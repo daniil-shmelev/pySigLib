@@ -90,3 +90,36 @@ def ensure_own_contiguous_storage(arr):
 def check_log_sig_method(method):
     if method < 0 or method > 2:
         raise ValueError("method must be one of 0, 1 or 2. Got " + str(method) + " instead.")
+
+def check_word(word, max_val, word_name):
+    if not isinstance(word, tuple):
+        raise TypeError(word_name + " must be a tuple of integers.")
+
+    for i in word:
+        if not isinstance(i, int):
+            raise TypeError(
+                word_name + " must be a tuple of integers. Found element of type " + str(type(i)) + " instead.")
+        if not 0 <= i < max_val:
+            raise ValueError(word_name + " must only contain letters in the range [0, " + str(max_val) + ")")
+
+def check_word_list(arr, max_val, arr_name):
+    if not isinstance(arr, list):
+        raise TypeError(arr_name + " must be a list of tuples of integers.")
+
+    for word in arr:
+        check_word(word, max_val, "Every word in " + arr_name)
+
+def check_word_or_word_list(param, max_val, param_name):
+    try:
+        if isinstance(param, tuple):
+            check_word(param, max_val, param_name)
+            return [param]
+        if isinstance(param, list):
+            check_word_list(param, max_val, param_name)
+            return param
+    except Exception as e:
+        raise type(e)("Error processing words: " + str(e)) from e
+
+    raise TypeError(param_name + " must be a tuple of integers or a list of tuples of integers.")
+
+

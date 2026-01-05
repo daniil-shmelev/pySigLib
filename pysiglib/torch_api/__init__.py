@@ -14,6 +14,7 @@
 # =========================================================================
 
 from ..load_siglib import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
+from ..words import words_of_length, words, lyndon_words_of_length, lyndon_words, is_lyndon, word_to_idx, idx_to_word
 from ..transform_path import transform_path
 from ..sig_length import sig_length, log_sig_length
 from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache

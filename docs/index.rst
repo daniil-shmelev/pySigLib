@@ -24,7 +24,7 @@ pySigLib |release|
    :align: center
    :class: only-dark
 
-Fast Signature Computations on CPU and GPU.
+Fast Signature, Log Signature and Signature Kernel Computations on CPU and GPU.
 
 .. toctree::
    :titlesonly:
@@ -43,6 +43,12 @@ Fast Signature Computations on CPU and GPU.
    :maxdepth: 2
 
    /pages/path_transformations
+
+.. toctree::
+   :titlesonly:
+   :maxdepth: 2
+
+   /pages/words
 
 .. toctree::
    :titlesonly:
