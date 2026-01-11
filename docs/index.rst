@@ -60,6 +60,12 @@ Fast Signature, Log Signature and Signature Kernel Computations on CPU and GPU.
    :titlesonly:
    :maxdepth: 2
 
+   /pages/signature_coefficients
+
+.. toctree::
+   :titlesonly:
+   :maxdepth: 2
+
    /pages/log_signatures
 
 .. toctree::
