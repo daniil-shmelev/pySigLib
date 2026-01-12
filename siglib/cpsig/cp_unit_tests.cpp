@@ -580,6 +580,51 @@ public:
 #endif
     };
 
+    TEST_CLASS(sigCoefDoubleTest)
+    {
+
+        TEST_METHOD(Trivial) {
+            auto f = sig_coef_d;
+
+            std::vector<double> path = { 0., 0. };
+            std::vector<double> true_ = { 0., 0. };
+            std::vector<uint64_t> multi_indices = { 0, 1 };
+            std::vector<uint64_t> degrees = { 1, 1 };
+
+            check_result(f, path, true_, multi_indices.data(), degrees.size(), degrees.data(), 2, 1, false, false, 1.);
+        }
+        TEST_METHOD(Linear) {
+            auto f = sig_coef_d;
+
+            std::vector<double> path = { 0., 1. };
+            std::vector<double> true_ = { 1., 1. / 2, 1. / 6, 1. / 24, 1. / 120 };
+            std::vector<uint64_t> multi_indices(15, 0);
+            std::vector<uint64_t> degrees = { 1, 2, 3, 4, 5 };
+
+            check_result(f, path, true_, multi_indices.data(), degrees.size(), degrees.data(), 1, 2, false, false, 1.);
+        }
+
+        TEST_METHOD(ManualSigTest) {
+            auto f = sig_coef_d;
+            uint64_t dimension = 2, length = 4, degree = 2;
+            std::vector<double> path = { 0., 0., 1., 0.5, 4., 0., 0., 1. };
+            std::vector<double> true_sig = { 0., 1., 0., 1., -1., 0.5 };
+
+            std::vector<uint64_t> multi_indices = {
+                0,
+                1,
+                0, 0,
+                0, 1,
+                1, 0,
+                1, 1
+            };
+
+            std::vector<uint64_t> degrees = { 1, 1, 2, 2, 2, 2 };
+
+            check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1.);
+        }
+    };
+
     TEST_CLASS(signatureDoubleTest)
     {
     public:

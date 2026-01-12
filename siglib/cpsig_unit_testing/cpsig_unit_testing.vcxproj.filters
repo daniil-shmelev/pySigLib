@@ -54,6 +54,9 @@
     <ClInclude Include="..\cpsig\log_sig_cache.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
+    <ClInclude Include="..\cpsig\cp_sig_coef.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cpsig\cppch.cpp">
@@ -84,6 +87,9 @@
       <Filter>Source Files\cpsig</Filter>
     </ClCompile>
     <ClCompile Include="..\cpsig\log_sig_cache.cpp">
+      <Filter>Source Files\cpsig</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpsig\cp_sig_coef.cpp">
       <Filter>Source Files\cpsig</Filter>
     </ClCompile>
   </ItemGroup>

@@ -57,6 +57,9 @@
     <ClInclude Include="log_sig_cache.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="cp_sig_coef.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cppch.cpp">
@@ -84,6 +87,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="log_sig_cache.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_sig_coef.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
