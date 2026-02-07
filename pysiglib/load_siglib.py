@@ -416,7 +416,7 @@ CPSIG.sig_coef_f.argtypes = (
     c_uint64,
     c_bool,
     c_bool,
-    c_double
+    c_float
 )
 CPSIG.sig_coef_f.restype = c_int
 
@@ -511,7 +511,7 @@ CPSIG.batch_sig_coef_f.argtypes = (
     c_uint64,
     c_bool,
     c_bool,
-    c_double,
+    c_float,
     c_int
 )
 CPSIG.batch_sig_coef_f.restype = c_int

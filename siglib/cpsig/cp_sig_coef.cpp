@@ -23,25 +23,25 @@
 template<std::floating_point T>
 void single_sig_coef_(
 	const Path<T>& path,
-	double* out,
+	T* out,
 	const uint64_t* multi_idx,
 	uint64_t degree,
-	double* prev_coefs,
-	double* next_coefs,
-	double* incr_prod,
-	const double* one_over_fact
+	T* prev_coefs,
+	T* next_coefs,
+	T* incr_prod,
+	const T* one_over_fact
 ) {
 	Point<T> prev_pt(path.begin());
 	Point<T> next_pt(++path.begin());
 	const Point<T> end_pt(path.end());
 
-	prev_coefs[0] = 1.;
-	next_coefs[0] = 1.;
+	prev_coefs[0] = static_cast<T>(1.);
+	next_coefs[0] = static_cast<T>(1.);
 
-	incr_prod[0] = 1.;
+	incr_prod[0] = static_cast<T>(1.);
 
 	for (uint64_t i = 1; i < degree + 1; ++i) {
-		incr_prod[i] = incr_prod[i - 1] * static_cast<double>(next_pt[multi_idx[i - 1]] - prev_pt[multi_idx[i - 1]]);
+		incr_prod[i] = incr_prod[i - 1] * (next_pt[multi_idx[i - 1]] - prev_pt[multi_idx[i - 1]]);
 	}
 
 	for (uint64_t i = 1; i < degree + 1; ++i) {
@@ -59,7 +59,7 @@ void single_sig_coef_(
 		for (uint64_t i = 1; i < degree + 1; ++i) {
 			next_coefs[i] = prev_coefs[i];
 
-			const double new_incr = static_cast<double>(next_pt[multi_idx[i - 1]] - prev_pt[multi_idx[i - 1]]);
+			const T new_incr = (next_pt[multi_idx[i - 1]] - prev_pt[multi_idx[i - 1]]);
 			incr_prod[i] = new_incr;
 
 			for (uint64_t k = 1; k < i; ++k) {
@@ -82,7 +82,7 @@ void single_sig_coef_(
 template<std::floating_point T>
 void sig_coef_(
 	const T* path,
-	double* out,
+	T* out,
 	const uint64_t* multi_idx,
 	uint64_t num_multi_idx, // len(multi_idx)
 	const uint64_t* degrees, // [ len(multi_index[i]) for i in 0:num_multi_index ]
@@ -90,13 +90,13 @@ void sig_coef_(
 	uint64_t length,
 	bool time_aug,
 	bool lead_lag,
-	double end_time
+	T end_time
 ) {
 
 	if (dimension == 0) { throw std::invalid_argument("sig_coef received path of dimension 0"); }
 
 	if (length <= 1) {
-		std::fill(out, out + num_multi_idx, 0.);
+		std::fill(out, out + num_multi_idx, static_cast<T>(0.));
 		return;
 	}
 
@@ -104,7 +104,7 @@ void sig_coef_(
 
 	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time);
 
-	double* out_ptr = out;
+	T* out_ptr = out;
 
 	// Each buffer is of length (len(multi_indices[i]) + 1)
 	// So we need a total size of sum{ len(multi_indices[i]) + 1 } = sum{ len(multi_indices[i]) } + len(multi_indices)
@@ -116,22 +116,22 @@ void sig_coef_(
 		max_degree = std::max(max_degree, degrees[i]);
 	}
 
-	auto incr_prod_uptr = std::make_unique<double[]>(max_degree + 1);
-	double* incr_prod = incr_prod_uptr.get();
+	auto incr_prod_uptr = std::make_unique<T[]>(max_degree + 1);
+	T* incr_prod = incr_prod_uptr.get();
 
-	auto one_over_fact_uptr = std::make_unique<double[]>(max_degree + 1);
-	double* one_over_fact = one_over_fact_uptr.get();
+	auto one_over_fact_uptr = std::make_unique<T[]>(max_degree + 1);
+	T* one_over_fact = one_over_fact_uptr.get();
 
 	one_over_fact[0] = 1.;
 	for (uint64_t i = 1; i < max_degree + 1; ++i) {
 		one_over_fact[i] = one_over_fact[i - 1] / i;
 	}
 
-	auto prev_coefs_uptr = std::make_unique<double[]>(coef_buffer_len);
-	double* prev_coefs = prev_coefs_uptr.get();
+	auto prev_coefs_uptr = std::make_unique<T[]>(coef_buffer_len);
+	T* prev_coefs = prev_coefs_uptr.get();
 
-	auto next_coefs_uptr = std::make_unique<double[]>(coef_buffer_len);
-	double* next_coefs = next_coefs_uptr.get();
+	auto next_coefs_uptr = std::make_unique<T[]>(coef_buffer_len);
+	T* next_coefs = next_coefs_uptr.get();
 
 	const uint64_t* multi_idx_ptr = multi_idx;
 
@@ -148,7 +148,7 @@ void sig_coef_(
 template<std::floating_point T>
 void batch_sig_coef_(
 	const T* path,
-	double* out,
+	T* out,
 	const uint64_t* multi_idx,
 	uint64_t num_multi_idx, // len(multi_idx)
 	const uint64_t* degrees, // [ len(multi_index[i]) for i in 0:num_multi_index ]
@@ -157,7 +157,7 @@ void batch_sig_coef_(
 	uint64_t length,
 	bool time_aug,
 	bool lead_lag,
-	double end_time,
+	T end_time,
 	int n_jobs
 )
 {
@@ -170,14 +170,14 @@ void batch_sig_coef_(
 	const uint64_t flat_path_length = dimension * length;
 	const T* const data_end = path + flat_path_length * batch_size;
 
-	std::function<void(const T*, double*)> sig_func;
+	std::function<void(const T*, T*)> sig_func;
 
-	sig_func = [&](const T* path_ptr, double* out_ptr) {
+	sig_func = [&](const T* path_ptr, T* out_ptr) {
 		sig_coef_<T>(path_ptr, out_ptr, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time);
 		};
 
 	const T* path_ptr;
-	double* out_ptr;
+	T* out_ptr;
 
 	if (n_jobs != 1) {
 		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, num_multi_idx, n_jobs);
@@ -195,7 +195,7 @@ void batch_sig_coef_(
 
 extern "C" {
 
-	CPSIG_API int sig_coef_f(const float* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time) noexcept {
+	CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time) noexcept {
 		SAFE_CALL(sig_coef_<float>(path, out, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time));
 	}
 
@@ -203,7 +203,7 @@ extern "C" {
 		SAFE_CALL(sig_coef_<double>(path, out, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time));
 	}
 
-	CPSIG_API int batch_sig_coef_f(const float* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, int n_jobs) noexcept {
+	CPSIG_API int batch_sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, int n_jobs) noexcept {
 		SAFE_CALL(batch_sig_coef_<float>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, n_jobs));
 	}
 

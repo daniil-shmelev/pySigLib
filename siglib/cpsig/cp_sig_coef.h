@@ -22,7 +22,7 @@
 template<std::floating_point T>
 void sig_coef_(
 	const T* path,
-	double* out,
+	T* out,
 	const uint64_t* multi_idx,
 	uint64_t num_multi_idx, // len(multi_idx)
 	const uint64_t* degrees, // [ len(multi_index[i]) for i in 0:num_multi_index ]
@@ -30,13 +30,13 @@ void sig_coef_(
 	uint64_t length,
 	bool time_aug = false,
 	bool lead_lag = false,
-	double end_time = 1.
+	T end_time = 1.
 );
 
 template<std::floating_point T>
 void batch_sig_coef_(
 	const T* path,
-	double* out,
+	T* out,
 	const uint64_t* multi_idx,
 	uint64_t num_multi_idx, // len(multi_idx)
 	const uint64_t* degrees, // [ len(multi_index[i]) for i in 0:num_multi_index ]
@@ -45,6 +45,6 @@ void batch_sig_coef_(
 	uint64_t length,
 	bool time_aug = false,
 	bool lead_lag = false,
-	double end_time = 1.,
+	T end_time = 1.,
 	int n_jobs = 1
 );
