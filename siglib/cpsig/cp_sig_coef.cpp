@@ -60,7 +60,7 @@ void single_sig_coef_(
 		for (uint64_t i = 1; i < degree + 1; ++i) {
 			next_coefs[i] = prev_coefs[i];
 
-			const T new_incr = (next_pt[multi_idx[i - 1]] - prev_pt[multi_idx[i - 1]]);
+			const T new_incr = next_pt[multi_idx[i - 1]] - prev_pt[multi_idx[i - 1]];
 			incr_prod[i] = new_incr;
 
 			for (uint64_t k = 1; k < i; ++k) {

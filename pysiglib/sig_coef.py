@@ -143,6 +143,7 @@ def sig_coef(
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
     :param prefixes: If ``True``, will additionally return all prefixes of signature coefficients.
+        These prefixes are extracted for free as a by-product of the computation.
         For example, passing ``word=[[1,2], [3,2,1]]`` with ``prefixes=True`` returns an
         output equivalent to passing ``word=[[1], [1,2], [3], [3,2], [3,2,1]]`` with ``prefixes=False``.
     :type prefixes: bool

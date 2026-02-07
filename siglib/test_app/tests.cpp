@@ -308,3 +308,30 @@ void example_sig_to_log_sig_d(
 
     std::cout << "done\n";
 }
+
+void example_batch_sig_coef(
+    uint64_t num_idx,
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    uint64_t length,
+    bool time_aug,
+    bool lead_lag,
+    double end_time,
+    int n_jobs,
+    int num_runs
+) {
+    print_header("Batch Sig Coef");
+
+    uint64_t path_size = dimension * length * batch_size;
+    std::vector<double> path = test_data<double>(path_size);
+    path[0] = 0.;
+    path[1] = 1.;
+
+    std::vector<uint64_t> degrees(num_idx, degree);
+    std::vector<uint64_t> multi_idx(num_idx * degree, 0);
+
+    std::vector<double> out(batch_size * num_idx);
+
+    time_function(num_runs, batch_sig_coef_d, path.data(), out.data(), multi_idx.data(), degrees.size(), degrees.data(), batch_size, dimension, length, time_aug, lead_lag, end_time, false, n_jobs);
+}
