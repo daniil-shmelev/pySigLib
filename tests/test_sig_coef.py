@@ -75,7 +75,15 @@ def test_sig_coef():
 
     true_coeffs = get_true_sig_coefs(multi_indices, X, 5)
     coeff = pysiglib.sig_coef(X, multi_indices)
-    sig = pysiglib.signature(X, 5)
+    check_close(true_coeffs, coeff)
+
+def test_sig_coef_prefixes():
+    X = np.random.uniform(size=(100, 3))
+    multi_indices = [(0, 1), (2, 1, 0), (1,)]
+    grid_idx = [(0,), (0,1), (2,), (2,1), (2,1,0), (1,)]
+
+    true_coeffs = get_true_sig_coefs(grid_idx, X, 5)
+    coeff = pysiglib.sig_coef(X, multi_indices, prefixes = True)
     check_close(true_coeffs, coeff)
 
 def test_sig_coef_full():
@@ -93,17 +101,6 @@ def test_batch_sig_coef_full():
     coeff = pysiglib.sig_coef(X, multi_indices)
     sig = pysiglib.signature(X, 5)
     check_close(sig[:, 1:], coeff)
-
-# @pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-# def test_batch_sig_coef_full_cuda():
-#     X = torch.rand(size=(10, 100, 3), device = "cuda")
-#     multi_indices = pysiglib.words(3, 5)[1:]
-#
-#     coeff = pysiglib.sig_coef(X, multi_indices)
-#     assert(coeff.device == X.device)
-#     coeff = coeff.cpu()
-#     sig = pysiglib.signature(X, 5).cpu()
-#     check_close(sig[:, 1:], coeff)
 
 def test_batch_sig_coef_full_time_aug():
     X = np.random.uniform(size=(10, 100, 3))

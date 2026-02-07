@@ -67,7 +67,7 @@ def extract_sig_coef(
 
     return sig[..., idx]
 
-def sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr):
+def sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes):
     err_code = CPSIG_SIG_COEF[data.dtype](
         data.data_ptr,
         result.data_ptr,
@@ -78,14 +78,15 @@ def sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr):
         data.data_length,
         data.time_aug,
         data.lead_lag,
-        data.end_time
+        data.end_time,
+        prefixes
     )
 
     if err_code:
         raise Exception("Error in pysiglib.sig_coef: " + err_msg(err_code))
     return result.data
 
-def batch_sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, n_jobs = 1):
+def batch_sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes, n_jobs = 1):
     err_code = CPSIG_BATCH_SIG_COEF[data.dtype](
         data.data_ptr,
         result.data_ptr,
@@ -98,6 +99,7 @@ def batch_sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_
         data.time_aug,
         data.lead_lag,
         data.end_time,
+        prefixes,
         n_jobs
     )
 
@@ -111,6 +113,7 @@ def sig_coef(
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
+        prefixes : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -139,6 +142,10 @@ def sig_coef(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
+    :param prefixes: If ``True``, will additionally return all prefixes of signature coefficients.
+        For example, passing ``word=[[1,2], [3,2,1]]`` with ``prefixes=True`` returns an
+        output equivalent to passing ``word=[[1], [1,2], [3], [3,2], [3,2,1]]`` with ``prefixes=False``.
+    :type prefixes: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
@@ -172,6 +179,7 @@ def sig_coef(
 
     num_multi_indices = len(word)
     degrees = [len(idx) for idx in word]
+    result_length = sum(degrees) if prefixes else num_multi_indices
 
     word = [torch.tensor(idx, dtype=torch.uint64, device = data.device) for idx in word]
     word = torch.concatenate(word, axis = 0)
@@ -180,15 +188,15 @@ def sig_coef(
     multi_indices_ptr = cast(word.data_ptr(), POINTER(c_uint64))
     degrees_ptr = cast(degrees.data_ptr(), POINTER(c_uint64))
 
-    result = SigOutputHandler(data, num_multi_indices)
+    result = SigOutputHandler(data, result_length)
 
     if data.is_batch:
         check_type(n_jobs, "n_jobs", int)
         if n_jobs == 0:
             raise ValueError("n_jobs cannot be 0")
-        res = batch_sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, n_jobs)
+        res = batch_sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes, n_jobs)
     else:
-        res = sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr)
+        res = sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
 
     if device_handler.device is not None:
         res = res.to(device_handler.device)

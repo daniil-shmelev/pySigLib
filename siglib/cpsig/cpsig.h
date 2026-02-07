@@ -250,9 +250,9 @@ extern "C" {
 	*
 	* @param TODO
 	*/
-	CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1.) noexcept;
+	CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false) noexcept;
 	/** @brief */
-	CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false) noexcept;
 	/** @} */
 
 	/** @defgroup batch_sig_coef_functions Batch signature coefficient functions
@@ -265,9 +265,9 @@ extern "C" {
 	*
 	* @param TODO
 	*/
-	CPSIG_API int batch_sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
+	CPSIG_API int batch_sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
+	CPSIG_API int batch_sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup signature_functions Signature functions

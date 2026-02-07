@@ -591,7 +591,7 @@ public:
             std::vector<uint64_t> multi_indices = { 0, 1 };
             std::vector<uint64_t> degrees = { 1, 1 };
 
-            check_result(f, path, true_, multi_indices.data(), degrees.size(), degrees.data(), 2, 1, false, false, 1.);
+            check_result(f, path, true_, multi_indices.data(), degrees.size(), degrees.data(), 2, 1, false, false, 1., false);
         }
         TEST_METHOD(Linear) {
             auto f = sig_coef_d;
@@ -601,7 +601,7 @@ public:
             std::vector<uint64_t> multi_indices(15, 0);
             std::vector<uint64_t> degrees = { 1, 2, 3, 4, 5 };
 
-            check_result(f, path, true_, multi_indices.data(), degrees.size(), degrees.data(), 1, 2, false, false, 1.);
+            check_result(f, path, true_, multi_indices.data(), degrees.size(), degrees.data(), 1, 2, false, false, 1., false);
         }
 
         TEST_METHOD(ManualSigTest) {
@@ -621,7 +621,7 @@ public:
 
             std::vector<uint64_t> degrees = { 1, 1, 2, 2, 2, 2 };
 
-            check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1.);
+            check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1., false);
         }
     };
 

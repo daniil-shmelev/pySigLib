@@ -29,7 +29,8 @@ void single_sig_coef_(
 	T* prev_coefs,
 	T* next_coefs,
 	T* incr_prod,
-	const T* one_over_fact
+	const T* one_over_fact,
+	bool prefixes
 ) {
 	Point<T> prev_pt(path.begin());
 	Point<T> next_pt(++path.begin());
@@ -75,7 +76,14 @@ void single_sig_coef_(
 		std::swap(next_coefs, prev_coefs);
 	}
 
-	*out = prev_coefs[degree];
+	if (!prefixes) {
+		*out = prev_coefs[degree];
+	}
+	else {
+		for (uint64_t i = 0; i < degree; ++i) {
+			out[i] = prev_coefs[i + 1];
+		}
+	}
 }
 
 
@@ -90,7 +98,8 @@ void sig_coef_(
 	uint64_t length,
 	bool time_aug,
 	bool lead_lag,
-	T end_time
+	T end_time,
+	bool prefixes
 ) {
 
 	if (dimension == 0) { throw std::invalid_argument("sig_coef received path of dimension 0"); }
@@ -136,8 +145,8 @@ void sig_coef_(
 	const uint64_t* multi_idx_ptr = multi_idx;
 
 	for (uint64_t i = 0; i < num_multi_idx; ++i) {
-		single_sig_coef_<T>(path_obj, out_ptr, multi_idx_ptr, degrees[i], prev_coefs, next_coefs, incr_prod, one_over_fact);
-		++out_ptr;
+		single_sig_coef_<T>(path_obj, out_ptr, multi_idx_ptr, degrees[i], prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
+		out_ptr += prefixes ? degrees[i] : 1;
 		prev_coefs += degrees[i] + 1;
 		next_coefs += degrees[i] + 1;
 		multi_idx_ptr += degrees[i];
@@ -158,6 +167,7 @@ void batch_sig_coef_(
 	bool time_aug,
 	bool lead_lag,
 	T end_time,
+	bool prefixes,
 	int n_jobs
 )
 {
@@ -173,7 +183,7 @@ void batch_sig_coef_(
 	std::function<void(const T*, T*)> sig_func;
 
 	sig_func = [&](const T* path_ptr, T* out_ptr) {
-		sig_coef_<T>(path_ptr, out_ptr, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time);
+		sig_coef_<T>(path_ptr, out_ptr, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time, prefixes);
 		};
 
 	const T* path_ptr;
@@ -195,20 +205,20 @@ void batch_sig_coef_(
 
 extern "C" {
 
-	CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time) noexcept {
-		SAFE_CALL(sig_coef_<float>(path, out, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time));
+	CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, bool prefixes) noexcept {
+		SAFE_CALL(sig_coef_<float>(path, out, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time, prefixes));
 	}
 
-	CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time) noexcept {
-		SAFE_CALL(sig_coef_<double>(path, out, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time));
+	CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, bool prefixes) noexcept {
+		SAFE_CALL(sig_coef_<double>(path, out, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time, prefixes));
 	}
 
-	CPSIG_API int batch_sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, int n_jobs) noexcept {
-		SAFE_CALL(batch_sig_coef_<float>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, n_jobs));
+	CPSIG_API int batch_sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, bool prefixes, int n_jobs) noexcept {
+		SAFE_CALL(batch_sig_coef_<float>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, n_jobs));
 	}
 
-	CPSIG_API int batch_sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, int n_jobs) noexcept {
-		SAFE_CALL(batch_sig_coef_<double>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, n_jobs));
+	CPSIG_API int batch_sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, bool prefixes, int n_jobs) noexcept {
+		SAFE_CALL(batch_sig_coef_<double>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, n_jobs));
 	}
 
 }
