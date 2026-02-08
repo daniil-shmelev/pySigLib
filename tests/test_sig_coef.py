@@ -52,8 +52,8 @@ def get_true_sig_coefs(multi_indices, X, *args, **kwargs):
         for i in idx:
             flat_idx *= dim
             flat_idx += i + 1
-        res.append(sig[flat_idx])
-    return np.array(res)
+        res.append(sig[..., flat_idx])
+    return np.array(res).T
 
 def test_sig_coef_trivial():
     X = np.array([[0., 0.], [1., 1.]])
@@ -79,6 +79,15 @@ def test_sig_coef():
 
 def test_sig_coef_prefixes():
     X = np.random.uniform(size=(100, 3))
+    multi_indices = [(0, 1), (2, 1, 0), (1,)]
+    grid_idx = [(0,), (0,1), (2,), (2,1), (2,1,0), (1,)]
+
+    true_coeffs = get_true_sig_coefs(grid_idx, X, 5)
+    coeff = pysiglib.sig_coef(X, multi_indices, prefixes = True)
+    check_close(true_coeffs, coeff)
+
+def test_batch_sig_coef_prefixes():
+    X = np.random.uniform(size=(10, 100, 3))
     multi_indices = [(0, 1), (2, 1, 0), (1,)]
     grid_idx = [(0,), (0,1), (2,), (2,1), (2,1,0), (1,)]
 

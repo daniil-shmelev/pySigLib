@@ -178,6 +178,16 @@ void batch_sig_coef_(
 
 	//General case and degree = 1 case
 	const uint64_t flat_path_length = dimension * length;
+	uint64_t result_length = 0;
+
+	if (prefixes) {
+		for (uint64_t i = 0; i < num_multi_idx; ++i)
+			result_length += degrees[i];
+	}
+	else {
+		result_length = num_multi_idx;
+	}
+
 	const T* const data_end = path + flat_path_length * batch_size;
 
 	std::function<void(const T*, T*)> sig_func;
@@ -190,12 +200,12 @@ void batch_sig_coef_(
 	T* out_ptr;
 
 	if (n_jobs != 1) {
-		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, num_multi_idx, n_jobs);
+		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, result_length, n_jobs);
 	}
 	else {
 		for (path_ptr = path, out_ptr = out;
 			path_ptr < data_end;
-			path_ptr += flat_path_length, out_ptr += num_multi_idx) {
+			path_ptr += flat_path_length, out_ptr += result_length) {
 
 			sig_func(path_ptr, out_ptr);
 		}
