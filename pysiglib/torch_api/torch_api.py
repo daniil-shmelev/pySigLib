@@ -72,12 +72,14 @@ sig.__doc__ = sig_forward.__doc__
 
 class SigCombine(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, sig1, sig2, dimension ,degree, n_jobs):
-        sig_combined = sig_combine_forward(sig1, sig2, dimension ,degree, n_jobs)
+    def forward(ctx, sig1, sig2, dimension, degree, time_aug, lead_lag, n_jobs):
+        sig_combined = sig_combine_forward(sig1, sig2, dimension, degree, time_aug, lead_lag, n_jobs)
 
         ctx.save_for_backward(sig1, sig2)
         ctx.dimension = dimension
         ctx.degree = degree
+        ctx.time_aug = time_aug
+        ctx.lead_lag = lead_lag
         ctx.n_jobs = n_jobs
 
         return sig_combined
@@ -85,17 +87,19 @@ class SigCombine(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         sig1, sig2 = ctx.saved_tensors
-        sig1_grad, sig2_grad = sig_combine_backprop(grad_output, sig1, sig2, ctx.dimension, ctx.degree, ctx.n_jobs)
-        return sig1_grad, sig2_grad, None, None, None
+        sig1_grad, sig2_grad = sig_combine_backprop(grad_output, sig1, sig2, ctx.dimension, ctx.degree, ctx.time_aug, ctx.lead_lag, ctx.n_jobs)
+        return sig1_grad, sig2_grad, None, None, None, None, None
 
 def sig_combine(
         sig1 : Union[np.ndarray, torch.tensor],
         sig2 : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        time_aug: bool = False,
+        lead_lag: bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    return SigCombine.apply(sig1, sig2, dimension ,degree, n_jobs)
+    return SigCombine.apply(sig1, sig2, dimension, degree, time_aug, lead_lag, n_jobs)
 
 
 sig_combine.__doc__ = sig_combine_forward.__doc__
