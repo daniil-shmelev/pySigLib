@@ -213,6 +213,284 @@ void batch_sig_coef_(
 	return;
 }
 
+//////////////////////////////////////////////////////////////////////////////////////////////
+// backpropagation
+//////////////////////////////////////////////////////////////////////////////////////////////
+
+template <typename T>
+class UpperTriangularMatrix {
+public:
+	explicit UpperTriangularMatrix(size_t n)
+		: n_(n), data_(n* (n + 1) / 2) {
+	}
+
+	size_t size() const { return n_; }
+
+	// Write access
+	T& operator()(size_t i, size_t j) {
+		if (i > j)
+			throw std::out_of_range("Accessing non-strict upper element");
+		/*uint64_t idx = index(i, j);
+		T res = data_[index(i, j)];
+		return res;*/
+		return data_[index(i, j)];
+	}
+
+	// Read access
+	T operator()(size_t i, size_t j) const {
+		if (i > j)
+			return T(0);
+		return data_[index(i, j)];
+	}
+
+	T get_neg(size_t i, size_t j) const {
+		if (i > j)
+			return T(0);
+		if ((i + j) % 2)
+			return data_[index(i, j)];
+		else
+			return -data_[index(i, j)];
+	}
+
+private:
+	size_t n_;
+	std::vector<T> data_;
+
+	size_t index(size_t i, size_t j) const {
+		return i * n_ - (i * (i - 1)) / 2 + (j - i);
+	}
+};
+
+template<std::floating_point T>
+void single_sig_coef_backprop_(
+	const Path<T>& path,
+	T* out, // Should be zeroed
+	const T* coefs, // This should be an array of size degree, of the prefixes of the coeff.
+	const uint64_t* multi_idx,
+	uint64_t degree,
+	T* prev_coefs,
+	T* next_coefs,
+	T* incr,
+	UpperTriangularMatrix<T>& incr_prod, // Array of size degree * degree, to be filled with incr_prod[i,j] = prod_{k = i}^j incr[k]
+	T* prev_derivs, // Derivs wrt coeffs. Should be the same length as the above array.
+	T* next_derivs,
+	const T* one_over_fact
+) {
+	Point<T> prev_pt(--path.end());
+	Point<T> next_pt(----path.end());
+	const Point<T> start_pt(path.begin());
+
+	prev_coefs[0] = static_cast<T>(1.);
+	for (uint64_t i = 0; i < degree; ++i) {
+		prev_coefs[i + 1] = coefs[i];
+	}
+	next_coefs[0] = static_cast<T>(1.);
+
+	uint64_t path_dim = path.dimension();
+	T* out_ptr = out + path_dim * (path.length() - 1);
+
+	do {
+		out_ptr -= path_dim;
+
+		// Populate incr
+		for (uint64_t i = 0; i < degree; ++i) {
+			incr[i] = next_pt[multi_idx[i]] - prev_pt[multi_idx[i]];
+		}
+
+		// Populate incr_prod
+		for (int64_t i = degree - 1; i >= 0; --i) {
+			incr_prod(i, i) = incr[i];
+			for (uint64_t j = i + 1; j < degree; ++j) {
+				incr_prod(i, j) = incr[j] * incr_prod(i, j - 1);
+			}
+		}
+
+		// Reconstruct coefs
+		for (uint64_t i = 1; i < degree + 1; ++i) {
+			next_coefs[i] = prev_coefs[i];
+
+			for (uint64_t k = 1; k <= i; ++k) {
+				next_coefs[i] += prev_coefs[i - k] * incr_prod(i - k, i - 1) * one_over_fact[k];
+			}
+		}
+
+		//// Update path derivs
+		//for (uint64_t i = 1; i < degree + 1; ++i) {
+		//	for (uint64_t m = i; m < degree + 1; ++m) {
+		//		T deriv_update = incr_prod.get_neg(0, m - 1) * one_over_fact[m];
+		//		for (uint64_t k = 1; k < m; ++k) {
+		//			deriv_update += next_coefs[k] * incr_prod.get_neg(k, m - 1) * one_over_fact[m - k];
+		//		}
+		//		T update = prev_derivs[m-1] * deriv_update / incr_prod.get_neg(i - 1, i - 1);
+		//		out_ptr[multi_idx[i-1]] -= update;
+		//		out_ptr[multi_idx[i-1] + path_dim] += update;
+		//	}
+		//}
+
+		// Update path derivs
+		T* buff = next_derivs;
+		for (uint64_t i = 0; i < degree; ++i)
+			buff[i] = 0.;
+
+		for (uint64_t i = 0; i < degree; ++i) {
+			T update = 0.;
+			for (uint64_t m = i; m < degree; ++m) {
+				buff[m] += next_coefs[i] * incr_prod.get_neg(i, m) * one_over_fact[m - i + 1];
+				update += prev_derivs[m] * buff[m];
+			}
+			update /= incr_prod.get_neg(i, i);
+			out_ptr[multi_idx[i]] -= update;
+			out_ptr[multi_idx[i] + path_dim] += update;
+		}
+
+
+		// Update sig coef derivs
+		for (uint64_t i = 0; i < degree; ++i) {
+			next_derivs[i] = prev_derivs[i];
+
+			for (uint64_t k = i + 1; k < degree; ++k) {
+				next_derivs[i] += prev_derivs[k] * incr_prod.get_neg(i + 1, k) * one_over_fact[k - i];
+			}
+		}
+
+		std::swap(next_coefs, prev_coefs);
+		std::swap(next_derivs, prev_derivs);
+
+		--next_pt;
+		--prev_pt;
+	} while (prev_pt != start_pt);
+}
+
+
+template<std::floating_point T>
+void sig_coef_backprop_(
+	const T* path,
+	T* out,
+	const T* coefs,
+	T* derivs,
+	const uint64_t* multi_idx,
+	uint64_t num_multi_idx, // len(multi_idx)
+	const uint64_t* degrees, // [ len(multi_index[i]) for i in 0:num_multi_index ]
+	uint64_t dimension,
+	uint64_t length,
+	bool time_aug,
+	bool lead_lag,
+	T end_time,
+	bool prefixes
+) {
+
+	if (dimension == 0) { throw std::invalid_argument("sig_coef received path of dimension 0"); }
+
+	const uint64_t path_length = dimension * length;
+	std::fill(out, out + path_length, static_cast<T>(0.));
+
+	if (length <= 1) {
+		return;
+	}
+
+	//TODO: check indices < dim
+
+	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time);
+
+	T* out_ptr = out;
+
+	// Each buffer is of length (len(multi_indices[i]) + 1)
+	// So we need a total size of sum{ len(multi_indices[i]) + 1 } = sum{ len(multi_indices[i]) } + len(multi_indices)
+	uint64_t coef_buffer_len = num_multi_idx;
+	uint64_t max_degree = 0;
+
+	for (uint64_t i = 0; i < num_multi_idx; ++i) {
+		coef_buffer_len += degrees[i];
+		max_degree = std::max(max_degree, degrees[i]);
+	}
+
+	auto one_over_fact_uptr = std::make_unique<T[]>(max_degree + 1);
+	T* one_over_fact = one_over_fact_uptr.get();
+
+	one_over_fact[0] = 1.;
+	for (uint64_t i = 1; i < max_degree + 1; ++i) {
+		one_over_fact[i] = one_over_fact[i - 1] / i;
+	}
+
+	auto prev_coefs_uptr = std::make_unique<T[]>(coef_buffer_len);
+	T* prev_coefs = prev_coefs_uptr.get();
+
+	auto next_coefs_uptr = std::make_unique<T[]>(coef_buffer_len);
+	T* next_coefs = next_coefs_uptr.get();
+
+	auto next_derivs_uptr = std::make_unique<T[]>(coef_buffer_len);
+	T* next_derivs = next_derivs_uptr.get();
+
+	auto incr_uptr = std::make_unique<T[]>(max_degree);
+	T* incr = incr_uptr.get();
+
+	const uint64_t* multi_idx_ptr = multi_idx;
+
+	for (uint64_t i = 0; i < num_multi_idx; ++i) {
+		uint64_t degree = degrees[i];
+		UpperTriangularMatrix<T> incr_prod(degree);
+		single_sig_coef_backprop_<T>(path_obj, out_ptr, coefs, multi_idx_ptr, degree, prev_coefs, next_coefs, incr, incr_prod, derivs, next_derivs, one_over_fact);
+		out_ptr += prefixes ? degree : 1;
+		prev_coefs += degree + 1;
+		next_coefs += degree + 1;
+		derivs += degree + 1;
+		next_derivs += degree + 1;
+		multi_idx_ptr += degree;
+	}
+
+}
+
+template<std::floating_point T>
+void batch_sig_coef_backprop_(
+	const T* path,
+	T* out,
+	const T* coefs,
+	T* derivs,
+	const uint64_t* multi_idx,
+	uint64_t num_multi_idx, // len(multi_idx)
+	const uint64_t* degrees, // [ len(multi_index[i]) for i in 0:num_multi_index ]
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t length,
+	bool time_aug,
+	bool lead_lag,
+	T end_time,
+	bool prefixes,
+	int n_jobs
+)
+{
+	//Deal with trivial cases
+	if (dimension == 0) { throw std::invalid_argument("sig_coef received path of dimension 0"); }
+
+	Path<T> dummy_path_obj(nullptr, dimension, length, time_aug, lead_lag, end_time); //Work with path_obj to capture time_aug, lead_lag transformations
+
+	//General case and degree = 1 case
+	const uint64_t flat_path_length = dimension * length;
+	const T* const data_end = path + flat_path_length * batch_size;
+
+	std::function<void(const T*, T*)> sig_func;
+
+	sig_func = [&](const T* path_ptr, T* out_ptr) {
+		sig_coef_backprop_<T>(path_ptr, out_ptr, coefs, derivs, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time, prefixes);
+		};
+
+	const T* path_ptr;
+	T* out_ptr;
+
+	if (n_jobs != 1) {
+		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, num_multi_idx, n_jobs);
+	}
+	else {
+		for (path_ptr = path, out_ptr = out;
+			path_ptr < data_end;
+			path_ptr += flat_path_length, out_ptr += num_multi_idx) {
+
+			sig_func(path_ptr, out_ptr);
+		}
+	}
+	return;
+}
+
 extern "C" {
 
 	CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, bool prefixes) noexcept {
@@ -229,6 +507,22 @@ extern "C" {
 
 	CPSIG_API int batch_sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, bool prefixes, int n_jobs) noexcept {
 		SAFE_CALL(batch_sig_coef_<double>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, n_jobs));
+	}
+
+	CPSIG_API int sig_coef_backprop_f(const float* path, float* out, float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, bool prefixes) noexcept {
+		SAFE_CALL(sig_coef_backprop_<float>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time, prefixes));
+	}
+
+	CPSIG_API int sig_coef_backprop_d(const double* path, double* out, double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, bool prefixes) noexcept {
+		SAFE_CALL(sig_coef_backprop_<double>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time, prefixes));
+	}
+
+	CPSIG_API int batch_sig_coef_backprop_f(const float* path, float* out, float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, bool prefixes, int n_jobs) noexcept {
+		SAFE_CALL(batch_sig_coef_backprop_<float>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, n_jobs));
+	}
+
+	CPSIG_API int batch_sig_coef_backprop_d(const double* path, double* out, double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, bool prefixes, int n_jobs) noexcept {
+		SAFE_CALL(batch_sig_coef_backprop_<double>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, n_jobs));
 	}
 
 }
