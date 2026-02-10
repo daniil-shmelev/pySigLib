@@ -452,8 +452,7 @@ CPSIG.sig_coef_backprop_f.argtypes = (
     c_uint64,
     c_bool,
     c_bool,
-    c_float,
-    c_bool
+    c_float
 )
 CPSIG.sig_coef_backprop_f.restype = c_int
 
@@ -469,8 +468,7 @@ CPSIG.sig_coef_backprop_d.argtypes = (
     c_uint64,
     c_bool,
     c_bool,
-    c_double,
-    c_bool
+    c_double
 )
 CPSIG.sig_coef_backprop_d.restype = c_int
 
@@ -592,7 +590,6 @@ CPSIG.batch_sig_coef_backprop_f.argtypes = (
     c_bool,
     c_bool,
     c_float,
-    c_bool,
     c_int
 )
 CPSIG.batch_sig_coef_backprop_f.restype = c_int
@@ -611,7 +608,6 @@ CPSIG.batch_sig_coef_backprop_d.argtypes = (
     c_bool,
     c_bool,
     c_double,
-    c_bool,
     c_int
 )
 CPSIG.batch_sig_coef_backprop_d.restype = c_int

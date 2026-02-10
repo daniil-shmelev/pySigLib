@@ -701,7 +701,7 @@ public:
 
             std::vector<uint64_t> degrees = { 3 };
 
-            check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1., false);
+            check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1.);
         }
 
         TEST_METHOD(ManualTest2) {
@@ -719,7 +719,7 @@ public:
 
             std::vector<uint64_t> degrees = { 3 };
 
-            check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1., false);
+            check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1.);
         }
         TEST_METHOD(ManualTest3) {
             auto f = sig_coef_backprop_d;
@@ -736,7 +736,7 @@ public:
 
             std::vector<uint64_t> degrees = { 3 };
 
-            check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1., false);
+            check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1.);
         }
     };
 

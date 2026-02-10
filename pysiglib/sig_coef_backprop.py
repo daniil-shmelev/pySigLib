@@ -26,7 +26,7 @@ from .words import word_to_idx
 from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler, DeviceToHost, MultipleSigInputHandler, PathOutputHandler
 
 
-def sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes):
+def sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr):
     err_code = CPSIG_SIG_COEF_BACKPROP[data.dtype](
         data.data_ptr,
         result.data_ptr,
@@ -39,15 +39,14 @@ def sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_in
         data.data_length,
         data.time_aug,
         data.lead_lag,
-        data.end_time,
-        prefixes
+        data.end_time
     )
 
     if err_code:
         raise Exception("Error in pysiglib.sig_coef: " + err_msg(err_code))
     return result.data
 
-def batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes, n_jobs = 1):
+def batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, n_jobs = 1):
     err_code = CPSIG_BATCH_SIG_COEF_BACKPROP[data.dtype](
         data.data_ptr,
         result.data_ptr,
@@ -62,7 +61,6 @@ def batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_mu
         data.time_aug,
         data.lead_lag,
         data.end_time,
-        prefixes,
         n_jobs
     )
 
@@ -78,7 +76,6 @@ def sig_coef_backprop(
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
-        prefixes : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -147,7 +144,6 @@ def sig_coef_backprop(
 
     num_multi_indices = len(word)
     degrees = [len(idx) for idx in word]
-    result_length = sum(degrees) if prefixes else num_multi_indices
 
     word = [torch.tensor(idx, dtype=torch.uint64, device = data.device) for idx in word]
     word = torch.concatenate(word, axis = 0)
@@ -162,9 +158,9 @@ def sig_coef_backprop(
         check_type(n_jobs, "n_jobs", int)
         if n_jobs == 0:
             raise ValueError("n_jobs cannot be 0")
-        res = batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes, n_jobs)
+        res = batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, n_jobs)
     else:
-        res = sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
+        res = sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr)
 
     if device_handler.device is not None:
         res = res.to(device_handler.device)
