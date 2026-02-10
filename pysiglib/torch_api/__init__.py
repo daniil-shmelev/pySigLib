@@ -17,6 +17,7 @@ from ..load_siglib import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
 from ..words import words_of_length, words, lyndon_words_of_length, lyndon_words, is_lyndon, word_to_idx, idx_to_word
 from ..transform_path import transform_path
 from ..sig_length import sig_length, log_sig_length
+from ..sig_coef import extract_sig_coef
 from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache
 from ..static_kernels import Context, StaticKernel, LinearKernel, ScaledLinearKernel, RBFKernel
 from .torch_api import sig, sig_combine, transform_path, sig_to_log_sig, log_sig, sig_kernel, sig_kernel_gram, sig_score, expected_sig_score, sig_mmd

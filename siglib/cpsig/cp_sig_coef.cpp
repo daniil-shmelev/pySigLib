@@ -314,19 +314,6 @@ void single_sig_coef_backprop_(
 			}
 		}
 
-		//// Update path derivs
-		//for (uint64_t i = 1; i < degree + 1; ++i) {
-		//	for (uint64_t m = i; m < degree + 1; ++m) {
-		//		T deriv_update = incr_prod.get_neg(0, m - 1) * one_over_fact[m];
-		//		for (uint64_t k = 1; k < m; ++k) {
-		//			deriv_update += next_coefs[k] * incr_prod.get_neg(k, m - 1) * one_over_fact[m - k];
-		//		}
-		//		T update = prev_derivs[m-1] * deriv_update / incr_prod.get_neg(i - 1, i - 1);
-		//		out_ptr[multi_idx[i-1]] -= update;
-		//		out_ptr[multi_idx[i-1] + path_dim] += update;
-		//	}
-		//}
-
 		// Update path derivs
 		T* buff = next_derivs;
 		for (uint64_t i = 0; i < degree; ++i)

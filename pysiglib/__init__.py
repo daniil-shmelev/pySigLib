@@ -19,6 +19,7 @@ from .sig_length import sig_length, log_sig_length
 from .sig import sig_combine, sig
 from .sig_backprop import sig_backprop, sig_combine_backprop
 from .sig_coef import extract_sig_coef, sig_coef
+from .sig_coef_backprop import sig_coef_backprop
 from .log_sig import set_cache_dir, prepare_log_sig, clear_cache, sig_to_log_sig, log_sig
 from .log_sig_backprop import sig_to_log_sig_backprop
 from .sig_kernel import sig_kernel, sig_kernel_gram
