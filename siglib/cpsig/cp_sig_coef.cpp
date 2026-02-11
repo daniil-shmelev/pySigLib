@@ -239,13 +239,13 @@ public:
 	// Read access
 	T operator()(size_t i, size_t j) const {
 		if (i > j)
-			return T(0);
+			return T(1.);
 		return data_[index(i, j)];
 	}
 
 	T get_neg(size_t i, size_t j) const {
 		if (i > j)
-			return T(0);
+			return T(1.);
 		if ((i + j) % 2)
 			return data_[index(i, j)];
 		else
@@ -315,17 +315,19 @@ void single_sig_coef_backprop_(
 		}
 
 		// Update path derivs
-		T* buff = next_derivs;
-		for (uint64_t i = 0; i < degree; ++i)
-			buff[i] = 0.;
-
 		for (uint64_t i = 0; i < degree; ++i) {
 			T update = 0.;
 			for (uint64_t m = i; m < degree; ++m) {
-				buff[m] += next_coefs[i] * incr_prod.get_neg(i, m) * one_over_fact[m - i + 1];
-				update += prev_derivs[m] * buff[m];
+				T s = 0;
+				for (uint64_t k = 0; k <= i; ++k) {
+					if (i)
+						s += next_coefs[k] * incr_prod.get_neg(k, i-1) * incr_prod.get_neg(i+1, m) * one_over_fact[m - k + 1];
+					else
+						s += next_coefs[k] * incr_prod.get_neg(i + 1, m) * one_over_fact[m - k + 1];
+				}
+				update += prev_derivs[m] * s;
 			}
-			update /= incr_prod.get_neg(i, i);
+			//update /= incr_prod.get_neg(i, i);
 			out_ptr[multi_idx[i]] -= update;
 			out_ptr[multi_idx[i] + path_dim] += update;
 		}
@@ -416,7 +418,8 @@ void sig_coef_backprop_(
 		single_sig_coef_backprop_<T>(path_obj, out, coefs, multi_idx_ptr, degree, prev_coefs, next_coefs, incr, incr_prod, derivs, next_derivs, one_over_fact);
 		prev_coefs += degree + 1;
 		next_coefs += degree + 1;
-		derivs += degree + 1;
+		coefs += degree;
+		derivs += degree;
 		next_derivs += degree + 1;
 		multi_idx_ptr += degree;
 	}
@@ -448,26 +451,32 @@ void batch_sig_coef_backprop_(
 
 	//General case and degree = 1 case
 	const uint64_t flat_path_length = dimension * length;
+	uint64_t coefs_len = 0;
+	for (uint64_t i = 0; i < num_multi_idx; ++i) {
+		coefs_len += degrees[i];
+	}
 	const T* const data_end = path + flat_path_length * batch_size;
 
-	std::function<void(const T*, T*)> sig_func;
+	std::function<void(const T*, const T*, T*, T*)> sig_func;
 
-	sig_func = [&](const T* path_ptr, T* out_ptr) {
-		sig_coef_backprop_<T>(path_ptr, out_ptr, coefs, derivs, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time);
+	sig_func = [&](const T* path_ptr, const T* coefs_ptr, T* derivs_ptr, T* out_ptr) {
+		sig_coef_backprop_<T>(path_ptr, out_ptr, coefs_ptr, derivs_ptr, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time);
 		};
 
 	const T* path_ptr;
 	T* out_ptr;
+	const T* coefs_ptr;
+	T* derivs_ptr;
 
 	if (n_jobs != 1) {
-		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, num_multi_idx, n_jobs);
+		multi_threaded_batch_3(sig_func, path, coefs, derivs, out, batch_size, flat_path_length, flat_path_length, coefs_len, coefs_len, n_jobs);
 	}
 	else {
-		for (path_ptr = path, out_ptr = out;
+		for (path_ptr = path, out_ptr = out, coefs_ptr = coefs, derivs_ptr = derivs;
 			path_ptr < data_end;
-			path_ptr += flat_path_length, out_ptr += num_multi_idx) {
+			path_ptr += flat_path_length, out_ptr += flat_path_length, coefs_ptr += coefs_len, derivs_ptr += coefs_len) {
 
-			sig_func(path_ptr, out_ptr);
+			sig_func(path_ptr, coefs_ptr, derivs_ptr, out_ptr);
 		}
 	}
 	return;
