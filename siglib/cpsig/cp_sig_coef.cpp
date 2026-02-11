@@ -145,11 +145,19 @@ void sig_coef_(
 	const uint64_t* multi_idx_ptr = multi_idx;
 
 	for (uint64_t i = 0; i < num_multi_idx; ++i) {
-		single_sig_coef_<T>(path_obj, out_ptr, multi_idx_ptr, degrees[i], prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-		out_ptr += prefixes ? degrees[i] : 1;
-		prev_coefs += degrees[i] + 1;
-		next_coefs += degrees[i] + 1;
-		multi_idx_ptr += degrees[i];
+		uint64_t degree = degrees[i];
+
+		if (!degree) {
+			*out_ptr = static_cast<T>(1.);
+			++out_ptr;
+			continue;
+		}
+
+		single_sig_coef_<T>(path_obj, out_ptr, multi_idx_ptr, degree, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
+		out_ptr += prefixes ? degree : 1;
+		prev_coefs += degree + 1;
+		next_coefs += degree + 1;
+		multi_idx_ptr += degree;
 	}
 
 }
@@ -182,7 +190,7 @@ void batch_sig_coef_(
 
 	if (prefixes) {
 		for (uint64_t i = 0; i < num_multi_idx; ++i)
-			result_length += degrees[i];
+			result_length += degrees[i] ? degrees[i] : 1;
 	}
 	else {
 		result_length = num_multi_idx;
@@ -414,6 +422,13 @@ void sig_coef_backprop_(
 
 	for (uint64_t i = 0; i < num_multi_idx; ++i) {
 		uint64_t degree = degrees[i];
+
+		if (!degree) {
+			coefs += 1;
+			derivs += 1;
+			continue;
+		}
+
 		UpperTriangularMatrix<T> incr_prod(degree);
 		single_sig_coef_backprop_<T>(path_obj, out, coefs, multi_idx_ptr, degree, prev_coefs, next_coefs, incr, incr_prod, derivs, next_derivs, one_over_fact);
 		prev_coefs += degree + 1;
@@ -453,7 +468,7 @@ void batch_sig_coef_backprop_(
 	const uint64_t flat_path_length = dimension * length;
 	uint64_t coefs_len = 0;
 	for (uint64_t i = 0; i < num_multi_idx; ++i) {
-		coefs_len += degrees[i];
+		coefs_len += degrees[i] ? degrees[i] : 1;
 	}
 	const T* const data_end = path + flat_path_length * batch_size;
 

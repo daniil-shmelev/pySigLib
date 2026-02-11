@@ -180,7 +180,12 @@ def sig_coef(
 
     num_multi_indices = len(word)
     degrees = [len(idx) for idx in word]
-    result_length = sum(degrees) if prefixes else num_multi_indices
+    if prefixes:
+        result_length = 0
+        for idx in word:
+            result_length += len(idx) if idx else 1
+    else:
+        result_length = num_multi_indices
 
     word = [torch.tensor(idx, dtype=torch.uint64, device = data.device) for idx in word]
     word = torch.concatenate(word, axis = 0)

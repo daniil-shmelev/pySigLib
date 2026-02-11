@@ -776,6 +776,25 @@ public:
 
             check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., 1);
         }
+
+        TEST_METHOD(ManualTest4Empty) {
+            auto f = sig_coef_backprop_d;
+            uint64_t dimension = 2, length = 4, degree = 3;
+            std::vector<double> path = { 0., 0., 1., 0.5, 4., 0., 0., 1. };
+            std::vector<double> true_deriv = { 19./24, 17./12, 2./3, 7.+1./3, -31./24, -25./12, -1./6, -20./3 };
+
+            std::vector<uint64_t> multi_indices = {
+                0, 1, 0,
+                1, 1, 0
+            };
+
+            std::vector<double> coefs = { 1., 0., 1., -2., 1., 0.5, -0.5 };
+            std::vector<double> derivs = { 1., 0., 0., 1., 0., 0., 1. };
+
+            std::vector<uint64_t> degrees = { 0, 3, 3 };
+
+            check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1.);
+        }
     };
 
     TEST_CLASS(signatureDoubleTest)
