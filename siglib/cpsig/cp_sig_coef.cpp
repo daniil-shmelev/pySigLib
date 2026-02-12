@@ -284,9 +284,14 @@ void single_sig_coef_backprop_(
 	T* next_derivs,
 	const T* one_over_fact
 ) {
-	Point<T> prev_pt(--path.end());
-	Point<T> next_pt(----path.end());
-	const Point<T> start_pt(path.begin());
+	const bool lead_lag = path.lead_lag();
+	const uint64_t pre_time_aug_dim = path.dimension() - (path.time_aug() ? 1 : 0);
+	const uint64_t data_dimension = path.data_dimension();
+	const uint64_t data_length = path.data_length();
+
+	Point<T> next_pt(--path.end());
+	Point<T> prev_pt(----path.end());
+	const Point<T> first_pt(path.begin());
 
 	prev_coefs[0] = static_cast<T>(1.);
 	for (uint64_t i = 0; i < degree; ++i) {
@@ -294,15 +299,14 @@ void single_sig_coef_backprop_(
 	}
 	next_coefs[0] = static_cast<T>(1.);
 
-	uint64_t path_dim = path.dimension();
-	T* out_ptr = out + path_dim * (path.length() - 1);
+	T* pos = out + data_dimension * (data_length - 1);
+	T* neg = pos - data_dimension;
 
-	do {
-		out_ptr -= path_dim;
+	for (; next_pt != first_pt; --next_pt, --prev_pt, pos -= data_dimension, neg -= data_dimension) {
 
 		// Populate incr
 		for (uint64_t i = 0; i < degree; ++i) {
-			incr[i] = next_pt[multi_idx[i]] - prev_pt[multi_idx[i]];
+			incr[i] = prev_pt[multi_idx[i]] - next_pt[multi_idx[i]];
 		}
 
 		// Populate incr_prod
@@ -323,21 +327,26 @@ void single_sig_coef_backprop_(
 		}
 
 		// Update path derivs
-		for (uint64_t i = 0; i < degree; ++i) {
+		T update = 0.;
+		for (uint64_t m = 0; m < degree; ++m) {
+			update += prev_derivs[m] * next_coefs[0] * incr_prod.get_neg(1, m) * one_over_fact[m + 1];;
+		}
+		pos[multi_idx[0]] += update;
+		neg[multi_idx[0]] -= update;
+
+		for (uint64_t i = 1; i < degree; ++i) {
 			T update = 0.;
 			for (uint64_t m = i; m < degree; ++m) {
 				T s = 0;
 				for (uint64_t k = 0; k <= i; ++k) {
-					if (i)
-						s += next_coefs[k] * incr_prod.get_neg(k, i-1) * incr_prod.get_neg(i+1, m) * one_over_fact[m - k + 1];
-					else
-						s += next_coefs[k] * incr_prod.get_neg(i + 1, m) * one_over_fact[m - k + 1];
+					s += next_coefs[k] * incr_prod.get_neg(k, i-1) * one_over_fact[m - k + 1];
 				}
+				s *= incr_prod.get_neg(i + 1, m);
 				update += prev_derivs[m] * s;
 			}
-			//update /= incr_prod.get_neg(i, i);
-			out_ptr[multi_idx[i]] -= update;
-			out_ptr[multi_idx[i] + path_dim] += update;
+			
+			pos[multi_idx[i]] += update;
+			neg[multi_idx[i]] -= update;
 		}
 
 
@@ -352,10 +361,7 @@ void single_sig_coef_backprop_(
 
 		std::swap(next_coefs, prev_coefs);
 		std::swap(next_derivs, prev_derivs);
-
-		--next_pt;
-		--prev_pt;
-	} while (prev_pt != start_pt);
+	}
 }
 
 

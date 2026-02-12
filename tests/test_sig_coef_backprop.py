@@ -89,12 +89,12 @@ def test_sig_coef_backprop_batch_3():
     check_close(d1, d2)
 
 def test_sig_coef_backprop_full_batch():
-    X = np.random.uniform(size=(1, 2, 2))
-    words = pysiglib.words(2, 2)
+    X = np.random.uniform(size=(32, 100, 3))
+    words = pysiglib.words(3, 3)
 
-    sig = pysiglib.sig(X, 2)
+    sig = pysiglib.sig(X, 3)
     derivs = np.ones(sig.shape)
-    d1 = pysiglib.sig_backprop(X, sig, derivs, 2)
+    d1 = pysiglib.sig_backprop(X, sig, derivs, 3)
 
     coef = pysiglib.sig_coef(X, words, prefixes=True)
     derivs = np.zeros_like(coef)
