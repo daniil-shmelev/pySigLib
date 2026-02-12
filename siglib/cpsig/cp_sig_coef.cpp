@@ -229,7 +229,7 @@ template <typename T>
 class UpperTriangularMatrix {
 public:
 	explicit UpperTriangularMatrix(size_t n)
-		: n_(n), data_(n* (n + 1) / 2) {
+		: n_(n), size_(n* (n + 1) / 2), data_(n* (n + 1) / 2) {
 	}
 
 	size_t size() const { return n_; }
@@ -260,8 +260,30 @@ public:
 			return -data_[index(i, j)];
 	}
 
+	void populate(const T* incr) {
+		data_[size_ - 1] = incr[n_ - 1];
+
+		uint64_t len = 1;
+		uint64_t idx = size_ - 1;
+		uint64_t row_len = 2;
+		for (int64_t i = n_ - 2; i >= 0; --i, ++len, ++row_len) {
+			idx -= row_len;
+
+			T xi = incr[i];
+			data_[idx] = xi;
+
+			T* curr = &data_[idx];
+			T* prev = &data_[idx + row_len];
+
+			for (uint64_t k = 0; k < len; ++k) {
+				curr[k + 1] = xi * prev[k];
+			}
+		}
+	}
+
 private:
 	size_t n_;
+	size_t size_;
 	std::vector<T> data_;
 
 	size_t index(size_t i, size_t j) const {
@@ -306,16 +328,12 @@ void single_sig_coef_backprop_(
 
 		// Populate incr
 		for (uint64_t i = 0; i < degree; ++i) {
-			incr[i] = prev_pt[multi_idx[i]] - next_pt[multi_idx[i]];
+			const uint64_t idx = multi_idx[i];
+			incr[i] = prev_pt[idx] - next_pt[idx];
 		}
 
 		// Populate incr_prod
-		for (int64_t i = degree - 1; i >= 0; --i) {
-			incr_prod(i, i) = incr[i];
-			for (uint64_t j = i + 1; j < degree; ++j) {
-				incr_prod(i, j) = incr[j] * incr_prod(i, j - 1);
-			}
-		}
+		incr_prod.populate(incr);
 
 		// Reconstruct coefs
 		for (uint64_t i = 1; i < degree + 1; ++i) {
@@ -335,7 +353,7 @@ void single_sig_coef_backprop_(
 		neg[multi_idx[0]] -= update;
 
 		for (uint64_t i = 1; i < degree; ++i) {
-			T update = 0.;
+			update = 0.;
 			for (uint64_t m = i; m < degree; ++m) {
 				T s = 0;
 				for (uint64_t k = 0; k <= i; ++k) {
