@@ -404,7 +404,7 @@ void single_sig_coef_backprop_(
 		// Update sig coef derivs using:
 		// dL / d prev_coefs[i] = sum_k (dL / d next_coefs[k]) * (d next_coefs[k] / d prev_coefs[i])
 		/////////////////////////////////////////////////////////////////////////
-		for (uint64_t i = 0; i < degree; ++i) {
+		for (uint64_t i = 0; i < degree - 1; ++i) {
 			T acc = static_cast<T>(0.);
 			const T* incr_prod_row_i1 = incr_prod.row_ptr(i+1);
 			for (uint64_t k = i + 1; k < degree; ++k) {
@@ -412,6 +412,7 @@ void single_sig_coef_backprop_(
 			}
 			prev_derivs[i] = next_derivs[i] + acc;
 		}
+		prev_derivs[degree - 1] = next_derivs[degree - 1];
 
 		std::swap(prev_coefs, next_coefs);
 		std::swap(prev_derivs, next_derivs);
