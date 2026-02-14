@@ -56,6 +56,22 @@ def test_sig_coef_backprop_batch():
 
     check_close(d1, d2)
 
+def test_sig_coef_backprop_time_aug_batch():
+    X = np.random.uniform(size=(32, 100, 2))
+    words = [(0,1,2), (2, 0, 1)]
+    words_idx = [pysiglib.word_to_idx(w, 3) for w in words]
+
+    sig = pysiglib.sig(X, 3, time_aug = True)
+    derivs = np.zeros_like(sig)
+    derivs[:, words_idx] = 1.
+    d1 = pysiglib.sig_backprop(X, sig, derivs, 3, time_aug = True)
+
+    coef = pysiglib.sig_coef(X, words, prefixes=True, time_aug = True)
+    derivs = np.array([[0.,0.,1., 0., 0., 1.]]*32)
+    d2 = pysiglib.sig_coef_backprop(X, words, coef, derivs, time_aug = True)
+
+    check_close(d1, d2)
+
 def test_sig_coef_backprop_batch_2():
     X = np.random.uniform(size=(32, 100, 3))
     words = [(2, 0, 1)]
@@ -103,6 +119,24 @@ def test_sig_coef_backprop_full_batch():
         i += len(w)
         derivs[:, i] = 1.
     d2 = pysiglib.sig_coef_backprop(X, words, coef, derivs)
+
+    check_close(d1, d2)
+
+def test_sig_coef_backprop_time_aug_full_batch():
+    X = np.random.uniform(size=(32, 100, 2))
+    words = pysiglib.words(3, 3)
+
+    sig = pysiglib.sig(X, 3, time_aug=True)
+    derivs = np.ones(sig.shape)
+    d1 = pysiglib.sig_backprop(X, sig, derivs, 3, time_aug=True)
+
+    coef = pysiglib.sig_coef(X, words, prefixes=True, time_aug=True)
+    derivs = np.zeros_like(coef)
+    i = 0
+    for w in words:
+        i += len(w)
+        derivs[:, i] = 1.
+    d2 = pysiglib.sig_coef_backprop(X, words, coef, derivs, time_aug=True)
 
     check_close(d1, d2)
 

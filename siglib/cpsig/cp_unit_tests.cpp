@@ -795,6 +795,48 @@ public:
 
             check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), dimension, length, false, false, 1.);
         }
+
+        TEST_METHOD(ManualTestTimeAug) {
+            auto f = sig_coef_backprop_d;
+            uint64_t dimension = 2, length = 4, degree = 3;
+            std::vector<double> path = { 0., 0., 1., 0.5, 4., 0., 0., 1. };
+            std::vector<double> true_deriv = { 55./36, 29./18, -1., -4./9, -71./36, -17./18, 13./9, -2./9 };
+
+            std::vector<uint64_t> multi_indices = {
+                0, 2, 0,
+                1, 2, 0
+            };
+
+            std::vector<double> coefs = { 0., 1. + 2./3, -4. - 2./9, 1., 1./3, -4./9 };
+            std::vector<double> derivs = { 0., 0., 1., 0., 0., 1. };
+
+            std::vector<uint64_t> degrees = { 3, 3 };
+
+            check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), dimension, length, true, false, 1.);
+        }
+
+        TEST_METHOD(ManualTestTimeAugBatch) {
+            auto f = batch_sig_coef_backprop_d;
+            uint64_t dimension = 2, length = 4, degree = 3, batch_size = 2;
+            std::vector<double> path = { 0., 0., 1., 0.5, 4., 0., 0., 1.,
+            0., 0., 1., 0.5, 4., 0., 0., 1. };
+            std::vector<double> true_deriv = { 55. / 36, 29. / 18, -1., -4. / 9, -71. / 36, -17. / 18, 13. / 9, -2. / 9,
+            55. / 36, 29. / 18, -1., -4. / 9, -71. / 36, -17. / 18, 13. / 9, -2. / 9 };
+
+            std::vector<uint64_t> multi_indices = {
+                0, 2, 0,
+                1, 2, 0
+            };
+
+            std::vector<double> coefs = { 0., 1. + 2. / 3, -4. - 2. / 9, 1., 1. / 3, -4. / 9,
+            0., 1. + 2. / 3, -4. - 2. / 9, 1., 1. / 3, -4. / 9 };
+            std::vector<double> derivs = { 0., 0., 1., 0., 0., 1.,
+            0., 0., 1., 0., 0., 1. };
+
+            std::vector<uint64_t> degrees = { 3, 3 };
+
+            check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, true, false, 1., 1);
+        }
     };
 
     TEST_CLASS(signatureDoubleTest)

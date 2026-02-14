@@ -357,40 +357,47 @@ void single_sig_coef_backprop_(
 		/////////////////////////////////////////////////////////////////////////
 
 		// Separate out i = 0 from main loop - slightly simpler logic
-		T update = next_derivs[0];
-		const T* incr_prod_row_1 = incr_prod.row_ptr(1);
-		for (uint64_t m = 1; m < degree; ++m) {
-			update += next_derivs[m] * incr_prod_row_1[m - 1] * one_over_fact[m + 1];
-		}
-		update *= prev_coefs[0];
+		T update;
+		uint64_t idx = multi_idx[0];
+		if (idx < pre_time_aug_dim) { // Skip if idx is time-aug dimension
+			update = next_derivs[0];
+			const T* incr_prod_row_1 = incr_prod.row_ptr(1);
+			for (uint64_t m = 1; m < degree; ++m) {
+				update += next_derivs[m] * incr_prod_row_1[m - 1] * one_over_fact[m + 1];
+			}
+			update *= prev_coefs[0];
 
-		// incr derivs -> path derivs
-		pos[multi_idx[0]] += update;
-		neg[multi_idx[0]] -= update;
+			// incr derivs -> path derivs
+			pos[idx] += update;
+			neg[idx] -= update;
+		}
 
 		// prev_derivs is currently unused - use as a buffer to store intermediate values
 		T* buff = prev_derivs;
 
 		for (uint64_t i = 1; i < degree; ++i) {
-			T s = prev_coefs[i];
-			for (uint64_t k = 0; k < i; ++k) {
-				buff[k] = prev_coefs[k] * incr_prod(k, i - 1);
-				s += buff[k] * one_over_fact[i - k + 1];
-			}
-			update = next_derivs[i] * s;
-
-			for (uint64_t m = i + 1; m < degree; ++m) {
-				s = prev_coefs[i] * one_over_fact[m - i + 1];
+			uint64_t idx = multi_idx[i];
+			if (idx < pre_time_aug_dim) { // Skip if idx is time-aug dimension
+				T s = prev_coefs[i];
 				for (uint64_t k = 0; k < i; ++k) {
-					s += buff[k] * one_over_fact[m - k + 1];
+					buff[k] = prev_coefs[k] * incr_prod(k, i - 1);
+					s += buff[k] * one_over_fact[i - k + 1];
 				}
-				s *= incr_prod(i + 1, m);
-				update += next_derivs[m] * s;
+				update = next_derivs[i] * s;
+
+				for (uint64_t m = i + 1; m < degree; ++m) {
+					s = prev_coefs[i] * one_over_fact[m - i + 1];
+					for (uint64_t k = 0; k < i; ++k) {
+						s += buff[k] * one_over_fact[m - k + 1];
+					}
+					s *= incr_prod(i + 1, m);
+					update += next_derivs[m] * s;
+				}
+
+				// incr derivs -> path derivs
+				pos[idx] += update;
+				neg[idx] -= update;
 			}
-			
-			// incr derivs -> path derivs
-			pos[multi_idx[i]] += update;
-			neg[multi_idx[i]] -= update;
 		}
 
 		/////////////////////////////////////////////////////////////////////////

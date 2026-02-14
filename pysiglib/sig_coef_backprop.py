@@ -152,7 +152,7 @@ def sig_coef_backprop(
     multi_indices_ptr = cast(word.data_ptr(), POINTER(c_uint64))
     degrees_ptr = cast(degrees.data_ptr(), POINTER(c_uint64))
 
-    result = PathOutputHandler(data.length, data.dimension, data)
+    result = PathOutputHandler(data.data_length, data.data_dimension, data)
 
     if data.is_batch:
         check_type(n_jobs, "n_jobs", int)
