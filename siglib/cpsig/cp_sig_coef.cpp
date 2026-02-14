@@ -287,6 +287,12 @@ private:
 	std::vector<std::vector<T>> rows_;
 };
 
+FORCE_INLINE bool sig_coef_backprop_skip(uint64_t data_dimension, uint64_t pre_time_aug_dim, uint64_t idx, bool time_aug, bool lead_lag, bool parity) {
+	// Determine whether the derivative with respect to incr[i] needs to be computed, or can be skipped
+
+	return (idx >= pre_time_aug_dim) || (lead_lag && (parity == (idx < data_dimension)));
+}
+
 template<std::floating_point T>
 void single_sig_coef_backprop_(
 	const Path<T>& path,
@@ -302,6 +308,7 @@ void single_sig_coef_backprop_(
 	T* prev_derivs,
 	const T* one_over_fact
 ) {
+	const bool time_aug = path.time_aug();
 	const bool lead_lag = path.lead_lag();
 	const uint64_t pre_time_aug_dim = path.dimension() - (path.time_aug() ? 1 : 0);
 	const uint64_t data_dimension = path.data_dimension();
@@ -319,8 +326,9 @@ void single_sig_coef_backprop_(
 
 	T* pos = out + data_dimension * (data_length - 1);
 	T* neg = pos - data_dimension;
+	bool parity = false;
 
-	for (; next_pt != first_pt; --next_pt, --prev_pt, pos -= data_dimension, neg -= data_dimension) {
+	for (; next_pt != first_pt; --next_pt, --prev_pt, parity = !parity) {
 
 		/////////////////////////////////////////////////////////////////////////
 		// Populate incr
@@ -359,7 +367,7 @@ void single_sig_coef_backprop_(
 		// Separate out i = 0 from main loop - slightly simpler logic
 		T update;
 		uint64_t idx = multi_idx[0];
-		if (idx < pre_time_aug_dim) { // Skip if idx is time-aug dimension
+		if (!sig_coef_backprop_skip(data_dimension, pre_time_aug_dim, idx, time_aug, lead_lag, parity)) {
 			update = next_derivs[0];
 			const T* incr_prod_row_1 = incr_prod.row_ptr(1);
 			for (uint64_t m = 1; m < degree; ++m) {
@@ -368,6 +376,9 @@ void single_sig_coef_backprop_(
 			update *= prev_coefs[0];
 
 			// incr derivs -> path derivs
+			if (lead_lag && parity) {
+				idx -= data_dimension;
+			}
 			pos[idx] += update;
 			neg[idx] -= update;
 		}
@@ -377,7 +388,7 @@ void single_sig_coef_backprop_(
 
 		for (uint64_t i = 1; i < degree; ++i) {
 			uint64_t idx = multi_idx[i];
-			if (idx < pre_time_aug_dim) { // Skip if idx is time-aug dimension
+			if (!sig_coef_backprop_skip(data_dimension, pre_time_aug_dim, idx, time_aug, lead_lag, parity)) { // Skip if idx is time-aug dimension
 				T s = prev_coefs[i];
 				for (uint64_t k = 0; k < i; ++k) {
 					buff[k] = prev_coefs[k] * incr_prod(k, i - 1);
@@ -395,6 +406,9 @@ void single_sig_coef_backprop_(
 				}
 
 				// incr derivs -> path derivs
+				if (lead_lag && parity) {
+					idx -= data_dimension;
+				}
 				pos[idx] += update;
 				neg[idx] -= update;
 			}
@@ -416,6 +430,11 @@ void single_sig_coef_backprop_(
 
 		std::swap(prev_coefs, next_coefs);
 		std::swap(prev_derivs, next_derivs);
+
+		if (!lead_lag || parity) {
+			pos -= data_dimension;
+			neg -= data_dimension;
+		}
 	}
 }
 
