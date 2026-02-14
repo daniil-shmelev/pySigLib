@@ -229,66 +229,62 @@ template <typename T>
 class UpperTriangularMatrix {
 public:
 	explicit UpperTriangularMatrix(size_t n)
-		: n_(n), size_(n* (n + 1) / 2), data_(n* (n + 1) / 2) {
+		: n_(n), rows_(n)
+	{
+		for (size_t i = 0; i < n_; ++i) {
+			rows_[i].resize(n_ - i);
+		}
 	}
 
 	size_t size() const { return n_; }
 
-	// Write access
-	T& operator()(size_t i, size_t j) {
-		if (i > j)
-			throw std::out_of_range("Accessing non-strict upper element");
-		/*uint64_t idx = index(i, j);
-		T res = data_[index(i, j)];
-		return res;*/
-		return data_[index(i, j)];
+	inline T& operator()(size_t i, size_t j) {
+#ifdef _DEBUG
+		if (i > j) {
+			throw std::out_of_range("Accessing lower-triangular element");
+		}
+#endif
+		return rows_[i][j - i];
 	}
 
-	// Read access
-	T operator()(size_t i, size_t j) const {
-		if (i > j)
-			return T(1.);
-		return data_[index(i, j)];
+	inline const T& operator()(size_t i, size_t j) const {
+#ifdef _DEBUG
+		if (i > j) {
+			throw std::out_of_range("Accessing lower-triangular element");
+		}
+#endif
+		return rows_[i][j - i];
 	}
 
-	T get_neg(size_t i, size_t j) const {
-		if (i > j)
-			return T(1.);
-		if ((i + j) % 2)
-			return data_[index(i, j)];
-		else
-			return -data_[index(i, j)];
-	}
+	inline const T* row_ptr(size_t r) const { return rows_[r].data(); }
 
 	void populate(const T* incr) {
-		data_[size_ - 1] = incr[n_ - 1];
+		// Populate the matrix so that mat(i,j) = prod_{k=i}^j incr[k]
 
-		uint64_t len = 1;
-		uint64_t idx = size_ - 1;
-		uint64_t row_len = 2;
-		for (int64_t i = n_ - 2; i >= 0; --i, ++len, ++row_len) {
-			idx -= row_len;
+		// Set last diagonal entry: mat(n_ - 1, n_ - 1) = incr[n_ - 1]
+		rows_[n_ - 1][0] = incr[n_ - 1];
+
+		// Loop backwards over rows using the relation:
+		// mat(i-1, j) = mat(i, j) * incr[i-1];
+		size_t prev_row_length = 1;
+		for (int64_t i = n_ - 2; i >= 0; --i, ++prev_row_length) {
 
 			T xi = incr[i];
-			data_[idx] = xi;
+			rows_[i][0] = xi; // Diagonal entry for current row: mat(i,i) = incr[i]
 
-			T* curr = &data_[idx];
-			T* prev = &data_[idx + row_len];
+			const T* prev_row = rows_[i + 1].data();
+			T* curr_row = rows_[i].data() + 1;
 
-			for (uint64_t k = 0; k < len; ++k) {
-				curr[k + 1] = xi * prev[k];
+			// Multiply previous row by incr[i-1] and assign to current row
+			for (size_t k = 0; k < prev_row_length; ++k) {
+				curr_row[k] = xi * prev_row[k];
 			}
 		}
 	}
 
 private:
 	size_t n_;
-	size_t size_;
-	std::vector<T> data_;
-
-	size_t index(size_t i, size_t j) const {
-		return i * n_ - (i * (i - 1)) / 2 + (j - i);
-	}
+	std::vector<std::vector<T>> rows_;
 };
 
 template<std::floating_point T>
@@ -298,12 +294,12 @@ void single_sig_coef_backprop_(
 	const T* coefs, // This should be an array of size degree, of the prefixes of the coeff.
 	const uint64_t* multi_idx,
 	uint64_t degree,
-	T* prev_coefs,
 	T* next_coefs,
+	T* prev_coefs,
 	T* incr,
 	UpperTriangularMatrix<T>& incr_prod, // Array of size degree * degree, to be filled with incr_prod[i,j] = prod_{k = i}^j incr[k]
-	T* prev_derivs, // Derivs wrt coeffs. Should be the same length as the above array.
-	T* next_derivs,
+	T* next_derivs, // Derivs wrt coeffs. Should be the same length as the above array.
+	T* prev_derivs,
 	const T* one_over_fact
 ) {
 	const bool lead_lag = path.lead_lag();
@@ -315,70 +311,103 @@ void single_sig_coef_backprop_(
 	Point<T> prev_pt(----path.end());
 	const Point<T> first_pt(path.begin());
 
-	prev_coefs[0] = static_cast<T>(1.);
-	for (uint64_t i = 0; i < degree; ++i) {
-		prev_coefs[i + 1] = coefs[i];
-	}
 	next_coefs[0] = static_cast<T>(1.);
+	for (uint64_t i = 0; i < degree; ++i) {
+		next_coefs[i + 1] = coefs[i];
+	}
+	prev_coefs[0] = static_cast<T>(1.);
 
 	T* pos = out + data_dimension * (data_length - 1);
 	T* neg = pos - data_dimension;
 
 	for (; next_pt != first_pt; --next_pt, --prev_pt, pos -= data_dimension, neg -= data_dimension) {
 
+		/////////////////////////////////////////////////////////////////////////
 		// Populate incr
+		/////////////////////////////////////////////////////////////////////////
 		for (uint64_t i = 0; i < degree; ++i) {
 			const uint64_t idx = multi_idx[i];
-			incr[i] = prev_pt[idx] - next_pt[idx];
+			incr[i] = next_pt[idx] - prev_pt[idx];
 		}
 
+		/////////////////////////////////////////////////////////////////////////
 		// Populate incr_prod
+		// incr_prod(i,j) = prod_{k=i}^j incr[k]
+		/////////////////////////////////////////////////////////////////////////
 		incr_prod.populate(incr);
 
-		// Reconstruct coefs
+		/////////////////////////////////////////////////////////////////////////
+		// Reconstruct coefs by using chens relation:
+		// S(x_{1:i-1}) = S(x_{1:i}) * S(-x_{i-1:i})
+		// Noting that S(-x_{i-1:i}) is given by signed entries of incr_prod
+		/////////////////////////////////////////////////////////////////////////
 		for (uint64_t i = 1; i < degree + 1; ++i) {
-			next_coefs[i] = prev_coefs[i];
-
-			for (uint64_t k = 1; k <= i; ++k) {
-				next_coefs[i] += prev_coefs[i - k] * incr_prod(i - k, i - 1) * one_over_fact[k];
+			T acc = static_cast<T>(0.);
+			T sgn = static_cast<T>(-1.);
+			for (uint64_t k = 1; k <= i; ++k, sgn = -sgn) {
+				acc += sgn * next_coefs[i - k] * incr_prod(i - k, i - 1) * one_over_fact[k];
 			}
+			prev_coefs[i] = next_coefs[i] + acc;
 		}
 
-		// Update path derivs
-		T update = 0.;
-		for (uint64_t m = 0; m < degree; ++m) {
-			update += prev_derivs[m] * next_coefs[0] * incr_prod.get_neg(1, m) * one_over_fact[m + 1];;
+		/////////////////////////////////////////////////////////////////////////
+		// Update path derivs:
+		// Compute dL / d incr[i] = sum_k (dL / d next_coefs[k]) * (d next_coefs[k] / d incr[i])
+		// backprop incr derivs -> path derivs
+		/////////////////////////////////////////////////////////////////////////
+
+		// Separate out i = 0 from main loop - slightly simpler logic
+		T update = next_derivs[0];
+		const T* incr_prod_row_1 = incr_prod.row_ptr(1);
+		for (uint64_t m = 1; m < degree; ++m) {
+			update += next_derivs[m] * incr_prod_row_1[m - 1] * one_over_fact[m + 1];
 		}
+		update *= prev_coefs[0];
+
+		// incr derivs -> path derivs
 		pos[multi_idx[0]] += update;
 		neg[multi_idx[0]] -= update;
 
+		// prev_derivs is currently unused - use as a buffer to store intermediate values
+		T* buff = prev_derivs;
+
 		for (uint64_t i = 1; i < degree; ++i) {
-			update = 0.;
-			for (uint64_t m = i; m < degree; ++m) {
-				T s = 0;
-				for (uint64_t k = 0; k <= i; ++k) {
-					s += next_coefs[k] * incr_prod.get_neg(k, i-1) * one_over_fact[m - k + 1];
+			T s = prev_coefs[i];
+			for (uint64_t k = 0; k < i; ++k) {
+				buff[k] = prev_coefs[k] * incr_prod(k, i - 1);
+				s += buff[k] * one_over_fact[i - k + 1];
+			}
+			update = next_derivs[i] * s;
+
+			for (uint64_t m = i + 1; m < degree; ++m) {
+				s = prev_coefs[i] * one_over_fact[m - i + 1];
+				for (uint64_t k = 0; k < i; ++k) {
+					s += buff[k] * one_over_fact[m - k + 1];
 				}
-				s *= incr_prod.get_neg(i + 1, m);
-				update += prev_derivs[m] * s;
+				s *= incr_prod(i + 1, m);
+				update += next_derivs[m] * s;
 			}
 			
+			// incr derivs -> path derivs
 			pos[multi_idx[i]] += update;
 			neg[multi_idx[i]] -= update;
 		}
 
-
-		// Update sig coef derivs
+		/////////////////////////////////////////////////////////////////////////
+		// Update sig coef derivs using:
+		// dL / d prev_coefs[i] = sum_k (dL / d next_coefs[k]) * (d next_coefs[k] / d prev_coefs[i])
+		/////////////////////////////////////////////////////////////////////////
 		for (uint64_t i = 0; i < degree; ++i) {
-			next_derivs[i] = prev_derivs[i];
-
+			T acc = static_cast<T>(0.);
+			const T* incr_prod_row_i1 = incr_prod.row_ptr(i+1);
 			for (uint64_t k = i + 1; k < degree; ++k) {
-				next_derivs[i] += prev_derivs[k] * incr_prod.get_neg(i + 1, k) * one_over_fact[k - i];
+				acc += next_derivs[k] * incr_prod_row_i1[k - i - 1] * one_over_fact[k - i];
 			}
+			prev_derivs[i] = next_derivs[i] + acc;
 		}
 
-		std::swap(next_coefs, prev_coefs);
-		std::swap(next_derivs, prev_derivs);
+		std::swap(prev_coefs, next_coefs);
+		std::swap(prev_derivs, next_derivs);
 	}
 }
 
