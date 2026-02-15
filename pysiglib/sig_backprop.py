@@ -199,11 +199,9 @@ def sig_backprop(
     :type sig_derivs: numpy.ndarray | torch.tensor
     :param degree: The truncation level of the signature, :math:`N`.
     :type degree: int
-    :param time_aug: If set to True, will compute the signature of the time-augmented path, :math:`\\hat{x}_t := (t, x_t)`,
-        defined as the original path with an extra channel set to time, :math:`t`. This channel spans :math:`[0, t_L]`,
-        where :math:`t_L` is given by the parameter ``end_time``.
+    :param time_aug: Whether the signatures were computed with ``time_aug=True``.
     :type time_aug: bool
-    :param lead_lag: If set to True, will compute the signature of the path after applying the lead-lag transformation.
+    :param lead_lag: Whether the signatures were computed with ``lead_lag=True``.
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float

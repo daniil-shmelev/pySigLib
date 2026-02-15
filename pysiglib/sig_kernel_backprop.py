@@ -124,9 +124,9 @@ def sig_kernel_backprop(
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
-    :param time_aug: If ``True``, assumes the paths were time augmented.
+    :param time_aug: Whether the signature kernels were computed with ``time_aug=True``.
     :type time_aug: bool
-    :param lead_lag: If ``True``, assumes the lead-lag transform was applied.
+    :param lead_lag: Whether the signature kernels were computed with ``lead_lag=True``.
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
