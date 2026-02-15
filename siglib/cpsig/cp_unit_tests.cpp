@@ -775,6 +775,9 @@ public:
             std::vector<uint64_t> degrees = { 3, 3 };
 
             check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., 1);
+
+            std::vector<double> derivs2 = { 0., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 1. };
+            check_result(f, path, true_deriv, coefs.data(), derivs2.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., -1);
         }
 
         TEST_METHOD(ManualTest4Empty) {
@@ -836,6 +839,10 @@ public:
             std::vector<uint64_t> degrees = { 3, 3 };
 
             check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, true, false, 1., 1);
+            
+            std::vector<double> derivs2 = { 0., 0., 1., 0., 0., 1.,
+            0., 0., 1., 0., 0., 1. };
+            check_result(f, path, true_deriv, coefs.data(), derivs2.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, true, false, 1., -1);
         }
 
         TEST_METHOD(ManualTestLeadLag) {

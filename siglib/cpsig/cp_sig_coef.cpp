@@ -564,7 +564,7 @@ void batch_sig_coef_backprop_(
 	T* derivs_ptr;
 
 	if (n_jobs != 1) {
-		multi_threaded_batch_3(sig_func, path, coefs, derivs, out, batch_size, flat_path_length, flat_path_length, coefs_len, coefs_len, n_jobs);
+		multi_threaded_batch_3(sig_func, path, coefs, derivs, out, batch_size, flat_path_length, coefs_len, coefs_len, flat_path_length, n_jobs);
 	}
 	else {
 		for (path_ptr = path, out_ptr = out, coefs_ptr = coefs, derivs_ptr = derivs;
