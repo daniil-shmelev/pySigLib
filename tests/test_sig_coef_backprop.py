@@ -315,3 +315,21 @@ def test_sig_coef_torch_api_full_cuda():
 
     check_close(s1.cpu(), s2.cpu())
     check_close(d1.cpu(), d2.cpu())
+
+def test_extract_sig_coef_torch_api_full():
+    X1 = torch.rand(size=(32, 100, 3), dtype=torch.float64, requires_grad = True)
+    X2 = torch.tensor(X1.clone().detach(), requires_grad = True)
+    words = pysiglib.words(3, 2)
+
+    sig = pysiglib.torch_api.sig(X1, 3)
+    derivs1 = torch.zeros(sig.shape)
+    derivs1[:, :pysiglib.sig_length(3,2)] = 1.
+    sig.backward(derivs1)
+    d1 = X1.grad
+
+    sig2 = pysiglib.torch_api.sig(X2, 3)
+    coef = pysiglib.torch_api.extract_sig_coef(sig2, words, dimension = 3)
+    coef.backward(torch.ones_like(coef))
+    d2 = X2.grad
+
+    check_close(d1, d2)
