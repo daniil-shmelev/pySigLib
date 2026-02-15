@@ -18,6 +18,8 @@ import numpy as np
 import torch
 from ..sig import sig as sig_forward
 from ..sig import sig_combine as sig_combine_forward
+from ..sig_coef import sig_coef as sig_coef_forward
+from ..sig_coef_backprop import sig_coef_backprop
 from ..sig_backprop import sig_backprop, sig_combine_backprop
 from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
 from ..log_sig import log_sig as log_sig_forward
@@ -33,7 +35,7 @@ from ..sig_metrics import sig_mmd as sig_mmd_forward
 from ..transform_path import transform_path as transform_path_forward
 from ..transform_path_backprop import transform_path_backprop
 
-from ..param_checks import check_type
+from ..param_checks import check_type, check_word_or_word_list
 from ..data_handlers import MultiplePathInputHandler
 
 class Sig(torch.autograd.Function):
@@ -103,6 +105,55 @@ def sig_combine(
 
 
 sig_combine.__doc__ = sig_combine_forward.__doc__
+
+def _get_coef_from_prefixes(word, coef, prefixes):
+    if prefixes:
+        return coef
+
+    if isinstance(word, tuple):
+        word = [word]
+    degrees = [max(len(w), 1) for w in word]
+
+    _coef_idx = [degrees[0] - 1]
+    for i in range(1, len(word)):
+        _coef_idx.append(_coef_idx[-1] + degrees[i])
+
+    return coef[..., _coef_idx].contiguous()
+
+class SigCoef(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, path, word, time_aug, lead_lag, end_time, n_jobs):
+        coefs_ = sig_coef_forward(path, word, time_aug, lead_lag, end_time, True, n_jobs)
+
+        ctx.save_for_backward(coefs_, path)
+        ctx.word = word
+        ctx.time_aug = time_aug
+        ctx.lead_lag = lead_lag
+        ctx.end_time = end_time
+        ctx.n_jobs = n_jobs
+
+        return coefs_
+
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        coefs_, path = ctx.saved_tensors
+        grad = sig_coef_backprop(path, ctx.word, coefs_, grad_output, ctx.time_aug, ctx.lead_lag, ctx.end_time, ctx.n_jobs)
+        return grad, None, None, None, None, None
+
+def sig_coef(
+        path: Union[np.ndarray, torch.tensor],
+        word: Union[tuple[int, ...], list[tuple[int, ...]]],
+        time_aug: bool = False,
+        lead_lag: bool = False,
+        end_time: float = 1.,
+        prefixes: bool = False,
+        n_jobs: int = 1
+) -> Union[np.ndarray, torch.tensor]:
+    coefs_ = SigCoef.apply(path, word, time_aug, lead_lag, end_time, n_jobs)
+    return _get_coef_from_prefixes(word, coefs_, prefixes)
+
+sig_coef.__doc__ = sig_coef_forward.__doc__
 
 class TransformPath(torch.autograd.Function):
     @staticmethod

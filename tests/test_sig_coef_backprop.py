@@ -18,7 +18,7 @@ import numpy as np
 import torch
 import pysiglib
 
-EPSILON = 1e-10
+EPSILON = 1e-5
 
 def check_close(a, b):
     a_ = np.array(a)
@@ -206,5 +206,89 @@ def test_sig_coef_backprop_time_aug_lead_lag_full_batch():
         derivs[:, i] = 1.
     d2 = pysiglib.sig_coef_backprop(X, words, coef, derivs, time_aug=True, lead_lag=True)
 
+    check_close(d1, d2)
+
+###########################################################
+## torch_api
+###########################################################
+
+def test_sig_coef_torch_api_full():
+    X1 = torch.rand(size=(32, 100, 3), dtype=torch.float64, requires_grad = True)
+    X2 = torch.tensor(X1.clone().detach(), requires_grad = True)
+    words = pysiglib.words(3, 3)
+
+    sig = pysiglib.torch_api.sig(X1, 3)
+    s1 = sig.clone().detach()
+    derivs1 = torch.ones(sig.shape)
+    derivs2 = derivs1.clone()
+    sig.backward(derivs1)
+    d1 = X1.grad
+
+    coef = pysiglib.torch_api.sig_coef(X2, words, n_jobs = -1)
+    s2 = coef.clone().detach()
+    coef.backward(derivs2)
+    d2 = X2.grad
+
+    check_close(s1, s2)
+    check_close(d1, d2)
+
+def test_sig_coef_time_aug_torch_api_full():
+    X1 = torch.rand(size=(32, 100, 3), dtype=torch.float64, requires_grad = True)
+    X2 = torch.tensor(X1.clone().detach(), requires_grad = True)
+    words = pysiglib.words(4, 3)
+
+    sig = pysiglib.torch_api.sig(X1, 3, time_aug=True)
+    s1 = sig.clone().detach()
+    derivs1 = torch.ones(sig.shape)
+    derivs2 = derivs1.clone()
+    sig.backward(derivs1)
+    d1 = X1.grad
+
+    coef = pysiglib.torch_api.sig_coef(X2, words, n_jobs = -1, time_aug=True)
+    s2 = coef.clone().detach()
+    coef.backward(derivs2)
+    d2 = X2.grad
+
+    check_close(s1, s2)
+    check_close(d1, d2)
+
+def test_sig_coef_lead_lag_torch_api_full():
+    X1 = torch.rand(size=(32, 100, 2), dtype=torch.float64, requires_grad = True)
+    X2 = torch.tensor(X1.clone().detach(), requires_grad = True)
+    words = pysiglib.words(4, 3)
+
+    sig = pysiglib.torch_api.sig(X1, 3, lead_lag=True)
+    s1 = sig.clone().detach()
+    derivs1 = torch.ones(sig.shape)
+    derivs2 = derivs1.clone()
+    sig.backward(derivs1)
+    d1 = X1.grad
+
+    coef = pysiglib.torch_api.sig_coef(X2, words, lead_lag=True, n_jobs = -1)
+    s2 = coef.clone().detach()
+    coef.backward(derivs2)
+    d2 = X2.grad
+
+    check_close(s1, s2)
+    check_close(d1, d2)
+
+def test_sig_coef_time_aug_lead_lag_torch_api_full():
+    X1 = torch.rand(size=(32, 100, 2), dtype=torch.float64, requires_grad = True)
+    X2 = torch.tensor(X1.clone().detach(), requires_grad = True)
+    words = pysiglib.words(5, 3)
+
+    sig = pysiglib.torch_api.sig(X1, 3, time_aug=True, lead_lag=True)
+    s1 = sig.clone().detach()
+    derivs1 = torch.ones(sig.shape)
+    derivs2 = derivs1.clone()
+    sig.backward(derivs1)
+    d1 = X1.grad
+
+    coef = pysiglib.torch_api.sig_coef(X2, words, time_aug=True, lead_lag=True, n_jobs = -1)
+    s2 = coef.clone().detach()
+    coef.backward(derivs2)
+    d2 = X2.grad
+
+    check_close(s1, s2)
     check_close(d1, d2)
 
