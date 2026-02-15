@@ -135,8 +135,8 @@ def sig_coef_backprop(
     check_type(end_time, "end_time", float)
 
     # If path is on GPU, move to CPU
-    device_handler = DeviceToHost([path], ["path"])
-    path = device_handler.data[0]
+    device_handler = DeviceToHost([path, coef, deriv], ["path", "coef", "deriv"])
+    path, coef, deriv = device_handler.data
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     word = check_word_or_word_list(word, data.dimension, "word")
 
