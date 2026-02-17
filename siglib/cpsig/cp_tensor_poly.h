@@ -277,11 +277,9 @@ void batch_sig_combine_(
 	const uint64_t siglength = ::sig_length(dimension, degree);
 	const T* const sig1_end = sig1 + siglength * batch_size;
 
-	std::function<void(const T*, const T*, T*)> sig_combine_func;
-
-	sig_combine_func = [&](const T* sig1_ptr, const T* sig2_ptr, T* out_ptr) {
+	auto sig_combine_func = [&](const T* sig1_ptr, const T* sig2_ptr, T* out_ptr) {
 		sig_combine_(sig1_ptr, sig2_ptr, out_ptr, dimension, degree);
-		};
+	};
 
 	if (n_jobs != 1) {
 		multi_threaded_batch_2<const T, const T, T>(sig_combine_func, sig1, sig2, out, batch_size, siglength, siglength, siglength, n_jobs);
@@ -348,11 +346,9 @@ void batch_sig_combine_backprop_(
 
 	std::memcpy(sig1_deriv, sig_combined_deriv, sizeof(T) * siglength * batch_size);
 
-	std::function<void(const T*, T*, T*, const T*, const T*)> sig_combine_backprop_func;
-
-	sig_combine_backprop_func = [&](const T* sig_combined_deriv_ptr, T* sig1_deriv_ptr, T* sig2_deriv_ptr, const T* sig1_ptr, const T* sig2_ptr) {
+	auto sig_combine_backprop_func = [&](const T* sig_combined_deriv_ptr, T* sig1_deriv_ptr, T* sig2_deriv_ptr, const T* sig1_ptr, const T* sig2_ptr) {
 		sig_combine_backprop_(sig_combined_deriv_ptr, sig1_deriv_ptr, sig2_deriv_ptr, sig1_ptr, sig2_ptr, dimension, degree);
-		};
+	};
 
 	if (n_jobs != 1) {
 		multi_threaded_batch_4<T>(sig_combine_backprop_func, sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, siglength, siglength, siglength, siglength, siglength, n_jobs);

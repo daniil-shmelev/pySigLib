@@ -244,21 +244,17 @@ void batch_sig_coef_(
 
 	const T* const data_end = path + flat_path_length * batch_size;
 
-	std::function<void(const T*, T*)> sig_func;
-
-	sig_func = [&](const T* path_ptr, T* out_ptr) {
+	auto sig_func = [&](const T* path_ptr, T* out_ptr) {
 		sig_coef_<T>(path_ptr, out_ptr, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time, prefixes);
-		};
-
-	const T* path_ptr;
-	T* out_ptr;
+	};
 
 	if (n_jobs != 1) {
 		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, result_length, n_jobs);
 	}
 	else {
-		for (path_ptr = path, out_ptr = out;
-			path_ptr < data_end;
+		const T* path_ptr = path;
+		T* out_ptr = out;
+		for (; path_ptr < data_end;
 			path_ptr += flat_path_length, out_ptr += result_length) {
 
 			sig_func(path_ptr, out_ptr);
@@ -650,23 +646,19 @@ void batch_sig_coef_backprop_(
 	}
 	const T* const data_end = path + flat_path_length * batch_size;
 
-	std::function<void(const T*, const T*, T*, T*)> sig_func;
-
-	sig_func = [&](const T* path_ptr, const T* coefs_ptr, T* derivs_ptr, T* out_ptr) {
+	auto sig_func = [&](const T* path_ptr, const T* coefs_ptr, T* derivs_ptr, T* out_ptr) {
 		sig_coef_backprop_<T>(path_ptr, out_ptr, coefs_ptr, derivs_ptr, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time);
-		};
-
-	const T* path_ptr;
-	T* out_ptr;
-	const T* coefs_ptr;
-	T* derivs_ptr;
+	};
 
 	if (n_jobs != 1) {
 		multi_threaded_batch_3(sig_func, path, coefs, derivs, out, batch_size, flat_path_length, coefs_len, coefs_len, flat_path_length, n_jobs);
 	}
 	else {
-		for (path_ptr = path, out_ptr = out, coefs_ptr = coefs, derivs_ptr = derivs;
-			path_ptr < data_end;
+		const T* path_ptr = path;
+		T* out_ptr = out;
+		const T* coefs_ptr = coefs;
+		T* derivs_ptr = derivs;
+		for (; path_ptr < data_end;
 			path_ptr += flat_path_length, out_ptr += flat_path_length, coefs_ptr += coefs_len, derivs_ptr += coefs_len) {
 
 			sig_func(path_ptr, coefs_ptr, derivs_ptr, out_ptr);
