@@ -18,21 +18,6 @@
 #include "cp_signature.h"
 #include "macros.h"
 
-template class Path<float>;
-template class Path<double>;
-
-template<std::floating_point T>
-PointImpl<T>* Path<T>::point_impl_factory(uint64_t index) const {
-	if (!_time_aug && !_lead_lag)
-		return new PointImpl(this, index);
-	else if (_time_aug && !_lead_lag)
-		return new PointImplTimeAug(this, index);
-	else if (!_time_aug && _lead_lag)
-		return new PointImplLeadLag(this, index);
-	else
-		return new PointImplTimeAugLeadLag(this, index);
-}
-
 extern "C" {
 
 	CPSIG_API int signature_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool horner) noexcept {
