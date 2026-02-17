@@ -348,7 +348,8 @@ FORCE_INLINE void single_sig_coef_backprop_(
 	UpperTriangularMatrix<T>& incr_prod, // Array of size degree * degree, to be filled with incr_prod[i,j] = prod_{k = i}^j incr[k]
 	T* next_derivs, // Derivs wrt coeffs. Should be the same length as the above array.
 	T* prev_derivs,
-	const T* one_over_fact
+	const T* one_over_fact,
+	const T* signed_one_over_fact
 ) {
 	const bool time_aug = path.time_aug();
 	const bool lead_lag = path.lead_lag();
@@ -393,9 +394,8 @@ FORCE_INLINE void single_sig_coef_backprop_(
 		/////////////////////////////////////////////////////////////////////////
 		for (uint64_t i = 1; i < degree + 1; ++i) {
 			T acc = static_cast<T>(0.);
-			T sgn = static_cast<T>(-1.);
-			for (uint64_t k = 1; k <= i; ++k, sgn = -sgn) {
-				acc += sgn * next_coefs[i - k] * incr_prod(i - k, i - 1) * one_over_fact[k];
+			for (uint64_t k = 1; k <= i; ++k) {
+				acc += next_coefs[i - k] * incr_prod(i - k, i - 1) * signed_one_over_fact[k];
 			}
 			prev_coefs[i] = next_coefs[i] + acc;
 		}
@@ -492,9 +492,10 @@ void single_sig_coef_backprop_template_(
 	UpperTriangularMatrix<T>& incr_prod,
 	T* next_derivs,
 	T* prev_derivs,
-	const T* one_over_fact
+	const T* one_over_fact,
+	const T* signed_one_over_fact
 ) {
-	single_sig_coef_backprop_(path, out, coefs, multi_idx, degree, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
+	single_sig_coef_backprop_(path, out, coefs, multi_idx, degree, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
 }
 
 template<std::floating_point T>
@@ -510,31 +511,32 @@ void call_single_sig_coef_backprop_(
 	UpperTriangularMatrix<T>& incr_prod,
 	T* next_derivs,
 	T* prev_derivs,
-	const T* one_over_fact
+	const T* one_over_fact,
+	const T* signed_one_over_fact
 ) {
 	switch (degree) {
-	case 1:  return single_sig_coef_backprop_template_<T, 1>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 2:  return single_sig_coef_backprop_template_<T, 2>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 3:  return single_sig_coef_backprop_template_<T, 3>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 4:  return single_sig_coef_backprop_template_<T, 4>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 5:  return single_sig_coef_backprop_template_<T, 5>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 6:  return single_sig_coef_backprop_template_<T, 6>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 7:  return single_sig_coef_backprop_template_<T, 7>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 8:  return single_sig_coef_backprop_template_<T, 8>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 9:  return single_sig_coef_backprop_template_<T, 9>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 10: return single_sig_coef_backprop_template_<T, 10>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 11: return single_sig_coef_backprop_template_<T, 11>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 12: return single_sig_coef_backprop_template_<T, 12>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 13: return single_sig_coef_backprop_template_<T, 13>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 14: return single_sig_coef_backprop_template_<T, 14>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 15: return single_sig_coef_backprop_template_<T, 15>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 16: return single_sig_coef_backprop_template_<T, 16>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 17: return single_sig_coef_backprop_template_<T, 17>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 18: return single_sig_coef_backprop_template_<T, 18>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 19: return single_sig_coef_backprop_template_<T, 19>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
-	case 20: return single_sig_coef_backprop_template_<T, 20>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
+	case 1:  return single_sig_coef_backprop_template_<T, 1>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 2:  return single_sig_coef_backprop_template_<T, 2>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 3:  return single_sig_coef_backprop_template_<T, 3>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 4:  return single_sig_coef_backprop_template_<T, 4>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 5:  return single_sig_coef_backprop_template_<T, 5>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 6:  return single_sig_coef_backprop_template_<T, 6>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 7:  return single_sig_coef_backprop_template_<T, 7>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 8:  return single_sig_coef_backprop_template_<T, 8>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 9:  return single_sig_coef_backprop_template_<T, 9>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 10: return single_sig_coef_backprop_template_<T, 10>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 11: return single_sig_coef_backprop_template_<T, 11>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 12: return single_sig_coef_backprop_template_<T, 12>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 13: return single_sig_coef_backprop_template_<T, 13>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 14: return single_sig_coef_backprop_template_<T, 14>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 15: return single_sig_coef_backprop_template_<T, 15>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 16: return single_sig_coef_backprop_template_<T, 16>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 17: return single_sig_coef_backprop_template_<T, 17>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 18: return single_sig_coef_backprop_template_<T, 18>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 19: return single_sig_coef_backprop_template_<T, 19>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
+	case 20: return single_sig_coef_backprop_template_<T, 20>(path, out, coefs, multi_idx, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
 	default:
-		return single_sig_coef_backprop_(path, out, coefs, multi_idx, degree, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact);
+		return single_sig_coef_backprop_(path, out, coefs, multi_idx, degree, next_coefs, prev_coefs, incr, incr_prod, next_derivs, prev_derivs, one_over_fact, signed_one_over_fact);
 	}
 
 
@@ -578,9 +580,15 @@ void sig_coef_backprop_(
 	auto one_over_fact_uptr = std::make_unique<T[]>(max_degree + 1);
 	T* one_over_fact = one_over_fact_uptr.get();
 
-	one_over_fact[0] = 1.;
-	for (uint64_t i = 1; i < max_degree + 1; ++i) {
+	auto signed_one_over_fact_uptr = std::make_unique<T[]>(max_degree + 1);
+	T* signed_one_over_fact = signed_one_over_fact_uptr.get();
+
+	one_over_fact[0] = static_cast<T>(1.);
+	signed_one_over_fact[0] = static_cast<T>(1.);
+	T sgn = static_cast<T>(-1.);
+	for (uint64_t i = 1; i < max_degree + 1; ++i, sgn = -sgn) {
 		one_over_fact[i] = one_over_fact[i - 1] / i;
+		signed_one_over_fact[i] = sgn * one_over_fact[i];
 	}
 
 	auto prev_coefs_uptr = std::make_unique<T[]>(max_degree + 1);
@@ -607,7 +615,7 @@ void sig_coef_backprop_(
 		}
 
 		UpperTriangularMatrix<T> incr_prod(degree);
-		call_single_sig_coef_backprop_<T>(path_obj, out, coefs, multi_idx_ptr, degree, prev_coefs, next_coefs, incr, incr_prod, derivs, next_derivs, one_over_fact);
+		call_single_sig_coef_backprop_<T>(path_obj, out, coefs, multi_idx_ptr, degree, prev_coefs, next_coefs, incr, incr_prod, derivs, next_derivs, one_over_fact, signed_one_over_fact);
 		coefs += degree;
 		derivs += degree;
 		multi_idx_ptr += degree;
