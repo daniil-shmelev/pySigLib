@@ -271,40 +271,50 @@ template <typename T>
 class UpperTriangularMatrix {
 public:
 	explicit UpperTriangularMatrix(size_t n)
-		: n_(n), rows_(n)
+		: n_(n), data_(n * (n + 1) / 2), row_offsets_(n)
 	{
-		for (size_t i = 0; i < n_; ++i) {
-			rows_[i].resize(n_ - i);
-		}
+		compute_offsets();
 	}
 
 	size_t size() const { return n_; }
 
+	void resize(size_t n) {
+		n_ = n;
+		const size_t needed = n * (n + 1) / 2;
+		if (needed > data_.size()) {
+			data_.resize(needed);
+		}
+		if (n > row_offsets_.size()) {
+			row_offsets_.resize(n);
+		}
+		compute_offsets();
+	}
+
 	inline T& operator()(size_t i, size_t j) {
 #ifdef _DEBUG
-		if (i > j) {
-			throw std::out_of_range("Accessing lower-triangular element");
+		if (i > j || j >= n_) {
+			throw std::out_of_range("Accessing out-of-range element");
 		}
 #endif
-		return rows_[i][j - i];
+		return data_[row_offsets_[i] + (j - i)];
 	}
 
 	inline const T& operator()(size_t i, size_t j) const {
 #ifdef _DEBUG
-		if (i > j) {
-			throw std::out_of_range("Accessing lower-triangular element");
+		if (i > j || j >= n_) {
+			throw std::out_of_range("Accessing out-of-range element");
 		}
 #endif
-		return rows_[i][j - i];
+		return data_[row_offsets_[i] + (j - i)];
 	}
 
-	inline const T* row_ptr(size_t r) const { return rows_[r].data(); }
+	inline const T* row_ptr(size_t r) const { return data_.data() + row_offsets_[r]; }
 
 	void populate(const T* incr) {
 		// Populate the matrix so that mat(i,j) = prod_{k=i}^j incr[k]
 
 		// Set last diagonal entry: mat(n_ - 1, n_ - 1) = incr[n_ - 1]
-		rows_[n_ - 1][0] = incr[n_ - 1];
+		data_[row_offsets_[n_ - 1]] = incr[n_ - 1];
 
 		// Loop backwards over rows using the relation:
 		// mat(i-1, j) = mat(i, j) * incr[i-1];
@@ -312,21 +322,31 @@ public:
 		for (int64_t i = n_ - 2; i >= 0; --i, ++prev_row_length) {
 
 			T xi = incr[i];
-			rows_[i][0] = xi; // Diagonal entry for current row: mat(i,i) = incr[i]
+			T* curr_row = data_.data() + row_offsets_[i];
+			curr_row[0] = xi; // Diagonal entry for current row: mat(i,i) = incr[i]
 
-			const T* prev_row = rows_[i + 1].data();
-			T* curr_row = rows_[i].data() + 1;
+			const T* prev_row = data_.data() + row_offsets_[i + 1];
 
 			// Multiply previous row by incr[i-1] and assign to current row
 			for (size_t k = 0; k < prev_row_length; ++k) {
-				curr_row[k] = xi * prev_row[k];
+				curr_row[k + 1] = xi * prev_row[k];
 			}
 		}
 	}
 
 private:
+	void compute_offsets() {
+		// Row i has (n_ - i) elements
+		size_t offset = 0;
+		for (size_t i = 0; i < n_; ++i) {
+			row_offsets_[i] = offset;
+			offset += n_ - i;
+		}
+	}
+
 	size_t n_;
-	std::vector<std::vector<T>> rows_;
+	std::vector<T> data_;
+	std::vector<size_t> row_offsets_;
 };
 
 FORCE_INLINE bool sig_coef_backprop_skip(uint64_t data_dimension, uint64_t pre_time_aug_dim, uint64_t idx, bool lead_lag, bool parity) {
@@ -603,6 +623,8 @@ void sig_coef_backprop_(
 	auto incr_uptr = std::make_unique<T[]>(max_degree);
 	T* incr = incr_uptr.get();
 
+	UpperTriangularMatrix<T> incr_prod(max_degree);
+
 	const uint64_t* multi_idx_ptr = multi_idx;
 
 	for (uint64_t i = 0; i < num_multi_idx; ++i) {
@@ -614,7 +636,7 @@ void sig_coef_backprop_(
 			continue;
 		}
 
-		UpperTriangularMatrix<T> incr_prod(degree);
+		incr_prod.resize(degree);
 		call_single_sig_coef_backprop_<T>(path_obj, out, coefs, multi_idx_ptr, degree, prev_coefs, next_coefs, incr, incr_prod, derivs, next_derivs, one_over_fact, signed_one_over_fact);
 		coefs += degree;
 		derivs += degree;
