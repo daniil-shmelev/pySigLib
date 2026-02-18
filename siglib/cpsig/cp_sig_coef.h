@@ -30,7 +30,8 @@ void sig_coef_(
 	uint64_t length,
 	bool time_aug = false,
 	bool lead_lag = false,
-	T end_time = 1.
+	T end_time = 1.,
+	bool prefixes = false
 );
 
 template<std::floating_point T>
@@ -46,5 +47,6 @@ void batch_sig_coef_(
 	bool time_aug = false,
 	bool lead_lag = false,
 	T end_time = 1.,
+	bool prefixes = false,
 	int n_jobs = 1
 );

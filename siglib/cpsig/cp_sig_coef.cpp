@@ -157,8 +157,15 @@ void sig_coef_(
 
 	if (dimension == 0) { throw std::invalid_argument("sig_coef received path of dimension 0"); }
 
+	uint64_t max_degree = 0;
+	uint64_t result_length = 0;
+	for (uint64_t i = 0; i < num_multi_idx; ++i) {
+		max_degree = std::max(max_degree, degrees[i]);
+		result_length += (prefixes && degrees[i]) ? degrees[i] : 1;
+	}
+
 	if (length <= 1) {
-		std::fill(out, out + num_multi_idx, static_cast<T>(0.));
+		std::fill(out, out + result_length, static_cast<T>(0.));
 		return;
 	}
 
@@ -168,18 +175,13 @@ void sig_coef_(
 
 	T* out_ptr = out;
 
-	uint64_t max_degree = 0;
-	for (uint64_t i = 0; i < num_multi_idx; ++i) {
-		max_degree = std::max(max_degree, degrees[i]);
-	}
-
 	auto incr_prod_uptr = std::make_unique<T[]>(max_degree + 1);
 	T* incr_prod = incr_prod_uptr.get();
 
 	auto one_over_fact_uptr = std::make_unique<T[]>(max_degree + 1);
 	T* one_over_fact = one_over_fact_uptr.get();
 
-	one_over_fact[0] = 1.;
+	one_over_fact[0] = static_cast<T>(1.);
 	for (uint64_t i = 1; i < max_degree + 1; ++i) {
 		one_over_fact[i] = one_over_fact[i - 1] / i;
 	}
@@ -267,7 +269,7 @@ void batch_sig_coef_(
 // backpropagation
 //////////////////////////////////////////////////////////////////////////////////////////////
 
-template <typename T>
+template <std::floating_point T>
 class UpperTriangularMatrix {
 public:
 	explicit UpperTriangularMatrix(size_t n)
@@ -365,13 +367,12 @@ FORCE_INLINE void single_sig_coef_backprop_(
 	T* next_coefs,
 	T* prev_coefs,
 	T* incr,
-	UpperTriangularMatrix<T>& incr_prod, // Array of size degree * degree, to be filled with incr_prod[i,j] = prod_{k = i}^j incr[k]
-	T* next_derivs, // Derivs wrt coeffs. Should be the same length as the above array.
+	UpperTriangularMatrix<T>& incr_prod, // Upper-triangular matrix, to be filled with incr_prod[i,j] = prod_{k = i}^j incr[k]
+	T* next_derivs, // Derivs wrt coeffs
 	T* prev_derivs,
 	const T* one_over_fact,
 	const T* signed_one_over_fact
 ) {
-	const bool time_aug = path.time_aug();
 	const bool lead_lag = path.lead_lag();
 	const uint64_t pre_time_aug_dim = path.dimension() - (path.time_aug() ? 1 : 0);
 	const uint64_t data_dimension = path.data_dimension();
@@ -579,7 +580,7 @@ void sig_coef_backprop_(
 	T end_time
 ) {
 
-	if (dimension == 0) { throw std::invalid_argument("sig_coef received path of dimension 0"); }
+	if (dimension == 0) { throw std::invalid_argument("sig_coef_backprop received path of dimension 0"); }
 
 	const uint64_t path_length = dimension * length;
 	std::fill(out, out + path_length, static_cast<T>(0.));
