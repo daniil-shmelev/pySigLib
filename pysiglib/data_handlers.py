@@ -22,11 +22,7 @@ from .param_checks import check_type_multiple, check_dtype, ensure_own_contiguou
 from .dtypes import DTYPES
 
 def names_str(name_list):
-    names_ = ""
-    for n_ in name_list[:-1]:
-        names_ += n_ + ", "
-    names_ += name_list[-1]
-    return names_
+    return ", ".join(name_list)
 
 def make_output(obj, data, shape):
     if obj.type_ == "numpy":
@@ -88,14 +84,12 @@ class SigInputHandler:
             self.type_ = "numpy"
             self.dtype = str(self.sig.dtype)
             self.data_ptr = self.sig.ctypes.data_as(POINTER(DTYPES[self.dtype]))
-        elif isinstance(self.sig, torch.Tensor):
+        else:
             self.type_ = "torch"
             self.dtype = str(self.sig.dtype)[6:]
             if not self.sig.device.type == "cpu":
                 raise ValueError(param_name + " must be located on the cpu")
             self.data_ptr = cast(self.sig.data_ptr(), POINTER(DTYPES[self.dtype]))
-        else:
-            raise ValueError(param_name + " must be a numpy array or a torch array")
 
 class MultipleSigInputHandler:
     """
@@ -138,7 +132,7 @@ class PathInputHandler:
     """
     def __init__(self, path_, time_aug, lead_lag, end_time, param_name):
         self.param_name = param_name
-        check_type_multiple(path_, param_name,(np.ndarray, torch.Tensor))
+        check_type_multiple(path_, param_name, (np.ndarray, torch.Tensor))
         self.path = ensure_own_contiguous_storage(path_)
         check_dtype(self.path, param_name)
 
@@ -223,7 +217,7 @@ class MultiplePathInputHandler:
 
 class ScalarInputHandler:
     """
-    Handle output which is (shaped like) a scalar or a batch of scalars
+    Handle input which is (shaped like) a scalar or a batch of scalars
     """
     def __init__(self, data_, is_batch = False, data_name = "scalars"):
         self.data_name = data_name

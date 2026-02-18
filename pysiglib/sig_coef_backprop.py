@@ -19,11 +19,10 @@ from ctypes import c_uint64, POINTER, cast
 import numpy as np
 import torch
 
-from .param_checks import check_word_or_word_list, check_type, check_non_neg
+from .param_checks import check_word_or_word_list, check_type
 from .error_codes import err_msg
 from .dtypes import CPSIG_SIG_COEF_BACKPROP, CPSIG_BATCH_SIG_COEF_BACKPROP
-from .words import word_to_idx
-from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler, DeviceToHost, MultipleSigInputHandler, PathOutputHandler
+from .data_handlers import PathInputHandler, DeviceToHost, MultipleSigInputHandler, PathOutputHandler
 
 
 def sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr):
@@ -43,7 +42,7 @@ def sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_in
     )
 
     if err_code:
-        raise Exception("Error in pysiglib.sig_coef: " + err_msg(err_code))
+        raise Exception("Error in pysiglib.sig_coef_backprop: " + err_msg(err_code))
     return result.data
 
 def batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, n_jobs = 1):
@@ -65,7 +64,7 @@ def batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_mu
     )
 
     if err_code:
-        raise Exception("Error in pysiglib.sig_coef: " + err_msg(err_code))
+        raise Exception("Error in pysiglib.sig_coef_backprop: " + err_msg(err_code))
     return result.data
 
 def sig_coef_backprop(
@@ -134,9 +133,9 @@ def sig_coef_backprop(
     num_multi_indices = len(word)
     degrees = [len(idx) for idx in word]
 
-    word = [torch.tensor(idx, dtype=torch.uint64, device = data.device) for idx in word]
-    word = torch.concatenate(word, axis = 0)
-    degrees = torch.tensor(degrees, dtype=torch.uint64, device=data.device)
+    flat_indices = [i for idx in word for i in idx]
+    word = torch.tensor(flat_indices, dtype=torch.uint64)
+    degrees = torch.tensor(degrees, dtype=torch.uint64)
 
     multi_indices_ptr = cast(word.data_ptr(), POINTER(c_uint64))
     degrees_ptr = cast(degrees.data_ptr(), POINTER(c_uint64))

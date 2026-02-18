@@ -151,7 +151,8 @@ def sig_coef(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :return: Array of signature coefficients of shape ``(batch_size, num_coefs)``.
+    :return: Signature coefficients of shape ``num_words`` or batch of signature
+        coefficients of shape ``(batch_size, num_words)``.
     :rtype: numpy.ndarray | torch.tensor
 
     .. note::
@@ -171,6 +172,7 @@ def sig_coef(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
+    check_type(prefixes, "prefixes", bool)
 
     # If path is on GPU, move to CPU
     device_handler = DeviceToHost([path], ["path"])
@@ -187,9 +189,9 @@ def sig_coef(
     else:
         result_length = num_multi_indices
 
-    word = [torch.tensor(idx, dtype=torch.uint64, device = data.device) for idx in word]
-    word = torch.concatenate(word, axis = 0)
-    degrees = torch.tensor(degrees, dtype=torch.uint64, device=data.device)
+    flat_indices = [i for idx in word for i in idx]
+    word = torch.tensor(flat_indices, dtype=torch.uint64)
+    degrees = torch.tensor(degrees, dtype=torch.uint64)
 
     multi_indices_ptr = cast(word.data_ptr(), POINTER(c_uint64))
     degrees_ptr = cast(degrees.data_ptr(), POINTER(c_uint64))
