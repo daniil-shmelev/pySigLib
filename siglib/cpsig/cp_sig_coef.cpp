@@ -28,7 +28,7 @@ FORCE_INLINE void single_sig_coef_(
 	uint64_t degree,
 	T* prev_coefs,
 	T* next_coefs,
-	T* incr_prod,
+	T* buff,
 	const T* one_over_fact,
 	bool prefixes
 ) {
@@ -39,38 +39,43 @@ FORCE_INLINE void single_sig_coef_(
 	prev_coefs[0] = static_cast<T>(1.);
 	next_coefs[0] = static_cast<T>(1.);
 
-	incr_prod[0] = static_cast<T>(1.);
-
+	// buff[i] = prod_{k=1}^{i} incr[k]
+	buff[0] = static_cast<T>(1.);
 	for (uint64_t i = 1; i < degree + 1; ++i) {
-		incr_prod[i] = incr_prod[i - 1] * (next_pt[multi_idx[i - 1]] - prev_pt[multi_idx[i - 1]]);
+		buff[i] = buff[i - 1] * (next_pt[multi_idx[i - 1]] - prev_pt[multi_idx[i - 1]]);
 	}
 
 	for (uint64_t i = 1; i < degree + 1; ++i) {
-		prev_coefs[i] = incr_prod[i] * one_over_fact[i];
+		prev_coefs[i] = buff[i] * one_over_fact[i];
 	}
 
 	++prev_pt;
 	++next_pt;
 
 	for (; next_pt != end_pt; ++prev_pt, ++next_pt) {
-
-		// incr_prod here takes a different role than before
-		// At step i, incr_prod[i - k] = prod_{j=k}^i incr[j]
-
 		for (uint64_t i = 1; i < degree + 1; ++i) {
+
+			// At every step:
+			// buff[j] = prev_coefs[j] * prod_{k=j+1}^{i} incr[k],
+			
+			// So that Chen's relation is:
+			// next_coefs[i] = prev_coefs[i] + sum_{j=0}^{i-1} buff[j] * one_over_fact[i - j]
+
 			next_coefs[i] = prev_coefs[i];
 
 			const T new_incr = next_pt[multi_idx[i - 1]] - prev_pt[multi_idx[i - 1]];
-			incr_prod[i] = new_incr;
 
-			for (uint64_t k = 1; k < i; ++k) {
-				incr_prod[k] *= new_incr;
+			for (uint64_t j = 0; j < i - 1; ++j) {
+				buff[j] *= new_incr;
 			}
-			
-			// Can we vectorise this?
-			for (uint64_t k = 1; k <= i; ++k) {
-				next_coefs[i] += prev_coefs[i - k] * incr_prod[i - k + 1] * one_over_fact[k];
+
+			buff[i - 1] = prev_coefs[i - 1] * new_incr;
+
+			T acc = static_cast<T>(0.);
+			for (uint64_t j = 0; j < i; ++j) {
+				acc += buff[j] * one_over_fact[i - j];
 			}
+			next_coefs[i] += acc;
 		}
 
 		std::swap(next_coefs, prev_coefs);
@@ -93,11 +98,11 @@ void single_sig_coef_template_(
 	const uint64_t* multi_idx,
 	T* prev_coefs,
 	T* next_coefs,
-	T* incr_prod,
+	T* buff,
 	const T* one_over_fact,
 	bool prefixes
 ) {
-	single_sig_coef_(path, out, multi_idx, degree, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
+	single_sig_coef_(path, out, multi_idx, degree, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
 }
 
 template<std::floating_point T>
@@ -108,33 +113,33 @@ void call_single_sig_coef_(
 	uint64_t degree,
 	T* prev_coefs,
 	T* next_coefs,
-	T* incr_prod,
+	T* buff,
 	const T* one_over_fact,
 	bool prefixes
 ) {
 	switch (degree) {
-	case 1:  return single_sig_coef_template_<T, 1>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 2:  return single_sig_coef_template_<T, 2>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 3:  return single_sig_coef_template_<T, 3>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 4:  return single_sig_coef_template_<T, 4>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 5:  return single_sig_coef_template_<T, 5>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 6:  return single_sig_coef_template_<T, 6>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 7:  return single_sig_coef_template_<T, 7>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 8:  return single_sig_coef_template_<T, 8>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 9:  return single_sig_coef_template_<T, 9>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 10: return single_sig_coef_template_<T, 10>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 11: return single_sig_coef_template_<T, 11>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 12: return single_sig_coef_template_<T, 12>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 13: return single_sig_coef_template_<T, 13>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 14: return single_sig_coef_template_<T, 14>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 15: return single_sig_coef_template_<T, 15>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 16: return single_sig_coef_template_<T, 16>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 17: return single_sig_coef_template_<T, 17>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 18: return single_sig_coef_template_<T, 18>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 19: return single_sig_coef_template_<T, 19>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
-	case 20: return single_sig_coef_template_<T, 20>(path, out, multi_idx, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
+	case 1:  return single_sig_coef_template_<T, 1>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 2:  return single_sig_coef_template_<T, 2>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 3:  return single_sig_coef_template_<T, 3>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 4:  return single_sig_coef_template_<T, 4>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 5:  return single_sig_coef_template_<T, 5>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 6:  return single_sig_coef_template_<T, 6>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 7:  return single_sig_coef_template_<T, 7>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 8:  return single_sig_coef_template_<T, 8>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 9:  return single_sig_coef_template_<T, 9>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 10: return single_sig_coef_template_<T, 10>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 11: return single_sig_coef_template_<T, 11>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 12: return single_sig_coef_template_<T, 12>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 13: return single_sig_coef_template_<T, 13>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 14: return single_sig_coef_template_<T, 14>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 15: return single_sig_coef_template_<T, 15>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 16: return single_sig_coef_template_<T, 16>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 17: return single_sig_coef_template_<T, 17>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 18: return single_sig_coef_template_<T, 18>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 19: return single_sig_coef_template_<T, 19>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
+	case 20: return single_sig_coef_template_<T, 20>(path, out, multi_idx, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
 	default:
-		return single_sig_coef_<T>(path, out, multi_idx, degree, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
+		return single_sig_coef_<T>(path, out, multi_idx, degree, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
 	}
 
 }
@@ -175,8 +180,8 @@ void sig_coef_(
 
 	T* out_ptr = out;
 
-	auto incr_prod_uptr = std::make_unique<T[]>(max_degree + 1);
-	T* incr_prod = incr_prod_uptr.get();
+	auto buff_uptr = std::make_unique<T[]>(max_degree + 1);
+	T* buff = buff_uptr.get();
 
 	auto one_over_fact_uptr = std::make_unique<T[]>(max_degree + 1);
 	T* one_over_fact = one_over_fact_uptr.get();
@@ -203,7 +208,7 @@ void sig_coef_(
 			continue;
 		}
 
-		call_single_sig_coef_<T>(path_obj, out_ptr, multi_idx_ptr, degree, prev_coefs, next_coefs, incr_prod, one_over_fact, prefixes);
+		call_single_sig_coef_<T>(path_obj, out_ptr, multi_idx_ptr, degree, prev_coefs, next_coefs, buff, one_over_fact, prefixes);
 		out_ptr += prefixes ? degree : 1;
 		multi_idx_ptr += degree;
 	}
