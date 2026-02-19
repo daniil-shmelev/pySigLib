@@ -75,6 +75,19 @@ def sig_score(
     :return: Signature kernel score
     :rtype: numpy.ndarray | torch.tensor
 
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        sample = torch.rand((20, 100, 5))
+        y = torch.rand((100, 5))
+        score = pysiglib.sig_score(sample, y, dyadic_order=2)
+        print(score)
+
     """
 
     check_type_multiple(sample, "sample", (np.ndarray, torch.Tensor))
@@ -168,6 +181,19 @@ def expected_sig_score(
     :return: Expected signature kernel score
     :rtype: numpy.ndarray | torch.tensor
 
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        sample1 = torch.rand((20, 100, 5))
+        sample2 = torch.rand((15, 100, 5))
+        score = pysiglib.expected_sig_score(sample1, sample2, dyadic_order=2)
+        print(score)
+
     """
 
     res = sig_score(sample1, sample2, dyadic_order, lam, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch)
@@ -245,6 +271,19 @@ def sig_mmd(
     :type max_batch: int
     :return: Signature MMD
     :rtype: numpy.ndarray | torch.tensor
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        sample1 = torch.rand((20, 100, 5))
+        sample2 = torch.rand((15, 100, 5))
+        mmd = pysiglib.sig_mmd(sample1, sample2, dyadic_order=2)
+        print(mmd)
 
     """
     data = MultiplePathInputHandler([sample1, sample2], time_aug, lead_lag, end_time, ["sample1", "sample2"], False)

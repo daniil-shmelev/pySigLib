@@ -46,6 +46,18 @@ def sig_length(
     :type lead_lag: bool
     :return: Length of a truncated signature
     :rtype: int
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import pysiglib
+
+        # Length of a truncated signature for a 3-dimensional path at degree 4
+        length = pysiglib.sig_length(3, 4)
+        print(length) # 121 (= 1 + 3 + 9 + 27 + 81)
+
     """
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
@@ -92,6 +104,18 @@ def log_sig_length(
     :type lead_lag: bool
     :return: Length of a truncated log signature
     :rtype: int
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import pysiglib
+
+        # Length of a truncated log signature for a 3-dimensional path at degree 4
+        length = pysiglib.log_sig_length(3, 4)
+        print(length) # 32
+
     """
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)

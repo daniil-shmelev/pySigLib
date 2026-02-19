@@ -152,6 +152,21 @@ def sig_kernel_backprop(
         :math:`\\{\\partial F / y_{t_i}\\}_{i=0}^{L_2}`.
     :rtype: numpy.ndarray | torch.tensor | Tuple[numpy.ndarray | numpy.ndarray] | Tuple[torch.tensor | torch.tensor]
 
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((10, 100, 5))
+        k = pysiglib.sig_kernel(path1, path2, dyadic_order=2)
+        derivs = torch.ones_like(k)
+        dpath1, _ = pysiglib.sig_kernel_backprop(derivs, path1, path2, dyadic_order=2)
+        print(dpath1)
+
     """
     check_type(n_jobs, "n_jobs", int)
     if n_jobs == 0:
@@ -298,6 +313,21 @@ def sig_kernel_gram_backprop(
 
         When called via ``pysiglib.torch_api``, the default behaviour is to pass ``k_grid = None`` and reconstruct the
         PDE grids. This is done to avoid memory allocation issues for large batch sizes.
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((8, 100, 5))
+        gram = pysiglib.sig_kernel_gram(path1, path2, dyadic_order=2)
+        derivs = torch.ones_like(gram)
+        dpath1, _ = pysiglib.sig_kernel_gram_backprop(derivs, path1, path2, dyadic_order=2)
+        print(dpath1)
 
     """
     # We use sig_kernel_backprop for simplicity, rather than directly calling

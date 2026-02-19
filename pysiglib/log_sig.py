@@ -152,6 +152,23 @@ def clear_cache(
         See additionally the documentation for
         ``pysiglib.set_cache_dir``.
     :type use_disk: bool
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        pysiglib.prepare_log_sig(dimension=5, degree=4, method=2, use_disk=True)
+
+        path = torch.rand((10, 100, 5))
+        log_sig = pysiglib.log_sig(path, 4, n_jobs = -1)
+        print(log_sig)
+
+        pysiglib.clear_cache() # Clear cache from memory but keep on disk
+
     """
     err_code = CPSIG.clear_cache(use_disk)
     if err_code:

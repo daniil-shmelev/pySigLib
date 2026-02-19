@@ -117,6 +117,21 @@ def sig_coef_backprop(
         If this is not the case, ``pysiglib.sig_coef_backprop`` will internally create a contiguous copy, which may be
         inefficient.
 
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        words = [(0,), (1, 0), (1, 2, 3)]
+        coefs = pysiglib.sig_coef(path, words)
+        derivs = torch.ones_like(coefs)
+        path_derivs = pysiglib.sig_coef_backprop(path, words, coefs, derivs)
+        print(path_derivs)
+
     """
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)

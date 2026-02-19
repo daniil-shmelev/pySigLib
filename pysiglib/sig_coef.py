@@ -50,6 +50,21 @@ def extract_sig_coef(
     :return: Signature coefficients of shape ``num_words`` or batch of signature
         coefficients of shape ``(batch_size, num_words)``.
     :rtype: numpy.ndarray | torch.tensor
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        sigs = pysiglib.sig(path, degree=4)
+        words = [(0,), (1, 0), (1, 2, 3)]
+        coefs = pysiglib.extract_sig_coef(sigs, words, dimension=5)
+        print(coefs)
+
     """
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
@@ -167,6 +182,18 @@ def sig_coef(
         Ideally, any array passed to ``pysiglib.sig_coef`` should be both contiguous and own its data.
         If this is not the case, ``pysiglib.sig_coef`` will internally create a contiguous copy, which may be
         inefficient.
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        words = [(0,), (1,0), (1,2,3)]
+        coefs = pysiglib.sig_coef(path, words)
 
     """
     check_type(time_aug, "time_aug", bool)

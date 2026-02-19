@@ -122,7 +122,19 @@ def transform_path_backprop(
     :return: Derivatives with respect to the original path,
         :math:`\\{\\partial F / x_{t_i}\\}_{i=0}^L`.
     :rtype: numpy.ndarray | torch.tensor
+    Example:
+    ---------
 
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path = torch.tensor([[0., 1.], [2., 3.]])
+        transformed = pysiglib.transform_path(path, time_aug=True, lead_lag=True)
+        derivs = torch.ones_like(transformed)
+        path_derivs = pysiglib.transform_path_backprop(derivs, time_aug=True, lead_lag=True)
+        print(path_derivs)
     """
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)

@@ -173,6 +173,17 @@ def transform_path(
         method will never explicitly compute or store the lead-lag transform, and will instead
         modify the signature computation directly.
 
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path = torch.tensor([[0., 1.], [2., 3.]])
+        transformed = pysiglib.transform_path(path, time_aug=True, lead_lag=True)
+        print(transformed)
     """
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)

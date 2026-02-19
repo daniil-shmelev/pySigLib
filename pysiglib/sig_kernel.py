@@ -124,6 +124,19 @@ def sig_kernel(
     :return: Single signature kernel or batch of signature kernels
     :rtype: numpy.ndarray | torch.tensor
 
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((10, 100, 5))
+        k = pysiglib.sig_kernel(path1, path2, dyadic_order=2)
+        print(k)
+
     """
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
@@ -262,6 +275,20 @@ def sig_kernel_gram(
 
         When called via ``pysiglib.torch_api``, the default behaviour is to reconstruct the
         PDE grids during backpropagation. This is done to avoid memory allocation issues for large batch sizes.
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((8, 100, 5))
+        gram = pysiglib.sig_kernel_gram(path1, path2, dyadic_order=2)
+        print(gram.shape) # gram has shape (10, 8)
+        print(gram)
 
     """
     # We use sig_kernel for simplicity, rather than directly calling

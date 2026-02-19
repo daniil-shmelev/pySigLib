@@ -75,6 +75,7 @@ def sig_combine(
     Example usage::
 
         import pysiglib
+        import numpy as np
 
         batch_size = 32
         length = 100
@@ -226,6 +227,18 @@ def sig(
 
         ``pysiglib.signature`` is an alias of ``pysiglib.sig`` included for backward
         compatibility with versions ``< 1.0.0``.
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        sigs = pysiglib.sig(path, degree=4)
+        print(sigs)
 
     """
     check_type(degree, "degree", int)

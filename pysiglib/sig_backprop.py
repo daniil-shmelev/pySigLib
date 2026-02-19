@@ -97,6 +97,27 @@ def sig_combine_backprop(
     :return: Derivatives with respect to ``sig1`` and ``sig2``
     :rtype: Tuple[numpy.ndarray | torch.tensor, numpy.ndarray | torch.tensor]
 
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import numpy as np
+        import pysiglib
+
+        batch_size, length, dimension, degree = 10, 100, 5, 3
+        X1 = np.random.uniform(size=(batch_size, length, dimension))
+        X2 = np.random.uniform(size=(batch_size, length, dimension))
+
+        sig1 = pysiglib.sig(X1, degree)
+        sig2 = pysiglib.sig(X2, degree)
+        combined = pysiglib.sig_combine(sig1, sig2, dimension, degree)
+
+        derivs = np.ones_like(combined)
+        dsig1, dsig2 = pysiglib.sig_combine_backprop(derivs, sig1, sig2, dimension, degree)
+        print(dsig1)
+        print(dsig2)
+
     """
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
@@ -208,6 +229,21 @@ def sig_backprop(
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.tensor
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        degree = 4
+        sigs = pysiglib.sig(path, degree)
+        sig_derivs = torch.ones_like(sigs)
+        path_derivs = pysiglib.sig_backprop(path, sigs, sig_derivs, degree)
+        print(path_derivs)
 
     """
     check_type(degree, "degree", int)

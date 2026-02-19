@@ -30,6 +30,18 @@ def words_of_length(
     :type length: int
     :return: All words of the given length.
     :rtype: list[tuple[int, ...]]
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import pysiglib
+
+        # All words of length 2 over alphabet {0, 1}
+        w = pysiglib.words_of_length(2, 2)
+        print(w) # [(0, 0), (0, 1), (1, 0), (1, 1)]
+
     """
     check_type(alphabet_size, "alphabet_size", int)
     check_type(length, "length", int)
@@ -52,6 +64,18 @@ def words(
     :type max_length: int
     :return: All words up to the given length.
     :rtype: list[tuple[int, ...]]
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import pysiglib
+
+        # All words up to length 2 over alphabet {0, 1}
+        w = pysiglib.words(2, 2)
+        print(w) # [(), (0,), (1,), (0, 0), (0, 1), (1, 0), (1, 1)]
+
     """
     check_type(alphabet_size, "alphabet_size", int)
     check_type(max_length, "max_length", int)
@@ -78,6 +102,18 @@ def lyndon_words_of_length(
     :type length: int
     :return: All Lyndon words of the given length.
     :rtype: list[tuple[int, ...]]
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import pysiglib
+
+        # All Lyndon words of length 3 over alphabet {0, 1}
+        w = pysiglib.lyndon_words_of_length(2, 3)
+        print(w) # [(0, 0, 1), (0, 1, 1)]
+
     """
     check_type(alphabet_size, "alphabet_size", int)
     check_type(length, "length", int)
@@ -116,6 +152,18 @@ def lyndon_words(
     :type max_length: int
     :return: All Lyndon words up to the given length.
     :rtype: list[tuple[int, ...]]
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import pysiglib
+
+        # All Lyndon words up to length 3 over alphabet {0, 1}
+        w = pysiglib.lyndon_words(2, 3)
+        print(w) # [(0,), (1,), (0, 1), (0, 0, 1), (0, 1, 1)]
+
     """
     check_type(alphabet_size, "alphabet_size", int)
     check_type(max_length, "max_length", int)
@@ -138,6 +186,18 @@ def is_lyndon(
     :type word: tuple[int, ...]
     :return: Returns ``True`` if ``word`` is a Lyndon word and ``False`` otherwise.
     :rtype: bool
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import pysiglib
+
+        print(pysiglib.is_lyndon((0, 1)))    # True
+        print(pysiglib.is_lyndon((1, 0)))    # False
+        print(pysiglib.is_lyndon((0, 0, 1))) # True
+
     """
     check_word(word, float('inf'), "word")
     n = len(word)
