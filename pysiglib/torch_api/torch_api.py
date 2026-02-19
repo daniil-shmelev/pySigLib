@@ -143,15 +143,15 @@ class SigCoef(torch.autograd.Function):
 
 def sig_coef(
         path: Union[np.ndarray, torch.tensor],
-        word: Union[tuple[int, ...], list[tuple[int, ...]]],
+        words: Union[tuple[int, ...], list[tuple[int, ...]]],
         time_aug: bool = False,
         lead_lag: bool = False,
         end_time: float = 1.,
         prefixes: bool = False,
         n_jobs: int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    coefs_ = SigCoef.apply(path, word, time_aug, lead_lag, end_time, n_jobs)
-    return _get_coef_from_prefixes(word, coefs_, prefixes)
+    coefs_ = SigCoef.apply(path, words, time_aug, lead_lag, end_time, n_jobs)
+    return _get_coef_from_prefixes(words, coefs_, prefixes)
 
 sig_coef.__doc__ = sig_coef_forward.__doc__
 

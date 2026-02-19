@@ -69,7 +69,7 @@ def batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_mu
 
 def sig_coef_backprop(
         path : Union[np.ndarray, torch.tensor],
-        word : Union[tuple[int, ...], list[tuple[int, ...]]],
+        words : Union[tuple[int, ...], list[tuple[int, ...]]],
         coefs : Union[np.ndarray, torch.tensor],
         derivs : Union[np.ndarray, torch.tensor],
         time_aug : bool = False,
@@ -88,9 +88,9 @@ def sig_coef_backprop(
         For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
         be of shape ``(batch_size, length, dimension)``.
     :type path: numpy.ndarray | torch.tensor
-    :param word: Multi-indices :math:`I` indexing the signature coefficients, given as a list
+    :param words: Multi-indices :math:`I` indexing the signature coefficients, given as a list
         of lists of integers in :math:`[0, d-1]`, where :math:`d` is the dimension of the path(s).
-    :type word: tuple[int, ...] | list[tuple[int, ...]]
+    :type words: tuple[int, ...] | list[tuple[int, ...]]
     :param coefs: Signature coefficients of the path or batch of paths.
     :type coefs: numpy.ndarray | torch.tensor
     :param derivs: Derivatives of the scalar function :math:`F` with respect to the signature coefficients,
@@ -126,18 +126,18 @@ def sig_coef_backprop(
     device_handler = DeviceToHost([path, coefs, derivs], ["path", "coefs", "derivs"])
     path, coefs, derivs = device_handler.data
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
-    word = check_word_or_word_list(word, data.dimension, "word")
+    words = check_word_or_word_list(words, data.dimension, "word")
 
     deriv_data = MultipleSigInputHandler([coefs, derivs], coefs.shape[-1], ["coef", "deriv"])
 
-    num_multi_indices = len(word)
-    degrees = [len(idx) for idx in word]
+    num_multi_indices = len(words)
+    degrees = [len(idx) for idx in words]
 
-    flat_indices = [i for idx in word for i in idx]
-    word = torch.tensor(flat_indices, dtype=torch.uint64)
+    flat_indices = [i for idx in words for i in idx]
+    words = torch.tensor(flat_indices, dtype=torch.uint64)
     degrees = torch.tensor(degrees, dtype=torch.uint64)
 
-    multi_indices_ptr = cast(word.data_ptr(), POINTER(c_uint64))
+    multi_indices_ptr = cast(words.data_ptr(), POINTER(c_uint64))
     degrees_ptr = cast(degrees.data_ptr(), POINTER(c_uint64))
 
     result = PathOutputHandler(data.data_length, data.data_dimension, data)

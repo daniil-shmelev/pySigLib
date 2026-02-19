@@ -27,7 +27,7 @@ from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler, 
 
 def extract_sig_coef(
         sig : Union[np.ndarray, torch.tensor],
-        word: Union[tuple[int, ...], list[tuple[int, ...]]],
+        words: Union[tuple[int, ...], list[tuple[int, ...]]],
         dimension: int,
         time_aug: bool = False,
         lead_lag: bool = False
@@ -39,8 +39,8 @@ def extract_sig_coef(
         For a single signature, this must be of shape ``sig_length``. For a batch of paths, this must
         be of shape ``(batch_size, sig_length)``.
     :type sig: numpy.ndarray | torch.tensor
-    :param word: Word or list of words at which to extract coefficients.
-    :type word: tuple[int, ...] | list[tuple[int, ...]]]
+    :param words: Word or list of words at which to extract coefficients.
+    :type words: tuple[int, ...] | list[tuple[int, ...]]]
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
     :param time_aug: Whether the signatures were computed with ``time_aug=True``.
@@ -58,12 +58,12 @@ def extract_sig_coef(
 
     aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
 
-    word = check_word_or_word_list(word, aug_dimension, "word")
+    words = check_word_or_word_list(words, aug_dimension, "word")
 
     sig_len = sig.shape[-1]
     data = SigInputHandler(sig, sig_len, "sig")
 
-    idx = [word_to_idx(w, aug_dimension) for w in word]
+    idx = [word_to_idx(w, aug_dimension) for w in words]
 
     return sig[..., idx]
 
@@ -109,7 +109,7 @@ def batch_sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_
 
 def sig_coef(
         path : Union[np.ndarray, torch.tensor],
-        word : Union[tuple[int, ...], list[tuple[int, ...]]],
+        words : Union[tuple[int, ...], list[tuple[int, ...]]],
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
@@ -118,7 +118,7 @@ def sig_coef(
 ) -> Union[np.ndarray, torch.tensor]:
     """
     Computes specific signature coefficients for a single path or a batch of paths. For
-    a single path :math:`x`, the signature coeficient at a multi-index
+    a single path :math:`x`, the signature coefficient at a multi-index
     :math:`I = (i_1, i_2, \\ldots, i_k)` is given by
 
     .. math::
@@ -129,11 +129,11 @@ def sig_coef(
         For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
         be of shape ``(batch_size, length, dimension)``.
     :type path: numpy.ndarray | torch.tensor
-    :param word: Multi-indices :math:`I` at which to evaluate signature coefficients, given as a list
+    :param words: Multi-indices :math:`I` at which to evaluate signature coefficients, given as a list
         of lists of integers in :math:`[0, d-1]`, where :math:`d` is the dimension of the path(s). For example,
-        for a 2-dimensional path, one could pass ``[[0], [1,0], [0,1,1]]`` to compute the coefficients at
+        for a 2-dimensional path, one could pass ``[(0,), (1,0), (0,1,1)]`` to compute the coefficients at
         the three multi-indices :math:`I = (0), (1,0), (0,1,1)`.
-    :type word: tuple[int, ...] | list[tuple[int, ...]]
+    :type words: tuple[int, ...] | list[tuple[int, ...]]
     :param time_aug: If set to True, will compute signature coefficients of the time-augmented path, :math:`\\hat{x}_t := (t, x_t)`,
         defined as the original path with an extra channel set to time, :math:`t`. This channel spans :math:`[0, t_L]`,
         where :math:`t_L` is given by the parameter ``end_time``.
@@ -144,8 +144,8 @@ def sig_coef(
     :type end_time: float
     :param prefixes: If ``True``, will additionally return all prefixes of signature coefficients.
         These prefixes are extracted for free as a by-product of the computation.
-        For example, passing ``word=[[1,2], [3,2,1]]`` with ``prefixes=True`` returns an
-        output equivalent to passing ``word=[[1], [1,2], [3], [3,2], [3,2,1]]`` with ``prefixes=False``.
+        For example, passing ``word=[(1,2), (3,2,1)]`` with ``prefixes=True`` returns an
+        output equivalent to passing ``word=[(1,), (1,2), (3,), (3,2), (3,2,1)]`` with ``prefixes=False``.
     :type prefixes: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
@@ -178,22 +178,22 @@ def sig_coef(
     device_handler = DeviceToHost([path], ["path"])
     path = device_handler.data[0]
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
-    word = check_word_or_word_list(word, data.dimension, "word")
+    words = check_word_or_word_list(words, data.dimension, "word")
 
-    num_multi_indices = len(word)
-    degrees = [len(idx) for idx in word]
+    num_multi_indices = len(words)
+    degrees = [len(idx) for idx in words]
     if prefixes:
         result_length = 0
-        for idx in word:
+        for idx in words:
             result_length += len(idx) if idx else 1
     else:
         result_length = num_multi_indices
 
-    flat_indices = [i for idx in word for i in idx]
-    word = torch.tensor(flat_indices, dtype=torch.uint64)
+    flat_indices = [i for idx in words for i in idx]
+    words = torch.tensor(flat_indices, dtype=torch.uint64)
     degrees = torch.tensor(degrees, dtype=torch.uint64)
 
-    multi_indices_ptr = cast(word.data_ptr(), POINTER(c_uint64))
+    multi_indices_ptr = cast(words.data_ptr(), POINTER(c_uint64))
     degrees_ptr = cast(degrees.data_ptr(), POINTER(c_uint64))
 
     result = SigOutputHandler(data, result_length)
