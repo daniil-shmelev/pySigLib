@@ -88,6 +88,25 @@ def sig_score(
         score = pysiglib.sig_score(sample, y, dyadic_order=2)
         print(score)
 
+    .. code-block:: python
+
+        # Using a static kernel with regularisation and time augmentation
+        import torch
+        import pysiglib
+
+        sample = torch.rand((20, 100, 5))
+        y = torch.rand((100, 5))
+        rbf = pysiglib.RBFKernel(sigma=1.0)
+        score = pysiglib.sig_score(
+            sample, y,
+            dyadic_order=2,
+            lam=0.1,
+            static_kernel=rbf,
+            time_aug=True,
+            max_batch=8,
+        )
+        print(score)
+
     """
 
     check_type_multiple(sample, "sample", (np.ndarray, torch.Tensor))
@@ -194,6 +213,24 @@ def expected_sig_score(
         score = pysiglib.expected_sig_score(sample1, sample2, dyadic_order=2)
         print(score)
 
+    .. code-block:: python
+
+        # Expected score with lead-lag and a static kernel
+        import torch
+        import pysiglib
+
+        sample1 = torch.rand((20, 100, 5))
+        sample2 = torch.rand((15, 100, 5))
+        rbf = pysiglib.RBFKernel(sigma=1.0)
+        score = pysiglib.expected_sig_score(
+            sample1, sample2,
+            dyadic_order=2,
+            static_kernel=rbf,
+            lead_lag=True,
+            max_batch=8,
+        )
+        print(score)
+
     """
 
     res = sig_score(sample1, sample2, dyadic_order, lam, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch)
@@ -283,6 +320,24 @@ def sig_mmd(
         sample1 = torch.rand((20, 100, 5))
         sample2 = torch.rand((15, 100, 5))
         mmd = pysiglib.sig_mmd(sample1, sample2, dyadic_order=2)
+        print(mmd)
+
+    .. code-block:: python
+
+        # MMD with a static kernel and time augmentation
+        import torch
+        import pysiglib
+
+        sample1 = torch.rand((20, 100, 5))
+        sample2 = torch.rand((15, 100, 5))
+        rbf = pysiglib.RBFKernel(sigma=0.5)
+        mmd = pysiglib.sig_mmd(
+            sample1, sample2,
+            dyadic_order=2,
+            static_kernel=rbf,
+            time_aug=True,
+            max_batch=8,
+        )
         print(mmd)
 
     """

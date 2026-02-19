@@ -109,14 +109,15 @@ def sig_combine_backprop(
         X1 = np.random.uniform(size=(batch_size, length, dimension))
         X2 = np.random.uniform(size=(batch_size, length, dimension))
 
-        sig1 = pysiglib.sig(X1, degree)
-        sig2 = pysiglib.sig(X2, degree)
-        combined = pysiglib.sig_combine(sig1, sig2, dimension, degree)
+        sig1 = pysiglib.sig(X1, degree, time_aug=True)
+        sig2 = pysiglib.sig(X2, degree, time_aug=True)
+        combined = pysiglib.sig_combine(sig1, sig2, dimension, degree, time_aug=True)
 
         derivs = np.ones_like(combined)
-        dsig1, dsig2 = pysiglib.sig_combine_backprop(derivs, sig1, sig2, dimension, degree)
+        dsig1, dsig2 = pysiglib.sig_combine_backprop(
+            derivs, sig1, sig2, dimension, degree, time_aug=True
+        )
         print(dsig1)
-        print(dsig2)
 
     """
     check_type(dimension, "dimension", int)
@@ -243,6 +244,22 @@ def sig_backprop(
         sigs = pysiglib.sig(path, degree)
         sig_derivs = torch.ones_like(sigs)
         path_derivs = pysiglib.sig_backprop(path, sigs, sig_derivs, degree)
+        print(path_derivs)
+
+    .. code-block:: python
+
+        # Backprop with time augmentation and lead-lag
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        degree = 4
+        sigs = pysiglib.sig(path, degree, time_aug=True, lead_lag=True, end_time=2.0)
+        sig_derivs = torch.ones_like(sigs)
+        path_derivs = pysiglib.sig_backprop(
+            path, sigs, sig_derivs, degree,
+            time_aug=True, lead_lag=True, end_time=2.0,
+        )
         print(path_derivs)
 
     """

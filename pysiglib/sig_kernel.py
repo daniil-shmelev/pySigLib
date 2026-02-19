@@ -137,6 +137,38 @@ def sig_kernel(
         k = pysiglib.sig_kernel(path1, path2, dyadic_order=2)
         print(k)
 
+    .. code-block:: python
+
+        # Using an RBF static kernel with time augmentation
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((10, 100, 5))
+        rbf = pysiglib.RBFKernel(sigma=1.0)
+        k = pysiglib.sig_kernel(
+            path1, path2,
+            dyadic_order=2,
+            static_kernel=rbf,
+            time_aug=True,
+        )
+        print(k)
+
+    .. code-block:: python
+
+        # Asymmetric dyadic orders and returning the PDE grid
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((100, 5))
+        path2 = torch.rand((80, 5))
+        grid = pysiglib.sig_kernel(
+            path1, path2,
+            dyadic_order=(2, 3),
+            return_grid=True,
+        )
+        print(grid.shape)
+
     """
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
@@ -289,6 +321,25 @@ def sig_kernel_gram(
         gram = pysiglib.sig_kernel_gram(path1, path2, dyadic_order=2)
         print(gram.shape) # gram has shape (10, 8)
         print(gram)
+
+    .. code-block:: python
+
+        # Gram matrix with a static kernel
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((8, 100, 5))
+        rbf = pysiglib.RBFKernel(sigma=0.5)
+        gram = pysiglib.sig_kernel_gram(
+            path1, path2,
+            dyadic_order=2,
+            static_kernel=rbf,
+            time_aug=True,
+            lead_lag=True,
+            max_batch=4,
+        )
+        print(gram.shape)
 
     """
     # We use sig_kernel for simplicity, rather than directly calling

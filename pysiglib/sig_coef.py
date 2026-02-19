@@ -65,6 +65,23 @@ def extract_sig_coef(
         coefs = pysiglib.extract_sig_coef(sigs, words, dimension=5)
         print(coefs)
 
+    .. code-block:: python
+
+        # Extract coefficients from signatures computed with time_aug and lead_lag
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        sigs = pysiglib.sig(path, degree=4, time_aug=True, lead_lag=True)
+
+        # With lead_lag the dimension doubles (10), and time_aug adds one (11).
+        # Words now index into the augmented dimension.
+        words = [(6,), (10, 9)]
+        coefs = pysiglib.extract_sig_coef(
+            sigs, words, dimension=5, time_aug=True, lead_lag=True
+        )
+        print(coefs)
+
     """
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
@@ -177,12 +194,6 @@ def sig_coef(
         ``pysiglib.extract_sig_coefs``. This function is only faster when a very sparse collection
         of coefficients is required.
 
-    .. note::
-
-        Ideally, any array passed to ``pysiglib.sig_coef`` should be both contiguous and own its data.
-        If this is not the case, ``pysiglib.sig_coef`` will internally create a contiguous copy, which may be
-        inefficient.
-
     Example:
     ---------
 
@@ -194,6 +205,31 @@ def sig_coef(
         path = torch.rand((10, 100, 5))
         words = [(0,), (1,0), (1,2,3)]
         coefs = pysiglib.sig_coef(path, words)
+
+    .. code-block:: python
+
+        # Using prefixes to return all prefix coefficients
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        words = [(4, 3), (1, 2, 3)]
+        coefs = pysiglib.sig_coef(path, words, prefixes=True)
+        # Returns coefficients for (4,), (4,3), (1,), (1,2), and (1,2,3)
+        print(coefs)
+
+    .. code-block:: python
+
+        # Computing specific coefficients with time_aug and lead_lag
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        # With lead_lag the dimension doubles (10), and time_aug adds one (11).
+        # Words now index into the augmented dimension.
+        words = [(6,), (10, 9)]
+        coefs = pysiglib.sig_coef(path, words, lead_lag=True, time_aug=True, end_time=2.0)
+        print(coefs)
 
     """
     check_type(time_aug, "time_aug", bool)

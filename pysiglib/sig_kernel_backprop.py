@@ -167,6 +167,27 @@ def sig_kernel_backprop(
         dpath1, _ = pysiglib.sig_kernel_backprop(derivs, path1, path2, dyadic_order=2)
         print(dpath1)
 
+    .. code-block:: python
+
+        # Backprop with a static kernel and time augmentation
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((10, 100, 5))
+        rbf = pysiglib.RBFKernel(sigma=1.0)
+        k = pysiglib.sig_kernel(
+            path1, path2, dyadic_order=2, static_kernel=rbf, time_aug=True,
+        )
+        derivs = torch.ones_like(k)
+        dpath1, _ = pysiglib.sig_kernel_backprop(
+            derivs, path1, path2,
+            dyadic_order=2,
+            static_kernel=rbf,
+            time_aug=True,
+        )
+        print(dpath1)
+
     """
     check_type(n_jobs, "n_jobs", int)
     if n_jobs == 0:
@@ -328,6 +349,31 @@ def sig_kernel_gram_backprop(
         derivs = torch.ones_like(gram)
         dpath1, _ = pysiglib.sig_kernel_gram_backprop(derivs, path1, path2, dyadic_order=2)
         print(dpath1)
+
+    .. code-block:: python
+
+        # Gram backprop with a static kernel
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((8, 100, 5))
+        rbf = pysiglib.RBFKernel(sigma=0.5)
+        gram = pysiglib.sig_kernel_gram(
+            path1, path2, dyadic_order=2, static_kernel=rbf, time_aug=True,
+        )
+        derivs = torch.ones_like(gram)
+        dpath1, dpath2 = pysiglib.sig_kernel_gram_backprop(
+            derivs, path1, path2,
+            dyadic_order=2,
+            static_kernel=rbf,
+            time_aug=True,
+            left_deriv=True,
+            right_deriv=True,
+            max_batch=4,
+        )
+        print(dpath1)
+        print(dpath2)
 
     """
     # We use sig_kernel_backprop for simplicity, rather than directly calling

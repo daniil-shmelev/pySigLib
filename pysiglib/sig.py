@@ -240,6 +240,23 @@ def sig(
         sigs = pysiglib.sig(path, degree=4)
         print(sigs)
 
+    .. code-block:: python
+
+        # Using time augmentation, lead-lag, and parallel threads
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        sigs = pysiglib.sig(
+            path,
+            degree=4,
+            time_aug=True,
+            lead_lag=True,
+            end_time=2.0,
+            n_jobs=-1,
+        )
+        print(sigs)
+
     """
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")

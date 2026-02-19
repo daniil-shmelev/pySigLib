@@ -58,6 +58,15 @@ def sig_length(
         length = pysiglib.sig_length(3, 4)
         print(length) # 121 (= 1 + 3 + 9 + 27 + 81)
 
+    .. code-block:: python
+
+        # Signature length with time augmentation and lead-lag
+        import pysiglib
+
+        # lead_lag doubles the dimension (6), time_aug adds one (7)
+        length = pysiglib.sig_length(3, 4, time_aug=True, lead_lag=True)
+        print(length)  # 2801
+
     """
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
@@ -115,6 +124,14 @@ def log_sig_length(
         # Length of a truncated log signature for a 3-dimensional path at degree 4
         length = pysiglib.log_sig_length(3, 4)
         print(length) # 32
+
+    .. code-block:: python
+
+        # Log signature length with time augmentation and lead-lag
+        import pysiglib
+
+        length = pysiglib.log_sig_length(3, 4, time_aug=True, lead_lag=True)
+        print(length) # 728
 
     """
     check_type(dimension, "dimension", int)

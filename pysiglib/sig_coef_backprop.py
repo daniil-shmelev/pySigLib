@@ -82,7 +82,9 @@ def sig_coef_backprop(
     Given the derivatives of a scalar function :math:`F` with respect to the
     signature coefficients, :math:`\\partial F / \\partial S(x)^I`, returns the
     derivatives of :math:`F` with respect to the underlying path,
-    :math:`\\partial F / \\partial x`.
+    :math:`\\partial F / \\partial x`. Note that ``coefs`` must be generated using
+    ``pysiglib.sig_coef`` using ``prefixes=True``, and ``derivs`` must be the derivatives
+    with respect to this extended array.
 
     :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
         For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
@@ -91,7 +93,8 @@ def sig_coef_backprop(
     :param words: Multi-indices :math:`I` indexing the signature coefficients, given as a list
         of lists of integers in :math:`[0, d-1]`, where :math:`d` is the dimension of the path(s).
     :type words: tuple[int, ...] | list[tuple[int, ...]]
-    :param coefs: Signature coefficients of the path or batch of paths.
+    :param coefs: Signature coefficients of the path or batch of paths, generated using
+        ``pysiglib.sig_coef`` using ``prefixes=True``.
     :type coefs: numpy.ndarray | torch.tensor
     :param derivs: Derivatives of the scalar function :math:`F` with respect to the signature coefficients,
         :math:`\\partial F / \\partial S(x)^I`. This must be an array of the same shape as the
@@ -111,12 +114,6 @@ def sig_coef_backprop(
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.tensor
 
-    .. note::
-
-        Ideally, any array passed to ``pysiglib.sig_coef_backprop`` should be both contiguous and own its data.
-        If this is not the case, ``pysiglib.sig_coef_backprop`` will internally create a contiguous copy, which may be
-        inefficient.
-
     Example:
     ---------
 
@@ -127,9 +124,26 @@ def sig_coef_backprop(
 
         path = torch.rand((10, 100, 5))
         words = [(0,), (1, 0), (1, 2, 3)]
-        coefs = pysiglib.sig_coef(path, words)
+        # Must generate coefs with prefixes=True for backprop
+        coefs = pysiglib.sig_coef(path, words, prefixes=True)
         derivs = torch.ones_like(coefs)
         path_derivs = pysiglib.sig_coef_backprop(path, words, coefs, derivs)
+        print(path_derivs)
+
+    .. code-block:: python
+
+        # Backprop with time augmentation and lead-lag
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        words = [(0,), (1, 2)]
+        # Must generate coefs with prefixes=True for backprop
+        coefs = pysiglib.sig_coef(path, words, time_aug=True, lead_lag=True, prefixes=True)
+        derivs = torch.ones_like(coefs)
+        path_derivs = pysiglib.sig_coef_backprop(
+            path, words, coefs, derivs, time_aug=True, lead_lag=True,
+        )
         print(path_derivs)
 
     """
