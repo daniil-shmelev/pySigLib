@@ -281,6 +281,151 @@ FORCE_INLINE bool sig_coef_backprop_skip(uint64_t data_dimension, uint64_t pre_t
 }
 
 template<std::floating_point T>
+FORCE_INLINE void uncombine_coefs_(
+	T* coefs,
+	const T* incr,
+	T* buff,
+	uint64_t degree,
+	const T* signed_one_over_fact
+) {
+	// Reconstruct coefs for previous time step using Chen's inverse relation:
+	// S(x_{1:n-1}) = S(x_{1:n}) * S(-x_{n-1:n})
+	//
+	// coefs[i] = coefs[i]
+	//    + sum_{j=0}^{i-1} coefs[j] * prod_{k=j}^{i-1} incr[k] * (-1)^{i-j} / (i-j)!
+	//
+	// Maintain buff[j] = coefs[j] * prod_{k=j}^{i-1} incr[k] incrementally:
+	// at each step i, multiply existing entries by incr[i-1]
+	// and add the new entry buff[i-1] = coefs[i-1] * incr[i-1].
+	// Overwrite coefs in place, using last_coef to hold the original coefs[i-1].
+
+	T last_coef = coefs[0]; // = 1
+	for (uint64_t i = 1; i < degree + 1; ++i) {
+		const T inc = incr[i - 1];
+
+		for (uint64_t j = 0; j < i - 1; ++j) {
+			buff[j] *= inc;
+		}
+
+		buff[i - 1] = last_coef * inc;
+
+		T acc = static_cast<T>(0.);
+		for (uint64_t j = 0; j < i; ++j) {
+			acc += buff[j] * signed_one_over_fact[i - j];
+		}
+		last_coef = coefs[i];
+		coefs[i] += acc;
+	}
+}
+
+template<std::floating_point T>
+FORCE_INLINE void update_path_derivs_(
+	const uint64_t* multi_idx,
+	uint64_t degree,
+	const T* coefs,
+	const T* incr,
+	T* buff,
+	const T* derivs,
+	const T* one_over_fact,
+	uint64_t data_dimension,
+	uint64_t pre_time_aug_dim,
+	bool lead_lag,
+	bool parity,
+	T* pos,
+	T* neg
+) {
+	// Update path derivs
+	// dL / d incr[i] = sum_k (dL / d next_coefs[k]) * (d next_coefs[k] / d incr[i])
+	// where next_coefs are S(x_{1:n})
+	// Then backprop incr derivs -> path derivs.
+
+	// i = 0 case: compute right-growing products on the fly
+	T update;
+	uint64_t idx = multi_idx[0];
+	if (!sig_coef_backprop_skip(data_dimension, pre_time_aug_dim, idx, lead_lag, parity)) {
+		update = derivs[0];
+		T right_prod = static_cast<T>(1.);
+		for (uint64_t m = 1; m < degree; ++m) {
+			right_prod *= incr[m];
+			update += derivs[m] * right_prod * one_over_fact[m + 1];
+		}
+		update *= coefs[0];
+
+		// incr derivs -> path derivs
+		if (lead_lag && parity) {
+			idx -= data_dimension;
+		}
+		pos[idx] += update;
+		neg[idx] -= update;
+	}
+
+	// i >= 1 case: maintain buff[k] = coefs[k] * prod_{l=k+1}^{i} incr[l]
+	// incrementally across iterations of i
+	for (uint64_t i = 1; i < degree; ++i) {
+
+		// Maintain buff incrementally (even when skipping)
+		const T inc = incr[i - 1];
+		for (uint64_t k = 0; k < i - 1; ++k) {
+			buff[k] *= inc;
+		}
+		buff[i - 1] = coefs[i - 1] * inc;
+
+		idx = multi_idx[i];
+		if (!sig_coef_backprop_skip(data_dimension, pre_time_aug_dim, idx, lead_lag, parity)) {
+
+			// Left part: compute s using the incrementally maintained buff
+			T s = coefs[i];
+			for (uint64_t k = 0; k < i; ++k) {
+				s += buff[k] * one_over_fact[i - k + 1];
+			}
+			update = derivs[i] * s;
+
+			// Right part: compute right-growing products on the fly
+			T right_prod = static_cast<T>(1.);
+			for (uint64_t m = i + 1; m < degree; ++m) {
+				right_prod *= incr[m];
+				s = coefs[i] * one_over_fact[m - i + 1];
+				for (uint64_t k = 0; k < i; ++k) {
+					s += buff[k] * one_over_fact[m - k + 1];
+				}
+				s *= right_prod;
+				update += derivs[m] * s;
+			}
+
+			// incr derivs -> path derivs
+			if (lead_lag && parity) {
+				idx -= data_dimension;
+			}
+			pos[idx] += update;
+			neg[idx] -= update;
+		}
+	}
+}
+
+template<std::floating_point T>
+FORCE_INLINE void update_coef_derivs_(
+	T* derivs,
+	const T* incr,
+	uint64_t degree,
+	const T* one_over_fact
+) {
+	// Update sig coef derivs (derivs[i] = dL / d coefs[i])
+	// dL / d coefs[i] += sum_{k=i+1}^{degree-1} derivs[k] * prod_{l=i+1}^{k} incr[l] / (k-i)!
+	//
+	// Compute right-growing products prod_{l=i+1}^{k} incr[l] on the fly.
+
+	for (uint64_t i = 0; i < degree - 1; ++i) {
+		T acc = static_cast<T>(0.);
+		T right_prod = static_cast<T>(1.);
+		for (uint64_t k = i + 1; k < degree; ++k) {
+			right_prod *= incr[k];
+			acc += derivs[k] * right_prod * one_over_fact[k - i];
+		}
+		derivs[i] += acc;
+	}
+}
+
+template<std::floating_point T>
 FORCE_INLINE void single_sig_coef_backprop_(
 	const Path<T>& path,
 	T* out, // Should be zeroed
@@ -308,128 +453,18 @@ FORCE_INLINE void single_sig_coef_backprop_(
 
 	for (; next_pt != first_pt; --next_pt, --prev_pt, parity = !parity) {
 
-		/////////////////////////////////////////////////////////////////////////
 		// Populate incr
-		/////////////////////////////////////////////////////////////////////////
 		for (uint64_t i = 0; i < degree; ++i) {
 			const uint64_t idx = multi_idx[i];
 			incr[i] = next_pt[idx] - prev_pt[idx];
 		}
 
-		/////////////////////////////////////////////////////////////////////////
-		// Reconstruct coefs for previous time step using Chen's inverse relation:
-		// S(x_{1:n-1}) = S(x_{1:n}) * S(-x_{n-1:n})
-		//
-		// coefs[i] = coefs[i]
-		//    + sum_{j=0}^{i-1} coefs[j] * prod_{k=j}^{i-1} incr[k] * (-1)^{i-j} / (i-j)!
-		//
-		// Maintain buff[j] = coefs[j] * prod_{k=j}^{i-1} incr[k] incrementally:
-		// at each step i, multiply existing entries by incr[i-1]
-		// and add the new entry buff[i-1] = coefs[i-1] * incr[i-1].
-		// Overwrite coefs in place, using last_coef to hold the original coefs[i-1].
-		/////////////////////////////////////////////////////////////////////////
-		T last_coef = coefs[0]; // = 1
-		for (uint64_t i = 1; i < degree + 1; ++i) {
-			const T inc = incr[i - 1];
+		uncombine_coefs_(coefs, incr, buff, degree, signed_one_over_fact);
 
-			for (uint64_t j = 0; j < i - 1; ++j) {
-				buff[j] *= inc;
-			}
+		update_path_derivs_(multi_idx, degree, coefs, incr, buff, derivs, one_over_fact,
+			data_dimension, pre_time_aug_dim, lead_lag, parity, pos, neg);
 
-			buff[i - 1] = last_coef * inc;
-
-			T acc = static_cast<T>(0.);
-			for (uint64_t j = 0; j < i; ++j) {
-				acc += buff[j] * signed_one_over_fact[i - j];
-			}
-			last_coef = coefs[i];
-			coefs[i] += acc;
-		}
-
-		/////////////////////////////////////////////////////////////////////////
-		// Update path derivs
-		// dL / d incr[i] = sum_k (dL / d next_coefs[k]) * (d next_coefs[k] / d incr[i])
-		// where next_coefs are S(x_{1:n})
-		// Then backprop incr derivs -> path derivs.
-		/////////////////////////////////////////////////////////////////////////
-
-		// i = 0 case: compute right-growing products on the fly
-		T update;
-		uint64_t idx = multi_idx[0];
-		if (!sig_coef_backprop_skip(data_dimension, pre_time_aug_dim, idx, lead_lag, parity)) {
-			update = derivs[0];
-			T right_prod = static_cast<T>(1.);
-			for (uint64_t m = 1; m < degree; ++m) {
-				right_prod *= incr[m];
-				update += derivs[m] * right_prod * one_over_fact[m + 1];
-			}
-			update *= coefs[0];
-
-			// incr derivs -> path derivs
-			if (lead_lag && parity) {
-				idx -= data_dimension;
-			}
-			pos[idx] += update;
-			neg[idx] -= update;
-		}
-
-		// i >= 1 case: maintain buff[k] = coefs[k] * prod_{l=k+1}^{i} incr[l]
-		// incrementally across iterations of i
-		for (uint64_t i = 1; i < degree; ++i) {
-
-			// Maintain buff incrementally (even when skipping)
-			const T inc = incr[i - 1];
-			for (uint64_t k = 0; k < i - 1; ++k) {
-				buff[k] *= inc;
-			}
-			buff[i - 1] = coefs[i - 1] * inc;
-
-			idx = multi_idx[i];
-			if (!sig_coef_backprop_skip(data_dimension, pre_time_aug_dim, idx, lead_lag, parity)) {
-
-				// Left part: compute s using the incrementally maintained buff
-				T s = coefs[i];
-				for (uint64_t k = 0; k < i; ++k) {
-					s += buff[k] * one_over_fact[i - k + 1];
-				}
-				update = derivs[i] * s;
-
-				// Right part: compute right-growing products on the fly
-				T right_prod = static_cast<T>(1.);
-				for (uint64_t m = i + 1; m < degree; ++m) {
-					right_prod *= incr[m];
-					s = coefs[i] * one_over_fact[m - i + 1];
-					for (uint64_t k = 0; k < i; ++k) {
-						s += buff[k] * one_over_fact[m - k + 1];
-					}
-					s *= right_prod;
-					update += derivs[m] * s;
-				}
-
-				// incr derivs -> path derivs
-				if (lead_lag && parity) {
-					idx -= data_dimension;
-				}
-				pos[idx] += update;
-				neg[idx] -= update;
-			}
-		}
-
-		/////////////////////////////////////////////////////////////////////////
-		// Update sig coef derivs (derivs[i] = dL / d coefs[i])
-		// dL / d coefs[i] += sum_{k=i+1}^{degree-1} derivs[k] * prod_{l=i+1}^{k} incr[l] / (k-i)!
-		//
-		// Compute right-growing products prod_{l=i+1}^{k} incr[l] on the fly.
-		/////////////////////////////////////////////////////////////////////////
-		for (uint64_t i = 0; i < degree - 1; ++i) {
-			T acc = static_cast<T>(0.);
-			T right_prod = static_cast<T>(1.);
-			for (uint64_t k = i + 1; k < degree; ++k) {
-				right_prod *= incr[k];
-				acc += derivs[k] * right_prod * one_over_fact[k - i];
-			}
-			derivs[i] += acc;
-		}
+		update_coef_derivs_(derivs, incr, degree, one_over_fact);
 
 		if (!lead_lag || parity) {
 			pos -= data_dimension;
