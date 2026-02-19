@@ -249,8 +249,8 @@ def sig_kernel_backprop(
     rd = static_kernel.grad_y(ctx, gram_derivs) if right_deriv else None
 
     if lead_lag or time_aug:
-        ld = transform_path_backprop(ld, time_aug, lead_lag, end_time, n_jobs)
-        rd = transform_path_backprop(rd, time_aug, lead_lag, end_time, n_jobs)
+        ld = transform_path_backprop(ld, time_aug, lead_lag, end_time, n_jobs) if left_deriv else None
+        rd = transform_path_backprop(rd, time_aug, lead_lag, end_time, n_jobs) if right_deriv else None
 
     if data.type_ == "numpy":
         ld = ld.numpy()

@@ -157,7 +157,14 @@ def sig_coef_backprop(
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     words = check_word_or_word_list(words, data.dimension, "word")
 
-    deriv_data = MultipleSigInputHandler([coefs, derivs], coefs.shape[-1], ["coef", "deriv"])
+    coefs_len = 0
+    for idx in words:
+        coefs_len += len(idx) if idx else 1
+
+    if coefs.shape[-1] != coefs_len:
+        raise ValueError("Expected coefs.shape[-1] == " + str(coefs_len) + ". Please make sure coefs was generated using prefixes=True.")
+
+    deriv_data = MultipleSigInputHandler([coefs, derivs], coefs_len, ["coef", "deriv"])
 
     num_multi_indices = len(words)
     degrees = [len(idx) for idx in words]
