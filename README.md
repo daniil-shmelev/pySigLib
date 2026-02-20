@@ -14,7 +14,7 @@
 ![CI - Test](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml/badge.svg)
 [![codecov](https://codecov.io/gh/daniil-shmelev/pySigLib/graph/badge.svg?token=8W0JXOSIC7)](https://codecov.io/gh/daniil-shmelev/pySigLib)
 ![Read the Docs](https://img.shields.io/readthedocs/pySigLib)
-![GitHub License](https://img.shields.io/github/license/daniil-shmelev/pySigLib)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 
 ## Installation
@@ -64,6 +64,21 @@ import pysiglib
 
 X = np.random.uniform(size=(32, 1000, 10))
 s = pysiglib.sig(X, degree = 5)
+```
+
+### Signature Coefficients
+
+In addition to truncated signatures, pySigLib allows for the computation of individual
+signature coefficients through the `pysiglib.sig_coef` function, which takes as input
+a path or batch of paths `X` and a word or list of words indexing the coefficients.</p>
+
+```python
+import numpy as np
+import pysiglib
+
+path = np.random.uniform(size=(32, 1000, 5))
+words = [(0,), (1,0), (1,2,4)]
+coefs = pysiglib.sig_coef(path, words)
 ```
 
 ### Log Signatures
