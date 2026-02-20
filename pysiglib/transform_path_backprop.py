@@ -122,6 +122,7 @@ def transform_path_backprop(
     :return: Derivatives with respect to the original path,
         :math:`\\{\\partial F / x_{t_i}\\}_{i=0}^L`.
     :rtype: numpy.ndarray | torch.tensor
+
     Example:
     ---------
 
