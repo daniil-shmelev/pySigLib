@@ -29,7 +29,7 @@ from .dtypes import CPSIG_BATCH_SIG_KERNEL_BACKPROP, DTYPES, CUSIG_BATCH_SIG_KER
 from .data_handlers import MultiplePathInputHandler, ScalarInputHandler, GridOutputHandler, PathInputHandler
 from .static_kernels import StaticKernel, LinearKernel, Context
 
-def sig_kernel_backprop_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, n_jobs):
+def sig_kernel_backprop_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
 
     err_code = CPSIG_BATCH_SIG_KERNEL_BACKPROP[data.dtype](
         cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]])),
@@ -42,11 +42,12 @@ def sig_kernel_backprop_(data, derivs_data, result, gram, k_grid_data, dyadic_or
         data.length[1],
         dyadic_order_1,
         dyadic_order_2,
+        return_grid,
         n_jobs
     )
 
     if err_code:
-        raise Exception("Error in pysiglib.sig_kernel_backprop: " + err_msg(err_code))#
+        raise Exception("Error in pysiglib.sig_kernel_backprop: " + err_msg(err_code))
 
 def sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2):
     err_code = CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA[data.dtype](
@@ -72,14 +73,17 @@ def gram_deriv(
         k_grid_data : Union[np.ndarray, torch.tensor],
         dyadic_order_1,
         dyadic_order_2,
+        return_grid : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
 
     result = GridOutputHandler(data.length[0] - 1, data.length[1] - 1, derivs_data) #Derivatives with respect to gram matrix
 
     if data.device == "cpu":
-        sig_kernel_backprop_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, n_jobs)
+        sig_kernel_backprop_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
     else:
+        if return_grid:
+            raise NotImplementedError("Grid backpropagation is not yet supported on CUDA. Please move data to CPU.")
         if not BUILT_WITH_CUDA:
             raise RuntimeError("pySigLib was built without CUDA - data must be moved to CPU.")
         sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2)
@@ -98,6 +102,7 @@ def sig_kernel_backprop(
         left_deriv : bool = True,
         right_deriv : bool = False,
         k_grid : Union[np.ndarray, torch.tensor] = None,
+        return_grid: bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.tensor, torch.tensor]]:
     """
@@ -140,6 +145,8 @@ def sig_kernel_backprop(
     :type right_deriv: bool
     :param k_grid: Signature kernel PDE grid. If ``None``, the grid will be recomputed.
     :type k_grid: numpy.ndarray | torch.tensor
+    :param return_grid: TODO
+    :type return_grid: TODO
     :param n_jobs: (Only applicable to CPU computation) Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
@@ -216,11 +223,15 @@ def sig_kernel_backprop(
     data = MultiplePathInputHandler([path1, path2], False, False, end_time, ["path1", "path2"])
 
     derivs = torch.as_tensor(derivs)
-    derivs_data = ScalarInputHandler(derivs, data.is_batch, "derivs")
+
+    if return_grid:
+        derivs_data = PathInputHandler(derivs, False, False, 0., "derivs")
+    else:
+        derivs_data = ScalarInputHandler(derivs, data.is_batch, "derivs")
 
     if not (derivs_data.type_ == data.type_ and derivs_data.device == data.device):
         raise ValueError("derivs, path1 and path2 must all be numpy arrays or all torch tensors on the same device")
-    if data.batch_size != derivs_data.batch_size:
+    if not return_grid and data.batch_size != derivs_data.batch_size:
         raise ValueError("batch size for derivs does not match batch size of paths")
 
     torch_path1 = torch.as_tensor(data.path[0])  # Avoids data copy
@@ -243,7 +254,8 @@ def sig_kernel_backprop(
     gram = static_kernel(ctx, torch_path1, torch_path2).squeeze()
 
     k_grid_data = PathInputHandler(k_grid, False, False, 0., "k_grid")
-    gram_derivs = gram_deriv(derivs_data, data, gram, k_grid_data, dyadic_order_1, dyadic_order_2, n_jobs)
+
+    gram_derivs = gram_deriv(derivs_data, data, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
 
     ld = static_kernel.grad_x(ctx, gram_derivs) if left_deriv else None
     rd = static_kernel.grad_y(ctx, gram_derivs) if right_deriv else None
@@ -430,7 +442,7 @@ def sig_kernel_gram_backprop(
 
             derivs_ = derivs[i:i + batch1_, j:j + batch2_].flatten().contiguous().clone()
 
-            ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k, n_jobs)
+            ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k, False, n_jobs)
 
             if left_deriv:
                 ld_ = ld_.reshape((batch1_, batch2_) + ld_.shape[1:])

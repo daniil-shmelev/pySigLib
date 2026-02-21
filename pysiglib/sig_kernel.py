@@ -66,8 +66,8 @@ def sig_kernel(
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
-        n_jobs : int = 1,
-        return_grid = False
+        return_grid: bool = False,
+        n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
     Computes a single signature kernel or a batch of signature kernels.
@@ -114,13 +114,13 @@ def sig_kernel(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
+    :param return_grid: If ``True``, returns the entire PDE grid.
+    :type return_grid: bool
     :param n_jobs: (Only applicable to CPU computation) Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param return_grid: If ``True``, returns the entire PDE grid.
-    :type return_grid: bool
     :return: Single signature kernel or batch of signature kernels
     :rtype: numpy.ndarray | torch.tensor
 
@@ -383,7 +383,7 @@ def sig_kernel_gram(
             path1_ = path1[i:i + batch1_, :, :].repeat_interleave(batch2_, 0).contiguous().clone()
             path2_ = path2[j:j + batch2_, :, :].repeat(batch1_, 1, 1).contiguous().clone()
 
-            k = sig_kernel(path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
+            k = sig_kernel(path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, return_grid, n_jobs)
             k = k.reshape((batch1_, batch2_) + k.shape[1:])
             res[-1].append(k)
 
