@@ -124,9 +124,9 @@ def sig_kernel_backprop(
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
-    :param time_aug: If ``True``, assumes the paths were time augmented.
+    :param time_aug: Whether the signature kernels were computed with ``time_aug=True``.
     :type time_aug: bool
-    :param lead_lag: If ``True``, assumes the lead-lag transform was applied.
+    :param lead_lag: Whether the signature kernels were computed with ``lead_lag=True``.
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
@@ -151,6 +151,42 @@ def sig_kernel_backprop(
         it is ``None``. Similarly for ``right_deriv`` and
         :math:`\\{\\partial F / y_{t_i}\\}_{i=0}^{L_2}`.
     :rtype: numpy.ndarray | torch.tensor | Tuple[numpy.ndarray | numpy.ndarray] | Tuple[torch.tensor | torch.tensor]
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((10, 100, 5))
+        k = pysiglib.sig_kernel(path1, path2, dyadic_order=2)
+        derivs = torch.ones_like(k)
+        dpath1, _ = pysiglib.sig_kernel_backprop(derivs, path1, path2, dyadic_order=2)
+        print(dpath1)
+
+    .. code-block:: python
+
+        # Backprop with a static kernel and time augmentation
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((10, 100, 5))
+        rbf = pysiglib.RBFKernel(sigma=1.0)
+        k = pysiglib.sig_kernel(
+            path1, path2, dyadic_order=2, static_kernel=rbf, time_aug=True,
+        )
+        derivs = torch.ones_like(k)
+        dpath1, _ = pysiglib.sig_kernel_backprop(
+            derivs, path1, path2,
+            dyadic_order=2,
+            static_kernel=rbf,
+            time_aug=True,
+        )
+        print(dpath1)
 
     """
     check_type(n_jobs, "n_jobs", int)
@@ -213,8 +249,8 @@ def sig_kernel_backprop(
     rd = static_kernel.grad_y(ctx, gram_derivs) if right_deriv else None
 
     if lead_lag or time_aug:
-        ld = transform_path_backprop(ld, time_aug, lead_lag, end_time, n_jobs)
-        rd = transform_path_backprop(rd, time_aug, lead_lag, end_time, n_jobs)
+        ld = transform_path_backprop(ld, time_aug, lead_lag, end_time, n_jobs) if left_deriv else None
+        rd = transform_path_backprop(rd, time_aug, lead_lag, end_time, n_jobs) if right_deriv else None
 
     if data.type_ == "numpy":
         ld = ld.numpy()
@@ -298,6 +334,46 @@ def sig_kernel_gram_backprop(
 
         When called via ``pysiglib.torch_api``, the default behaviour is to pass ``k_grid = None`` and reconstruct the
         PDE grids. This is done to avoid memory allocation issues for large batch sizes.
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((8, 100, 5))
+        gram = pysiglib.sig_kernel_gram(path1, path2, dyadic_order=2)
+        derivs = torch.ones_like(gram)
+        dpath1, _ = pysiglib.sig_kernel_gram_backprop(derivs, path1, path2, dyadic_order=2)
+        print(dpath1)
+
+    .. code-block:: python
+
+        # Gram backprop with a static kernel
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((10, 100, 5))
+        path2 = torch.rand((8, 100, 5))
+        rbf = pysiglib.RBFKernel(sigma=0.5)
+        gram = pysiglib.sig_kernel_gram(
+            path1, path2, dyadic_order=2, static_kernel=rbf, time_aug=True,
+        )
+        derivs = torch.ones_like(gram)
+        dpath1, dpath2 = pysiglib.sig_kernel_gram_backprop(
+            derivs, path1, path2,
+            dyadic_order=2,
+            static_kernel=rbf,
+            time_aug=True,
+            left_deriv=True,
+            right_deriv=True,
+            max_batch=4,
+        )
+        print(dpath1)
+        print(dpath2)
 
     """
     # We use sig_kernel_backprop for simplicity, rather than directly calling

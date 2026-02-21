@@ -51,9 +51,11 @@ int main(int argc, char* argv[])
     //example_sig_backprop_d();
 
     //example_signature_d(6, 8, false, false, true, 5);
-    example_sig_to_log_sig_d(6, 8, false, false, 0, 50);
-    example_sig_to_log_sig_d(6, 8, false, false, 1, 50);
-    example_sig_to_log_sig_d(6, 8, false, false, 2, 50);
+    //example_sig_to_log_sig_d(6, 8, false, false, 0, 50);
+    //example_sig_to_log_sig_d(6, 8, false, false, 1, 50);
+    //example_sig_to_log_sig_d(6, 8, false, false, 2, 50);
+
+    example_batch_sig_coef();
 
     unload_cpsig();
     unload_cusig();

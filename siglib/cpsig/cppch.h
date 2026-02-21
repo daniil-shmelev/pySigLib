@@ -36,6 +36,7 @@
 #include <thread>
 #include <functional>
 #include <concepts>
+#include <variant>
 #include <set>
 #include <map>
 #include <unordered_set>

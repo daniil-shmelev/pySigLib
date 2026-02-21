@@ -403,6 +403,76 @@ CPSIG.batch_sig_combine_backprop_d.argtypes = (
 CPSIG.batch_sig_combine_backprop_d.restype = c_int
 
 ######################################################
+# sig_coef
+######################################################
+
+CPSIG.sig_coef_f.argtypes = (
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_uint64),
+    c_uint64,
+    POINTER(c_uint64),
+    c_uint64,
+    c_uint64,
+    c_bool,
+    c_bool,
+    c_float,
+    c_bool
+)
+CPSIG.sig_coef_f.restype = c_int
+
+CPSIG.sig_coef_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_uint64),
+    c_uint64,
+    POINTER(c_uint64),
+    c_uint64,
+    c_uint64,
+    c_bool,
+    c_bool,
+    c_double,
+    c_bool
+)
+CPSIG.sig_coef_d.restype = c_int
+
+######################################################
+# sig_coef_backprop
+######################################################
+
+CPSIG.sig_coef_backprop_f.argtypes = (
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_uint64),
+    c_uint64,
+    POINTER(c_uint64),
+    c_uint64,
+    c_uint64,
+    c_bool,
+    c_bool,
+    c_float
+)
+CPSIG.sig_coef_backprop_f.restype = c_int
+
+CPSIG.sig_coef_backprop_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_uint64),
+    c_uint64,
+    POINTER(c_uint64),
+    c_uint64,
+    c_uint64,
+    c_bool,
+    c_bool,
+    c_double
+)
+CPSIG.sig_coef_backprop_d.restype = c_int
+
+######################################################
 # signature
 ######################################################
 
@@ -463,6 +533,84 @@ CPSIG.sig_backprop_d.argtypes = (
     c_double
 )
 CPSIG.sig_backprop_d.restype = c_int
+
+######################################################
+# batch_sig_coef
+######################################################
+
+CPSIG.batch_sig_coef_f.argtypes = (
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_uint64),
+    c_uint64,
+    POINTER(c_uint64),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_bool,
+    c_bool,
+    c_float,
+    c_bool,
+    c_int
+)
+CPSIG.batch_sig_coef_f.restype = c_int
+
+CPSIG.batch_sig_coef_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_uint64),
+    c_uint64,
+    POINTER(c_uint64),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_bool,
+    c_bool,
+    c_double,
+    c_bool,
+    c_int
+)
+CPSIG.batch_sig_coef_d.restype = c_int
+
+######################################################
+# batch_sig_coef_backprop
+######################################################
+
+CPSIG.batch_sig_coef_backprop_f.argtypes = (
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_uint64),
+    c_uint64,
+    POINTER(c_uint64),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_bool,
+    c_bool,
+    c_float,
+    c_int
+)
+CPSIG.batch_sig_coef_backprop_f.restype = c_int
+
+CPSIG.batch_sig_coef_backprop_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_uint64),
+    c_uint64,
+    POINTER(c_uint64),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_bool,
+    c_bool,
+    c_double,
+    c_int
+)
+CPSIG.batch_sig_coef_backprop_d.restype = c_int
 
 ######################################################
 # batch_signature

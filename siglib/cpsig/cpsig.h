@@ -47,7 +47,7 @@ extern "C" {
 	*
 	* @param data_in Pointer to input path data (row-major), size = `length * dimension`.
 	* @param data_out Pointer to output buffer (row-major, preallocated), size = `transformed_length * transformed_dimension`, where
-	*					`transformed_length = lead_lag ? length_ * 2 - 1` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
+	*					`transformed_length = lead_lag ? length * 2 - 1 : length` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
 	* @param dimension Dimension of the path.
 	* @param length Length of the path.
 	* @param time_aug Whether to add time augmentation (default = false).
@@ -70,7 +70,7 @@ extern "C" {
 	*
 	* @param data_in Pointer to input path data (row-major), size = `batch_size * length * dimension`.
 	* @param data_out Pointer to output buffer (row-major, preallocated), size = `batch_size * transformed_length * transformed_dimension`, where
-	*					`transformed_length = lead_lag ? length_ * 2 - 1` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
+	*					`transformed_length = lead_lag ? length * 2 - 1 : length` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
 	* @param batch_size Batch size of the paths.
 	* @param dimension Dimension of the paths.
 	* @param length Length of the paths.
@@ -96,7 +96,7 @@ extern "C" {
 	*
 	*
 	* @param derivs Pointer to derivatives with respect to transformed path (row-major), size = `transformed_length * transformed_dimension`, where
-	*					`transformed_length = lead_lag ? length_ * 2 - 1` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
+	*					`transformed_length = lead_lag ? length * 2 - 1 : length` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
 	* @param data_out Pointer to output buffer (row-major, preallocated), size = `length * dimension`.
 	* @param dimension Dimension of the original (pre-transformation) path.
 	* @param length Length of the original (pre-transformation) path.
@@ -119,7 +119,7 @@ extern "C" {
 	*
 	*
 	* @param derivs Pointer to derivatives with respect to transformed path (row-major), size = `batch_size * transformed_length * transformed_dimension`, where
-	*					`transformed_length = lead_lag ? length_ * 2 - 1` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
+	*					`transformed_length = lead_lag ? length * 2 - 1 : length` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
 	* @param data_out Pointer to output buffer (row-major, preallocated), size = `batch_size * length * dimension`.
 	* @param batch_size Batch size of the paths.
 	* @param dimension Dimension of the original (pre-transformation) paths.
@@ -240,6 +240,120 @@ extern "C" {
 	CPSIG_API int batch_sig_combine_backprop_d(const double* sig_combined_derivs, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
+	/** @defgroup sig_coef_functions Signature coefficient functions
+	* @{
+	*/
+
+	/**
+	* @brief For a path of type float, computes coefficients of its signature.
+	*
+	*
+	* @param path Pointer to path data (row-major), size = `length * dimension`.
+	* @param out Pointer to output buffer (preallocated), size = `prefixes ? sum(max(degrees[i], 1)) : num_multi_idx`.
+	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
+	* @param num_multi_idx Number of multi indices.
+	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @param time_aug Whether to add time augmentation (default = false).
+	* @param lead_lag Whether to apply lead-lag transform (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @param prefixes If `true`, will additionally return coefficients for all prefixes of words (default = false).
+	* @return Status code (0 = success).
+	*/
+	CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false) noexcept;
+	/** @brief */
+	CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_coef_functions Batch signature coefficient functions
+	* @{
+	*/
+
+	/**
+	* @brief For a batch of paths of type float, computes coefficients of their signatures.
+	*
+	*
+	* @param path Pointer to path data (row-major), size = `batch_size * length * dimension`.
+	* @param out Pointer to output buffer (preallocated), size = `batch_size * (prefixes ? sum(max(degrees[i], 1)) : num_multi_idx)`.
+	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
+	* @param num_multi_idx Number of multi indices.
+	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @param time_aug Whether to add time augmentation (default = false).
+	* @param lead_lag Whether to apply lead-lag transform (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @param prefixes If `true`, will additionally return coefficients for all prefixes of words (default = false).
+	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
+	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
+	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @return Status code (0 = success).
+	*/
+	CPSIG_API int batch_sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
+	/** @brief */
+	CPSIG_API int batch_sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
+	/** @} */
+
+	/** @defgroup sig_coef_backprop_functions Signature coefficient backprop functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagation through the sig_coef functions
+	*
+	*
+	* @param path Pointer to path data (row-major), size = `length * dimension`.
+	* @param out Pointer to output buffer (preallocated), size = `length * dimension`.
+	* @param coefs Pointer to coefficients computed using `sig_coef` with `prefixes=true`, size = `sum(degrees[i])`.
+	* @param derivs Pointer to derivatives with respect to coefficients,  size = `sum(degrees[i])`.
+	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
+	* @param num_multi_idx Number of multi indices.
+	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @param time_aug Whether time augmentation was applied (default = false).
+	* @param lead_lag Whether the lead-lag transform was applied (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @return Status code (0 = success).
+	*/
+	CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1.) noexcept;
+	/** @brief */
+	CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_coef_backprop_functions Batch signature coefficient backprop functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagation through the batch_sig_coef functions
+	*
+	*
+	* @param path Pointer to path data (row-major), size = `batch_size * length * dimension`.
+	* @param out Pointer to output buffer (preallocated), size = `batch_size * length * dimension`.
+	* @param coefs Pointer to coefficients computed using `sig_coef` with `prefixes=true`, size = `batch_size * sum(degrees[i])`.
+	* @param derivs Pointer to derivatives with respect to coefficients,  size = `batch_size * sum(degrees[i])`.
+	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
+	* @param num_multi_idx Number of multi indices.
+	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @param time_aug Whether time augmentation was applied (default = false).
+	* @param lead_lag Whether the lead-lag transform was applied (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
+	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
+	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @return Status code (0 = success).
+	*/
+	CPSIG_API int batch_sig_coef_backprop_f(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
+	/** @brief */
+	CPSIG_API int batch_sig_coef_backprop_d(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
+	/** @} */
+
 	/** @defgroup signature_functions Signature functions
 	* @{
 	*/
@@ -268,7 +382,7 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Computes the signature of a path of type float.
+	* @brief Computes the signatures of a batch of paths of type float.
 	* @param path Pointer to path batch data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * sig_length(dimension, degree)`.
 	* @param batch_size Batch size of the paths.
@@ -298,7 +412,7 @@ extern "C" {
 	* @brief Backpropagation through the signature_f function.
 	* 
 	* @param path Pointer to path data (row-major), size = `length * dimension`.
-	* @param out Pointer to output buffer (preallocated), size = `sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (preallocated), size = `length * dimension`.
 	* @param sig_derivs Pointer to derivatives with respect to the signature, size = `sig_length(dimension, degree)`.
 	* @param sig Pointer to signature of the path (precomputed), size = `sig_length(dimension, degree)`.
 	* @param dimension Dimension of the path.
@@ -323,7 +437,7 @@ extern "C" {
 	* @brief Backpropagation through the batch_signature_f function.
 	*
 	* @param path Pointer to path batch data (row-major), size = `batch_size * length * dimension`.
-	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * length * dimension`.
 	* @param sig_derivs Pointer to derivatives with respect to the signatures (row-major), size = `batch_size * sig_length(dimension, degree)`.
 	* @param sig Pointer to signatures of the paths (row-major, precomputed), size = `batch_size * sig_length(dimension, degree)`.
 	* @param batch_size Batch size of the paths.
@@ -414,6 +528,7 @@ extern "C" {
 	* @brief Converts a batch of signatures to log signatures using the specified method.
 	* @param sig Pointer to batch of signatures (row-major), size = `batch_size * sig_length(dimension, degree)`.
 	* @param out Pointer to output buffer (preallocated), size = `batch_size * (method ? log_sig_length(dimension, degree) : sig_length(dimension, degree))`.
+	* @param batch_size Batch size.
 	* @param dimension Dimension of the paths.
 	* @param degree Truncation degree of the (log) signatures.
 	* @param time_aug Whether time augmentation was used for the signature computations (default = false).

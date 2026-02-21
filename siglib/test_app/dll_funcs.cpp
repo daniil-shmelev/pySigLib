@@ -166,6 +166,12 @@ sig_backprop_d_fn sig_backprop_d = nullptr;
 sig_kernel_cuda_d_fn sig_kernel_cuda_d = nullptr;
 batch_sig_kernel_cuda_d_fn batch_sig_kernel_cuda_d = nullptr;
 
+sig_coef_d_fn sig_coef_d = nullptr;
+batch_sig_coef_d_fn batch_sig_coef_d = nullptr;
+
+sig_coef_backprop_d_fn sig_coef_backprop_d = nullptr;
+batch_sig_coef_backprop_d_fn batch_sig_coef_backprop_d = nullptr;
+
 sig_kernel_backprop_d_fn sig_kernel_backprop_d = nullptr;
 batch_sig_kernel_backprop_d_fn batch_sig_kernel_backprop_d = nullptr;
 
@@ -199,6 +205,10 @@ void get_cpsig_fn_ptrs()
     GET_FN(set_cache_dir, cpsig);
     GET_FN(clear_cache, cpsig);
     GET_FN(sig_to_log_sig_d, cpsig);
+    GET_FN(sig_coef_d, cpsig);
+    GET_FN(batch_sig_coef_d, cpsig);
+    GET_FN(sig_coef_backprop_d, cpsig);
+    GET_FN(batch_sig_coef_backprop_d, cpsig);
 }
 
 void get_cusig_fn_ptrs()

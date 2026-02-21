@@ -107,6 +107,27 @@ def sig_to_log_sig_backprop(
         :math:`\\partial F / \\partial S(x)`.
         This is an array of the same shape as the provided signature(s).
     :rtype: numpy.ndarray | torch.tensor
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        batch, length, dimension, degree = 10, 100, 5, 4
+        pysiglib.prepare_log_sig(dimension, degree, time_aug=True, method=1)
+
+        path = torch.rand((batch, length, dimension))
+        sigs = pysiglib.sig(path, degree, time_aug=True)
+        log_sigs = pysiglib.sig_to_log_sig(sigs, dimension, degree, time_aug=True, method=1)
+        log_sig_derivs = torch.ones_like(log_sigs)
+        sig_derivs = pysiglib.sig_to_log_sig_backprop(
+            sigs, log_sig_derivs, dimension, degree,
+            time_aug=True, method=1,
+        )
+        print(sig_derivs)
     """
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")

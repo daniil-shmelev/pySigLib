@@ -97,6 +97,28 @@ def sig_combine_backprop(
     :return: Derivatives with respect to ``sig1`` and ``sig2``
     :rtype: Tuple[numpy.ndarray | torch.tensor, numpy.ndarray | torch.tensor]
 
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import numpy as np
+        import pysiglib
+
+        batch_size, length, dimension, degree = 10, 100, 5, 3
+        X1 = np.random.uniform(size=(batch_size, length, dimension))
+        X2 = np.random.uniform(size=(batch_size, length, dimension))
+
+        sig1 = pysiglib.sig(X1, degree, time_aug=True)
+        sig2 = pysiglib.sig(X2, degree, time_aug=True)
+        combined = pysiglib.sig_combine(sig1, sig2, dimension, degree, time_aug=True)
+
+        derivs = np.ones_like(combined)
+        dsig1, dsig2 = pysiglib.sig_combine_backprop(
+            derivs, sig1, sig2, dimension, degree, time_aug=True
+        )
+        print(dsig1)
+
     """
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
@@ -199,17 +221,46 @@ def sig_backprop(
     :type sig_derivs: numpy.ndarray | torch.tensor
     :param degree: The truncation level of the signature, :math:`N`.
     :type degree: int
-    :param time_aug: If set to True, will compute the signature of the time-augmented path, :math:`\\hat{x}_t := (t, x_t)`,
-        defined as the original path with an extra channel set to time, :math:`t`. This channel spans :math:`[0, t_L]`,
-        where :math:`t_L` is given by the parameter ``end_time``.
+    :param time_aug: Whether the signatures were computed with ``time_aug=True``.
     :type time_aug: bool
-    :param lead_lag: If set to True, will compute the signature of the path after applying the lead-lag transformation.
+    :param lead_lag: Whether the signatures were computed with ``lead_lag=True``.
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.tensor
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        degree = 4
+        sigs = pysiglib.sig(path, degree)
+        sig_derivs = torch.ones_like(sigs)
+        path_derivs = pysiglib.sig_backprop(path, sigs, sig_derivs, degree)
+        print(path_derivs)
+
+    .. code-block:: python
+
+        # Backprop with time augmentation and lead-lag
+        import torch
+        import pysiglib
+
+        path = torch.rand((10, 100, 5))
+        degree = 4
+        sigs = pysiglib.sig(path, degree, time_aug=True, lead_lag=True, end_time=2.0)
+        sig_derivs = torch.ones_like(sigs)
+        path_derivs = pysiglib.sig_backprop(
+            path, sigs, sig_derivs, degree,
+            time_aug=True, lead_lag=True, end_time=2.0,
+        )
+        print(path_derivs)
 
     """
     check_type(degree, "degree", int)

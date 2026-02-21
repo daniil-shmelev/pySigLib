@@ -105,6 +105,7 @@
     <ClInclude Include="cp_path.h" />
     <ClInclude Include="cppch.h" />
     <ClInclude Include="cp_path_transforms.h" />
+    <ClInclude Include="cp_sig_coef.h" />
     <ClInclude Include="cp_sig_kernel.h" />
     <ClInclude Include="cp_signature.h" />
     <ClInclude Include="cp_tensor_poly.h" />
@@ -119,6 +120,7 @@
     <ClCompile Include="cp_log_signatures.cpp" />
     <ClCompile Include="cp_path_transforms.cpp" />
     <ClCompile Include="cpsig.cpp" />
+    <ClCompile Include="cp_sig_coef.cpp" />
     <ClCompile Include="cp_sig_kernel.cpp" />
     <ClCompile Include="cp_signature.cpp" />
     <ClCompile Include="cppch.cpp">

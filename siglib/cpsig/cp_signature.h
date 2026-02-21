@@ -428,42 +428,30 @@ void batch_signature_(
 	const uint64_t flat_path_length = dimension * length;
 	const T* const data_end = path + flat_path_length * batch_size;
 
-	std::function<void(const T*, T*)> sig_func;
-
-	if (degree == 1) {
-		sig_func = [&](const T* path_ptr, T* out_ptr) {
-			Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
+	auto sig_func = [&](const T* path_ptr, T* out_ptr) {
+		Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
+		if (degree == 1) {
 			Point<T> first_pt = path_obj.begin();
 			Point<T> last_pt = --path_obj.end();
 			out_ptr[0] = 1.;
 			for (uint64_t i = 0; i < path_obj.dimension(); ++i)
 				out_ptr[i + 1] = last_pt[i] - first_pt[i];
-			};
-	}
-	else {
-		if (horner) {
-			sig_func = [&](const T* path_ptr, T* out_ptr) {
-				Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
-				call_signature_horner_<T>(path_obj, out_ptr, degree);
-				};
+		}
+		else if (horner) {
+			call_signature_horner_<T>(path_obj, out_ptr, degree);
 		}
 		else {
-			sig_func = [&](const T* path_ptr, T* out_ptr) {
-				Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
-				signature_naive_<T>(path_obj, out_ptr, degree);
-				};
+			signature_naive_<T>(path_obj, out_ptr, degree);
 		}
-	}
-
-	const T* path_ptr;
-	T* out_ptr;
+	};
 
 	if (n_jobs != 1) {
 		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, result_length, n_jobs);
 	}
 	else {
-		for (path_ptr = path, out_ptr = out;
-			path_ptr < data_end;
+		const T* path_ptr = path;
+		T* out_ptr = out;
+		for (; path_ptr < data_end;
 			path_ptr += flat_path_length, out_ptr += result_length) {
 
 			sig_func(path_ptr, out_ptr);
@@ -555,17 +543,10 @@ void batch_sig_backprop_(
 	T* sig_copy = sig_copy_uptr.get();
 	std::memcpy(sig_copy, sig, sig_len_ * batch_size * sizeof(T));
 
-	std::function<void(const T*, T*, T*, T*)> sig_backprop_func;
-
-	sig_backprop_func = [&](const T* path_ptr, T* sig_derivs_ptr, T* sig_ptr, T* out_ptr) {
+	auto sig_backprop_func = [&](const T* path_ptr, T* sig_derivs_ptr, T* sig_ptr, T* out_ptr) {
 		Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
 		sig_backprop_inplace_<T>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree, sig_len_);
 	};
-
-	const T* path_ptr;
-	T* sig_derivs_ptr;
-	T* sig_ptr;
-	T* out_ptr;
 
 	if (n_jobs != 1) {
 		multi_threaded_batch_3(
@@ -583,8 +564,11 @@ void batch_sig_backprop_(
 		);
 	}
 	else {
-		for (path_ptr = path, sig_derivs_ptr = sig_derivs_copy, sig_ptr = sig_copy, out_ptr = out;
-			path_ptr < data_end;
+		const T* path_ptr = path;
+		T* sig_derivs_ptr = sig_derivs_copy;
+		T* sig_ptr = sig_copy;
+		T* out_ptr = out;
+		for (; path_ptr < data_end;
 			path_ptr += flat_path_length, sig_derivs_ptr += sig_len_, sig_ptr += sig_len_, out_ptr += flat_path_length) {
 
 			sig_backprop_func(path_ptr, sig_derivs_ptr, sig_ptr, out_ptr);
