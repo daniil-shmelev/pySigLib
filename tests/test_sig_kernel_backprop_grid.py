@@ -545,3 +545,299 @@ def test_grid_backprop_rbf_kernel(dyadic_order):
             out[:, i, d_] = (Fp - F0) / eps
 
     check_close(d1, out)
+
+
+################################################
+## CUDA grid backprop tests
+################################################
+
+CUDA_SKIP = pytest.mark.skipif(
+    not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()),
+    reason="CUDA not available or disabled"
+)
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize(("len1", "len2"), [(10, 10), (10, 5), (5, 10)])
+@pytest.mark.parametrize("dyadic_order", range(3))
+def test_grid_backprop_cuda_consistency_with_scalar(len1, len2, dyadic_order):
+    """
+    CUDA: When derivs_grid has 1.0 only at [-1,-1], return_grid=True backprop
+    should produce the same result as return_grid=False with deriv=1.0.
+    """
+    X = torch.rand(size=(len1, 3), dtype=torch.float64, device="cuda")
+    Y = torch.rand(size=(len2, 3), dtype=torch.float64, device="cuda")
+
+    # Scalar backprop
+    derivs_scalar = torch.ones(1, dtype=torch.float64, device="cuda")
+    d1_scalar, d2_scalar = pysiglib.sig_kernel_backprop(
+        derivs_scalar, X, Y, dyadic_order, left_deriv=True, right_deriv=True
+    )
+
+    # Grid backprop: construct derivs_grid with 1.0 at [-1,-1]
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    derivs_grid = torch.zeros_like(k_grid)
+    derivs_grid[-1, -1] = 1.0
+    d1_grid, d2_grid = pysiglib.sig_kernel_backprop(
+        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=True,
+        k_grid=k_grid, return_grid=True
+    )
+
+    check_close(d1_scalar.cpu(), d1_grid.cpu())
+    check_close(d2_scalar.cpu(), d2_grid.cpu())
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize("dyadic_order", range(3))
+def test_grid_backprop_cuda_consistency_batch(dyadic_order):
+    """CUDA batch: consistency between grid and scalar backprop."""
+    X = torch.rand(size=(8, 10, 3), dtype=torch.float64, device="cuda")
+    Y = torch.rand(size=(8, 10, 3), dtype=torch.float64, device="cuda")
+
+    derivs_scalar = torch.ones(8, dtype=torch.float64, device="cuda")
+    d1_scalar, d2_scalar = pysiglib.sig_kernel_backprop(
+        derivs_scalar, X, Y, dyadic_order, left_deriv=True, right_deriv=True
+    )
+
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    derivs_grid = torch.zeros_like(k_grid)
+    derivs_grid[:, -1, -1] = 1.0
+    d1_grid, d2_grid = pysiglib.sig_kernel_backprop(
+        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=True,
+        k_grid=k_grid, return_grid=True
+    )
+
+    check_close(d1_scalar.cpu(), d1_grid.cpu())
+    check_close(d2_scalar.cpu(), d2_grid.cpu())
+
+
+@CUDA_SKIP
+def test_grid_backprop_cuda_zero_derivs():
+    """CUDA: Grid backprop with zero derivs should produce zero path derivatives."""
+    X = torch.rand(size=(5, 3), dtype=torch.float64, device="cuda")
+    Y = torch.rand(size=(5, 3), dtype=torch.float64, device="cuda")
+
+    k_grid = pysiglib.sig_kernel(X, Y, 0, return_grid=True)
+    derivs_grid = torch.zeros_like(k_grid)
+    d1, d2 = pysiglib.sig_kernel_backprop(
+        derivs_grid, X, Y, 0, left_deriv=True, right_deriv=True,
+        k_grid=k_grid, return_grid=True
+    )
+
+    check_close(d1.cpu(), torch.zeros_like(d1.cpu()))
+    check_close(d2.cpu(), torch.zeros_like(d2.cpu()))
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize("dyadic_order", range(2))
+def test_grid_backprop_cuda_linearity(dyadic_order):
+    """CUDA: backprop(a*d1 + b*d2) == a*backprop(d1) + b*backprop(d2)."""
+    X = torch.rand(size=(5, 3), dtype=torch.float64, device="cuda")
+    Y = torch.rand(size=(7, 3), dtype=torch.float64, device="cuda")
+
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
+
+    derivs1 = torch.rand_like(k_grid)
+    derivs2 = torch.rand_like(k_grid)
+    a, b = 2.5, -1.3
+
+    d1_a, d2_a = pysiglib.sig_kernel_backprop(
+        derivs1, X, Y, dyadic_order, left_deriv=True, right_deriv=True,
+        k_grid=k_grid, return_grid=True
+    )
+    d1_b, d2_b = pysiglib.sig_kernel_backprop(
+        derivs2, X, Y, dyadic_order, left_deriv=True, right_deriv=True,
+        k_grid=k_grid, return_grid=True
+    )
+    d1_c, d2_c = pysiglib.sig_kernel_backprop(
+        a * derivs1 + b * derivs2, X, Y, dyadic_order,
+        left_deriv=True, right_deriv=True,
+        k_grid=k_grid, return_grid=True
+    )
+
+    check_close(d1_c.cpu(), (a * d1_a + b * d1_b).cpu())
+    check_close(d2_c.cpu(), (a * d2_a + b * d2_b).cpu())
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize("dyadic_order", range(2))
+def test_grid_backprop_cuda_finite_diff(dyadic_order):
+    """CUDA: finite-difference check for single-element grid backprop."""
+    X = torch.rand(size=(5, 3), dtype=torch.float64, device="cuda")
+    Y = torch.rand(size=(7, 3), dtype=torch.float64, device="cuda")
+
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    derivs_grid = torch.rand_like(k_grid)
+
+    d1, _ = pysiglib.sig_kernel_backprop(
+        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
+        k_grid=k_grid, return_grid=True
+    )
+
+    # finite difference runs on CPU
+    d1_fd = _finite_difference_grid(X.cpu(), Y.cpu(), derivs_grid.cpu(), dyadic_order)
+    check_close(d1.cpu(), d1_fd)
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize("dyadic_order", range(2))
+def test_grid_backprop_cuda_finite_diff_batch(dyadic_order):
+    """CUDA: finite-difference check for batched grid backprop."""
+    X = torch.rand(size=(4, 5, 3), dtype=torch.float64, device="cuda")
+    Y = torch.rand(size=(4, 7, 3), dtype=torch.float64, device="cuda")
+
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    derivs_grid = torch.rand_like(k_grid)
+
+    d1, _ = pysiglib.sig_kernel_backprop(
+        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
+        k_grid=k_grid, return_grid=True
+    )
+
+    d1_fd = _finite_difference_grid(X.cpu(), Y.cpu(), derivs_grid.cpu(), dyadic_order)
+    check_close(d1.cpu(), d1_fd)
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize("dyadic_order", range(2))
+def test_grid_backprop_cuda_torch_api_weighted(dyadic_order):
+    """CUDA: Torch autograd weighted-sum test with return_grid=True."""
+    X = torch.rand(size=(5, 3), dtype=torch.float64, device="cuda", requires_grad=True)
+    Y = torch.rand(size=(7, 3), dtype=torch.float64, device="cuda", requires_grad=True)
+
+    k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    weights = torch.rand_like(k_grid.detach())
+    loss = (k_grid * weights).sum()
+    loss.backward()
+
+    d1_torch = X.grad.clone()
+
+    X_nograd = X.detach().cpu().clone()
+    Y_nograd = Y.detach().cpu().clone()
+    d1_fd = _finite_difference_grid(X_nograd, Y_nograd, weights.cpu(), dyadic_order)
+
+    check_close(d1_torch.cpu(), d1_fd)
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize("dyadic_order", range(2))
+def test_grid_backprop_cuda_torch_api_batch(dyadic_order):
+    """CUDA: Torch autograd batched test with return_grid=True."""
+    X = torch.rand(size=(4, 5, 3), dtype=torch.float64, device="cuda", requires_grad=True)
+    Y = torch.rand(size=(4, 7, 3), dtype=torch.float64, device="cuda", requires_grad=True)
+
+    k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    weights = torch.rand_like(k_grid.detach())
+    loss = (k_grid * weights).sum()
+    loss.backward()
+
+    d1_torch = X.grad.clone()
+
+    X_nograd = X.detach().cpu().clone()
+    Y_nograd = Y.detach().cpu().clone()
+    d1_fd = _finite_difference_grid(X_nograd, Y_nograd, weights.cpu(), dyadic_order)
+
+    check_close(d1_torch.cpu(), d1_fd)
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize("dyadic_order", range(2))
+def test_grid_backprop_cuda_torch_api_consistency_last_element(dyadic_order):
+    """CUDA: scalar vs grid[-1,-1] consistency through torch autograd."""
+    X = torch.rand(size=(4, 5, 3), dtype=torch.float64, device="cuda")
+    Y = torch.rand(size=(4, 7, 3), dtype=torch.float64, device="cuda")
+
+    # Scalar path
+    X1 = X.clone().requires_grad_()
+    Y1 = Y.clone().requires_grad_()
+    k_scalar = pysiglib.torch_api.sig_kernel(X1, Y1, dyadic_order)
+    loss_scalar = k_scalar.sum()
+    loss_scalar.backward()
+
+    # Grid path: sum only [-1,-1]
+    X2 = X.clone().requires_grad_()
+    Y2 = Y.clone().requires_grad_()
+    k_grid = pysiglib.torch_api.sig_kernel(X2, Y2, dyadic_order, return_grid=True)
+    loss_grid = k_grid[:, -1, -1].sum()
+    loss_grid.backward()
+
+    check_close(X1.grad.cpu(), X2.grad.cpu())
+    check_close(Y1.grad.cpu(), Y2.grad.cpu())
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize("dyadic_order", range(3))
+def test_grid_backprop_cuda_consistency_time_aug(dyadic_order):
+    """CUDA: Consistency with scalar backprop when time_aug=True."""
+    X = torch.rand(size=(10, 5), dtype=torch.float64, device="cuda")
+    Y = torch.rand(size=(10, 5), dtype=torch.float64, device="cuda")
+
+    derivs_scalar = torch.ones(1, dtype=torch.float64, device="cuda")
+    d1_scalar, d2_scalar = pysiglib.sig_kernel_backprop(
+        derivs_scalar, X, Y, dyadic_order, time_aug=True,
+        left_deriv=True, right_deriv=True
+    )
+
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, time_aug=True, return_grid=True)
+    derivs_grid = torch.zeros_like(k_grid)
+    derivs_grid[-1, -1] = 1.0
+    d1_grid, d2_grid = pysiglib.sig_kernel_backprop(
+        derivs_grid, X, Y, dyadic_order, time_aug=True,
+        left_deriv=True, right_deriv=True,
+        k_grid=k_grid, return_grid=True
+    )
+
+    check_close(d1_scalar.cpu(), d1_grid.cpu())
+    check_close(d2_scalar.cpu(), d2_grid.cpu())
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize("dyadic_order", range(3))
+def test_grid_backprop_cuda_consistency_lead_lag(dyadic_order):
+    """CUDA: Consistency with scalar backprop when lead_lag=True."""
+    X = torch.rand(size=(5, 2), dtype=torch.float64, device="cuda")
+    Y = torch.rand(size=(10, 2), dtype=torch.float64, device="cuda")
+
+    derivs_scalar = torch.ones(1, dtype=torch.float64, device="cuda")
+    d1_scalar, d2_scalar = pysiglib.sig_kernel_backprop(
+        derivs_scalar, X, Y, dyadic_order, lead_lag=True,
+        left_deriv=True, right_deriv=True
+    )
+
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, lead_lag=True, return_grid=True)
+    derivs_grid = torch.zeros_like(k_grid)
+    derivs_grid[-1, -1] = 1.0
+    d1_grid, d2_grid = pysiglib.sig_kernel_backprop(
+        derivs_grid, X, Y, dyadic_order, lead_lag=True,
+        left_deriv=True, right_deriv=True,
+        k_grid=k_grid, return_grid=True
+    )
+
+    check_close(d1_scalar.cpu(), d1_grid.cpu())
+    check_close(d2_scalar.cpu(), d2_grid.cpu())
+
+
+@CUDA_SKIP
+@pytest.mark.parametrize("dyadic_order", range(3))
+def test_grid_backprop_cuda_consistency_time_aug_lead_lag(dyadic_order):
+    """CUDA: Consistency with scalar backprop when both time_aug and lead_lag are True."""
+    X = torch.rand(size=(5, 2), dtype=torch.float64, device="cuda") / 2
+    Y = torch.rand(size=(10, 2), dtype=torch.float64, device="cuda") / 2
+
+    derivs_scalar = torch.ones(1, dtype=torch.float64, device="cuda")
+    d1_scalar, d2_scalar = pysiglib.sig_kernel_backprop(
+        derivs_scalar, X, Y, dyadic_order, time_aug=True, lead_lag=True,
+        left_deriv=True, right_deriv=True
+    )
+
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, time_aug=True, lead_lag=True, return_grid=True)
+    derivs_grid = torch.zeros_like(k_grid)
+    derivs_grid[-1, -1] = 1.0
+    d1_grid, d2_grid = pysiglib.sig_kernel_backprop(
+        derivs_grid, X, Y, dyadic_order, time_aug=True, lead_lag=True,
+        left_deriv=True, right_deriv=True,
+        k_grid=k_grid, return_grid=True
+    )
+
+    check_close(d1_scalar.cpu(), d1_grid.cpu())
+    check_close(d2_scalar.cpu(), d2_grid.cpu())

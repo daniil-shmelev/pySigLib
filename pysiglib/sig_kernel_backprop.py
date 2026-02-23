@@ -49,7 +49,7 @@ def sig_kernel_backprop_(data, derivs_data, result, gram, k_grid_data, dyadic_or
     if err_code:
         raise Exception("Error in pysiglib.sig_kernel_backprop: " + err_msg(err_code))
 
-def sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2):
+def sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid):
     err_code = CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA[data.dtype](
         cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]])),
         result.data_ptr,
@@ -60,7 +60,8 @@ def sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyad
         data.length[0],
         data.length[1],
         dyadic_order_1,
-        dyadic_order_2
+        dyadic_order_2,
+        return_grid
     )
 
     if err_code:
@@ -82,11 +83,9 @@ def gram_deriv(
     if data.device == "cpu":
         sig_kernel_backprop_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
     else:
-        if return_grid:
-            raise NotImplementedError("Grid backpropagation is not yet supported on CUDA. Please move data to CPU.")
         if not BUILT_WITH_CUDA:
             raise RuntimeError("pySigLib was built without CUDA - data must be moved to CPU.")
-        sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2)
+        sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid)
 
     return result.data
 

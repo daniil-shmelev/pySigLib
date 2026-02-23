@@ -944,7 +944,8 @@ if BUILT_WITH_CUDA:
         c_uint64,
         c_uint64,
         c_uint64,
-        c_uint64
+        c_uint64,
+        c_bool
     )
     CUSIG.batch_sig_kernel_backprop_cuda_f.restype = c_int
 
@@ -958,6 +959,7 @@ if BUILT_WITH_CUDA:
         c_uint64,
         c_uint64,
         c_uint64,
-        c_uint64
+        c_uint64,
+        c_bool
     )
     CUSIG.batch_sig_kernel_backprop_cuda_d.restype = c_int

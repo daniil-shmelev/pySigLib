@@ -172,6 +172,35 @@ void check_result_4(FN f, std::vector<T>& path, std::vector<double>& true_, std:
     Assert::IsTrue(abs(-1. - out[true_.size()]) < EPSILON);
 }
 
+template<typename FN, typename T, typename... Args>
+std::vector<double> run_backprop_cuda(FN f, std::vector<T>& gram, uint64_t out_size, std::vector<double>& deriv, std::vector<double>& k_grid, Args... args) {
+    std::vector<double> out(out_size, 0.);
+
+    T* d_gram;
+    double* d_out;
+    double* d_deriv;
+    double* d_k_grid;
+    cudaMalloc(&d_gram, sizeof(T) * gram.size());
+    cudaMalloc(&d_out, sizeof(double) * out_size);
+    cudaMalloc(&d_deriv, sizeof(double) * deriv.size());
+    cudaMalloc(&d_k_grid, sizeof(double) * k_grid.size());
+
+    cudaMemcpy(d_gram, gram.data(), sizeof(T) * gram.size(), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_deriv, deriv.data(), sizeof(double) * deriv.size(), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_k_grid, k_grid.data(), sizeof(double) * k_grid.size(), cudaMemcpyHostToDevice);
+
+    f(d_gram, d_out, d_deriv, d_k_grid, args...);
+
+    cudaMemcpy(out.data(), d_out, sizeof(double) * out_size, cudaMemcpyDeviceToHost);
+
+    cudaFree(d_gram);
+    cudaFree(d_out);
+    cudaFree(d_deriv);
+    cudaFree(d_k_grid);
+
+    return out;
+}
+
 namespace MyTest
 {
     TEST_CLASS(sigKernelTest) {
@@ -295,7 +324,7 @@ public:
         std::vector<double> gram((length1 - 1) * (length2 - 1));
         std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11. };
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0);
+        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
     }
 
     TEST_METHOD(ManualTest1Extended) {
@@ -324,7 +353,7 @@ public:
         k_grid[length1 * length2 - 2] = 4.;
         k_grid[length1 * length2 - 1] = 11.;
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0);
+        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
     }
 
     TEST_METHOD(ManualTest1Rev) {
@@ -337,7 +366,7 @@ public:
         std::vector<double> gram((length1 - 1) * (length2 - 1));
         std::vector<double> k_grid = { 1., 1., 1., 4., 1., 11. };
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0);
+        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
     }
 
     TEST_METHOD(ManualTest2) {
@@ -350,7 +379,7 @@ public:
         std::vector<double> gram((length1 - 1) * (length2 - 1));
         std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11., 1., 7., 25. - 1. / 6 };
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0);
+        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
     }
 
     TEST_METHOD(ManualTest2Rev) {
@@ -363,7 +392,7 @@ public:
         std::vector<double> gram((length1 - 1) * (length2 - 1));
         std::vector<double> k_grid = { 1., 1., 1., 1., 4., 7., 1., 11., 25. - 1. / 6 };
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0);
+        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
     }
 
     TEST_METHOD(ManualTest3) {
@@ -392,7 +421,7 @@ public:
             11.584854549831814
         };
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 1, 1);
+        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 1, 1, false);
     }
 
     TEST_METHOD(ManualTest3Rev) {
@@ -421,7 +450,7 @@ public:
             11.584854549831814
         };
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 1, 1);
+        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 1, 1, false);
     }
 
     TEST_METHOD(ManualTest4) {
@@ -444,7 +473,7 @@ public:
             87.729 + 1. / 6000
         };
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0);
+        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
     }
 
     TEST_METHOD(ManualTest4Rev) {
@@ -467,7 +496,7 @@ public:
             87.729 + 1. / 6000
         };
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0);
+        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
     }
 
     /*TEST_METHOD(ManualTest5) {
@@ -485,7 +514,7 @@ public:
         std::vector<double> k_grid(length1 * length2);
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
         sig_kernel_cuda_d(gram.data(), k_grid.data(), dimension, length1, length2, 0, 0, true);
-        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0);
+        check_result_4(f, gram, true_, deriv, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
     }*/
 
     TEST_METHOD(BatchManualTest1) {
@@ -499,7 +528,7 @@ public:
         std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11., 1., 1., 1., 1., 4., 11. };
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
         gram_(path1.data(), path2.data(), gram.data() + 2, 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, derivs, k_grid, batch_size, dimension, length1, length2, 0, 0);
+        check_result_4(f, gram, true_, derivs, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
     }
 
     TEST_METHOD(BatchManualTest2) {
@@ -513,8 +542,232 @@ public:
         std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11., 1., 7., 25. - 1. / 6, 1., 1., 1., 1., 4., 11., 1., 7., 25. - 1. / 6 };
         gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
         gram_(path1.data(), path2.data(), gram.data() + 4, 1, dimension, length1, length2);
-        check_result_4(f, gram, true_, derivs, k_grid, batch_size, dimension, length1, length2, 0, 0);
+        check_result_4(f, gram, true_, derivs, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
     }
+    };
+
+    TEST_CLASS(sigKernelBackpropGridTest) {
+    public:
+        // When derivs_grid has 1.0 only at [-1,-1] and 0 elsewhere,
+        // grid backprop should produce the same result as scalar backprop with deriv=1.0.
+        TEST_METHOD(ConsistencyWithScalar_ManualTest1) {
+            auto f = batch_sig_kernel_backprop_cuda_d;
+            uint64_t batch_size = 1, dimension = 1, length1 = 2, length2 = 3;
+            std::vector<double> path1 = { 0., 2. };
+            std::vector<double> path2 = { 0., 1., 2. };
+            std::vector<double> gram((length1 - 1) * (length2 - 1));
+            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11. };
+            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
+            uint64_t out_size = (length1 - 1) * (length2 - 1);
+
+            // Scalar backprop
+            std::vector<double> deriv_scalar = { 1. };
+            auto out_scalar = run_backprop_cuda(f, gram, out_size, deriv_scalar, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
+
+            // Grid backprop with 1.0 only at [-1,-1]
+            uint64_t grid_length = length1 * length2;
+            std::vector<double> derivs_grid(grid_length, 0.);
+            derivs_grid[grid_length - 1] = 1.0;
+            auto out_grid = run_backprop_cuda(f, gram, out_size, derivs_grid, k_grid, batch_size, dimension, length1, length2, 0, 0, true);
+
+            for (uint64_t i = 0; i < out_size; ++i)
+                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < EPSILON);
+        }
+
+        TEST_METHOD(ConsistencyWithScalar_ManualTest2) {
+            auto f = batch_sig_kernel_backprop_cuda_d;
+            uint64_t batch_size = 1, dimension = 1, length1 = 3, length2 = 3;
+            std::vector<double> path1 = { 0., 2., 3. };
+            std::vector<double> path2 = { 0., 1., 2. };
+            std::vector<double> gram((length1 - 1) * (length2 - 1));
+            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11., 1., 7., 25. - 1. / 6 };
+            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
+            uint64_t out_size = (length1 - 1) * (length2 - 1);
+
+            std::vector<double> deriv_scalar = { 1. };
+            auto out_scalar = run_backprop_cuda(f, gram, out_size, deriv_scalar, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
+
+            uint64_t grid_length = length1 * length2;
+            std::vector<double> derivs_grid(grid_length, 0.);
+            derivs_grid[grid_length - 1] = 1.0;
+            auto out_grid = run_backprop_cuda(f, gram, out_size, derivs_grid, k_grid, batch_size, dimension, length1, length2, 0, 0, true);
+
+            for (uint64_t i = 0; i < out_size; ++i)
+                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < EPSILON);
+        }
+
+        TEST_METHOD(ConsistencyWithScalar_DyadicOrder) {
+            auto f = batch_sig_kernel_backprop_cuda_d;
+            uint64_t batch_size = 1, dimension = 1, length1 = 2, length2 = 3;
+            std::vector<double> path1 = { 0., 2. };
+            std::vector<double> path2 = { 0., 1., 2. };
+            std::vector<double> gram((length1 - 1) * (length2 - 1));
+            std::vector<double> k_grid = {
+                1.0, 1.0, 1.0, 1.0, 1.0,
+                1.0, 1.5625, 2.27734375, 3.1857910156249996, 4.3402760823567705,
+                1.0, 2.27734375, 4.25830078125, 7.2303009033203125, 11.584854549831814
+            };
+            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
+            uint64_t out_size = (length1 - 1) * (length2 - 1);
+
+            std::vector<double> deriv_scalar = { 1. };
+            auto out_scalar = run_backprop_cuda(f, gram, out_size, deriv_scalar, k_grid, batch_size, dimension, length1, length2, 1, 1, false);
+
+            uint64_t dyadic_length_1 = ((length1 - 1) << 1) + 1;
+            uint64_t dyadic_length_2 = ((length2 - 1) << 1) + 1;
+            uint64_t grid_length = dyadic_length_1 * dyadic_length_2;
+            std::vector<double> derivs_grid(grid_length, 0.);
+            derivs_grid[grid_length - 1] = 1.0;
+            auto out_grid = run_backprop_cuda(f, gram, out_size, derivs_grid, k_grid, batch_size, dimension, length1, length2, 1, 1, true);
+
+            for (uint64_t i = 0; i < out_size; ++i)
+                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < EPSILON);
+        }
+
+        TEST_METHOD(ConsistencyWithScalar_MultiDim) {
+            auto f = batch_sig_kernel_backprop_cuda_d;
+            uint64_t batch_size = 1, dimension = 2, length1 = 3, length2 = 3;
+            std::vector<double> path1 = { 0., 1., 2., 4., 5., 5. };
+            std::vector<double> path2 = { 0., 2., 1., 3., 2., 1. };
+            std::vector<double> gram((length1 - 1) * (length2 - 1));
+            std::vector<double> k_grid = {
+                1.0, 1.0, 1.0,
+                1.0, 12.25, 4.75,
+                1.0, 57.75, 87.729 + 1. / 6000
+            };
+            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
+            uint64_t out_size = (length1 - 1) * (length2 - 1);
+
+            std::vector<double> deriv_scalar = { 1. };
+            auto out_scalar = run_backprop_cuda(f, gram, out_size, deriv_scalar, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
+
+            uint64_t grid_length = length1 * length2;
+            std::vector<double> derivs_grid(grid_length, 0.);
+            derivs_grid[grid_length - 1] = 1.0;
+            auto out_grid = run_backprop_cuda(f, gram, out_size, derivs_grid, k_grid, batch_size, dimension, length1, length2, 0, 0, true);
+
+            for (uint64_t i = 0; i < out_size; ++i)
+                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < EPSILON);
+        }
+
+        TEST_METHOD(ConsistencyWithScalar_ScaledDeriv) {
+            // When derivs_grid has value c only at [-1,-1], result should equal scalar backprop with deriv=c
+            auto f = batch_sig_kernel_backprop_cuda_d;
+            uint64_t batch_size = 1, dimension = 1, length1 = 2, length2 = 3;
+            std::vector<double> path1 = { 0., 2. };
+            std::vector<double> path2 = { 0., 1., 2. };
+            std::vector<double> gram((length1 - 1) * (length2 - 1));
+            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11. };
+            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
+            uint64_t out_size = (length1 - 1) * (length2 - 1);
+            double c = 3.7;
+
+            std::vector<double> deriv_scalar = { c };
+            auto out_scalar = run_backprop_cuda(f, gram, out_size, deriv_scalar, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
+
+            uint64_t grid_length = length1 * length2;
+            std::vector<double> derivs_grid(grid_length, 0.);
+            derivs_grid[grid_length - 1] = c;
+            auto out_grid = run_backprop_cuda(f, gram, out_size, derivs_grid, k_grid, batch_size, dimension, length1, length2, 0, 0, true);
+
+            for (uint64_t i = 0; i < out_size; ++i)
+                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < EPSILON);
+        }
+
+        TEST_METHOD(AllOnesDerivGrid_DiffersFromScalar) {
+            // Grid backprop with all-ones derivs should differ from scalar backprop with deriv=1.0
+            auto f = batch_sig_kernel_backprop_cuda_d;
+            uint64_t batch_size = 1, dimension = 1, length1 = 2, length2 = 3;
+            std::vector<double> path1 = { 0., 2. };
+            std::vector<double> path2 = { 0., 1., 2. };
+            std::vector<double> gram((length1 - 1) * (length2 - 1));
+            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11. };
+            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
+            uint64_t out_size = (length1 - 1) * (length2 - 1);
+
+            std::vector<double> deriv_scalar = { 1. };
+            auto out_scalar = run_backprop_cuda(f, gram, out_size, deriv_scalar, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
+
+            uint64_t grid_length = length1 * length2;
+            std::vector<double> derivs_grid(grid_length, 1.0); // all ones
+            auto out_grid = run_backprop_cuda(f, gram, out_size, derivs_grid, k_grid, batch_size, dimension, length1, length2, 0, 0, true);
+
+            bool differs = false;
+            for (uint64_t i = 0; i < out_size; ++i) {
+                if (abs(out_scalar[i] - out_grid[i]) > EPSILON)
+                    differs = true;
+            }
+            Assert::IsTrue(differs);
+        }
+
+        TEST_METHOD(ZeroDerivs) {
+            // Grid backprop with zero derivs should produce zero output
+            auto f = batch_sig_kernel_backprop_cuda_d;
+            uint64_t batch_size = 1, dimension = 1, length1 = 2, length2 = 3;
+            std::vector<double> path1 = { 0., 2. };
+            std::vector<double> path2 = { 0., 1., 2. };
+            std::vector<double> gram((length1 - 1) * (length2 - 1));
+            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11. };
+            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
+            uint64_t out_size = (length1 - 1) * (length2 - 1);
+
+            uint64_t grid_length = length1 * length2;
+            std::vector<double> derivs_grid(grid_length, 0.);
+            auto out_grid = run_backprop_cuda(f, gram, out_size, derivs_grid, k_grid, batch_size, dimension, length1, length2, 0, 0, true);
+
+            for (uint64_t i = 0; i < out_size; ++i)
+                Assert::IsTrue(abs(out_grid[i]) < EPSILON);
+        }
+
+        TEST_METHOD(BatchConsistencyWithScalar) {
+            auto f = batch_sig_kernel_backprop_cuda_d;
+            uint64_t batch_size = 2, dimension = 1, length1 = 2, length2 = 3;
+            std::vector<double> path1 = { 0., 2., 0., 2. };
+            std::vector<double> path2 = { 0., 1., 2., 0., 1., 2. };
+            std::vector<double> gram((length1 - 1) * (length2 - 1) * batch_size);
+            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11., 1., 1., 1., 1., 4., 11. };
+            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
+            gram_(path1.data(), path2.data(), gram.data() + 2, 1, dimension, length1, length2);
+            uint64_t out_size = (length1 - 1) * (length2 - 1) * batch_size;
+
+            // Scalar batch backprop
+            std::vector<double> derivs_scalar = { 1., 1. };
+            auto out_scalar = run_backprop_cuda(f, gram, out_size, derivs_scalar, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
+
+            // Grid batch backprop
+            uint64_t grid_length = length1 * length2;
+            std::vector<double> derivs_grid(grid_length * batch_size, 0.);
+            derivs_grid[grid_length - 1] = 1.0;
+            derivs_grid[2 * grid_length - 1] = 1.0;
+            auto out_grid = run_backprop_cuda(f, gram, out_size, derivs_grid, k_grid, batch_size, dimension, length1, length2, 0, 0, true);
+
+            for (uint64_t i = 0; i < out_size; ++i)
+                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < EPSILON);
+        }
+
+        TEST_METHOD(BatchConsistencyWithScalar_3x3) {
+            auto f = batch_sig_kernel_backprop_cuda_d;
+            uint64_t batch_size = 2, dimension = 1, length1 = 3, length2 = 3;
+            std::vector<double> path1 = { 0., 2., 3., 0., 2., 3. };
+            std::vector<double> path2 = { 0., 1., 2., 0., 1., 2. };
+            std::vector<double> gram((length1 - 1) * (length2 - 1) * batch_size);
+            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11., 1., 7., 25. - 1. / 6, 1., 1., 1., 1., 4., 11., 1., 7., 25. - 1. / 6 };
+            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
+            gram_(path1.data(), path2.data(), gram.data() + 4, 1, dimension, length1, length2);
+            uint64_t out_size = (length1 - 1) * (length2 - 1) * batch_size;
+
+            std::vector<double> derivs_scalar = { 1., 1. };
+            auto out_scalar = run_backprop_cuda(f, gram, out_size, derivs_scalar, k_grid, batch_size, dimension, length1, length2, 0, 0, false);
+
+            uint64_t grid_length = length1 * length2;
+            std::vector<double> derivs_grid(grid_length * batch_size, 0.);
+            derivs_grid[grid_length - 1] = 1.0;
+            derivs_grid[2 * grid_length - 1] = 1.0;
+            auto out_grid = run_backprop_cuda(f, gram, out_size, derivs_grid, k_grid, batch_size, dimension, length1, length2, 0, 0, true);
+
+            for (uint64_t i = 0; i < out_size; ++i)
+                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < EPSILON);
+        }
     };
 
     TEST_CLASS(transformPathBackprop) {
