@@ -22,11 +22,14 @@ plotting_params.set_plotting_params(8, 10, 12)
 
 if __name__ == '__main__':
 
-    dyadic_order = 0
-    batch_size = 32
-    dimension = 5
-    N = 10
-    device = "cuda"
+    cfg = {
+        'batch_size': 32,
+        'dimension': 5,
+        'dyadic_order': 0,
+        'dtype': "double",
+        'device': 'cuda',
+        'num_runs': 10
+    }
 
     length_arr = list(range(10, 2100, 200))
     sigkerneltime = []
@@ -34,8 +37,9 @@ if __name__ == '__main__':
 
 
     for length in tqdm(length_arr):
-        sigkerneltime.append(time_sigkernel_kernel_backprop(batch_size, length, dimension, dyadic_order, device, N, torch.float64))
-        pysiglibtime.append(time_pysiglib_kernel_backprop(batch_size, length, dimension, dyadic_order, device, N, torch.float64, -1))
+        cfg['length'] = length
+        sigkerneltime.append(time_sigkernel_kernel_backprop(cfg))
+        pysiglibtime.append(time_pysiglib_kernel_backprop(cfg, -1))
 
     print(sigkerneltime)
     print(pysiglibtime)
@@ -45,21 +49,21 @@ if __name__ == '__main__':
                 x=length_arr[:9],
                 ys= [sigkerneltime[:9], pysiglibtime[:9]],
                 legend = ["sigkernel", "pysiglib"],
-                title = "Signature Kernels Backprop " + ("(CPU)" if device == "cpu" else "(CUDA)"),
+                title = "Signature Kernels Backprop " + ("(CPU)" if cfg['device'] == "cpu" else "(CUDA)"),
                 xlabel = "Path Length",
                 ylabel = "Elapsed Time (s)",
                 scale = scale,
-                filename = "sigkernel_backprop_times_len_" + scale + "_" + device + "_1",
+                filename = "sigkernel_backprop_times_len_" + scale + "_" + cfg['device'] + "_1",
                 linestyles = ["-", "--"]
         )
         plot_times(
                 x= length_arr,
                 ys= [sigkerneltime, pysiglibtime],
                 legend = ["sigkernel", "pysiglib"],
-                title = "Signature Kernels Backprop " + ("(CPU)" if device == "cpu" else "(CUDA)"),
+                title = "Signature Kernels Backprop " + ("(CPU)" if cfg['device'] == "cpu" else "(CUDA)"),
                 xlabel = "Path Length",
                 ylabel = "Elapsed Time (s)",
                 scale = scale,
-                filename = "sigkernel_backprop_times_len_" + scale + "_" + device + "_2",
+                filename = "sigkernel_backprop_times_len_" + scale + "_" + cfg['device'] + "_2",
                 linestyles = ["-", "--"]
         )

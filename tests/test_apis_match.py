@@ -54,21 +54,21 @@ def test_torch_api_has_no_backprop_functions():
     assert not bad, f"torch_api should not expose backprop functions: {bad}"
 
 
-# @pytest.mark.parametrize("name", sorted(BASE_API_FUNCS.keys()))
-# def test_function_signature_and_docstring_match(name):
-#     """Each function matches signature and docstring."""
-#     assert name in TORCH_API_FUNCS, f"{name} missing from torch_api"
-#
-#     sig_base_api = inspect.signature(BASE_API_FUNCS[name])
-#     sig_torch_api = inspect.signature(TORCH_API_FUNCS[name])
-#
-#     assert sig_base_api == sig_torch_api, (
-#         f"Signature mismatch for '{name}':\n"
-#         f"base_api: {sig_base_api}\n"
-#         f"torch_api: {sig_torch_api}\n"
-#     )
-#
-#     doc_base_api = (inspect.getdoc(BASE_API_FUNCS[name]) or "").strip()
-#     doc_torch_api = (inspect.getdoc(TORCH_API_FUNCS[name]) or "").strip()
-#     assert doc_base_api == doc_torch_api, f"Docstring mismatch for '{name}'"
+@pytest.mark.parametrize("name", sorted(BASE_API_FUNCS.keys()))
+def test_function_signature_and_docstring_match(name):
+    """Each function matches signature and docstring."""
+    assert name in TORCH_API_FUNCS, f"{name} missing from torch_api"
+
+    sig_base_api = inspect.signature(BASE_API_FUNCS[name])
+    sig_torch_api = inspect.signature(TORCH_API_FUNCS[name])
+
+    assert sig_base_api == sig_torch_api, (
+        f"Signature mismatch for '{name}':\n"
+        f"base_api: {sig_base_api}\n"
+        f"torch_api: {sig_torch_api}\n"
+    )
+
+    doc_base_api = (inspect.getdoc(BASE_API_FUNCS[name]) or "").strip()
+    doc_torch_api = (inspect.getdoc(TORCH_API_FUNCS[name]) or "").strip()
+    assert doc_base_api == doc_torch_api, f"Docstring mismatch for '{name}'"
 

@@ -574,6 +574,7 @@ extern "C" {
 	* @param sig Pointer to batch of signatures (row-major), size = `batch_size * sig_length(dimension, degree)`.
 	* @param out Pointer to output buffer (preallocated), size = `batch_size * sig_length(dimension, degree)`.
 	* @param log_sig_derivs Pointer to derivatives with respect to the log signature, size = `batch_size * (method ? log_sig_length(dimension, degree) : sig_length(dimension, degree))`.
+	* @param batch_size Batch size.
 	* @param dimension Dimension of the paths.
 	* @param degree Truncation degree of the (log) signatures.
 	* @param time_aug Whether time augmentation was used for the signature computations (default = false).

@@ -101,8 +101,8 @@ def sig_kernel_backprop(
         left_deriv : bool = True,
         right_deriv : bool = False,
         k_grid : Union[np.ndarray, torch.tensor] = None,
-        return_grid: bool = False,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        return_grid: bool = False
 ) -> Union[np.ndarray, torch.tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.tensor, torch.tensor]]:
     """
     This function is required to backpropagate through ``pysiglib.sig_kernel``.
@@ -147,13 +147,13 @@ def sig_kernel_backprop(
     :type right_deriv: bool
     :param k_grid: Signature kernel PDE grid. If ``None``, the grid will be recomputed.
     :type k_grid: numpy.ndarray | torch.tensor
-    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire PDE grid.
-    :type return_grid: bool
     :param n_jobs: (Only applicable to CPU computation) Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
+    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire PDE grid.
+    :type return_grid: bool
     :return: Tuple of derivatives of :math:`F` with respect to one or both of the
         underlying paths. If ``left_deriv`` is ``True``, the first element of
         this tuple is  :math:`\\{\\partial F / x_{t_i}\\}_{i=0}^{L_1}`, otherwise
@@ -283,8 +283,8 @@ def sig_kernel_gram_backprop(
         left_deriv : bool = True,
         right_deriv : bool = False,
         k_grid : Union[np.ndarray, torch.tensor] = None,
-        return_grid : bool = False,
         n_jobs : int = 1,
+        return_grid : bool = False,
         max_batch : int = -1
 ) -> Union[np.ndarray, torch.tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.tensor, torch.tensor]]:
     """
@@ -331,13 +331,13 @@ def sig_kernel_gram_backprop(
     :type right_deriv: bool
     :param k_grid: Signature kernel PDE grid. If ``None``, the grid will be recomputed.
     :type k_grid: numpy.ndarray | torch.tensor
-    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire PDE grid.
-    :type return_grid: bool
     :param n_jobs: (Only applicable to CPU computation) Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
+    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire PDE grid.
+    :type return_grid: bool
     :param max_batch: Maximum batch size to run in parallel. If the computation is failing
         due to insufficient memory, this parameter should be decreased.
         If set to -1, the entire batch is computed in parallel.
@@ -454,7 +454,7 @@ def sig_kernel_gram_backprop(
             else:
                 derivs_ = derivs[i:i + batch1_, j:j + batch2_].flatten().contiguous().clone()
 
-            ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k, return_grid, n_jobs)
+            ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k, n_jobs, return_grid)
 
             if left_deriv:
                 ld_ = ld_.reshape((batch1_, batch2_) + ld_.shape[1:])

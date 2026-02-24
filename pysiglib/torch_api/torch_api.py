@@ -237,7 +237,7 @@ log_sig.__doc__ = log_sig_forward.__doc__
 class SigKernel(torch.autograd.Function):
     @staticmethod
     def forward(ctx, path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid):
-        k_grid = sig_kernel_forward(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, True, n_jobs)
+        k_grid = sig_kernel_forward(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, True)
 
         ctx.save_for_backward(k_grid, path1, path2)
         ctx.dyadic_order = dyadic_order
@@ -263,7 +263,7 @@ class SigKernel(torch.autograd.Function):
         k_grid, path1, path2 = ctx.saved_tensors
         new_derivs = sig_kernel_backprop(grad_output, path1, path2, ctx.dyadic_order, ctx.static_kernel,
                                          ctx.time_aug, ctx.lead_lag, ctx.end_time,
-                                         left_deriv, right_deriv, k_grid, ctx.return_grid, ctx.n_jobs)
+                                         left_deriv, right_deriv, k_grid, ctx.n_jobs, ctx.return_grid)
 
         return new_derivs[0], new_derivs[1], None, None, None, None, None, None, None
 
@@ -275,8 +275,8 @@ def sig_kernel(
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
-        return_grid: bool = False,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        return_grid: bool = False
 ) -> Union[np.ndarray, torch.tensor]:
     return SigKernel.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
 
@@ -312,7 +312,7 @@ class SigKernelGram(torch.autograd.Function):
 
         new_derivs = sig_kernel_gram_backprop(grad_output, path1, path2, ctx.dyadic_order, ctx.static_kernel,
                                          ctx.time_aug, ctx.lead_lag, ctx.end_time,
-                                         left_deriv, right_deriv, k_grid, ctx.return_grid, ctx.n_jobs, ctx.max_batch)
+                                         left_deriv, right_deriv, k_grid, ctx.n_jobs, ctx.return_grid, ctx.max_batch)
 
         return new_derivs[0], new_derivs[1], None, None, None, None, None, None, None, None
 
