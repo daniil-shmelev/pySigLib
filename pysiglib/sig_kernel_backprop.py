@@ -87,7 +87,7 @@ def gram_deriv(
             raise RuntimeError("pySigLib was built without CUDA - data must be moved to CPU.")
         sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid)
 
-    return result.data
+    return torch.as_tensor(result.data)
 
 def sig_kernel_backprop(
         derivs : Union[np.ndarray, torch.tensor],
@@ -221,8 +221,6 @@ def sig_kernel_backprop(
 
     data = MultiplePathInputHandler([path1, path2], False, False, end_time, ["path1", "path2"])
 
-    derivs = torch.as_tensor(derivs)
-
     if return_grid:
         derivs_data = PathInputHandler(derivs, False, False, 0., "derivs")
     else:
@@ -264,8 +262,8 @@ def sig_kernel_backprop(
         rd = transform_path_backprop(rd, time_aug, lead_lag, end_time, n_jobs) if right_deriv else None
 
     if data.type_ == "numpy":
-        ld = ld.numpy()
-        rd = rd.numpy()
+        ld = ld.numpy() if left_deriv else None
+        rd = rd.numpy() if right_deriv else None
 
     return ld, rd
 

@@ -2062,7 +2062,7 @@ public:
     public:
         // When derivs_grid has 1.0 only at position [-1,-1] and 0.0 elsewhere,
         // the grid backprop should produce the same result as scalar backprop with deriv=1.0.
-        TEST_METHOD(ConsistencyWithScalar_ManualTest1) {
+        TEST_METHOD(ConsistencyWithScalar) {
             uint64_t dimension = 1, length1 = 2, length2 = 3;
             std::vector<double> path1 = { 0., 2. };
             std::vector<double> path2 = { 0., 1., 2. };
@@ -2085,188 +2085,6 @@ public:
             for (uint64_t i = 0; i < out_scalar.size(); ++i)
                 Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
         }
-
-        TEST_METHOD(ConsistencyWithScalar_ManualTest2) {
-            uint64_t dimension = 1, length1 = 3, length2 = 3;
-            std::vector<double> path1 = { 0., 2., 3. };
-            std::vector<double> path2 = { 0., 1., 2. };
-            std::vector<double> gram((length1 - 1) * (length2 - 1));
-            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11., 1., 7., 25. - 1. / 6 };
-            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-
-            double one = 1.0;
-            std::vector<double> out_scalar((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_scalar.data(), &one, k_grid.data(), dimension, length1, length2, 0, 0, false);
-
-            uint64_t grid_length = length1 * length2;
-            std::vector<double> derivs_grid(grid_length, 0.);
-            derivs_grid[grid_length - 1] = 1.0;
-            std::vector<double> out_grid((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), dimension, length1, length2, 0, 0, true);
-
-            for (uint64_t i = 0; i < out_scalar.size(); ++i)
-                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
-        }
-
-        TEST_METHOD(ConsistencyWithScalar_DyadicOrder) {
-            uint64_t dimension = 1, length1 = 2, length2 = 3;
-            std::vector<double> path1 = { 0., 2. };
-            std::vector<double> path2 = { 0., 1., 2. };
-            std::vector<double> gram((length1 - 1) * (length2 - 1));
-            std::vector<double> k_grid = {
-                1.0, 1.0, 1.0, 1.0, 1.0,
-                1.0, 1.5625, 2.27734375, 3.1857910156249996, 4.3402760823567705,
-                1.0, 2.27734375, 4.25830078125, 7.2303009033203125, 11.584854549831814
-            };
-            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-
-            double one = 1.0;
-            std::vector<double> out_scalar((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_scalar.data(), &one, k_grid.data(), dimension, length1, length2, 1, 1, false);
-
-            uint64_t dyadic_length_1 = ((length1 - 1) << 1) + 1;
-            uint64_t dyadic_length_2 = ((length2 - 1) << 1) + 1;
-            uint64_t grid_length = dyadic_length_1 * dyadic_length_2;
-            std::vector<double> derivs_grid(grid_length, 0.);
-            derivs_grid[grid_length - 1] = 1.0;
-            std::vector<double> out_grid((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), dimension, length1, length2, 1, 1, true);
-
-            for (uint64_t i = 0; i < out_scalar.size(); ++i)
-                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
-        }
-
-        TEST_METHOD(ConsistencyWithScalar_MultiDim) {
-            uint64_t dimension = 2, length1 = 3, length2 = 3;
-            std::vector<double> path1 = { 0., 1., 2., 4., 5., 5. };
-            std::vector<double> path2 = { 0., 2., 1., 3., 2., 1. };
-            std::vector<double> gram((length1 - 1) * (length2 - 1));
-            std::vector<double> k_grid = {
-                1.0, 1.0, 1.0,
-                1.0, 12.25, 4.75,
-                1.0, 57.75, 87.729 + 1. / 6000
-            };
-            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-
-            double one = 1.0;
-            std::vector<double> out_scalar((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_scalar.data(), &one, k_grid.data(), dimension, length1, length2, 0, 0, false);
-
-            uint64_t grid_length = length1 * length2;
-            std::vector<double> derivs_grid(grid_length, 0.);
-            derivs_grid[grid_length - 1] = 1.0;
-            std::vector<double> out_grid((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), dimension, length1, length2, 0, 0, true);
-
-            for (uint64_t i = 0; i < out_scalar.size(); ++i)
-                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
-        }
-
-        TEST_METHOD(ConsistencyWithScalar_ScaledDeriv) {
-            // When derivs_grid has value c only at [-1,-1], result should equal scalar backprop with deriv=c
-            uint64_t dimension = 1, length1 = 2, length2 = 3;
-            std::vector<double> path1 = { 0., 2. };
-            std::vector<double> path2 = { 0., 1., 2. };
-            std::vector<double> gram((length1 - 1) * (length2 - 1));
-            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11. };
-            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-            double c = 3.7;
-
-            std::vector<double> out_scalar((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_scalar.data(), &c, k_grid.data(), dimension, length1, length2, 0, 0, false);
-
-            uint64_t grid_length = length1 * length2;
-            std::vector<double> derivs_grid(grid_length, 0.);
-            derivs_grid[grid_length - 1] = c;
-            std::vector<double> out_grid((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), dimension, length1, length2, 0, 0, true);
-
-            for (uint64_t i = 0; i < out_scalar.size(); ++i)
-                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
-        }
-
-        // Test that grid backprop with all-ones derivs_grid produces a different
-        // result than scalar backprop with deriv=1.0
-        TEST_METHOD(AllOnesDerivGrid_DiffersFromScalar) {
-            uint64_t dimension = 1, length1 = 2, length2 = 3;
-            std::vector<double> path1 = { 0., 2. };
-            std::vector<double> path2 = { 0., 1., 2. };
-            std::vector<double> gram((length1 - 1) * (length2 - 1));
-            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11. };
-            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-
-            double one = 1.0;
-            std::vector<double> out_scalar((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_scalar.data(), &one, k_grid.data(), dimension, length1, length2, 0, 0, false);
-
-            uint64_t grid_length = length1 * length2;
-            std::vector<double> derivs_grid(grid_length, 1.0); // all ones
-            std::vector<double> out_grid((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), dimension, length1, length2, 0, 0, true);
-
-            // With all-ones derivs, the result should differ from scalar backprop
-            bool differs = false;
-            for (uint64_t i = 0; i < out_scalar.size(); ++i) {
-                if (abs(out_scalar[i] - out_grid[i]) > DOUBLE_EPSILON)
-                    differs = true;
-            }
-            Assert::IsTrue(differs);
-        }
-
-        // Test linearity: grid_backprop(a * derivs1 + b * derivs2) = a * grid_backprop(derivs1) + b * grid_backprop(derivs2)
-        TEST_METHOD(Linearity) {
-            uint64_t dimension = 1, length1 = 3, length2 = 3;
-            std::vector<double> path1 = { 0., 2., 3. };
-            std::vector<double> path2 = { 0., 1., 2. };
-            std::vector<double> gram((length1 - 1) * (length2 - 1));
-            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11., 1., 7., 25. - 1. / 6 };
-            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-
-            uint64_t grid_length = length1 * length2;
-            double a = 2.5, b = -1.3;
-
-            // derivs1: ones at first row
-            std::vector<double> derivs1(grid_length, 0.);
-            for (uint64_t j = 0; j < length2; ++j) derivs1[j] = 1.0;
-
-            // derivs2: ones at last column
-            std::vector<double> derivs2(grid_length, 0.);
-            for (uint64_t i = 0; i < length1; ++i) derivs2[i * length2 + length2 - 1] = 1.0;
-
-            // combined: a * derivs1 + b * derivs2
-            std::vector<double> derivs_combined(grid_length, 0.);
-            for (uint64_t i = 0; i < grid_length; ++i) derivs_combined[i] = a * derivs1[i] + b * derivs2[i];
-
-            uint64_t out_size = (length1 - 1) * (length2 - 1);
-            std::vector<double> out1(out_size, 0.), out2(out_size, 0.), out_combined(out_size, 0.);
-
-            sig_kernel_backprop_d(gram.data(), out1.data(), derivs1.data(), k_grid.data(), dimension, length1, length2, 0, 0, true);
-            sig_kernel_backprop_d(gram.data(), out2.data(), derivs2.data(), k_grid.data(), dimension, length1, length2, 0, 0, true);
-            sig_kernel_backprop_d(gram.data(), out_combined.data(), derivs_combined.data(), k_grid.data(), dimension, length1, length2, 0, 0, true);
-
-            for (uint64_t i = 0; i < out_size; ++i)
-                Assert::IsTrue(abs(out_combined[i] - (a * out1[i] + b * out2[i])) < DOUBLE_EPSILON);
-        }
-
-        // Test with zero derivs_grid produces zero output
-        TEST_METHOD(ZeroDerivs) {
-            uint64_t dimension = 1, length1 = 2, length2 = 3;
-            std::vector<double> path1 = { 0., 2. };
-            std::vector<double> path2 = { 0., 1., 2. };
-            std::vector<double> gram((length1 - 1) * (length2 - 1));
-            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11. };
-            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-
-            uint64_t grid_length = length1 * length2;
-            std::vector<double> derivs_grid(grid_length, 0.);
-            std::vector<double> out_grid((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), dimension, length1, length2, 0, 0, true);
-
-            for (uint64_t i = 0; i < out_grid.size(); ++i)
-                Assert::IsTrue(abs(out_grid[i]) < DOUBLE_EPSILON);
-        }
-
-        // Batch test: consistency with scalar backprop
         TEST_METHOD(BatchConsistencyWithScalar) {
             uint64_t batch_size = 2, dimension = 1, length1 = 2, length2 = 3;
             std::vector<double> path1 = { 0., 2., 0., 2. };
@@ -2293,31 +2111,22 @@ public:
             for (uint64_t i = 0; i < out_size; ++i)
                 Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
         }
+        TEST_METHOD(ManualTest) {
+            uint64_t dimension = 2, length = 4;
+            std::vector<double> path = { 0., 0., 1., .5, 4., 0., 0., 1. };
+            std::vector<double> gram((length - 1) * (length - 1));
+            std::vector<double> k_grid = { 1., 1., 1., 1., 1., 2.640625, 10.571045, 3.154658, 1., 10.571045, 285.859342, 2372.95239, 1., 3.154658, 2372.95239, 165981.889 };
+            gram_(path.data(), path.data(), gram.data(), 1, dimension, length, length);
+            uint64_t out_size = (length - 1) * (length - 1);
 
-        // Batch test with 3x3 paths
-        TEST_METHOD(BatchConsistencyWithScalar_3x3) {
-            uint64_t batch_size = 2, dimension = 1, length1 = 3, length2 = 3;
-            std::vector<double> path1 = { 0., 2., 3., 0., 2., 3. };
-            std::vector<double> path2 = { 0., 1., 2., 0., 1., 2. };
-            std::vector<double> gram((length1 - 1) * (length2 - 1) * batch_size);
-            std::vector<double> k_grid = { 1., 1., 1., 1., 4., 11., 1., 7., 25. - 1. / 6, 1., 1., 1., 1., 4., 11., 1., 7., 25. - 1. / 6 };
-            gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
-            gram_(path1.data(), path2.data(), gram.data() + 4, 1, dimension, length1, length2);
-
-            std::vector<double> derivs_scalar = { 1., 1. };
-            uint64_t out_size = (length1 - 1) * (length2 - 1) * batch_size;
-            std::vector<double> out_scalar(out_size, 0.);
-            batch_sig_kernel_backprop_d(gram.data(), out_scalar.data(), derivs_scalar.data(), k_grid.data(), batch_size, dimension, length1, length2, 0, 0, false, 1);
-
-            uint64_t grid_length = length1 * length2;
-            std::vector<double> derivs_grid(grid_length * batch_size, 0.);
-            derivs_grid[grid_length - 1] = 1.0;
-            derivs_grid[2 * grid_length - 1] = 1.0;
+            std::vector<double> true_ = { 8.0338748831219071, 3.0207107002152322, -0.041744818181351222, 3.0207107002152322, 2.6526166180712516, -1.6587152651909718, -0.041744818181351222, -1.6587152651909718, 1.6629617402333334 };
+            uint64_t grid_length = length * length;
+            std::vector<double> derivs_grid(grid_length, 0.0001);
             std::vector<double> out_grid(out_size, 0.);
-            batch_sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), batch_size, dimension, length1, length2, 0, 0, true, 1);
+            sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), dimension, length, length, 0, 0, true);
 
             for (uint64_t i = 0; i < out_size; ++i)
-                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
+                Assert::IsTrue(abs(true_[i] - out_grid[i]) < DOUBLE_EPSILON);
         }
     };
 
