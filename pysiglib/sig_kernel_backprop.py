@@ -114,6 +114,9 @@ def sig_kernel_backprop(
 
     :param derivs: Derivatives with respect to a signature kernel or batch
         of signature kernels, :math:`\\partial F / \\left< S(x), S(y) \\right>`.
+        If ``return_grid=False``, this should be an array of shape ``(batch_size,)``.
+        If ``return_grid=True``, this should have the same shape as the PDE grid returned by
+        ``pysiglib.sig_kernel(..., return_grid=True)``.
     :type derivs: numpy.ndarray | torch.tensor
     :param path1: The first underlying path or batch of paths, given as a `numpy.ndarray` or
         `torch.tensor`. For a single path, this must be of shape ``(length_1, dimension)``. For a
@@ -144,8 +147,8 @@ def sig_kernel_backprop(
     :type right_deriv: bool
     :param k_grid: Signature kernel PDE grid. If ``None``, the grid will be recomputed.
     :type k_grid: numpy.ndarray | torch.tensor
-    :param return_grid: TODO
-    :type return_grid: TODO
+    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire PDE grid.
+    :type return_grid: bool
     :param n_jobs: (Only applicable to CPU computation) Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
@@ -280,6 +283,7 @@ def sig_kernel_gram_backprop(
         left_deriv : bool = True,
         right_deriv : bool = False,
         k_grid : Union[np.ndarray, torch.tensor] = None,
+        return_grid : bool = False,
         n_jobs : int = 1,
         max_batch : int = -1
 ) -> Union[np.ndarray, torch.tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.tensor, torch.tensor]]:
@@ -293,6 +297,10 @@ def sig_kernel_gram_backprop(
 
     :param derivs: Derivatives with respect to a gram matrix of signature kernels,
         :math:`\\partial F / G`.
+        If ``return_grid=False``, this should have shape ``(batch_size_1, batch_size_2)``.
+        If ``return_grid=True``, this should have shape
+        ``(batch_size_1, batch_size_2, length_1, length_2)``, matching the output of
+        ``pysiglib.sig_kernel_gram(..., return_grid=True)``.
     :type derivs: numpy.ndarray | torch.tensor
     :param path1: The first underlying path or batch of paths, given as a `numpy.ndarray` or
         `torch.tensor`. For a single path, this must be of shape ``(length_1, dimension)``. For a
@@ -323,6 +331,8 @@ def sig_kernel_gram_backprop(
     :type right_deriv: bool
     :param k_grid: Signature kernel PDE grid. If ``None``, the grid will be recomputed.
     :type k_grid: numpy.ndarray | torch.tensor
+    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire PDE grid.
+    :type return_grid: bool
     :param n_jobs: (Only applicable to CPU computation) Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
@@ -435,11 +445,16 @@ def sig_kernel_gram_backprop(
             if k_grid is None:
                 k = sig_kernel(path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, True)
             else:
-                k = k_grid[i:i + batch1_, j:j + batch2_, :, :].contiguous().clone()
+                k = k_grid[i:i + batch1_, j:j + batch2_, :, :].reshape(batch1_ * batch2_, k_grid.shape[-2], k_grid.shape[-1]).contiguous().clone()
 
-            derivs_ = derivs[i:i + batch1_, j:j + batch2_].flatten().contiguous().clone()
+            if return_grid:
+                # derivs has shape (batch1, batch2, grid_len1, grid_len2)
+                # We need to reshape to (batch1_ * batch2_, grid_len1, grid_len2) for sig_kernel_backprop
+                derivs_ = derivs[i:i + batch1_, j:j + batch2_].reshape(batch1_ * batch2_, derivs.shape[-2], derivs.shape[-1]).contiguous().clone()
+            else:
+                derivs_ = derivs[i:i + batch1_, j:j + batch2_].flatten().contiguous().clone()
 
-            ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k, False, n_jobs)
+            ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k, return_grid, n_jobs)
 
             if left_deriv:
                 ld_ = ld_.reshape((batch1_, batch2_) + ld_.shape[1:])

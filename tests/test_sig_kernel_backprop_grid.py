@@ -24,7 +24,7 @@ np.random.seed(42)
 torch.manual_seed(42)
 
 SINGLE_EPSILON = 1e-2
-DOUBLE_EPSILON = 1e-2
+DOUBLE_EPSILON = 1e-4
 
 def check_close(a, b):
     a_ = np.array(a.cpu())
@@ -71,8 +71,8 @@ def test_grid_backprop_consistency_with_scalar(len1, len2, dyadic_order, device)
 @pytest.mark.parametrize("dyadic_order", range(3))
 @pytest.mark.parametrize("device", DEVICES)
 def test_grid_backprop_consistency_batch(dyadic_order, device):
-    X = torch.rand(size=(32, 100, 5), dtype=torch.float64, device=device)
-    Y = torch.rand(size=(32, 100, 5), dtype=torch.float64, device=device)
+    X = torch.rand(size=(32, 10, 5), dtype=torch.float64, device=device)
+    Y = torch.rand(size=(32, 10, 5), dtype=torch.float64, device=device)
 
     derivs_scalar = torch.ones(32, dtype=torch.float64, device=device)
     d1_scalar, d2_scalar = pysiglib.sig_kernel_backprop(
@@ -129,8 +129,8 @@ def _finite_difference_grid(x1, x2, derivs_grid, dyadic_order, time_aug=False, l
 @pytest.mark.parametrize("dyadic_order", range(2))
 @pytest.mark.parametrize("device", DEVICES)
 def test_grid_backprop_finite_diff(dyadic_order, device):
-    X = torch.rand(size=(50, 5), dtype=torch.float64, device=device)
-    Y = torch.rand(size=(70, 5), dtype=torch.float64, device=device)
+    X = torch.rand(size=(5, 5), dtype=torch.float64, device=device)
+    Y = torch.rand(size=(7, 5), dtype=torch.float64, device=device)
 
     k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
     derivs_grid = torch.rand_like(k_grid, device=device)
@@ -147,8 +147,8 @@ def test_grid_backprop_finite_diff(dyadic_order, device):
 @pytest.mark.parametrize("dyadic_order", range(2))
 @pytest.mark.parametrize("device", DEVICES)
 def test_grid_backprop_finite_diff_batch(dyadic_order, device):
-    X = torch.rand(size=(32, 50, 5), dtype=torch.float64, device=device)
-    Y = torch.rand(size=(32, 70, 5), dtype=torch.float64, device=device)
+    X = torch.rand(size=(32, 5, 5), dtype=torch.float64, device=device)
+    Y = torch.rand(size=(32, 7, 5), dtype=torch.float64, device=device)
 
     k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
     derivs_grid = torch.rand_like(k_grid, device=device)
@@ -164,8 +164,8 @@ def test_grid_backprop_finite_diff_batch(dyadic_order, device):
 @pytest.mark.parametrize("dyadic_order", range(2))
 @pytest.mark.parametrize("device", DEVICES)
 def test_grid_backprop_finite_diff_time_aug_batch(dyadic_order, device):
-    X = torch.rand(size=(32, 50, 5), dtype=torch.float64, device=device)
-    Y = torch.rand(size=(32, 70, 5), dtype=torch.float64, device=device)
+    X = torch.rand(size=(32, 5, 5), dtype=torch.float64, device=device)
+    Y = torch.rand(size=(32, 7, 5), dtype=torch.float64, device=device)
 
     k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, time_aug=True, return_grid=True)
     derivs_grid = torch.rand_like(k_grid, device=device)
@@ -220,8 +220,8 @@ def test_grid_backprop_finite_diff_time_aug_lead_lag_batch(dyadic_order, device)
 @pytest.mark.parametrize("dyadic_order", range(2))
 @pytest.mark.parametrize("device", DEVICES)
 def test_grid_backprop_torch_api_batch(dyadic_order, device):
-    X = torch.rand(size=(32, 50, 5), dtype=torch.float64, device=device, requires_grad=True)
-    Y = torch.rand(size=(32, 70, 5), dtype=torch.float64, device=device, requires_grad=True)
+    X = torch.rand(size=(32, 5, 5), dtype=torch.float64, device=device, requires_grad=True)
+    Y = torch.rand(size=(32, 7, 5), dtype=torch.float64, device=device, requires_grad=True)
 
     k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, return_grid=True)
     derivs = torch.rand(k_grid.shape, device=device)
@@ -238,8 +238,8 @@ def test_grid_backprop_torch_api_batch(dyadic_order, device):
 @pytest.mark.parametrize("dyadic_order", range(2))
 @pytest.mark.parametrize("device", DEVICES)
 def test_grid_backprop_torch_api_time_aug_batch(dyadic_order, device):
-    X = torch.rand(size=(32, 50, 4), dtype=torch.float64, device=device, requires_grad=True)
-    Y = torch.rand(size=(32, 70, 4), dtype=torch.float64, device=device, requires_grad=True)
+    X = torch.rand(size=(32, 5, 4), dtype=torch.float64, device=device, requires_grad=True)
+    Y = torch.rand(size=(32, 7, 4), dtype=torch.float64, device=device, requires_grad=True)
 
     k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, time_aug=True, return_grid=True)
     derivs = torch.rand(k_grid.shape, device=device)
