@@ -464,12 +464,13 @@ template<std::floating_point T>
 void get_sig_kernel_backprop_(
 	const T* gram,
 	T* out,
-	T deriv,
+	const T* derivs,
 	const T* k_grid,
 	uint64_t length1,
 	uint64_t length2,
 	uint64_t dyadic_order_1,
-	uint64_t dyadic_order_2
+	uint64_t dyadic_order_2,
+	bool return_grid
 ) {
 	const uint64_t dyadic_length_1 = ((length1 - 1) << dyadic_order_1) + 1;
 	const uint64_t dyadic_length_2 = ((length2 - 1) << dyadic_order_2) + 1;
@@ -484,6 +485,17 @@ void get_sig_kernel_backprop_(
 	auto d_grid_uptr = std::make_unique<T[]>(grid_length);
 	T* const d_grid = d_grid_uptr.get();
 
+	// Populate d_grid from derivs
+	if (return_grid) {
+		// derivs points to a grid-sized array of derivatives
+		std::copy(derivs, derivs + grid_length, d_grid);
+	}
+	else {
+		// derivs points to a single scalar derivative
+		std::fill(d_grid, d_grid + grid_length, static_cast<T>(0.));
+		d_grid[grid_length - 1] = *derivs;
+	}
+
 	std::fill(out, out + (length1 - 1) * (length2 - 1), static_cast<T>(0.));
 
 	// a, b, da, db
@@ -497,9 +509,7 @@ void get_sig_kernel_backprop_(
 	const T* k11, * k12, * k21;
 	const T* d11, * d12, * d21;
 
-	//Start with the last dF / dk, which is known ============================================
-	d_grid[grid_length - 1] = deriv;
-
+	//Start with the last dF / dk ============================================
 	//Compute dA(i-1, j-1) and dB(i-1, j-1)
 	gram_idx = gram_length - 1;
 	get_a_b_deriv(a_deriv, b_deriv, gram, gram_idx, dyadic_frac);
@@ -531,7 +541,7 @@ void get_sig_kernel_backprop_(
 		get_a(a, gram, prev_jj + cur_ii, dyadic_frac);
 
 		//Update dF / dk
-		d_grid[grid_idx] = d_grid[grid_idx + 1] * a;
+		d_grid[grid_idx] += d_grid[grid_idx + 1] * a;
 
 		//Compute dA(i-1, j-1) and dB(i-1, j-1)
 		gram_idx = prev_jj + prev_ii;
@@ -565,7 +575,7 @@ void get_sig_kernel_backprop_(
 		get_a(a, gram, cur_jj + prev_ii, dyadic_frac);
 
 		//Update dF / dk
-		d_grid[grid_idx] = d_grid[grid_idx + dyadic_length_2] * a;
+		d_grid[grid_idx] += d_grid[grid_idx + dyadic_length_2] * a;
 
 		//Compute dA(i-1, j-1) and dB(i-1, j-1)
 		gram_idx = prev_jj + prev_ii;
@@ -621,7 +631,7 @@ void get_sig_kernel_backprop_(
 			get_b(b11, gram, cur_jj + cur_ii, dyadic_frac);
 
 			//Update dF / dk
-			d_grid[grid_idx] = (*d21) * a10 + (*d12) * a01 - (*d11) * b11;
+			d_grid[grid_idx] += (*d21) * a10 + (*d12) * a01 - (*d11) * b11;
 
 			//Compute dA(i-1, j-1) and dB(i-1, j-1)
 			gram_idx = prev_jj + prev_ii;
@@ -639,16 +649,17 @@ template<std::floating_point T>
 void sig_kernel_backprop_(
 	const T* gram,
 	T* out,
-	T deriv,
+	const T* derivs,
 	const T* k_grid,
 	uint64_t dimension,
 	uint64_t length1,
 	uint64_t length2,
 	uint64_t dyadic_order_1,
-	uint64_t dyadic_order_2
+	uint64_t dyadic_order_2,
+	bool return_grid
 ) {
 	if (dimension == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
-	get_sig_kernel_backprop_<T>(gram, out, deriv, k_grid, length1, length2, dyadic_order_1, dyadic_order_2);
+	get_sig_kernel_backprop_<T>(gram, out, derivs, k_grid, length1, length2, dyadic_order_1, dyadic_order_2, return_grid);
 	//get_sig_kernel_backprop_diag_(gram, out, deriv, k_grid, length1, length2, dyadic_order_1, dyadic_order_2);
 }
 
@@ -685,6 +696,7 @@ void batch_sig_kernel_backprop_(
 	uint64_t length2,
 	uint64_t dyadic_order_1,
 	uint64_t dyadic_order_2,
+	bool return_grid,
 	int n_jobs
 ) {
 	if (dimension == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
@@ -702,12 +714,14 @@ void batch_sig_kernel_backprop_(
 	const uint64_t dyadic_length_2 = ((length2 - 1) << dyadic_order_2) + 1;
 	const uint64_t grid_length = dyadic_length_1 * dyadic_length_2;
 
+	const uint64_t derivs_stride = return_grid ? grid_length : 1;
+
 	auto sig_kernel_backprop_func = [&](const T* gram_ptr, const T* deriv_ptr, const T* k_grid_ptr, T* out_ptr) {
-		sig_kernel_backprop_(gram_ptr, out_ptr, *deriv_ptr, k_grid_ptr, dimension, length1, length2, dyadic_order_1, dyadic_order_2);
+		sig_kernel_backprop_(gram_ptr, out_ptr, deriv_ptr, k_grid_ptr, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid);
 	};
 
 	if (n_jobs != 1) {
-		multi_threaded_batch_3(sig_kernel_backprop_func, gram, derivs, k_grid, out, batch_size, gram_length, 1, grid_length, gram_length, n_jobs);
+		multi_threaded_batch_3(sig_kernel_backprop_func, gram, derivs, k_grid, out, batch_size, gram_length, derivs_stride, grid_length, gram_length, n_jobs);
 	}
 	else {
 		const T* gram_ptr = gram;
@@ -716,7 +730,7 @@ void batch_sig_kernel_backprop_(
 		const T* k_grid_ptr = k_grid;
 		for (;
 			gram_ptr < data_end_1;
-			gram_ptr += gram_length, out_ptr += gram_length, deriv_ptr += 1, k_grid_ptr += grid_length) {
+			gram_ptr += gram_length, out_ptr += gram_length, deriv_ptr += derivs_stride, k_grid_ptr += grid_length) {
 
 			sig_kernel_backprop_func(gram_ptr, deriv_ptr, k_grid_ptr, out_ptr);
 		}

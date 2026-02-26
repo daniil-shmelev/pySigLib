@@ -851,8 +851,8 @@ CPSIG.batch_sig_kernel_f.argtypes = (
     c_uint64,
     c_uint64,
     c_uint64,
-    c_int,
-    c_bool
+    c_bool,
+    c_int
 )
 CPSIG.batch_sig_kernel_f.restype = c_int
 
@@ -865,8 +865,8 @@ CPSIG.batch_sig_kernel_d.argtypes = (
     c_uint64,
     c_uint64,
     c_uint64,
-    c_int,
-    c_bool
+    c_bool,
+    c_int
 )
 CPSIG.batch_sig_kernel_d.restype = c_int
 
@@ -912,6 +912,7 @@ CPSIG.batch_sig_kernel_backprop_f.argtypes = (
     c_uint64,
     c_uint64,
     c_uint64,
+    c_bool,
     c_int
 )
 CPSIG.batch_sig_kernel_backprop_f.restype = c_int
@@ -927,6 +928,7 @@ CPSIG.batch_sig_kernel_backprop_d.argtypes = (
     c_uint64,
     c_uint64,
     c_uint64,
+    c_bool,
     c_int
 )
 CPSIG.batch_sig_kernel_backprop_d.restype = c_int
@@ -942,7 +944,8 @@ if BUILT_WITH_CUDA:
         c_uint64,
         c_uint64,
         c_uint64,
-        c_uint64
+        c_uint64,
+        c_bool
     )
     CUSIG.batch_sig_kernel_backprop_cuda_f.restype = c_int
 
@@ -956,6 +959,7 @@ if BUILT_WITH_CUDA:
         c_uint64,
         c_uint64,
         c_uint64,
-        c_uint64
+        c_uint64,
+        c_bool
     )
     CUSIG.batch_sig_kernel_backprop_cuda_d.restype = c_int

@@ -386,7 +386,7 @@ void sig_kernel_cuda_(
 
 template<typename T, bool order> //order is True if dyadic_length_2 <= dyadic_length_1
 __device__ void goursat_pde_32_deriv(
-	const T deriv,
+	const T* derivs,
 	const T* const k_grid,
 	T* const out,
 	T* const initial_condition, //This is the top row of the grid, which will be overwritten to become the bottom row of this grid.
@@ -398,7 +398,9 @@ __device__ void goursat_pde_32_deriv(
 	const T* const gram,
 	const uint64_t iteration,
 	const int num_threads,
-	T dyadic_frac
+	T dyadic_frac,
+	bool return_grid,
+	uint64_t derivs_length
 ) {
 	// General structure of the grids:
 	//
@@ -447,8 +449,10 @@ __device__ void goursat_pde_32_deriv(
 		*prev_prev_diag = initial_condition[0];
 		*prev_diag = initial_condition[1];
 
+		T last_deriv = derivs[derivs_length - 1];
+
 		if (iteration == 0) {
-			*(prev_diag + 1) = deriv;
+			*(prev_diag + 1) = last_deriv;
 			T da, db;
 			get_a_b_deriv(da, db, gram, gram_length - 1, dyadic_frac);
 
@@ -456,7 +460,7 @@ __device__ void goursat_pde_32_deriv(
 			k21 = k_grid + grid_length - 2;
 			k12 = k_grid + grid_length - dyadic_length_2 - 1; //NOT ord_dyadic_length_2 here, as we are indexing k_grid
 			k11 = k12 - 1;
-			out[gram_length - 1] += deriv * (((*k21) + (*k12)) * da - *(k11)*db);
+			out[gram_length - 1] += last_deriv * (((*k21) + (*k12)) * da - *(k11)*db);
 		}
 	}
 
@@ -554,6 +558,9 @@ __device__ void goursat_pde_32_deriv(
 			// Update dF / dk
 			*(next_diag + j) = *(prev_diag + j - 1) * a[j - 1] + *(prev_diag + j) * a[j] - *(prev_prev_diag + j - 1) * b[j - 1];
 
+			if (return_grid)
+				*(next_diag + j) += *(derivs + idx);
+
 			// Update dF / dx
 			k12 = k_grid + idx - 1;
 			k21 = k_grid + idx - dyadic_length_2; //NOT ord_dyadic_length_2 here as we are indexing k_grid
@@ -583,18 +590,20 @@ __device__ void goursat_pde_32_deriv(
 
 template<typename T>
 __global__ void goursat_pde_deriv(
-	T* const initial_condition, //This is the top row of the grid, which will be overwritten
-	T* const a_initial_condition,
-	T* const b_initial_condition,
-	const T* const gram,
-	const T* const deriv,
-	const T* const k_grid,
-	T* const out,
-	T dyadic_frac
+	T* initial_condition, //This is the top row of the grid, which will be overwritten
+	T* a_initial_condition,
+	T* b_initial_condition,
+	const T* gram,
+	const T* derivs,
+	const T* k_grid,
+	T* out,
+	T dyadic_frac,
+	bool return_grid,
+	uint64_t derivs_length
 ) {
 	const int blockId = blockIdx.x;
 	const T* const gram_ = gram + blockId * gram_length;
-	const T deriv_ = *(deriv + blockId);
+	const T* derivs_ = derivs + blockId * derivs_length;
 	const T* const k_grid_ = k_grid + blockId * grid_length;
 	T* const out_ = out + blockId * gram_length;
 
@@ -611,10 +620,10 @@ __global__ void goursat_pde_deriv(
 		const uint64_t remainder = (dyadic_length_2 - 1) % 32;
 
 		for (int i = 0; i < num_full_runs; ++i)
-			goursat_pde_32_deriv<T, true>(deriv_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, i, 32, dyadic_frac);
+			goursat_pde_32_deriv<T, true>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, i, 32, dyadic_frac, return_grid, derivs_length);
 
 		if (remainder)
-			goursat_pde_32_deriv<T, true>(deriv_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, num_full_runs, remainder, dyadic_frac);
+			goursat_pde_32_deriv<T, true>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, num_full_runs, remainder, dyadic_frac, return_grid, derivs_length);
 	}
 	else {
 		T* const initial_condition_ = initial_condition + blockId * dyadic_length_2;
@@ -625,25 +634,26 @@ __global__ void goursat_pde_deriv(
 		const uint64_t remainder = (dyadic_length_1 - 1) % 32;
 
 		for (int i = 0; i < num_full_runs; ++i) 
-			goursat_pde_32_deriv<T, false>(deriv_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, i, 32, dyadic_frac);
+			goursat_pde_32_deriv<T, false>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, i, 32, dyadic_frac, return_grid, derivs_length);
 
 		if (remainder)
-			goursat_pde_32_deriv<T, false>(deriv_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, num_full_runs, remainder, dyadic_frac);
+			goursat_pde_32_deriv<T, false>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, num_full_runs, remainder, dyadic_frac, return_grid, derivs_length);
 	}
 }
 
 template<typename T>
 void sig_kernel_backprop_cuda_(
-	const T* const gram,
+	const T* gram,
 	T* const out,
-	const T* const deriv,
-	const T* const k_grid,
+	const T* derivs,
+	const T* k_grid,
 	const uint64_t batch_size_,
 	const uint64_t dimension_,
 	const uint64_t length1_,
 	const uint64_t length2_,
 	const uint64_t dyadic_order_1_,
-	const uint64_t dyadic_order_2_
+	const uint64_t dyadic_order_2_,
+	const bool return_grid
 ) {
 	if (dimension_ == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
 
@@ -654,6 +664,7 @@ void sig_kernel_backprop_cuda_(
 	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1_ + dyadic_order_2_));
 	const uint64_t gram_length_ = (length1_ - 1) * (length2_ - 1);
 	const uint64_t grid_length_ = dyadic_length_1_ * dyadic_length_2_;
+	const uint64_t derivs_length_ = return_grid ? grid_length_ : 1;
 
 	// Allocate constant memory
 	cudaMemcpyToSymbol(dimension, &dimension_, sizeof(uint64_t));
@@ -684,7 +695,7 @@ void sig_kernel_backprop_cuda_(
 	cudaMalloc((void**)&d_b_initial_condition, main_dyadic_length_ * batch_size_ * sizeof(T));
 	cudaMemset(d_b_initial_condition, 0, main_dyadic_length_ * batch_size_ * sizeof(T));
 
-	goursat_pde_deriv << <static_cast<unsigned int>(batch_size_), 32U >> > (d_initial_condition, d_a_initial_condition, d_b_initial_condition, gram, deriv, k_grid, out, dyadic_frac);
+	goursat_pde_deriv << <static_cast<unsigned int>(batch_size_), 32U >> > (d_initial_condition, d_a_initial_condition, d_b_initial_condition, gram, derivs, k_grid, out, dyadic_frac, return_grid, derivs_length_);
 
 	cudaFree(d_initial_condition);
 	cudaFree(d_a_initial_condition);
@@ -749,19 +760,19 @@ extern "C" {
 		SAFE_CALL(sig_kernel_cuda_<double>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
-	CUSIG_API int sig_kernel_backprop_cuda_f(const float* const gram, float* const out, const float deriv, const float* const k_grid, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, &deriv, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2));
+	CUSIG_API int sig_kernel_backprop_cuda_f(const float* const gram, float* const out, const float* const derivs, const float* const k_grid, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
+		SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
-	CUSIG_API int sig_kernel_backprop_cuda_d(const double* const gram, double* const out, const double deriv, const double* const k_grid, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, &deriv, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2));
+	CUSIG_API int sig_kernel_backprop_cuda_d(const double* const gram, double* const out, const double* const derivs, const double* const k_grid, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
+		SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
-	CUSIG_API int batch_sig_kernel_backprop_cuda_f(const float* const gram, float* const out, const float* const deriv, const float* const k_grid, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, deriv, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2));
+	CUSIG_API int batch_sig_kernel_backprop_cuda_f(const float* const gram, float* const out, const float* const derivs, const float* const k_grid, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
+		SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
-	CUSIG_API int batch_sig_kernel_backprop_cuda_d(const double* const gram, double* const out, const double* const deriv, const double* const k_grid, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, deriv, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2));
+	CUSIG_API int batch_sig_kernel_backprop_cuda_d(const double* const gram, double* const out, const double* const derivs, const double* const k_grid, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
+		SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 }

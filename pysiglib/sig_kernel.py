@@ -67,7 +67,7 @@ def sig_kernel(
         lead_lag : bool = False,
         end_time : float = 1.,
         n_jobs : int = 1,
-        return_grid = False
+        return_grid: bool = False
 ) -> Union[np.ndarray, torch.tensor]:
     """
     Computes a single signature kernel or a batch of signature kernels.

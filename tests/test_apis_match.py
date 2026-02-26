@@ -22,17 +22,6 @@ import pysiglib.torch_api as torch_api
 # Backprop functions excluded from torch_api
 EXCLUDED_SUFFIXES = ("_backprop",)
 
-# Args which appear in base api but not torch_api
-ALLOWED_MISSING_ARGS_IN_TORCH_API = {
-    "sig_kernel": {"return_grid"},
-    "sig_kernel_gram": {"return_grid"}
-}
-
-# Args which appear in torch_api but not base api
-ALLOWED_MISSING_ARGS_IN_BASE_API = {
-    "sig_kernel_gram": {"save_kernel"}
-}
-
 def get_public_functions(module):
     return {
         name: obj
@@ -43,14 +32,6 @@ def get_public_functions(module):
         )
     }
 
-
-def normalize_signature(sig, remove_params=frozenset()):
-    """Return signature with selected parameters removed."""
-    params = [
-        p for name, p in sig.parameters.items()
-        if name not in remove_params
-    ]
-    return sig.replace(parameters=params)
 
 BASE_API_FUNCS = get_public_functions(base_api)
 TORCH_API_FUNCS = get_public_functions(torch_api)
@@ -81,30 +62,13 @@ def test_function_signature_and_docstring_match(name):
     sig_base_api = inspect.signature(BASE_API_FUNCS[name])
     sig_torch_api = inspect.signature(TORCH_API_FUNCS[name])
 
-    remove_base_api = ALLOWED_MISSING_ARGS_IN_TORCH_API.get(name, set())
-    rename_torch_api = ALLOWED_MISSING_ARGS_IN_BASE_API.get(name, set())
-
-    sig_base_api_norm = normalize_signature(sig_base_api, remove_base_api)
-    sig_torch_api_norm = normalize_signature(sig_torch_api, rename_torch_api)
-
-    assert sig_base_api_norm == sig_torch_api_norm, (
+    assert sig_base_api == sig_torch_api, (
         f"Signature mismatch for '{name}':\n"
         f"base_api: {sig_base_api}\n"
         f"torch_api: {sig_torch_api}\n"
-        f"Allowed missing in base_api: {rename_torch_api}"
-        f"Allowed missing in torch_api: {remove_base_api}"
     )
 
     doc_base_api = (inspect.getdoc(BASE_API_FUNCS[name]) or "").strip()
     doc_torch_api = (inspect.getdoc(TORCH_API_FUNCS[name]) or "").strip()
     assert doc_base_api == doc_torch_api, f"Docstring mismatch for '{name}'"
 
-
-def test_expected_missing_args_really_missing():
-    """Ensure declared missing args are actually absent."""
-    for name, missing in ALLOWED_MISSING_ARGS_IN_TORCH_API.items():
-        sig_torch_api = inspect.signature(TORCH_API_FUNCS[name])
-        for arg in missing:
-            assert arg not in sig_torch_api.parameters, (
-                f"{name}: '{arg}' unexpectedly present in torch_api"
-            )
