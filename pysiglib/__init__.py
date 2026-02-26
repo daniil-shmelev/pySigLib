@@ -33,4 +33,4 @@ signature = sig
 
 import pysiglib.torch_api
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
