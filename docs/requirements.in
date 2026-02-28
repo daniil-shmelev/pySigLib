@@ -1,4 +1,6 @@
 sphinx==8.2.3
 sphinx_book_theme==1.1.4
 sphinxcontrib-bibtex==2.6.3
+sphinx-copybutton>=0.5.2
+sphinx-design>=0.6.0
 breathe==4.36.0

@@ -14,80 +14,80 @@ pySigLib |release|
 
    </div>
 
-.. image:: _static/logo_light.png
-   :width: 400
-   :align: center
-   :class: only-light
+.. raw:: html
 
-.. image:: _static/logo_dark.png
-   :width: 400
-   :align: center
-   :class: only-dark
+   <div style="text-align: center;">
+     <img src="_static/logo_light.png" width="400" class="only-light" style="pointer-events: none;" />
+     <img src="_static/logo_dark.png" width="400" class="only-dark" style="pointer-events: none;" />
+   </div>
+
+.. rst-class:: landing-tagline
 
 Fast Signature, Log Signature and Signature Kernel Computations on CPU and GPU.
 
+.. grid:: 3
+   :gutter: 3
+
+   .. grid-item-card:: :octicon:`download;1.5em` Installation
+      :link: /pages/installation
+      :link-type: doc
+
+      Get up and running with pySigLib on Windows, Linux, or macOS — with optional CUDA support.
+
+   .. grid-item-card:: :octicon:`book;1.5em` Conventions
+      :link: /pages/conventions
+      :link-type: doc
+
+      Default behaviours, CPU/GPU conventions, parallelism, and data format expectations.
+
+   .. grid-item-card:: :octicon:`code;1.5em` API Reference
+      :link: /pages/api_reference
+      :link-type: doc
+
+      Signatures, log signatures, signature kernels, and more.
+
+.. grid:: 2
+   :gutter: 3
+
+   .. grid-item-card:: :octicon:`flame;1.5em` PyTorch API
+      :link: /pages/torch_api
+      :link-type: doc
+
+      Use pySigLib functions as native PyTorch autograd functions with full gradient support.
+
+   .. grid-item-card:: :octicon:`terminal;1.5em` C++ Library
+      :link: /pages/cpp
+      :link-type: doc
+
+      Direct access to the underlying C++/CUDA siglib library.
+
+----
+
 .. toctree::
-   :titlesonly:
    :maxdepth: 2
+   :caption: Getting Started
+   :hidden:
 
    /pages/installation
-
-.. toctree::
-   :titlesonly:
-   :maxdepth: 2
-
    /pages/conventions
 
 .. toctree::
-   :titlesonly:
    :maxdepth: 2
+   :caption: API Reference
+   :hidden:
 
    /pages/path_transformations
-
-.. toctree::
-   :titlesonly:
-   :maxdepth: 2
-
    /pages/words
-
-.. toctree::
-   :titlesonly:
-   :maxdepth: 2
-
    /pages/signatures
-
-.. toctree::
-   :titlesonly:
-   :maxdepth: 2
-
    /pages/signature_coefficients
-
-.. toctree::
-   :titlesonly:
-   :maxdepth: 2
-
    /pages/log_signatures
-
-.. toctree::
-   :titlesonly:
-   :maxdepth: 2
-
    /pages/signature_kernels
-
-.. toctree::
-   :titlesonly:
-   :maxdepth: 2
-
    /pages/backprop
 
 .. toctree::
-   :titlesonly:
    :maxdepth: 2
+   :caption: Interfaces
+   :hidden:
 
    /pages/torch_api
-
-.. toctree::
-   :titlesonly:
-   :maxdepth: 2
-
    /pages/cpp

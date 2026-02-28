@@ -18,10 +18,11 @@ When GPU data is passed to a CPU-only function, the data will be copied to the C
 where the algorithm will run, and the result will be moved back to the GPU. This
 behaviour applies to the following functions:
 
-- ``sig``,
-- ``sig_combine``,
-- ``sig_to_log_sig``,
-- ``log_sig``,
+- ``sig``
+- ``sig_combine``
+- ``sig_coef``
+- ``sig_to_log_sig``
+- ``log_sig``
 - and corresponding backpropagation functions.
 
 CPU Parallelism

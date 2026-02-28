@@ -76,8 +76,14 @@ sphinx==8.2.3
     #   breathe
     #   pydata-sphinx-theme
     #   sphinx-book-theme
+    #   sphinx-copybutton
+    #   sphinx-design
     #   sphinxcontrib-bibtex
 sphinx-book-theme==1.1.4
+    # via -r requirements.in
+sphinx-copybutton==0.5.2
+    # via -r requirements.in
+sphinx-design==0.7.0
     # via -r requirements.in
 sphinxcontrib-applehelp==2.0.0
     # via sphinx

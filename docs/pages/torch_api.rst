@@ -6,7 +6,7 @@ Torch API
 pySigLib provides a torch API which exposes all the same functions, but makes them torch differentiable.
 Just import
 
-.. code-block::
+.. code-block:: python
 
     import pysiglib.torch_api as pysiglib
 
