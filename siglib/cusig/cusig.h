@@ -267,4 +267,56 @@ extern "C" {
 	/** @brief */
 	CUSIG_API int batch_signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true) noexcept;
 	/** @} */
+
+	/** @defgroup sig_backprop_cuda_functions Signature backpropagation CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through the signature computation on the GPU (float).
+	*
+	* Given the forward signature and derivatives dF/d(sig), computes derivatives
+	* dF/d(path) with respect to the original path.
+	*
+	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as path.
+	* @param sig_derivs Pointer to dF/d(sig) (on device), size = `sig_length(transformed_dimension, degree)`.
+	* @param sig Pointer to forward signature (on device), same size as sig_derivs.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @param degree Truncation degree of the signature.
+	* @param time_aug Whether time augmentation was applied (default = false).
+	* @param lead_lag Whether the lead-lag transform was applied (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	/** @brief */
+	CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_backprop_cuda_functions Batch signature backpropagation CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through the batch signature computation on the GPU (float).
+	*
+	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as path.
+	* @param sig_derivs Pointer to dF/d(sig) (on device), size = `batch_size * sig_length(transformed_dimension, degree)`.
+	* @param sig Pointer to forward signatures (on device), same size as sig_derivs.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the paths.
+	* @param length Length of the paths.
+	* @param degree Truncation degree of the signature.
+	* @param time_aug Whether time augmentation was applied (default = false).
+	* @param lead_lag Whether the lead-lag transform was applied (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	/** @} */
 }

@@ -61,7 +61,7 @@ class SigInputHandler:
     """
     Handle input which is (shaped like) a signature or a batch of signatures
     """
-    def __init__(self, sig_, sig_len, param_name):
+    def __init__(self, sig_, sig_len, param_name, allow_cuda=False):
         check_type_multiple(sig_, param_name, (np.ndarray, torch.Tensor))
         self.sig = ensure_own_contiguous_storage(sig_)
         check_dtype(self.sig, param_name)
@@ -87,7 +87,7 @@ class SigInputHandler:
         else:
             self.type_ = "torch"
             self.dtype = str(self.sig.dtype)[6:]
-            if not self.sig.device.type == "cpu":
+            if not allow_cuda and not self.sig.device.type == "cpu":
                 raise ValueError(param_name + " must be located on the cpu")
             self.data_ptr = cast(self.sig.data_ptr(), POINTER(DTYPES[self.dtype]))
 
@@ -95,8 +95,8 @@ class MultipleSigInputHandler:
     """
     Handle multiple inputs which are (shaped like) signatures or batches of signatures
     """
-    def __init__(self, sig_list, sig_len, sig_name_list):
-        self.data = [SigInputHandler(sig_, sig_len, sig_name) for sig_, sig_name in zip(sig_list, sig_name_list)]
+    def __init__(self, sig_list, sig_len, sig_name_list, allow_cuda=False):
+        self.data = [SigInputHandler(sig_, sig_len, sig_name, allow_cuda=allow_cuda) for sig_, sig_name in zip(sig_list, sig_name_list)]
         self.sig = [d.sig for d in self.data]
 
         if not all(d.type_ == self.data[0].type_ for d in self.data):

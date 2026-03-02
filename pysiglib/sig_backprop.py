@@ -21,7 +21,8 @@ import torch
 from .param_checks import check_type, check_non_neg
 from .error_codes import err_msg
 from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler, DeviceToHost
-from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_BATCH_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CPSIG_BATCH_SIG_COMBINE_BACKPROP
+from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_BATCH_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CPSIG_BATCH_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP_CUDA, CUSIG_BATCH_SIG_BACKPROP_CUDA
+from .load_siglib import BUILT_WITH_CUDA
 from .sig_length import sig_length
 
 def sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, dimension, degree):
@@ -192,6 +193,43 @@ def batch_sig_backprop_(path_data, sig_data, result, degree, n_jobs):
         raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
     return result.data
 
+def sig_backprop_cuda_(path_data, sig_data, result, degree):
+    err_code = CUSIG_SIG_BACKPROP_CUDA[path_data.dtype](
+        path_data.data_ptr,
+        result.data_ptr,
+        sig_data.sig_ptr[1],
+        sig_data.sig_ptr[0],
+        path_data.data_dimension,
+        path_data.data_length,
+        degree,
+        path_data.time_aug,
+        path_data.lead_lag,
+        path_data.end_time
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
+    return result.data
+
+def batch_sig_backprop_cuda_(path_data, sig_data, result, degree):
+    err_code = CUSIG_BATCH_SIG_BACKPROP_CUDA[path_data.dtype](
+        path_data.data_ptr,
+        result.data_ptr,
+        sig_data.sig_ptr[1],
+        sig_data.sig_ptr[0],
+        path_data.batch_size,
+        path_data.data_dimension,
+        path_data.data_length,
+        degree,
+        path_data.time_aug,
+        path_data.lead_lag,
+        path_data.end_time
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
+    return result.data
+
 def sig_backprop(
         path : Union[np.ndarray, torch.tensor],
         sig : Union[np.ndarray, torch.tensor],
@@ -269,12 +307,20 @@ def sig_backprop(
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
 
-    device_handler = DeviceToHost([path, sig, sig_derivs], ["path", "sig", "sig_derivs"])
-    path, sig, sig_derivs = device_handler.data
+    # Check if inputs are on CUDA and we can use the GPU implementation
+    use_cuda = (
+        BUILT_WITH_CUDA
+        and isinstance(path, torch.Tensor)
+        and path.device.type == "cuda"
+    )
+
+    if not use_cuda:
+        device_handler = DeviceToHost([path, sig, sig_derivs], ["path", "sig", "sig_derivs"])
+        path, sig, sig_derivs = device_handler.data
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     sig_len = sig_length(path_data.dimension, degree)
-    sig_data = MultipleSigInputHandler([sig, sig_derivs], sig_len, ["sig", "sig_derivs"])
+    sig_data = MultipleSigInputHandler([sig, sig_derivs], sig_len, ["sig", "sig_derivs"], allow_cuda=use_cuda)
 
     if path_data.type_ != sig_data.type_:
         raise ValueError("path, sig and sig_derivs must all be numpy arrays or torch tensors")
@@ -285,6 +331,11 @@ def sig_backprop(
 
     if path_data.is_batch != sig_data.is_batch or path_data.batch_size != sig_data.batch_size:
         raise ValueError("path, sig and sig_derivs must have the same batch sizes")
+
+    if use_cuda:
+        if path_data.is_batch:
+            return batch_sig_backprop_cuda_(path_data, sig_data, result, degree)
+        return sig_backprop_cuda_(path_data, sig_data, result, degree)
 
     if path_data.is_batch:
         check_type(n_jobs, "n_jobs", int)

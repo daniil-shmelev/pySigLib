@@ -297,6 +297,114 @@ void example_sig_backprop_d(
     std::cout << "done\n";
 }
 
+void example_batch_sig_backprop_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t degree,
+    bool time_aug,
+    bool lead_lag,
+    int n_jobs,
+    int num_runs
+) {
+    print_header("Batch Sig Backprop Double");
+
+    uint64_t path_size = batch_size * dimension * length;
+    std::vector<double> path = test_data<double>(path_size);
+    uint64_t sig_len = sig_length(dimension, degree);
+    std::vector<double> sig_derivs = test_data<double>(batch_size * sig_len);
+    std::vector<double> sig = test_data<double>(batch_size * sig_len);
+
+    uint64_t out_size = batch_size * dimension * length;
+    std::vector<double> out(out_size, 0.);
+
+    time_function(num_runs, batch_sig_backprop_d, path.data(), out.data(), sig_derivs.data(), sig.data(), batch_size, dimension, length, degree, time_aug, lead_lag, 1., n_jobs);
+
+    std::cout << "done\n";
+}
+
+void example_sig_backprop_cuda_d(
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t degree,
+    bool time_aug,
+    bool lead_lag,
+    int num_runs
+) {
+    print_header("Sig Backprop CUDA Double");
+
+    std::vector<double> path = test_data<double>(dimension * length);
+    uint64_t sig_len = sig_length(dimension, degree);
+    std::vector<double> sig_derivs = test_data<double>(sig_len);
+    std::vector<double> sig = test_data<double>(sig_len);
+
+    uint64_t out_size = dimension * length;
+
+    double* d_path;
+    double* d_out;
+    double* d_sig_derivs;
+    double* d_sig;
+    cudaMalloc(&d_path, sizeof(double) * dimension * length);
+    cudaMalloc(&d_out, sizeof(double) * out_size);
+    cudaMalloc(&d_sig_derivs, sizeof(double) * sig_len);
+    cudaMalloc(&d_sig, sizeof(double) * sig_len);
+
+    cudaMemcpy(d_path, path.data(), sizeof(double) * dimension * length, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(double) * sig_len, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sig, sig.data(), sizeof(double) * sig_len, cudaMemcpyHostToDevice);
+
+    time_function(num_runs, sig_backprop_cuda_d, d_path, d_out, d_sig_derivs, d_sig, dimension, length, degree, time_aug, lead_lag, 1.);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+    cudaFree(d_sig_derivs);
+    cudaFree(d_sig);
+
+    std::cout << "done\n";
+}
+
+void example_batch_sig_backprop_cuda_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t degree,
+    bool time_aug,
+    bool lead_lag,
+    int num_runs
+) {
+    print_header("Batch Sig Backprop CUDA Double");
+
+    uint64_t path_size = batch_size * dimension * length;
+    std::vector<double> path = test_data<double>(path_size);
+    uint64_t sig_len = sig_length(dimension, degree);
+    std::vector<double> sig_derivs = test_data<double>(batch_size * sig_len);
+    std::vector<double> sig = test_data<double>(batch_size * sig_len);
+
+    uint64_t out_size = batch_size * dimension * length;
+
+    double* d_path;
+    double* d_out;
+    double* d_sig_derivs;
+    double* d_sig;
+    cudaMalloc(&d_path, sizeof(double) * path_size);
+    cudaMalloc(&d_out, sizeof(double) * out_size);
+    cudaMalloc(&d_sig_derivs, sizeof(double) * batch_size * sig_len);
+    cudaMalloc(&d_sig, sizeof(double) * batch_size * sig_len);
+
+    cudaMemcpy(d_path, path.data(), sizeof(double) * path_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(double) * batch_size * sig_len, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sig, sig.data(), sizeof(double) * batch_size * sig_len, cudaMemcpyHostToDevice);
+
+    time_function(num_runs, batch_sig_backprop_cuda_d, d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, 1.);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+    cudaFree(d_sig_derivs);
+    cudaFree(d_sig);
+
+    std::cout << "done\n";
+}
+
 void example_batch_sig_kernel_backprop(
     uint64_t batch_size,
     uint64_t dimension,

@@ -970,4 +970,235 @@ public:
             check_result_typed(f, path, true_sig, (uint64_t)2, dimension, length, degree, false, false, 1.f, true);
         }
     };
+
+    // =====================================================================
+    // Helper for sig_backprop tests
+    // Allocates path, sig, sig_derivs, out on GPU, runs backprop, checks result
+    // =====================================================================
+    template<typename FN, typename T>
+    void check_backprop_result(
+        FN f,
+        std::vector<T>& path,
+        std::vector<T>& sig,
+        std::vector<T>& sig_derivs,
+        std::vector<T>& expected_out,
+        uint64_t dimension, uint64_t length, uint64_t degree,
+        bool time_aug, bool lead_lag, T end_time
+    ) {
+        std::vector<T> out(expected_out.size() + 1);
+        out[expected_out.size()] = static_cast<T>(-1.);
+
+        T* d_path = nullptr;
+        T* d_out = nullptr;
+        T* d_sig = nullptr;
+        T* d_sig_derivs = nullptr;
+
+        if (path.size() > 0)
+            cudaMalloc(&d_path, sizeof(T) * path.size());
+        cudaMalloc(&d_out, sizeof(T) * out.size());
+        cudaMalloc(&d_sig, sizeof(T) * sig.size());
+        cudaMalloc(&d_sig_derivs, sizeof(T) * sig_derivs.size());
+
+        // Copy sentinel
+        cudaMemcpy(d_out, out.data(), sizeof(T) * out.size(), cudaMemcpyHostToDevice);
+
+        if (path.size() > 0)
+            cudaMemcpy(d_path, path.data(), sizeof(T) * path.size(), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_sig, sig.data(), sizeof(T) * sig.size(), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(T) * sig_derivs.size(), cudaMemcpyHostToDevice);
+
+        int err = f(d_path, d_out, d_sig_derivs, d_sig, dimension, length, degree, time_aug, lead_lag, end_time);
+        cudaDeviceSynchronize();
+
+        cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);
+
+        if (d_path) cudaFree(d_path);
+        cudaFree(d_out);
+        cudaFree(d_sig);
+        cudaFree(d_sig_derivs);
+
+        Assert::AreEqual(0, err, L"sig_backprop returned non-zero error code");
+
+        const double eps = TYPED_EPSILON(T);
+        for (uint64_t i = 0; i < expected_out.size(); ++i) {
+            std::wstring msg = L"Backprop mismatch at index " + std::to_wstring(i) +
+                L": expected " + std::to_wstring(static_cast<double>(expected_out[i])) +
+                L" got " + std::to_wstring(static_cast<double>(out[i]));
+            Assert::IsTrue(std::abs(static_cast<double>(expected_out[i]) - static_cast<double>(out[i])) < eps, msg.c_str());
+        }
+
+        Assert::IsTrue(std::abs(-1. - static_cast<double>(out[expected_out.size()])) < eps, L"Sentinel value was overwritten");
+    }
+
+    template<typename FN, typename T>
+    void check_batch_backprop_result(
+        FN f,
+        std::vector<T>& path,
+        std::vector<T>& sig,
+        std::vector<T>& sig_derivs,
+        std::vector<T>& expected_out,
+        uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
+        bool time_aug, bool lead_lag, T end_time
+    ) {
+        std::vector<T> out(expected_out.size() + 1);
+        out[expected_out.size()] = static_cast<T>(-1.);
+
+        T* d_path = nullptr;
+        T* d_out = nullptr;
+        T* d_sig = nullptr;
+        T* d_sig_derivs = nullptr;
+
+        if (path.size() > 0)
+            cudaMalloc(&d_path, sizeof(T) * path.size());
+        cudaMalloc(&d_out, sizeof(T) * out.size());
+        cudaMalloc(&d_sig, sizeof(T) * sig.size());
+        cudaMalloc(&d_sig_derivs, sizeof(T) * sig_derivs.size());
+
+        cudaMemcpy(d_out, out.data(), sizeof(T) * out.size(), cudaMemcpyHostToDevice);
+
+        if (path.size() > 0)
+            cudaMemcpy(d_path, path.data(), sizeof(T) * path.size(), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_sig, sig.data(), sizeof(T) * sig.size(), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(T) * sig_derivs.size(), cudaMemcpyHostToDevice);
+
+        int err = f(d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time);
+        cudaDeviceSynchronize();
+
+        cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);
+
+        if (d_path) cudaFree(d_path);
+        cudaFree(d_out);
+        cudaFree(d_sig);
+        cudaFree(d_sig_derivs);
+
+        Assert::AreEqual(0, err, L"batch_sig_backprop returned non-zero error code");
+
+        const double eps = TYPED_EPSILON(T);
+        for (uint64_t i = 0; i < expected_out.size(); ++i) {
+            std::wstring msg = L"Batch backprop mismatch at index " + std::to_wstring(i) +
+                L": expected " + std::to_wstring(static_cast<double>(expected_out[i])) +
+                L" got " + std::to_wstring(static_cast<double>(out[i]));
+            Assert::IsTrue(std::abs(static_cast<double>(expected_out[i]) - static_cast<double>(out[i])) < eps, msg.c_str());
+        }
+
+        Assert::IsTrue(std::abs(-1. - static_cast<double>(out[expected_out.size()])) < eps, L"Sentinel value was overwritten");
+    }
+
+    TEST_CLASS(sigBackpropDoubleTest)
+    {
+    public:
+        // Degree 0 or length <= 1: output should be all zeros
+        TEST_METHOD(TrivialDegree0) {
+            auto f = sig_backprop_cuda_d;
+            uint64_t dimension = 2, length = 3, degree = 0;
+            std::vector<double> path = { 0., 0., 1., 1., 2., 2. };
+            std::vector<double> sig = { 1. };
+            std::vector<double> sig_derivs = { 1. };
+            std::vector<double> expected_out(dimension * length, 0.);
+            check_backprop_result(f, path, sig, sig_derivs, expected_out, dimension, length, degree, false, false, 1.);
+        }
+
+        TEST_METHOD(TrivialLength1) {
+            auto f = sig_backprop_cuda_d;
+            uint64_t dimension = 2, length = 1, degree = 3;
+            std::vector<double> path = { 1., 2. };
+            std::vector<double> sig = { 1., 0., 0. };
+            std::vector<double> sig_derivs = { 1., 1., 1. };
+            std::vector<double> expected_out(dimension * length, 0.);
+            check_backprop_result(f, path, sig, sig_derivs, expected_out, dimension, length, degree, false, false, 1.);
+        }
+        TEST_METHOD(Degree1Dim1) {
+            auto f = sig_backprop_cuda_d;
+            uint64_t dimension = 1, length = 3, degree = 1;
+            std::vector<double> path = { 0., 1., 3. };
+            std::vector<double> sig = { 1., 3. };
+            std::vector<double> sig_derivs = { 0., 2. };
+            std::vector<double> expected_out = { -2., 0., 2. };
+            check_backprop_result(f, path, sig, sig_derivs, expected_out, dimension, length, degree, false, false, 1.);
+        }
+
+        TEST_METHOD(Degree1Dim2) {
+            auto f = sig_backprop_cuda_d;
+            uint64_t dimension = 2, length = 3, degree = 1;
+            std::vector<double> path = { 0., 0., 1., 2., 3., 5. };
+            std::vector<double> sig = { 1., 3., 5. };
+            std::vector<double> sig_derivs = { 0., 1., 1. };
+            std::vector<double> expected_out = { -1., -1., 0., 0., 1., 1. };
+            check_backprop_result(f, path, sig, sig_derivs, expected_out, dimension, length, degree, false, false, 1.);
+        }
+        TEST_METHOD(Degree2Dim1) {
+            auto f = sig_backprop_cuda_d;
+            uint64_t dimension = 1, length = 3, degree = 2;
+            std::vector<double> path = { 0., 1., 2. };
+            std::vector<double> sig = { 1., 2., 2. };
+            std::vector<double> sig_derivs = { 0., 0., 1. };
+            std::vector<double> expected_out = { -2., 0., 2. };
+            check_backprop_result(f, path, sig, sig_derivs, expected_out, dimension, length, degree, false, false, 1.);
+        }
+        TEST_METHOD(Degree2Dim2) {
+            auto f = sig_backprop_cuda_d;
+            uint64_t dimension = 2, length = 2, degree = 2;
+            std::vector<double> path = { 0., 0., 1., 2. };
+            std::vector<double> sig = { 1., 1., 2., 0.5, 1., 1., 2. };
+            std::vector<double> sig_derivs = { 0., 1., 0., 0., 0., 0., 0. };
+            std::vector<double> expected_out = { -1., 0., 1., 0. };
+            check_backprop_result(f, path, sig, sig_derivs, expected_out, dimension, length, degree, false, false, 1.);
+        }
+        TEST_METHOD(ErrorDimension0) {
+            int err = sig_backprop_cuda_d(nullptr, nullptr, nullptr, nullptr, 0, 3, 2, false, false, 1.);
+            Assert::AreNotEqual(0, err);
+        }
+    };
+
+    TEST_CLASS(sigBackpropFloatTest)
+    {
+    public:
+        TEST_METHOD(Degree1Dim2Float) {
+            auto f = sig_backprop_cuda_f;
+            uint64_t dimension = 2, length = 3, degree = 1;
+            std::vector<float> path = { 0.f, 0.f, 1.f, 2.f, 3.f, 5.f };
+            std::vector<float> sig = { 1.f, 3.f, 5.f };
+            std::vector<float> sig_derivs = { 0.f, 1.f, 1.f };
+            std::vector<float> expected_out = { -1.f, -1.f, 0.f, 0.f, 1.f, 1.f };
+            check_backprop_result(f, path, sig, sig_derivs, expected_out, dimension, length, degree, false, false, 1.f);
+        }
+
+        TEST_METHOD(Degree2Dim1Float) {
+            auto f = sig_backprop_cuda_f;
+            uint64_t dimension = 1, length = 3, degree = 2;
+            std::vector<float> path = { 0.f, 1.f, 2.f };
+            std::vector<float> sig = { 1.f, 2.f, 2.f };
+            std::vector<float> sig_derivs = { 0.f, 0.f, 1.f };
+            std::vector<float> expected_out = { -2.f, 0.f, 2.f };
+            check_backprop_result(f, path, sig, sig_derivs, expected_out, dimension, length, degree, false, false, 1.f);
+        }
+    };
+
+    TEST_CLASS(batchSigBackpropTest)
+    {
+    public:
+        TEST_METHOD(BatchDegree1) {
+            auto f = batch_sig_backprop_cuda_d;
+            uint64_t dimension = 2, length = 3, degree = 1;
+            // Two identical batch elements
+            std::vector<double> path = {
+                0., 0., 1., 2., 3., 5.,
+                0., 0., 1., 2., 3., 5.
+            };
+            std::vector<double> sig = {
+                1., 3., 5.,
+                1., 3., 5.
+            };
+            std::vector<double> sig_derivs = {
+                0., 1., 1.,
+                0., 1., 1.
+            };
+            std::vector<double> expected_out = {
+                -1., -1., 0., 0., 1., 1.,
+                -1., -1., 0., 0., 1., 1.
+            };
+            check_batch_backprop_result(f, path, sig, sig_derivs, expected_out,
+                (uint64_t)2, dimension, length, degree, false, false, 1.);
+        }
+    };
 }

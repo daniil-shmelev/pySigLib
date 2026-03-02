@@ -301,9 +301,9 @@ def time_pysiglib_kernel_backprop(cfg, n_jobs, progress_bar = False):
 def time_pysiglib_sig_backprop(cfg, n_jobs, progress_bar = False):
     dtype = torch_dtype(cfg['dtype'])
     sig_len = pysiglib.sig_length(cfg['dimension'], cfg['degree'])
-    X = torch.rand(size=(cfg['batch_size'], cfg['length'], cfg['dimension']), dtype=dtype)
-    s = torch.rand(size=(cfg['batch_size'], sig_len), dtype=dtype)
-    sig_derivs = torch.rand(size=(cfg['batch_size'], sig_len), dtype=dtype)
+    X = torch.rand(size=(cfg['batch_size'], cfg['length'], cfg['dimension']), dtype=dtype, device=cfg['device'])
+    s = torch.rand(size=(cfg['batch_size'], sig_len), dtype=dtype, device=cfg['device'])
+    sig_derivs = torch.rand(size=(cfg['batch_size'], sig_len), dtype=dtype, device=cfg['device'])
     best_time = float('inf')
     loop = tqdm(range(cfg['num_runs'])) if progress_bar else range(cfg['num_runs'])
     for _ in loop:

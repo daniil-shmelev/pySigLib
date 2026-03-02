@@ -565,6 +565,39 @@ CPSIG.sig_backprop_d.argtypes = (
 )
 CPSIG.sig_backprop_d.restype = c_int
 
+if BUILT_WITH_CUDA:
+    ######################################################
+    # sig_backprop_cuda
+    ######################################################
+
+    CUSIG.sig_backprop_cuda_f.argtypes = (
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_bool,
+        c_bool,
+        c_float
+    )
+    CUSIG.sig_backprop_cuda_f.restype = c_int
+
+    CUSIG.sig_backprop_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_bool,
+        c_bool,
+        c_double
+    )
+    CUSIG.sig_backprop_cuda_d.restype = c_int
+
 ######################################################
 # batch_sig_coef
 ######################################################
@@ -745,6 +778,41 @@ CPSIG.batch_sig_backprop_d.argtypes = (
     c_int
 )
 CPSIG.batch_sig_backprop_d.restype = c_int
+
+if BUILT_WITH_CUDA:
+    ######################################################
+    # batch_sig_backprop_cuda
+    ######################################################
+
+    CUSIG.batch_sig_backprop_cuda_f.argtypes = (
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_bool,
+        c_bool,
+        c_float
+    )
+    CUSIG.batch_sig_backprop_cuda_f.restype = c_int
+
+    CUSIG.batch_sig_backprop_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_bool,
+        c_bool,
+        c_double
+    )
+    CUSIG.batch_sig_backprop_cuda_d.restype = c_int
 
 ######################################################
 # log_sig_length
