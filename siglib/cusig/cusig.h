@@ -214,4 +214,57 @@ extern "C" {
 	/** @brief */
 	CUSIG_API int batch_sig_kernel_backprop_cuda_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
+
+	/** @defgroup signature_cuda_functions Signature CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes the truncated signature of a path of type float on the GPU.
+	*
+	* The signature is computed using the Horner algorithm by default, which is more
+	* efficient for longer paths and higher degrees. A naive algorithm (Chen's identity
+	* applied iteratively) can be used as a fallback by setting `horner = false`.
+	*
+	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), size = `sig_length(transformed_dimension, degree)`,
+	*			  where `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @param degree Truncation degree of the signature.
+	* @param time_aug Whether to add time augmentation (default = false).
+	* @param lead_lag Whether to apply the lead-lag transform (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @param horner Whether to use the Horner algorithm (default = true).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true) noexcept;
+	/** @brief */
+	CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true) noexcept;
+	/** @} */
+
+	/** @defgroup batch_signature_cuda_functions Batch signature CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes the truncated signatures of a batch of paths of type float on the GPU.
+	*
+	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), size = `batch_size * sig_length(transformed_dimension, degree)`,
+	*			  where `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the paths.
+	* @param length Length of the paths.
+	* @param degree Truncation degree of the signature.
+	* @param time_aug Whether to add time augmentation (default = false).
+	* @param lead_lag Whether to apply the lead-lag transform (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @param horner Whether to use the Horner algorithm (default = true).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true) noexcept;
+	/** @brief */
+	CUSIG_API int batch_signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true) noexcept;
+	/** @} */
 }

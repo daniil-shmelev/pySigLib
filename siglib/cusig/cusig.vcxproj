@@ -109,8 +109,10 @@
     <ClInclude Include="cusig.h" />
     <ClInclude Include="cupch.h" />
     <ClInclude Include="cu_path_transforms.h" />
+    <ClInclude Include="cu_signature.h" />
     <CudaCompile Include="cu_path_transforms.cu" />
     <CudaCompile Include="cu_sig_kernel.h" />
+    <CudaCompile Include="cu_signature.cu" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cupch.cpp">

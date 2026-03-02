@@ -502,6 +502,37 @@ CPSIG.signature_d.argtypes = (
 )
 CPSIG.signature_d.restype = c_int
 
+if BUILT_WITH_CUDA:
+    ######################################################
+    # signature_cuda
+    ######################################################
+
+    CUSIG.signature_cuda_f.argtypes = (
+        POINTER(c_float),
+        POINTER(c_float),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_bool,
+        c_bool,
+        c_float,
+        c_bool
+    )
+    CUSIG.signature_cuda_f.restype = c_int
+
+    CUSIG.signature_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_bool,
+        c_bool,
+        c_double,
+        c_bool
+    )
+    CUSIG.signature_cuda_d.restype = c_int
+
 ######################################################
 # sig_backprop
 ######################################################
@@ -645,6 +676,39 @@ CPSIG.batch_signature_d.argtypes = (
     c_int
 )
 CPSIG.batch_signature_d.restype = c_int
+
+if BUILT_WITH_CUDA:
+    ######################################################
+    # batch_signature_cuda
+    ######################################################
+
+    CUSIG.batch_signature_cuda_f.argtypes = (
+        POINTER(c_float),
+        POINTER(c_float),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_bool,
+        c_bool,
+        c_float,
+        c_bool
+    )
+    CUSIG.batch_signature_cuda_f.restype = c_int
+
+    CUSIG.batch_signature_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_bool,
+        c_bool,
+        c_double,
+        c_bool
+    )
+    CUSIG.batch_signature_cuda_d.restype = c_int
 
 ######################################################
 # batch_sig_backprop

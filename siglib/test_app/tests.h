@@ -37,13 +37,44 @@ void example_signature_d(
 
 void example_batch_signature_d(
 	uint64_t batch_size = 100,
-	uint64_t dimension = 5,
+	uint64_t dimension = 6,
 	uint64_t length = 1000,
 	uint64_t degree = 5,
 	bool time_aug = false,
 	bool lead_lag = false,
 	bool horner = true,
 	int n_jobs = -1,
+	int num_runs = 50
+);
+
+void example_signature_cuda_f(
+	uint64_t dimension = 5,
+	uint64_t length = 10000,
+	uint64_t degree = 7,
+	bool time_aug = false,
+	bool lead_lag = false,
+	bool horner = true,
+	int num_runs = 50
+);
+
+void example_signature_cuda_d(
+	uint64_t dimension = 5,
+	uint64_t length = 10000,
+	uint64_t degree = 7,
+	bool time_aug = false,
+	bool lead_lag = false,
+	bool horner = true,
+	int num_runs = 50
+);
+
+void example_batch_signature_cuda_d(
+	uint64_t batch_size = 100,
+	uint64_t dimension = 6,
+	uint64_t length = 1000,
+	uint64_t degree = 5,
+	bool time_aug = false,
+	bool lead_lag = false,
+	bool horner = true,
 	int num_runs = 50
 );
 

@@ -81,6 +81,100 @@ void example_batch_signature_d(
     std::cout << "done\n";
 }
 
+void example_signature_cuda_f(
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t degree,
+    bool time_aug,
+    bool lead_lag,
+    bool horner,
+    int num_runs
+) {
+    print_header("Signature CUDA Float");
+
+    uint64_t path_size = dimension * length;
+    std::vector<float> path = test_data<float>(path_size);
+
+    uint64_t out_size = sig_length(dimension, degree);
+
+    float* d_path;
+    float* d_out;
+    cudaMalloc(&d_path, sizeof(float) * path_size);
+    cudaMalloc(&d_out, sizeof(float) * out_size);
+
+    cudaMemcpy(d_path, path.data(), sizeof(float) * path_size, cudaMemcpyHostToDevice);
+
+    time_function(num_runs, signature_cuda_f, d_path, d_out, dimension, length, degree, time_aug, lead_lag, 1.f, horner);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+
+    std::cout << "done\n";
+}
+
+void example_signature_cuda_d(
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t degree,
+    bool time_aug,
+    bool lead_lag,
+    bool horner,
+    int num_runs
+) {
+    print_header("Signature CUDA Double");
+
+    uint64_t path_size = dimension * length;
+    std::vector<double> path = test_data<double>(path_size);
+
+    uint64_t out_size = sig_length(dimension, degree);
+
+    double* d_path;
+    double* d_out;
+    cudaMalloc(&d_path, sizeof(double) * path_size);
+    cudaMalloc(&d_out, sizeof(double) * out_size);
+
+    cudaMemcpy(d_path, path.data(), sizeof(double) * path_size, cudaMemcpyHostToDevice);
+
+    time_function(num_runs, signature_cuda_d, d_path, d_out, dimension, length, degree, time_aug, lead_lag, 1., horner);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+
+    std::cout << "done\n";
+}
+
+void example_batch_signature_cuda_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t degree,
+    bool time_aug,
+    bool lead_lag,
+    bool horner,
+    int num_runs
+) {
+    print_header("Batch Signature CUDA Double");
+
+    uint64_t path_size = batch_size * dimension * length;
+    std::vector<double> path = test_data<double>(path_size);
+
+    uint64_t out_size = sig_length(dimension, degree) * batch_size;
+
+    double* d_path;
+    double* d_out;
+    cudaMalloc(&d_path, sizeof(double) * path_size);
+    cudaMalloc(&d_out, sizeof(double) * out_size);
+
+    cudaMemcpy(d_path, path.data(), sizeof(double) * path_size, cudaMemcpyHostToDevice);
+
+    time_function(num_runs, batch_signature_cuda_d, d_path, d_out, batch_size, dimension, length, degree, time_aug, lead_lag, 1., horner);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+
+    std::cout << "done\n";
+}
+
 void example_batch_signature_kernel_f(
     uint64_t batch_size,
     uint64_t dimension,

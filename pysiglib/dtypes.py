@@ -62,6 +62,8 @@ CUSIG_TRANSFORM_PATH_BACKPROP_CUDA = None
 CUSIG_BATCH_TRANSFORM_PATH_BACKPROP_CUDA = None
 CUSIG_BATCH_SIG_KERNEL_CUDA = None
 CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA = None
+CUSIG_SIGNATURE_CUDA = None
+CUSIG_BATCH_SIGNATURE_CUDA = None
 
 if BUILT_WITH_CUDA:
     CUSIG_TRANSFORM_PATH_CUDA = {
@@ -92,6 +94,16 @@ if BUILT_WITH_CUDA:
     CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA = {
         "float32": CUSIG.batch_sig_kernel_backprop_cuda_f,
         "float64": CUSIG.batch_sig_kernel_backprop_cuda_d
+    }
+
+    CUSIG_SIGNATURE_CUDA = {
+        "float32": CUSIG.signature_cuda_f,
+        "float64": CUSIG.signature_cuda_d
+    }
+
+    CUSIG_BATCH_SIGNATURE_CUDA = {
+        "float32": CUSIG.batch_signature_cuda_f,
+        "float64": CUSIG.batch_signature_cuda_d
     }
 
 CPSIG_SIG_COEF = {

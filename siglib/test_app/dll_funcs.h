@@ -60,6 +60,11 @@ using batch_sig_kernel_d_fn = void(CDECL_*)(const double*, double*, uint64_t, ui
 using sig_kernel_cuda_d_fn = void(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool);
 using batch_sig_kernel_cuda_d_fn = void(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool);
 
+using signature_cuda_f_fn = int(CDECL_*)(const float*, float*, uint64_t, uint64_t, uint64_t, bool, bool, float, bool);
+using signature_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, bool, bool, double, bool);
+using batch_signature_cuda_f_fn = int(CDECL_*)(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool);
+using batch_signature_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool);
+
 using sig_coef_d_fn = void(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, bool, bool, double, bool);
 using batch_sig_coef_d_fn = void(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int);
 
@@ -99,6 +104,11 @@ extern sig_backprop_d_fn sig_backprop_d;
 
 extern sig_kernel_cuda_d_fn sig_kernel_cuda_d;
 extern batch_sig_kernel_cuda_d_fn batch_sig_kernel_cuda_d;
+
+extern signature_cuda_f_fn signature_cuda_f;
+extern signature_cuda_d_fn signature_cuda_d;
+extern batch_signature_cuda_f_fn batch_signature_cuda_f;
+extern batch_signature_cuda_d_fn batch_signature_cuda_d;
 
 extern sig_coef_d_fn sig_coef_d;
 extern batch_sig_coef_d_fn batch_sig_coef_d;

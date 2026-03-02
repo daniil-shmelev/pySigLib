@@ -20,7 +20,8 @@ import torch
 
 from .param_checks import check_type, check_non_neg
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIGNATURE, CPSIG_BATCH_SIGNATURE, CPSIG_SIG_COMBINE, CPSIG_BATCH_SIG_COMBINE
+from .dtypes import CPSIG_SIGNATURE, CPSIG_BATCH_SIGNATURE, CPSIG_SIG_COMBINE, CPSIG_BATCH_SIG_COMBINE, CUSIG_SIGNATURE_CUDA, CUSIG_BATCH_SIGNATURE_CUDA
+from .load_siglib import BUILT_WITH_CUDA
 from .sig_length import sig_length
 from .data_handlers import PathInputHandler, MultipleSigInputHandler, SigOutputHandler, DeviceToHost
 
@@ -180,6 +181,41 @@ def batch_sig_(data, result, degree, horner = True, n_jobs = 1):
         raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
     return result.data
 
+def sig_cuda_(data, result, degree, horner = True):
+    err_code = CUSIG_SIGNATURE_CUDA[data.dtype](
+        data.data_ptr,
+        result.data_ptr,
+        data.data_dimension,
+        data.data_length,
+        degree,
+        data.time_aug,
+        data.lead_lag,
+        data.end_time,
+        horner
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
+    return result.data
+
+def batch_sig_cuda_(data, result, degree, horner = True):
+    err_code = CUSIG_BATCH_SIGNATURE_CUDA[data.dtype](
+        data.data_ptr,
+        result.data_ptr,
+        data.batch_size,
+        data.data_dimension,
+        data.data_length,
+        degree,
+        data.time_aug,
+        data.lead_lag,
+        data.end_time,
+        horner
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
+    return result.data
+
 def sig(
         path : Union[np.ndarray, torch.tensor],
         degree : int,
@@ -265,13 +301,27 @@ def sig(
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
 
-    # If path is on GPU, move to CPU
-    device_handler = DeviceToHost([path], ["path"])
-    path = device_handler.data[0]
+    # Check if path is on CUDA and we can use the GPU implementation
+    use_cuda = (
+        BUILT_WITH_CUDA
+        and isinstance(path, torch.Tensor)
+        and path.device.type == "cuda"
+    )
+
+    if not use_cuda:
+        # If path is on GPU but no CUDA build, move to CPU
+        device_handler = DeviceToHost([path], ["path"])
+        path = device_handler.data[0]
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     sig_len = sig_length(data.dimension, degree)
     result = SigOutputHandler(data, sig_len)
+
+    if use_cuda:
+        if data.is_batch:
+            return batch_sig_cuda_(data, result, degree, horner)
+        return sig_cuda_(data, result, degree, horner)
+
     if data.is_batch:
         check_type(n_jobs, "n_jobs", int)
         if n_jobs == 0:
