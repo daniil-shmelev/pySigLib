@@ -731,18 +731,18 @@ public:
             Assert::AreEqual(2, f(nullptr, nullptr, 0, 0, 0, false, false, 1., true));
 
             true_sig.push_back(1.);
-            check_result_typed(f, path, true_sig, (uint64_t)1, (uint64_t)0, (uint64_t)0, false, false, 1., true);
+            check_result_typed(f, path, true_sig, 1, 0, 0, false, false, 1., true);
 
             path.push_back(0.);
-            check_result_typed(f, path, true_sig, (uint64_t)1, (uint64_t)1, (uint64_t)0, false, false, 1., true);
+            check_result_typed(f, path, true_sig, 1, 1, 0, false, false, 1., true);
 
             true_sig.push_back(0.);
-            check_result_typed(f, path, true_sig, (uint64_t)1, (uint64_t)0, (uint64_t)1, false, false, 1., true);
-            check_result_typed(f, path, true_sig, (uint64_t)1, (uint64_t)1, (uint64_t)1, false, false, 1., true);
+            check_result_typed(f, path, true_sig, 1, 0, 1, false, false, 1., true);
+            check_result_typed(f, path, true_sig, 1, 1, 1, false, false, 1., true);
 
             path.push_back(1.);
             true_sig[1] = 1.;
-            check_result_typed(f, path, true_sig, (uint64_t)1, (uint64_t)2, (uint64_t)1, false, false, 1., true);
+            check_result_typed(f, path, true_sig, 1, 2, 1, false, false, 1., true);
         }
 
         TEST_METHOD(LinearPathTest) {

@@ -80,18 +80,32 @@ __device__ void linear_signature_device(
 
 	__syncthreads();
 
+	// Precompute stride decomposition for incremental index tracking (avoids repeated integer division)
+	// Use 32-bit integers for loop variables (faster on GPU than 64-bit)
+	const unsigned int dim32 = static_cast<unsigned int>(dimension);
+	const unsigned int stride_l = static_cast<unsigned int>(nthreads) / dim32;
+	const unsigned int stride_r = static_cast<unsigned int>(nthreads) % dim32;
+	const unsigned int base_l = static_cast<unsigned int>(tid) / dim32;
+	const unsigned int base_r = static_cast<unsigned int>(tid) % dim32;
+
 	// Higher levels
 	for (uint64_t level = 2; level <= degree; ++level) {
 		const T one_over_level = static_cast<T>(1) / static_cast<T>(level);
 		const uint64_t prev_start = level_index[level - 1];
 		const uint64_t prev_size = level_index[level] - level_index[level - 1];
 		const uint64_t cur_start = level_index[level];
-		const uint64_t cur_size = prev_size * dimension;
+		const unsigned int cur_size = static_cast<unsigned int>(prev_size * dimension);
 
-		for (uint64_t idx = tid; idx < cur_size; idx += nthreads) {
-			const uint64_t left_idx = idx / dimension;
-			const uint64_t right_idx = idx % dimension;
-			out[cur_start + idx] = out[prev_start + left_idx] * increments[right_idx] * one_over_level;
+		unsigned int cur_l = base_l;
+		unsigned int cur_r = base_r;
+		for (unsigned int idx = static_cast<unsigned int>(tid); idx < cur_size; idx += static_cast<unsigned int>(nthreads)) {
+			out[cur_start + idx] = out[prev_start + cur_l] * increments[cur_r] * one_over_level;
+			cur_l += stride_l;
+			cur_r += stride_r;
+			if (cur_r >= dim32) {
+				cur_r -= dim32;
+				cur_l++;
+			}
 		}
 		__syncthreads();
 	}
@@ -173,6 +187,16 @@ __device__ void signature_horner_step_device(
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
+	// Precompute stride decomposition for incremental index tracking (avoids repeated integer division)
+	// Use 32-bit integers for loop variables (faster on GPU than 64-bit)
+	const unsigned int dim32 = static_cast<unsigned int>(dimension);
+	const unsigned int tid32 = static_cast<unsigned int>(tid);
+	const unsigned int nthreads32 = static_cast<unsigned int>(nthreads);
+	const unsigned int stride_l = nthreads32 / dim32;
+	const unsigned int stride_r = nthreads32 % dim32;
+	const unsigned int base_l = tid32 / dim32;
+	const unsigned int base_r = tid32 % dim32;
+
 	T* buf_A = horner_workspace;
 	T* buf_B = horner_workspace + half_size;
 
@@ -185,7 +209,7 @@ __device__ void signature_horner_step_device(
 		T* dst = buf_B;
 
 		// left_level = 0: assign increments * one_over_level into src
-		for (uint64_t i = tid; i < dimension; i += nthreads)
+		for (unsigned int i = tid32; i < dim32; i += nthreads32)
 			src[i] = increments[i] * one_over_level;
 		__syncthreads();
 
@@ -193,20 +217,27 @@ __device__ void signature_horner_step_device(
 			left_level < target_level - 1;
 			++left_level, --right_level) {
 
-			const uint64_t left_level_size = level_index[left_level + 1] - level_index[left_level];
+			const unsigned int left_level_size = static_cast<unsigned int>(level_index[left_level + 1] - level_index[left_level]);
 			one_over_level = static_cast<T>(1) / static_cast<T>(right_level);
 
 			// Add sig at left_level into src (current horner data)
-			for (uint64_t i = tid; i < left_level_size; i += nthreads)
-				src[i] += sig[level_index[left_level] + i];
+			const uint64_t left_start = level_index[left_level];
+			for (unsigned int i = tid32; i < left_level_size; i += nthreads32)
+				src[i] += sig[left_start + i];
 			__syncthreads();
 
 			// Multiply: dst = src (x) increments * one_over_level
-			const uint64_t result_size = left_level_size * dimension;
-			for (uint64_t idx = tid; idx < result_size; idx += nthreads) {
-				const uint64_t l_idx = idx / dimension;
-				const uint64_t r_idx = idx % dimension;
-				dst[idx] = src[l_idx] * increments[r_idx] * one_over_level;
+			const unsigned int result_size = left_level_size * dim32;
+			unsigned int cur_l = base_l;
+			unsigned int cur_r = base_r;
+			for (unsigned int idx = tid32; idx < result_size; idx += nthreads32) {
+				dst[idx] = src[cur_l] * increments[cur_r] * one_over_level;
+				cur_l += stride_l;
+				cur_r += stride_r;
+				if (cur_r >= dim32) {
+					cur_r -= dim32;
+					cur_l++;
+				}
 			}
 			__syncthreads();
 
@@ -218,26 +249,34 @@ __device__ void signature_horner_step_device(
 
 		// Last iteration: left_level = target_level - 1
 		{
-			const uint64_t left_level_size = level_index[target_level] - level_index[target_level - 1];
+			const unsigned int left_level_size = static_cast<unsigned int>(level_index[target_level] - level_index[target_level - 1]);
 
 			// Add sig at target_level - 1 into src
-			for (uint64_t i = tid; i < left_level_size; i += nthreads)
-				src[i] += sig[level_index[target_level - 1] + i];
+			const uint64_t last_left_start = level_index[target_level - 1];
+			for (unsigned int i = tid32; i < left_level_size; i += nthreads32)
+				src[i] += sig[last_left_start + i];
 			__syncthreads();
 
 			// Multiply and add directly into sig at target_level (right_level = 1)
-			const uint64_t out_size = left_level_size * dimension;
-			for (uint64_t idx = tid; idx < out_size; idx += nthreads) {
-				const uint64_t l_idx = idx / dimension;
-				const uint64_t r_idx = idx % dimension;
-				sig[level_index[target_level] + idx] += src[l_idx] * increments[r_idx];
+			const unsigned int out_size = left_level_size * dim32;
+			const uint64_t target_start = level_index[target_level];
+			unsigned int cur_l = base_l;
+			unsigned int cur_r = base_r;
+			for (unsigned int idx = tid32; idx < out_size; idx += nthreads32) {
+				sig[target_start + idx] += src[cur_l] * increments[cur_r];
+				cur_l += stride_l;
+				cur_r += stride_r;
+				if (cur_r >= dim32) {
+					cur_r -= dim32;
+					cur_l++;
+				}
 			}
 			__syncthreads();
 		}
 	}
 
 	// Update level 1
-	for (uint64_t i = tid; i < dimension; i += nthreads)
+	for (unsigned int i = tid32; i < dim32; i += nthreads32)
 		sig[i + 1] += increments[i];
 	__syncthreads();
 }
@@ -252,7 +291,7 @@ __device__ void signature_horner_step_device(
 // =========================================================================
 
 template<typename T>
-__global__ void signature_kernel(
+__global__ void __launch_bounds__(1024, 2) signature_kernel(
 	const T* __restrict__ path,
 	T* __restrict__ out,
 	const uint64_t* __restrict__ d_level_index,
@@ -272,10 +311,18 @@ __global__ void signature_kernel(
 	T* my_out = out + batch_idx * sig_len;
 	T* my_horner = workspace + batch_idx * 2 * horner_half_size;
 
-	// ---- Compute increments for step 0 and linear signature ----
-	// Use shared memory for increments (dimension elements)
+	// ---- Shared memory: increments + level_index ----
 	extern __shared__ char smem[];
 	T* increments = reinterpret_cast<T*>(smem);
+	// Level index after increments, aligned to 8 bytes
+	const size_t inc_bytes = dimension * sizeof(T);
+	const size_t aligned_off = (inc_bytes + 7) & ~size_t(7);
+	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem + aligned_off);
+
+	// Load level_index into shared memory (small array, degree+2 entries)
+	for (uint64_t i = tid; i < degree + 2; i += nthreads)
+		level_index_smem[i] = d_level_index[i];
+	__syncthreads();
 
 	const T* prev_pt = my_path;
 	const T* next_pt = my_path + dimension;
@@ -286,7 +333,7 @@ __global__ void signature_kernel(
 	__syncthreads();
 
 	// Linear signature of first segment
-	linear_signature_device(increments, my_out, dimension, degree, d_level_index);
+	linear_signature_device(increments, my_out, dimension, degree, level_index_smem);
 	__syncthreads();
 
 	if (length <= 2) return;
@@ -302,7 +349,7 @@ __global__ void signature_kernel(
 		__syncthreads();
 
 		// Horner step: combine current sig with linear sig of this segment
-		signature_horner_step_device(my_out, increments, dimension, degree, d_level_index, my_horner, horner_half_size);
+		signature_horner_step_device(my_out, increments, dimension, degree, level_index_smem, my_horner, horner_half_size);
 	}
 }
 
@@ -330,8 +377,16 @@ __global__ void signature_naive_kernel(
 	T* my_out = out + batch_idx * sig_len;
 	T* my_linear_sig = linear_sig_workspace + batch_idx * sig_len;
 
+	// ---- Shared memory: increments + level_index ----
 	extern __shared__ char smem[];
 	T* increments = reinterpret_cast<T*>(smem);
+	const size_t inc_bytes = dimension * sizeof(T);
+	const size_t aligned_off = (inc_bytes + 7) & ~size_t(7);
+	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem + aligned_off);
+
+	for (uint64_t i = tid; i < degree + 2; i += nthreads)
+		level_index_smem[i] = d_level_index[i];
+	__syncthreads();
 
 	const T* prev_pt = my_path;
 	const T* next_pt = my_path + dimension;
@@ -342,7 +397,7 @@ __global__ void signature_naive_kernel(
 	__syncthreads();
 
 	// Linear signature of first segment
-	linear_signature_device(increments, my_out, dimension, degree, d_level_index);
+	linear_signature_device(increments, my_out, dimension, degree, level_index_smem);
 	__syncthreads();
 
 	if (length <= 2) return;
@@ -355,10 +410,10 @@ __global__ void signature_naive_kernel(
 			increments[i] = next_pt[i] - prev_pt[i];
 		__syncthreads();
 
-		linear_signature_device(increments, my_linear_sig, dimension, degree, d_level_index);
+		linear_signature_device(increments, my_linear_sig, dimension, degree, level_index_smem);
 		__syncthreads();
 
-		sig_combine_inplace_device(my_out, my_linear_sig, degree, d_level_index);
+		sig_combine_inplace_device(my_out, my_linear_sig, degree, level_index_smem);
 		__syncthreads();
 	}
 }
@@ -402,10 +457,6 @@ void signature_cuda_core_(
 	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
 
-	uint64_t* d_level_index;
-	cudaMalloc(&d_level_index, (degree + 2) * sizeof(uint64_t));
-	cudaMemcpy(d_level_index, level_index_host.get(), (degree + 2) * sizeof(uint64_t), cudaMemcpyHostToDevice);
-
 	// Choose number of threads per block based on largest level size
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads_per_block = 32; // minimum: one warp
@@ -413,15 +464,25 @@ void signature_cuda_core_(
 	if (max_level_size > 64) threads_per_block = 128;
 	if (max_level_size > 128) threads_per_block = 256;
 	if (max_level_size > 512) threads_per_block = 512;
+	if (max_level_size > 1024) threads_per_block = 1024;
 
-	// Shared memory: space for increments
-	size_t smem_size = dimension * sizeof(T);
+	// Shared memory: increments + level_index (aligned)
+	size_t smem_size = (dimension * sizeof(T) + 7) & ~size_t(7);
+	smem_size += (degree + 2) * sizeof(uint64_t);
+
+	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
 
 	if (horner && degree >= 2) {
-		// Allocate Horner workspace on device (2x for ping-pong buffers)
+		// Single allocation: level_index + Horner workspace (2x ping-pong buffers)
 		uint64_t horner_half_size = max_level_size;
-		T* d_workspace;
-		cudaMalloc(&d_workspace, batch_size * 2 * horner_half_size * sizeof(T));
+		const size_t workspace_bytes = batch_size * 2 * horner_half_size * sizeof(T);
+		const size_t aligned_li_bytes = (level_index_bytes + sizeof(T) - 1) / sizeof(T) * sizeof(T);
+
+		char* d_alloc;
+		cudaMalloc(&d_alloc, aligned_li_bytes + workspace_bytes);
+		uint64_t* d_level_index = reinterpret_cast<uint64_t*>(d_alloc);
+		T* d_workspace = reinterpret_cast<T*>(d_alloc + aligned_li_bytes);
+		cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
 
 		signature_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 			path, out, d_level_index,
@@ -430,12 +491,18 @@ void signature_cuda_core_(
 		);
 
 		cudaDeviceSynchronize();
-		cudaFree(d_workspace);
+		cudaFree(d_alloc);
 	}
 	else {
-		// Allocate linear sig workspace on device
-		T* d_linear_sig;
-		cudaMalloc(&d_linear_sig, batch_size * sig_len * sizeof(T));
+		// Single allocation: level_index + linear sig workspace
+		const size_t workspace_bytes = batch_size * sig_len * sizeof(T);
+		const size_t aligned_li_bytes = (level_index_bytes + sizeof(T) - 1) / sizeof(T) * sizeof(T);
+
+		char* d_alloc;
+		cudaMalloc(&d_alloc, aligned_li_bytes + workspace_bytes);
+		uint64_t* d_level_index = reinterpret_cast<uint64_t*>(d_alloc);
+		T* d_linear_sig = reinterpret_cast<T*>(d_alloc + aligned_li_bytes);
+		cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
 
 		signature_naive_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 			path, out, d_level_index,
@@ -444,10 +511,8 @@ void signature_cuda_core_(
 		);
 
 		cudaDeviceSynchronize();
-		cudaFree(d_linear_sig);
+		cudaFree(d_alloc);
 	}
-
-	cudaFree(d_level_index);
 
 	cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess) {
@@ -715,9 +780,16 @@ __global__ void sig_backprop_kernel(
 	T* horner_ws = my_workspace + 2 * sig_len;
 	T* dd_accum = my_workspace + 2 * sig_len + 2 * horner_half_size;
 
-	// Shared memory for increments
+	// ---- Shared memory: increments + level_index ----
 	extern __shared__ char smem[];
 	T* increments = reinterpret_cast<T*>(smem);
+	const size_t inc_bytes = dimension * sizeof(T);
+	const size_t aligned_off = (inc_bytes + 7) & ~size_t(7);
+	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem + aligned_off);
+
+	for (uint64_t i = tid; i < degree + 2; i += nthreads)
+		level_index_smem[i] = d_level_index[i];
+	__syncthreads();
 
 	// Zero the output
 	for (uint64_t i = tid; i < path_flat_len; i += nthreads)
@@ -737,7 +809,7 @@ __global__ void sig_backprop_kernel(
 		__syncthreads();
 
 		// Compute linear signature of the FORWARD segment
-		linear_signature_device(increments, linear_sig, dimension, degree, d_level_index);
+		linear_signature_device(increments, linear_sig, dimension, degree, level_index_smem);
 		__syncthreads();
 
 		// Negate increments to get REVERSED = prev_pt - next_pt (for Horner uncombine)
@@ -747,19 +819,19 @@ __global__ void sig_backprop_kernel(
 
 		// Horner step to "uncombine": sig = sig uncombined with reversed segment
 		signature_horner_step_device(my_sig, increments, dimension, degree,
-			d_level_index, horner_ws, horner_half_size);
+			level_index_smem, horner_ws, horner_half_size);
 		__syncthreads();
 
 		// uncombine_sig_deriv: split derivatives
 		// After this: my_sig_derivs contains dF/d(sig1), local_derivs contains dF/d(sig2)
 		uncombine_sig_deriv_device(my_sig, linear_sig, my_sig_derivs, local_derivs,
-			dimension, degree, sig_len, d_level_index);
+			dimension, degree, sig_len, level_index_smem);
 		__syncthreads();
 
 		// linear_sig_deriv_to_increment_deriv: convert dF/d(linear_sig) to dF/d(increment)
 		// Result is in local_derivs[1..dimension]
 		linear_sig_deriv_to_increment_deriv_device(linear_sig, local_derivs,
-			dimension, degree, d_level_index, dd_accum);
+			dimension, degree, level_index_smem, dd_accum);
 		__syncthreads();
 
 		// Accumulate into output: pos += s, neg -= s
@@ -820,22 +892,22 @@ void sig_backprop_cuda_core_(
 	//   local_derivs: sig_len
 	//   linear_signature: sig_len
 	//   horner_workspace: 2 * horner_half_size
-	uint64_t horner_half_size = level_index_host[degree + 1] - level_index_host[degree];
+	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
+	uint64_t horner_half_size = max_level_size;
 	uint64_t workspace_per_batch = 2 * sig_len + 2 * horner_half_size + dimension;
 
 	T* d_workspace;
 	cudaMalloc(&d_workspace, batch_size * workspace_per_batch * sizeof(T));
-
-	// Choose threads per block
-	uint64_t max_level_size = horner_half_size;
 	unsigned int threads_per_block = 32;
 	if (max_level_size > 32) threads_per_block = 64;
 	if (max_level_size > 64) threads_per_block = 128;
 	if (max_level_size > 128) threads_per_block = 256;
 	if (max_level_size > 512) threads_per_block = 512;
+	if (max_level_size > 1024) threads_per_block = 1024;
 
-	// Shared memory for increments
-	size_t smem_size = dimension * sizeof(T);
+	// Shared memory: increments + level_index (aligned)
+	size_t smem_size = (dimension * sizeof(T) + 7) & ~size_t(7);
+	smem_size += (degree + 2) * sizeof(uint64_t);
 
 	sig_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 		path, out, d_sig_derivs_copy, d_sig_copy,
