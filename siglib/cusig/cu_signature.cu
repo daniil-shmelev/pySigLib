@@ -16,66 +16,53 @@
 #include "cupch.h"
 #include "cusig.h"
 #include "cu_signature.h"
+#include "cu_tensor_poly.h"
 
-// =========================================================================
-// Helper: compute sig_length on the host
-// =========================================================================
+ // =========================================================================
+ // Custom atomicAdd for double: CAS-based implementation for sm_50/52
+ // (Native atomicAdd(double*,double) requires sm_60+)
+ // For float, we just forward to the built-in atomicAdd.
+ // =========================================================================
 
-static uint64_t host_power(uint64_t base, uint64_t exp) {
-	uint64_t result = 1;
-	while (exp > 0) {
-		if (exp & 1) result *= base;
-		base *= base;
-		exp >>= 1;
-	}
-	return result;
+template<typename T>
+__device__ __forceinline__ void myAtomicAdd(T* address, T val);
+
+template<>
+__device__ __forceinline__ void myAtomicAdd<float>(float* address, float val) {
+	atomicAdd(address, val);
 }
 
-static uint64_t host_sig_length(uint64_t dimension, uint64_t degree) {
-	if (dimension == 0) return 1;
-	if (dimension == 1) return degree + 1;
-	return (host_power(dimension, degree + 1) - 1) / (dimension - 1);
+template<>
+__device__ __forceinline__ void myAtomicAdd<double>(double* address, double val) {
+	unsigned long long int* address_as_ull = reinterpret_cast<unsigned long long int*>(address);
+	unsigned long long int old = *address_as_ull;
+	unsigned long long int assumed;
+	do {
+		assumed = old;
+		old = atomicCAS(address_as_ull, assumed,
+			__double_as_longlong(val + __longlong_as_double(assumed)));
+	} while (assumed != old);
 }
-
-// =========================================================================
-// Helper: populate level_index on the host
-//   level_index[k] = start offset of level k in the flat signature array
-//   level_index[0] = 0, level_index[1] = 1, level_index[k] = level_index[k-1]*dim + 1
-// =========================================================================
-
-static void host_populate_level_index(uint64_t* level_index, uint64_t dimension, uint64_t count) {
-	level_index[0] = 0;
-	for (uint64_t i = 1; i < count; ++i)
-		level_index[i] = level_index[i - 1] * dimension + 1;
-}
-
-// =========================================================================
-// CUDA Kernel: compute the linear signature of a single segment
-//
-// Given increments z[0..dim-1] = end_pt - start_pt, the linear signature is:
-//   level 0: 1
-//   level 1: z
-//   level k: tensor product of level (k-1) with z, divided by k
-//
-// Each thread handles a strided portion of the output.
-// =========================================================================
 
 template<typename T>
 __device__ void linear_signature_device(
-	const T* __restrict__ increments,   // dimension elements
-	T* __restrict__ out,                // sig_length elements
+	const T* __restrict__ increments,   // dimension many elements
+	T* __restrict__ out,                // sig_length many elements
 	uint64_t dimension,
 	uint64_t degree,
 	const uint64_t* __restrict__ level_index
 ) {
-	const int tid = threadIdx.x;
+	// compute the linear signature of a single segment
+	// Each thread handles a strided portion of the output.
+
+	const int thread_id = threadIdx.x;
 	const int nthreads = blockDim.x;
 
 	// Level 0
-	if (tid == 0) out[0] = static_cast<T>(1);
+	if (thread_id == 0) out[0] = static_cast<T>(1.);
 
 	// Level 1
-	for (uint64_t i = tid; i < dimension; i += nthreads)
+	for (uint64_t i = thread_id; i < dimension; i += nthreads)
 		out[i + 1] = increments[i];
 
 	__syncthreads();
@@ -83,10 +70,10 @@ __device__ void linear_signature_device(
 	// Precompute stride decomposition for incremental index tracking (avoids repeated integer division)
 	// Use 32-bit integers for loop variables (faster on GPU than 64-bit)
 	const unsigned int dim32 = static_cast<unsigned int>(dimension);
-	const unsigned int stride_l = static_cast<unsigned int>(nthreads) / dim32;
-	const unsigned int stride_r = static_cast<unsigned int>(nthreads) % dim32;
-	const unsigned int base_l = static_cast<unsigned int>(tid) / dim32;
-	const unsigned int base_r = static_cast<unsigned int>(tid) % dim32;
+	const unsigned int stride_l = static_cast<unsigned int>(nthreads) / dimension;
+	const unsigned int stride_r = static_cast<unsigned int>(nthreads) % dimension;
+	const unsigned int base_l = static_cast<unsigned int>(thread_id) / dimension;
+	const unsigned int base_r = static_cast<unsigned int>(thread_id) % dimension;
 
 	// Higher levels
 	for (uint64_t level = 2; level <= degree; ++level) {
@@ -98,7 +85,7 @@ __device__ void linear_signature_device(
 
 		unsigned int cur_l = base_l;
 		unsigned int cur_r = base_r;
-		for (unsigned int idx = static_cast<unsigned int>(tid); idx < cur_size; idx += static_cast<unsigned int>(nthreads)) {
+		for (unsigned int idx = static_cast<unsigned int>(thread_id); idx < cur_size; idx += static_cast<unsigned int>(nthreads)) {
 			out[cur_start + idx] = out[prev_start + cur_l] * increments[cur_r] * one_over_level;
 			cur_l += stride_l;
 			cur_r += stride_r;
@@ -111,69 +98,6 @@ __device__ void linear_signature_device(
 	}
 }
 
-// =========================================================================
-// CUDA Kernel: sig_combine_inplace on device
-//
-// Computes sig1 = sig1 (x) sig2  (tensor product / Chen's identity)
-// where sig2 is the signature of a linear segment.
-// =========================================================================
-
-template<typename T>
-__device__ void sig_combine_inplace_device(
-	T* __restrict__ sig1,
-	const T* __restrict__ sig2,
-	uint64_t degree,
-	const uint64_t* __restrict__ level_index
-) {
-	const int tid = threadIdx.x;
-	const int nthreads = blockDim.x;
-
-	// Process from highest level down to 1
-	for (int64_t target_level = static_cast<int64_t>(degree); target_level > 0; --target_level) {
-
-		const uint64_t target_start = level_index[target_level];
-		const uint64_t target_size = level_index[target_level + 1] - level_index[target_level];
-
-		// Accumulate contributions from left_level x right_level where left_level + right_level = target_level
-		for (int64_t left_level = target_level - 1, right_level = 1;
-			left_level > 0;
-			--left_level, ++right_level) {
-
-			const uint64_t left_start = level_index[left_level];
-			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
-			const uint64_t right_start = level_index[right_level];
-			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
-
-			for (uint64_t idx = tid; idx < target_size; idx += nthreads) {
-				const uint64_t l_idx = idx / right_size;
-				const uint64_t r_idx = idx % right_size;
-				sig1[target_start + idx] += sig1[left_start + l_idx] * sig2[right_start + r_idx];
-			}
-			__syncthreads();
-		}
-
-		// left_level = 0: just add sig2 at this level
-		for (uint64_t idx = tid; idx < target_size; idx += nthreads) {
-			sig1[target_start + idx] += sig2[level_index[target_level] + idx];
-		}
-		__syncthreads();
-	}
-}
-
-// =========================================================================
-// CUDA Kernel: Horner-based signature step on device
-//
-// Combines the current signature with the signature of a linear segment
-// (given by increments) using Horner's method.  This avoids materialising
-// the full linear signature and is the same algorithm as the CPU version.
-//
-// Workspace layout: horner_step has size 2 * dim^degree.
-//   - buf_A = horner_step[0 .. dim^degree - 1]
-//   - buf_B = horner_step[dim^degree .. 2*dim^degree - 1]
-//   We ping-pong between buf_A and buf_B during the multiply steps
-//   to avoid read-write conflicts under parallel execution.
-// =========================================================================
-
 template<typename T>
 __device__ void signature_horner_step_device(
 	T* __restrict__ sig,
@@ -184,32 +108,40 @@ __device__ void signature_horner_step_device(
 	T* __restrict__ horner_workspace,  // size = 2 * (level_index[degree+1] - level_index[degree])
 	uint64_t half_size                 // = level_index[degree+1] - level_index[degree]
 ) {
-	const int tid = threadIdx.x;
+	// Combines the current signature with the signature of a linear segment
+	// (given by increments) using Horner's method.
+
+	// Workspace layout: horner_step has size 2 * dim^degree.
+	//   - buf_A = horner_step[0 .. dim^degree - 1]
+	//   - buf_B = horner_step[dim^degree .. 2*dim^degree - 1]
+	//   We ping-pong between buf_A and buf_B during the multiply steps
+	//   to avoid read-write conflicts under parallel execution.
+
+	const unsigned int thread_id = static_cast<unsigned int>(threadIdx.x);
 	const int nthreads = blockDim.x;
 
 	// Precompute stride decomposition for incremental index tracking (avoids repeated integer division)
 	// Use 32-bit integers for loop variables (faster on GPU than 64-bit)
 	const unsigned int dim32 = static_cast<unsigned int>(dimension);
-	const unsigned int tid32 = static_cast<unsigned int>(tid);
 	const unsigned int nthreads32 = static_cast<unsigned int>(nthreads);
 	const unsigned int stride_l = nthreads32 / dim32;
 	const unsigned int stride_r = nthreads32 % dim32;
-	const unsigned int base_l = tid32 / dim32;
-	const unsigned int base_r = tid32 % dim32;
+	const unsigned int base_l = thread_id / dim32;
+	const unsigned int base_r = thread_id % dim32;
 
 	T* buf_A = horner_workspace;
 	T* buf_B = horner_workspace + half_size;
 
 	for (int64_t target_level = static_cast<int64_t>(degree); target_level > 1; --target_level) {
 
-		T one_over_level = static_cast<T>(1) / static_cast<T>(target_level);
+		T one_over_level = static_cast<T>(1.) / static_cast<T>(target_level);
 
 		// Current read buffer: start with buf_A
 		T* src = buf_A;
 		T* dst = buf_B;
 
 		// left_level = 0: assign increments * one_over_level into src
-		for (unsigned int i = tid32; i < dim32; i += nthreads32)
+		for (unsigned int i = thread_id; i < dim32; i += nthreads32)
 			src[i] = increments[i] * one_over_level;
 		__syncthreads();
 
@@ -218,11 +150,11 @@ __device__ void signature_horner_step_device(
 			++left_level, --right_level) {
 
 			const unsigned int left_level_size = static_cast<unsigned int>(level_index[left_level + 1] - level_index[left_level]);
-			one_over_level = static_cast<T>(1) / static_cast<T>(right_level);
+			one_over_level = static_cast<T>(1.) / static_cast<T>(right_level);
 
 			// Add sig at left_level into src (current horner data)
 			const uint64_t left_start = level_index[left_level];
-			for (unsigned int i = tid32; i < left_level_size; i += nthreads32)
+			for (unsigned int i = thread_id; i < left_level_size; i += nthreads32)
 				src[i] += sig[left_start + i];
 			__syncthreads();
 
@@ -230,7 +162,7 @@ __device__ void signature_horner_step_device(
 			const unsigned int result_size = left_level_size * dim32;
 			unsigned int cur_l = base_l;
 			unsigned int cur_r = base_r;
-			for (unsigned int idx = tid32; idx < result_size; idx += nthreads32) {
+			for (unsigned int idx = thread_id; idx < result_size; idx += nthreads32) {
 				dst[idx] = src[cur_l] * increments[cur_r] * one_over_level;
 				cur_l += stride_l;
 				cur_r += stride_r;
@@ -253,7 +185,7 @@ __device__ void signature_horner_step_device(
 
 			// Add sig at target_level - 1 into src
 			const uint64_t last_left_start = level_index[target_level - 1];
-			for (unsigned int i = tid32; i < left_level_size; i += nthreads32)
+			for (unsigned int i = thread_id; i < left_level_size; i += nthreads32)
 				src[i] += sig[last_left_start + i];
 			__syncthreads();
 
@@ -262,7 +194,7 @@ __device__ void signature_horner_step_device(
 			const uint64_t target_start = level_index[target_level];
 			unsigned int cur_l = base_l;
 			unsigned int cur_r = base_r;
-			for (unsigned int idx = tid32; idx < out_size; idx += nthreads32) {
+			for (unsigned int idx = thread_id; idx < out_size; idx += nthreads32) {
 				sig[target_start + idx] += src[cur_l] * increments[cur_r];
 				cur_l += stride_l;
 				cur_r += stride_r;
@@ -276,22 +208,13 @@ __device__ void signature_horner_step_device(
 	}
 
 	// Update level 1
-	for (unsigned int i = tid32; i < dim32; i += nthreads32)
+	for (unsigned int i = thread_id; i < dim32; i += nthreads32)
 		sig[i + 1] += increments[i];
 	__syncthreads();
 }
 
-// =========================================================================
-// Main kernel: compute signature for a batch of paths
-// One block per batch element. Path data is already transformed
-// (time_aug / lead_lag handled by cu_path_transforms).
-//
-// path: [batch_size, length, dimension] in row-major (on GPU)
-// out:  [batch_size, sig_length] (on GPU, preallocated)
-// =========================================================================
-
 template<typename T>
-__global__ void __launch_bounds__(1024, 2) signature_kernel(
+__global__ void signature_ker(
 	const T* __restrict__ path,
 	T* __restrict__ out,
 	const uint64_t* __restrict__ d_level_index,
@@ -303,8 +226,11 @@ __global__ void __launch_bounds__(1024, 2) signature_kernel(
 	T* __restrict__ workspace,     // [batch_size * 2 * horner_half_size]
 	uint64_t horner_half_size      // = level_index[degree+1] - level_index[degree]
 ) {
+	// One block per batch element. Path data is already transformed
+	// (time_aug / lead_lag handled by cu_path_transforms).
+
 	const uint64_t batch_idx = blockIdx.x;
-	const int tid = threadIdx.x;
+	const int thread_id = threadIdx.x;
 	const int nthreads = blockDim.x;
 
 	const T* my_path = path + batch_idx * path_flat_len;
@@ -320,7 +246,7 @@ __global__ void __launch_bounds__(1024, 2) signature_kernel(
 	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem + aligned_off);
 
 	// Load level_index into shared memory (small array, degree+2 entries)
-	for (uint64_t i = tid; i < degree + 2; i += nthreads)
+	for (uint64_t i = thread_id; i < degree + 2; i += nthreads)
 		level_index_smem[i] = d_level_index[i];
 	__syncthreads();
 
@@ -328,7 +254,7 @@ __global__ void __launch_bounds__(1024, 2) signature_kernel(
 	const T* next_pt = my_path + dimension;
 
 	// Compute increments = next_pt - prev_pt
-	for (uint64_t i = tid; i < dimension; i += nthreads)
+	for (uint64_t i = thread_id; i < dimension; i += nthreads)
 		increments[i] = next_pt[i] - prev_pt[i];
 	__syncthreads();
 
@@ -344,7 +270,7 @@ __global__ void __launch_bounds__(1024, 2) signature_kernel(
 		next_pt = my_path + step * dimension;
 
 		// Compute increments
-		for (uint64_t i = tid; i < dimension; i += nthreads)
+		for (uint64_t i = thread_id; i < dimension; i += nthreads)
 			increments[i] = next_pt[i] - prev_pt[i];
 		__syncthreads();
 
@@ -353,12 +279,8 @@ __global__ void __launch_bounds__(1024, 2) signature_kernel(
 	}
 }
 
-// =========================================================================
-// Naive kernel (fallback, uses sig_combine instead of Horner)
-// =========================================================================
-
 template<typename T>
-__global__ void signature_naive_kernel(
+__global__ void signature_naive_ker(
 	const T* __restrict__ path,
 	T* __restrict__ out,
 	const uint64_t* __restrict__ d_level_index,
@@ -370,7 +292,7 @@ __global__ void signature_naive_kernel(
 	T* __restrict__ linear_sig_workspace  // [batch_size * sig_len]
 ) {
 	const uint64_t batch_idx = blockIdx.x;
-	const int tid = threadIdx.x;
+	const int thread_id = threadIdx.x;
 	const int nthreads = blockDim.x;
 
 	const T* my_path = path + batch_idx * path_flat_len;
@@ -384,7 +306,7 @@ __global__ void signature_naive_kernel(
 	const size_t aligned_off = (inc_bytes + 7) & ~size_t(7);
 	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem + aligned_off);
 
-	for (uint64_t i = tid; i < degree + 2; i += nthreads)
+	for (uint64_t i = thread_id; i < degree + 2; i += nthreads)
 		level_index_smem[i] = d_level_index[i];
 	__syncthreads();
 
@@ -392,7 +314,7 @@ __global__ void signature_naive_kernel(
 	const T* next_pt = my_path + dimension;
 
 	// Increments for first segment
-	for (uint64_t i = tid; i < dimension; i += nthreads)
+	for (uint64_t i = thread_id; i < dimension; i += nthreads)
 		increments[i] = next_pt[i] - prev_pt[i];
 	__syncthreads();
 
@@ -406,7 +328,7 @@ __global__ void signature_naive_kernel(
 		prev_pt = my_path + (step - 1) * dimension;
 		next_pt = my_path + step * dimension;
 
-		for (uint64_t i = tid; i < dimension; i += nthreads)
+		for (uint64_t i = thread_id; i < dimension; i += nthreads)
 			increments[i] = next_pt[i] - prev_pt[i];
 		__syncthreads();
 
@@ -417,10 +339,6 @@ __global__ void signature_naive_kernel(
 		__syncthreads();
 	}
 }
-
-// =========================================================================
-// Host-side core launch (operates on already-transformed path data)
-// =========================================================================
 
 template<typename T>
 void signature_cuda_core_(
@@ -484,7 +402,7 @@ void signature_cuda_core_(
 		T* d_workspace = reinterpret_cast<T*>(d_alloc + aligned_li_bytes);
 		cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
 
-		signature_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
+		signature_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 			path, out, d_level_index,
 			dimension, length, degree, sig_len, path_flat_len,
 			d_workspace, horner_half_size
@@ -504,7 +422,7 @@ void signature_cuda_core_(
 		T* d_linear_sig = reinterpret_cast<T*>(d_alloc + aligned_li_bytes);
 		cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
 
-		signature_naive_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
+		signature_naive_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 			path, out, d_level_index,
 			dimension, length, degree, sig_len, path_flat_len,
 			d_linear_sig
@@ -520,15 +438,6 @@ void signature_cuda_core_(
 		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
 	}
 }
-
-// =========================================================================
-// Host-side launch function (with time_aug / lead_lag support)
-//
-// The input path is on GPU with shape [batch_size, length, dimension].
-// If time_aug or lead_lag is set, the path is first transformed on-GPU
-// using the existing cu_path_transforms infrastructure, then the signature
-// is computed on the transformed path.
-// =========================================================================
 
 // Forward-declare transform_path_ from cu_path_transforms.cu
 template<typename T>
@@ -580,40 +489,6 @@ void signature_cuda_(
 	}
 }
 
-// =========================================================================
-// Custom atomicAdd for double: CAS-based implementation for sm_50/52
-// (Native atomicAdd(double*,double) requires sm_60+)
-// For float, we just forward to the built-in atomicAdd.
-// =========================================================================
-
-template<typename T>
-__device__ __forceinline__ void myAtomicAdd(T* address, T val);
-
-template<>
-__device__ __forceinline__ void myAtomicAdd<float>(float* address, float val) {
-	atomicAdd(address, val);
-}
-
-template<>
-__device__ __forceinline__ void myAtomicAdd<double>(double* address, double val) {
-	unsigned long long int* address_as_ull = reinterpret_cast<unsigned long long int*>(address);
-	unsigned long long int old = *address_as_ull;
-	unsigned long long int assumed;
-	do {
-		assumed = old;
-		old = atomicCAS(address_as_ull, assumed,
-			__double_as_longlong(val + __longlong_as_double(assumed)));
-	} while (assumed != old);
-}
-
-// =========================================================================
-// CUDA Device: uncombine_sig_deriv
-//
-// Given sig1, sig2 are two signatures, and sig_concat = sig1 * sig2.
-// sig_concat_deriv is dF/d(sig_concat).
-// Computes dF/d(sig1) into sig_concat_deriv and dF/d(sig2) into sig2_deriv.
-// =========================================================================
-
 template<typename T>
 __device__ void uncombine_sig_deriv_device(
 	const T* __restrict__ sig1,
@@ -625,14 +500,18 @@ __device__ void uncombine_sig_deriv_device(
 	uint64_t sig_len,
 	const uint64_t* __restrict__ level_index
 ) {
-	const int tid = threadIdx.x;
+	// Given sig1, sig2 are two signatures, and sig_concat = sig1 * sig2.
+	// sig_concat_deriv is dF/d(sig_concat).
+	// Computes dF/d(sig1) into sig_concat_deriv and dF/d(sig2) into sig2_deriv.
+
+	const int thread_id = threadIdx.x;
 	const int nthreads = blockDim.x;
 
 	// Use 32-bit integers for loop variables (faster on GPU than 64-bit)
 	const unsigned int sig_len32 = static_cast<unsigned int>(sig_len);
 
 	// Copy sig_concat_deriv to sig2_deriv
-	for (unsigned int i = tid; i < sig_len32; i += nthreads)
+	for (unsigned int i = thread_id; i < sig_len32; i += nthreads)
 		sig2_deriv[i] = sig_concat_deriv[i];
 	__syncthreads();
 
@@ -653,7 +532,7 @@ __device__ void uncombine_sig_deriv_device(
 			const uint64_t left_start = level_index[left_level];
 			const uint64_t right_start = level_index[right_level];
 
-			for (unsigned int r = tid; r < right_size; r += nthreads) {
+			for (unsigned int r = thread_id; r < right_size; r += nthreads) {
 				T acc = static_cast<T>(0);
 				for (unsigned int l = 0; l < left_size; ++l) {
 					acc += sig_concat_deriv[level_start + l * right_size + r]
@@ -682,7 +561,7 @@ __device__ void uncombine_sig_deriv_device(
 			const uint64_t left_start = level_index[left_level];
 			const uint64_t right_start = level_index[right_level];
 
-			for (unsigned int l = tid; l < left_size; l += nthreads) {
+			for (unsigned int l = thread_id; l < left_size; l += nthreads) {
 				T acc = static_cast<T>(0);
 				for (unsigned int r = 0; r < right_size; ++r) {
 					acc += sig_concat_deriv[level_start + static_cast<uint64_t>(l) * right_size + r]
@@ -694,13 +573,6 @@ __device__ void uncombine_sig_deriv_device(
 	}
 }
 
-// =========================================================================
-// CUDA Device: linear_sig_deriv_to_increment_deriv
-//
-// Given sig is the signature of a line segment [a,b] and sig_deriv is
-// dF/d(sig), computes dF/d(b-a) and writes it into sig_deriv[1..dimension].
-// =========================================================================
-
 template<typename T>
 __device__ void linear_sig_deriv_to_increment_deriv_device(
 	const T* __restrict__ sig,
@@ -709,21 +581,24 @@ __device__ void linear_sig_deriv_to_increment_deriv_device(
 	uint64_t degree,
 	const uint64_t* __restrict__ level_index
 ) {
-	const int tid = threadIdx.x;
+	// Given sig is the signature of a line segment [a,b] and sig_deriv is
+	// dF/d(sig), computes dF/d(b-a) and writes it into sig_deriv[1..dimension].
+
+	const int thread_id = threadIdx.x;
 	const int nthreads = blockDim.x;
 
 	// Use 32-bit integers for loop variables (faster on GPU than 64-bit)
 	const unsigned int dim32 = static_cast<unsigned int>(dimension);
 
 	for (uint64_t level = degree; level > 1; --level) {
-		const T one_over_level = static_cast<T>(1) / static_cast<T>(level);
+		const T one_over_level = static_cast<T>(1.) / static_cast<T>(level);
 		const unsigned int level_size = static_cast<unsigned int>(level_index[level] - level_index[level - 1]);
 		const uint64_t level_start = level_index[level];
 		const uint64_t prev_start = level_index[level - 1];
 
 		// Pass 1: parallelize over j (each j owns unique offs2)
 		// Compute offs2_acc contribution (no atomics needed).
-		for (unsigned int j = tid; j < level_size; j += nthreads) {
+		for (unsigned int j = thread_id; j < level_size; j += nthreads) {
 			const uint64_t offs1 = level_start + static_cast<uint64_t>(dim32) * j - 1;
 			const uint64_t offs2 = prev_start + j;
 			T offs2_acc = static_cast<T>(0);
@@ -738,32 +613,21 @@ __device__ void linear_sig_deriv_to_increment_deriv_device(
 		// with one atomicAdd per dd per thread (reduces atomics from
 		// dimension*level_size to dimension*min(level_size, nthreads)).
 		for (unsigned int dd = 1; dd <= dim32; ++dd) {
-			T local_acc = static_cast<T>(0);
-			for (unsigned int j = tid; j < level_size; j += nthreads) {
+			T local_acc = static_cast<T>(0.);
+			for (unsigned int j = thread_id; j < level_size; j += nthreads) {
 				const uint64_t offs1 = level_start + static_cast<uint64_t>(dim32) * j - 1;
 				const uint64_t offs2 = prev_start + j;
 				local_acc += sig[offs2] * sig_deriv[offs1 + dd] * one_over_level;
 			}
-			if (local_acc != static_cast<T>(0))
+			if (local_acc != static_cast<T>(0.))
 				myAtomicAdd(&sig_deriv[dd], local_acc);
 		}
 		__syncthreads();
 	}
 }
 
-// =========================================================================
-// Main backprop kernel: one block per batch element
-//
-// path:       [batch_size, length, dimension] (GPU, transformed path)
-// out:        [batch_size, length, dimension] (GPU, output path derivs)
-// sig_derivs: [batch_size, sig_len] (GPU, dF/d(sig), will be modified)
-// sig:        [batch_size, sig_len] (GPU, forward signature, will be modified)
-// workspace:  per-batch workspace for local_derivs, linear_signature,
-//             horner buffers
-// =========================================================================
-
 template<typename T>
-__global__ void sig_backprop_kernel(
+__global__ void sig_backprop_ker(
 	const T* __restrict__ path,
 	T* __restrict__ out,
 	T* __restrict__ sig_derivs,
@@ -779,7 +643,7 @@ __global__ void sig_backprop_kernel(
 	uint64_t horner_half_size
 ) {
 	const uint64_t batch_idx = blockIdx.x;
-	const int tid = threadIdx.x;
+	const int thread_id = threadIdx.x;
 	const int nthreads = blockDim.x;
 
 	const T* my_path = path + batch_idx * path_flat_len;
@@ -803,12 +667,12 @@ __global__ void sig_backprop_kernel(
 	const size_t aligned_off = (inc_bytes + 7) & ~size_t(7);
 	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem + aligned_off);
 
-	for (uint64_t i = tid; i < degree + 2; i += nthreads)
+	for (uint64_t i = thread_id; i < degree + 2; i += nthreads)
 		level_index_smem[i] = d_level_index[i];
 	__syncthreads();
 
 	// Zero the output
-	for (uint64_t i = tid; i < path_flat_len; i += nthreads)
+	for (uint64_t i = thread_id; i < path_flat_len; i += nthreads)
 		my_out[i] = static_cast<T>(0);
 	__syncthreads();
 
@@ -820,7 +684,7 @@ __global__ void sig_backprop_kernel(
 		const T* next_pt = my_path + step * dimension;
 
 		// Compute FORWARD increments = next_pt - prev_pt (for linear signature)
-		for (uint64_t i = tid; i < dimension; i += nthreads)
+		for (uint64_t i = thread_id; i < dimension; i += nthreads)
 			increments[i] = next_pt[i] - prev_pt[i];
 		__syncthreads();
 
@@ -829,7 +693,7 @@ __global__ void sig_backprop_kernel(
 		__syncthreads();
 
 		// Negate increments to get REVERSED = prev_pt - next_pt (for Horner uncombine)
-		for (uint64_t i = tid; i < dimension; i += nthreads)
+		for (uint64_t i = thread_id; i < dimension; i += nthreads)
 			increments[i] = -increments[i];
 		__syncthreads();
 
@@ -855,7 +719,7 @@ __global__ void sig_backprop_kernel(
 		// s = local_derivs + 1
 		T* pos = my_out + step * dimension;
 		T* neg = my_out + (step - 1) * dimension;
-		for (uint64_t d = tid; d < dimension; d += nthreads) {
+		for (uint64_t d = thread_id; d < dimension; d += nthreads) {
 			T s = local_derivs[1 + d];
 			pos[d] += s;
 			neg[d] -= s;
@@ -863,10 +727,6 @@ __global__ void sig_backprop_kernel(
 		__syncthreads();
 	}
 }
-
-// =========================================================================
-// Host-side core launch for backprop (operates on already-transformed path)
-// =========================================================================
 
 template<typename T>
 void sig_backprop_cuda_core_(
@@ -931,7 +791,7 @@ void sig_backprop_cuda_core_(
 	size_t smem_size = (dimension * sizeof(T) + 7) & ~size_t(7);
 	smem_size += (degree + 2) * sizeof(uint64_t);
 
-	sig_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
+	sig_backprop_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 		path, out, d_sig_derivs_copy, d_sig_copy,
 		d_level_index,
 		dimension, length, degree, sig_len, path_flat_len,
@@ -946,15 +806,6 @@ void sig_backprop_cuda_core_(
 		throw std::runtime_error("CUDA Error (" + std::to_string(static_cast<int>(err)) + "): " + cudaGetErrorString(err));
 	}
 }
-
-// =========================================================================
-// Host-side launch function for backprop (with time_aug / lead_lag support)
-//
-// For the backprop, when time_aug or lead_lag is set:
-// 1. Transform the path on GPU
-// 2. Compute the backprop on the transformed path (gives derivs w.r.t. transformed path)
-// 3. Apply transform_path_backprop to get derivs w.r.t. original path
-// =========================================================================
 
 // Forward-declare transform_path_backprop_ from cu_path_transforms.cu
 template<typename T>
@@ -1023,9 +874,6 @@ void sig_backprop_cuda_(
 	}
 }
 
-// =========================================================================
-// SAFE_CALL macro (same pattern as cu_sig_kernel.cu)
-// =========================================================================
 
 #ifndef CU_SIGNATURE_SAFE_CALL
 #define CU_SIGNATURE_SAFE_CALL(function_call)                   \
@@ -1062,9 +910,6 @@ void sig_backprop_cuda_(
     return 0;
 #endif
 
-// =========================================================================
-// Exported C functions
-// =========================================================================
 
 extern "C" {
 
@@ -1105,7 +950,7 @@ extern "C" {
 	}
 
 	// =====================================================================
-	// Signature backpropagation exports
+	// backprop
 	// =====================================================================
 
 	CUSIG_API int sig_backprop_cuda_f(
@@ -1143,4 +988,5 @@ extern "C" {
 	) noexcept {
 		CU_SIGNATURE_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time));
 	}
+
 }
