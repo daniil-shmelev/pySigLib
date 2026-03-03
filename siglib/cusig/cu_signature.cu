@@ -628,8 +628,11 @@ __device__ void uncombine_sig_deriv_device(
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
+	// Use 32-bit integers for loop variables (faster on GPU than 64-bit)
+	const unsigned int sig_len32 = static_cast<unsigned int>(sig_len);
+
 	// Copy sig_concat_deriv to sig2_deriv
-	for (uint64_t i = tid; i < sig_len; i += nthreads)
+	for (unsigned int i = tid; i < sig_len32; i += nthreads)
 		sig2_deriv[i] = sig_concat_deriv[i];
 	__syncthreads();
 
@@ -637,23 +640,27 @@ __device__ void uncombine_sig_deriv_device(
 	// For each (level, left_level, right_level):
 	//   sig2_deriv[right_start + r] += sum_{l} sig_concat_deriv[level_start + l*right_size + r] * sig1[left_start + l]
 	// Parallelize over r (the output dimension) — no atomics needed.
+	// No __syncthreads needed: reads only from sig_concat_deriv and sig1 (both unmodified),
+	// writes only to sig2_deriv at unique per-thread r positions.
 	for (uint64_t level = degree; level > 0; --level) {
 		for (uint64_t left_level = level - 1, right_level = 1;
 			left_level > 0;
 			--left_level, ++right_level) {
 
-			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
-			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+			const unsigned int left_size = static_cast<unsigned int>(level_index[left_level + 1] - level_index[left_level]);
+			const unsigned int right_size = static_cast<unsigned int>(level_index[right_level + 1] - level_index[right_level]);
+			const uint64_t level_start = level_index[level];
+			const uint64_t left_start = level_index[left_level];
+			const uint64_t right_start = level_index[right_level];
 
-			for (uint64_t r = tid; r < right_size; r += nthreads) {
+			for (unsigned int r = tid; r < right_size; r += nthreads) {
 				T acc = static_cast<T>(0);
-				for (uint64_t l = 0; l < left_size; ++l) {
-					acc += sig_concat_deriv[level_index[level] + l * right_size + r]
-						* sig1[level_index[left_level] + l];
+				for (unsigned int l = 0; l < left_size; ++l) {
+					acc += sig_concat_deriv[level_start + l * right_size + r]
+						* sig1[left_start + l];
 				}
-				sig2_deriv[level_index[right_level] + r] += acc;
+				sig2_deriv[right_start + r] += acc;
 			}
-			__syncthreads();
 		}
 	}
 
@@ -661,23 +668,28 @@ __device__ void uncombine_sig_deriv_device(
 	// For each (left_level, level, right_level):
 	//   sig_concat_deriv[left_start + l] += sum_{r} sig_concat_deriv[level_start + l*right_size + r] * sig2[right_start + r]
 	// Parallelize over l (the output dimension) — no atomics needed.
+	// Sync needed between left_level iterations (left_level=k writes to level k,
+	// left_level=k-1 reads from level k), but not between inner iterations.
 	for (uint64_t left_level = 1; left_level < degree; ++left_level) {
+		__syncthreads();
 		for (uint64_t level = left_level + 1, right_level = 1;
 			level <= degree;
 			++level, ++right_level) {
 
-			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
-			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+			const unsigned int left_size = static_cast<unsigned int>(level_index[left_level + 1] - level_index[left_level]);
+			const unsigned int right_size = static_cast<unsigned int>(level_index[right_level + 1] - level_index[right_level]);
+			const uint64_t level_start = level_index[level];
+			const uint64_t left_start = level_index[left_level];
+			const uint64_t right_start = level_index[right_level];
 
-			for (uint64_t l = tid; l < left_size; l += nthreads) {
+			for (unsigned int l = tid; l < left_size; l += nthreads) {
 				T acc = static_cast<T>(0);
-				for (uint64_t r = 0; r < right_size; ++r) {
-					acc += sig_concat_deriv[level_index[level] + l * right_size + r]
-						* sig2[level_index[right_level] + r];
+				for (unsigned int r = 0; r < right_size; ++r) {
+					acc += sig_concat_deriv[level_start + static_cast<uint64_t>(l) * right_size + r]
+						* sig2[right_start + r];
 				}
-				sig_concat_deriv[level_index[left_level] + l] += acc;
+				sig_concat_deriv[left_start + l] += acc;
 			}
-			__syncthreads();
 		}
 	}
 }
@@ -695,40 +707,46 @@ __device__ void linear_sig_deriv_to_increment_deriv_device(
 	T* __restrict__ sig_deriv,
 	uint64_t dimension,
 	uint64_t degree,
-	const uint64_t* __restrict__ level_index,
-	T* __restrict__ dd_accum     // workspace of size dimension, zeroed before each level
+	const uint64_t* __restrict__ level_index
 ) {
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
+	// Use 32-bit integers for loop variables (faster on GPU than 64-bit)
+	const unsigned int dim32 = static_cast<unsigned int>(dimension);
+
 	for (uint64_t level = degree; level > 1; --level) {
 		const T one_over_level = static_cast<T>(1) / static_cast<T>(level);
-		const uint64_t level_size = level_index[level] - level_index[level - 1];
-
-		// Zero the per-dd accumulator
-		for (uint64_t d = tid; d < dimension; d += nthreads)
-			dd_accum[d] = static_cast<T>(0);
-		__syncthreads();
+		const unsigned int level_size = static_cast<unsigned int>(level_index[level] - level_index[level - 1]);
+		const uint64_t level_start = level_index[level];
+		const uint64_t prev_start = level_index[level - 1];
 
 		// Pass 1: parallelize over j (each j owns unique offs2)
-		// Accumulate sig_deriv[offs2] and contribute to dd_accum via atomics
-		// on a small buffer (dimension elements only — low contention).
-		for (uint64_t j = tid; j < level_size; j += nthreads) {
-			const uint64_t offs1 = level_index[level] + dimension * j - 1;
-			const uint64_t offs2 = level_index[level - 1] + j;
+		// Compute offs2_acc contribution (no atomics needed).
+		for (unsigned int j = tid; j < level_size; j += nthreads) {
+			const uint64_t offs1 = level_start + static_cast<uint64_t>(dim32) * j - 1;
+			const uint64_t offs2 = prev_start + j;
 			T offs2_acc = static_cast<T>(0);
-			for (uint64_t dd = 1; dd <= dimension; ++dd) {
-				const T ii = sig_deriv[offs1 + dd] * one_over_level;
-				offs2_acc += sig[dd] * ii;
-				myAtomicAdd(&dd_accum[dd - 1], sig[offs2] * ii);
+			for (unsigned int dd = 1; dd <= dim32; ++dd) {
+				offs2_acc += sig[dd] * sig_deriv[offs1 + dd] * one_over_level;
 			}
 			sig_deriv[offs2] += offs2_acc;
 		}
 		__syncthreads();
 
-		// Pass 2: flush dd_accum into sig_deriv[1..dimension]
-		for (uint64_t d = tid; d < dimension; d += nthreads)
-			sig_deriv[d + 1] += dd_accum[d];
+		// Pass 2: accumulate dd contributions locally per thread, then flush
+		// with one atomicAdd per dd per thread (reduces atomics from
+		// dimension*level_size to dimension*min(level_size, nthreads)).
+		for (unsigned int dd = 1; dd <= dim32; ++dd) {
+			T local_acc = static_cast<T>(0);
+			for (unsigned int j = tid; j < level_size; j += nthreads) {
+				const uint64_t offs1 = level_start + static_cast<uint64_t>(dim32) * j - 1;
+				const uint64_t offs2 = prev_start + j;
+				local_acc += sig[offs2] * sig_deriv[offs1 + dd] * one_over_level;
+			}
+			if (local_acc != static_cast<T>(0))
+				myAtomicAdd(&sig_deriv[dd], local_acc);
+		}
 		__syncthreads();
 	}
 }
@@ -773,12 +791,10 @@ __global__ void sig_backprop_kernel(
 	//   [0 .. sig_len-1]                     = local_derivs
 	//   [sig_len .. 2*sig_len-1]             = linear_signature
 	//   [2*sig_len .. 2*sig_len+2*hhs-1]    = horner_workspace
-	//   [2*sig_len+2*hhs .. 2*sig_len+2*hhs+dimension-1] = dd_accum
 	T* my_workspace = workspace + batch_idx * workspace_per_batch;
 	T* local_derivs = my_workspace;
 	T* linear_sig = my_workspace + sig_len;
 	T* horner_ws = my_workspace + 2 * sig_len;
-	T* dd_accum = my_workspace + 2 * sig_len + 2 * horner_half_size;
 
 	// ---- Shared memory: increments + level_index ----
 	extern __shared__ char smem[];
@@ -831,7 +847,7 @@ __global__ void sig_backprop_kernel(
 		// linear_sig_deriv_to_increment_deriv: convert dF/d(linear_sig) to dF/d(increment)
 		// Result is in local_derivs[1..dimension]
 		linear_sig_deriv_to_increment_deriv_device(linear_sig, local_derivs,
-			dimension, degree, level_index_smem, dd_accum);
+			dimension, degree, level_index_smem);
 		__syncthreads();
 
 		// Accumulate into output: pos += s, neg -= s
@@ -872,21 +888,9 @@ void sig_backprop_cuda_core_(
 		return;
 	}
 
-	// Build level_index on host and copy to device
+	// Build level_index on host
 	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
-
-	uint64_t* d_level_index;
-	cudaMalloc(&d_level_index, (degree + 2) * sizeof(uint64_t));
-	cudaMemcpy(d_level_index, level_index_host.get(), (degree + 2) * sizeof(uint64_t), cudaMemcpyHostToDevice);
-
-	// Make mutable copies of sig_derivs and sig on device
-	T* d_sig_derivs_copy;
-	T* d_sig_copy;
-	cudaMalloc(&d_sig_derivs_copy, batch_size * sig_len * sizeof(T));
-	cudaMalloc(&d_sig_copy, batch_size * sig_len * sizeof(T));
-	cudaMemcpy(d_sig_derivs_copy, sig_derivs, batch_size * sig_len * sizeof(T), cudaMemcpyDeviceToDevice);
-	cudaMemcpy(d_sig_copy, sig, batch_size * sig_len * sizeof(T), cudaMemcpyDeviceToDevice);
 
 	// Workspace per batch element:
 	//   local_derivs: sig_len
@@ -894,10 +898,28 @@ void sig_backprop_cuda_core_(
 	//   horner_workspace: 2 * horner_half_size
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	uint64_t horner_half_size = max_level_size;
-	uint64_t workspace_per_batch = 2 * sig_len + 2 * horner_half_size + dimension;
+	uint64_t workspace_per_batch = 2 * sig_len + 2 * horner_half_size;
 
-	T* d_workspace;
-	cudaMalloc(&d_workspace, batch_size * workspace_per_batch * sizeof(T));
+	// Merge all device allocations into a single cudaMalloc
+	// Layout: [level_index (aligned to 256)] [sig_derivs_copy] [sig_copy] [workspace]
+	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
+	const size_t level_index_padded = (level_index_bytes + 255) & ~size_t(255);
+	const size_t sig_derivs_bytes = batch_size * sig_len * sizeof(T);
+	const size_t sig_copy_bytes = batch_size * sig_len * sizeof(T);
+	const size_t workspace_bytes = batch_size * workspace_per_batch * sizeof(T);
+	const size_t total_bytes = level_index_padded + sig_derivs_bytes + sig_copy_bytes + workspace_bytes;
+
+	char* d_merged;
+	cudaMalloc(&d_merged, total_bytes);
+
+	uint64_t* d_level_index = reinterpret_cast<uint64_t*>(d_merged);
+	T* d_sig_derivs_copy = reinterpret_cast<T*>(d_merged + level_index_padded);
+	T* d_sig_copy = reinterpret_cast<T*>(d_merged + level_index_padded + sig_derivs_bytes);
+	T* d_workspace = reinterpret_cast<T*>(d_merged + level_index_padded + sig_derivs_bytes + sig_copy_bytes);
+
+	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_sig_derivs_copy, sig_derivs, sig_derivs_bytes, cudaMemcpyDeviceToDevice);
+	cudaMemcpy(d_sig_copy, sig, sig_copy_bytes, cudaMemcpyDeviceToDevice);
 	unsigned int threads_per_block = 32;
 	if (max_level_size > 32) threads_per_block = 64;
 	if (max_level_size > 64) threads_per_block = 128;
@@ -918,10 +940,7 @@ void sig_backprop_cuda_core_(
 
 	cudaError_t err = cudaDeviceSynchronize();
 
-	cudaFree(d_workspace);
-	cudaFree(d_sig_derivs_copy);
-	cudaFree(d_sig_copy);
-	cudaFree(d_level_index);
+	cudaFree(d_merged);
 
 	if (err != cudaSuccess) {
 		throw std::runtime_error("CUDA Error (" + std::to_string(static_cast<int>(err)) + "): " + cudaGetErrorString(err));
