@@ -12,56 +12,59 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # =========================================================================
+import timeit
+
 from tqdm import tqdm
-from timing_utils import time_pysiglib_sig_backprop, plot_times
+import torch
+
+import pysiglib
+from timing_utils import plot_times, time_pysiglib_sig_combine
 import plotting_params
 plotting_params.set_plotting_params(8, 10, 12)
 
+
 if __name__ == '__main__':
     cfg_cpu = {
-        'batch_size': 100,
+        'batch_size': 1024,
         'length': 10,
-        'dimension': 5,
+        'dimension': 6,
         'degree_arr': list(range(1, 8)),
-        'dtype': "double",
+        'dtype': "float",
         'device': 'cpu',
-        'num_runs': 50
+        'num_runs': 5
     }
 
     cfg_cuda = {
-        'batch_size': 100,
+        'batch_size': 1024,
         'length': 10,
-        'dimension': 5,
+        'dimension': 6,
         'degree_arr': list(range(1, 8)),
-        'dtype': "double",
+        'dtype': "float",
         'device': 'cuda',
-        'num_runs': 50
+        'num_runs': 5
     }
 
-    cpu_serial_time = []
-    cpu_parallel_time = []
+    cpu_time = []
     cuda_time = []
 
     for degree in tqdm(cfg_cpu['degree_arr']):
         cfg_cpu['degree'] = degree
         cfg_cuda['degree'] = degree
-        cpu_serial_time.append(time_pysiglib_sig_backprop(cfg_cpu, 1))
-        cpu_parallel_time.append(time_pysiglib_sig_backprop(cfg_cpu, -1))
-        cuda_time.append(time_pysiglib_sig_backprop(cfg_cuda, 1))
+        cpu_time.append(time_pysiglib_sig_combine(cfg_cpu, -1))
+        cuda_time.append(time_pysiglib_sig_combine(cfg_cuda, 1))
 
-    print("CPU (Serial):", cpu_serial_time)
-    print("CPU (Parallel):", cpu_parallel_time)
+    print("CPU:", cpu_time)
     print("CUDA:", cuda_time)
 
     for scale in ["linear", "log"]:
         plot_times(
             x=cfg_cpu['degree_arr'],
-            ys=[cpu_serial_time, cpu_parallel_time, cuda_time],
-            legend=["CPU (Serial)", "CPU (Parallel)", "CUDA"],
-            linestyles=["-", "-", "--"],
-            title="Sig Backprop: CPU vs CUDA",
+            ys=[cpu_time, cuda_time],
+            legend=["CPU", "CUDA"],
+            linestyles=["-", "--"],
+            title="Signature Combine: CPU vs CUDA",
             xlabel="Truncation Level",
             ylabel="Elapsed Time (s)",
             scale=scale,
-            filename="sig_backprop_times_cpu_vs_cuda_" + scale
+            filename="sig_combine_times_cpu_vs_cuda_" + scale
         )

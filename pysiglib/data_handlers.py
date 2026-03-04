@@ -114,6 +114,12 @@ class MultipleSigInputHandler:
         self.type_ = self.data[0].type_
         self.sig_ptr = [d.data_ptr for d in self.data]
 
+        # Propagate device info so SigOutputHandler can allocate on the correct device
+        if self.type_ == "torch":
+            self.device = self.data[0].sig.device.type
+        else:
+            self.device = "cpu"
+
 class SigOutputHandler:
     """
     Handle output which is (shaped like) a signature or a batch of signatures

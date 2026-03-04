@@ -319,4 +319,46 @@ extern "C" {
 	/** @brief */
 	CUSIG_API int batch_sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
 	/** @} */
+
+	/** @defgroup sig_combine_cuda_functions Signature combine CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Combines two truncated signatures on the GPU using Chen's identity (tensor product).
+	*
+	* Given two signatures S(x1) and S(x2), computes S(x1) ⊗ S(x2) = S(x1 * x2),
+	* where x1 * x2 is the concatenation of paths x1 and x2.
+	*
+	* @param sig1 Pointer to first signature (row-major, on device), size = `sig_length(dimension, degree)`.
+	* @param sig2 Pointer to second signature (row-major, on device), same size as sig1.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as sig1.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signatures.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_combine_cuda_f(const float* sig1, const float* sig2, float* out, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_combine_cuda_functions Batch signature combine CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Combines batches of truncated signatures on the GPU using Chen's identity.
+	*
+	* @param sig1 Pointer to batch of first signatures (row-major, on device), size = `batch_size * sig_length(dimension, degree)`.
+	* @param sig2 Pointer to batch of second signatures (row-major, on device), same size as sig1.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as sig1.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signatures.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_combine_cuda_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
 }

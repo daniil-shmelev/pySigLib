@@ -257,6 +257,106 @@ void check_result_typed(FN f, std::vector<T>& path, std::vector<T>& true_, Args.
     Assert::IsTrue(std::abs(-1. - static_cast<double>(out[true_.size()])) < eps, L"Sentinel value was overwritten");
 }
 
+// Typed check_result_2: two device inputs, output type T (for sig_combine_cuda_f / sig_combine_cuda_d)
+template<typename FN, typename T, typename... Args>
+void check_result_2_typed(FN f, std::vector<T>& input1, std::vector<T>& input2, std::vector<T>& true_, Args... args) {
+    std::vector<T> out;
+    out.resize(true_.size() + 1);
+    out[true_.size()] = static_cast<T>(-1.);
+
+    T* d_input1 = nullptr;
+    T* d_input2 = nullptr;
+    T* d_out = nullptr;
+    if (input1.size() > 0)
+        cudaMalloc(&d_input1, sizeof(T) * input1.size());
+    if (input2.size() > 0)
+        cudaMalloc(&d_input2, sizeof(T) * input2.size());
+    cudaMalloc(&d_out, sizeof(T) * out.size());
+
+    // Copy sentinel to device so we can check it later
+    cudaMemcpy(d_out, out.data(), sizeof(T) * out.size(), cudaMemcpyHostToDevice);
+
+    if (input1.size() > 0)
+        cudaMemcpy(d_input1, input1.data(), sizeof(T) * input1.size(), cudaMemcpyHostToDevice);
+    if (input2.size() > 0)
+        cudaMemcpy(d_input2, input2.data(), sizeof(T) * input2.size(), cudaMemcpyHostToDevice);
+
+    int err = f(d_input1, d_input2, d_out, args...);
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);
+
+    if (d_input1) cudaFree(d_input1);
+    if (d_input2) cudaFree(d_input2);
+    cudaFree(d_out);
+
+    Assert::AreEqual(0, err, L"sig_combine_cuda returned non-zero error code");
+
+    const double eps = TYPED_EPSILON(T);
+    for (uint64_t i = 0; i < true_.size(); ++i) {
+        std::wstring msg = L"Mismatch at index " + std::to_wstring(i) +
+            L": expected " + std::to_wstring(static_cast<double>(true_[i])) +
+            L" got " + std::to_wstring(static_cast<double>(out[i]));
+        Assert::IsTrue(std::abs(static_cast<double>(true_[i]) - static_cast<double>(out[i])) < eps, msg.c_str());
+    }
+
+    Assert::IsTrue(std::abs(-1. - static_cast<double>(out[true_.size()])) < eps, L"Sentinel value was overwritten");
+}
+
+// Helper: compute signature on GPU and return host vector
+template<typename T>
+std::vector<T> compute_sig_on_gpu(const std::vector<T>& path, uint64_t dimension, uint64_t length, uint64_t degree) {
+    uint64_t sig_len = sig_length_(dimension, degree);
+    std::vector<T> sig(sig_len);
+
+    T* d_path = nullptr;
+    T* d_out = nullptr;
+    cudaMalloc(&d_path, sizeof(T) * path.size());
+    cudaMalloc(&d_out, sizeof(T) * sig_len);
+    cudaMemcpy(d_path, path.data(), sizeof(T) * path.size(), cudaMemcpyHostToDevice);
+
+    int err;
+    if constexpr (std::is_same_v<T, float>)
+        err = signature_cuda_f(d_path, d_out, dimension, length, degree, false, false, 1.f, true);
+    else
+        err = signature_cuda_d(d_path, d_out, dimension, length, degree, false, false, 1., true);
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(sig.data(), d_out, sizeof(T) * sig_len, cudaMemcpyDeviceToHost);
+    cudaFree(d_path);
+    cudaFree(d_out);
+
+    Assert::AreEqual(0, err, L"signature_cuda returned non-zero error code in helper");
+    return sig;
+}
+
+// Helper: compute batch signature on GPU and return host vector
+template<typename T>
+std::vector<T> compute_batch_sig_on_gpu(const std::vector<T>& path, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree) {
+    uint64_t sig_len = sig_length_(dimension, degree) * batch_size;
+    std::vector<T> sig(sig_len);
+
+    T* d_path = nullptr;
+    T* d_out = nullptr;
+    cudaMalloc(&d_path, sizeof(T) * path.size());
+    cudaMalloc(&d_out, sizeof(T) * sig_len);
+    cudaMemcpy(d_path, path.data(), sizeof(T) * path.size(), cudaMemcpyHostToDevice);
+
+    int err;
+    if constexpr (std::is_same_v<T, float>)
+        err = batch_signature_cuda_f(d_path, d_out, batch_size, dimension, length, degree, false, false, 1.f, true);
+    else
+        err = batch_signature_cuda_d(d_path, d_out, batch_size, dimension, length, degree, false, false, 1., true);
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(sig.data(), d_out, sizeof(T) * sig_len, cudaMemcpyDeviceToHost);
+    cudaFree(d_path);
+    cudaFree(d_out);
+
+    Assert::AreEqual(0, err, L"batch_signature_cuda returned non-zero error code in helper");
+    return sig;
+}
+
 namespace MyTest
 {
     TEST_CLASS(sigKernelTest) {
@@ -1199,6 +1299,136 @@ public:
             };
             check_batch_backprop_result(f, path, sig, sig_derivs, expected_out,
                 (uint64_t)2, dimension, length, degree, false, false, 1.);
+        }
+    };
+
+    TEST_CLASS(sigCombineDoubleTest)
+    {
+    public:
+        TEST_METHOD(PolyMultTestLinear)
+        {
+            // Test signatures of linear 2d paths (same as CPU PolyMultTestLinear)
+            auto f = sig_combine_cuda_d;
+            std::vector<double> poly = { 1., 1., 1., 1. / 2, 1. / 2, 1. / 2, 1. / 2 };
+            std::vector<double> true_res = { 1., 2., 2., 2., 2., 2., 2. };
+
+            check_result_2_typed(f, poly, poly, true_res, (uint64_t)2, (uint64_t)2);
+        }
+
+        TEST_METHOD(PolyMultSigTest)
+        {
+            // Same as CPU PolyMultSigTest: compute sigs of two sub-paths, combine,
+            // and compare against sig of the concatenated path
+            uint64_t dimension = 2, degree = 5;
+            auto f = sig_combine_cuda_d;
+            std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
+            std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
+            std::vector<double> path = { 0., 0., 1., 0.5, 0.4, 2., 6., 0.1, 2.3, 4.1 };
+
+            // Compute sigs on GPU
+            std::vector<double> poly1 = compute_sig_on_gpu(path1, dimension, 3, degree);
+            std::vector<double> poly2 = compute_sig_on_gpu(path2, dimension, 3, degree);
+            std::vector<double> true_sig = compute_sig_on_gpu(path, dimension, 5, degree);
+
+            check_result_2_typed(f, poly1, poly2, true_sig, dimension, (uint64_t)degree);
+        }
+    };
+
+    TEST_CLASS(sigCombineFloatTest)
+    {
+    public:
+        TEST_METHOD(PolyMultTestLinear)
+        {
+            auto f = sig_combine_cuda_f;
+            std::vector<float> poly = { 1.f, 1.f, 1.f, 1.f / 2, 1.f / 2, 1.f / 2, 1.f / 2 };
+            std::vector<float> true_res = { 1.f, 2.f, 2.f, 2.f, 2.f, 2.f, 2.f };
+
+            check_result_2_typed(f, poly, poly, true_res, (uint64_t)2, (uint64_t)2);
+        }
+
+        TEST_METHOD(PolyMultSigTest)
+        {
+            uint64_t dimension = 2, degree = 5;
+            auto f = sig_combine_cuda_f;
+            std::vector<float> path1 = { 0.f, 0.f, 1.f, 0.5f, 0.4f, 2.f };
+            std::vector<float> path2 = { 0.4f, 2.f, 6.f, 0.1f, 2.3f, 4.1f };
+            std::vector<float> path = { 0.f, 0.f, 1.f, 0.5f, 0.4f, 2.f, 6.f, 0.1f, 2.3f, 4.1f };
+
+            std::vector<float> poly1 = compute_sig_on_gpu(path1, dimension, (uint64_t)3, degree);
+            std::vector<float> poly2 = compute_sig_on_gpu(path2, dimension, (uint64_t)3, degree);
+            std::vector<float> true_sig = compute_sig_on_gpu(path, dimension, (uint64_t)5, degree);
+
+            check_result_2_typed(f, poly1, poly2, true_sig, dimension, (uint64_t)degree);
+        }
+    };
+
+    TEST_CLASS(batchSigCombineTest)
+    {
+    public:
+        TEST_METHOD(BatchPolyMultSigTest)
+        {
+            // Same as CPU BatchPolyMultSigTest
+            uint64_t batch_size = 3, dimension = 2, degree = 2;
+            auto f = batch_sig_combine_cuda_d;
+            std::vector<double> path1 = { 0., 0., 0.25, 0.25, 0.5, 0.5,
+                0., 0., 0.4, 0.4, 0.6, 0.6,
+                0., 0., 1., 0.5, 4., 0. };
+            std::vector<double> path2 = { 0.5, 0.5, 1., 1.,
+                0.6, 0.6, 1., 1.,
+                4., 0., 0., 1. };
+            std::vector<double> path = { 0., 0., 0.25, 0.25, 0.5, 0.5, 1., 1.,
+                0., 0., 0.4, 0.4, 0.6, 0.6, 1., 1.,
+                0., 0., 1., 0.5, 4., 0., 0., 1. };
+
+            std::vector<double> poly1 = compute_batch_sig_on_gpu(path1, batch_size, dimension, 3, degree);
+            std::vector<double> poly2 = compute_batch_sig_on_gpu(path2, batch_size, dimension, 2, degree);
+            std::vector<double> true_sig = compute_batch_sig_on_gpu(path, batch_size, dimension, 4, degree);
+
+            check_result_2_typed(f, poly1, poly2, true_sig, batch_size, dimension, (uint64_t)degree);
+        }
+
+        TEST_METHOD(BatchPolyMultSigTestFloat)
+        {
+            uint64_t batch_size = 3, dimension = 2, degree = 2;
+            auto f = batch_sig_combine_cuda_f;
+            std::vector<float> path1 = { 0.f, 0.f, 0.25f, 0.25f, 0.5f, 0.5f,
+                0.f, 0.f, 0.4f, 0.4f, 0.6f, 0.6f,
+                0.f, 0.f, 1.f, 0.5f, 4.f, 0.f };
+            std::vector<float> path2 = { 0.5f, 0.5f, 1.f, 1.f,
+                0.6f, 0.6f, 1.f, 1.f,
+                4.f, 0.f, 0.f, 1.f };
+            std::vector<float> path = { 0.f, 0.f, 0.25f, 0.25f, 0.5f, 0.5f, 1.f, 1.f,
+                0.f, 0.f, 0.4f, 0.4f, 0.6f, 0.6f, 1.f, 1.f,
+                0.f, 0.f, 1.f, 0.5f, 4.f, 0.f, 0.f, 1.f };
+
+            std::vector<float> poly1 = compute_batch_sig_on_gpu<float>(path1, batch_size, dimension, 3, degree);
+            std::vector<float> poly2 = compute_batch_sig_on_gpu<float>(path2, batch_size, dimension, 2, degree);
+            std::vector<float> true_sig = compute_batch_sig_on_gpu<float>(path, batch_size, dimension, 4, degree);
+
+            check_result_2_typed(f, poly1, poly2, true_sig, batch_size, dimension, (uint64_t)degree);
+        }
+
+        TEST_METHOD(BatchPolyMultStressTest)
+        {
+            // Same as CPU BatchPolyMultStressTest: just check it doesn't crash/error
+            uint64_t batch_size = 1000, dimension = 5, degree = 5;
+            uint64_t total_len = batch_size * sig_length_(dimension, degree);
+
+            std::vector<double> poly(total_len, 1.);
+
+            double* d_poly = nullptr;
+            double* d_out = nullptr;
+            cudaMalloc(&d_poly, sizeof(double) * total_len);
+            cudaMalloc(&d_out, sizeof(double) * total_len);
+            cudaMemcpy(d_poly, poly.data(), sizeof(double) * total_len, cudaMemcpyHostToDevice);
+
+            int err = batch_sig_combine_cuda_d(d_poly, d_poly, d_out, batch_size, dimension, degree);
+            cudaDeviceSynchronize();
+
+            cudaFree(d_poly);
+            cudaFree(d_out);
+
+            Assert::AreEqual(0, err, L"BatchPolyMultStressTest returned non-zero error code");
         }
     };
 }

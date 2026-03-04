@@ -20,7 +20,7 @@ import torch
 
 from .param_checks import check_type, check_non_neg
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIGNATURE, CPSIG_BATCH_SIGNATURE, CPSIG_SIG_COMBINE, CPSIG_BATCH_SIG_COMBINE, CUSIG_SIGNATURE_CUDA, CUSIG_BATCH_SIGNATURE_CUDA
+from .dtypes import CPSIG_SIGNATURE, CPSIG_BATCH_SIGNATURE, CPSIG_SIG_COMBINE, CPSIG_BATCH_SIG_COMBINE, CUSIG_SIGNATURE_CUDA, CUSIG_BATCH_SIGNATURE_CUDA, CUSIG_SIG_COMBINE_CUDA, CUSIG_BATCH_SIG_COMBINE_CUDA
 from .load_siglib import BUILT_WITH_CUDA
 from .sig_length import sig_length
 from .data_handlers import PathInputHandler, MultipleSigInputHandler, SigOutputHandler, DeviceToHost
@@ -110,39 +110,73 @@ def sig_combine(
 
     aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
 
-    # If sig1 and sig2 on GPU, move to CPU
-    device_handler = DeviceToHost([sig1, sig2], ["sig1", "sig2"])
-    sig1, sig2 = device_handler.data
+    # Check if inputs are on CUDA and we can use the GPU implementation
+    use_cuda = (
+        BUILT_WITH_CUDA
+        and isinstance(sig1, torch.Tensor)
+        and sig1.device.type == "cuda"
+        and isinstance(sig2, torch.Tensor)
+        and sig2.device.type == "cuda"
+    )
+
+    if not use_cuda:
+        # If sig1 and sig2 on GPU, move to CPU
+        device_handler = DeviceToHost([sig1, sig2], ["sig1", "sig2"])
+        sig1, sig2 = device_handler.data
 
     sig_len = sig_length(aug_dimension, degree)
-    data = MultipleSigInputHandler([sig1, sig2], sig_len, ["sig1", "sig2"])
+    data = MultipleSigInputHandler([sig1, sig2], sig_len, ["sig1", "sig2"], allow_cuda=use_cuda)
     result = SigOutputHandler(data, sig_len)
 
-    if data.is_batch:
-        err_code = CPSIG_BATCH_SIG_COMBINE[data.dtype](
-            data.sig_ptr[0],
-            data.sig_ptr[1],
-            result.data_ptr,
-            data.batch_size,
-            aug_dimension,
-            degree,
-            n_jobs
-        )
+    if use_cuda:
+        if data.is_batch:
+            err_code = CUSIG_BATCH_SIG_COMBINE_CUDA[data.dtype](
+                data.sig_ptr[0],
+                data.sig_ptr[1],
+                result.data_ptr,
+                data.batch_size,
+                aug_dimension,
+                degree
+            )
+        else:
+            err_code = CUSIG_SIG_COMBINE_CUDA[data.dtype](
+                data.sig_ptr[0],
+                data.sig_ptr[1],
+                result.data_ptr,
+                aug_dimension,
+                degree
+            )
+
+        if err_code:
+            raise Exception("Error in pysiglib.sig_combine: " + err_msg(err_code))
+
+        res = result.data
     else:
-        err_code = CPSIG_SIG_COMBINE[data.dtype](
-            data.sig_ptr[0],
-            data.sig_ptr[1],
-            result.data_ptr,
-            aug_dimension,
-            degree
-        )
+        if data.is_batch:
+            err_code = CPSIG_BATCH_SIG_COMBINE[data.dtype](
+                data.sig_ptr[0],
+                data.sig_ptr[1],
+                result.data_ptr,
+                data.batch_size,
+                aug_dimension,
+                degree,
+                n_jobs
+            )
+        else:
+            err_code = CPSIG_SIG_COMBINE[data.dtype](
+                data.sig_ptr[0],
+                data.sig_ptr[1],
+                result.data_ptr,
+                aug_dimension,
+                degree
+            )
 
-    if err_code:
-        raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
+        if err_code:
+            raise Exception("Error in pysiglib.sig_combine: " + err_msg(err_code))
 
-    res = result.data
-    if device_handler.device is not None:
-        res = res.to(device_handler.device)
+        res = result.data
+        if device_handler.device is not None:
+            res = res.to(device_handler.device)
     return res
 
 def sig_(data, result, degree, horner = True):

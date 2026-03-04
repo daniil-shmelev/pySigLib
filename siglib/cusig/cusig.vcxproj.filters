@@ -27,6 +27,12 @@
     <ClInclude Include="cu_path_transforms.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="cu_tensor_poly.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cu_signature.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cupch.cpp">
@@ -41,6 +47,12 @@
       <Filter>Header Files</Filter>
     </CudaCompile>
     <CudaCompile Include="cu_path_transforms.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="cu_tensor_poly.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="cu_signature.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
   </ItemGroup>

@@ -1,4 +1,4 @@
-# Copyright 2025 Daniil Shmelev
+# Copyright 2026 Daniil Shmelev
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ if __name__ == '__main__':
         'batch_size': 1000,
         'length': 10,
         'dimension': 8,
-        'degree_arr': list(range(1, 7)),
+        'degree_arr': list(range(1, 8)),
         'dtype': "float",
         'device': 'cpu',
         'num_runs': 5
@@ -32,7 +32,7 @@ if __name__ == '__main__':
         'batch_size': 1000,
         'length': 10,
         'dimension': 8,
-        'degree_arr': list(range(1, 7)),
+        'degree_arr': list(range(1, 8)),
         'dtype': "float",
         'device': 'cuda',
         'num_runs': 5

@@ -1,4 +1,4 @@
-/* Copyright 2025 Daniil Shmelev
+/* Copyright 2026 Daniil Shmelev
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.

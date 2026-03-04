@@ -16,6 +16,7 @@
     <ClInclude Include="..\cusig\cu_path_transforms.h" />
     <ClInclude Include="..\cusig\cu_sig_kernel.h" />
     <ClInclude Include="..\cusig\cu_signature.h" />
+    <ClInclude Include="..\cusig\cu_tensor_poly.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cusig\cupch.cpp" />
@@ -25,6 +26,7 @@
     <CudaCompile Include="..\cusig\cu_path_transforms.cu" />
     <CudaCompile Include="..\cusig\cu_sig_kernel.cu" />
     <CudaCompile Include="..\cusig\cu_signature.cu" />
+    <CudaCompile Include="..\cusig\cu_tensor_poly.cu" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

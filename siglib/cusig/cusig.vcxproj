@@ -110,7 +110,9 @@
     <ClInclude Include="cupch.h" />
     <ClInclude Include="cu_path_transforms.h" />
     <ClInclude Include="cu_signature.h" />
+    <ClInclude Include="cu_tensor_poly.h" />
     <CudaCompile Include="cu_path_transforms.cu" />
+    <CudaCompile Include="cu_tensor_poly.cu" />
     <CudaCompile Include="cu_sig_kernel.h" />
     <CudaCompile Include="cu_signature.cu" />
   </ItemGroup>
