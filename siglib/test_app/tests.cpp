@@ -511,6 +511,58 @@ void example_sig_to_log_sig_d(
     std::cout << "done\n";
 }
 
+void example_sig_to_log_sig_cuda_d(
+    uint64_t dimension,
+    uint64_t degree,
+    int num_runs
+) {
+    print_header("Log Signature CUDA Double");
+
+    uint64_t slen = sig_length(dimension, degree);
+    std::vector<double> sig = test_data<double>(slen);
+
+    double* d_sig;
+    double* d_out;
+    cudaMalloc(&d_sig, sizeof(double) * slen);
+    cudaMalloc(&d_out, sizeof(double) * slen);
+
+    cudaMemcpy(d_sig, sig.data(), sizeof(double) * slen, cudaMemcpyHostToDevice);
+
+    time_function(num_runs, sig_to_log_sig_cuda_d, d_sig, d_out, dimension, degree);
+
+    cudaFree(d_sig);
+    cudaFree(d_out);
+
+    std::cout << "done\n";
+}
+
+void example_batch_sig_to_log_sig_cuda_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    int num_runs
+) {
+    print_header("Batch Log Signature CUDA Double");
+
+    uint64_t slen = sig_length(dimension, degree);
+    uint64_t total = batch_size * slen;
+    std::vector<double> sig = test_data<double>(total);
+
+    double* d_sig;
+    double* d_out;
+    cudaMalloc(&d_sig, sizeof(double) * total);
+    cudaMalloc(&d_out, sizeof(double) * total);
+
+    cudaMemcpy(d_sig, sig.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+
+    time_function(num_runs, batch_sig_to_log_sig_cuda_d, d_sig, d_out, batch_size, dimension, degree);
+
+    cudaFree(d_sig);
+    cudaFree(d_out);
+
+    std::cout << "done\n";
+}
+
 void example_batch_sig_coef(
     uint64_t num_idx,
     uint64_t batch_size,

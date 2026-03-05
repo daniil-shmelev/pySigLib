@@ -361,4 +361,44 @@ extern "C" {
 	/** @brief */
 	CUSIG_API int batch_sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
+
+	/** @defgroup sig_to_log_sig_cuda_functions Sig to log sig CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes the expanded tensor logarithm of a truncated signature on the GPU (float).
+	*
+	* Converts a signature to its log signature using the expanded (method=0) representation.
+	* Both input and output live on the GPU.
+	*
+	* @param sig Pointer to input signature (row-major, on device), size = `sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as sig.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signature.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_to_log_sig_cuda_functions Batch sig to log sig CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes the expanded tensor logarithm of a batch of truncated signatures on the GPU (float).
+	*
+	* @param sig Pointer to batch of input signatures (row-major, on device), size = `batch_size * sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as sig.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signature.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
 }

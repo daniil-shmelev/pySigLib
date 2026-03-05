@@ -21,11 +21,11 @@ import torch
 
 from .param_checks import check_type, check_non_neg, check_log_sig_method
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIG_TO_LOG_SIG, CPSIG_BATCH_SIG_TO_LOG_SIG
+from .dtypes import CPSIG_SIG_TO_LOG_SIG, CPSIG_BATCH_SIG_TO_LOG_SIG, CUSIG_SIG_TO_LOG_SIG_CUDA, CUSIG_BATCH_SIG_TO_LOG_SIG_CUDA
 from .sig_length import sig_length, log_sig_length
 from .sig import sig
 from .data_handlers import SigOutputHandler, DeviceToHost, SigInputHandler
-from .load_siglib import CPSIG
+from .load_siglib import CPSIG, BUILT_WITH_CUDA
 
 
 ######################################################
@@ -264,11 +264,45 @@ def sig_to_log_sig(
     check_type(method, "method", int)
     check_log_sig_method(method)
 
-    # If path is on GPU, move to CPU
+    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+
+    # Check if we can use the GPU path (method=0, expanded, only)
+    use_cuda = (
+        BUILT_WITH_CUDA
+        and method == 0
+        and isinstance(sig, torch.Tensor)
+        and sig.device.type == "cuda"
+    )
+
+    if use_cuda:
+        sig_len = sig_length(aug_dimension, degree)
+        data = SigInputHandler(sig, sig_len, "sig", allow_cuda=True)
+        result = SigOutputHandler(data, sig_len)
+
+        if data.is_batch:
+            err_code = CUSIG_BATCH_SIG_TO_LOG_SIG_CUDA[data.dtype](
+                data.data_ptr,
+                result.data_ptr,
+                data.batch_size,
+                aug_dimension,
+                degree
+            )
+        else:
+            err_code = CUSIG_SIG_TO_LOG_SIG_CUDA[data.dtype](
+                data.data_ptr,
+                result.data_ptr,
+                aug_dimension,
+                degree
+            )
+
+        if err_code:
+            raise Exception("Error in pysiglib.sig_to_log_sig: " + err_msg(err_code))
+
+        return result.data
+
+    # CPU path
     device_handler = DeviceToHost([sig], ["sig"])
     sig = device_handler.data[0]
-
-    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
 
     sig_len = sig_length(aug_dimension, degree)
     data = SigInputHandler(sig, sig_len, "sig")

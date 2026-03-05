@@ -83,12 +83,14 @@ class SigInputHandler:
         if isinstance(self.sig, np.ndarray):
             self.type_ = "numpy"
             self.dtype = str(self.sig.dtype)
+            self.device = "cpu"
             self.data_ptr = self.sig.ctypes.data_as(POINTER(DTYPES[self.dtype]))
         else:
             self.type_ = "torch"
             self.dtype = str(self.sig.dtype)[6:]
             if not allow_cuda and not self.sig.device.type == "cpu":
                 raise ValueError(param_name + " must be located on the cpu")
+            self.device = self.sig.device.type
             self.data_ptr = cast(self.sig.data_ptr(), POINTER(DTYPES[self.dtype]))
 
 class MultipleSigInputHandler:

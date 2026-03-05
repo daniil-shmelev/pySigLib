@@ -111,7 +111,9 @@
     <ClInclude Include="cu_path_transforms.h" />
     <ClInclude Include="cu_signature.h" />
     <ClInclude Include="cu_tensor_poly.h" />
+    <ClInclude Include="cu_log_signature.h" />
     <CudaCompile Include="cu_path_transforms.cu" />
+    <CudaCompile Include="cu_log_signature.cu" />
     <CudaCompile Include="cu_tensor_poly.cu" />
     <CudaCompile Include="cu_sig_kernel.h" />
     <CudaCompile Include="cu_signature.cu" />
