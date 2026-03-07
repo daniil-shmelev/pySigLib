@@ -401,7 +401,8 @@ if BUILT_WITH_CUDA:
         POINTER(c_float),
         POINTER(c_float),
         c_uint64,
-        c_uint64
+        c_uint64,
+        c_int
     )
     CUSIG.sig_to_log_sig_cuda_f.restype = c_int
 
@@ -409,7 +410,8 @@ if BUILT_WITH_CUDA:
         POINTER(c_double),
         POINTER(c_double),
         c_uint64,
-        c_uint64
+        c_uint64,
+        c_int
     )
     CUSIG.sig_to_log_sig_cuda_d.restype = c_int
 
@@ -422,7 +424,8 @@ if BUILT_WITH_CUDA:
         POINTER(c_float),
         c_uint64,
         c_uint64,
-        c_uint64
+        c_uint64,
+        c_int
     )
     CUSIG.batch_sig_to_log_sig_cuda_f.restype = c_int
 
@@ -431,9 +434,28 @@ if BUILT_WITH_CUDA:
         POINTER(c_double),
         c_uint64,
         c_uint64,
-        c_uint64
+        c_uint64,
+        c_int
     )
     CUSIG.batch_sig_to_log_sig_cuda_d.restype = c_int
+
+    ######################################################
+    # prepare_log_sig_cuda
+    ######################################################
+
+    CUSIG.prepare_log_sig_cuda.argtypes = (
+        c_uint64,
+        c_uint64,
+        c_int
+    )
+    CUSIG.prepare_log_sig_cuda.restype = c_int
+
+    ######################################################
+    # clear_cache_cuda
+    ######################################################
+
+    CUSIG.clear_cache_cuda.argtypes = ()
+    CUSIG.clear_cache_cuda.restype = c_int
 
 ######################################################
 # sig_combine_backprop

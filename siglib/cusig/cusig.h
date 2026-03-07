@@ -367,20 +367,23 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Computes the expanded tensor logarithm of a truncated signature on the GPU (float).
+	* @brief Converts a signature to its log signature on the GPU using the specified method.
 	*
-	* Converts a signature to its log signature using the expanded (method=0) representation.
-	* Both input and output live on the GPU.
+	* Method 0: expanded tensor log (output size = sig_length).
+	* Method 1: Lyndon words (output size = log_sig_length).
+	* Method 2: Lyndon basis (output size = log_sig_length).
+	* Methods 1 and 2 require a prior call to prepare_log_sig_cuda.
 	*
-	* @param sig Pointer to input signature (row-major, on device), size = `sig_length(dimension, degree)`.
-	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as sig.
+	* @param sig Pointer to input signature (on device), size = `sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (on device, preallocated).
 	* @param dimension Dimension of the underlying path space.
 	* @param degree Truncation degree of the signature.
+	* @param method Method for log signature computation (0, 1, or 2).
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t dimension, uint64_t degree, int method) noexcept;
 	/** @brief */
-	CUSIG_API int sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t dimension, uint64_t degree, int method) noexcept;
 	/** @} */
 
 	/** @defgroup batch_sig_to_log_sig_cuda_functions Batch sig to log sig CUDA functions
@@ -388,17 +391,45 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Computes the expanded tensor logarithm of a batch of truncated signatures on the GPU (float).
+	* @brief Converts a batch of signatures to log signatures on the GPU using the specified method.
 	*
-	* @param sig Pointer to batch of input signatures (row-major, on device), size = `batch_size * sig_length(dimension, degree)`.
-	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as sig.
+	* @param sig Pointer to batch of input signatures (on device), size = `batch_size * sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (on device, preallocated).
 	* @param batch_size Batch size.
 	* @param dimension Dimension of the underlying path space.
 	* @param degree Truncation degree of the signature.
+	* @param method Method for log signature computation (0, 1, or 2).
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int batch_sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
 	/** @brief */
-	CUSIG_API int batch_sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int batch_sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @} */
+
+	/** @defgroup prepare_log_sig_cuda_functions Prepare log sig CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Prepares GPU-side data structures needed for log signature methods 1 and 2.
+	*
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree.
+	* @param method Method (1 or 2).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int prepare_log_sig_cuda(uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @} */
+
+	/** @defgroup clear_cache_cuda_functions Clear cache CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Clears all GPU-side cached data for log signature computation.
+	*
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int clear_cache_cuda() noexcept;
 	/** @} */
 }

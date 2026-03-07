@@ -19,7 +19,6 @@ import numpy as np
 import torch
 
 from .transform_path import transform_path
-from .load_siglib import BUILT_WITH_CUDA
 from .param_checks import check_type
 from .error_codes import err_msg
 from .dtypes import CPSIG_BATCH_SIG_KERNEL, DTYPES, CUSIG_BATCH_SIG_KERNEL_CUDA
@@ -220,8 +219,6 @@ def sig_kernel(
     if data.device == "cpu":
         sig_kernel_(data, result, gram, dyadic_order_1, dyadic_order_2, n_jobs, return_grid)
     else:
-        if not BUILT_WITH_CUDA:
-            raise RuntimeError("pySigLib was built without CUDA - data must be moved to CPU.")
         sig_kernel_cuda_(data, result, gram, dyadic_order_1, dyadic_order_2, return_grid)
 
     return result.data

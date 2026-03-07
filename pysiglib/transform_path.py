@@ -18,7 +18,6 @@ from typing import Union
 import numpy as np
 import torch
 
-from .load_siglib import BUILT_WITH_CUDA
 from .data_handlers import PathOutputHandler
 from .param_checks import check_type
 from .error_codes import err_msg
@@ -194,21 +193,14 @@ def transform_path(
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     result = PathOutputHandler(data.length, data.dimension, data)
-    if data.is_batch:
-        check_type(n_jobs, "n_jobs", int)
-        if n_jobs == 0:
-            raise ValueError("n_jobs cannot be 0")
-
-        if data.device == "cpu":
-            return batch_transform_path_(data, result, n_jobs)
-        else:
-            if not BUILT_WITH_CUDA:
-                raise RuntimeError("pySigLib was built without CUDA - data must be moved to CPU.")
-            return batch_transform_path_cuda_(data, result, n_jobs)
-
     if data.device == "cpu":
+        if data.is_batch:
+            check_type(n_jobs, "n_jobs", int)
+            if n_jobs == 0:
+                raise ValueError("n_jobs cannot be 0")
+            return batch_transform_path_(data, result, n_jobs)
         return transform_path_(data, result)
     else:
-        if not BUILT_WITH_CUDA:
-            raise RuntimeError("pySigLib was built without CUDA - data must be moved to CPU.")
+        if data.is_batch:
+            return batch_transform_path_cuda_(data, result, n_jobs)
         return transform_path_cuda_(data, result)

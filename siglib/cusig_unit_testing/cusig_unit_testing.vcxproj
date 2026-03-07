@@ -13,6 +13,7 @@
   <ItemGroup>
     <ClInclude Include="..\cusig\cupch.h" />
     <ClInclude Include="..\cusig\cusig.h" />
+    <ClInclude Include="..\cusig\cu_log_signature.h" />
     <ClInclude Include="..\cusig\cu_path_transforms.h" />
     <ClInclude Include="..\cusig\cu_sig_kernel.h" />
     <ClInclude Include="..\cusig\cu_signature.h" />
@@ -23,6 +24,7 @@
     <ClCompile Include="..\cusig\cu_unit_tests.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <CudaCompile Include="..\cusig\cu_log_signature.cu" />
     <CudaCompile Include="..\cusig\cu_path_transforms.cu" />
     <CudaCompile Include="..\cusig\cu_sig_kernel.cu" />
     <CudaCompile Include="..\cusig\cu_signature.cu" />

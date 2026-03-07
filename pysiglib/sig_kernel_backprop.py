@@ -22,7 +22,6 @@ import torch
 from .transform_path import transform_path
 from .transform_path_backprop import transform_path_backprop
 from .sig_kernel import sig_kernel
-from .load_siglib import BUILT_WITH_CUDA
 from .param_checks import check_type
 from .error_codes import err_msg
 from .dtypes import CPSIG_BATCH_SIG_KERNEL_BACKPROP, DTYPES, CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA
@@ -83,8 +82,6 @@ def gram_deriv(
     if data.device == "cpu":
         sig_kernel_backprop_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
     else:
-        if not BUILT_WITH_CUDA:
-            raise RuntimeError("pySigLib was built without CUDA - data must be moved to CPU.")
         sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid)
 
     return torch.as_tensor(result.data)

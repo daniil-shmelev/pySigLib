@@ -19,23 +19,23 @@ plotting_params.set_plotting_params(8, 10, 12)
 
 if __name__ == '__main__':
     cfg_cpu = {
-        'batch_size': 100,
+        'batch_size': 1024,
         'length': 10,
         'dimension': 5,
         'degree_arr': list(range(1, 8)),
         'dtype': "double",
         'device': 'cpu',
-        'num_runs': 50
+        'num_runs': 5
     }
 
     cfg_cuda = {
-        'batch_size': 100,
+        'batch_size': 1024,
         'length': 10,
         'dimension': 5,
         'degree_arr': list(range(1, 8)),
         'dtype': "double",
         'device': 'cuda',
-        'num_runs': 50
+        'num_runs': 5
     }
 
     cpu_serial_time = []

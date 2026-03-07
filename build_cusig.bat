@@ -52,12 +52,16 @@ set NVCC_ARGS= %NVCC_GENCODE% --use-local-env -ccbin %VS_PATH%\bin\HostX64\x64 -
 
 %NVCC_EXE% %NVCC_ARGS% -o %SIGLIB_DIR%\cusig\x64\Release\cu_signature.cu.obj %SIGLIB_DIR%\cusig\cu_signature.cu
 
+%NVCC_EXE% %NVCC_ARGS% -o %SIGLIB_DIR%\cusig\x64\Release\cu_log_signature.cu.obj %SIGLIB_DIR%\cusig\cu_log_signature.cu
+
+%NVCC_EXE% %NVCC_ARGS% -o %SIGLIB_DIR%\cusig\x64\Release\cu_log_sig_cache.cu.obj %SIGLIB_DIR%\cusig\cu_log_sig_cache.cu
+
 
 
 @echo ---------------------------------------------------------------------------------------
 @echo link cuda obj files
 REM link cuda obj files 
-%NVCC_EXE% -dlink  -o x64\Release\cusig.device-link.obj -Xcompiler "/EHsc /W3 /nologo /O2   /MT " -Xcompiler "/Fdx64\Release\vc143.pdb" -L%CUDA_PATH%\bin\crt -L%CUDA_PATH%\lib\x64 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib cudart.lib cudadevrt.lib  %NVCC_GENCODE%  %SIGLIB_DIR%\cusig\x64\Release\cu_sig_kernel.h.obj %SIGLIB_DIR%\cusig\x64\Release\cu_sig_kernel.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_path_transforms.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_tensor_poly.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_signature.cu.obj
+%NVCC_EXE% -dlink  -o x64\Release\cusig.device-link.obj -Xcompiler "/EHsc /W3 /nologo /O2   /MT " -Xcompiler "/Fdx64\Release\vc143.pdb" -L%CUDA_PATH%\bin\crt -L%CUDA_PATH%\lib\x64 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib cudart.lib cudadevrt.lib  %NVCC_GENCODE%  %SIGLIB_DIR%\cusig\x64\Release\cu_sig_kernel.h.obj %SIGLIB_DIR%\cusig\x64\Release\cu_sig_kernel.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_path_transforms.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_tensor_poly.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_signature.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_log_signature.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_log_sig_cache.cu.obj
 
 rem pause
 
@@ -78,7 +82,7 @@ CD %SIGLIB_DIR%\cusig
 
 set STD_LIBS=kernel32.lib
 
-%LINK_EXE% /ERRORREPORT:PROMPT /OUT:%SIGLIB_DIR%\x64\Release\cusig.dll /NOLOGO /LIBPATH:%CUDA_PATH%\lib\x64 %STD_LIBS% cudart.lib cudadevrt.lib /MANIFEST /MANIFESTUAC:NO /manifest:embed /DEBUG /PDB:%SIGLIB_DIR%\x64\Release\cusig.pdb /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /LTCG:incremental /LTCGOUT:"x64\Release\cusig.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:%SIGLIB_DIR%\x64\Release\cusig.lib /MACHINE:X64 /DLL %SIGLIB_DIR%\cusig\x64\Release\cu_sig_kernel.h.obj %SIGLIB_DIR%\cusig\x64\Release\cu_sig_kernel.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_path_transforms.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_tensor_poly.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_signature.cu.obj x64\Release\cupch.obj  "x64\Release\cusig.device-link.obj"
+%LINK_EXE% /ERRORREPORT:PROMPT /OUT:%SIGLIB_DIR%\x64\Release\cusig.dll /NOLOGO /LIBPATH:%CUDA_PATH%\lib\x64 %STD_LIBS% cudart.lib cudadevrt.lib /MANIFEST /MANIFESTUAC:NO /manifest:embed /DEBUG /PDB:%SIGLIB_DIR%\x64\Release\cusig.pdb /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /LTCG:incremental /LTCGOUT:"x64\Release\cusig.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:%SIGLIB_DIR%\x64\Release\cusig.lib /MACHINE:X64 /DLL %SIGLIB_DIR%\cusig\x64\Release\cu_sig_kernel.h.obj %SIGLIB_DIR%\cusig\x64\Release\cu_sig_kernel.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_path_transforms.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_tensor_poly.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_signature.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_log_signature.cu.obj %SIGLIB_DIR%\cusig\x64\Release\cu_log_sig_cache.cu.obj x64\Release\cupch.obj  "x64\Release\cusig.device-link.obj"
 @echo ---------------------------------------------------------------------------------------
 
 rem pause

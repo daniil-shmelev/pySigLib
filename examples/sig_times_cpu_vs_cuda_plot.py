@@ -21,7 +21,7 @@ if __name__ == '__main__':
     cfg_cpu = {
         'batch_size': 1000,
         'length': 10,
-        'dimension': 8,
+        'dimension': 5,
         'degree_arr': list(range(1, 8)),
         'dtype': "float",
         'device': 'cpu',
@@ -31,7 +31,7 @@ if __name__ == '__main__':
     cfg_cuda = {
         'batch_size': 1000,
         'length': 10,
-        'dimension': 8,
+        'dimension': 5,
         'degree_arr': list(range(1, 8)),
         'dtype': "float",
         'device': 'cuda',

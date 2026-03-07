@@ -192,6 +192,9 @@ prepare_log_sig_fn prepare_log_sig = nullptr;
 clear_cache_fn clear_cache = nullptr;
 
 sig_to_log_sig_d_fn sig_to_log_sig_d = nullptr;
+batch_sig_to_log_sig_d_fn batch_sig_to_log_sig_d = nullptr;
+
+prepare_log_sig_cuda_fn prepare_log_sig_cuda = nullptr;
 
 sig_to_log_sig_cuda_d_fn sig_to_log_sig_cuda_d = nullptr;
 batch_sig_to_log_sig_cuda_d_fn batch_sig_to_log_sig_cuda_d = nullptr;
@@ -218,6 +221,7 @@ void get_cpsig_fn_ptrs()
     GET_FN(set_cache_dir, cpsig);
     GET_FN(clear_cache, cpsig);
     GET_FN(sig_to_log_sig_d, cpsig);
+    GET_FN(batch_sig_to_log_sig_d, cpsig);
     GET_FN(sig_coef_d, cpsig);
     GET_FN(batch_sig_coef_d, cpsig);
     GET_FN(sig_coef_backprop_d, cpsig);
@@ -235,6 +239,7 @@ void get_cusig_fn_ptrs()
     GET_FN(batch_signature_cuda_d, cusig);
     GET_FN(sig_backprop_cuda_d, cusig);
     GET_FN(batch_sig_backprop_cuda_d, cusig);
+    GET_FN(prepare_log_sig_cuda, cusig);
     GET_FN(sig_to_log_sig_cuda_d, cusig);
     GET_FN(batch_sig_to_log_sig_cuda_d, cusig);
 }

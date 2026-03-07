@@ -511,9 +511,34 @@ void example_sig_to_log_sig_d(
     std::cout << "done\n";
 }
 
+void example_batch_sig_to_log_sig_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    bool time_aug,
+    bool lead_lag,
+    int method,
+    int n_jobs,
+    int num_runs
+) {
+    print_header("Batch Log Signature Double");
+
+    uint64_t slen = sig_length(dimension, degree);
+    std::vector<double> sig = test_data<double>(batch_size * slen);
+
+    uint64_t out_len = method ? log_sig_length(dimension, degree) : slen;
+    std::vector<double> out(batch_size * out_len, 0.);
+
+    prepare_log_sig(dimension, degree, method, true);
+    time_function(num_runs, batch_sig_to_log_sig_d, sig.data(), out.data(), batch_size, dimension, degree, time_aug, lead_lag, method, n_jobs);
+
+    std::cout << "done\n";
+}
+
 void example_sig_to_log_sig_cuda_d(
     uint64_t dimension,
     uint64_t degree,
+    int method,
     int num_runs
 ) {
     print_header("Log Signature CUDA Double");
@@ -528,7 +553,8 @@ void example_sig_to_log_sig_cuda_d(
 
     cudaMemcpy(d_sig, sig.data(), sizeof(double) * slen, cudaMemcpyHostToDevice);
 
-    time_function(num_runs, sig_to_log_sig_cuda_d, d_sig, d_out, dimension, degree);
+    prepare_log_sig_cuda(dimension, degree, method);
+    time_function(num_runs, sig_to_log_sig_cuda_d, d_sig, d_out, dimension, degree, method);
 
     cudaFree(d_sig);
     cudaFree(d_out);
@@ -540,6 +566,7 @@ void example_batch_sig_to_log_sig_cuda_d(
     uint64_t batch_size,
     uint64_t dimension,
     uint64_t degree,
+    int method,
     int num_runs
 ) {
     print_header("Batch Log Signature CUDA Double");
@@ -555,7 +582,8 @@ void example_batch_sig_to_log_sig_cuda_d(
 
     cudaMemcpy(d_sig, sig.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
 
-    time_function(num_runs, batch_sig_to_log_sig_cuda_d, d_sig, d_out, batch_size, dimension, degree);
+    prepare_log_sig_cuda(dimension, degree, method);
+    time_function(num_runs, batch_sig_to_log_sig_cuda_d, d_sig, d_out, batch_size, dimension, degree, method);
 
     cudaFree(d_sig);
     cudaFree(d_out);

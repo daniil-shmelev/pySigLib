@@ -1449,14 +1449,14 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
-            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, dimension, (uint64_t)degree);
+            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, dimension, (uint64_t)degree, 0);
         }
 
         TEST_METHOD(ManualLogSigTest) {
             uint64_t dimension = 2, degree = 2;
             std::vector<double> true_ = { 0., 0., 1., 0., 1., -1., 0. };
             std::vector<double> sig = { 1., 0., 1., 0., 1., -1., 0.5 };
-            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, dimension, (uint64_t)degree);
+            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, dimension, (uint64_t)degree, 0);
         }
 
         TEST_METHOD(ManualLogSigTest2Float) {
@@ -1480,7 +1480,7 @@ public:
                 -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
                 -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
             };
-            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, dimension, (uint64_t)degree);
+            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, dimension, (uint64_t)degree, 0);
         }
 
         TEST_METHOD(BatchLogSigTest) {
@@ -1494,7 +1494,7 @@ public:
                 1., 1., 1., 0.5, 0.5, 0.5, 0.5,
                 1., 0., 1., 0., 1., -1., 0.5 };
 
-            check_result_typed(batch_sig_to_log_sig_cuda_d, sig, true_, (uint64_t)3, dimension, (uint64_t)degree);
+            check_result_typed(batch_sig_to_log_sig_cuda_d, sig, true_, (uint64_t)3, dimension, (uint64_t)degree, 0);
         }
 
         TEST_METHOD(ManualTimeAugTest) {
@@ -1505,7 +1505,7 @@ public:
                                 10.5f, 5.5f, -5.25f, -11.f, 5.5f, 0.f };
             std::vector<float> sig = { 1.f, 9.f, 4.f, 40.5f, 15.5f, 20.5f, 8.f, 121.5f, 37.5f,
                                 64.5f, 24.5f, 60.f, 13.f, 34.5f, 10.f + 2.f / 3.f };
-            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, dimension, (uint64_t)degree);
+            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, dimension, (uint64_t)degree, 0);
         }
 
         TEST_METHOD(ManualLeadLagTest) {
@@ -1514,7 +1514,7 @@ public:
             uint64_t dimension = 2, degree = 3;
             std::vector<float> true_ = { 0.f, 9.f, 9.f, 0.f, -31.5f, 31.5f, 0.f, 0.f, 26.75f, -53.5f, 11.75f, 26.75f, -23.5f, 11.75f, 0.f };
             std::vector<float> sig = { 1.f, 9.f, 9.f, 40.5f, 9.f, 72.f, 40.5f, 121.5f, 6.5f, 68.f, -8.5f, 290.f, 98.f, 275.f, 121.5f };
-            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, dimension, (uint64_t)degree);
+            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, dimension, (uint64_t)degree, 0);
         }
 
         TEST_METHOD(BigLeadLagTest) {
@@ -1531,7 +1531,7 @@ public:
             cudaMalloc(&d_out, sizeof(double) * out.size());
             cudaMemcpy(d_sig, sig.data(), sizeof(double) * sig.size(), cudaMemcpyHostToDevice);
 
-            int err = batch_sig_to_log_sig_cuda_d(d_sig, d_out, batch, dimension, degree);
+            int err = batch_sig_to_log_sig_cuda_d(d_sig, d_out, batch, dimension, degree, 0);
             cudaDeviceSynchronize();
 
             cudaFree(d_sig);
@@ -1545,7 +1545,7 @@ public:
             uint64_t dimension = 3, degree = 1;
             std::vector<double> sig = { 1., 2., 3., 4. };
             std::vector<double> true_ = { 0., 2., 3., 4. };
-            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, dimension, (uint64_t)degree);
+            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, dimension, (uint64_t)degree, 0);
         }
 
         TEST_METHOD(StressTest) {
@@ -1562,7 +1562,7 @@ public:
             cudaMalloc(&d_out, sizeof(double) * total_len);
             cudaMemcpy(d_sig, sig.data(), sizeof(double) * total_len, cudaMemcpyHostToDevice);
 
-            int err = batch_sig_to_log_sig_cuda_d(d_sig, d_out, batch_size, dimension, degree);
+            int err = batch_sig_to_log_sig_cuda_d(d_sig, d_out, batch_size, dimension, degree, 0);
             cudaDeviceSynchronize();
 
             cudaFree(d_sig);
