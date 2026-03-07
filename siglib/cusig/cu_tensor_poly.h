@@ -43,6 +43,20 @@ inline void host_populate_level_index(uint64_t* level_index, uint64_t dimension,
 }
 
 // =========================================================================
+// Shared helper: choose threads per block from largest level size
+// =========================================================================
+
+inline unsigned int host_choose_threads_per_block(uint64_t max_level_size) {
+	unsigned int tpb = 32;
+	if (max_level_size > 32)   tpb = 64;
+	if (max_level_size > 64)   tpb = 128;
+	if (max_level_size > 128)  tpb = 256;
+	if (max_level_size > 512)  tpb = 512;
+	if (max_level_size > 1024) tpb = 1024;
+	return tpb;
+}
+
+// =========================================================================
 // CUDA device function: sig_combine_inplace
 //
 // Computes sig1 = sig1 (x) sig2  (tensor product / Chen's identity)

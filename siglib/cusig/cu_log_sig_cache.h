@@ -291,6 +291,12 @@ struct CUDALogSigCache {
 	uint64_t* d_lyndon_idx = nullptr;
 	uint64_t log_sig_len = 0;
 
+	// Cached level index (avoids per-call allocation)
+	uint64_t* d_level_index = nullptr;
+	uint64_t sig_len = 0;
+	uint64_t buff1_len = 0;
+	unsigned int threads_per_block = 32;
+
 	// CSR sparse matrix for method 2
 	int* d_sparse_vals = nullptr;
 	uint64_t* d_sparse_cols = nullptr;
@@ -299,6 +305,7 @@ struct CUDALogSigCache {
 
 	~CUDALogSigCache() {
 		if (d_lyndon_idx) cudaFree(d_lyndon_idx);
+		if (d_level_index) cudaFree(d_level_index);
 		if (d_sparse_vals) cudaFree(d_sparse_vals);
 		if (d_sparse_cols) cudaFree(d_sparse_cols);
 		if (d_sparse_row_ptr) cudaFree(d_sparse_row_ptr);
@@ -310,10 +317,13 @@ struct CUDALogSigCache {
 	CUDALogSigCache() = default;
 	CUDALogSigCache(CUDALogSigCache&& o) noexcept
 		: d_lyndon_idx(o.d_lyndon_idx), log_sig_len(o.log_sig_len),
+		  d_level_index(o.d_level_index), sig_len(o.sig_len),
+		  buff1_len(o.buff1_len), threads_per_block(o.threads_per_block),
 		  d_sparse_vals(o.d_sparse_vals), d_sparse_cols(o.d_sparse_cols),
 		  d_sparse_row_ptr(o.d_sparse_row_ptr), sparse_nnz(o.sparse_nnz)
 	{
 		o.d_lyndon_idx = nullptr;
+		o.d_level_index = nullptr;
 		o.d_sparse_vals = nullptr;
 		o.d_sparse_cols = nullptr;
 		o.d_sparse_row_ptr = nullptr;
@@ -398,6 +408,20 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 	cudaMalloc(&entry.d_lyndon_idx, log_sig_len * sizeof(uint64_t));
 	cudaMemcpy(entry.d_lyndon_idx, lyndon_idx.data(), log_sig_len * sizeof(uint64_t), cudaMemcpyHostToDevice);
 
+	// Cache level_index on GPU
+	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
+	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
+	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
+	cudaMalloc(&entry.d_level_index, level_index_bytes);
+	cudaMemcpy(entry.d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
+
+	entry.sig_len = host_sig_length(dimension, degree);
+	entry.buff1_len = degree >= 2 ? host_sig_length(dimension, degree - 1) : 1;
+
+	// Compute threads_per_block from max level size
+	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
+	entry.threads_per_block = host_choose_threads_per_block(max_level_size);
+
 	// For method 2, compute and upload the sparse matrix
 	if (method == 2) {
 		upload_sparse_matrix_(entry, dimension, degree);
@@ -416,6 +440,10 @@ inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_
 	return it->second;
 }
 
+// Forward declaration — defined in cu_log_signature.cu
+void free_cuda_log_sig_workspace_();
+
 inline void clear_cache_cuda_() {
 	get_cuda_log_sig_cache_map_().clear();
+	free_cuda_log_sig_workspace_();
 }

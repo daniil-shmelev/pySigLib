@@ -20,12 +20,55 @@
 #include "cu_log_sig_cache.h"
 
 // =========================================================================
-// CUDA sig_to_log_sig kernel
+// Scratch buffer workspace — cached across calls to avoid per-call
+// cudaMalloc/cudaFree of large buffers
+// =========================================================================
+
+struct CUDALogSigWorkspace {
+	void* d_temp = nullptr;
+	void* d_buff1 = nullptr;
+	void* d_buff2 = nullptr;
+	size_t temp_bytes = 0;
+	size_t buff1_bytes = 0;
+	size_t buff2_bytes = 0;
+
+	void ensure(size_t need_temp, size_t need_buff1, size_t need_buff2) {
+		if (need_temp > temp_bytes) {
+			if (d_temp) cudaFree(d_temp);
+			cudaMalloc(&d_temp, need_temp);
+			temp_bytes = need_temp;
+		}
+		if (need_buff1 > buff1_bytes) {
+			if (d_buff1) cudaFree(d_buff1);
+			cudaMalloc(&d_buff1, need_buff1);
+			buff1_bytes = need_buff1;
+		}
+		if (need_buff2 > buff2_bytes) {
+			if (d_buff2) cudaFree(d_buff2);
+			cudaMalloc(&d_buff2, need_buff2);
+			buff2_bytes = need_buff2;
+		}
+	}
+
+	void free() {
+		if (d_temp) { cudaFree(d_temp); d_temp = nullptr; temp_bytes = 0; }
+		if (d_buff1) { cudaFree(d_buff1); d_buff1 = nullptr; buff1_bytes = 0; }
+		if (d_buff2) { cudaFree(d_buff2); d_buff2 = nullptr; buff2_bytes = 0; }
+	}
+
+	~CUDALogSigWorkspace() { free(); }
+};
+
+static CUDALogSigWorkspace g_workspace;
+
+void free_cuda_log_sig_workspace_() {
+	g_workspace.free();
+}
+
+// =========================================================================
+// CUDA sig_to_log_sig kernel (method 0 — expanded tensor log)
 //
-// Computes the expanded tensor logarithm of a truncated signature.
 // Each block handles one batch element.
-// Requires two scratch buffers (buff1, buff2) per batch element,
-// allocated in global memory.
 // =========================================================================
 
 template<typename T>
@@ -66,7 +109,7 @@ __global__ void sig_to_log_sig_kernel(
 }
 
 // =========================================================================
-// Host-side sig_to_log_sig core launch
+// Host-side sig_to_log_sig core launch (method 0)
 // =========================================================================
 
 template<typename T>
@@ -102,36 +145,29 @@ void sig_to_log_sig_cuda_core_(
 	cudaMalloc(&d_level_index, level_index_bytes);
 	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
 
-	// Allocate scratch buffers
+	// Allocate scratch buffers via workspace cache
 	const uint64_t buff1_len = degree >= 2 ? host_sig_length(dimension, degree - 1) : 1;
 
-	T* d_buff1 = nullptr;
-	T* d_buff2 = nullptr;
-	cudaMalloc(&d_buff1, sizeof(T) * batch_size * buff1_len);
-	cudaMalloc(&d_buff2, sizeof(T) * batch_size * sig_len);
+	g_workspace.ensure(0, sizeof(T) * batch_size * buff1_len, sizeof(T) * batch_size * sig_len);
 
 	// Choose threads per block based on largest level size
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
-	unsigned int threads_per_block = 32;
-	if (max_level_size > 32)   threads_per_block = 64;
-	if (max_level_size > 64)   threads_per_block = 128;
-	if (max_level_size > 128)  threads_per_block = 256;
-	if (max_level_size > 512)  threads_per_block = 512;
-	if (max_level_size > 1024) threads_per_block = 1024;
+	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
 
 	// Shared memory: level_index only
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
 	sig_to_log_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-		sig, out, d_buff1, d_buff2, d_level_index, degree, sig_len, buff1_len
+		sig, out,
+		static_cast<T*>(g_workspace.d_buff1),
+		static_cast<T*>(g_workspace.d_buff2),
+		d_level_index, degree, sig_len, buff1_len
 	);
 
 	cudaDeviceSynchronize();
-	cudaFree(d_level_index);
-	cudaFree(d_buff1);
-	cudaFree(d_buff2);
 
 	cudaError_t err = cudaGetLastError();
+	cudaFree(d_level_index);
 	if (err != cudaSuccess) {
 		const int error_code = static_cast<int>(err);
 		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
@@ -194,9 +230,10 @@ __global__ void sig_to_log_sig_m1_kernel(
 // CUDA sig_to_log_sig method 2 kernel (Lyndon basis)
 //
 // Phase 1: Copy sig → temp, compute tensor log in-place
-// Phase 2: Gather — gathered[i] = temp[lyndon_idx[i]]
-// Phase 3: Apply sparse lower-triangular matrix multiply (serial per row)
-//          out[i] = gathered[i] + sum_j(sparse_mat[i][j] * gathered[j])
+// Phase 2: Gather — out[i] = temp[lyndon_idx[i]]
+// Phase 3: Apply sparse lower-triangular matrix multiply (parallel)
+//          Copy gathered values to temp scratch, then:
+//          out[i] = temp[i] + sum_j(sparse_mat[i][j] * temp[j])
 // =========================================================================
 
 template<typename T>
@@ -247,20 +284,22 @@ __global__ void sig_to_log_sig_m2_kernel(
 		my_out[i] = my_temp[d_lyndon_idx[i]];
 	__syncthreads();
 
-	// Apply inverse projection matrix (lower triangular, diagonal = identity, dropped)
-	// out[i] += sum_j mat[i][j] * out[j] for j < i
-	// Process rows bottom-up so that out[j] values used in row i are still original
-	if (tid == 0) {
-		for (uint64_t i_ = 0; i_ < log_sig_len; ++i_) {
-			uint64_t i = log_sig_len - i_ - 1;
-			uint64_t row_start = d_sparse_row_ptr[i];
-			uint64_t row_end = d_sparse_row_ptr[i + 1];
-			T acc = static_cast<T>(0);
-			for (uint64_t k = row_start; k < row_end; ++k) {
-				acc += static_cast<T>(d_sparse_vals[k]) * my_out[d_sparse_cols[k]];
-			}
-			my_out[i] += acc;
+	// Copy gathered values to temp scratch (reuse my_temp since tensor log is done)
+	// so we can read from scratch while writing to out in parallel
+	for (uint64_t i = tid; i < log_sig_len; i += nthreads)
+		my_temp[i] = my_out[i];
+	__syncthreads();
+
+	// Apply inverse projection matrix in parallel
+	// out[i] = temp[i] + sum_j mat[i][j] * temp[j]
+	for (uint64_t i = tid; i < log_sig_len; i += nthreads) {
+		uint64_t row_start = d_sparse_row_ptr[i];
+		uint64_t row_end = d_sparse_row_ptr[i + 1];
+		T acc = static_cast<T>(0);
+		for (uint64_t k = row_start; k < row_end; ++k) {
+			acc += static_cast<T>(d_sparse_vals[k]) * my_temp[d_sparse_cols[k]];
 		}
+		my_out[i] = my_temp[i] + acc;
 	}
 }
 
@@ -276,51 +315,30 @@ void sig_to_log_sig_cuda_m1_core_(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const uint64_t sig_len = host_sig_length(dimension, degree);
 	const auto& cache = get_cuda_log_sig_cache(dimension, degree);
+	const uint64_t sig_len = cache.sig_len;
+	const uint64_t buff1_len = cache.buff1_len;
 	const uint64_t log_sig_len = cache.log_sig_len;
 
-	// Build level_index on host and copy to device
-	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
-	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
-
-	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
-
-	uint64_t* d_level_index = nullptr;
-	cudaMalloc(&d_level_index, level_index_bytes);
-	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
-
-	// Allocate scratch buffers
-	const uint64_t buff1_len = degree >= 2 ? host_sig_length(dimension, degree - 1) : 1;
-
-	T* d_temp = nullptr;
-	T* d_buff1 = nullptr;
-	T* d_buff2 = nullptr;
-	cudaMalloc(&d_temp, sizeof(T) * batch_size * sig_len);
-	cudaMalloc(&d_buff1, sizeof(T) * batch_size * buff1_len);
-	cudaMalloc(&d_buff2, sizeof(T) * batch_size * sig_len);
-
-	// Choose threads per block
-	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
-	unsigned int threads_per_block = 32;
-	if (max_level_size > 32)   threads_per_block = 64;
-	if (max_level_size > 64)   threads_per_block = 128;
-	if (max_level_size > 128)  threads_per_block = 256;
-	if (max_level_size > 512)  threads_per_block = 512;
-	if (max_level_size > 1024) threads_per_block = 1024;
+	// Use cached workspace for scratch buffers
+	g_workspace.ensure(
+		sizeof(T) * batch_size * sig_len,
+		sizeof(T) * batch_size * buff1_len,
+		sizeof(T) * batch_size * sig_len
+	);
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
-	sig_to_log_sig_m1_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-		sig, out, d_temp, d_buff1, d_buff2, d_level_index,
+	sig_to_log_sig_m1_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
+		sig, out,
+		static_cast<T*>(g_workspace.d_temp),
+		static_cast<T*>(g_workspace.d_buff1),
+		static_cast<T*>(g_workspace.d_buff2),
+		cache.d_level_index,
 		cache.d_lyndon_idx, degree, sig_len, buff1_len, log_sig_len
 	);
 
 	cudaDeviceSynchronize();
-	cudaFree(d_level_index);
-	cudaFree(d_temp);
-	cudaFree(d_buff1);
-	cudaFree(d_buff2);
 
 	cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess) {
@@ -341,53 +359,32 @@ void sig_to_log_sig_cuda_m2_core_(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const uint64_t sig_len = host_sig_length(dimension, degree);
 	const auto& cache = get_cuda_log_sig_cache(dimension, degree);
+	const uint64_t sig_len = cache.sig_len;
+	const uint64_t buff1_len = cache.buff1_len;
 	const uint64_t log_sig_len = cache.log_sig_len;
 
-	// Build level_index on host and copy to device
-	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
-	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
-
-	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
-
-	uint64_t* d_level_index = nullptr;
-	cudaMalloc(&d_level_index, level_index_bytes);
-	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
-
-	// Allocate scratch buffers
-	const uint64_t buff1_len = degree >= 2 ? host_sig_length(dimension, degree - 1) : 1;
-
-	T* d_temp = nullptr;
-	T* d_buff1 = nullptr;
-	T* d_buff2 = nullptr;
-	cudaMalloc(&d_temp, sizeof(T) * batch_size * sig_len);
-	cudaMalloc(&d_buff1, sizeof(T) * batch_size * buff1_len);
-	cudaMalloc(&d_buff2, sizeof(T) * batch_size * sig_len);
-
-	// Choose threads per block
-	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
-	unsigned int threads_per_block = 32;
-	if (max_level_size > 32)   threads_per_block = 64;
-	if (max_level_size > 64)   threads_per_block = 128;
-	if (max_level_size > 128)  threads_per_block = 256;
-	if (max_level_size > 512)  threads_per_block = 512;
-	if (max_level_size > 1024) threads_per_block = 1024;
+	// Use cached workspace for scratch buffers
+	g_workspace.ensure(
+		sizeof(T) * batch_size * sig_len,
+		sizeof(T) * batch_size * buff1_len,
+		sizeof(T) * batch_size * sig_len
+	);
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
-	sig_to_log_sig_m2_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-		sig, out, d_temp, d_buff1, d_buff2, d_level_index,
+	sig_to_log_sig_m2_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
+		sig, out,
+		static_cast<T*>(g_workspace.d_temp),
+		static_cast<T*>(g_workspace.d_buff1),
+		static_cast<T*>(g_workspace.d_buff2),
+		cache.d_level_index,
 		cache.d_lyndon_idx,
 		cache.d_sparse_vals, cache.d_sparse_cols, cache.d_sparse_row_ptr,
 		degree, sig_len, buff1_len, log_sig_len
 	);
 
 	cudaDeviceSynchronize();
-	cudaFree(d_level_index);
-	cudaFree(d_temp);
-	cudaFree(d_buff1);
-	cudaFree(d_buff2);
 
 	cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess) {
