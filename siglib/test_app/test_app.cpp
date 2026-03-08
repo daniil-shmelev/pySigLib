@@ -61,7 +61,10 @@ int main(int argc, char* argv[])
     //example_batch_sig_to_log_sig_backprop_d();
     //example_batch_sig_to_log_sig_backprop_cuda_d();
 
-    example_batch_sig_combine_cuda_d();
+    //example_batch_sig_combine_cuda_d();
+
+    example_batch_sig_combine_backprop_d(5200, 6, 6, -1, 50);  // CPU all cores
+    example_batch_sig_combine_backprop_cuda_d();
 
     unload_cpsig();
     unload_cusig();

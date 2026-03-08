@@ -683,6 +683,68 @@ void example_batch_sig_combine_cuda_d(
     std::cout << "done\n";
 }
 
+void example_batch_sig_combine_backprop_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    int n_jobs,
+    int num_runs
+) {
+    print_header("Batch Sig Combine Backprop CPU Double");
+
+    uint64_t sig_len = sig_length(dimension, degree);
+    uint64_t total = batch_size * sig_len;
+    std::vector<double> sig1 = test_data<double>(total);
+    std::vector<double> sig2 = test_data<double>(total);
+    std::vector<double> sig_combined_deriv = test_data<double>(total);
+    std::vector<double> sig1_deriv(total);
+    std::vector<double> sig2_deriv(total);
+
+    time_function(num_runs, batch_sig_combine_backprop_d, sig_combined_deriv.data(), sig1_deriv.data(), sig2_deriv.data(), sig1.data(), sig2.data(), batch_size, dimension, degree, n_jobs);
+
+    std::cout << "done\n";
+}
+
+void example_batch_sig_combine_backprop_cuda_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    int num_runs
+) {
+    print_header("Batch Sig Combine Backprop CUDA Double");
+
+    uint64_t sig_len = sig_length(dimension, degree);
+    uint64_t total = batch_size * sig_len;
+    std::vector<double> sig1 = test_data<double>(total);
+    std::vector<double> sig2 = test_data<double>(total);
+    std::vector<double> sig_combined_deriv = test_data<double>(total);
+
+    double* d_sig1;
+    double* d_sig2;
+    double* d_sig_combined_deriv;
+    double* d_sig1_deriv;
+    double* d_sig2_deriv;
+    cudaMalloc(&d_sig1, sizeof(double) * total);
+    cudaMalloc(&d_sig2, sizeof(double) * total);
+    cudaMalloc(&d_sig_combined_deriv, sizeof(double) * total);
+    cudaMalloc(&d_sig1_deriv, sizeof(double) * total);
+    cudaMalloc(&d_sig2_deriv, sizeof(double) * total);
+
+    cudaMemcpy(d_sig1, sig1.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sig2, sig2.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sig_combined_deriv, sig_combined_deriv.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+
+    time_function(num_runs, batch_sig_combine_backprop_cuda_d, d_sig_combined_deriv, d_sig1_deriv, d_sig2_deriv, d_sig1, d_sig2, batch_size, dimension, degree);
+
+    cudaFree(d_sig1);
+    cudaFree(d_sig2);
+    cudaFree(d_sig_combined_deriv);
+    cudaFree(d_sig1_deriv);
+    cudaFree(d_sig2_deriv);
+
+    std::cout << "done\n";
+}
+
 void example_batch_sig_coef(
     uint64_t num_idx,
     uint64_t batch_size,

@@ -149,86 +149,87 @@ void sig_combine_cuda_(
 //   sig1_deriv = dF/d(sig1)
 //   sig2_deriv = dF/d(sig2)
 //
-// Each output element is computed independently from the original d_out,
-// sig1, and sig2 — no synchronization needed between threads.
+// 2D grid: gridDim.y = batch_size, gridDim.x covers sig_len.
+// Each thread processes exactly one (batch, element) pair.
 // =========================================================================
 
 template<typename T>
-__global__ void sig_combine_backprop_kernel(
+__global__ void __launch_bounds__(256)
+sig_combine_backprop_kernel(
 	const T* __restrict__ d_out,         // [batch_size * sig_len]
 	T* __restrict__ sig1_deriv,          // [batch_size * sig_len]
 	T* __restrict__ sig2_deriv,          // [batch_size * sig_len]
 	const T* __restrict__ sig1,          // [batch_size * sig_len]
 	const T* __restrict__ sig2,          // [batch_size * sig_len]
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	uint64_t sig_len
 ) {
-	const uint64_t batch_idx = blockIdx.x;
-	const int tid = threadIdx.x;
-	const int nthreads = blockDim.x;
-
-	// Compute level_index in shared memory
 	extern __shared__ char smem[];
 	uint64_t* level_index = reinterpret_cast<uint64_t*>(smem);
-
-	if (tid == 0) {
+	if (threadIdx.x == 0) {
 		level_index[0] = 0;
 		for (uint64_t i = 1; i < degree + 2; ++i)
 			level_index[i] = level_index[i - 1] * dimension + 1;
 	}
 	__syncthreads();
 
-	const uint64_t sig_len = level_index[degree + 1];
-	const T* my_d_out = d_out + batch_idx * sig_len;
-	T* my_d_sig1 = sig1_deriv + batch_idx * sig_len;
-	T* my_d_sig2 = sig2_deriv + batch_idx * sig_len;
-	const T* my_sig1 = sig1 + batch_idx * sig_len;
-	const T* my_sig2 = sig2 + batch_idx * sig_len;
+	const uint64_t elem = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	if (elem >= sig_len) return;
 
-	// Level 0: pass through the derivative
-	if (tid == 0) {
-		my_d_sig1[0] = my_d_out[0];
-		my_d_sig2[0] = my_d_out[0];
+	const uint64_t offset = (uint64_t)blockIdx.y * sig_len;
+	const T* my_d_out = d_out + offset;
+	const T* my_sig2 = sig2 + offset;
+	const T* my_sig1 = sig1 + offset;
+
+	if (elem == 0) {
+		sig1_deriv[offset] = my_d_out[0];
+		sig2_deriv[offset] = my_d_out[0];
+		return;
 	}
 
-	// Each element reads only from the original d_out, sig1, and sig2,
-	// so all elements are independent — no syncs needed.
-	for (uint64_t k = 1; k <= degree; ++k) {
-		const uint64_t k_start = level_index[k];
-		const uint64_t k_size = level_index[k + 1] - k_start;
+	// Find level
+	uint64_t k = 1;
+	while (elem >= level_index[k + 1]) ++k;
 
-		for (uint64_t idx = tid; idx < k_size; idx += nthreads) {
-			const T d_out_k_idx = my_d_out[k_start + idx];
+	const T d_out_val = my_d_out[elem];
 
-			// sig1_deriv[k][idx] = d_out[k][idx]
-			//   + sum_{right_level=1}^{degree-k} sum_r d_out[k+rl][idx*rs + r] * sig2[rl][r]
-			T val1 = d_out_k_idx;
-			for (uint64_t right_level = 1; right_level <= degree - k; ++right_level) {
-				const uint64_t combined_start = level_index[k + right_level];
-				const uint64_t right_start = level_index[right_level];
-				const uint64_t right_size = level_index[right_level + 1] - right_start;
+	// Top level: no inner loop work, just copy
+	if (k == degree) {
+		sig1_deriv[offset + elem] = d_out_val;
+		sig2_deriv[offset + elem] = d_out_val;
+		return;
+	}
 
-				for (uint64_t r = 0; r < right_size; ++r) {
-					val1 += my_d_out[combined_start + idx * right_size + r] * my_sig2[right_start + r];
-				}
-			}
-			my_d_sig1[k_start + idx] = val1;
+	const uint64_t k_start = level_index[k];
+	const uint64_t k_size = level_index[k + 1] - k_start;
+	const uint64_t idx = elem - k_start;
 
-			// sig2_deriv[k][idx] = d_out[k][idx]
-			//   + sum_{left_level=1}^{degree-k} sum_l d_out[ll+k][l*ks + idx] * sig1[ll][l]
-			T val2 = d_out_k_idx;
-			for (uint64_t left_level = 1; left_level <= degree - k; ++left_level) {
-				const uint64_t combined_start = level_index[left_level + k];
-				const uint64_t left_start = level_index[left_level];
-				const uint64_t left_size = level_index[left_level + 1] - left_start;
-
-				for (uint64_t l = 0; l < left_size; ++l) {
-					val2 += my_d_out[combined_start + l * k_size + idx] * my_sig1[left_start + l];
-				}
-			}
-			my_d_sig2[k_start + idx] = val2;
+	// sig1_deriv
+	T val1 = d_out_val;
+	for (uint64_t rl = 1; rl <= degree - k; ++rl) {
+		const uint64_t comb_start = level_index[k + rl];
+		const uint64_t r_start = level_index[rl];
+		const uint64_t rs = level_index[rl + 1] - r_start;
+		const T* d_out_row = my_d_out + comb_start + idx * rs;
+		for (uint64_t r = 0; r < rs; ++r) {
+			val1 += d_out_row[r] * my_sig2[r_start + r];
 		}
 	}
+	sig1_deriv[offset + elem] = val1;
+
+	// sig2_deriv
+	T val2 = d_out_val;
+	for (uint64_t ll = 1; ll <= degree - k; ++ll) {
+		const uint64_t comb_start = level_index[ll + k];
+		const uint64_t l_start = level_index[ll];
+		const uint64_t ls = level_index[ll + 1] - l_start;
+		const T* d_out_col = my_d_out + comb_start + idx;
+		for (uint64_t l = 0; l < ls; ++l) {
+			val2 += d_out_col[l * k_size] * my_sig1[l_start + l];
+		}
+	}
+	sig2_deriv[offset + elem] = val2;
 }
 
 // =========================================================================
@@ -252,16 +253,17 @@ void sig_combine_backprop_cuda_core_(
 		return;
 	}
 
-	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
-	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
+	uint64_t sig_len = host_sig_length(dimension, degree);
 
-	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
-	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
+	unsigned int threads_per_block = 256;
+	unsigned int grid_x = static_cast<unsigned int>((sig_len + threads_per_block - 1) / threads_per_block);
+	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
-	sig_combine_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-		sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, dimension, degree
+	sig_combine_backprop_kernel<T><<<grid, threads_per_block, smem_size>>>(
+		sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2,
+		dimension, degree, sig_len
 	);
 
 	cudaDeviceSynchronize();
