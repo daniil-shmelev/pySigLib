@@ -96,6 +96,12 @@ using prepare_log_sig_cuda_fn = int(CDECL_*)(uint64_t, uint64_t, int);
 using sig_to_log_sig_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, int);
 using batch_sig_to_log_sig_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, int);
 
+using sig_to_log_sig_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, uint64_t, uint64_t, bool, bool, int);
+using batch_sig_to_log_sig_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, bool, bool, int, int);
+
+using sig_to_log_sig_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, uint64_t, uint64_t, int);
+using batch_sig_to_log_sig_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, int);
+
 extern HMODULE cpsig;
 extern HMODULE cusig;
 
@@ -147,6 +153,12 @@ extern prepare_log_sig_cuda_fn prepare_log_sig_cuda;
 
 extern sig_to_log_sig_cuda_d_fn sig_to_log_sig_cuda_d;
 extern batch_sig_to_log_sig_cuda_d_fn batch_sig_to_log_sig_cuda_d;
+
+extern sig_to_log_sig_backprop_d_fn sig_to_log_sig_backprop_d;
+extern batch_sig_to_log_sig_backprop_d_fn batch_sig_to_log_sig_backprop_d;
+
+extern sig_to_log_sig_backprop_cuda_d_fn sig_to_log_sig_backprop_cuda_d;
+extern batch_sig_to_log_sig_backprop_cuda_d_fn batch_sig_to_log_sig_backprop_cuda_d;
 
 #if defined(_WIN32)
 #define GET_FN_PTR ::GetProcAddress

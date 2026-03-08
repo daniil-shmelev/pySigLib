@@ -591,6 +591,66 @@ void example_batch_sig_to_log_sig_cuda_d(
     std::cout << "done\n";
 }
 
+void example_batch_sig_to_log_sig_backprop_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    bool time_aug,
+    bool lead_lag,
+    int method,
+    int n_jobs,
+    int num_runs
+) {
+    print_header("Batch Log Signature Backprop Double");
+
+    uint64_t slen = sig_length(dimension, degree);
+    std::vector<double> sig = test_data<double>(batch_size * slen);
+
+    uint64_t derivs_len = method ? log_sig_length(dimension, degree) : slen;
+    std::vector<double> derivs = test_data<double>(batch_size * derivs_len);
+
+    std::vector<double> out(batch_size * slen, 0.);
+
+    prepare_log_sig(dimension, degree, method, true);
+    time_function(num_runs, batch_sig_to_log_sig_backprop_d, sig.data(), out.data(), derivs.data(), batch_size, dimension, degree, time_aug, lead_lag, method, n_jobs);
+
+    std::cout << "done\n";
+}
+
+void example_batch_sig_to_log_sig_backprop_cuda_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    int method,
+    int num_runs
+) {
+    print_header("Batch Log Signature Backprop CUDA Double");
+
+    uint64_t slen = sig_length(dimension, degree);
+    uint64_t derivs_len = method ? log_sig_length(dimension, degree) : slen;
+    std::vector<double> sig = test_data<double>(batch_size * slen);
+    std::vector<double> derivs = test_data<double>(batch_size * derivs_len);
+
+    double* d_sig;
+    double* d_out;
+    double* d_derivs;
+    cudaMalloc(&d_sig, sizeof(double) * batch_size * slen);
+    cudaMalloc(&d_out, sizeof(double) * batch_size * slen);
+    cudaMalloc(&d_derivs, sizeof(double) * batch_size * derivs_len);
+
+    cudaMemcpy(d_sig, sig.data(), sizeof(double) * batch_size * slen, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_derivs, derivs.data(), sizeof(double) * batch_size * derivs_len, cudaMemcpyHostToDevice);
+
+    prepare_log_sig_cuda(dimension, degree, method);
+    time_function(num_runs, batch_sig_to_log_sig_backprop_cuda_d, d_sig, d_out, d_derivs, batch_size, dimension, degree, method);
+
+    cudaFree(d_sig);
+    cudaFree(d_out);
+    cudaFree(d_derivs);
+
+    std::cout << "done\n";
+}
+
 void example_batch_sig_coef(
     uint64_t num_idx,
     uint64_t batch_size,

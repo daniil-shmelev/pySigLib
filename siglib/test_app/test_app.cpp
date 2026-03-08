@@ -58,6 +58,9 @@ int main(int argc, char* argv[])
     example_batch_sig_to_log_sig_d();
     example_batch_sig_to_log_sig_cuda_d();
 
+    example_batch_sig_to_log_sig_backprop_d();
+    example_batch_sig_to_log_sig_backprop_cuda_d();
+
     unload_cpsig();
     unload_cusig();
 }

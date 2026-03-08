@@ -222,6 +222,25 @@ void example_batch_sig_to_log_sig_cuda_d(
 	int num_runs = 50
 );
 
+void example_batch_sig_to_log_sig_backprop_d(
+	uint64_t batch_size = 1000,
+	uint64_t dimension = 5,
+	uint64_t degree = 7,
+	bool time_aug = false,
+	bool lead_lag = false,
+	int method = 2,
+	int n_jobs = -1,
+	int num_runs = 50
+);
+
+void example_batch_sig_to_log_sig_backprop_cuda_d(
+	uint64_t batch_size = 1000,
+	uint64_t dimension = 5,
+	uint64_t degree = 7,
+	int method = 2,
+	int num_runs = 50
+);
+
 void example_batch_sig_coef(
 	uint64_t num_idx = 10,
 	uint64_t batch_size = 1000,
