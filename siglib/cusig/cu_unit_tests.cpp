@@ -1571,4 +1571,242 @@ public:
             Assert::AreEqual(0, err, L"StressTest returned non-zero error code");
         }
     };
+
+    // =========================================================================
+    // Helper for backprop tests: 3 device inputs (sig, derivs → out)
+    // fn signature: int f(const T* sig, T* out, const T* derivs, ...)
+    // =========================================================================
+
+    template<typename FN, typename T, typename... Args>
+    void check_result_backprop_typed(FN f, std::vector<T>& sig, std::vector<T>& true_, std::vector<T>& derivs, Args... args) {
+        std::vector<T> out;
+        out.resize(true_.size() + 1);
+        out[true_.size()] = static_cast<T>(-1.);
+
+        T* d_sig = nullptr;
+        T* d_out = nullptr;
+        T* d_derivs = nullptr;
+        cudaMalloc(&d_sig, sizeof(T) * sig.size());
+        cudaMalloc(&d_out, sizeof(T) * out.size());
+        cudaMalloc(&d_derivs, sizeof(T) * derivs.size());
+
+        cudaMemcpy(d_out, out.data(), sizeof(T) * out.size(), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_sig, sig.data(), sizeof(T) * sig.size(), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_derivs, derivs.data(), sizeof(T) * derivs.size(), cudaMemcpyHostToDevice);
+
+        int err = f(d_sig, d_out, d_derivs, args...);
+        cudaDeviceSynchronize();
+
+        cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);
+
+        cudaFree(d_sig);
+        cudaFree(d_out);
+        cudaFree(d_derivs);
+
+        Assert::AreEqual(0, err, L"Backprop function returned non-zero error code");
+
+        const double eps = TYPED_EPSILON(T);
+        for (uint64_t i = 0; i < true_.size(); ++i) {
+            std::wstring msg = L"Mismatch at index " + std::to_wstring(i) +
+                L": expected " + std::to_wstring(static_cast<double>(true_[i])) +
+                L" got " + std::to_wstring(static_cast<double>(out[i]));
+            Assert::IsTrue(std::abs(static_cast<double>(true_[i]) - static_cast<double>(out[i])) < eps, msg.c_str());
+        }
+
+        Assert::IsTrue(std::abs(-1. - static_cast<double>(out[true_.size()])) < eps, L"Sentinel value was overwritten");
+    }
+
+    // For batch backprop: fn signature: int f(const T* sig, T* out, const T* derivs, batch_size, ...)
+    template<typename FN, typename T, typename... Args>
+    void check_result_batch_backprop_typed(FN f, std::vector<T>& sig, std::vector<T>& true_, std::vector<T>& derivs, Args... args) {
+        check_result_backprop_typed(f, sig, true_, derivs, args...);
+    }
+
+    // =========================================================================
+    // sig_to_log_sig_backprop CUDA tests (expanded / method=0)
+    // Ported from CPU logSignatureExpandedBackpropTest
+    // =========================================================================
+    TEST_CLASS(logSignatureExpandedBackpropCudaTest) {
+    public:
+
+        TEST_METHOD(LinearPathTest) {
+            uint64_t dimension = 2, degree = 2;
+            std::vector<double> deriv = { 1., 1., 1., 1., 1., 1., 1. };
+            std::vector<double> true_ = { 1., -1., -1.,  1.,  1.,  1.,  1. };
+            std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, dimension, (uint64_t)degree, 0);
+        }
+
+        TEST_METHOD(ManualTest) {
+            uint64_t dimension = 2, degree = 2;
+            std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6. };
+            std::vector<double> true_ = { 1., -5., -6.25, 3., 4., 5., 6. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, dimension, (uint64_t)degree, 0);
+        }
+
+        TEST_METHOD(ManualTest2) {
+            uint64_t dimension = 2, degree = 3;
+            std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
+            std::vector<double> true_ = { 1., 6.5, 7.6875, -10, -11.25, -12.5, -13.75, 7., 8., 9., 10., 11., 12., 13., 14. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, dimension, (uint64_t)degree, 0);
+        }
+
+        TEST_METHOD(ManualTestAsBatch) {
+            uint64_t dimension = 2, degree = 2;
+            std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6. };
+            std::vector<double> true_ = { 1., -5., -6.25, 3., 4., 5., 6. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
+            check_result_backprop_typed(batch_sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0);
+        }
+
+        TEST_METHOD(ManualTest2AsBatch) {
+            uint64_t dimension = 2, degree = 3;
+            std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
+            std::vector<double> true_ = { 1., 6.5, 7.6875, -10, -11.25, -12.5, -13.75, 7., 8., 9., 10., 11., 12., 13., 14. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
+            check_result_backprop_typed(batch_sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0);
+        }
+
+        TEST_METHOD(ManualBatchTest) {
+            uint64_t dimension = 2, degree = 3, batch_size = 3;
+            std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14., 1., 1., -2., 3., -4., 5., -6., 7., -8., 9., -10., 11., -12., 13., -14., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1. };
+            std::vector<double> true_ = { 1., 6.5, 7.6875, -10., -11.25, -12.5, -13.75, 7., 8., 9., 10., 11., 12., 13., 14., 1., 66., 30.25, -35., 15.5, -46., 14.5, 7., -8., 9., -10., 11., -12., 13., -14., 1., 1.625, 1.625, 1.5, 1.5, 1.5, 1.5, 1., 1., 1., 1., 1., 1., 1., 1. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
+            check_result_backprop_typed(batch_sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 0);
+        }
+
+        TEST_METHOD(ManualDim1Test) {
+            uint64_t dimension = 1, degree = 8;
+            std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8. };
+            std::vector<double> true_ = { 1., -1., 8., 9., 1., -8., -9., -1., 8. };
+            std::vector<double> sig = { 1., 1., 2., 3., 4., 5., 6., 7., 8. };
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, dimension, (uint64_t)degree, 0);
+        }
+    };
+
+    // =========================================================================
+    // sig_to_log_sig_backprop CUDA tests (Lyndon words / method=1)
+    // Ported from CPU logSignatureLyndonWordsBackpropTest
+    // =========================================================================
+    TEST_CLASS(logSignatureLyndonWordsBackpropCudaTest) {
+    public:
+
+        TEST_METHOD(LinearPathTest) {
+            uint64_t dimension = 2, degree = 2;
+            std::vector<double> deriv = { 1., 1., 1. };
+            std::vector<double> true_ = { 0., .5, .5, 0., 1., 0., 0. };
+            std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
+            prepare_log_sig_cuda(dimension, degree, 1);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, dimension, (uint64_t)degree, 1);
+        }
+
+        TEST_METHOD(ManualTest) {
+            uint64_t dimension = 2, degree = 2;
+            std::vector<double> deriv = { 1., 2., 3. };
+            std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
+            prepare_log_sig_cuda(dimension, degree, 1);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, dimension, (uint64_t)degree, 1);
+        }
+
+        TEST_METHOD(ManualTest2) {
+            uint64_t dimension = 2, degree = 3;
+            std::vector<double> deriv = { 1., 2., 3., 4., 5. };
+            std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
+            prepare_log_sig_cuda(dimension, degree, 1);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, dimension, (uint64_t)degree, 1);
+        }
+
+        TEST_METHOD(ManualTestAsBatch) {
+            uint64_t dimension = 2, degree = 2;
+            std::vector<double> deriv = { 1., 2., 3. };
+            std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
+            prepare_log_sig_cuda(dimension, degree, 1);
+            check_result_backprop_typed(batch_sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
+        }
+
+        TEST_METHOD(ManualTest2AsBatch) {
+            uint64_t dimension = 2, degree = 3;
+            std::vector<double> deriv = { 1., 2., 3., 4., 5. };
+            std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
+            prepare_log_sig_cuda(dimension, degree, 1);
+            check_result_backprop_typed(batch_sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
+        }
+
+        TEST_METHOD(ManualBatchTest) {
+            uint64_t dimension = 2, degree = 3, batch_size = 3;
+            std::vector<double> deriv = { 1., 2., 3., 4., 5., 1., -2., 3., -4., 5., 1., 1., 1., 1., 1. };
+            std::vector<double> true_ = { 0., 0.75, 2.375, -2., -.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0., 0., -21., 8., 4., 8., 0., -12.5, 0., -4., 0., 5., 0., 0., 0., 0., 0., 1.375, 0.5625, 0.5, 1.25, 0., -0.25, 0., 1., 0., 1., 0., 0., 0., 0. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
+            prepare_log_sig_cuda(dimension, degree, 1);
+            check_result_backprop_typed(batch_sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 1);
+        }
+    };
+
+    // =========================================================================
+    // sig_to_log_sig_backprop CUDA tests (Lyndon basis / method=2)
+    // Ported from CPU logSignatureLyndonBasisBackpropTest
+    // =========================================================================
+    TEST_CLASS(logSignatureLyndonBasisBackpropCudaTest) {
+    public:
+
+        TEST_METHOD(LinearPathTest) {
+            uint64_t dimension = 2, degree = 2;
+            std::vector<double> deriv = { 1., 1., 1. };
+            std::vector<double> true_ = { 0., .5, .5, 0., 1., 0., 0. };
+            std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
+            prepare_log_sig_cuda(dimension, degree, 2);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, dimension, (uint64_t)degree, 2);
+        }
+
+        TEST_METHOD(ManualTest) {
+            uint64_t dimension = 2, degree = 2;
+            std::vector<double> deriv = { 1., 2., 3. };
+            std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
+            prepare_log_sig_cuda(dimension, degree, 2);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, dimension, (uint64_t)degree, 2);
+        }
+
+        TEST_METHOD(ManualTest2) {
+            uint64_t dimension = 2, degree = 3;
+            std::vector<double> deriv = { 1., 2., 3., 4., 5. };
+            std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
+            prepare_log_sig_cuda(dimension, degree, 2);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, dimension, (uint64_t)degree, 2);
+        }
+
+        TEST_METHOD(ManualTestAsBatch) {
+            uint64_t dimension = 2, degree = 2;
+            std::vector<double> deriv = { 1., 2., 3. };
+            std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
+            prepare_log_sig_cuda(dimension, degree, 2);
+            check_result_backprop_typed(batch_sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
+        }
+
+        TEST_METHOD(ManualTest2AsBatch) {
+            uint64_t dimension = 2, degree = 3;
+            std::vector<double> deriv = { 1., 2., 3., 4., 5. };
+            std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
+            prepare_log_sig_cuda(dimension, degree, 2);
+            check_result_backprop_typed(batch_sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
+        }
+
+        TEST_METHOD(ManualBatchTest) {
+            uint64_t dimension = 2, degree = 3, batch_size = 3;
+            std::vector<double> deriv = { 1., 2., 3., 4., 5., 1., -2., 3., -4., 5., 1., 1., 1., 1., 1. };
+            std::vector<double> true_ = { 0., 0.75, 2.375, -2., -.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0., 0., -21., 8., 4., 8., 0., -12.5, 0., -4., 0., 5., 0., 0., 0., 0., 0., 1.375, 0.5625, 0.5, 1.25, 0., -0.25, 0., 1., 0., 1., 0., 0., 0., 0. };
+            std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
+            prepare_log_sig_cuda(dimension, degree, 2);
+            check_result_backprop_typed(batch_sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 2);
+        }
+    };
 }

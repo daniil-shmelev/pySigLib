@@ -39,6 +39,9 @@
     <ClInclude Include="cu_log_signature.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="cu_log_sig_backprop.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cupch.cpp">

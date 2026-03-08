@@ -20,9 +20,10 @@ import torch
 
 from .param_checks import check_type, check_non_neg, check_log_sig_method
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIG_TO_LOG_SIG_BACKPROP, CPSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP
+from .dtypes import (CPSIG_SIG_TO_LOG_SIG_BACKPROP, CPSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP,
+                     CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA, CUSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP_CUDA)
 from .sig_length import sig_length, log_sig_length
-from .data_handlers import SigOutputHandler, DeviceToHost, SigInputHandler
+from .data_handlers import SigOutputHandler, SigInputHandler
 
 
 ######################################################
@@ -57,6 +58,35 @@ def batch_sig_to_log_sig_backprop_(data, derivs_data, result, data_dimension, de
         lead_lag,
         method,
         n_jobs
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig_to_log_sig_backprop: " + err_msg(err_code))
+    return result.data
+
+def sig_to_log_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method):
+    err_code = CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA[data.dtype](
+        data.data_ptr,
+        result.data_ptr,
+        derivs_data.data_ptr,
+        aug_dimension,
+        degree,
+        method
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig_to_log_sig_backprop: " + err_msg(err_code))
+    return result.data
+
+def batch_sig_to_log_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method):
+    err_code = CUSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP_CUDA[data.dtype](
+        data.data_ptr,
+        result.data_ptr,
+        derivs_data.data_ptr,
+        data.batch_size,
+        aug_dimension,
+        degree,
+        method
     )
 
     if err_code:
@@ -138,9 +168,7 @@ def sig_to_log_sig_backprop(
     check_type(method, "method", int)
     check_log_sig_method(method)
 
-    # If path is on GPU, move to CPU
-    device_handler = DeviceToHost([sig, log_sig_derivs], ["sig", "log_sig_derivs"])
-    sig, log_sig_derivs = device_handler.data
+    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
 
     sig_len = sig_length(dimension, degree, time_aug, lead_lag)
     log_sig_len = log_sig_length(dimension, degree, time_aug, lead_lag) if method else sig_length(dimension, degree, time_aug, lead_lag)
@@ -151,14 +179,14 @@ def sig_to_log_sig_backprop(
         raise ValueError("sig and log_sig_derivs must have the same dtype")
 
     result = SigOutputHandler(data, sig_len)
-    if data.is_batch:
-        check_type(n_jobs, "n_jobs", int)
-        if n_jobs == 0:
-            raise ValueError("n_jobs cannot be 0")
-        res = batch_sig_to_log_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method, n_jobs)
+    if data.device == "cpu":
+        if data.is_batch:
+            check_type(n_jobs, "n_jobs", int)
+            if n_jobs == 0:
+                raise ValueError("n_jobs cannot be 0")
+            return batch_sig_to_log_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method, n_jobs)
+        return sig_to_log_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method)
     else:
-        res = sig_to_log_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method)
-
-    if device_handler.device is not None:
-        res = res.to(device_handler.device)
-    return res
+        if data.is_batch:
+            return batch_sig_to_log_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method)
+        return sig_to_log_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method)

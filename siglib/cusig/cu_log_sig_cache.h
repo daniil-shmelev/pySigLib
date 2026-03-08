@@ -440,10 +440,12 @@ inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_
 	return it->second;
 }
 
-// Forward declaration — defined in cu_log_signature.cu
+// Forward declarations — defined in cu_log_signature.cu
 void free_cuda_log_sig_workspace_();
+void free_cuda_log_sig_backprop_workspace_();
 
 inline void clear_cache_cuda_() {
 	get_cuda_log_sig_cache_map_().clear();
 	free_cuda_log_sig_workspace_();
+	free_cuda_log_sig_backprop_workspace_();
 }

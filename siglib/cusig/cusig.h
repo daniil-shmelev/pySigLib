@@ -406,6 +406,47 @@ extern "C" {
 	CUSIG_API int batch_sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
 	/** @} */
 
+	/** @defgroup sig_to_log_sig_backprop_cuda_functions Sig to log sig backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through the sig_to_log_sig_cuda function.
+	*
+	* @param sig Pointer to input signature (on device), size = `sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (on device, preallocated), size = `sig_length(dimension, degree)`.
+	* @param log_sig_derivs Pointer to dF/d(log_sig) (on device).
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signature.
+	* @param method Method for log signature computation (0, 1, or 2).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_to_log_sig_backprop_cuda_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @brief */
+	CUSIG_API int sig_to_log_sig_backprop_cuda_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_to_log_sig_backprop_cuda_functions Batch sig to log sig backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through the batch_sig_to_log_sig_cuda function.
+	*
+	* @param sig Pointer to batch of input signatures (on device), size = `batch_size * sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (on device, preallocated), size = `batch_size * sig_length(dimension, degree)`.
+	* @param log_sig_derivs Pointer to dF/d(log_sig) (on device).
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signature.
+	* @param method Method for log signature computation (0, 1, or 2).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_to_log_sig_backprop_cuda_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_to_log_sig_backprop_cuda_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @} */
+
 	/** @defgroup prepare_log_sig_cuda_functions Prepare log sig CUDA functions
 	* @{
 	*/

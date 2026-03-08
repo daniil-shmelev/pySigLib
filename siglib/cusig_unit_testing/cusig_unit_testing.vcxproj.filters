@@ -42,6 +42,12 @@
     <ClInclude Include="..\cusig\cu_log_signature.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
+    <ClInclude Include="..\cusig\cu_log_sig_cache.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_log_sig_backprop.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cusig\cupch.cpp">
@@ -65,6 +71,9 @@
       <Filter>Source Files\cusig</Filter>
     </CudaCompile>
     <CudaCompile Include="..\cusig\cu_log_signature.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_log_sig_cache.cu">
       <Filter>Source Files\cusig</Filter>
     </CudaCompile>
   </ItemGroup>

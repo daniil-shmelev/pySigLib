@@ -29,13 +29,17 @@
 // level_index:  precomputed level index array (degree+2 entries)
 // =========================================================================
 
+// When partial_logs is non-null, intermediate buff1 snapshots are stored
+// for use by the backpropagation pass. buff1_size must be provided in that case.
 template<typename T>
 __device__ void tensor_log_inplace_device(
 	T* __restrict__ sig,
 	T* __restrict__ buff1,
 	T* __restrict__ buff2,
 	uint64_t degree,
-	const uint64_t* __restrict__ level_index
+	const uint64_t* __restrict__ level_index,
+	T* __restrict__ partial_logs = nullptr,
+	uint64_t buff1_size = 0
 ) {
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
@@ -47,13 +51,15 @@ __device__ void tensor_log_inplace_device(
 	if (degree <= 1) return;
 
 	// Zero buff1 and buff2
-	const uint64_t buff1_size = level_index[degree];   // sig_length(dim, degree-1)
-	const uint64_t buff2_size = level_index[degree + 1]; // sig_length(dim, degree)
+	if (!buff1_size) buff1_size = level_index[degree];
+	const uint64_t buff2_size = level_index[degree + 1];
 	for (uint64_t i = tid; i < buff1_size; i += nthreads)
 		buff1[i] = static_cast<T>(0);
 	for (uint64_t i = tid; i < buff2_size; i += nthreads)
 		buff2[i] = static_cast<T>(0);
 	__syncthreads();
+
+	uint64_t partial_idx = 0;
 
 	for (int64_t k = static_cast<int64_t>(degree); k > 0; --k) {
 		const T constant = static_cast<T>(1) / static_cast<T>(k);
@@ -87,18 +93,26 @@ __device__ void tensor_log_inplace_device(
 			}
 		}
 
-		if (k > 1) {
-			// Update buff1: buff1[level] = constant * sig[level] - buff2[level]
-			// for levels 1..max_target
-			for (uint64_t target_level = 1; target_level <= max_target; ++target_level) {
-				const uint64_t target_start = level_index[target_level];
-				const uint64_t target_size = level_index[target_level + 1] - target_start;
+		if (k == 1) continue;
 
-				for (uint64_t i = tid; i < target_size; i += nthreads) {
-					buff1[target_start + i] = constant * sig[target_start + i] - buff2[target_start + i];
-				}
+		// Update buff1: buff1[level] = constant * sig[level] - buff2[level]
+		for (uint64_t target_level = 1; target_level <= max_target; ++target_level) {
+			const uint64_t target_start = level_index[target_level];
+			const uint64_t target_size = level_index[target_level + 1] - target_start;
+
+			for (uint64_t i = tid; i < target_size; i += nthreads) {
+				buff1[target_start + i] = constant * sig[target_start + i] - buff2[target_start + i];
 			}
+		}
+		__syncthreads();
+
+		// Store partial_logs snapshot for backprop: when k > 2 && k != degree
+		if (partial_logs && k > 2 && k != static_cast<int64_t>(degree)) {
+			T* dst = partial_logs + partial_idx * buff1_size;
+			for (uint64_t i = tid; i < buff1_size; i += nthreads)
+				dst[i] = buff1[i];
 			__syncthreads();
+			++partial_idx;
 		}
 	}
 
@@ -112,4 +126,12 @@ __device__ void tensor_log_inplace_device(
 		}
 	}
 	__syncthreads();
+
+	// Store final buff1 snapshot for backprop
+	if (partial_logs) {
+		T* dst = partial_logs + partial_idx * buff1_size;
+		for (uint64_t i = tid; i < buff1_size; i += nthreads)
+			dst[i] = buff1[i];
+		__syncthreads();
+	}
 }

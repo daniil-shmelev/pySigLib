@@ -113,6 +113,7 @@
     <ClInclude Include="cu_tensor_poly.h" />
     <ClInclude Include="cu_log_signature.h" />
     <ClInclude Include="cu_log_sig_cache.h" />
+    <ClInclude Include="cu_log_sig_backprop.h" />
     <CudaCompile Include="cu_path_transforms.cu" />
     <CudaCompile Include="cu_log_signature.cu" />
     <CudaCompile Include="cu_tensor_poly.cu" />

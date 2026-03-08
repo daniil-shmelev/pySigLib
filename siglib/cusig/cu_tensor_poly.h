@@ -88,7 +88,6 @@ __device__ void sig_combine_inplace_device(
 			--left_level, ++right_level) {
 
 			const uint64_t left_start = level_index[left_level];
-			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
 			const uint64_t right_start = level_index[right_level];
 			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
 
