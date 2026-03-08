@@ -468,17 +468,20 @@ __global__ void sig_to_log_sig_backprop_kernel(
 	T* buff1 = other_derivs + sig_len;
 	T* buff2 = buff1 + buff1_len;
 
-	// Load level_index into shared memory
+	// Load level_index into shared memory; reduction buffer follows
 	extern __shared__ char smem[];
 	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem);
 	for (uint64_t i = tid; i < degree + 2; i += nthreads)
 		level_index_smem[i] = d_level_index[i];
 	__syncthreads();
 
+	T* reduction_buf = reinterpret_cast<T*>(smem + (degree + 2) * sizeof(uint64_t));
+
 	tensor_log_backprop_device<T>(
 		my_out, my_derivs, other_derivs, my_sig,
 		sig_copy, partial_logs, buff1, buff2,
-		dimension, degree, sig_len, buff1_len, level_index_smem
+		dimension, degree, sig_len, buff1_len, level_index_smem,
+		reduction_buf
 	);
 }
 
@@ -530,7 +533,7 @@ void sig_to_log_sig_backprop_cuda_core_(
 
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
-	size_t smem_size = (degree + 2) * sizeof(uint64_t);
+	size_t smem_size = (degree + 2) * sizeof(uint64_t) + threads_per_block * sizeof(T);
 
 	sig_to_log_sig_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 		sig, out, static_cast<T*>(g_bp_workspace.d_derivs),
@@ -587,7 +590,7 @@ __global__ void sig_to_log_sig_backprop_m1_kernel(
 	T* buff1 = other_derivs + sig_len;
 	T* buff2 = buff1 + buff1_len;
 
-	// Load level_index into shared memory
+	// Load level_index into shared memory; reduction buffer follows
 	extern __shared__ char smem[];
 	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem);
 	for (uint64_t i = tid; i < degree + 2; i += nthreads)
@@ -603,10 +606,13 @@ __global__ void sig_to_log_sig_backprop_m1_kernel(
 		my_derivs[d_lyndon_idx[i]] = my_log_derivs[i];
 	__syncthreads();
 
+	T* reduction_buf = reinterpret_cast<T*>(smem + (degree + 2) * sizeof(uint64_t));
+
 	tensor_log_backprop_device<T>(
 		my_out, my_derivs, other_derivs, my_sig,
 		sig_copy, partial_logs, buff1, buff2,
-		dimension, degree, sig_len, buff1_len, level_index_smem
+		dimension, degree, sig_len, buff1_len, level_index_smem,
+		reduction_buf
 	);
 }
 
@@ -639,7 +645,7 @@ void sig_to_log_sig_backprop_cuda_m1_core_(
 	const size_t derivs_size = sizeof(T) * batch_size * sig_len;
 	g_bp_workspace.ensure(sizeof(T) * batch_size * scratch_per_element, derivs_size);
 
-	size_t smem_size = (degree + 2) * sizeof(uint64_t);
+	size_t smem_size = (degree + 2) * sizeof(uint64_t) + cache.threads_per_block * sizeof(T);
 
 	sig_to_log_sig_backprop_m1_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
 		sig, out, log_sig_derivs, static_cast<T*>(g_bp_workspace.d_derivs),
@@ -700,7 +706,7 @@ __global__ void sig_to_log_sig_backprop_m2_kernel(
 	T* buff1 = other_derivs + sig_len;
 	T* buff2 = buff1 + buff1_len;
 
-	// Load level_index into shared memory
+	// Load level_index into shared memory; reduction buffer follows
 	extern __shared__ char smem[];
 	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem);
 	for (uint64_t i = tid; i < degree + 2; i += nthreads)
@@ -726,10 +732,13 @@ __global__ void sig_to_log_sig_backprop_m2_kernel(
 	}
 	__syncthreads();
 
+	T* reduction_buf = reinterpret_cast<T*>(smem + (degree + 2) * sizeof(uint64_t));
+
 	tensor_log_backprop_device<T>(
 		my_out, my_derivs, other_derivs, my_sig,
 		sig_copy, partial_logs, buff1, buff2,
-		dimension, degree, sig_len, buff1_len, level_index_smem
+		dimension, degree, sig_len, buff1_len, level_index_smem,
+		reduction_buf
 	);
 }
 
@@ -762,7 +771,7 @@ void sig_to_log_sig_backprop_cuda_m2_core_(
 	const size_t derivs_size = sizeof(T) * batch_size * sig_len;
 	g_bp_workspace.ensure(sizeof(T) * batch_size * scratch_per_element, derivs_size);
 
-	size_t smem_size = (degree + 2) * sizeof(uint64_t);
+	size_t smem_size = (degree + 2) * sizeof(uint64_t) + cache.threads_per_block * sizeof(T);
 
 	sig_to_log_sig_backprop_m2_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
 		sig, out, log_sig_derivs, static_cast<T*>(g_bp_workspace.d_derivs),
