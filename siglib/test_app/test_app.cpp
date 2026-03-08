@@ -55,8 +55,8 @@ int main(int argc, char* argv[])
     //example_batch_sig_backprop_d(100, 6, 100, 6);
     //example_batch_sig_backprop_cuda_d(100, 6, 100, 5);
 
-    example_batch_sig_to_log_sig_d();
-    example_batch_sig_to_log_sig_cuda_d();
+    //example_batch_sig_to_log_sig_d();
+    //example_batch_sig_to_log_sig_cuda_d();
 
     example_batch_sig_to_log_sig_backprop_d();
     example_batch_sig_to_log_sig_backprop_cuda_d();

@@ -301,7 +301,11 @@ struct CUDALogSigCache {
 	int* d_sparse_vals = nullptr;
 	uint64_t* d_sparse_cols = nullptr;
 	uint64_t* d_sparse_row_ptr = nullptr;
-	uint64_t sparse_nnz = 0;
+
+	// Transpose CSR sparse matrix for method 2 backprop
+	int* d_sparse_vals_t = nullptr;
+	uint64_t* d_sparse_cols_t = nullptr;
+	uint64_t* d_sparse_row_ptr_t = nullptr;
 
 	~CUDALogSigCache() {
 		if (d_lyndon_idx) cudaFree(d_lyndon_idx);
@@ -309,6 +313,9 @@ struct CUDALogSigCache {
 		if (d_sparse_vals) cudaFree(d_sparse_vals);
 		if (d_sparse_cols) cudaFree(d_sparse_cols);
 		if (d_sparse_row_ptr) cudaFree(d_sparse_row_ptr);
+		if (d_sparse_vals_t) cudaFree(d_sparse_vals_t);
+		if (d_sparse_cols_t) cudaFree(d_sparse_cols_t);
+		if (d_sparse_row_ptr_t) cudaFree(d_sparse_row_ptr_t);
 	}
 
 	// No copy
@@ -320,13 +327,18 @@ struct CUDALogSigCache {
 		  d_level_index(o.d_level_index), sig_len(o.sig_len),
 		  buff1_len(o.buff1_len), threads_per_block(o.threads_per_block),
 		  d_sparse_vals(o.d_sparse_vals), d_sparse_cols(o.d_sparse_cols),
-		  d_sparse_row_ptr(o.d_sparse_row_ptr), sparse_nnz(o.sparse_nnz)
+		  d_sparse_row_ptr(o.d_sparse_row_ptr),
+		  d_sparse_vals_t(o.d_sparse_vals_t), d_sparse_cols_t(o.d_sparse_cols_t),
+		  d_sparse_row_ptr_t(o.d_sparse_row_ptr_t)
 	{
 		o.d_lyndon_idx = nullptr;
 		o.d_level_index = nullptr;
 		o.d_sparse_vals = nullptr;
 		o.d_sparse_cols = nullptr;
 		o.d_sparse_row_ptr = nullptr;
+		o.d_sparse_vals_t = nullptr;
+		o.d_sparse_cols_t = nullptr;
+		o.d_sparse_row_ptr_t = nullptr;
 	}
 };
 
@@ -337,6 +349,41 @@ struct CUDALogSigCache {
 inline std::unordered_map<std::pair<uint64_t, uint64_t>, CUDALogSigCache, CuPairHash>& get_cuda_log_sig_cache_map_() {
 	static std::unordered_map<std::pair<uint64_t, uint64_t>, CUDALogSigCache, CuPairHash> cache;
 	return cache;
+}
+
+inline void upload_csr_to_gpu_(
+	const CuSparseIntMatrix& mat,
+	int*& d_vals, uint64_t*& d_cols, uint64_t*& d_row_ptr
+) {
+	uint64_t nnz = 0;
+	for (uint64_t i = 0; i < mat.n; ++i)
+		nnz += mat.rows[i].size();
+
+	std::vector<int> h_vals(nnz);
+	std::vector<uint64_t> h_cols(nnz);
+	std::vector<uint64_t> h_row_ptr(mat.n + 1);
+
+	uint64_t idx = 0;
+	for (uint64_t i = 0; i < mat.n; ++i) {
+		h_row_ptr[i] = idx;
+		for (const auto& e : mat.rows[i]) {
+			h_vals[idx] = e.val;
+			h_cols[idx] = e.col;
+			++idx;
+		}
+	}
+	h_row_ptr[mat.n] = idx;
+
+	if (nnz > 0) {
+		cudaMalloc(&d_vals, nnz * sizeof(int));
+		cudaMemcpy(d_vals, h_vals.data(), nnz * sizeof(int), cudaMemcpyHostToDevice);
+
+		cudaMalloc(&d_cols, nnz * sizeof(uint64_t));
+		cudaMemcpy(d_cols, h_cols.data(), nnz * sizeof(uint64_t), cudaMemcpyHostToDevice);
+	}
+
+	cudaMalloc(&d_row_ptr, (mat.n + 1) * sizeof(uint64_t));
+	cudaMemcpy(d_row_ptr, h_row_ptr.data(), (mat.n + 1) * sizeof(uint64_t), cudaMemcpyHostToDevice);
 }
 
 inline void upload_sparse_matrix_(CUDALogSigCache& entry, uint64_t dimension, uint64_t degree) {
@@ -350,38 +397,13 @@ inline void upload_sparse_matrix_(CUDALogSigCache& entry, uint64_t dimension, ui
 	CuSparseIntMatrix inv_proj_mat;
 	proj_mat.inverse(inv_proj_mat);
 
-	// Convert inverse to CSR format
-	uint64_t nnz = 0;
-	for (uint64_t i = 0; i < inv_proj_mat.n; ++i)
-		nnz += inv_proj_mat.rows[i].size();
+	// Upload inverse to GPU (used by forward pass)
+	upload_csr_to_gpu_(inv_proj_mat, entry.d_sparse_vals, entry.d_sparse_cols, entry.d_sparse_row_ptr);
 
-	std::vector<int> h_vals(nnz);
-	std::vector<uint64_t> h_cols(nnz);
-	std::vector<uint64_t> h_row_ptr(inv_proj_mat.n + 1);
-
-	uint64_t idx = 0;
-	for (uint64_t i = 0; i < inv_proj_mat.n; ++i) {
-		h_row_ptr[i] = idx;
-		for (const auto& e : inv_proj_mat.rows[i]) {
-			h_vals[idx] = e.val;
-			h_cols[idx] = e.col;
-			++idx;
-		}
-	}
-	h_row_ptr[inv_proj_mat.n] = idx;
-
-	entry.sparse_nnz = nnz;
-
-	if (nnz > 0) {
-		cudaMalloc(&entry.d_sparse_vals, nnz * sizeof(int));
-		cudaMemcpy(entry.d_sparse_vals, h_vals.data(), nnz * sizeof(int), cudaMemcpyHostToDevice);
-
-		cudaMalloc(&entry.d_sparse_cols, nnz * sizeof(uint64_t));
-		cudaMemcpy(entry.d_sparse_cols, h_cols.data(), nnz * sizeof(uint64_t), cudaMemcpyHostToDevice);
-	}
-
-	cudaMalloc(&entry.d_sparse_row_ptr, (proj_mat.n + 1) * sizeof(uint64_t));
-	cudaMemcpy(entry.d_sparse_row_ptr, h_row_ptr.data(), (proj_mat.n + 1) * sizeof(uint64_t), cudaMemcpyHostToDevice);
+	// Upload transpose of inverse to GPU (used by backprop)
+	CuSparseIntMatrix inv_proj_mat_t;
+	inv_proj_mat.transpose(inv_proj_mat_t);
+	upload_csr_to_gpu_(inv_proj_mat_t, entry.d_sparse_vals_t, entry.d_sparse_cols_t, entry.d_sparse_row_ptr_t);
 }
 
 inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int method) {

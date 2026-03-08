@@ -674,9 +674,9 @@ __global__ void sig_to_log_sig_backprop_m2_kernel(
 	T* __restrict__ scratch,
 	const uint64_t* __restrict__ d_level_index,
 	const uint64_t* __restrict__ d_lyndon_idx,
-	const int* __restrict__ d_sparse_vals,
-	const uint64_t* __restrict__ d_sparse_cols,
-	const uint64_t* __restrict__ d_sparse_row_ptr,
+	const int* __restrict__ d_sparse_vals_t,
+	const uint64_t* __restrict__ d_sparse_cols_t,
+	const uint64_t* __restrict__ d_sparse_row_ptr_t,
 	uint64_t dimension,
 	uint64_t degree,
 	uint64_t sig_len,
@@ -699,9 +699,6 @@ __global__ void sig_to_log_sig_backprop_m2_kernel(
 	T* other_derivs = partial_logs + (degree - 1) * buff1_len;
 	T* buff1 = other_derivs + sig_len;
 	T* buff2 = buff1 + buff1_len;
-	// Reuse the end of buff2 area for temp_derivs (log_sig_len)
-	// Actually, use a separate region after buff2
-	T* temp_derivs = buff2 + sig_len;
 
 	// Load level_index into shared memory
 	extern __shared__ char smem[];
@@ -710,37 +707,23 @@ __global__ void sig_to_log_sig_backprop_m2_kernel(
 		level_index_smem[i] = d_level_index[i];
 	__syncthreads();
 
-	// Copy log_sig_derivs to temp_derivs
-	for (uint64_t i = tid; i < log_sig_len; i += nthreads)
-		temp_derivs[i] = my_log_derivs[i];
-	__syncthreads();
-
-	// Apply transpose of inverse projection matrix (upper triangular, in-place)
-	// The forward used: out[i] = temp[i] + sum_j M[i][j] * temp[j]  (lower triangular)
-	// The backward is: (I + M^T) * x, applied in-place via scatter.
-	// For each row i of M (lower triangular, entries j < i):
-	//   temp_derivs[j] += M[i][j] * temp_derivs[i]
-	// Must process rows in ASCENDING order so that temp_derivs[i] is still the
-	// original value when read (since all scatter targets j < i < current row).
-	// This must be done serially (single thread) for correctness.
-	if (tid == 0) {
-		for (uint64_t i = 0; i < log_sig_len; ++i) {
-			uint64_t row_start = d_sparse_row_ptr[i];
-			uint64_t row_end = d_sparse_row_ptr[i + 1];
-			for (uint64_t k = row_start; k < row_end; ++k) {
-				temp_derivs[d_sparse_cols[k]] += static_cast<T>(d_sparse_vals[k]) * temp_derivs[i];
-			}
-		}
-	}
-	__syncthreads();
-
-	// Zero expanded derivs, then scatter from temp_derivs
+	// Apply transpose of inverse projection matrix via parallel gather,
+	// and scatter to expanded form in one step.
+	// result[j] = log_sig_derivs[j] + sum_k M^T[j][k] * log_sig_derivs[k]
+	// Then: derivs_expanded[lyndon_idx[j]] = result[j]
 	for (uint64_t i = tid; i < sig_len; i += nthreads)
 		my_derivs[i] = static_cast<T>(0);
 	__syncthreads();
 
-	for (uint64_t i = tid; i < log_sig_len; i += nthreads)
-		my_derivs[d_lyndon_idx[i]] = temp_derivs[i];
+	for (uint64_t j = tid; j < log_sig_len; j += nthreads) {
+		T acc = my_log_derivs[j];
+		uint64_t row_start = d_sparse_row_ptr_t[j];
+		uint64_t row_end = d_sparse_row_ptr_t[j + 1];
+		for (uint64_t k = row_start; k < row_end; ++k) {
+			acc += static_cast<T>(d_sparse_vals_t[k]) * my_log_derivs[d_sparse_cols_t[k]];
+		}
+		my_derivs[d_lyndon_idx[j]] = acc;
+	}
 	__syncthreads();
 
 	tensor_log_backprop_device<T>(
@@ -773,9 +756,8 @@ void sig_to_log_sig_backprop_cuda_m2_core_(
 		return;
 	}
 
-	// Extra log_sig_len for temp_derivs in method 2
 	const uint64_t scratch_per_element =
-		sig_len + (degree - 1) * buff1_len + sig_len + buff1_len + sig_len + log_sig_len;
+		sig_len + (degree - 1) * buff1_len + sig_len + buff1_len + sig_len;
 
 	const size_t derivs_size = sizeof(T) * batch_size * sig_len;
 	g_bp_workspace.ensure(sizeof(T) * batch_size * scratch_per_element, derivs_size);
@@ -786,7 +768,7 @@ void sig_to_log_sig_backprop_cuda_m2_core_(
 		sig, out, log_sig_derivs, static_cast<T*>(g_bp_workspace.d_derivs),
 		static_cast<T*>(g_bp_workspace.d_buf),
 		cache.d_level_index, cache.d_lyndon_idx,
-		cache.d_sparse_vals, cache.d_sparse_cols, cache.d_sparse_row_ptr,
+		cache.d_sparse_vals_t, cache.d_sparse_cols_t, cache.d_sparse_row_ptr_t,
 		dimension, degree, sig_len, buff1_len, log_sig_len, scratch_per_element
 	);
 
