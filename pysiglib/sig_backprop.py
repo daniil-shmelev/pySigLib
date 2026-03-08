@@ -20,8 +20,8 @@ import torch
 
 from .param_checks import check_type, check_non_neg
 from .error_codes import err_msg
-from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler, DeviceToHost
-from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_BATCH_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CPSIG_BATCH_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP_CUDA, CUSIG_BATCH_SIG_BACKPROP_CUDA
+from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler
+from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_BATCH_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CPSIG_BATCH_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP_CUDA, CUSIG_BATCH_SIG_BACKPROP_CUDA, CUSIG_SIG_COMBINE_BACKPROP_CUDA, CUSIG_BATCH_SIG_COMBINE_BACKPROP_CUDA
 from .sig_length import sig_length
 
 def sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, dimension, degree):
@@ -50,6 +50,37 @@ def batch_sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, dimension, deg
         dimension,
         degree,
         n_jobs
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig_combine_backprop: " + err_msg(err_code))
+    return sig1_deriv.data, sig2_deriv.data
+
+def sig_combine_backprop_cuda_(sig_data, sig1_deriv, sig2_deriv, dimension, degree):
+    err_code = CUSIG_SIG_COMBINE_BACKPROP_CUDA[sig_data.dtype](
+        sig_data.sig_ptr[2],
+        sig1_deriv.data_ptr,
+        sig2_deriv.data_ptr,
+        sig_data.sig_ptr[0],
+        sig_data.sig_ptr[1],
+        dimension,
+        degree
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig_combine_backprop: " + err_msg(err_code))
+    return sig1_deriv.data, sig2_deriv.data
+
+def batch_sig_combine_backprop_cuda_(sig_data, sig1_deriv, sig2_deriv, dimension, degree):
+    err_code = CUSIG_BATCH_SIG_COMBINE_BACKPROP_CUDA[sig_data.dtype](
+        sig_data.sig_ptr[2],
+        sig1_deriv.data_ptr,
+        sig2_deriv.data_ptr,
+        sig_data.sig_ptr[0],
+        sig_data.sig_ptr[1],
+        sig_data.batch_size,
+        dimension,
+        degree
     )
 
     if err_code:
@@ -127,31 +158,28 @@ def sig_combine_backprop(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
 
-    device_handler = DeviceToHost([deriv, sig1, sig2], ["deriv", "sig1", "sig2"])
-    deriv, sig1, sig2 = device_handler.data
-
-    check_type(dimension, "dimension", int)
-    check_type(degree, "degree", int)
-
     aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
-
     sig_len = sig_length(aug_dimension, degree)
+
     sig_data = MultipleSigInputHandler([sig1, sig2, deriv], sig_len, ["sig1", "sig2", "sig_combined_deriv"])
 
     sig1_deriv = SigOutputHandler(sig_data, sig_len)
     sig2_deriv = SigOutputHandler(sig_data, sig_len)
 
-    if sig_data.is_batch:
-        check_type(n_jobs, "n_jobs", int)
-        if n_jobs == 0:
-            raise ValueError("n_jobs cannot be 0")
-        res1, res2 = batch_sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, aug_dimension, degree, n_jobs)
+    if sig_data.device == "cpu":
+        if sig_data.is_batch:
+            check_type(n_jobs, "n_jobs", int)
+            if n_jobs == 0:
+                raise ValueError("n_jobs cannot be 0")
+            res1, res2 = batch_sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, aug_dimension, degree, n_jobs)
+        else:
+            res1, res2 = sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, aug_dimension, degree)
     else:
-        res1, res2 = sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, aug_dimension, degree)
+        if sig_data.is_batch:
+            res1, res2 = batch_sig_combine_backprop_cuda_(sig_data, sig1_deriv, sig2_deriv, aug_dimension, degree)
+        else:
+            res1, res2 = sig_combine_backprop_cuda_(sig_data, sig1_deriv, sig2_deriv, aug_dimension, degree)
 
-    if device_handler.device is not None:
-        res1 = res1.to(device_handler.device)
-        res2 = res2.to(device_handler.device)
     return res1, res2
 
 def sig_backprop_(path_data, sig_data, result, degree):

@@ -143,6 +143,152 @@ void sig_combine_cuda_(
 }
 
 // =========================================================================
+// CUDA sig_combine_backprop kernel
+//
+// Given d_out = dF/d(sig_combine(sig1, sig2)), computes:
+//   sig1_deriv = dF/d(sig1)
+//   sig2_deriv = dF/d(sig2)
+//
+// Each output element is computed independently from the original d_out,
+// sig1, and sig2 — no synchronization needed between threads.
+// =========================================================================
+
+template<typename T>
+__global__ void sig_combine_backprop_kernel(
+	const T* __restrict__ d_out,         // [batch_size * sig_len]
+	T* __restrict__ sig1_deriv,          // [batch_size * sig_len]
+	T* __restrict__ sig2_deriv,          // [batch_size * sig_len]
+	const T* __restrict__ sig1,          // [batch_size * sig_len]
+	const T* __restrict__ sig2,          // [batch_size * sig_len]
+	uint64_t dimension,
+	uint64_t degree
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+
+	// Compute level_index in shared memory
+	extern __shared__ char smem[];
+	uint64_t* level_index = reinterpret_cast<uint64_t*>(smem);
+
+	if (tid == 0) {
+		level_index[0] = 0;
+		for (uint64_t i = 1; i < degree + 2; ++i)
+			level_index[i] = level_index[i - 1] * dimension + 1;
+	}
+	__syncthreads();
+
+	const uint64_t sig_len = level_index[degree + 1];
+	const T* my_d_out = d_out + batch_idx * sig_len;
+	T* my_d_sig1 = sig1_deriv + batch_idx * sig_len;
+	T* my_d_sig2 = sig2_deriv + batch_idx * sig_len;
+	const T* my_sig1 = sig1 + batch_idx * sig_len;
+	const T* my_sig2 = sig2 + batch_idx * sig_len;
+
+	// Level 0: pass through the derivative
+	if (tid == 0) {
+		my_d_sig1[0] = my_d_out[0];
+		my_d_sig2[0] = my_d_out[0];
+	}
+
+	// Each element reads only from the original d_out, sig1, and sig2,
+	// so all elements are independent — no syncs needed.
+	for (uint64_t k = 1; k <= degree; ++k) {
+		const uint64_t k_start = level_index[k];
+		const uint64_t k_size = level_index[k + 1] - k_start;
+
+		for (uint64_t idx = tid; idx < k_size; idx += nthreads) {
+			const T d_out_k_idx = my_d_out[k_start + idx];
+
+			// sig1_deriv[k][idx] = d_out[k][idx]
+			//   + sum_{right_level=1}^{degree-k} sum_r d_out[k+rl][idx*rs + r] * sig2[rl][r]
+			T val1 = d_out_k_idx;
+			for (uint64_t right_level = 1; right_level <= degree - k; ++right_level) {
+				const uint64_t combined_start = level_index[k + right_level];
+				const uint64_t right_start = level_index[right_level];
+				const uint64_t right_size = level_index[right_level + 1] - right_start;
+
+				for (uint64_t r = 0; r < right_size; ++r) {
+					val1 += my_d_out[combined_start + idx * right_size + r] * my_sig2[right_start + r];
+				}
+			}
+			my_d_sig1[k_start + idx] = val1;
+
+			// sig2_deriv[k][idx] = d_out[k][idx]
+			//   + sum_{left_level=1}^{degree-k} sum_l d_out[ll+k][l*ks + idx] * sig1[ll][l]
+			T val2 = d_out_k_idx;
+			for (uint64_t left_level = 1; left_level <= degree - k; ++left_level) {
+				const uint64_t combined_start = level_index[left_level + k];
+				const uint64_t left_start = level_index[left_level];
+				const uint64_t left_size = level_index[left_level + 1] - left_start;
+
+				for (uint64_t l = 0; l < left_size; ++l) {
+					val2 += my_d_out[combined_start + l * k_size + idx] * my_sig1[left_start + l];
+				}
+			}
+			my_d_sig2[k_start + idx] = val2;
+		}
+	}
+}
+
+// =========================================================================
+// Host-side core launch for backprop
+// =========================================================================
+
+template<typename T>
+void sig_combine_backprop_cuda_core_(
+	const T* sig_combined_deriv,
+	T* sig1_deriv,
+	T* sig2_deriv,
+	const T* sig1,
+	const T* sig2,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t degree
+) {
+	if (degree == 0) {
+		cudaMemcpy(sig1_deriv, sig_combined_deriv, batch_size * sizeof(T), cudaMemcpyDeviceToDevice);
+		cudaMemcpy(sig2_deriv, sig_combined_deriv, batch_size * sizeof(T), cudaMemcpyDeviceToDevice);
+		return;
+	}
+
+	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
+	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
+
+	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
+	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
+
+	size_t smem_size = (degree + 2) * sizeof(uint64_t);
+
+	sig_combine_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
+		sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, dimension, degree
+	);
+
+	cudaDeviceSynchronize();
+
+	cudaError_t err = cudaGetLastError();
+	if (err != cudaSuccess) {
+		const int error_code = static_cast<int>(err);
+		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
+	}
+}
+
+template<typename T>
+void sig_combine_backprop_cuda_(
+	const T* sig_combined_deriv,
+	T* sig1_deriv,
+	T* sig2_deriv,
+	const T* sig1,
+	const T* sig2,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t degree
+) {
+	if (dimension == 0) throw std::invalid_argument("sig_combine_backprop_cuda received dimension 0");
+	sig_combine_backprop_cuda_core_<T>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree);
+}
+
+// =========================================================================
 // SAFE_CALL macro
 // =========================================================================
 
@@ -213,5 +359,37 @@ extern "C" {
 		uint64_t batch_size, uint64_t dimension, uint64_t degree
 	) noexcept {
 		CU_TENSOR_POLY_SAFE_CALL(sig_combine_cuda_<double>(sig1, sig2, out, batch_size, dimension, degree));
+	}
+
+	CUSIG_API int sig_combine_backprop_cuda_f(
+		const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv,
+		const float* sig1, const float* sig2,
+		uint64_t dimension, uint64_t degree
+	) noexcept {
+		CU_TENSOR_POLY_SAFE_CALL(sig_combine_backprop_cuda_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, 1, dimension, degree));
+	}
+
+	CUSIG_API int sig_combine_backprop_cuda_d(
+		const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv,
+		const double* sig1, const double* sig2,
+		uint64_t dimension, uint64_t degree
+	) noexcept {
+		CU_TENSOR_POLY_SAFE_CALL(sig_combine_backprop_cuda_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, 1, dimension, degree));
+	}
+
+	CUSIG_API int batch_sig_combine_backprop_cuda_f(
+		const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv,
+		const float* sig1, const float* sig2,
+		uint64_t batch_size, uint64_t dimension, uint64_t degree
+	) noexcept {
+		CU_TENSOR_POLY_SAFE_CALL(sig_combine_backprop_cuda_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree));
+	}
+
+	CUSIG_API int batch_sig_combine_backprop_cuda_d(
+		const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv,
+		const double* sig1, const double* sig2,
+		uint64_t batch_size, uint64_t dimension, uint64_t degree
+	) noexcept {
+		CU_TENSOR_POLY_SAFE_CALL(sig_combine_backprop_cuda_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree));
 	}
 }

@@ -1433,6 +1433,120 @@ public:
     };
 
     // =========================================================================
+    // sig_combine_backprop CUDA tests
+    // Ported from CPU sigCombineBackpropTest
+    // =========================================================================
+
+    TEST_CLASS(sigCombineBackpropCudaTest) {
+    public:
+        TEST_METHOD(ManualTest) {
+            uint64_t dimension = 2, degree = 2;
+            uint64_t sig_len = 7;
+
+            std::vector<double> sig1 = { 1., 1., 1., .5, .5, .5, .5 };
+            std::vector<double> sig2 = { 1., 0., 1., 0., 1., -1., .5 };
+            std::vector<double> derivs = { 1., 1., 2., 3., 4., 5., 6. };
+            // true_ = [sig1_deriv..., sig2_deriv...]
+            std::vector<double> true_ = { 1., 5., 8., 3., 4., 5., 6., 1., 9., 12., 3., 4., 5., 6. };
+
+            double* d_derivs = nullptr;
+            double* d_sig1 = nullptr;
+            double* d_sig2 = nullptr;
+            double* d_sig1_deriv = nullptr;
+            double* d_sig2_deriv = nullptr;
+            cudaMalloc(&d_derivs, sizeof(double) * sig_len);
+            cudaMalloc(&d_sig1, sizeof(double) * sig_len);
+            cudaMalloc(&d_sig2, sizeof(double) * sig_len);
+            cudaMalloc(&d_sig1_deriv, sizeof(double) * sig_len);
+            cudaMalloc(&d_sig2_deriv, sizeof(double) * sig_len);
+
+            cudaMemcpy(d_derivs, derivs.data(), sizeof(double) * sig_len, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_sig1, sig1.data(), sizeof(double) * sig_len, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_sig2, sig2.data(), sizeof(double) * sig_len, cudaMemcpyHostToDevice);
+
+            int err = sig_combine_backprop_cuda_d(d_derivs, d_sig1_deriv, d_sig2_deriv, d_sig1, d_sig2, dimension, degree);
+            cudaDeviceSynchronize();
+
+            std::vector<double> sig1_deriv(sig_len), sig2_deriv(sig_len);
+            cudaMemcpy(sig1_deriv.data(), d_sig1_deriv, sizeof(double) * sig_len, cudaMemcpyDeviceToHost);
+            cudaMemcpy(sig2_deriv.data(), d_sig2_deriv, sizeof(double) * sig_len, cudaMemcpyDeviceToHost);
+
+            cudaFree(d_derivs);
+            cudaFree(d_sig1);
+            cudaFree(d_sig2);
+            cudaFree(d_sig1_deriv);
+            cudaFree(d_sig2_deriv);
+
+            Assert::AreEqual(0, err, L"sig_combine_backprop_cuda_d returned non-zero error code");
+
+            for (uint64_t i = 0; i < sig_len; ++i) {
+                std::wstring msg = L"sig1_deriv mismatch at " + std::to_wstring(i);
+                Assert::IsTrue(std::abs(sig1_deriv[i] - true_[i]) < DOUBLE_EPSILON, msg.c_str());
+            }
+            for (uint64_t i = 0; i < sig_len; ++i) {
+                std::wstring msg = L"sig2_deriv mismatch at " + std::to_wstring(i);
+                Assert::IsTrue(std::abs(sig2_deriv[i] - true_[sig_len + i]) < DOUBLE_EPSILON, msg.c_str());
+            }
+        }
+
+        TEST_METHOD(ManualBatchTest) {
+            uint64_t dimension = 2, degree = 2, batch_size = 2;
+            uint64_t sig_len = 7;
+            uint64_t total = sig_len * batch_size;
+
+            std::vector<double> sig1 = { 1., 1., 1., .5, .5, .5, .5,
+                1., 0., 1., 0., 1., -1., .5 };
+            std::vector<double> sig2 = { 1., 0., 1., 0., 1., -1., .5,
+                1., 1., 1., .5, .5, .5, .5 };
+            std::vector<double> derivs = { 1., 1., 2., 3., 4., 5., 6.,
+                1., 1., 2., 3., 4., 5., 6. };
+            std::vector<double> true_ = { 1., 5., 8., 3., 4., 5., 6.,
+                1., 8., 13., 3., 4., 5., 6.,
+                1., 9., 12., 3., 4., 5., 6.,
+                1., 6., 8., 3., 4., 5., 6. };
+
+            double* d_derivs = nullptr;
+            double* d_sig1 = nullptr;
+            double* d_sig2 = nullptr;
+            double* d_sig1_deriv = nullptr;
+            double* d_sig2_deriv = nullptr;
+            cudaMalloc(&d_derivs, sizeof(double) * total);
+            cudaMalloc(&d_sig1, sizeof(double) * total);
+            cudaMalloc(&d_sig2, sizeof(double) * total);
+            cudaMalloc(&d_sig1_deriv, sizeof(double) * total);
+            cudaMalloc(&d_sig2_deriv, sizeof(double) * total);
+
+            cudaMemcpy(d_derivs, derivs.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_sig1, sig1.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_sig2, sig2.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+
+            int err = batch_sig_combine_backprop_cuda_d(d_derivs, d_sig1_deriv, d_sig2_deriv, d_sig1, d_sig2, batch_size, dimension, degree);
+            cudaDeviceSynchronize();
+
+            std::vector<double> sig1_deriv(total), sig2_deriv(total);
+            cudaMemcpy(sig1_deriv.data(), d_sig1_deriv, sizeof(double) * total, cudaMemcpyDeviceToHost);
+            cudaMemcpy(sig2_deriv.data(), d_sig2_deriv, sizeof(double) * total, cudaMemcpyDeviceToHost);
+
+            cudaFree(d_derivs);
+            cudaFree(d_sig1);
+            cudaFree(d_sig2);
+            cudaFree(d_sig1_deriv);
+            cudaFree(d_sig2_deriv);
+
+            Assert::AreEqual(0, err, L"batch_sig_combine_backprop_cuda_d returned non-zero error code");
+
+            for (uint64_t i = 0; i < total; ++i) {
+                std::wstring msg = L"sig1_deriv mismatch at " + std::to_wstring(i);
+                Assert::IsTrue(std::abs(sig1_deriv[i] - true_[i]) < DOUBLE_EPSILON, msg.c_str());
+            }
+            for (uint64_t i = 0; i < total; ++i) {
+                std::wstring msg = L"sig2_deriv mismatch at " + std::to_wstring(i);
+                Assert::IsTrue(std::abs(sig2_deriv[i] - true_[total + i]) < DOUBLE_EPSILON, msg.c_str());
+            }
+        }
+    };
+
+    // =========================================================================
     // sig_to_log_sig CUDA tests (expanded / method=0)
     // Ported from CPU logSignatureExpandedTest
     // =========================================================================

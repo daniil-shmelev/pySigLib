@@ -362,6 +362,51 @@ extern "C" {
 	CUSIG_API int batch_sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
+	/** @defgroup sig_combine_backprop_cuda_functions Signature combine backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagation through sig_combine on the GPU.
+	*
+	* Given dF/d(sig_combine(sig1, sig2)), computes dF/d(sig1) and dF/d(sig2).
+	*
+	* @param sig_combined_deriv Pointer to input derivatives (on device), size = `sig_length(dimension, degree)`.
+	* @param sig1_deriv Pointer to output sig1 derivatives (on device, preallocated).
+	* @param sig2_deriv Pointer to output sig2 derivatives (on device, preallocated).
+	* @param sig1 Pointer to first signature (on device).
+	* @param sig2 Pointer to second signature (on device).
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signatures.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_combine_backprop_cuda_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int sig_combine_backprop_cuda_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_combine_backprop_cuda_functions Batch signature combine backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Batch backpropagation through sig_combine on the GPU.
+	*
+	* @param sig_combined_deriv Pointer to input derivatives (on device), size = `batch_size * sig_length(dimension, degree)`.
+	* @param sig1_deriv Pointer to output sig1 derivatives (on device, preallocated).
+	* @param sig2_deriv Pointer to output sig2 derivatives (on device, preallocated).
+	* @param sig1 Pointer to first signatures (on device).
+	* @param sig2 Pointer to second signatures (on device).
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signatures.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_combine_backprop_cuda_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_combine_backprop_cuda_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
 	/** @defgroup sig_to_log_sig_cuda_functions Sig to log sig CUDA functions
 	* @{
 	*/
