@@ -241,6 +241,13 @@ void example_batch_sig_to_log_sig_backprop_cuda_d(
 	int num_runs = 50
 );
 
+void example_batch_sig_combine_cuda_d(
+	uint64_t batch_size = 1000,
+	uint64_t dimension = 8,
+	uint64_t degree = 6,
+	int num_runs = 50
+);
+
 void example_batch_sig_coef(
 	uint64_t num_idx = 10,
 	uint64_t batch_size = 1000,

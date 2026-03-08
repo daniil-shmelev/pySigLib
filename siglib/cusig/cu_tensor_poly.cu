@@ -29,33 +29,58 @@ __global__ void sig_combine_kernel(
 	const T* __restrict__ sig1,          // [batch_size * sig_len]
 	const T* __restrict__ sig2,          // [batch_size * sig_len]
 	T* __restrict__ out,                 // [batch_size * sig_len]
-	const uint64_t* __restrict__ d_level_index,
-	uint64_t degree,
-	uint64_t sig_len
+	uint64_t dimension,
+	uint64_t degree
 ) {
 	const uint64_t batch_idx = blockIdx.x;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
+	// Compute level_index in shared memory (no device malloc needed)
+	extern __shared__ char smem[];
+	uint64_t* level_index = reinterpret_cast<uint64_t*>(smem);
+
+	if (tid == 0) {
+		level_index[0] = 0;
+		for (uint64_t i = 1; i < degree + 2; ++i)
+			level_index[i] = level_index[i - 1] * dimension + 1;
+	}
+	__syncthreads();
+
+	const uint64_t sig_len = level_index[degree + 1];
 	const T* my_sig1 = sig1 + batch_idx * sig_len;
 	const T* my_sig2 = sig2 + batch_idx * sig_len;
 	T* my_out = out + batch_idx * sig_len;
 
-	// Load level_index into shared memory
-	extern __shared__ char smem[];
-	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem);
+	// Level 0: scalar component = 1
+	if (tid == 0)
+		my_out[0] = static_cast<T>(1);
 
-	for (uint64_t i = tid; i < degree + 2; i += nthreads)
-		level_index_smem[i] = d_level_index[i];
-	__syncthreads();
+	// Each level reads only from the original sig1 and sig2,
+	// so all levels are independent — no syncs needed between them.
+	for (uint64_t target_level = 1; target_level <= degree; ++target_level) {
+		const uint64_t target_start = level_index[target_level];
+		const uint64_t target_size = level_index[target_level + 1] - target_start;
 
-	// Copy sig1 to out
-	for (uint64_t i = tid; i < sig_len; i += nthreads)
-		my_out[i] = my_sig1[i];
-	__syncthreads();
+		for (uint64_t idx = tid; idx < target_size; idx += nthreads) {
+			// S1^(k) + S2^(k)
+			T val = my_sig1[target_start + idx] + my_sig2[target_start + idx];
 
-	// Combine in-place: out = out (x) sig2
-	sig_combine_inplace_device<T>(my_out, my_sig2, degree, level_index_smem);
+			// + sum_{i=1}^{k-1} S1^(i) tensor S2^(k-i)
+			for (uint64_t left_level = 1; left_level < target_level; ++left_level) {
+				const uint64_t right_level = target_level - left_level;
+				const uint64_t left_start = level_index[left_level];
+				const uint64_t right_start = level_index[right_level];
+				const uint64_t right_size = level_index[right_level + 1] - right_start;
+
+				const uint64_t l_idx = idx / right_size;
+				const uint64_t r_idx = idx % right_size;
+				val += my_sig1[left_start + l_idx] * my_sig2[right_start + r_idx];
+			}
+
+			my_out[target_start + idx] = val;
+		}
+	}
 }
 
 // =========================================================================
@@ -81,34 +106,21 @@ void sig_combine_cuda_core_(
 		return;
 	}
 
-	// Build level_index on host and copy to device
+	// Choose threads per block based on largest level size
 	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
 
-	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
-
-	uint64_t* d_level_index = nullptr;
-	cudaMalloc(&d_level_index, level_index_bytes);
-	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
-
-	// Choose threads per block based on largest level size
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
-	unsigned int threads_per_block = 32;
-	if (max_level_size > 32)   threads_per_block = 64;
-	if (max_level_size > 64)   threads_per_block = 128;
-	if (max_level_size > 128)  threads_per_block = 256;
-	if (max_level_size > 512)  threads_per_block = 512;
-	if (max_level_size > 1024) threads_per_block = 1024;
+	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
 
-	// Shared memory: level_index only
+	// Shared memory: level_index (computed inside kernel, no device malloc needed)
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
 	sig_combine_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-		sig1, sig2, out, d_level_index, degree, sig_len
+		sig1, sig2, out, dimension, degree
 	);
 
 	cudaDeviceSynchronize();
-	cudaFree(d_level_index);
 
 	cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess) {

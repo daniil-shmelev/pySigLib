@@ -72,6 +72,7 @@ using sig_coef_backprop_d_fn = void(CDECL_*)(const double*, double*, double*, do
 using batch_sig_coef_backprop_d_fn = void(CDECL_*)(const double*, double*, double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, int);
 
 using batch_sig_combine_d_fn = void(CDECL_*)(const double*, const double*, double*, uint64_t, uint64_t, uint64_t, int);
+using batch_sig_combine_cuda_d_fn = int(CDECL_*)(const double*, const double*, double*, uint64_t, uint64_t, uint64_t);
 using sig_backprop_d_fn = void(CDECL_*)(const double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, bool, bool, double);
 using batch_sig_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, int);
 
@@ -116,6 +117,7 @@ extern batch_sig_kernel_f_fn batch_sig_kernel_f;
 extern sig_kernel_d_fn sig_kernel_d;
 extern batch_sig_kernel_d_fn batch_sig_kernel_d;
 extern batch_sig_combine_d_fn batch_sig_combine;
+extern batch_sig_combine_cuda_d_fn batch_sig_combine_cuda_d;
 extern sig_backprop_d_fn sig_backprop_d;
 extern batch_sig_backprop_d_fn batch_sig_backprop_d;
 
