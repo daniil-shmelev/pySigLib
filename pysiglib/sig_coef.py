@@ -21,9 +21,9 @@ import torch
 
 from .param_checks import check_word_or_word_list, check_type, check_non_neg
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIG_COEF, CPSIG_BATCH_SIG_COEF
+from .dtypes import CPSIG_SIG_COEF, CPSIG_BATCH_SIG_COEF, CUSIG_SIG_COEF_CUDA, CUSIG_BATCH_SIG_COEF_CUDA
 from .words import word_to_idx
-from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler, DeviceToHost
+from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler
 
 def extract_sig_coef(
         sig : Union[np.ndarray, torch.tensor],
@@ -139,6 +139,39 @@ def batch_sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_
         raise Exception("Error in pysiglib.sig_coef: " + err_msg(err_code))
     return result.data
 
+def sig_coef_cuda_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes):
+    err_code = CUSIG_SIG_COEF_CUDA[data.dtype](
+        data.data_ptr,
+        result.data_ptr,
+        multi_indices_ptr,
+        num_multi_indices,
+        degrees_ptr,
+        data.data_dimension,
+        data.data_length,
+        prefixes
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig_coef (CUDA): " + err_msg(err_code))
+    return result.data
+
+def batch_sig_coef_cuda_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes):
+    err_code = CUSIG_BATCH_SIG_COEF_CUDA[data.dtype](
+        data.data_ptr,
+        result.data_ptr,
+        multi_indices_ptr,
+        num_multi_indices,
+        degrees_ptr,
+        data.batch_size,
+        data.data_dimension,
+        data.data_length,
+        prefixes
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig_coef (CUDA): " + err_msg(err_code))
+    return result.data
+
 def sig_coef(
         path : Union[np.ndarray, torch.tensor],
         words : Union[tuple[int, ...], list[tuple[int, ...]]],
@@ -237,9 +270,6 @@ def sig_coef(
     check_type(end_time, "end_time", float)
     check_type(prefixes, "prefixes", bool)
 
-    # If path is on GPU, move to CPU
-    device_handler = DeviceToHost([path], ["path"])
-    path = device_handler.data[0]
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     words = check_word_or_word_list(words, data.dimension, "word")
 
@@ -253,22 +283,31 @@ def sig_coef(
         result_length = num_multi_indices
 
     flat_indices = [i for idx in words for i in idx]
-    words = torch.tensor(flat_indices, dtype=torch.uint64)
-    degrees = torch.tensor(degrees, dtype=torch.uint64)
 
-    multi_indices_ptr = cast(words.data_ptr(), POINTER(c_uint64))
-    degrees_ptr = cast(degrees.data_ptr(), POINTER(c_uint64))
+    if data.device == "cuda":
+        words_t = torch.tensor(flat_indices, dtype=torch.uint64, device=path.device)
+        degrees_t = torch.tensor(degrees, dtype=torch.uint64, device=path.device)
+    else:
+        words_t = torch.tensor(flat_indices, dtype=torch.uint64)
+        degrees_t = torch.tensor(degrees, dtype=torch.uint64)
+
+    multi_indices_ptr = cast(words_t.data_ptr(), POINTER(c_uint64))
+    degrees_ptr = cast(degrees_t.data_ptr(), POINTER(c_uint64))
 
     result = SigOutputHandler(data, result_length)
 
-    if data.is_batch:
-        check_type(n_jobs, "n_jobs", int)
-        if n_jobs == 0:
-            raise ValueError("n_jobs cannot be 0")
-        res = batch_sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes, n_jobs)
+    if data.device == "cuda":
+        if data.is_batch:
+            res = batch_sig_coef_cuda_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
+        else:
+            res = sig_coef_cuda_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
     else:
-        res = sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
+        if data.is_batch:
+            check_type(n_jobs, "n_jobs", int)
+            if n_jobs == 0:
+                raise ValueError("n_jobs cannot be 0")
+            res = batch_sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes, n_jobs)
+        else:
+            res = sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
 
-    if device_handler.device is not None:
-        res = res.to(device_handler.device)
     return res

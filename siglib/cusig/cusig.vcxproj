@@ -114,6 +114,7 @@
     <ClInclude Include="cu_log_signature.h" />
     <ClInclude Include="cu_log_sig_cache.h" />
     <ClInclude Include="cu_log_sig_backprop.h" />
+    <ClInclude Include="cu_sig_coef.h" />
     <CudaCompile Include="cu_path_transforms.cu" />
     <CudaCompile Include="cu_log_signature.cu" />
     <CudaCompile Include="cu_tensor_poly.cu" />
@@ -129,6 +130,7 @@
   <ItemGroup>
     <CudaCompile Include="cu_sig_kernel.cu" />
     <CudaCompile Include="cu_log_sig_cache.cu" />
+    <CudaCompile Include="cu_sig_coef.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -800,3 +800,46 @@ void example_batch_sig_coef_backprop(
 
     time_function(num_runs, batch_sig_coef_backprop_d, path.data(), out.data(), coefs.data(), derivs.data(), multi_idx.data(), degrees.size(), degrees.data(), batch_size, dimension, length, time_aug, lead_lag, end_time, n_jobs);
 }
+
+void example_batch_sig_coef_cuda_d(
+    uint64_t num_idx,
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    uint64_t length,
+    int num_runs
+) {
+    print_header("Batch Sig Coef CUDA Double");
+
+    uint64_t path_size = dimension * length * batch_size;
+    std::vector<double> path = test_data<double>(path_size);
+
+    std::vector<uint64_t> degrees(num_idx, degree);
+    std::vector<uint64_t> multi_idx(num_idx * degree, 0);
+
+    uint64_t out_size = batch_size * num_idx;
+
+    // Allocate device memory
+    double* d_path;
+    double* d_out;
+    uint64_t* d_multi_idx;
+    uint64_t* d_degrees;
+    cudaMalloc(&d_path, sizeof(double) * path_size);
+    cudaMalloc(&d_out, sizeof(double) * out_size);
+    cudaMalloc(&d_multi_idx, sizeof(uint64_t) * multi_idx.size());
+    cudaMalloc(&d_degrees, sizeof(uint64_t) * degrees.size());
+
+    // Copy to device
+    cudaMemcpy(d_path, path.data(), sizeof(double) * path_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_multi_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_degrees, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
+
+    time_function(num_runs, batch_sig_coef_cuda_d, d_path, d_out, d_multi_idx, num_idx, d_degrees, batch_size, dimension, length, false);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+    cudaFree(d_multi_idx);
+    cudaFree(d_degrees);
+
+    std::cout << "done\n";
+}

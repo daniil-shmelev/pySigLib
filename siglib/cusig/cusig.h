@@ -507,6 +507,54 @@ extern "C" {
 	CUSIG_API int prepare_log_sig_cuda(uint64_t dimension, uint64_t degree, int method) noexcept;
 	/** @} */
 
+	/** @defgroup sig_coef_cuda_functions Sig coef CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes signature coefficients for specified multi-indices on the GPU.
+	*
+	* Each multi-index (word) specifies a sequence of channels, and the function computes
+	* the corresponding iterated integral (signature coefficient) of the path.
+	*
+	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
+	* @param out Pointer to output buffer (on device, preallocated).
+	* @param multi_idx Pointer to flattened multi-indices (on device).
+	* @param num_multi_idx Number of multi-indices (words).
+	* @param degrees Pointer to degree of each multi-index (on device), size = `num_multi_idx`.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @param prefixes If true, output all prefix coefficients; if false, output only the final coefficient.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	/** @brief */
+	CUSIG_API int sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_coef_cuda_functions Batch sig coef CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes signature coefficients for a batch of paths on the GPU.
+	*
+	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
+	* @param out Pointer to output buffer (on device, preallocated).
+	* @param multi_idx Pointer to flattened multi-indices (on device).
+	* @param num_multi_idx Number of multi-indices (words).
+	* @param degrees Pointer to degree of each multi-index (on device), size = `num_multi_idx`.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the paths.
+	* @param length Length of the paths.
+	* @param prefixes If true, output all prefix coefficients; if false, output only the final coefficient.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	/** @} */
+
 	/** @defgroup clear_cache_cuda_functions Clear cache CUDA functions
 	* @{
 	*/

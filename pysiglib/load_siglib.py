@@ -561,6 +561,64 @@ if BUILT_WITH_CUDA:
     CUSIG.clear_cache_cuda.argtypes = ()
     CUSIG.clear_cache_cuda.restype = c_int
 
+    ######################################################
+    # sig_coef_cuda
+    ######################################################
+
+    CUSIG.sig_coef_cuda_f.argtypes = (
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_uint64),
+        c_uint64,
+        POINTER(c_uint64),
+        c_uint64,
+        c_uint64,
+        c_bool
+    )
+    CUSIG.sig_coef_cuda_f.restype = c_int
+
+    CUSIG.sig_coef_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_uint64),
+        c_uint64,
+        POINTER(c_uint64),
+        c_uint64,
+        c_uint64,
+        c_bool
+    )
+    CUSIG.sig_coef_cuda_d.restype = c_int
+
+    ######################################################
+    # batch_sig_coef_cuda
+    ######################################################
+
+    CUSIG.batch_sig_coef_cuda_f.argtypes = (
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_uint64),
+        c_uint64,
+        POINTER(c_uint64),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_bool
+    )
+    CUSIG.batch_sig_coef_cuda_f.restype = c_int
+
+    CUSIG.batch_sig_coef_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_uint64),
+        c_uint64,
+        POINTER(c_uint64),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_bool
+    )
+    CUSIG.batch_sig_coef_cuda_d.restype = c_int
+
 ######################################################
 # sig_combine_backprop
 ######################################################

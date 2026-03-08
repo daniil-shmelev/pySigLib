@@ -20,6 +20,7 @@
     <ClInclude Include="..\cusig\cu_tensor_poly.h" />
     <ClInclude Include="..\cusig\cu_log_sig_cache.h" />
     <ClInclude Include="..\cusig\cu_log_sig_backprop.h" />
+    <ClInclude Include="..\cusig\cu_sig_coef.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cusig\cupch.cpp" />
@@ -29,6 +30,7 @@
     <CudaCompile Include="..\cusig\cu_log_signature.cu" />
     <CudaCompile Include="..\cusig\cu_log_sig_cache.cu" />
     <CudaCompile Include="..\cusig\cu_path_transforms.cu" />
+    <CudaCompile Include="..\cusig\cu_sig_coef.cu" />
     <CudaCompile Include="..\cusig\cu_sig_kernel.cu" />
     <CudaCompile Include="..\cusig\cu_signature.cu" />
     <CudaCompile Include="..\cusig\cu_tensor_poly.cu" />
