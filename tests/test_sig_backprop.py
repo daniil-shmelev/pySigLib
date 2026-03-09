@@ -92,42 +92,6 @@ def test_sig_backprop_random(deg, dtype):
     check_close(sig_back1, sig_back2)
 
 @pytest.mark.skipif(not HAS_IISIGNATURE, reason="iisignature not available")
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-def test_sig_backprop_random_cuda(deg):
-    X = torch.rand(size=(100, 5), device = "cuda")
-    sig_derivs = torch.rand(size = (pysiglib.sig_length(5, deg),), device = "cuda")
-
-    sig = pysiglib.sig(X, deg)
-
-    sig_back1 = pysiglib.sig_backprop(X.clone(), sig.clone(), sig_derivs.clone(), deg)
-    sig_back2 = iisignature.sigbackprop(sig_derivs[1:].clone().cpu(), X.clone().cpu(), deg)
-    check_close(sig_back1.cpu(), sig_back2)
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_sig_backprop_random_cuda_vs_cpu(deg, dtype):
-    X = torch.rand(size=(100, 5), dtype=dtype)
-    sig_derivs = torch.rand(size=(pysiglib.sig_length(5, deg),), dtype=dtype)
-    sig = pysiglib.sig(X, deg)
-
-    sig_back_cpu = pysiglib.sig_backprop(X.clone(), sig.clone(), sig_derivs.clone(), deg)
-    sig_back_cuda = pysiglib.sig_backprop(X.clone().cuda(), sig.clone().cuda(), sig_derivs.clone().cuda(), deg)
-    check_close(sig_back_cuda.cpu(), sig_back_cpu)
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-def test_batch_sig_backprop_random_cuda(deg):
-    X = torch.rand(size=(100, 3, 2), dtype=torch.float64)
-    sig_derivs = torch.rand(size=(100, pysiglib.sig_length(2, deg)), dtype=torch.float64)
-    sig = pysiglib.sig(X.clone(), deg)
-
-    sig_back_cpu = pysiglib.sig_backprop(X.clone(), sig.clone(), sig_derivs.clone(), deg)
-    sig_back_cuda = pysiglib.sig_backprop(X.clone().cuda(), sig.clone().cuda(), sig_derivs.clone().cuda(), deg)
-    check_close(sig_back_cuda.cpu(), sig_back_cpu)
-
-@pytest.mark.skipif(not HAS_IISIGNATURE, reason="iisignature not available")
 @pytest.mark.parametrize("deg", range(1, 6))
 def test_batch_sig_backprop_random(deg):
     X = np.random.uniform(size=(100, 3, 2)).astype("double")
@@ -168,30 +132,6 @@ def test_batch_sig_backprop_time_aug_random(deg):
     sig_back2 = pysiglib.sig_backprop(X_time_aug.copy(), sig.copy(), sig_derivs.copy(), deg)[:, :, :-1]
     check_close(sig_back1, sig_back2)
 
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 5))
-def test_sig_backprop_time_aug_random_cuda(deg):
-    length, dimension = 100, 5
-    X = torch.rand(size=(length, dimension), dtype=torch.float64)
-    sig_derivs = torch.rand(size=(pysiglib.sig_length(dimension + 1, deg),), dtype=torch.float64)
-    sig = pysiglib.sig(X, deg, time_aug=True)
-
-    sig_back_cpu = pysiglib.sig_backprop(X.clone(), sig.clone(), sig_derivs.clone(), deg, time_aug=True)
-    sig_back_cuda = pysiglib.sig_backprop(X.clone().cuda(), sig.clone().cuda(), sig_derivs.clone().cuda(), deg, time_aug=True)
-    check_close(sig_back_cuda.cpu(), sig_back_cpu)
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 5))
-def test_batch_sig_backprop_time_aug_random_cuda(deg):
-    batch_size, length, dimension = 10, 100, 5
-    X = torch.rand(size=(batch_size, length, dimension), dtype=torch.float64)
-    sig_derivs = torch.rand(size=(batch_size, pysiglib.sig_length(dimension + 1, deg)), dtype=torch.float64)
-    sig = pysiglib.sig(X.clone(), deg, time_aug=True)
-
-    sig_back_cpu = pysiglib.sig_backprop(X.clone(), sig.clone(), sig_derivs.clone(), deg, time_aug=True)
-    sig_back_cuda = pysiglib.sig_backprop(X.clone().cuda(), sig.clone().cuda(), sig_derivs.clone().cuda(), deg, time_aug=True)
-    check_close(sig_back_cuda.cpu(), sig_back_cpu)
-
 @pytest.mark.parametrize("deg", range(1, 5))
 def test_sig_backprop_lead_lag_random(deg):
     length, dimension = 100, 5
@@ -226,30 +166,6 @@ def test_batch_sig_backprop_lead_lag_random(deg):
 
     check_close(grad_input1, sig_back2)
 
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 5))
-def test_sig_backprop_lead_lag_random_cuda(deg):
-    length, dimension = 100, 5
-    X = torch.rand(size=(length, dimension), dtype=torch.float64)
-    sig = pysiglib.sig(X, deg, lead_lag=True)
-    sig_derivs = torch.rand(size=(pysiglib.sig_length(dimension * 2, deg),), dtype=torch.float64)
-
-    sig_back_cpu = pysiglib.sig_backprop(X.clone(), sig.clone(), sig_derivs.clone(), deg, lead_lag=True)
-    sig_back_cuda = pysiglib.sig_backprop(X.clone().cuda(), sig.clone().cuda(), sig_derivs.clone().cuda(), deg, lead_lag=True)
-    check_close(sig_back_cuda.cpu(), sig_back_cpu)
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 5))
-def test_batch_sig_backprop_lead_lag_random_cuda(deg):
-    batch_size, length, dimension = 10, 100, 5
-    X = torch.rand(size=(batch_size, length, dimension), dtype=torch.float64)
-    sig = pysiglib.sig(X.clone(), deg, lead_lag=True)
-    sig_derivs = torch.rand(size=(batch_size, pysiglib.sig_length(dimension * 2, deg)), dtype=torch.float64)
-
-    sig_back_cpu = pysiglib.sig_backprop(X.clone(), sig.clone(), sig_derivs.clone(), deg, lead_lag=True)
-    sig_back_cuda = pysiglib.sig_backprop(X.clone().cuda(), sig.clone().cuda(), sig_derivs.clone().cuda(), deg, lead_lag=True)
-    check_close(sig_back_cuda.cpu(), sig_back_cpu)
-
 @pytest.mark.parametrize("deg", range(1, 5))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
 def test_sig_backprop_time_aug_lead_lag_random(deg, dtype):
@@ -268,18 +184,6 @@ def test_sig_backprop_time_aug_lead_lag_random(deg, dtype):
 
     check_close(grad_input1, sig_back2)
 
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 5))
-def test_sig_backprop_time_aug_lead_lag_random_cuda(deg):
-    length, dimension = 100, 5
-    X = torch.rand(size=(length, dimension), dtype=torch.float64)
-    sig = pysiglib.sig(X, deg, time_aug=True, lead_lag=True)
-    sig_derivs = torch.rand(size=(pysiglib.sig_length(dimension * 2 + 1, deg),), dtype=torch.float64)
-
-    sig_back_cpu = pysiglib.sig_backprop(X.clone(), sig.clone(), sig_derivs.clone(), deg, time_aug=True, lead_lag=True)
-    sig_back_cuda = pysiglib.sig_backprop(X.clone().cuda(), sig.clone().cuda(), sig_derivs.clone().cuda(), deg, time_aug=True, lead_lag=True)
-    check_close(sig_back_cuda.cpu(), sig_back_cpu)
-
 @pytest.mark.parametrize("deg", range(1, 5))
 def test_batch_sig_backprop_time_aug_lead_lag_random(deg):
     batch_size, length, dimension = 10, 100, 5
@@ -296,15 +200,3 @@ def test_batch_sig_backprop_time_aug_lead_lag_random(deg):
     grad_input1, = torch.autograd.grad(X_ll, X, sig_back1, False, True)
 
     check_close(grad_input1, sig_back2)
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 5))
-def test_batch_sig_backprop_time_aug_lead_lag_random_cuda(deg):
-    batch_size, length, dimension = 10, 100, 5
-    X = torch.rand(size=(batch_size, length, dimension), dtype=torch.float64)
-    sig = pysiglib.sig(X.clone(), deg, time_aug=True, lead_lag=True)
-    sig_derivs = torch.rand(size=(batch_size, pysiglib.sig_length(dimension * 2 + 1, deg)), dtype=torch.float64)
-
-    sig_back_cpu = pysiglib.sig_backprop(X.clone(), sig.clone(), sig_derivs.clone(), deg, time_aug=True, lead_lag=True)
-    sig_back_cuda = pysiglib.sig_backprop(X.clone().cuda(), sig.clone().cuda(), sig_derivs.clone().cuda(), deg, time_aug=True, lead_lag=True)
-    check_close(sig_back_cuda.cpu(), sig_back_cpu)

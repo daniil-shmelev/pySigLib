@@ -1,4 +1,4 @@
-# Copyright 2025 Daniil Shmelev
+# Copyright 2026 Daniil Shmelev
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -54,78 +54,98 @@ def finite_difference(x1, x2, dyadic_order, time_aug = False, lead_lag = False):
             out[:,i,d] = ((k_d - k) / eps).sum(1)
     return out
 
-################################################
-## CPU
-################################################
+skip_no_cuda = pytest.mark.skipif(
+    not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()),
+    reason="CUDA not available or disabled"
+)
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_gram_backprop_batch(dyadic_order):
-    X = torch.rand(size=(8, 10, 5))
-    Y = torch.rand(size=(8, 100, 5))
-    derivs = torch.ones((8, 8))
+def test_sig_kernel_gram_backprop_batch_cuda(dyadic_order):
+    X = torch.rand(size=(8, 10, 5), device = "cuda")
+    Y = torch.rand(size=(8, 100, 5), device = "cuda")
+    derivs = torch.ones((8, 8), device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order)
     d2 = finite_difference(Y, X, dyadic_order)
-    d3, d4 = pysiglib.sig_kernel_gram_backprop(derivs, X, Y, dyadic_order, left_deriv = True, right_deriv = True)
-    d5, d6 = pysiglib.sig_kernel_gram_backprop(derivs, X, Y, dyadic_order, left_deriv=True, right_deriv=True, max_batch = 2)
+    d3, d4 = pysiglib.sig_kernel_gram_backprop(derivs, X, Y, dyadic_order, left_deriv=True, right_deriv=True)
+    d5, d6 = pysiglib.sig_kernel_gram_backprop(derivs, X, Y, dyadic_order, left_deriv=True, right_deriv=True,
+                                               max_batch=2)
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
+    assert d5.device.type == "cuda"
+    assert d6.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
-    check_close(d1, d5)
-    check_close(d2, d6)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
+    check_close(d1, d5.cpu())
+    check_close(d2, d6.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_backprop_batch_time_aug(dyadic_order):
-    X = torch.rand(size=(8, 10, 5))
-    Y = torch.rand(size=(8, 100, 5))
-    derivs = torch.ones((8, 8))
+def test_sig_kernel_gram_backprop_batch_cuda_time_aug(dyadic_order):
+    X = torch.rand(size=(8, 5, 5), device = "cuda")
+    Y = torch.rand(size=(8, 10, 5), device = "cuda")
+    derivs = torch.ones((8, 8), device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order, time_aug = True)
-    d2 = finite_difference(Y, X, dyadic_order, time_aug = True)
+    d2 = finite_difference(Y, X, dyadic_order, time_aug=True)
     d3, d4 = pysiglib.sig_kernel_gram_backprop(derivs, X, Y, dyadic_order, time_aug = True, left_deriv = True, right_deriv = True)
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_backprop_batch_lead_lag(dyadic_order):
-    X = torch.rand(size=(8, 5, 2))
-    Y = torch.rand(size=(8, 10, 2))
-    derivs = torch.ones((8, 8))
+def test_sig_kernel_gram_backprop_batch_cuda_lead_lag(dyadic_order):
+    X = torch.rand(size=(8, 5, 2), device = "cuda")
+    Y = torch.rand(size=(8, 10, 2), device = "cuda")
+    derivs = torch.ones((8, 8), device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order, lead_lag = True)
     d2 = finite_difference(Y, X, dyadic_order, lead_lag=True)
     d3, d4 = pysiglib.sig_kernel_gram_backprop(derivs, X, Y, dyadic_order, lead_lag = True, left_deriv = True, right_deriv = True)
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_backprop_batch_time_aug_lead_lag(dyadic_order):
-    X = torch.rand(size=(8, 5, 2)) / 2
-    Y = torch.rand(size=(8, 10, 2)) / 2
-    derivs = torch.ones((8, 8))
+def test_sig_kernel_gram_backprop_batch_cuda_time_aug_lead_lag(dyadic_order):
+    X = torch.rand(size=(8, 5, 2), device = "cuda") / 2
+    Y = torch.rand(size=(8, 10, 2), device = "cuda") / 2
+    derivs = torch.ones((8, 8), device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order, time_aug = True, lead_lag = True)
     d2 = finite_difference(Y, X, dyadic_order, time_aug=True, lead_lag=True)
     d3, d4 = pysiglib.sig_kernel_gram_backprop(derivs, X, Y, dyadic_order, time_aug = True, lead_lag = True, left_deriv = True, right_deriv = True)
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_gram_backprop_batch_torch_api(dyadic_order):
-    X = torch.rand(size=(8, 10, 5))
-    Y = torch.rand(size=(8, 100, 5))
-    derivs = torch.ones((8,8))
+def test_sig_kernel_gram_backprop_batch_cuda_torch_api(dyadic_order):
+    X = torch.rand(size=(8, 10, 5), device = "cuda")
+    Y = torch.rand(size=(8, 100, 5), device = "cuda")
+    derivs = torch.ones((8,8), device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order)
     d2 = finite_difference(Y, X, dyadic_order)
     X.requires_grad_()
     Y.requires_grad_()
     K = pysiglib.torch_api.sig_kernel_gram(X, Y, dyadic_order)
+    assert K.device.type == "cuda"
     K.backward(derivs)
     d3, d4 = X.grad, Y.grad
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())

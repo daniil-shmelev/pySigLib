@@ -18,9 +18,10 @@ import numpy as np
 import torch
 import iisignature
 
+signatory = None
 try:
     import signatory
-except:
+except Exception:
     signatory = None
 
 import pysiglib.torch_api as pysiglib
@@ -162,123 +163,3 @@ def test_batch_log_signature_lyndon_basis_random(deg, dtype):
     check_close(iisig, sig)
     pysiglib.clear_cache()
 
-
-# =====================================================================
-# CUDA tests — mirror the CPU tests above
-# =====================================================================
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_log_signature_expanded_random_cuda(deg, dtype):
-    np_dtype = np.float32 if dtype == torch.float32 else np.float64
-    X_np = np.random.uniform(size=(100, 5)).astype(np_dtype)
-
-    s = iisignature.prepare(5, deg, "x")
-    iisig = iisignature.logsig(X_np, s, "x").astype(np_dtype)
-
-    X = torch.tensor(X_np, device="cuda", dtype=dtype)
-    sig = pysiglib.log_sig(X, deg, method=0).cpu().numpy()
-    check_close(iisig, sig[1:])
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_batch_log_signature_expanded_random_cuda(deg, dtype):
-    np_dtype = np.float32 if dtype == torch.float32 else np.float64
-    X_np = np.random.uniform(size=(32, 100, 5)).astype(np_dtype)
-
-    s = iisignature.prepare(5, deg, "x")
-    iisig = iisignature.logsig(X_np, s, "x").astype(np_dtype)
-
-    X = torch.tensor(X_np, device="cuda", dtype=dtype)
-    sig = pysiglib.log_sig(X, deg, method=0).cpu().numpy()
-    check_close(iisig, sig[:, 1:])
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_batch_log_signature_expanded_time_aug_random_cuda(deg, dtype):
-    np_dtype = np.float32 if dtype == torch.float32 else np.float64
-    X_np = np.random.uniform(size=(32, 100, 5)).astype(np_dtype)
-
-    s = iisignature.prepare(6, deg, "x")
-    iisig = iisignature.logsig(pysiglib.transform_path(X_np, time_aug=True), s, "x").astype(np_dtype)
-
-    X = torch.tensor(X_np, device="cuda", dtype=dtype)
-    sig = pysiglib.log_sig(X, deg, time_aug=True, method=0).cpu().numpy()
-    check_close(iisig, sig[:, 1:])
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_batch_log_signature_expanded_lead_lag_random_cuda(deg, dtype):
-    np_dtype = np.float32 if dtype == torch.float32 else np.float64
-    X_np = np.random.uniform(size=(32, 100, 5)).astype(np_dtype)
-
-    s = iisignature.prepare(10, deg, "x")
-    iisig = iisignature.logsig(pysiglib.transform_path(X_np, lead_lag=True), s, "x").astype(np_dtype)
-
-    X = torch.tensor(X_np, device="cuda", dtype=dtype)
-    sig = pysiglib.log_sig(X, deg, lead_lag=True, method=0).cpu().numpy()
-    check_close(iisig, sig[:, 1:])
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.skipif(signatory is None, reason="signatory not available")
-@pytest.mark.parametrize("deg", range(1, 6))
-@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_log_signature_lyndon_words_random_cuda(deg, dtype):
-    X = torch.rand(size=(1, 100, 5), dtype=dtype)
-
-    ls = signatory.logsignature(X, deg, mode="words")[0]
-    pysiglib.prepare_log_sig(5, deg, 1)
-    X_cuda = X[0].to("cuda")
-    sig = pysiglib.log_sig(X_cuda, deg, method=1).cpu()
-    check_close(ls, sig)
-    pysiglib.clear_cache()
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.skipif(signatory is None, reason="signatory not available")
-@pytest.mark.parametrize("deg", range(1, 6))
-@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_batch_log_signature_lyndon_words_random_cuda(deg, dtype):
-    X = torch.rand(size=(32, 100, 5), dtype=dtype)
-
-    ls = signatory.logsignature(X, deg, mode="words")
-    pysiglib.prepare_log_sig(5, deg, 1)
-    X_cuda = X.to("cuda")
-    sig = pysiglib.log_sig(X_cuda, deg, method=1).cpu()
-    check_close(ls, sig)
-    pysiglib.clear_cache()
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_log_signature_lyndon_basis_random_cuda(deg, dtype):
-    np_dtype = np.float32 if dtype == torch.float32 else np.float64
-    X_np = np.random.uniform(size=(100, 5)).astype(np_dtype)
-
-    s = iisignature.prepare(5, deg, "s")
-    iisig = iisignature.logsig(X_np, s, "s").astype(np_dtype)
-
-    pysiglib.prepare_log_sig(5, deg, 2)
-    X = torch.tensor(X_np, device="cuda", dtype=dtype)
-    sig = pysiglib.log_sig(X, deg, method=2).cpu().numpy()
-    check_close(iisig, sig)
-    pysiglib.clear_cache()
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_batch_log_signature_lyndon_basis_random_cuda(deg, dtype):
-    np_dtype = np.float32 if dtype == torch.float32 else np.float64
-    X_np = np.random.uniform(size=(32, 100, 5)).astype(np_dtype)
-
-    s = iisignature.prepare(5, deg, "s")
-    iisig = iisignature.logsig(X_np, s, "s").astype(np_dtype)
-
-    pysiglib.prepare_log_sig(5, deg, 2)
-    X = torch.tensor(X_np, device="cuda", dtype=dtype)
-    sig = pysiglib.log_sig(X, deg, method=2).cpu().numpy()
-    check_close(iisig, sig)
-    pysiglib.clear_cache()

@@ -46,21 +46,6 @@ def test_sig_combine_backprop_random(deg):
     check_close(sig1_deriv[1:], iisig1_deriv)
     check_close(sig2_deriv[1:], iisig2_deriv)
 
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-def test_sig_combine_backprop_random_cuda(deg):
-    dimension = 5
-    sig_len = pysiglib.sig_length(dimension, deg)
-
-    sig1 = torch.rand(size = (sig_len,), device = "cuda", dtype = torch.float64)
-    sig2 = torch.rand(size = (sig_len,), device = "cuda", dtype = torch.float64)
-    derivs = torch.rand(size = (sig_len,), device = "cuda", dtype = torch.float64)
-
-    sig1_deriv, sig2_deriv = pysiglib.sig_combine_backprop(derivs, sig1, sig2, dimension, deg)
-    iisig1_deriv, iisig2_deriv = iisignature.sigcombinebackprop(derivs[1:].cpu(), sig1[1:].cpu(), sig2[1:].cpu(), dimension, deg)
-    check_close(sig1_deriv[1:].cpu(), iisig1_deriv)
-    check_close(sig2_deriv[1:].cpu(), iisig2_deriv)
-
 @pytest.mark.parametrize("deg", range(1, 6))
 def test_batch_sig_backprop_random(deg):
     dimension, batch_size = 5, 10

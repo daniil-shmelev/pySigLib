@@ -167,36 +167,3 @@ def test_sig_mmd_random_cpu_non_square(len1, len2, dyadic_order):
     mmd2 = pysiglib.sig_mmd(X, Y, dyadic_order, n_jobs = -1)
 
     assert not abs(mmd1 - mmd2) > EPSILON
-
-################################################
-## CUDA
-################################################
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("dyadic_order", range(3))
-def test_expected_sig_score_random_cuda(dyadic_order):
-    batch, len1, len2, dim = 32, 10, 10, 5
-    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype = torch.double)
-
-    static_kernel = sigkernel.LinearKernel()
-    signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
-    d1 = float(signature_kernel.compute_expected_scoring_rule(X, Y, 100).cpu())
-    d2 = pysiglib.expected_sig_score(X, Y, dyadic_order)
-
-    assert not abs(d1 - d2) > EPSILON
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize(("len1", "len2"), [(10, 50), (50, 10)])
-@pytest.mark.parametrize("dyadic_order", range(3))
-def test_expected_sig_score_random_non_square_cuda(len1, len2, dyadic_order):
-    batch, dim = 32, 5
-    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype = torch.double)
-
-    static_kernel = sigkernel.LinearKernel()
-    signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
-    d1 = float(signature_kernel.compute_expected_scoring_rule(X, Y, 100).cpu())
-    d2 = pysiglib.expected_sig_score(X, Y, dyadic_order)
-
-    assert not abs(d1 - d2) > EPSILON

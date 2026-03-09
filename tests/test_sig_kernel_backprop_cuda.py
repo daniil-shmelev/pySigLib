@@ -1,4 +1,4 @@
-# Copyright 2025 Daniil Shmelev
+# Copyright 2026 Daniil Shmelev
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -54,113 +54,135 @@ def finite_difference(x1, x2, dyadic_order, time_aug = False, lead_lag = False, 
             out[:,i,d] = (k_d - k) / eps
     return out
 
-################################################
-## CPU
-################################################
+skip_no_cuda = pytest.mark.skipif(
+    not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()),
+    reason="CUDA not available or disabled"
+)
 
+@skip_no_cuda
 @pytest.mark.parametrize(("len1", "len2"), [(100, 100), (100, 10), (10, 100)])
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_backprop_1(len1, len2, dyadic_order):
-    X = torch.rand(size=(len1, 5))
-    Y = torch.rand(size=(len2, 5))
-    derivs = torch.ones(1)
+def test_sig_kernel_backprop_cuda(len1, len2, dyadic_order):
+    X = torch.rand(size=(len1, 5), device = "cuda")
+    Y = torch.rand(size=(len2, 5), device = "cuda")
+    derivs = torch.ones(1, device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order)
     d2 = finite_difference(Y, X, dyadic_order)
     d3, d4 = pysiglib.sig_kernel_backprop(derivs, X, Y, dyadic_order, left_deriv = True, right_deriv = True)
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_backprop_batch(dyadic_order):
-    X = torch.rand(size=(32, 10, 5))
-    Y = torch.rand(size=(32, 100, 5))
-    derivs = torch.ones(32)
+def test_sig_kernel_backprop_batch_cuda(dyadic_order):
+    X = torch.rand(size=(32, 10, 5), device = "cuda")
+    Y = torch.rand(size=(32, 100, 5), device = "cuda")
+    derivs = torch.ones(32, device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order)
     d2 = finite_difference(Y, X, dyadic_order)
     d3, d4 = pysiglib.sig_kernel_backprop(derivs, X, Y, dyadic_order, left_deriv = True, right_deriv = True)
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_scaled_linear_backprop_batch(dyadic_order):
-    X = torch.rand(size=(32, 10, 5))
-    Y = torch.rand(size=(32, 100, 5))
-    derivs = torch.ones(32)
+def test_sig_kernel_scaled_linear_backprop_batch_cuda(dyadic_order):
+    X = torch.rand(size=(32, 10, 5), device = "cuda")
+    Y = torch.rand(size=(32, 100, 5), device = "cuda")
+    derivs = torch.ones(32, device = "cuda")
 
     kernel = pysiglib.ScaledLinearKernel(0.5)
 
     d1 = finite_difference(X, Y, dyadic_order, kernel = kernel)
     d2 = finite_difference(Y, X, dyadic_order, kernel = kernel)
     d3, d4 = pysiglib.sig_kernel_backprop(derivs, X, Y, dyadic_order, left_deriv = True, right_deriv = True, static_kernel= kernel)
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_rbf_backprop_batch(dyadic_order):
-    X = torch.rand(size=(32, 10, 5))
-    Y = torch.rand(size=(32, 100, 5))
-    derivs = torch.ones(32)
+def test_sig_kernel_rbf_backprop_batch_cuda(dyadic_order):
+    X = torch.rand(size=(32, 10, 5), device = "cuda")
+    Y = torch.rand(size=(32, 100, 5), device = "cuda")
+    derivs = torch.ones(32, device = "cuda")
 
     kernel = pysiglib.RBFKernel(0.5)
 
     d1 = finite_difference(X, Y, dyadic_order, kernel = kernel)
     d2 = finite_difference(Y, X, dyadic_order, kernel = kernel)
     d3, d4 = pysiglib.sig_kernel_backprop(derivs, X, Y, dyadic_order, left_deriv = True, right_deriv = True, static_kernel= kernel)
-    _, d5 = pysiglib.sig_kernel_backprop(derivs, X, Y, dyadic_order, left_deriv = False, right_deriv = True, static_kernel=kernel)
+    _, d5 = pysiglib.sig_kernel_backprop(derivs, X, Y, dyadic_order, left_deriv = False, right_deriv = True, static_kernel= kernel)
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
+    assert d5.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
-    check_close(d2, d5)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
+    check_close(d2, d5.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_backprop_batch_time_aug(dyadic_order):
-    X = torch.rand(size=(32, 10, 5))
-    Y = torch.rand(size=(32, 100, 5))
-    derivs = torch.ones(32)
+def test_sig_kernel_backprop_batch_cuda_time_aug(dyadic_order):
+    X = torch.rand(size=(32, 5, 5), device = "cuda")
+    Y = torch.rand(size=(32, 10, 5), device = "cuda")
+    derivs = torch.ones(32, device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order, time_aug = True)
-    d2 = finite_difference(Y, X, dyadic_order, time_aug = True)
+    d2 = finite_difference(Y, X, dyadic_order, time_aug=True)
     d3, d4 = pysiglib.sig_kernel_backprop(derivs, X, Y, dyadic_order, time_aug = True, left_deriv = True, right_deriv = True)
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_backprop_batch_lead_lag(dyadic_order):
-    X = torch.rand(size=(32, 5, 2))
-    Y = torch.rand(size=(32, 10, 2))
-    derivs = torch.ones(32)
+def test_sig_kernel_backprop_batch_cuda_lead_lag(dyadic_order):
+    X = torch.rand(size=(32, 5, 2), device = "cuda")
+    Y = torch.rand(size=(32, 10, 2), device = "cuda")
+    derivs = torch.ones(32, device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order, lead_lag = True)
     d2 = finite_difference(Y, X, dyadic_order, lead_lag=True)
     d3, d4 = pysiglib.sig_kernel_backprop(derivs, X, Y, dyadic_order, lead_lag = True, left_deriv = True, right_deriv = True)
+    assert d3.device.type == "cuda"
+    assert d4.device.type == "cuda"
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_backprop_batch_time_aug_lead_lag(dyadic_order):
-    X = torch.rand(size=(32, 5, 2)) / 2
-    Y = torch.rand(size=(32, 10, 2)) / 2
-    derivs = torch.ones(32)
+def test_sig_kernel_backprop_batch_cuda_time_aug_lead_lag(dyadic_order):
+    X = torch.rand(size=(32, 5, 2), device = "cuda") / 2
+    Y = torch.rand(size=(32, 10, 2), device = "cuda") / 2
+    derivs = torch.ones(32, device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order, time_aug = True, lead_lag = True)
     d2 = finite_difference(Y, X, dyadic_order, time_aug=True, lead_lag=True)
     d3, d4 = pysiglib.sig_kernel_backprop(derivs, X, Y, dyadic_order, time_aug = True, lead_lag = True, left_deriv = True, right_deriv = True)
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())
 
+@skip_no_cuda
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_backprop_batch_torch_api(dyadic_order):
-    X = torch.rand(size=(32, 10, 5))
-    Y = torch.rand(size=(32, 100, 5))
-    derivs = torch.ones(32)
+def test_sig_kernel_backprop_batch_cuda_torch_api(dyadic_order):
+    X = torch.rand(size=(32, 10, 5), device = "cuda")
+    Y = torch.rand(size=(32, 100, 5), device = "cuda")
+    derivs = torch.ones(32, device = "cuda")
 
     d1 = finite_difference(X, Y, dyadic_order)
     d2 = finite_difference(Y, X, dyadic_order)
@@ -170,5 +192,5 @@ def test_sig_kernel_backprop_batch_torch_api(dyadic_order):
     K.backward(derivs)
     d3, d4 = X.grad, Y.grad
 
-    check_close(d1, d3)
-    check_close(d2, d4)
+    check_close(d1, d3.cpu())
+    check_close(d2, d4.cpu())

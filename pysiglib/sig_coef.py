@@ -271,6 +271,14 @@ def sig_coef(
     check_type(prefixes, "prefixes", bool)
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
+
+    # CUDA sig_coef doesn't support time_aug/lead_lag natively —
+    # transform the path first, then recurse with no augmentation flags.
+    if data.device != "cpu" and (time_aug or lead_lag):
+        from .transform_path import transform_path
+        transformed = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
+        return sig_coef(transformed, words, time_aug=False, lead_lag=False, end_time=1., prefixes=prefixes, n_jobs=n_jobs)
+
     words = check_word_or_word_list(words, data.dimension, "word")
 
     num_multi_indices = len(words)

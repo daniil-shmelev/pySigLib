@@ -667,12 +667,45 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 	cache_map.emplace(key, std::move(entry));
 }
 
-inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_t degree) {
+inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_t degree, int method = 1) {
 	auto key = std::make_pair(dimension, degree);
 	auto& cache_map = get_cuda_log_sig_cache_map_();
 	auto it = cache_map.find(key);
+
+	// Auto-reload from disk if memory cache is empty
+	if (it == cache_map.end()) {
+		auto& dir = get_cuda_cache_dir_();
+		if (!dir.empty()) {
+			try {
+				CuCacheFile file(dimension, degree);
+				if (file.exists()) {
+					int disk_method;
+					std::vector<uint64_t> lyndon_idx;
+					CuSparseIntMatrix inv_proj_mat, inv_proj_mat_t;
+					file.read(disk_method, lyndon_idx, inv_proj_mat, inv_proj_mat_t);
+
+					CUDALogSigCache entry;
+					populate_cuda_cache_entry_(entry, lyndon_idx, dimension, degree);
+
+					if (disk_method >= 2) {
+						upload_csr_to_gpu_(inv_proj_mat, entry.d_sparse_vals, entry.d_sparse_cols, entry.d_sparse_row_ptr);
+						upload_csr_to_gpu_(inv_proj_mat_t, entry.d_sparse_vals_t, entry.d_sparse_cols_t, entry.d_sparse_row_ptr_t);
+					}
+
+					cache_map.emplace(key, std::move(entry));
+					it = cache_map.find(key);
+				}
+			} catch (...) {
+				// Disk load failed — fall through to error
+			}
+		}
+	}
+
 	if (it == cache_map.end()) {
 		throw std::runtime_error("CUDA log sig cache not found — call prepare_log_sig_cuda first");
+	}
+	if (method == 2 && it->second.d_sparse_row_ptr == nullptr) {
+		throw std::runtime_error("CUDA log sig cache not found for method 2 — call prepare_log_sig_cuda with method=2 first");
 	}
 	return it->second;
 }

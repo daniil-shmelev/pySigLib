@@ -125,23 +125,3 @@ def test_sig_kernel_gram_lead_lag(dyadic_order):
     check_close(kernel1, kernel2)
     check_close(kernel1, kernel3)
 
-################################################
-## CUDA
-################################################
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_gram_random_cuda(dyadic_order):
-    batch1, batch2, len1, len2, dim = 32, 16, 100, 100, 5
-    X = torch.rand(size=(batch1, len1, dim), device="cuda", dtype = torch.double)
-    Y = torch.rand(size=(batch2, len2, dim), device="cuda", dtype = torch.double)
-
-    static_kernel = sigkernel.LinearKernel()
-    signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
-    kernel1 = signature_kernel.compute_Gram(X, Y, False, 100)
-    kernel2 = pysiglib.sig_kernel_gram(X, Y, dyadic_order)
-    kernel3 = pysiglib.sig_kernel_gram(X, Y, dyadic_order, max_batch = 2)
-
-    check_close(kernel1.cpu(), kernel2.cpu())
-    check_close(kernel1.cpu(), kernel3.cpu())
-

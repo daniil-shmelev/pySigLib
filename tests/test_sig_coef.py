@@ -134,14 +134,3 @@ def test_batch_sig_coef_full_time_aug_lead_lag():
     coeff = pysiglib.sig_coef(X, multi_indices, time_aug = True, lead_lag = True)
     sig = pysiglib.signature(X, 5, time_aug = True, lead_lag = True)
     check_close(sig[:, 1:], coeff)
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-def test_batch_sig_coef_full_cuda():
-    X = torch.rand(size=(10, 100, 3), device="cuda", dtype=torch.float64)
-    multi_indices = pysiglib.words(3, 5)[1:]
-
-    coeff = pysiglib.sig_coef(X, multi_indices)
-    sig = pysiglib.signature(X, 5)
-
-    assert coeff.device.type == "cuda"
-    check_close(sig[:, 1:].cpu(), coeff.cpu())

@@ -18,9 +18,10 @@ import numpy as np
 import torch
 import iisignature
 
+signatory = None
 try:
     import signatory
-except:
+except Exception:
     signatory = None
 
 import pysiglib.torch_api as pysiglib

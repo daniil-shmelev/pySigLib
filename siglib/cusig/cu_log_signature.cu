@@ -360,7 +360,7 @@ void sig_to_log_sig_cuda_m2_core_(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const auto& cache = get_cuda_log_sig_cache(dimension, degree);
+	const auto& cache = get_cuda_log_sig_cache(dimension, degree, 2);
 	const uint64_t sig_len = cache.sig_len;
 	const uint64_t buff1_len = cache.buff1_len;
 	const uint64_t log_sig_len = cache.log_sig_len;
@@ -755,7 +755,7 @@ void sig_to_log_sig_backprop_cuda_m2_core_(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const auto& cache = get_cuda_log_sig_cache(dimension, degree);
+	const auto& cache = get_cuda_log_sig_cache(dimension, degree, 2);
 	const uint64_t sig_len = cache.sig_len;
 	const uint64_t buff1_len = cache.buff1_len;
 	const uint64_t log_sig_len = cache.log_sig_len;

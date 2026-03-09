@@ -187,6 +187,16 @@ def sig_coef_backprop(
     check_type(end_time, "end_time", float)
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
+
+    # CUDA sig_coef_backprop doesn't support time_aug/lead_lag natively —
+    # transform the path first, backprop, then backprop through the transform.
+    if data.device != "cpu" and (time_aug or lead_lag):
+        from .transform_path import transform_path
+        from .transform_path_backprop import transform_path_backprop
+        transformed = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
+        aug_grad = sig_coef_backprop(transformed, words, coefs, derivs, time_aug=False, lead_lag=False, end_time=1., n_jobs=n_jobs)
+        return transform_path_backprop(aug_grad, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
+
     words = check_word_or_word_list(words, data.dimension, "word")
 
     coefs_len = 0
@@ -195,6 +205,24 @@ def sig_coef_backprop(
 
     if coefs.shape[-1] != coefs_len:
         raise ValueError("Expected coefs.shape[-1] == " + str(coefs_len) + ". Please make sure coefs was generated using prefixes=True.")
+
+    # CUDA kernel doesn't handle empty words (degree 0) correctly.
+    # Since S() = 1 is constant, its gradient is always zero — safely skip.
+    if data.device != "cpu" and any(len(w) == 0 for w in words):
+        keep_indices = []
+        pos = 0
+        for w in words:
+            block_len = len(w) if w else 1
+            if w:
+                keep_indices.extend(range(pos, pos + block_len))
+            pos += block_len
+        words = [w for w in words if w]
+        if not words:
+            result = PathOutputHandler(data.data_length, data.data_dimension, data)
+            return result.data
+        coefs = coefs[..., keep_indices].contiguous()
+        derivs = derivs[..., keep_indices].contiguous()
+        coefs_len = sum(len(idx) for idx in words)
 
     deriv_data = MultipleSigInputHandler([coefs, derivs], coefs_len, ["coef", "deriv"])
 
