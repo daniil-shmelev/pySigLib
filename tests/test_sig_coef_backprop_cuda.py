@@ -19,11 +19,17 @@ import torch
 import pysiglib
 
 EPSILON = 1e-5
+SINGLE_EPSILON = 1e-4
 
 def check_close(a, b):
     a_ = np.array(a)
     b_ = np.array(b)
     assert not np.any(np.abs(a_ - b_) > EPSILON)
+
+def check_close_single(a, b):
+    a_ = np.array(a)
+    b_ = np.array(b)
+    assert not np.any(np.abs(a_ - b_) > SINGLE_EPSILON)
 
 skip_no_cuda = pytest.mark.skipif(
     not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()),
@@ -465,3 +471,71 @@ def test_extract_sig_coef_torch_api_full_cuda():
     assert d2.device.type == "cuda"
 
     check_close(d1.cpu(), d2.cpu())
+
+# float32 backprop: parametrized over degrees 1-3, compare CUDA vs CPU
+@skip_no_cuda
+@pytest.mark.parametrize("deg", range(1, 4))
+def test_sig_coef_backprop_float32_cuda(deg):
+    np.random.seed(42)
+    X_np = np.random.uniform(size=(50, 3))
+    # Build one word of length `deg` per dimension combination
+    words = [(0,) * deg, (1,) * deg, (2,) * deg]
+
+    X_cuda = torch.tensor(X_np, device="cuda", dtype=torch.float32)
+
+    coef_cpu = pysiglib.sig_coef(X_np, words, prefixes=True)
+    # Create derivs that select the last prefix entry of each word (the full word)
+    n_coef = coef_cpu.shape[0] if coef_cpu.ndim == 1 else coef_cpu.shape[-1]
+    derivs_cpu = np.zeros(n_coef)
+    # Index to the final coef of each word (position deg, 2*deg, 3*deg in prefix output)
+    for k in range(len(words)):
+        derivs_cpu[(k + 1) * deg - 1] = 1.
+    # Create CUDA tensors before CPU call (CPU backprop mutates derivs in-place)
+    coef_cuda = pysiglib.sig_coef(X_cuda, words, prefixes=True)
+    derivs_cuda = torch.tensor(derivs_cpu, device="cuda", dtype=torch.float32)
+
+    d_cpu = pysiglib.sig_coef_backprop(X_np, words, coef_cpu, derivs_cpu)
+
+    d_cuda = pysiglib.sig_coef_backprop(X_cuda, words, coef_cuda, derivs_cuda)
+
+    assert d_cuda.device.type == "cuda"
+    check_close_single(d_cpu, d_cuda.cpu().numpy())
+
+# Backprop with time_aug=True and a non-default end_time: compare CUDA vs CPU
+@skip_no_cuda
+def test_sig_coef_backprop_end_time_cuda():
+    np.random.seed(42)
+    X_np = np.random.uniform(size=(5, 50, 3))
+    # Augmented dimension is 4 (time channel prepended to dim=3)
+    words = [(0, 1, 2), (3, 0, 1)]
+
+    coef_cpu = pysiglib.sig_coef(X_np, words, prefixes=True, time_aug=True, end_time=2.0)
+    derivs_cpu = np.array([[0., 0., 1., 0., 0., 1.]] * 5)
+    d_cpu = pysiglib.sig_coef_backprop(X_np, words, coef_cpu, derivs_cpu, time_aug=True, end_time=2.0)
+
+    X_cuda = torch.tensor(X_np, device="cuda", dtype=torch.float64)
+    coef_cuda = pysiglib.sig_coef(X_cuda, words, prefixes=True, time_aug=True, end_time=2.0)
+    derivs_cuda = torch.tensor([[0., 0., 1., 0., 0., 1.]] * 5, device="cuda", dtype=torch.float64)
+    d_cuda = pysiglib.sig_coef_backprop(X_cuda, words, coef_cuda, derivs_cuda, time_aug=True, end_time=2.0)
+
+    assert d_cuda.device.type == "cuda"
+    check_close(d_cpu, d_cuda.cpu().numpy())
+
+# Backprop with a single word passed as a tuple (not a list): compare CUDA vs CPU
+@skip_no_cuda
+def test_sig_coef_backprop_single_word_cuda():
+    np.random.seed(42)
+    X_np = np.random.uniform(size=(50, 3))
+    word = (0, 1)
+
+    coef_cpu = pysiglib.sig_coef(X_np, word, prefixes=True)
+    derivs_cpu = np.array([0., 1.])
+    d_cpu = pysiglib.sig_coef_backprop(X_np, word, coef_cpu, derivs_cpu)
+
+    X_cuda = torch.tensor(X_np, device="cuda", dtype=torch.float64)
+    coef_cuda = pysiglib.sig_coef(X_cuda, word, prefixes=True)
+    derivs_cuda = torch.tensor([0., 1.], device="cuda", dtype=torch.float64)
+    d_cuda = pysiglib.sig_coef_backprop(X_cuda, word, coef_cuda, derivs_cuda)
+
+    assert d_cuda.device.type == "cuda"
+    check_close(d_cpu, d_cuda.cpu().numpy())

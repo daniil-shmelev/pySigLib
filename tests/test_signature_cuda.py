@@ -167,3 +167,95 @@ def test_signature_non_contiguous_cuda():
     assert res1.device.type == "cuda"
     assert res2.device.type == "cuda"
     check_close(res1.cpu(), res2.cpu())
+
+@skip_no_cuda
+@pytest.mark.parametrize("end_time", [2.0, 0.5])
+def test_sig_end_time_cuda(end_time):
+    # Verify that the CUDA signature with time_aug and non-default end_time
+    # matches the CPU result for the same end_time value.
+    batch_size, length, dimension = 10, 50, 3
+    X = np.random.uniform(size=(batch_size, length, dimension))
+    X_cpu = torch.tensor(X, dtype=torch.float64)
+    X_cuda = torch.tensor(X, dtype=torch.float64, device="cuda")
+
+    sig_cpu = pysiglib.sig(X_cpu, 3, time_aug=True, end_time=end_time)
+    sig_cuda = pysiglib.sig(X_cuda, 3, time_aug=True, end_time=end_time)
+
+    assert sig_cuda.device.type == "cuda"
+    check_close(sig_cpu, sig_cuda.cpu())
+
+@skip_no_cuda
+@pytest.mark.parametrize("deg", range(1, 4))
+def test_sig_single_point_cuda(deg):
+    # The signature of a single-point path has no increments, so all terms
+    # beyond degree 0 are zero; the degree-0 term is 1 (the leading scalar).
+    dimension = 3
+    sig_len = pysiglib.sig_length(dimension, deg)
+
+    X_single = torch.zeros((1, dimension), dtype=torch.float64, device="cuda")
+    sig = pysiglib.sig(X_single, deg)
+
+    assert sig.device.type == "cuda"
+    expected = torch.zeros(sig_len, dtype=torch.float64)
+    expected[0] = 1.0
+    check_close(expected, sig.cpu())
+
+    # Batch version: each path consists of a single point
+    batch_size = 5
+    X_batch = torch.zeros((batch_size, 1, dimension), dtype=torch.float64, device="cuda")
+    sig_batch = pysiglib.sig(X_batch, deg)
+
+    assert sig_batch.device.type == "cuda"
+    expected_batch = torch.zeros((batch_size, sig_len), dtype=torch.float64)
+    expected_batch[:, 0] = 1.0
+    check_close(expected_batch, sig_batch.cpu())
+
+@skip_no_cuda
+@pytest.mark.parametrize("deg", [6, 7])
+def test_sig_high_degree_cuda(deg):
+    # Verify correctness of CUDA signature at high truncation levels by
+    # comparing against the CPU result on a low-dimensional path.
+    length, dimension = 50, 2
+    X = np.random.uniform(size=(length, dimension))
+    X_cpu = torch.tensor(X, dtype=torch.float64)
+    X_cuda = torch.tensor(X, dtype=torch.float64, device="cuda")
+
+    sig_cpu = pysiglib.sig(X_cpu, deg)
+    sig_cuda = pysiglib.sig(X_cuda, deg)
+
+    assert sig_cuda.device.type == "cuda"
+    check_close(sig_cpu, sig_cuda.cpu())
+
+@skip_no_cuda
+@pytest.mark.parametrize("deg", range(1, 6))
+def test_sig_float32_cuda_vs_cpu(deg):
+    # Float32 CUDA and CPU results should agree within SINGLE_EPSILON.
+    length, dimension = 50, 4
+    X = np.random.uniform(size=(length, dimension)).astype(np.float32)
+    X_cpu = torch.tensor(X, dtype=torch.float32)
+    X_cuda = torch.tensor(X, dtype=torch.float32, device="cuda")
+
+    sig_cpu = pysiglib.sig(X_cpu, deg)
+    sig_cuda = pysiglib.sig(X_cuda, deg)
+
+    assert sig_cuda.device.type == "cuda"
+    check_close(
+        sig_cpu.numpy().astype(np.float32),
+        sig_cuda.cpu().numpy().astype(np.float32),
+    )
+
+@skip_no_cuda
+def test_batch_sig_end_time_lead_lag_cuda():
+    # Verify CUDA vs CPU agreement for a batch signature with both time
+    # augmentation and lead-lag enabled, using a non-default end_time.
+    batch_size, length, dimension, deg = 5, 50, 3, 3
+    end_time = 3.0
+    X = np.random.uniform(size=(batch_size, length, dimension))
+    X_cpu = torch.tensor(X, dtype=torch.float64)
+    X_cuda = torch.tensor(X, dtype=torch.float64, device="cuda")
+
+    sig_cpu = pysiglib.sig(X_cpu, deg, time_aug=True, lead_lag=True, end_time=end_time)
+    sig_cuda = pysiglib.sig(X_cuda, deg, time_aug=True, lead_lag=True, end_time=end_time)
+
+    assert sig_cuda.device.type == "cuda"
+    check_close(sig_cpu, sig_cuda.cpu())

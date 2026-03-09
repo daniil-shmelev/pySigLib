@@ -19,11 +19,17 @@ import torch
 import pysiglib
 
 EPSILON = 1e-10
+SINGLE_EPSILON = 1e-4
 
 def check_close(a, b):
     a_ = np.array(a)
     b_ = np.array(b)
     assert not np.any(np.abs(a_ - b_) > EPSILON), f"Max diff: {np.max(np.abs(a_ - b_))}"
+
+def check_close_single(a, b):
+    a_ = np.array(a)
+    b_ = np.array(b)
+    assert not np.any(np.abs(a_ - b_) > SINGLE_EPSILON), f"Max diff: {np.max(np.abs(a_ - b_))}"
 
 skip_no_cuda = pytest.mark.skipif(
     not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()),
@@ -230,4 +236,87 @@ def test_batch_sig_coef_full_time_aug_lead_lag_cuda():
     sig = pysiglib.signature(X_np, 5, time_aug=True, lead_lag=True)
     assert coeff.device.type == "cuda"
     check_close(sig[:, 1:], coeff.cpu())
+
+# float32 path (single): verify CUDA output matches reference signature coefficients
+@skip_no_cuda
+def test_sig_coef_float32_cuda():
+    np.random.seed(42)
+    X_np = np.random.uniform(size=(100, 3))
+    X_cuda = torch.tensor(X_np, device="cuda", dtype=torch.float32)
+    multi_indices = [(0, 1), (2, 1, 0), (1,)]
+
+    true_coeffs = get_true_sig_coefs(multi_indices, X_np, 5)
+    coeff = pysiglib.sig_coef(X_cuda, multi_indices)
+    assert coeff.device.type == "cuda"
+    check_close_single(true_coeffs, coeff.cpu())
+
+# float32 batch: verify CUDA output matches reference signature coefficients
+@skip_no_cuda
+def test_batch_sig_coef_float32_cuda():
+    np.random.seed(42)
+    X_np = np.random.uniform(size=(10, 100, 3))
+    X_cuda = torch.tensor(X_np, device="cuda", dtype=torch.float32)
+    multi_indices = [(0, 1), (2, 1, 0), (1,)]
+
+    true_coeffs = get_true_sig_coefs(multi_indices, X_np, 5)
+    coeff = pysiglib.sig_coef(X_cuda, multi_indices)
+    assert coeff.device.type == "cuda"
+    check_close_single(true_coeffs, coeff.cpu())
+
+# Test sig_coef with time_aug=True and a non-default end_time
+# Words index into the augmented path dimension (dim=3+1=4 for time_aug)
+@skip_no_cuda
+def test_sig_coef_end_time_cuda():
+    np.random.seed(42)
+    X_np = np.random.uniform(size=(10, 100, 3))
+    X_cuda = torch.tensor(X_np, device="cuda", dtype=torch.float64)
+    # Augmented dimension is 4 (time channel prepended to dim=3)
+    # Use words(4, 5) to get the full set for augmented dimension, then compare
+    # against pysiglib.signature with the same params
+    multi_indices = pysiglib.words(4, 5)[1:]
+
+    coeff = pysiglib.sig_coef(X_cuda, multi_indices, time_aug=True, end_time=2.0)
+    sig = pysiglib.signature(X_np, 5, time_aug=True, end_time=2.0)
+    assert coeff.device.type == "cuda"
+    check_close(sig[:, 1:], coeff.cpu())
+
+# Test sig_coef with a single word passed as a tuple (not a list)
+@skip_no_cuda
+def test_sig_coef_single_word_cuda():
+    np.random.seed(42)
+    X_np = np.random.uniform(size=(100, 3))
+    X_cuda = torch.tensor(X_np, device="cuda", dtype=torch.float64)
+    word = (0, 1, 2)
+
+    true_coeffs = get_true_sig_coefs([word], X_np, 5)
+    coeff = pysiglib.sig_coef(X_cuda, word)
+    assert coeff.device.type == "cuda"
+    check_close(true_coeffs.squeeze(), coeff.cpu())
+
+# Test sig_coef with a high-degree word (degree 7): verifies CUDA vs CPU consistency
+@skip_no_cuda
+def test_sig_coef_high_degree_word_cuda():
+    np.random.seed(42)
+    X_np = np.random.uniform(size=(50, 2))
+    X_cuda = torch.tensor(X_np, device="cuda", dtype=torch.float64)
+    multi_indices = [(0, 1, 0, 1, 0, 1, 0)]
+
+    coeff_cpu = pysiglib.sig_coef(X_np, multi_indices)
+    coeff_cuda = pysiglib.sig_coef(X_cuda, multi_indices)
+    assert coeff_cuda.device.type == "cuda"
+    check_close(coeff_cpu, coeff_cuda.cpu())
+
+# float32 batch with prefixes=True: verify CUDA output matches reference
+@skip_no_cuda
+def test_sig_coef_prefixes_float32_cuda():
+    np.random.seed(42)
+    X_np = np.random.uniform(size=(100, 3))
+    X_cuda = torch.tensor(X_np, device="cuda", dtype=torch.float32)
+    multi_indices = [(0, 1), (2, 1, 0)]
+    grid_idx = [(0,), (0, 1), (2,), (2, 1), (2, 1, 0)]
+
+    true_coeffs = get_true_sig_coefs(grid_idx, X_np, 5)
+    coeff = pysiglib.sig_coef(X_cuda, multi_indices, prefixes=True)
+    assert coeff.device.type == "cuda"
+    check_close_single(true_coeffs, coeff.cpu())
 

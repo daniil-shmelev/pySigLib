@@ -249,3 +249,59 @@ def test_sig_kernel_lead_lag_cuda(dyadic_order):
     assert kernel2.device.type == "cuda"
 
     check_close(kernel1.cpu(), kernel2.cpu())
+
+@skip_no_cuda
+@pytest.mark.parametrize("dyadic_order", [0, 1])
+def test_sig_kernel_time_aug_cuda(dyadic_order):
+    batch, len1, len2, dim = 32, 10, 10, 5
+    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype=torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype=torch.double)
+
+    # CPU reference: manually apply time-aug then run sig_kernel on CPU
+    X_cpu = X.cpu()
+    Y_cpu = Y.cpu()
+    kernel1 = pysiglib.sig_kernel(X_cpu, Y_cpu, dyadic_order, time_aug=True)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order, time_aug=True)
+    assert kernel2.device.type == "cuda"
+
+    check_close(kernel1, kernel2.cpu())
+
+@skip_no_cuda
+@pytest.mark.parametrize("dyadic_order", [0, 1])
+def test_sig_kernel_time_aug_lead_lag_cuda(dyadic_order):
+    batch, len1, len2, dim = 32, 10, 10, 5
+    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype=torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype=torch.double)
+
+    X_cpu = X.cpu()
+    Y_cpu = Y.cpu()
+    kernel1 = pysiglib.sig_kernel(X_cpu, Y_cpu, dyadic_order, time_aug=True, lead_lag=True)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order, time_aug=True, lead_lag=True)
+    assert kernel2.device.type == "cuda"
+
+    check_close(kernel1, kernel2.cpu())
+
+@skip_no_cuda
+def test_sig_kernel_end_time_cuda():
+    batch, len1, len2, dim = 32, 10, 10, 5
+    end_time = 2.0
+    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype=torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype=torch.double)
+
+    X_cpu = X.cpu()
+    Y_cpu = Y.cpu()
+    kernel1 = pysiglib.sig_kernel(X_cpu, Y_cpu, 0, time_aug=True, end_time=end_time)
+    kernel2 = pysiglib.sig_kernel(X, Y, 0, time_aug=True, end_time=end_time)
+    assert kernel2.device.type == "cuda"
+
+    check_close(kernel1, kernel2.cpu())
+
+@skip_no_cuda
+def test_sig_kernel_single_point_cuda():
+    # A path with a single time-step has a trivial signature of 1; verify
+    # the kernel is well-defined and equals 1 for two identical single-point paths.
+    dim = 5
+    X = torch.rand(size=(1, dim), device="cuda", dtype=torch.double)
+    k = pysiglib.sig_kernel(X, X, 0)
+    assert k.device.type == "cuda"
+    check_close(torch.tensor([1.0], dtype=torch.double), k.cpu())

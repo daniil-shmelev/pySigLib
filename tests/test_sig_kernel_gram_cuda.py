@@ -101,3 +101,46 @@ def test_sig_kernel_gram_lead_lag_cuda(dyadic_order):
 
     check_close(kernel1.cpu(), kernel2.cpu())
     check_close(kernel1.cpu(), kernel3.cpu())
+
+@skip_no_cuda
+def test_sig_kernel_gram_time_aug_cuda():
+    batch1, batch2, length, dim = 16, 16, 10, 3
+    X = torch.rand(size=(batch1, length, dim), device="cuda", dtype=torch.double)
+    Y = torch.rand(size=(batch2, length, dim), device="cuda", dtype=torch.double)
+
+    # CPU reference
+    X_cpu = X.cpu()
+    Y_cpu = Y.cpu()
+    kernel1 = pysiglib.sig_kernel_gram(X_cpu, Y_cpu, 0, time_aug=True)
+    kernel2 = pysiglib.sig_kernel_gram(X, Y, 0, time_aug=True)
+    assert kernel2.device.type == "cuda"
+
+    check_close(kernel1, kernel2.cpu())
+
+@skip_no_cuda
+def test_sig_kernel_gram_time_aug_lead_lag_cuda():
+    batch1, batch2, length, dim = 16, 16, 10, 3
+    X = torch.rand(size=(batch1, length, dim), device="cuda", dtype=torch.double)
+    Y = torch.rand(size=(batch2, length, dim), device="cuda", dtype=torch.double)
+
+    X_cpu = X.cpu()
+    Y_cpu = Y.cpu()
+    kernel1 = pysiglib.sig_kernel_gram(X_cpu, Y_cpu, 0, time_aug=True, lead_lag=True)
+    kernel2 = pysiglib.sig_kernel_gram(X, Y, 0, time_aug=True, lead_lag=True)
+    assert kernel2.device.type == "cuda"
+
+    check_close(kernel1, kernel2.cpu())
+
+@skip_no_cuda
+def test_sig_kernel_gram_max_batch_cuda():
+    # Verify that using a small max_batch produces the same result as using a large one.
+    batch1, batch2, length, dim = 16, 16, 10, 3
+    X = torch.rand(size=(batch1, length, dim), device="cuda", dtype=torch.double)
+    Y = torch.rand(size=(batch2, length, dim), device="cuda", dtype=torch.double)
+
+    kernel1 = pysiglib.sig_kernel_gram(X, Y, 0, max_batch=4)
+    kernel2 = pysiglib.sig_kernel_gram(X, Y, 0, max_batch=100)
+    assert kernel1.device.type == "cuda"
+    assert kernel2.device.type == "cuda"
+
+    check_close(kernel1.cpu(), kernel2.cpu())

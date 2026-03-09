@@ -207,3 +207,68 @@ def test_batch_log_signature_lyndon_basis_random_cuda(deg, dtype):
     assert sig.device.type == "cuda"
     check_close(iisig, sig.cpu().numpy())
     pysiglib.clear_cache()
+
+@skip_no_cuda
+@pytest.mark.parametrize("deg", range(1, 5))
+def test_log_signature_expanded_end_time_cuda(deg):
+    # Test method=0 with time_aug=True and a non-default end_time on a single path.
+    # iisignature receives the pre-transformed path so that end_time is reflected.
+    X_np = np.random.uniform(size=(100, 5)).astype(np.float64)
+
+    s = iisignature.prepare(6, deg, "x")
+    iisig = iisignature.logsig(
+        pysiglib.transform_path(X_np, time_aug=True, end_time=2.0), s, "x"
+    ).astype(np.float64)
+
+    X = torch.tensor(X_np, device="cuda", dtype=torch.float64)
+    sig = pysiglib.log_sig(X, deg, time_aug=True, end_time=2.0, method=0)
+
+    assert sig.device.type == "cuda"
+    check_close(iisig, sig[1:].cpu().numpy())
+
+@skip_no_cuda
+@pytest.mark.parametrize("deg", range(1, 5))
+def test_batch_log_signature_expanded_end_time_cuda(deg):
+    # Same as test_log_signature_expanded_end_time_cuda but for a batch of paths.
+    X_np = np.random.uniform(size=(32, 100, 5)).astype(np.float64)
+
+    s = iisignature.prepare(6, deg, "x")
+    iisig = iisignature.logsig(
+        pysiglib.transform_path(X_np, time_aug=True, end_time=2.0), s, "x"
+    ).astype(np.float64)
+
+    X = torch.tensor(X_np, device="cuda", dtype=torch.float64)
+    sig = pysiglib.log_sig(X, deg, time_aug=True, end_time=2.0, method=0)
+
+    assert sig.device.type == "cuda"
+    check_close(iisig, sig.cpu().numpy()[:, 1:])
+
+@skip_no_cuda
+@pytest.mark.parametrize("deg", range(1, 5))
+def test_log_signature_expanded_time_aug_lead_lag_cuda(deg):
+    # Test method=0 with both time_aug=True and lead_lag=True on a single path.
+    # lead_lag doubles the dimension (10), time_aug adds one channel (11 total).
+    X_np = np.random.uniform(size=(100, 5)).astype(np.float64)
+
+    s = iisignature.prepare(11, deg, "x")
+    iisig = iisignature.logsig(
+        pysiglib.transform_path(X_np, time_aug=True, lead_lag=True), s, "x"
+    ).astype(np.float64)
+
+    X = torch.tensor(X_np, device="cuda", dtype=torch.float64)
+    sig = pysiglib.log_sig(X, deg, time_aug=True, lead_lag=True, method=0)
+
+    assert sig.device.type == "cuda"
+    check_close(iisig, sig[1:].cpu().numpy())
+
+@skip_no_cuda
+@pytest.mark.parametrize("deg", range(1, 4))
+def test_log_signature_single_point_cuda(deg):
+    # The log signature of a path with a single point has no increments and must be all zeros.
+    X_np = np.random.uniform(size=(1, 5)).astype(np.float64)
+
+    X = torch.tensor(X_np, device="cuda", dtype=torch.float64)
+    sig = pysiglib.log_sig(X, deg, method=0)
+
+    assert sig.device.type == "cuda"
+    assert np.allclose(sig.cpu().numpy(), 0.0)
