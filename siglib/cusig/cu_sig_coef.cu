@@ -400,37 +400,17 @@ void sig_coef_cuda_(
 	cudaError_t err = cudaGetLastError();
 	cudaFree(d_offsets);
 
-	if (err != cudaSuccess)
-		throw std::runtime_error(std::string("sig_coef_cuda kernel failed: ") + cudaGetErrorString(err));
+	if (err != cudaSuccess) {
+		int error_code = static_cast<int>(err);
+		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
+	}
 }
 
 // =========================================================================
 // SAFE_CALL macro
 // =========================================================================
 
-#ifndef CU_SIG_COEF_SAFE_CALL
-#define CU_SIG_COEF_SAFE_CALL(function_call)                    \
-    try {                                                       \
-        function_call;                                          \
-    }                                                           \
-    catch (std::bad_alloc&) {                                   \
-        std::cerr << "Failed to allocate memory";               \
-        return 1;                                               \
-    }                                                           \
-    catch (std::invalid_argument& e) {                          \
-        std::cerr << e.what();                                  \
-        return 2;                                               \
-    }                                                           \
-    catch (std::exception& e) {                                 \
-        std::cerr << e.what();                                  \
-        return 3;                                               \
-    }                                                           \
-    catch (...) {                                               \
-        std::cerr << "Unknown error";                           \
-        return 4;                                               \
-    }                                                           \
-    return 0;
-#endif
+#include "cu_macros.h"
 
 // =========================================================================
 // Exported C functions
@@ -443,7 +423,7 @@ extern "C" {
 		uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t dimension, uint64_t length, bool prefixes
 	) noexcept {
-		CU_SIG_COEF_SAFE_CALL(sig_coef_cuda_<float>(path, out, multi_idx, num_multi_idx, degrees, 1, dimension, length, prefixes));
+		CUSIG_SAFE_CALL(sig_coef_cuda_<float>(path, out, multi_idx, num_multi_idx, degrees, 1, dimension, length, prefixes));
 	}
 
 	CUSIG_API int sig_coef_cuda_d(
@@ -451,7 +431,7 @@ extern "C" {
 		uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t dimension, uint64_t length, bool prefixes
 	) noexcept {
-		CU_SIG_COEF_SAFE_CALL(sig_coef_cuda_<double>(path, out, multi_idx, num_multi_idx, degrees, 1, dimension, length, prefixes));
+		CUSIG_SAFE_CALL(sig_coef_cuda_<double>(path, out, multi_idx, num_multi_idx, degrees, 1, dimension, length, prefixes));
 	}
 
 	CUSIG_API int batch_sig_coef_cuda_f(
@@ -459,7 +439,7 @@ extern "C" {
 		uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes
 	) noexcept {
-		CU_SIG_COEF_SAFE_CALL(sig_coef_cuda_<float>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, prefixes));
+		CUSIG_SAFE_CALL(sig_coef_cuda_<float>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, prefixes));
 	}
 
 	CUSIG_API int batch_sig_coef_cuda_d(
@@ -467,7 +447,7 @@ extern "C" {
 		uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes
 	) noexcept {
-		CU_SIG_COEF_SAFE_CALL(sig_coef_cuda_<double>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, prefixes));
+		CUSIG_SAFE_CALL(sig_coef_cuda_<double>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, prefixes));
 	}
 }
 
@@ -946,8 +926,10 @@ void sig_coef_backprop_cuda_(
 	cudaError_t err = cudaGetLastError();
 	cudaFree(d_offsets);
 
-	if (err != cudaSuccess)
-		throw std::runtime_error(std::string("sig_coef_backprop_cuda kernel failed: ") + cudaGetErrorString(err));
+	if (err != cudaSuccess) {
+		int error_code = static_cast<int>(err);
+		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
+	}
 }
 
 // =========================================================================
@@ -961,7 +943,7 @@ extern "C" {
 		const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t dimension, uint64_t length
 	) noexcept {
-		CU_SIG_COEF_SAFE_CALL(sig_coef_backprop_cuda_<float>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, 1, dimension, length));
+		CUSIG_SAFE_CALL(sig_coef_backprop_cuda_<float>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, 1, dimension, length));
 	}
 
 	CUSIG_API int sig_coef_backprop_cuda_d(
@@ -969,7 +951,7 @@ extern "C" {
 		const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t dimension, uint64_t length
 	) noexcept {
-		CU_SIG_COEF_SAFE_CALL(sig_coef_backprop_cuda_<double>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, 1, dimension, length));
+		CUSIG_SAFE_CALL(sig_coef_backprop_cuda_<double>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, 1, dimension, length));
 	}
 
 	CUSIG_API int batch_sig_coef_backprop_cuda_f(
@@ -977,7 +959,7 @@ extern "C" {
 		const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t batch_size, uint64_t dimension, uint64_t length
 	) noexcept {
-		CU_SIG_COEF_SAFE_CALL(sig_coef_backprop_cuda_<float>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length));
+		CUSIG_SAFE_CALL(sig_coef_backprop_cuda_<float>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length));
 	}
 
 	CUSIG_API int batch_sig_coef_backprop_cuda_d(
@@ -985,6 +967,6 @@ extern "C" {
 		const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t batch_size, uint64_t dimension, uint64_t length
 	) noexcept {
-		CU_SIG_COEF_SAFE_CALL(sig_coef_backprop_cuda_<double>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length));
+		CUSIG_SAFE_CALL(sig_coef_backprop_cuda_<double>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length));
 	}
 }

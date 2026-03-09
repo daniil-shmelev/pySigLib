@@ -855,40 +855,7 @@ void sig_to_log_sig_cuda_(
 // SAFE_CALL macro
 // =========================================================================
 
-#ifndef CU_LOG_SIG_SAFE_CALL
-#define CU_LOG_SIG_SAFE_CALL(function_call)                     \
-    try {                                                       \
-        function_call;                                          \
-    }                                                           \
-    catch (std::bad_alloc&) {                                   \
-        std::cerr << "Failed to allocate memory";               \
-        return 1;                                               \
-    }                                                           \
-    catch (std::invalid_argument& e) {                          \
-        std::cerr << e.what();                                  \
-        return 2;                                               \
-    }                                                           \
-    catch (std::out_of_range& e) {                              \
-        std::cerr << e.what();                                  \
-        return 3;                                               \
-    }                                                           \
-    catch (std::runtime_error& e) {                             \
-        std::string msg = e.what();                             \
-        std::regex pattern(R"(CUDA Error \((\d+)\):)");         \
-        std::smatch match;                                      \
-        int ret_code = 10;                                      \
-        if (std::regex_search(msg, match, pattern)) {           \
-            ret_code = 100000 + std::stoi(match[1]);            \
-        }                                                       \
-        std::cerr << e.what();                                  \
-        return ret_code;                                        \
-    }                                                           \
-    catch (...) {                                               \
-        std::cerr << "Unknown exception";                       \
-        return 11;                                              \
-    }                                                           \
-    return 0;
-#endif
+#include "cu_macros.h"
 
 // =========================================================================
 // Exported C functions
@@ -900,55 +867,55 @@ extern "C" {
 		const float* sig, float* out,
 		uint64_t dimension, uint64_t degree, int method
 	) noexcept {
-		CU_LOG_SIG_SAFE_CALL(sig_to_log_sig_cuda_<float>(sig, out, 1, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<float>(sig, out, 1, dimension, degree, method));
 	}
 
 	CUSIG_API int sig_to_log_sig_cuda_d(
 		const double* sig, double* out,
 		uint64_t dimension, uint64_t degree, int method
 	) noexcept {
-		CU_LOG_SIG_SAFE_CALL(sig_to_log_sig_cuda_<double>(sig, out, 1, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<double>(sig, out, 1, dimension, degree, method));
 	}
 
 	CUSIG_API int batch_sig_to_log_sig_cuda_f(
 		const float* sig, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
 	) noexcept {
-		CU_LOG_SIG_SAFE_CALL(sig_to_log_sig_cuda_<float>(sig, out, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<float>(sig, out, batch_size, dimension, degree, method));
 	}
 
 	CUSIG_API int batch_sig_to_log_sig_cuda_d(
 		const double* sig, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
 	) noexcept {
-		CU_LOG_SIG_SAFE_CALL(sig_to_log_sig_cuda_<double>(sig, out, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<double>(sig, out, batch_size, dimension, degree, method));
 	}
 
 	CUSIG_API int sig_to_log_sig_backprop_cuda_f(
 		const float* sig, float* out, const float* log_sig_derivs,
 		uint64_t dimension, uint64_t degree, int method
 	) noexcept {
-		CU_LOG_SIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<float>(sig, out, log_sig_derivs, 1, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<float>(sig, out, log_sig_derivs, 1, dimension, degree, method));
 	}
 
 	CUSIG_API int sig_to_log_sig_backprop_cuda_d(
 		const double* sig, double* out, const double* log_sig_derivs,
 		uint64_t dimension, uint64_t degree, int method
 	) noexcept {
-		CU_LOG_SIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<double>(sig, out, log_sig_derivs, 1, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<double>(sig, out, log_sig_derivs, 1, dimension, degree, method));
 	}
 
 	CUSIG_API int batch_sig_to_log_sig_backprop_cuda_f(
 		const float* sig, float* out, const float* log_sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
 	) noexcept {
-		CU_LOG_SIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<float>(sig, out, log_sig_derivs, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<float>(sig, out, log_sig_derivs, batch_size, dimension, degree, method));
 	}
 
 	CUSIG_API int batch_sig_to_log_sig_backprop_cuda_d(
 		const double* sig, double* out, const double* log_sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
 	) noexcept {
-		CU_LOG_SIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<double>(sig, out, log_sig_derivs, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<double>(sig, out, log_sig_derivs, batch_size, dimension, degree, method));
 	}
 }

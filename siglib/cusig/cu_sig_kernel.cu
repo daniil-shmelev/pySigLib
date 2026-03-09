@@ -708,71 +708,40 @@ void sig_kernel_backprop_cuda_(
 	}
 }
 
-#define SAFE_CALL(function_call)                            \
-    try {                                                   \
-        function_call;                                      \
-    }                                                       \
-    catch (std::bad_alloc&) {					            \
-		std::cerr << "Failed to allocate memory";           \
-        return 1;                                           \
-    }                                                       \
-    catch (std::invalid_argument& e) {                      \
-		std::cerr << e.what();					            \
-        return 2;                                           \
-    }                                                       \
-	catch (std::out_of_range& e) {			                \
-		std::cerr << e.what();					            \
-		return 3;                                           \
-	}  											            \
-	catch (std::runtime_error& e) {							\
-		std::string msg = e.what();							\
-		std::regex pattern(R"(CUDA Error \((\d+)\):)");		\
-		std::smatch match;									\
-		int ret_code = 10;									\
-		if (std::regex_search(msg, match, pattern)) {		\
-			ret_code = 100000 + std::stoi(match[1]);		\
-		}													\
-		std::cerr << e.what();								\
-		return ret_code;									\
-	}														\
-    catch (...) {                                           \
-		std::cerr << "Unknown exception";		            \
-        return 11;                                           \
-    }                                                       \
-    return 0;
+#include "cu_macros.h"
 
 
 extern "C" {
 
 	CUSIG_API int sig_kernel_cuda_f(const float* const gram, float* const out, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_cuda_<float>(gram, out, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_cuda_<float>(gram, out, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int sig_kernel_cuda_d(const double* const gram, double* const out, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_cuda_<double>(gram, out, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_cuda_<double>(gram, out, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int batch_sig_kernel_cuda_f(const float* const gram, float* const out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_cuda_<float>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_cuda_<float>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int batch_sig_kernel_cuda_d(const double* const gram, double* const out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_cuda_<double>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_cuda_<double>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int sig_kernel_backprop_cuda_f(const float* const gram, float* const out, const float* const derivs, const float* const k_grid, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int sig_kernel_backprop_cuda_d(const double* const gram, double* const out, const double* const derivs, const double* const k_grid, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int batch_sig_kernel_backprop_cuda_f(const float* const gram, float* const out, const float* const derivs, const float* const k_grid, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int batch_sig_kernel_backprop_cuda_d(const double* const gram, double* const out, const double* const derivs, const double* const k_grid, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 }

@@ -202,70 +202,39 @@ void transform_path_backprop_(
 	}
 }
 
-#define SAFE_CALL(function_call)                            \
-    try {                                                   \
-        function_call;                                      \
-    }                                                       \
-    catch (std::bad_alloc&) {					            \
-		std::cerr << "Failed to allocate memory";           \
-        return 1;                                           \
-    }                                                       \
-    catch (std::invalid_argument& e) {                      \
-		std::cerr << e.what();					            \
-        return 2;                                           \
-    }                                                       \
-	catch (std::out_of_range& e) {			                \
-		std::cerr << e.what();					            \
-		return 3;                                           \
-	}  											            \
-	catch (std::runtime_error& e) {							\
-		std::string msg = e.what();							\
-		std::regex pattern(R"(CUDA Error \((\d+)\):)");		\
-		std::smatch match;									\
-		int ret_code = 10;									\
-		if (std::regex_search(msg, match, pattern)) {		\
-			ret_code = 100000 + std::stoi(match[1]);		\
-		}													\
-		std::cerr << e.what();								\
-		return ret_code;									\
-	}														\
-    catch (...) {                                           \
-		std::cerr << "Unknown exception";		            \
-        return 11;                                           \
-    }                                                       \
-    return 0;
+#include "cu_macros.h"
 
 extern "C" {
 
 	CUSIG_API int transform_path_cuda_f(const float* const data_in, float* const data_out, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const float end_time) noexcept {
-		SAFE_CALL(transform_path_<float>(data_in, data_out, 1, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(transform_path_<float>(data_in, data_out, 1, dimension, length, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int transform_path_cuda_d(const double* const data_in, double* const data_out, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const double end_time) noexcept {
-		SAFE_CALL(transform_path_<double>(data_in, data_out, 1, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(transform_path_<double>(data_in, data_out, 1, dimension, length, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int batch_transform_path_cuda_f(const float* const data_in, float* const data_out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const float end_time) noexcept {
-		SAFE_CALL(transform_path_<float>(data_in, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(transform_path_<float>(data_in, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int batch_transform_path_cuda_d(const double* const data_in, double* const data_out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const double end_time) noexcept {
-		SAFE_CALL(transform_path_<double>(data_in, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(transform_path_<double>(data_in, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int transform_path_backprop_cuda_f(const float* const derivs, float* const data_out, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const float end_time) noexcept {
-		SAFE_CALL(transform_path_backprop_<float>(derivs, data_out, 1, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(transform_path_backprop_<float>(derivs, data_out, 1, dimension, length, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int transform_path_backprop_cuda_d(const double* const derivs, double* const data_out, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const double end_time) noexcept {
-		SAFE_CALL(transform_path_backprop_<double>(derivs, data_out, 1, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(transform_path_backprop_<double>(derivs, data_out, 1, dimension, length, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int batch_transform_path_backprop_cuda_f(const float* const derivs, float* const data_out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const float end_time) noexcept {
-		SAFE_CALL(transform_path_backprop_<float>(derivs, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(transform_path_backprop_<float>(derivs, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int batch_transform_path_backprop_cuda_d(const double* const derivs, double* const data_out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const double end_time) noexcept {
-		SAFE_CALL(transform_path_backprop_<double>(derivs, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(transform_path_backprop_<double>(derivs, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
 	}
 }

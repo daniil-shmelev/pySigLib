@@ -875,40 +875,7 @@ void sig_backprop_cuda_(
 }
 
 
-#ifndef CU_SIGNATURE_SAFE_CALL
-#define CU_SIGNATURE_SAFE_CALL(function_call)                   \
-    try {                                                       \
-        function_call;                                          \
-    }                                                           \
-    catch (std::bad_alloc&) {                                   \
-        std::cerr << "Failed to allocate memory";               \
-        return 1;                                               \
-    }                                                           \
-    catch (std::invalid_argument& e) {                          \
-        std::cerr << e.what();                                  \
-        return 2;                                               \
-    }                                                           \
-    catch (std::out_of_range& e) {                              \
-        std::cerr << e.what();                                  \
-        return 3;                                               \
-    }                                                           \
-    catch (std::runtime_error& e) {                             \
-        std::string msg = e.what();                             \
-        std::regex pattern(R"(CUDA Error \((\d+)\):)");         \
-        std::smatch match;                                      \
-        int ret_code = 10;                                      \
-        if (std::regex_search(msg, match, pattern)) {           \
-            ret_code = 100000 + std::stoi(match[1]);            \
-        }                                                       \
-        std::cerr << e.what();                                  \
-        return ret_code;                                        \
-    }                                                           \
-    catch (...) {                                               \
-        std::cerr << "Unknown exception";                       \
-        return 11;                                              \
-    }                                                           \
-    return 0;
-#endif
+#include "cu_macros.h"
 
 
 extern "C" {
@@ -919,7 +886,7 @@ extern "C" {
 		bool time_aug, bool lead_lag, float end_time,
 		bool horner
 	) noexcept {
-		CU_SIGNATURE_SAFE_CALL(signature_cuda_<float>(path, out, 1, dimension, length, degree, time_aug, lead_lag, end_time, horner));
+		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, 1, dimension, length, degree, time_aug, lead_lag, end_time, horner));
 	}
 
 	CUSIG_API int signature_cuda_d(
@@ -928,7 +895,7 @@ extern "C" {
 		bool time_aug, bool lead_lag, double end_time,
 		bool horner
 	) noexcept {
-		CU_SIGNATURE_SAFE_CALL(signature_cuda_<double>(path, out, 1, dimension, length, degree, time_aug, lead_lag, end_time, horner));
+		CUSIG_SAFE_CALL(signature_cuda_<double>(path, out, 1, dimension, length, degree, time_aug, lead_lag, end_time, horner));
 	}
 
 	CUSIG_API int batch_signature_cuda_f(
@@ -937,7 +904,7 @@ extern "C" {
 		bool time_aug, bool lead_lag, float end_time,
 		bool horner
 	) noexcept {
-		CU_SIGNATURE_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner));
+		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner));
 	}
 
 	CUSIG_API int batch_signature_cuda_d(
@@ -946,7 +913,7 @@ extern "C" {
 		bool time_aug, bool lead_lag, double end_time,
 		bool horner
 	) noexcept {
-		CU_SIGNATURE_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner));
+		CUSIG_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner));
 	}
 
 	// =====================================================================
@@ -959,7 +926,7 @@ extern "C" {
 		uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, float end_time
 	) noexcept {
-		CU_SIGNATURE_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, 1, dimension, length, degree, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, 1, dimension, length, degree, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int sig_backprop_cuda_d(
@@ -968,7 +935,7 @@ extern "C" {
 		uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, double end_time
 	) noexcept {
-		CU_SIGNATURE_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, 1, dimension, length, degree, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, 1, dimension, length, degree, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int batch_sig_backprop_cuda_f(
@@ -977,7 +944,7 @@ extern "C" {
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, float end_time
 	) noexcept {
-		CU_SIGNATURE_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int batch_sig_backprop_cuda_d(
@@ -986,7 +953,7 @@ extern "C" {
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, double end_time
 	) noexcept {
-		CU_SIGNATURE_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time));
 	}
 
 }

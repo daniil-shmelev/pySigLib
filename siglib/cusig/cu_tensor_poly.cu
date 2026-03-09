@@ -294,40 +294,7 @@ void sig_combine_backprop_cuda_(
 // SAFE_CALL macro
 // =========================================================================
 
-#ifndef CU_TENSOR_POLY_SAFE_CALL
-#define CU_TENSOR_POLY_SAFE_CALL(function_call)                 \
-    try {                                                       \
-        function_call;                                          \
-    }                                                           \
-    catch (std::bad_alloc&) {                                   \
-        std::cerr << "Failed to allocate memory";               \
-        return 1;                                               \
-    }                                                           \
-    catch (std::invalid_argument& e) {                          \
-        std::cerr << e.what();                                  \
-        return 2;                                               \
-    }                                                           \
-    catch (std::out_of_range& e) {                              \
-        std::cerr << e.what();                                  \
-        return 3;                                               \
-    }                                                           \
-    catch (std::runtime_error& e) {                             \
-        std::string msg = e.what();                             \
-        std::regex pattern(R"(CUDA Error \((\d+)\):)");         \
-        std::smatch match;                                      \
-        int ret_code = 10;                                      \
-        if (std::regex_search(msg, match, pattern)) {           \
-            ret_code = 100000 + std::stoi(match[1]);            \
-        }                                                       \
-        std::cerr << e.what();                                  \
-        return ret_code;                                        \
-    }                                                           \
-    catch (...) {                                               \
-        std::cerr << "Unknown exception";                       \
-        return 11;                                              \
-    }                                                           \
-    return 0;
-#endif
+#include "cu_macros.h"
 
 // =========================================================================
 // Exported C functions
@@ -339,28 +306,28 @@ extern "C" {
 		const float* sig1, const float* sig2, float* out,
 		uint64_t dimension, uint64_t degree
 	) noexcept {
-		CU_TENSOR_POLY_SAFE_CALL(sig_combine_cuda_<float>(sig1, sig2, out, 1, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_cuda_<float>(sig1, sig2, out, 1, dimension, degree));
 	}
 
 	CUSIG_API int sig_combine_cuda_d(
 		const double* sig1, const double* sig2, double* out,
 		uint64_t dimension, uint64_t degree
 	) noexcept {
-		CU_TENSOR_POLY_SAFE_CALL(sig_combine_cuda_<double>(sig1, sig2, out, 1, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_cuda_<double>(sig1, sig2, out, 1, dimension, degree));
 	}
 
 	CUSIG_API int batch_sig_combine_cuda_f(
 		const float* sig1, const float* sig2, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree
 	) noexcept {
-		CU_TENSOR_POLY_SAFE_CALL(sig_combine_cuda_<float>(sig1, sig2, out, batch_size, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_cuda_<float>(sig1, sig2, out, batch_size, dimension, degree));
 	}
 
 	CUSIG_API int batch_sig_combine_cuda_d(
 		const double* sig1, const double* sig2, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree
 	) noexcept {
-		CU_TENSOR_POLY_SAFE_CALL(sig_combine_cuda_<double>(sig1, sig2, out, batch_size, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_cuda_<double>(sig1, sig2, out, batch_size, dimension, degree));
 	}
 
 	CUSIG_API int sig_combine_backprop_cuda_f(
@@ -368,7 +335,7 @@ extern "C" {
 		const float* sig1, const float* sig2,
 		uint64_t dimension, uint64_t degree
 	) noexcept {
-		CU_TENSOR_POLY_SAFE_CALL(sig_combine_backprop_cuda_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, 1, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, 1, dimension, degree));
 	}
 
 	CUSIG_API int sig_combine_backprop_cuda_d(
@@ -376,7 +343,7 @@ extern "C" {
 		const double* sig1, const double* sig2,
 		uint64_t dimension, uint64_t degree
 	) noexcept {
-		CU_TENSOR_POLY_SAFE_CALL(sig_combine_backprop_cuda_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, 1, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, 1, dimension, degree));
 	}
 
 	CUSIG_API int batch_sig_combine_backprop_cuda_f(
@@ -384,7 +351,7 @@ extern "C" {
 		const float* sig1, const float* sig2,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree
 	) noexcept {
-		CU_TENSOR_POLY_SAFE_CALL(sig_combine_backprop_cuda_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree));
 	}
 
 	CUSIG_API int batch_sig_combine_backprop_cuda_d(
@@ -392,6 +359,6 @@ extern "C" {
 		const double* sig1, const double* sig2,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree
 	) noexcept {
-		CU_TENSOR_POLY_SAFE_CALL(sig_combine_backprop_cuda_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree));
 	}
 }
