@@ -553,7 +553,7 @@ void example_sig_to_log_sig_cuda_d(
 
     cudaMemcpy(d_sig, sig.data(), sizeof(double) * slen, cudaMemcpyHostToDevice);
 
-    prepare_log_sig_cuda(dimension, degree, method);
+    prepare_log_sig_cuda(dimension, degree, method, false);
     time_function(num_runs, sig_to_log_sig_cuda_d, d_sig, d_out, dimension, degree, method);
 
     cudaFree(d_sig);
@@ -582,7 +582,7 @@ void example_batch_sig_to_log_sig_cuda_d(
 
     cudaMemcpy(d_sig, sig.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
 
-    prepare_log_sig_cuda(dimension, degree, method);
+    prepare_log_sig_cuda(dimension, degree, method, false);
     time_function(num_runs, batch_sig_to_log_sig_cuda_d, d_sig, d_out, batch_size, dimension, degree, method);
 
     cudaFree(d_sig);
@@ -641,7 +641,7 @@ void example_batch_sig_to_log_sig_backprop_cuda_d(
     cudaMemcpy(d_sig, sig.data(), sizeof(double) * batch_size * slen, cudaMemcpyHostToDevice);
     cudaMemcpy(d_derivs, derivs.data(), sizeof(double) * batch_size * derivs_len, cudaMemcpyHostToDevice);
 
-    prepare_log_sig_cuda(dimension, degree, method);
+    prepare_log_sig_cuda(dimension, degree, method, false);
     time_function(num_runs, batch_sig_to_log_sig_backprop_cuda_d, d_sig, d_out, d_derivs, batch_size, dimension, degree, method);
 
     cudaFree(d_sig);

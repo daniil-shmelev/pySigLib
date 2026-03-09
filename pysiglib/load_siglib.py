@@ -550,7 +550,8 @@ if BUILT_WITH_CUDA:
     CUSIG.prepare_log_sig_cuda.argtypes = (
         c_uint64,
         c_uint64,
-        c_int
+        c_int,
+        c_bool
     )
     CUSIG.prepare_log_sig_cuda.restype = c_int
 
@@ -558,8 +559,15 @@ if BUILT_WITH_CUDA:
     # clear_cache_cuda
     ######################################################
 
-    CUSIG.clear_cache_cuda.argtypes = ()
+    CUSIG.clear_cache_cuda.argtypes = (c_bool,)
     CUSIG.clear_cache_cuda.restype = c_int
+
+    ######################################################
+    # set_cache_dir_cuda
+    ######################################################
+
+    CUSIG.set_cache_dir_cuda.argtypes = (c_char_p,)
+    CUSIG.set_cache_dir_cuda.restype = c_int
 
     ######################################################
     # sig_coef_cuda

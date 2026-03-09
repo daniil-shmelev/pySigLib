@@ -100,7 +100,7 @@ using clear_cache_fn = int(CDECL_*)(bool);
 using sig_to_log_sig_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, bool, bool, int);
 using batch_sig_to_log_sig_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, bool, bool, int, int);
 
-using prepare_log_sig_cuda_fn = int(CDECL_*)(uint64_t, uint64_t, int);
+using prepare_log_sig_cuda_fn = int(CDECL_*)(uint64_t, uint64_t, int, bool);
 
 using sig_to_log_sig_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, int);
 using batch_sig_to_log_sig_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, int);

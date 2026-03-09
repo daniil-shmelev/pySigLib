@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <stdexcept>
 #include <utility>
+#include <filesystem>
+#include <fstream>
 
 // =========================================================================
 // Lyndon word utilities (host-side, ported from cpsig/words.h + words.cpp)
@@ -211,6 +213,34 @@ public:
 				if (kv.second != 0) {
 					out.rows[i].emplace_back(kv.first, kv.second);
 				}
+			}
+		}
+	}
+
+	void serialize(std::ostream& out) const {
+		out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+		out.write(reinterpret_cast<const char*>(&m), sizeof(m));
+		for (uint64_t i = 0; i < n; ++i) {
+			uint64_t nnz = rows[i].size();
+			out.write(reinterpret_cast<const char*>(&nnz), sizeof(nnz));
+			for (const auto& e : rows[i]) {
+				out.write(reinterpret_cast<const char*>(&e.col), sizeof(e.col));
+				out.write(reinterpret_cast<const char*>(&e.val), sizeof(e.val));
+			}
+		}
+	}
+
+	static void deserialize(std::istream& in, CuSparseIntMatrix& out) {
+		in.read(reinterpret_cast<char*>(&out.n), sizeof(out.n));
+		in.read(reinterpret_cast<char*>(&out.m), sizeof(out.m));
+		out.rows.resize(out.n);
+		for (uint64_t i = 0; i < out.n; ++i) {
+			uint64_t nnz;
+			in.read(reinterpret_cast<char*>(&nnz), sizeof(nnz));
+			out.rows[i].resize(nnz);
+			for (uint64_t k = 0; k < nnz; ++k) {
+				in.read(reinterpret_cast<char*>(&out.rows[i][k].col), sizeof(uint64_t));
+				in.read(reinterpret_cast<char*>(&out.rows[i][k].val), sizeof(int));
 			}
 		}
 	}
@@ -406,24 +436,134 @@ inline void upload_sparse_matrix_(CUDALogSigCache& entry, uint64_t dimension, ui
 	upload_csr_to_gpu_(inv_proj_mat_t, entry.d_sparse_vals_t, entry.d_sparse_cols_t, entry.d_sparse_row_ptr_t);
 }
 
-inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int method) {
-	auto key = std::make_pair(dimension, degree);
-	auto& cache_map = get_cuda_log_sig_cache_map_();
+// =========================================================================
+// Disk cache infrastructure (shared format with cpsig)
+// =========================================================================
 
-	auto it = cache_map.find(key);
-	if (it != cache_map.end()) {
-		// Entry exists — upgrade to method 2 if needed
-		if (method == 2 && it->second.d_sparse_row_ptr == nullptr) {
-			upload_sparse_matrix_(it->second, dimension, degree);
-		}
-		return;
+constexpr uint64_t cu_cache_magic_number = 0x70797369676C6962;
+constexpr const char* cu_cache_version = "v1";
+constexpr const char* cu_cache_folder_name = "pysiglib_cache";
+
+inline std::filesystem::path& get_cuda_cache_dir_() {
+	static std::filesystem::path dir;
+	return dir;
+}
+
+inline void cu_serialize_vector_(std::ostream& out, const std::vector<uint64_t>& v) {
+	uint64_t size = v.size();
+	out.write(reinterpret_cast<const char*>(&size), sizeof(size));
+	if (size > 0) {
+		out.write(reinterpret_cast<const char*>(v.data()), size * sizeof(uint64_t));
+	}
+}
+
+inline void cu_deserialize_vector_(std::istream& in, std::vector<uint64_t>& out) {
+	uint64_t size;
+	in.read(reinterpret_cast<char*>(&size), sizeof(size));
+	out.resize(size);
+	if (size > 0) {
+		in.read(reinterpret_cast<char*>(out.data()), size * sizeof(uint64_t));
+	}
+}
+
+inline void set_cache_dir_cuda_(const char* dir) {
+	std::filesystem::path dir_path = dir;
+	if (!std::filesystem::exists(dir_path)) {
+		throw std::runtime_error("Directory " + std::string(dir) + " does not exist.");
+	}
+	std::filesystem::path cache_path = dir_path / cu_cache_folder_name;
+	if (!std::filesystem::exists(cache_path)) {
+		std::filesystem::create_directories(cache_path);
+	}
+	get_cuda_cache_dir_() = dir_path;
+}
+
+inline void set_default_cuda_cache_dir_() {
+#ifdef _WIN32
+	char* dir = nullptr;
+	size_t len;
+	const errno_t err = _dupenv_s(&dir, &len, "LOCALAPPDATA");
+	if (err || !dir) {
+		throw std::runtime_error("Failed to get default cache directory.");
+	}
+#elif __APPLE__
+	std::string dir_str = std::string(std::getenv("HOME")) + "/Library/Caches";
+	const char* dir = dir_str.c_str();
+#else
+	std::string dir_str = std::string(std::getenv("HOME")) + "/.cache";
+	const char* dir = dir_str.c_str();
+#endif
+	set_cache_dir_cuda_(dir);
+#ifdef _WIN32
+	free(dir);
+#endif
+}
+
+inline void ensure_cuda_cache_dir_() {
+	auto& dir = get_cuda_cache_dir_();
+	if (dir.empty()) {
+		set_default_cuda_cache_dir_();
+	}
+	auto cache_path = dir / cu_cache_folder_name;
+	if (!std::filesystem::exists(cache_path)) {
+		std::filesystem::create_directories(cache_path);
+	}
+}
+
+class CuCacheFile {
+public:
+	CuCacheFile(uint64_t dimension, uint64_t degree) {
+		auto& dir = get_cuda_cache_dir_();
+		if (dir.empty() || !std::filesystem::exists(dir / cu_cache_folder_name))
+			throw std::runtime_error("Unexpected internal error. Cache directory was not set correctly.");
+		file_name_ = std::to_string(dimension) + "_" + std::to_string(degree) + "_" + cu_cache_version + ".bin";
+		file_path_ = dir / cu_cache_folder_name / file_name_;
 	}
 
-	// Compute Lyndon indices on host
-	std::vector<uint64_t> lyndon_idx = cu_all_lyndon_idx(dimension, degree);
-	uint64_t log_sig_len = lyndon_idx.size();
+	bool exists() const {
+		return std::filesystem::exists(file_path_);
+	}
 
-	CUDALogSigCache entry;
+	void write(int method, const std::vector<uint64_t>& lyndon_idx,
+	           const CuSparseIntMatrix& inv_proj_mat,
+	           const CuSparseIntMatrix& inv_proj_mat_t) const {
+		std::ofstream out(file_path_, std::ios::binary);
+		out.write(reinterpret_cast<const char*>(&cu_cache_magic_number), sizeof(cu_cache_magic_number));
+		out.write(reinterpret_cast<const char*>(&method), sizeof(method));
+		cu_serialize_vector_(out, lyndon_idx);
+		inv_proj_mat.serialize(out);
+		inv_proj_mat_t.serialize(out);
+	}
+
+	void read(int& method, std::vector<uint64_t>& lyndon_idx,
+	          CuSparseIntMatrix& inv_proj_mat,
+	          CuSparseIntMatrix& inv_proj_mat_t) const {
+		std::ifstream in(file_path_, std::ios::binary);
+		uint64_t magic;
+		in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+		if (magic != cu_cache_magic_number)
+			throw std::runtime_error("Tried to read an invalid cache file. Cache may have been corrupted.");
+		in.read(reinterpret_cast<char*>(&method), sizeof(method));
+		cu_deserialize_vector_(in, lyndon_idx);
+		CuSparseIntMatrix::deserialize(in, inv_proj_mat);
+		CuSparseIntMatrix::deserialize(in, inv_proj_mat_t);
+	}
+
+private:
+	std::string file_name_;
+	std::filesystem::path file_path_;
+};
+
+// =========================================================================
+// prepare / clear (host-side)
+// =========================================================================
+
+inline void populate_cuda_cache_entry_(
+	CUDALogSigCache& entry,
+	const std::vector<uint64_t>& lyndon_idx,
+	uint64_t dimension, uint64_t degree
+) {
+	uint64_t log_sig_len = lyndon_idx.size();
 	entry.log_sig_len = log_sig_len;
 
 	// Upload lyndon_idx to GPU
@@ -443,10 +583,85 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 	// Compute threads_per_block from max level size
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	entry.threads_per_block = host_choose_threads_per_block(max_level_size);
+}
+
+inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int method, bool use_disk) {
+	auto key = std::make_pair(dimension, degree);
+	auto& cache_map = get_cuda_log_sig_cache_map_();
+
+	auto it = cache_map.find(key);
+	if (it != cache_map.end()) {
+		// Entry exists — upgrade to method 2 if needed
+		if (method == 2 && it->second.d_sparse_row_ptr == nullptr) {
+			// Try loading sparse matrices from disk
+			if (use_disk) {
+				ensure_cuda_cache_dir_();
+				CuCacheFile file(dimension, degree);
+				if (file.exists()) {
+					int disk_method;
+					std::vector<uint64_t> disk_lyndon_idx;
+					CuSparseIntMatrix disk_inv, disk_inv_t;
+					file.read(disk_method, disk_lyndon_idx, disk_inv, disk_inv_t);
+					if (disk_method >= 2) {
+						upload_csr_to_gpu_(disk_inv, it->second.d_sparse_vals, it->second.d_sparse_cols, it->second.d_sparse_row_ptr);
+						upload_csr_to_gpu_(disk_inv_t, it->second.d_sparse_vals_t, it->second.d_sparse_cols_t, it->second.d_sparse_row_ptr_t);
+						return;
+					}
+				}
+			}
+			upload_sparse_matrix_(it->second, dimension, degree);
+		}
+		return;
+	}
+
+	// Full cache miss — try loading from disk
+	if (use_disk) {
+		ensure_cuda_cache_dir_();
+		CuCacheFile file(dimension, degree);
+		if (file.exists()) {
+			int disk_method;
+			std::vector<uint64_t> lyndon_idx;
+			CuSparseIntMatrix inv_proj_mat, inv_proj_mat_t;
+			file.read(disk_method, lyndon_idx, inv_proj_mat, inv_proj_mat_t);
+
+			if (disk_method >= method) {
+				CUDALogSigCache entry;
+				populate_cuda_cache_entry_(entry, lyndon_idx, dimension, degree);
+
+				if (method == 2 && disk_method >= 2) {
+					upload_csr_to_gpu_(inv_proj_mat, entry.d_sparse_vals, entry.d_sparse_cols, entry.d_sparse_row_ptr);
+					upload_csr_to_gpu_(inv_proj_mat_t, entry.d_sparse_vals_t, entry.d_sparse_cols_t, entry.d_sparse_row_ptr_t);
+				}
+
+				cache_map.emplace(key, std::move(entry));
+				return;
+			}
+		}
+	}
+
+	// Compute from scratch
+	std::vector<uint64_t> lyndon_idx = cu_all_lyndon_idx(dimension, degree);
+
+	CUDALogSigCache entry;
+	populate_cuda_cache_entry_(entry, lyndon_idx, dimension, degree);
 
 	// For method 2, compute and upload the sparse matrix
+	CuSparseIntMatrix inv_proj_mat, inv_proj_mat_t;
 	if (method == 2) {
-		upload_sparse_matrix_(entry, dimension, degree);
+		std::vector<cu_word> lyndon_words = cu_all_lyndon_words(dimension, degree);
+		CuSparseIntMatrix proj_mat;
+		cu_lyndon_proj_matrix(proj_mat, lyndon_words, lyndon_idx, dimension, degree);
+		proj_mat.inverse(inv_proj_mat);
+		inv_proj_mat.transpose(inv_proj_mat_t);
+		upload_csr_to_gpu_(inv_proj_mat, entry.d_sparse_vals, entry.d_sparse_cols, entry.d_sparse_row_ptr);
+		upload_csr_to_gpu_(inv_proj_mat_t, entry.d_sparse_vals_t, entry.d_sparse_cols_t, entry.d_sparse_row_ptr_t);
+	}
+
+	// Save to disk
+	if (use_disk) {
+		ensure_cuda_cache_dir_();
+		CuCacheFile file(dimension, degree);
+		file.write(method, lyndon_idx, inv_proj_mat, inv_proj_mat_t);
 	}
 
 	cache_map.emplace(key, std::move(entry));
@@ -466,8 +681,19 @@ inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_
 void free_cuda_log_sig_workspace_();
 void free_cuda_log_sig_backprop_workspace_();
 
-inline void clear_cache_cuda_() {
+inline void clear_cache_cuda_(bool use_disk) {
 	get_cuda_log_sig_cache_map_().clear();
 	free_cuda_log_sig_workspace_();
 	free_cuda_log_sig_backprop_workspace_();
+
+	if (use_disk) {
+		auto& dir = get_cuda_cache_dir_();
+		if (dir.empty()) {
+			set_default_cuda_cache_dir_();
+		}
+		auto cache_path = dir / cu_cache_folder_name;
+		if (std::filesystem::exists(cache_path)) {
+			std::filesystem::remove_all(cache_path);
+		}
+	}
 }

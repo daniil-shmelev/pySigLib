@@ -502,9 +502,10 @@ extern "C" {
 	* @param dimension Dimension of the underlying path space.
 	* @param degree Truncation degree.
 	* @param method Method (1 or 2).
+	* @param use_disk If true, check the shared disk cache before computing, and save to disk if not found.
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int prepare_log_sig_cuda(uint64_t dimension, uint64_t degree, int method) noexcept;
+	CUSIG_API int prepare_log_sig_cuda(uint64_t dimension, uint64_t degree, int method, bool use_disk = false) noexcept;
 	/** @} */
 
 	/** @defgroup sig_coef_cuda_functions Sig coef CUDA functions
@@ -609,8 +610,25 @@ extern "C" {
 	/**
 	* @brief Clears all GPU-side cached data for log signature computation.
 	*
+	* @param use_disk If true, also delete the shared disk cache.
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int clear_cache_cuda() noexcept;
+	CUSIG_API int clear_cache_cuda(bool use_disk = false) noexcept;
+	/** @} */
+
+	/** @defgroup set_cache_dir_cuda_functions Set cache dir CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Sets the disk cache directory for CUDA log signature data.
+	*
+	* This should match the directory used by cpsig, as both libraries
+	* share the same disk cache format.
+	*
+	* @param dir Path to the cache directory.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int set_cache_dir_cuda(const char* dir) noexcept;
 	/** @} */
 }
