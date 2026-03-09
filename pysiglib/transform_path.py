@@ -72,7 +72,7 @@ def batch_transform_path_(data, result, n_jobs):
         raise Exception("Error in pysiglib.transform_path: " + err_msg(err_code))
     return result.data
 
-def batch_transform_path_cuda_(data, result, n_jobs):
+def batch_transform_path_cuda_(data, result):
     err_code = CUSIG_BATCH_TRANSFORM_PATH_CUDA[data.dtype](
         data.data_ptr,
         result.data_ptr,
@@ -202,5 +202,5 @@ def transform_path(
         return transform_path_(data, result)
     else:
         if data.is_batch:
-            return batch_transform_path_cuda_(data, result, n_jobs)
+            return batch_transform_path_cuda_(data, result)
         return transform_path_cuda_(data, result)

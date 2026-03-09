@@ -284,24 +284,19 @@ def sig_coef(
 
     flat_indices = [i for idx in words for i in idx]
 
-    if data.device == "cuda":
-        words_t = torch.tensor(flat_indices, dtype=torch.uint64, device=path.device)
-        degrees_t = torch.tensor(degrees, dtype=torch.uint64, device=path.device)
-    else:
+    if data.device == "cpu":
         words_t = torch.tensor(flat_indices, dtype=torch.uint64)
         degrees_t = torch.tensor(degrees, dtype=torch.uint64)
+    else:
+        words_t = torch.tensor(flat_indices, dtype=torch.uint64, device=path.device)
+        degrees_t = torch.tensor(degrees, dtype=torch.uint64, device=path.device)
 
     multi_indices_ptr = cast(words_t.data_ptr(), POINTER(c_uint64))
     degrees_ptr = cast(degrees_t.data_ptr(), POINTER(c_uint64))
 
     result = SigOutputHandler(data, result_length)
 
-    if data.device == "cuda":
-        if data.is_batch:
-            res = batch_sig_coef_cuda_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
-        else:
-            res = sig_coef_cuda_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
-    else:
+    if data.device == "cpu":
         if data.is_batch:
             check_type(n_jobs, "n_jobs", int)
             if n_jobs == 0:
@@ -309,5 +304,10 @@ def sig_coef(
             res = batch_sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes, n_jobs)
         else:
             res = sig_coef_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
+    else:
+        if data.is_batch:
+            res = batch_sig_coef_cuda_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
+        else:
+            res = sig_coef_cuda_(data, result, multi_indices_ptr, num_multi_indices, degrees_ptr, prefixes)
 
     return res
