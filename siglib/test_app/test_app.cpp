@@ -67,7 +67,10 @@ int main(int argc, char* argv[])
     //example_batch_sig_combine_backprop_cuda_d();
 
     //example_batch_sig_coef(100, 5000, 5, 5, 1000, false, false, 1., -1, 10);  // CPU all cores
-    example_batch_sig_coef_cuda_d(100, 5000, 5, 5, 1000, 10);               // CUDA
+    //example_batch_sig_coef_cuda_d(100, 5000, 5, 5, 1000, 10);               // CUDA
+
+    // benchmark: batch_sig_coef_backprop_cuda_d (batch=64, dim=8, deg=5, len=1000, num_idx=100)
+    example_batch_sig_coef_backprop_cuda_d(100, 1000, 8, 5, 400, 10);
 
     unload_cpsig();
     unload_cusig();

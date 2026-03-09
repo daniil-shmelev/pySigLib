@@ -475,12 +475,13 @@ extern "C" {
 // Backpropagation
 // =========================================================================
 
-// Additional constant memory for (-1)^k / k!
-__constant__ double c_signed_ovf_d[SIG_COEF_CUDA_MAX_DEGREE + 1];
-__constant__ float  c_signed_ovf_f[SIG_COEF_CUDA_MAX_DEGREE + 1];
+// Note: signed_one_over_fact ((-1)^k / k!) is computed inline from one_over_fact
+// to reduce register pressure — sign flip is free with compile-time unrolling.
 
 // =========================================================================
 // Generic backprop kernel (variable degree per word)
+// - sovf computed inline from ovf to reduce register pressure
+// - Merged atomicAdds: adjacent timesteps combined (~2x fewer atomics)
 // =========================================================================
 
 template<typename T>
@@ -492,7 +493,6 @@ __global__ void sig_coef_backprop_kernel(
 	const uint64_t* __restrict__ multi_idx,
 	const uint64_t* __restrict__ degrees,
 	const T* __restrict__ one_over_fact,
-	const T* __restrict__ signed_one_over_fact,
 	const uint64_t* __restrict__ idx_offsets,
 	const uint64_t* __restrict__ coef_offsets,
 	uint64_t num_multi_idx,
@@ -520,9 +520,9 @@ __global__ void sig_coef_backprop_kernel(
 	const T* my_path = path + batch_idx * path_length * dimension;
 	T* my_out = out + batch_idx * path_length * dimension;
 
-	uint64_t ch[SIG_COEF_CUDA_MAX_DEGREE];
+	uint32_t ch[SIG_COEF_CUDA_MAX_DEGREE];
 	for (uint64_t i = 0; i < degree; ++i)
-		ch[i] = my_idx[i];
+		ch[i] = static_cast<uint32_t>(my_idx[i]);
 
 	T c[SIG_COEF_CUDA_MAX_DEGREE + 1];
 	c[0] = T(1);
@@ -534,6 +534,9 @@ __global__ void sig_coef_backprop_kernel(
 		d[i] = my_derivs[i];
 
 	T buff[SIG_COEF_CUDA_MAX_DEGREE];
+	T prev_upd[SIG_COEF_CUDA_MAX_DEGREE];
+	for (uint64_t i = 0; i < degree; ++i)
+		prev_upd[i] = T(0);
 
 	for (uint64_t t = path_length - 1; t >= 1; --t) {
 		T dx[SIG_COEF_CUDA_MAX_DEGREE];
@@ -541,7 +544,7 @@ __global__ void sig_coef_backprop_kernel(
 			dx[i] = my_path[t * dimension + ch[i]]
 			      - my_path[(t - 1) * dimension + ch[i]];
 
-		// uncombine_coefs_
+		// uncombine_coefs_ (sovf computed inline)
 		{
 			T last_c = c[0];
 			for (uint64_t i = 1; i <= degree; ++i) {
@@ -551,25 +554,23 @@ __global__ void sig_coef_backprop_kernel(
 				buff[i - 1] = last_c * inc;
 				T acc = T(0);
 				for (uint64_t j = 0; j < i; ++j)
-					acc += buff[j] * signed_one_over_fact[i - j];
+					acc += buff[j] * (((i - j) & 1) ? -one_over_fact[i - j] : one_over_fact[i - j]);
 				last_c = c[i];
 				c[i] += acc;
 			}
 		}
 
-		// update_path_derivs_
+		// update_path_derivs_ → collect into cur_upd
+		T cur_upd[SIG_COEF_CUDA_MAX_DEGREE];
 		{
-			// i = 0
 			T upd = d[0];
 			T rp = T(1);
 			for (uint64_t m = 1; m < degree; ++m) {
 				rp *= dx[m];
 				upd += d[m] * rp * one_over_fact[m + 1];
 			}
-			myAtomicAdd(&my_out[t * dimension + ch[0]], upd);
-			myAtomicAdd(&my_out[(t - 1) * dimension + ch[0]], -upd);
+			cur_upd[0] = upd;
 
-			// i >= 1
 			for (uint64_t i = 1; i < degree; ++i) {
 				const T inc = dx[i - 1];
 				for (uint64_t k = 0; k + 1 < i; ++k)
@@ -591,10 +592,16 @@ __global__ void sig_coef_backprop_kernel(
 					upd += d[m] * s;
 				}
 
-				myAtomicAdd(&my_out[t * dimension + ch[i]], upd);
-				myAtomicAdd(&my_out[(t - 1) * dimension + ch[i]], -upd);
+				cur_upd[i] = upd;
 			}
 		}
+
+		// Merged atomicAdds: net = cur_upd - prev_upd
+		for (uint64_t i = 0; i < degree; ++i)
+			myAtomicAdd(&my_out[t * dimension + ch[i]], cur_upd[i] - prev_upd[i]);
+
+		for (uint64_t i = 0; i < degree; ++i)
+			prev_upd[i] = cur_upd[i];
 
 		// update_coef_derivs_
 		{
@@ -609,10 +616,16 @@ __global__ void sig_coef_backprop_kernel(
 			}
 		}
 	}
+
+	// Final: write -prev_upd to position 0
+	for (uint64_t i = 0; i < degree; ++i)
+		myAtomicAdd(&my_out[ch[i]], -prev_upd[i]);
 }
 
 // =========================================================================
 // Fixed-degree backprop kernel (compile-time unrolling)
+// - sovf computed inline from ovf to reduce register pressure
+// - Merged atomicAdds: adjacent timesteps combined (~2x fewer atomics)
 // =========================================================================
 
 template<typename T, uint64_t DEGREE>
@@ -623,7 +636,6 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 	const T* __restrict__ derivs_in,
 	const uint64_t* __restrict__ multi_idx,
 	const T* __restrict__ one_over_fact,
-	const T* __restrict__ signed_one_over_fact,
 	const uint64_t* __restrict__ idx_offsets,
 	const uint64_t* __restrict__ coef_offsets,
 	uint64_t num_multi_idx,
@@ -648,15 +660,13 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 	const T* my_path = path + batch_idx * path_length * dimension;
 	T* my_out = out + batch_idx * path_length * dimension;
 
-	uint64_t ch[DEGREE];
+	uint32_t ch[DEGREE];
 	T ovf[DEGREE + 1];
-	T sovf[DEGREE + 1];
 
 	#pragma unroll
 	for (uint64_t i = 0; i < DEGREE; ++i) {
-		ch[i] = my_idx[i];
+		ch[i] = static_cast<uint32_t>(my_idx[i]);
 		ovf[i + 1] = one_over_fact[i + 1];
-		sovf[i + 1] = signed_one_over_fact[i + 1];
 	}
 	ovf[0] = T(1);
 
@@ -672,6 +682,10 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 		d[i] = my_derivs[i];
 
 	T buff[DEGREE];
+	T prev_upd[DEGREE];
+	#pragma unroll
+	for (uint64_t i = 0; i < DEGREE; ++i)
+		prev_upd[i] = T(0);
 
 	for (uint64_t t = path_length - 1; t >= 1; --t) {
 		T dx[DEGREE];
@@ -680,7 +694,7 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 			dx[i] = my_path[t * dimension + ch[i]]
 			      - my_path[(t - 1) * dimension + ch[i]];
 
-		// uncombine_coefs_
+		// uncombine_coefs_ (sovf computed inline: (-1)^k * ovf[k])
 		{
 			T last_c = c[0];
 			#pragma unroll
@@ -693,13 +707,14 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 				T acc = T(0);
 				#pragma unroll
 				for (uint64_t j = 0; j < i; ++j)
-					acc += buff[j] * sovf[i - j];
+					acc += buff[j] * (((i - j) & 1) ? -ovf[i - j] : ovf[i - j]);
 				last_c = c[i];
 				c[i] += acc;
 			}
 		}
 
-		// update_path_derivs_
+		// update_path_derivs_ → collect into cur_upd
+		T cur_upd[DEGREE];
 		{
 			T upd = d[0];
 			T rp = T(1);
@@ -708,8 +723,7 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 				rp *= dx[m];
 				upd += d[m] * rp * ovf[m + 1];
 			}
-			myAtomicAdd(&my_out[t * dimension + ch[0]], upd);
-			myAtomicAdd(&my_out[(t - 1) * dimension + ch[0]], -upd);
+			cur_upd[0] = upd;
 
 			#pragma unroll
 			for (uint64_t i = 1; i < DEGREE; ++i) {
@@ -737,10 +751,18 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 					upd += d[m] * s;
 				}
 
-				myAtomicAdd(&my_out[t * dimension + ch[i]], upd);
-				myAtomicAdd(&my_out[(t - 1) * dimension + ch[i]], -upd);
+				cur_upd[i] = upd;
 			}
 		}
+
+		// Merged atomicAdds: net = cur_upd - prev_upd
+		#pragma unroll
+		for (uint64_t i = 0; i < DEGREE; ++i)
+			myAtomicAdd(&my_out[t * dimension + ch[i]], cur_upd[i] - prev_upd[i]);
+
+		#pragma unroll
+		for (uint64_t i = 0; i < DEGREE; ++i)
+			prev_upd[i] = cur_upd[i];
 
 		// update_coef_derivs_
 		{
@@ -757,6 +779,11 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 			}
 		}
 	}
+
+	// Final: write -prev_upd to position 0
+	#pragma unroll
+	for (uint64_t i = 0; i < DEGREE; ++i)
+		myAtomicAdd(&my_out[ch[i]], -prev_upd[i]);
 }
 
 // =========================================================================
@@ -809,30 +836,20 @@ void sig_coef_backprop_cuda_(
 
 	if (length <= 1 || max_degree == 0) return;
 
-	// Upload 1/k! to constant memory
+	// Upload 1/k! to constant memory (sovf computed inline in kernel)
 	std::vector<T> h_ovf(max_degree + 1);
-	std::vector<T> h_sovf(max_degree + 1);
 	h_ovf[0] = T(1);
-	h_sovf[0] = T(1);
-	T sgn = T(-1);
-	for (uint64_t i = 1; i <= max_degree; ++i, sgn = -sgn) {
+	for (uint64_t i = 1; i <= max_degree; ++i)
 		h_ovf[i] = h_ovf[i - 1] / T(i);
-		h_sovf[i] = sgn * h_ovf[i];
-	}
 
 	const T* d_ovf;
-	const T* d_sovf;
 	if constexpr (std::is_same_v<T, double>) {
 		cudaMemcpyToSymbol(c_one_over_fact_d, h_ovf.data(), sizeof(T) * (max_degree + 1));
 		cudaGetSymbolAddress((void**)&d_ovf, c_one_over_fact_d);
-		cudaMemcpyToSymbol(c_signed_ovf_d, h_sovf.data(), sizeof(T) * (max_degree + 1));
-		cudaGetSymbolAddress((void**)&d_sovf, c_signed_ovf_d);
 	}
 	else {
 		cudaMemcpyToSymbol(c_one_over_fact_f, h_ovf.data(), sizeof(T) * (max_degree + 1));
 		cudaGetSymbolAddress((void**)&d_ovf, c_one_over_fact_f);
-		cudaMemcpyToSymbol(c_signed_ovf_f, h_sovf.data(), sizeof(T) * (max_degree + 1));
-		cudaGetSymbolAddress((void**)&d_sovf, c_signed_ovf_f);
 	}
 
 	// Upload prefix sums
@@ -851,67 +868,67 @@ void sig_coef_backprop_cuda_(
 		switch (max_degree) {
 		case 1:
 			sig_coef_backprop_kernel_fixed_degree<T, 1><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
 		case 2:
 			sig_coef_backprop_kernel_fixed_degree<T, 2><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
 		case 3:
 			sig_coef_backprop_kernel_fixed_degree<T, 3><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
 		case 4:
 			sig_coef_backprop_kernel_fixed_degree<T, 4><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
 		case 5:
 			sig_coef_backprop_kernel_fixed_degree<T, 5><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
 		case 6:
 			sig_coef_backprop_kernel_fixed_degree<T, 6><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
 		case 7:
 			sig_coef_backprop_kernel_fixed_degree<T, 7><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
 		case 8:
 			sig_coef_backprop_kernel_fixed_degree<T, 8><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
 		case 9:
 			sig_coef_backprop_kernel_fixed_degree<T, 9><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
 		case 10:
 			sig_coef_backprop_kernel_fixed_degree<T, 10><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
 		default:
 			sig_coef_backprop_kernel<T><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_degrees, d_ovf, d_sovf,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_degrees, d_ovf,
 				d_idx_offsets, d_coef_offsets,
 				num_multi_idx, batch_size, dimension, length, coefs_length);
 			break;
@@ -919,7 +936,7 @@ void sig_coef_backprop_cuda_(
 	}
 	else {
 		sig_coef_backprop_kernel<T><<<num_blocks, tpb>>>(
-			d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_degrees, d_ovf, d_sovf,
+			d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_degrees, d_ovf,
 			d_idx_offsets, d_coef_offsets,
 			num_multi_idx, batch_size, dimension, length, coefs_length);
 	}
