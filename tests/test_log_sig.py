@@ -18,25 +18,16 @@ import numpy as np
 import torch
 import iisignature
 
-signatory = None
 try:
     import signatory
-except Exception:
+except:
     signatory = None
 
 import pysiglib.torch_api as pysiglib
+from conftest import DEVICES, check_close, assert_device
 
 np.random.seed(42)
 torch.manual_seed(42)
-
-SINGLE_EPSILON = 1e-4
-DOUBLE_EPSILON = 1e-10
-
-def check_close(a, b):
-    a_ = np.array(a)
-    b_ = np.array(b)
-    EPSILON = SINGLE_EPSILON if a_.dtype == np.float32 else DOUBLE_EPSILON
-    assert not np.any(np.abs(a_ - b_) > EPSILON)
 
 def test_prepare_memory():
     X = np.random.uniform(size=(100, 5))
@@ -75,91 +66,112 @@ def test_prepare_disk():
     pysiglib.clear_cache(True)
 
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_log_signature_expanded_random(deg, dtype):
+def test_log_signature_expanded_random(device, deg, dtype):
     X = np.random.uniform(size=(100, 5)).astype(dtype)
 
     s = iisignature.prepare(5, deg, "x")
     iisig = iisignature.logsig(X, s, "x").astype(dtype)
-    sig = pysiglib.log_sig(X, deg, method=0)
+    X_dev = torch.tensor(X, device=device)
+    sig = pysiglib.log_sig(X_dev, deg, method=0)
+    assert_device(sig, device)
     check_close(iisig, sig[1:])
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_batch_log_signature_expanded_random(deg, dtype):
+def test_batch_log_signature_expanded_random(device, deg, dtype):
     X = np.random.uniform(size=(32, 100, 5)).astype(dtype)
 
     s = iisignature.prepare(5, deg, "x")
     iisig = iisignature.logsig(X, s, "x").astype(dtype)
-    sig = pysiglib.log_sig(X, deg, method=0)
+    X_dev = torch.tensor(X, device=device)
+    sig = pysiglib.log_sig(X_dev, deg, method=0)
+    assert_device(sig, device)
     check_close(iisig, sig[:, 1:])
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_batch_log_signature_expanded_time_aug_random(deg, dtype):
+def test_batch_log_signature_expanded_time_aug_random(device, deg, dtype):
     X = np.random.uniform(size=(32, 100, 5)).astype(dtype)
 
     s = iisignature.prepare(6, deg, "x")
     iisig = iisignature.logsig(pysiglib.transform_path(X, time_aug=True), s, "x").astype(dtype)
-    sig = pysiglib.log_sig(X, deg, time_aug=True, method=0)
+    X_dev = torch.tensor(X, device=device)
+    sig = pysiglib.log_sig(X_dev, deg, time_aug=True, method=0)
+    assert_device(sig, device)
     check_close(iisig, sig[:, 1:])
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_batch_log_signature_expanded_lead_lag_random(deg, dtype):
+def test_batch_log_signature_expanded_lead_lag_random(device, deg, dtype):
     X = np.random.uniform(size=(32, 100, 5)).astype(dtype)
 
     s = iisignature.prepare(10, deg, "x")
     iisig = iisignature.logsig(pysiglib.transform_path(X, lead_lag=True), s, "x").astype(dtype)
-    sig = pysiglib.log_sig(X, deg, lead_lag=True, method=0)
+    X_dev = torch.tensor(X, device=device)
+    sig = pysiglib.log_sig(X_dev, deg, lead_lag=True, method=0)
+    assert_device(sig, device)
     check_close(iisig, sig[:, 1:])
 
 @pytest.mark.skipif(signatory is None, reason="signatory not available")
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_log_signature_lyndon_words_random(deg, dtype):
-    X = torch.rand(size=(1, 100, 5), dtype=dtype)
+def test_log_signature_lyndon_words_random(device, deg, dtype):
+    X = torch.rand(size=(1, 100, 5), dtype=dtype, device=device)
 
-    ls = signatory.logsignature(X, deg, mode="words")[0]
+    ls = signatory.logsignature(X.cpu(), deg, mode="words")[0]
     pysiglib.prepare_log_sig(5, deg, 1)
     sig = pysiglib.log_sig(X[0], deg, method=1)
+    assert_device(sig, device)
     check_close(ls, sig)
     pysiglib.clear_cache()
 
 @pytest.mark.skipif(signatory is None, reason="signatory not available")
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_batch_log_signature_lyndon_words_random(deg, dtype):
-    X = torch.rand(size=(32, 100, 5), dtype=dtype)
+def test_batch_log_signature_lyndon_words_random(device, deg, dtype):
+    X = torch.rand(size=(32, 100, 5), dtype=dtype, device=device)
 
-    ls = signatory.logsignature(X, deg, mode="words")
+    ls = signatory.logsignature(X.cpu(), deg, mode="words")
     pysiglib.prepare_log_sig(5, deg, 1)
     sig = pysiglib.log_sig(X, deg, method=1)
+    assert_device(sig, device)
     check_close(ls, sig)
     pysiglib.clear_cache()
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_log_signature_lyndon_basis_random(deg, dtype):
+def test_log_signature_lyndon_basis_random(device, deg, dtype):
     X = np.random.uniform(size=(100, 5)).astype(dtype)
 
     s = iisignature.prepare(5, deg, "s")
     iisig = iisignature.logsig(X, s, "s").astype(dtype)
+    X_dev = torch.tensor(X, device=device)
     pysiglib.prepare_log_sig(5, deg, 2)
-    sig = pysiglib.log_sig(X, deg, method=2)
+    sig = pysiglib.log_sig(X_dev, deg, method=2)
+    assert_device(sig, device)
     check_close(iisig, sig)
     pysiglib.clear_cache()
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_batch_log_signature_lyndon_basis_random(deg, dtype):
+def test_batch_log_signature_lyndon_basis_random(device, deg, dtype):
     X = np.random.uniform(size=(32, 100, 5)).astype(dtype)
 
     s = iisignature.prepare(5, deg, "s")
     iisig = iisignature.logsig(X, s, "s").astype(dtype)
+    X_dev = torch.tensor(X, device=device)
     pysiglib.prepare_log_sig(5, deg, 2)
-    sig = pysiglib.log_sig(X, deg, method=2)
+    sig = pysiglib.log_sig(X_dev, deg, method=2)
+    assert_device(sig, device)
     check_close(iisig, sig)
     pysiglib.clear_cache()
-

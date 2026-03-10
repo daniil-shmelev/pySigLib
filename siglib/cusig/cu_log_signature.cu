@@ -634,13 +634,8 @@ void sig_to_log_sig_backprop_cuda_m1_core_(
 	const uint64_t buff1_len = cache.buff1_len;
 	const uint64_t log_sig_len = cache.log_sig_len;
 
-	if (degree <= 1) {
-		cudaMemcpy(out, log_sig_derivs, batch_size * sig_len * sizeof(T), cudaMemcpyDeviceToDevice);
-		return;
-	}
-
 	const uint64_t scratch_per_element =
-		sig_len + (degree - 1) * buff1_len + sig_len + buff1_len + sig_len;
+		sig_len + (degree > 1 ? (degree - 1) : 1) * buff1_len + sig_len + buff1_len + sig_len;
 
 	const size_t derivs_size = sizeof(T) * batch_size * sig_len;
 	g_bp_workspace.ensure(sizeof(T) * batch_size * scratch_per_element, derivs_size);
@@ -760,13 +755,8 @@ void sig_to_log_sig_backprop_cuda_m2_core_(
 	const uint64_t buff1_len = cache.buff1_len;
 	const uint64_t log_sig_len = cache.log_sig_len;
 
-	if (degree <= 1) {
-		cudaMemcpy(out, log_sig_derivs, batch_size * sig_len * sizeof(T), cudaMemcpyDeviceToDevice);
-		return;
-	}
-
 	const uint64_t scratch_per_element =
-		sig_len + (degree - 1) * buff1_len + sig_len + buff1_len + sig_len;
+		sig_len + (degree > 1 ? (degree - 1) : 1) * buff1_len + sig_len + buff1_len + sig_len;
 
 	const size_t derivs_size = sizeof(T) * batch_size * sig_len;
 	g_bp_workspace.ensure(sizeof(T) * batch_size * scratch_per_element, derivs_size);

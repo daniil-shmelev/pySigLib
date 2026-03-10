@@ -25,10 +25,9 @@ torch.manual_seed(42)
 
 EPSILON = 1e-5
 
-def check_close(a, b):
-    a_ = np.array(a)
-    b_ = np.array(b)
-    assert not np.any(np.abs(a_ - b_) > EPSILON)
+from functools import partial
+from conftest import DEVICES, check_close as _check_close
+check_close = partial(_check_close, atol=EPSILON)
 
 def lead_lag(x):
     # A backpropagatable version of lead-lag
@@ -84,86 +83,88 @@ def sig_kernel_full_grid(X1, X2, len1, len2, batch):
     return result
 
 
-################################################
-## CPU
-################################################
-
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_expected_sig_score_random_cpu(dyadic_order):
+def test_expected_sig_score_random(device, dyadic_order):
     batch, len1, len2, dim = 32, 10, 10, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     static_kernel = sigkernel.LinearKernel()
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
     d1 = float(signature_kernel.compute_expected_scoring_rule(X, Y, 100))
-    d2 = pysiglib.expected_sig_score(X, Y, dyadic_order, n_jobs = -1)
+    d2 = float(pysiglib.expected_sig_score(X, Y, dyadic_order))
 
     assert not abs(d1 - d2) > EPSILON
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_expected_sig_score_random_cpu_rbf(dyadic_order):
+def test_expected_sig_score_random_rbf(device, dyadic_order):
     batch, len1, len2, dim = 32, 10, 10, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     static_kernel = sigkernel.RBFKernel(2.)
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
     d1 = float(signature_kernel.compute_expected_scoring_rule(X, Y, 100))
-    d2 = pysiglib.expected_sig_score(X, Y, dyadic_order, n_jobs = -1, static_kernel= pysiglib.RBFKernel(2.))
+    d2 = float(pysiglib.expected_sig_score(X, Y, dyadic_order, static_kernel= pysiglib.RBFKernel(2.)))
 
     assert not abs(d1 - d2) > EPSILON
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize(("len1", "len2"), [(10, 50), (50, 10)])
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_expected_sig_score_random_cpu_non_square(len1, len2, dyadic_order):
+def test_expected_sig_score_random_non_square(device, len1, len2, dyadic_order):
     batch, dim = 32, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     static_kernel = sigkernel.LinearKernel()
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
     d1 = float(signature_kernel.compute_expected_scoring_rule(X, Y, 100))
-    d2 = pysiglib.expected_sig_score(X, Y, dyadic_order, n_jobs = -1)
+    d2 = float(pysiglib.expected_sig_score(X, Y, dyadic_order))
 
     assert not abs(d1 - d2) > EPSILON
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_mmd_random_cpu(dyadic_order):
+def test_sig_mmd_random(device, dyadic_order):
     batch, len1, len2, dim = 32, 10, 10, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     static_kernel = sigkernel.LinearKernel()
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
     mmd1 = float(signature_kernel.compute_mmd(X, Y, 100))
-    mmd2 = pysiglib.sig_mmd(X, Y, dyadic_order, n_jobs = -1)
+    mmd2 = float(pysiglib.sig_mmd(X, Y, dyadic_order))
 
     assert not abs(mmd1 - mmd2) > EPSILON
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_mmd_random_cpu_rbf(dyadic_order):
+def test_sig_mmd_random_rbf(device, dyadic_order):
     batch, len1, len2, dim = 32, 10, 10, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     static_kernel = sigkernel.RBFKernel(2.)
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
     mmd1 = float(signature_kernel.compute_mmd(X, Y, 100))
-    mmd2 = pysiglib.sig_mmd(X, Y, dyadic_order, n_jobs = -1, static_kernel= pysiglib.RBFKernel(2.))
+    mmd2 = float(pysiglib.sig_mmd(X, Y, dyadic_order, static_kernel= pysiglib.RBFKernel(2.)))
 
     assert not abs(mmd1 - mmd2) > EPSILON
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize(("len1", "len2"), [(10, 50), (50, 10)])
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_mmd_random_cpu_non_square(len1, len2, dyadic_order):
+def test_sig_mmd_random_non_square(device, len1, len2, dyadic_order):
     batch, dim = 32, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     static_kernel = sigkernel.LinearKernel()
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
     mmd1 = float(signature_kernel.compute_mmd(X, Y, 100))
-    mmd2 = pysiglib.sig_mmd(X, Y, dyadic_order, n_jobs = -1)
+    mmd2 = float(pysiglib.sig_mmd(X, Y, dyadic_order))
 
     assert not abs(mmd1 - mmd2) > EPSILON

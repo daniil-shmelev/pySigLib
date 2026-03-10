@@ -21,12 +21,9 @@ import pysiglib
 
 np.random.seed(42)
 torch.manual_seed(42)
-EPSILON = 1e-5
-
-def check_close(a, b):
-    a_ = np.array(a)
-    b_ = np.array(b)
-    assert not np.max(np.abs(a_ - b_)) > EPSILON
+from functools import partial
+from conftest import DEVICES, check_close as _check_close, assert_device
+check_close = partial(_check_close, atol=1e-5)
 
 def time_aug(X, end_time = 1., is_batch = False):
     length = X.shape[1] if is_batch else X.shape[0]
@@ -54,38 +51,52 @@ def lead_lag(X, is_batch = False):
     else:
         return np.concatenate([lead_lag(X_)[np.newaxis, :, :] for X_ in X], axis = 0)
 
-def test_transform_path_time_aug():
+@pytest.mark.parametrize("device", DEVICES)
+def test_transform_path_time_aug(device):
     X = np.random.uniform(size=(100, 5))
     X1 = time_aug(X)
-    X2 = pysiglib.transform_path(X, time_aug = True)
+    X_dev = torch.tensor(X, device=device)
+    X2 = pysiglib.transform_path(X_dev, time_aug = True)
+    assert_device(X2, device)
     check_close(X1, X2)
 
-def test_batch_transform_path_time_aug():
+@pytest.mark.parametrize("device", DEVICES)
+def test_batch_transform_path_time_aug(device):
     X = np.random.uniform(size=(10, 100, 5))
     X1 = time_aug(X, is_batch = True)
-    X2 = pysiglib.transform_path(X, time_aug = True)
+    X_dev = torch.tensor(X, device=device)
+    X2 = pysiglib.transform_path(X_dev, time_aug = True)
+    assert_device(X2, device)
     check_close(X1, X2)
 
-def test_transform_path_lead_lag():
+@pytest.mark.parametrize("device", DEVICES)
+def test_transform_path_lead_lag(device):
     X = np.random.uniform(size=(100, 5))
     X1 = lead_lag(X)
-    X2 = pysiglib.transform_path(X, lead_lag = True)
+    X_dev = torch.tensor(X, device=device)
+    X2 = pysiglib.transform_path(X_dev, lead_lag = True)
+    assert_device(X2, device)
     check_close(X1, X2)
 
-def test_batch_transform_path_lead_lag():
+@pytest.mark.parametrize("device", DEVICES)
+def test_batch_transform_path_lead_lag(device):
     X = np.random.uniform(size=(10, 100, 5))
     X1 = lead_lag(X, True)
-    X2 = pysiglib.transform_path(X, lead_lag = True)
+    X_dev = torch.tensor(X, device=device)
+    X2 = pysiglib.transform_path(X_dev, lead_lag = True)
+    assert_device(X2, device)
     check_close(X1, X2)
 
-def test_transform_path_backprop_lead_lag():
-    X = torch.rand(size=(100, 5), dtype = torch.double)
+@pytest.mark.parametrize("device", DEVICES)
+def test_transform_path_backprop_lead_lag(device):
+    X = torch.rand(size=(100, 5), dtype = torch.double, device=device)
 
     X_ll = pysiglib.transform_path(X, lead_lag = True)
-    deriv = torch.ones(X_ll.shape, dtype = torch.double)
+    deriv = torch.ones(X_ll.shape, dtype = torch.double, device=device)
     X1 = pysiglib.transform_path_backprop(deriv, lead_lag = True)
+    assert_device(X1, device)
 
-    X2 = torch.ones((100,5), dtype = torch.double) * 4.
+    X2 = torch.ones((100,5), dtype = torch.double, device=device) * 4.
     X2[0, :] = 3.
     X2[-1, :] = 3.
 
