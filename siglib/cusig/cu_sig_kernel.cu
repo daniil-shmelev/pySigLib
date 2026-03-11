@@ -32,46 +32,6 @@ __constant__ uint64_t gram_length;
 __constant__ uint64_t grid_length;
 
 
-// https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#atomic-functions
-__device__ float myAtomicAdd(float* address, float val)
-{
-	unsigned int* address_as_ui =
-		(unsigned int*)address;
-	unsigned int old = *address_as_ui, assumed;
-
-	do {
-		assumed = old;
-		old = atomicCAS(
-			address_as_ui,
-			assumed,
-			__float_as_uint(val + __uint_as_float(assumed))
-		);
-
-		// integer comparison avoids NaN hang
-	} while (assumed != old);
-
-	return __uint_as_float(old);
-}
-
-__device__ double myAtomicAdd(double* address, double val)
-{
-	unsigned long long int* address_as_ull =
-		(unsigned long long int*)address;
-	unsigned long long int old = *address_as_ull, assumed;
-
-	do {
-		assumed = old;
-		old = atomicCAS(address_as_ull, assumed,
-			__double_as_longlong(val +
-				__longlong_as_double(assumed)));
-
-		// Note: uses integer comparison to avoid hang in case of NaN (since NaN != NaN)
-	} while (assumed != old);
-
-	return __longlong_as_double(old);
-}
-
-
 template<typename T>
 inline __device__ void get_a_b(T& a, T& b, const T* gram, uint64_t idx, T dyadic_frac) {
 	static const T twelth = static_cast<T>(1.) / 12;

@@ -48,6 +48,9 @@
     <ClInclude Include="cu_sig_coef.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="cu_atomic.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cupch.cpp">

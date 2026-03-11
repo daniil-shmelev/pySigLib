@@ -16,33 +16,8 @@
 #include "cupch.h"
 #include "cusig.h"
 #include "cu_sig_coef.h"
+#include "cu_atomic.h"
 #include <type_traits>
-
-// =========================================================================
-// Custom atomicAdd for double: CAS-based implementation for sm_50/52
-// (Native atomicAdd(double*,double) requires sm_60+)
-// For float, we just forward to the built-in atomicAdd.
-// =========================================================================
-
-template<typename T>
-__device__ __forceinline__ void myAtomicAdd(T* address, T val);
-
-template<>
-__device__ __forceinline__ void myAtomicAdd<float>(float* address, float val) {
-	atomicAdd(address, val);
-}
-
-template<>
-__device__ __forceinline__ void myAtomicAdd<double>(double* address, double val) {
-	unsigned long long int* address_as_ull = reinterpret_cast<unsigned long long int*>(address);
-	unsigned long long int old = *address_as_ull;
-	unsigned long long int assumed;
-	do {
-		assumed = old;
-		old = atomicCAS(address_as_ull, assumed,
-			__double_as_longlong(val + __longlong_as_double(assumed)));
-	} while (assumed != old);
-}
 
 // =========================================================================
 // Constant memory for 1/k! values (max 21 doubles = 168 bytes)

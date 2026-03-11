@@ -15,6 +15,4 @@
 
 #pragma once
 #include "cupch.h"
-
-__device__ float myAtomicAdd(float* address, float val);
-__device__ double myAtomicAdd(double* address, double val);
+#include "cu_atomic.h"

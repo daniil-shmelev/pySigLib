@@ -17,32 +17,7 @@
 #include "cusig.h"
 #include "cu_signature.h"
 #include "cu_tensor_poly.h"
-
- // =========================================================================
- // Custom atomicAdd for double: CAS-based implementation for sm_50/52
- // (Native atomicAdd(double*,double) requires sm_60+)
- // For float, we just forward to the built-in atomicAdd.
- // =========================================================================
-
-template<typename T>
-__device__ __forceinline__ void myAtomicAdd(T* address, T val);
-
-template<>
-__device__ __forceinline__ void myAtomicAdd<float>(float* address, float val) {
-	atomicAdd(address, val);
-}
-
-template<>
-__device__ __forceinline__ void myAtomicAdd<double>(double* address, double val) {
-	unsigned long long int* address_as_ull = reinterpret_cast<unsigned long long int*>(address);
-	unsigned long long int old = *address_as_ull;
-	unsigned long long int assumed;
-	do {
-		assumed = old;
-		old = atomicCAS(address_as_ull, assumed,
-			__double_as_longlong(val + __longlong_as_double(assumed)));
-	} while (assumed != old);
-}
+#include "cu_atomic.h"
 
 template<typename T>
 __device__ void linear_signature_device(
@@ -357,10 +332,9 @@ void signature_cuda_core_(
 	if (length <= 1) {
 		// sig = (1, 0, 0, ..., 0) for each batch element
 		cudaMemset(out, 0, batch_size * sig_len * sizeof(T));
-		auto ones = std::make_unique<T[]>(batch_size);
-		std::fill(ones.get(), ones.get() + batch_size, static_cast<T>(1));
+		T one = static_cast<T>(1);
 		for (uint64_t i = 0; i < batch_size; ++i)
-			cudaMemcpy(out + i * sig_len, ones.get() + i, sizeof(T), cudaMemcpyHostToDevice);
+			cudaMemcpy(out + i * sig_len, &one, sizeof(T), cudaMemcpyHostToDevice);
 		return;
 	}
 
@@ -377,24 +351,19 @@ void signature_cuda_core_(
 
 	// Choose number of threads per block based on largest level size
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
-	unsigned int threads_per_block = 32; // minimum: one warp
-	if (max_level_size > 32) threads_per_block = 64;
-	if (max_level_size > 64) threads_per_block = 128;
-	if (max_level_size > 128) threads_per_block = 256;
-	if (max_level_size > 512) threads_per_block = 512;
-	if (max_level_size > 1024) threads_per_block = 1024;
+	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
 
 	// Shared memory: increments + level_index (aligned)
 	size_t smem_size = (dimension * sizeof(T) + 7) & ~size_t(7);
 	smem_size += (degree + 2) * sizeof(uint64_t);
 
 	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
+	const size_t aligned_li_bytes = (level_index_bytes + sizeof(T) - 1) / sizeof(T) * sizeof(T);
 
 	if (horner && degree >= 2) {
 		// Single allocation: level_index + Horner workspace (2x ping-pong buffers)
 		uint64_t horner_half_size = max_level_size;
 		const size_t workspace_bytes = batch_size * 2 * horner_half_size * sizeof(T);
-		const size_t aligned_li_bytes = (level_index_bytes + sizeof(T) - 1) / sizeof(T) * sizeof(T);
 
 		char* d_alloc;
 		cudaMalloc(&d_alloc, aligned_li_bytes + workspace_bytes);
@@ -414,7 +383,6 @@ void signature_cuda_core_(
 	else {
 		// Single allocation: level_index + linear sig workspace
 		const size_t workspace_bytes = batch_size * sig_len * sizeof(T);
-		const size_t aligned_li_bytes = (level_index_bytes + sizeof(T) - 1) / sizeof(T) * sizeof(T);
 
 		char* d_alloc;
 		cudaMalloc(&d_alloc, aligned_li_bytes + workspace_bytes);
@@ -776,12 +744,7 @@ void sig_backprop_cuda_core_(
 	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_sig_derivs_copy, sig_derivs, sig_derivs_bytes, cudaMemcpyDeviceToDevice);
 	cudaMemcpy(d_sig_copy, sig, sig_copy_bytes, cudaMemcpyDeviceToDevice);
-	unsigned int threads_per_block = 32;
-	if (max_level_size > 32) threads_per_block = 64;
-	if (max_level_size > 64) threads_per_block = 128;
-	if (max_level_size > 128) threads_per_block = 256;
-	if (max_level_size > 512) threads_per_block = 512;
-	if (max_level_size > 1024) threads_per_block = 1024;
+	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
 
 	// Shared memory: increments + level_index (aligned)
 	size_t smem_size = (dimension * sizeof(T) + 7) & ~size_t(7);

@@ -116,6 +116,7 @@
     <ClInclude Include="cu_log_sig_backprop.h" />
     <ClInclude Include="cu_sig_coef.h" />
     <ClInclude Include="cu_macros.h" />
+    <ClInclude Include="cu_atomic.h" />
     <CudaCompile Include="cu_path_transforms.cu" />
     <CudaCompile Include="cu_log_signature.cu" />
     <CudaCompile Include="cu_tensor_poly.cu" />
