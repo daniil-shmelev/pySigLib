@@ -21,6 +21,9 @@
     <ClInclude Include="..\cpsig\cp_sig_kernel.h" />
     <ClInclude Include="..\cpsig\cp_tensor_poly.h" />
     <ClInclude Include="..\cpsig\log_sig_cache.h" />
+    <ClInclude Include="..\cpsig\cp_vector_funcs.h" />
+    <ClInclude Include="..\cpsig\macros.h" />
+    <ClInclude Include="..\cpsig\multithreading.h" />
     <ClInclude Include="..\cpsig\sparse.h" />
     <ClInclude Include="..\cpsig\words.h" />
   </ItemGroup>

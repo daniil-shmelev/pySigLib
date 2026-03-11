@@ -377,11 +377,7 @@ void sig_kernel_cuda_(
 		cudaFree(pde_grid);
 	}
 
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-        throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_error();
 }
 
 template<typename T, bool order> //order is True if dyadic_length_2 <= dyadic_length_1
@@ -699,13 +695,9 @@ void sig_kernel_backprop_cuda_(
 
 	cudaFree(d_initial_condition);
 	cudaFree(d_a_initial_condition);
-	cudaFree(d_b_initial_condition);	
+	cudaFree(d_b_initial_condition);
 
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_error();
 }
 
 #include "cu_macros.h"

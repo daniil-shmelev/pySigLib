@@ -42,6 +42,12 @@
     <ClInclude Include="cu_log_sig_backprop.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="cu_macros.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cu_sig_coef.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cupch.cpp">
@@ -68,6 +74,9 @@
       <Filter>Source Files</Filter>
     </CudaCompile>
     <CudaCompile Include="cu_log_signature.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="cu_sig_coef.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
   </ItemGroup>

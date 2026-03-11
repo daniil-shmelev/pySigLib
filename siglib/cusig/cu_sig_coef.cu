@@ -395,15 +395,8 @@ void sig_coef_cuda_(
 			num_multi_idx, batch_size, dimension, length, result_length, prefixes);
 	}
 
-	cudaDeviceSynchronize();
-
-	cudaError_t err = cudaGetLastError();
+	check_cuda_kernel_launch();
 	cudaFree(d_offsets);
-
-	if (err != cudaSuccess) {
-		int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
 }
 
 // =========================================================================
@@ -921,15 +914,8 @@ void sig_coef_backprop_cuda_(
 			num_multi_idx, batch_size, dimension, length, coefs_length);
 	}
 
-	cudaDeviceSynchronize();
-
-	cudaError_t err = cudaGetLastError();
+	check_cuda_kernel_launch();
 	cudaFree(d_offsets);
-
-	if (err != cudaSuccess) {
-		int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
 }
 
 // =========================================================================

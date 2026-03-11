@@ -124,16 +124,8 @@ void sig_to_log_sig_cuda_core_(
 	const uint64_t sig_len = host_sig_length(dimension, degree);
 
 	if (degree == 0) {
-		// degree 0: just copy the scalar 1 → out[0] = 0 (log of unit)
-		auto zeros = std::make_unique<T[]>(batch_size);
-		std::fill(zeros.get(), zeros.get() + batch_size, static_cast<T>(0));
-		cudaMemcpy(out, zeros.get(), batch_size * sizeof(T), cudaMemcpyHostToDevice);
+		cudaMemset(out, 0, batch_size * sizeof(T));
 		return;
-	}
-
-	if (degree == 1) {
-		// degree 1: just set out[0]=0, copy the rest
-		// We launch the kernel anyway (it handles this case)
 	}
 
 	// Build level_index on host and copy to device
@@ -165,14 +157,8 @@ void sig_to_log_sig_cuda_core_(
 		d_level_index, degree, sig_len, buff1_len
 	);
 
-	cudaDeviceSynchronize();
-
-	cudaError_t err = cudaGetLastError();
+	check_cuda_kernel_launch();
 	cudaFree(d_level_index);
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
 }
 
 // =========================================================================
@@ -339,13 +325,7 @@ void sig_to_log_sig_cuda_m1_core_(
 		cache.d_lyndon_idx, degree, sig_len, buff1_len, log_sig_len
 	);
 
-	cudaDeviceSynchronize();
-
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_kernel_launch();
 }
 
 // =========================================================================
@@ -385,13 +365,7 @@ void sig_to_log_sig_cuda_m2_core_(
 		degree, sig_len, buff1_len, log_sig_len
 	);
 
-	cudaDeviceSynchronize();
-
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_kernel_launch();
 }
 
 // =========================================================================
@@ -541,14 +515,8 @@ void sig_to_log_sig_backprop_cuda_core_(
 		d_level_index, dimension, degree, sig_len, buff1_len, scratch_per_element
 	);
 
-	cudaDeviceSynchronize();
-
-	cudaError_t err = cudaGetLastError();
+	check_cuda_kernel_launch();
 	cudaFree(d_level_index);
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
 }
 
 // =========================================================================
@@ -649,13 +617,7 @@ void sig_to_log_sig_backprop_cuda_m1_core_(
 		dimension, degree, sig_len, buff1_len, log_sig_len, scratch_per_element
 	);
 
-	cudaDeviceSynchronize();
-
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_kernel_launch();
 }
 
 // =========================================================================
@@ -771,13 +733,7 @@ void sig_to_log_sig_backprop_cuda_m2_core_(
 		dimension, degree, sig_len, buff1_len, log_sig_len, scratch_per_element
 	);
 
-	cudaDeviceSynchronize();
-
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_kernel_launch();
 }
 
 // =========================================================================

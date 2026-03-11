@@ -117,11 +117,7 @@ void transform_path_(
 
 	transform_path_internal_ << <static_cast<unsigned int>(batch_size_), 32U >> > (data_in, data_out, end_time);
 
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_error();
 }
 
 template<typename T>
@@ -195,11 +191,7 @@ void transform_path_backprop_(
 		transform_path_backprop_internal_ << <static_cast<unsigned int>(batch_size_), 32U >> > (derivs, data_out, end_time);
 	}
 
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_error();
 }
 
 #include "cu_macros.h"

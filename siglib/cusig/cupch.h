@@ -39,4 +39,23 @@
 #include <regex>
 #include <filesystem>
 
+// =========================================================================
+// Shared CUDA error-checking helpers
+// =========================================================================
+
+// Checks cudaGetLastError() and throws std::runtime_error if a CUDA error occurred.
+inline void check_cuda_error() {
+	cudaError_t err = cudaGetLastError();
+	if (err != cudaSuccess) {
+		const int error_code = static_cast<int>(err);
+		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
+	}
+}
+
+// Synchronizes the device and then checks for CUDA errors.
+inline void check_cuda_kernel_launch() {
+	cudaDeviceSynchronize();
+	check_cuda_error();
+}
+
 #endif //PCH_H

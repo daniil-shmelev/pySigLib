@@ -11,9 +11,11 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\cusig\cuda_constants.h" />
     <ClInclude Include="..\cusig\cupch.h" />
     <ClInclude Include="..\cusig\cusig.h" />
     <ClInclude Include="..\cusig\cu_log_signature.h" />
+    <ClInclude Include="..\cusig\cu_macros.h" />
     <ClInclude Include="..\cusig\cu_path_transforms.h" />
     <ClInclude Include="..\cusig\cu_sig_kernel.h" />
     <ClInclude Include="..\cusig\cu_signature.h" />

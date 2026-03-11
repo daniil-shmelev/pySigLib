@@ -120,13 +120,7 @@ void sig_combine_cuda_core_(
 		sig1, sig2, out, dimension, degree
 	);
 
-	cudaDeviceSynchronize();
-
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_kernel_launch();
 }
 
 template<typename T>
@@ -266,13 +260,7 @@ void sig_combine_backprop_cuda_core_(
 		dimension, degree, sig_len
 	);
 
-	cudaDeviceSynchronize();
-
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_kernel_launch();
 }
 
 template<typename T>

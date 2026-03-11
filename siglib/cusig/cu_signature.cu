@@ -432,11 +432,7 @@ void signature_cuda_core_(
 		cudaFree(d_alloc);
 	}
 
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_error();
 }
 
 // Forward-declare transform_path_ from cu_path_transforms.cu
@@ -798,13 +794,8 @@ void sig_backprop_cuda_core_(
 		d_workspace, workspace_per_batch, horner_half_size
 	);
 
-	cudaError_t err = cudaDeviceSynchronize();
-
+	check_cuda_kernel_launch();
 	cudaFree(d_merged);
-
-	if (err != cudaSuccess) {
-		throw std::runtime_error("CUDA Error (" + std::to_string(static_cast<int>(err)) + "): " + cudaGetErrorString(err));
-	}
 }
 
 // Forward-declare transform_path_backprop_ from cu_path_transforms.cu

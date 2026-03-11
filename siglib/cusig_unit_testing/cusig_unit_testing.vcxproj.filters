@@ -51,6 +51,9 @@
     <ClInclude Include="..\cusig\cu_sig_coef.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
+    <ClInclude Include="..\cusig\cu_macros.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cusig\cupch.cpp">
