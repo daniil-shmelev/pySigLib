@@ -757,8 +757,8 @@ void sig_backprop_cuda_core_(
 		d_workspace, workspace_per_batch, horner_half_size
 	);
 
-	check_cuda_kernel_launch();
 	cudaFree(d_merged);
+	check_cuda_kernel_launch();
 }
 
 // Forward-declare transform_path_backprop_ from cu_path_transforms.cu

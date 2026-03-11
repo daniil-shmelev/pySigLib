@@ -370,8 +370,8 @@ void sig_coef_cuda_(
 			num_multi_idx, batch_size, dimension, length, result_length, prefixes);
 	}
 
-	check_cuda_kernel_launch();
 	cudaFree(d_offsets);
+	check_cuda_kernel_launch();
 }
 
 // =========================================================================
@@ -889,8 +889,8 @@ void sig_coef_backprop_cuda_(
 			num_multi_idx, batch_size, dimension, length, coefs_length);
 	}
 
-	check_cuda_kernel_launch();
 	cudaFree(d_offsets);
+	check_cuda_kernel_launch();
 }
 
 // =========================================================================

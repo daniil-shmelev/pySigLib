@@ -78,16 +78,6 @@ __global__ void transform_path_internal_(
 	}
 }
 
-//template __global__ void transform_path_internal_<float>(
-//	const float* data_in,
-//	float* data_out
-//);
-//
-//template __global__ void transform_path_internal_<double>(
-//	const double* data_in,
-//	double* data_out
-//);
-
 template<typename T>
 void transform_path_(
 	const T* data_in,

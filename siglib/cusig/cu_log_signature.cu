@@ -157,8 +157,8 @@ void sig_to_log_sig_cuda_core_(
 		d_level_index, degree, sig_len, buff1_len
 	);
 
-	check_cuda_kernel_launch();
 	cudaFree(d_level_index);
+	check_cuda_kernel_launch();
 }
 
 // =========================================================================
@@ -515,8 +515,8 @@ void sig_to_log_sig_backprop_cuda_core_(
 		d_level_index, dimension, degree, sig_len, buff1_len, scratch_per_element
 	);
 
-	check_cuda_kernel_launch();
 	cudaFree(d_level_index);
+	check_cuda_kernel_launch();
 }
 
 // =========================================================================
