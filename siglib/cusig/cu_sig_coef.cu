@@ -26,6 +26,45 @@ __constant__ double c_one_over_fact_d[SIG_COEF_CUDA_MAX_DEGREE + 1];
 __constant__ float  c_one_over_fact_f[SIG_COEF_CUDA_MAX_DEGREE + 1];
 
 // =========================================================================
+// Upload 1/k! to constant memory and return device pointer
+// =========================================================================
+template<typename T>
+const T* upload_one_over_fact(uint64_t max_degree) {
+	std::vector<T> h_ovf(max_degree + 1);
+	h_ovf[0] = T(1);
+	for (uint64_t i = 1; i <= max_degree; ++i)
+		h_ovf[i] = h_ovf[i - 1] / T(i);
+
+	const T* d_ptr;
+	if constexpr (std::is_same_v<T, double>) {
+		cudaMemcpyToSymbol(c_one_over_fact_d, h_ovf.data(), sizeof(T) * (max_degree + 1));
+		cudaGetSymbolAddress((void**)&d_ptr, c_one_over_fact_d);
+	}
+	else {
+		cudaMemcpyToSymbol(c_one_over_fact_f, h_ovf.data(), sizeof(T) * (max_degree + 1));
+		cudaGetSymbolAddress((void**)&d_ptr, c_one_over_fact_f);
+	}
+	return d_ptr;
+}
+
+// =========================================================================
+// Fixed-degree kernel dispatch macro (cases 1-10)
+// =========================================================================
+#define CUSIG_DISPATCH_FIXED_DEGREE(KERNEL, NUM_BLOCKS, TPB, ...) \
+	switch (max_degree) { \
+	case 1:  KERNEL<T, 1> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 2:  KERNEL<T, 2> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 3:  KERNEL<T, 3> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 4:  KERNEL<T, 4> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 5:  KERNEL<T, 5> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 6:  KERNEL<T, 6> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 7:  KERNEL<T, 7> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 8:  KERNEL<T, 8> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 9:  KERNEL<T, 9> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 10: KERNEL<T, 10><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	}
+
+// =========================================================================
 // Generic CUDA sig_coef kernel (Horner scheme)
 //
 // The Chen identity update at each timestep is:
@@ -263,23 +302,7 @@ void sig_coef_cuda_(
 		return;
 	}
 
-	// Upload 1/k! to constant memory
-	std::vector<T> h_one_over_fact(max_degree + 1);
-	h_one_over_fact[0] = T(1);
-	for (uint64_t i = 1; i <= max_degree; ++i)
-		h_one_over_fact[i] = h_one_over_fact[i - 1] / T(i);
-
-	const T* d_one_over_fact;
-	if constexpr (std::is_same_v<T, double>) {
-		cudaMemcpyToSymbol(c_one_over_fact_d, h_one_over_fact.data(),
-			sizeof(T) * (max_degree + 1));
-		cudaGetSymbolAddress((void**)&d_one_over_fact, c_one_over_fact_d);
-	}
-	else {
-		cudaMemcpyToSymbol(c_one_over_fact_f, h_one_over_fact.data(),
-			sizeof(T) * (max_degree + 1));
-		cudaGetSymbolAddress((void**)&d_one_over_fact, c_one_over_fact_f);
-	}
+	const T* d_one_over_fact = upload_one_over_fact<T>(max_degree);
 
 	// Upload prefix sums (single allocation, single memcpy)
 	uint64_t* d_offsets;
@@ -293,75 +316,11 @@ void sig_coef_cuda_(
 	unsigned int tpb = 256;
 	unsigned int num_blocks = static_cast<unsigned int>((total_work + tpb - 1) / tpb);
 
-	if (all_same_degree && max_degree > 0) {
-		switch (max_degree) {
-		case 1:
-			sig_coef_kernel_fixed_degree<T, 1><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		case 2:
-			sig_coef_kernel_fixed_degree<T, 2><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		case 3:
-			sig_coef_kernel_fixed_degree<T, 3><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		case 4:
-			sig_coef_kernel_fixed_degree<T, 4><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		case 5:
-			sig_coef_kernel_fixed_degree<T, 5><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		case 6:
-			sig_coef_kernel_fixed_degree<T, 6><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		case 7:
-			sig_coef_kernel_fixed_degree<T, 7><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		case 8:
-			sig_coef_kernel_fixed_degree<T, 8><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		case 9:
-			sig_coef_kernel_fixed_degree<T, 9><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		case 10:
-			sig_coef_kernel_fixed_degree<T, 10><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		default:
-			sig_coef_kernel<T><<<num_blocks, tpb>>>(
-				d_path, d_out, d_multi_idx, d_degrees, d_one_over_fact,
-				d_idx_offsets, d_out_offsets,
-				num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-			break;
-		}
+	if (all_same_degree && max_degree > 0 && max_degree <= 10) {
+		CUSIG_DISPATCH_FIXED_DEGREE(sig_coef_kernel_fixed_degree, num_blocks, tpb,
+			d_path, d_out, d_multi_idx, d_one_over_fact,
+			d_idx_offsets, d_out_offsets,
+			num_multi_idx, batch_size, dimension, length, result_length, prefixes);
 	}
 	else {
 		sig_coef_kernel<T><<<num_blocks, tpb>>>(
@@ -784,21 +743,7 @@ void sig_coef_backprop_cuda_(
 
 	if (length <= 1 || max_degree == 0) return;
 
-	// Upload 1/k! to constant memory (sovf computed inline in kernel)
-	std::vector<T> h_ovf(max_degree + 1);
-	h_ovf[0] = T(1);
-	for (uint64_t i = 1; i <= max_degree; ++i)
-		h_ovf[i] = h_ovf[i - 1] / T(i);
-
-	const T* d_ovf;
-	if constexpr (std::is_same_v<T, double>) {
-		cudaMemcpyToSymbol(c_one_over_fact_d, h_ovf.data(), sizeof(T) * (max_degree + 1));
-		cudaGetSymbolAddress((void**)&d_ovf, c_one_over_fact_d);
-	}
-	else {
-		cudaMemcpyToSymbol(c_one_over_fact_f, h_ovf.data(), sizeof(T) * (max_degree + 1));
-		cudaGetSymbolAddress((void**)&d_ovf, c_one_over_fact_f);
-	}
+	const T* d_ovf = upload_one_over_fact<T>(max_degree);
 
 	// Upload prefix sums
 	uint64_t* d_offsets;
@@ -812,75 +757,11 @@ void sig_coef_backprop_cuda_(
 	unsigned int tpb = 256;
 	unsigned int num_blocks = static_cast<unsigned int>((total_work + tpb - 1) / tpb);
 
-	if (all_same_degree && max_degree > 0) {
-		switch (max_degree) {
-		case 1:
-			sig_coef_backprop_kernel_fixed_degree<T, 1><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		case 2:
-			sig_coef_backprop_kernel_fixed_degree<T, 2><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		case 3:
-			sig_coef_backprop_kernel_fixed_degree<T, 3><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		case 4:
-			sig_coef_backprop_kernel_fixed_degree<T, 4><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		case 5:
-			sig_coef_backprop_kernel_fixed_degree<T, 5><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		case 6:
-			sig_coef_backprop_kernel_fixed_degree<T, 6><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		case 7:
-			sig_coef_backprop_kernel_fixed_degree<T, 7><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		case 8:
-			sig_coef_backprop_kernel_fixed_degree<T, 8><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		case 9:
-			sig_coef_backprop_kernel_fixed_degree<T, 9><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		case 10:
-			sig_coef_backprop_kernel_fixed_degree<T, 10><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		default:
-			sig_coef_backprop_kernel<T><<<num_blocks, tpb>>>(
-				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_degrees, d_ovf,
-				d_idx_offsets, d_coef_offsets,
-				num_multi_idx, batch_size, dimension, length, coefs_length);
-			break;
-		}
+	if (all_same_degree && max_degree > 0 && max_degree <= 10) {
+		CUSIG_DISPATCH_FIXED_DEGREE(sig_coef_backprop_kernel_fixed_degree, num_blocks, tpb,
+			d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
+			d_idx_offsets, d_coef_offsets,
+			num_multi_idx, batch_size, dimension, length, coefs_length);
 	}
 	else {
 		sig_coef_backprop_kernel<T><<<num_blocks, tpb>>>(
