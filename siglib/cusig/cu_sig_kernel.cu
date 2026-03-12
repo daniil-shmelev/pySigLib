@@ -15,7 +15,6 @@
 
 #include "cupch.h"
 #include "cusig.h"
-//#include "cuda_constants.h"
 #include "cu_sig_kernel.h"
 
 __constant__ uint64_t dimension;

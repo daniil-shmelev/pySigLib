@@ -16,7 +16,6 @@
 #include "cupch.h"
 #include "cusig.h"
 #include "cu_path_transforms.h"
-//#include "cuda_constants.h"
 
 __constant__ uint64_t path_dimension;
 __constant__ uint64_t length;

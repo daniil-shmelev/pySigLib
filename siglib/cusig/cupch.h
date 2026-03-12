@@ -36,7 +36,6 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#include <regex>
 #include <filesystem>
 
 // =========================================================================

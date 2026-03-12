@@ -64,10 +64,13 @@
             return 8;                                                   \
         if (msg == "Tried to read an invalid cache file. Cache may have been corrupted.") \
             return 9;                                                   \
-        std::regex cuda_err_pattern(R"(CUDA Error \((\d+)\):)");        \
-        std::smatch cuda_err_match;                                     \
-        if (std::regex_search(msg, cuda_err_match, cuda_err_pattern))   \
-            return 100000 + std::stoi(cuda_err_match[1]);               \
+        auto cuda_pos = msg.find("CUDA Error (");                       \
+        if (cuda_pos != std::string::npos) {                            \
+            auto num_start = cuda_pos + 12;                             \
+            auto num_end = msg.find(')', num_start);                    \
+            if (num_end != std::string::npos)                           \
+                return 100000 + std::stoi(msg.substr(num_start, num_end - num_start)); \
+        }                                                               \
         return 10;                                                      \
     }                                                                   \
     catch (...) {                                                       \
