@@ -15,7 +15,6 @@
 
 #include "cupch.h"
 #include "cusig.h"
-//#include "cuda_constants.h"
 #include "cu_sig_kernel.h"
 
 __constant__ uint64_t dimension;
@@ -30,46 +29,6 @@ __constant__ uint64_t main_dyadic_length;
 __constant__ uint64_t num_anti_diag;
 __constant__ uint64_t gram_length;
 __constant__ uint64_t grid_length;
-
-
-// https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#atomic-functions
-__device__ float myAtomicAdd(float* address, float val)
-{
-	unsigned int* address_as_ui =
-		(unsigned int*)address;
-	unsigned int old = *address_as_ui, assumed;
-
-	do {
-		assumed = old;
-		old = atomicCAS(
-			address_as_ui,
-			assumed,
-			__float_as_uint(val + __uint_as_float(assumed))
-		);
-
-		// integer comparison avoids NaN hang
-	} while (assumed != old);
-
-	return __uint_as_float(old);
-}
-
-__device__ double myAtomicAdd(double* address, double val)
-{
-	unsigned long long int* address_as_ull =
-		(unsigned long long int*)address;
-	unsigned long long int old = *address_as_ull, assumed;
-
-	do {
-		assumed = old;
-		old = atomicCAS(address_as_ull, assumed,
-			__double_as_longlong(val +
-				__longlong_as_double(assumed)));
-
-		// Note: uses integer comparison to avoid hang in case of NaN (since NaN != NaN)
-	} while (assumed != old);
-
-	return __longlong_as_double(old);
-}
 
 
 template<typename T>
@@ -377,11 +336,7 @@ void sig_kernel_cuda_(
 		cudaFree(pde_grid);
 	}
 
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		const int error_code = static_cast<int>(err);
-        throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_error();
 }
 
 template<typename T, bool order> //order is True if dyadic_length_2 <= dyadic_length_1
@@ -699,80 +654,45 @@ void sig_kernel_backprop_cuda_(
 
 	cudaFree(d_initial_condition);
 	cudaFree(d_a_initial_condition);
-	cudaFree(d_b_initial_condition);	
+	cudaFree(d_b_initial_condition);
 
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		int error_code = static_cast<int>(err);
-		throw std::runtime_error("CUDA Error (" + std::to_string(error_code) + "): " + cudaGetErrorString(err));
-	}
+	check_cuda_error();
 }
 
-#define SAFE_CALL(function_call)                            \
-    try {                                                   \
-        function_call;                                      \
-    }                                                       \
-    catch (std::bad_alloc&) {					            \
-		std::cerr << "Failed to allocate memory";           \
-        return 1;                                           \
-    }                                                       \
-    catch (std::invalid_argument& e) {                      \
-		std::cerr << e.what();					            \
-        return 2;                                           \
-    }                                                       \
-	catch (std::out_of_range& e) {			                \
-		std::cerr << e.what();					            \
-		return 3;                                           \
-	}  											            \
-	catch (std::runtime_error& e) {							\
-		std::string msg = e.what();							\
-		std::regex pattern(R"(CUDA Error \((\d+)\):)");		\
-		std::smatch match;									\
-		int ret_code = 10;									\
-		if (std::regex_search(msg, match, pattern)) {		\
-			ret_code = 100000 + std::stoi(match[1]);		\
-		}													\
-		std::cerr << e.what();								\
-		return ret_code;									\
-	}														\
-    catch (...) {                                           \
-		std::cerr << "Unknown exception";		            \
-        return 11;                                           \
-    }                                                       \
-    return 0;
+#include "cu_macros.h"
 
 
 extern "C" {
 
 	CUSIG_API int sig_kernel_cuda_f(const float* const gram, float* const out, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_cuda_<float>(gram, out, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_cuda_<float>(gram, out, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int sig_kernel_cuda_d(const double* const gram, double* const out, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_cuda_<double>(gram, out, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_cuda_<double>(gram, out, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int batch_sig_kernel_cuda_f(const float* const gram, float* const out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_cuda_<float>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_cuda_<float>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int batch_sig_kernel_cuda_d(const double* const gram, double* const out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_cuda_<double>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_cuda_<double>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int sig_kernel_backprop_cuda_f(const float* const gram, float* const out, const float* const derivs, const float* const k_grid, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int sig_kernel_backprop_cuda_d(const double* const gram, double* const out, const double* const derivs, const double* const k_grid, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, 1, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int batch_sig_kernel_backprop_cuda_f(const float* const gram, float* const out, const float* const derivs, const float* const k_grid, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int batch_sig_kernel_backprop_cuda_d(const double* const gram, double* const out, const double* const derivs, const double* const k_grid, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUSIG_SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 }

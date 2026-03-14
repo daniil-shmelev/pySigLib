@@ -191,7 +191,7 @@ def time_iisig_log_sig(cfg, progress_bar = False):
 
 def time_pysiglib_log_sig(cfg, n_jobs, progress_bar = False):
     dtype = torch_dtype(cfg['dtype'])
-    X = torch.rand(size=(cfg['batch_size'], cfg['length'], cfg['dimension']), dtype=dtype)
+    X = torch.rand(size=(cfg['batch_size'], cfg['length'], cfg['dimension']), dtype=dtype, device = cfg['device'])
     pysiglib.prepare_log_sig(cfg['dimension'], cfg['degree'], cfg['method'])
     best_time = float('inf')
     loop = tqdm(range(cfg['num_runs'])) if progress_bar else range(cfg['num_runs'])
@@ -301,9 +301,9 @@ def time_pysiglib_kernel_backprop(cfg, n_jobs, progress_bar = False):
 def time_pysiglib_sig_backprop(cfg, n_jobs, progress_bar = False):
     dtype = torch_dtype(cfg['dtype'])
     sig_len = pysiglib.sig_length(cfg['dimension'], cfg['degree'])
-    X = torch.rand(size=(cfg['batch_size'], cfg['length'], cfg['dimension']), dtype=dtype)
-    s = torch.rand(size=(cfg['batch_size'], sig_len), dtype=dtype)
-    sig_derivs = torch.rand(size=(cfg['batch_size'], sig_len), dtype=dtype)
+    X = torch.rand(size=(cfg['batch_size'], cfg['length'], cfg['dimension']), dtype=dtype, device=cfg['device'])
+    s = torch.rand(size=(cfg['batch_size'], sig_len), dtype=dtype, device=cfg['device'])
+    sig_derivs = torch.rand(size=(cfg['batch_size'], sig_len), dtype=dtype, device=cfg['device'])
     best_time = float('inf')
     loop = tqdm(range(cfg['num_runs'])) if progress_bar else range(cfg['num_runs'])
     for _ in loop:
@@ -345,4 +345,48 @@ def time_signatory_sig_backprop(cfg, progress_bar = False):
         end = timeit.default_timer()
         time_ = end - start
         best_time = min(best_time, time_)
+    return best_time
+
+def time_pysiglib_sig_coef(cfg, n_jobs, progress_bar=False):
+    dtype = torch_dtype(cfg['dtype'])
+    device = cfg['device']
+    dimension = cfg['dimension']
+    degree = cfg['degree']
+    num_words = cfg['num_words']
+    X = torch.rand(size=(cfg['batch_size'], cfg['length'], dimension), dtype=dtype, device=device)
+    words = [tuple(torch.randint(0, dimension, (degree,)).tolist()) for _ in range(num_words)]
+    best_time = float('inf')
+    loop = tqdm(range(cfg['num_runs'])) if progress_bar else range(cfg['num_runs'])
+    for _ in loop:
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        start = timeit.default_timer()
+        pysiglib.sig_coef(X, words, n_jobs=n_jobs)
+        end = timeit.default_timer()
+        best_time = min(best_time, end - start)
+    return best_time
+
+def time_pysiglib_sig_combine(cfg, n_jobs):
+    """Time pysiglib.sig_combine by pre-computing signatures and then
+    measuring only the combine step."""
+    dtype = torch.float32 if cfg['dtype'] == "float" else torch.float64
+    device = cfg['device']
+    batch_size = cfg['batch_size']
+    dimension = cfg['dimension']
+    degree = cfg['degree']
+    length = cfg['length']
+
+    # Pre-compute two signatures on the target device
+    X1 = torch.rand(size=(batch_size, length, dimension), dtype=dtype, device=device)
+    X2 = torch.rand(size=(batch_size, length, dimension), dtype=dtype, device=device)
+    sig1 = pysiglib.sig(X1, degree, n_jobs=n_jobs)
+    sig2 = pysiglib.sig(X2, degree, n_jobs=n_jobs)
+
+    best_time = float('inf')
+    for _ in range(cfg['num_runs']):
+        torch.cuda.empty_cache()
+        start = timeit.default_timer()
+        pysiglib.sig_combine(sig1, sig2, dimension, degree, n_jobs=n_jobs)
+        end = timeit.default_timer()
+        best_time = min(best_time, end - start)
     return best_time

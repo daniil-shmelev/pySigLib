@@ -4,26 +4,15 @@ Default Behaviours and Conventions
 CPU and GPU Computation
 ------------------------
 
-For functions which support both CPU and GPU computation, the computation will be performed
-on the same device as the input data. This applies to all functions involving signature
-kernels.
+All ``pysiglib`` functions support both CPU and GPU (CUDA) computation.
+The computation is performed on the same device as the input data:
+pass a CPU tensor for CPU computation, or a CUDA tensor for GPU computation.
 
-Functions involving signature calculations or similar tensor operations to Chen's relation
-only have CPU-based implementations in ``pysiglib``. This is because these operations are
-memory-bound rather than computation-bound, and so are not well-suited to GPUs. Whilst
-other packages may implement GPU algorithms, we find that ``pysiglib`` CPU algorithms
-often do as well or better on most chips.
-
-When GPU data is passed to a CPU-only function, the data will be copied to the CPU
-where the algorithm will run, and the result will be moved back to the GPU. This
-behaviour applies to the following functions:
-
-- ``sig``
-- ``sig_combine``
-- ``sig_coef``
-- ``sig_to_log_sig``
-- ``log_sig``
-- and corresponding backpropagation functions.
+Note that CUDA is not necessarily faster than CPU for all operations. Whether
+the GPU backend is beneficial depends on the specific function, the problem
+parameters (batch size, path length, dimension, truncation degree, etc.), and
+the hardware. We recommend benchmarking on your own setup to determine the
+best device for your workload.
 
 CPU Parallelism
 ----------------

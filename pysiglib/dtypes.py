@@ -62,6 +62,22 @@ CUSIG_TRANSFORM_PATH_BACKPROP_CUDA = None
 CUSIG_BATCH_TRANSFORM_PATH_BACKPROP_CUDA = None
 CUSIG_BATCH_SIG_KERNEL_CUDA = None
 CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA = None
+CUSIG_SIGNATURE_CUDA = None
+CUSIG_BATCH_SIGNATURE_CUDA = None
+CUSIG_SIG_BACKPROP_CUDA = None
+CUSIG_BATCH_SIG_BACKPROP_CUDA = None
+CUSIG_SIG_COMBINE_CUDA = None
+CUSIG_BATCH_SIG_COMBINE_CUDA = None
+CUSIG_SIG_COMBINE_BACKPROP_CUDA = None
+CUSIG_BATCH_SIG_COMBINE_BACKPROP_CUDA = None
+CUSIG_SIG_TO_LOG_SIG_CUDA = None
+CUSIG_BATCH_SIG_TO_LOG_SIG_CUDA = None
+CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA = None
+CUSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP_CUDA = None
+CUSIG_SIG_COEF_CUDA = None
+CUSIG_BATCH_SIG_COEF_CUDA = None
+CUSIG_SIG_COEF_BACKPROP_CUDA = None
+CUSIG_BATCH_SIG_COEF_BACKPROP_CUDA = None
 
 if BUILT_WITH_CUDA:
     CUSIG_TRANSFORM_PATH_CUDA = {
@@ -92,6 +108,86 @@ if BUILT_WITH_CUDA:
     CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA = {
         "float32": CUSIG.batch_sig_kernel_backprop_cuda_f,
         "float64": CUSIG.batch_sig_kernel_backprop_cuda_d
+    }
+
+    CUSIG_SIGNATURE_CUDA = {
+        "float32": CUSIG.signature_cuda_f,
+        "float64": CUSIG.signature_cuda_d
+    }
+
+    CUSIG_BATCH_SIGNATURE_CUDA = {
+        "float32": CUSIG.batch_signature_cuda_f,
+        "float64": CUSIG.batch_signature_cuda_d
+    }
+
+    CUSIG_SIG_BACKPROP_CUDA = {
+        "float32": CUSIG.sig_backprop_cuda_f,
+        "float64": CUSIG.sig_backprop_cuda_d
+    }
+
+    CUSIG_BATCH_SIG_BACKPROP_CUDA = {
+        "float32": CUSIG.batch_sig_backprop_cuda_f,
+        "float64": CUSIG.batch_sig_backprop_cuda_d
+    }
+
+    CUSIG_SIG_COMBINE_CUDA = {
+        "float32": CUSIG.sig_combine_cuda_f,
+        "float64": CUSIG.sig_combine_cuda_d
+    }
+
+    CUSIG_BATCH_SIG_COMBINE_CUDA = {
+        "float32": CUSIG.batch_sig_combine_cuda_f,
+        "float64": CUSIG.batch_sig_combine_cuda_d
+    }
+
+    CUSIG_SIG_COMBINE_BACKPROP_CUDA = {
+        "float32": CUSIG.sig_combine_backprop_cuda_f,
+        "float64": CUSIG.sig_combine_backprop_cuda_d
+    }
+
+    CUSIG_BATCH_SIG_COMBINE_BACKPROP_CUDA = {
+        "float32": CUSIG.batch_sig_combine_backprop_cuda_f,
+        "float64": CUSIG.batch_sig_combine_backprop_cuda_d
+    }
+
+    CUSIG_SIG_TO_LOG_SIG_CUDA = {
+        "float32": CUSIG.sig_to_log_sig_cuda_f,
+        "float64": CUSIG.sig_to_log_sig_cuda_d
+    }
+
+    CUSIG_BATCH_SIG_TO_LOG_SIG_CUDA = {
+        "float32": CUSIG.batch_sig_to_log_sig_cuda_f,
+        "float64": CUSIG.batch_sig_to_log_sig_cuda_d
+    }
+
+    CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA = {
+        "float32": CUSIG.sig_to_log_sig_backprop_cuda_f,
+        "float64": CUSIG.sig_to_log_sig_backprop_cuda_d
+    }
+
+    CUSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP_CUDA = {
+        "float32": CUSIG.batch_sig_to_log_sig_backprop_cuda_f,
+        "float64": CUSIG.batch_sig_to_log_sig_backprop_cuda_d
+    }
+
+    CUSIG_SIG_COEF_CUDA = {
+        "float32": CUSIG.sig_coef_cuda_f,
+        "float64": CUSIG.sig_coef_cuda_d
+    }
+
+    CUSIG_BATCH_SIG_COEF_CUDA = {
+        "float32": CUSIG.batch_sig_coef_cuda_f,
+        "float64": CUSIG.batch_sig_coef_cuda_d
+    }
+
+    CUSIG_SIG_COEF_BACKPROP_CUDA = {
+        "float32": CUSIG.sig_coef_backprop_cuda_f,
+        "float64": CUSIG.sig_coef_backprop_cuda_d
+    }
+
+    CUSIG_BATCH_SIG_COEF_BACKPROP_CUDA = {
+        "float32": CUSIG.batch_sig_coef_backprop_cuda_f,
+        "float64": CUSIG.batch_sig_coef_backprop_cuda_d
     }
 
 CPSIG_SIG_COEF = {

@@ -23,8 +23,7 @@ import pysiglib
 np.random.seed(42)
 torch.manual_seed(42)
 
-SINGLE_EPSILON = 1e-4
-DOUBLE_EPSILON = 1e-10
+from conftest import DEVICES, check_close, assert_device
 
 def lead_lag(X):
     lag = []
@@ -42,56 +41,52 @@ def lead_lag(X):
 
     return np.c_[lag, lead]
 
-def check_close(a, b):
-    a_ = np.array(a)
-    b_ = np.array(b)
-    EPSILON = SINGLE_EPSILON if a_.dtype == np.float32 else DOUBLE_EPSILON
-    assert not np.any(np.abs(a_ - b_) > EPSILON)
-
-def test_signature_trivial():
-    check_close(pysiglib.sig(np.array([[0., 0.], [1., 1.]]), 0), [1.])
-    check_close(pysiglib.sig(np.array([[0., 0.], [1., 1.]]), 1), [1., 1., 1.])
-    check_close(pysiglib.sig(np.array([[0., 0.]]), 1), [1., 0., 0.])
+@pytest.mark.parametrize("device", DEVICES)
+def test_signature_trivial(device):
+    check_close(pysiglib.sig(torch.tensor([[0., 0.], [1., 1.]], device=device), 0), [1.])
+    check_close(pysiglib.sig(torch.tensor([[0., 0.], [1., 1.]], device=device), 1), [1., 1., 1.])
+    check_close(pysiglib.sig(torch.tensor([[0., 0.]], device=device), 1), [1., 0., 0.])
 
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_signature_random(deg, dtype):
+def test_signature_random(device, deg, dtype):
     X = np.random.uniform(size=(100, 5)).astype(dtype)
     iisig = iisignature.sig(X, deg).astype(dtype)
-    sig = pysiglib.sig(X, deg).astype(dtype)
-    check_close(iisig, sig[1:])
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("deg", range(1, 6))
-def test_signature_random_cuda(deg):
-    X = np.random.uniform(size=(100, 5))
-    iisig = iisignature.sig(X, deg)
-    X = torch.tensor(X, device="cuda")
-    sig = pysiglib.sig(X, deg).cpu()
+    X_dev = torch.tensor(X, device=device)
+    sig = pysiglib.sig(X_dev, deg)
+    assert_device(sig, device)
     check_close(iisig, sig[1:])
 
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
-def test_signature_random_batch(deg):
+def test_signature_random_batch(device, deg):
     X = np.random.uniform(size=(32, 100, 5))
     iisig = iisignature.sig(X, deg)
-    sig_serial = pysiglib.sig(X, deg, n_jobs=1)
-    sig_parallel = pysiglib.sig(X, deg, n_jobs=-1)
+    X_dev = torch.tensor(X, device=device)
+    sig_serial = pysiglib.sig(X_dev, deg, n_jobs=1)
+    sig_parallel = pysiglib.sig(X_dev, deg, n_jobs=-1)
+    assert_device(sig_serial, device)
+    assert_device(sig_parallel, device)
     check_close(iisig, sig_serial[:, 1:])
     check_close(iisig, sig_parallel[:, 1:])
 
 
-def test_signature_non_contiguous():
+@pytest.mark.parametrize("device", DEVICES)
+def test_signature_non_contiguous(device):
     # Make sure signature works with any form of array
     dim, degree, length, batch = 10, 3, 100, 32
 
-    rand_data = torch.rand((batch, length), dtype=torch.float64)[:, :, None]
+    rand_data = torch.rand((batch, length), dtype=torch.float64, device=device)[:, :, None]
     X_non_cont = rand_data.expand(-1, -1, dim)
     X = X_non_cont.clone()
 
     res1 = pysiglib.sig(X, degree)
     res2 = pysiglib.sig(X_non_cont, degree)
+    assert_device(res1, device)
+    assert_device(res2, device)
     check_close(res1, res2)
 
     rand_data = np.random.normal(size=(batch, length))[:, :, None]
@@ -102,30 +97,39 @@ def test_signature_non_contiguous():
     res2 = pysiglib.sig(X_non_cont, degree)
     check_close(res1, res2)
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
-def test_signature_time_aug(deg):
+def test_signature_time_aug(device, deg):
     X = np.random.uniform(size=(10, 4))
     t = np.linspace(0, 1, 10)[:, np.newaxis]
     X_aug = np.concatenate([X, t], axis = 1)
     iisig = iisignature.sig(X_aug, deg)
-    sig = pysiglib.sig(X, deg, time_aug = True)
+    X_dev = torch.tensor(X, device=device)
+    sig = pysiglib.sig(X_dev, deg, time_aug = True)
+    assert_device(sig, device)
     check_close(iisig, sig[1:])
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
-def test_signature_lead_lag(deg):
+def test_signature_lead_lag(device, deg):
     X = np.random.uniform(size=(10, 2))
     X_aug = lead_lag(X)
     iisig = iisignature.sig(X_aug, deg)
-    sig = pysiglib.sig(X, deg, lead_lag = True)
+    X_dev = torch.tensor(X, device=device)
+    sig = pysiglib.sig(X_dev, deg, lead_lag = True)
+    assert_device(sig, device)
     check_close(iisig, sig[1:])
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_signature_time_aug_lead_lag(deg, dtype):
+def test_signature_time_aug_lead_lag(device, deg, dtype):
     X = np.random.uniform(size=(10, 2)).astype(dtype)
     X_aug = lead_lag(X)
     t = np.linspace(0, 1, 19)[:, np.newaxis]
     X_aug = np.concatenate([X_aug, t], axis = 1)
     iisig = iisignature.sig(X_aug, deg).astype(dtype)
-    sig = pysiglib.sig(X, deg, lead_lag = True, time_aug = True)
+    X_dev = torch.tensor(X, device=device)
+    sig = pysiglib.sig(X_dev, deg, lead_lag = True, time_aug = True)
+    assert_device(sig, device)
     check_close(iisig, sig[1:])

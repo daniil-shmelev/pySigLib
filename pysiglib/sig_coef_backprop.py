@@ -21,8 +21,8 @@ import torch
 
 from .param_checks import check_word_or_word_list, check_type
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIG_COEF_BACKPROP, CPSIG_BATCH_SIG_COEF_BACKPROP
-from .data_handlers import PathInputHandler, DeviceToHost, MultipleSigInputHandler, PathOutputHandler
+from .dtypes import CPSIG_SIG_COEF_BACKPROP, CPSIG_BATCH_SIG_COEF_BACKPROP, CUSIG_SIG_COEF_BACKPROP_CUDA, CUSIG_BATCH_SIG_COEF_BACKPROP_CUDA
+from .data_handlers import PathInputHandler, MultipleSigInputHandler, PathOutputHandler
 
 
 def sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr):
@@ -67,6 +67,41 @@ def batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_mu
         raise Exception("Error in pysiglib.sig_coef_backprop: " + err_msg(err_code))
     return result.data
 
+def sig_coef_backprop_cuda_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr):
+    err_code = CUSIG_SIG_COEF_BACKPROP_CUDA[data.dtype](
+        data.data_ptr,
+        result.data_ptr,
+        deriv_data.data[0].data_ptr,
+        deriv_data.data[1].data_ptr,
+        multi_indices_ptr,
+        num_multi_indices,
+        degrees_ptr,
+        data.data_dimension,
+        data.data_length
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig_coef_backprop (CUDA): " + err_msg(err_code))
+    return result.data
+
+def batch_sig_coef_backprop_cuda_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr):
+    err_code = CUSIG_BATCH_SIG_COEF_BACKPROP_CUDA[data.dtype](
+        data.data_ptr,
+        result.data_ptr,
+        deriv_data.data[0].data_ptr,
+        deriv_data.data[1].data_ptr,
+        multi_indices_ptr,
+        num_multi_indices,
+        degrees_ptr,
+        data.batch_size,
+        data.data_dimension,
+        data.data_length
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.sig_coef_backprop (CUDA): " + err_msg(err_code))
+    return result.data
+
 def sig_coef_backprop(
         path : Union[np.ndarray, torch.tensor],
         words : Union[tuple[int, ...], list[tuple[int, ...]]],
@@ -98,7 +133,7 @@ def sig_coef_backprop(
     :type coefs: numpy.ndarray | torch.tensor
     :param derivs: Derivatives of the scalar function :math:`F` with respect to the signature coefficients,
         :math:`\\partial F / \\partial S(x)^I`. This must be an array of the same shape as the
-        provided coefficients.
+        provided coefficients. **On CPU, this buffer is modified in-place.**
     :type derivs: numpy.ndarray | torch.tensor
     :param time_aug: Whether the signature coefficients were computed with ``time_aug=True``.
     :type time_aug: bool
@@ -151,10 +186,17 @@ def sig_coef_backprop(
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
 
-    # If path is on GPU, move to CPU
-    device_handler = DeviceToHost([path, coefs, derivs], ["path", "coefs", "derivs"])
-    path, coefs, derivs = device_handler.data
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
+
+    # CUDA sig_coef_backprop doesn't support time_aug/lead_lag natively —
+    # transform the path first, backprop, then backprop through the transform.
+    if data.device != "cpu" and (time_aug or lead_lag):
+        from .transform_path import transform_path
+        from .transform_path_backprop import transform_path_backprop
+        transformed = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
+        aug_grad = sig_coef_backprop(transformed, words, coefs, derivs, time_aug=False, lead_lag=False, end_time=1., n_jobs=n_jobs)
+        return transform_path_backprop(aug_grad, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
+
     words = check_word_or_word_list(words, data.dimension, "word")
 
     coefs_len = 0
@@ -164,28 +206,55 @@ def sig_coef_backprop(
     if coefs.shape[-1] != coefs_len:
         raise ValueError("Expected coefs.shape[-1] == " + str(coefs_len) + ". Please make sure coefs was generated using prefixes=True.")
 
+    # CUDA kernel doesn't handle empty words (degree 0) correctly.
+    # Since S() = 1 is constant, its gradient is always zero — safely skip.
+    if data.device != "cpu" and any(len(w) == 0 for w in words):
+        keep_indices = []
+        pos = 0
+        for w in words:
+            block_len = len(w) if w else 1
+            if w:
+                keep_indices.extend(range(pos, pos + block_len))
+            pos += block_len
+        words = [w for w in words if w]
+        if not words:
+            result = PathOutputHandler(data.data_length, data.data_dimension, data)
+            return result.data
+        coefs = coefs[..., keep_indices].contiguous()
+        derivs = derivs[..., keep_indices].contiguous()
+        coefs_len = sum(len(idx) for idx in words)
+
     deriv_data = MultipleSigInputHandler([coefs, derivs], coefs_len, ["coef", "deriv"])
 
     num_multi_indices = len(words)
     degrees = [len(idx) for idx in words]
 
     flat_indices = [i for idx in words for i in idx]
-    words = torch.tensor(flat_indices, dtype=torch.uint64)
-    degrees = torch.tensor(degrees, dtype=torch.uint64)
 
-    multi_indices_ptr = cast(words.data_ptr(), POINTER(c_uint64))
-    degrees_ptr = cast(degrees.data_ptr(), POINTER(c_uint64))
+    if data.device == "cpu":
+        words_t = torch.tensor(flat_indices, dtype=torch.uint64)
+        degrees_t = torch.tensor(degrees, dtype=torch.uint64)
+    else:
+        words_t = torch.tensor(flat_indices, dtype=torch.uint64, device=path.device)
+        degrees_t = torch.tensor(degrees, dtype=torch.uint64, device=path.device)
+
+    multi_indices_ptr = cast(words_t.data_ptr(), POINTER(c_uint64))
+    degrees_ptr = cast(degrees_t.data_ptr(), POINTER(c_uint64))
 
     result = PathOutputHandler(data.data_length, data.data_dimension, data)
 
-    if data.is_batch:
-        check_type(n_jobs, "n_jobs", int)
-        if n_jobs == 0:
-            raise ValueError("n_jobs cannot be 0")
-        res = batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, n_jobs)
+    if data.device == "cpu":
+        if data.is_batch:
+            check_type(n_jobs, "n_jobs", int)
+            if n_jobs == 0:
+                raise ValueError("n_jobs cannot be 0")
+            res = batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, n_jobs)
+        else:
+            res = sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr)
     else:
-        res = sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr)
+        if data.is_batch:
+            res = batch_sig_coef_backprop_cuda_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr)
+        else:
+            res = sig_coef_backprop_cuda_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr)
 
-    if device_handler.device is not None:
-        res = res.to(device_handler.device)
     return res

@@ -214,4 +214,421 @@ extern "C" {
 	/** @brief */
 	CUSIG_API int batch_sig_kernel_backprop_cuda_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
+
+	/** @defgroup signature_cuda_functions Signature CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes the truncated signature of a path of type float on the GPU.
+	*
+	* The signature is computed using the Horner algorithm by default, which is more
+	* efficient for longer paths and higher degrees. A naive algorithm (Chen's identity
+	* applied iteratively) can be used as a fallback by setting `horner = false`.
+	*
+	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), size = `sig_length(transformed_dimension, degree)`,
+	*			  where `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @param degree Truncation degree of the signature.
+	* @param time_aug Whether to add time augmentation (default = false).
+	* @param lead_lag Whether to apply the lead-lag transform (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @param horner Whether to use the Horner algorithm (default = true).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true) noexcept;
+	/** @brief */
+	CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true) noexcept;
+	/** @} */
+
+	/** @defgroup batch_signature_cuda_functions Batch signature CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes the truncated signatures of a batch of paths of type float on the GPU.
+	*
+	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), size = `batch_size * sig_length(transformed_dimension, degree)`,
+	*			  where `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the paths.
+	* @param length Length of the paths.
+	* @param degree Truncation degree of the signature.
+	* @param time_aug Whether to add time augmentation (default = false).
+	* @param lead_lag Whether to apply the lead-lag transform (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @param horner Whether to use the Horner algorithm (default = true).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true) noexcept;
+	/** @brief */
+	CUSIG_API int batch_signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true) noexcept;
+	/** @} */
+
+	/** @defgroup sig_backprop_cuda_functions Signature backpropagation CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through the signature computation on the GPU (float).
+	*
+	* Given the forward signature and derivatives dF/d(sig), computes derivatives
+	* dF/d(path) with respect to the original path.
+	*
+	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as path.
+	* @param sig_derivs Pointer to dF/d(sig) (on device), size = `sig_length(transformed_dimension, degree)`.
+	* @param sig Pointer to forward signature (on device), same size as sig_derivs.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @param degree Truncation degree of the signature.
+	* @param time_aug Whether time augmentation was applied (default = false).
+	* @param lead_lag Whether the lead-lag transform was applied (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	/** @brief */
+	CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_backprop_cuda_functions Batch signature backpropagation CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through the batch signature computation on the GPU (float).
+	*
+	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as path.
+	* @param sig_derivs Pointer to dF/d(sig) (on device), size = `batch_size * sig_length(transformed_dimension, degree)`.
+	* @param sig Pointer to forward signatures (on device), same size as sig_derivs.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the paths.
+	* @param length Length of the paths.
+	* @param degree Truncation degree of the signature.
+	* @param time_aug Whether time augmentation was applied (default = false).
+	* @param lead_lag Whether the lead-lag transform was applied (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	/** @} */
+
+	/** @defgroup sig_combine_cuda_functions Signature combine CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Combines two truncated signatures on the GPU using Chen's identity (tensor product).
+	*
+	* Given two signatures S(x1) and S(x2), computes S(x1) ⊗ S(x2) = S(x1 * x2),
+	* where x1 * x2 is the concatenation of paths x1 and x2.
+	*
+	* @param sig1 Pointer to first signature (row-major, on device), size = `sig_length(dimension, degree)`.
+	* @param sig2 Pointer to second signature (row-major, on device), same size as sig1.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as sig1.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signatures.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_combine_cuda_f(const float* sig1, const float* sig2, float* out, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_combine_cuda_functions Batch signature combine CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Combines batches of truncated signatures on the GPU using Chen's identity.
+	*
+	* @param sig1 Pointer to batch of first signatures (row-major, on device), size = `batch_size * sig_length(dimension, degree)`.
+	* @param sig2 Pointer to batch of second signatures (row-major, on device), same size as sig1.
+	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as sig1.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signatures.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_combine_cuda_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
+	/** @defgroup sig_combine_backprop_cuda_functions Signature combine backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagation through sig_combine on the GPU.
+	*
+	* Given dF/d(sig_combine(sig1, sig2)), computes dF/d(sig1) and dF/d(sig2).
+	*
+	* @param sig_combined_deriv Pointer to input derivatives (on device), size = `sig_length(dimension, degree)`.
+	* @param sig1_deriv Pointer to output sig1 derivatives (on device, preallocated).
+	* @param sig2_deriv Pointer to output sig2 derivatives (on device, preallocated).
+	* @param sig1 Pointer to first signature (on device).
+	* @param sig2 Pointer to second signature (on device).
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signatures.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_combine_backprop_cuda_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int sig_combine_backprop_cuda_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_combine_backprop_cuda_functions Batch signature combine backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Batch backpropagation through sig_combine on the GPU.
+	*
+	* @param sig_combined_deriv Pointer to input derivatives (on device), size = `batch_size * sig_length(dimension, degree)`.
+	* @param sig1_deriv Pointer to output sig1 derivatives (on device, preallocated).
+	* @param sig2_deriv Pointer to output sig2 derivatives (on device, preallocated).
+	* @param sig1 Pointer to first signatures (on device).
+	* @param sig2 Pointer to second signatures (on device).
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signatures.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_combine_backprop_cuda_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_combine_backprop_cuda_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
+	/** @defgroup sig_to_log_sig_cuda_functions Sig to log sig CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Converts a signature to its log signature on the GPU using the specified method.
+	*
+	* Method 0: expanded tensor log (output size = sig_length).
+	* Method 1: Lyndon words (output size = log_sig_length).
+	* Method 2: Lyndon basis (output size = log_sig_length).
+	* Methods 1 and 2 require a prior call to prepare_log_sig_cuda.
+	*
+	* @param sig Pointer to input signature (on device), size = `sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (on device, preallocated).
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signature.
+	* @param method Method for log signature computation (0, 1, or 2).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @brief */
+	CUSIG_API int sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_to_log_sig_cuda_functions Batch sig to log sig CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Converts a batch of signatures to log signatures on the GPU using the specified method.
+	*
+	* @param sig Pointer to batch of input signatures (on device), size = `batch_size * sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (on device, preallocated).
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signature.
+	* @param method Method for log signature computation (0, 1, or 2).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @} */
+
+	/** @defgroup sig_to_log_sig_backprop_cuda_functions Sig to log sig backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through the sig_to_log_sig_cuda function.
+	*
+	* @param sig Pointer to input signature (on device), size = `sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (on device, preallocated), size = `sig_length(dimension, degree)`.
+	* @param log_sig_derivs Pointer to dF/d(log_sig) (on device).
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signature.
+	* @param method Method for log signature computation (0, 1, or 2).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_to_log_sig_backprop_cuda_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @brief */
+	CUSIG_API int sig_to_log_sig_backprop_cuda_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_to_log_sig_backprop_cuda_functions Batch sig to log sig backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through the batch_sig_to_log_sig_cuda function.
+	*
+	* @param sig Pointer to batch of input signatures (on device), size = `batch_size * sig_length(dimension, degree)`.
+	* @param out Pointer to output buffer (on device, preallocated), size = `batch_size * sig_length(dimension, degree)`.
+	* @param log_sig_derivs Pointer to dF/d(log_sig) (on device).
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the signature.
+	* @param method Method for log signature computation (0, 1, or 2).
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_to_log_sig_backprop_cuda_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_to_log_sig_backprop_cuda_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	/** @} */
+
+	/** @defgroup prepare_log_sig_cuda_functions Prepare log sig CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Prepares GPU-side data structures needed for log signature methods 1 and 2.
+	*
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree.
+	* @param method Method (1 or 2).
+	* @param use_disk If true, check the shared disk cache before computing, and save to disk if not found.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int prepare_log_sig_cuda(uint64_t dimension, uint64_t degree, int method, bool use_disk = false) noexcept;
+	/** @} */
+
+	/** @defgroup sig_coef_cuda_functions Sig coef CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes signature coefficients for specified multi-indices on the GPU.
+	*
+	* Each multi-index (word) specifies a sequence of channels, and the function computes
+	* the corresponding iterated integral (signature coefficient) of the path.
+	*
+	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
+	* @param out Pointer to output buffer (on device, preallocated).
+	* @param multi_idx Pointer to flattened multi-indices (on device).
+	* @param num_multi_idx Number of multi-indices (words).
+	* @param degrees Pointer to degree of each multi-index (on device), size = `num_multi_idx`.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @param prefixes If true, output all prefix coefficients; if false, output only the final coefficient.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	/** @brief */
+	CUSIG_API int sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_coef_cuda_functions Batch sig coef CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes signature coefficients for a batch of paths on the GPU.
+	*
+	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
+	* @param out Pointer to output buffer (on device, preallocated).
+	* @param multi_idx Pointer to flattened multi-indices (on device).
+	* @param num_multi_idx Number of multi-indices (words).
+	* @param degrees Pointer to degree of each multi-index (on device), size = `num_multi_idx`.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the paths.
+	* @param length Length of the paths.
+	* @param prefixes If true, output all prefix coefficients; if false, output only the final coefficient.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	/** @} */
+
+	/** @defgroup sig_coef_backprop_cuda_functions Sig coef backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through sig_coef_cuda on the GPU.
+	*
+	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
+	* @param out Pointer to output buffer (on device, preallocated), size = `length * dimension`.
+	* @param coefs Pointer to prefix coefficients from forward pass (on device).
+	* @param derivs Pointer to dF/d(coefs) (on device), same size as coefs.
+	* @param multi_idx Pointer to flattened multi-indices (on device).
+	* @param num_multi_idx Number of multi-indices (words).
+	* @param degrees Pointer to degree of each multi-index (on device), size = `num_multi_idx`.
+	* @param dimension Dimension of the path.
+	* @param length Length of the path.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length) noexcept;
+	/** @brief */
+	CUSIG_API int sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length) noexcept;
+	/** @} */
+
+	/** @defgroup batch_sig_coef_backprop_cuda_functions Batch sig coef backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through batch_sig_coef_cuda on the GPU.
+	*
+	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
+	* @param out Pointer to output buffer (on device, preallocated), size = `batch_size * length * dimension`.
+	* @param coefs Pointer to prefix coefficients from forward pass (on device).
+	* @param derivs Pointer to dF/d(coefs) (on device), same size as coefs.
+	* @param multi_idx Pointer to flattened multi-indices (on device).
+	* @param num_multi_idx Number of multi-indices (words).
+	* @param degrees Pointer to degree of each multi-index (on device), size = `num_multi_idx`.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the paths.
+	* @param length Length of the paths.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
+	/** @brief */
+	CUSIG_API int batch_sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
+	/** @} */
+
+	/** @defgroup clear_cache_cuda_functions Clear cache CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Clears all GPU-side cached data for log signature computation.
+	*
+	* @param use_disk If true, also delete the shared disk cache.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int clear_cache_cuda(bool use_disk = false) noexcept;
+	/** @} */
+
+	/** @defgroup set_cache_dir_cuda_functions Set cache dir CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Sets the disk cache directory for CUDA log signature data.
+	*
+	* This should match the directory used by cpsig, as both libraries
+	* share the same disk cache format.
+	*
+	* @param dir Path to the cache directory.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int set_cache_dir_cuda(const char* dir) noexcept;
+	/** @} */
 }

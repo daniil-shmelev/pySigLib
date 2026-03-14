@@ -19,7 +19,6 @@ import numpy as np
 import torch
 
 from .data_handlers import PathOutputHandler
-from .load_siglib import BUILT_WITH_CUDA
 from .param_checks import check_type
 from .error_codes import err_msg
 from .dtypes import CPSIG_TRANSFORM_PATH_BACKPROP, CPSIG_BATCH_TRANSFORM_PATH_BACKPROP, CUSIG_TRANSFORM_PATH_BACKPROP_CUDA, CUSIG_BATCH_TRANSFORM_PATH_BACKPROP_CUDA
@@ -150,21 +149,14 @@ def transform_path_backprop(
     if lead_lag:
         dimension = dimension // 2
     result = PathOutputHandler(length, dimension, data)
-    if data.is_batch:
-        check_type(n_jobs, "n_jobs", int)
-        if n_jobs == 0:
-            raise ValueError("n_jobs cannot be 0")
-
-        if data.device == "cpu":
-            return batch_transform_path_backprop_(data, result, length, dimension, time_aug, lead_lag, end_time, n_jobs)
-        else:
-            if not BUILT_WITH_CUDA:
-                raise RuntimeError("pySigLib was built without CUDA - data must be moved to CPU.")
-            return batch_transform_path_backprop_cuda_(data, result, length, dimension, time_aug, lead_lag, end_time)
-
     if data.device == "cpu":
+        if data.is_batch:
+            check_type(n_jobs, "n_jobs", int)
+            if n_jobs == 0:
+                raise ValueError("n_jobs cannot be 0")
+            return batch_transform_path_backprop_(data, result, length, dimension, time_aug, lead_lag, end_time, n_jobs)
         return transform_path_backprop_(data, result, length, dimension, time_aug, lead_lag, end_time)
     else:
-        if not BUILT_WITH_CUDA:
-            raise RuntimeError("pySigLib was built without CUDA - data must be moved to CPU.")
+        if data.is_batch:
+            return batch_transform_path_backprop_cuda_(data, result, length, dimension, time_aug, lead_lag, end_time)
         return transform_path_backprop_cuda_(data, result, length, dimension, time_aug, lead_lag, end_time)

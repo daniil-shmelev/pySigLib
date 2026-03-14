@@ -83,12 +83,12 @@ class SigInputHandler:
         if isinstance(self.sig, np.ndarray):
             self.type_ = "numpy"
             self.dtype = str(self.sig.dtype)
+            self.device = "cpu"
             self.data_ptr = self.sig.ctypes.data_as(POINTER(DTYPES[self.dtype]))
         else:
             self.type_ = "torch"
             self.dtype = str(self.sig.dtype)[6:]
-            if not self.sig.device.type == "cpu":
-                raise ValueError(param_name + " must be located on the cpu")
+            self.device = self.sig.device.type
             self.data_ptr = cast(self.sig.data_ptr(), POINTER(DTYPES[self.dtype]))
 
 class MultipleSigInputHandler:
@@ -113,6 +113,12 @@ class MultipleSigInputHandler:
         self.batch_size = self.data[0].batch_size
         self.type_ = self.data[0].type_
         self.sig_ptr = [d.data_ptr for d in self.data]
+
+        # Propagate device info so SigOutputHandler can allocate on the correct device
+        if self.type_ == "torch":
+            self.device = self.data[0].sig.device.type
+        else:
+            self.device = "cpu"
 
 class SigOutputHandler:
     """

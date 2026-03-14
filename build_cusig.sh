@@ -31,8 +31,8 @@ ${NVCC_EXE} -arch=sm_50 \
 -gencode=arch=compute_70,code=sm_70 \
 -gencode=arch=compute_75,code=sm_75 \
 -gencode=arch=compute_75,code=compute_75 \
--shared -Xcompiler -fPIC -DNDEBUG -DCUSIG_EXPORTS \
-    cu_sig_kernel.cu cu_path_transforms.cu \
+--std c++17 -shared -Xcompiler -fPIC -DNDEBUG -DCUSIG_EXPORTS \
+    cu_sig_kernel.cu cu_path_transforms.cu cu_tensor_poly.cu cu_signature.cu cu_log_signature.cu cu_log_sig_cache.cu cu_sig_coef.cu \
     -o ${SIGLIB_DIR}/x64/Release/libcusig.so
 
 echo "*** Build complete. ***"

@@ -23,16 +23,9 @@ import pysiglib
 np.random.seed(42)
 torch.manual_seed(42)
 
-SINGLE_EPSILON = 1e-2
-DOUBLE_EPSILON = 1e-4
-
-def check_close(a, b):
-    a_ = np.array(a.cpu())
-    b_ = np.array(b.cpu())
-    EPSILON = SINGLE_EPSILON if a_.dtype == np.float32 else DOUBLE_EPSILON
-    assert not np.any(np.abs(a_ - b_) > EPSILON)
-
-DEVICES = ["cpu", "cuda"] if (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()) else ["cpu"]
+from functools import partial
+from conftest import DEVICES, check_close as _check_close, assert_device
+check_close = partial(_check_close, single_atol=1e-2, double_atol=1e-4)
 
 ################################################
 ## Consistency with return_grid=False
@@ -54,6 +47,8 @@ def test_grid_backprop_consistency_with_scalar(len1, len2, dyadic_order, device)
     d1_scalar, d2_scalar = pysiglib.sig_kernel_backprop(
         derivs_scalar, X, Y, dyadic_order, left_deriv=True, right_deriv=True
     )
+    assert_device(d1_scalar, device)
+    assert_device(d2_scalar, device)
 
     # Grid backprop: construct derivs_grid with 1.0 at [-1,-1]
     k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
@@ -63,6 +58,8 @@ def test_grid_backprop_consistency_with_scalar(len1, len2, dyadic_order, device)
         derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=True,
         k_grid=k_grid, return_grid=True
     )
+    assert_device(d1_grid, device)
+    assert_device(d2_grid, device)
 
     check_close(d1_scalar, d1_grid)
     check_close(d2_scalar, d2_grid)
@@ -78,6 +75,8 @@ def test_grid_backprop_consistency_batch(dyadic_order, device):
     d1_scalar, d2_scalar = pysiglib.sig_kernel_backprop(
         derivs_scalar, X, Y, dyadic_order, left_deriv=True, right_deriv=True
     )
+    assert_device(d1_scalar, device)
+    assert_device(d2_scalar, device)
 
     k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
     derivs_grid = torch.zeros_like(k_grid, device=device)
@@ -86,6 +85,8 @@ def test_grid_backprop_consistency_batch(dyadic_order, device):
         derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=True,
         k_grid=k_grid, return_grid=True
     )
+    assert_device(d1_grid, device)
+    assert_device(d2_grid, device)
 
     check_close(d1_scalar, d1_grid)
     check_close(d2_scalar, d2_grid)
@@ -139,6 +140,7 @@ def test_grid_backprop_finite_diff(dyadic_order, device):
         derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
         k_grid=k_grid, return_grid=True
     )
+    assert_device(d1, device)
 
     d1_fd = _finite_difference_grid(X, Y, derivs_grid, dyadic_order)
     check_close(d1, d1_fd)
@@ -157,6 +159,7 @@ def test_grid_backprop_finite_diff_batch(dyadic_order, device):
         derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
         k_grid=k_grid, return_grid=True
     )
+    assert_device(d1, device)
 
     d1_fd = _finite_difference_grid(X, Y, derivs_grid, dyadic_order)
     check_close(d1, d1_fd)
@@ -174,6 +177,7 @@ def test_grid_backprop_finite_diff_time_aug_batch(dyadic_order, device):
         derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
         k_grid=k_grid, return_grid=True, time_aug=True,
     )
+    assert_device(d1, device)
 
     d1_fd = _finite_difference_grid(X, Y, derivs_grid, dyadic_order, time_aug=True)
     check_close(d1, d1_fd)
@@ -191,6 +195,7 @@ def test_grid_backprop_finite_diff_lead_lag_batch(dyadic_order, device):
         derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
         k_grid=k_grid, return_grid=True, lead_lag=True
     )
+    assert_device(d1, device)
 
     d1_fd = _finite_difference_grid(X, Y, derivs_grid, dyadic_order, lead_lag=True)
     check_close(d1, d1_fd)
@@ -208,6 +213,7 @@ def test_grid_backprop_finite_diff_time_aug_lead_lag_batch(dyadic_order, device)
         derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
         k_grid=k_grid, return_grid=True, time_aug=True, lead_lag=True
     )
+    assert_device(d1, device)
 
     d1_fd = _finite_difference_grid(X, Y, derivs_grid, dyadic_order, time_aug=True, lead_lag=True)
     check_close(d1, d1_fd)
@@ -224,6 +230,7 @@ def test_grid_backprop_torch_api_batch(dyadic_order, device):
     Y = torch.rand(size=(32, 7, 5), dtype=torch.float64, device=device, requires_grad=True)
 
     k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    assert_device(k_grid, device)
     derivs = torch.rand(k_grid.shape, device=device)
     k_grid.backward(derivs)
 
@@ -242,6 +249,7 @@ def test_grid_backprop_torch_api_time_aug_batch(dyadic_order, device):
     Y = torch.rand(size=(32, 7, 4), dtype=torch.float64, device=device, requires_grad=True)
 
     k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, time_aug=True, return_grid=True)
+    assert_device(k_grid, device)
     derivs = torch.rand(k_grid.shape, device=device)
     k_grid.backward(derivs)
 
@@ -260,6 +268,7 @@ def test_grid_backprop_torch_api_lead_lag_batch(dyadic_order, device):
     Y = torch.tensor(torch.rand(size=(32, 10, 2)) / 200, dtype=torch.float64, device=device, requires_grad=True)
 
     k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, lead_lag=True, return_grid=True)
+    assert_device(k_grid, device)
     derivs = torch.rand(k_grid.shape, device=device)
     k_grid.backward(derivs)
 
@@ -278,6 +287,7 @@ def test_grid_backprop_torch_api_time_aug_lead_lag_batch(dyadic_order, device):
     Y = torch.tensor(torch.rand(size=(32, 10, 2)) / 200, dtype=torch.float64, device=device, requires_grad=True)
 
     k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, time_aug=True, lead_lag=True, return_grid=True)
+    assert_device(k_grid, device)
     derivs = torch.rand(k_grid.shape, device=device)
     k_grid.backward(derivs)
 

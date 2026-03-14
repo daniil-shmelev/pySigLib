@@ -46,8 +46,6 @@ void load_cpsig(const std::string& dir_path) {
             (LPTSTR)&lpMsgBuf,
             0, NULL);
 
-        // Display the error message and exit the process
-
         lpDisplayBuf = (LPVOID)::LocalAlloc(LMEM_ZEROINIT,
             (lstrlen((LPCTSTR)lpMsgBuf) + 40) * sizeof(TCHAR));
 
@@ -56,21 +54,17 @@ void load_cpsig(const std::string& dir_path) {
             TEXT("Failed with error %d: %s"),
             dw, lpMsgBuf);
 
-        //std::cerr << std::string((LPCTSTR)lpDisplayBuf);
-
         LocalFree(lpMsgBuf);
         LocalFree(lpDisplayBuf);
         throw std::runtime_error("Failed to load cpsig");
-        //return 1;
     }
 
 #else
 
-    // /home/shmelev/Projects/Daniils/pySigLib/siglib/dist/release
-    void* cpsig = dlopen("/home/shmelev/Projects/Daniils/pySigLib/siglib/dist/release/libcpsig.so", RTLD_LAZY | RTLD_DEEPBIND);
+    cpsig = dlopen((dir_path + "/libcpsig.so").c_str(), RTLD_LAZY | RTLD_DEEPBIND);
     if (!cpsig) {
         fputs(dlerror(), stderr);
-        return 1;
+        throw std::runtime_error("Failed to load cpsig");
     }
 
 #endif
@@ -102,8 +96,6 @@ void load_cusig(const std::string& dir_path) {
             (LPTSTR)&lpMsgBuf,
             0, NULL);
 
-        // Display the error message and exit the process
-
         lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT,
             (lstrlen((LPCTSTR)lpMsgBuf) + 40) * sizeof(TCHAR));
         StringCchPrintf((LPTSTR)lpDisplayBuf,
@@ -124,20 +116,22 @@ void unload_cpsig() {
 #if defined(_WIN32) && !defined __GNUC__
     if (cpsig)
         ::FreeLibrary(cpsig);
-    cpsig = nullptr;
 #else
-    //TODO
+    if (cpsig)
+        dlclose(cpsig);
 #endif
+    cpsig = nullptr;
 }
 
 void unload_cusig() {
 #if defined(_WIN32) && !defined __GNUC__
     if (cusig)
         ::FreeLibrary(cusig);
-    cusig = nullptr;
 #else
-    //TODO
+    if (cusig)
+        dlclose(cusig);
 #endif
+    cusig = nullptr;
 }
 
 //////////////////////////////////////////////
@@ -161,7 +155,11 @@ batch_sig_kernel_f_fn batch_sig_kernel_f = nullptr;
 sig_kernel_d_fn sig_kernel_d = nullptr;
 batch_sig_kernel_d_fn batch_sig_kernel_d = nullptr;
 batch_sig_combine_d_fn batch_sig_combine_d = nullptr;
+batch_sig_combine_cuda_d_fn batch_sig_combine_cuda_d = nullptr;
+batch_sig_combine_backprop_d_fn batch_sig_combine_backprop_d = nullptr;
+batch_sig_combine_backprop_cuda_d_fn batch_sig_combine_backprop_cuda_d = nullptr;
 sig_backprop_d_fn sig_backprop_d = nullptr;
+batch_sig_backprop_d_fn batch_sig_backprop_d = nullptr;
 
 sig_kernel_cuda_d_fn sig_kernel_cuda_d = nullptr;
 batch_sig_kernel_cuda_d_fn batch_sig_kernel_cuda_d = nullptr;
@@ -172,17 +170,43 @@ batch_sig_coef_d_fn batch_sig_coef_d = nullptr;
 sig_coef_backprop_d_fn sig_coef_backprop_d = nullptr;
 batch_sig_coef_backprop_d_fn batch_sig_coef_backprop_d = nullptr;
 
+sig_coef_cuda_d_fn sig_coef_cuda_d = nullptr;
+batch_sig_coef_cuda_d_fn batch_sig_coef_cuda_d = nullptr;
+
+sig_coef_backprop_cuda_d_fn sig_coef_backprop_cuda_d = nullptr;
+batch_sig_coef_backprop_cuda_d_fn batch_sig_coef_backprop_cuda_d = nullptr;
+
 sig_kernel_backprop_d_fn sig_kernel_backprop_d = nullptr;
 batch_sig_kernel_backprop_d_fn batch_sig_kernel_backprop_d = nullptr;
 
 sig_kernel_backprop_cuda_d_fn sig_kernel_backprop_cuda_d = nullptr;
 batch_sig_kernel_backprop_cuda_d_fn batch_sig_kernel_backprop_cuda_d = nullptr;
 
+signature_cuda_f_fn signature_cuda_f = nullptr;
+signature_cuda_d_fn signature_cuda_d = nullptr;
+batch_signature_cuda_f_fn batch_signature_cuda_f = nullptr;
+batch_signature_cuda_d_fn batch_signature_cuda_d = nullptr;
+
+sig_backprop_cuda_d_fn sig_backprop_cuda_d = nullptr;
+batch_sig_backprop_cuda_d_fn batch_sig_backprop_cuda_d = nullptr;
+
 set_cache_dir_fn set_cache_dir = nullptr;
 prepare_log_sig_fn prepare_log_sig = nullptr;
 clear_cache_fn clear_cache = nullptr;
 
 sig_to_log_sig_d_fn sig_to_log_sig_d = nullptr;
+batch_sig_to_log_sig_d_fn batch_sig_to_log_sig_d = nullptr;
+
+prepare_log_sig_cuda_fn prepare_log_sig_cuda = nullptr;
+
+sig_to_log_sig_cuda_d_fn sig_to_log_sig_cuda_d = nullptr;
+batch_sig_to_log_sig_cuda_d_fn batch_sig_to_log_sig_cuda_d = nullptr;
+
+sig_to_log_sig_backprop_d_fn sig_to_log_sig_backprop_d = nullptr;
+batch_sig_to_log_sig_backprop_d_fn batch_sig_to_log_sig_backprop_d = nullptr;
+
+sig_to_log_sig_backprop_cuda_d_fn sig_to_log_sig_backprop_cuda_d = nullptr;
+batch_sig_to_log_sig_backprop_cuda_d_fn batch_sig_to_log_sig_backprop_cuda_d = nullptr;
 
 
 void get_cpsig_fn_ptrs()
@@ -199,16 +223,21 @@ void get_cpsig_fn_ptrs()
     GET_FN(batch_sig_kernel_f, cpsig);
     GET_FN(batch_sig_combine_d, cpsig);
     GET_FN(sig_backprop_d, cpsig);
+    GET_FN(batch_sig_backprop_d, cpsig);
     GET_FN(sig_kernel_backprop_d, cpsig);
     GET_FN(batch_sig_kernel_backprop_d, cpsig);
     GET_FN(prepare_log_sig, cpsig);
     GET_FN(set_cache_dir, cpsig);
     GET_FN(clear_cache, cpsig);
     GET_FN(sig_to_log_sig_d, cpsig);
+    GET_FN(batch_sig_to_log_sig_d, cpsig);
+    GET_FN(sig_to_log_sig_backprop_d, cpsig);
+    GET_FN(batch_sig_to_log_sig_backprop_d, cpsig);
     GET_FN(sig_coef_d, cpsig);
     GET_FN(batch_sig_coef_d, cpsig);
     GET_FN(sig_coef_backprop_d, cpsig);
     GET_FN(batch_sig_coef_backprop_d, cpsig);
+    GET_FN(batch_sig_combine_backprop_d, cpsig);
 }
 
 void get_cusig_fn_ptrs()
@@ -216,4 +245,21 @@ void get_cusig_fn_ptrs()
     GET_FN(sig_kernel_cuda_d, cusig);
     GET_FN(batch_sig_kernel_cuda_d, cusig);
     GET_FN(batch_sig_kernel_backprop_cuda_d, cusig);
+    GET_FN(signature_cuda_f, cusig);
+    GET_FN(signature_cuda_d, cusig);
+    GET_FN(batch_signature_cuda_f, cusig);
+    GET_FN(batch_signature_cuda_d, cusig);
+    GET_FN(sig_backprop_cuda_d, cusig);
+    GET_FN(batch_sig_backprop_cuda_d, cusig);
+    GET_FN(batch_sig_combine_cuda_d, cusig);
+    GET_FN(batch_sig_combine_backprop_cuda_d, cusig);
+    GET_FN(prepare_log_sig_cuda, cusig);
+    GET_FN(sig_to_log_sig_cuda_d, cusig);
+    GET_FN(batch_sig_to_log_sig_cuda_d, cusig);
+    GET_FN(sig_to_log_sig_backprop_cuda_d, cusig);
+    GET_FN(batch_sig_to_log_sig_backprop_cuda_d, cusig);
+    GET_FN(sig_coef_cuda_d, cusig);
+    GET_FN(batch_sig_coef_cuda_d, cusig);
+    GET_FN(sig_coef_backprop_cuda_d, cusig);
+    GET_FN(batch_sig_coef_backprop_cuda_d, cusig);
 }

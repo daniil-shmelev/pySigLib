@@ -33,6 +33,27 @@
     <ClInclude Include="..\cusig\cu_path_transforms.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
+    <ClInclude Include="..\cusig\cu_signature.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_tensor_poly.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_log_signature.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_log_sig_cache.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_log_sig_backprop.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_sig_coef.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_macros.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cusig\cupch.cpp">
@@ -47,6 +68,21 @@
       <Filter>Source Files\cusig</Filter>
     </CudaCompile>
     <CudaCompile Include="..\cusig\cu_path_transforms.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_signature.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_tensor_poly.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_log_signature.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_log_sig_cache.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_sig_coef.cu">
       <Filter>Source Files\cusig</Filter>
     </CudaCompile>
   </ItemGroup>

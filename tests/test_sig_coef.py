@@ -18,29 +18,30 @@ import numpy as np
 import torch
 import pysiglib
 
-EPSILON = 1e-10
+from functools import partial
+from conftest import DEVICES, check_close as _check_close, assert_device
+check_close = partial(_check_close, atol=1e-10)
 
-def check_close(a, b):
-    a_ = np.array(a)
-    b_ = np.array(b)
-    assert not np.any(np.abs(a_ - b_) > EPSILON)
-
-def test_extract_sig_coef_all():
+@pytest.mark.parametrize("device", DEVICES)
+def test_extract_sig_coef_all(device):
     dimension, degree = 3, 4
-    x = torch.rand(size=(100, dimension))
+    x = torch.rand(size=(100, dimension), device=device)
     sig = pysiglib.sig(x, degree)
     words = pysiglib.words(dimension, degree)
     coefs = pysiglib.extract_sig_coef(sig, words, dimension)
+    assert_device(coefs, device)
     check_close(sig, coefs)
 
-def test_extract_sig_coef_lyndon():
+@pytest.mark.parametrize("device", DEVICES)
+def test_extract_sig_coef_lyndon(device):
     dimension, degree = 3, 4
-    x = torch.rand(size=(100, dimension))
+    x = torch.rand(size=(100, dimension), device=device)
     pysiglib.prepare_log_sig(dimension, degree, method=1)
     log_sig_full = pysiglib.log_sig(x, degree, method=0)
     log_sig = pysiglib.log_sig(x, degree, method=1)
     words = pysiglib.lyndon_words(dimension, degree)
     coefs = pysiglib.extract_sig_coef(log_sig_full, words, dimension)
+    assert_device(coefs, device)
     check_close(log_sig, coefs)
 
 def get_true_sig_coefs(multi_indices, X, *args, **kwargs):
@@ -55,93 +56,108 @@ def get_true_sig_coefs(multi_indices, X, *args, **kwargs):
         res.append(sig[..., flat_idx])
     return np.array(res).T
 
-def test_sig_coef_trivial():
-    X = np.array([[0., 0.], [1., 1.]])
-    check_close(pysiglib.sig_coef(X, [(0,), (1,)]), [1., 1.])
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_coef_trivial(device):
+    X = torch.tensor([[0., 0.], [1., 1.]], device=device)
+    result = pysiglib.sig_coef(X, [(0,), (1,)])
+    assert_device(result, device)
+    check_close(result, [1., 1.])
 
-    X = np.array([[0., 0.]])
-    check_close(pysiglib.sig_coef(X, [(0,), (1,)]), [0., 0.])
+    X = torch.tensor([[0., 0.]], device=device)
+    result = pysiglib.sig_coef(X, [(0,), (1,)])
+    assert_device(result, device)
+    check_close(result, [0., 0.])
 
-def test_batch_sig_coef_trivial():
-    X = np.array([[[0., 0.], [1., 1.]]])
-    check_close(pysiglib.sig_coef(X, [(0,), (1,)]), [1., 1.])
+@pytest.mark.parametrize("device", DEVICES)
+def test_batch_sig_coef_trivial(device):
+    X = torch.tensor([[[0., 0.], [1., 1.]]], device=device)
+    result = pysiglib.sig_coef(X, [(0,), (1,)])
+    assert_device(result, device)
+    check_close(result, [1., 1.])
 
-    X = np.array([[[0., 0.]]])
-    check_close(pysiglib.sig_coef(X, [(0,), (1,)]), [0., 0.])
+    X = torch.tensor([[[0., 0.]]], device=device)
+    result = pysiglib.sig_coef(X, [(0,), (1,)])
+    assert_device(result, device)
+    check_close(result, [0., 0.])
 
-def test_sig_coef():
-    X = np.random.uniform(size=(100, 3))
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_coef(device):
+    X = torch.rand(size=(100, 3), dtype=torch.float64, device=device)
     multi_indices = [(0, 1), (2, 1, 0), (1,)]
 
-    true_coeffs = get_true_sig_coefs(multi_indices, X, 5)
+    true_coeffs = get_true_sig_coefs(multi_indices, X.cpu(), 5)
     coeff = pysiglib.sig_coef(X, multi_indices)
+    assert_device(coeff, device)
     check_close(true_coeffs, coeff)
 
-def test_sig_coef_prefixes():
-    X = np.random.uniform(size=(100, 3))
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_coef_prefixes(device):
+    X = torch.rand(size=(100, 3), dtype=torch.float64, device=device)
     multi_indices = [(0, 1), (2, 1, 0), (1,)]
     grid_idx = [(0,), (0,1), (2,), (2,1), (2,1,0), (1,)]
 
-    true_coeffs = get_true_sig_coefs(grid_idx, X, 5)
+    true_coeffs = get_true_sig_coefs(grid_idx, X.cpu(), 5)
     coeff = pysiglib.sig_coef(X, multi_indices, prefixes = True)
+    assert_device(coeff, device)
     check_close(true_coeffs, coeff)
 
-def test_batch_sig_coef_prefixes():
-    X = np.random.uniform(size=(10, 100, 3))
+@pytest.mark.parametrize("device", DEVICES)
+def test_batch_sig_coef_prefixes(device):
+    X = torch.rand(size=(10, 100, 3), dtype=torch.float64, device=device)
     multi_indices = [(0, 1), (2, 1, 0), (1,)]
     grid_idx = [(0,), (0,1), (2,), (2,1), (2,1,0), (1,)]
 
-    true_coeffs = get_true_sig_coefs(grid_idx, X, 5)
+    true_coeffs = get_true_sig_coefs(grid_idx, X.cpu(), 5)
     coeff = pysiglib.sig_coef(X, multi_indices, prefixes = True)
+    assert_device(coeff, device)
     check_close(true_coeffs, coeff)
 
-def test_sig_coef_full():
-    X = np.random.uniform(size=(100, 3))
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_coef_full(device):
+    X = torch.rand(size=(100, 3), dtype=torch.float64, device=device)
     multi_indices = pysiglib.words(3, 5)[1:]
 
     coeff = pysiglib.sig_coef(X, multi_indices)
+    assert_device(coeff, device)
     sig = pysiglib.signature(X, 5)
     check_close(sig[1:], coeff)
 
-def test_batch_sig_coef_full():
-    X = np.random.uniform(size=(10, 100, 3))
+@pytest.mark.parametrize("device", DEVICES)
+def test_batch_sig_coef_full(device):
+    X = torch.rand(size=(10, 100, 3), device=device, dtype=torch.float64)
     multi_indices = pysiglib.words(3, 5)[1:]
 
     coeff = pysiglib.sig_coef(X, multi_indices)
+    assert_device(coeff, device)
     sig = pysiglib.signature(X, 5)
     check_close(sig[:, 1:], coeff)
 
-def test_batch_sig_coef_full_time_aug():
-    X = np.random.uniform(size=(10, 100, 3))
+@pytest.mark.parametrize("device", DEVICES)
+def test_batch_sig_coef_full_time_aug(device):
+    X = torch.rand(size=(10, 100, 3), device=device, dtype=torch.float64)
     multi_indices = pysiglib.words(4, 5)[1:]
 
     coeff = pysiglib.sig_coef(X, multi_indices, time_aug = True)
+    assert_device(coeff, device)
     sig = pysiglib.signature(X, 5, time_aug = True)
     check_close(sig[:, 1:], coeff)
 
-def test_batch_sig_coef_full_lead_lag():
-    X = np.random.uniform(size=(10, 100, 3))
+@pytest.mark.parametrize("device", DEVICES)
+def test_batch_sig_coef_full_lead_lag(device):
+    X = torch.rand(size=(10, 100, 3), device=device, dtype=torch.float64)
     multi_indices = pysiglib.words(6, 5)[1:]
 
     coeff = pysiglib.sig_coef(X, multi_indices, lead_lag = True)
+    assert_device(coeff, device)
     sig = pysiglib.signature(X, 5, lead_lag = True)
     check_close(sig[:, 1:], coeff)
 
-def test_batch_sig_coef_full_time_aug_lead_lag():
-    X = np.random.uniform(size=(10, 100, 3))
+@pytest.mark.parametrize("device", DEVICES)
+def test_batch_sig_coef_full_time_aug_lead_lag(device):
+    X = torch.rand(size=(10, 100, 3), device=device, dtype=torch.float64)
     multi_indices = pysiglib.words(7, 5)[1:]
 
     coeff = pysiglib.sig_coef(X, multi_indices, time_aug = True, lead_lag = True)
+    assert_device(coeff, device)
     sig = pysiglib.signature(X, 5, time_aug = True, lead_lag = True)
     check_close(sig[:, 1:], coeff)
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-def test_batch_sig_coef_full_cuda():
-    X = torch.rand(size=(10, 100, 3), device="cuda", dtype=torch.float64)
-    multi_indices = pysiglib.words(3, 5)[1:]
-
-    coeff = pysiglib.sig_coef(X, multi_indices)
-    sig = pysiglib.signature(X, 5)
-
-    assert coeff.device.type == "cuda"
-    check_close(sig[:, 1:].cpu(), coeff.cpu())

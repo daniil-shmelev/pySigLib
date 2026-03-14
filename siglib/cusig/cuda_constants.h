@@ -16,9 +16,6 @@
 #pragma once
 #include "cupch.h"
 
-#ifndef CUDACONSTANTS_H
-#define CUDACONSTANTS_H
-
 extern __constant__ uint64_t dimension;
 extern __constant__ uint64_t length1;
 extern __constant__ uint64_t length2;
@@ -40,5 +37,3 @@ extern __constant__ uint64_t path_size;
 extern __constant__ uint64_t transformed_dimension;
 extern __constant__ uint64_t transformed_length;
 extern __constant__ uint64_t transformed_path_size;
-
-#endif

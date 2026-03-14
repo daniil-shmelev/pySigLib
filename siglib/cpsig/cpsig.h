@@ -307,7 +307,7 @@ extern "C" {
 	* @param path Pointer to path data (row-major), size = `length * dimension`.
 	* @param out Pointer to output buffer (preallocated), size = `length * dimension`.
 	* @param coefs Pointer to coefficients computed using `sig_coef` with `prefixes=true`, size = `sum(degrees[i])`.
-	* @param derivs Pointer to derivatives with respect to coefficients,  size = `sum(degrees[i])`.
+	* @param derivs Pointer to derivatives with respect to coefficients,  size = `sum(degrees[i])`. **Modified in-place.**
 	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
 	* @param num_multi_idx Number of multi indices.
 	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.
@@ -334,7 +334,7 @@ extern "C" {
 	* @param path Pointer to path data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (preallocated), size = `batch_size * length * dimension`.
 	* @param coefs Pointer to coefficients computed using `sig_coef` with `prefixes=true`, size = `batch_size * sum(degrees[i])`.
-	* @param derivs Pointer to derivatives with respect to coefficients,  size = `batch_size * sum(degrees[i])`.
+	* @param derivs Pointer to derivatives with respect to coefficients,  size = `batch_size * sum(degrees[i])`. **Modified in-place.**
 	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
 	* @param num_multi_idx Number of multi indices.
 	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.

@@ -44,18 +44,33 @@ int main(int argc, char* argv[])
     load_cusig(dir_path);
     get_cusig_fn_ptrs();
 
-    /*example_signature_d();
-    example_batch_signature_d();
-    example_batch_signature_kernel();
-    example_batch_signature_kernel_cuda();*/
-    //example_sig_backprop_d();
+    //example_batch_signature_d(1000, 6, 100, 6, false, false, true, -1, 10);
+    //example_batch_signature_cuda_d(1000, 6, 100, 6, false, false, true, 10); // Min run time: 156ms
 
-    //example_signature_d(6, 8, false, false, true, 5);
-    //example_sig_to_log_sig_d(6, 8, false, false, 0, 50);
-    //example_sig_to_log_sig_d(6, 8, false, false, 1, 50);
-    //example_sig_to_log_sig_d(6, 8, false, false, 2, 50);
+    //// ---- Forward pass benchmark: single path, dim=5, len=1000, deg=5 ----
+    //example_signature_d(5, 1000, 5);
+    //example_signature_cuda_d(5, 1000, 5);
 
-    example_batch_sig_coef();
+    //// ---- Backprop benchmark: batch=100, dim=6, len=100, deg=6 ----
+    //example_batch_sig_backprop_d(100, 6, 100, 6);
+    //example_batch_sig_backprop_cuda_d(100, 6, 100, 5);
+
+    //example_batch_sig_to_log_sig_d();
+    //example_batch_sig_to_log_sig_cuda_d();
+
+    //example_batch_sig_to_log_sig_backprop_d();
+    //example_batch_sig_to_log_sig_backprop_cuda_d();
+
+    //example_batch_sig_combine_cuda_d();
+
+    //example_batch_sig_combine_backprop_d(5200, 6, 6, -1, 50);  // CPU all cores
+    //example_batch_sig_combine_backprop_cuda_d();
+
+    //example_batch_sig_coef(100, 5000, 5, 5, 1000, false, false, 1., -1, 10);  // CPU all cores
+    //example_batch_sig_coef_cuda_d(100, 5000, 5, 5, 1000, 10);               // CUDA
+
+    // benchmark: batch_sig_coef_backprop_cuda_d (batch=64, dim=8, deg=5, len=1000, num_idx=100)
+    example_batch_sig_coef_backprop_cuda_d(100, 1000, 8, 5, 400, 10);
 
     unload_cpsig();
     unload_cusig();

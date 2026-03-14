@@ -23,14 +23,9 @@ import pysiglib
 np.random.seed(42)
 torch.manual_seed(42)
 
-SINGLE_EPSILON = 1e-3
-DOUBLE_EPSILON = 1e-5
-
-def check_close(a, b):
-    a_ = np.array(a)
-    b_ = np.array(b)
-    EPSILON = SINGLE_EPSILON if a_.dtype == np.float32 else DOUBLE_EPSILON
-    assert not np.any(np.abs(a_ - b_) > EPSILON)
+from functools import partial
+from conftest import DEVICES, check_close as _check_close, assert_device
+check_close = partial(_check_close, single_atol=1e-3, double_atol=1e-5)
 
 def lead_lag(x):
     # A backpropagatable version of lead-lag
@@ -86,51 +81,55 @@ def sig_kernel_full_grid(X1, X2, len1, len2, batch):
     return result
 
 
-################################################
-## CPU
-################################################
-
-def test_sig_kernel_trivial():
-    X = torch.tensor([[0.]])
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_trivial(device):
+    X = torch.tensor([[0.]], device=device)
     k = pysiglib.sig_kernel(X, X, 0)
+    assert_device(k, device)
     check_close(torch.tensor([1.]), k)
 
-def test_sig_kernel_numpy():
-    x = np.array([[0., 1.], [3., 2.]])
-    pysiglib.sig_kernel(x, x, 0)
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_numpy(device):
+    x = torch.tensor([[0., 1.], [3., 2.]], device=device)
+    k = pysiglib.sig_kernel(x, x, 0)
+    assert_device(k, device)
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_sig_kernel_dtypes_cpu(dtype):
+def test_sig_kernel_dtypes(device, dtype):
     batch, len1, len2, dim = 32, 10, 10, 5
-    # arr * 3 - 1.5 below gives us non-zero values for int dtypes
-    X = (torch.rand(size=(batch, len1, dim), device="cpu") * 3 - 1.5).to(dtype=dtype) / 100
-    Y = (torch.rand(size=(batch, len2, dim), device="cpu") * 3 - 1.5).to(dtype=dtype) / 100
+    X = (torch.rand(size=(batch, len1, dim), device=device) * 3 - 1.5).to(dtype=dtype) / 100
+    Y = (torch.rand(size=(batch, len2, dim), device=device) * 3 - 1.5).to(dtype=dtype) / 100
 
     static_kernel = sigkernel.LinearKernel()
     signature_kernel = sigkernel.SigKernel(static_kernel, 0)
     kernel1 = signature_kernel.compute_kernel(X.double(), Y.double(), 100)
     kernel2 = pysiglib.sig_kernel(X, Y, 0)
+    assert_device(kernel2, device)
 
     check_close(kernel1, kernel2)
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_random_cpu(dyadic_order):
+def test_sig_kernel_random(device, dyadic_order):
     batch, len1, len2, dim = 32, 100, 100, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     static_kernel = sigkernel.LinearKernel()
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
     kernel1 = signature_kernel.compute_kernel(X, Y, 100)
     kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order)
+    assert_device(kernel2, device)
 
     check_close(kernel1, kernel2)
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_scaled_linear_cpu(dyadic_order):
+def test_sig_kernel_scaled_linear(device, dyadic_order):
     batch, len1, len2, dim = 32, 100, 100, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     static_kernel = sigkernel.LinearKernel(0.5)
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
@@ -138,14 +137,16 @@ def test_sig_kernel_scaled_linear_cpu(dyadic_order):
 
     static_kernel = pysiglib.ScaledLinearKernel(0.5)
     kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order, static_kernel= static_kernel)
+    assert_device(kernel2, device)
 
     check_close(kernel1, kernel2)
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_rbf_cpu(dyadic_order):
+def test_sig_kernel_rbf(device, dyadic_order):
     batch, len1, len2, dim = 32, 100, 100, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     static_kernel = sigkernel.RBFKernel(0.5)
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
@@ -153,45 +154,53 @@ def test_sig_kernel_rbf_cpu(dyadic_order):
 
     static_kernel = pysiglib.RBFKernel(0.5)
     kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order, static_kernel= static_kernel)
+    assert_device(kernel2, device)
 
     check_close(kernel1, kernel2)
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize(("len1", "len2"), [(10, 100), (100, 10)])
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_random_cpu_non_square(len1, len2, dyadic_order):
+def test_sig_kernel_random_non_square(device, len1, len2, dyadic_order):
     batch, dim = 32, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     static_kernel = sigkernel.LinearKernel()
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
     kernel1 = signature_kernel.compute_kernel(X, Y, 100)
     kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order)
+    assert_device(kernel2, device)
 
     check_close(kernel1, kernel2)
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dyadic_order", [(1,0), (2,0), (2,1)])
-def test_sig_kernel_different_dyadics_cpu(dyadic_order):
+def test_sig_kernel_different_dyadics(device, dyadic_order):
     batch, len1, len2, dim = 32, 10, 100, 5
-    X = torch.rand(size=(batch, len1, dim), device="cpu", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cpu", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     kernel1 = pysiglib.sig_kernel(X, Y, dyadic_order)
+    assert_device(kernel1, device)
     kernel2 = pysiglib.sig_kernel(Y, X, dyadic_order[::-1])
 
     check_close(kernel1, kernel2)
 
 
-def test_sig_kernel_non_contiguous():
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_non_contiguous(device):
     # Make sure sig_kernel works with any form of array
     dim, length, batch = 10, 100, 32
 
-    rand_data = torch.rand(size=(batch, length), dtype=torch.float64)[:, :, None]
+    rand_data = torch.rand(size=(batch, length), dtype=torch.float64, device=device)[:, :, None]
     X_non_cont = rand_data.expand(-1, -1, dim)
     X = X_non_cont.clone()
 
     res1 = pysiglib.sig_kernel(X, X, 0)
     res2 = pysiglib.sig_kernel(X_non_cont, X_non_cont, 0)
+    assert_device(res1, device)
+    assert_device(res2, device)
     check_close(res1, res2)
 
     rand_data = np.random.normal(size=(batch, length))[:, :, None]
@@ -202,10 +211,11 @@ def test_sig_kernel_non_contiguous():
     res2 = pysiglib.sig_kernel(X_non_cont, X_non_cont, 0)
     check_close(res1, res2)
 
+@pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_lead_lag(dyadic_order):
-    X = torch.rand(size=(32, 50, 5), dtype = torch.double) / 100
-    Y = torch.rand(size=(32, 100, 5), dtype = torch.double) / 100
+def test_sig_kernel_lead_lag(device, dyadic_order):
+    X = torch.rand(size=(32, 50, 5), dtype = torch.double, device=device) / 100
+    Y = torch.rand(size=(32, 100, 5), dtype = torch.double, device=device) / 100
 
     X_ll = batch_lead_lag(X).double()
     Y_ll = batch_lead_lag(Y).double()
@@ -214,164 +224,64 @@ def test_sig_kernel_lead_lag(dyadic_order):
     signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
     kernel1 = signature_kernel.compute_kernel(X_ll, Y_ll, 100)
     kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order, lead_lag = True)
+    assert_device(kernel2, device)
 
     check_close(kernel1, kernel2)
 
-def test_sig_kernel_full_grid():
-    X = np.random.uniform(size=(10, 5, 5))
-    Y = np.random.uniform(size=(10, 10, 5))
-
-    kernel1 = sig_kernel_full_grid(X, Y, 5, 10, 10)
-    kernel2 = pysiglib.sig_kernel(X, Y, 0, return_grid=True)
-
-    check_close(kernel1, kernel2)
-
-def test_sig_kernel_full_grid_time_aug():
-    X = np.random.uniform(size=(10, 5, 5))
-    Y = np.random.uniform(size=(10, 10, 5))
-
-    X_t = pysiglib.transform_path(X, time_aug = True)
-    Y_t = pysiglib.transform_path(Y, time_aug = True)
-
-    kernel1 = sig_kernel_full_grid(X_t, Y_t, 5, 10, 10)
-    kernel2 = pysiglib.sig_kernel(X, Y, 0, time_aug = True, return_grid=True)
-
-    check_close(kernel1, kernel2)
-
-def test_sig_kernel_full_grid_lead_lag():
-    X = np.random.uniform(size=(10, 5, 5))
-    Y = np.random.uniform(size=(10, 10, 5))
-
-    X_ll = pysiglib.transform_path(X, lead_lag = True)
-    Y_ll = pysiglib.transform_path(Y, lead_lag = True)
-
-    kernel1 = sig_kernel_full_grid(X_ll, Y_ll, X_ll.shape[1], Y_ll.shape[1], 10)
-    kernel2 = pysiglib.sig_kernel(X, Y, 0, lead_lag = True, return_grid=True)
-
-    check_close(kernel1, kernel2)
-
-def test_sig_kernel_full_grid_time_aug_lead_lag():
-    X = np.random.uniform(size=(10, 5, 5))
-    Y = np.random.uniform(size=(10, 10, 5))
-
-    X_ll = pysiglib.transform_path(X, time_aug = True, lead_lag=True)
-    Y_ll = pysiglib.transform_path(Y, time_aug = True, lead_lag=True)
-
-    kernel1 = sig_kernel_full_grid(X_ll, Y_ll, X_ll.shape[1], Y_ll.shape[1], 10)
-    kernel2 = pysiglib.sig_kernel(X, Y, 0, lead_lag = True, time_aug = True, return_grid=True)
-
-    check_close(kernel1, kernel2)
-
-################################################
-## CUDA
-################################################
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_sig_kernel_dtypes_cuda(dtype):
-    batch, len1, len2, dim = 32, 10, 10, 5
-    # arr * 3 - 1.5 below gives us non-zero values for int dtypes
-    X = (torch.rand(size=(batch, len1, dim), device="cuda") * 3 - 1.5).to(dtype=dtype) / 100
-    Y = (torch.rand(size=(batch, len2, dim), device="cuda") * 3 - 1.5).to(dtype=dtype) / 100
-
-    static_kernel = sigkernel.LinearKernel()
-    signature_kernel = sigkernel.SigKernel(static_kernel, 0)
-    kernel1 = signature_kernel.compute_kernel(X.double(), Y.double(), 100)
-    kernel2 = pysiglib.sig_kernel(X, Y, 0)
-
-    check_close(kernel1.cpu(), kernel2.cpu())
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_random_cuda(dyadic_order):
-    batch, len1, len2, dim = 32, 100, 100, 5
-    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype = torch.double)
-
-    static_kernel = sigkernel.LinearKernel()
-    signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
-    kernel1 = signature_kernel.compute_kernel(X, Y, 100)
-    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order)
-
-    check_close(kernel1.cpu(), kernel2.cpu())
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize(("len1", "len2"), [(10, 100), (100, 10)])
-@pytest.mark.parametrize("dyadic_order", range(3))
-def test_sig_kernel_random_non_square_cuda(len1, len2, dyadic_order):
-    batch, dim = 32, 5
-    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype = torch.double)
-
-    static_kernel = sigkernel.LinearKernel()
-    signature_kernel = sigkernel.SigKernel(static_kernel, dyadic_order)
-    kernel1 = signature_kernel.compute_kernel(X, Y, 100)
-    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order)
-
-    check_close(kernel1.cpu(), kernel2.cpu())
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize("dyadic_order", [(1,0), (2,0), (2,1)])
-def test_sig_kernel_different_dyadics_cuda(dyadic_order):
-    batch, len1, len2, dim = 32, 10, 100, 5
-    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype = torch.double)
-
-    kernel1 = pysiglib.sig_kernel(X, Y, dyadic_order)
-    kernel2 = pysiglib.sig_kernel(Y, X, dyadic_order[::-1])
-
-    check_close(kernel1.cpu(), kernel2.cpu())
-
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-@pytest.mark.parametrize(("len1", "len2"), [(10, 10), (10, 100), (100, 10)])
-def test_sig_kernel_full_grid_cuda(len1, len2):
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(("len1", "len2"), [(10, 10), (10, 5), (5, 10)])
+def test_sig_kernel_full_grid(device, len1, len2):
     batch, dim = 2, 5
-    X = torch.rand(size=(batch, len1, dim), device = "cuda", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device = "cuda", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     kernel1 = sig_kernel_full_grid(X, Y, len1, len2, batch)
     kernel2 = pysiglib.sig_kernel(X, Y, 0, return_grid=True)
+    assert_device(kernel2, device)
 
-    check_close(kernel1, kernel2.cpu())
+    check_close(kernel1, kernel2)
 
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-def test_sig_kernel_full_grid_time_aug_cuda():
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_full_grid_time_aug(device):
     batch, len1, len2, dim = 10, 5, 10, 5
-    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     X_t = pysiglib.transform_path(X, time_aug = True)
     Y_t = pysiglib.transform_path(Y, time_aug = True)
 
     kernel1 = sig_kernel_full_grid(X_t, Y_t, len1, len2, batch)
     kernel2 = pysiglib.sig_kernel(X, Y, 0, time_aug = True, return_grid=True)
+    assert_device(kernel2, device)
 
-    check_close(kernel1, kernel2.cpu())
+    check_close(kernel1, kernel2)
 
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-def test_sig_kernel_full_grid_lead_lag_cuda():
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_full_grid_lead_lag(device):
     batch, len1, len2, dim = 10, 5, 10, 5
-    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     X_ll = pysiglib.transform_path(X, lead_lag = True)
     Y_ll = pysiglib.transform_path(Y, lead_lag = True)
 
     kernel1 = sig_kernel_full_grid(X_ll, Y_ll, X_ll.shape[1], Y_ll.shape[1], batch)
     kernel2 = pysiglib.sig_kernel(X, Y, 0, lead_lag = True, return_grid=True)
+    assert_device(kernel2, device)
 
-    check_close(kernel1, kernel2.cpu())
+    check_close(kernel1, kernel2)
 
-@pytest.mark.skipif(not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()), reason="CUDA not available or disabled")
-def test_sig_kernel_full_grid_time_aug_lead_lag_cuda():
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_full_grid_time_aug_lead_lag(device):
     batch, len1, len2, dim = 10, 5, 10, 5
-    X = torch.rand(size=(batch, len1, dim), device="cuda", dtype = torch.double)
-    Y = torch.rand(size=(batch, len2, dim), device="cuda", dtype = torch.double)
+    X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
+    Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     X_ll = pysiglib.transform_path(X, time_aug = True, lead_lag=True)
     Y_ll = pysiglib.transform_path(Y, time_aug = True, lead_lag=True)
 
     kernel1 = sig_kernel_full_grid(X_ll, Y_ll, X_ll.shape[1], Y_ll.shape[1], batch)
     kernel2 = pysiglib.sig_kernel(X, Y, 0, lead_lag = True, time_aug = True, return_grid=True)
+    assert_device(kernel2, device)
 
-    check_close(kernel1, kernel2.cpu())
+    check_close(kernel1, kernel2)
