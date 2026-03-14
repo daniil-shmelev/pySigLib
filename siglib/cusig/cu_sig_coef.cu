@@ -64,22 +64,6 @@ const T* upload_one_over_fact(uint64_t max_degree) {
 	case 10: KERNEL<T, 10><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
 	}
 
-// =========================================================================
-// Generic CUDA sig_coef kernel (Horner scheme)
-//
-// The Chen identity update at each timestep is:
-//   coefs[i] += sum_{j=0}^{i-1} coefs[j] * prod(dx[j..i-1]) * ovf[i-j]
-//
-// Horner evaluation (high-to-low for in-place update):
-//   temp = ovf[i]; for k: temp = temp*dx[k] + coefs[k+1]*ovf[i-k-1]
-//   coefs[i] += temp * dx[i-1]
-//
-// Benefits over the original buff-based approach:
-//   - 25% fewer FP64 ops (no separate buff multiply pass)
-//   - No cross-level serial dependency (ILP across levels)
-//   - Eliminates the buff[] array entirely
-// =========================================================================
-
 template<typename T>
 __global__ void sig_coef_kernel(
 	const T* __restrict__ path,

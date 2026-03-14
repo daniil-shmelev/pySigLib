@@ -46,8 +46,6 @@ void load_cpsig(const std::string& dir_path) {
             (LPTSTR)&lpMsgBuf,
             0, NULL);
 
-        // Display the error message and exit the process
-
         lpDisplayBuf = (LPVOID)::LocalAlloc(LMEM_ZEROINIT,
             (lstrlen((LPCTSTR)lpMsgBuf) + 40) * sizeof(TCHAR));
 
@@ -56,21 +54,17 @@ void load_cpsig(const std::string& dir_path) {
             TEXT("Failed with error %d: %s"),
             dw, lpMsgBuf);
 
-        //std::cerr << std::string((LPCTSTR)lpDisplayBuf);
-
         LocalFree(lpMsgBuf);
         LocalFree(lpDisplayBuf);
         throw std::runtime_error("Failed to load cpsig");
-        //return 1;
     }
 
 #else
 
-    // /home/shmelev/Projects/Daniils/pySigLib/siglib/dist/release
-    void* cpsig = dlopen("/home/shmelev/Projects/Daniils/pySigLib/siglib/dist/release/libcpsig.so", RTLD_LAZY | RTLD_DEEPBIND);
+    cpsig = dlopen((dir_path + "/libcpsig.so").c_str(), RTLD_LAZY | RTLD_DEEPBIND);
     if (!cpsig) {
         fputs(dlerror(), stderr);
-        return 1;
+        throw std::runtime_error("Failed to load cpsig");
     }
 
 #endif
@@ -102,8 +96,6 @@ void load_cusig(const std::string& dir_path) {
             (LPTSTR)&lpMsgBuf,
             0, NULL);
 
-        // Display the error message and exit the process
-
         lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT,
             (lstrlen((LPCTSTR)lpMsgBuf) + 40) * sizeof(TCHAR));
         StringCchPrintf((LPTSTR)lpDisplayBuf,
@@ -124,20 +116,22 @@ void unload_cpsig() {
 #if defined(_WIN32) && !defined __GNUC__
     if (cpsig)
         ::FreeLibrary(cpsig);
-    cpsig = nullptr;
 #else
-    //TODO
+    if (cpsig)
+        dlclose(cpsig);
 #endif
+    cpsig = nullptr;
 }
 
 void unload_cusig() {
 #if defined(_WIN32) && !defined __GNUC__
     if (cusig)
         ::FreeLibrary(cusig);
-    cusig = nullptr;
 #else
-    //TODO
+    if (cusig)
+        dlclose(cusig);
 #endif
+    cusig = nullptr;
 }
 
 //////////////////////////////////////////////

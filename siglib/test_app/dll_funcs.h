@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <dlfcn.h>
 #include <float.h>
+typedef void* HMODULE;
 #endif
 
 #include <string>
