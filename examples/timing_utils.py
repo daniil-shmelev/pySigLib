@@ -347,6 +347,25 @@ def time_signatory_sig_backprop(cfg, progress_bar = False):
         best_time = min(best_time, time_)
     return best_time
 
+def time_pysiglib_sig_coef(cfg, n_jobs, progress_bar=False):
+    dtype = torch_dtype(cfg['dtype'])
+    device = cfg['device']
+    dimension = cfg['dimension']
+    degree = cfg['degree']
+    num_words = cfg['num_words']
+    X = torch.rand(size=(cfg['batch_size'], cfg['length'], dimension), dtype=dtype, device=device)
+    words = [tuple(torch.randint(0, dimension, (degree,)).tolist()) for _ in range(num_words)]
+    best_time = float('inf')
+    loop = tqdm(range(cfg['num_runs'])) if progress_bar else range(cfg['num_runs'])
+    for _ in loop:
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        start = timeit.default_timer()
+        pysiglib.sig_coef(X, words, n_jobs=n_jobs)
+        end = timeit.default_timer()
+        best_time = min(best_time, end - start)
+    return best_time
+
 def time_pysiglib_sig_combine(cfg, n_jobs):
     """Time pysiglib.sig_combine by pre-computing signatures and then
     measuring only the combine step."""

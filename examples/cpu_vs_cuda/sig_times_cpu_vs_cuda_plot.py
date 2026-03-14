@@ -12,22 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # =========================================================================
-import timeit
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tqdm import tqdm
-import torch
-
-import pysiglib
-from timing_utils import plot_times, time_pysiglib_sig_combine
+from timing_utils import time_pysiglib_sig, plot_times
 import plotting_params
 plotting_params.set_plotting_params(8, 10, 12)
 
-
 if __name__ == '__main__':
     cfg_cpu = {
-        'batch_size': 1024,
+        'batch_size': 1000,
         'length': 10,
-        'dimension': 6,
+        'dimension': 5,
         'degree_arr': list(range(1, 8)),
         'dtype': "float",
         'device': 'cpu',
@@ -35,36 +32,42 @@ if __name__ == '__main__':
     }
 
     cfg_cuda = {
-        'batch_size': 1024,
+        'batch_size': 1000,
         'length': 10,
-        'dimension': 6,
+        'dimension': 5,
         'degree_arr': list(range(1, 8)),
         'dtype': "float",
         'device': 'cuda',
         'num_runs': 5
     }
 
-    cpu_time = []
-    cuda_time = []
+    cpu_direct_time = []
+    cpu_horner_time = []
+    cuda_direct_time = []
+    cuda_horner_time = []
 
     for degree in tqdm(cfg_cpu['degree_arr']):
         cfg_cpu['degree'] = degree
         cfg_cuda['degree'] = degree
-        cpu_time.append(time_pysiglib_sig_combine(cfg_cpu, -1))
-        cuda_time.append(time_pysiglib_sig_combine(cfg_cuda, 1))
+        cpu_direct_time.append(time_pysiglib_sig(cfg_cpu, False, -1))
+        cpu_horner_time.append(time_pysiglib_sig(cfg_cpu, True, -1))
+        cuda_direct_time.append(time_pysiglib_sig(cfg_cuda, False, 1))
+        cuda_horner_time.append(time_pysiglib_sig(cfg_cuda, True, 1))
 
-    print("CPU:", cpu_time)
-    print("CUDA:", cuda_time)
+    print("CPU Direct:", cpu_direct_time)
+    print("CPU Horner:", cpu_horner_time)
+    print("CUDA Direct:", cuda_direct_time)
+    print("CUDA Horner:", cuda_horner_time)
 
     for scale in ["linear", "log"]:
         plot_times(
             x=cfg_cpu['degree_arr'],
-            ys=[cpu_time, cuda_time],
-            legend=["CPU", "CUDA"],
-            linestyles=["-", "--"],
-            title="Signature Combine: CPU vs CUDA",
+            ys=[cpu_direct_time, cpu_horner_time, cuda_direct_time, cuda_horner_time],
+            legend=["CPU (Direct)", "CPU (Horner)", "CUDA (Direct)", "CUDA (Horner)"],
+            linestyles=["-", "-", "--", "--"],
+            title="Truncated Signatures: CPU vs CUDA",
             xlabel="Truncation Level",
             ylabel="Elapsed Time (s)",
             scale=scale,
-            filename="sig_combine_times_cpu_vs_cuda_" + scale
+            filename="signature_times_cpu_vs_cuda_" + scale
         )
