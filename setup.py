@@ -118,6 +118,11 @@ class CustomBuild(_build_py):
                 if USE_CUDA:
                     build_cusig(SYSTEM, log_file)
 
+            # Clean up b2 build tool
+            b2_dir = Path(__file__).parent / 'b2'
+            if b2_dir.exists():
+                shutil.rmtree(b2_dir)
+
             parent_dir = Path(__file__).parent
             dir_ = parent_dir / 'pysiglib'
 
