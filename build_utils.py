@@ -25,7 +25,7 @@ import os
 
 import requests
 
-B2_VERSION = '5.3.2'
+B2_VERSION = '5.4.2'
 
 ZIP_FOLDERNAME = 'b2-' + B2_VERSION
 ZIP_FILENAME = ZIP_FOLDERNAME + '.zip'
