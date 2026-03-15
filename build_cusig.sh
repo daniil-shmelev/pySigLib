@@ -1,38 +1,45 @@
+#!/usr/bin/env bash
 set -e
-set -x
 
-CUDA_PATH="${CUDA_PATH}"
+: "${CUDA_PATH:?CUDA_PATH environment variable is not set}"
 NVCC_EXE="${CUDA_PATH}/bin/nvcc"
 
 SIGLIB_DIR="$(pwd)/siglib"
-BUILD_DIR="${SIGLIB_DIR}/cusig/x64/Release"
-
-mkdir -p "${BUILD_DIR}"
 
 cd "${SIGLIB_DIR}/cusig"
 
-# Build precompiled header equivalent (g++ only supports it with gch or precompiled modules in C++20)
-# Optional step – comment out if unnecessary
-# g++ -std=c++20 -O2 -Wall -Wextra -DNDEBUG -DCUSIG_EXPORTS -fPIC -I"${CUDA_PATH}/include" -c cupch.cpp -o "${BUILD_DIR}/cupch.o"
+echo "*** Detecting supported GPU architectures ***"
 
-#echo "*** Compile CUDA files with nvcc ***"
-#NVCC_ARGS="-gencode=arch=compute_50,code=sm_50 --use-local-env -rdc=true -I${CUDA_PATH}/include --keep-dir ${BUILD_DIR} --machine 64 --compile -cudart static -lineinfo -DNDEBUG -#DCUSIG_EXPORTS -Xcompiler -fPIC"
+# Query nvcc for supported architectures (available since CUDA 11.5)
+ARCHS=$("${NVCC_EXE}" --list-gpu-arch 2>/dev/null | sed -n 's/^compute_//p' | sort -n -u)
 
-#${NVCC_EXE} ${NVCC_ARGS} -o "${BUILD_DIR}/cu_sig_kernel.cu.o" cu_sig_kernel.cu
-#${NVCC_EXE} ${NVCC_ARGS} -o "${BUILD_DIR}/cu_sig_kernel.h.o" cu_sig_kernel.h
+if [ -z "${ARCHS}" ]; then
+    echo "Error: failed to detect supported GPU architectures from nvcc."
+    exit 1
+fi
+
+# Build -gencode flags for each supported architecture
+GENCODE_FLAGS=""
+LAST_ARCH=""
+for arch in ${ARCHS}; do
+    GENCODE_FLAGS="${GENCODE_FLAGS} -gencode=arch=compute_${arch},code=sm_${arch}"
+    LAST_ARCH="${arch}"
+done
+
+# Add PTX for the highest architecture (forward compatibility)
+GENCODE_FLAGS="${GENCODE_FLAGS} -gencode=arch=compute_${LAST_ARCH},code=compute_${LAST_ARCH}"
+
+echo "Architectures: ${ARCHS}"
+echo "PTX forward-compat: compute_${LAST_ARCH}"
 
 echo "*** Compile CUDA files with nvcc + Linking ***"
 
-${NVCC_EXE} -arch=sm_50 \
--gencode=arch=compute_50,code=sm_50 \
--gencode=arch=compute_52,code=sm_52 \
--gencode=arch=compute_60,code=sm_60 \
--gencode=arch=compute_61,code=sm_61 \
--gencode=arch=compute_70,code=sm_70 \
--gencode=arch=compute_75,code=sm_75 \
--gencode=arch=compute_75,code=compute_75 \
+mkdir -p "${SIGLIB_DIR}/x64/Release"
+
+"${NVCC_EXE}" \
+${GENCODE_FLAGS} \
 --std c++17 -shared -Xcompiler -fPIC -DNDEBUG -DCUSIG_EXPORTS \
     cu_sig_kernel.cu cu_path_transforms.cu cu_tensor_poly.cu cu_signature.cu cu_log_signature.cu cu_log_sig_cache.cu cu_sig_coef.cu \
-    -o ${SIGLIB_DIR}/x64/Release/libcusig.so
+    -o "${SIGLIB_DIR}/x64/Release/libcusig.so"
 
 echo "*** Build complete. ***"
