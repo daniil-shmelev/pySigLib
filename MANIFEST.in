@@ -27,6 +27,7 @@ recursive-exclude siglib *.vcxproj.filters
 recursive-exclude siglib *.vcxproj.user
 recursive-exclude siglib *.jam
 recursive-exclude docs *.psd
+recursive-exclude docs *.pclprof
 
 prune */__pycache__
 prune pysiglib/torch_api/__pycache__
