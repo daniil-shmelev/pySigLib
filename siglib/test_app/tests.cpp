@@ -898,3 +898,23 @@ void example_batch_sig_coef_backprop_cuda_d(
 
     std::cout << "done\n";
 }
+
+void example_batch_log_sig_combine_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    int n_jobs,
+    int num_runs
+) {
+    print_header("Batch Log Sig Combine CPU Double");
+
+    uint64_t ls_len = log_sig_length(dimension, degree);
+    uint64_t total = batch_size * ls_len;
+    std::vector<double> ls1 = test_data<double>(total);
+    std::vector<double> ls2 = test_data<double>(total);
+    std::vector<double> out(total);
+
+    time_function(num_runs, batch_log_sig_combine_d, ls1.data(), ls2.data(), out.data(), batch_size, dimension, degree, n_jobs);
+
+    std::cout << "done\n";
+}

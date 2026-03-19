@@ -70,7 +70,9 @@ int main(int argc, char* argv[])
     //example_batch_sig_coef_cuda_d(100, 5000, 5, 5, 1000, 10);               // CUDA
 
     // benchmark: batch_sig_coef_backprop_cuda_d (batch=64, dim=8, deg=5, len=1000, num_idx=100)
-    example_batch_sig_coef_backprop_cuda_d(100, 1000, 8, 5, 400, 10);
+    //example_batch_sig_coef_backprop_cuda_d(100, 1000, 8, 5, 400, 10);
+
+    example_batch_log_sig_combine_d();
 
     unload_cpsig();
     unload_cusig();

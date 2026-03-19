@@ -306,3 +306,11 @@ void example_batch_sig_coef_backprop_cuda_d(
 	uint64_t length = 100,
 	int num_runs = 10
 );
+
+void example_batch_log_sig_combine_d(
+	uint64_t batch_size = 120,
+	uint64_t dimension = 5,
+	uint64_t degree = 5,
+	int n_jobs = -1,
+	int num_runs = 20
+);

@@ -336,25 +336,35 @@ inline void clear_bch_cache() {
 
 template<std::floating_point T>
 void lie_bracket(
-	const T* v1, const T* v2, T* result, uint64_t m,
+	const T* __restrict v1, const T* __restrict v2, T* __restrict result, uint64_t m,
 	const std::vector<SparseVec>& commutator_table
 ) {
-	std::fill(result, result + m, static_cast<T>(0));
+	std::memset(result, 0, m * sizeof(T));
 
+	// Gather non-zero indices to avoid O(m^2) scan over zero pairs
+	std::vector<uint64_t> nz1_buf, nz2_buf;
+	nz1_buf.reserve(m);
+	nz2_buf.reserve(m);
 	for (uint64_t i = 0; i < m; ++i) {
-		if (v1[i] == static_cast<T>(0)) continue;
-		for (uint64_t j = 0; j < m; ++j) {
-			if (i == j) continue;
-			if (v2[j] == static_cast<T>(0)) continue;
+		if (v1[i] != static_cast<T>(0)) nz1_buf.push_back(i);
+	}
+	for (uint64_t j = 0; j < m; ++j) {
+		if (v2[j] != static_cast<T>(0)) nz2_buf.push_back(j);
+	}
 
-			T prod = v1[i] * v2[j];
+	for (uint64_t ii = 0; ii < nz1_buf.size(); ++ii) {
+		uint64_t i = nz1_buf[ii];
+		T vi = v1[i];
+		for (uint64_t jj = 0; jj < nz2_buf.size(); ++jj) {
+			uint64_t j = nz2_buf[jj];
+			if (i == j) continue;
+			T prod = vi * v2[j];
 			if (i < j) {
 				for (const auto& [k, c] : commutator_table[i * m + j]) {
 					result[k] += prod * static_cast<T>(c);
 				}
 			}
 			else {
-				// [e_i, e_j] = -[e_j, e_i]
 				for (const auto& [k, c] : commutator_table[j * m + i]) {
 					result[k] -= prod * static_cast<T>(c);
 				}
@@ -364,64 +374,66 @@ void lie_bracket(
 }
 
 // ========================================================================
-// Evaluate bracket tree of a 2-letter Lyndon word w on (L1, L2)
+// log_sig_combine_: BCH evaluation with memoized bracket subtrees
 // ========================================================================
 
-// workspace must have at least 2 * depth_remaining * m elements.
-// Each recursion level uses 2 slots (left_buf, right_buf) at its depth.
-template<std::floating_point T>
-void evaluate_bracket_tree(
-	uint64_t bch_idx,
-	const T* log_sig1, const T* log_sig2,
-	T* result, uint64_t m,
-	const BchCache& cache,
-	T* workspace, uint64_t depth
-) {
-	if (cache.bch_left_factor[bch_idx] == UINT64_MAX) {
-		// Leaf: index 0 = letter A -> log_sig1, index 1 = letter B -> log_sig2
-		std::memcpy(result, bch_idx == 0 ? log_sig1 : log_sig2, m * sizeof(T));
-		return;
-	}
-
-	T* left_buf = workspace + 2 * depth * m;
-	T* right_buf = workspace + (2 * depth + 1) * m;
-
-	evaluate_bracket_tree(cache.bch_left_factor[bch_idx], log_sig1, log_sig2,
-		left_buf, m, cache, workspace, depth + 1);
-	evaluate_bracket_tree(cache.bch_right_factor[bch_idx], log_sig1, log_sig2,
-		right_buf, m, cache, workspace, depth + 1);
-
-	lie_bracket(left_buf, right_buf, result, m, cache.commutator_table);
-}
-
-// ========================================================================
-// log_sig_combine_: BCH evaluation
-// ========================================================================
-
-// Internal implementation using pre-allocated buffers.
-// bracket_buf: m elements. workspace: 2 * (degree - 1) * m elements.
+// Internal implementation using memoization.
+// memo: m2 * m elements (one m-length slot per BCH index).
 template<std::floating_point T>
 void log_sig_combine_impl_(
-	const T* log_sig1, const T* log_sig2, T* out,
-	const BchCache& cache, T* bracket_buf, T* workspace
+	const T* __restrict log_sig1, const T* __restrict log_sig2, T* __restrict out,
+	const BchCache& cache, T* memo
 ) {
 	uint64_t m = cache.m;
+	uint64_t m2 = cache.bch_coefficients.size();
+
 	for (uint64_t i = 0; i < m; ++i) {
 		out[i] = log_sig1[i] + log_sig2[i];
 	}
 
-	uint64_t m2 = cache.bch_coefficients.size();
-	// The first 2 entries (index 0 and 1) are the degree-1 words {A} and {B}
-	// which correspond to the L1 + L2 terms already added above.
+	if (m2 <= 2) return;
+
+	// Initialize leaves: memo[0] = log_sig1, memo[1] = log_sig2
+	std::memcpy(memo, log_sig1, m * sizeof(T));
+	std::memcpy(memo + m, log_sig2, m * sizeof(T));
+
+	// Track which indices have been evaluated
+	bool computed[1024];
+	std::memset(computed, 0, m2 * sizeof(bool));
+	computed[0] = true;
+	computed[1] = true;
+
+	// Forward pass: BCH indices are topologically sorted (children < parent)
 	for (uint64_t w = 2; w < m2; ++w) {
+		uint64_t lf = cache.bch_left_factor[w];
+		uint64_t rf = cache.bch_right_factor[w];
+
+		// Ensure subtrees are computed (they may have zero coefficient but
+		// still be needed as children of a non-zero-coefficient term)
+		if (!computed[lf]) {
+			uint64_t llf = cache.bch_left_factor[lf];
+			uint64_t lrf = cache.bch_right_factor[lf];
+			lie_bracket(memo + llf * m, memo + lrf * m, memo + lf * m, m, cache.commutator_table);
+			computed[lf] = true;
+		}
+		if (!computed[rf]) {
+			uint64_t rlf = cache.bch_left_factor[rf];
+			uint64_t rrf = cache.bch_right_factor[rf];
+			lie_bracket(memo + rlf * m, memo + rrf * m, memo + rf * m, m, cache.commutator_table);
+			computed[rf] = true;
+		}
+
+		// Compute this bracket
+		lie_bracket(memo + lf * m, memo + rf * m, memo + w * m, m, cache.commutator_table);
+		computed[w] = true;
+
+		// Accumulate into output
 		T c_w = static_cast<T>(cache.bch_coefficients[w]);
-		if (c_w == static_cast<T>(0)) continue;
-
-		evaluate_bracket_tree(w, log_sig1, log_sig2, bracket_buf, m, cache,
-			workspace, 0);
-
-		for (uint64_t k = 0; k < m; ++k) {
-			out[k] += c_w * bracket_buf[k];
+		if (c_w != static_cast<T>(0)) {
+			const T* bracket = memo + w * m;
+			for (uint64_t k = 0; k < m; ++k) {
+				out[k] += c_w * bracket[k];
+			}
 		}
 	}
 }
@@ -442,9 +454,9 @@ void log_sig_combine_(
 		return;
 	}
 
-	std::vector<T> bracket_buf(m);
-	std::vector<T> workspace(2 * (degree - 1) * m);
-	log_sig_combine_impl_<T>(log_sig1, log_sig2, out, cache, bracket_buf.data(), workspace.data());
+	uint64_t m2 = cache.bch_coefficients.size();
+	std::vector<T> memo(m2 * m);
+	log_sig_combine_impl_<T>(log_sig1, log_sig2, out, cache, memo.data());
 }
 
 template<std::floating_point T>
@@ -468,22 +480,21 @@ void batch_log_sig_combine_(
 		return;
 	}
 
+	uint64_t m2 = cache.bch_coefficients.size();
+
 	if (n_jobs != 1) {
 		auto func = [&](const T* ls1, const T* ls2, T* o) {
-			thread_local std::vector<T> tl_bracket_buf;
-			thread_local std::vector<T> tl_workspace;
-			tl_bracket_buf.resize(m);
-			tl_workspace.resize(2 * (degree - 1) * m);
-			log_sig_combine_impl_<T>(ls1, ls2, o, cache, tl_bracket_buf.data(), tl_workspace.data());
+			thread_local std::vector<T> tl_memo;
+			tl_memo.resize(m2 * m);
+			log_sig_combine_impl_<T>(ls1, ls2, o, cache, tl_memo.data());
 		};
 		multi_threaded_batch_2<const T, const T, T>(func, log_sig1, log_sig2, out, batch_size, m, m, m, n_jobs);
 	}
 	else {
-		std::vector<T> bracket_buf(m);
-		std::vector<T> workspace(2 * (degree - 1) * m);
+		std::vector<T> memo(m2 * m);
 		for (uint64_t i = 0; i < batch_size; ++i) {
 			log_sig_combine_impl_<T>(log_sig1 + i * m, log_sig2 + i * m, out + i * m,
-				cache, bracket_buf.data(), workspace.data());
+				cache, memo.data());
 		}
 	}
 }
