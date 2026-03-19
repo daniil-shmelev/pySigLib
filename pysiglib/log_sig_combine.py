@@ -20,7 +20,7 @@ import torch
 
 from .param_checks import check_type, check_non_neg
 from .error_codes import err_msg
-from .dtypes import CPSIG_BATCH_LOG_SIG_COMBINE
+from .dtypes import CPSIG_BATCH_LOG_SIG_COMBINE, CUSIG_BATCH_LOG_SIG_COMBINE_CUDA
 from .sig_length import log_sig_length
 from .data_handlers import MultipleSigInputHandler, SigOutputHandler
 
@@ -38,6 +38,21 @@ def log_sig_combine_(data, result, aug_dimension, degree, n_jobs):
 
     if err_code:
         raise Exception("Error in pysiglib.log_sig_combine: " + err_msg(err_code))
+    return result.data
+
+
+def log_sig_combine_cuda_(data, result, aug_dimension, degree):
+    err_code = CUSIG_BATCH_LOG_SIG_COMBINE_CUDA[data.dtype](
+        data.sig_ptr[0],
+        data.sig_ptr[1],
+        result.data_ptr,
+        data.batch_size,
+        aug_dimension,
+        degree
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.log_sig_combine (CUDA): " + err_msg(err_code))
     return result.data
 
 
@@ -101,6 +116,8 @@ def log_sig_combine(
     result = SigOutputHandler(data, ls_len)
 
     if data.device != "cpu":
-        raise NotImplementedError("log_sig_combine is currently only supported on CPU")
+        if CUSIG_BATCH_LOG_SIG_COMBINE_CUDA is None:
+            raise RuntimeError("CUDA log_sig_combine requires cusig (built with CUDA support)")
+        return log_sig_combine_cuda_(data, result, aug_dimension, degree)
 
     return log_sig_combine_(data, result, aug_dimension, degree, n_jobs)

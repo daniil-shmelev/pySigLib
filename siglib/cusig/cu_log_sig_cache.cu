@@ -16,6 +16,7 @@
 #include "cupch.h"
 #include "cusig.h"
 #include "cu_log_sig_cache.h"
+#include "cu_log_sig_combine.h"
 
 // =========================================================================
 // SAFE_CALL macro

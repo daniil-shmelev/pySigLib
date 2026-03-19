@@ -40,7 +40,7 @@
     <ClCompile Include="..\cpsig\cp_sig_coef.cpp" />
     <ClCompile Include="..\cpsig\cp_sig_kernel.cpp" />
     <ClCompile Include="..\cpsig\cp_tensor_poly.cpp" />
-    <ClCompile Include="..\cpsig\cp_unit_tests.cpp" />
+    <ClCompile Include="cp_unit_tests.cpp" />
     <ClCompile Include="..\cpsig\log_sig_cache.cpp" />
     <ClCompile Include="..\cpsig\words.cpp" />
   </ItemGroup>
@@ -91,7 +91,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>$(VCInstallDir)UnitTest\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)\cpsig;$(SolutionDir)\shared;$(VCInstallDir)UnitTest\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions);CPSIG_EXPORTS</PreprocessorDefinitions>
       <UseFullPaths>true</UseFullPaths>
       <PrecompiledHeaderFile>
@@ -110,7 +110,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>$(VCInstallDir)UnitTest\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)\cpsig;$(SolutionDir)\shared;$(VCInstallDir)UnitTest\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions);CPSIG_EXPORTS</PreprocessorDefinitions>
       <UseFullPaths>true</UseFullPaths>
       <PrecompiledHeaderFile>
