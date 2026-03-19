@@ -1,4 +1,6 @@
 add_library(cpsig SHARED
+    cp_bch.cpp
+    cp_bch_data.cpp
     cp_log_signatures.cpp
     cp_path_transforms.cpp
     cp_sig_coef.cpp

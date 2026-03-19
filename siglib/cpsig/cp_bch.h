@@ -40,6 +40,7 @@ struct BchCache {
 	std::vector<uint32_t> comm_k_i;
 	std::vector<uint32_t> comm_k_j;
 	std::vector<int> comm_k_val;
+	std::vector<double> comm_k_val_d; // pre-cast to double
 
 	// Input-grouped commutator table (CSR format, grouped by input index a)
 	// For each input index a, stores (k, partner, signed_c) triples where
@@ -48,6 +49,15 @@ struct BchCache {
 	std::vector<uint32_t> comm_a_k;
 	std::vector<uint32_t> comm_a_partner;
 	std::vector<int> comm_a_signed_c;
+
+	// Pair-grouped commutator table (CSR format, grouped by (i,j) pair)
+	// For the backward pass: allows factoring out v1/v2 loads per pair.
+	uint32_t n_pairs = 0;
+	std::vector<uint32_t> comm_ij_i;    // [n_pairs] left index
+	std::vector<uint32_t> comm_ij_j;    // [n_pairs] right index
+	std::vector<uint32_t> comm_ij_ptr;  // [n_pairs+1] CSR row pointers
+	std::vector<uint32_t> comm_ij_k;    // [nnz] output index
+	std::vector<double>   comm_ij_c;    // [nnz] coefficient (pre-cast)
 
 	// Standard factorization of each d-letter Lyndon word (as index pairs)
 	// For degree-1 words: left_factor[i] = right_factor[i] = UINT64_MAX
@@ -328,6 +338,12 @@ inline void build_commutator_table(BchCache& cache) {
 		}
 	}
 
+	// Pre-cast k-grouped coefficients to double
+	cache.comm_k_val_d.resize(nnz);
+	for (uint32_t idx = 0; idx < nnz; ++idx) {
+		cache.comm_k_val_d[idx] = static_cast<double>(cache.comm_k_val[idx]);
+	}
+
 	// Build input-grouped commutator table (CSR format, grouped by input index a)
 	std::vector<uint32_t> a_counts(m, 0);
 	for (uint64_t i = 0; i < m; ++i) {
@@ -364,6 +380,42 @@ inline void build_commutator_table(BchCache& cache) {
 				cache.comm_a_partner[pos_j] = static_cast<uint32_t>(i);
 				cache.comm_a_signed_c[pos_j] = -c;
 			}
+		}
+	}
+
+	// Build pair-grouped commutator table (CSR format, grouped by (i,j) pair)
+	// Iterate non-empty pairs and flatten their (k, c) entries
+	cache.n_pairs = 0;
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			if (!cache.commutator_table[i * m + j].empty()) {
+				cache.n_pairs++;
+			}
+		}
+	}
+
+	cache.comm_ij_i.resize(cache.n_pairs);
+	cache.comm_ij_j.resize(cache.n_pairs);
+	cache.comm_ij_ptr.resize(cache.n_pairs + 1);
+	cache.comm_ij_k.resize(nnz);
+	cache.comm_ij_c.resize(nnz);
+
+	uint32_t pair_idx = 0;
+	uint32_t entry_idx = 0;
+	cache.comm_ij_ptr[0] = 0;
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			const auto& entries = cache.commutator_table[i * m + j];
+			if (entries.empty()) continue;
+			cache.comm_ij_i[pair_idx] = static_cast<uint32_t>(i);
+			cache.comm_ij_j[pair_idx] = static_cast<uint32_t>(j);
+			for (const auto& [k, c] : entries) {
+				cache.comm_ij_k[entry_idx] = static_cast<uint32_t>(k);
+				cache.comm_ij_c[entry_idx] = static_cast<double>(c);
+				entry_idx++;
+			}
+			cache.comm_ij_ptr[pair_idx + 1] = entry_idx;
+			pair_idx++;
 		}
 	}
 }
@@ -493,7 +545,7 @@ void log_sig_combine_impl_(
 	const uint32_t* k_ptr = cache.comm_k_ptr.data();
 	const uint32_t* k_i = cache.comm_k_i.data();
 	const uint32_t* k_j = cache.comm_k_j.data();
-	const int* k_val = cache.comm_k_val.data();
+	const double* k_val_d = cache.comm_k_val_d.data();
 
 	// Forward pass: BCH indices are topologically sorted (children < parent),
 	// so memo[lf] and memo[rf] are always already computed when we reach w.
@@ -505,16 +557,13 @@ void log_sig_combine_impl_(
 		T* result = memo + w * m;
 		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
 
-		// Fused lie_bracket + output accumulation via transposed commutator table
+		// Fused lie_bracket + output accumulation via k-grouped commutator table
 		for (uint64_t k = 0; k < m; ++k) {
 			T sum = T(0);
 			const uint32_t start = k_ptr[k];
 			const uint32_t end = k_ptr[k + 1];
 			for (uint32_t idx = start; idx < end; ++idx) {
-				const uint32_t i = k_i[idx];
-				const uint32_t j = k_j[idx];
-				const int c = k_val[idx];
-				sum += static_cast<T>(c) * (v1[i] * v2[j] - v1[j] * v2[i]);
+				sum += static_cast<T>(k_val_d[idx]) * (v1[k_i[idx]] * v2[k_j[idx]] - v1[k_j[idx]] * v2[k_i[idx]]);
 			}
 			result[k] = sum;
 			if (c_w != T(0)) out[k] += c_w * sum;
@@ -606,14 +655,16 @@ void log_sig_combine_backprop_impl_(
 	T* memo = workspace;
 	T* d_memo = workspace + m2 * m;
 
-	// Recompute forward memo
+	// Recompute forward memo using pair-grouped table
 	std::memcpy(memo, ls1, m * sizeof(T));
 	std::memcpy(memo + m, ls2, m * sizeof(T));
 
-	const uint32_t* k_ptr = cache.comm_k_ptr.data();
-	const uint32_t* k_i = cache.comm_k_i.data();
-	const uint32_t* k_j = cache.comm_k_j.data();
-	const int* k_val = cache.comm_k_val.data();
+	const uint32_t* ij_i = cache.comm_ij_i.data();
+	const uint32_t* ij_j = cache.comm_ij_j.data();
+	const uint32_t* ij_ptr = cache.comm_ij_ptr.data();
+	const uint32_t* ij_k = cache.comm_ij_k.data();
+	const double* ij_c = cache.comm_ij_c.data();
+	const uint32_t n_pairs = cache.n_pairs;
 
 	for (uint64_t w = 2; w < m2; ++w) {
 		const uint64_t lf = cache.bch_left_factor[w];
@@ -621,18 +672,18 @@ void log_sig_combine_backprop_impl_(
 		const T* v1 = memo + lf * m;
 		const T* v2 = memo + rf * m;
 		T* result = memo + w * m;
+		std::memset(result, 0, m * sizeof(T));
 
-		for (uint64_t k = 0; k < m; ++k) {
-			T sum = T(0);
-			const uint32_t start = k_ptr[k];
-			const uint32_t end = k_ptr[k + 1];
+		for (uint32_t p = 0; p < n_pairs; ++p) {
+			const uint32_t i = ij_i[p];
+			const uint32_t j = ij_j[p];
+			const T prod = v1[i] * v2[j] - v1[j] * v2[i];
+			if (prod == T(0)) continue;
+			const uint32_t start = ij_ptr[p];
+			const uint32_t end = ij_ptr[p + 1];
 			for (uint32_t idx = start; idx < end; ++idx) {
-				const uint32_t i = k_i[idx];
-				const uint32_t j = k_j[idx];
-				const int c = k_val[idx];
-				sum += static_cast<T>(c) * (v1[i] * v2[j] - v1[j] * v2[i]);
+				result[ij_k[idx]] += static_cast<T>(ij_c[idx]) * prod;
 			}
-			result[k] = sum;
 		}
 	}
 
@@ -640,7 +691,7 @@ void log_sig_combine_backprop_impl_(
 	std::memset(d_memo, 0, 2 * m * sizeof(T));
 	for (uint64_t w = 2; w < m2; ++w) {
 		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
-		T* dm = d_memo + w * m;
+		T* __restrict dm = d_memo + w * m;
 		if (c_w != T(0)) {
 			for (uint64_t k = 0; k < m; ++k) {
 				dm[k] = c_w * d_out[k];
@@ -651,12 +702,8 @@ void log_sig_combine_backprop_impl_(
 		}
 	}
 
-	// Reverse BCH loop using input-grouped table (gather pattern)
-	const uint32_t* a_ptr = cache.comm_a_ptr.data();
-	const uint32_t* a_k = cache.comm_a_k.data();
-	const uint32_t* a_partner = cache.comm_a_partner.data();
-	const int* a_signed_c = cache.comm_a_signed_c.data();
-
+	// Reverse BCH loop using pair-grouped table
+	// For each (i,j) pair, compute S = sum_k c * dm_w[k], then scatter 4 updates
 	for (uint64_t w = m2 - 1; w >= 2; --w) {
 		const uint64_t lf = cache.bch_left_factor[w];
 		const uint64_t rf = cache.bch_right_factor[w];
@@ -666,21 +713,22 @@ void log_sig_combine_backprop_impl_(
 		T* dm_lf = d_memo + lf * m;
 		T* dm_rf = d_memo + rf * m;
 
-		for (uint64_t a = 0; a < m; ++a) {
-			T acc_dv1 = T(0);
-			T acc_dv2 = T(0);
-			const uint32_t start = a_ptr[a];
-			const uint32_t end = a_ptr[a + 1];
+		for (uint32_t p = 0; p < n_pairs; ++p) {
+			// Dot product: S = sum_k c_{ijk} * dm_w[k]
+			T S = T(0);
+			const uint32_t start = ij_ptr[p];
+			const uint32_t end = ij_ptr[p + 1];
 			for (uint32_t idx = start; idx < end; ++idx) {
-				const uint32_t k = a_k[idx];
-				const uint32_t partner = a_partner[idx];
-				const int sc = a_signed_c[idx];
-				const T dk = dm_w[k];
-				acc_dv1 += static_cast<T>(sc) * v2[partner] * dk;
-				acc_dv2 -= static_cast<T>(sc) * v1[partner] * dk;
+				S += static_cast<T>(ij_c[idx]) * dm_w[ij_k[idx]];
 			}
-			dm_lf[a] += acc_dv1;
-			dm_rf[a] += acc_dv2;
+			if (S == T(0)) continue;
+
+			const uint32_t i = ij_i[p];
+			const uint32_t j = ij_j[p];
+			dm_lf[i] += S * v2[j];
+			dm_lf[j] -= S * v2[i];
+			dm_rf[j] += S * v1[i];
+			dm_rf[i] -= S * v1[j];
 		}
 	}
 

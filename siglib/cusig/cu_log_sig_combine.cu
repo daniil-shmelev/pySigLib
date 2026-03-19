@@ -350,9 +350,8 @@ __global__ void batch_log_sig_combine_backprop_kernel_(
 		d_memo[m + k] = T(0);
 	}
 	for (uint64_t w = 2; w < m2; ++w) {
-		const T c_w = T(bch_coefs[w]);
 		for (uint64_t k = tid; k < m; k += stride) {
-			d_memo[w * m + k] = c_w * my_dout[k];
+			d_memo[w * m + k] = T(bch_coefs[w]) * my_dout[k];
 		}
 	}
 	__syncthreads();
@@ -475,9 +474,8 @@ __global__ void batch_log_sig_combine_backprop_kernel_noshmem_(
 		d_memo[m + k] = T(0);
 	}
 	for (uint64_t w = 2; w < m2; ++w) {
-		const T c_w = T(bch_coefs[w]);
 		for (uint64_t k = tid; k < m; k += stride) {
-			d_memo[w * m + k] = c_w * my_dout[k];
+			d_memo[w * m + k] = T(bch_coefs[w]) * my_dout[k];
 		}
 	}
 	__syncthreads();
@@ -544,18 +542,30 @@ void batch_log_sig_combine_backprop_cuda_(
 
 	// Workspace: 2 * m2 * m per batch element (memo + d_memo)
 	uint64_t ws_per_batch = 2 * m2 * m;
-	size_t free_mem, total_mem;
-	cudaMemGetInfo(&free_mem, &total_mem);
 
-	uint64_t max_batch = free_mem / (ws_per_batch * sizeof(T) * 2);
-	if (max_batch < 1) max_batch = 1;
-	uint64_t chunk_size = std::min(batch_size, max_batch);
+	// Cached workspace to avoid cudaMalloc/cudaFree per call
+	static T* s_workspace = nullptr;
+	static size_t s_workspace_elems = 0;
 
-	T* d_workspace = nullptr;
-	cudaMalloc(&d_workspace, chunk_size * ws_per_batch * sizeof(T));
-	check_cuda_error();
+	size_t needed_elems = batch_size * ws_per_batch;
+	if (needed_elems > s_workspace_elems) {
+		if (s_workspace) { cudaFree(s_workspace); s_workspace = nullptr; s_workspace_elems = 0; }
+		// Check available memory and determine chunk size
+		size_t free_mem, total_mem;
+		cudaMemGetInfo(&free_mem, &total_mem);
+		uint64_t max_batch = free_mem / (ws_per_batch * sizeof(T) * 2);
+		if (max_batch < 1) max_batch = 1;
+		uint64_t alloc_batch = std::min(batch_size, max_batch);
+		size_t alloc_elems = alloc_batch * ws_per_batch;
+		cudaMalloc(&s_workspace, alloc_elems * sizeof(T));
+		check_cuda_error();
+		s_workspace_elems = alloc_elems;
+	}
 
-	unsigned int threads = std::min(static_cast<uint64_t>(256), m);
+	uint64_t chunk_size = s_workspace_elems / ws_per_batch;
+	if (chunk_size > batch_size) chunk_size = batch_size;
+
+	unsigned int threads = std::min(static_cast<uint64_t>(64), m);
 	threads = ((threads + 31) / 32) * 32;
 	if (threads < 32) threads = 32;
 
@@ -572,7 +582,7 @@ void batch_log_sig_combine_backprop_cuda_(
 				d_ls2 + offset * m,
 				ls1 + offset * m,
 				ls2 + offset * m,
-				d_workspace,
+				s_workspace,
 				cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
 				cache.d_comm_k_ptr, cache.d_comm_k_i, cache.d_comm_k_j, cache.d_comm_k_val,
 				cache.d_comm_a_ptr, cache.d_comm_a_k, cache.d_comm_a_partner, cache.d_comm_a_signed_c,
@@ -585,7 +595,7 @@ void batch_log_sig_combine_backprop_cuda_(
 				d_ls2 + offset * m,
 				ls1 + offset * m,
 				ls2 + offset * m,
-				d_workspace,
+				s_workspace,
 				cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
 				cache.d_comm_k_ptr, cache.d_comm_k_i, cache.d_comm_k_j, cache.d_comm_k_val,
 				cache.d_comm_a_ptr, cache.d_comm_a_k, cache.d_comm_a_partner, cache.d_comm_a_signed_c,
@@ -595,9 +605,6 @@ void batch_log_sig_combine_backprop_cuda_(
 
 		check_cuda_kernel_launch();
 	}
-
-	cudaFree(d_workspace);
-	check_cuda_error();
 }
 
 // =========================================================================
