@@ -22,6 +22,7 @@ import subprocess
 import traceback
 import shutil
 import os
+import platform
 
 import requests
 
@@ -32,12 +33,39 @@ ZIP_FILENAME = ZIP_FOLDERNAME + '.zip'
 B2_URL = 'https://github.com/bfgroup/b2/releases/download/' + B2_VERSION + '/b2-' + B2_VERSION + '.zip'
 
 def _run(cmd, log_file, shell = False, check = True):
-    cmd_str = ' '.join(cmd)
+    # On Windows under non-cmd shells (Git Bash / MSYS2), two issues arise:
+    # 1. .bat/.cmd files that call other .bat files by bare name fail because
+    #    cmd.exe doesn't resolve .bat files in the current working directory.
+    # 2. Executables with forward slashes (e.g. "x64/Release/foo.exe") fail
+    #    because CreateProcess doesn't resolve them.
+    env = None
+    cwd = None
+    cmd = list(cmd)  # avoid mutating caller's list
+    if platform.system() == 'Windows':
+        cmd[0] = os.path.abspath(cmd[0])
 
+        if not shell and cmd[0].endswith(('.bat', '.cmd')):
+            bat_dir = os.path.dirname(cmd[0])
+            cmd = ['cmd.exe', '/c'] + cmd
+            cwd = bat_dir
+            env = os.environ.copy()
+            # Add the bat's directory and subdirectories (up to 3 levels) to
+            # PATH so nested "call <name>.bat" invocations resolve correctly.
+            extra_dirs = [bat_dir]
+            for root, dirs, files in os.walk(bat_dir):
+                depth = root.replace(bat_dir, '').count(os.sep)
+                if depth >= 3:
+                    dirs.clear()
+                    continue
+                if any(f.endswith(('.bat', '.cmd')) for f in files):
+                    extra_dirs.append(root)
+            env['PATH'] = os.pathsep.join(extra_dirs) + os.pathsep + env.get('PATH', '')
+
+    cmd_str = ' '.join(cmd)
     try:
         log_file.write("\n" + "=" * 10 + " Running Command " + "=" * 10 + "\n")
         log_file.write(cmd_str + "\n\n")
-        output = subprocess.run(cmd, capture_output=True, check=check, text=True, shell = shell)
+        output = subprocess.run(cmd, capture_output=True, check=check, text=True, shell = shell, env=env, cwd=cwd)
         log_file.write(output.stdout)
         log_file.write(output.stderr)
         return output
