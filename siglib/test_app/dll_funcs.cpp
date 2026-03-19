@@ -211,6 +211,8 @@ batch_sig_to_log_sig_backprop_cuda_d_fn batch_sig_to_log_sig_backprop_cuda_d = n
 log_sig_combine_d_fn log_sig_combine_d = nullptr;
 batch_log_sig_combine_d_fn batch_log_sig_combine_d = nullptr;
 batch_log_sig_combine_cuda_d_fn batch_log_sig_combine_cuda_d = nullptr;
+batch_log_sig_combine_backprop_d_fn batch_log_sig_combine_backprop_d = nullptr;
+batch_log_sig_combine_backprop_cuda_d_fn batch_log_sig_combine_backprop_cuda_d = nullptr;
 
 
 void get_cpsig_fn_ptrs()
@@ -244,6 +246,7 @@ void get_cpsig_fn_ptrs()
     GET_FN(batch_sig_combine_backprop_d, cpsig);
     GET_FN(log_sig_combine_d, cpsig);
     GET_FN(batch_log_sig_combine_d, cpsig);
+    GET_FN(batch_log_sig_combine_backprop_d, cpsig);
 }
 
 void get_cusig_fn_ptrs()
@@ -269,4 +272,5 @@ void get_cusig_fn_ptrs()
     GET_FN(sig_coef_backprop_cuda_d, cusig);
     GET_FN(batch_sig_coef_backprop_cuda_d, cusig);
     GET_FN(batch_log_sig_combine_cuda_d, cusig);
+    GET_FN(batch_log_sig_combine_backprop_cuda_d, cusig);
 }

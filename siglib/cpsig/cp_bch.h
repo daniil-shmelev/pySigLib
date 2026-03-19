@@ -41,6 +41,14 @@ struct BchCache {
 	std::vector<uint32_t> comm_k_j;
 	std::vector<int> comm_k_val;
 
+	// Input-grouped commutator table (CSR format, grouped by input index a)
+	// For each input index a, stores (k, partner, signed_c) triples where
+	// signed_c = +c when a==i, signed_c = -c when a==j, partner is the other index.
+	std::vector<uint32_t> comm_a_ptr;
+	std::vector<uint32_t> comm_a_k;
+	std::vector<uint32_t> comm_a_partner;
+	std::vector<int> comm_a_signed_c;
+
 	// Standard factorization of each d-letter Lyndon word (as index pairs)
 	// For degree-1 words: left_factor[i] = right_factor[i] = UINT64_MAX
 	std::vector<uint64_t> left_factor;
@@ -319,6 +327,45 @@ inline void build_commutator_table(BchCache& cache) {
 			}
 		}
 	}
+
+	// Build input-grouped commutator table (CSR format, grouped by input index a)
+	std::vector<uint32_t> a_counts(m, 0);
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
+				a_counts[i]++;
+				a_counts[j]++;
+			}
+		}
+	}
+
+	cache.comm_a_ptr.resize(m + 1);
+	cache.comm_a_ptr[0] = 0;
+	for (uint64_t a = 0; a < m; ++a) {
+		cache.comm_a_ptr[a + 1] = cache.comm_a_ptr[a] + a_counts[a];
+	}
+
+	uint32_t a_nnz = cache.comm_a_ptr[m];
+	cache.comm_a_k.resize(a_nnz);
+	cache.comm_a_partner.resize(a_nnz);
+	cache.comm_a_signed_c.resize(a_nnz);
+
+	std::fill(a_counts.begin(), a_counts.end(), 0);
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
+				uint32_t pos_i = cache.comm_a_ptr[i] + a_counts[i]++;
+				cache.comm_a_k[pos_i] = static_cast<uint32_t>(k);
+				cache.comm_a_partner[pos_i] = static_cast<uint32_t>(j);
+				cache.comm_a_signed_c[pos_i] = c;
+
+				uint32_t pos_j = cache.comm_a_ptr[j] + a_counts[j]++;
+				cache.comm_a_k[pos_j] = static_cast<uint32_t>(k);
+				cache.comm_a_partner[pos_j] = static_cast<uint32_t>(i);
+				cache.comm_a_signed_c[pos_j] = -c;
+			}
+		}
+	}
 }
 
 // ========================================================================
@@ -532,6 +579,178 @@ void batch_log_sig_combine_(
 		for (uint64_t i = 0; i < batch_size; ++i) {
 			log_sig_combine_impl_<T>(log_sig1 + i * m, log_sig2 + i * m, out + i * m,
 				cache, memo.data());
+		}
+	}
+}
+
+// ========================================================================
+// log_sig_combine_backprop_: backward pass through BCH
+// ========================================================================
+
+template<std::floating_point T>
+void log_sig_combine_backprop_impl_(
+	const T* __restrict d_out, T* __restrict d_ls1, T* __restrict d_ls2,
+	const T* __restrict ls1, const T* __restrict ls2,
+	const BchCache& cache, T* workspace
+) {
+	uint64_t m = cache.m;
+	uint64_t m2 = cache.bch_coefficients.size();
+
+	// d_ls1 = d_out, d_ls2 = d_out (from the addition)
+	std::memcpy(d_ls1, d_out, m * sizeof(T));
+	std::memcpy(d_ls2, d_out, m * sizeof(T));
+
+	if (m2 <= 2) return;
+
+	// workspace layout: memo[m2 * m] then d_memo[m2 * m]
+	T* memo = workspace;
+	T* d_memo = workspace + m2 * m;
+
+	// Recompute forward memo
+	std::memcpy(memo, ls1, m * sizeof(T));
+	std::memcpy(memo + m, ls2, m * sizeof(T));
+
+	const uint32_t* k_ptr = cache.comm_k_ptr.data();
+	const uint32_t* k_i = cache.comm_k_i.data();
+	const uint32_t* k_j = cache.comm_k_j.data();
+	const int* k_val = cache.comm_k_val.data();
+
+	for (uint64_t w = 2; w < m2; ++w) {
+		const uint64_t lf = cache.bch_left_factor[w];
+		const uint64_t rf = cache.bch_right_factor[w];
+		const T* v1 = memo + lf * m;
+		const T* v2 = memo + rf * m;
+		T* result = memo + w * m;
+
+		for (uint64_t k = 0; k < m; ++k) {
+			T sum = T(0);
+			const uint32_t start = k_ptr[k];
+			const uint32_t end = k_ptr[k + 1];
+			for (uint32_t idx = start; idx < end; ++idx) {
+				const uint32_t i = k_i[idx];
+				const uint32_t j = k_j[idx];
+				const int c = k_val[idx];
+				sum += static_cast<T>(c) * (v1[i] * v2[j] - v1[j] * v2[i]);
+			}
+			result[k] = sum;
+		}
+	}
+
+	// Initialize d_memo: d_memo[w] = c_w * d_out for w >= 2, zero for leaves
+	std::memset(d_memo, 0, 2 * m * sizeof(T));
+	for (uint64_t w = 2; w < m2; ++w) {
+		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
+		T* dm = d_memo + w * m;
+		if (c_w != T(0)) {
+			for (uint64_t k = 0; k < m; ++k) {
+				dm[k] = c_w * d_out[k];
+			}
+		}
+		else {
+			std::memset(dm, 0, m * sizeof(T));
+		}
+	}
+
+	// Reverse BCH loop using input-grouped table (gather pattern)
+	const uint32_t* a_ptr = cache.comm_a_ptr.data();
+	const uint32_t* a_k = cache.comm_a_k.data();
+	const uint32_t* a_partner = cache.comm_a_partner.data();
+	const int* a_signed_c = cache.comm_a_signed_c.data();
+
+	for (uint64_t w = m2 - 1; w >= 2; --w) {
+		const uint64_t lf = cache.bch_left_factor[w];
+		const uint64_t rf = cache.bch_right_factor[w];
+		const T* v1 = memo + lf * m;
+		const T* v2 = memo + rf * m;
+		const T* dm_w = d_memo + w * m;
+		T* dm_lf = d_memo + lf * m;
+		T* dm_rf = d_memo + rf * m;
+
+		for (uint64_t a = 0; a < m; ++a) {
+			T acc_dv1 = T(0);
+			T acc_dv2 = T(0);
+			const uint32_t start = a_ptr[a];
+			const uint32_t end = a_ptr[a + 1];
+			for (uint32_t idx = start; idx < end; ++idx) {
+				const uint32_t k = a_k[idx];
+				const uint32_t partner = a_partner[idx];
+				const int sc = a_signed_c[idx];
+				const T dk = dm_w[k];
+				acc_dv1 += static_cast<T>(sc) * v2[partner] * dk;
+				acc_dv2 -= static_cast<T>(sc) * v1[partner] * dk;
+			}
+			dm_lf[a] += acc_dv1;
+			dm_rf[a] += acc_dv2;
+		}
+	}
+
+	// Accumulate leaf gradients
+	for (uint64_t i = 0; i < m; ++i) {
+		d_ls1[i] += d_memo[i];
+		d_ls2[i] += d_memo[m + i];
+	}
+}
+
+template<std::floating_point T>
+void log_sig_combine_backprop_(
+	const T* d_out, T* d_ls1, T* d_ls2,
+	const T* ls1, const T* ls2,
+	uint64_t dimension, uint64_t degree
+) {
+	if (dimension == 0) throw std::invalid_argument("log_sig_combine_backprop received dimension 0");
+	if (degree == 0) throw std::invalid_argument("log_sig_combine_backprop received degree 0");
+
+	const BchCache& cache = get_bch_cache(dimension, degree);
+	uint64_t m = cache.m;
+
+	if (degree < 2) {
+		std::memcpy(d_ls1, d_out, m * sizeof(T));
+		std::memcpy(d_ls2, d_out, m * sizeof(T));
+		return;
+	}
+
+	uint64_t m2 = cache.bch_coefficients.size();
+	std::vector<T> workspace(2 * m2 * m);
+	log_sig_combine_backprop_impl_<T>(d_out, d_ls1, d_ls2, ls1, ls2, cache, workspace.data());
+}
+
+template<std::floating_point T>
+void batch_log_sig_combine_backprop_(
+	const T* d_out, T* d_ls1, T* d_ls2,
+	const T* ls1, const T* ls2,
+	uint64_t batch_size, uint64_t dimension, uint64_t degree,
+	int n_jobs = 1
+) {
+	if (dimension == 0) throw std::invalid_argument("log_sig_combine_backprop received dimension 0");
+	if (degree == 0) throw std::invalid_argument("log_sig_combine_backprop received degree 0");
+
+	const BchCache& cache = get_bch_cache(dimension, degree);
+	uint64_t m = cache.m;
+
+	if (degree < 2) {
+		for (uint64_t i = 0; i < batch_size * m; ++i) {
+			d_ls1[i] = d_out[i];
+			d_ls2[i] = d_out[i];
+		}
+		return;
+	}
+
+	uint64_t m2 = cache.bch_coefficients.size();
+
+	if (n_jobs != 1) {
+		auto func = [&](const T* dout, T* dls1, T* dls2, const T* l1, const T* l2) {
+			thread_local std::vector<T> tl_workspace;
+			tl_workspace.resize(2 * m2 * m);
+			log_sig_combine_backprop_impl_<T>(dout, dls1, dls2, l1, l2, cache, tl_workspace.data());
+		};
+		multi_threaded_batch_4<T>(func, d_out, d_ls1, d_ls2, ls1, ls2, batch_size, m, m, m, m, m, n_jobs);
+	}
+	else {
+		std::vector<T> workspace(2 * m2 * m);
+		for (uint64_t i = 0; i < batch_size; ++i) {
+			log_sig_combine_backprop_impl_<T>(
+				d_out + i * m, d_ls1 + i * m, d_ls2 + i * m,
+				ls1 + i * m, ls2 + i * m, cache, workspace.data());
 		}
 	}
 }

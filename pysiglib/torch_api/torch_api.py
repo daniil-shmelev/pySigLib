@@ -25,6 +25,8 @@ from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
 from ..log_sig import log_sig as log_sig_forward
 from ..log_sig_backprop import sig_to_log_sig_backprop
 from ..static_kernels import StaticKernel
+from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
+from ..log_sig_combine import log_sig_combine_backprop
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel_backprop import sig_kernel_backprop
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
@@ -417,3 +419,36 @@ def sig_mmd(
     return xx_sum - xy_sum + yy_sum
 
 sig_mmd.__doc__ = sig_mmd_forward.__doc__
+
+class LogSigCombine(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, ls1, ls2, dimension, degree, time_aug, lead_lag, n_jobs):
+        combined = log_sig_combine_forward(ls1, ls2, dimension, degree, time_aug, lead_lag, n_jobs)
+
+        ctx.save_for_backward(ls1, ls2)
+        ctx.dimension = dimension
+        ctx.degree = degree
+        ctx.time_aug = time_aug
+        ctx.lead_lag = lead_lag
+        ctx.n_jobs = n_jobs
+
+        return combined
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        ls1, ls2 = ctx.saved_tensors
+        ls1_grad, ls2_grad = log_sig_combine_backprop(grad_output, ls1, ls2, ctx.dimension, ctx.degree, ctx.time_aug, ctx.lead_lag, ctx.n_jobs)
+        return ls1_grad, ls2_grad, None, None, None, None, None
+
+def log_sig_combine(
+        ls1 : Union[np.ndarray, torch.tensor],
+        ls2 : Union[np.ndarray, torch.tensor],
+        dimension : int,
+        degree : int,
+        time_aug: bool = False,
+        lead_lag: bool = False,
+        n_jobs : int = 1
+) -> Union[np.ndarray, torch.tensor]:
+    return LogSigCombine.apply(ls1, ls2, dimension, degree, time_aug, lead_lag, n_jobs)
+
+log_sig_combine.__doc__ = log_sig_combine_forward.__doc__

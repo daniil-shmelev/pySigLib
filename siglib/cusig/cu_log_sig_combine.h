@@ -239,6 +239,11 @@ struct CUDABchCache {
 	uint32_t* d_comm_k_j = nullptr;
 	int* d_comm_k_val = nullptr;
 
+	uint32_t* d_comm_a_ptr = nullptr;
+	uint32_t* d_comm_a_k = nullptr;
+	uint32_t* d_comm_a_partner = nullptr;
+	int* d_comm_a_signed_c = nullptr;
+
 	~CUDABchCache() {
 		if (d_bch_coefficients) cudaFree(d_bch_coefficients);
 		if (d_bch_left_factor) cudaFree(d_bch_left_factor);
@@ -247,6 +252,10 @@ struct CUDABchCache {
 		if (d_comm_k_i) cudaFree(d_comm_k_i);
 		if (d_comm_k_j) cudaFree(d_comm_k_j);
 		if (d_comm_k_val) cudaFree(d_comm_k_val);
+		if (d_comm_a_ptr) cudaFree(d_comm_a_ptr);
+		if (d_comm_a_k) cudaFree(d_comm_a_k);
+		if (d_comm_a_partner) cudaFree(d_comm_a_partner);
+		if (d_comm_a_signed_c) cudaFree(d_comm_a_signed_c);
 	}
 
 	CUDABchCache(const CUDABchCache&) = delete;
@@ -260,7 +269,11 @@ struct CUDABchCache {
 		  d_comm_k_ptr(std::exchange(o.d_comm_k_ptr, nullptr)),
 		  d_comm_k_i(std::exchange(o.d_comm_k_i, nullptr)),
 		  d_comm_k_j(std::exchange(o.d_comm_k_j, nullptr)),
-		  d_comm_k_val(std::exchange(o.d_comm_k_val, nullptr))
+		  d_comm_k_val(std::exchange(o.d_comm_k_val, nullptr)),
+		  d_comm_a_ptr(std::exchange(o.d_comm_a_ptr, nullptr)),
+		  d_comm_a_k(std::exchange(o.d_comm_a_k, nullptr)),
+		  d_comm_a_partner(std::exchange(o.d_comm_a_partner, nullptr)),
+		  d_comm_a_signed_c(std::exchange(o.d_comm_a_signed_c, nullptr))
 	{}
 };
 
@@ -316,6 +329,56 @@ inline void set_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 
 		cudaMalloc(&cache.d_comm_k_val, nnz * sizeof(int));
 		cudaMemcpy(cache.d_comm_k_val, h_k_val.data(), nnz * sizeof(int), cudaMemcpyHostToDevice);
+	}
+
+	// Build input-grouped commutator table from k-grouped data
+	struct AEntry { uint32_t k; uint32_t partner; int signed_c; };
+	std::vector<std::vector<AEntry>> entries_by_a(cache.m);
+	for (uint64_t k = 0; k < cache.m; ++k) {
+		for (uint32_t idx = h_k_ptr[k]; idx < h_k_ptr[k + 1]; ++idx) {
+			uint32_t i = h_k_i[idx];
+			uint32_t j = h_k_j[idx];
+			int c = h_k_val[idx];
+			entries_by_a[i].push_back({static_cast<uint32_t>(k), j, c});
+			entries_by_a[j].push_back({static_cast<uint32_t>(k), i, -c});
+		}
+	}
+
+	// Flatten to CSR
+	std::vector<uint32_t> h_a_ptr(cache.m + 1);
+	uint32_t a_offset = 0;
+	for (uint64_t a = 0; a < cache.m; ++a) {
+		h_a_ptr[a] = a_offset;
+		a_offset += static_cast<uint32_t>(entries_by_a[a].size());
+	}
+	h_a_ptr[cache.m] = a_offset;
+
+	uint32_t a_nnz = a_offset;
+	std::vector<uint32_t> h_a_k(a_nnz), h_a_partner(a_nnz);
+	std::vector<int> h_a_signed_c(a_nnz);
+	uint32_t a_idx = 0;
+	for (uint64_t a = 0; a < cache.m; ++a) {
+		for (const auto& e : entries_by_a[a]) {
+			h_a_k[a_idx] = e.k;
+			h_a_partner[a_idx] = e.partner;
+			h_a_signed_c[a_idx] = e.signed_c;
+			++a_idx;
+		}
+	}
+
+	// Upload to GPU
+	cudaMalloc(&cache.d_comm_a_ptr, (cache.m + 1) * sizeof(uint32_t));
+	cudaMemcpy(cache.d_comm_a_ptr, h_a_ptr.data(), (cache.m + 1) * sizeof(uint32_t), cudaMemcpyHostToDevice);
+
+	if (a_nnz > 0) {
+		cudaMalloc(&cache.d_comm_a_k, a_nnz * sizeof(uint32_t));
+		cudaMemcpy(cache.d_comm_a_k, h_a_k.data(), a_nnz * sizeof(uint32_t), cudaMemcpyHostToDevice);
+
+		cudaMalloc(&cache.d_comm_a_partner, a_nnz * sizeof(uint32_t));
+		cudaMemcpy(cache.d_comm_a_partner, h_a_partner.data(), a_nnz * sizeof(uint32_t), cudaMemcpyHostToDevice);
+
+		cudaMalloc(&cache.d_comm_a_signed_c, a_nnz * sizeof(int));
+		cudaMemcpy(cache.d_comm_a_signed_c, h_a_signed_c.data(), a_nnz * sizeof(int), cudaMemcpyHostToDevice);
 	}
 
 	check_cuda_error();

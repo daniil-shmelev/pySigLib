@@ -183,9 +183,15 @@ using log_sig_combine_d_fn = int(CDECL_*)(const double*, const double*, double*,
 using batch_log_sig_combine_d_fn = int(CDECL_*)(const double*, const double*, double*, uint64_t, uint64_t, uint64_t, int);
 using batch_log_sig_combine_cuda_d_fn = int(CDECL_*)(const double*, const double*, double*, uint64_t, uint64_t, uint64_t);
 
+using batch_log_sig_combine_backprop_d_fn = int(CDECL_*)(const double*, double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, int);
+using batch_log_sig_combine_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t);
+
 extern log_sig_combine_d_fn log_sig_combine_d;
 extern batch_log_sig_combine_d_fn batch_log_sig_combine_d;
 extern batch_log_sig_combine_cuda_d_fn batch_log_sig_combine_cuda_d;
+
+extern batch_log_sig_combine_backprop_d_fn batch_log_sig_combine_backprop_d;
+extern batch_log_sig_combine_backprop_cuda_d_fn batch_log_sig_combine_backprop_cuda_d;
 
 #if defined(_WIN32)
 #define GET_FN_PTR ::GetProcAddress

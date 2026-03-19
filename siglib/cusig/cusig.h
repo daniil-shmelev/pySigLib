@@ -642,6 +642,21 @@ extern "C" {
 	CUSIG_API int batch_log_sig_combine_cuda_d(const double* log_sig1, const double* log_sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
+	/** @defgroup log_sig_combine_backprop_cuda_functions Log sig combine backprop CUDA functions
+	* @{
+	*/
+
+	CUSIG_API int log_sig_combine_backprop_cuda_f(const float* d_out, float* d_ls1, float* d_ls2,
+		const float* ls1, const float* ls2, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int log_sig_combine_backprop_cuda_d(const double* d_out, double* d_ls1, double* d_ls2,
+		const double* ls1, const double* ls2, uint64_t dimension, uint64_t degree) noexcept;
+
+	CUSIG_API int batch_log_sig_combine_backprop_cuda_f(const float* d_out, float* d_ls1, float* d_ls2,
+		const float* ls1, const float* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int batch_log_sig_combine_backprop_cuda_d(const double* d_out, double* d_ls1, double* d_ls2,
+		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
 	/** @defgroup clear_cache_cuda_functions Clear cache CUDA functions
 	* @{
 	*/

@@ -321,3 +321,18 @@ void example_batch_log_sig_combine_cuda_d(
 	uint64_t degree = 5,
 	int num_runs = 20
 );
+
+void example_batch_log_sig_combine_backprop_d(
+	uint64_t batch_size = 120,
+	uint64_t dimension = 5,
+	uint64_t degree = 5,
+	int n_jobs = -1,
+	int num_runs = 20
+);
+
+void example_batch_log_sig_combine_backprop_cuda_d(
+	uint64_t batch_size = 120,
+	uint64_t dimension = 5,
+	uint64_t degree = 5,
+	int num_runs = 20
+);
