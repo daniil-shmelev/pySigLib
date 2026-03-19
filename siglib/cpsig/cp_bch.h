@@ -32,6 +32,15 @@ struct BchCache {
 	// commutator_table[i * m + j] = [e_i, e_j] for i < j
 	std::vector<SparseVec> commutator_table;
 
+	// Transposed commutator table (CSR format, grouped by output index k)
+	// For output element k, entries from comm_k_ptr[k] to comm_k_ptr[k+1]-1
+	// store (i, j, coefficient) triples where i < j and [e_i, e_j] has a
+	// non-zero k-th component.
+	std::vector<uint32_t> comm_k_ptr;
+	std::vector<uint32_t> comm_k_i;
+	std::vector<uint32_t> comm_k_j;
+	std::vector<int> comm_k_val;
+
 	// Standard factorization of each d-letter Lyndon word (as index pairs)
 	// For degree-1 words: left_factor[i] = right_factor[i] = UINT64_MAX
 	std::vector<uint64_t> left_factor;
@@ -277,6 +286,39 @@ inline void build_commutator_table(BchCache& cache) {
 			}
 		}
 	}
+
+	// Build transposed commutator table (CSR format, grouped by output k)
+	std::vector<uint32_t> counts(m, 0);
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
+				++counts[k];
+			}
+		}
+	}
+
+	cache.comm_k_ptr.resize(m + 1);
+	cache.comm_k_ptr[0] = 0;
+	for (uint64_t k = 0; k < m; ++k) {
+		cache.comm_k_ptr[k + 1] = cache.comm_k_ptr[k] + counts[k];
+	}
+
+	uint32_t nnz = cache.comm_k_ptr[m];
+	cache.comm_k_i.resize(nnz);
+	cache.comm_k_j.resize(nnz);
+	cache.comm_k_val.resize(nnz);
+
+	std::fill(counts.begin(), counts.end(), 0);
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
+				uint32_t pos = cache.comm_k_ptr[k] + counts[k]++;
+				cache.comm_k_i[pos] = static_cast<uint32_t>(i);
+				cache.comm_k_j[pos] = static_cast<uint32_t>(j);
+				cache.comm_k_val[pos] = c;
+			}
+		}
+	}
 }
 
 // ========================================================================
@@ -377,8 +419,12 @@ void lie_bracket(
 // log_sig_combine_: BCH evaluation with memoized bracket subtrees
 // ========================================================================
 
-// Internal implementation using memoization.
+// Internal implementation using transposed commutator table (CSR format).
 // memo: m2 * m elements (one m-length slot per BCH index).
+// Uses output-grouped iteration: for each output element k, gather all
+// contributing (i,j) pairs from the CSR table. This eliminates empty-pair
+// overhead, removes per-bracket vector allocations, and produces sequential
+// output writes.
 template<std::floating_point T>
 void log_sig_combine_impl_(
 	const T* __restrict log_sig1, const T* __restrict log_sig2, T* __restrict out,
@@ -397,43 +443,34 @@ void log_sig_combine_impl_(
 	std::memcpy(memo, log_sig1, m * sizeof(T));
 	std::memcpy(memo + m, log_sig2, m * sizeof(T));
 
-	// Track which indices have been evaluated
-	bool computed[1024];
-	std::memset(computed, 0, m2 * sizeof(bool));
-	computed[0] = true;
-	computed[1] = true;
+	const uint32_t* k_ptr = cache.comm_k_ptr.data();
+	const uint32_t* k_i = cache.comm_k_i.data();
+	const uint32_t* k_j = cache.comm_k_j.data();
+	const int* k_val = cache.comm_k_val.data();
 
-	// Forward pass: BCH indices are topologically sorted (children < parent)
+	// Forward pass: BCH indices are topologically sorted (children < parent),
+	// so memo[lf] and memo[rf] are always already computed when we reach w.
 	for (uint64_t w = 2; w < m2; ++w) {
-		uint64_t lf = cache.bch_left_factor[w];
-		uint64_t rf = cache.bch_right_factor[w];
+		const uint64_t lf = cache.bch_left_factor[w];
+		const uint64_t rf = cache.bch_right_factor[w];
+		const T* v1 = memo + lf * m;
+		const T* v2 = memo + rf * m;
+		T* result = memo + w * m;
+		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
 
-		// Ensure subtrees are computed (they may have zero coefficient but
-		// still be needed as children of a non-zero-coefficient term)
-		if (!computed[lf]) {
-			uint64_t llf = cache.bch_left_factor[lf];
-			uint64_t lrf = cache.bch_right_factor[lf];
-			lie_bracket(memo + llf * m, memo + lrf * m, memo + lf * m, m, cache.commutator_table);
-			computed[lf] = true;
-		}
-		if (!computed[rf]) {
-			uint64_t rlf = cache.bch_left_factor[rf];
-			uint64_t rrf = cache.bch_right_factor[rf];
-			lie_bracket(memo + rlf * m, memo + rrf * m, memo + rf * m, m, cache.commutator_table);
-			computed[rf] = true;
-		}
-
-		// Compute this bracket
-		lie_bracket(memo + lf * m, memo + rf * m, memo + w * m, m, cache.commutator_table);
-		computed[w] = true;
-
-		// Accumulate into output
-		T c_w = static_cast<T>(cache.bch_coefficients[w]);
-		if (c_w != static_cast<T>(0)) {
-			const T* bracket = memo + w * m;
-			for (uint64_t k = 0; k < m; ++k) {
-				out[k] += c_w * bracket[k];
+		// Fused lie_bracket + output accumulation via transposed commutator table
+		for (uint64_t k = 0; k < m; ++k) {
+			T sum = T(0);
+			const uint32_t start = k_ptr[k];
+			const uint32_t end = k_ptr[k + 1];
+			for (uint32_t idx = start; idx < end; ++idx) {
+				const uint32_t i = k_i[idx];
+				const uint32_t j = k_j[idx];
+				const int c = k_val[idx];
+				sum += static_cast<T>(c) * (v1[i] * v2[j] - v1[j] * v2[i]);
 			}
+			result[k] = sum;
+			if (c_w != T(0)) out[k] += c_w * sum;
 		}
 	}
 }
