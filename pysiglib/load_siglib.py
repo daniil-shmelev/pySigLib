@@ -299,6 +299,54 @@ CPSIG.sig_length.argtypes = (
 CPSIG.sig_length.restype = c_uint64
 
 ######################################################
+# log_sig_combine
+######################################################
+
+CPSIG.log_sig_combine_f.argtypes = (
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    c_uint64,
+    c_uint64
+)
+CPSIG.log_sig_combine_f.restype = c_int
+
+CPSIG.log_sig_combine_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    c_uint64,
+    c_uint64
+)
+CPSIG.log_sig_combine_d.restype = c_int
+
+######################################################
+# batch_log_sig_combine
+######################################################
+
+CPSIG.batch_log_sig_combine_f.argtypes = (
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_int
+)
+CPSIG.batch_log_sig_combine_f.restype = c_int
+
+CPSIG.batch_log_sig_combine_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_int
+)
+CPSIG.batch_log_sig_combine_d.restype = c_int
+
+######################################################
 # sig_combine
 ######################################################
 

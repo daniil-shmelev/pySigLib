@@ -190,6 +190,11 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.batch_sig_coef_backprop_cuda_d
     }
 
+CPSIG_BATCH_LOG_SIG_COMBINE = {
+    "float32": CPSIG.batch_log_sig_combine_f,
+    "float64": CPSIG.batch_log_sig_combine_d
+}
+
 CPSIG_SIG_COEF = {
     "float32": CPSIG.sig_coef_f,
     "float64": CPSIG.sig_coef_d

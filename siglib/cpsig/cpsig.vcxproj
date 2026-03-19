@@ -115,8 +115,12 @@
     <ClInclude Include="multithreading.h" />
     <ClInclude Include="sparse.h" />
     <ClInclude Include="words.h" />
+    <ClInclude Include="cp_bch.h" />
+    <ClInclude Include="cp_bch_data.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="cp_bch.cpp" />
+    <ClCompile Include="cp_bch_data.cpp" />
     <ClCompile Include="cp_log_signatures.cpp" />
     <ClCompile Include="cp_path_transforms.cpp" />
     <ClCompile Include="cpsig.cpp" />

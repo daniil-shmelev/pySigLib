@@ -590,6 +590,21 @@ extern "C" {
 	CPSIG_API int batch_sig_to_log_sig_backprop_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, int n_jobs) noexcept;
 	/** @} */
 
+	/** @defgroup log_sig_combine_functions Log sig combine functions
+	* @{
+	*/
+
+	CPSIG_API int log_sig_combine_f(const float* log_sig1, const float* log_sig2, float* out,
+		uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int log_sig_combine_d(const double* log_sig1, const double* log_sig2, double* out,
+		uint64_t dimension, uint64_t degree) noexcept;
+
+	CPSIG_API int batch_log_sig_combine_f(const float* log_sig1, const float* log_sig2, float* out,
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_log_sig_combine_d(const double* log_sig1, const double* log_sig2, double* out,
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	/** @} */
+
 	/** @defgroup sig_kernel_functions Signature kernel functions
 	* @{
 	*/

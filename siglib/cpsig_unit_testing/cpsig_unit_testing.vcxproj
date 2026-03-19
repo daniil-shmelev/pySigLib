@@ -26,9 +26,13 @@
     <ClInclude Include="..\cpsig\multithreading.h" />
     <ClInclude Include="..\cpsig\sparse.h" />
     <ClInclude Include="..\cpsig\words.h" />
+    <ClInclude Include="..\cpsig\cp_bch.h" />
+    <ClInclude Include="..\cpsig\cp_bch_data.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cpsig\cppch.cpp" />
+    <ClCompile Include="..\cpsig\cp_bch.cpp" />
+    <ClCompile Include="..\cpsig\cp_bch_data.cpp" />
     <ClCompile Include="..\cpsig\cpsig.cpp" />
     <ClCompile Include="..\cpsig\cp_log_signatures.cpp" />
     <ClCompile Include="..\cpsig\cp_path_transforms.cpp" />

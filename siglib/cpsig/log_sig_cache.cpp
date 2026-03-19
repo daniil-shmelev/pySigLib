@@ -16,6 +16,7 @@
 #pragma once
 #include "cppch.h"
 #include "log_sig_cache.h"
+#include "cp_bch.h"
 
 const char* version = "v1";
 std::filesystem::path cache_dir;
@@ -169,6 +170,7 @@ void clear_cache_(bool use_disk) {
 	}
 
 	basis_cache.clear();
+	clear_bch_cache();
 
 	if (use_disk)
 		std::filesystem::remove_all(cache_dir / cache_folder_name);
