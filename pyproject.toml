@@ -47,3 +47,14 @@ editable.mode = "inplace"
 PYSIGLIB_CUDA      = {env = "CUSIG", default = "ON"}
 PYSIGLIB_AVX       = {env = "SIGLIB_VEC", default = "ON"}
 PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
+
+# -----------------------------------------------------------------------
+# Uploading to PyPI
+# -----------------------------------------------------------------------
+# To distribute the package, build an sdist and upload via twine:
+#
+#   pip install build twine
+#   python -m build --sdist
+#   twine check dist/*
+#   twine upload -r testpypi dist/*
+#
