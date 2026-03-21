@@ -31,10 +31,7 @@ jobs:
           python3 -m pip install numpy==1.26.4
 
       - name: Install package
-        run: |
-          export ALLOW_EDITABLE=1
-          python3 setup.py build_py
-          python -m pip install -e .
+        run: CUSIG=0 python -m pip install -e .
 
       - name: Run tests and collect coverage
         run: pytest --cov=pysiglib --cov-report=xml
