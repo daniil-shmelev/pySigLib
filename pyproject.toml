@@ -57,6 +57,12 @@ PYSIGLIB_CUDA      = {env = "CUSIG", default = "ON"}
 PYSIGLIB_AVX       = {env = "SIGLIB_VEC", default = "ON"}
 PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
 
+[tool.coverage.run]
+source_pkgs = ["pysiglib"]
+
+[tool.coverage.paths]
+pysiglib = ["pysiglib/", "*/site-packages/pysiglib/"]
+
 # -----------------------------------------------------------------------
 # Uploading to PyPI
 # -----------------------------------------------------------------------

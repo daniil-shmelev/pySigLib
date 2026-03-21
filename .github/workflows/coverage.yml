@@ -22,16 +22,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python3 -m pip install --upgrade pip==22.3.1
+          python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
-          python3 -m pip install pytest pytest-cov
-          python3 -m pip install iisignature
-          python3 -m pip install cython
-          python3 -m pip install git+https://github.com/crispitagorico/sigkernel.git
           python3 -m pip install numpy==1.26.4
+          python3 -m pip install pytest pytest-cov cython wheel
+          python3 -m pip install iisignature --no-build-isolation
+          python3 -m pip install git+https://github.com/crispitagorico/sigkernel.git --no-build-isolation
 
       - name: Install package
-        run: CUSIG=0 python -m pip install -e .
+        run: CUSIG=0 python -m pip install .
 
       - name: Run tests and collect coverage
         run: pytest --cov=pysiglib --cov-report=xml

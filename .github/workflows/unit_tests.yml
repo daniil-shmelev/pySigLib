@@ -28,13 +28,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python3 -m pip install --upgrade pip==22.3.1
+          python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
-          python3 -m pip install pytest
-          python3 -m pip install iisignature
-          python3 -m pip install cython
-          python3 -m pip install git+https://github.com/crispitagorico/sigkernel.git
           python3 -m pip install numpy==1.26.4
+          python3 -m pip install pytest cython wheel
+          python3 -m pip install iisignature --no-build-isolation
+          python3 -m pip install git+https://github.com/crispitagorico/sigkernel.git --no-build-isolation
 
       - name: Install package
         run: python -m pip install .
