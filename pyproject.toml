@@ -1,0 +1,49 @@
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pysiglib"
+version = "2.1.0"
+description = "Fast Signature Computations on CPU and GPU"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+readme = "README.md"
+authors = [
+    { name = "Daniil Shmelev", email = "daniil.shmelev23@imperial.ac.uk" },
+]
+dependencies = ["numpy", "torch"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Healthcare Industry",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: English",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: Unix",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+[project.urls]
+Homepage = "https://github.com/daniil-shmelev/pySigLib"
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+wheel.packages = ["pysiglib"]
+
+# Editable installs: place built DLLs in the source tree so ctypes.CDLL finds them
+editable.mode = "inplace"
+
+[tool.scikit-build.cmake.define]
+PYSIGLIB_CUDA      = {env = "CUSIG", default = "ON"}
+PYSIGLIB_AVX       = {env = "SIGLIB_VEC", default = "ON"}
+PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
