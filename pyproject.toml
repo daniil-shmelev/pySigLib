@@ -40,6 +40,9 @@ Homepage = "https://github.com/daniil-shmelev/pySigLib"
 cmake.build-type = "Release"
 wheel.packages = ["pysiglib"]
 
+# Editable installs: place built DLLs in the source tree so ctypes.CDLL finds them
+editable.mode = "inplace"
+
 [tool.scikit-build.cmake.define]
 PYSIGLIB_CUDA      = {env = "CUSIG", default = "ON"}
 PYSIGLIB_AVX       = {env = "SIGLIB_VEC", default = "ON"}
