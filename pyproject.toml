@@ -38,6 +38,7 @@ Homepage = "https://github.com/daniil-shmelev/pySigLib"
 
 [tool.scikit-build]
 cmake.build-type = "Release"
+build-dir = "build/{wheel_tag}"
 wheel.packages = ["pysiglib"]
 sdist.exclude = [
     "docs/",
@@ -48,9 +49,6 @@ sdist.exclude = [
     ".readthedocs.yaml",
     "codecov.yml",
 ]
-
-# Editable installs: place built DLLs in the source tree so ctypes.CDLL finds them
-editable.mode = "inplace"
 
 [tool.scikit-build.cmake.define]
 PYSIGLIB_CUDA      = {env = "CUSIG", default = "ON"}

@@ -32,3 +32,4 @@
 *.jam
 /.vs
 /tests/__pycache__
+/build
