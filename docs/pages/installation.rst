@@ -13,8 +13,7 @@ Installation
           pip install pysiglib
 
       pySigLib will automatically detect CUDA, provided the ``CUDA_PATH`` environment variable is set correctly.
-      To manually disable CUDA and build pySigLib for CPU only, create an environment variable ``CUSIG`` and set
-      it to ``0``:
+      To manually disable CUDA and build pySigLib for CPU only, set the ``CUSIG`` environment variable to ``0``:
 
       .. code-block:: console
 
@@ -37,8 +36,7 @@ Installation
 
           export CUDA_PATH=/usr/lib/nvidia-cuda-toolkit
 
-      To manually disable CUDA and build pySigLib for CPU only, create an environment variable ``CUSIG`` and set
-      it to ``0``:
+      To manually disable CUDA and build pySigLib for CPU only, set the ``CUSIG`` environment variable to ``0``:
 
       .. code-block:: bash
 
@@ -47,11 +45,44 @@ Installation
 
    .. tab-item:: macOS
 
-      pySigLib requires an installation of the GCC compiler in order to compile the package.
-      Please ensure this exists, then run:
+      pySigLib requires the Xcode Command Line Tools in order to compile the package.
+      Please ensure these are installed (``xcode-select --install``), then run:
 
       .. code-block:: console
 
           pip install pysiglib
 
       pySigLib does not support CUDA on macOS, and will build without it when installed.
+
+Build Options
+------------------------
+
+The following environment variables can be used to control the build:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 15 65
+
+   * - Variable
+     - Default
+     - Description
+   * - ``CUSIG``
+     - ``ON``
+     - Set to ``0`` to disable CUDA and build for CPU only.
+   * - ``SIGLIB_VEC``
+     - ``ON``
+     - Set to ``0`` to disable AVX vectorization.
+   * - ``CUDA_ARCH``
+     - ``native``
+     - CUDA architectures to compile for. Accepts ``native`` (local GPU only),
+       ``all`` (all architectures), ``all-major``, or a semicolon-separated list
+       (e.g. ``"80;89;90"``). Use ``all`` when building portable wheels.
+
+Editable Installs
+------------------------
+
+pySigLib supports editable installs for development:
+
+.. code-block:: console
+
+    pip install -e .

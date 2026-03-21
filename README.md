@@ -20,19 +20,17 @@
 ## Installation
 
 Before installing, please ensure you have a compatible C++ compiler installed
-(MSVC for Windows, GCC or Clang for Linux and MacOS), then run
+(MSVC for Windows, GCC for Linux, or Xcode Command Line Tools for macOS), then run
 
 ```
 pip install pysiglib
 ```
 
 pySigLib will automatically detect CUDA, provided the `CUDA_PATH` environment variable is set correctly.
-To manually disable CUDA and build pySigLib for CPU only, create an environment variable `CUSIG` and set
-it to `0`:
+To manually disable CUDA and build pySigLib for CPU only, set the `CUSIG` environment variable to `0`:
 
 ```
-set CUSIG=0
-pip install pysiglib
+CUSIG=0 pip install pysiglib
 ```
 
 For detailed and up-to-date installation instructions on Windows, Linux and MacOS, see the
