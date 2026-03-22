@@ -177,8 +177,8 @@ sig_combine_backprop_kernel(
 	const T* my_sig1 = sig1 + offset;
 
 	if (elem == 0) {
-		sig1_deriv[offset] = my_d_out[0];
-		sig2_deriv[offset] = my_d_out[0];
+		sig1_deriv[offset] = static_cast<T>(1);
+		sig2_deriv[offset] = static_cast<T>(1);
 		return;
 	}
 
