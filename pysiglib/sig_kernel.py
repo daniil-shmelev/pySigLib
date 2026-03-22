@@ -360,6 +360,8 @@ def sig_kernel_gram(
     # There is clearly more overhead here than is necessary, but it
     # shouldn't be significant for large computations.
 
+    symmetric = path1 is path2
+
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(max_batch, "max_batch", int)
@@ -381,11 +383,58 @@ def sig_kernel_gram(
     if max_batch == -1:
         max_batch = max(batch1, batch2)
 
-    res = []
-
     ####################################
     # Now run computation in batches
     ####################################
+
+    if symmetric:
+        # Symmetric case: only compute upper triangle pairs, mirror to lower.
+        # This guarantees exact symmetry and halves the number of kernel evaluations.
+        # Cannot mirror grids when dyadic orders differ (gl1 != gl2), so fall through.
+        if return_grid:
+            if isinstance(dyadic_order, tuple) and len(dyadic_order) == 2:
+                do1, do2 = dyadic_order
+            else:
+                do1 = do2 = dyadic_order
+            gl1 = ((data.length[0] - 1) << do1) + 1
+            gl2 = ((data.length[1] - 1) << do2) + 1
+            if gl1 != gl2:
+                symmetric = False
+
+    if symmetric:
+        idx_i, idx_j = torch.triu_indices(batch1, batch1, device=path1.device)
+        n_pairs = idx_i.shape[0]
+        chunk_size = max_batch * max_batch
+
+        if return_grid:
+            res = torch.empty(batch1, batch1, gl1, gl2, dtype=path1.dtype, device=path1.device)
+        else:
+            res = torch.empty(batch1, batch1, dtype=path1.dtype, device=path1.device)
+
+        for start in range(0, n_pairs, chunk_size):
+            end = min(start + chunk_size, n_pairs)
+            ci = idx_i[start:end]
+            cj = idx_j[start:end]
+
+            path1_ = path1[ci]
+            path2_ = path1[cj]
+
+            k = sig_kernel(path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
+
+            # Place in upper triangle
+            res[ci, cj] = k
+
+            # Mirror off-diagonal to lower triangle
+            off = ci != cj
+            if off.any():
+                k_mirror = k[off]
+                if return_grid:
+                    k_mirror = k_mirror.transpose(-2, -1)
+                res[cj[off], ci[off]] = k_mirror
+
+        return res
+
+    res = []
 
     for i in range(0, batch1, max_batch):
         batch1_ = min(max_batch, batch1 - i)
