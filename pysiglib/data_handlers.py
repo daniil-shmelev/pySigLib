@@ -108,6 +108,9 @@ class MultipleSigInputHandler:
         if not all(d.shape == self.sig[0].shape for d in self.sig):
             raise ValueError(names_str(sig_name_list) + " have different shapes")
 
+        if not all(d.device == self.data[0].device for d in self.data):
+            raise ValueError(names_str(sig_name_list) + " must be on the same device")
+
         self.dtype = self.data[0].dtype
         self.is_batch = self.data[0].is_batch
         self.batch_size = self.data[0].batch_size
