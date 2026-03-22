@@ -14,6 +14,7 @@
 # =========================================================================
 from typing import Union, Optional
 from ctypes import POINTER, cast
+import warnings
 
 import numpy as np
 import torch
@@ -220,6 +221,21 @@ def sig_kernel(
         sig_kernel_(data, result, gram, dyadic_order_1, dyadic_order_2, n_jobs, return_grid)
     else:
         sig_kernel_cuda_(data, result, gram, dyadic_order_1, dyadic_order_2, return_grid)
+
+    if isinstance(result.data, np.ndarray):
+        has_bad = np.isnan(result.data).any() or np.isinf(result.data).any()
+    else:
+        has_bad = torch.isnan(result.data).any().item() or torch.isinf(result.data).any().item()
+
+    if has_bad:
+        warnings.warn(
+            "sig_kernel produced NaN or Inf values. This is typically caused by "
+            "paths with large increments, leading to numerical overflow in the "
+            "PDE solver. Consider normalizing your paths or using a static kernel "
+            "(e.g., pysiglib.RBFKernel) to bound the inner products.",
+            RuntimeWarning,
+            stacklevel=2
+        )
 
     return result.data
 
