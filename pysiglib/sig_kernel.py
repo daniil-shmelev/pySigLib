@@ -194,6 +194,7 @@ def sig_kernel(
 
     data = MultiplePathInputHandler([path1, path2], False, False, 0., ["path1", "path2"])
 
+
     if not return_grid:
         result = ScalarOutputHandler(data)
     else:

@@ -163,6 +163,10 @@ class PathInputHandler:
             raise ValueError(
                 self.param_name + ".shape must have length 2 or 3, got length " + str(len(self.path.shape)) + " instead.")
 
+        if self.data_dimension == 0:
+            raise ValueError(
+                self.param_name + " has 0 channels (dimension). Path dimension must be at least 1.")
+
         if isinstance(self.path, np.ndarray):
             self.type_ = "numpy"
             self.dtype = str(self.path.dtype)

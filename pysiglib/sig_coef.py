@@ -281,6 +281,9 @@ def sig_coef(
 
     words = check_word_or_word_list(words, data.dimension, "word")
 
+    if len(words) == 0:
+        raise ValueError("words must be a non-empty list of multi-indices.")
+
     num_multi_indices = len(words)
     degrees = [len(idx) for idx in words]
     if prefixes:
