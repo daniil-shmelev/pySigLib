@@ -288,6 +288,7 @@ class SigKernelGram(torch.autograd.Function):
         k_grid = sig_kernel_gram_forward(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid = True)
 
         ctx.save_for_backward(k_grid, path1, path2)
+        ctx.symmetric = path1 is path2
 
         ctx.dyadic_order = dyadic_order
         ctx.static_kernel = static_kernel
@@ -309,6 +310,8 @@ class SigKernelGram(torch.autograd.Function):
         right_deriv = ctx.needs_input_grad[1]
 
         k_grid, path1, path2 = ctx.saved_tensors
+        if ctx.symmetric:
+            path2 = path1
 
         new_derivs = sig_kernel_gram_backprop(grad_output, path1, path2, ctx.dyadic_order, ctx.static_kernel,
                                          ctx.time_aug, ctx.lead_lag, ctx.end_time,

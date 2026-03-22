@@ -408,6 +408,8 @@ def sig_kernel_gram_backprop(
     if max_batch == 0 or max_batch < -1:
         raise ValueError("max_batch must be a positive integer or -1")
 
+    symmetric = path1 is path2
+
     data = MultiplePathInputHandler([path1, path2], time_aug, lead_lag, end_time, ["path1", "path2"], False)
 
     derivs = torch.as_tensor(derivs)
@@ -424,43 +426,77 @@ def sig_kernel_gram_backprop(
     if max_batch == -1:
         max_batch = max(batch1, batch2)
 
-    ld = torch.zeros(path1.shape, dtype = torch.float64, device = path1.device) if left_deriv else None
-    rd = torch.zeros(path2.shape, dtype = torch.float64, device = path1.device) if right_deriv else None
+    ld = torch.zeros(path1.shape, dtype=torch.float64, device=path1.device) if left_deriv else None
+    rd = torch.zeros(path2.shape, dtype=torch.float64, device=path1.device) if right_deriv else None
 
     ####################################
     # Now run computation in batches
     ####################################
 
-    for i in range(0, batch1, max_batch):
-        batch1_ = min(max_batch, batch1 - i)
-        for j in range(0, batch2, max_batch):
-            batch2_ = min(max_batch, batch2 - j)
+    if symmetric:
+        idx_i, idx_j = torch.triu_indices(batch1, batch1, device=path1.device)
+    else:
+        idx_i = torch.arange(batch1, device=path1.device).repeat_interleave(batch2)
+        idx_j = torch.arange(batch2, device=path2.device).repeat(batch1)
 
-            path1_ = path1[i:i + batch1_, :, :].repeat_interleave(batch2_, 0).contiguous().clone()
-            path2_ = path2[j:j + batch2_, :, :].repeat(batch1_, 1, 1).contiguous().clone()
+    src2 = path1 if symmetric else path2
+    n_pairs = idx_i.shape[0]
+    chunk_size = max_batch * max_batch
 
-            if k_grid is None:
-                k = sig_kernel(path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, True)
-            else:
-                k = k_grid[i:i + batch1_, j:j + batch2_, :, :].reshape(batch1_ * batch2_, k_grid.shape[-2], k_grid.shape[-1]).contiguous().clone()
+    # Check if k_grid can be transposed for symmetric off-diagonal pairs
+    if isinstance(dyadic_order, tuple) and len(dyadic_order) == 2:
+        do1, do2 = dyadic_order
+    else:
+        do1 = do2 = dyadic_order
+    can_transpose_k = (do1 == do2)
 
-            if return_grid:
-                # derivs has shape (batch1, batch2, grid_len1, grid_len2)
-                # We need to reshape to (batch1_ * batch2_, grid_len1, grid_len2) for sig_kernel_backprop
-                derivs_ = derivs[i:i + batch1_, j:j + batch2_].reshape(batch1_ * batch2_, derivs.shape[-2], derivs.shape[-1]).contiguous().clone()
-            else:
-                derivs_ = derivs[i:i + batch1_, j:j + batch2_].flatten().contiguous().clone()
+    for start in range(0, n_pairs, chunk_size):
+        end = min(start + chunk_size, n_pairs)
+        ci = idx_i[start:end]
+        cj = idx_j[start:end]
 
-            ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k, n_jobs, return_grid)
+        path1_ = path1[ci]
+        path2_ = src2[cj]
 
-            if left_deriv:
-                ld_ = ld_.reshape((batch1_, batch2_) + ld_.shape[1:])
-                ld_ = ld_.sum(1)
-                ld[i:i + batch1_, :, :] += ld_
-            if right_deriv:
-                rd_ = rd_.reshape((batch1_, batch2_) + rd_.shape[1:])
-                rd_ = rd_.permute(1, 0, 2, 3).sum(1)
-                rd[j:j + batch2_, :, :] += rd_
+        if k_grid is None:
+            k = sig_kernel(path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, True)
+        else:
+            k = k_grid[ci, cj]
+
+        derivs_ = derivs[ci, cj]
+
+        ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k, n_jobs, return_grid)
+
+        if left_deriv:
+            ld.index_add_(0, ci, ld_.to(ld.dtype))
+        if right_deriv:
+            rd.index_add_(0, cj, rd_.to(rd.dtype))
+
+        # Symmetric: handle transposed off-diagonal entries G[j,i]
+        if symmetric:
+            off = ci != cj
+            if off.any():
+                ci_off = ci[off]
+                cj_off = cj[off]
+
+                path1_t = src2[cj_off]
+                path2_t = path1[ci_off]
+
+                if k_grid is not None:
+                    k_t = k_grid[cj_off, ci_off]
+                elif can_transpose_k:
+                    k_t = k[off].transpose(-2, -1)
+                else:
+                    k_t = sig_kernel(path1_t, path2_t, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, True)
+
+                derivs_t = derivs[cj_off, ci_off]
+
+                ld_t, rd_t = sig_kernel_backprop(derivs_t, path1_t, path2_t, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k_t, n_jobs, return_grid)
+
+                if left_deriv:
+                    ld.index_add_(0, cj_off, ld_t.to(ld.dtype))
+                if right_deriv:
+                    rd.index_add_(0, ci_off, rd_t.to(rd.dtype))
 
     if data.type_ == "numpy":
         return ld.numpy(), rd.numpy()

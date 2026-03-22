@@ -434,22 +434,29 @@ def sig_kernel_gram(
 
         return res
 
-    res = []
+    # Asymmetric case: pair-based indexing
+    idx_i = torch.arange(batch1, device=path1.device).repeat_interleave(batch2)
+    idx_j = torch.arange(batch2, device=path2.device).repeat(batch1)
+    n_pairs = idx_i.shape[0]
+    chunk_size = max_batch * max_batch
 
-    for i in range(0, batch1, max_batch):
-        batch1_ = min(max_batch, batch1 - i)
-        res.append([])
-        for j in range(0, batch2, max_batch):
-            batch2_ = min(max_batch, batch2 - j)
+    if return_grid:
+        if isinstance(dyadic_order, tuple) and len(dyadic_order) == 2:
+            do1, do2 = dyadic_order
+        else:
+            do1 = do2 = dyadic_order
+        gl1 = ((data.length[0] - 1) << do1) + 1
+        gl2 = ((data.length[1] - 1) << do2) + 1
+        res = torch.empty(batch1, batch2, gl1, gl2, dtype=path1.dtype, device=path1.device)
+    else:
+        res = torch.empty(batch1, batch2, dtype=path1.dtype, device=path1.device)
 
-            path1_ = path1[i:i + batch1_, :, :].repeat_interleave(batch2_, 0).contiguous().clone()
-            path2_ = path2[j:j + batch2_, :, :].repeat(batch1_, 1, 1).contiguous().clone()
+    for start in range(0, n_pairs, chunk_size):
+        end = min(start + chunk_size, n_pairs)
+        ci = idx_i[start:end]
+        cj = idx_j[start:end]
 
-            k = sig_kernel(path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
-            k = k.reshape((batch1_, batch2_) + k.shape[1:])
-            res[-1].append(k)
+        k = sig_kernel(path1[ci], path2[cj], dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
+        res[ci, cj] = k
 
-    for i in range(len(res)):
-        res[i] = torch.cat(res[i], dim = 1)
-    res = torch.cat(res, dim = 0)
     return res
