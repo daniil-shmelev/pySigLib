@@ -163,16 +163,14 @@ class RBFKernel(StaticKernel):
         x2 = torch.sum(x2, dim=2) * self._one_over_sigma
         y2 = torch.sum(y2, dim=2) * self._one_over_sigma
 
-        dist -= torch.reshape(x2, (x.shape[0], x.shape[1], 1)) + torch.reshape(y2, (x.shape[0], 1, y.shape[1]))
-        torch.exp(dist, out=dist)
+        dist = dist - (torch.reshape(x2, (x.shape[0], x.shape[1], 1)) + torch.reshape(y2, (x.shape[0], 1, y.shape[1])))
+        dist = torch.exp(dist)
 
         ctx.save_for_backward(x, y, dist.clone())
 
-        buff = torch.empty_like(dist[:, :-1, :])
-        torch.diff(dist, dim=1, out=buff)
-        dist.resize_((dist.shape[0], dist.shape[1] - 1, dist.shape[2] - 1))
-        torch.diff(buff, dim=2, out=dist)
-        return dist
+        buff = torch.diff(dist, dim=1)
+        result = torch.diff(buff, dim=2)
+        return result
 
     def grad_x(self, ctx : Context, derivs : torch.Tensor):
         x, y, out = ctx.saved_tensors
