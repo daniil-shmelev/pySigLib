@@ -113,7 +113,8 @@ def prepare_log_sig(
     :type dimension: int
     :param degree: Truncation degree of the log signature.
     :type degree: int
-    :param method: Method for the log signature computation. Must be one of `0`, `1` or `2`.
+    :param method: Method for the log signature computation. Must be one of `0`, `1`, `2` or `3`.
+        Methods `0`-`2` require preparation; method `3` does not.
     :type method: int
     :param time_aug: Whether time augmentation will be used in the computation.
     :type time_aug: bool
@@ -306,6 +307,7 @@ def sig_to_log_sig(
     :param lead_lag: Whether the signatures were computed with ``lead_lag=True``.
     :type lead_lag: bool
     :param method: Method to use for the log signature computation (`0`, `1` or `2`).
+        Method `3` is not supported here; use ``pysiglib.log_sig`` with ``method=3`` instead.
     :type method: int
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
@@ -386,7 +388,11 @@ def log_sig(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
-    :param method: Method to use for the log signature computation (`0`, `1` or `2`).
+    :param method: Method to use for the log signature computation (`0`, `1`, `2` or `3`).
+        Methods `0`-`2` first compute the full signature and then project to the log signature.
+        Method `3` uses the Baker-Campbell-Hausdorff formula to compute the log signature
+        directly from the path without ever computing the full signature. This uses less
+        memory but is slower than methods `0`-`2` for typical dimensions and degrees.
     :type method: int
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads

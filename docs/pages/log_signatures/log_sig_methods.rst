@@ -10,7 +10,7 @@ For :math:`x \in T(\mathbb{R}^d)`, the logarithm in tensor space is defined by
 Applying this logarithm map to the signature yields the `log signature`. A
 useful property of the log signature is its ability to be `compressed` into
 a smaller tensor without losing information, by considering its values at
-`Lyndon words`. ``pysiglib`` implements three methods for
+`Lyndon words`. ``pysiglib`` implements four methods for
 log signature computation, controlled by the ``method`` flag, described in
 detail below.
 
@@ -100,3 +100,27 @@ equation, or consistent comparison across implementations.
 
 This method corresponds to ``methods="s"`` in the ``iisignature`` package and
 ``mode="brackets"`` in the ``signatory`` package.
+
+``method = 3``
+-------------------
+
+This option computes the log signature directly from the path using the
+Baker-Campbell-Hausdorff (BCH) formula, without ever computing the full signature.
+Each linear segment of the path has a trivial log signature (just the increment),
+and these are sequentially combined using
+
+.. math::
+
+    L(x_1 \ast x_2) = \mathrm{BCH}(L(x_1), L(x_2)).
+
+The output is in the Lyndon basis (same format as ``method=2``).
+
+The advantage of this method is **memory**: it never allocates the full signature tensor,
+whose size grows exponentially with degree (:math:`\sum_{k=1}^{N} d^k`). This makes it
+the only viable option when the signature would be too large to fit in memory (e.g. high
+degree or high dimension). For typical dimensions and degrees, ``method=2`` is faster.
+
+This method does not require a call to ``pysiglib.prepare_log_sig``.
+
+This method corresponds to ``methods="o"`` or ``methods="c"`` in the ``iisignature``
+package. There is no equivalent in the ``signatory`` package.

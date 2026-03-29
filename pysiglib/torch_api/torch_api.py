@@ -37,6 +37,8 @@ from ..sig_metrics import sig_mmd as sig_mmd_forward
 from ..transform_path import transform_path as transform_path_forward
 from ..sig_length import log_sig_length
 from ..transform_path_backprop import transform_path_backprop
+from ..dtypes import CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP
+from ..error_codes import err_msg
 
 from ..param_checks import check_type, check_word_or_word_list
 from ..data_handlers import MultiplePathInputHandler
@@ -241,44 +243,80 @@ def log_sig(
 log_sig.__doc__ = log_sig_forward.__doc__
 
 
-def _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_jobs):
-    """Compute log-signature via sequential BCH combination (torch autograd compatible).
-
-    For torch tensors with requires_grad, uses the Python loop through LogSigCombine autograd.
-    For non-grad tensors and numpy arrays, delegates to the C++ implementation.
-    """
-    needs_grad = isinstance(path, torch.Tensor) and path.requires_grad
-
-    if needs_grad:
-        # Use Python loop for autograd support
+class LogSigFromPath(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, path, degree, time_aug, lead_lag, end_time, n_jobs):
+        # Apply transforms if needed
         if time_aug or lead_lag:
-            path = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
-
-        aug_dim = path.shape[-1]
-        ls_len = log_sig_length(aug_dim, degree)
-        is_batch = (path.ndim == 3)
-        pad_len = ls_len - aug_dim
-
-        if is_batch:
-            increments = path[:, 1:, :] - path[:, :-1, :]
-            n_segments = increments.shape[1]
+            transformed = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
         else:
-            increments = path[1:, :] - path[:-1, :]
-            n_segments = increments.shape[0]
+            transformed = path
 
-        if n_segments == 0:
-            return torch.zeros(*path.shape[:-2], ls_len, dtype=path.dtype, device=path.device)
+        result = log_sig_forward(transformed, degree, False, False, 1.0, 3, n_jobs)
 
-        def _make_seg_ls(inc):
-            return torch.nn.functional.pad(inc, (0, pad_len))
+        ctx.save_for_backward(transformed)
+        ctx.degree = degree
+        ctx.n_jobs = n_jobs
+        ctx.time_aug = time_aug
+        ctx.lead_lag = lead_lag
+        ctx.end_time = end_time
 
-        result = _make_seg_ls(increments[:, 0, :] if is_batch else increments[0, :])
-        for i in range(1, n_segments):
-            seg_ls = _make_seg_ls(increments[:, i, :] if is_batch else increments[i, :])
-            result = log_sig_combine(result, seg_ls, aug_dim, degree, n_jobs=n_jobs)
         return result
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        transformed, = ctx.saved_tensors
+        aug_dim = transformed.shape[-1]
+        is_batch = (transformed.ndim == 3)
+        batch_size = transformed.shape[0] if is_batch else 1
+        length = transformed.shape[-2]
+
+        # Ensure contiguous
+        grad_output = grad_output.contiguous()
+        path_data = transformed.contiguous()
+
+        # Allocate output gradient (same shape as transformed path)
+        d_path = torch.zeros_like(path_data)
+
+        from ctypes import cast, c_void_p, POINTER, c_float, c_double
+        dtype_str = "float32" if path_data.dtype == torch.float32 else "float64"
+        ptr_type = POINTER(c_float) if dtype_str == "float32" else POINTER(c_double)
+
+        if path_data.is_cuda:
+            h_grad = grad_output.cpu().contiguous()
+            h_path = path_data.cpu().contiguous()
+            h_d_path = torch.zeros_like(h_path)
+            fn = CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP[dtype_str]
+            err = fn(
+                cast(h_grad.data_ptr(), ptr_type),
+                cast(h_d_path.data_ptr(), ptr_type),
+                cast(h_path.data_ptr(), ptr_type),
+                batch_size, length, aug_dim, ctx.degree, 1
+            )
+            d_path = h_d_path.to(path_data.device)
+        else:
+            fn = CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP[dtype_str]
+            err = fn(
+                cast(grad_output.data_ptr(), ptr_type),
+                cast(d_path.data_ptr(), ptr_type),
+                cast(path_data.data_ptr(), ptr_type),
+                batch_size, length, aug_dim, ctx.degree, ctx.n_jobs
+            )
+
+        if err:
+            raise Exception("Error in log_sig_from_path_backprop: " + err_msg(err))
+
+        # If transforms were applied, backprop through them
+        if ctx.time_aug or ctx.lead_lag:
+            d_path = transform_path_backprop(d_path, ctx.time_aug, ctx.lead_lag, ctx.end_time, ctx.n_jobs)
+
+        return d_path, None, None, None, None, None
+
+def _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_jobs):
+    """Compute log-signature via sequential BCH combination with C++ forward and backward."""
+    if isinstance(path, torch.Tensor) and path.requires_grad:
+        return LogSigFromPath.apply(path, degree, time_aug, lead_lag, end_time, n_jobs)
     else:
-        # Delegate to C++ implementation (faster, no autograd)
         return log_sig_forward(path, degree, time_aug, lead_lag, end_time, 3, n_jobs)
 
 class SigKernel(torch.autograd.Function):

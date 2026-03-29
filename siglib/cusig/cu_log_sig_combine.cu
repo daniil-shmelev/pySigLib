@@ -848,6 +848,13 @@ void batch_log_sig_from_path_cuda_(
 }
 
 // =========================================================================
+// CUDA backward for log_sig_from_path: host-side loop using existing kernels
+// =========================================================================
+
+// CUDA backward is handled in Python by transferring to CPU.
+// A native CUDA backward kernel is left for future work.
+
+// =========================================================================
 // Exported C functions
 // =========================================================================
 

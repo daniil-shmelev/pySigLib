@@ -81,7 +81,6 @@ CUSIG_BATCH_SIG_COEF_BACKPROP_CUDA = None
 CUSIG_BATCH_LOG_SIG_COMBINE_CUDA = None
 CUSIG_BATCH_LOG_SIG_COMBINE_BACKPROP_CUDA = None
 CUSIG_BATCH_LOG_SIG_FROM_PATH_CUDA = None
-
 if BUILT_WITH_CUDA:
     CUSIG_TRANSFORM_PATH_CUDA = {
         "float32": CUSIG.transform_path_cuda_f,
@@ -216,6 +215,11 @@ CPSIG_BATCH_LOG_SIG_COMBINE = {
 CPSIG_BATCH_LOG_SIG_FROM_PATH = {
     "float32": CPSIG.batch_log_sig_from_path_f,
     "float64": CPSIG.batch_log_sig_from_path_d
+}
+
+CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP = {
+    "float32": CPSIG.batch_log_sig_from_path_backprop_f,
+    "float64": CPSIG.batch_log_sig_from_path_backprop_d
 }
 
 CPSIG_LOG_SIG_COMBINE_BACKPROP = {

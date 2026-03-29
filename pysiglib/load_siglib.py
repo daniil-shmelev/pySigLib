@@ -373,6 +373,34 @@ CPSIG.batch_log_sig_from_path_d.argtypes = (
 CPSIG.batch_log_sig_from_path_d.restype = c_int
 
 ######################################################
+# batch_log_sig_from_path_backprop
+######################################################
+
+CPSIG.batch_log_sig_from_path_backprop_f.argtypes = (
+    POINTER(c_float),   # d_out
+    POINTER(c_float),   # d_path
+    POINTER(c_float),   # path
+    c_uint64,           # batch_size
+    c_uint64,           # length
+    c_uint64,           # dimension
+    c_uint64,           # degree
+    c_int               # n_jobs
+)
+CPSIG.batch_log_sig_from_path_backprop_f.restype = c_int
+
+CPSIG.batch_log_sig_from_path_backprop_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_int
+)
+CPSIG.batch_log_sig_from_path_backprop_d.restype = c_int
+
+######################################################
 # log_sig_combine_backprop
 ######################################################
 
