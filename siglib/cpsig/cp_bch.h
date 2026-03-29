@@ -670,6 +670,185 @@ void log_sig_from_path_(
 	if (acc != out) std::memcpy(out, acc, m * sizeof(T));
 }
 
+#if defined(VEC) && !defined(__APPLE__)
+// 4-wide AVX2 BCH combination: processes 4 batch elements simultaneously.
+// Memo/out use interleaved layout: position k stores 4 doubles at offset k*4.
+inline void log_sig_combine_impl_x4_(
+	const double* __restrict ls1, const double* __restrict ls2, double* __restrict out,
+	const BchCache& cache, double* memo
+) {
+	uint64_t m = cache.m;
+	uint64_t m2 = cache.bch_coefficients.size();
+
+	for (uint64_t i = 0; i < m; ++i) {
+		__m256d a = _mm256_loadu_pd(&ls1[i * 4]);
+		__m256d b = _mm256_loadu_pd(&ls2[i * 4]);
+		_mm256_storeu_pd(&out[i * 4], _mm256_add_pd(a, b));
+	}
+
+	if (m2 <= 2) return;
+
+	std::memcpy(memo, ls1, m * 4 * sizeof(double));
+	std::memcpy(memo + m * 4, ls2, m * 4 * sizeof(double));
+
+	const uint32_t* k_ptr = cache.comm_k_ptr.data();
+	const uint32_t* k_i = cache.comm_k_i.data();
+	const uint32_t* k_j = cache.comm_k_j.data();
+	const double* k_val_d = cache.comm_k_val_d.data();
+
+	for (uint64_t w = 2; w < m2; ++w) {
+		const uint64_t lf = cache.bch_left_factor[w];
+		const uint64_t rf = cache.bch_right_factor[w];
+		const double* v1 = memo + lf * m * 4;
+		const double* v2 = memo + rf * m * 4;
+		double* result = memo + w * m * 4;
+		const double c_w = cache.bch_coefficients[w];
+
+		for (uint64_t k = 0; k < m; ++k) {
+			__m256d v_sum = _mm256_setzero_pd();
+			const uint32_t start = k_ptr[k];
+			const uint32_t end = k_ptr[k + 1];
+			for (uint32_t idx = start; idx < end; ++idx) {
+				const uint32_t ci = k_i[idx];
+				const uint32_t cj = k_j[idx];
+				__m256d val = _mm256_set1_pd(k_val_d[idx]);
+				__m256d v1i = _mm256_loadu_pd(&v1[ci * 4]);
+				__m256d v2j = _mm256_loadu_pd(&v2[cj * 4]);
+				__m256d v1j = _mm256_loadu_pd(&v1[cj * 4]);
+				__m256d v2i = _mm256_loadu_pd(&v2[ci * 4]);
+				v_sum = _mm256_fmadd_pd(val,
+					_mm256_sub_pd(_mm256_mul_pd(v1i, v2j), _mm256_mul_pd(v1j, v2i)),
+					v_sum);
+			}
+			_mm256_storeu_pd(&result[k * 4], v_sum);
+			if (c_w != 0.0) {
+				__m256d v_cw = _mm256_set1_pd(c_w);
+				__m256d v_out = _mm256_loadu_pd(&out[k * 4]);
+				_mm256_storeu_pd(&out[k * 4], _mm256_fmadd_pd(v_cw, v_sum, v_out));
+			}
+		}
+	}
+}
+
+#endif // VEC && !__APPLE__
+
+#if defined(VEC) && defined(__APPLE__)
+// 4-wide NEON BCH combination for Apple Silicon using two float64x2_t registers.
+// Processes 4 batch elements: lo pair (0,1) and hi pair (2,3).
+inline void log_sig_combine_impl_x4_(
+	const double* __restrict ls1, const double* __restrict ls2, double* __restrict out,
+	const BchCache& cache, double* memo
+) {
+	uint64_t m = cache.m;
+	uint64_t m2 = cache.bch_coefficients.size();
+
+	for (uint64_t i = 0; i < m; ++i) {
+		float64x2_t a_lo = vld1q_f64(&ls1[i * 4]);
+		float64x2_t a_hi = vld1q_f64(&ls1[i * 4 + 2]);
+		float64x2_t b_lo = vld1q_f64(&ls2[i * 4]);
+		float64x2_t b_hi = vld1q_f64(&ls2[i * 4 + 2]);
+		vst1q_f64(&out[i * 4], vaddq_f64(a_lo, b_lo));
+		vst1q_f64(&out[i * 4 + 2], vaddq_f64(a_hi, b_hi));
+	}
+
+	if (m2 <= 2) return;
+
+	std::memcpy(memo, ls1, m * 4 * sizeof(double));
+	std::memcpy(memo + m * 4, ls2, m * 4 * sizeof(double));
+
+	const uint32_t* k_ptr = cache.comm_k_ptr.data();
+	const uint32_t* k_i = cache.comm_k_i.data();
+	const uint32_t* k_j = cache.comm_k_j.data();
+	const double* k_val_d = cache.comm_k_val_d.data();
+
+	for (uint64_t w = 2; w < m2; ++w) {
+		const uint64_t lf = cache.bch_left_factor[w];
+		const uint64_t rf = cache.bch_right_factor[w];
+		const double* v1 = memo + lf * m * 4;
+		const double* v2 = memo + rf * m * 4;
+		double* result = memo + w * m * 4;
+		const double c_w = cache.bch_coefficients[w];
+
+		for (uint64_t k = 0; k < m; ++k) {
+			float64x2_t sum_lo = vdupq_n_f64(0.0);
+			float64x2_t sum_hi = vdupq_n_f64(0.0);
+			const uint32_t start = k_ptr[k];
+			const uint32_t end = k_ptr[k + 1];
+			for (uint32_t idx = start; idx < end; ++idx) {
+				const uint32_t ci = k_i[idx];
+				const uint32_t cj = k_j[idx];
+				float64x2_t val = vdupq_n_f64(k_val_d[idx]);
+				float64x2_t v1i_lo = vld1q_f64(&v1[ci * 4]);
+				float64x2_t v1i_hi = vld1q_f64(&v1[ci * 4 + 2]);
+				float64x2_t v2j_lo = vld1q_f64(&v2[cj * 4]);
+				float64x2_t v2j_hi = vld1q_f64(&v2[cj * 4 + 2]);
+				float64x2_t v1j_lo = vld1q_f64(&v1[cj * 4]);
+				float64x2_t v1j_hi = vld1q_f64(&v1[cj * 4 + 2]);
+				float64x2_t v2i_lo = vld1q_f64(&v2[ci * 4]);
+				float64x2_t v2i_hi = vld1q_f64(&v2[ci * 4 + 2]);
+				sum_lo = vfmaq_f64(sum_lo, val,
+					vsubq_f64(vmulq_f64(v1i_lo, v2j_lo), vmulq_f64(v1j_lo, v2i_lo)));
+				sum_hi = vfmaq_f64(sum_hi, val,
+					vsubq_f64(vmulq_f64(v1i_hi, v2j_hi), vmulq_f64(v1j_hi, v2i_hi)));
+			}
+			vst1q_f64(&result[k * 4], sum_lo);
+			vst1q_f64(&result[k * 4 + 2], sum_hi);
+			if (c_w != 0.0) {
+				float64x2_t v_cw = vdupq_n_f64(c_w);
+				float64x2_t o_lo = vld1q_f64(&out[k * 4]);
+				float64x2_t o_hi = vld1q_f64(&out[k * 4 + 2]);
+				vst1q_f64(&out[k * 4], vfmaq_f64(o_lo, v_cw, sum_lo));
+				vst1q_f64(&out[k * 4 + 2], vfmaq_f64(o_hi, v_cw, sum_hi));
+			}
+		}
+	}
+}
+
+#endif // VEC && __APPLE__
+
+// Shared across AVX2 and NEON — no platform-specific intrinsics needed.
+#ifdef VEC
+inline void log_sig_from_path_x4_(
+	const double* paths[4], double* outs[4],
+	uint64_t length, uint64_t dimension,
+	const BchCache& cache, double* memo, double* seg, double* temp
+) {
+	uint64_t m = cache.m;
+
+	for (uint64_t k = 0; k < dimension; ++k) {
+		for (int b = 0; b < 4; ++b)
+			temp[k * 4 + b] = paths[b][dimension + k] - paths[b][k];
+	}
+	std::memset(&temp[dimension * 4], 0, (m - dimension) * 4 * sizeof(double));
+
+	if (length <= 2) {
+		for (uint64_t k = 0; k < m; ++k)
+			for (int b = 0; b < 4; ++b)
+				outs[b][k] = temp[k * 4 + b];
+		return;
+	}
+
+	std::memset(seg, 0, m * 4 * sizeof(double));
+
+	double* acc = temp;
+	double* src = memo + cache.bch_coefficients.size() * m * 4;
+
+	for (uint64_t s = 1; s < length - 1; ++s) {
+		for (uint64_t k = 0; k < dimension; ++k) {
+			for (int b = 0; b < 4; ++b)
+				seg[k * 4 + b] = paths[b][(s + 1) * dimension + k] - paths[b][s * dimension + k];
+		}
+
+		std::swap(acc, src);
+		log_sig_combine_impl_x4_(src, seg, acc, cache, memo);
+	}
+
+	for (uint64_t k = 0; k < m; ++k)
+		for (int b = 0; b < 4; ++b)
+			outs[b][k] = acc[k * 4 + b];
+}
+#endif // VEC
+
 template<std::floating_point T>
 void batch_log_sig_from_path_(
 	const T* path, T* out,
@@ -709,12 +888,43 @@ void batch_log_sig_from_path_(
 		multi_threaded_batch<const T, T>(func, path, out, batch_size, path_stride, m, n_jobs);
 	}
 	else {
-		std::vector<T> memo(m2 * m);
-		std::vector<T> seg(m);
-		std::vector<T> temp(m);
-		for (uint64_t i = 0; i < batch_size; ++i) {
-			log_sig_from_path_<T>(path + i * path_stride, out + i * m,
-				length, dimension, cache, memo.data(), seg.data(), temp.data());
+#ifdef VEC
+		if constexpr (std::is_same_v<T, double>) {
+			// SIMD path: process groups of 4 batch elements
+			std::vector<double> memo_x4((m2 + 1) * m * 4); // BCH memo + src buffer
+			std::vector<double> seg_x4(m * 4);
+			std::vector<double> temp_x4(m * 4);
+			uint64_t i = 0;
+			for (; i + 4 <= batch_size; i += 4) {
+				const double* ps[4] = {
+					path + (i+0)*path_stride, path + (i+1)*path_stride,
+					path + (i+2)*path_stride, path + (i+3)*path_stride };
+				double* os[4] = {
+					out + (i+0)*m, out + (i+1)*m,
+					out + (i+2)*m, out + (i+3)*m };
+				log_sig_from_path_x4_(ps, os, length, dimension, cache,
+					memo_x4.data(), seg_x4.data(), temp_x4.data());
+			}
+			// Scalar fallback for remaining elements
+			if (i < batch_size) {
+				std::vector<double> memo(m2 * m);
+				std::vector<double> seg(m);
+				std::vector<double> temp(m);
+				for (; i < batch_size; ++i) {
+					log_sig_from_path_<double>(path + i*path_stride, out + i*m,
+						length, dimension, cache, memo.data(), seg.data(), temp.data());
+				}
+			}
+		} else
+#endif
+		{
+			std::vector<T> memo(m2 * m);
+			std::vector<T> seg(m);
+			std::vector<T> temp(m);
+			for (uint64_t i = 0; i < batch_size; ++i) {
+				log_sig_from_path_<T>(path + i * path_stride, out + i * m,
+					length, dimension, cache, memo.data(), seg.data(), temp.data());
+			}
 		}
 	}
 }

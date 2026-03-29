@@ -611,7 +611,6 @@ void batch_log_sig_combine_backprop_cuda_(
 // CUDA kernel: log_sig_from_path — full segment loop inside the kernel
 // =========================================================================
 
-// Shared-memory variant: v1/v2 loaded into shared memory each BCH iteration
 template<typename T>
 __global__ void batch_log_sig_from_path_kernel_(
 	const T* __restrict__ path,
@@ -646,8 +645,6 @@ __global__ void batch_log_sig_from_path_kernel_(
 		const T* pa = my_path + seg * dimension;
 		const T* pb = my_path + (seg + 1) * dimension;
 
-		// Write segment increment directly into memo[1] (ls2 leaf slot)
-		// and copy accumulator into memo[0] (ls1 leaf slot)
 		for (uint64_t k = tid; k < m; k += stride) {
 			memo[k] = my_out[k];
 			T seg_k = (k < dimension) ? (pb[k] - pa[k]) : T(0);
@@ -688,7 +685,6 @@ __global__ void batch_log_sig_from_path_kernel_(
 	}
 }
 
-// Fallback without shared memory (for large m)
 template<typename T>
 __global__ void batch_log_sig_from_path_kernel_noshmem_(
 	const T* __restrict__ path,
