@@ -36,7 +36,7 @@ from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
 from ..transform_path import transform_path as transform_path_forward
 from ..transform_path_backprop import transform_path_backprop
-from ..dtypes import CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP
+from ..dtypes import CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP, CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA
 from ..error_codes import err_msg
 
 from ..param_checks import check_type, check_word_or_word_list
@@ -282,17 +282,15 @@ class LogSigFromPath(torch.autograd.Function):
         ptr_type = POINTER(c_float) if dtype_str == "float32" else POINTER(c_double)
 
         if path_data.is_cuda:
-            h_grad = grad_output.cpu().contiguous()
-            h_path = path_data.cpu().contiguous()
-            h_d_path = torch.zeros_like(h_path)
-            fn = CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP[dtype_str]
+            if CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA is None:
+                raise RuntimeError("CUDA log_sig_from_path_backprop requires cusig (built with CUDA support)")
+            fn = CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA[dtype_str]
             err = fn(
-                cast(h_grad.data_ptr(), ptr_type),
-                cast(h_d_path.data_ptr(), ptr_type),
-                cast(h_path.data_ptr(), ptr_type),
-                batch_size, length, aug_dim, ctx.degree, 1
+                cast(grad_output.data_ptr(), ptr_type),
+                cast(d_path.data_ptr(), ptr_type),
+                cast(path_data.data_ptr(), ptr_type),
+                batch_size, length, aug_dim, ctx.degree
             )
-            d_path = h_d_path.to(path_data.device)
         else:
             fn = CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP[dtype_str]
             err = fn(
@@ -523,14 +521,14 @@ class LogSigCombine(torch.autograd.Function):
         return ls1_grad, ls2_grad, None, None, None, None, None
 
 def log_sig_combine(
-        ls1 : Union[np.ndarray, torch.tensor],
-        ls2 : Union[np.ndarray, torch.tensor],
+        log_sig1 : Union[np.ndarray, torch.tensor],
+        log_sig2 : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
         time_aug: bool = False,
         lead_lag: bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    return LogSigCombine.apply(ls1, ls2, dimension, degree, time_aug, lead_lag, n_jobs)
+    return LogSigCombine.apply(log_sig1, log_sig2, dimension, degree, time_aug, lead_lag, n_jobs)
 
 log_sig_combine.__doc__ = log_sig_combine_forward.__doc__

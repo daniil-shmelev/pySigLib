@@ -22,8 +22,7 @@ import pysiglib.torch_api as torch_api
 # Backprop functions excluded from torch_api
 EXCLUDED_SUFFIXES = ("_backprop",)
 
-# Functions not yet added to torch_api (TODO: add torch autograd wrappers)
-TEMPORARILY_EXCLUDED = {"log_sig_combine"}
+TEMPORARILY_EXCLUDED = set()
 
 def get_public_functions(module):
     return {

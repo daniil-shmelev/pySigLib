@@ -933,8 +933,9 @@ void batch_log_sig_from_path_(
 // log_sig_from_path_backprop_: backward pass through sequential BCH chain
 // ========================================================================
 
-// Given d_out (gradient w.r.t. log-sig output), computes d_path (gradient w.r.t. path).
-// Recomputes the forward chain (intermediate accumulators) then reverses through it.
+// Backward pass using BCH uncombination: recovers each intermediate on the fly
+// via BCH(curr, -seg) = prev, avoiding O(N*m) storage of all intermediates.
+// Uses O(m) memory instead, same total compute.
 template<std::floating_point T>
 void log_sig_from_path_backprop_(
 	const T* d_out, T* d_path,
@@ -947,27 +948,31 @@ void log_sig_from_path_backprop_(
 	uint64_t n_segs = length - 1;
 
 	// Workspace layout:
-	// intermediates: n_segs * m (the accumulator after each segment combination)
+	// curr: m (current accumulator, recovered via uncombination)
+	// prev: m (previous accumulator, recovered via BCH(curr, -seg))
 	// seg: m (segment log-sig buffer)
-	// bch_workspace: 2 * m2 * m (for log_sig_combine_backprop_impl_)
-	// d_acc: m (gradient flowing backward through the chain)
-	// d_ls1: m, d_ls2: m (temporaries for each backprop step)
-	T* intermediates = workspace;
-	T* seg = intermediates + n_segs * m;
-	T* bch_ws = seg + m;
-	T* d_acc = bch_ws + 2 * m2 * m;
+	// neg_seg: m (negated segment for uncombination)
+	// bch_ws: m2 * m (BCH forward memo, shared between combine and backprop)
+	// bch_bp_ws: 2 * m2 * m (backprop workspace: memo + d_memo)
+	// d_acc: m (gradient flowing backward)
+	// d_ls1: m, d_ls2: m
+	T* curr = workspace;
+	T* prev = curr + m;
+	T* seg = prev + m;
+	T* neg_seg = seg + m;
+	T* bch_ws = neg_seg + m;
+	T* bch_bp_ws = bch_ws + m2 * m;
+	T* d_acc = bch_bp_ws + 2 * m2 * m;
 	T* d_ls1 = d_acc + m;
 	T* d_ls2 = d_ls1 + m;
 
-	// --- Forward recomputation: store intermediate accumulators ---
-	// intermediates[0] = first segment log-sig
+	// Recompute the forward output into curr
 	const T* p0 = path;
 	const T* p1 = path + dimension;
-	T* acc = intermediates;
 	for (uint64_t k = 0; k < dimension; ++k)
-		acc[k] = p1[k] - p0[k];
+		curr[k] = p1[k] - p0[k];
 	for (uint64_t k = dimension; k < m; ++k)
-		acc[k] = T(0);
+		curr[k] = T(0);
 
 	std::memset(seg, 0, m * sizeof(T));
 	for (uint64_t s = 1; s < n_segs; ++s) {
@@ -976,43 +981,40 @@ void log_sig_from_path_backprop_(
 		for (uint64_t k = 0; k < dimension; ++k)
 			seg[k] = pb[k] - pa[k];
 
-		T* prev = intermediates + (s - 1) * m;
-		T* curr = intermediates + s * m;
-		log_sig_combine_impl_<T>(prev, seg, curr, cache, bch_ws);
+		// curr = BCH(curr, seg) — reuse prev as temp output, then swap
+		log_sig_combine_impl_<T>(curr, seg, prev, cache, bch_ws);
+		std::swap(curr, prev);
 	}
 
-	// --- Backward pass: reverse through the BCH chain ---
-	// Initialize d_acc with d_out
+	// curr now holds the final forward output (= intermediates[n_segs-1])
 	std::memcpy(d_acc, d_out, m * sizeof(T));
-
-	// Zero d_path
 	std::memset(d_path, 0, length * dimension * sizeof(T));
 
+	// Backward: reverse through segments, recovering prev via uncombination
+	std::memset(neg_seg, 0, m * sizeof(T));
 	for (uint64_t s = n_segs - 1; s >= 1; --s) {
-		// Rebuild seg for this step
 		const T* pa = path + s * dimension;
 		const T* pb = path + (s + 1) * dimension;
-		for (uint64_t k = 0; k < dimension; ++k)
+		for (uint64_t k = 0; k < dimension; ++k) {
 			seg[k] = pb[k] - pa[k];
-		for (uint64_t k = dimension; k < m; ++k)
-			seg[k] = T(0);
+			neg_seg[k] = -(pb[k] - pa[k]);
+		}
 
-		// Backprop through BCH(intermediates[s-1], seg) -> intermediates[s]
-		const T* ls1 = intermediates + (s - 1) * m;
-		log_sig_combine_backprop_impl_<T>(d_acc, d_ls1, d_ls2, ls1, seg, cache, bch_ws);
+		// Recover prev = BCH(curr, -seg) — the "uncombine" step
+		log_sig_combine_impl_<T>(curr, neg_seg, prev, cache, bch_ws);
 
-		// d_ls2 is the gradient w.r.t. seg = [dx, 0, ..., 0]
-		// Propagate to path: d_path[s+1] += d_ls2[:d], d_path[s] -= d_ls2[:d]
+		// Backprop through BCH(prev, seg) -> curr
+		log_sig_combine_backprop_impl_<T>(d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
+
 		for (uint64_t k = 0; k < dimension; ++k) {
 			d_path[(s + 1) * dimension + k] += d_ls2[k];
 			d_path[s * dimension + k] -= d_ls2[k];
 		}
 
-		// d_ls1 becomes d_acc for the next step backward
 		std::memcpy(d_acc, d_ls1, m * sizeof(T));
+		std::swap(curr, prev); // curr = prev for next iteration
 	}
 
-	// Final step: d_acc is gradient w.r.t. the first segment [path[1]-path[0], 0, ..., 0]
 	for (uint64_t k = 0; k < dimension; ++k) {
 		d_path[dimension + k] += d_acc[k];
 		d_path[k] -= d_acc[k];
@@ -1048,8 +1050,8 @@ void batch_log_sig_from_path_backprop_(
 	uint64_t m2 = cache.bch_coefficients.size();
 	uint64_t n_segs = length - 1;
 	uint64_t path_stride = length * dimension;
-	// Workspace per element: n_segs*m (intermediates) + m (seg) + 2*m2*m (bch_ws) + 3*m (d_acc, d_ls1, d_ls2)
-	uint64_t ws_size = n_segs * m + m + 2 * m2 * m + 3 * m;
+	// Workspace: 4*m (curr, prev, seg, neg_seg) + 3*m2*m (bch_ws + bch_bp_ws) + 3*m (d_acc, d_ls1, d_ls2)
+	uint64_t ws_size = 7 * m + 3 * m2 * m;
 
 	if (n_jobs != 1) {
 		auto func = [&](const T* dout, T* dp, const T* p) {

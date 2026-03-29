@@ -766,6 +766,24 @@ __global__ void batch_log_sig_from_path_deg1_kernel_(
 	}
 }
 
+// Degree < 2 backprop: d_path[last] = +d_out, d_path[first] = -d_out
+template<typename T>
+__global__ void batch_log_sig_from_path_deg1_backprop_kernel_(
+	const T* __restrict__ d_out,
+	T* __restrict__ d_path,
+	uint64_t m, uint64_t length, uint64_t dimension
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t tid = threadIdx.x;
+	const uint64_t stride = blockDim.x;
+	T* dp = d_path + batch_idx * length * dimension;
+	const T* dout = d_out + batch_idx * m;
+	for (uint64_t k = tid; k < m; k += stride) {
+		dp[(length - 1) * dimension + k] = dout[k];
+		dp[k] = -dout[k];
+	}
+}
+
 template<typename T>
 void batch_log_sig_from_path_cuda_(
 	const T* path, T* out,
@@ -848,17 +866,299 @@ void batch_log_sig_from_path_cuda_(
 }
 
 // =========================================================================
-// CUDA backward for log_sig_from_path: host-side loop using existing kernels
+// CUDA backward kernel for log_sig_from_path
 // =========================================================================
 
-// CUDA backward is handled in Python by transferring to CPU.
-// A native CUDA backward kernel is left for future work.
+// Backward using BCH uncombination: recovers each intermediate via BCH(curr, -seg).
+// No O(N*m) intermediate storage — uses O(m) memory per batch element.
+template<typename T>
+__global__ void batch_log_sig_from_path_backprop_kernel_(
+	const T* __restrict__ d_out,
+	T* __restrict__ d_path,
+	const T* __restrict__ path,
+	T* __restrict__ workspace,
+	const double* __restrict__ bch_coefs,
+	const uint64_t* __restrict__ bch_lf,
+	const uint64_t* __restrict__ bch_rf,
+	const uint32_t* __restrict__ comm_k_ptr,
+	const uint32_t* __restrict__ comm_k_i,
+	const uint32_t* __restrict__ comm_k_j,
+	const int* __restrict__ comm_k_val,
+	const uint32_t* __restrict__ comm_a_ptr,
+	const uint32_t* __restrict__ comm_a_k,
+	const uint32_t* __restrict__ comm_a_partner,
+	const int* __restrict__ comm_a_signed_c,
+	uint64_t m, uint64_t m2, uint64_t length, uint64_t dimension
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t tid = threadIdx.x;
+	const uint64_t stride = blockDim.x;
+	const uint64_t n_segs = length - 1;
+
+	extern __shared__ char smem[];
+	T* s_v1 = reinterpret_cast<T*>(smem);
+	T* s_v2 = s_v1 + m;
+
+	const T* my_path = path + batch_idx * length * dimension;
+	const T* my_dout = d_out + batch_idx * m;
+	T* my_dpath = d_path + batch_idx * length * dimension;
+
+	// Workspace: curr[m] + prev[m] + memo[m2*m] + d_memo[m2*m] + d_acc[m]
+	const uint64_t ws_per_batch = 3 * m + 2 * m2 * m;
+	T* curr = workspace + batch_idx * ws_per_batch;
+	T* prev = curr + m;
+	T* memo = prev + m;
+	T* d_memo = memo + m2 * m;
+	T* d_acc = d_memo + m2 * m;
+
+	// Zero d_path
+	for (uint64_t k = tid; k < length * dimension; k += stride)
+		my_dpath[k] = T(0);
+	__syncthreads();
+
+	// === Forward recomputation into curr (no intermediate storage) ===
+	for (uint64_t k = tid; k < m; k += stride)
+		curr[k] = (k < dimension) ? (my_path[dimension + k] - my_path[k]) : T(0);
+
+	for (uint64_t s = 1; s < n_segs; ++s) {
+		const T* pa = my_path + s * dimension;
+		const T* pb = my_path + (s + 1) * dimension;
+
+		for (uint64_t k = tid; k < m; k += stride) {
+			T seg_k = (k < dimension) ? (pb[k] - pa[k]) : T(0);
+			memo[k] = curr[k];
+			memo[m + k] = seg_k;
+			prev[k] = curr[k] + seg_k; // prev used as temp output
+		}
+		__syncthreads();
+
+		for (uint64_t w = 2; w < m2; ++w) {
+			const uint64_t lf = bch_lf[w];
+			const uint64_t rf = bch_rf[w];
+			T* result = memo + w * m;
+			const T* v1_global = memo + lf * m;
+			const T* v2_global = memo + rf * m;
+			for (uint64_t k = tid; k < m; k += stride) { s_v1[k] = v1_global[k]; s_v2[k] = v2_global[k]; }
+			__syncthreads();
+			const T c_w = T(bch_coefs[w]);
+			for (uint64_t k = tid; k < m; k += stride) {
+				T sum = T(0);
+				const uint32_t start = comm_k_ptr[k], end = comm_k_ptr[k + 1];
+				for (uint32_t idx = start; idx < end; ++idx) {
+					const uint32_t i = comm_k_i[idx], j = comm_k_j[idx]; const int c = comm_k_val[idx];
+					sum += T(c) * (s_v1[i] * s_v2[j] - s_v1[j] * s_v2[i]);
+				}
+				result[k] = sum;
+				if (c_w != T(0)) prev[k] += c_w * sum;
+			}
+			__syncthreads();
+		}
+		// Swap curr and prev
+		T* tmp = curr; curr = prev; prev = tmp;
+	}
+
+	// === Backward: uncombine to recover prev, backprop, repeat ===
+	for (uint64_t k = tid; k < m; k += stride)
+		d_acc[k] = my_dout[k];
+	__syncthreads();
+
+	for (uint64_t s = n_segs - 1; s >= 1; --s) {
+		const T* pa = my_path + s * dimension;
+		const T* pb = my_path + (s + 1) * dimension;
+
+		// Uncombine: prev = BCH(curr, -seg)
+		for (uint64_t k = tid; k < m; k += stride) {
+			T neg_seg_k = (k < dimension) ? -(pb[k] - pa[k]) : T(0);
+			memo[k] = curr[k];
+			memo[m + k] = neg_seg_k;
+			prev[k] = curr[k] + neg_seg_k;
+		}
+		__syncthreads();
+
+		for (uint64_t w = 2; w < m2; ++w) {
+			const uint64_t lf = bch_lf[w]; const uint64_t rf = bch_rf[w];
+			T* result = memo + w * m;
+			const T* v1_global = memo + lf * m; const T* v2_global = memo + rf * m;
+			for (uint64_t k = tid; k < m; k += stride) { s_v1[k] = v1_global[k]; s_v2[k] = v2_global[k]; }
+			__syncthreads();
+			const T c_w = T(bch_coefs[w]);
+			for (uint64_t k = tid; k < m; k += stride) {
+				T sum = T(0);
+				const uint32_t start = comm_k_ptr[k], end = comm_k_ptr[k + 1];
+				for (uint32_t idx = start; idx < end; ++idx) {
+					const uint32_t i = comm_k_i[idx], j = comm_k_j[idx]; const int c = comm_k_val[idx];
+					sum += T(c) * (s_v1[i] * s_v2[j] - s_v1[j] * s_v2[i]);
+				}
+				result[k] = sum;
+				if (c_w != T(0)) prev[k] += c_w * sum;
+			}
+			__syncthreads();
+		}
+
+		// Recompute BCH memo for backprop: BCH(prev, seg) -> curr
+		for (uint64_t k = tid; k < m; k += stride) {
+			T seg_k = (k < dimension) ? (pb[k] - pa[k]) : T(0);
+			memo[k] = prev[k];
+			memo[m + k] = seg_k;
+		}
+		__syncthreads();
+
+		for (uint64_t w = 2; w < m2; ++w) {
+			const uint64_t lf = bch_lf[w]; const uint64_t rf = bch_rf[w];
+			T* result = memo + w * m;
+			const T* v1_global = memo + lf * m; const T* v2_global = memo + rf * m;
+			for (uint64_t k = tid; k < m; k += stride) { s_v1[k] = v1_global[k]; s_v2[k] = v2_global[k]; }
+			__syncthreads();
+			for (uint64_t k = tid; k < m; k += stride) {
+				T sum = T(0);
+				const uint32_t start = comm_k_ptr[k], end = comm_k_ptr[k + 1];
+				for (uint32_t idx = start; idx < end; ++idx) {
+					const uint32_t i = comm_k_i[idx], j = comm_k_j[idx]; const int c = comm_k_val[idx];
+					sum += T(c) * (s_v1[i] * s_v2[j] - s_v1[j] * s_v2[i]);
+				}
+				result[k] = sum;
+			}
+			__syncthreads();
+		}
+
+		// d_memo init + reverse BCH backprop
+		for (uint64_t k = tid; k < m; k += stride) { d_memo[k] = T(0); d_memo[m + k] = T(0); }
+		for (uint64_t w = 2; w < m2; ++w) {
+			for (uint64_t k = tid; k < m; k += stride)
+				d_memo[w * m + k] = T(bch_coefs[w]) * d_acc[k];
+		}
+		__syncthreads();
+
+		for (uint64_t w = m2 - 1; w >= 2; --w) {
+			const uint64_t lf = bch_lf[w]; const uint64_t rf = bch_rf[w];
+			const T* dm_w = d_memo + w * m; T* dm_lf = d_memo + lf * m; T* dm_rf = d_memo + rf * m;
+			const T* v1_global = memo + lf * m; const T* v2_global = memo + rf * m;
+			for (uint64_t k = tid; k < m; k += stride) { s_v1[k] = v1_global[k]; s_v2[k] = v2_global[k]; }
+			__syncthreads();
+			for (uint64_t a = tid; a < m; a += stride) {
+				T acc_dv1 = T(0), acc_dv2 = T(0);
+				const uint32_t start = comm_a_ptr[a], end = comm_a_ptr[a + 1];
+				for (uint32_t idx = start; idx < end; ++idx) {
+					const uint32_t k = comm_a_k[idx]; const uint32_t partner = comm_a_partner[idx];
+					const int sc = comm_a_signed_c[idx]; const T dk = dm_w[k];
+					acc_dv1 += T(sc) * s_v2[partner] * dk;
+					acc_dv2 -= T(sc) * s_v1[partner] * dk;
+				}
+				dm_lf[a] += acc_dv1; dm_rf[a] += acc_dv2;
+			}
+			__syncthreads();
+		}
+
+		// Propagate gradients
+		for (uint64_t k = tid; k < m; k += stride) {
+			T d_ls2_k = d_acc[k] + d_memo[m + k];
+			d_acc[k] = d_acc[k] + d_memo[k];
+			if (k < dimension) {
+				my_dpath[(s + 1) * dimension + k] += d_ls2_k;
+				my_dpath[s * dimension + k] -= d_ls2_k;
+			}
+		}
+		__syncthreads();
+
+		// Move to previous accumulator
+		T* tmp = curr; curr = prev; prev = tmp;
+	}
+
+	for (uint64_t k = tid; k < dimension; k += stride) {
+		my_dpath[dimension + k] += d_acc[k];
+		my_dpath[k] -= d_acc[k];
+	}
+}
+
+template<typename T>
+void batch_log_sig_from_path_backprop_cuda_(
+	const T* d_out, T* d_path, const T* path,
+	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
+) {
+	if (dimension == 0) throw std::invalid_argument("log_sig_from_path_backprop_cuda received dimension 0");
+	if (degree == 0) throw std::invalid_argument("log_sig_from_path_backprop_cuda received degree 0");
+	if (length < 2) throw std::invalid_argument("log_sig_from_path_backprop_cuda received length < 2");
+
+	const CUDABchCache& cache = get_cuda_bch_cache_(dimension, degree);
+	uint64_t m = cache.m;
+	uint64_t m2 = cache.m2;
+	uint64_t n_segs = length - 1;
+
+	if (degree < 2) {
+		// Forward: out[k] = path[last][k] - path[first][k]
+		// Backward: d_path[last][k] = +d_out[k], d_path[first][k] = -d_out[k], rest = 0
+		cudaMemset(d_path, 0, batch_size * length * dimension * sizeof(T));
+		unsigned int deg1_threads = std::min(static_cast<uint64_t>(256), m);
+		deg1_threads = ((deg1_threads + 31) / 32) * 32;
+		if (deg1_threads < 32) deg1_threads = 32;
+		batch_log_sig_from_path_deg1_backprop_kernel_<T><<<static_cast<unsigned int>(batch_size), deg1_threads>>>(
+			d_out, d_path, m, length, dimension
+		);
+		check_cuda_kernel_launch();
+		return;
+	}
+
+	// Workspace per batch: curr[m] + prev[m] + memo[m2*m] + d_memo[m2*m] + d_acc[m]
+	uint64_t ws_per_batch = 3 * m + 2 * m2 * m;
+	size_t free_mem, total_mem;
+	cudaMemGetInfo(&free_mem, &total_mem);
+
+	uint64_t max_batch = free_mem / (ws_per_batch * sizeof(T) * 2);
+	if (max_batch < 1) max_batch = 1;
+	uint64_t chunk_size = std::min(batch_size, max_batch);
+
+	T* d_workspace = nullptr;
+	cudaMalloc(&d_workspace, chunk_size * ws_per_batch * sizeof(T));
+	check_cuda_error();
+
+	unsigned int threads = std::min(static_cast<uint64_t>(64), m);
+	threads = ((threads + 31) / 32) * 32;
+	if (threads < 32) threads = 32;
+
+	size_t shared_size = 2 * m * sizeof(T);
+	if (shared_size > 48 * 1024)
+		throw std::runtime_error("log_sig_from_path_backprop_cuda: m too large for shared memory");
+	uint64_t path_stride = length * dimension;
+
+	for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
+		uint64_t current_batch = std::min(chunk_size, batch_size - offset);
+
+		batch_log_sig_from_path_backprop_kernel_<T><<<static_cast<unsigned int>(current_batch), threads, shared_size>>>(
+			d_out + offset * m,
+			d_path + offset * path_stride,
+			path + offset * path_stride,
+			d_workspace,
+			cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
+			cache.d_comm_k_ptr, cache.d_comm_k_i, cache.d_comm_k_j, cache.d_comm_k_val,
+			cache.d_comm_a_ptr, cache.d_comm_a_k, cache.d_comm_a_partner, cache.d_comm_a_signed_c,
+			m, m2, length, dimension
+		);
+		check_cuda_kernel_launch();
+	}
+
+	cudaFree(d_workspace);
+	check_cuda_error();
+}
 
 // =========================================================================
 // Exported C functions
 // =========================================================================
 
 extern "C" {
+
+CUSIG_API int batch_log_sig_from_path_backprop_cuda_f(
+	const float* d_out, float* d_path, const float* path,
+	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
+) noexcept {
+	CUSIG_SAFE_CALL(batch_log_sig_from_path_backprop_cuda_<float>(d_out, d_path, path, batch_size, length, dimension, degree));
+}
+
+CUSIG_API int batch_log_sig_from_path_backprop_cuda_d(
+	const double* d_out, double* d_path, const double* path,
+	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
+) noexcept {
+	CUSIG_SAFE_CALL(batch_log_sig_from_path_backprop_cuda_<double>(d_out, d_path, path, batch_size, length, dimension, degree));
+}
 
 CUSIG_API int batch_log_sig_from_path_cuda_f(
 	const float* path, float* out,

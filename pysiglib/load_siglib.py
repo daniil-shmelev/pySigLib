@@ -949,6 +949,32 @@ if BUILT_WITH_CUDA:
     )
     CUSIG.batch_log_sig_combine_backprop_cuda_d.restype = c_int
 
+    ######################################################
+    # batch_log_sig_from_path_backprop_cuda
+    ######################################################
+
+    CUSIG.batch_log_sig_from_path_backprop_cuda_f.argtypes = (
+        POINTER(c_float),   # d_out
+        POINTER(c_float),   # d_path
+        POINTER(c_float),   # path
+        c_uint64,           # batch_size
+        c_uint64,           # length
+        c_uint64,           # dimension
+        c_uint64            # degree
+    )
+    CUSIG.batch_log_sig_from_path_backprop_cuda_f.restype = c_int
+
+    CUSIG.batch_log_sig_from_path_backprop_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_uint64
+    )
+    CUSIG.batch_log_sig_from_path_backprop_cuda_d.restype = c_int
+
 ######################################################
 # sig_combine_backprop
 ######################################################
