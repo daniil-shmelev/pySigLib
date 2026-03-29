@@ -22,11 +22,13 @@ import torch
 from .param_checks import check_type, check_non_neg, check_log_sig_method
 from .error_codes import err_msg
 from .dtypes import (CPSIG_SIG_TO_LOG_SIG, CPSIG_BATCH_SIG_TO_LOG_SIG,
-                     CUSIG_SIG_TO_LOG_SIG_CUDA, CUSIG_BATCH_SIG_TO_LOG_SIG_CUDA)
+                     CUSIG_SIG_TO_LOG_SIG_CUDA, CUSIG_BATCH_SIG_TO_LOG_SIG_CUDA,
+                     CPSIG_BATCH_LOG_SIG_FROM_PATH, CUSIG_BATCH_LOG_SIG_FROM_PATH_CUDA)
 from .sig_length import sig_length, log_sig_length
 from .sig import sig
-from .data_handlers import SigOutputHandler, SigInputHandler
+from .data_handlers import SigOutputHandler, SigInputHandler, PathInputHandler
 from .load_siglib import CPSIG, CUSIG, BUILT_WITH_CUDA
+from .transform_path import transform_path
 
 
 ######################################################
@@ -152,7 +154,7 @@ def prepare_log_sig(
     if device not in ("cpu", "cuda", "both"):
         raise ValueError("device must be 'cpu', 'cuda', or 'both'")
 
-    if method == 0:
+    if method == 0 or method == 3:
         return
 
     aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
@@ -335,6 +337,8 @@ def sig_to_log_sig(
     check_type(lead_lag, "lead_lag", bool)
     check_type(method, "method", int)
     check_log_sig_method(method)
+    if method == 3:
+        raise ValueError("method=3 is not supported in sig_to_log_sig. Use log_sig(path, degree, method=3) instead.")
 
     aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
 
@@ -405,7 +409,48 @@ def log_sig(
         X = torch.rand((32,100,5))
         X_log_sig = pysiglib.log_sig(X, 3, lead_lag=True, method=2)
     """
+    if method == 3:
+        return _log_sig_via_combine(path, degree, time_aug, lead_lag, end_time, n_jobs)
+
     sig_ = sig(path, degree, time_aug, lead_lag, end_time, True, n_jobs)
     dimension = path.shape[-1]
     log_sig_ = sig_to_log_sig(sig_, dimension, degree, time_aug, lead_lag, method, n_jobs)
     return log_sig_
+
+
+def _log_sig_via_combine(path, degree, time_aug, lead_lag, end_time, n_jobs):
+    """Compute log-signature via sequential BCH combination of per-segment log-signatures."""
+    if time_aug or lead_lag:
+        path = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
+
+    aug_dim = path.shape[-1]
+    ls_len = log_sig_length(aug_dim, degree)
+
+    data = PathInputHandler(path, False, False, 1.0, "path")
+    result = SigOutputHandler(data, ls_len)
+
+    if data.device == "cpu":
+        err_code = CPSIG_BATCH_LOG_SIG_FROM_PATH[data.dtype](
+            data.data_ptr,
+            result.data_ptr,
+            data.batch_size,
+            data.data_length,
+            aug_dim,
+            degree,
+            n_jobs
+        )
+        if err_code:
+            raise Exception("Error in pysiglib.log_sig (method=3): " + err_msg(err_code))
+    else:
+        err_code = CUSIG_BATCH_LOG_SIG_FROM_PATH_CUDA[data.dtype](
+            data.data_ptr,
+            result.data_ptr,
+            data.batch_size,
+            data.data_length,
+            aug_dim,
+            degree
+        )
+        if err_code:
+            raise Exception("Error in pysiglib.log_sig (method=3, CUDA): " + err_msg(err_code))
+
+    return result.data

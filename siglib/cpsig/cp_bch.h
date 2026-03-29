@@ -633,6 +633,93 @@ void batch_log_sig_combine_(
 }
 
 // ========================================================================
+// log_sig_from_path_: compute log-signature directly via sequential BCH
+// ========================================================================
+
+template<std::floating_point T>
+void log_sig_from_path_(
+	const T* path, T* out,
+	uint64_t length, uint64_t dimension,
+	const BchCache& cache, T* memo, T* seg, T* temp
+) {
+	uint64_t m = cache.m;
+
+	const T* p0 = path;
+	const T* p1 = path + dimension;
+	for (uint64_t k = 0; k < dimension; ++k)
+		out[k] = p1[k] - p0[k];
+	for (uint64_t k = dimension; k < m; ++k)
+		out[k] = T(0);
+
+	if (length <= 2) return;
+
+	std::memset(seg, 0, m * sizeof(T));
+
+	T* acc = out;
+	T* src = temp;
+	for (uint64_t s = 1; s < length - 1; ++s) {
+		const T* pa = path + s * dimension;
+		const T* pb = path + (s + 1) * dimension;
+		for (uint64_t k = 0; k < dimension; ++k)
+			seg[k] = pb[k] - pa[k];
+
+		std::swap(acc, src);
+		log_sig_combine_impl_<T>(src, seg, acc, cache, memo);
+	}
+
+	if (acc != out) std::memcpy(out, acc, m * sizeof(T));
+}
+
+template<std::floating_point T>
+void batch_log_sig_from_path_(
+	const T* path, T* out,
+	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree,
+	int n_jobs = 1
+) {
+	if (dimension == 0) throw std::invalid_argument("log_sig_from_path received dimension 0");
+	if (degree == 0) throw std::invalid_argument("log_sig_from_path received degree 0");
+	if (length < 2) throw std::invalid_argument("log_sig_from_path received length < 2");
+
+	const BchCache& cache = get_bch_cache(dimension, degree);
+	uint64_t m = cache.m;
+
+	if (degree < 2) {
+		for (uint64_t i = 0; i < batch_size; ++i) {
+			const T* first = path + i * length * dimension;
+			const T* last = first + (length - 1) * dimension;
+			for (uint64_t k = 0; k < m; ++k)
+				out[i * m + k] = last[k] - first[k];
+		}
+		return;
+	}
+
+	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t path_stride = length * dimension;
+
+	if (n_jobs != 1) {
+		auto func = [&](const T* p, T* o) {
+			thread_local std::vector<T> tl_memo;
+			thread_local std::vector<T> tl_seg;
+			thread_local std::vector<T> tl_temp;
+			tl_memo.resize(m2 * m);
+			tl_seg.resize(m);
+			tl_temp.resize(m);
+			log_sig_from_path_<T>(p, o, length, dimension, cache, tl_memo.data(), tl_seg.data(), tl_temp.data());
+		};
+		multi_threaded_batch<const T, T>(func, path, out, batch_size, path_stride, m, n_jobs);
+	}
+	else {
+		std::vector<T> memo(m2 * m);
+		std::vector<T> seg(m);
+		std::vector<T> temp(m);
+		for (uint64_t i = 0; i < batch_size; ++i) {
+			log_sig_from_path_<T>(path + i * path_stride, out + i * m,
+				length, dimension, cache, memo.data(), seg.data(), temp.data());
+		}
+	}
+}
+
+// ========================================================================
 // log_sig_combine_backprop_: backward pass through BCH
 // ========================================================================
 

@@ -608,10 +608,268 @@ void batch_log_sig_combine_backprop_cuda_(
 }
 
 // =========================================================================
+// CUDA kernel: log_sig_from_path — full segment loop inside the kernel
+// =========================================================================
+
+// Shared-memory variant: v1/v2 loaded into shared memory each BCH iteration
+template<typename T>
+__global__ void batch_log_sig_from_path_kernel_(
+	const T* __restrict__ path,
+	T* __restrict__ out,
+	T* __restrict__ workspace,
+	const double* __restrict__ bch_coefs,
+	const uint64_t* __restrict__ bch_lf,
+	const uint64_t* __restrict__ bch_rf,
+	const uint32_t* __restrict__ comm_k_ptr,
+	const uint32_t* __restrict__ comm_k_i,
+	const uint32_t* __restrict__ comm_k_j,
+	const int* __restrict__ comm_k_val,
+	uint64_t m, uint64_t m2, uint64_t length, uint64_t dimension
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t tid = threadIdx.x;
+	const uint64_t stride = blockDim.x;
+
+	extern __shared__ char smem[];
+	T* s_v1 = reinterpret_cast<T*>(smem);
+	T* s_v2 = s_v1 + m;
+
+	const T* my_path = path + batch_idx * length * dimension;
+	T* my_out = out + batch_idx * m;
+	T* memo = workspace + batch_idx * m2 * m;
+
+	for (uint64_t k = tid; k < m; k += stride) {
+		my_out[k] = (k < dimension) ? (my_path[dimension + k] - my_path[k]) : T(0);
+	}
+
+	for (uint64_t seg = 1; seg < length - 1; ++seg) {
+		const T* pa = my_path + seg * dimension;
+		const T* pb = my_path + (seg + 1) * dimension;
+
+		// Write segment increment directly into memo[1] (ls2 leaf slot)
+		// and copy accumulator into memo[0] (ls1 leaf slot)
+		for (uint64_t k = tid; k < m; k += stride) {
+			memo[k] = my_out[k];
+			T seg_k = (k < dimension) ? (pb[k] - pa[k]) : T(0);
+			memo[m + k] = seg_k;
+			my_out[k] += seg_k;
+		}
+		__syncthreads();
+
+		for (uint64_t w = 2; w < m2; ++w) {
+			const uint64_t lf = bch_lf[w];
+			const uint64_t rf = bch_rf[w];
+			T* result = memo + w * m;
+
+			const T* v1_global = memo + lf * m;
+			const T* v2_global = memo + rf * m;
+			for (uint64_t k = tid; k < m; k += stride) {
+				s_v1[k] = v1_global[k];
+				s_v2[k] = v2_global[k];
+			}
+			__syncthreads();
+
+			const T c_w = T(bch_coefs[w]);
+			for (uint64_t k = tid; k < m; k += stride) {
+				T sum = T(0);
+				const uint32_t start = comm_k_ptr[k];
+				const uint32_t end = comm_k_ptr[k + 1];
+				for (uint32_t idx = start; idx < end; ++idx) {
+					const uint32_t i = comm_k_i[idx];
+					const uint32_t j = comm_k_j[idx];
+					const int c = comm_k_val[idx];
+					sum += T(c) * (s_v1[i] * s_v2[j] - s_v1[j] * s_v2[i]);
+				}
+				result[k] = sum;
+				if (c_w != T(0)) my_out[k] += c_w * sum;
+			}
+			__syncthreads();
+		}
+	}
+}
+
+// Fallback without shared memory (for large m)
+template<typename T>
+__global__ void batch_log_sig_from_path_kernel_noshmem_(
+	const T* __restrict__ path,
+	T* __restrict__ out,
+	T* __restrict__ workspace,
+	const double* __restrict__ bch_coefs,
+	const uint64_t* __restrict__ bch_lf,
+	const uint64_t* __restrict__ bch_rf,
+	const uint32_t* __restrict__ comm_k_ptr,
+	const uint32_t* __restrict__ comm_k_i,
+	const uint32_t* __restrict__ comm_k_j,
+	const int* __restrict__ comm_k_val,
+	uint64_t m, uint64_t m2, uint64_t length, uint64_t dimension
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t tid = threadIdx.x;
+	const uint64_t stride = blockDim.x;
+
+	const T* my_path = path + batch_idx * length * dimension;
+	T* my_out = out + batch_idx * m;
+	T* memo = workspace + batch_idx * m2 * m;
+
+	for (uint64_t k = tid; k < m; k += stride) {
+		my_out[k] = (k < dimension) ? (my_path[dimension + k] - my_path[k]) : T(0);
+	}
+
+	for (uint64_t seg = 1; seg < length - 1; ++seg) {
+		const T* pa = my_path + seg * dimension;
+		const T* pb = my_path + (seg + 1) * dimension;
+
+		for (uint64_t k = tid; k < m; k += stride) {
+			memo[k] = my_out[k];
+			T seg_k = (k < dimension) ? (pb[k] - pa[k]) : T(0);
+			memo[m + k] = seg_k;
+			my_out[k] += seg_k;
+		}
+		__syncthreads();
+
+		for (uint64_t w = 2; w < m2; ++w) {
+			const uint64_t lf = bch_lf[w];
+			const uint64_t rf = bch_rf[w];
+			const T* v1 = memo + lf * m;
+			const T* v2 = memo + rf * m;
+			T* result = memo + w * m;
+
+			const T c_w = T(bch_coefs[w]);
+			for (uint64_t k = tid; k < m; k += stride) {
+				T sum = T(0);
+				const uint32_t start = comm_k_ptr[k];
+				const uint32_t end = comm_k_ptr[k + 1];
+				for (uint32_t idx = start; idx < end; ++idx) {
+					const uint32_t i = comm_k_i[idx];
+					const uint32_t j = comm_k_j[idx];
+					const int c = comm_k_val[idx];
+					sum += T(c) * (v1[i] * v2[j] - v1[j] * v2[i]);
+				}
+				result[k] = sum;
+				if (c_w != T(0)) my_out[k] += c_w * sum;
+			}
+			__syncthreads();
+		}
+	}
+}
+
+// Degree < 2: log-sig is just path[last] - path[first]
+template<typename T>
+__global__ void batch_log_sig_from_path_deg1_kernel_(
+	const T* __restrict__ path,
+	T* __restrict__ out,
+	uint64_t m, uint64_t length, uint64_t dimension
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t tid = threadIdx.x;
+	const uint64_t stride = blockDim.x;
+	const T* first = path + batch_idx * length * dimension;
+	const T* last = first + (length - 1) * dimension;
+	for (uint64_t k = tid; k < m; k += stride) {
+		out[batch_idx * m + k] = last[k] - first[k];
+	}
+}
+
+template<typename T>
+void batch_log_sig_from_path_cuda_(
+	const T* path, T* out,
+	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
+) {
+	if (dimension == 0) throw std::invalid_argument("log_sig_from_path_cuda received dimension 0");
+	if (degree == 0) throw std::invalid_argument("log_sig_from_path_cuda received degree 0");
+	if (length < 2) throw std::invalid_argument("log_sig_from_path_cuda received length < 2");
+
+	const CUDABchCache& cache = get_cuda_bch_cache_(dimension, degree);
+	uint64_t m = cache.m;
+	uint64_t m2 = cache.m2;
+
+	if (degree < 2) {
+		unsigned int threads = std::min(static_cast<uint64_t>(256), m);
+		threads = ((threads + 31) / 32) * 32;
+		if (threads < 32) threads = 32;
+		batch_log_sig_from_path_deg1_kernel_<T><<<static_cast<unsigned int>(batch_size), threads>>>(
+			path, out, m, length, dimension
+		);
+		check_cuda_kernel_launch();
+		return;
+	}
+
+	uint64_t ws_per_batch = m2 * m;
+
+	// Cached workspace
+	static T* s_workspace = nullptr;
+	static size_t s_workspace_elems = 0;
+
+	size_t needed_elems = batch_size * ws_per_batch;
+	if (needed_elems > s_workspace_elems) {
+		if (s_workspace) { cudaFree(s_workspace); s_workspace = nullptr; s_workspace_elems = 0; }
+		size_t free_mem, total_mem;
+		cudaMemGetInfo(&free_mem, &total_mem);
+		uint64_t max_batch = free_mem / (ws_per_batch * sizeof(T) * 2);
+		if (max_batch < 1) max_batch = 1;
+		uint64_t alloc_batch = std::min(batch_size, max_batch);
+		size_t alloc_elems = alloc_batch * ws_per_batch;
+		cudaMalloc(&s_workspace, alloc_elems * sizeof(T));
+		check_cuda_error();
+		s_workspace_elems = alloc_elems;
+	}
+
+	uint64_t chunk_size = s_workspace_elems / ws_per_batch;
+	if (chunk_size > batch_size) chunk_size = batch_size;
+
+	unsigned int threads = std::min(static_cast<uint64_t>(64), m);
+	threads = ((threads + 31) / 32) * 32;
+	if (threads < 32) threads = 32;
+
+	size_t shared_size = 2 * m * sizeof(T);
+	bool use_shmem = (shared_size <= 48 * 1024);
+	uint64_t path_stride = length * dimension;
+
+	for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
+		uint64_t current_batch = std::min(chunk_size, batch_size - offset);
+
+		if (use_shmem) {
+			batch_log_sig_from_path_kernel_<T><<<static_cast<unsigned int>(current_batch), threads, shared_size>>>(
+				path + offset * path_stride,
+				out + offset * m,
+				s_workspace,
+				cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
+				cache.d_comm_k_ptr, cache.d_comm_k_i, cache.d_comm_k_j, cache.d_comm_k_val,
+				m, m2, length, dimension
+			);
+		} else {
+			batch_log_sig_from_path_kernel_noshmem_<T><<<static_cast<unsigned int>(current_batch), threads>>>(
+				path + offset * path_stride,
+				out + offset * m,
+				s_workspace,
+				cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
+				cache.d_comm_k_ptr, cache.d_comm_k_i, cache.d_comm_k_j, cache.d_comm_k_val,
+				m, m2, length, dimension
+			);
+		}
+		check_cuda_kernel_launch();
+	}
+}
+
+// =========================================================================
 // Exported C functions
 // =========================================================================
 
 extern "C" {
+
+CUSIG_API int batch_log_sig_from_path_cuda_f(
+	const float* path, float* out,
+	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
+) noexcept {
+	CUSIG_SAFE_CALL(batch_log_sig_from_path_cuda_<float>(path, out, batch_size, length, dimension, degree));
+}
+
+CUSIG_API int batch_log_sig_from_path_cuda_d(
+	const double* path, double* out,
+	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
+) noexcept {
+	CUSIG_SAFE_CALL(batch_log_sig_from_path_cuda_<double>(path, out, batch_size, length, dimension, degree));
+}
 
 CUSIG_API int log_sig_combine_cuda_f(
 	const float* log_sig1, const float* log_sig2, float* out,

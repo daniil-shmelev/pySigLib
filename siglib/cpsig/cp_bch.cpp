@@ -40,6 +40,16 @@ extern "C" {
 		SAFE_CALL(batch_log_sig_combine_<double>(log_sig1, log_sig2, out, batch_size, dimension, degree, n_jobs));
 	}
 
+	CPSIG_API int batch_log_sig_from_path_f(const float* path, float* out,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
+		SAFE_CALL(batch_log_sig_from_path_<float>(path, out, batch_size, length, dimension, degree, n_jobs));
+	}
+
+	CPSIG_API int batch_log_sig_from_path_d(const double* path, double* out,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
+		SAFE_CALL(batch_log_sig_from_path_<double>(path, out, batch_size, length, dimension, degree, n_jobs));
+	}
+
 	CPSIG_API int log_sig_combine_backprop_f(const float* d_out, float* d_ls1, float* d_ls2,
 		const float* ls1, const float* ls2, uint64_t dimension, uint64_t degree) noexcept {
 		SAFE_CALL(log_sig_combine_backprop_<float>(d_out, d_ls1, d_ls2, ls1, ls2, dimension, degree));

@@ -35,6 +35,7 @@ from ..sig_metrics import sig_score as sig_score_forward
 from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
 from ..transform_path import transform_path as transform_path_forward
+from ..sig_length import log_sig_length
 from ..transform_path_backprop import transform_path_backprop
 
 from ..param_checks import check_type, check_word_or_word_list
@@ -229,12 +230,56 @@ def log_sig(
         method : int = 1,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
+    if method == 3:
+        return _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_jobs)
+
     sig_ = sig(path, degree, time_aug, lead_lag, end_time, True, n_jobs)
     dimension = path.shape[-1]
     log_sig_ = sig_to_log_sig(sig_, dimension, degree, time_aug, lead_lag, method, n_jobs)
     return log_sig_
 
 log_sig.__doc__ = log_sig_forward.__doc__
+
+
+def _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_jobs):
+    """Compute log-signature via sequential BCH combination (torch autograd compatible).
+
+    For torch tensors with requires_grad, uses the Python loop through LogSigCombine autograd.
+    For non-grad tensors and numpy arrays, delegates to the C++ implementation.
+    """
+    needs_grad = isinstance(path, torch.Tensor) and path.requires_grad
+
+    if needs_grad:
+        # Use Python loop for autograd support
+        if time_aug or lead_lag:
+            path = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
+
+        aug_dim = path.shape[-1]
+        ls_len = log_sig_length(aug_dim, degree)
+        is_batch = (path.ndim == 3)
+        pad_len = ls_len - aug_dim
+
+        if is_batch:
+            increments = path[:, 1:, :] - path[:, :-1, :]
+            n_segments = increments.shape[1]
+        else:
+            increments = path[1:, :] - path[:-1, :]
+            n_segments = increments.shape[0]
+
+        if n_segments == 0:
+            return torch.zeros(*path.shape[:-2], ls_len, dtype=path.dtype, device=path.device)
+
+        def _make_seg_ls(inc):
+            return torch.nn.functional.pad(inc, (0, pad_len))
+
+        result = _make_seg_ls(increments[:, 0, :] if is_batch else increments[0, :])
+        for i in range(1, n_segments):
+            seg_ls = _make_seg_ls(increments[:, i, :] if is_batch else increments[i, :])
+            result = log_sig_combine(result, seg_ls, aug_dim, degree, n_jobs=n_jobs)
+        return result
+    else:
+        # Delegate to C++ implementation (faster, no autograd)
+        return log_sig_forward(path, degree, time_aug, lead_lag, end_time, 3, n_jobs)
 
 class SigKernel(torch.autograd.Function):
     @staticmethod
