@@ -1,5 +1,5 @@
-Backpropagation
-========================
+pysiglib.log_sig_combine_backprop
+====================================
 
 .. warning::
 
@@ -8,14 +8,4 @@ Backpropagation
     incorrectly. In addition, some ``pysiglib`` functions can only be backpropagated through
     using their ``pysiglib.torch_api`` variants and do not expose explicit backpropagation functions.
 
-.. toctree::
-   :titlesonly:
-
-   backprop/transform_path_backprop
-   backprop/sig_backprop
-   backprop/sig_combine_backprop
-   backprop/sig_coef_backprop
-   backprop/sig_to_log_sig_backprop
-   backprop/log_sig_combine_backprop
-   backprop/sig_kernel_backprop
-   backprop/sig_kernel_gram_backprop
+.. autofunction:: pysiglib.log_sig_combine_backprop

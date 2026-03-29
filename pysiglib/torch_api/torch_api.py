@@ -35,7 +35,6 @@ from ..sig_metrics import sig_score as sig_score_forward
 from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
 from ..transform_path import transform_path as transform_path_forward
-from ..sig_length import log_sig_length
 from ..transform_path_backprop import transform_path_backprop
 from ..dtypes import CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP
 from ..error_codes import err_msg
@@ -278,7 +277,7 @@ class LogSigFromPath(torch.autograd.Function):
         # Allocate output gradient (same shape as transformed path)
         d_path = torch.zeros_like(path_data)
 
-        from ctypes import cast, c_void_p, POINTER, c_float, c_double
+        from ctypes import cast, POINTER, c_float, c_double
         dtype_str = "float32" if path_data.dtype == torch.float32 else "float64"
         ptr_type = POINTER(c_float) if dtype_str == "float32" else POINTER(c_double)
 
