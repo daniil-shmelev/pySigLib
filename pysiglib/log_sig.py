@@ -114,7 +114,7 @@ def prepare_log_sig(
     :param degree: Truncation degree of the log signature.
     :type degree: int
     :param method: Method for the log signature computation. Must be one of `0`, `1`, `2` or `3`.
-        Methods `0`-`2` require preparation; method `3` does not.
+        Methods `1` and `2` require preparation; methods `0` and `3` do not.
     :type method: int
     :param time_aug: Whether time augmentation will be used in the computation.
     :type time_aug: bool

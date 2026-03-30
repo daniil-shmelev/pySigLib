@@ -70,16 +70,16 @@ def log_sig_combine(
     using the Baker-Campbell-Hausdorff (BCH) formula. In particular, let :math:`x_1, x_2`
     be two paths such that the first point of :math:`x_2` is the last point of :math:`x_1`.
     Let :math:`L(x_1), L(x_2)` be the truncated log-signatures of :math:`x_1, x_2`
-    respectively (computed with ``method=2``). Then calling this function on
+    respectively (computed with ``method=2`` or ``method=3``). Then calling this function on
     :math:`L(x_1), L(x_2)` returns the truncated log-signature of the concatenated path,
 
     .. math::
 
         L(x_1 * x_2) = \\text{BCH}(L(x_1), L(x_2)).
 
-    :param log_sig1: The first truncated log-signature (Lyndon basis, method=2)
+    :param log_sig1: The first truncated log-signature (Lyndon basis, method=2 or method=3)
     :type log_sig1: numpy.ndarray | torch.tensor
-    :param log_sig2: The second truncated log-signature (Lyndon basis, method=2).
+    :param log_sig2: The second truncated log-signature (Lyndon basis, method=2 or method=3).
         Must have the same degree and dimension as the first.
     :type log_sig2: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
@@ -175,9 +175,9 @@ def log_sig_combine_backprop(
 
     :param deriv: Derivative with respect to the combined log-signature
     :type deriv: numpy.ndarray | torch.tensor
-    :param ls1: The first truncated log-signature (Lyndon basis, method=2)
+    :param ls1: The first truncated log-signature (Lyndon basis, method=2 or method=3)
     :type ls1: numpy.ndarray | torch.tensor
-    :param ls2: The second truncated log-signature (Lyndon basis, method=2)
+    :param ls2: The second truncated log-signature (Lyndon basis, method=2 or method=3)
     :type ls2: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying space
     :type dimension: int

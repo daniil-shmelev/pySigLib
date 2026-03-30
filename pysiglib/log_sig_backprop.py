@@ -193,32 +193,13 @@ def sig_to_log_sig_backprop(
         return sig_to_log_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method)
 
 
-def log_sig_from_path_backprop(
+def _log_sig_from_path_backprop(
         grad_output : Union[np.ndarray, torch.tensor],
         path : Union[np.ndarray, torch.tensor],
         degree : int,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    """
-    Backpropagates through the log-signature-from-path computation (method 3).
-    Given the derivatives of a scalar function :math:`F` with respect to the
-    log signature, :math:`\\partial F / \\partial \\log(S(x))`, returns the
-    derivatives of :math:`F` with respect to the path,
-    :math:`\\partial F / \\partial x`.
-
-    :param grad_output: Derivatives of the scalar function :math:`F` with respect to the log signature(s).
-    :type grad_output: numpy.ndarray | torch.tensor
-    :param path: The path or batch of paths (after any transforms), given as a `numpy.ndarray` or `torch.tensor`.
-        For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
-        be of shape ``(batch_size, length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
-    :param degree: Truncation degree of the log signature(s).
-    :type degree: int
-    :param n_jobs: Number of threads to run in parallel (CPU only).
-    :type n_jobs: int
-    :return: Derivatives of the scalar function :math:`F` with respect to the path(s).
-    :rtype: numpy.ndarray | torch.tensor
-    """
+    """Backpropagates through the method=3 log-signature-from-path computation."""
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
     check_type(n_jobs, "n_jobs", int)

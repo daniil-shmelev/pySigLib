@@ -23,7 +23,7 @@ from ..sig_coef_backprop import sig_coef_backprop
 from ..sig_backprop import sig_backprop, sig_combine_backprop
 from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
 from ..log_sig import log_sig as log_sig_forward
-from ..log_sig_backprop import sig_to_log_sig_backprop, log_sig_from_path_backprop
+from ..log_sig_backprop import sig_to_log_sig_backprop, _log_sig_from_path_backprop
 from ..static_kernels import StaticKernel
 from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
 from ..log_sig_combine import log_sig_combine_backprop
@@ -263,7 +263,7 @@ class LogSigFromPath(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         transformed, = ctx.saved_tensors
-        d_path = log_sig_from_path_backprop(grad_output, transformed, ctx.degree, ctx.n_jobs)
+        d_path = _log_sig_from_path_backprop(grad_output, transformed, ctx.degree, ctx.n_jobs)
 
         # If transforms were applied, backprop through them
         if ctx.time_aug or ctx.lead_lag:
