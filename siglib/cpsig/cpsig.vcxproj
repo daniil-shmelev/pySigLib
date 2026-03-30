@@ -76,6 +76,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>NDEBUG;VEC;CPSIG_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(SolutionDir)\shared;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>cppch.h</PrecompiledHeaderFile>
@@ -120,7 +121,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cp_bch.cpp" />
-    <ClCompile Include="cp_bch_data.cpp" />
     <ClCompile Include="cp_log_signatures.cpp" />
     <ClCompile Include="cp_path_transforms.cpp" />
     <ClCompile Include="cpsig.cpp" />

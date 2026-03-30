@@ -14,15 +14,4 @@
  * ========================================================================= */
 
 #pragma once
-#include <cstdint>
-
-constexpr uint64_t BCH_MAX_HARDCODED_DEGREE = 12;
-
-struct BchHardcodedData {
-	const double* coefficients;
-	const uint64_t* left_factor;
-	const uint64_t* right_factor;
-	uint64_t size;  // = log_sig_length(2, degree)
-};
-
-const BchHardcodedData* get_hardcoded_bch_data(uint64_t degree);
+#include "bch_data.h"

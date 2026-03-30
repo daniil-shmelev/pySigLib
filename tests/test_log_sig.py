@@ -149,14 +149,15 @@ def test_batch_log_signature_lyndon_words_random(device, deg, dtype):
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_log_signature_lyndon_basis_random(device, deg, dtype):
+@pytest.mark.parametrize("method", [2, 3])
+def test_log_signature_lyndon_basis_random(device, deg, dtype, method):
     X = np.random.uniform(size=(100, 5)).astype(dtype)
 
     s = iisignature.prepare(5, deg, "s")
     iisig = iisignature.logsig(X, s, "s").astype(dtype)
     X_dev = torch.tensor(X, device=device)
     pysiglib.prepare_log_sig(5, deg, 2)
-    sig = pysiglib.log_sig(X_dev, deg, method=2)
+    sig = pysiglib.log_sig(X_dev, deg, method=method)
     assert_device(sig, device)
     check_close(iisig, sig)
     pysiglib.clear_cache()
@@ -164,14 +165,15 @@ def test_log_signature_lyndon_basis_random(device, deg, dtype):
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
-def test_batch_log_signature_lyndon_basis_random(device, deg, dtype):
+@pytest.mark.parametrize("method", [2, 3])
+def test_batch_log_signature_lyndon_basis_random(device, deg, dtype, method):
     X = np.random.uniform(size=(32, 100, 5)).astype(dtype)
 
     s = iisignature.prepare(5, deg, "s")
     iisig = iisignature.logsig(X, s, "s").astype(dtype)
     X_dev = torch.tensor(X, device=device)
     pysiglib.prepare_log_sig(5, deg, 2)
-    sig = pysiglib.log_sig(X_dev, deg, method=2)
+    sig = pysiglib.log_sig(X_dev, deg, method=method)
     assert_device(sig, device)
     check_close(iisig, sig)
     pysiglib.clear_cache()

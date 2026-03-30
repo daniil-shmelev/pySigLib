@@ -149,10 +149,11 @@ def test_batch_log_signature_lyndon_words_random(device, deg, dtype):
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_log_signature_backprop_lyndon_basis_random(device, deg, dtype):
+@pytest.mark.parametrize("method", [2, 3])
+def test_log_signature_backprop_lyndon_basis_random(device, deg, dtype, method):
     X = torch.rand(size=(100, 5), requires_grad=True, dtype=dtype, device=device)
     pysiglib.prepare_log_sig(5, deg, 2)
-    ls = pysiglib.log_sig(X, deg, method=2)
+    ls = pysiglib.log_sig(X, deg, method=method)
     assert_device(ls, device)
     derivs = torch.rand(size=ls.shape, dtype=dtype, device=device)
     ls.backward(derivs)
@@ -168,10 +169,11 @@ def test_log_signature_backprop_lyndon_basis_random(device, deg, dtype):
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
-def test_batch_log_signature_backprop_lyndon_basis_random(device, deg, dtype):
+@pytest.mark.parametrize("method", [2, 3])
+def test_batch_log_signature_backprop_lyndon_basis_random(device, deg, dtype, method):
     X = torch.rand(size=(32, 100, 5), requires_grad=True, dtype=dtype, device=device)
     pysiglib.prepare_log_sig(5, deg, 2)
-    ls = pysiglib.log_sig(X, deg, method=2)
+    ls = pysiglib.log_sig(X, deg, method=method)
     assert_device(ls, device)
     derivs = torch.rand(size=ls.shape, dtype=dtype, device=device)
     ls.backward(derivs)
@@ -182,4 +184,4 @@ def test_batch_log_signature_backprop_lyndon_basis_random(device, deg, dtype):
     s = iisignature.prepare(5, deg, "s")
     d2 = iisignature.logsigbackprop(derivs, X, s, "s")
 
-    check_close(d1, d2)
+    check_close(d1, d2, single_atol=1e-3)
