@@ -16,7 +16,6 @@ Backpropagation
    backprop/sig_combine_backprop
    backprop/sig_coef_backprop
    backprop/sig_to_log_sig_backprop
-   backprop/log_sig_from_path_backprop
    backprop/log_sig_combine_backprop
    backprop/sig_kernel_backprop
    backprop/sig_kernel_gram_backprop
