@@ -21,9 +21,10 @@ import torch
 from .param_checks import check_type, check_non_neg, check_log_sig_method
 from .error_codes import err_msg
 from .dtypes import (CPSIG_SIG_TO_LOG_SIG_BACKPROP, CPSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP,
-                     CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA, CUSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP_CUDA)
+                     CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA, CUSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP_CUDA,
+                     CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP, CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA)
 from .sig_length import sig_length, log_sig_length
-from .data_handlers import SigOutputHandler, SigInputHandler
+from .data_handlers import SigOutputHandler, SigInputHandler, PathInputHandler, PathOutputHandler
 
 
 ######################################################
@@ -190,3 +191,74 @@ def sig_to_log_sig_backprop(
         if data.is_batch:
             return batch_sig_to_log_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method)
         return sig_to_log_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method)
+
+
+def log_sig_from_path_backprop(
+        grad_output : Union[np.ndarray, torch.tensor],
+        path : Union[np.ndarray, torch.tensor],
+        degree : int,
+        n_jobs : int = 1
+) -> Union[np.ndarray, torch.tensor]:
+    """
+    Backpropagates through the log-signature-from-path computation (method 3).
+    Given the derivatives of a scalar function :math:`F` with respect to the
+    log signature, :math:`\\partial F / \\partial \\log(S(x))`, returns the
+    derivatives of :math:`F` with respect to the path,
+    :math:`\\partial F / \\partial x`.
+
+    :param grad_output: Derivatives of the scalar function :math:`F` with respect to the log signature(s).
+    :type grad_output: numpy.ndarray | torch.tensor
+    :param path: The path or batch of paths (after any transforms), given as a `numpy.ndarray` or `torch.tensor`.
+        For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
+        be of shape ``(batch_size, length, dimension)``.
+    :type path: numpy.ndarray | torch.tensor
+    :param degree: Truncation degree of the log signature(s).
+    :type degree: int
+    :param n_jobs: Number of threads to run in parallel (CPU only).
+    :type n_jobs: int
+    :return: Derivatives of the scalar function :math:`F` with respect to the path(s).
+    :rtype: numpy.ndarray | torch.tensor
+    """
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_type(n_jobs, "n_jobs", int)
+    if n_jobs == 0:
+        raise ValueError("n_jobs cannot be 0")
+
+    data = PathInputHandler(path, False, False, 1.0, "path")
+    ls_len = log_sig_length(data.data_dimension, degree)
+    derivs_data = SigInputHandler(grad_output, ls_len, "grad_output")
+
+    if data.dtype != derivs_data.dtype:
+        raise ValueError("grad_output and path must have the same dtype")
+
+    result = PathOutputHandler(data.data_length, data.data_dimension, data)
+
+    if data.device == "cpu":
+        err_code = CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP[data.dtype](
+            derivs_data.data_ptr,
+            result.data_ptr,
+            data.data_ptr,
+            data.batch_size,
+            data.data_length,
+            data.data_dimension,
+            degree,
+            n_jobs
+        )
+    else:
+        if CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA is None:
+            raise RuntimeError("CUDA log_sig_from_path_backprop requires cusig (built with CUDA support)")
+        err_code = CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA[data.dtype](
+            derivs_data.data_ptr,
+            result.data_ptr,
+            data.data_ptr,
+            data.batch_size,
+            data.data_length,
+            data.data_dimension,
+            degree
+        )
+
+    if err_code:
+        raise Exception("Error in pysiglib.log_sig_from_path_backprop: " + err_msg(err_code))
+
+    return result.data

@@ -23,7 +23,7 @@ from ..sig_coef_backprop import sig_coef_backprop
 from ..sig_backprop import sig_backprop, sig_combine_backprop
 from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
 from ..log_sig import log_sig as log_sig_forward
-from ..log_sig_backprop import sig_to_log_sig_backprop
+from ..log_sig_backprop import sig_to_log_sig_backprop, log_sig_from_path_backprop
 from ..static_kernels import StaticKernel
 from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
 from ..log_sig_combine import log_sig_combine_backprop
@@ -36,8 +36,6 @@ from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
 from ..transform_path import transform_path as transform_path_forward
 from ..transform_path_backprop import transform_path_backprop
-from ..dtypes import CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP, CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA
-from ..error_codes import err_msg
 
 from ..param_checks import check_type, check_word_or_word_list
 from ..data_handlers import MultiplePathInputHandler
@@ -265,43 +263,7 @@ class LogSigFromPath(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         transformed, = ctx.saved_tensors
-        aug_dim = transformed.shape[-1]
-        is_batch = (transformed.ndim == 3)
-        batch_size = transformed.shape[0] if is_batch else 1
-        length = transformed.shape[-2]
-
-        # Ensure contiguous
-        grad_output = grad_output.contiguous()
-        path_data = transformed.contiguous()
-
-        # Allocate output gradient (same shape as transformed path)
-        d_path = torch.zeros_like(path_data)
-
-        from ctypes import cast, POINTER, c_float, c_double
-        dtype_str = "float32" if path_data.dtype == torch.float32 else "float64"
-        ptr_type = POINTER(c_float) if dtype_str == "float32" else POINTER(c_double)
-
-        if path_data.is_cuda:
-            if CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA is None:
-                raise RuntimeError("CUDA log_sig_from_path_backprop requires cusig (built with CUDA support)")
-            fn = CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA[dtype_str]
-            err = fn(
-                cast(grad_output.data_ptr(), ptr_type),
-                cast(d_path.data_ptr(), ptr_type),
-                cast(path_data.data_ptr(), ptr_type),
-                batch_size, length, aug_dim, ctx.degree
-            )
-        else:
-            fn = CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP[dtype_str]
-            err = fn(
-                cast(grad_output.data_ptr(), ptr_type),
-                cast(d_path.data_ptr(), ptr_type),
-                cast(path_data.data_ptr(), ptr_type),
-                batch_size, length, aug_dim, ctx.degree, ctx.n_jobs
-            )
-
-        if err:
-            raise Exception("Error in log_sig_from_path_backprop: " + err_msg(err))
+        d_path = log_sig_from_path_backprop(grad_output, transformed, ctx.degree, ctx.n_jobs)
 
         # If transforms were applied, backprop through them
         if ctx.time_aug or ctx.lead_lag:
