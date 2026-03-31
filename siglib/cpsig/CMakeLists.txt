@@ -1,4 +1,5 @@
 add_library(cpsig SHARED
+    cp_bch.cpp
     cp_log_signatures.cpp
     cp_path_transforms.cpp
     cp_sig_coef.cpp
@@ -12,6 +13,7 @@ add_library(cpsig SHARED
 )
 
 target_compile_features(cpsig PRIVATE cxx_std_20)
+target_include_directories(cpsig PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
 target_compile_definitions(cpsig PRIVATE CPSIG_EXPORTS)
 
 # B2 uses <threading>multi — on Linux this adds -pthread

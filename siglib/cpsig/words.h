@@ -49,6 +49,11 @@ word longest_lyndon_suffix_(word w, const std::unordered_set<word, WordHash>& ly
 word concatenate_words(word& a, word& b);
 uint64_t concatenate_idx(uint64_t i, uint64_t j, uint64_t len_j, uint64_t dimension);
 
+std::pair<word, word> standard_factorization(
+	const word& w,
+	const std::unordered_set<word, WordHash>& lyndon_set
+);
+
 void lyndon_proj_matrix(
 	SparseIntMatrix& out,
 	const std::vector<word>& lyndon_words,

@@ -898,3 +898,117 @@ void example_batch_sig_coef_backprop_cuda_d(
 
     std::cout << "done\n";
 }
+
+void example_batch_log_sig_combine_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    int n_jobs,
+    int num_runs
+) {
+    print_header("Batch Log Sig Combine CPU Double");
+
+    uint64_t ls_len = log_sig_length(dimension, degree);
+    uint64_t total = batch_size * ls_len;
+    std::vector<double> ls1 = test_data<double>(total);
+    std::vector<double> ls2 = test_data<double>(total);
+    std::vector<double> out(total);
+
+    time_function(num_runs, batch_log_sig_combine_d, ls1.data(), ls2.data(), out.data(), batch_size, dimension, degree, n_jobs);
+
+    std::cout << "done\n";
+}
+
+void example_batch_log_sig_combine_cuda_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    int num_runs
+) {
+    print_header("Batch Log Sig Combine CUDA Double");
+
+    uint64_t ls_len = log_sig_length(dimension, degree);
+    uint64_t total = batch_size * ls_len;
+    std::vector<double> ls1 = test_data<double>(total);
+    std::vector<double> ls2 = test_data<double>(total);
+
+    double* d_ls1;
+    double* d_ls2;
+    double* d_out;
+    cudaMalloc(&d_ls1, sizeof(double) * total);
+    cudaMalloc(&d_ls2, sizeof(double) * total);
+    cudaMalloc(&d_out, sizeof(double) * total);
+
+    cudaMemcpy(d_ls1, ls1.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_ls2, ls2.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+
+    time_function(num_runs, batch_log_sig_combine_cuda_d, d_ls1, d_ls2, d_out, batch_size, dimension, degree);
+
+    cudaFree(d_ls1);
+    cudaFree(d_ls2);
+    cudaFree(d_out);
+
+    std::cout << "done\n";
+}
+
+void example_batch_log_sig_combine_backprop_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    int n_jobs,
+    int num_runs
+) {
+    print_header("Batch Log Sig Combine Backprop CPU Double");
+
+    uint64_t ls_len = log_sig_length(dimension, degree);
+    uint64_t total = batch_size * ls_len;
+    std::vector<double> ls1 = test_data<double>(total);
+    std::vector<double> ls2 = test_data<double>(total);
+    std::vector<double> d_out = test_data<double>(total);
+    std::vector<double> d_ls1(total);
+    std::vector<double> d_ls2(total);
+
+    time_function(num_runs, batch_log_sig_combine_backprop_d, d_out.data(), d_ls1.data(), d_ls2.data(), ls1.data(), ls2.data(), batch_size, dimension, degree, n_jobs);
+
+    std::cout << "done\n";
+}
+
+void example_batch_log_sig_combine_backprop_cuda_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    int num_runs
+) {
+    print_header("Batch Log Sig Combine Backprop CUDA Double");
+
+    uint64_t ls_len = log_sig_length(dimension, degree);
+    uint64_t total = batch_size * ls_len;
+    std::vector<double> ls1 = test_data<double>(total);
+    std::vector<double> ls2 = test_data<double>(total);
+    std::vector<double> d_out = test_data<double>(total);
+
+    double* d_ls1_dev;
+    double* d_ls2_dev;
+    double* d_ls1_out;
+    double* d_ls2_out;
+    double* d_out_dev;
+    cudaMalloc(&d_ls1_dev, sizeof(double) * total);
+    cudaMalloc(&d_ls2_dev, sizeof(double) * total);
+    cudaMalloc(&d_ls1_out, sizeof(double) * total);
+    cudaMalloc(&d_ls2_out, sizeof(double) * total);
+    cudaMalloc(&d_out_dev, sizeof(double) * total);
+
+    cudaMemcpy(d_ls1_dev, ls1.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_ls2_dev, ls2.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_out_dev, d_out.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+
+    time_function(num_runs, batch_log_sig_combine_backprop_cuda_d, d_out_dev, d_ls1_out, d_ls2_out, d_ls1_dev, d_ls2_dev, batch_size, dimension, degree);
+
+    cudaFree(d_ls1_dev);
+    cudaFree(d_ls2_dev);
+    cudaFree(d_ls1_out);
+    cudaFree(d_ls2_out);
+    cudaFree(d_out_dev);
+
+    std::cout << "done\n";
+}

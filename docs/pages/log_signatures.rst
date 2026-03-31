@@ -12,3 +12,4 @@ Log Signatures
    /pages/log_signatures/log_sig_length
    /pages/log_signatures/sig_to_log_sig
    /pages/log_signatures/log_sig
+   /pages/log_signatures/log_sig_combine

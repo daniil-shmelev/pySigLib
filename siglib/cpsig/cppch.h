@@ -40,8 +40,10 @@
 #include <set>
 #include <map>
 #include <unordered_set>
+#include <unordered_map>
 #include <fstream>
 #include <filesystem>
+#include <cmath>
 
 #ifdef VEC
 #ifndef __APPLE__

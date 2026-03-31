@@ -88,8 +88,8 @@ def ensure_own_contiguous_storage(arr):
     raise TypeError("Unexpected error in ensure_own_contiguous_storage: arr must be of type torch.Tensor or numpy.ndarray")
 
 def check_log_sig_method(method):
-    if method < 0 or method > 2:
-        raise ValueError("method must be one of 0, 1 or 2. Got " + str(method) + " instead.")
+    if method < 0 or method > 3:
+        raise ValueError("method must be one of 0, 1, 2 or 3. Got " + str(method) + " instead.")
 
 def check_word(word, max_val, word_name):
     if not isinstance(word, tuple):

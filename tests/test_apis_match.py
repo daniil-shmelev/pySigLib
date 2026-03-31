@@ -22,6 +22,8 @@ import pysiglib.torch_api as torch_api
 # Backprop functions excluded from torch_api
 EXCLUDED_SUFFIXES = ("_backprop",)
 
+TEMPORARILY_EXCLUDED = set()
+
 def get_public_functions(module):
     return {
         name: obj
@@ -29,6 +31,7 @@ def get_public_functions(module):
         if (
             not name.startswith("_")
             and not name.endswith(EXCLUDED_SUFFIXES)
+            and name not in TEMPORARILY_EXCLUDED
         )
     }
 

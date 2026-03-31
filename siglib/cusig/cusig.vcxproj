@@ -101,6 +101,7 @@
     </Link>
     <CudaCompile>
       <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
+      <CodeGeneration>compute_52,sm_52;compute_89,sm_89</CodeGeneration>
       <AdditionalOptions>-lineinfo --std c++17 %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
@@ -117,6 +118,7 @@
     <ClInclude Include="cu_sig_coef.h" />
     <ClInclude Include="cu_macros.h" />
     <ClInclude Include="cu_atomic.h" />
+    <ClInclude Include="cu_log_sig_combine.h" />
     <CudaCompile Include="cu_path_transforms.cu" />
     <CudaCompile Include="cu_log_signature.cu" />
     <CudaCompile Include="cu_tensor_poly.cu" />
@@ -133,6 +135,7 @@
     <CudaCompile Include="cu_sig_kernel.cu" />
     <CudaCompile Include="cu_log_sig_cache.cu" />
     <CudaCompile Include="cu_sig_coef.cu" />
+    <CudaCompile Include="cu_log_sig_combine.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

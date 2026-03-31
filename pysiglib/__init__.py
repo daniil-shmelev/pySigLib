@@ -22,6 +22,7 @@ from .sig_coef import extract_sig_coef, sig_coef
 from .sig_coef_backprop import sig_coef_backprop
 from .log_sig import set_cache_dir, prepare_log_sig, clear_cache, sig_to_log_sig, log_sig
 from .log_sig_backprop import sig_to_log_sig_backprop
+from .log_sig_combine import log_sig_combine, log_sig_combine_backprop
 from .sig_kernel import sig_kernel, sig_kernel_gram
 from .sig_kernel_backprop import sig_kernel_backprop, sig_kernel_gram_backprop
 from .sig_metrics import sig_score, expected_sig_score, sig_mmd

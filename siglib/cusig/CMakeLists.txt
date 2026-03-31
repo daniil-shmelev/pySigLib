@@ -1,5 +1,6 @@
 add_library(cusig SHARED
     cu_log_sig_cache.cu
+    cu_log_sig_combine.cu
     cu_log_signature.cu
     cu_path_transforms.cu
     cu_sig_coef.cu
@@ -16,6 +17,7 @@ set_target_properties(cusig PROPERTIES
     CUDA_ARCHITECTURES         "${PYSIGLIB_CUDA_ARCH}"
 )
 
+target_include_directories(cusig PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
 target_compile_definitions(cusig PRIVATE CUSIG_EXPORTS NDEBUG)
 
 # ---------------------------------------------------------------------------

@@ -92,6 +92,15 @@ word longest_lyndon_suffix_(word w, const std::unordered_set<word, WordHash>& ly
 	throw std::runtime_error("Error looking for lyndon suffix");
 }
 
+std::pair<word, word> standard_factorization(
+	const word& w,
+	const std::unordered_set<word, WordHash>& lyndon_set
+) {
+	word m = longest_lyndon_suffix_(w, lyndon_set);
+	word l(w.begin(), w.end() - m.size());
+	return { l, m };
+}
+
 word concatenate_words(word& a, word& b) {
 	word c(a);
 	c.insert(c.end(), b.begin(), b.end());

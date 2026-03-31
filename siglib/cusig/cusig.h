@@ -603,6 +603,60 @@ extern "C" {
 	CUSIG_API int batch_sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
 	/** @} */
 
+	/** @defgroup log_sig_combine_cuda_functions Log sig combine CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Combines two truncated log-signatures on the GPU using the BCH formula.
+	*
+	* @param log_sig1 Pointer to first log-signature (on device), size = `log_sig_length(dimension, degree)`.
+	* @param log_sig2 Pointer to second log-signature (on device), same size as log_sig1.
+	* @param out Pointer to output buffer (on device, preallocated), same size as log_sig1.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the log-signatures.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int log_sig_combine_cuda_f(const float* log_sig1, const float* log_sig2, float* out, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int log_sig_combine_cuda_d(const double* log_sig1, const double* log_sig2, double* out, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
+	/** @defgroup batch_log_sig_combine_cuda_functions Batch log sig combine CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Combines batches of truncated log-signatures on the GPU using the BCH formula.
+	*
+	* @param log_sig1 Pointer to batch of first log-signatures (on device), size = `batch_size * log_sig_length(dimension, degree)`.
+	* @param log_sig2 Pointer to batch of second log-signatures (on device), same size as log_sig1.
+	* @param out Pointer to output buffer (on device, preallocated), same size as log_sig1.
+	* @param batch_size Batch size.
+	* @param dimension Dimension of the underlying path space.
+	* @param degree Truncation degree of the log-signatures.
+	* @return Status code (0 = success).
+	*/
+	CUSIG_API int batch_log_sig_combine_cuda_f(const float* log_sig1, const float* log_sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @brief */
+	CUSIG_API int batch_log_sig_combine_cuda_d(const double* log_sig1, const double* log_sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
+	/** @defgroup log_sig_combine_backprop_cuda_functions Log sig combine backprop CUDA functions
+	* @{
+	*/
+
+	CUSIG_API int log_sig_combine_backprop_cuda_f(const float* d_out, float* d_ls1, float* d_ls2,
+		const float* ls1, const float* ls2, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int log_sig_combine_backprop_cuda_d(const double* d_out, double* d_ls1, double* d_ls2,
+		const double* ls1, const double* ls2, uint64_t dimension, uint64_t degree) noexcept;
+
+	CUSIG_API int batch_log_sig_combine_backprop_cuda_f(const float* d_out, float* d_ls1, float* d_ls2,
+		const float* ls1, const float* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int batch_log_sig_combine_backprop_cuda_d(const double* d_out, double* d_ls1, double* d_ls2,
+		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
 	/** @defgroup clear_cache_cuda_functions Clear cache CUDA functions
 	* @{
 	*/

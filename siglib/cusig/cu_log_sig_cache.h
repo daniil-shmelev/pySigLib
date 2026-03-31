@@ -714,8 +714,12 @@ inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_
 void free_cuda_log_sig_workspace_();
 void free_cuda_log_sig_backprop_workspace_();
 
+// Forward declaration — defined in cu_log_sig_combine.h
+void clear_cuda_bch_cache_();
+
 inline void clear_cache_cuda_(bool use_disk) {
 	get_cuda_log_sig_cache_map_().clear();
+	clear_cuda_bch_cache_();
 	free_cuda_log_sig_workspace_();
 	free_cuda_log_sig_backprop_workspace_();
 

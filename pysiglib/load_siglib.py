@@ -299,6 +299,164 @@ CPSIG.sig_length.argtypes = (
 CPSIG.sig_length.restype = c_uint64
 
 ######################################################
+# log_sig_combine
+######################################################
+
+CPSIG.log_sig_combine_f.argtypes = (
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    c_uint64,
+    c_uint64
+)
+CPSIG.log_sig_combine_f.restype = c_int
+
+CPSIG.log_sig_combine_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    c_uint64,
+    c_uint64
+)
+CPSIG.log_sig_combine_d.restype = c_int
+
+######################################################
+# batch_log_sig_combine
+######################################################
+
+CPSIG.batch_log_sig_combine_f.argtypes = (
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_int
+)
+CPSIG.batch_log_sig_combine_f.restype = c_int
+
+CPSIG.batch_log_sig_combine_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_int
+)
+CPSIG.batch_log_sig_combine_d.restype = c_int
+
+######################################################
+# batch_log_sig_from_path
+######################################################
+
+CPSIG.batch_log_sig_from_path_f.argtypes = (
+    POINTER(c_float),   # path
+    POINTER(c_float),   # out
+    c_uint64,           # batch_size
+    c_uint64,           # length
+    c_uint64,           # dimension
+    c_uint64,           # degree
+    c_int               # n_jobs
+)
+CPSIG.batch_log_sig_from_path_f.restype = c_int
+
+CPSIG.batch_log_sig_from_path_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_int
+)
+CPSIG.batch_log_sig_from_path_d.restype = c_int
+
+######################################################
+# batch_log_sig_from_path_backprop
+######################################################
+
+CPSIG.batch_log_sig_from_path_backprop_f.argtypes = (
+    POINTER(c_float),   # d_out
+    POINTER(c_float),   # d_path
+    POINTER(c_float),   # path
+    c_uint64,           # batch_size
+    c_uint64,           # length
+    c_uint64,           # dimension
+    c_uint64,           # degree
+    c_int               # n_jobs
+)
+CPSIG.batch_log_sig_from_path_backprop_f.restype = c_int
+
+CPSIG.batch_log_sig_from_path_backprop_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_int
+)
+CPSIG.batch_log_sig_from_path_backprop_d.restype = c_int
+
+######################################################
+# log_sig_combine_backprop
+######################################################
+
+CPSIG.log_sig_combine_backprop_f.argtypes = (
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    c_uint64,
+    c_uint64
+)
+CPSIG.log_sig_combine_backprop_f.restype = c_int
+
+CPSIG.log_sig_combine_backprop_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    c_uint64,
+    c_uint64
+)
+CPSIG.log_sig_combine_backprop_d.restype = c_int
+
+######################################################
+# batch_log_sig_combine_backprop
+######################################################
+
+CPSIG.batch_log_sig_combine_backprop_f.argtypes = (
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    POINTER(c_float),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_int
+)
+CPSIG.batch_log_sig_combine_backprop_f.restype = c_int
+
+CPSIG.batch_log_sig_combine_backprop_d.argtypes = (
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    POINTER(c_double),
+    c_uint64,
+    c_uint64,
+    c_uint64,
+    c_int
+)
+CPSIG.batch_log_sig_combine_backprop_d.restype = c_int
+
+######################################################
 # sig_combine
 ######################################################
 
@@ -688,6 +846,134 @@ if BUILT_WITH_CUDA:
         c_uint64
     )
     CUSIG.batch_sig_coef_backprop_cuda_d.restype = c_int
+
+    ######################################################
+    # batch_log_sig_combine_cuda
+    ######################################################
+
+    CUSIG.batch_log_sig_combine_cuda_f.argtypes = (
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        c_uint64,
+        c_uint64,
+        c_uint64
+    )
+    CUSIG.batch_log_sig_combine_cuda_f.restype = c_int
+
+    CUSIG.batch_log_sig_combine_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        c_uint64,
+        c_uint64,
+        c_uint64
+    )
+    CUSIG.batch_log_sig_combine_cuda_d.restype = c_int
+
+    ######################################################
+    # batch_log_sig_from_path_cuda
+    ######################################################
+
+    CUSIG.batch_log_sig_from_path_cuda_f.argtypes = (
+        POINTER(c_float),   # path
+        POINTER(c_float),   # out
+        c_uint64,           # batch_size
+        c_uint64,           # length
+        c_uint64,           # dimension
+        c_uint64            # degree
+    )
+    CUSIG.batch_log_sig_from_path_cuda_f.restype = c_int
+
+    CUSIG.batch_log_sig_from_path_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_uint64
+    )
+    CUSIG.batch_log_sig_from_path_cuda_d.restype = c_int
+
+    ######################################################
+    # log_sig_combine_backprop_cuda
+    ######################################################
+
+    CUSIG.log_sig_combine_backprop_cuda_f.argtypes = (
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        c_uint64,
+        c_uint64
+    )
+    CUSIG.log_sig_combine_backprop_cuda_f.restype = c_int
+
+    CUSIG.log_sig_combine_backprop_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        c_uint64,
+        c_uint64
+    )
+    CUSIG.log_sig_combine_backprop_cuda_d.restype = c_int
+
+    ######################################################
+    # batch_log_sig_combine_backprop_cuda
+    ######################################################
+
+    CUSIG.batch_log_sig_combine_backprop_cuda_f.argtypes = (
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        POINTER(c_float),
+        c_uint64,
+        c_uint64,
+        c_uint64
+    )
+    CUSIG.batch_log_sig_combine_backprop_cuda_f.restype = c_int
+
+    CUSIG.batch_log_sig_combine_backprop_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        c_uint64,
+        c_uint64,
+        c_uint64
+    )
+    CUSIG.batch_log_sig_combine_backprop_cuda_d.restype = c_int
+
+    ######################################################
+    # batch_log_sig_from_path_backprop_cuda
+    ######################################################
+
+    CUSIG.batch_log_sig_from_path_backprop_cuda_f.argtypes = (
+        POINTER(c_float),   # d_out
+        POINTER(c_float),   # d_path
+        POINTER(c_float),   # path
+        c_uint64,           # batch_size
+        c_uint64,           # length
+        c_uint64,           # dimension
+        c_uint64            # degree
+    )
+    CUSIG.batch_log_sig_from_path_backprop_cuda_f.restype = c_int
+
+    CUSIG.batch_log_sig_from_path_backprop_cuda_d.argtypes = (
+        POINTER(c_double),
+        POINTER(c_double),
+        POINTER(c_double),
+        c_uint64,
+        c_uint64,
+        c_uint64,
+        c_uint64
+    )
+    CUSIG.batch_log_sig_from_path_backprop_cuda_d.restype = c_int
 
 ######################################################
 # sig_combine_backprop
