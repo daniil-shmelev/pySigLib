@@ -20,8 +20,21 @@
 #ifdef VEC
 #ifndef __APPLE__
 
+#include <immintrin.h>
+
 FORCE_INLINE void vec_mult_add(float* out, const float* other, float scalar, uint64_t size)
 {
+	if (size > 4 && size < 8) {
+		const __m128 s = _mm_set1_ps(scalar);
+		const __m128 v0 = _mm_loadu_ps(other);
+		const __m128 v1 = _mm_loadu_ps(other + size - 4);
+		const __m128 o0 = _mm_loadu_ps(out);
+		const __m128 o1 = _mm_loadu_ps(out + size - 4);
+		_mm_storeu_ps(out, _mm_fmadd_ps(v0, s, o0));
+		_mm_storeu_ps(out + size - 4, _mm_fmadd_ps(v1, s, o1));
+		return;
+	}
+
 	const uint64_t N = size / 8UL;
 	const uint64_t tail4 = size & 4UL;
 	const uint64_t tail2 = size & 2UL;
@@ -32,9 +45,8 @@ FORCE_INLINE void vec_mult_add(float* out, const float* other, float scalar, uin
 
 	for (uint64_t i = 0; i < N; ++i) {
 		a = _mm256_loadu_ps(other);
-		a = _mm256_mul_ps(a, scalar_256);
 		b = _mm256_loadu_ps(out);
-		b = _mm256_add_ps(a, b);
+		b = _mm256_fmadd_ps(a, scalar_256, b);
 		_mm256_storeu_ps(out, b);
 		other += 8;
 		out += 8;
@@ -45,9 +57,8 @@ FORCE_INLINE void vec_mult_add(float* out, const float* other, float scalar, uin
 		const __m128 scalar_128 = _mm_set1_ps(scalar);
 
 		c = _mm_loadu_ps(other);
-		c = _mm_mul_ps(c, scalar_128);
 		d = _mm_loadu_ps(out);
-		d = _mm_add_ps(c, d);
+		d = _mm_fmadd_ps(c, scalar_128, d);
 		_mm_storeu_ps(out, d);
 		other += 4;
 		out += 4;
@@ -59,8 +70,7 @@ FORCE_INLINE void vec_mult_add(float* out, const float* other, float scalar, uin
 
 		c = _mm_castpd_ps(_mm_load_sd(reinterpret_cast<const double*>(other)));
 		d = _mm_castpd_ps(_mm_load_sd(reinterpret_cast<const double*>(out)));
-		c = _mm_mul_ps(c, scalar_128);
-		d = _mm_add_ps(c, d);
+		d = _mm_fmadd_ps(c, scalar_128, d);
 		_mm_store_sd(reinterpret_cast<double*>(out), _mm_castps_pd(d));
 		other += 2;
 		out += 2;
@@ -82,9 +92,8 @@ FORCE_INLINE void vec_mult_add(double* out, const double* other, double scalar, 
 
 	for (uint64_t i = 0; i < N; ++i) {
 		a = _mm256_loadu_pd(other);
-		a = _mm256_mul_pd(a, scalar_256);
 		b = _mm256_loadu_pd(out);
-		b = _mm256_add_pd(a, b);
+		b = _mm256_fmadd_pd(a, scalar_256, b);
 		_mm256_storeu_pd(out, b);
 		other += 4;
 		out += 4;
@@ -94,9 +103,8 @@ FORCE_INLINE void vec_mult_add(double* out, const double* other, double scalar, 
 		__m128d scalar_128 = _mm_set1_pd(scalar);
 
 		c = _mm_loadu_pd(other);
-		c = _mm_mul_pd(c, scalar_128);
 		d = _mm_loadu_pd(out);
-		d = _mm_add_pd(c, d);
+		d = _mm_fmadd_pd(c, scalar_128, d);
 		_mm_storeu_pd(out, d);
 		other += 2;
 		out += 2;
@@ -108,6 +116,13 @@ FORCE_INLINE void vec_mult_add(double* out, const double* other, double scalar, 
 
 FORCE_INLINE void vec_mult_assign(float* out, const float* other, float scalar, uint64_t size)
 {
+	if (size > 4 && size < 8) {
+		const __m128 s = _mm_set1_ps(scalar);
+		_mm_storeu_ps(out, _mm_mul_ps(_mm_loadu_ps(other), s));
+		_mm_storeu_ps(out + size - 4, _mm_mul_ps(_mm_loadu_ps(other + size - 4), s));
+		return;
+	}
+
 	const uint64_t N = size / 8UL;
 	const uint64_t tail4 = size & 4UL;
 	const uint64_t tail2 = size & 2UL;

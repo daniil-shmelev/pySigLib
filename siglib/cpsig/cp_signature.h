@@ -212,8 +212,12 @@ FORCE_INLINE void signature_horner_(
 #endif
 		}
 		//Update target_level == 1
+#ifdef VEC
+		vec_mult_add(out + 1, increments, static_cast<T>(1.), dimension);
+#else
 		for (uint64_t i = 0; i < dimension; ++i)
 			out[i + 1] += increments[i];
+#endif
 	}
 }
 
@@ -291,6 +295,16 @@ void signature_horner_step_(
 			one_over_level = static_cast<T>(1. / right_level);
 
 			//Horner stuff
+#ifdef VEC
+			//Add and multiply (fused)
+			T left_over_level;
+			T* sig_ptr = sig + level_index[left_level + 1];
+			T* result_ptr = horner_step + level_index[left_level + 2] - level_index[left_level + 1] - dimension;
+			for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr, result_ptr -= dimension) {
+				left_over_level = (*left_ptr + *(--sig_ptr)) * one_over_level;
+				vec_mult_assign(result_ptr, increments, left_over_level, dimension);
+			}
+#else
 			//Add
 			T* left_ptr_1 = sig + level_index[left_level];
 			for (uint64_t i = 0; i < left_level_size; ++i) {
@@ -298,14 +312,6 @@ void signature_horner_step_(
 			}
 
 			//Multiply
-#ifdef VEC
-			T left_over_level;
-			T* result_ptr = horner_step + level_index[left_level + 2] - level_index[left_level + 1] - dimension;
-			for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr, result_ptr -= dimension) {
-				left_over_level = (*left_ptr) * one_over_level;
-				vec_mult_assign(result_ptr, increments, left_over_level, dimension);
-			}
-#else
 			T left_over_level;
 			T* result_ptr = horner_step + level_index[left_level + 2] - level_index[left_level + 1];
 			for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr) {
@@ -322,6 +328,15 @@ void signature_horner_step_(
 		const uint64_t left_level_size = level_index[target_level] - level_index[target_level - 1];
 
 		//Horner stuff
+#ifdef VEC
+		//Add, Multiply and add (fused), writing straight into out
+		T* sig_ptr = sig + level_index[target_level];
+		T* result_ptr = sig + level_index[target_level + 1] - dimension;
+		for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr, result_ptr -= dimension) {
+			const T scalar = *left_ptr + *(--sig_ptr);
+			vec_mult_add(result_ptr, increments, scalar, dimension);
+		}
+#else
 		//Add
 		T* left_ptr_1 = sig + level_index[target_level - 1];
 		for (uint64_t i = 0; i < left_level_size; ++i) {
@@ -329,12 +344,6 @@ void signature_horner_step_(
 		}
 
 		//Multiply and add, writing straight into out
-#ifdef VEC
-		T* result_ptr = sig + level_index[target_level + 1] - dimension;
-		for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr, result_ptr -= dimension) {
-			vec_mult_add(result_ptr, increments, *left_ptr, dimension);
-		}
-#else
 		T* result_ptr = sig + level_index[target_level + 1];
 		for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr) {
 			for (const T* right_ptr = increments + dimension - 1; right_ptr != increments - 1; --right_ptr) {
@@ -344,8 +353,12 @@ void signature_horner_step_(
 #endif
 	}
 	//Update target_level == 1
+#ifdef VEC
+	vec_mult_add(sig + 1, increments, static_cast<T>(1.), dimension);
+#else
 	for (uint64_t i = 0; i < dimension; ++i)
 		sig[i + 1] += increments[i];
+#endif
 }
 
 template<std::floating_point T>
