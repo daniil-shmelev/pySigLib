@@ -76,7 +76,9 @@ int main(int argc, char* argv[])
     //example_batch_log_sig_combine_cuda_d(45000, 5, 5, 20);
 
     //example_batch_log_sig_combine_backprop_d(13000, 5, 5, -1, 20);
-    example_batch_log_sig_combine_backprop_cuda_d(13000, 5, 5, 20);
+    //example_batch_log_sig_combine_backprop_cuda_d(13000, 5, 5, 20);
+    example_branched_sig_d(3, 1000, 4, 50);
+    example_batch_branched_sig_d(100, 3, 100, 4, -1, 50);
 
     unload_cpsig();
     unload_cusig();

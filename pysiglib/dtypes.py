@@ -337,3 +337,23 @@ CPSIG_BATCH_SIG_KERNEL_BACKPROP = {
     "float32": CPSIG.batch_sig_kernel_backprop_f,
     "float64": CPSIG.batch_sig_kernel_backprop_d
 }
+
+CPSIG_BRANCHED_SIG = {
+    "float32": CPSIG.branched_sig_f,
+    "float64": CPSIG.branched_sig_d
+}
+
+CPSIG_BATCH_BRANCHED_SIG = {
+    "float32": CPSIG.batch_branched_sig_f,
+    "float64": CPSIG.batch_branched_sig_d
+}
+
+CPSIG_BRANCHED_SIG_COMBINE = {
+    "float32": CPSIG.branched_sig_combine_f,
+    "float64": CPSIG.branched_sig_combine_d
+}
+
+CPSIG_BATCH_BRANCHED_SIG_COMBINE = {
+    "float32": CPSIG.batch_branched_sig_combine_f,
+    "float64": CPSIG.batch_branched_sig_combine_d
+}

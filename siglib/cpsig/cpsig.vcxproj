@@ -118,6 +118,9 @@
     <ClInclude Include="words.h" />
     <ClInclude Include="cp_bch.h" />
     <ClInclude Include="cp_bch_data.h" />
+    <ClInclude Include="cp_branched_trees.h" />
+    <ClInclude Include="cp_branched_cache.h" />
+    <ClInclude Include="cp_branched_signature.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cp_bch.cpp" />
@@ -134,6 +137,8 @@
     <ClCompile Include="cp_tensor_poly.cpp" />
     <ClCompile Include="log_sig_cache.cpp" />
     <ClCompile Include="words.cpp" />
+    <ClCompile Include="cp_branched_cache.cpp" />
+    <ClCompile Include="cp_branched_signature.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

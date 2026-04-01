@@ -719,6 +719,26 @@ extern "C" {
 	/** @brief */
 	CPSIG_API int batch_sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
+
+	/** @defgroup branched_sig_functions Branched signature functions
+	* @{
+	*/
+
+	CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes) noexcept;
+	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes) noexcept;
+
+	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t max_nodes) noexcept;
+	CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t dimension, uint64_t length, uint64_t max_nodes) noexcept;
+
+	CPSIG_API int batch_branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1) noexcept;
+
+	CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t dimension, uint64_t max_nodes) noexcept;
+
+	CPSIG_API int batch_branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
+	/** @} */
 }
 
 

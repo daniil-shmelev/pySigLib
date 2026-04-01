@@ -193,6 +193,16 @@ extern batch_log_sig_combine_cuda_d_fn batch_log_sig_combine_cuda_d;
 extern batch_log_sig_combine_backprop_d_fn batch_log_sig_combine_backprop_d;
 extern batch_log_sig_combine_backprop_cuda_d_fn batch_log_sig_combine_backprop_cuda_d;
 
+using prepare_branched_sig_fn = int(CDECL_*)(uint64_t, uint64_t);
+using branched_sig_length_fn = uint64_t(CDECL_*)(uint64_t, uint64_t);
+using branched_sig_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t);
+using batch_branched_sig_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, int);
+
+extern prepare_branched_sig_fn prepare_branched_sig;
+extern branched_sig_length_fn branched_sig_length;
+extern branched_sig_d_fn branched_sig_d;
+extern batch_branched_sig_d_fn batch_branched_sig_d;
+
 #if defined(_WIN32)
 #define GET_FN_PTR ::GetProcAddress
 #else

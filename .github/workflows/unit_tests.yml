@@ -31,7 +31,7 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
           python3 -m pip install numpy==1.26.4
-          python3 -m pip install pytest cython wheel
+          python3 -m pip install pytest cython wheel kauri
           python3 -m pip install iisignature --no-build-isolation
           python3 -m pip install git+https://github.com/crispitagorico/sigkernel.git --no-build-isolation
 
