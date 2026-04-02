@@ -152,9 +152,9 @@ template<typename T> __device__ __forceinline__ T d_recip(int n);
 template<> __device__ __forceinline__ float d_recip<float>(int n) { return c_recip_f32[n]; }
 template<> __device__ __forceinline__ double d_recip<double>(int n) { return c_recip_f64[n]; }
 
-// Batches multiple time steps into shared memory per chunk to reduce
-// __syncthreads() overhead from 2 per step to 2 per chunk.
-constexpr int SIG_CHUNK = 128;
+// Chunk sizes for batching time steps into shared memory (reduces sync overhead).
+constexpr int SIG_CHUNK = 128;   // forward kernel
+constexpr int BWD_CHUNK = 32;    // backward kernel (needs more shared mem for reduction)
 
 template<typename T, int DEGREE>
 __global__ void signature_per_word_ker(
@@ -259,11 +259,14 @@ void sig_backprop_per_word_ker(
 	const uint64_t batch_idx = blockIdx.y;
 	const bool active = word_idx < level_size;
 
-	// Shared memory: path increments + letter gradient reduction workspace
 	extern __shared__ char smem[];
-	T* shared_inc = reinterpret_cast<T*>(smem);
+	T* shared_inc = reinterpret_cast<T*>(smem);           // [BWD_CHUNK * dim]
 	const unsigned num_warps = blockDim.x >> 5;
-	T* shared_letter_grads = shared_inc + dim;  // [dim * num_warps]
+	T* shared_letter_grads = shared_inc + BWD_CHUNK * dim; // [dim * num_warps]
+
+	// Zero the reduction workspace
+	for (int i = threadIdx.x; i < dim * (int)num_warps; i += blockDim.x)
+		shared_letter_grads[i] = T(0);
 
 	// Unpack word letters
 	int letters[DEGREE];
@@ -307,118 +310,123 @@ void sig_backprop_per_word_ker(
 	const T* batch_path = path + batch_idx * path_stride;
 	T* batch_inc_grad = inc_grads + batch_idx * static_cast<uint64_t>(steps) * dim;
 
-	// Iterate backward through time
-	for (int t = steps - 1; t >= 0; --t) {
-		// Zero letter grads
-		T letter_grads_local[DEGREE];
-		for (int i = 0; i < DEGREE; ++i) letter_grads_local[i] = T(0);
+	const unsigned warp_id = threadIdx.x >> 5;
+	const unsigned lane = threadIdx.x & 31;
 
-		// Load increment into shared memory
-		for (int i = threadIdx.x; i < dim; i += blockDim.x) {
-			shared_inc[i] = batch_path[(t + 1) * dim + i] - batch_path[t * dim + i];
+	for (int chunk_end = steps; chunk_end > 0; chunk_end -= BWD_CHUNK) {
+		const int chunk_start = (chunk_end - BWD_CHUNK > 0) ? chunk_end - BWD_CHUNK : 0;
+		const int chunk_len = chunk_end - chunk_start;
+
+		// Load all increments for this chunk into shared memory
+		__syncthreads();
+		{
+			const int total_elems = chunk_len * dim;
+			for (int i = threadIdx.x; i < total_elems; i += blockDim.x) {
+				const int t_local = i / dim;
+				const int d_idx = i - t_local * dim;
+				const int t = chunk_start + t_local;
+				shared_inc[i] = batch_path[(t + 1) * dim + d_idx] - batch_path[t * dim + d_idx];
+			}
 		}
 		__syncthreads();
 
-		// Backward prefix update: undo step t's contribution (negate increments)
-		if (active) {
-			for (int sd = DEGREE; sd > 0; --sd) {
-				T h = T(0);
-				for (int k = 0; k < sd; ++k) {
-					T scale = -shared_inc[letters[k]] * d_recip<T>(sd - k);
-					h = scale * (pref[k] + h);
-				}
-				pref[sd] += h;
-			}
-		}
+		// Process steps in this chunk backward (no increment-load syncs needed)
+		for (int t_local = chunk_len - 1; t_local >= 0; --t_local) {
+			const int t = chunk_start + t_local;
+			const T* inc = shared_inc + t_local * dim;
 
-		// Compute per-letter gradients
-		if (active) {
-			for (int pref_len = 0; pref_len < DEGREE; ++pref_len) {
-				const T pref_val = pref[pref_len];
-				T prev_prod = T(1);
-
-				// letter_pos = pref_len
-				{
-					T temp_prod = prev_prod;
-					T temp_grad = temp_prod * suf[DEGREE - pref_len - 1];
-					int denom = 2;
-					for (int pos = pref_len + 1; pos < DEGREE; ++pos, ++denom) {
-						temp_prod *= shared_inc[letters[pos]] * d_recip<T>(denom);
-						temp_grad += temp_prod * suf[DEGREE - pos - 1];
-					}
-					letter_grads_local[pref_len] += temp_grad * pref_val;
-				}
-
-				// letter_pos = pref_len+1 .. DEGREE-1
-				int denom_lp = 2;
-				for (int lp = pref_len + 1; lp < DEGREE; ++lp, ++denom_lp) {
-					prev_prod *= shared_inc[letters[lp - 1]] * d_recip<T>(denom_lp);
-					T temp_prod = prev_prod;
-					T temp_grad = temp_prod * suf[DEGREE - lp - 1];
-					int denom = denom_lp + 1;
-					for (int pos = lp + 1; pos < DEGREE; ++pos, ++denom) {
-						temp_prod *= shared_inc[letters[pos]] * d_recip<T>(denom);
-						temp_grad += temp_prod * suf[DEGREE - pos - 1];
-					}
-					letter_grads_local[lp] += temp_grad * pref_val;
-				}
-			}
-		}
-
-		// Warp reduction: accumulate per-letter grads into shared_letter_grads
-		const unsigned warp_id = threadIdx.x >> 5;
-		const unsigned lane = threadIdx.x & 31;
-
-		// Per-dimension reduction (low d path, d < 30)
-		for (int letter = 0; letter < dim; ++letter) {
-			T val = T(0);
+			// Backward prefix update
 			if (active) {
-				for (int lp = 0; lp < DEGREE; ++lp) {
-					if (letters[lp] == letter) val += letter_grads_local[lp];
+				for (int sd = DEGREE; sd > 0; --sd) {
+					T h = T(0);
+					for (int k = 0; k < sd; ++k) {
+						h = (-inc[letters[k]] * d_recip<T>(sd - k)) * (pref[k] + h);
+					}
+					pref[sd] += h;
 				}
 			}
-			val *= grad_val;
 
-			// Warp shuffle reduction
-			val += __shfl_down_sync(0xffffffff, val, 16);
-			val += __shfl_down_sync(0xffffffff, val, 8);
-			val += __shfl_down_sync(0xffffffff, val, 4);
-			val += __shfl_down_sync(0xffffffff, val, 2);
-			val += __shfl_down_sync(0xffffffff, val, 1);
+			// Compute per-letter gradients
+			T letter_grads_local[DEGREE];
+			for (int i = 0; i < DEGREE; ++i) letter_grads_local[i] = T(0);
 
-			if (lane == 0) {
-				shared_letter_grads[letter * num_warps + warp_id] = val;
-			}
-		}
+			if (active) {
+				for (int pref_len = 0; pref_len < DEGREE; ++pref_len) {
+					const T pref_val = pref[pref_len];
+					T prev_prod = T(1);
 
-		__syncthreads();
+					{
+						T temp_prod = prev_prod;
+						T temp_grad = temp_prod * suf[DEGREE - pref_len - 1];
+						int denom = 2;
+						for (int pos = pref_len + 1; pos < DEGREE; ++pos, ++denom) {
+							temp_prod *= inc[letters[pos]] * d_recip<T>(denom);
+							temp_grad += temp_prod * suf[DEGREE - pos - 1];
+						}
+						letter_grads_local[pref_len] += temp_grad * pref_val;
+					}
 
-		// Block-wide accumulation → global atomicAdd
-		for (int letter = threadIdx.x; letter < dim; letter += blockDim.x) {
-			T sum = T(0);
-			for (unsigned w = 0; w < num_warps; ++w) {
-				sum += shared_letter_grads[letter * num_warps + w];
-			}
-			if (sum != T(0)) {
-				myAtomicAdd(&batch_inc_grad[static_cast<uint64_t>(t) * dim + letter], sum);
-			}
-		}
-
-		// Forward suffix update
-		if (active) {
-			for (int m = DEGREE - 1; m > 0; --m) {
-				const int base_pos = DEGREE - m;
-				T h = T(0);
-				for (int p = m; p >= 1; --p) {
-					int lp = base_pos + (p - 1);
-					T scale = shared_inc[letters[lp]] * d_recip<T>(p);
-					h = scale * (suf[m - p] + h);
+					int denom_lp = 2;
+					for (int lp = pref_len + 1; lp < DEGREE; ++lp, ++denom_lp) {
+						prev_prod *= inc[letters[lp - 1]] * d_recip<T>(denom_lp);
+						T temp_prod = prev_prod;
+						T temp_grad = temp_prod * suf[DEGREE - lp - 1];
+						int denom = denom_lp + 1;
+						for (int pos = lp + 1; pos < DEGREE; ++pos, ++denom) {
+							temp_prod *= inc[letters[pos]] * d_recip<T>(denom);
+							temp_grad += temp_prod * suf[DEGREE - pos - 1];
+						}
+						letter_grads_local[lp] += temp_grad * pref_val;
+					}
 				}
-				suf[m] += h;
 			}
-		}
 
-		__syncthreads();
+			// Per-dimension warp reduction + global atomicAdd
+			for (int letter = 0; letter < dim; ++letter) {
+				T val = T(0);
+				if (active) {
+					for (int lp = 0; lp < DEGREE; ++lp) {
+						if (letters[lp] == letter) val += letter_grads_local[lp];
+					}
+				}
+				val *= grad_val;
+
+				val += __shfl_down_sync(0xffffffff, val, 16);
+				val += __shfl_down_sync(0xffffffff, val, 8);
+				val += __shfl_down_sync(0xffffffff, val, 4);
+				val += __shfl_down_sync(0xffffffff, val, 2);
+				val += __shfl_down_sync(0xffffffff, val, 1);
+
+				if (lane == 0) {
+					shared_letter_grads[letter * num_warps + warp_id] = val;
+				}
+			}
+
+			__syncthreads();
+
+			for (int letter = threadIdx.x; letter < dim; letter += blockDim.x) {
+				T sum = T(0);
+				for (unsigned w = 0; w < num_warps; ++w)
+					sum += shared_letter_grads[letter * num_warps + w];
+				if (sum != T(0))
+					myAtomicAdd(&batch_inc_grad[static_cast<uint64_t>(t) * dim + letter], sum);
+			}
+
+			// Forward suffix update
+			if (active) {
+				for (int m = DEGREE - 1; m > 0; --m) {
+					const int base_pos = DEGREE - m;
+					T h = T(0);
+					for (int p = m; p >= 1; --p) {
+						int lp = base_pos + (p - 1);
+						h = (inc[letters[lp]] * d_recip<T>(p)) * (suf[m - p] + h);
+					}
+					suf[m] += h;
+				}
+			}
+
+			__syncthreads();
+		}
 	}
 }
 
@@ -452,7 +460,6 @@ __global__ void increment_to_path_grad_ker(
 	}
 }
 
-// Set level 0 (scalar 1) for all batch elements
 template<typename T>
 __global__ void set_sig_level0(T* out, uint64_t sig_size, uint64_t batch_size) {
 	uint64_t b = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
@@ -574,45 +581,39 @@ void signature_cuda_core_(
 		return;
 	}
 
-	// Build level_index on host and copy to device
+	if (horner) {
+		signature_per_word_core_<T>(path, out, batch_size, dimension, length, degree);
+		return;
+	}
+
+	// Naive (Chen's identity) fallback
 	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
 
-	// Choose number of threads per block based on largest level size
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
 
-	// Shared memory: increments + level_index (aligned)
 	size_t smem_size = (dimension * sizeof(T) + 7) & ~size_t(7);
 	smem_size += (degree + 2) * sizeof(uint64_t);
 
 	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
 	const size_t aligned_li_bytes = (level_index_bytes + sizeof(T) - 1) / sizeof(T) * sizeof(T);
+	const size_t workspace_bytes = batch_size * sig_len * sizeof(T);
 
-	// Use per-word kernel (fast path)
-	if (horner) {
-		signature_per_word_core_<T>(path, out, batch_size, dimension, length, degree);
-		return;
-	}
-	else {
-		// Single allocation: level_index + linear sig workspace
-		const size_t workspace_bytes = batch_size * sig_len * sizeof(T);
+	char* d_alloc;
+	cudaMalloc(&d_alloc, aligned_li_bytes + workspace_bytes);
+	uint64_t* d_level_index = reinterpret_cast<uint64_t*>(d_alloc);
+	T* d_linear_sig = reinterpret_cast<T*>(d_alloc + aligned_li_bytes);
+	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
 
-		char* d_alloc;
-		cudaMalloc(&d_alloc, aligned_li_bytes + workspace_bytes);
-		uint64_t* d_level_index = reinterpret_cast<uint64_t*>(d_alloc);
-		T* d_linear_sig = reinterpret_cast<T*>(d_alloc + aligned_li_bytes);
-		cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
+	signature_naive_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
+		path, out, d_level_index,
+		dimension, length, degree, sig_len, path_flat_len,
+		d_linear_sig
+	);
 
-		signature_naive_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-			path, out, d_level_index,
-			dimension, length, degree, sig_len, path_flat_len,
-			d_linear_sig
-		);
-
-		cudaDeviceSynchronize();
-		cudaFree(d_alloc);
-	}
+	cudaDeviceSynchronize();
+	cudaFree(d_alloc);
 
 	check_cuda_error();
 }
@@ -697,10 +698,10 @@ void sig_backprop_cuda_core_(
 	uint64_t li[14];
 	host_populate_level_index(li, dimension, degree + 2);
 
-	// Shared memory: dim (increments) + dim * num_warps (letter grad reduction)
+	// Shared memory: BWD_CHUNK * dim (chunked increments) + dim * num_warps (reduction)
 	const unsigned int block = 128;
 	const unsigned int num_warps = block / 32;
-	size_t smem_size = (dimension + dimension * num_warps) * sizeof(T);
+	size_t smem_size = (BWD_CHUNK * dimension + dimension * num_warps) * sizeof(T);
 
 	ensure_streams();
 
