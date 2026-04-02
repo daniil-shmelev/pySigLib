@@ -189,72 +189,6 @@ __device__ void signature_horner_step_device(
 }
 
 template<typename T>
-__global__ void signature_ker(
-	const T* __restrict__ path,
-	T* __restrict__ out,
-	const uint64_t* __restrict__ d_level_index,
-	uint64_t dimension,
-	uint64_t length,
-	uint64_t degree,
-	uint64_t sig_len,
-	uint64_t path_flat_len,        // dimension * length
-	T* __restrict__ workspace,     // [batch_size * 2 * horner_half_size]
-	uint64_t horner_half_size      // = level_index[degree+1] - level_index[degree]
-) {
-	// One block per batch element. Path data is already transformed
-	// (time_aug / lead_lag handled by cu_path_transforms).
-
-	const uint64_t batch_idx = blockIdx.x;
-	const int thread_id = threadIdx.x;
-	const int nthreads = blockDim.x;
-
-	const T* my_path = path + batch_idx * path_flat_len;
-	T* my_out = out + batch_idx * sig_len;
-	T* my_horner = workspace + batch_idx * 2 * horner_half_size;
-
-	// ---- Shared memory: increments + level_index ----
-	extern __shared__ char smem[];
-	T* increments = reinterpret_cast<T*>(smem);
-	// Level index after increments, aligned to 8 bytes
-	const size_t inc_bytes = dimension * sizeof(T);
-	const size_t aligned_off = (inc_bytes + 7) & ~size_t(7);
-	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem + aligned_off);
-
-	// Load level_index into shared memory (small array, degree+2 entries)
-	for (uint64_t i = thread_id; i < degree + 2; i += nthreads)
-		level_index_smem[i] = d_level_index[i];
-	__syncthreads();
-
-	const T* prev_pt = my_path;
-	const T* next_pt = my_path + dimension;
-
-	// Compute increments = next_pt - prev_pt
-	for (uint64_t i = thread_id; i < dimension; i += nthreads)
-		increments[i] = next_pt[i] - prev_pt[i];
-	__syncthreads();
-
-	// Linear signature of first segment
-	linear_signature_device(increments, my_out, dimension, degree, level_index_smem);
-	__syncthreads();
-
-	if (length <= 2) return;
-
-	// ---- Iterate over remaining segments using Horner ----
-	for (uint64_t step = 2; step < length; ++step) {
-		prev_pt = my_path + (step - 1) * dimension;
-		next_pt = my_path + step * dimension;
-
-		// Compute increments
-		for (uint64_t i = thread_id; i < dimension; i += nthreads)
-			increments[i] = next_pt[i] - prev_pt[i];
-		__syncthreads();
-
-		// Horner step: combine current sig with linear sig of this segment
-		signature_horner_step_device(my_out, increments, dimension, degree, level_index_smem, my_horner, horner_half_size);
-	}
-}
-
-template<typename T>
 __global__ void signature_naive_ker(
 	const T* __restrict__ path,
 	T* __restrict__ out,
@@ -315,6 +249,175 @@ __global__ void signature_naive_ker(
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Per-word kernel: each thread computes ONE signature coefficient across all
+// time steps. Launched once per level on separate CUDA streams.
+// ---------------------------------------------------------------------------
+
+__constant__ float c_recip_f32[13] = {
+	0.f, 1.f, 0.5f, 1.f/3.f, 0.25f, 0.2f, 1.f/6.f, 1.f/7.f,
+	0.125f, 1.f/9.f, 0.1f, 1.f/11.f, 1.f/12.f
+};
+__constant__ double c_recip_f64[13] = {
+	0.0, 1.0, 0.5, 1.0/3.0, 0.25, 0.2, 1.0/6.0, 1.0/7.0,
+	0.125, 1.0/9.0, 0.1, 1.0/11.0, 1.0/12.0
+};
+
+template<typename T> __device__ __forceinline__ T d_recip(int n);
+template<> __device__ __forceinline__ float d_recip<float>(int n) { return c_recip_f32[n]; }
+template<> __device__ __forceinline__ double d_recip<double>(int n) { return c_recip_f64[n]; }
+
+template<typename T, int DEGREE>
+__global__ void signature_per_word_ker(
+	const T* __restrict__ path,       // [batch, length, dim]
+	T* __restrict__ out,              // [batch, sig_len]
+	const int dim,
+	const int steps,                  // length - 1 (number of increments)
+	const uint64_t sig_size,
+	const uint64_t level_offset,      // where this level starts in sig array
+	const uint64_t level_size,        // d^DEGREE words at this level
+	const uint64_t path_stride        // length * dim
+) {
+	static_assert(DEGREE >= 1 && DEGREE <= 12, "DEGREE must be 1-12");
+
+	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	const uint64_t batch_idx = blockIdx.y;
+	const bool active = word_idx < level_size;
+
+	extern __shared__ char smem[];
+	T* shared_inc = reinterpret_cast<T*>(smem);
+
+	int letters[DEGREE];
+	if (active) {
+		uint64_t w = word_idx;
+		for (int i = DEGREE - 1; i >= 0; --i) {
+			letters[i] = static_cast<int>(w % dim);
+			w /= dim;
+		}
+	}
+
+	T pref[DEGREE + 1] = {};
+	T comp[DEGREE + 1] = {};
+	pref[0] = static_cast<T>(1);
+
+	const T* batch_path = path + batch_idx * path_stride;
+
+	// Iterate over all time steps
+	for (int t = 0; t < steps; ++t) {
+		// Cooperatively load increments into shared memory
+		const T* pt_curr = batch_path + (uint64_t)t * dim;
+		const T* pt_next = batch_path + ((uint64_t)t + 1) * dim;
+		for (int i = threadIdx.x; i < dim; i += blockDim.x) {
+			shared_inc[i] = pt_next[i] - pt_curr[i];
+		}
+		__syncthreads();
+
+		if (active) {
+			// Horner-style recurrence from highest degree down to 1
+			for (int sd = DEGREE; sd > 0; --sd) {
+				T h = static_cast<T>(0);
+				for (int k = 0; k < sd; ++k) {
+					T scale = shared_inc[letters[k]] * d_recip<T>(sd - k);
+					h = scale * (pref[k] + h);
+				}
+				// Kahan summation: pref[sd] += h
+				T y = h - comp[sd];
+				T tmp = pref[sd] + y;
+				comp[sd] = (tmp - pref[sd]) - y;
+				pref[sd] = tmp;
+			}
+		}
+		__syncthreads();
+	}
+
+	// Write result
+	if (active) {
+		T* batch_out = out + batch_idx * sig_size;
+		batch_out[level_offset + word_idx] = pref[DEGREE];
+	}
+}
+
+// Set level 0 (scalar 1) for all batch elements
+template<typename T>
+__global__ void set_sig_level0(T* out, uint64_t sig_size, uint64_t batch_size) {
+	uint64_t b = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	if (b < batch_size) out[b * sig_size] = static_cast<T>(1);
+}
+
+// Cached stream pool (created once, reused across calls)
+static cudaStream_t s_per_word_streams[12] = {};
+static bool s_streams_initialized = false;
+
+static void ensure_streams() {
+	if (!s_streams_initialized) {
+		for (int i = 0; i < 12; ++i)
+			cudaStreamCreate(&s_per_word_streams[i]);
+		s_streams_initialized = true;
+	}
+}
+
+template<typename T>
+void signature_per_word_core_(
+	const T* path,
+	T* out,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t length,
+	uint64_t degree
+) {
+	const uint64_t sig_len = host_sig_length(dimension, degree);
+	const uint64_t path_stride = length * dimension;
+	const int steps = static_cast<int>(length - 1);
+	const int dim = static_cast<int>(dimension);
+
+	// Set level 0 (all other levels written by per-word kernels)
+	set_sig_level0<T><<<(unsigned int)((batch_size + 255) / 256), 256>>>(
+		out, sig_len, batch_size);
+
+	// Level offsets (stack-allocated, max degree 12 → 14 entries)
+	uint64_t li[14];
+	host_populate_level_index(li, dimension, degree + 2);
+
+	size_t smem = dimension * sizeof(T);
+
+	ensure_streams();
+
+	for (uint64_t k = 1; k <= degree; ++k) {
+		uint64_t level_size = host_power(dimension, k);
+		uint64_t level_offset = li[k];
+		unsigned int block = 128;
+		if (level_size < 128) block = 32;
+		unsigned int grid_x = (unsigned int)((level_size + block - 1) / block);
+		dim3 grid(grid_x, (unsigned int)batch_size, 1);
+
+		#define LAUNCH_DEGREE(D) \
+			case D: signature_per_word_ker<T, D><<<grid, block, smem, s_per_word_streams[k-1]>>>( \
+				path, out, dim, steps, sig_len, level_offset, level_size, path_stride); break;
+
+		switch (k) {
+			LAUNCH_DEGREE(1)
+			LAUNCH_DEGREE(2)
+			LAUNCH_DEGREE(3)
+			LAUNCH_DEGREE(4)
+			LAUNCH_DEGREE(5)
+			LAUNCH_DEGREE(6)
+			LAUNCH_DEGREE(7)
+			LAUNCH_DEGREE(8)
+			LAUNCH_DEGREE(9)
+			LAUNCH_DEGREE(10)
+			LAUNCH_DEGREE(11)
+			LAUNCH_DEGREE(12)
+			default: break;
+		}
+		#undef LAUNCH_DEGREE
+	}
+
+	for (uint64_t k = 0; k < degree; ++k)
+		cudaStreamSynchronize(s_per_word_streams[k]);
+
+	check_cuda_error();
+}
+
 template<typename T>
 void signature_cuda_core_(
 	const T* path,          // GPU pointer, shape [batch_size, length, dimension] flattened
@@ -360,25 +463,10 @@ void signature_cuda_core_(
 	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
 	const size_t aligned_li_bytes = (level_index_bytes + sizeof(T) - 1) / sizeof(T) * sizeof(T);
 
-	if (horner && degree >= 2) {
-		// Single allocation: level_index + Horner workspace (2x ping-pong buffers)
-		uint64_t horner_half_size = max_level_size;
-		const size_t workspace_bytes = batch_size * 2 * horner_half_size * sizeof(T);
-
-		char* d_alloc;
-		cudaMalloc(&d_alloc, aligned_li_bytes + workspace_bytes);
-		uint64_t* d_level_index = reinterpret_cast<uint64_t*>(d_alloc);
-		T* d_workspace = reinterpret_cast<T*>(d_alloc + aligned_li_bytes);
-		cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
-
-		signature_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-			path, out, d_level_index,
-			dimension, length, degree, sig_len, path_flat_len,
-			d_workspace, horner_half_size
-		);
-
-		cudaDeviceSynchronize();
-		cudaFree(d_alloc);
+	// Use per-word kernel (fast path)
+	if (horner) {
+		signature_per_word_core_<T>(path, out, batch_size, dimension, length, degree);
+		return;
 	}
 	else {
 		// Single allocation: level_index + linear sig workspace
