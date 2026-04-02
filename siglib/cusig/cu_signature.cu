@@ -191,8 +191,7 @@ __global__ void signature_per_word_ker(
 	}
 
 	T pref[DEGREE + 1];
-	T comp[DEGREE + 1];
-	for (int i = 0; i <= DEGREE; ++i) { pref[i] = T(0); comp[i] = T(0); }
+	for (int i = 0; i <= DEGREE; ++i) pref[i] = T(0);
 	pref[0] = T(1);
 
 	const T* batch_path = path + batch_idx * path_stride;
@@ -225,10 +224,7 @@ __global__ void signature_per_word_ker(
 					const T scale = inc[letters[k]] * d_recip<T>(sd - k);
 					h = scale * (pref[k] + h);
 				}
-				T y = h - comp[sd];
-				T tmp = pref[sd] + y;
-				comp[sd] = (tmp - pref[sd]) - y;
-				pref[sd] = tmp;
+				pref[sd] += h;
 			}
 		}
 	}
@@ -274,8 +270,7 @@ __global__ void signature_per_word_generic_ker(
 	}
 
 	T pref[MAX_GENERIC_DEGREE + 1];
-	T comp[MAX_GENERIC_DEGREE + 1];
-	for (int i = 0; i <= degree; ++i) { pref[i] = T(0); comp[i] = T(0); }
+	for (int i = 0; i <= degree; ++i) pref[i] = T(0);
 	pref[0] = T(1);
 
 	const T* batch_path = path + batch_idx * path_stride;
@@ -307,10 +302,7 @@ __global__ void signature_per_word_generic_ker(
 					const T scale = inc[letters[k]] * d_recip_rt<T>(sd - k);
 					h = scale * (pref[k] + h);
 				}
-				T y = h - comp[sd];
-				T tmp = pref[sd] + y;
-				comp[sd] = (tmp - pref[sd]) - y;
-				pref[sd] = tmp;
+				pref[sd] += h;
 			}
 		}
 	}
@@ -550,7 +542,6 @@ void sig_backprop_per_word_ker(
 	const T* batch_sig = sig + batch_idx * sig_size;
 	const T grad_val = active ? sig_grads[batch_idx * sig_size + level_offset + word_idx] : T(0);
 
-	// Prefix signature values: load from precomputed forward signature
 	T pref[DEGREE + 1];
 	pref[0] = T(1);
 	if (active) {
@@ -570,7 +561,6 @@ void sig_backprop_per_word_ker(
 		for (int i = 1; i <= DEGREE; ++i) pref[i] = T(0);
 	}
 
-	// Suffix signature values: start at identity (no suffix at end of path)
 	T suf[DEGREE + 1];
 	suf[0] = T(1);
 	for (int i = 1; i <= DEGREE; ++i) suf[i] = T(0);
@@ -603,7 +593,6 @@ void sig_backprop_per_word_ker(
 			const int t = chunk_start + t_local;
 			const T* inc = shared_inc + t_local * dim;
 
-			// Backward prefix update
 			if (active) {
 				for (int sd = DEGREE; sd > 0; --sd) {
 					T h = T(0);
