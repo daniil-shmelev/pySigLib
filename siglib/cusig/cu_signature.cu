@@ -152,6 +152,11 @@ template<typename T> __device__ __forceinline__ T d_recip(int n);
 template<> __device__ __forceinline__ float d_recip<float>(int n) { return c_recip_f32[n]; }
 template<> __device__ __forceinline__ double d_recip<double>(int n) { return c_recip_f64[n]; }
 
+// Runtime reciprocal for the generic (non-template) fallback kernels
+template<typename T> __device__ __forceinline__ T d_recip_rt(int n) {
+	return (n <= 12) ? d_recip<T>(n) : static_cast<T>(1) / static_cast<T>(n);
+}
+
 // Chunk sizes for batching time steps into shared memory (reduces sync overhead).
 constexpr int SIG_CHUNK = 128;   // forward kernel
 constexpr int BWD_CHUNK = 32;    // backward kernel (needs more shared mem for reduction)
@@ -230,6 +235,269 @@ __global__ void signature_per_word_ker(
 
 	if (active) {
 		out[batch_idx * sig_size + level_offset + word_idx] = pref[DEGREE];
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Generic (non-template) per-word forward kernel for degree > 12.
+// Same algorithm as the template version but with runtime degree parameter.
+// ---------------------------------------------------------------------------
+
+constexpr int MAX_GENERIC_DEGREE = 64;
+
+template<typename T>
+__global__ void signature_per_word_generic_ker(
+	const T* __restrict__ path,
+	T* __restrict__ out,
+	const int dim,
+	const int steps,
+	const int degree,
+	const uint64_t sig_size,
+	const uint64_t level_offset,
+	const uint64_t level_size,
+	const uint64_t path_stride
+) {
+	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	const uint64_t batch_idx = blockIdx.y;
+	const bool active = word_idx < level_size;
+
+	extern __shared__ char smem[];
+	T* shared_inc = reinterpret_cast<T*>(smem);
+
+	int letters[MAX_GENERIC_DEGREE];
+	if (active) {
+		uint64_t w = word_idx;
+		for (int i = degree - 1; i >= 0; --i) {
+			letters[i] = static_cast<int>(w % dim);
+			w /= dim;
+		}
+	}
+
+	T pref[MAX_GENERIC_DEGREE + 1];
+	T comp[MAX_GENERIC_DEGREE + 1];
+	for (int i = 0; i <= degree; ++i) { pref[i] = T(0); comp[i] = T(0); }
+	pref[0] = T(1);
+
+	const T* batch_path = path + batch_idx * path_stride;
+
+	for (int chunk_start = 0; chunk_start < steps; chunk_start += SIG_CHUNK) {
+		const int chunk_end = (chunk_start + SIG_CHUNK < steps) ? chunk_start + SIG_CHUNK : steps;
+		const int chunk_len = chunk_end - chunk_start;
+
+		__syncthreads();
+		{
+			const int total_elems = chunk_len * dim;
+			for (int i = threadIdx.x; i < total_elems; i += blockDim.x) {
+				const int t_local = i / dim;
+				const int d_idx = i - t_local * dim;
+				const int base = (chunk_start + t_local) * dim;
+				shared_inc[i] = batch_path[base + dim + d_idx] - batch_path[base + d_idx];
+			}
+		}
+		__syncthreads();
+
+		if (!active) continue;
+
+		for (int t_local = 0; t_local < chunk_len; ++t_local) {
+			const T* inc = shared_inc + t_local * dim;
+
+			for (int sd = degree; sd > 0; --sd) {
+				T h = T(0);
+				for (int k = 0; k < sd; ++k) {
+					const T scale = inc[letters[k]] * d_recip_rt<T>(sd - k);
+					h = scale * (pref[k] + h);
+				}
+				T y = h - comp[sd];
+				T tmp = pref[sd] + y;
+				comp[sd] = (tmp - pref[sd]) - y;
+				pref[sd] = tmp;
+			}
+		}
+	}
+
+	if (active) {
+		out[batch_idx * sig_size + level_offset + word_idx] = pref[degree];
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Generic (non-template) per-word backward kernel for degree > 12.
+// ---------------------------------------------------------------------------
+
+template<typename T>
+__global__ __launch_bounds__(128)
+void sig_backprop_per_word_generic_ker(
+	const T* __restrict__ path,
+	const T* __restrict__ sig,
+	const T* __restrict__ sig_grads,
+	T* __restrict__ inc_grads,
+	const int dim,
+	const int steps,
+	const int degree,
+	const uint64_t sig_size,
+	const uint64_t level_offset,
+	const uint64_t level_size,
+	const uint64_t path_stride
+) {
+	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	const uint64_t batch_idx = blockIdx.y;
+	const bool active = word_idx < level_size;
+
+	extern __shared__ char smem[];
+	T* shared_inc = reinterpret_cast<T*>(smem);
+	const unsigned num_warps = blockDim.x >> 5;
+	T* shared_letter_grads = shared_inc + BWD_CHUNK * dim;
+
+	for (int i = threadIdx.x; i < dim * (int)num_warps; i += blockDim.x)
+		shared_letter_grads[i] = T(0);
+
+	int letters[MAX_GENERIC_DEGREE];
+	if (active) {
+		uint64_t w = word_idx;
+		for (int i = degree - 1; i >= 0; --i) {
+			letters[i] = static_cast<int>(w % dim);
+			w /= dim;
+		}
+	}
+
+	const T* batch_sig = sig + batch_idx * sig_size;
+	const T grad_val = active ? sig_grads[batch_idx * sig_size + level_offset + word_idx] : T(0);
+
+	T pref[MAX_GENERIC_DEGREE + 1];
+	pref[0] = T(1);
+	if (active) {
+		uint64_t off = 1;
+		uint64_t d_pow = static_cast<uint64_t>(dim);
+		uint64_t pref_word = 0;
+		for (int lvl = 1; lvl < degree; ++lvl) {
+			pref_word = pref_word * dim + letters[lvl - 1];
+			pref[lvl] = batch_sig[off + pref_word];
+			off += d_pow;
+			d_pow *= dim;
+		}
+		pref[degree] = batch_sig[level_offset + word_idx];
+	} else {
+		for (int i = 1; i <= degree; ++i) pref[i] = T(0);
+	}
+
+	T suf[MAX_GENERIC_DEGREE + 1];
+	suf[0] = T(1);
+	for (int i = 1; i <= degree; ++i) suf[i] = T(0);
+
+	const T* batch_path = path + batch_idx * path_stride;
+	T* batch_inc_grad = inc_grads + batch_idx * static_cast<uint64_t>(steps) * dim;
+
+	const unsigned warp_id = threadIdx.x >> 5;
+	const unsigned lane = threadIdx.x & 31;
+
+	for (int chunk_end = steps; chunk_end > 0; chunk_end -= BWD_CHUNK) {
+		const int chunk_start = (chunk_end - BWD_CHUNK > 0) ? chunk_end - BWD_CHUNK : 0;
+		const int chunk_len = chunk_end - chunk_start;
+
+		__syncthreads();
+		{
+			const int total_elems = chunk_len * dim;
+			for (int i = threadIdx.x; i < total_elems; i += blockDim.x) {
+				const int t_local = i / dim;
+				const int d_idx = i - t_local * dim;
+				const int t = chunk_start + t_local;
+				shared_inc[i] = batch_path[(t + 1) * dim + d_idx] - batch_path[t * dim + d_idx];
+			}
+		}
+		__syncthreads();
+
+		for (int t_local = chunk_len - 1; t_local >= 0; --t_local) {
+			const int t = chunk_start + t_local;
+			const T* inc = shared_inc + t_local * dim;
+
+			if (active) {
+				for (int sd = degree; sd > 0; --sd) {
+					T h = T(0);
+					for (int k = 0; k < sd; ++k) {
+						h = (-inc[letters[k]] * d_recip_rt<T>(sd - k)) * (pref[k] + h);
+					}
+					pref[sd] += h;
+				}
+			}
+
+			T letter_grads_local[MAX_GENERIC_DEGREE];
+			for (int i = 0; i < degree; ++i) letter_grads_local[i] = T(0);
+
+			if (active) {
+				for (int pref_len = 0; pref_len < degree; ++pref_len) {
+					const T pref_val = pref[pref_len];
+					T prev_prod = T(1);
+
+					{
+						T temp_prod = prev_prod;
+						T temp_grad = temp_prod * suf[degree - pref_len - 1];
+						int denom = 2;
+						for (int pos = pref_len + 1; pos < degree; ++pos, ++denom) {
+							temp_prod *= inc[letters[pos]] * d_recip_rt<T>(denom);
+							temp_grad += temp_prod * suf[degree - pos - 1];
+						}
+						letter_grads_local[pref_len] += temp_grad * pref_val;
+					}
+
+					int denom_lp = 2;
+					for (int lp = pref_len + 1; lp < degree; ++lp, ++denom_lp) {
+						prev_prod *= inc[letters[lp - 1]] * d_recip_rt<T>(denom_lp);
+						T temp_prod = prev_prod;
+						T temp_grad = temp_prod * suf[degree - lp - 1];
+						int denom = denom_lp + 1;
+						for (int pos = lp + 1; pos < degree; ++pos, ++denom) {
+							temp_prod *= inc[letters[pos]] * d_recip_rt<T>(denom);
+							temp_grad += temp_prod * suf[degree - pos - 1];
+						}
+						letter_grads_local[lp] += temp_grad * pref_val;
+					}
+				}
+			}
+
+			for (int letter = 0; letter < dim; ++letter) {
+				T val = T(0);
+				if (active) {
+					for (int lp = 0; lp < degree; ++lp) {
+						if (letters[lp] == letter) val += letter_grads_local[lp];
+					}
+				}
+				val *= grad_val;
+
+				val += __shfl_down_sync(0xffffffff, val, 16);
+				val += __shfl_down_sync(0xffffffff, val, 8);
+				val += __shfl_down_sync(0xffffffff, val, 4);
+				val += __shfl_down_sync(0xffffffff, val, 2);
+				val += __shfl_down_sync(0xffffffff, val, 1);
+
+				if (lane == 0) {
+					shared_letter_grads[letter * num_warps + warp_id] = val;
+				}
+			}
+
+			__syncthreads();
+
+			for (int letter = threadIdx.x; letter < dim; letter += blockDim.x) {
+				T sum = T(0);
+				for (unsigned w = 0; w < num_warps; ++w)
+					sum += shared_letter_grads[letter * num_warps + w];
+				if (sum != T(0))
+					myAtomicAdd(&batch_inc_grad[static_cast<uint64_t>(t) * dim + letter], sum);
+			}
+
+			if (active) {
+				for (int m = degree - 1; m > 0; --m) {
+					const int base_pos = degree - m;
+					T h = T(0);
+					for (int p = m; p >= 1; --p) {
+						int lp = base_pos + (p - 1);
+						h = (inc[letters[lp]] * d_recip_rt<T>(p)) * (suf[m - p] + h);
+					}
+					suf[m] += h;
+				}
+			}
+
+			__syncthreads();
+		}
 	}
 }
 
@@ -467,12 +735,13 @@ __global__ void set_sig_level0(T* out, uint64_t sig_size, uint64_t batch_size) {
 }
 
 // Cached stream pool (created once, reused across calls)
-static cudaStream_t s_per_word_streams[12] = {};
+static constexpr int MAX_PER_WORD_STREAMS = 12;
+static cudaStream_t s_per_word_streams[MAX_PER_WORD_STREAMS] = {};
 static bool s_streams_initialized = false;
 
 static void ensure_streams() {
 	if (!s_streams_initialized) {
-		for (int i = 0; i < 12; ++i)
+		for (int i = 0; i < MAX_PER_WORD_STREAMS; ++i)
 			cudaStreamCreate(&s_per_word_streams[i]);
 		s_streams_initialized = true;
 	}
@@ -508,8 +777,8 @@ void signature_per_word_core_(
 	set_sig_level0<T><<<(unsigned int)((batch_size + 255) / 256), 256>>>(
 		out, sig_len, batch_size);
 
-	uint64_t li[14];
-	host_populate_level_index(li, dimension, degree + 2);
+	auto li = std::make_unique<uint64_t[]>(degree + 2);
+	host_populate_level_index(li.get(), dimension, degree + 2);
 
 	size_t smem = SIG_CHUNK * dimension * sizeof(T);
 
@@ -522,9 +791,11 @@ void signature_per_word_core_(
 		if (level_size < 128) block = 32;
 		unsigned int grid_x = (unsigned int)((level_size + block - 1) / block);
 		dim3 grid(grid_x, (unsigned int)batch_size, 1);
+		cudaStream_t stream = (k <= MAX_PER_WORD_STREAMS)
+			? s_per_word_streams[k - 1] : nullptr;
 
 		#define LAUNCH_DEGREE(D) \
-			case D: signature_per_word_ker<T, D><<<grid, block, smem, s_per_word_streams[k-1]>>>( \
+			case D: signature_per_word_ker<T, D><<<grid, block, smem, stream>>>( \
 				path, out, dim, steps, sig_len, level_offset, level_size, path_stride); break;
 
 		switch (k) {
@@ -540,13 +811,18 @@ void signature_per_word_core_(
 			LAUNCH_DEGREE(10)
 			LAUNCH_DEGREE(11)
 			LAUNCH_DEGREE(12)
-			default: break;
+			default:
+				signature_per_word_generic_ker<T><<<grid, block, smem, stream>>>(
+					path, out, dim, steps, static_cast<int>(k),
+					sig_len, level_offset, level_size, path_stride);
+				break;
 		}
 		#undef LAUNCH_DEGREE
 	}
 
-	for (uint64_t k = 0; k < degree; ++k)
+	for (uint64_t k = 0; k < degree && k < MAX_PER_WORD_STREAMS; ++k)
 		cudaStreamSynchronize(s_per_word_streams[k]);
+	cudaDeviceSynchronize();
 
 	check_cuda_error();
 }
@@ -687,6 +963,11 @@ void sig_backprop_cuda_core_(
 		return;
 	}
 
+	if (degree > MAX_GENERIC_DEGREE)
+		throw std::invalid_argument(
+			"sig_backprop on CUDA requires degree <= 64. "
+			"Use CPU or reduce the truncation level.");
+
 	const int steps = static_cast<int>(length - 1);
 	const int dim = static_cast<int>(dimension);
 
@@ -695,8 +976,8 @@ void sig_backprop_cuda_core_(
 	T* d_inc_grads = static_cast<T*>(ensure_inc_grad_buf(inc_grad_bytes));
 	cudaMemset(d_inc_grads, 0, inc_grad_bytes);
 
-	uint64_t li[14];
-	host_populate_level_index(li, dimension, degree + 2);
+	auto li = std::make_unique<uint64_t[]>(degree + 2);
+	host_populate_level_index(li.get(), dimension, degree + 2);
 
 	// Shared memory: BWD_CHUNK * dim (chunked increments) + dim * num_warps (reduction)
 	const unsigned int block = 128;
@@ -711,23 +992,30 @@ void sig_backprop_cuda_core_(
 		uint64_t level_offset = li[k];
 		unsigned int grid_x = static_cast<unsigned int>((level_size + block - 1) / block);
 		dim3 grid(grid_x, static_cast<unsigned int>(batch_size), 1);
+		cudaStream_t stream = (k <= MAX_PER_WORD_STREAMS)
+			? s_per_word_streams[k - 1] : nullptr;
 
 		#define LAUNCH_BWD(D) \
-			case D: sig_backprop_per_word_ker<T, D><<<grid, block, smem_size, s_per_word_streams[k-1]>>>( \
+			case D: sig_backprop_per_word_ker<T, D><<<grid, block, smem_size, stream>>>( \
 				path, sig, sig_derivs, d_inc_grads, dim, steps, sig_len, \
 				level_offset, level_size, length * dimension); break;
 
 		switch (k) {
-			LAUNCH_BWD(1) LAUNCH_BWD(2) LAUNCH_BWD(3) LAUNCH_BWD(4)
-			LAUNCH_BWD(5) LAUNCH_BWD(6) LAUNCH_BWD(7) LAUNCH_BWD(8)
-			LAUNCH_BWD(9) LAUNCH_BWD(10) LAUNCH_BWD(11) LAUNCH_BWD(12)
-			default: break;
+			LAUNCH_BWD(1)  LAUNCH_BWD(2)  LAUNCH_BWD(3)  LAUNCH_BWD(4)
+			LAUNCH_BWD(5)  LAUNCH_BWD(6)  LAUNCH_BWD(7)  LAUNCH_BWD(8)
+			LAUNCH_BWD(9)  LAUNCH_BWD(10) LAUNCH_BWD(11) LAUNCH_BWD(12)
+			default:
+				sig_backprop_per_word_generic_ker<T><<<grid, block, smem_size, stream>>>(
+					path, sig, sig_derivs, d_inc_grads, dim, steps, static_cast<int>(k),
+					sig_len, level_offset, level_size, length * dimension);
+				break;
 		}
 		#undef LAUNCH_BWD
 	}
 
-	for (uint64_t k = 0; k < degree; ++k)
+	for (uint64_t k = 0; k < degree && k < MAX_PER_WORD_STREAMS; ++k)
 		cudaStreamSynchronize(s_per_word_streams[k]);
+	cudaDeviceSynchronize();
 
 	// Convert increment gradients to path gradients
 	{
