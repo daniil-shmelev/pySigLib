@@ -267,15 +267,20 @@ template<typename T> __device__ __forceinline__ T d_recip(int n);
 template<> __device__ __forceinline__ float d_recip<float>(int n) { return c_recip_f32[n]; }
 template<> __device__ __forceinline__ double d_recip<double>(int n) { return c_recip_f64[n]; }
 
+// Batches multiple time steps into shared memory per chunk to reduce
+// __syncthreads() overhead from 2 per step to 2 per chunk.
+constexpr int SIG_CHUNK = 128;
+
 template<typename T, int DEGREE>
-__global__ void signature_per_word_ker(
+__global__ __launch_bounds__(128)
+void signature_per_word_ker(
 	const T* __restrict__ path,       // [batch, length, dim]
-	T* __restrict__ out,              // [batch, sig_len]
+	T* __restrict__ out,
 	const int dim,
-	const int steps,                  // length - 1 (number of increments)
+	const int steps,
 	const uint64_t sig_size,
-	const uint64_t level_offset,      // where this level starts in sig array
-	const uint64_t level_size,        // d^DEGREE words at this level
+	const uint64_t level_offset,
+	const uint64_t level_size,
 	const uint64_t path_stride        // length * dim
 ) {
 	static_assert(DEGREE >= 1 && DEGREE <= 12, "DEGREE must be 1-12");
@@ -296,44 +301,51 @@ __global__ void signature_per_word_ker(
 		}
 	}
 
-	T pref[DEGREE + 1] = {};
-	T comp[DEGREE + 1] = {};
-	pref[0] = static_cast<T>(1);
+	T pref[DEGREE + 1];
+	T comp[DEGREE + 1];
+	for (int i = 0; i <= DEGREE; ++i) { pref[i] = T(0); comp[i] = T(0); }
+	pref[0] = T(1);
 
 	const T* batch_path = path + batch_idx * path_stride;
 
-	// Iterate over all time steps
-	for (int t = 0; t < steps; ++t) {
-		// Cooperatively load increments into shared memory
-		const T* pt_curr = batch_path + (uint64_t)t * dim;
-		const T* pt_next = batch_path + ((uint64_t)t + 1) * dim;
-		for (int i = threadIdx.x; i < dim; i += blockDim.x) {
-			shared_inc[i] = pt_next[i] - pt_curr[i];
+	for (int chunk_start = 0; chunk_start < steps; chunk_start += SIG_CHUNK) {
+		const int chunk_end = (chunk_start + SIG_CHUNK < steps) ? chunk_start + SIG_CHUNK : steps;
+		const int chunk_len = chunk_end - chunk_start;
+
+		// Cooperatively load increments for this chunk (compute on the fly)
+		__syncthreads();
+		{
+			const int total_elems = chunk_len * dim;
+			for (int i = threadIdx.x; i < total_elems; i += blockDim.x) {
+				const int t_local = i / dim;
+				const int d_idx = i - t_local * dim;
+				const int base = (chunk_start + t_local) * dim;
+				shared_inc[i] = batch_path[base + dim + d_idx] - batch_path[base + d_idx];
+			}
 		}
 		__syncthreads();
 
-		if (active) {
-			// Horner-style recurrence from highest degree down to 1
+		if (!active) continue;
+
+		for (int t_local = 0; t_local < chunk_len; ++t_local) {
+			const T* inc = shared_inc + t_local * dim;
+
 			for (int sd = DEGREE; sd > 0; --sd) {
-				T h = static_cast<T>(0);
+				T h = T(0);
 				for (int k = 0; k < sd; ++k) {
-					T scale = shared_inc[letters[k]] * d_recip<T>(sd - k);
+					const T scale = inc[letters[k]] * d_recip<T>(sd - k);
 					h = scale * (pref[k] + h);
 				}
-				// Kahan summation: pref[sd] += h
 				T y = h - comp[sd];
 				T tmp = pref[sd] + y;
 				comp[sd] = (tmp - pref[sd]) - y;
 				pref[sd] = tmp;
 			}
 		}
-		__syncthreads();
 	}
 
-	// Write result
 	if (active) {
-		T* batch_out = out + batch_idx * sig_size;
-		batch_out[level_offset + word_idx] = pref[DEGREE];
+		out[batch_idx * sig_size + level_offset + word_idx] = pref[DEGREE];
 	}
 }
 
@@ -370,15 +382,13 @@ void signature_per_word_core_(
 	const int steps = static_cast<int>(length - 1);
 	const int dim = static_cast<int>(dimension);
 
-	// Set level 0 (all other levels written by per-word kernels)
 	set_sig_level0<T><<<(unsigned int)((batch_size + 255) / 256), 256>>>(
 		out, sig_len, batch_size);
 
-	// Level offsets (stack-allocated, max degree 12 → 14 entries)
 	uint64_t li[14];
 	host_populate_level_index(li, dimension, degree + 2);
 
-	size_t smem = dimension * sizeof(T);
+	size_t smem = SIG_CHUNK * dimension * sizeof(T);
 
 	ensure_streams();
 
