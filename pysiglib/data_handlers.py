@@ -20,9 +20,18 @@ import torch
 
 from .param_checks import check_type_multiple, check_dtype, ensure_own_contiguous_storage
 from .dtypes import DTYPES
+from .load_siglib import BUILT_WITH_CUDA
 
 def names_str(name_list):
     return ", ".join(name_list)
+
+def _check_cuda_available(device):
+    if device != "cpu" and not BUILT_WITH_CUDA:
+        raise RuntimeError(
+            "pySigLib was built without CUDA support but received a GPU tensor. "
+            "Either move your tensor to CPU with .cpu(), or reinstall pySigLib "
+            "with the full CUDA toolkit available (ensure CUDA_PATH is set and nvcc is on PATH)."
+        )
 
 def make_output(obj, data, shape):
     if obj.type_ == "numpy":
@@ -89,6 +98,7 @@ class SigInputHandler:
             self.type_ = "torch"
             self.dtype = str(self.sig.dtype)[6:]
             self.device = self.sig.device.type
+            _check_cuda_available(self.device)
             self.data_ptr = cast(self.sig.data_ptr(), POINTER(DTYPES[self.dtype]))
 
 class MultipleSigInputHandler:
@@ -178,6 +188,7 @@ class PathInputHandler:
 
         self.length, self.dimension = self.transformed_dims()
         self.device = self.path.device.type if self.type_ == "torch" else "cpu"
+        _check_cuda_available(self.device)
 
     def transformed_dims(self):
         length_ = self.data_length
