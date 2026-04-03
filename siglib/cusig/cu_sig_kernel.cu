@@ -180,14 +180,10 @@ __device__ void goursat_pde_32(
 		if (thread_id == 0 && q >= num_threads && q - num_threads < ord_dyadic_length_1)
 			initial_condition[q - num_threads] = diagonals[next_diag_idx + num_threads];
 
-		// Rotate the diagonals (swap indices, no data copying)
 		int temp = prev_prev_diag_idx;
 		prev_prev_diag_idx = prev_diag_idx;
 		prev_diag_idx = next_diag_idx;
 		next_diag_idx = temp;
-
-		// Make sure all threads wait for the rotation of diagonals
-		__syncwarp(0xFFFFFFFF);
 	}
 }
 
@@ -539,13 +535,10 @@ __device__ void goursat_pde_32_deriv(
 			initial_condition[q - num_threads] = *(next_diag + num_threads);
 		}
 
-		// Rotate the diagonals (swap pointers, no data copying)
 		T* temp = prev_prev_diag;
 		prev_prev_diag = prev_diag;
 		prev_diag = next_diag;
 		next_diag = temp;
-
-		__syncwarp(0xFFFFFFFF);
 	}
 }
 
