@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from .transform_path import transform_path
-from .param_checks import check_type
+from .param_checks import check_type, parse_dyadic_order, dyadic_grid_length
 from .error_codes import err_msg
 from .dtypes import CPSIG_BATCH_SIG_KERNEL, DTYPES, CUSIG_BATCH_SIG_KERNEL_CUDA
 from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOutputHandler
@@ -176,17 +176,7 @@ def sig_kernel(
     if n_jobs == 0:
         raise ValueError("n_jobs cannot be 0")
 
-    if isinstance(dyadic_order, tuple) and len(dyadic_order) == 2:
-        dyadic_order_1 = dyadic_order[0]
-        dyadic_order_2 = dyadic_order[1]
-    elif isinstance(dyadic_order, int):
-        dyadic_order_1 = dyadic_order
-        dyadic_order_2 = dyadic_order
-    else:
-        raise TypeError("dyadic_order must be an integer or a tuple of length 2")
-
-    if dyadic_order_1 < 0 or dyadic_order_2 < 0:
-        raise ValueError("dyadic_order must be a non-negative integer or tuple of non-negative integers")
+    dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
 
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug, lead_lag, end_time, n_jobs)
@@ -198,8 +188,8 @@ def sig_kernel(
     if not return_grid:
         result = ScalarOutputHandler(data)
     else:
-        dyadic_len_1 = ((data.length[0] - 1) << dyadic_order_1) + 1
-        dyadic_len_2 = ((data.length[1] - 1) << dyadic_order_2) + 1
+        dyadic_len_1 = dyadic_grid_length(data.length[0], dyadic_order_1)
+        dyadic_len_2 = dyadic_grid_length(data.length[1], dyadic_order_2)
         result = GridOutputHandler(dyadic_len_1, dyadic_len_2, data)
 
     torch_path1 = torch.as_tensor(data.path[0])  # Avoids data copy
@@ -388,76 +378,46 @@ def sig_kernel_gram(
     # Now run computation in batches
     ####################################
 
+    do1, do2 = parse_dyadic_order(dyadic_order)
+
+    if return_grid:
+        gl1 = dyadic_grid_length(data.length[0], do1)
+        gl2 = dyadic_grid_length(data.length[1], do2)
+
     if symmetric:
         # Symmetric case: only compute upper triangle pairs, mirror to lower.
-        # This guarantees exact symmetry and halves the number of kernel evaluations.
         # Cannot mirror grids when dyadic orders differ (gl1 != gl2), so fall through.
-        if return_grid:
-            if isinstance(dyadic_order, tuple) and len(dyadic_order) == 2:
-                do1, do2 = dyadic_order
-            else:
-                do1 = do2 = dyadic_order
-            gl1 = ((data.length[0] - 1) << do1) + 1
-            gl2 = ((data.length[1] - 1) << do2) + 1
-            if gl1 != gl2:
-                symmetric = False
+        if return_grid and gl1 != gl2:
+            symmetric = False
 
     if symmetric:
         idx_i, idx_j = torch.triu_indices(batch1, batch1, device=path1.device)
-        n_pairs = idx_i.shape[0]
-        chunk_size = max_batch * max_batch
+        src1, src2 = path1, path1
+    else:
+        idx_i = torch.arange(batch1, device=path1.device).repeat_interleave(batch2)
+        idx_j = torch.arange(batch2, device=path2.device).repeat(batch1)
+        src1, src2 = path1, path2
 
-        if return_grid:
-            res = torch.empty(batch1, batch1, gl1, gl2, dtype=path1.dtype, device=path1.device)
-        else:
-            res = torch.empty(batch1, batch1, dtype=path1.dtype, device=path1.device)
+    if return_grid:
+        res = torch.empty(batch1, batch2, gl1, gl2, dtype=path1.dtype, device=path1.device)
+    else:
+        res = torch.empty(batch1, batch2, dtype=path1.dtype, device=path1.device)
 
-        for start in range(0, n_pairs, chunk_size):
-            end = min(start + chunk_size, n_pairs)
-            ci = idx_i[start:end]
-            cj = idx_j[start:end]
+    chunk_size = max_batch * max_batch
+    for start in range(0, idx_i.shape[0], chunk_size):
+        end = min(start + chunk_size, idx_i.shape[0])
+        ci = idx_i[start:end]
+        cj = idx_j[start:end]
 
-            path1_ = path1[ci]
-            path2_ = path1[cj]
+        k = sig_kernel(src1[ci], src2[cj], dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
+        res[ci, cj] = k
 
-            k = sig_kernel(path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
-
-            # Place in upper triangle
-            res[ci, cj] = k
-
-            # Mirror off-diagonal to lower triangle
+        if symmetric:
             off = ci != cj
             if off.any():
                 k_mirror = k[off]
                 if return_grid:
                     k_mirror = k_mirror.transpose(-2, -1)
                 res[cj[off], ci[off]] = k_mirror
-
-        return res
-
-    # Asymmetric case: pair-based indexing
-    idx_i = torch.arange(batch1, device=path1.device).repeat_interleave(batch2)
-    idx_j = torch.arange(batch2, device=path2.device).repeat(batch1)
-    n_pairs = idx_i.shape[0]
-    chunk_size = max_batch * max_batch
-
-    if return_grid:
-        if isinstance(dyadic_order, tuple) and len(dyadic_order) == 2:
-            do1, do2 = dyadic_order
-        else:
-            do1 = do2 = dyadic_order
-        gl1 = ((data.length[0] - 1) << do1) + 1
-        gl2 = ((data.length[1] - 1) << do2) + 1
-        res = torch.empty(batch1, batch2, gl1, gl2, dtype=path1.dtype, device=path1.device)
-    else:
-        res = torch.empty(batch1, batch2, dtype=path1.dtype, device=path1.device)
-
-    for start in range(0, n_pairs, chunk_size):
-        end = min(start + chunk_size, n_pairs)
-        ci = idx_i[start:end]
-        cj = idx_j[start:end]
-
-        k = sig_kernel(path1[ci], path2[cj], dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
-        res[ci, cj] = k
 
     return res

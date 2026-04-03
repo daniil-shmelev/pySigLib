@@ -24,6 +24,18 @@
 #include "cp_vector_funcs.h"
 #endif
 
+/* Signature kernel PDE solver (CPU).
+ *
+ * Forward recurrence (Day/Wazwaz second-order scheme):
+ *   K[i+1, j+1] = (K[i, j+1] + K[i+1, j]) * A(d) - K[i, j] * B(d)
+ * where d = <dx_i, dy_j> * dyadic_frac,  A(d) = 1 + d/2 + d^2/12,  B(d) = 1 - d^2/12.
+ *
+ * Backward recurrence (arXiv:2509.10613):
+ *   d[row, col] += d[row, col+1] * A(D_{row-1, col})
+ *               +  d[row+1, col] * A(D_{row, col-1})
+ *               -  d[row+1, col+1] * B(D_{row, col})
+ */
+
 template<std::floating_point T>
 FORCE_INLINE void get_a_b(T& a, T& b, const T* gram, uint64_t idx, T dyadic_frac) {
 	static const T twelth = static_cast<T>(1.) / 12;
@@ -57,45 +69,31 @@ FORCE_INLINE void get_a_b_deriv(T& a_deriv, T& b_deriv, const T* gram, uint64_t 
 }
 
 template<std::floating_point T>
-void get_sig_kernel_(
+void get_sig_kernel_grid_(
 	const T* gram,
 	uint64_t length1,
 	uint64_t length2,
 	T* out,
 	uint64_t dyadic_order_1,
-	uint64_t dyadic_order_2,
-	bool return_grid
+	uint64_t dyadic_order_2
 ) {
 	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1 + dyadic_order_2));
 	const T twelth = static_cast<T>(1.) / 12;
 
-	// Dyadically refined grid dimensions
 	const uint64_t grid_size_1 = 1ULL << dyadic_order_1;
 	const uint64_t grid_size_2 = 1ULL << dyadic_order_2;
 	const uint64_t dyadic_length_1 = ((length1 - 1) << dyadic_order_1) + 1;
 	const uint64_t dyadic_length_2 = ((length2 - 1) << dyadic_order_2) + 1;
 
-	// Allocate(flattened) PDE grid
-	T* pde_grid;
-	if (return_grid)
-		pde_grid = out;
-	else {
-		auto pde_grid_uptr = std::make_unique<T[]>(dyadic_length_1 * dyadic_length_2);
-		pde_grid = pde_grid_uptr.get();
-	}
+	T* pde_grid = out;
 
-	// Initialization of K array
-	for (uint64_t i = 0; i < dyadic_length_1; ++i) {
-		pde_grid[i * dyadic_length_2] = static_cast<T>(1.0); // Set K[i, 0] = 1.0
-	}
-
-	std::fill(pde_grid, pde_grid + dyadic_length_2, static_cast<T>(1.0)); // Set K[0, j] = 1.0
-
-	auto deriv_term_1_uptr = std::make_unique<T[]>(length2 - 1);
-	T* const deriv_term_1 = deriv_term_1_uptr.get();
-
-	auto deriv_term_2_uptr = std::make_unique<T[]>(length2 - 1);
-	T* const deriv_term_2 = deriv_term_2_uptr.get();
+	for (uint64_t i = 0; i < dyadic_length_1; ++i)
+		pde_grid[i * dyadic_length_2] = static_cast<T>(1.);
+	std::fill(pde_grid, pde_grid + dyadic_length_2, static_cast<T>(1.));
+	auto a_terms_uptr = std::make_unique<T[]>(length2 - 1);
+	auto b_terms_uptr = std::make_unique<T[]>(length2 - 1);
+	T* const a_terms = a_terms_uptr.get();
+	T* const b_terms = b_terms_uptr.get();
 
 	T* k11 = pde_grid;
 	T* k12 = k11 + 1;
@@ -106,31 +104,47 @@ void get_sig_kernel_(
 
 	for (uint64_t ii = 0; ii < length1 - 1; ++ii, gram_ptr += length2 - 1) {
 		for (uint64_t m = 0; m < length2 - 1; ++m) {
-			const T deriv = gram_ptr[m] * dyadic_frac;//dot_product(diff1Ptr, diff2Ptr, dimension);
+			const T deriv = gram_ptr[m] * dyadic_frac;
 			const T deriv2 = deriv * deriv * twelth;
-			deriv_term_1[m] = static_cast<T>(1.0) + static_cast<T>(0.5) * deriv + deriv2;
-			deriv_term_2[m] = static_cast<T>(1.0) - deriv2;
+			a_terms[m] = static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2;
+			b_terms[m] = static_cast<T>(1.) - deriv2;
 		}
 
-		for (uint64_t i = 0;
-			i < grid_size_1;
-			++i, ++k11, ++k12, ++k21, ++k22) {
-
+		for (uint64_t i = 0; i < grid_size_1; ++i, ++k11, ++k12, ++k21, ++k22) {
 			for (uint64_t jj = 0; jj < length2 - 1; ++jj) {
-				const T t1 = deriv_term_1[jj];
-				const T t2 = deriv_term_2[jj];
+				const T a = a_terms[jj];
+				const T b = b_terms[jj];
 				for (uint64_t j = 0; j < grid_size_2; ++j) {
-					*(k22++) = (*(k21++) + *(k12++)) * t1 - *(k11++) * t2;
+					*(k22++) = (*(k21++) + *(k12++)) * a - *(k11++) * b;
 				}
 			}
 		}
 	}
-
-	if (!return_grid)
-		*out = pde_grid[dyadic_length_1 * dyadic_length_2 - 1];
 }
 
-template<std::floating_point T, bool order> //order is True if dyadic_length_2 <= dyadic_length_1
+template<std::floating_point T>
+FORCE_INLINE void pde_stencil(T* next, const T* prev, const T* prev_prev, uint64_t j, T deriv) {
+	static const T twelth = static_cast<T>(1.) / 12;
+	const T deriv2 = deriv * deriv * twelth;
+	*(next + j) = (*(prev + j) + *(prev + j - 1)) * (
+		static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2)
+		- *(prev_prev + j - 1) * (static_cast<T>(1.) - deriv2);
+}
+
+// order=true: j along dim 2 (shorter), i along dim 1.
+// order=false: swapped. Resolved at compile time.
+template<bool order>
+FORCE_INLINE uint64_t diag_gram_idx(uint64_t i, uint64_t j, uint64_t do1, uint64_t do2, uint64_t gram_stride) {
+	if constexpr (order) {
+		return ((i - 1) >> do1) * gram_stride + ((j - 1) >> do2);
+	} else {
+		return ((j - 1) >> do1) * gram_stride + ((i - 1) >> do2);
+	}
+}
+
+// Anti-diagonal sweep for scalar output. Stores 3 diagonal buffers
+// of length min(L1, L2) instead of the full grid.
+template<std::floating_point T, bool order>
 void get_sig_kernel_diag_internal_(
 	const T* gram,
 	uint64_t length2,
@@ -141,11 +155,11 @@ void get_sig_kernel_diag_internal_(
 	uint64_t dyadic_length_2
 ) {
 	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1 + dyadic_order_2));
-	const T twelth = static_cast<T>(1.) / 12;
 	const uint64_t num_anti_diag = dyadic_length_1 + dyadic_length_2 - 1;
+	const uint64_t long_len = order ? dyadic_length_1 : dyadic_length_2;
+	const uint64_t short_len = order ? dyadic_length_2 : dyadic_length_1;
 
-	// Allocate three diagonals
-	const uint64_t diag_len = std::min(dyadic_length_1, dyadic_length_2);
+	const uint64_t diag_len = short_len;
 	auto diagonals_uptr = std::make_unique<T[]>(diag_len * 3);
 	T* const diagonals = diagonals_uptr.get();
 
@@ -153,53 +167,18 @@ void get_sig_kernel_diag_internal_(
 	T* prev_diag = diagonals + diag_len;
 	T* next_diag = diagonals + 2 * diag_len;
 
-	// Initialization
 	std::fill(diagonals, diagonals + 3 * diag_len, static_cast<T>(1.));
 
-	for (uint64_t p = 2; p < num_anti_diag; ++p) { // First two antidiagonals are initialised to 1
+	for (uint64_t p = 2; p < num_anti_diag; ++p) {
+		const uint64_t startj = long_len > p ? 1 : p - long_len + 1;
+		const uint64_t endj = short_len > p ? p : short_len;
 
-		if (order) {
-			uint64_t startj, endj;
-			if (dyadic_length_1 > p) startj = 1;
-			else startj = p - dyadic_length_1 + 1;
-			if (dyadic_length_2 > p) endj = p;
-			else endj = dyadic_length_2;
-
-			for (uint64_t j = startj; j < endj; ++j) {
-				const uint64_t i = p - j;  // Calculate corresponding i (since i + j = p)
-				const uint64_t ii = ((i - 1) >> dyadic_order_1);
-				const uint64_t jj = ((j - 1) >> dyadic_order_2);
-
-				const T deriv = gram[ii * (length2 - 1) + jj] * dyadic_frac;
-				const T deriv2 = deriv * deriv * twelth;
-
-				*(next_diag + j) = (*(prev_diag + j) + *(prev_diag + j - 1)) * (
-					static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2) - *(prev_prev_diag + j - 1) * (static_cast<T>(1.) - deriv2);
-
-			}
-		}
-		else {
-			uint64_t startj, endj;
-			if (dyadic_length_2 > p) startj = 1;
-			else startj = p - dyadic_length_2 + 1;
-			if (dyadic_length_1 > p) endj = p;
-			else endj = dyadic_length_1;
-
-			for (uint64_t j = startj; j < endj; ++j) {
-				const uint64_t i = p - j;  // Calculate corresponding i (since i + j = p)
-				const uint64_t ii = ((i - 1) >> dyadic_order_2);
-				const uint64_t jj = ((j - 1) >> dyadic_order_1);
-
-				const T deriv = gram[jj * (length2 - 1) + ii] * dyadic_frac;
-				const T deriv2 = deriv * deriv * twelth;
-
-				*(next_diag + j) = (*(prev_diag + j) + *(prev_diag + j - 1)) * (
-					static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2) - *(prev_prev_diag + j - 1) * (static_cast<T>(1.) - deriv2);
-
-			}
+		for (uint64_t j = startj; j < endj; ++j) {
+			const uint64_t i = p - j;
+			const T deriv = gram[diag_gram_idx<order>(i, j, dyadic_order_1, dyadic_order_2, length2 - 1)] * dyadic_frac;
+			pde_stencil(next_diag, prev_diag, prev_prev_diag, j, deriv);
 		}
 
-		// Rotate the diagonals (swap pointers, no data copying)
 		T* temp = prev_prev_diag;
 		prev_prev_diag = prev_diag;
 		prev_diag = next_diag;
@@ -207,172 +186,6 @@ void get_sig_kernel_diag_internal_(
 	}
 
 	*out = prev_diag[diag_len - 1];
-}
-
-template<std::floating_point T, bool order>//order is True if dyadic_length_2 <= dyadic_length_1
-void get_sig_kernel_backprop_diag_internal_(
-	const T* gram,
-	T* out,
-	T deriv,
-	const T* k_grid,
-	uint64_t length1,
-	uint64_t length2,
-	uint64_t dyadic_order_1,
-	uint64_t dyadic_order_2,
-	uint64_t dyadic_length_1,
-	uint64_t dyadic_length_2
-) {
-	// General structure of the grids:
-	// 
-	// dF / dk = 0 for the first row and column of k_grid, so disregard these.
-	// Flip the remaining grid, so that the last element is now in the top left.
-	// Now, add a row and column of zeros as initial conditions to the grid, such that it now
-	// has the same dimensions as k_grid.
-	// The resulting grid is what is traversed by 'diagonals' below.
-	// 
-	// The grids for A, B, dA and dB are flipped and padded similarly, such that
-	// the value at index [1,1] is the value at [-1,-1] in the original grids.
-	// We will only need one diagonal for A and one for B, containing the values
-	// needed to update the leading diagonal of dF / dk. For dA and dB, we don't
-	// need to use diagonals, we can just get the values once when updating dF / dk.
-	// Note that for A, these values are lagged, i.e. we need values A(i-1,j) and 
-	// A(i,j-1) to update dF / dk(i,j).
-
-	// As with the diagonal method for sig_kernel, it matters which of
-	// dyadic_length_1 and dyadic_length_2 is longer.
-	const uint64_t ord_dyadic_order_1 = order ? dyadic_order_1 : dyadic_order_2;
-	const uint64_t ord_dyadic_order_2 = order ? dyadic_order_2 : dyadic_order_1;
-	const uint64_t ord_dyadic_length_1 = order ? dyadic_length_1 : dyadic_length_2;
-	const uint64_t ord_dyadic_length_2 = order ? dyadic_length_2 : dyadic_length_1;
-
-	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1 + dyadic_order_2));
-	const uint64_t num_anti_diag = dyadic_length_1 + dyadic_length_2 - 1;
-	const uint64_t grid_length = dyadic_length_1 * dyadic_length_2;
-	const uint64_t gram_length = (length1 - 1) * (length2 - 1);
-
-	// Allocate three diagonals
-	const uint64_t diag_len = std::min(dyadic_length_1, dyadic_length_2);
-	auto diagonals_uptr = std::make_unique<T[]>(diag_len * 3);
-	T* const diagonals = diagonals_uptr.get();
-
-	// Allocate diagonals to store A, B, A_deriv, B_deriv
-	auto a_uptr = std::make_unique<T[]>(diag_len);
-	T* const a = a_uptr.get();
-
-	auto b_uptr = std::make_unique<T[]>(diag_len);
-	T* const b = b_uptr.get();
-
-	// Ptrs for diagonals
-	T* prev_prev_diag = diagonals;
-	T* prev_diag = prev_prev_diag + diag_len;
-	T* next_diag = prev_diag + diag_len;
-
-	// k_grid ptrs
-	const T* k11, * k12, * k21;
-
-	// Initialization
-	std::fill(out, out + (length1 - 1) * (length2 - 1), static_cast<T>(0.));
-	std::fill(diagonals, diagonals + 3 * diag_len, static_cast<T>(0.));
-	std::fill(a, a + diag_len, static_cast<T>(0.));
-	std::fill(b, b + diag_len, static_cast<T>(0.));
-	
-	*(prev_diag + 1) = deriv;
-	T da, db;
-	get_a_b_deriv(da, db, gram, gram_length - 1, dyadic_frac);
-
-	//Update dF / dx for first value
-	k21 = k_grid + grid_length - 2;
-	k12 = k_grid + grid_length - dyadic_length_2 - 1; //NOT ord_dyadic_length_2 here, as we are indexing k_grid
-	k11 = k12 - 1;
-	out[gram_length - 1] += deriv * ( ((*k21) + (*k12)) * da - *(k11) * db );
-
-	for (uint64_t p = 3; p < num_anti_diag; ++p) { // First three antidiagonals are initialised
-
-		//Update b
-		uint64_t startj, endj;
-		uint64_t p_ = p - 2;
-		startj = ord_dyadic_length_1 > p_ ? 1 : p_ - ord_dyadic_length_1 + 1;
-		endj = ord_dyadic_length_2 > p_ ? p_ : ord_dyadic_length_2;
-
-		uint64_t i = p_ - startj; // Calculate corresponding i (since i + j = p)
-		uint64_t i_rev = ord_dyadic_length_1 - i - 1;
-		uint64_t j_rev = ord_dyadic_length_2 - startj - 1;
-
-		for (uint64_t j = startj;
-			j < endj;
-			++j, --i, ++i_rev, --j_rev) {
-			const uint64_t ii = (i_rev >> ord_dyadic_order_1);
-			const uint64_t jj = (j_rev >> ord_dyadic_order_2);
-			const uint64_t gram_idx = order ? ii * (length2 - 1) + jj : jj * (length2 - 1) + ii;
-
-			get_b(b[j], gram, gram_idx, dyadic_frac);
-		}
-
-		//Update a
-		p_ = p - 1;
-		startj = ord_dyadic_length_1 > p_ ? 1 : p_ - ord_dyadic_length_1 + 1;
-		endj = ord_dyadic_length_2 > p_ ? p_ : ord_dyadic_length_2;
-
-		i = p_ - startj; // Calculate corresponding i (since i + j = p)
-		i_rev = ord_dyadic_length_1 - i - 1;
-		j_rev = ord_dyadic_length_2 - startj - 1;
-
-		for (uint64_t j = startj;
-			j < endj;
-			++j, --i, ++i_rev, --j_rev) {
-			const uint64_t ii = (i_rev >> ord_dyadic_order_1);
-			const uint64_t jj = (j_rev >> ord_dyadic_order_2);
-			const uint64_t gram_idx = order ? ii * (length2 - 1) + jj : jj * (length2 - 1) + ii;
-
-			get_a(a[j], gram, gram_idx, dyadic_frac);
-		}
-
-		//Update diagonals
-		startj = ord_dyadic_length_1 > p ? 1 : p - ord_dyadic_length_1 + 1;
-		endj = ord_dyadic_length_2 > p ? p : ord_dyadic_length_2;
-
-		i = p - startj; // Calculate corresponding i (since i + j = p)
-		i_rev = ord_dyadic_length_1 - i - 1;
-		j_rev = ord_dyadic_length_2 - startj - 1;
-		uint64_t idx = order ? (i_rev + 1) * dyadic_length_2 + (j_rev + 1) : (j_rev + 1) * dyadic_length_2 + (i_rev + 1); //NOT ord_dyadic_length_2 here, as we are indexing k_grid
-		k12 = k_grid + idx - 1;
-		k21 = k_grid + idx - dyadic_length_2; //NOT ord_dyadic_length_2 here, as we are indexing k_grid
-		k11 = k21 - 1;
-
-		for (uint64_t j = startj;
-			j < endj;
-			++j, --i, ++i_rev, --j_rev) {
-			const uint64_t ii = (i_rev >> ord_dyadic_order_1);
-			const uint64_t jj = (j_rev >> ord_dyadic_order_2);
-
-			//Get da, db
-			const uint64_t gram_idx = order ? ii * (length2 - 1) + jj : jj * (length2 - 1) + ii;
-			get_a_b_deriv(da, db, gram, gram_idx, dyadic_frac);
-
-			// Update dF / dk
-			*(next_diag + j) = *(prev_diag + j - 1) * a[j-1] + *(prev_diag + j) * a[j] - *(prev_prev_diag + j - 1) * b[j-1];
-
-			// Update dF / dx
-			out[gram_idx] += *(next_diag + j) * ( (*(k12) + *(k21)) * da - *(k11) * db );
-
-			if (order) {
-				k12 += dyadic_length_2 - 1; //NOT ord_dyadic_length_2 here, as we are indexing k_grid
-				k21 += dyadic_length_2 - 1;
-				k11 += dyadic_length_2 - 1;
-			}
-			else {
-				k12 -= dyadic_length_2 - 1; //NOT ord_dyadic_length_2 here, as we are indexing k_grid
-				k21 -= dyadic_length_2 - 1;
-				k11 -= dyadic_length_2 - 1;
-			}
-		}
-
-		// Rotate the diagonals (swap pointers, no data copying)
-		T* temp = prev_prev_diag;
-		prev_prev_diag = prev_diag;
-		prev_diag = next_diag;
-		next_diag = temp;
-	}
 }
 
 template<std::floating_point T>
@@ -384,7 +197,6 @@ void get_sig_kernel_diag_(
 	uint64_t dyadic_order_1,
 	uint64_t dyadic_order_2
 ) {
-	// Dyadically refined grid dimensions
 	const uint64_t dyadic_length_1 = ((length1 - 1) << dyadic_order_1) + 1;
 	const uint64_t dyadic_length_2 = ((length2 - 1) << dyadic_order_2) + 1;
 
@@ -407,7 +219,7 @@ void sig_kernel_(
 ) {
 	if (dimension == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
 	if (return_grid)
-		get_sig_kernel_(gram, length1, length2, out, dyadic_order_1, dyadic_order_2, true);
+		get_sig_kernel_grid_(gram, length1, length2, out, dyadic_order_1, dyadic_order_2);
 	else
 		get_sig_kernel_diag_(gram, length1, length2, out, dyadic_order_1, dyadic_order_2);
 }
@@ -437,7 +249,7 @@ void batch_sig_kernel_(
 
 	auto sig_kernel_func = [&](const T* const gram_ptr, T* const out_ptr) {
 		if (return_grid) {
-			get_sig_kernel_(gram_ptr, length1, length2, out_ptr, dyadic_order_1, dyadic_order_2, true);
+			get_sig_kernel_grid_(gram_ptr, length1, length2, out_ptr, dyadic_order_1, dyadic_order_2);
 		}
 		else {
 			get_sig_kernel_diag_(gram_ptr, length1, length2, out_ptr, dyadic_order_1, dyadic_order_2);
@@ -472,177 +284,74 @@ void get_sig_kernel_backprop_(
 	uint64_t dyadic_order_2,
 	bool return_grid
 ) {
-	const uint64_t dyadic_length_1 = ((length1 - 1) << dyadic_order_1) + 1;
-	const uint64_t dyadic_length_2 = ((length2 - 1) << dyadic_order_2) + 1;
-
+	const uint64_t dl1 = ((length1 - 1) << dyadic_order_1) + 1;
+	const uint64_t dl2 = ((length2 - 1) << dyadic_order_2) + 1;
 	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1 + dyadic_order_2));
-	static const T sixth = static_cast<T>(1.) / 6;
-	static const T twelth = static_cast<T>(1.) / 12;
-	const uint64_t grid_length = dyadic_length_1 * dyadic_length_2;
+	const uint64_t grid_length = dl1 * dl2;
 	const uint64_t gram_length = (length1 - 1) * (length2 - 1);
+	const uint64_t gram_stride = length2 - 1;
 
-	// Allocate grid for dF / dk
+	auto at = [dl2](int64_t row, int64_t col) -> uint64_t { return row * dl2 + col; };
+	auto gram_at = [&](int64_t row, int64_t col) -> uint64_t {
+		return (row >> dyadic_order_1) * gram_stride + (col >> dyadic_order_2);
+	};
+
 	auto d_grid_uptr = std::make_unique<T[]>(grid_length);
 	T* const d_grid = d_grid_uptr.get();
 
-	// Populate d_grid from derivs
 	if (return_grid) {
-		// derivs points to a grid-sized array of derivatives
 		std::copy(derivs, derivs + grid_length, d_grid);
 	}
 	else {
-		// derivs points to a single scalar derivative
 		std::fill(d_grid, d_grid + grid_length, static_cast<T>(0.));
 		d_grid[grid_length - 1] = *derivs;
 	}
 
-	std::fill(out, out + (length1 - 1) * (length2 - 1), static_cast<T>(0.));
+	std::fill(out, out + gram_length, static_cast<T>(0.));
 
-	// a, b, da, db
-	T a, a_deriv, b_deriv;
-	T a10, a01, b11;
+	T a, da, db;
 
-	// indices
-	uint64_t grid_idx, gram_idx;
+	auto accum_gram_grad = [&](int64_t row, int64_t col) {
+		const uint64_t gi = gram_at(row - 1, col - 1);
+		get_a_b_deriv(da, db, gram, gi, dyadic_frac);
+		out[gi] += d_grid[at(row, col)] * (
+			(k_grid[at(row - 1, col)] + k_grid[at(row, col - 1)]) * da
+			- k_grid[at(row - 1, col - 1)] * db
+		);
+	};
 
-	// k_grid and d_grid ptrs
-	const T* k11, * k12, * k21;
-	const T* d11, * d12, * d21;
+	// 1. Last element (seed)
+	accum_gram_grad(dl1 - 1, dl2 - 1);
 
-	//Start with the last dF / dk ============================================
-	//Compute dA(i-1, j-1) and dB(i-1, j-1)
-	gram_idx = gram_length - 1;
-	get_a_b_deriv(a_deriv, b_deriv, gram, gram_idx, dyadic_frac);
-
-	//Update dF / dx
-	k21 = k_grid + grid_length - 2;
-	k12 = k_grid + grid_length - dyadic_length_2 - 1;
-	k11 = k12 - 1;
-	out[gram_length - 1] += d_grid[grid_length - 1] * ((*k12 + *k21) * a_deriv - *k11 * b_deriv);
-
-	//Loop over last row ============================================
-	grid_idx = grid_length - 2;
-	k21 = k_grid + grid_idx - 1;
-	k12 = k_grid + grid_idx - dyadic_length_2;
-	k11 = k12 - 1;
-
-	for (int64_t i = dyadic_length_2 - 2;
-		i >= 1;
-		--i, --grid_idx, --k12, --k21, --k11) {
-
-		const int64_t j = dyadic_length_1 - 1;
-
-		//Precompute indices
-		const uint64_t cur_ii = (i >> dyadic_order_2);
-		const uint64_t prev_ii = ((i - 1) >> dyadic_order_2);
-		const uint64_t prev_jj = ((j - 1) >> dyadic_order_1) * (length2 - 1);
-
-		//Compute A(i, j-1)
-		get_a(a, gram, prev_jj + cur_ii, dyadic_frac);
-
-		//Update dF / dk
-		d_grid[grid_idx] += d_grid[grid_idx + 1] * a;
-
-		//Compute dA(i-1, j-1) and dB(i-1, j-1)
-		gram_idx = prev_jj + prev_ii;
-		get_a_b_deriv(a_deriv, b_deriv, gram, gram_idx, dyadic_frac);
-
-		//Update dF / dx
-		out[gram_idx] += d_grid[grid_idx] * ((*k12 + *k21) * a_deriv - *k11 * b_deriv);
+	// 2. Last row: horizontal propagation only
+	for (int64_t col = dl2 - 2; col >= 1; --col) {
+		get_a(a, gram, gram_at(dl1 - 2, col), dyadic_frac);
+		d_grid[at(dl1 - 1, col)] += d_grid[at(dl1 - 1, col + 1)] * a;
+		accum_gram_grad(dl1 - 1, col);
 	}
 
-	grid_idx = grid_length - 1 - dyadic_length_2;
-	k21 = k_grid + grid_idx - 1;
-	k12 = k_grid + grid_idx - dyadic_length_2;
-	k11 = k12 - 1;
-	//Loop over last column ============================================
-	for (int64_t j = dyadic_length_1 - 2;
-		j >= 1;
-		--j,
-		grid_idx -= dyadic_length_2,
-		k21 -= dyadic_length_2,
-		k12 -= dyadic_length_2,
-		k11 -= dyadic_length_2) {
-
-		const int64_t i = dyadic_length_2 - 1;
-
-		//Precompute indices
-		const uint64_t prev_ii = ((i - 1) >> dyadic_order_2);
-		const uint64_t cur_jj = (j >> dyadic_order_1) * (length2 - 1);
-		const uint64_t prev_jj = ((j - 1) >> dyadic_order_1) * (length2 - 1);
-
-		//Compute A(i-1, j)
-		get_a(a, gram, cur_jj + prev_ii, dyadic_frac);
-
-		//Update dF / dk
-		d_grid[grid_idx] += d_grid[grid_idx + dyadic_length_2] * a;
-
-		//Compute dA(i-1, j-1) and dB(i-1, j-1)
-		gram_idx = prev_jj + prev_ii;
-		get_a_b_deriv(a_deriv, b_deriv, gram, gram_idx, dyadic_frac);
-
-		//Update dF / dx
-		out[gram_idx] += d_grid[grid_idx] * ((*k12 + *k21) * a_deriv - *k11 * b_deriv);
+	// 3. Last column: vertical propagation only
+	for (int64_t row = dl1 - 2; row >= 1; --row) {
+		get_a(a, gram, gram_at(row, dl2 - 2), dyadic_frac);
+		d_grid[at(row, dl2 - 1)] += d_grid[at(row + 1, dl2 - 1)] * a;
+		accum_gram_grad(row, dl2 - 1);
 	}
 
-	// Loop over remaining grid ============================================
-	grid_idx = grid_length - 2 - dyadic_length_2;
-	k21 = k_grid + grid_idx - 1;
-	k12 = k_grid + grid_idx - dyadic_length_2;
-	k11 = k12 - 1;
-	d21 = d_grid + grid_idx + 1;
-	d12 = d_grid + grid_idx + dyadic_length_2;
-	d11 = d12 + 1;
-	for (int64_t j = dyadic_length_1 - 2;
-		j >= 1;
-		--j,
-		grid_idx -= 2,
-		k12 -= 2,
-		k21 -= 2,
-		k11 -= 2,
-		d12 -= 2,
-		d21 -= 2,
-		d11 -= 2) {
+	// 4. Interior
+	for (int64_t row = dl1 - 2; row >= 1; --row) {
+		for (int64_t col = dl2 - 2; col >= 1; --col) {
+			T a_right, a_below, b_diag;
+			get_a(a_right, gram, gram_at(row - 1, col), dyadic_frac);
+			get_a(a_below, gram, gram_at(row, col - 1), dyadic_frac);
+			get_b(b_diag, gram, gram_at(row, col), dyadic_frac);
 
-		for (int64_t i = dyadic_length_2 - 2;
-			i >= 1;
-			--i,
-			--grid_idx,
-			--k12,
-			--k21,
-			--k11,
-			--d12,
-			--d21,
-			--d11) {
+			d_grid[at(row, col)] += d_grid[at(row, col + 1)] * a_right
+				+ d_grid[at(row + 1, col)] * a_below
+				- d_grid[at(row + 1, col + 1)] * b_diag;
 
-			//Precompute indices
-			const uint64_t cur_ii = (i >> dyadic_order_2);
-			const uint64_t prev_ii = ((i - 1) >> dyadic_order_2);
-			const uint64_t cur_jj = (j >> dyadic_order_1) * (length2 - 1);
-			const uint64_t prev_jj = ((j - 1) >> dyadic_order_1) * (length2 - 1);
-
-			// Compute A(i, j-1)
-			get_a(a10, gram, prev_jj + cur_ii, dyadic_frac);
-
-			// Compute A(i-1, j)
-			get_a(a01, gram, cur_jj + prev_ii, dyadic_frac);
-
-			// Compute B(i, j)
-			get_b(b11, gram, cur_jj + cur_ii, dyadic_frac);
-
-			//Update dF / dk
-			d_grid[grid_idx] += (*d21) * a10 + (*d12) * a01 - (*d11) * b11;
-
-			//Compute dA(i-1, j-1) and dB(i-1, j-1)
-			gram_idx = prev_jj + prev_ii;
-			get_a_b_deriv(a_deriv, b_deriv, gram, gram_idx, dyadic_frac);
-
-			//Update dF / dx
-			out[gram_idx] += d_grid[grid_idx] * ((*k12 + *k21) * a_deriv - *k11 * b_deriv);
+			accum_gram_grad(row, col);
 		}
 	}
-
-	return;
 }
 
 template<std::floating_point T>
@@ -660,28 +369,6 @@ void sig_kernel_backprop_(
 ) {
 	if (dimension == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
 	get_sig_kernel_backprop_<T>(gram, out, derivs, k_grid, length1, length2, dyadic_order_1, dyadic_order_2, return_grid);
-	//get_sig_kernel_backprop_diag_(gram, out, deriv, k_grid, length1, length2, dyadic_order_1, dyadic_order_2);
-}
-
-template<std::floating_point T>
-void get_sig_kernel_backprop_diag_(
-	const T* gram,
-	T* out,
-	T deriv,
-	const T* k_grid,
-	uint64_t length1,
-	uint64_t length2,
-	uint64_t dyadic_order_1,
-	uint64_t dyadic_order_2
-) {
-	// Dyadically refined grid dimensions
-	const uint64_t dyadic_length_1 = ((length1 - 1) << dyadic_order_1) + 1;
-	const uint64_t dyadic_length_2 = ((length2 - 1) << dyadic_order_2) + 1;
-
-	if (dyadic_length_2 <= dyadic_length_1)
-		get_sig_kernel_backprop_diag_internal_<true>(gram, out, deriv, k_grid, length1, length2, dyadic_order_1, dyadic_order_2, dyadic_length_1, dyadic_length_2);
-	else
-		get_sig_kernel_backprop_diag_internal_<false>(gram, out, deriv, k_grid, length1, length2, dyadic_order_1, dyadic_order_2, dyadic_length_1, dyadic_length_2);
 }
 
 template<std::floating_point T>

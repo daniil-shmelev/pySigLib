@@ -87,6 +87,20 @@ def ensure_own_contiguous_storage(arr):
 
     raise TypeError("Unexpected error in ensure_own_contiguous_storage: arr must be of type torch.Tensor or numpy.ndarray")
 
+def parse_dyadic_order(dyadic_order):
+    if isinstance(dyadic_order, tuple) and len(dyadic_order) == 2:
+        do1, do2 = dyadic_order
+    elif isinstance(dyadic_order, int):
+        do1 = do2 = dyadic_order
+    else:
+        raise TypeError("dyadic_order must be an integer or a tuple of length 2")
+    if do1 < 0 or do2 < 0:
+        raise ValueError("dyadic_order must be a non-negative integer or tuple of non-negative integers")
+    return do1, do2
+
+def dyadic_grid_length(path_length, dyadic_order):
+    return ((path_length - 1) << dyadic_order) + 1
+
 def check_log_sig_method(method):
     if method < 0 or method > 3:
         raise ValueError("method must be one of 0, 1, 2 or 3. Got " + str(method) + " instead.")

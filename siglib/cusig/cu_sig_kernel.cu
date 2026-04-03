@@ -17,6 +17,11 @@
 #include "cusig.h"
 #include "cu_sig_kernel.h"
 
+/* Signature kernel PDE solver (CUDA).
+ * Same scheme as cp_sig_kernel.h. Each block processes one batch item
+ * with 32 threads sweeping anti-diagonals in tiles along the shorter axis.
+ * The `order` template (true when L2 <= L1) controls axis orientation. */
+
 __constant__ uint64_t dimension;
 __constant__ uint64_t length1;
 __constant__ uint64_t length2;
@@ -33,7 +38,7 @@ __constant__ uint64_t grid_length;
 
 template<typename T>
 inline __device__ void get_a_b(T& a, T& b, const T* gram, uint64_t idx, T dyadic_frac) {
-	static const T twelth = static_cast<T>(1.) / 12;
+	const T twelth = static_cast<T>(1.) / 12;
 	const T gram_val = gram[idx] * dyadic_frac;
 	const T gram_val_2 = gram_val * gram_val * twelth;
 	a = static_cast<T>(1.) + static_cast<T>(0.5) * gram_val + gram_val_2;
@@ -42,24 +47,45 @@ inline __device__ void get_a_b(T& a, T& b, const T* gram, uint64_t idx, T dyadic
 
 template<typename T>
 inline __device__ void get_a(T& a, const T* gram, uint64_t idx, T dyadic_frac) {
-	static const T twelth = static_cast<T>(1.) / 12;
+	const T twelth = static_cast<T>(1.) / 12;
 	T gram_val = gram[idx] * dyadic_frac;
 	a = static_cast<T>(1.) + gram_val * (0.5 + gram_val * twelth);
 }
 
 template<typename T>
 inline __device__ void get_b(T& b, const T* gram, uint64_t idx, T dyadic_frac) {
-	static const T twelth = static_cast<T>(1.) / 12;
+	const T twelth = static_cast<T>(1.) / 12;
 	const T gram_val = gram[idx] * dyadic_frac;
 	b = static_cast<T>(1.) - gram_val * gram_val * twelth;
 }
 
 template<typename T>
 inline __device__ void get_a_b_deriv(T& a_deriv, T& b_deriv, const T* gram, uint64_t idx, T dyadic_frac) {
-	static const T sixth = static_cast<T>(1.) / 6;
+	const T sixth = static_cast<T>(1.) / 6;
 	const T gram_val = gram[idx] * dyadic_frac;
 	b_deriv = -gram_val * sixth * dyadic_frac;
 	a_deriv = static_cast<T>(0.5) * dyadic_frac - b_deriv;
+}
+
+template<bool order>
+inline __device__ uint64_t diag_gram_idx(uint64_t ii, uint64_t jj) {
+	if constexpr (order)
+		return ii * (length2 - 1) + jj;
+	else
+		return jj * (length2 - 1) + ii;
+}
+
+template<typename T, bool order>
+inline __device__ T gram_val(const T* gram, uint64_t ii, uint64_t jj, T dyadic_frac) {
+	return gram[diag_gram_idx<order>(ii, jj)] * dyadic_frac;
+}
+
+template<typename T>
+inline __device__ T pde_stencil(T prev_j, T prev_jm1, T pprev_jm1, T deriv) {
+	const T twelth = static_cast<T>(1.) / 12;
+	const T deriv2 = deriv * deriv * twelth;
+	return (prev_j + prev_jm1) * (static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2)
+		- pprev_jm1 * (static_cast<T>(1.) - deriv2);
 }
 
 template<typename T, bool order> //order is True if dyadic_length_2 <= dyadic_length_1
@@ -71,7 +97,6 @@ __device__ void goursat_pde_32(
 	const int num_threads,
 	T dyadic_frac
 ) {
-	static const T twelth = static_cast<T>(1.) / 12;
 	const int thread_id = threadIdx.x;
 
 	const uint64_t ord_dyadic_order_1 = order ? dyadic_order_1 : dyadic_order_2;
@@ -116,11 +141,10 @@ __device__ void goursat_pde_32(
 			const uint64_t ii = ((i - 1) >> ord_dyadic_order_1);
 			const uint64_t jj = ((j + iteration * 32 - 1) >> ord_dyadic_order_2);
 
-			const T deriv = order ? gram[ii * (length2 - 1) + jj] * dyadic_frac : gram[jj * (length2 - 1) + ii] * dyadic_frac;
-			const T deriv2 = deriv * deriv * twelth;
-
-			diagonals[next_diag_idx + j] = (diagonals[prev_diag_idx + j] + diagonals[prev_diag_idx + j - 1]) * (
-				static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2) - diagonals[prev_prev_diag_idx + j - 1] * (static_cast<T>(1.) - deriv2);
+			const T deriv = gram_val<T, order>(gram, ii, jj, dyadic_frac);
+			diagonals[next_diag_idx + j] = pde_stencil(
+				diagonals[prev_diag_idx + j], diagonals[prev_diag_idx + j - 1],
+				diagonals[prev_prev_diag_idx + j - 1], deriv);
 
 		}
 
@@ -188,7 +212,6 @@ __device__ void goursat_pde_32_full(
 	const int num_threads,
 	T dyadic_frac
 ) {
-	static const T twelth = static_cast<T>(1.) / 12;
 	const int thread_id = threadIdx.x;
 	T* const pde_grid_ = order ? pde_grid + iteration * 32 : pde_grid + iteration * 32 * dyadic_length_2;
 
@@ -214,16 +237,17 @@ __device__ void goursat_pde_32_full(
 			const uint64_t ii = ((i - 1) >> ord_dyadic_order_1);
 			const uint64_t jj = ((j + iteration * 32 - 1) >> ord_dyadic_order_2);
 
-			const T deriv = order ? gram[ii * (length2 - 1) + jj] * dyadic_frac : gram[jj * (length2 - 1) + ii] * dyadic_frac;
-			const T deriv2 = deriv * deriv * twelth;
+			const T deriv = gram_val<T, order>(gram, ii, jj, dyadic_frac);
 
-			if (order) {
-				pde_grid_[i * dyadic_length_2 + j] = (pde_grid_[(i - 1) * dyadic_length_2 + j] + pde_grid_[i * dyadic_length_2 + (j - 1)]) * (
-					static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2) - pde_grid_[(i - 1) * dyadic_length_2 + j - 1] * (static_cast<T>(1.) - deriv2);
+			if constexpr (order) {
+				pde_grid_[i * dyadic_length_2 + j] = pde_stencil(
+					pde_grid_[(i - 1) * dyadic_length_2 + j], pde_grid_[i * dyadic_length_2 + (j - 1)],
+					pde_grid_[(i - 1) * dyadic_length_2 + j - 1], deriv);
 			}
 			else {
-				pde_grid_[j * dyadic_length_2 + i] = (pde_grid_[(j - 1) * dyadic_length_2 + i] + pde_grid_[j * dyadic_length_2 + (i - 1)]) * (
-					static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2) - pde_grid_[(j - 1) * dyadic_length_2 + i - 1] * (static_cast<T>(1.) - deriv2);
+				pde_grid_[j * dyadic_length_2 + i] = pde_stencil(
+					pde_grid_[(j - 1) * dyadic_length_2 + i], pde_grid_[j * dyadic_length_2 + (i - 1)],
+					pde_grid_[(j - 1) * dyadic_length_2 + i - 1], deriv);
 			}
 
 		}
@@ -288,7 +312,6 @@ void sig_kernel_cuda_(
 	const uint64_t gram_length_ = (length1_ - 1) * (length2_ - 1);
 	const uint64_t grid_length_ = dyadic_length_1_ * dyadic_length_2_;
 
-	// Allocate constant memory
 	cudaMemcpyToSymbol(dimension, &dimension_, sizeof(uint64_t));
 	cudaMemcpyToSymbol(length1, &length1_, sizeof(uint64_t));
 	cudaMemcpyToSymbol(length2, &length2_, sizeof(uint64_t));
@@ -421,11 +444,8 @@ __device__ void goursat_pde_32_deriv(
 
 	__syncthreads();
 
-	// First three antidiagonals are initialised
-	// num_anti_diag + 2 so that a and b are updated as initial conds
 	for (uint64_t p = (iteration == 0) ? 3 : 2; p < num_anti_diag + 2; ++p) {
 
-		//Update b
 		uint64_t startj, endj;
 		int64_t p_ = p - 2;
 		startj = ord_dyadic_length_1 > p_ ? 1 : p_ - ord_dyadic_length_1 + 1;
@@ -444,19 +464,17 @@ __device__ void goursat_pde_32_deriv(
 			const uint64_t j_rev = ord_dyadic_length_2 - j - 1 - iteration * 32;
 			const uint64_t ii = (i_rev >> ord_dyadic_order_1);
 			const uint64_t jj = (j_rev >> ord_dyadic_order_2);
-			const uint64_t gram_idx = order ? ii * (length2 - 1) + jj : jj * (length2 - 1) + ii;
+			const uint64_t gram_idx = diag_gram_idx<order>(ii, jj);
 
 			get_b(b[j], gram, gram_idx, dyadic_frac);
 		}
 
 		__syncthreads();
 
-		//Overwrite initial conditions
 		if (thread_id == 0 && p_ >= num_threads && p_ - num_threads < ord_dyadic_length_1) {
 			b_initial_condition[p_ - num_threads] = b[num_threads];
 		}
 
-		//Update a
 		p_ = p - 1;
 		startj = ord_dyadic_length_1 > p_ ? 1 : p_ - ord_dyadic_length_1 + 1;
 		endj = num_threads + 1 > p_ ? p_ : num_threads + 1;
@@ -474,19 +492,17 @@ __device__ void goursat_pde_32_deriv(
 			const uint64_t j_rev = ord_dyadic_length_2 - j - 1 - iteration * 32;
 			const uint64_t ii = (i_rev >> ord_dyadic_order_1);
 			const uint64_t jj = (j_rev >> ord_dyadic_order_2);
-			const uint64_t gram_idx = order ? ii * (length2 - 1) + jj : jj * (length2 - 1) + ii;
+			const uint64_t gram_idx = diag_gram_idx<order>(ii, jj);
 
 			get_a(a[j], gram, gram_idx, dyadic_frac);
 		}
 
 		__syncthreads();
 
-		//Overwrite initial conditions
 		if (thread_id == 0 && p_ >= num_threads && p_ - num_threads < ord_dyadic_length_1) {
 			a_initial_condition[p_ - num_threads] = a[num_threads];
 		}
 
-		//Update diagonals
 		startj = ord_dyadic_length_1 > p ? 1 : p - ord_dyadic_length_1 + 1;
 		endj = num_threads + 1 > p ? p : num_threads + 1;
 
@@ -504,19 +520,16 @@ __device__ void goursat_pde_32_deriv(
 			const uint64_t idx = order ? (i_rev + 1) * dyadic_length_2 + (j_rev + 1) : (j_rev + 1) * dyadic_length_2 + (i_rev + 1); //NOT ord_dyadic_length_2 here as we are indexing k_grid
 			const uint64_t ii = (i_rev >> ord_dyadic_order_1);
 			const uint64_t jj = (j_rev >> ord_dyadic_order_2);
-			const uint64_t gram_idx = order ? ii * (length2 - 1) + jj : jj * (length2 - 1) + ii;
+			const uint64_t gram_idx = diag_gram_idx<order>(ii, jj);
 
-			//Get da, db
 			T da, db;
 			get_a_b_deriv(da, db, gram, gram_idx, dyadic_frac);
 
-			// Update dF / dk
 			*(next_diag + j) = *(prev_diag + j - 1) * a[j - 1] + *(prev_diag + j) * a[j] - *(prev_prev_diag + j - 1) * b[j - 1];
 
 			if (return_grid)
 				*(next_diag + j) += *(derivs + idx);
 
-			// Update dF / dx
 			k12 = k_grid + idx - 1;
 			k21 = k_grid + idx - dyadic_length_2; //NOT ord_dyadic_length_2 here as we are indexing k_grid
 			k11 = k_grid + idx - dyadic_length_2 - 1;
@@ -528,7 +541,6 @@ __device__ void goursat_pde_32_deriv(
 
 		__syncthreads();
 
-		//Overwrite initial conditions
 		if (thread_id == 0 && p >= num_threads && p - num_threads < ord_dyadic_length_1) {
 			initial_condition[p - num_threads] = *(next_diag + num_threads);
 		}
@@ -621,7 +633,6 @@ void sig_kernel_backprop_cuda_(
 	const uint64_t grid_length_ = dyadic_length_1_ * dyadic_length_2_;
 	const uint64_t derivs_length_ = return_grid ? grid_length_ : 1;
 
-	// Allocate constant memory
 	cudaMemcpyToSymbol(dimension, &dimension_, sizeof(uint64_t));
 	cudaMemcpyToSymbol(length1, &length1_, sizeof(uint64_t));
 	cudaMemcpyToSymbol(length2, &length2_, sizeof(uint64_t));
@@ -635,7 +646,6 @@ void sig_kernel_backprop_cuda_(
 	cudaMemcpyToSymbol(gram_length, &gram_length_, sizeof(uint64_t));
 	cudaMemcpyToSymbol(grid_length, &grid_length_, sizeof(uint64_t));
 
-	//Initialise out to 0
 	cudaMemset(out, 0, batch_size_ * gram_length_ * sizeof(T));
 
 	T* d_initial_condition;
