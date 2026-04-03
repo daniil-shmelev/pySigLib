@@ -37,38 +37,6 @@
  */
 
 template<std::floating_point T>
-FORCE_INLINE void get_a_b(T& a, T& b, const T* gram, uint64_t idx, T dyadic_frac) {
-	static const T twelth = static_cast<T>(1.) / 12;
-	const T gram_val = gram[idx] * dyadic_frac;
-	const T gram_val_2 = gram_val * gram_val * twelth;
-	a = static_cast<T>(1.) + static_cast<T>(0.5) * gram_val + gram_val_2;
-	b = static_cast<T>(1.) - gram_val_2;
-}
-
-template<std::floating_point T>
-FORCE_INLINE void get_a(T& a, const T* gram, uint64_t idx, T dyadic_frac) {
-	static const T twelth = static_cast<T>(1.) / 12;
-	T gram_val = gram[idx] * dyadic_frac;
-	a = static_cast<T>(1.) + gram_val * (static_cast < T>(0.5) + gram_val * twelth);
-}
-
-template<std::floating_point T>
-FORCE_INLINE void get_b(T& b, const T* gram, uint64_t idx, T dyadic_frac) {
-	static const T twelth = static_cast<T>(1.) / 12;
-	const T gram_val = gram[idx] * dyadic_frac;
-	b = static_cast<T>(1.) - gram_val * gram_val * twelth;
-}
-
-template<std::floating_point T>
-FORCE_INLINE void get_a_b_deriv(T& a_deriv, T& b_deriv, const T* gram, uint64_t idx, T dyadic_frac) {
-	static const T twelth = static_cast<T>(1.) / 12;
-	static const T sixth = static_cast<T>(1.) / 6;
-	const T gram_val = gram[idx] * dyadic_frac;
-	b_deriv = -gram_val * sixth * dyadic_frac;
-	a_deriv = static_cast<T>(0.5) * dyadic_frac - b_deriv;
-}
-
-template<std::floating_point T>
 void get_sig_kernel_grid_(
 	const T* gram,
 	uint64_t length1,
@@ -122,15 +90,6 @@ void get_sig_kernel_grid_(
 	}
 }
 
-template<std::floating_point T>
-FORCE_INLINE void pde_stencil(T* next, const T* prev, const T* prev_prev, uint64_t j, T deriv) {
-	static const T twelth = static_cast<T>(1.) / 12;
-	const T deriv2 = deriv * deriv * twelth;
-	*(next + j) = (*(prev + j) + *(prev + j - 1)) * (
-		static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2)
-		- *(prev_prev + j - 1) * (static_cast<T>(1.) - deriv2);
-}
-
 // order=true: j along dim 2 (shorter), i along dim 1.
 // order=false: swapped. Resolved at compile time.
 template<bool order>
@@ -146,18 +105,19 @@ FORCE_INLINE uint64_t diag_gram_idx(uint64_t i, uint64_t j, uint64_t do1, uint64
 // of length min(L1, L2) instead of the full grid.
 template<std::floating_point T, bool order>
 void get_sig_kernel_diag_internal_(
-	const T* gram,
+	const T* RESTRICT gram_a,
+	const T* RESTRICT gram_b,
 	uint64_t length2,
-	T* out,
+	T* RESTRICT out,
 	uint64_t dyadic_order_1,
 	uint64_t dyadic_order_2,
 	uint64_t dyadic_length_1,
 	uint64_t dyadic_length_2
 ) {
-	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1 + dyadic_order_2));
 	const uint64_t num_anti_diag = dyadic_length_1 + dyadic_length_2 - 1;
 	const uint64_t long_len = order ? dyadic_length_1 : dyadic_length_2;
 	const uint64_t short_len = order ? dyadic_length_2 : dyadic_length_1;
+	const uint64_t gram_stride = length2 - 1;
 
 	const uint64_t diag_len = short_len;
 	auto diagonals_uptr = std::make_unique<T[]>(diag_len * 3);
@@ -173,10 +133,55 @@ void get_sig_kernel_diag_internal_(
 		const uint64_t startj = long_len > p ? 1 : p - long_len + 1;
 		const uint64_t endj = short_len > p ? p : short_len;
 
-		for (uint64_t j = startj; j < endj; ++j) {
+		uint64_t j = startj;
+#ifdef HAS_AVX2
+		if constexpr (std::is_same_v<T, double>) {
+			for (; j + 4 <= endj; j += 4) {
+				const uint64_t i0 = p - j;
+				const uint64_t gi0 = diag_gram_idx<order>(i0, j, dyadic_order_1, dyadic_order_2, gram_stride);
+				const uint64_t gi1 = diag_gram_idx<order>(i0 - 1, j + 1, dyadic_order_1, dyadic_order_2, gram_stride);
+				const uint64_t gi2 = diag_gram_idx<order>(i0 - 2, j + 2, dyadic_order_1, dyadic_order_2, gram_stride);
+				const uint64_t gi3 = diag_gram_idx<order>(i0 - 3, j + 3, dyadic_order_1, dyadic_order_2, gram_stride);
+
+				__m256d va = _mm256_set_pd(gram_a[gi3], gram_a[gi2], gram_a[gi1], gram_a[gi0]);
+				__m256d vb = _mm256_set_pd(gram_b[gi3], gram_b[gi2], gram_b[gi1], gram_b[gi0]);
+				__m256d vpj = _mm256_loadu_pd(prev_diag + j);
+				__m256d vpjm1 = _mm256_loadu_pd(prev_diag + j - 1);
+				__m256d vppjm1 = _mm256_loadu_pd(prev_prev_diag + j - 1);
+
+				// (vpj + vpjm1) * va - vppjm1 * vb = vpj*va + (vpjm1*va - vppjm1*vb)
+				_mm256_storeu_pd(next_diag + j,
+					_mm256_fmadd_pd(vpj, va, _mm256_fmsub_pd(vpjm1, va, _mm256_mul_pd(vppjm1, vb))));
+			}
+		}
+		else if constexpr (std::is_same_v<T, float>) {
+			for (; j + 8 <= endj; j += 8) {
+				const uint64_t i0 = p - j;
+				__m256 va, vb;
+				// Gather A/B from pre-computed gram arrays
+				alignas(32) float a_vals[8], b_vals[8];
+				for (int k = 0; k < 8; ++k) {
+					uint64_t gi = diag_gram_idx<order>(i0 - k, j + k, dyadic_order_1, dyadic_order_2, gram_stride);
+					a_vals[k] = gram_a[gi];
+					b_vals[k] = gram_b[gi];
+				}
+				va = _mm256_load_ps(a_vals);
+				vb = _mm256_load_ps(b_vals);
+
+				__m256 vpj = _mm256_loadu_ps(prev_diag + j);
+				__m256 vpjm1 = _mm256_loadu_ps(prev_diag + j - 1);
+				__m256 vppjm1 = _mm256_loadu_ps(prev_prev_diag + j - 1);
+
+				_mm256_storeu_ps(next_diag + j,
+					_mm256_fmadd_ps(vpj, va, _mm256_fmsub_ps(vpjm1, va, _mm256_mul_ps(vppjm1, vb))));
+			}
+		}
+#endif
+		for (; j < endj; ++j) {
 			const uint64_t i = p - j;
-			const T deriv = gram[diag_gram_idx<order>(i, j, dyadic_order_1, dyadic_order_2, length2 - 1)] * dyadic_frac;
-			pde_stencil(next_diag, prev_diag, prev_prev_diag, j, deriv);
+			const uint64_t gi = diag_gram_idx<order>(i, j, dyadic_order_1, dyadic_order_2, gram_stride);
+			*(next_diag + j) = (*(prev_diag + j) + *(prev_diag + j - 1)) * gram_a[gi]
+				- *(prev_prev_diag + j - 1) * gram_b[gi];
 		}
 
 		T* temp = prev_prev_diag;
@@ -199,11 +204,28 @@ void get_sig_kernel_diag_(
 ) {
 	const uint64_t dyadic_length_1 = ((length1 - 1) << dyadic_order_1) + 1;
 	const uint64_t dyadic_length_2 = ((length2 - 1) << dyadic_order_2) + 1;
+	const uint64_t gram_size = (length1 - 1) * (length2 - 1);
+
+	// Pre-compute A and B for every gram cell once.
+	// Each gram cell is reused 2^(do1+do2) times across dyadic sub-cells.
+	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1 + dyadic_order_2));
+	static const T twelth = static_cast<T>(1.) / 12;
+	auto gram_a_uptr = std::make_unique<T[]>(gram_size);
+	auto gram_b_uptr = std::make_unique<T[]>(gram_size);
+	T* const gram_a = gram_a_uptr.get();
+	T* const gram_b = gram_b_uptr.get();
+
+	for (uint64_t idx = 0; idx < gram_size; ++idx) {
+		const T d = gram[idx] * dyadic_frac;
+		const T d2 = d * d * twelth;
+		gram_a[idx] = static_cast<T>(1.) + static_cast<T>(0.5) * d + d2;
+		gram_b[idx] = static_cast<T>(1.) - d2;
+	}
 
 	if (dyadic_length_2 <= dyadic_length_1)
-		get_sig_kernel_diag_internal_<T, true>(gram, length2, out, dyadic_order_1, dyadic_order_2, dyadic_length_1, dyadic_length_2);
+		get_sig_kernel_diag_internal_<T, true>(gram_a, gram_b, length2, out, dyadic_order_1, dyadic_order_2, dyadic_length_1, dyadic_length_2);
 	else
-		get_sig_kernel_diag_internal_<T, false>(gram, length2, out, dyadic_order_1, dyadic_order_2, dyadic_length_1, dyadic_length_2);
+		get_sig_kernel_diag_internal_<T, false>(gram_a, gram_b, length2, out, dyadic_order_1, dyadic_order_2, dyadic_length_1, dyadic_length_2);
 }
 
 template<std::floating_point T>
@@ -275,9 +297,9 @@ void batch_sig_kernel_(
 template<std::floating_point T>
 void get_sig_kernel_backprop_(
 	const T* gram,
-	T* out,
+	T* RESTRICT out,
 	const T* derivs,
-	const T* k_grid,
+	const T* RESTRICT k_grid,
 	uint64_t length1,
 	uint64_t length2,
 	uint64_t dyadic_order_1,
@@ -287,6 +309,8 @@ void get_sig_kernel_backprop_(
 	const uint64_t dl1 = ((length1 - 1) << dyadic_order_1) + 1;
 	const uint64_t dl2 = ((length2 - 1) << dyadic_order_2) + 1;
 	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1 + dyadic_order_2));
+	static const T twelth = static_cast<T>(1.) / 12;
+	static const T sixth = static_cast<T>(1.) / 6;
 	const uint64_t grid_length = dl1 * dl2;
 	const uint64_t gram_length = (length1 - 1) * (length2 - 1);
 	const uint64_t gram_stride = length2 - 1;
@@ -295,6 +319,25 @@ void get_sig_kernel_backprop_(
 	auto gram_at = [&](int64_t row, int64_t col) -> uint64_t {
 		return (row >> dyadic_order_1) * gram_stride + (col >> dyadic_order_2);
 	};
+
+	// Pre-compute A, B, dA, dB for every gram cell
+	auto gram_a_uptr = std::make_unique<T[]>(gram_length);
+	auto gram_b_uptr = std::make_unique<T[]>(gram_length);
+	auto gram_da_uptr = std::make_unique<T[]>(gram_length);
+	auto gram_db_uptr = std::make_unique<T[]>(gram_length);
+	T* const gram_a = gram_a_uptr.get();
+	T* const gram_b = gram_b_uptr.get();
+	T* const gram_da = gram_da_uptr.get();
+	T* const gram_db = gram_db_uptr.get();
+
+	for (uint64_t idx = 0; idx < gram_length; ++idx) {
+		const T gv = gram[idx] * dyadic_frac;
+		const T gv2 = gv * gv * twelth;
+		gram_a[idx] = static_cast<T>(1.) + static_cast<T>(0.5) * gv + gv2;
+		gram_b[idx] = static_cast<T>(1.) - gv2;
+		gram_db[idx] = -gv * sixth * dyadic_frac;
+		gram_da[idx] = static_cast<T>(0.5) * dyadic_frac - gram_db[idx];
+	}
 
 	auto d_grid_uptr = std::make_unique<T[]>(grid_length);
 	T* const d_grid = d_grid_uptr.get();
@@ -309,45 +352,35 @@ void get_sig_kernel_backprop_(
 
 	std::fill(out, out + gram_length, static_cast<T>(0.));
 
-	T a, da, db;
-
 	auto accum_gram_grad = [&](int64_t row, int64_t col) {
 		const uint64_t gi = gram_at(row - 1, col - 1);
-		get_a_b_deriv(da, db, gram, gi, dyadic_frac);
 		out[gi] += d_grid[at(row, col)] * (
-			(k_grid[at(row - 1, col)] + k_grid[at(row, col - 1)]) * da
-			- k_grid[at(row - 1, col - 1)] * db
+			(k_grid[at(row - 1, col)] + k_grid[at(row, col - 1)]) * gram_da[gi]
+			- k_grid[at(row - 1, col - 1)] * gram_db[gi]
 		);
 	};
 
-	// 1. Last element (seed)
+	// 1. Seed
 	accum_gram_grad(dl1 - 1, dl2 - 1);
 
 	// 2. Last row: horizontal propagation only
 	for (int64_t col = dl2 - 2; col >= 1; --col) {
-		get_a(a, gram, gram_at(dl1 - 2, col), dyadic_frac);
-		d_grid[at(dl1 - 1, col)] += d_grid[at(dl1 - 1, col + 1)] * a;
+		d_grid[at(dl1 - 1, col)] += d_grid[at(dl1 - 1, col + 1)] * gram_a[gram_at(dl1 - 2, col)];
 		accum_gram_grad(dl1 - 1, col);
 	}
 
 	// 3. Last column: vertical propagation only
 	for (int64_t row = dl1 - 2; row >= 1; --row) {
-		get_a(a, gram, gram_at(row, dl2 - 2), dyadic_frac);
-		d_grid[at(row, dl2 - 1)] += d_grid[at(row + 1, dl2 - 1)] * a;
+		d_grid[at(row, dl2 - 1)] += d_grid[at(row + 1, dl2 - 1)] * gram_a[gram_at(row, dl2 - 2)];
 		accum_gram_grad(row, dl2 - 1);
 	}
 
-	// 4. Interior
+	// 4. Interior (row-by-row, cache-friendly for large grids)
 	for (int64_t row = dl1 - 2; row >= 1; --row) {
 		for (int64_t col = dl2 - 2; col >= 1; --col) {
-			T a_right, a_below, b_diag;
-			get_a(a_right, gram, gram_at(row - 1, col), dyadic_frac);
-			get_a(a_below, gram, gram_at(row, col - 1), dyadic_frac);
-			get_b(b_diag, gram, gram_at(row, col), dyadic_frac);
-
-			d_grid[at(row, col)] += d_grid[at(row, col + 1)] * a_right
-				+ d_grid[at(row + 1, col)] * a_below
-				- d_grid[at(row + 1, col + 1)] * b_diag;
+			d_grid[at(row, col)] += d_grid[at(row, col + 1)] * gram_a[gram_at(row - 1, col)]
+				+ d_grid[at(row + 1, col)] * gram_a[gram_at(row, col - 1)]
+				- d_grid[at(row + 1, col + 1)] * gram_b[gram_at(row, col)];
 
 			accum_gram_grad(row, col);
 		}

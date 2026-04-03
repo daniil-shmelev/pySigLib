@@ -477,7 +477,7 @@ inline void clear_bch_cache() {
 
 template<std::floating_point T>
 void lie_bracket(
-	const T* __restrict v1, const T* __restrict v2, T* __restrict result, uint64_t m,
+	const T* RESTRICT v1, const T* RESTRICT v2, T* RESTRICT result, uint64_t m,
 	const std::vector<SparseVec>& commutator_table
 ) {
 	std::memset(result, 0, m * sizeof(T));
@@ -526,7 +526,7 @@ void lie_bracket(
 // output writes.
 template<std::floating_point T>
 void log_sig_combine_impl_(
-	const T* __restrict log_sig1, const T* __restrict log_sig2, T* __restrict out,
+	const T* RESTRICT log_sig1, const T* RESTRICT log_sig2, T* RESTRICT out,
 	const BchCache& cache, T* memo
 ) {
 	uint64_t m = cache.m;
@@ -699,7 +699,7 @@ inline SIMD4D SIMD4D_fmadd(SIMD4D a, SIMD4D b, SIMD4D c) { return {vfmaq_f64(c.l
 // 4-wide BCH combination using SIMD4D abstraction (works on both AVX2 and NEON).
 #ifdef VEC
 inline void log_sig_combine_impl_x4_(
-	const double* __restrict ls1, const double* __restrict ls2, double* __restrict out,
+	const double* RESTRICT ls1, const double* RESTRICT ls2, double* RESTRICT out,
 	const BchCache& cache, double* memo
 ) {
 	uint64_t m = cache.m;
@@ -793,8 +793,8 @@ inline void log_sig_from_path_x4_(
 // 4-wide BCH backprop: interleaved layout, processes 4 batch elements.
 // Uses pair-grouped table for forward recompute and reverse BCH.
 inline void log_sig_combine_backprop_impl_x4_(
-	const double* __restrict d_out, double* __restrict d_ls1, double* __restrict d_ls2,
-	const double* __restrict ls1, const double* __restrict ls2,
+	const double* RESTRICT d_out, double* RESTRICT d_ls1, double* RESTRICT d_ls2,
+	const double* RESTRICT ls1, const double* RESTRICT ls2,
 	const BchCache& cache, double* workspace
 ) {
 	uint64_t m = cache.m;
@@ -1239,8 +1239,8 @@ void batch_log_sig_from_path_backprop_(
 
 template<std::floating_point T>
 void log_sig_combine_backprop_impl_(
-	const T* __restrict d_out, T* __restrict d_ls1, T* __restrict d_ls2,
-	const T* __restrict ls1, const T* __restrict ls2,
+	const T* RESTRICT d_out, T* RESTRICT d_ls1, T* RESTRICT d_ls2,
+	const T* RESTRICT ls1, const T* RESTRICT ls2,
 	const BchCache& cache, T* workspace
 ) {
 	uint64_t m = cache.m;
@@ -1292,7 +1292,7 @@ void log_sig_combine_backprop_impl_(
 	std::memset(d_memo, 0, 2 * m * sizeof(T));
 	for (uint64_t w = 2; w < m2; ++w) {
 		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
-		T* __restrict dm = d_memo + w * m;
+		T* RESTRICT dm = d_memo + w * m;
 		if (c_w != T(0)) {
 			for (uint64_t k = 0; k < m; ++k) {
 				dm[k] = c_w * d_out[k];
