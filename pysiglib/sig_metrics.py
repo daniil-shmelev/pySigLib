@@ -3,8 +3,6 @@ import numpy as np
 import torch
 
 from .param_checks import check_type_multiple
-from .data_handlers import MultiplePathInputHandler
-
 from .static_kernels import StaticKernel
 from .sig_kernel import sig_kernel_gram
 
@@ -112,25 +110,23 @@ def sig_score(
     check_type_multiple(sample, "sample", (np.ndarray, torch.Tensor))
     check_type_multiple(y, "y", (np.ndarray, torch.Tensor))
 
-    # Use torch for simplicity
+    is_numpy = isinstance(sample, np.ndarray)
     sample = torch.as_tensor(sample)
     y = torch.as_tensor(y)
     if len(y.shape) == 2:
         y = y.unsqueeze(0).contiguous().clone()
-
-    data = MultiplePathInputHandler([sample, y], time_aug, lead_lag, end_time, ["sample_paths", "y"], False)
 
     B = sample.shape[0]
 
     xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
     xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
 
-    xx_sum = (torch.sum(xx) - torch.sum(torch.diag(xx))) / (B * (B - 1.))
-    xy_sum = torch.sum(xy, dim = 0) * (2. / B)
+    xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
+    xy_sum = torch.sum(xy, dim=0) * (2. / B)
 
     res = lam * xx_sum - xy_sum
 
-    if data.type_ == "numpy":
+    if is_numpy:
         return res.numpy()
     return res
 
@@ -341,11 +337,9 @@ def sig_mmd(
         print(mmd)
 
     """
-    data = MultiplePathInputHandler([sample1, sample2], time_aug, lead_lag, end_time, ["sample1", "sample2"], False)
-
-    # Use torch for simplicity
-    sample1 = torch.as_tensor(data.path[0])
-    sample2 = torch.as_tensor(data.path[1])
+    is_numpy = isinstance(sample1, np.ndarray)
+    sample1 = torch.as_tensor(sample1)
+    sample2 = torch.as_tensor(sample2)
 
     m = sample1.shape[0]
     n = sample2.shape[0]
@@ -354,12 +348,12 @@ def sig_mmd(
     xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
     yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
 
-    xx_sum = (torch.sum(xx) - torch.sum(torch.diag(xx))) / (m * (m - 1))
+    xx_sum = (torch.sum(xx) - torch.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * torch.mean(xy)
-    yy_sum = (torch.sum(yy) - torch.sum(torch.diag(yy))) / (n * (n - 1))
+    yy_sum = (torch.sum(yy) - torch.trace(yy)) / (n * (n - 1))
 
     res = xx_sum - xy_sum + yy_sum
 
-    if data.type_ == "numpy":
+    if is_numpy:
         return res.numpy()
     return res

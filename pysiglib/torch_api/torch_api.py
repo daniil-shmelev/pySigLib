@@ -38,7 +38,6 @@ from ..transform_path import transform_path as transform_path_forward
 from ..transform_path_backprop import transform_path_backprop
 
 from ..param_checks import check_type, check_word_or_word_list
-from ..data_handlers import MultiplePathInputHandler
 
 class Sig(torch.autograd.Function):
     @staticmethod
@@ -394,24 +393,18 @@ def sig_score(
     check_type(sample, "sample", torch.Tensor)
     check_type(y, "y", torch.Tensor)
 
-    # Use torch for simplicity
-    sample = torch.as_tensor(sample)
-    y = torch.as_tensor(y)
     if len(y.shape) == 2:
         y = y.unsqueeze(0).contiguous().clone()
-
-    data = MultiplePathInputHandler([sample, y], time_aug, lead_lag, end_time, ["sample_paths", "y"], False)
 
     B = sample.shape[0]
 
     xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
     xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
 
-    xx_sum = (torch.sum(xx) - torch.sum(torch.diag(xx))) / (B * (B - 1.))
+    xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
 
-    res = lam * xx_sum - xy_sum
-    return res
+    return lam * xx_sum - xy_sum
 
 sig_score.__doc__ = sig_score_forward.__doc__
 
@@ -444,12 +437,6 @@ def sig_mmd(
         n_jobs : int = 1,
         max_batch : int = -1
 ) -> Union[np.ndarray, torch.tensor]:
-    data = MultiplePathInputHandler([sample1, sample2], time_aug, lead_lag, end_time, ["sample1", "sample2"], False)
-
-    # Use torch for simplicity
-    sample1 = torch.as_tensor(data.path[0])
-    sample2 = torch.as_tensor(data.path[1])
-
     m = sample1.shape[0]
     n = sample2.shape[0]
 
@@ -457,9 +444,9 @@ def sig_mmd(
     xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
     yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
 
-    xx_sum = (torch.sum(xx) - torch.sum(torch.diag(xx))) / (m * (m - 1))
+    xx_sum = (torch.sum(xx) - torch.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * torch.mean(xy)
-    yy_sum = (torch.sum(yy) - torch.sum(torch.diag(yy))) / (n * (n - 1))
+    yy_sum = (torch.sum(yy) - torch.trace(yy)) / (n * (n - 1))
 
     return xx_sum - xy_sum + yy_sum
 
