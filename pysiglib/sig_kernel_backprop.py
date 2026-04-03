@@ -22,7 +22,7 @@ import torch
 from .transform_path import transform_path
 from .transform_path_backprop import transform_path_backprop
 from .sig_kernel import sig_kernel
-from .param_checks import check_type
+from .param_checks import check_type, parse_dyadic_order
 from .error_codes import err_msg
 from .dtypes import CPSIG_BATCH_SIG_KERNEL_BACKPROP, DTYPES, CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA
 from .data_handlers import MultiplePathInputHandler, ScalarInputHandler, GridOutputHandler, PathInputHandler
@@ -203,17 +203,7 @@ def sig_kernel_backprop(
     if not (left_deriv or right_deriv):
         return None, None
 
-    if isinstance(dyadic_order, tuple) and len(dyadic_order) == 2:
-        dyadic_order_1 = dyadic_order[0]
-        dyadic_order_2 = dyadic_order[1]
-    elif isinstance(dyadic_order, int):
-        dyadic_order_1 = dyadic_order
-        dyadic_order_2 = dyadic_order
-    else:
-        raise TypeError("dyadic_order must be an integer or a tuple of length 2")
-
-    if dyadic_order_1 < 0 or dyadic_order_2 < 0:
-        raise ValueError("dyadic_order must be a non-negative integer or tuple of non-negative integers")
+    dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
 
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug, lead_lag, end_time, n_jobs)
@@ -444,10 +434,7 @@ def sig_kernel_gram_backprop(
     chunk_size = max_batch * max_batch
 
     # Check if k_grid can be transposed for symmetric off-diagonal pairs
-    if isinstance(dyadic_order, tuple) and len(dyadic_order) == 2:
-        do1, do2 = dyadic_order
-    else:
-        do1 = do2 = dyadic_order
+    do1, do2 = parse_dyadic_order(dyadic_order)
     can_transpose_k = (do1 == do2)
 
     for start in range(0, n_pairs, chunk_size):
