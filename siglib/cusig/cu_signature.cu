@@ -231,6 +231,11 @@ __global__ void signature_per_word_ker(
 
 	if (active) {
 		out[batch_idx * sig_size + level_offset + word_idx] = pref[DEGREE];
+		// Level-1 kernel also writes the constant term (level 0)
+		if constexpr (DEGREE == 1) {
+			if (word_idx == 0)
+				out[batch_idx * sig_size] = T(1);
+		}
 	}
 }
 
@@ -763,13 +768,12 @@ void signature_per_word_core_(
 	const int steps = static_cast<int>(length - 1);
 	const int dim = static_cast<int>(dimension);
 
-	set_sig_level0<T><<<(unsigned int)((batch_size + 255) / 256), 256>>>(
-		out, sig_len, batch_size);
-
 	auto li = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(li.get(), dimension, degree + 2);
 
-	size_t smem = SIG_CHUNK * dimension * sizeof(T);
+	// Dynamic shared memory: only allocate what's needed for the actual path length
+	const int actual_chunk = (steps < SIG_CHUNK) ? steps : SIG_CHUNK;
+	size_t smem = actual_chunk * dimension * sizeof(T);
 
 	ensure_streams();
 
@@ -809,9 +813,17 @@ void signature_per_word_core_(
 		#undef LAUNCH_DEGREE
 	}
 
-	for (uint64_t k = 0; k < degree && k < MAX_PER_WORD_STREAMS; ++k)
-		cudaStreamSynchronize(s_per_word_streams[k]);
-	cudaDeviceSynchronize();
+	// Event-based sync: join worker streams into stream 0, then single host sync
+	{
+		cudaEvent_t done;
+		cudaEventCreateWithFlags(&done, cudaEventDisableTiming);
+		for (uint64_t k = 1; k < degree && k < MAX_PER_WORD_STREAMS; ++k) {
+			cudaEventRecord(done, s_per_word_streams[k]);
+			cudaStreamWaitEvent(s_per_word_streams[0], done, 0);
+		}
+		cudaEventDestroy(done);
+	}
+	cudaStreamSynchronize(s_per_word_streams[0]);
 
 	check_cuda_error();
 }
