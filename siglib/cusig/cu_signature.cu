@@ -768,14 +768,20 @@ void signature_per_word_core_(
 	const int steps = static_cast<int>(length - 1);
 	const int dim = static_cast<int>(dimension);
 
-	auto li = std::make_unique<uint64_t[]>(degree + 2);
-	host_populate_level_index(li.get(), dimension, degree + 2);
+	uint64_t li[14];  // stack array, supports up to degree 12
+	host_populate_level_index(li, dimension, degree + 2);
 
 	// Dynamic shared memory: only allocate what's needed for the actual path length
 	const int actual_chunk = (steps < SIG_CHUNK) ? steps : SIG_CHUNK;
 	size_t smem = actual_chunk * dimension * sizeof(T);
 
-	ensure_streams();
+	// For small total output sizes, skip streams and launch sequentially
+	// on the default stream — avoids event create/destroy and stream sync overhead.
+	const uint64_t top_level = host_power(dimension, degree);
+	const bool use_streams = (top_level > 4096);
+
+	if (use_streams)
+		ensure_streams();
 
 	for (uint64_t k = 1; k <= degree; ++k) {
 		uint64_t level_size = host_power(dimension, k);
@@ -784,7 +790,7 @@ void signature_per_word_core_(
 		if (level_size < 128) block = 32;
 		unsigned int grid_x = (unsigned int)((level_size + block - 1) / block);
 		dim3 grid(grid_x, (unsigned int)batch_size, 1);
-		cudaStream_t stream = (k <= MAX_PER_WORD_STREAMS)
+		cudaStream_t stream = (use_streams && k <= MAX_PER_WORD_STREAMS)
 			? s_per_word_streams[k - 1] : nullptr;
 
 		#define LAUNCH_DEGREE(D) \
@@ -813,8 +819,8 @@ void signature_per_word_core_(
 		#undef LAUNCH_DEGREE
 	}
 
-	// Event-based sync: join worker streams into stream 0, then single host sync
-	{
+	if (use_streams) {
+		// Event-based sync: join worker streams into stream 0, then single host sync
 		cudaEvent_t done;
 		cudaEventCreateWithFlags(&done, cudaEventDisableTiming);
 		for (uint64_t k = 1; k < degree && k < MAX_PER_WORD_STREAMS; ++k) {
@@ -822,8 +828,11 @@ void signature_per_word_core_(
 			cudaStreamWaitEvent(s_per_word_streams[0], done, 0);
 		}
 		cudaEventDestroy(done);
+		cudaStreamSynchronize(s_per_word_streams[0]);
+	} else {
+		// Default stream — all kernels are ordered, just sync once
+		cudaDeviceSynchronize();
 	}
-	cudaStreamSynchronize(s_per_word_streams[0]);
 
 	check_cuda_error();
 }
