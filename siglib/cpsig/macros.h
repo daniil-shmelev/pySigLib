@@ -23,16 +23,12 @@
 
 #ifdef _MSC_VER
     #define FORCE_INLINE __forceinline
+    #define FORCE_INLINE_LAMBDA [[msvc::forceinline]]
     #define RESTRICT __restrict
 #else
     #define FORCE_INLINE inline __attribute__((always_inline))
+    #define FORCE_INLINE_LAMBDA __attribute__((always_inline))
     #define RESTRICT __restrict__
-#endif
-
-// AVX2 intrinsics are available when VEC is defined and we're not on Apple
-// (Apple Silicon uses NEON, not AVX)
-#if defined(VEC) && !defined(__APPLE__)
-    #define HAS_AVX2
 #endif
 
 // Error codes match pysiglib/error_codes.py:

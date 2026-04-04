@@ -134,47 +134,20 @@ void get_sig_kernel_diag_internal_(
 		const uint64_t endj = short_len > p ? p : short_len;
 
 		uint64_t j = startj;
-#ifdef HAS_AVX2
-		if constexpr (std::is_same_v<T, double>) {
-			for (; j + 4 <= endj; j += 4) {
-				const uint64_t i0 = p - j;
-				const uint64_t gi0 = diag_gram_idx<order>(i0, j, dyadic_order_1, dyadic_order_2, gram_stride);
-				const uint64_t gi1 = diag_gram_idx<order>(i0 - 1, j + 1, dyadic_order_1, dyadic_order_2, gram_stride);
-				const uint64_t gi2 = diag_gram_idx<order>(i0 - 2, j + 2, dyadic_order_1, dyadic_order_2, gram_stride);
-				const uint64_t gi3 = diag_gram_idx<order>(i0 - 3, j + 3, dyadic_order_1, dyadic_order_2, gram_stride);
-
-				__m256d va = _mm256_set_pd(gram_a[gi3], gram_a[gi2], gram_a[gi1], gram_a[gi0]);
-				__m256d vb = _mm256_set_pd(gram_b[gi3], gram_b[gi2], gram_b[gi1], gram_b[gi0]);
-				__m256d vpj = _mm256_loadu_pd(prev_diag + j);
-				__m256d vpjm1 = _mm256_loadu_pd(prev_diag + j - 1);
-				__m256d vppjm1 = _mm256_loadu_pd(prev_prev_diag + j - 1);
-
-				// (vpj + vpjm1) * va - vppjm1 * vb = vpj*va + (vpjm1*va - vppjm1*vb)
-				_mm256_storeu_pd(next_diag + j,
-					_mm256_fmadd_pd(vpj, va, _mm256_fmsub_pd(vpjm1, va, _mm256_mul_pd(vppjm1, vb))));
-			}
-		}
-		else if constexpr (std::is_same_v<T, float>) {
-			for (; j + 8 <= endj; j += 8) {
-				const uint64_t i0 = p - j;
-				__m256 va, vb;
-				// Gather A/B from pre-computed gram arrays
-				alignas(32) float a_vals[8], b_vals[8];
-				for (int k = 0; k < 8; ++k) {
-					uint64_t gi = diag_gram_idx<order>(i0 - k, j + k, dyadic_order_1, dyadic_order_2, gram_stride);
-					a_vals[k] = gram_a[gi];
-					b_vals[k] = gram_b[gi];
-				}
-				va = _mm256_load_ps(a_vals);
-				vb = _mm256_load_ps(b_vals);
-
-				__m256 vpj = _mm256_loadu_ps(prev_diag + j);
-				__m256 vpjm1 = _mm256_loadu_ps(prev_diag + j - 1);
-				__m256 vppjm1 = _mm256_loadu_ps(prev_prev_diag + j - 1);
-
-				_mm256_storeu_ps(next_diag + j,
-					_mm256_fmadd_ps(vpj, va, _mm256_fmsub_ps(vpjm1, va, _mm256_mul_ps(vppjm1, vb))));
-			}
+#ifdef VEC
+		{
+			const uint64_t span = endj - startj;
+			const uint64_t i0 = p - startj;
+			auto idx = [&](uint64_t k) FORCE_INLINE_LAMBDA {
+				return diag_gram_idx<order>(i0 - k, startj + k, dyadic_order_1, dyadic_order_2, gram_stride);
+			};
+			vec_kernel_diag_step(
+				next_diag + startj,
+				prev_diag + startj,
+				prev_diag + startj - 1,
+				prev_prev_diag + startj - 1,
+				gram_a, gram_b, idx, span);
+			j = endj;
 		}
 #endif
 		for (; j < endj; ++j) {
