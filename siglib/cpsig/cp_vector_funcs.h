@@ -18,6 +18,23 @@
 #include "macros.h"
 
 #ifdef VEC
+
+// Vectorised signature kernel diagonal step with gather (scalar tail).
+// Computes: next[k] = (prev[k] + prev_m1[k]) * gram_a[idx(k)] - prev_prev_m1[k] * gram_b[idx(k)]
+// for k in [k, count).  IndexFn maps k -> gram index (non-contiguous gather).
+
+template<typename T, typename IndexFn>
+FORCE_INLINE void vec_kernel_diag_step_tail(
+	T* RESTRICT next, const T* RESTRICT prev, const T* RESTRICT prev_m1,
+	const T* RESTRICT prev_prev_m1, const T* RESTRICT gram_a,
+	const T* RESTRICT gram_b, IndexFn idx, uint64_t k, uint64_t count)
+{
+	for (; k < count; ++k) {
+		const uint64_t gi = idx(k);
+		next[k] = (prev[k] + prev_m1[k]) * gram_a[gi] - prev_prev_m1[k] * gram_b[gi];
+	}
+}
+
 #ifndef __APPLE__
 
 #include <immintrin.h>
@@ -215,6 +232,63 @@ FORCE_INLINE double dot_product(const double* a, const double* b, size_t N) {
 	return out;
 }
 
+template<typename IndexFn>
+FORCE_INLINE void vec_kernel_diag_step(
+	double* RESTRICT next,
+	const double* RESTRICT prev,
+	const double* RESTRICT prev_m1,
+	const double* RESTRICT prev_prev_m1,
+	const double* RESTRICT gram_a,
+	const double* RESTRICT gram_b,
+	IndexFn idx,
+	uint64_t count)
+{
+	uint64_t k = 0;
+	for (; k + 4 <= count; k += 4) {
+		const uint64_t gi0 = idx(k), gi1 = idx(k + 1), gi2 = idx(k + 2), gi3 = idx(k + 3);
+		__m256d va = _mm256_set_pd(gram_a[gi3], gram_a[gi2], gram_a[gi1], gram_a[gi0]);
+		__m256d vb = _mm256_set_pd(gram_b[gi3], gram_b[gi2], gram_b[gi1], gram_b[gi0]);
+		__m256d vpj = _mm256_loadu_pd(prev + k);
+		__m256d vpjm1 = _mm256_loadu_pd(prev_m1 + k);
+		__m256d vppjm1 = _mm256_loadu_pd(prev_prev_m1 + k);
+
+		_mm256_storeu_pd(next + k,
+			_mm256_fmadd_pd(vpj, va, _mm256_fmsub_pd(vpjm1, va, _mm256_mul_pd(vppjm1, vb))));
+	}
+	vec_kernel_diag_step_tail(next, prev, prev_m1, prev_prev_m1, gram_a, gram_b, idx, k, count);
+}
+
+template<typename IndexFn>
+FORCE_INLINE void vec_kernel_diag_step(
+	float* RESTRICT next,
+	const float* RESTRICT prev,
+	const float* RESTRICT prev_m1,
+	const float* RESTRICT prev_prev_m1,
+	const float* RESTRICT gram_a,
+	const float* RESTRICT gram_b,
+	IndexFn idx,
+	uint64_t count)
+{
+	uint64_t k = 0;
+	for (; k + 8 <= count; k += 8) {
+		alignas(32) float a_vals[8], b_vals[8];
+		for (int m = 0; m < 8; ++m) {
+			const uint64_t gi = idx(k + m);
+			a_vals[m] = gram_a[gi];
+			b_vals[m] = gram_b[gi];
+		}
+		__m256 va = _mm256_load_ps(a_vals);
+		__m256 vb = _mm256_load_ps(b_vals);
+		__m256 vpj = _mm256_loadu_ps(prev + k);
+		__m256 vpjm1 = _mm256_loadu_ps(prev_m1 + k);
+		__m256 vppjm1 = _mm256_loadu_ps(prev_prev_m1 + k);
+
+		_mm256_storeu_ps(next + k,
+			_mm256_fmadd_ps(vpj, va, _mm256_fmsub_ps(vpjm1, va, _mm256_mul_ps(vppjm1, vb))));
+	}
+	vec_kernel_diag_step_tail(next, prev, prev_m1, prev_prev_m1, gram_a, gram_b, idx, k, count);
+}
+
 #else
 
 FORCE_INLINE void vec_mult_add(float* out, const float* other, float scalar, uint64_t size)
@@ -305,6 +379,66 @@ FORCE_INLINE void vec_mult_assign(double* out, const double* other, double scala
     }
 }
 
+template<typename IndexFn>
+FORCE_INLINE void vec_kernel_diag_step(
+	double* RESTRICT next,
+	const double* RESTRICT prev,
+	const double* RESTRICT prev_m1,
+	const double* RESTRICT prev_prev_m1,
+	const double* RESTRICT gram_a,
+	const double* RESTRICT gram_b,
+	IndexFn idx,
+	uint64_t count)
+{
+	uint64_t k = 0;
+	for (; k + 2 <= count; k += 2) {
+		const uint64_t gi0 = idx(k), gi1 = idx(k + 1);
+		double a_vals[2] = { gram_a[gi0], gram_a[gi1] };
+		double b_vals[2] = { gram_b[gi0], gram_b[gi1] };
+		float64x2_t va = vld1q_f64(a_vals);
+		float64x2_t vb = vld1q_f64(b_vals);
+		float64x2_t vpj = vld1q_f64(prev + k);
+		float64x2_t vpjm1 = vld1q_f64(prev_m1 + k);
+		float64x2_t vppjm1 = vld1q_f64(prev_prev_m1 + k);
+
+		float64x2_t sum = vaddq_f64(vpj, vpjm1);
+		float64x2_t result = vmlsq_f64(vmulq_f64(sum, va), vppjm1, vb);
+		vst1q_f64(next + k, result);
+	}
+	vec_kernel_diag_step_tail(next, prev, prev_m1, prev_prev_m1, gram_a, gram_b, idx, k, count);
+}
+
+template<typename IndexFn>
+FORCE_INLINE void vec_kernel_diag_step(
+	float* RESTRICT next,
+	const float* RESTRICT prev,
+	const float* RESTRICT prev_m1,
+	const float* RESTRICT prev_prev_m1,
+	const float* RESTRICT gram_a,
+	const float* RESTRICT gram_b,
+	IndexFn idx,
+	uint64_t count)
+{
+	uint64_t k = 0;
+	for (; k + 4 <= count; k += 4) {
+		float a_vals[4], b_vals[4];
+		for (int m = 0; m < 4; ++m) {
+			const uint64_t gi = idx(k + m);
+			a_vals[m] = gram_a[gi];
+			b_vals[m] = gram_b[gi];
+		}
+		float32x4_t va = vld1q_f32(a_vals);
+		float32x4_t vb = vld1q_f32(b_vals);
+		float32x4_t vpj = vld1q_f32(prev + k);
+		float32x4_t vpjm1 = vld1q_f32(prev_m1 + k);
+		float32x4_t vppjm1 = vld1q_f32(prev_prev_m1 + k);
+
+		float32x4_t sum = vaddq_f32(vpj, vpjm1);
+		float32x4_t result = vmlsq_f32(vmulq_f32(sum, va), vppjm1, vb);
+		vst1q_f32(next + k, result);
+	}
+	vec_kernel_diag_step_tail(next, prev, prev_m1, prev_prev_m1, gram_a, gram_b, idx, k, count);
+}
 
 #endif
 
