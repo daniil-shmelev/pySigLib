@@ -293,6 +293,17 @@ FORCE_INLINE void vec_kernel_diag_step(
 
 FORCE_INLINE void vec_mult_add(float* out, const float* other, float scalar, uint64_t size)
 {
+	if (size > 4 && size < 8) {
+		const float32x4_t s = vdupq_n_f32(scalar);
+		const float32x4_t v0 = vld1q_f32(other);
+		const float32x4_t v1 = vld1q_f32(other + size - 4);
+		const float32x4_t o0 = vld1q_f32(out);
+		const float32x4_t o1 = vld1q_f32(out + size - 4);
+		vst1q_f32(out, vfmaq_f32(o0, v0, s));
+		vst1q_f32(out + size - 4, vfmaq_f32(o1, v1, s));
+		return;
+	}
+
 	const uint64_t N = size / 4;
 	const uint64_t tail = size & 3;
 
@@ -301,10 +312,7 @@ FORCE_INLINE void vec_mult_add(float* out, const float* other, float scalar, uin
 	for (uint64_t i = 0; i < N; ++i) {
 		float32x4_t a = vld1q_f32(other);
 		float32x4_t b = vld1q_f32(out);
-
-		a = vmulq_f32(a, scalar_v);
-		b = vaddq_f32(b, a);
-
+		b = vfmaq_f32(b, a, scalar_v);
 		vst1q_f32(out, b);
 
 		other += 4;
@@ -325,10 +333,7 @@ FORCE_INLINE void vec_mult_add(double* out, const double* other, double scalar, 
     for (uint64_t i = 0; i < N; ++i) {
         float64x2_t a = vld1q_f64(other);
         float64x2_t b = vld1q_f64(out);
-
-        a = vmulq_f64(a, scalar_v);
-        b = vaddq_f64(b, a);
-
+        b = vfmaq_f64(b, a, scalar_v);
         vst1q_f64(out, b);
 
         other += 2;
@@ -341,6 +346,13 @@ FORCE_INLINE void vec_mult_add(double* out, const double* other, double scalar, 
 
 FORCE_INLINE void vec_mult_assign(float* out, const float* other, float scalar, uint64_t size)
 {
+	if (size > 4 && size < 8) {
+		const float32x4_t s = vdupq_n_f32(scalar);
+		vst1q_f32(out, vmulq_f32(vld1q_f32(other), s));
+		vst1q_f32(out + size - 4, vmulq_f32(vld1q_f32(other + size - 4), s));
+		return;
+	}
+
 	const uint64_t N = size / 4;
 	const uint64_t tail = size & 3;
 
@@ -401,8 +413,9 @@ FORCE_INLINE void vec_kernel_diag_step(
 		float64x2_t vpjm1 = vld1q_f64(prev_m1 + k);
 		float64x2_t vppjm1 = vld1q_f64(prev_prev_m1 + k);
 
-		float64x2_t sum = vaddq_f64(vpj, vpjm1);
-		float64x2_t result = vmlsq_f64(vmulq_f64(sum, va), vppjm1, vb);
+		float64x2_t result = vmulq_f64(vpj, va);
+		result = vfmaq_f64(result, vpjm1, va);
+		result = vfmsq_f64(result, vppjm1, vb);
 		vst1q_f64(next + k, result);
 	}
 	vec_kernel_diag_step_tail(next, prev, prev_m1, prev_prev_m1, gram_a, gram_b, idx, k, count);
@@ -433,8 +446,9 @@ FORCE_INLINE void vec_kernel_diag_step(
 		float32x4_t vpjm1 = vld1q_f32(prev_m1 + k);
 		float32x4_t vppjm1 = vld1q_f32(prev_prev_m1 + k);
 
-		float32x4_t sum = vaddq_f32(vpj, vpjm1);
-		float32x4_t result = vmlsq_f32(vmulq_f32(sum, va), vppjm1, vb);
+		float32x4_t result = vmulq_f32(vpj, va);
+		result = vfmaq_f32(result, vpjm1, va);
+		result = vfmsq_f32(result, vppjm1, vb);
 		vst1q_f32(next + k, result);
 	}
 	vec_kernel_diag_step_tail(next, prev, prev_m1, prev_prev_m1, gram_a, gram_b, idx, k, count);
