@@ -484,3 +484,105 @@ def test_branched_sig_cuda_float32():
     cuda = pysiglib.branched_sig(path, N)
     cpu = pysiglib.branched_sig(path.cpu(), N)
     check_close(cpu, cuda, single_atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Backpropagation tests
+# ---------------------------------------------------------------------------
+
+def _finite_diff_branched_sig(path_np, d, N, eps=1e-8):
+    """Compute dF/dpath via finite differences where F = sum(branched_sig)."""
+    pysiglib.prepare_branched_sig(d, N)
+    grad = np.zeros_like(path_np)
+    f0 = np.array(pysiglib.branched_sig(path_np, N)).sum()
+    for i in range(path_np.shape[0]):
+        for j in range(path_np.shape[1]):
+            path_p = path_np.copy()
+            path_p[i, j] += eps
+            f1 = np.array(pysiglib.branched_sig(path_p, N)).sum()
+            grad[i, j] = (f1 - f0) / eps
+    return grad
+
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_branched_sig_backprop_finite_diff(d, N):
+    """Backprop matches finite differences with F = sum(bsig)."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(400)
+    L = 5
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig = pysiglib.branched_sig(path, N)
+    bsig_len = len(bsig)
+    derivs = np.ones(bsig_len)
+
+    grad_bp = np.array(pysiglib.branched_sig_backprop(path, bsig, derivs, N))
+    grad_fd = _finite_diff_branched_sig(path, d, N)
+
+    np.testing.assert_allclose(grad_bp, grad_fd, atol=1e-4)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_backprop_random_derivs(d, N):
+    """Backprop with random upstream derivatives matches finite differences."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(401)
+    L = 5
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig = pysiglib.branched_sig(path, N)
+    bsig_len = len(bsig)
+    derivs = np.random.randn(bsig_len)
+
+    grad_bp = np.array(pysiglib.branched_sig_backprop(path, bsig, derivs, N))
+
+    eps = 1e-8
+    grad_fd = np.zeros_like(path)
+    for i in range(path.shape[0]):
+        for j in range(path.shape[1]):
+            path_p = path.copy()
+            path_p[i, j] += eps
+            bsig_p = np.array(pysiglib.branched_sig(path_p, N))
+            grad_fd[i, j] = np.dot(derivs, bsig_p - np.array(bsig)) / eps
+
+    np.testing.assert_allclose(grad_bp, grad_fd, atol=1e-4)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_backprop_torch_api(d, N):
+    """torch_api branched_sig backward produces correct gradients."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(402)
+    path = torch.tensor(np.cumsum(np.random.randn(5, d) * 0.1, axis=0),
+                        dtype=torch.float64, requires_grad=True)
+
+    bsig = pysiglib.torch_api.branched_sig(path, N)
+    loss = bsig.sum()
+    loss.backward()
+    grad_torch = path.grad.clone()
+
+    grad_manual = pysiglib.branched_sig_backprop(
+        path.detach(), bsig.detach(),
+        torch.ones_like(bsig), N)
+
+    check_close(grad_torch, grad_manual, double_atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_backprop_batch(d, N):
+    """Batched backprop matches single-path backprop."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(403)
+    B, L = 4, 6
+    paths = np.random.randn(B, L, d)
+
+    bsigs = pysiglib.branched_sig(paths, N)
+    bsig_len = bsigs.shape[1]
+    derivs = np.random.randn(B, bsig_len)
+
+    batch_grad = np.array(pysiglib.branched_sig_backprop(paths, bsigs, derivs, N))
+
+    for i in range(B):
+        single_grad = np.array(pysiglib.branched_sig_backprop(
+            paths[i], bsigs[i], derivs[i], N))
+        np.testing.assert_allclose(batch_grad[i], single_grad, atol=1e-12)

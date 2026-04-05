@@ -506,3 +506,45 @@ def log_sig_combine(
     return LogSigCombine.apply(log_sig1, log_sig2, dimension, degree, time_aug, lead_lag, n_jobs)
 
 log_sig_combine.__doc__ = log_sig_combine_forward.__doc__
+
+
+# =========================================================================
+# Branched Signature (with autograd)
+# =========================================================================
+
+from ..branched_sig import branched_sig as branched_sig_forward, prepare_branched_sig, branched_sig_length, branched_sig_combine
+from ..branched_sig_backprop import branched_sig_backprop
+
+class BranchedSig(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, path, degree, time_aug, lead_lag, end_time, n_jobs):
+        bsig = branched_sig_forward(path, degree, n_jobs=n_jobs,
+                                     time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
+
+        ctx.save_for_backward(path, bsig)
+        ctx.degree = degree
+        ctx.time_aug = time_aug
+        ctx.lead_lag = lead_lag
+        ctx.end_time = end_time
+        ctx.n_jobs = n_jobs
+
+        return bsig
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        path, bsig = ctx.saved_tensors
+        grad = branched_sig_backprop(path, bsig, grad_output, ctx.degree,
+                                     ctx.time_aug, ctx.lead_lag, ctx.end_time, ctx.n_jobs)
+        return grad, None, None, None, None, None
+
+def branched_sig(
+        path: Union[np.ndarray, torch.tensor],
+        degree: int,
+        n_jobs: int = 1,
+        time_aug: bool = False,
+        lead_lag: bool = False,
+        end_time: float = 1.0
+) -> Union[np.ndarray, torch.tensor]:
+    return BranchedSig.apply(path, degree, time_aug, lead_lag, end_time, n_jobs)
+
+branched_sig.__doc__ = branched_sig_forward.__doc__
