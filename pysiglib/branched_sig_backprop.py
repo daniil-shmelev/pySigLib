@@ -169,28 +169,29 @@ def branched_sig_combine_backprop(
     result1 = SigOutputHandler(data, bsig_len)
     result2 = SigOutputHandler(data, bsig_len)
 
-    if data.is_batch:
-        err_code = CPSIG_BATCH_BRANCHED_SIG_COMBINE_BACKPROP[data.dtype](
-            data.sig_ptr[1],
-            data.sig_ptr[2],
-            data.sig_ptr[0],
-            result1.data_ptr,
-            result2.data_ptr,
-            data.batch_size,
-            dimension,
-            degree,
-            n_jobs
-        )
+    if data.device == "cuda":
+        from .dtypes import CUSIG_BRANCHED_SIG_COMBINE_BACKPROP, CUSIG_BATCH_BRANCHED_SIG_COMBINE_BACKPROP
+        if data.is_batch:
+            err_code = CUSIG_BATCH_BRANCHED_SIG_COMBINE_BACKPROP[data.dtype](
+                data.sig_ptr[1], data.sig_ptr[2], data.sig_ptr[0],
+                result1.data_ptr, result2.data_ptr,
+                data.batch_size, dimension, degree)
+        else:
+            err_code = CUSIG_BRANCHED_SIG_COMBINE_BACKPROP[data.dtype](
+                data.sig_ptr[1], data.sig_ptr[2], data.sig_ptr[0],
+                result1.data_ptr, result2.data_ptr,
+                dimension, degree)
     else:
-        err_code = CPSIG_BRANCHED_SIG_COMBINE_BACKPROP[data.dtype](
-            data.sig_ptr[1],
-            data.sig_ptr[2],
-            data.sig_ptr[0],
-            result1.data_ptr,
-            result2.data_ptr,
-            dimension,
-            degree
-        )
+        if data.is_batch:
+            err_code = CPSIG_BATCH_BRANCHED_SIG_COMBINE_BACKPROP[data.dtype](
+                data.sig_ptr[1], data.sig_ptr[2], data.sig_ptr[0],
+                result1.data_ptr, result2.data_ptr,
+                data.batch_size, dimension, degree, n_jobs)
+        else:
+            err_code = CPSIG_BRANCHED_SIG_COMBINE_BACKPROP[data.dtype](
+                data.sig_ptr[1], data.sig_ptr[2], data.sig_ptr[0],
+                result1.data_ptr, result2.data_ptr,
+                dimension, degree)
 
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine_backprop: " + err_msg(err_code))

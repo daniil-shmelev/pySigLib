@@ -489,6 +489,206 @@ void branched_sig_backprop_ker(
 }
 
 // =========================================================================
+// Combine kernel: out = butcher_product(bsig1, bsig2)
+// =========================================================================
+
+template<typename T>
+__global__ __launch_bounds__(1024)
+void branched_sig_combine_ker(
+	const T* __restrict__ bsig1,
+	const T* __restrict__ bsig2,
+	T* __restrict__ out,
+	uint32_t total_len,
+	const uint32_t* __restrict__ g_coprod_data,
+	const uint32_t* __restrict__ g_coprod_offsets,
+	const uint32_t* __restrict__ g_order_index,
+	int max_nodes,
+	uint32_t coprod_data_len
+) {
+	const uint32_t batch_idx = blockIdx.y;
+	const uint32_t tid = threadIdx.x;
+	const uint32_t num_trees = total_len - 1;
+
+	extern __shared__ char smem[];
+	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(smem);
+	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
+	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
+
+	for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
+		s_coprod_data[i] = g_coprod_data[i];
+	for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
+		s_coprod_off[i] = g_coprod_offsets[i];
+	for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2); i += blockDim.x)
+		s_order_idx[i] = g_order_index[i];
+	__syncthreads();
+
+	const uint64_t off = static_cast<uint64_t>(batch_idx) * total_len;
+	const T* X = bsig1 + off;
+	const T* Y = bsig2 + off;
+	T* O = out + off;
+
+	// Copy X to out
+	for (uint32_t i = tid; i < total_len; i += blockDim.x)
+		O[i] = X[i];
+	__syncthreads();
+
+	// Butcher product: out = butcher_product(X, Y) — process high to low order
+	for (int order = max_nodes; order >= 1; --order) {
+		uint32_t ostart = s_order_idx[order];
+		uint32_t oend = s_order_idx[order + 1];
+		if (tid >= ostart && tid < oend) {
+			uint32_t fi = tid + 1;
+			T val = O[fi] + Y[fi];
+			uint32_t pos = s_coprod_off[tid];
+			uint32_t pend = s_coprod_off[tid + 1];
+			while (pos < pend) {
+				uint32_t nf = s_coprod_data[pos++];
+				T term = Y[s_coprod_data[pos++]];
+				#pragma unroll 4
+				for (uint32_t j = 0; j < nf; ++j)
+					term *= O[s_coprod_data[pos++]];
+				val += term;
+			}
+			O[fi] = val;
+		}
+		__syncthreads();
+	}
+}
+
+// Combine backprop kernel: given dF/d(out), compute dF/d(bsig1) and dF/d(bsig2)
+template<typename T>
+__global__ __launch_bounds__(1024)
+void branched_sig_combine_backprop_ker(
+	const T* __restrict__ bsig1,
+	const T* __restrict__ bsig2,
+	const T* __restrict__ derivs,
+	T* __restrict__ out1,
+	T* __restrict__ out2,
+	uint32_t total_len,
+	const uint32_t* __restrict__ g_coprod_data,
+	const uint32_t* __restrict__ g_coprod_offsets,
+	const uint32_t* __restrict__ g_order_index,
+	int max_nodes,
+	uint32_t coprod_data_len
+) {
+	const uint32_t batch_idx = blockIdx.y;
+	const uint32_t tid = threadIdx.x;
+	const uint32_t num_trees = total_len - 1;
+
+	extern __shared__ char smem[];
+	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(smem);
+	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
+	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
+
+	for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
+		s_coprod_data[i] = g_coprod_data[i];
+	for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
+		s_coprod_off[i] = g_coprod_offsets[i];
+	for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2); i += blockDim.x)
+		s_order_idx[i] = g_order_index[i];
+	__syncthreads();
+
+	const uint64_t off = static_cast<uint64_t>(batch_idx) * total_len;
+	const T* X = bsig1 + off;
+	const T* Y = bsig2 + off;
+	T* dX = out1 + off;
+	T* dY = out2 + off;
+
+	// Initialize dX = derivs, dY = derivs (direct pass-through terms)
+	for (uint32_t i = tid; i < total_len; i += blockDim.x) {
+		dX[i] = derivs[off + i];
+		dY[i] = derivs[off + i];
+	}
+	if (tid == 0) dY[0] = T(0);
+	__syncthreads();
+
+	// Differentiate coproduct terms
+	if (tid < num_trees) {
+		uint32_t fi = tid + 1;
+		T dF_tau = derivs[off + fi];
+		if (dF_tau != T(0)) {
+			uint32_t pos = s_coprod_off[tid];
+			uint32_t pend = s_coprod_off[tid + 1];
+			while (pos < pend) {
+				uint32_t nf = s_coprod_data[pos++];
+				uint32_t trunk_flat = s_coprod_data[pos++];
+				uint32_t forest_start = pos;
+
+				T forest_product = T(1);
+				#pragma unroll 4
+				for (uint32_t j = 0; j < nf; ++j)
+					forest_product *= X[s_coprod_data[pos++]];
+
+				myAtomicAdd(&dY[trunk_flat], dF_tau * forest_product);
+
+				if (nf > 0) {
+					T base = dF_tau * Y[trunk_flat];
+					for (uint32_t k = 0; k < nf; ++k) {
+						uint32_t fk = s_coprod_data[forest_start + k];
+						T partial = base;
+						for (uint32_t j = 0; j < nf; ++j) {
+							if (j != k)
+								partial *= X[s_coprod_data[forest_start + j]];
+						}
+						myAtomicAdd(&dX[fk], partial);
+					}
+				}
+			}
+		}
+	}
+}
+
+// =========================================================================
+// Host-side launchers
+// =========================================================================
+
+template<typename T>
+void branched_sig_combine_cuda_(
+	const T* bsig1, const T* bsig2, T* out,
+	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes
+) {
+	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes);
+	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
+	if (block < 32) block = 32;
+	if (block > 1024) throw std::invalid_argument("CUDA branched sig combine: num_trees > 1024 not supported");
+
+	size_t smem = gc.coprod_data_len * sizeof(uint32_t)
+		+ (gc.num_trees + 1) * sizeof(uint32_t)
+		+ (gc.max_nodes + 2) * sizeof(uint32_t);
+	dim3 grid(1, static_cast<unsigned int>(batch_size));
+
+	branched_sig_combine_ker<T><<<grid, block, smem>>>(
+		bsig1, bsig2, out, gc.total_length,
+		gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
+		gc.max_nodes, gc.coprod_data_len);
+	cudaDeviceSynchronize();
+	check_cuda_error();
+}
+
+template<typename T>
+void branched_sig_combine_backprop_cuda_(
+	const T* bsig1, const T* bsig2, const T* derivs, T* out1, T* out2,
+	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes
+) {
+	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes);
+	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
+	if (block < 32) block = 32;
+	if (block > 1024) throw std::invalid_argument("CUDA branched sig combine backprop: num_trees > 1024 not supported");
+
+	size_t smem = gc.coprod_data_len * sizeof(uint32_t)
+		+ (gc.num_trees + 1) * sizeof(uint32_t)
+		+ (gc.max_nodes + 2) * sizeof(uint32_t);
+	dim3 grid(1, static_cast<unsigned int>(batch_size));
+
+	branched_sig_combine_backprop_ker<T><<<grid, block, smem>>>(
+		bsig1, bsig2, derivs, out1, out2, gc.total_length,
+		gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
+		gc.max_nodes, gc.coprod_data_len);
+	cudaDeviceSynchronize();
+	check_cuda_error();
+}
+
+// =========================================================================
 // Host-side launcher (forward)
 // =========================================================================
 
@@ -719,6 +919,32 @@ extern "C" {
 
 	CUSIG_API int batch_branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time) noexcept {
 		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time));
+	}
+
+	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t dimension, uint64_t max_nodes) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<float>(bsig1, bsig2, out, 1, dimension, max_nodes));
+	}
+	CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t dimension, uint64_t max_nodes) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<double>(bsig1, bsig2, out, 1, dimension, max_nodes));
+	}
+	CUSIG_API int batch_branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<float>(bsig1, bsig2, out, batch_size, dimension, max_nodes));
+	}
+	CUSIG_API int batch_branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<double>(bsig1, bsig2, out, batch_size, dimension, max_nodes));
+	}
+
+	CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t dimension, uint64_t max_nodes) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<float>(bsig1, bsig2, derivs, out1, out2, 1, dimension, max_nodes));
+	}
+	CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t dimension, uint64_t max_nodes) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<double>(bsig1, bsig2, derivs, out1, out2, 1, dimension, max_nodes));
+	}
+	CUSIG_API int batch_branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<float>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes));
+	}
+	CUSIG_API int batch_branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes));
 	}
 
 	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time) noexcept {

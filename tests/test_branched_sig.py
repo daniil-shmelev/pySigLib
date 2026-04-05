@@ -664,3 +664,101 @@ def test_branched_sig_combine_torch_api(d=2, N=3):
     assert bsig2.grad is not None
     assert bsig1.grad.shape == bsig1.shape
     assert bsig2.grad.shape == bsig2.shape
+
+
+# ---------------------------------------------------------------------------
+# Combine backprop finite-difference tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_branched_sig_combine_backprop_finite_diff(d, N):
+    """Combine backprop matches finite differences."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(600)
+    bsig_len = pysiglib.branched_sig_length(d, N)
+    bsig1 = np.random.randn(bsig_len)
+    bsig2 = np.random.randn(bsig_len)
+    derivs = np.random.randn(bsig_len)
+
+    d1, d2 = pysiglib.branched_sig_combine_backprop(derivs, bsig1, bsig2, d, N)
+
+    eps = 1e-8
+    fd1 = np.zeros(bsig_len)
+    for i in range(bsig_len):
+        b1p = bsig1.copy()
+        b1p[i] += eps
+        cp = np.array(pysiglib.branched_sig_combine(b1p, bsig2, d, N))
+        cm = np.array(pysiglib.branched_sig_combine(bsig1, bsig2, d, N))
+        fd1[i] = np.dot(derivs, (cp - cm)) / eps
+    np.testing.assert_allclose(d1, fd1, atol=1e-4)
+
+    fd2 = np.zeros(bsig_len)
+    for i in range(bsig_len):
+        b2p = bsig2.copy()
+        b2p[i] += eps
+        cp = np.array(pysiglib.branched_sig_combine(bsig1, b2p, d, N))
+        cm = np.array(pysiglib.branched_sig_combine(bsig1, bsig2, d, N))
+        fd2[i] = np.dot(derivs, (cp - cm)) / eps
+    np.testing.assert_allclose(d2, fd2, atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# CUDA combine tests
+# ---------------------------------------------------------------------------
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_combine_cuda_matches_cpu(d, N):
+    """CUDA combine matches CPU."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(601)
+    bsig_len = pysiglib.branched_sig_length(d, N)
+    bsig1 = torch.tensor(np.random.randn(bsig_len), dtype=torch.float64)
+    bsig2 = torch.tensor(np.random.randn(bsig_len), dtype=torch.float64)
+
+    cpu = pysiglib.branched_sig_combine(bsig1, bsig2, d, N)
+    cuda = pysiglib.branched_sig_combine(bsig1.cuda(), bsig2.cuda(), d, N)
+    check_close(cpu, cuda, double_atol=1e-12)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_combine_backprop_cuda_matches_cpu(d, N):
+    """CUDA combine backprop matches CPU."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(602)
+    bsig_len = pysiglib.branched_sig_length(d, N)
+    bsig1 = torch.tensor(np.random.randn(bsig_len), dtype=torch.float64)
+    bsig2 = torch.tensor(np.random.randn(bsig_len), dtype=torch.float64)
+    derivs = torch.tensor(np.random.randn(bsig_len), dtype=torch.float64)
+
+    d1_cpu, d2_cpu = pysiglib.branched_sig_combine_backprop(derivs, bsig1, bsig2, d, N)
+    d1_cuda, d2_cuda = pysiglib.branched_sig_combine_backprop(
+        derivs.cuda(), bsig1.cuda(), bsig2.cuda(), d, N)
+    check_close(d1_cpu, d1_cuda, double_atol=1e-10)
+    check_close(d2_cpu, d2_cuda, double_atol=1e-10)
+
+
+@skip_no_cuda
+def test_branched_sig_combine_torch_api_cuda(d=2, N=3):
+    """torch_api branched_sig_combine backward on CUDA."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(603)
+    bsig_len = pysiglib.branched_sig_length(d, N)
+    bsig1 = torch.tensor(np.random.randn(bsig_len),
+                         dtype=torch.float64, device='cuda', requires_grad=True)
+    bsig2 = torch.tensor(np.random.randn(bsig_len),
+                         dtype=torch.float64, device='cuda', requires_grad=True)
+
+    combined = pysiglib.torch_api.branched_sig_combine(bsig1, bsig2, d, N)
+    combined.sum().backward()
+
+    assert bsig1.grad is not None
+    assert bsig2.grad is not None
+
+    # Compare against CPU
+    b1_cpu = bsig1.detach().cpu().requires_grad_(True)
+    b2_cpu = bsig2.detach().cpu().requires_grad_(True)
+    pysiglib.torch_api.branched_sig_combine(b1_cpu, b2_cpu, d, N).sum().backward()
+    check_close(b1_cpu.grad, bsig1.grad, double_atol=1e-10)
+    check_close(b2_cpu.grad, bsig2.grad, double_atol=1e-10)

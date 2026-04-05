@@ -186,24 +186,25 @@ def branched_sig_combine(
     data = MultipleSigInputHandler([bsig1, bsig2], bsig_len, ["bsig1", "bsig2"])
     result = SigOutputHandler(data, bsig_len)
 
-    if data.is_batch:
-        err_code = CPSIG_BATCH_BRANCHED_SIG_COMBINE[data.dtype](
-            data.sig_ptr[0],
-            data.sig_ptr[1],
-            result.data_ptr,
-            data.batch_size,
-            dimension,
-            degree,
-            n_jobs
-        )
+    if data.device == "cuda":
+        from .dtypes import CUSIG_BRANCHED_SIG_COMBINE, CUSIG_BATCH_BRANCHED_SIG_COMBINE
+        if data.is_batch:
+            err_code = CUSIG_BATCH_BRANCHED_SIG_COMBINE[data.dtype](
+                data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+                data.batch_size, dimension, degree)
+        else:
+            err_code = CUSIG_BRANCHED_SIG_COMBINE[data.dtype](
+                data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+                dimension, degree)
     else:
-        err_code = CPSIG_BRANCHED_SIG_COMBINE[data.dtype](
-            data.sig_ptr[0],
-            data.sig_ptr[1],
-            result.data_ptr,
-            dimension,
-            degree
-        )
+        if data.is_batch:
+            err_code = CPSIG_BATCH_BRANCHED_SIG_COMBINE[data.dtype](
+                data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+                data.batch_size, dimension, degree, n_jobs)
+        else:
+            err_code = CPSIG_BRANCHED_SIG_COMBINE[data.dtype](
+                data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+                dimension, degree)
 
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine: " + err_msg(err_code))
