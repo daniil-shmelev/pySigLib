@@ -25,24 +25,38 @@ from .data_handlers import PathInputHandler, SigOutputHandler, MultipleSigInputH
 from .load_siglib import CPSIG
 
 
-def prepare_branched_sig(dimension: int, degree: int, use_disk: bool = False):
+def prepare_branched_sig(
+        dimension: int,
+        degree: int,
+        use_disk: bool = False,
+        time_aug: bool = False,
+        lead_lag: bool = False
+):
     """
     Precomputes the tree enumeration and Connes-Kreimer coproduct tables
     needed for branched signature computation. Must be called before
     ``branched_sig()`` for a given ``(dimension, degree)`` pair.
+
+    If ``time_aug`` or ``lead_lag`` are set, the cache is prepared for
+    the augmented dimension automatically.
 
     :param dimension: Dimension of the underlying path.
     :param degree: Maximum tree order (number of nodes).
     :param use_disk: If True, cache the precomputed tables to disk for
         faster loading in future sessions. Uses the same cache directory
         as ``set_cache_dir()`` / ``prepare_log_sig()``.
+    :param time_aug: If True, prepare for time-augmented paths (dim + 1).
+    :param lead_lag: If True, prepare for lead-lag transformed paths (2 * dim).
     """
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_type(use_disk, "use_disk", bool)
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    err_code = CPSIG.prepare_branched_sig(dimension, degree, use_disk)
+    aug_dim = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+    err_code = CPSIG.prepare_branched_sig(aug_dim, degree, use_disk)
     if err_code:
         raise Exception("Error in pysiglib.prepare_branched_sig: " + err_msg(err_code))
 
