@@ -37,56 +37,25 @@ struct CutResult {
 	uint64_t trunk;                // tree index of the trunk
 };
 
-// Linear scan to find tree index within its order. Only used during prepare.
-static uint64_t find_tree_index(
-	const CanonicalTree& target,
-	const std::vector<DecoratedTreeInfo>& trees,
-	const std::vector<uint64_t>& order_index
-) {
-	uint64_t order = target.num_nodes;
-	uint64_t start = order_index[order];
-	uint64_t end = order_index[order + 1];
+using TreeIndexMap = std::unordered_map<CanonicalTree, uint64_t, CanonicalTreeHash>;
 
-	for (uint64_t i = start; i < end; ++i) {
-		if (trees[i].canonical == target) {
-			return i;
-		}
-	}
-
-	throw std::runtime_error("Tree not found in enumeration");
-}
-
-// Enumerate all admissible cuts for a tree and produce CutResults.
-// An admissible cut on tree tau with children t1,...,tk:
-// For each child edge, either CUT (subtree goes to forest) or KEEP (recurse).
-// This produces all (forest, trunk) pairs.
-//
-// We only produce NON-TRIVIAL cuts:
-// - Exclude the empty cut (forest=empty, trunk=whole_tree)
-// - Include cuts where ALL root edges are cut (trunk=root_only)
+// Enumerate all admissible cuts for a tree using memoized child cuts and hash-map tree lookup.
 static void enumerate_admissible_cuts(
 	uint64_t tree_idx,
 	const std::vector<DecoratedTreeInfo>& trees,
 	const std::vector<uint64_t>& order_index,
+	const TreeIndexMap& tree_map,
+	const std::vector<std::vector<CutResult>>& memo,
 	std::vector<CutResult>& results
 ) {
 	const auto& tree = trees[tree_idx];
 	const auto& children = tree.canonical.child_ids;
 
-	if (children.empty()) {
-		// Leaf: no edges to cut, no non-trivial cuts
-		return;
-	}
-
-	// For each child, generate options:
-	// Option A: CUT this edge -> child subtree goes to forest
-	// Option B: KEEP this edge -> recurse into child (get sub-cuts)
-	//
-	// Each child's options are stored as a list of (forest_contribution, trunk_child_or_none)
+	if (children.empty()) return;
 
 	struct ChildOption {
-		std::vector<uint64_t> forest_trees;   // trees added to forest
-		int64_t trunk_child;                  // -1 if child is cut (no trunk child), else trunk subtree index
+		std::vector<uint64_t> forest_trees;
+		int64_t trunk_child;
 	};
 
 	std::vector<std::vector<ChildOption>> all_child_options;
@@ -94,7 +63,7 @@ static void enumerate_admissible_cuts(
 	for (uint64_t child_idx : children) {
 		std::vector<ChildOption> options;
 
-		// Option A: CUT - entire child subtree goes to forest
+		// Option A: CUT
 		{
 			ChildOption opt;
 			opt.forest_trees.push_back(child_idx);
@@ -102,19 +71,15 @@ static void enumerate_admissible_cuts(
 			options.push_back(std::move(opt));
 		}
 
-		// Option B: KEEP - recurse into child for sub-cuts
-		// Sub-option B0: empty sub-cut on child (no edges cut within child)
+		// Option B0: KEEP with empty sub-cut
 		{
 			ChildOption opt;
-			// no forest contribution
 			opt.trunk_child = static_cast<int64_t>(child_idx);
 			options.push_back(std::move(opt));
 		}
 
-		// Sub-options B1..Bn: non-trivial sub-cuts on child
-		std::vector<CutResult> child_cuts;
-		enumerate_admissible_cuts(child_idx, trees, order_index, child_cuts);
-		for (const auto& sub_cut : child_cuts) {
+		// Option B1..Bn: KEEP with non-trivial sub-cuts (from memoized results)
+		for (const auto& sub_cut : memo[child_idx]) {
 			ChildOption opt;
 			opt.forest_trees = sub_cut.forest;
 			opt.trunk_child = static_cast<int64_t>(sub_cut.trunk);
@@ -124,67 +89,49 @@ static void enumerate_admissible_cuts(
 		all_child_options.push_back(std::move(options));
 	}
 
-	// Take Cartesian product of all child options
-	// Each combination produces a (forest, trunk_children) pair.
-	// The trunk is reconstructed from root_label + trunk_children.
-
 	uint64_t num_children = children.size();
 	std::vector<uint64_t> indices(num_children, 0);
 
 	while (true) {
-		// Build forest and trunk children from current combination
 		std::vector<uint64_t> forest;
 		std::vector<uint64_t> trunk_children;
-		bool all_kept_empty = true;  // track if this is the trivial empty cut
+		bool all_kept_empty = true;
 
 		for (uint64_t c = 0; c < num_children; ++c) {
 			const auto& opt = all_child_options[c][indices[c]];
-			for (uint64_t f : opt.forest_trees) {
+			for (uint64_t f : opt.forest_trees)
 				forest.push_back(f);
-			}
-			if (opt.trunk_child >= 0) {
+			if (opt.trunk_child >= 0)
 				trunk_children.push_back(static_cast<uint64_t>(opt.trunk_child));
-			}
-			if (indices[c] != 1) {
-				// index 1 = "keep with empty sub-cut" (the no-op)
+			if (indices[c] != 1)
 				all_kept_empty = false;
-			}
 		}
 
-		// Skip the trivial empty cut (all children kept with empty sub-cuts)
 		if (!all_kept_empty) {
-			// Build the trunk tree's canonical form
-			// Sort by index (ascending) to match the enumeration's multiset ordering
 			std::sort(trunk_children.begin(), trunk_children.end());
 
 			CanonicalTree trunk_canonical;
 			trunk_canonical.root_label = tree.canonical.root_label;
 			trunk_canonical.child_ids = trunk_children;
 			trunk_canonical.num_nodes = 1;
-			for (uint64_t tc : trunk_children) {
+			for (uint64_t tc : trunk_children)
 				trunk_canonical.num_nodes += trees[tc].canonical.num_nodes;
-			}
 
-			// Find trunk index
 			uint64_t trunk_idx;
 			if (trunk_canonical.num_nodes == 1) {
-				// Trunk is just the root vertex (a leaf)
 				trunk_idx = order_index[1] + trunk_canonical.root_label;
 			}
 			else {
-				trunk_idx = find_tree_index(trunk_canonical, trees, order_index);
+				auto it = tree_map.find(trunk_canonical);
+				if (it == tree_map.end())
+					throw std::runtime_error("Tree not found in enumeration");
+				trunk_idx = it->second;
 			}
 
-			// Sort forest for deterministic output
 			std::sort(forest.begin(), forest.end());
-
-			CutResult result;
-			result.forest = std::move(forest);
-			result.trunk = trunk_idx;
-			results.push_back(std::move(result));
+			results.push_back(CutResult{ std::move(forest), trunk_idx });
 		}
 
-		// Advance to next combination (odometer-style)
 		int64_t pos = static_cast<int64_t>(num_children) - 1;
 		while (pos >= 0) {
 			indices[pos]++;
@@ -316,17 +263,31 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 			trees[i].node_labels.data(), trees[i].node_labels.size());
 	}
 
+	// Build hash map for O(1) tree lookup during coproduct construction
+	TreeIndexMap tree_map;
+	tree_map.reserve(num_trees);
+	for (uint64_t i = 0; i < num_trees; ++i)
+		tree_map[trees[i].canonical] = i;
+
+	// Compute all admissible cuts bottom-up with memoization
+	std::vector<std::vector<CutResult>> all_cuts(num_trees);
+	for (uint64_t order = 1; order <= max_nodes; ++order) {
+		uint64_t ostart = cache->order_index[order];
+		uint64_t oend = cache->order_index[order + 1];
+		for (uint64_t i = ostart; i < oend; ++i) {
+			enumerate_admissible_cuts(i, trees, cache->order_index, tree_map, all_cuts, all_cuts[i]);
+		}
+	}
+
+	// Pack coproduct table from memoized cuts
 	cache->coproduct_offsets.resize(num_trees + 1, 0);
 	for (uint64_t i = 0; i < num_trees; ++i) {
 		cache->coproduct_offsets[i] = cache->coproduct_data.size();
-		std::vector<CutResult> cuts;
-		enumerate_admissible_cuts(i, trees, cache->order_index, cuts);
-		for (const auto& cut : cuts) {
+		for (const auto& cut : all_cuts[i]) {
 			cache->coproduct_data.push_back(cut.forest.size());
 			cache->coproduct_data.push_back(cut.trunk + 1);
-			for (uint64_t f : cut.forest) {
+			for (uint64_t f : cut.forest)
 				cache->coproduct_data.push_back(f + 1);
-			}
 		}
 	}
 	cache->coproduct_offsets[num_trees] = cache->coproduct_data.size();

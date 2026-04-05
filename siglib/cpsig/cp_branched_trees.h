@@ -34,6 +34,16 @@ struct CanonicalTree {
 	}
 };
 
+struct CanonicalTreeHash {
+	size_t operator()(const CanonicalTree& t) const {
+		size_t h = std::hash<uint64_t>()(t.num_nodes);
+		h ^= std::hash<uint8_t>()(t.root_label) + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+		for (uint64_t c : t.child_ids)
+			h ^= std::hash<uint64_t>()(c) + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+		return h;
+	}
+};
+
 struct DecoratedTreeInfo {
 	CanonicalTree canonical;
 	std::vector<uint8_t> node_labels;  // all node labels in pre-order traversal
