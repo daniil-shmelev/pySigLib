@@ -82,6 +82,7 @@ Fast Signature, Log Signature and Signature Kernel Computations on CPU and GPU.
    /pages/signature_coefficients
    /pages/log_signatures
    /pages/signature_kernels
+   /pages/branched_signatures
    /pages/backprop
 
 .. toctree::
