@@ -16,6 +16,7 @@
 #pragma once
 #include "cppch.h"
 #include "cp_branched_cache.h"
+#include "cp_path.h"
 #include "multithreading.h"
 #include "macros.h"
 
@@ -83,32 +84,34 @@ void butcher_product_inplace_(
 
 template<std::floating_point T>
 void branched_signature_with_buffers_(
-	const T* path,
+	const Path<T>& path,
 	T* out,
 	T* increment,
 	T* temp,
-	uint64_t dimension,
-	uint64_t length,
 	const BranchedSigCache& cache
 ) {
 	uint64_t total_len = cache.total_length;
+	uint64_t dim = path.dimension();
+	uint64_t len = path.length();
 
-	if (length <= 1) {
+	if (len <= 1) {
 		out[0] = static_cast<T>(1.);
 		std::memset(out + 1, 0, (total_len - 1) * sizeof(T));
 		return;
 	}
 
-	for (uint64_t d = 0; d < dimension; ++d) {
-		increment[d] = path[dimension + d] - path[d];
+	auto p0 = path[0];
+	auto p1 = path[1];
+	for (uint64_t d = 0; d < dim; ++d) {
+		increment[d] = p1[d] - p0[d];
 	}
 	linear_branched_sig_(increment, out, cache);
 
-	for (uint64_t seg = 1; seg < length - 1; ++seg) {
-		const T* seg_start = path + seg * dimension;
-		const T* seg_end = path + (seg + 1) * dimension;
+	for (uint64_t seg = 1; seg < len - 1; ++seg) {
+		auto seg_start = path[seg];
+		auto seg_end = path[seg + 1];
 
-		for (uint64_t d = 0; d < dimension; ++d) {
+		for (uint64_t d = 0; d < dim; ++d) {
 			increment[d] = seg_end[d] - seg_start[d];
 		}
 
@@ -124,12 +127,16 @@ void branched_signature_(
 	T* out,
 	uint64_t dimension,
 	uint64_t length,
-	uint64_t max_nodes
+	uint64_t max_nodes,
+	bool time_aug = false,
+	bool lead_lag = false,
+	T end_time = static_cast<T>(1.)
 ) {
-	const auto& cache = get_branched_sig_cache(dimension, max_nodes);
-	auto increment = std::make_unique<T[]>(dimension);
+	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time);
+	const auto& cache = get_branched_sig_cache(path_obj.dimension(), max_nodes);
+	auto increment = std::make_unique<T[]>(path_obj.dimension());
 	auto temp = std::make_unique<T[]>(cache.total_length);
-	branched_signature_with_buffers_(path, out, increment.get(), temp.get(), dimension, length, cache);
+	branched_signature_with_buffers_(path_obj, out, increment.get(), temp.get(), cache);
 }
 
 
@@ -141,20 +148,24 @@ void batch_branched_signature_(
 	uint64_t dimension,
 	uint64_t length,
 	uint64_t max_nodes,
-	int n_jobs
+	int n_jobs,
+	bool time_aug = false,
+	bool lead_lag = false,
+	T end_time = static_cast<T>(1.)
 ) {
-	const auto& cache = get_branched_sig_cache(dimension, max_nodes);
+	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
+	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes);
 	uint64_t total_len = cache.total_length;
 	uint64_t flat_path_length = length * dimension;
 
 	if (n_jobs == 1 || batch_size == 1) {
-		auto increment = std::make_unique<T[]>(dimension);
+		auto increment = std::make_unique<T[]>(aug_dim);
 		auto temp = std::make_unique<T[]>(total_len);
 		const T* path_ptr = path;
 		T* out_ptr = out;
 		for (uint64_t b = 0; b < batch_size; ++b) {
-			branched_signature_with_buffers_(path_ptr, out_ptr, increment.get(), temp.get(),
-				dimension, length, cache);
+			Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
+			branched_signature_with_buffers_(path_obj, out_ptr, increment.get(), temp.get(), cache);
 			path_ptr += flat_path_length;
 			out_ptr += total_len;
 		}
@@ -169,17 +180,16 @@ void batch_branched_signature_(
 			throw std::invalid_argument("n_jobs too low");
 
 		std::vector<std::thread> workers;
-		// Each thread allocates buffers once and reuses them across all assigned paths
 		for (unsigned int t = 0; t < max_threads && t < batch_size; ++t) {
 			workers.emplace_back([&, t, max_threads]() {
-				auto increment = std::make_unique<T[]>(dimension);
+				auto increment = std::make_unique<T[]>(aug_dim);
 				auto temp = std::make_unique<T[]>(total_len);
 				for (uint64_t b = t; b < batch_size; b += max_threads) {
+					Path<T> path_obj(path + b * flat_path_length, dimension, length, time_aug, lead_lag, end_time);
 					branched_signature_with_buffers_(
-						path + b * flat_path_length,
+						path_obj,
 						out + b * total_len,
-						increment.get(), temp.get(),
-						dimension, length, cache);
+						increment.get(), temp.get(), cache);
 				}
 			});
 		}

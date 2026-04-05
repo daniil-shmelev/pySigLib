@@ -64,7 +64,10 @@ def branched_sig_length(dimension: int, degree: int) -> int:
 def branched_sig(
         path: Union[np.ndarray, torch.Tensor],
         degree: int,
-        n_jobs: int = 1
+        n_jobs: int = 1,
+        time_aug: bool = False,
+        lead_lag: bool = False,
+        end_time: float = 1.0
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated branched signature of a path or batch of paths.
@@ -72,20 +75,31 @@ def branched_sig(
     The branched signature extends the standard path signature to iterated
     integrals indexed by decorated rooted trees, following Gubinelli (2010).
 
-    Must call ``prepare_branched_sig(dimension, degree)`` before first use.
+    Must call ``prepare_branched_sig(dimension, degree)`` before first use,
+    where ``dimension`` is the augmented dimension (accounting for
+    ``time_aug`` and ``lead_lag``).
 
     :param path: Path of shape ``(length, dimension)`` or ``(batch_size, length, dimension)``.
     :param degree: Maximum tree order (number of nodes).
     :param n_jobs: Number of parallel threads for batch processing.
+    :param time_aug: If True, prepend a time channel to the path.
+    :param lead_lag: If True, apply the lead-lag transformation.
+    :param end_time: End time for the time augmentation channel.
     :return: Branched signature array of shape ``(bsig_len,)`` or ``(batch_size, bsig_len)``.
     """
     check_type(degree, "degree", int)
     check_type(n_jobs, "n_jobs", int)
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
+    check_type(end_time, "end_time", float)
     check_non_neg(degree, "degree")
+    if n_jobs == 0:
+        raise ValueError("n_jobs cannot be 0")
 
-    data = PathInputHandler(path, False, False, 1.0, "path")
-    dimension = data.dimension
-    bsig_len = CPSIG.branched_sig_length(dimension, degree)
+    data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
+    dimension = data.data_dimension
+    aug_dimension = data.dimension
+    bsig_len = CPSIG.branched_sig_length(aug_dimension, degree)
     result = SigOutputHandler(data, bsig_len)
 
     if data.is_batch:
@@ -94,17 +108,23 @@ def branched_sig(
             result.data_ptr,
             data.batch_size,
             dimension,
-            data.length,
+            data.data_length,
             degree,
-            n_jobs
+            n_jobs,
+            data.time_aug,
+            data.lead_lag,
+            data.end_time
         )
     else:
         err_code = CPSIG_BRANCHED_SIG[data.dtype](
             data.data_ptr,
             result.data_ptr,
             dimension,
-            data.length,
-            degree
+            data.data_length,
+            degree,
+            data.time_aug,
+            data.lead_lag,
+            data.end_time
         )
 
     if err_code:

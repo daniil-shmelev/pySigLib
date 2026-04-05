@@ -20,20 +20,20 @@
 
 extern "C" {
 
-	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t max_nodes) noexcept {
-		SAFE_CALL(branched_signature_<float>(path, out, dimension, length, max_nodes));
+	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time) noexcept {
+		SAFE_CALL(branched_signature_<float>(path, out, dimension, length, max_nodes, time_aug, lead_lag, end_time));
 	}
 
-	CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t dimension, uint64_t length, uint64_t max_nodes) noexcept {
-		SAFE_CALL(branched_signature_<double>(path, out, dimension, length, max_nodes));
+	CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time) noexcept {
+		SAFE_CALL(branched_signature_<double>(path, out, dimension, length, max_nodes, time_aug, lead_lag, end_time));
 	}
 
-	CPSIG_API int batch_branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs) noexcept {
-		SAFE_CALL(batch_branched_signature_<float>(path, out, batch_size, dimension, length, max_nodes, n_jobs));
+	CPSIG_API int batch_branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time) noexcept {
+		SAFE_CALL(batch_branched_signature_<float>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time));
 	}
 
-	CPSIG_API int batch_branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs) noexcept {
-		SAFE_CALL(batch_branched_signature_<double>(path, out, batch_size, dimension, length, max_nodes, n_jobs));
+	CPSIG_API int batch_branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time) noexcept {
+		SAFE_CALL(batch_branched_signature_<double>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time));
 	}
 
 	CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t dimension, uint64_t max_nodes) noexcept {

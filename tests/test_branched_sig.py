@@ -305,3 +305,95 @@ def test_branched_sig_degree_1_matches_standard():
     total_incr = path[-1] - path[0]
     np.testing.assert_allclose(bsig[0], 1.0, atol=1e-14)
     np.testing.assert_allclose(bsig[1:], total_incr, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# time_aug and lead_lag tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_branched_sig_time_aug_matches_manual(d, N):
+    """time_aug flag should match manually prepending a time channel."""
+    aug_dim = d + 1
+    pysiglib.prepare_branched_sig(aug_dim, N)
+    np.random.seed(200)
+    L = 10
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig_flag = pysiglib.branched_sig(path, N, time_aug=True)
+
+    t = np.linspace(0, 1, L)[:, np.newaxis]
+    path_aug = np.concatenate([path, t], axis=1)
+    bsig_manual = pysiglib.branched_sig(path_aug, N)
+
+    np.testing.assert_allclose(bsig_flag, bsig_manual, atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_lead_lag_matches_manual(d, N):
+    """lead_lag flag should match manually applying the lead-lag transform."""
+    aug_dim = 2 * d
+    pysiglib.prepare_branched_sig(aug_dim, N)
+    np.random.seed(201)
+    L = 8
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig_flag = pysiglib.branched_sig(path, N, lead_lag=True)
+
+    path_ll = np.array(pysiglib.transform_path(path, lead_lag=True))
+    bsig_manual = pysiglib.branched_sig(path_ll, N)
+
+    np.testing.assert_allclose(bsig_flag, bsig_manual, atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_time_aug_lead_lag_matches_manual(d, N):
+    """Combined time_aug + lead_lag should match manual transform."""
+    aug_dim = 2 * d + 1
+    pysiglib.prepare_branched_sig(aug_dim, N)
+    np.random.seed(202)
+    L = 8
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig_flag = pysiglib.branched_sig(path, N, time_aug=True, lead_lag=True)
+
+    path_t = np.array(pysiglib.transform_path(path, time_aug=True, lead_lag=True))
+    bsig_manual = pysiglib.branched_sig(path_t, N)
+
+    np.testing.assert_allclose(bsig_flag, bsig_manual, atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_time_aug_batch(d, N):
+    """time_aug should work correctly with batched input."""
+    aug_dim = d + 1
+    pysiglib.prepare_branched_sig(aug_dim, N)
+    np.random.seed(203)
+    B, L = 4, 10
+    paths = np.random.randn(B, L, d)
+
+    batch_result = pysiglib.branched_sig(paths, N, time_aug=True)
+    for i in range(B):
+        single = pysiglib.branched_sig(paths[i], N, time_aug=True)
+        np.testing.assert_allclose(batch_result[i], single, atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_lead_lag_concatenation(d, N):
+    """Chen's identity should hold with lead_lag enabled."""
+    aug_dim = 2 * d
+    pysiglib.prepare_branched_sig(aug_dim, N)
+    np.random.seed(204)
+    L1, L2 = 5, 6
+    path1 = np.cumsum(np.random.randn(L1, d) * 0.1, axis=0)
+    path2_inc = np.random.randn(L2 - 1, d) * 0.1
+    path2 = np.vstack([path1[-1:], path1[-1] + np.cumsum(path2_inc, axis=0)])
+
+    bsig1 = pysiglib.branched_sig(path1, N, lead_lag=True)
+    bsig2 = pysiglib.branched_sig(path2, N, lead_lag=True)
+    combined = pysiglib.branched_sig_combine(bsig1, bsig2, aug_dim, N)
+
+    full_path = np.vstack([path1, path2[1:]])
+    bsig_full = pysiglib.branched_sig(full_path, N, lead_lag=True)
+
+    np.testing.assert_allclose(combined, bsig_full, atol=1e-10)

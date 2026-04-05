@@ -28,7 +28,7 @@ if __name__ == '__main__':
         'degree_arr': list(range(1, 8)),
         'dtype': "float",
         'device': 'cpu',
-        'num_runs': 5
+        'num_runs': 50
     }
 
     cfg_cuda = {
@@ -38,7 +38,7 @@ if __name__ == '__main__':
         'degree_arr': list(range(1, 8)),
         'dtype': "float",
         'device': 'cuda',
-        'num_runs': 5
+        'num_runs': 50
     }
 
     cpu_direct_time = []
