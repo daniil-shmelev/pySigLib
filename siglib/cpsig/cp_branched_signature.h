@@ -366,10 +366,8 @@ void butcher_product_deriv_(
 
 	// Initialize dF_dY = dF_dX (the Y[τ] direct term)
 	dF_dY[0] = static_cast<T>(0);
-	for (uint64_t i = 0; i < num_trees; ++i)
-		dF_dY[i + 1] = dF_dX[i + 1];
+	std::memcpy(dF_dY + 1, dF_dX + 1, num_trees * sizeof(T));
 
-	// For each tree, propagate derivatives through its coproduct terms
 	for (uint64_t tree_idx = 0; tree_idx < num_trees; ++tree_idx) {
 		uint64_t flat_idx = tree_idx + 1;
 		T dF_dXcomb_tau = dF_dX[flat_idx];
@@ -382,7 +380,6 @@ void butcher_product_deriv_(
 			uint64_t num_forest = cache.coproduct_data[pos++];
 			uint64_t trunk_flat = cache.coproduct_data[pos++];
 
-			// Load forest values and compute prefix products for O(n) leave-one-out
 			uint64_t forest_start = pos;
 			T forest_product = static_cast<T>(1);
 			for (uint64_t j = 0; j < num_forest; ++j)
@@ -390,18 +387,16 @@ void butcher_product_deriv_(
 
 			dF_dY[trunk_flat] += dF_dXcomb_tau * forest_product;
 
-			// dF/dX_prev[forest_k] via prefix/suffix products
 			if (num_forest > 0) {
 				T base = dF_dXcomb_tau * Y[trunk_flat];
-				T prefix = static_cast<T>(1);
-				// Forward pass: accumulate prefix products
 				for (uint64_t k = 0; k < num_forest; ++k) {
 					uint64_t fk_flat = cache.coproduct_data[forest_start + k];
-					T suffix = static_cast<T>(1);
-					for (uint64_t j = k + 1; j < num_forest; ++j)
-						suffix *= X_prev[cache.coproduct_data[forest_start + j]];
-					dF_dX[fk_flat] += base * prefix * suffix;
-					prefix *= X_prev[fk_flat];
+					T partial = base;
+					for (uint64_t j = 0; j < num_forest; ++j) {
+						if (j != k)
+							partial *= X_prev[cache.coproduct_data[forest_start + j]];
+					}
+					dF_dX[fk_flat] += partial;
 				}
 			}
 		}
