@@ -134,14 +134,21 @@ inline void enumerate_all_decorated_trees(
 			for (const auto& children : child_multisets) {
 				if (children.empty()) continue;
 
+				// Fully construct label=0, derive label=1..d-1 by copy+patch
+				uint64_t base_idx = trees.size();
 				for (uint8_t label = 0; label < static_cast<uint8_t>(dimension); ++label) {
 					DecoratedTreeInfo info;
-					info.canonical.num_nodes = order;
-					info.canonical.root_label = label;
-					info.canonical.child_ids = children;
-
-					info.tree_factorial = compute_tree_factorial(info.canonical, trees);
-					collect_labels(info.canonical, trees, info.node_labels);
+					if (label == 0) {
+						info.canonical.num_nodes = order;
+						info.canonical.root_label = 0;
+						info.canonical.child_ids = children;
+						info.tree_factorial = compute_tree_factorial(info.canonical, trees);
+						collect_labels(info.canonical, trees, info.node_labels);
+					} else {
+						info = trees[base_idx];  // copy from label=0
+						info.canonical.root_label = label;
+						info.node_labels[0] = label;
+					}
 
 					trees.push_back(std::move(info));
 				}
