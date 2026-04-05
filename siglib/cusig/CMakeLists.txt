@@ -1,4 +1,5 @@
 add_library(cusig SHARED
+    cu_branched_signature.cu
     cu_log_sig_cache.cu
     cu_log_sig_combine.cu
     cu_log_signature.cu

@@ -15,12 +15,14 @@
 
 import pytest
 import numpy as np
+import torch
 import itertools
 
 import kauri
 import kauri.bck
 
 import pysiglib
+from conftest import DEVICES, check_close, skip_no_cuda
 
 
 # ---------------------------------------------------------------------------
@@ -397,3 +399,88 @@ def test_branched_sig_lead_lag_concatenation(d, N):
     bsig_full = pysiglib.branched_sig(full_path, N, lead_lag=True)
 
     np.testing.assert_allclose(combined, bsig_full, atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# CUDA tests
+# ---------------------------------------------------------------------------
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2), (2, 4)])
+def test_branched_sig_cuda_matches_cpu(d, N):
+    """CUDA output must exactly match CPU for the same input."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(300)
+    path = np.cumsum(np.random.randn(10, d) * 0.1, axis=0)
+    path_t = torch.tensor(path)
+
+    cpu = pysiglib.branched_sig(path_t, N)
+    cuda = pysiglib.branched_sig(path_t.cuda(), N)
+    check_close(cpu, cuda, double_atol=1e-12)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_branched_sig_cuda_batch(d, N):
+    """Batched CUDA output matches per-element CUDA."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(301)
+    B, L = 8, 12
+    paths = torch.tensor(np.random.randn(B, L, d)).cuda()
+
+    batch_result = pysiglib.branched_sig(paths, N)
+    for i in range(B):
+        single = pysiglib.branched_sig(paths[i], N)
+        check_close(batch_result[i], single, double_atol=1e-12)
+
+
+@skip_no_cuda
+def test_branched_sig_cuda_trivial():
+    """Constant path on CUDA should give identity signature."""
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N)
+    path = torch.tensor([[1.0, 2.0], [1.0, 2.0]], dtype=torch.float64).cuda()
+    bsig = pysiglib.branched_sig(path, N)
+    assert float(bsig[0].cpu()) == pytest.approx(1.0)
+    assert torch.allclose(bsig[1:], torch.zeros(bsig.shape[0] - 1, device="cuda", dtype=torch.float64), atol=1e-14)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_cuda_time_aug(d, N):
+    """time_aug on CUDA matches CPU."""
+    aug_dim = d + 1
+    pysiglib.prepare_branched_sig(aug_dim, N)
+    np.random.seed(302)
+    path = torch.tensor(np.cumsum(np.random.randn(10, d) * 0.1, axis=0))
+
+    cpu = pysiglib.branched_sig(path, N, time_aug=True)
+    cuda = pysiglib.branched_sig(path.cuda(), N, time_aug=True)
+    check_close(cpu, cuda, double_atol=1e-12)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_cuda_lead_lag(d, N):
+    """lead_lag on CUDA matches CPU."""
+    aug_dim = 2 * d
+    pysiglib.prepare_branched_sig(aug_dim, N)
+    np.random.seed(303)
+    path = torch.tensor(np.cumsum(np.random.randn(8, d) * 0.1, axis=0))
+
+    cpu = pysiglib.branched_sig(path, N, lead_lag=True)
+    cuda = pysiglib.branched_sig(path.cuda(), N, lead_lag=True)
+    check_close(cpu, cuda, double_atol=1e-12)
+
+
+@skip_no_cuda
+def test_branched_sig_cuda_float32():
+    """float32 on CUDA matches CPU."""
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(304)
+    path = torch.tensor(np.random.randn(8, d).astype(np.float32)).cuda()
+
+    cuda = pysiglib.branched_sig(path, N)
+    cpu = pysiglib.branched_sig(path.cpu(), N)
+    check_close(cpu, cuda, single_atol=1e-5)

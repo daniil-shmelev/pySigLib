@@ -102,30 +102,56 @@ def branched_sig(
     bsig_len = CPSIG.branched_sig_length(aug_dimension, degree)
     result = SigOutputHandler(data, bsig_len)
 
-    if data.is_batch:
-        err_code = CPSIG_BATCH_BRANCHED_SIG[data.dtype](
-            data.data_ptr,
-            result.data_ptr,
-            data.batch_size,
-            dimension,
-            data.data_length,
-            degree,
-            n_jobs,
-            data.time_aug,
-            data.lead_lag,
-            data.end_time
-        )
+    if data.device == "cuda":
+        from .dtypes import CUSIG_BRANCHED_SIG, CUSIG_BATCH_BRANCHED_SIG
+        if data.is_batch:
+            err_code = CUSIG_BATCH_BRANCHED_SIG[data.dtype](
+                data.data_ptr,
+                result.data_ptr,
+                data.batch_size,
+                dimension,
+                data.data_length,
+                degree,
+                data.time_aug,
+                data.lead_lag,
+                data.end_time
+            )
+        else:
+            err_code = CUSIG_BRANCHED_SIG[data.dtype](
+                data.data_ptr,
+                result.data_ptr,
+                dimension,
+                data.data_length,
+                degree,
+                data.time_aug,
+                data.lead_lag,
+                data.end_time
+            )
     else:
-        err_code = CPSIG_BRANCHED_SIG[data.dtype](
-            data.data_ptr,
-            result.data_ptr,
-            dimension,
-            data.data_length,
-            degree,
-            data.time_aug,
-            data.lead_lag,
-            data.end_time
-        )
+        if data.is_batch:
+            err_code = CPSIG_BATCH_BRANCHED_SIG[data.dtype](
+                data.data_ptr,
+                result.data_ptr,
+                data.batch_size,
+                dimension,
+                data.data_length,
+                degree,
+                n_jobs,
+                data.time_aug,
+                data.lead_lag,
+                data.end_time
+            )
+        else:
+            err_code = CPSIG_BRANCHED_SIG[data.dtype](
+                data.data_ptr,
+                result.data_ptr,
+                dimension,
+                data.data_length,
+                degree,
+                data.time_aug,
+                data.lead_lag,
+                data.end_time
+            )
 
     if err_code:
         raise Exception("Error in pysiglib.branched_sig: " + err_msg(err_code))
