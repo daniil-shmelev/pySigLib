@@ -16,6 +16,7 @@
 #include "cupch.h"
 #include "cusig.h"
 #include "cu_macros.h"
+#include "cu_atomic.h"
 
 // We load the branched-sig cache from cpsig.dll at runtime via LoadLibrary /
 // GetProcAddress.  This avoids any C++17 vs C++20 ABI issues between nvcc
@@ -295,7 +296,200 @@ void branched_sig_ker(
 }
 
 // =========================================================================
-// Host-side launcher
+// Backprop kernel
+// =========================================================================
+
+// Shared memory layout:
+// | s_bsig[total_len] | s_derivs[total_len] | temp_Y[total_len] | local_derivs[total_len] |
+// | inc[dim] | inc_derivs[dim] | coprod tables (same as forward) |
+
+template<typename T>
+__global__ __launch_bounds__(1024)
+void branched_sig_backprop_ker(
+	const T* __restrict__ path,
+	T* __restrict__ path_derivs,
+	const T* __restrict__ bsig_in,
+	const T* __restrict__ bsig_derivs_in,
+	int dim,
+	int steps,
+	uint32_t total_len,
+	uint64_t path_stride,
+	const uint8_t* __restrict__ labels_data,
+	const uint32_t* __restrict__ labels_offsets,
+	const T* __restrict__ inv_factorial,
+	const uint32_t* __restrict__ g_coprod_data,
+	const uint32_t* __restrict__ g_coprod_offsets,
+	const uint32_t* __restrict__ g_order_index,
+	int max_nodes,
+	uint32_t coprod_data_len
+) {
+	const uint32_t batch_idx = blockIdx.y;
+	const uint32_t tid = threadIdx.x;
+	const uint32_t num_trees = total_len - 1;
+
+	extern __shared__ char smem[];
+	T* s_bsig = reinterpret_cast<T*>(smem);
+	T* s_derivs = s_bsig + total_len;
+	T* temp_Y = s_derivs + total_len;
+	T* local_derivs = temp_Y + total_len;
+	T* inc = local_derivs + total_len;
+	T* inc_derivs = inc + dim;
+	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(inc_derivs + dim);
+	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
+	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
+
+	// --- One-time loads ---
+	const uint64_t batch_off = static_cast<uint64_t>(batch_idx) * total_len;
+	for (uint32_t i = tid; i < total_len; i += blockDim.x) {
+		s_bsig[i] = bsig_in[batch_off + i];
+		s_derivs[i] = bsig_derivs_in[batch_off + i];
+	}
+	for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
+		s_coprod_data[i] = g_coprod_data[i];
+	for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
+		s_coprod_off[i] = g_coprod_offsets[i];
+	for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2); i += blockDim.x)
+		s_order_idx[i] = g_order_index[i];
+
+	// Initialize path_derivs to zero
+	const T* bp = path + static_cast<uint64_t>(batch_idx) * path_stride;
+	T* pd = path_derivs + static_cast<uint64_t>(batch_idx) * path_stride;
+	for (uint32_t i = tid; i < static_cast<uint32_t>(path_stride); i += blockDim.x)
+		pd[i] = T(0);
+	__syncthreads();
+
+	for (int seg = steps - 1; seg >= 0; --seg) {
+		// --- 1. Load increment ---
+		for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
+			inc[d] = bp[(seg + 1) * dim + d] - bp[seg * dim + d];
+		__syncthreads();
+
+		// --- 2. Linear branched sig → temp_Y ---
+		if (tid == 0) temp_Y[0] = T(1);
+		if (tid < num_trees) {
+			T prod = T(1);
+			uint32_t lstart = labels_offsets[tid];
+			uint32_t lend = labels_offsets[tid + 1];
+			#pragma unroll 8
+			for (uint32_t j = lstart; j < lend; ++j)
+				prod *= inc[labels_data[j]];
+			temp_Y[tid + 1] = prod * inv_factorial[tid];
+		}
+		__syncthreads();
+
+		// --- 3. Butcher uncombine (order 1 to max_nodes) ---
+		if (seg > 0) {
+			for (int order = 1; order <= max_nodes; ++order) {
+				uint32_t ostart = s_order_idx[order];
+				uint32_t oend = s_order_idx[order + 1];
+				if (tid >= ostart && tid < oend) {
+					uint32_t fi = tid + 1;
+					T val = s_bsig[fi] - temp_Y[fi];
+					uint32_t pos = s_coprod_off[tid];
+					uint32_t pend = s_coprod_off[tid + 1];
+					while (pos < pend) {
+						uint32_t nf = s_coprod_data[pos++];
+						T term = temp_Y[s_coprod_data[pos++]];
+						#pragma unroll 4
+						for (uint32_t j = 0; j < nf; ++j)
+							term *= s_bsig[s_coprod_data[pos++]];
+						val -= term;
+					}
+					s_bsig[fi] = val;
+				}
+				__syncthreads();
+			}
+		}
+
+		// --- 4. Butcher product derivative ---
+		if (seg > 0) {
+			// Initialize local_derivs = s_derivs (dF/dY = dF/dX_combined)
+			if (tid == 0) local_derivs[0] = T(0);
+			for (uint32_t i = tid; i < num_trees; i += blockDim.x)
+				local_derivs[i + 1] = s_derivs[i + 1];
+			__syncthreads();
+
+			// Differentiate through coproduct terms
+			if (tid < num_trees) {
+				uint32_t fi = tid + 1;
+				T dF_tau = s_derivs[fi];
+				if (dF_tau != T(0)) {
+					uint32_t pos = s_coprod_off[tid];
+					uint32_t pend = s_coprod_off[tid + 1];
+					while (pos < pend) {
+						uint32_t nf = s_coprod_data[pos++];
+						uint32_t trunk_flat = s_coprod_data[pos++];
+						uint32_t forest_start = pos;
+
+						T forest_product = T(1);
+						#pragma unroll 4
+						for (uint32_t j = 0; j < nf; ++j)
+							forest_product *= s_bsig[s_coprod_data[pos++]];
+
+						myAtomicAdd(&local_derivs[trunk_flat], dF_tau * forest_product);
+
+						if (nf > 0) {
+							T base = dF_tau * temp_Y[trunk_flat];
+							for (uint32_t k = 0; k < nf; ++k) {
+								uint32_t fk = s_coprod_data[forest_start + k];
+								T partial = base;
+								for (uint32_t j = 0; j < nf; ++j) {
+									if (j != k)
+										partial *= s_bsig[s_coprod_data[forest_start + j]];
+								}
+								myAtomicAdd(&s_derivs[fk], partial);
+							}
+						}
+					}
+				}
+			}
+			__syncthreads();
+		}
+		else {
+			// seg == 0: local_derivs = s_derivs
+			for (uint32_t i = tid; i < total_len; i += blockDim.x)
+				local_derivs[i] = s_derivs[i];
+			__syncthreads();
+		}
+
+		// --- 5. Linear bsig deriv → increment derivs ---
+		// Zero inc_derivs
+		for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
+			inc_derivs[d] = T(0);
+		__syncthreads();
+
+		if (tid < num_trees) {
+			T dF_dYi = local_derivs[tid + 1];
+			if (dF_dYi != T(0)) {
+				T inv_gamma = inv_factorial[tid];
+				uint32_t lstart = labels_offsets[tid];
+				uint32_t lend = labels_offsets[tid + 1];
+				uint32_t n_labels = lend - lstart;
+
+				T base = inv_gamma * dF_dYi;
+				T prefix = T(1);
+				for (uint32_t j = 0; j < n_labels; ++j) {
+					T suffix = T(1);
+					for (uint32_t k = j + 1; k < n_labels; ++k)
+						suffix *= inc[labels_data[lstart + k]];
+					myAtomicAdd(&inc_derivs[labels_data[lstart + j]], base * prefix * suffix);
+					prefix *= inc[labels_data[lstart + j]];
+				}
+			}
+		}
+		__syncthreads();
+
+		// --- 6. Accumulate into path derivs ---
+		for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x) {
+			pd[(seg + 1) * dim + d] += inc_derivs[d];
+			pd[seg * dim + d] -= inc_derivs[d];
+		}
+		__syncthreads();
+	}
+}
+
+// =========================================================================
+// Host-side launcher (forward)
 // =========================================================================
 
 template<typename T>
@@ -395,6 +589,117 @@ void branched_sig_cuda_(
 }
 
 // =========================================================================
+// Backprop host launcher
+// =========================================================================
+
+template<typename T>
+void branched_sig_backprop_cuda_core_(
+	const T* path,
+	T* out,
+	const T* bsig_derivs,
+	const T* bsig,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t length,
+	uint64_t max_nodes
+) {
+	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes);
+	const int steps = static_cast<int>(length - 1);
+	const uint64_t path_stride = length * dimension;
+
+	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
+	if (block < 32) block = 32;
+	if (block > 1024)
+		throw std::invalid_argument("CUDA branched sig backprop: num_trees > 1024 not supported");
+
+	// Shared memory: 4*total_len*T + 2*dim*T + coprod tables
+	size_t smem = (4 * gc.total_length + 2 * dimension) * sizeof(T)
+		+ gc.coprod_data_len * sizeof(uint32_t)
+		+ (gc.num_trees + 1) * sizeof(uint32_t)
+		+ (gc.max_nodes + 2) * sizeof(uint32_t);
+
+	dim3 grid(1, static_cast<unsigned int>(batch_size));
+
+	const T* d_inv_fact;
+	if constexpr (std::is_same_v<T, float>)
+		d_inv_fact = reinterpret_cast<const T*>(gc.d_inv_factorial_f32);
+	else
+		d_inv_fact = reinterpret_cast<const T*>(gc.d_inv_factorial_f64);
+
+	branched_sig_backprop_ker<T><<<grid, block, smem>>>(
+		path, out, bsig, bsig_derivs,
+		static_cast<int>(dimension), steps,
+		gc.total_length, path_stride,
+		gc.d_labels_data, gc.d_labels_offsets32,
+		d_inv_fact,
+		gc.d_coprod_data32, gc.d_coprod_offsets32,
+		gc.d_order_index32, gc.max_nodes,
+		gc.coprod_data_len
+	);
+	cudaDeviceSynchronize();
+	check_cuda_error();
+}
+
+template<typename T>
+void transform_path_backprop_(
+	const T* derivs,
+	T* data_out,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t length,
+	bool time_aug,
+	bool lead_lag,
+	T end_time
+);
+
+template<typename T>
+void branched_sig_backprop_cuda_(
+	const T* path,
+	T* out,
+	const T* bsig_derivs,
+	const T* bsig,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t length,
+	uint64_t max_nodes,
+	bool time_aug,
+	bool lead_lag,
+	T end_time
+) {
+	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
+	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
+
+	if (time_aug || lead_lag) {
+		const uint64_t t_path_size = batch_size * t_length * t_dimension;
+		T* d_transformed = nullptr;
+		T* d_transformed_derivs = nullptr;
+
+		try {
+			cudaMalloc(&d_transformed, t_path_size * sizeof(T));
+			transform_path_<T>(path, d_transformed, batch_size, dimension, length, time_aug, lead_lag, end_time);
+
+			cudaMalloc(&d_transformed_derivs, t_path_size * sizeof(T));
+			branched_sig_backprop_cuda_core_<T>(d_transformed, d_transformed_derivs, bsig_derivs, bsig,
+				batch_size, t_dimension, t_length, max_nodes);
+
+			cudaFree(d_transformed);
+			d_transformed = nullptr;
+
+			transform_path_backprop_<T>(d_transformed_derivs, out, batch_size, dimension, length, time_aug, lead_lag, end_time);
+			cudaFree(d_transformed_derivs);
+		} catch (...) {
+			if (d_transformed) cudaFree(d_transformed);
+			if (d_transformed_derivs) cudaFree(d_transformed_derivs);
+			throw;
+		}
+	}
+	else {
+		branched_sig_backprop_cuda_core_<T>(path, out, bsig_derivs, bsig,
+			batch_size, dimension, length, max_nodes);
+	}
+}
+
+// =========================================================================
 // extern "C" wrappers
 // =========================================================================
 
@@ -414,6 +719,22 @@ extern "C" {
 
 	CUSIG_API int batch_branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time) noexcept {
 		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time));
+	}
+
+	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, 1, dimension, length, max_nodes, time_aug, lead_lag, end_time));
+	}
+
+	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, 1, dimension, length, max_nodes, time_aug, lead_lag, end_time));
+	}
+
+	CUSIG_API int batch_branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time));
+	}
+
+	CUSIG_API int batch_branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time));
 	}
 
 }

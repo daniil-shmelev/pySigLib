@@ -69,34 +69,64 @@ def branched_sig_backprop(
     sig_data = MultipleSigInputHandler([bsig, bsig_derivs], bsig_len, ["bsig", "bsig_derivs"])
     result = PathOutputHandler(path_data.data_length, path_data.data_dimension, path_data)
 
-    if path_data.is_batch:
-        err_code = CPSIG_BATCH_BRANCHED_SIG_BACKPROP[path_data.dtype](
-            path_data.data_ptr,
-            result.data_ptr,
-            sig_data.sig_ptr[1],
-            sig_data.sig_ptr[0],
-            path_data.batch_size,
-            dimension,
-            path_data.data_length,
-            degree,
-            n_jobs,
-            path_data.time_aug,
-            path_data.lead_lag,
-            path_data.end_time
-        )
+    if path_data.device == "cuda":
+        from .dtypes import CUSIG_BRANCHED_SIG_BACKPROP, CUSIG_BATCH_BRANCHED_SIG_BACKPROP
+        if path_data.is_batch:
+            err_code = CUSIG_BATCH_BRANCHED_SIG_BACKPROP[path_data.dtype](
+                path_data.data_ptr,
+                result.data_ptr,
+                sig_data.sig_ptr[1],
+                sig_data.sig_ptr[0],
+                path_data.batch_size,
+                dimension,
+                path_data.data_length,
+                degree,
+                path_data.time_aug,
+                path_data.lead_lag,
+                path_data.end_time
+            )
+        else:
+            err_code = CUSIG_BRANCHED_SIG_BACKPROP[path_data.dtype](
+                path_data.data_ptr,
+                result.data_ptr,
+                sig_data.sig_ptr[1],
+                sig_data.sig_ptr[0],
+                dimension,
+                path_data.data_length,
+                degree,
+                path_data.time_aug,
+                path_data.lead_lag,
+                path_data.end_time
+            )
     else:
-        err_code = CPSIG_BRANCHED_SIG_BACKPROP[path_data.dtype](
-            path_data.data_ptr,
-            result.data_ptr,
-            sig_data.sig_ptr[1],
-            sig_data.sig_ptr[0],
-            dimension,
-            path_data.data_length,
-            degree,
-            path_data.time_aug,
-            path_data.lead_lag,
-            path_data.end_time
-        )
+        if path_data.is_batch:
+            err_code = CPSIG_BATCH_BRANCHED_SIG_BACKPROP[path_data.dtype](
+                path_data.data_ptr,
+                result.data_ptr,
+                sig_data.sig_ptr[1],
+                sig_data.sig_ptr[0],
+                path_data.batch_size,
+                dimension,
+                path_data.data_length,
+                degree,
+                n_jobs,
+                path_data.time_aug,
+                path_data.lead_lag,
+                path_data.end_time
+            )
+        else:
+            err_code = CPSIG_BRANCHED_SIG_BACKPROP[path_data.dtype](
+                path_data.data_ptr,
+                result.data_ptr,
+                sig_data.sig_ptr[1],
+                sig_data.sig_ptr[0],
+                dimension,
+                path_data.data_length,
+                degree,
+                path_data.time_aug,
+                path_data.lead_lag,
+                path_data.end_time
+            )
 
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_backprop: " + err_msg(err_code))

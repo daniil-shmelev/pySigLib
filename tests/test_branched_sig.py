@@ -586,3 +586,81 @@ def test_branched_sig_backprop_batch(d, N):
         single_grad = np.array(pysiglib.branched_sig_backprop(
             paths[i], bsigs[i], derivs[i], N))
         np.testing.assert_allclose(batch_grad[i], single_grad, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# CUDA backprop tests
+# ---------------------------------------------------------------------------
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_branched_sig_backprop_cuda_matches_cpu(d, N):
+    """CUDA backprop must match CPU backprop."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(500)
+    path = torch.tensor(np.cumsum(np.random.randn(8, d) * 0.1, axis=0), dtype=torch.float64)
+    bsig = pysiglib.branched_sig(path, N)
+    derivs = torch.rand(bsig.shape, dtype=torch.float64)
+
+    cpu_grad = pysiglib.branched_sig_backprop(path, bsig, derivs, N)
+    cuda_grad = pysiglib.branched_sig_backprop(path.cuda(), bsig.cuda(), derivs.cuda(), N)
+    check_close(cpu_grad, cuda_grad, double_atol=1e-10)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_branched_sig_backprop_cuda_batch(d, N):
+    """Batched CUDA backprop matches single-path CUDA backprop."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(501)
+    B, L = 4, 6
+    paths = torch.tensor(np.random.randn(B, L, d), dtype=torch.float64, device='cuda')
+    bsigs = pysiglib.branched_sig(paths, N)
+    derivs = torch.rand(bsigs.shape, dtype=torch.float64, device='cuda')
+
+    batch_grad = pysiglib.branched_sig_backprop(paths, bsigs, derivs, N)
+    for i in range(B):
+        single_grad = pysiglib.branched_sig_backprop(paths[i], bsigs[i], derivs[i], N)
+        check_close(batch_grad[i], single_grad, double_atol=1e-10)
+
+
+@skip_no_cuda
+def test_branched_sig_backprop_cuda_torch_api(d=2, N=3):
+    """torch_api branched_sig backward works on CUDA."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(502)
+    path = torch.tensor(np.cumsum(np.random.randn(5, d) * 0.1, axis=0),
+                        dtype=torch.float64, device='cuda', requires_grad=True)
+
+    bsig = pysiglib.torch_api.branched_sig(path, N)
+    loss = bsig.sum()
+    loss.backward()
+    cuda_grad = path.grad.clone()
+
+    # Compare against CPU
+    path_cpu = path.detach().cpu().requires_grad_(True)
+    bsig_cpu = pysiglib.torch_api.branched_sig(path_cpu, N)
+    bsig_cpu.sum().backward()
+    cpu_grad = path_cpu.grad
+
+    check_close(cpu_grad, cuda_grad, double_atol=1e-10)
+
+
+@skip_no_cuda
+def test_branched_sig_combine_torch_api(d=2, N=3):
+    """torch_api branched_sig_combine backward works."""
+    pysiglib.prepare_branched_sig(d, N)
+    np.random.seed(503)
+    bsig1 = torch.tensor(np.random.randn(pysiglib.branched_sig_length(d, N)),
+                         dtype=torch.float64, requires_grad=True)
+    bsig2 = torch.tensor(np.random.randn(pysiglib.branched_sig_length(d, N)),
+                         dtype=torch.float64, requires_grad=True)
+
+    combined = pysiglib.torch_api.branched_sig_combine(bsig1, bsig2, d, N)
+    loss = combined.sum()
+    loss.backward()
+
+    assert bsig1.grad is not None
+    assert bsig2.grad is not None
+    assert bsig1.grad.shape == bsig1.shape
+    assert bsig2.grad.shape == bsig2.shape

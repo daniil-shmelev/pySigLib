@@ -388,3 +388,13 @@ if BUILT_WITH_CUDA:
         "float32": CUSIG.batch_branched_sig_cuda_f,
         "float64": CUSIG.batch_branched_sig_cuda_d
     }
+
+    CUSIG_BRANCHED_SIG_BACKPROP = {
+        "float32": CUSIG.branched_sig_backprop_cuda_f,
+        "float64": CUSIG.branched_sig_backprop_cuda_d
+    }
+
+    CUSIG_BATCH_BRANCHED_SIG_BACKPROP = {
+        "float32": CUSIG.batch_branched_sig_backprop_cuda_f,
+        "float64": CUSIG.batch_branched_sig_backprop_cuda_d
+    }

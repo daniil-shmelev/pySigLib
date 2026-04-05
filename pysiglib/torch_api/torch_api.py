@@ -512,8 +512,8 @@ log_sig_combine.__doc__ = log_sig_combine_forward.__doc__
 # Branched Signature (with autograd)
 # =========================================================================
 
-from ..branched_sig import branched_sig as branched_sig_forward, prepare_branched_sig, branched_sig_length, branched_sig_combine
-from ..branched_sig_backprop import branched_sig_backprop
+from ..branched_sig import branched_sig as branched_sig_forward, prepare_branched_sig, branched_sig_length, branched_sig_combine as branched_sig_combine_forward
+from ..branched_sig_backprop import branched_sig_backprop, branched_sig_combine_backprop
 
 class BranchedSig(torch.autograd.Function):
     @staticmethod
@@ -538,13 +538,42 @@ class BranchedSig(torch.autograd.Function):
         return grad, None, None, None, None, None
 
 def branched_sig(
-        path: Union[np.ndarray, torch.tensor],
+        path: Union[np.ndarray, torch.Tensor],
         degree: int,
         n_jobs: int = 1,
         time_aug: bool = False,
         lead_lag: bool = False,
         end_time: float = 1.0
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     return BranchedSig.apply(path, degree, time_aug, lead_lag, end_time, n_jobs)
 
 branched_sig.__doc__ = branched_sig_forward.__doc__
+
+
+class BranchedSigCombine(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, bsig1, bsig2, dimension, degree, n_jobs):
+        combined = branched_sig_combine_forward(bsig1, bsig2, dimension, degree, n_jobs)
+        ctx.save_for_backward(bsig1, bsig2)
+        ctx.dimension = dimension
+        ctx.degree = degree
+        ctx.n_jobs = n_jobs
+        return combined
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        bsig1, bsig2 = ctx.saved_tensors
+        d1, d2 = branched_sig_combine_backprop(
+            grad_output, bsig1, bsig2, ctx.dimension, ctx.degree, ctx.n_jobs)
+        return d1, d2, None, None, None
+
+def branched_sig_combine(
+        bsig1: Union[np.ndarray, torch.Tensor],
+        bsig2: Union[np.ndarray, torch.Tensor],
+        dimension: int,
+        degree: int,
+        n_jobs: int = 1
+) -> Union[np.ndarray, torch.Tensor]:
+    return BranchedSigCombine.apply(bsig1, bsig2, dimension, degree, n_jobs)
+
+branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__

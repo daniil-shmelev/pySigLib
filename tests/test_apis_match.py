@@ -22,12 +22,7 @@ import pysiglib.torch_api as torch_api
 # Backprop functions excluded from torch_api
 EXCLUDED_SUFFIXES = ("_backprop",)
 
-TEMPORARILY_EXCLUDED = {
-    "prepare_branched_sig",
-    "branched_sig",
-    "branched_sig_combine",
-    "branched_sig_length",
-}
+TEMPORARILY_EXCLUDED = set()
 
 def get_public_functions(module):
     return {
