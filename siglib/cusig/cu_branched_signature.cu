@@ -86,15 +86,19 @@ static CpSigFuncs& cpsig() {
 // =========================================================================
 
 struct BranchedSigCacheGPU {
-	double* d_inv_tree_factorial = nullptr;
-	uint8_t* d_node_labels_data = nullptr;
-	uint64_t* d_node_labels_offsets = nullptr;
-	uint64_t* d_coproduct_data = nullptr;
-	uint64_t* d_coproduct_offsets = nullptr;
-	uint64_t* d_order_index = nullptr;
+	// 32-bit GPU copies for fast index arithmetic
+	uint32_t* d_coprod_data32 = nullptr;
+	uint32_t* d_coprod_offsets32 = nullptr;
+	uint32_t* d_labels_offsets32 = nullptr;
+	uint32_t* d_order_index32 = nullptr;
 
-	uint64_t total_length = 0;
-	uint64_t num_trees = 0;
+	double* d_inv_factorial_f64 = nullptr;
+	float* d_inv_factorial_f32 = nullptr;
+	uint8_t* d_labels_data = nullptr;
+
+	uint32_t total_length = 0;
+	uint32_t num_trees = 0;
+	uint32_t coprod_data_len = 0;
 	int max_nodes = 0;
 
 	BranchedSigCacheGPU() = default;
@@ -102,12 +106,13 @@ struct BranchedSigCacheGPU {
 	BranchedSigCacheGPU& operator=(const BranchedSigCacheGPU&) = delete;
 
 	~BranchedSigCacheGPU() {
-		if (d_inv_tree_factorial) cudaFree(d_inv_tree_factorial);
-		if (d_node_labels_data) cudaFree(d_node_labels_data);
-		if (d_node_labels_offsets) cudaFree(d_node_labels_offsets);
-		if (d_coproduct_data) cudaFree(d_coproduct_data);
-		if (d_coproduct_offsets) cudaFree(d_coproduct_offsets);
-		if (d_order_index) cudaFree(d_order_index);
+		if (d_coprod_data32) cudaFree(d_coprod_data32);
+		if (d_coprod_offsets32) cudaFree(d_coprod_offsets32);
+		if (d_labels_offsets32) cudaFree(d_labels_offsets32);
+		if (d_order_index32) cudaFree(d_order_index32);
+		if (d_inv_factorial_f64) cudaFree(d_inv_factorial_f64);
+		if (d_inv_factorial_f32) cudaFree(d_inv_factorial_f32);
+		if (d_labels_data) cudaFree(d_labels_data);
 	}
 };
 
@@ -162,18 +167,33 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 			h_coprod_data.data(), h_coprod_offsets.data(), h_order_index.data()) != 0)
 		throw std::runtime_error("cu_branched_signature: get_branched_cache_data failed");
 
+	// Convert to 32-bit for GPU
+	std::vector<uint32_t> coprod_data32(coprod_data_len);
+	std::vector<uint32_t> coprod_offsets32(coprod_offsets_len);
+	std::vector<uint32_t> labels_offsets32(labels_offsets_len);
+	std::vector<uint32_t> order_index32(order_index_len);
+	for (size_t i = 0; i < coprod_data_len; ++i) coprod_data32[i] = static_cast<uint32_t>(h_coprod_data[i]);
+	for (size_t i = 0; i < coprod_offsets_len; ++i) coprod_offsets32[i] = static_cast<uint32_t>(h_coprod_offsets[i]);
+	for (size_t i = 0; i < labels_offsets_len; ++i) labels_offsets32[i] = static_cast<uint32_t>(h_labels_offsets[i]);
+	for (size_t i = 0; i < order_index_len; ++i) order_index32[i] = static_cast<uint32_t>(h_order_index[i]);
+
+	std::vector<float> inv_factorial_f32(num_trees);
+	for (size_t i = 0; i < num_trees; ++i) inv_factorial_f32[i] = static_cast<float>(h_inv_factorial[i]);
+
 	// Upload to GPU
 	auto gpu = std::make_unique<BranchedSigCacheGPU>();
-	gpu->total_length = total_length;
-	gpu->num_trees = num_trees;
+	gpu->total_length = static_cast<uint32_t>(total_length);
+	gpu->num_trees = static_cast<uint32_t>(num_trees);
+	gpu->coprod_data_len = static_cast<uint32_t>(coprod_data_len);
 	gpu->max_nodes = out_max_nodes;
 
-	upload(gpu->d_inv_tree_factorial, h_inv_factorial.data(), h_inv_factorial.size());
-	upload(gpu->d_node_labels_data, h_labels_data.data(), h_labels_data.size());
-	upload(gpu->d_node_labels_offsets, h_labels_offsets.data(), h_labels_offsets.size());
-	upload(gpu->d_coproduct_data, h_coprod_data.data(), h_coprod_data.size());
-	upload(gpu->d_coproduct_offsets, h_coprod_offsets.data(), h_coprod_offsets.size());
-	upload(gpu->d_order_index, h_order_index.data(), h_order_index.size());
+	upload(gpu->d_coprod_data32, coprod_data32.data(), coprod_data32.size());
+	upload(gpu->d_coprod_offsets32, coprod_offsets32.data(), coprod_offsets32.size());
+	upload(gpu->d_labels_offsets32, labels_offsets32.data(), labels_offsets32.size());
+	upload(gpu->d_order_index32, order_index32.data(), order_index32.size());
+	upload(gpu->d_inv_factorial_f64, h_inv_factorial.data(), h_inv_factorial.size());
+	upload(gpu->d_inv_factorial_f32, inv_factorial_f32.data(), inv_factorial_f32.size());
+	upload(gpu->d_labels_data, h_labels_data.data(), h_labels_data.size());
 
 	auto [ins, _] = s_gpu_cache_map.insert_or_assign(key, std::move(gpu));
 	return *(ins->second);
@@ -183,36 +203,53 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 // Fused segment kernel
 // =========================================================================
 
+// Shared memory layout:
+// | temp[total_len] | inc[dim] | s_coprod_data[coprod_len] | s_coprod_off[num_trees+1] | s_order_idx[max_nodes+2] |
+
 template<typename T>
-__global__ void branched_sig_ker(
+__global__ __launch_bounds__(1024)
+void branched_sig_ker(
 	const T* __restrict__ path,
 	T* __restrict__ out,
 	int dim,
 	int steps,
-	uint64_t total_len,
+	uint32_t total_len,
 	uint64_t path_stride,
 	const uint8_t* __restrict__ labels_data,
-	const uint64_t* __restrict__ labels_offsets,
-	const double* __restrict__ inv_factorial,
-	const uint64_t* __restrict__ coprod_data,
-	const uint64_t* __restrict__ coprod_offsets,
-	const uint64_t* __restrict__ order_index,
-	int max_nodes
+	const uint32_t* __restrict__ labels_offsets,
+	const T* __restrict__ inv_factorial,
+	const uint32_t* __restrict__ g_coprod_data,
+	const uint32_t* __restrict__ g_coprod_offsets,
+	const uint32_t* __restrict__ g_order_index,
+	int max_nodes,
+	uint32_t coprod_data_len
 ) {
-	const uint64_t batch_idx = blockIdx.y;
-	const uint64_t tid = threadIdx.x;
-	const uint64_t num_trees = total_len - 1;
+	const uint32_t batch_idx = blockIdx.y;
+	const uint32_t tid = threadIdx.x;
+	const uint32_t num_trees = total_len - 1;
 
 	extern __shared__ char smem[];
 	T* temp = reinterpret_cast<T*>(smem);
 	T* inc = temp + total_len;
+	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(inc + dim);
+	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
+	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
 
-	const T* bp = path + batch_idx * path_stride;
-	T* X = out + batch_idx * total_len;
+	// --- One-time cooperative load of coproduct table into shared memory ---
+	for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
+		s_coprod_data[i] = g_coprod_data[i];
+	for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
+		s_coprod_off[i] = g_coprod_offsets[i];
+	for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2); i += blockDim.x)
+		s_order_idx[i] = g_order_index[i];
+	__syncthreads();
+
+	const T* bp = path + static_cast<uint64_t>(batch_idx) * path_stride;
+	T* X = out + static_cast<uint64_t>(batch_idx) * total_len;
 
 	for (int seg = 0; seg < steps; ++seg) {
 		// --- Cooperative increment load ---
-		for (uint64_t d = tid; d < static_cast<uint64_t>(dim); d += blockDim.x)
+		for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
 			inc[d] = bp[(seg + 1) * dim + d] - bp[seg * dim + d];
 		__syncthreads();
 
@@ -221,28 +258,32 @@ __global__ void branched_sig_ker(
 		if (tid == 0) tgt[0] = T(1);
 		if (tid < num_trees) {
 			T prod = T(1);
-			for (uint64_t j = labels_offsets[tid]; j < labels_offsets[tid + 1]; ++j)
+			uint32_t lstart = labels_offsets[tid];
+			uint32_t lend = labels_offsets[tid + 1];
+			#pragma unroll 8
+			for (uint32_t j = lstart; j < lend; ++j)
 				prod *= inc[labels_data[j]];
-			tgt[tid + 1] = prod * static_cast<T>(inv_factorial[tid]);
+			tgt[tid + 1] = prod * inv_factorial[tid];
 		}
 		__syncthreads();
 
 		// --- Butcher product (seg > 0 only) ---
 		if (seg > 0) {
 			for (int order = max_nodes; order >= 1; --order) {
-				uint64_t ostart = order_index[order];
-				uint64_t oend = order_index[order + 1];
+				uint32_t ostart = s_order_idx[order];
+				uint32_t oend = s_order_idx[order + 1];
 				if (tid >= ostart && tid < oend) {
-					uint64_t fi = tid + 1;
+					uint32_t fi = tid + 1;
 					T val = X[fi] + temp[fi];
 
-					uint64_t pos = coprod_offsets[tid];
-					uint64_t pend = coprod_offsets[tid + 1];
+					uint32_t pos = s_coprod_off[tid];
+					uint32_t pend = s_coprod_off[tid + 1];
 					while (pos < pend) {
-						uint64_t nf = coprod_data[pos++];
-						T term = temp[coprod_data[pos++]];
-						for (uint64_t j = 0; j < nf; ++j)
-							term *= X[coprod_data[pos++]];
+						uint32_t nf = s_coprod_data[pos++];
+						T term = temp[s_coprod_data[pos++]];
+						#pragma unroll 4
+						for (uint32_t j = 0; j < nf; ++j)
+							term *= X[s_coprod_data[pos++]];
 						val += term;
 					}
 					X[fi] = val;
@@ -275,16 +316,31 @@ void branched_sig_cuda_core_(
 	if (block > 1024)
 		throw std::invalid_argument("CUDA branched sig: num_trees > 1024 not supported");
 
-	size_t smem = (gc.total_length + dimension) * sizeof(T);
+	// Shared memory: temp[total_len]*T + inc[dim]*T
+	//              + coprod_data[coprod_data_len]*4 + coprod_offsets[num_trees+1]*4
+	//              + order_index[max_nodes+2]*4
+	size_t smem = (gc.total_length + dimension) * sizeof(T)
+		+ gc.coprod_data_len * sizeof(uint32_t)
+		+ (gc.num_trees + 1) * sizeof(uint32_t)
+		+ (gc.max_nodes + 2) * sizeof(uint32_t);
+
 	dim3 grid(1, static_cast<unsigned int>(batch_size));
+
+	// Select float or double inv_factorial
+	const T* d_inv_fact;
+	if constexpr (std::is_same_v<T, float>)
+		d_inv_fact = reinterpret_cast<const T*>(gc.d_inv_factorial_f32);
+	else
+		d_inv_fact = reinterpret_cast<const T*>(gc.d_inv_factorial_f64);
 
 	branched_sig_ker<T><<<grid, block, smem>>>(
 		path, out, static_cast<int>(dimension), steps,
 		gc.total_length, path_stride,
-		gc.d_node_labels_data, gc.d_node_labels_offsets,
-		gc.d_inv_tree_factorial,
-		gc.d_coproduct_data, gc.d_coproduct_offsets,
-		gc.d_order_index, gc.max_nodes
+		gc.d_labels_data, gc.d_labels_offsets32,
+		d_inv_fact,
+		gc.d_coprod_data32, gc.d_coprod_offsets32,
+		gc.d_order_index32, gc.max_nodes,
+		gc.coprod_data_len
 	);
 	cudaDeviceSynchronize();
 	check_cuda_error();
