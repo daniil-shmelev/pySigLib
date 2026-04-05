@@ -31,6 +31,7 @@
     <ClInclude Include="..\cpsig\cp_branched_trees.h" />
     <ClInclude Include="..\cpsig\cp_branched_cache.h" />
     <ClInclude Include="..\cpsig\cp_branched_signature.h" />
+    <ClInclude Include="..\cpsig\disk_cache.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cpsig\cppch.cpp" />

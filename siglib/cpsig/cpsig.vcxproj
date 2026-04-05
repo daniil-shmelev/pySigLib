@@ -121,6 +121,7 @@
     <ClInclude Include="cp_branched_trees.h" />
     <ClInclude Include="cp_branched_cache.h" />
     <ClInclude Include="cp_branched_signature.h" />
+    <ClInclude Include="disk_cache.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cp_bch.cpp" />

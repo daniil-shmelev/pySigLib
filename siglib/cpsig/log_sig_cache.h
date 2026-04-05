@@ -18,9 +18,7 @@
 #include "cp_tensor_poly.h"
 #include "words.h"
 #include "sparse.h"
-
-void serialize_vector(std::ostream& out, const std::vector<uint64_t>& v);
-void deserialize_vector(std::istream& in, std::vector<uint64_t>& out);
+#include "disk_cache.h"
 
 struct BasisCache {
 	int method;
@@ -56,10 +54,7 @@ struct BasisCache {
 	}
 };
 
-constexpr uint64_t cache_magic_number = 0x70797369676C6962;
 extern const char* version;
-extern std::filesystem::path cache_dir;
-extern const char* cache_folder_name;
 extern std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BasisCache>, PairHash> basis_cache;
 
 class CacheFile {
@@ -101,8 +96,6 @@ private:
 	std::filesystem::path file_path;
 };
 
-void set_default_cache_dir();
-void set_cache_dir_(const char* dir);
 void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_disk = false);
 const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int method);
 void clear_cache_(bool use_disk);

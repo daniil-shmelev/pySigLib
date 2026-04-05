@@ -724,7 +724,7 @@ extern "C" {
 	* @{
 	*/
 
-	CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes) noexcept;
+	CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk = false) noexcept;
 	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes) noexcept;
 
 	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;

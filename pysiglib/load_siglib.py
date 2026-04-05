@@ -1734,7 +1734,7 @@ if BUILT_WITH_CUDA:
 # branched_sig
 ######################################################
 
-CPSIG.prepare_branched_sig.argtypes = (c_uint64, c_uint64)
+CPSIG.prepare_branched_sig.argtypes = (c_uint64, c_uint64, c_bool)
 CPSIG.prepare_branched_sig.restype = c_int
 
 CPSIG.branched_sig_length.argtypes = (c_uint64, c_uint64)

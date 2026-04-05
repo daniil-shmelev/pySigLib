@@ -16,6 +16,7 @@
 #include "cppch.h"
 #include "cpsig.h"
 #include "cp_branched_cache.h"
+#include "disk_cache.h"
 #include "macros.h"
 
 // Global cache map
@@ -153,10 +154,8 @@ static void enumerate_admissible_cuts(
 		// Skip the trivial empty cut (all children kept with empty sub-cuts)
 		if (!all_kept_empty) {
 			// Build the trunk tree's canonical form
-			std::sort(trunk_children.begin(), trunk_children.end(),
-				[&trees](uint64_t a, uint64_t b) {
-					return trees[a].canonical < trees[b].canonical;
-				});
+			// Sort by index (ascending) to match the enumeration's multiset ordering
+			std::sort(trunk_children.begin(), trunk_children.end());
 
 			CanonicalTree trunk_canonical;
 			trunk_canonical.root_label = tree.canonical.root_label;
@@ -198,34 +197,114 @@ static void enumerate_admissible_cuts(
 }
 
 // ---------------------------------------------------------------------------
+// Disk cache serialization
+// ---------------------------------------------------------------------------
+
+static std::filesystem::path branched_cache_file_path(uint64_t dimension, uint64_t max_nodes) {
+	return cache_dir / cache_folder_name /
+		("branched_" + std::to_string(dimension) + "_" + std::to_string(max_nodes) + "_v1.bin");
+}
+
+static void write_branched_cache(const BranchedSigCache& c) {
+	if (cache_dir.empty()) set_default_cache_dir();
+	auto dir = cache_dir / cache_folder_name;
+	if (!std::filesystem::exists(dir))
+		std::filesystem::create_directory(dir);
+
+	std::ofstream out(branched_cache_file_path(c.dimension, c.max_nodes), std::ios::binary);
+	if (!out) return;
+
+	out.write(reinterpret_cast<const char*>(&cache_magic_number), sizeof(cache_magic_number));
+	out.write(reinterpret_cast<const char*>(&c.dimension), sizeof(c.dimension));
+	out.write(reinterpret_cast<const char*>(&c.max_nodes), sizeof(c.max_nodes));
+	out.write(reinterpret_cast<const char*>(&c.total_length), sizeof(c.total_length));
+	serialize_vector(out, c.order_index);
+
+	uint64_t n = c.inv_tree_factorial.size();
+	out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+	if (n > 0) out.write(reinterpret_cast<const char*>(c.inv_tree_factorial.data()), n * sizeof(double));
+
+	n = c.node_labels_data.size();
+	out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+	if (n > 0) out.write(reinterpret_cast<const char*>(c.node_labels_data.data()), n);
+
+	serialize_vector(out, c.node_labels_offsets);
+	serialize_vector(out, c.coproduct_data);
+	serialize_vector(out, c.coproduct_offsets);
+}
+
+static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, BranchedSigCache& c) {
+	if (cache_dir.empty()) set_default_cache_dir();
+	auto path = branched_cache_file_path(dimension, max_nodes);
+	if (!std::filesystem::exists(path)) return false;
+
+	std::ifstream in(path, std::ios::binary);
+	if (!in) return false;
+
+	uint64_t magic;
+	in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+	if (magic != cache_magic_number)
+		throw std::runtime_error("Tried to read an invalid cache file. Cache may have been corrupted.");
+
+	in.read(reinterpret_cast<char*>(&c.dimension), sizeof(c.dimension));
+	in.read(reinterpret_cast<char*>(&c.max_nodes), sizeof(c.max_nodes));
+	if (c.dimension != dimension || c.max_nodes != max_nodes)
+		return false;
+	in.read(reinterpret_cast<char*>(&c.total_length), sizeof(c.total_length));
+	deserialize_vector(in, c.order_index);
+
+	uint64_t n;
+	in.read(reinterpret_cast<char*>(&n), sizeof(n));
+	c.inv_tree_factorial.resize(n);
+	if (n > 0) in.read(reinterpret_cast<char*>(c.inv_tree_factorial.data()), n * sizeof(double));
+
+	in.read(reinterpret_cast<char*>(&n), sizeof(n));
+	c.node_labels_data.resize(n);
+	if (n > 0) in.read(reinterpret_cast<char*>(c.node_labels_data.data()), n);
+
+	deserialize_vector(in, c.node_labels_offsets);
+	deserialize_vector(in, c.coproduct_data);
+	deserialize_vector(in, c.coproduct_offsets);
+
+	return in.good();
+}
+
+// ---------------------------------------------------------------------------
 // Cache construction
 // ---------------------------------------------------------------------------
 
-void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes) {
+void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk) {
 	std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
 
 	if (branched_sig_cache_map.find(key) != branched_sig_cache_map.end()) {
-		return;  // already cached
+		return;  // already cached in memory
 	}
 
+	// Try loading from disk
+	if (use_disk) {
+		auto cache = std::make_unique<BranchedSigCache>();
+		if (read_branched_cache(dimension, max_nodes, *cache)) {
+			branched_sig_cache_map.insert_or_assign(key, std::move(cache));
+			return;
+		}
+	}
+
+	// Compute from scratch
 	auto cache = std::make_unique<BranchedSigCache>();
 	cache->dimension = dimension;
 	cache->max_nodes = max_nodes;
 
-	// Enumerate all decorated trees
 	std::vector<DecoratedTreeInfo> trees;
 	enumerate_all_decorated_trees(dimension, max_nodes, trees, cache->order_index);
 
 	uint64_t num_trees = trees.size();
 	cache->total_length = 1 + num_trees;
 
-	// Extract per-tree data: precompute reciprocal factorials for hot-path multiply
 	cache->inv_tree_factorial.resize(num_trees);
 	for (uint64_t i = 0; i < num_trees; ++i) {
 		cache->inv_tree_factorial[i] = 1.0 / trees[i].tree_factorial;
 	}
 
-	// Flatten node labels into CSR format for cache-friendly access
 	cache->node_labels_offsets.resize(num_trees + 1);
 	cache->node_labels_offsets[0] = 0;
 	for (uint64_t i = 0; i < num_trees; ++i) {
@@ -237,25 +316,24 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes) {
 			trees[i].node_labels.data(), trees[i].node_labels.size());
 	}
 
-	// Build coproduct table
 	cache->coproduct_offsets.resize(num_trees + 1, 0);
-
 	for (uint64_t i = 0; i < num_trees; ++i) {
 		cache->coproduct_offsets[i] = cache->coproduct_data.size();
-
 		std::vector<CutResult> cuts;
 		enumerate_admissible_cuts(i, trees, cache->order_index, cuts);
-
 		for (const auto& cut : cuts) {
-			// Pack: [num_forest_trees, trunk_flat_idx, forest_flat_idx_0, ...]
 			cache->coproduct_data.push_back(cut.forest.size());
-			cache->coproduct_data.push_back(cut.trunk + 1);  // +1 for flat sig index
+			cache->coproduct_data.push_back(cut.trunk + 1);
 			for (uint64_t f : cut.forest) {
-				cache->coproduct_data.push_back(f + 1);  // +1 for flat sig index
+				cache->coproduct_data.push_back(f + 1);
 			}
 		}
 	}
 	cache->coproduct_offsets[num_trees] = cache->coproduct_data.size();
+
+	if (use_disk) {
+		write_branched_cache(*cache);
+	}
 
 	branched_sig_cache_map.insert_or_assign(key, std::move(cache));
 }
@@ -284,8 +362,8 @@ uint64_t branched_sig_length_(uint64_t dimension, uint64_t max_nodes) {
 
 extern "C" {
 
-	CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes) noexcept {
-		SAFE_CALL(prepare_branched_sig_cache(dimension, max_nodes));
+	CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk) noexcept {
+		SAFE_CALL(prepare_branched_sig_cache(dimension, max_nodes, use_disk));
 	}
 
 	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes) noexcept {

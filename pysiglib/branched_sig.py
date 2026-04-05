@@ -25,7 +25,7 @@ from .data_handlers import PathInputHandler, SigOutputHandler, MultipleSigInputH
 from .load_siglib import CPSIG
 
 
-def prepare_branched_sig(dimension: int, degree: int):
+def prepare_branched_sig(dimension: int, degree: int, use_disk: bool = False):
     """
     Precomputes the tree enumeration and Connes-Kreimer coproduct tables
     needed for branched signature computation. Must be called before
@@ -33,12 +33,16 @@ def prepare_branched_sig(dimension: int, degree: int):
 
     :param dimension: Dimension of the underlying path.
     :param degree: Maximum tree order (number of nodes).
+    :param use_disk: If True, cache the precomputed tables to disk for
+        faster loading in future sessions. Uses the same cache directory
+        as ``set_cache_dir()`` / ``prepare_log_sig()``.
     """
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
+    check_type(use_disk, "use_disk", bool)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    err_code = CPSIG.prepare_branched_sig(dimension, degree)
+    err_code = CPSIG.prepare_branched_sig(dimension, degree, use_disk)
     if err_code:
         raise Exception("Error in pysiglib.prepare_branched_sig: " + err_msg(err_code))
 
