@@ -269,13 +269,29 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 	for (uint64_t i = 0; i < num_trees; ++i)
 		tree_map[trees[i].canonical] = i;
 
-	// Compute all admissible cuts bottom-up with memoization
+	// Compute all admissible cuts bottom-up with memoization.
+	// Exploit label symmetry: trees differing only in root_label have identical
+	// coproduct structure. Compute cuts for label=0, copy to label=1..d-1
+	// with trunk index offset.
 	std::vector<std::vector<CutResult>> all_cuts(num_trees);
 	for (uint64_t order = 1; order <= max_nodes; ++order) {
 		uint64_t ostart = cache->order_index[order];
 		uint64_t oend = cache->order_index[order + 1];
-		for (uint64_t i = ostart; i < oend; ++i) {
+		for (uint64_t i = ostart; i < oend; i += dimension) {
+			// Compute cuts for the label=0 tree in this shape group
 			enumerate_admissible_cuts(i, trees, cache->order_index, tree_map, all_cuts, all_cuts[i]);
+
+			// Copy to label=1..d-1 with adjusted trunk indices
+			for (uint64_t L = 1; L < dimension && i + L < oend; ++L) {
+				all_cuts[i + L].reserve(all_cuts[i].size());
+				for (const auto& cut : all_cuts[i]) {
+					CutResult adjusted;
+					adjusted.forest = cut.forest;
+					// Trunk tree has same shape, label offset by L
+					adjusted.trunk = cut.trunk + L;
+					all_cuts[i + L].push_back(std::move(adjusted));
+				}
+			}
 		}
 	}
 
