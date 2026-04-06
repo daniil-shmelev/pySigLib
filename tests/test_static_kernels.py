@@ -493,3 +493,123 @@ def test_sig_kernel_gram_backprop_static_kernels(device, kernel_factory, kernel_
 
     check_close(d1, d3)
     check_close(d2, d4)
+
+
+# =========================================================================
+# Normalize tests
+# =========================================================================
+
+import pysiglib.torch_api as pysiglib_torch
+
+check_close_norm = partial(_check_close, atol=1e-5)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("kernel_factory", [
+    lambda: None,
+    lambda: pysiglib.RBFKernel(sigma=1.0),
+], ids=["linear_default", "rbf"])
+def test_sig_kernel_normalize_self_equals_one(device, kernel_factory):
+    """sig_kernel(X, X, normalize=True) should give exactly 1.0 for each batch element."""
+    batch, length, dim = 4, 15, 3
+    X = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
+
+    kernel = kernel_factory()
+    k = pysiglib.sig_kernel(X, X, 1, static_kernel=kernel, normalize=True)
+    assert_device(k, device)
+    assert k.shape == (batch,)
+    check_close_norm(k, torch.ones(batch, device=device, dtype=torch.double))
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_gram_normalize_diagonal(device):
+    """sig_kernel_gram(X, X, normalize=True) diagonal should be 1.0."""
+    batch, length, dim = 4, 15, 3
+    X = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
+
+    gram = pysiglib.sig_kernel_gram(X, X, 1, normalize=True)
+    assert_device(gram, device)
+    assert gram.shape == (batch, batch)
+    diag = torch.diagonal(gram)
+    check_close_norm(diag, torch.ones(batch, device=device, dtype=torch.double))
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_gram_normalize_bounded(device):
+    """All entries of normalized gram matrix should be <= 1.0 (Cauchy-Schwarz)."""
+    batch, length, dim = 4, 15, 3
+    X = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
+
+    gram = pysiglib.sig_kernel_gram(X, X, 1, normalize=True)
+    assert_device(gram, device)
+    assert torch.all(gram <= 1.0 + 1e-5), f"Max gram entry: {gram.max().item()}"
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_gram_normalize_consistency(device):
+    """sig_kernel_gram(X, Y, normalize=True)[i,j] should equal
+    sig_kernel(X[i:i+1], Y[j:j+1], normalize=True)."""
+    batch, length, dim = 4, 15, 3
+    X = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
+    Y = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
+
+    gram = pysiglib.sig_kernel_gram(X, Y, 1, normalize=True)
+    assert_device(gram, device)
+
+    for i in range(batch):
+        for j in range(batch):
+            k_ij = pysiglib.sig_kernel(
+                X[i:i+1], Y[j:j+1], 1, normalize=True
+            )
+            check_close_norm(gram[i, j], k_ij)
+
+
+def test_sig_kernel_normalize_return_grid_raises():
+    """normalize=True with return_grid=True should raise ValueError."""
+    batch, length, dim = 4, 15, 3
+    X = torch.rand(size=(batch, length, dim), dtype=torch.double) / 2
+    Y = torch.rand(size=(batch, length, dim), dtype=torch.double) / 2
+
+    with pytest.raises(ValueError, match="normalize.*return_grid"):
+        pysiglib.sig_kernel(X, Y, 1, return_grid=True, normalize=True)
+
+    with pytest.raises(ValueError, match="normalize.*return_grid"):
+        pysiglib.sig_kernel_gram(X, Y, 1, return_grid=True, normalize=True)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_gram_normalize_torch_api_backward(device):
+    """Gradients flow through normalized gram matrix via torch_api."""
+    batch, length, dim = 4, 15, 3
+    X = (torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2).requires_grad_(True)
+    Y = (torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2).requires_grad_(True)
+
+    gram = pysiglib_torch.sig_kernel_gram(X, Y, 1, normalize=True)
+    loss = gram.sum()
+    loss.backward()
+
+    assert X.grad is not None, "X.grad is None"
+    assert Y.grad is not None, "Y.grad is None"
+    assert X.grad.shape == X.shape
+    assert Y.grad.shape == Y.shape
+    assert torch.all(torch.isfinite(X.grad)), "X.grad has non-finite values"
+    assert torch.all(torch.isfinite(Y.grad)), "Y.grad has non-finite values"
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_kernel_normalize_torch_api_backward(device):
+    """Gradients flow through normalized sig_kernel via torch_api."""
+    batch, length, dim = 4, 15, 3
+    X = (torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2).requires_grad_(True)
+    Y = (torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2).requires_grad_(True)
+
+    k = pysiglib_torch.sig_kernel(X, Y, 1, normalize=True)
+    loss = k.sum()
+    loss.backward()
+
+    assert X.grad is not None, "X.grad is None"
+    assert Y.grad is not None, "Y.grad is None"
+    assert X.grad.shape == X.shape
+    assert Y.grad.shape == Y.shape
+    assert torch.all(torch.isfinite(X.grad)), "X.grad has non-finite values"
+    assert torch.all(torch.isfinite(Y.grad)), "Y.grad has non-finite values"

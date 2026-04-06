@@ -67,7 +67,8 @@ def sig_kernel(
         lead_lag : bool = False,
         end_time : float = 1.,
         n_jobs : int = 1,
-        return_grid: bool = False
+        return_grid: bool = False,
+        normalize : bool = False
 ) -> Union[np.ndarray, torch.tensor]:
     """
     Computes a single signature kernel or a batch of signature kernels.
@@ -121,6 +122,9 @@ def sig_kernel(
     :type n_jobs: int
     :param return_grid: If ``True``, returns the entire PDE grid.
     :type return_grid: bool
+    :param normalize: If ``True``, normalizes the signature kernel so that :math:`k(x, x) = 1`
+        by dividing by :math:`\\sqrt{k(x, x) \\cdot k(y, y)}`. Cannot be used with ``return_grid=True``.
+    :type normalize: bool
     :return: Single signature kernel or batch of signature kernels
     :rtype: numpy.ndarray | torch.tensor
 
@@ -175,6 +179,8 @@ def sig_kernel(
     check_type(n_jobs, "n_jobs", int)
     if n_jobs == 0:
         raise ValueError("n_jobs cannot be 0")
+    if normalize and return_grid:
+        raise ValueError("normalize=True cannot be used with return_grid=True")
 
     dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
 
@@ -228,6 +234,15 @@ def sig_kernel(
             stacklevel=2
         )
 
+    if normalize:
+        # Paths are already transformed at this point, so pass time_aug=False, lead_lag=False
+        k1 = sig_kernel(path1, path1, dyadic_order, static_kernel, n_jobs=n_jobs)
+        k2 = sig_kernel(path2, path2, dyadic_order, static_kernel, n_jobs=n_jobs)
+        if isinstance(result.data, np.ndarray):
+            result.data = result.data / np.sqrt(np.maximum(k1 * k2, 1e-30))
+        else:
+            result.data = result.data / torch.sqrt(torch.clamp(k1 * k2, min=1e-30))
+
     return result.data
 
 
@@ -241,7 +256,8 @@ def sig_kernel_gram(
         end_time : float = 1.,
         n_jobs : int = 1,
         max_batch : int = -1,
-        return_grid : bool = False
+        return_grid : bool = False,
+        normalize : bool = False
 ) -> Union[np.ndarray, torch.tensor]:
     """
     Given batches of paths :math:`\\{x_i\\}_{i=1}^B` and :math:`\\{y_i\\}_{i=1}^B`, computes the gram matrix of signature kernels
@@ -304,6 +320,9 @@ def sig_kernel_gram(
     :type max_batch: int
     :param return_grid: If ``True``, returns the entire PDE grid.
     :type return_grid: bool
+    :param normalize: If ``True``, normalizes the gram matrix so that :math:`K(x, x) = 1` by
+        dividing each entry by :math:`\\sqrt{K(x_i, x_i) \\cdot K(y_j, y_j)}`. Cannot be used with ``return_grid=True``.
+    :type normalize: bool
     :return: Gram matrix of signature kernels
     :rtype: numpy.ndarray | torch.tensor
 
@@ -358,6 +377,8 @@ def sig_kernel_gram(
     check_type(max_batch, "max_batch", int)
     if max_batch == 0 or max_batch < -1:
         raise ValueError("max_batch must be a positive integer or -1")
+    if normalize and return_grid:
+        raise ValueError("normalize=True cannot be used with return_grid=True")
 
     data = MultiplePathInputHandler([path1, path2], time_aug, lead_lag, end_time, ["path1", "path2"], False)
 
@@ -419,6 +440,11 @@ def sig_kernel_gram(
                 if return_grid:
                     k_mirror = k_mirror.transpose(-2, -1)
                 res[cj[off], ci[off]] = k_mirror
+
+    if normalize:
+        d1 = sig_kernel(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs)
+        d2 = sig_kernel(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs) if not symmetric else d1
+        res = res / torch.sqrt(torch.clamp(d1.unsqueeze(1) * d2.unsqueeze(0), min=1e-30))
 
     if data.type_ == "numpy":
         return res.numpy()

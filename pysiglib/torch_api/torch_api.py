@@ -319,9 +319,17 @@ def sig_kernel(
         lead_lag : bool = False,
         end_time : float = 1.,
         n_jobs : int = 1,
-        return_grid: bool = False
+        return_grid: bool = False,
+        normalize : bool = False
 ) -> Union[np.ndarray, torch.tensor]:
-    return SigKernel.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
+    if normalize and return_grid:
+        raise ValueError("normalize=True cannot be used with return_grid=True")
+    k = SigKernel.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
+    if normalize:
+        k1 = SigKernel.apply(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        k2 = SigKernel.apply(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        k = k / torch.sqrt(torch.clamp(k1 * k2, min=1e-30))
+    return k
 
 sig_kernel.__doc__ = sig_kernel_forward.__doc__
 
@@ -372,9 +380,17 @@ def sig_kernel_gram(
         end_time: float = 1.,
         n_jobs: int = 1,
         max_batch: int = -1,
-        return_grid: bool = False
+        return_grid: bool = False,
+        normalize : bool = False
 ) -> Union[np.ndarray, torch.tensor]:
-    return SigKernelGram.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid)
+    if normalize and return_grid:
+        raise ValueError("normalize=True cannot be used with return_grid=True")
+    gram = SigKernelGram.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid)
+    if normalize:
+        d1 = SigKernel.apply(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        d2 = d1 if path1 is path2 else SigKernel.apply(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        gram = gram / torch.sqrt(torch.clamp(d1.unsqueeze(1) * d2.unsqueeze(0), min=1e-30))
+    return gram
 
 sig_kernel_gram.__doc__ = sig_kernel_gram_forward.__doc__
 
