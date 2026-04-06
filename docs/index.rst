@@ -46,7 +46,7 @@ Fast Signature, Log Signature and Signature Kernel Computations on CPU and GPU.
 
       Signatures, log signatures, signature kernels, and more.
 
-.. grid:: 2
+.. grid:: 3
    :gutter: 3
 
    .. grid-item-card:: :octicon:`flame;1.5em` PyTorch API
@@ -54,6 +54,12 @@ Fast Signature, Log Signature and Signature Kernel Computations on CPU and GPU.
       :link-type: doc
 
       Use pySigLib functions as native PyTorch autograd functions with full gradient support.
+
+   .. grid-item-card:: :octicon:`zap;1.5em` JAX API
+      :link: /pages/jax_api
+      :link-type: doc
+
+      Use pySigLib functions with JAX transformations — ``jit``, ``grad``, and ``vmap``.
 
    .. grid-item-card:: :octicon:`terminal;1.5em` C++ Library
       :link: /pages/cpp
@@ -91,4 +97,5 @@ Fast Signature, Log Signature and Signature Kernel Computations on CPU and GPU.
    :hidden:
 
    /pages/torch_api
+   /pages/jax_api
    /pages/cpp
