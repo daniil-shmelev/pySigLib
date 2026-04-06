@@ -33,8 +33,6 @@ from ..log_sig import log_sig as log_sig_forward
 from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
 from ..branched_sig import branched_sig as branched_sig_forward
 from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
-from ..branched_sig import prepare_branched_sig
-from ..log_sig import prepare_log_sig
 from ..words import word_to_idx
 from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order
 from ._ffi import (
@@ -275,9 +273,6 @@ def sig_to_log_sig(
         )
 
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
-    if method in (1, 2):
-        prepare_log_sig(aug_dim, degree, method)
-
     return _sig_to_log_sig(sig_arr, aug_dim, degree, method, n_jobs)
 
 
@@ -366,7 +361,6 @@ def log_sig_combine(
         raise ValueError("n_jobs cannot be 0")
 
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
-    prepare_log_sig(aug_dim, degree, 1)
     return _log_sig_combine(log_sig1, log_sig2, aug_dim, degree, n_jobs)
 
 
@@ -734,9 +728,6 @@ def branched_sig(
     if n_jobs == 0:
         raise ValueError("n_jobs cannot be 0")
 
-    dimension = path.shape[-1]
-    prepare_branched_sig(dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
-
     return _branched_sig(path, degree, time_aug, lead_lag, end_time, n_jobs)
 
 
@@ -789,8 +780,6 @@ def branched_sig_combine(
     check_type(n_jobs, "n_jobs", int)
     if n_jobs == 0:
         raise ValueError("n_jobs cannot be 0")
-
-    prepare_branched_sig(dimension, degree)
 
     return _branched_sig_combine(bsig1, bsig2, dimension, degree, n_jobs)
 
