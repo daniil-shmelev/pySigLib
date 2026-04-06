@@ -181,7 +181,7 @@ class RBFKernel(StaticKernel):
         dout *= 2. * self._one_over_sigma
 
         ctx.save_for_grad_y(x, y, dout)
-        return torch.bmm(dout, y) - x * torch.sum(dout, dim=2).unsqueeze(-1)
+        return torch.bmm(dout, y) - x * torch.sum(dout, dim=2, keepdim=True)
 
     def grad_y(self, ctx : Context, derivs : torch.Tensor):
 
@@ -203,7 +203,7 @@ def _squared_dist(x, y):
 
 def _undo_double_diff(derivs, like):
     dout = torch.zeros_like(like)
-    dout[:, 1:, 1:] += derivs
+    dout[:, 1:, 1:] = derivs
     dout[:, :-1, :-1] += derivs
     dout[:, 1:, :-1] -= derivs
     dout[:, :-1, 1:] -= derivs
@@ -218,18 +218,31 @@ class PolynomialKernel(StaticKernel):
         self.degree = degree
         self.gamma = gamma
         self.scale = scale
+        self._int_degree = int(degree) if degree == int(degree) and 1 <= degree <= 5 else None
+
+    def _pow(self, base, exp):
+        if self._int_degree is not None and exp == int(exp) and 0 <= exp <= 4:
+            n = int(exp)
+            if n == 0: return torch.ones_like(base)
+            if n == 1: return base
+            if n == 2: return base * base
+            b2 = base * base
+            if n == 3: return b2 * base
+            if n == 4: return b2 * b2
+        return torch.pow(base, exp)
 
     def __call__(self, ctx : Context, x : torch.Tensor, y : torch.Tensor):
         inner = torch.bmm(x, y.permute(0, 2, 1))
         base = inner + self.gamma
-        K = self.scale * torch.pow(base, self.degree)
+        K = self.scale * self._pow(base, self.degree)
         ctx.save_for_backward(x, y, base)
         return torch.diff(torch.diff(K, dim=1), dim=2)
 
     def grad_x(self, ctx : Context, derivs : torch.Tensor):
         x, y, base = ctx.saved_tensors
         dout = _undo_double_diff(derivs, base)
-        dout *= self.scale * self.degree * torch.pow(base, self.degree - 1)
+        dout *= self.scale * self.degree
+        dout *= self._pow(base, self.degree - 1)
         ctx.save_for_grad_y(x, y, dout)
         return torch.bmm(dout, y)
 
@@ -239,7 +252,8 @@ class PolynomialKernel(StaticKernel):
         else:
             x, y, base = ctx.saved_tensors
             dout = _undo_double_diff(derivs, base)
-            dout *= self.scale * self.degree * torch.pow(base, self.degree - 1)
+            dout *= self.scale * self.degree
+            dout *= self._pow(base, self.degree - 1)
         return torch.bmm(dout.permute(0, 2, 1), x)
 
 class Matern12Kernel(StaticKernel):
@@ -262,9 +276,10 @@ class Matern12Kernel(StaticKernel):
         x, y, dist = ctx.saved_tensors
         K = torch.exp(-dist * self._one_over_sigma)
         dout = _undo_double_diff(derivs, dist)
-        dout *= K * self._one_over_sigma / torch.clamp(dist, min=1e-15)
+        dout *= K
+        dout *= self._one_over_sigma / torch.clamp(dist, min=1e-15)
         ctx.save_for_grad_y(x, y, dout)
-        return torch.bmm(dout, y) - x * torch.sum(dout, dim=2).unsqueeze(-1)
+        return torch.bmm(dout, y) - x * torch.sum(dout, dim=2, keepdim=True)
 
     def grad_y(self, ctx : Context, derivs : torch.Tensor):
         if ctx.saved_for_y:
@@ -273,7 +288,8 @@ class Matern12Kernel(StaticKernel):
             x, y, dist = ctx.saved_tensors
             K = torch.exp(-dist * self._one_over_sigma)
             dout = _undo_double_diff(derivs, dist)
-            dout *= K * self._one_over_sigma / torch.clamp(dist, min=1e-15)
+            dout *= K
+            dout *= self._one_over_sigma / torch.clamp(dist, min=1e-15)
         return torch.bmm(dout.permute(0, 2, 1), x) - y * torch.sum(dout, dim=1).unsqueeze(-1)
 
 class Matern32Kernel(StaticKernel):
@@ -287,8 +303,7 @@ class Matern32Kernel(StaticKernel):
         self._3_over_sigma_sq = 3. / (sigma ** 2)
 
     def __call__(self, ctx : Context, x : torch.Tensor, y : torch.Tensor):
-        dist = torch.sqrt(_squared_dist(x, y) + 1e-30)
-        D_scaled = dist * self._sqrt3_over_sigma
+        D_scaled = torch.sqrt(_squared_dist(x, y) + 1e-30) * self._sqrt3_over_sigma
         exp_term = torch.exp(-D_scaled)
         K = (1. + D_scaled) * exp_term
         ctx.save_for_backward(x, y, exp_term)
@@ -297,9 +312,10 @@ class Matern32Kernel(StaticKernel):
     def grad_x(self, ctx : Context, derivs : torch.Tensor):
         x, y, exp_term = ctx.saved_tensors
         dout = _undo_double_diff(derivs, exp_term)
-        dout *= self._3_over_sigma_sq * exp_term
+        dout *= exp_term
+        dout *= self._3_over_sigma_sq
         ctx.save_for_grad_y(x, y, dout)
-        return torch.bmm(dout, y) - x * torch.sum(dout, dim=2).unsqueeze(-1)
+        return torch.bmm(dout, y) - x * torch.sum(dout, dim=2, keepdim=True)
 
     def grad_y(self, ctx : Context, derivs : torch.Tensor):
         if ctx.saved_for_y:
@@ -307,7 +323,8 @@ class Matern32Kernel(StaticKernel):
         else:
             x, y, exp_term = ctx.saved_tensors
             dout = _undo_double_diff(derivs, exp_term)
-            dout *= self._3_over_sigma_sq * exp_term
+            dout *= exp_term
+            dout *= self._3_over_sigma_sq
         return torch.bmm(dout.permute(0, 2, 1), x) - y * torch.sum(dout, dim=1).unsqueeze(-1)
 
 class Matern52Kernel(StaticKernel):
@@ -321,8 +338,7 @@ class Matern52Kernel(StaticKernel):
         self._5_over_3sigma_sq = 5. / (3. * sigma ** 2)
 
     def __call__(self, ctx : Context, x : torch.Tensor, y : torch.Tensor):
-        dist = torch.sqrt(_squared_dist(x, y) + 1e-30)
-        u = dist * self._sqrt5_over_sigma
+        u = torch.sqrt(_squared_dist(x, y) + 1e-30) * self._sqrt5_over_sigma
         exp_term = torch.exp(-u)
         K = (1. + u + u * u / 3.) * exp_term
         ctx.save_for_backward(x, y, u, exp_term)
@@ -331,9 +347,11 @@ class Matern52Kernel(StaticKernel):
     def grad_x(self, ctx : Context, derivs : torch.Tensor):
         x, y, u, exp_term = ctx.saved_tensors
         dout = _undo_double_diff(derivs, exp_term)
-        dout *= self._5_over_3sigma_sq * (1. + u) * exp_term
+        dout *= exp_term
+        dout *= 1. + u
+        dout *= self._5_over_3sigma_sq
         ctx.save_for_grad_y(x, y, dout)
-        return torch.bmm(dout, y) - x * torch.sum(dout, dim=2).unsqueeze(-1)
+        return torch.bmm(dout, y) - x * torch.sum(dout, dim=2, keepdim=True)
 
     def grad_y(self, ctx : Context, derivs : torch.Tensor):
         if ctx.saved_for_y:
@@ -341,7 +359,9 @@ class Matern52Kernel(StaticKernel):
         else:
             x, y, u, exp_term = ctx.saved_tensors
             dout = _undo_double_diff(derivs, exp_term)
-            dout *= self._5_over_3sigma_sq * (1. + u) * exp_term
+            dout *= exp_term
+            dout *= 1. + u
+            dout *= self._5_over_3sigma_sq
         return torch.bmm(dout.permute(0, 2, 1), x) - y * torch.sum(dout, dim=1).unsqueeze(-1)
 
 class RationalQuadraticKernel(StaticKernel):
@@ -359,16 +379,16 @@ class RationalQuadraticKernel(StaticKernel):
         dist2 = _squared_dist(x, y)
         base = 1. + dist2 / self._c
         K = torch.pow(base, -self.alpha)
-        # Save K/base = base^(-alpha-1) to avoid pow in backward
         ctx.save_for_backward(x, y, K / base)
         return torch.diff(torch.diff(K, dim=1), dim=2)
 
     def grad_x(self, ctx : Context, derivs : torch.Tensor):
         x, y, weight = ctx.saved_tensors
         dout = _undo_double_diff(derivs, weight)
-        dout *= self._one_over_sigma_sq * weight
+        dout *= weight
+        dout *= self._one_over_sigma_sq
         ctx.save_for_grad_y(x, y, dout)
-        return torch.bmm(dout, y) - x * torch.sum(dout, dim=2).unsqueeze(-1)
+        return torch.bmm(dout, y) - x * torch.sum(dout, dim=2, keepdim=True)
 
     def grad_y(self, ctx : Context, derivs : torch.Tensor):
         if ctx.saved_for_y:
@@ -376,5 +396,6 @@ class RationalQuadraticKernel(StaticKernel):
         else:
             x, y, weight = ctx.saved_tensors
             dout = _undo_double_diff(derivs, weight)
-            dout *= self._one_over_sigma_sq * weight
+            dout *= weight
+            dout *= self._one_over_sigma_sq
         return torch.bmm(dout.permute(0, 2, 1), x) - y * torch.sum(dout, dim=1).unsqueeze(-1)
