@@ -397,6 +397,8 @@ def sig_score(
         y = y.unsqueeze(0).contiguous().clone()
 
     B = sample.shape[0]
+    if B < 2:
+        raise ValueError("sig_score requires at least 2 sample paths (got {}).".format(B))
 
     xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
     xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
@@ -439,6 +441,10 @@ def sig_mmd(
 ) -> Union[np.ndarray, torch.tensor]:
     m = sample1.shape[0]
     n = sample2.shape[0]
+    if m < 2:
+        raise ValueError("sig_mmd requires at least 2 paths in sample1 (got {}).".format(m))
+    if n < 2:
+        raise ValueError("sig_mmd requires at least 2 paths in sample2 (got {}).".format(n))
 
     xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
     xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)

@@ -420,4 +420,6 @@ def sig_kernel_gram(
                     k_mirror = k_mirror.transpose(-2, -1)
                 res[cj[off], ci[off]] = k_mirror
 
+    if data.type_ == "numpy":
+        return res.numpy()
     return res

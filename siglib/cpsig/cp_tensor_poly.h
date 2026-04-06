@@ -339,8 +339,8 @@ void sig_combine_backprop_(
 	std::memcpy(sig1_deriv, sig_combined_deriv, sizeof(T) * level_index[degree + 1]);
 
 	uncombine_sig_deriv(sig1, sig2, sig1_deriv, sig2_deriv, dimension, degree, level_index);
-	sig1_deriv[0] = static_cast<T>(1);
-	sig2_deriv[0] = static_cast<T>(1);
+	// sig1_deriv[0] already holds grad_output[0] from the memcpy above; no correction needed.
+	sig2_deriv[0] = static_cast<T>(0);
 	return;
 }
 
