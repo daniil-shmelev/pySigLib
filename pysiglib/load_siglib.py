@@ -29,6 +29,11 @@ try:
 except ImportError as exc:
     raise RuntimeError("Could not import configuration properties from _config.py - package may not have been built correctly.") from exc
 
+try:
+    from ._config import BUILT_WITH_JAX_FFI
+except ImportError:
+    BUILT_WITH_JAX_FFI = False
+
 if SYSTEM != platform.system():
     raise RuntimeError("System on which pySigLib was built does not match the current system - package may not have been built correctly.")
 

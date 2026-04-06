@@ -164,8 +164,14 @@ raise SystemExit(1)
 
     if(_jax_include_result EQUAL 0)
         set(_jax_ffi_enabled TRUE)
-    elseif(_jax_include_error)
-        message(STATUS "  JAX probe error: ${_jax_include_error}")
+    endif()
+
+    # Fallback: accept explicit JAX_INCLUDE_DIR
+    if(NOT _jax_ffi_enabled AND DEFINED JAX_INCLUDE_DIR)
+        if(EXISTS "${JAX_INCLUDE_DIR}/xla/ffi/api/ffi.h")
+            set(_jax_include_dir "${JAX_INCLUDE_DIR}")
+            set(_jax_ffi_enabled TRUE)
+        endif()
     endif()
 endif()
 

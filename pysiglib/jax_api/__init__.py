@@ -1,3 +1,51 @@
-from .jax_api import sig
+# Copyright 2026 Daniil Shmelev
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# =========================================================================
 
-__all__ = ["sig"]
+from .jax_api import (
+    sig, sig_combine, transform_path,
+    sig_to_log_sig, log_sig, log_sig_combine,
+    sig_coef, sig_kernel, sig_kernel_gram,
+    sig_score, expected_sig_score, sig_mmd,
+)
+from .static_kernels_jax import (
+    LinearKernel, ScaledLinearKernel, RBFKernel,
+    PolynomialKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel,
+    RationalQuadraticKernel,
+)
+
+# Re-export non-differentiable utilities from base pysiglib
+from ..sig_length import sig_length, log_sig_length
+from ..words import words_of_length, words, lyndon_words_of_length, lyndon_words, is_lyndon, word_to_idx, idx_to_word
+from ..sig_coef import extract_sig_coef
+from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache
+from ..load_siglib import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
+
+__all__ = [
+    "sig", "sig_combine", "transform_path",
+    "sig_to_log_sig", "log_sig", "log_sig_combine",
+    "sig_kernel", "sig_kernel_gram",
+    "sig_coef",
+    "sig_score", "expected_sig_score", "sig_mmd",
+    "sig_length", "log_sig_length",
+    "words_of_length", "words", "lyndon_words_of_length", "lyndon_words",
+    "is_lyndon", "word_to_idx", "idx_to_word",
+    "extract_sig_coef", "set_cache_dir", "prepare_log_sig", "clear_cache",
+    "LinearKernel", "ScaledLinearKernel", "RBFKernel",
+    "PolynomialKernel", "Matern12Kernel", "Matern32Kernel", "Matern52Kernel",
+    "RationalQuadraticKernel",
+    "signature",
+]
+
+signature = sig
