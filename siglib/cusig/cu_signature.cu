@@ -768,8 +768,8 @@ void signature_per_word_core_(
 	const int steps = static_cast<int>(length - 1);
 	const int dim = static_cast<int>(dimension);
 
-	uint64_t li[14];  // stack array, supports up to degree 12
-	host_populate_level_index(li, dimension, degree + 2);
+	auto li = std::make_unique<uint64_t[]>(degree + 2);
+	host_populate_level_index(li.get(), dimension, degree + 2);
 
 	// Dynamic shared memory: only allocate what's needed for the actual path length
 	const int actual_chunk = (steps < SIG_CHUNK) ? steps : SIG_CHUNK;
