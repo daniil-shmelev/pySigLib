@@ -39,11 +39,6 @@ try:
     import sigkernel
 except:
     sigkernel = None
-    
-try:
-    import jax
-except:
-    jax = None
 
 from tqdm import tqdm
 import numpy as np
@@ -147,43 +142,6 @@ def time_pysiglib_sig(cfg, horner, n_jobs, progress_bar = False):
         time_ = end - start
         best_time = min(best_time, time_)
     return best_time
-    
-def time_pysiglib_sig_jax(cfg, horner, n_jobs, progress_bar=False, jitted=False):
-    if cfg["dtype"] == "float":
-          dtype = jax.numpy.float32
-    elif cfg["dtype"] == "double":
-        dtype = jax.numpy.float64
-    else:
-        raise ValueError("invalid dtype")
-    platform = "gpu" if cfg["device"] == "cuda" else "cpu"
-    device = jax.devices(platform)[0]
-
-    key = jax.random.PRNGKey(0)
-    X = jax.device_put(
-        jax.random.uniform(
-            key,
-            (cfg["batch_size"], cfg["length"], cfg["dimension"]),
-            dtype=dtype,
-        ),
-        device,
-    )
-
-    fn = lambda x: pysiglib.jax_api.sig(x, cfg["degree"], horner=horner, n_jobs=n_jobs)
-    if jitted:
-        fn = jax.jit(fn)
-        jax.block_until_ready(fn(X))  # compile once
-
-    best_time = float("inf")
-    loop = tqdm(range(cfg["num_runs"])) if progress_bar else range(cfg["num_runs"])
-
-    for _ in loop:
-        start = timeit.default_timer()
-        out = fn(X)
-        jax.block_until_ready(out)
-        best_time = min(best_time, timeit.default_timer() - start)
-
-    return best_time
-
 
 def time_signatory_sig(cfg, progress_bar = False):
     dtype = torch_dtype(cfg['dtype'])

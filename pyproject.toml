@@ -38,13 +38,6 @@ classifiers = [
 jax = [
     "jax",
 ]
-dev = [
-    "tqdm",
-    "pytest",
-    "iisignature",
-    "sigkernel",
-    "matplotlib"
-]
 
 [project.urls]
 Homepage = "https://github.com/daniil-shmelev/pySigLib"

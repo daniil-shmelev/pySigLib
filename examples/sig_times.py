@@ -13,14 +13,7 @@
 # limitations under the License.
 # =========================================================================
 
-try:
-    import jax
-except:
-    jax = None
-
-import pysiglib
-
-from timing_utils import time_iisig_sig, time_signatory_sig, time_pysiglib_sig, time_esig_sig, time_pysiglib_sig_jax
+from timing_utils import time_iisig_sig, time_signatory_sig, time_pysiglib_sig, time_esig_sig
 
 if __name__ == '__main__':
     cfg = {
@@ -34,14 +27,8 @@ if __name__ == '__main__':
     }
 
     #print("\nesig (serial): ", time_esig_sig(cfg, True))
-    print("\niisignature (serial): ", time_iisig_sig(cfg, False))
-    print("\npysiglib (serial): ", time_pysiglib_sig(cfg, True, 1, False))
-    if jax is not None and pysiglib.BUILT_WITH_JAX_FFI:
-        print("\npysiglib (serial jax): ", time_pysiglib_sig_jax(cfg, True, 1, False))
-    else:
-        print("\npysiglib (jax): skipped")
+    print("\niisignature (serial): ", time_iisig_sig(cfg, True))
+    print("\npysiglib (serial): ", time_pysiglib_sig(cfg, True, 1, True))
 
-    # print("\nsignatory (parallel): ", time_signatory_sig(cfg, True))
-    print("\npysiglib (parallel): ", time_pysiglib_sig(cfg, True, -1, False))
-    if jax is not None and pysiglib.BUILT_WITH_JAX_FFI:
-        print("\npysiglib (parallel jax): ", time_pysiglib_sig_jax(cfg, True, -1, False))
+    print("\nsignatory (parallel): ", time_signatory_sig(cfg, True))
+    print("\npysiglib (parallel): ", time_pysiglib_sig(cfg, True, -1, True))
