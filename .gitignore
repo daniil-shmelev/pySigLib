@@ -33,3 +33,5 @@
 /.vs
 /tests/__pycache__
 /build
+__pycache__/
+*.py[cod]
