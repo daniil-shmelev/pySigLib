@@ -143,7 +143,6 @@ def time_pysiglib_sig(cfg, horner, n_jobs, progress_bar = False):
         best_time = min(best_time, time_)
     return best_time
 
-
 def time_signatory_sig(cfg, progress_bar = False):
     dtype = torch_dtype(cfg['dtype'])
     X = torch.rand(size=(cfg['batch_size'], cfg['length'], cfg['dimension']), device=cfg['device'], dtype=dtype)

@@ -13,6 +13,7 @@ authors = [
     { name = "Daniil Shmelev", email = "daniil.shmelev23@imperial.ac.uk" },
 ]
 dependencies = ["numpy", "torch"]
+
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Win32 (MS Windows)",
@@ -33,6 +34,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Mathematics",
 ]
 
+[project.optional-dependencies]
+jax = [
+    "jax",
+]
+
 [project.urls]
 Homepage = "https://github.com/daniil-shmelev/pySigLib"
 
@@ -51,6 +57,7 @@ sdist.exclude = [
 ]
 
 [tool.scikit-build.cmake.define]
+PYSIGLIB_JAX_FFI = {env = "PYSIGLIB_JAX_FFI", default = "OFF"}
 PYSIGLIB_CUDA      = {env = "CUSIG", default = "ON"}
 PYSIGLIB_AVX       = {env = "SIGLIB_VEC", default = "ON"}
 PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
