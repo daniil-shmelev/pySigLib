@@ -80,6 +80,14 @@ _TARGETS = {
         "cpu": ("pysiglib_sig_kernel_pde_backprop_cpu", "PySigLibSigKernelPdeBackpropCpu"),
         "cuda": ("pysiglib_sig_kernel_pde_backprop_cuda", "PySigLibSigKernelPdeBackpropCuda"),
     },
+    "log_sig_from_path": {
+        "cpu": ("pysiglib_log_sig_from_path_cpu", "PySigLibLogSigFromPathCpu"),
+        "cuda": ("pysiglib_log_sig_from_path_cuda", "PySigLibLogSigFromPathCuda"),
+    },
+    "log_sig_from_path_backprop": {
+        "cpu": ("pysiglib_log_sig_from_path_backprop_cpu", "PySigLibLogSigFromPathBackpropCpu"),
+        "cuda": ("pysiglib_log_sig_from_path_backprop_cuda", "PySigLibLogSigFromPathBackpropCuda"),
+    },
     "branched_sig": {
         "cpu": ("pysiglib_branched_sig_cpu", "PySigLibBranchedSigCpu"),
         "cuda": ("pysiglib_branched_sig_cuda", "PySigLibBranchedSigCuda"),
@@ -359,6 +367,25 @@ def sig_kernel_pde_backprop_ffi_call(gram, derivs, k_grid, dimension, dyadic_ord
                        dyadic_order_2=np.int64(dyadic_order_2),
                        return_grid=np.bool_(return_grid), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("sig_kernel_pde_backprop", (gram, derivs, k_grid), out_type, call_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# log_sig_from_path (method=3)
+# ---------------------------------------------------------------------------
+
+def log_sig_from_path_ffi_call(path, dimension, degree, n_jobs):
+    _normalize_dtype(path.dtype)
+    out_len = log_sig_length(dimension, degree)
+    out_type = jax.ShapeDtypeStruct((*path.shape[:-2], out_len), path.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("log_sig_from_path", (path,), out_type, call_kwargs)
+
+
+def log_sig_from_path_backprop_ffi_call(cotangent, path, dimension, degree, n_jobs):
+    _normalize_dtype(path.dtype)
+    out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("log_sig_from_path_backprop", (cotangent, path), out_type, call_kwargs)
 
 
 # ---------------------------------------------------------------------------

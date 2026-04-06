@@ -657,6 +657,20 @@ extern "C" {
 		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
+	/** @defgroup log_sig_from_path_cuda_functions Log-signature from path CUDA functions
+	* @{
+	*/
+	CUSIG_API int batch_log_sig_from_path_cuda_f(const float* path, float* out,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int batch_log_sig_from_path_cuda_d(const double* path, double* out,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
+
+	CUSIG_API int batch_log_sig_from_path_backprop_cuda_f(const float* d_out, float* d_path, const float* path,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int batch_log_sig_from_path_backprop_cuda_d(const double* d_out, double* d_path, const double* path,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
 	/** @defgroup clear_cache_cuda_functions Clear cache CUDA functions
 	* @{
 	*/

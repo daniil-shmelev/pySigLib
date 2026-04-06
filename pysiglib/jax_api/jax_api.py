@@ -50,6 +50,8 @@ from ._ffi import (
     log_sig_combine_backprop_ffi_call,
     sig_kernel_pde_ffi_call,
     sig_kernel_pde_backprop_ffi_call,
+    log_sig_from_path_ffi_call,
+    log_sig_from_path_backprop_ffi_call,
     branched_sig_ffi_call,
     branched_sig_backprop_ffi_call,
     branched_sig_combine_ffi_call,
@@ -280,8 +282,27 @@ sig_to_log_sig.__doc__ = sig_to_log_sig_forward.__doc__
 
 
 # ---------------------------------------------------------------------------
-# log_sig (pure Python composition — no FFI)
+# log_sig
 # ---------------------------------------------------------------------------
+
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3))
+def _log_sig_from_path(path, dimension, degree, n_jobs):
+    return log_sig_from_path_ffi_call(path, dimension, degree, n_jobs)
+
+
+def _log_sig_from_path_fwd(path, dimension, degree, n_jobs):
+    result = log_sig_from_path_ffi_call(path, dimension, degree, n_jobs)
+    return result, (path,)
+
+
+def _log_sig_from_path_bwd(dimension, degree, n_jobs, residual, cotangent):
+    path, = residual
+    grad = log_sig_from_path_backprop_ffi_call(cotangent, path, dimension, degree, n_jobs)
+    return (grad,)
+
+
+_log_sig_from_path.defvjp(_log_sig_from_path_fwd, _log_sig_from_path_bwd)
+
 
 def log_sig(
     path,
@@ -298,10 +319,10 @@ def log_sig(
     _validate_shape(path)
 
     if method == 3:
-        raise NotImplementedError(
-            "method=3 is not supported in the JAX API. "
-            "Use method=1 or method=2 instead."
-        )
+        if time_aug or lead_lag:
+            path = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
+        aug_dim = path.shape[-1]
+        return _log_sig_from_path(path, aug_dim, degree, n_jobs)
 
     dimension = path.shape[-1]
     sig_ = sig(path, degree, time_aug, lead_lag, end_time, True, n_jobs)

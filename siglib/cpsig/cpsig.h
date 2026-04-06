@@ -620,6 +620,20 @@ extern "C" {
 		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
+	/** @defgroup log_sig_from_path_functions Log-signature from path functions
+	* @{
+	*/
+	CPSIG_API int batch_log_sig_from_path_f(const float* path, float* out,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_log_sig_from_path_d(const double* path, double* out,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+
+	CPSIG_API int batch_log_sig_from_path_backprop_f(const float* d_out, float* d_path, const float* path,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_log_sig_from_path_backprop_d(const double* d_out, double* d_path, const double* path,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	/** @} */
+
 	/** @defgroup sig_kernel_functions Signature kernel functions
 	* @{
 	*/
