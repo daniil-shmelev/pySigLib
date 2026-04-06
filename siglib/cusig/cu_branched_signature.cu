@@ -702,6 +702,20 @@ void branched_sig_cuda_core_(
 	uint64_t max_nodes
 ) {
 	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes);
+
+	// Single-point paths have no increments => identity branched sig
+	if (length <= 1) {
+		for (uint64_t b = 0; b < batch_size; ++b) {
+			T* dst = out + b * gc.total_length;
+			cudaMemsetAsync(dst, 0, gc.total_length * sizeof(T));
+			T one = T(1);
+			cudaMemcpyAsync(dst, &one, sizeof(T), cudaMemcpyHostToDevice);
+		}
+		cudaDeviceSynchronize();
+		check_cuda_error();
+		return;
+	}
+
 	const int steps = static_cast<int>(length - 1);
 	const uint64_t path_stride = length * dimension;
 
@@ -804,6 +818,15 @@ void branched_sig_backprop_cuda_core_(
 	uint64_t max_nodes
 ) {
 	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes);
+
+	// Single-point paths have no increments => zero path gradients
+	if (length <= 1) {
+		cudaMemset(out, 0, batch_size * length * dimension * sizeof(T));
+		cudaDeviceSynchronize();
+		check_cuda_error();
+		return;
+	}
+
 	const int steps = static_cast<int>(length - 1);
 	const uint64_t path_stride = length * dimension;
 
