@@ -23,6 +23,7 @@ import numpy as np
 
 from ..load_siglib import BUILT_WITH_CUDA, BUILT_WITH_JAX_FFI, SYSTEM
 from ..sig_length import sig_length, log_sig_length
+from ..branched_sig import branched_sig_length
 
 import jax
 
@@ -78,6 +79,22 @@ _TARGETS = {
     "sig_kernel_pde_backprop": {
         "cpu": ("pysiglib_sig_kernel_pde_backprop_cpu", "PySigLibSigKernelPdeBackpropCpu"),
         "cuda": ("pysiglib_sig_kernel_pde_backprop_cuda", "PySigLibSigKernelPdeBackpropCuda"),
+    },
+    "branched_sig": {
+        "cpu": ("pysiglib_branched_sig_cpu", "PySigLibBranchedSigCpu"),
+        "cuda": ("pysiglib_branched_sig_cuda", "PySigLibBranchedSigCuda"),
+    },
+    "branched_sig_backprop": {
+        "cpu": ("pysiglib_branched_sig_backprop_cpu", "PySigLibBranchedSigBackpropCpu"),
+        "cuda": ("pysiglib_branched_sig_backprop_cuda", "PySigLibBranchedSigBackpropCuda"),
+    },
+    "branched_sig_combine": {
+        "cpu": ("pysiglib_branched_sig_combine_cpu", "PySigLibBranchedSigCombineCpu"),
+        "cuda": ("pysiglib_branched_sig_combine_cuda", "PySigLibBranchedSigCombineCuda"),
+    },
+    "branched_sig_combine_backprop": {
+        "cpu": ("pysiglib_branched_sig_combine_backprop_cpu", "PySigLibBranchedSigCombineBackpropCpu"),
+        "cuda": ("pysiglib_branched_sig_combine_backprop_cuda", "PySigLibBranchedSigCombineBackpropCuda"),
     },
 }
 
@@ -342,3 +359,51 @@ def sig_kernel_pde_backprop_ffi_call(gram, derivs, k_grid, dimension, dyadic_ord
                        dyadic_order_2=np.int64(dyadic_order_2),
                        return_grid=np.bool_(return_grid), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("sig_kernel_pde_backprop", (gram, derivs, k_grid), out_type, call_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# branched_sig
+# ---------------------------------------------------------------------------
+
+def _branched_sig_shape(path_shape, dimension, max_nodes, time_aug, lead_lag):
+    aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
+    out_len = branched_sig_length(aug_dim, max_nodes)
+    if out_len == 0:
+        raise ValueError("Branched signature length overflow.")
+    return (*path_shape[:-2], out_len)
+
+
+def branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs):
+    _normalize_dtype(path.dtype)
+    dimension = path.shape[-1]
+    out_type = jax.ShapeDtypeStruct(
+        _branched_sig_shape(path.shape, dimension, max_nodes, time_aug, lead_lag), path.dtype)
+    call_kwargs = dict(max_nodes=np.int64(max_nodes), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
+                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("branched_sig", (path,), out_type, call_kwargs)
+
+
+def branched_sig_backprop_ffi_call(path, bsig, cotangent, max_nodes, time_aug, lead_lag, end_time, n_jobs):
+    _normalize_dtype(path.dtype)
+    out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
+    call_kwargs = dict(max_nodes=np.int64(max_nodes), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
+                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("branched_sig_backprop", (path, bsig, cotangent), out_type, call_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# branched_sig_combine
+# ---------------------------------------------------------------------------
+
+def branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs):
+    _normalize_dtype(bsig1.dtype)
+    out_type = jax.ShapeDtypeStruct(bsig1.shape, bsig1.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("branched_sig_combine", (bsig1, bsig2), out_type, call_kwargs)
+
+
+def branched_sig_combine_backprop_ffi_call(cotangent, bsig1, bsig2, dimension, max_nodes, n_jobs):
+    _normalize_dtype(bsig1.dtype)
+    grad_type = jax.ShapeDtypeStruct(bsig1.shape, bsig1.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("branched_sig_combine_backprop", (cotangent, bsig1, bsig2), (grad_type, grad_type), call_kwargs)
