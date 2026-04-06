@@ -26,7 +26,12 @@ If instead one considers a static kernel :math:`\kappa` on the ambient space, th
 ``pysiglib`` functions which utilise signature kernels accept :math:`\kappa` as an optional
 parameter (``static_kernel``). By default, the standard linear kernel will be used. ``pysiglib``
 provides implementations of the :ref:`linear kernel <linear-kernel-anchor>`,
-:ref:`scaled linear kernel <scaled-linear-kernel-anchor>` and :ref:`RBF kernel <rbf-kernel-anchor>`,
+:ref:`scaled linear kernel <scaled-linear-kernel-anchor>`, :ref:`RBF kernel <rbf-kernel-anchor>`,
+:ref:`polynomial kernel <polynomial-kernel-anchor>`,
+:ref:`Matern-1/2 kernel <matern12-kernel-anchor>`,
+:ref:`Matern-3/2 kernel <matern32-kernel-anchor>`,
+:ref:`Matern-5/2 kernel <matern52-kernel-anchor>` and
+:ref:`rational quadratic kernel <rq-kernel-anchor>`,
 which are documented below. In addition, one may define :ref:`custom kernels <custom-kernels-anchor>`.
 
 .. code-block:: python
@@ -58,6 +63,16 @@ Standard Kernels
 .. autoclass:: pysiglib.ScaledLinearKernel
 .. _rbf-kernel-anchor:
 .. autoclass:: pysiglib.RBFKernel
+.. _polynomial-kernel-anchor:
+.. autoclass:: pysiglib.PolynomialKernel
+.. _matern12-kernel-anchor:
+.. autoclass:: pysiglib.Matern12Kernel
+.. _matern32-kernel-anchor:
+.. autoclass:: pysiglib.Matern32Kernel
+.. _matern52-kernel-anchor:
+.. autoclass:: pysiglib.Matern52Kernel
+.. _rq-kernel-anchor:
+.. autoclass:: pysiglib.RationalQuadraticKernel
 .. _custom-kernels-anchor:
 
 Custom Kernels
