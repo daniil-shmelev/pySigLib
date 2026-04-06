@@ -15,6 +15,7 @@
 
 from abc import ABC, abstractmethod
 import math
+import warnings
 import torch
 
 class Context:
@@ -219,6 +220,8 @@ class PolynomialKernel(StaticKernel):
         self.gamma = gamma
         self.scale = scale
         self._int_degree = int(degree) if degree == int(degree) and 1 <= degree <= 5 else None
+        self._needs_base_clamp = self._int_degree is None and degree != 0
+        self._warned_negative_base = False
 
     def _pow(self, base, exp):
         if self._int_degree is not None and exp == int(exp) and 0 <= exp <= 4:
@@ -234,11 +237,23 @@ class PolynomialKernel(StaticKernel):
     def __call__(self, ctx : Context, x : torch.Tensor, y : torch.Tensor):
         inner = torch.bmm(x, y.permute(0, 2, 1))
         base = inner + self.gamma
+        if self._needs_base_clamp:
+            if not self._warned_negative_base and (base < 0).any():
+                self._warned_negative_base = True
+                warnings.warn(
+                    "PolynomialKernel: non-integer degree with negative base values "
+                    "(<x, y> + gamma < 0). These entries are clamped to 0. Consider "
+                    "increasing gamma to ensure all base values are non-negative.",
+                    RuntimeWarning, stacklevel=2
+                )
+            base = torch.clamp(base, min=0)
         K = self.scale * self._pow(base, self.degree)
         ctx.save_for_backward(x, y, base)
         return torch.diff(torch.diff(K, dim=1), dim=2)
 
     def grad_x(self, ctx : Context, derivs : torch.Tensor):
+        if self.degree == 0:
+            return torch.zeros_like(ctx.saved_tensors[0])
         x, y, base = ctx.saved_tensors
         dout = _undo_double_diff(derivs, base)
         dout *= self.scale * self.degree
@@ -247,6 +262,8 @@ class PolynomialKernel(StaticKernel):
         return torch.bmm(dout, y)
 
     def grad_y(self, ctx : Context, derivs : torch.Tensor):
+        if self.degree == 0:
+            return torch.zeros_like(ctx.saved_tensors[1])
         if ctx.saved_for_y:
             x, y, dout = ctx.saved_for_y
         else:
