@@ -21,16 +21,8 @@
 #include <type_traits>
 
 // =========================================================================
-// Device function: tensor_exp (Horner scheme)
-//
-// Computes exp(log_sig) via: S = 1 + x/N, then S = 1 + (x/k)*S for k=N-1..1
-// Each block handles one batch element. Threads cooperate on levels.
-//
-// log_sig:     input expanded log-signature (level 0 = 0)
-// out:         output signature (level 0 = 1)
-// buff:        scratch buffer of size sig_len
-// degree:      truncation degree
-// level_index: precomputed (degree+2 entries, in shared memory)
+// tensor_exp: exp(x) = 1 + P_1 + ... + P_N, P_1=x, P_n=x⊗P_{n-1}/n
+// P_n has min level n → level-skipping. buff must be 2*sig_len.
 // =========================================================================
 
 template<typename T>
@@ -45,30 +37,33 @@ __device__ void tensor_exp_device(
 	const int nthreads = blockDim.x;
 	const uint64_t sig_len = level_index[degree + 1];
 
-	// Initialize: out = 1 + x/N
 	if (tid == 0) out[0] = static_cast<T>(1);
-	T inv_k = static_cast<T>(1) / static_cast<T>(degree);
 	for (uint64_t i = level_index[1] + tid; i < sig_len; i += nthreads)
-		out[i] = log_sig[i] * inv_k;
+		out[i] = log_sig[i];
 	__syncthreads();
 
 	if (degree <= 1) return;
 
-	// Horner iterations: k = N-1 down to 1
-	for (int64_t k = static_cast<int64_t>(degree) - 1; k >= 1; --k) {
-		inv_k = static_cast<T>(1) / static_cast<T>(k);
+	T* P_prev = buff;
+	T* P_curr = buff + sig_len;
 
-		// Compute buff[l] = sum_{l1+l2=l, l1>=1, l2>=1} (x[l1]*inv_k) * out[l2]
-		for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
+	for (uint64_t i = tid; i < sig_len; i += nthreads)
+		P_prev[i] = log_sig[i];
+	__syncthreads();
+
+	for (uint64_t n = 2; n <= degree; ++n) {
+		T inv_n = static_cast<T>(1) / static_cast<T>(n);
+
+		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
 			const uint64_t target_start = level_index[target_level];
 			const uint64_t target_size = level_index[target_level + 1] - target_start;
+			const uint64_t max_left = target_level - (n - 1);
 
-			// Zero buff at this level
 			for (uint64_t i = tid; i < target_size; i += nthreads)
-				buff[target_start + i] = static_cast<T>(0);
+				P_curr[target_start + i] = static_cast<T>(0);
 			__syncthreads();
 
-			for (uint64_t left_level = 1; left_level < target_level; ++left_level) {
+			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
 				const uint64_t right_level = target_level - left_level;
 				const uint64_t left_start = level_index[left_level];
 				const uint64_t right_start = level_index[right_level];
@@ -77,41 +72,26 @@ __device__ void tensor_exp_device(
 				for (uint64_t idx = tid; idx < target_size; idx += nthreads) {
 					const uint64_t l_idx = idx / right_size;
 					const uint64_t r_idx = idx % right_size;
-					buff[target_start + idx] += (log_sig[left_start + l_idx] * inv_k) * out[right_start + r_idx];
+					P_curr[target_start + idx] += (log_sig[left_start + l_idx] * inv_n) * P_prev[right_start + r_idx];
 				}
 				__syncthreads();
 			}
 		}
 
-		// Update out: out[l] = x[l]/k + buff[l] for l >= 2, out[1] = x[1]/k
-		const uint64_t level1_start = level_index[1];
-		const uint64_t level1_size = level_index[2] - level1_start;
-		for (uint64_t i = tid; i < level1_size; i += nthreads)
-			out[level1_start + i] = log_sig[level1_start + i] * inv_k;
+		for (uint64_t i = level_index[n] + tid; i < sig_len; i += nthreads)
+			out[i] += P_curr[i];
+		__syncthreads();
 
-		for (uint64_t l = 2; l <= degree; ++l) {
-			const uint64_t l_start = level_index[l];
-			const uint64_t l_size = level_index[l + 1] - l_start;
-			for (uint64_t i = tid; i < l_size; i += nthreads)
-				out[l_start + i] = log_sig[l_start + i] * inv_k + buff[l_start + i];
-		}
+		T* tmp = P_prev;
+		P_prev = P_curr;
+		P_curr = tmp;
 		__syncthreads();
 	}
 }
 
 // =========================================================================
-// Device function: tensor_exp_backprop
-//
-// Given dL/d(sig), computes dL/d(log_sig).
-// Recomputes Horner intermediates internally.
-//
-// d_logsig:    output gradient w.r.t. log_sig
-// d_sig:       input upstream gradient w.r.t. signature
-// log_sig:     original log-signature input
-// intermediates: scratch buffer of size (degree-1) * sig_len for S_2..S_N
-// buff:        scratch buffer of size sig_len
-// dS, dS_next: two sig_len buffers for gradient propagation
-// degree, level_index: as above
+// tensor_exp_backprop: recomputes P_1..P_N, backprops from n=degree to 2.
+// P_all: degree*sig_len scratch. dP+dP_next: 2*sig_len scratch.
 // =========================================================================
 
 template<typename T>
@@ -119,10 +99,9 @@ __device__ void tensor_exp_backprop_device(
 	T* __restrict__ d_logsig,
 	const T* __restrict__ d_sig,
 	const T* __restrict__ log_sig,
-	T* __restrict__ intermediates,
-	T* __restrict__ buff,
-	T* __restrict__ dS,
-	T* __restrict__ dS_next,
+	T* __restrict__ P_all,
+	T* __restrict__ dP,
+	T* __restrict__ dP_next,
 	uint64_t degree,
 	const uint64_t* __restrict__ level_index
 ) {
@@ -136,39 +115,31 @@ __device__ void tensor_exp_backprop_device(
 	__syncthreads();
 
 	if (degree <= 1) {
-		// exp(x) = 1 + x, so d_logsig = d_sig (levels 1+)
 		for (uint64_t i = level_index[1] + tid; i < sig_len; i += nthreads)
 			d_logsig[i] = d_sig[i];
 		__syncthreads();
 		return;
 	}
 
-	const uint64_t num_intermediates = degree - 1;
-
-	// Recompute S_N
-	T* S_current = intermediates + (num_intermediates - 1) * sig_len;
-	if (tid == 0) S_current[0] = static_cast<T>(1);
-	T inv_k = static_cast<T>(1) / static_cast<T>(degree);
-	for (uint64_t i = level_index[1] + tid; i < sig_len; i += nthreads)
-		S_current[i] = log_sig[i] * inv_k;
+	for (uint64_t i = tid; i < sig_len; i += nthreads)
+		P_all[i] = log_sig[i];
 	__syncthreads();
 
-	// Recompute S_{N-1}, ..., S_2
-	for (int64_t k = static_cast<int64_t>(degree) - 1; k >= 2; --k) {
-		T* S_prev = S_current;
-		S_current = intermediates + (k - 2) * sig_len;
-		inv_k = static_cast<T>(1) / static_cast<T>(k);
+	for (uint64_t n = 2; n <= degree; ++n) {
+		T inv_n = static_cast<T>(1) / static_cast<T>(n);
+		T* P_curr = P_all + (n - 1) * sig_len;
+		const T* P_prev = P_all + (n - 2) * sig_len;
 
-		// Compute S_k = 1 + (x/k) * S_{k+1}
-		for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
+		for (uint64_t i = level_index[n] + tid; i < sig_len; i += nthreads)
+			P_curr[i] = static_cast<T>(0);
+		__syncthreads();
+
+		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
 			const uint64_t target_start = level_index[target_level];
 			const uint64_t target_size = level_index[target_level + 1] - target_start;
+			const uint64_t max_left = target_level - (n - 1);
 
-			for (uint64_t i = tid; i < target_size; i += nthreads)
-				buff[target_start + i] = static_cast<T>(0);
-			__syncthreads();
-
-			for (uint64_t left_level = 1; left_level < target_level; ++left_level) {
+			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
 				const uint64_t right_level = target_level - left_level;
 				const uint64_t left_start = level_index[left_level];
 				const uint64_t right_start = level_index[right_level];
@@ -177,91 +148,71 @@ __device__ void tensor_exp_backprop_device(
 				for (uint64_t idx = tid; idx < target_size; idx += nthreads) {
 					const uint64_t l_idx = idx / right_size;
 					const uint64_t r_idx = idx % right_size;
-					buff[target_start + idx] += (log_sig[left_start + l_idx] * inv_k) * S_prev[right_start + r_idx];
+					P_curr[target_start + idx] += (log_sig[left_start + l_idx] * inv_n) * P_prev[right_start + r_idx];
 				}
 				__syncthreads();
 			}
 		}
-
-		if (tid == 0) S_current[0] = static_cast<T>(1);
-		const uint64_t l1_start = level_index[1];
-		const uint64_t l1_size = level_index[2] - l1_start;
-		for (uint64_t i = tid; i < l1_size; i += nthreads)
-			S_current[l1_start + i] = log_sig[l1_start + i] * inv_k;
-
-		for (uint64_t l = 2; l <= degree; ++l) {
-			const uint64_t l_start = level_index[l];
-			const uint64_t l_size = level_index[l + 1] - l_start;
-			for (uint64_t i = tid; i < l_size; i += nthreads)
-				S_current[l_start + i] = log_sig[l_start + i] * inv_k + buff[l_start + i];
-		}
-		__syncthreads();
 	}
 
-	// Copy d_sig to dS
-	for (uint64_t i = tid; i < sig_len; i += nthreads)
-		dS[i] = d_sig[i];
+	for (uint64_t i = level_index[1] + tid; i < sig_len; i += nthreads)
+		d_logsig[i] = d_sig[i];
 	__syncthreads();
 
-	// Backward: for k = 1, ..., N-1
-	for (int64_t k = 1; k < static_cast<int64_t>(degree); ++k) {
-		inv_k = static_cast<T>(1) / static_cast<T>(k);
-		const T* S_kp1 = intermediates + (k - 1) * sig_len;
+	for (uint64_t i = tid; i < sig_len; i += nthreads)
+		dP[i] = static_cast<T>(0);
+	__syncthreads();
 
-		// d_logsig += dS / k (additive term)
-		for (uint64_t i = level_index[1] + tid; i < sig_len; i += nthreads)
-			d_logsig[i] += dS[i] * inv_k;
-		__syncthreads();
+	for (int64_t n = static_cast<int64_t>(degree); n >= 2; --n) {
+		T inv_n = static_cast<T>(1) / static_cast<T>(n);
+		const T* P_prev = P_all + (n - 2) * sig_len;
 
-		// Zero dS_next
 		for (uint64_t i = tid; i < sig_len; i += nthreads)
-			dS_next[i] = static_cast<T>(0);
+			dP_next[i] = static_cast<T>(0);
 		__syncthreads();
 
-		// Backprop through tensor product
-		for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
+		for (uint64_t target_level = static_cast<uint64_t>(n); target_level <= degree; ++target_level) {
 			const uint64_t target_start = level_index[target_level];
+			const uint64_t max_left = target_level - (n - 1);
 
-			for (uint64_t left_level = 1; left_level < target_level; ++left_level) {
+			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
 				const uint64_t right_level = target_level - left_level;
 				const uint64_t left_start = level_index[left_level];
 				const uint64_t left_size = level_index[left_level + 1] - left_start;
 				const uint64_t right_start = level_index[right_level];
 				const uint64_t right_size = level_index[right_level + 1] - right_start;
 
-				// d_logsig[l1] += sum_{l2} dS[l1+l2] * S_{k+1}[l2] * inv_k
 				for (uint64_t l_idx = tid; l_idx < left_size; l_idx += nthreads) {
 					T acc = static_cast<T>(0);
 					for (uint64_t r_idx = 0; r_idx < right_size; ++r_idx) {
-						acc += dS[target_start + l_idx * right_size + r_idx] * S_kp1[right_start + r_idx];
+						uint64_t t_idx = l_idx * right_size + r_idx;
+						acc += (d_sig[target_start + t_idx] + dP[target_start + t_idx]) * P_prev[right_start + r_idx];
 					}
-					myAtomicAdd(&d_logsig[left_start + l_idx], acc * inv_k);
+					d_logsig[left_start + l_idx] += acc * inv_n;
 				}
 				__syncthreads();
 
-				// dS_next[l2] += sum_{l1} dS[l1+l2] * x[l1] * inv_k
 				for (uint64_t r_idx = tid; r_idx < right_size; r_idx += nthreads) {
 					T acc = static_cast<T>(0);
 					for (uint64_t l_idx = 0; l_idx < left_size; ++l_idx) {
-						acc += dS[target_start + l_idx * right_size + r_idx] * log_sig[left_start + l_idx];
+						uint64_t t_idx = l_idx * right_size + r_idx;
+						acc += (d_sig[target_start + t_idx] + dP[target_start + t_idx]) * log_sig[left_start + l_idx];
 					}
-					myAtomicAdd(&dS_next[right_start + r_idx], acc * inv_k);
+					dP_next[right_start + r_idx] += acc * inv_n;
 				}
 				__syncthreads();
 			}
 		}
 
-		// Swap dS and dS_next
-		T* tmp = dS;
-		dS = dS_next;
-		dS_next = tmp;
+		T* tmp = dP;
+		dP = dP_next;
+		dP_next = tmp;
 		__syncthreads();
 	}
 
-	// Final step: k = N
-	inv_k = static_cast<T>(1) / static_cast<T>(degree);
+	// dP now holds chain gradient to P_1 = x
 	for (uint64_t i = level_index[1] + tid; i < sig_len; i += nthreads)
-		d_logsig[i] += dS[i] * inv_k;
+		d_logsig[i] += dP[i];
 	__syncthreads();
 }
 
@@ -284,7 +235,7 @@ __global__ void logsig_to_sig_kernel(
 
 	const T* my_log_sig = log_sig + batch_idx * sig_len;
 	T* my_out = out + batch_idx * sig_len;
-	T* my_buff = buff + batch_idx * sig_len;
+	T* my_buff = buff + batch_idx * 2 * sig_len; // needs 2*sig_len for P_prev/P_curr
 
 	extern __shared__ char smem[];
 	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem);
@@ -304,9 +255,8 @@ __global__ void logsig_to_sig_backprop_kernel(
 	T* __restrict__ d_logsig,
 	const T* __restrict__ d_sig,
 	const T* __restrict__ log_sig,
-	T* __restrict__ intermediates,
-	T* __restrict__ buff,
-	T* __restrict__ dS_buf,
+	T* __restrict__ P_all_buf,
+	T* __restrict__ dP_buf,
 	const uint64_t* __restrict__ d_level_index,
 	uint64_t degree,
 	uint64_t sig_len
@@ -315,15 +265,12 @@ __global__ void logsig_to_sig_backprop_kernel(
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
-	const uint64_t num_intermediates = degree - 1;
-
 	T* my_d_logsig = d_logsig + batch_idx * sig_len;
 	const T* my_d_sig = d_sig + batch_idx * sig_len;
 	const T* my_log_sig = log_sig + batch_idx * sig_len;
-	T* my_intermediates = intermediates + batch_idx * num_intermediates * sig_len;
-	T* my_buff = buff + batch_idx * sig_len;
-	T* my_dS = dS_buf + batch_idx * 2 * sig_len;
-	T* my_dS_next = my_dS + sig_len;
+	T* my_P_all = P_all_buf + batch_idx * degree * sig_len;
+	T* my_dP = dP_buf + batch_idx * 2 * sig_len;
+	T* my_dP_next = my_dP + sig_len;
 
 	extern __shared__ char smem[];
 	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem);
@@ -333,7 +280,7 @@ __global__ void logsig_to_sig_backprop_kernel(
 
 	tensor_exp_backprop_device<T>(
 		my_d_logsig, my_d_sig, my_log_sig,
-		my_intermediates, my_buff, my_dS, my_dS_next,
+		my_P_all, my_dP, my_dP_next,
 		degree, level_index_smem
 	);
 }
@@ -361,7 +308,7 @@ __global__ void logsig_to_sig_m12_kernel(
 	const T* my_coefs = coefs + batch_idx * m;
 	T* my_out = out + batch_idx * sig_len;
 	T* my_expanded = expanded_buf + batch_idx * sig_len;
-	T* my_buff = buff + batch_idx * sig_len;
+	T* my_buff = buff + batch_idx * 2 * sig_len;
 
 	extern __shared__ char smem[];
 	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem);
@@ -388,9 +335,8 @@ __global__ void logsig_to_sig_m12_backprop_kernel(
 	const T* __restrict__ d_expand_mat,
 	T* __restrict__ expanded_buf,
 	T* __restrict__ d_expanded_buf,
-	T* __restrict__ intermediates,
-	T* __restrict__ buff,
-	T* __restrict__ dS_buf,
+	T* __restrict__ P_all_buf,
+	T* __restrict__ dP_buf,
 	const uint64_t* __restrict__ d_level_index,
 	uint64_t degree,
 	uint64_t sig_len,
@@ -400,17 +346,14 @@ __global__ void logsig_to_sig_m12_backprop_kernel(
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
-	const uint64_t num_intermediates = degree - 1;
-
 	const T* my_coefs = coefs + batch_idx * m;
 	const T* my_d_sig = d_sig + batch_idx * sig_len;
 	T* my_d_coefs = d_coefs + batch_idx * m;
 	T* my_expanded = expanded_buf + batch_idx * sig_len;
 	T* my_d_expanded = d_expanded_buf + batch_idx * sig_len;
-	T* my_intermediates = intermediates + batch_idx * num_intermediates * sig_len;
-	T* my_buff = buff + batch_idx * sig_len;
-	T* my_dS = dS_buf + batch_idx * 2 * sig_len;
-	T* my_dS_next = my_dS + sig_len;
+	T* my_P_all = P_all_buf + batch_idx * degree * sig_len;
+	T* my_dP = dP_buf + batch_idx * 2 * sig_len;
+	T* my_dP_next = my_dP + sig_len;
 
 	extern __shared__ char smem[];
 	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem);
@@ -428,7 +371,7 @@ __global__ void logsig_to_sig_m12_backprop_kernel(
 
 	tensor_exp_backprop_device<T>(
 		my_d_expanded, my_d_sig, my_expanded,
-		my_intermediates, my_buff, my_dS, my_dS_next,
+		my_P_all, my_dP, my_dP_next,
 		degree, level_index_smem
 	);
 
@@ -472,8 +415,7 @@ struct CUDAExpSigWorkspace {
 	void ensure_d_expanded(size_t need) { ensure(d_d_expanded, d_expanded_bytes, need); }
 	void ensure_expand_mat(size_t need) { ensure(d_expand_mat, expand_mat_bytes, need); }
 
-	void ensure_backward(size_t need_buff, size_t need_intermediates, size_t need_dS) {
-		ensure_forward(need_buff);
+	void ensure_backward(size_t need_intermediates, size_t need_dS) {
 		ensure(d_intermediates, intermediates_bytes, need_intermediates);
 		ensure(d_dS, dS_bytes, need_dS);
 	}
@@ -529,7 +471,7 @@ void logsig_to_sig_cuda_(
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
 	if (method == 0) {
-		g_exp_workspace.ensure_forward(sizeof(T) * batch_size * sig_len);
+		g_exp_workspace.ensure_forward(sizeof(T) * batch_size * 2 * sig_len);
 
 		logsig_to_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
 			log_sig, out,
@@ -551,7 +493,7 @@ void logsig_to_sig_cuda_(
 		g_exp_workspace.ensure_expand_mat(mat_bytes);
 		cudaMemcpy(g_exp_workspace.d_expand_mat, h_expand.get(), mat_bytes, cudaMemcpyHostToDevice);
 
-		g_exp_workspace.ensure_forward(sizeof(T) * batch_size * sig_len);
+		g_exp_workspace.ensure_forward(sizeof(T) * batch_size * 2 * sig_len);
 		g_exp_workspace.ensure_expanded(sizeof(T) * batch_size * sig_len);
 
 		logsig_to_sig_m12_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
@@ -599,22 +541,19 @@ void logsig_to_sig_backprop_cuda_(
 	cudaMalloc(&d_level_index, level_index_bytes);
 	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
 
-	const uint64_t num_intermediates = degree >= 2 ? degree - 1 : 1;
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
 	if (method == 0) {
 		g_exp_workspace.ensure_backward(
-			sizeof(T) * batch_size * sig_len,
-			sizeof(T) * batch_size * num_intermediates * sig_len,
-			sizeof(T) * batch_size * 2 * sig_len
+			sizeof(T) * batch_size * degree * sig_len,   // P_all
+			sizeof(T) * batch_size * 2 * sig_len         // dP + dP_next
 		);
 
 		logsig_to_sig_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
 			d_logsig, d_sig, log_sig,
 			static_cast<T*>(g_exp_workspace.d_intermediates),
-			static_cast<T*>(g_exp_workspace.d_buff),
 			static_cast<T*>(g_exp_workspace.d_dS),
 			d_level_index, degree, sig_len
 		);
@@ -634,9 +573,8 @@ void logsig_to_sig_backprop_cuda_(
 
 		g_exp_workspace.ensure_expanded(sizeof(T) * batch_size * sig_len);
 		g_exp_workspace.ensure_backward(
-			sizeof(T) * batch_size * sig_len,
-			sizeof(T) * batch_size * num_intermediates * sig_len,
-			sizeof(T) * batch_size * 2 * sig_len
+			sizeof(T) * batch_size * degree * sig_len,     // P_all
+			sizeof(T) * batch_size * 2 * sig_len           // dP + dP_next
 		);
 
 		g_exp_workspace.ensure_d_expanded(sizeof(T) * batch_size * sig_len);
@@ -647,7 +585,6 @@ void logsig_to_sig_backprop_cuda_(
 			static_cast<T*>(g_exp_workspace.d_expanded),
 			static_cast<T*>(g_exp_workspace.d_d_expanded),
 			static_cast<T*>(g_exp_workspace.d_intermediates),
-			static_cast<T*>(g_exp_workspace.d_buff),
 			static_cast<T*>(g_exp_workspace.d_dS),
 			d_level_index, degree, sig_len, m
 		);

@@ -24,12 +24,11 @@
 #endif
 
 // ---------------------------------------------------------------------------
-// tensor_exp_: Horner scheme for the truncated tensor exponential
+// tensor_exp_: truncated tensor exponential via power series
 //
-//   exp(x) = 1 + x(1 + x/2(1 + x/3(...(1 + x/N)...)))
-//
-// Input:  log_sig — expanded log-signature (sig_length elements, level 0 = 0)
-// Output: out     — signature (sig_length elements, level 0 = 1)
+//   exp(x) = 1 + P_1 + P_2 + ... + P_N
+//   P_1 = x, P_n = x ⊗ P_{n-1} / n
+//   P_n has min level n → level-skipping reduces work for large n.
 // ---------------------------------------------------------------------------
 
 template<std::floating_point T>
@@ -45,46 +44,47 @@ void tensor_exp_(
 	uint64_t* level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	// Initialize: out = 1 + x / N
 	out[0] = static_cast<T>(1.);
 	if (degree == 0) return;
-
-	T inv_k = static_cast<T>(1.) / static_cast<T>(degree);
-	for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i) {
-		out[i] = log_sig[i] * inv_k;
-	}
+	std::memcpy(out + level_index[1], log_sig + level_index[1],
+		(level_index[degree + 1] - level_index[1]) * sizeof(T));
 
 	if (degree <= 1) return;
 
-	// Scratch buffer for tensor product accumulation
-	auto buff_uptr = std::make_unique<T[]>(sig_len);
-	T* buff = buff_uptr.get();
+	auto buff1_uptr = std::make_unique<T[]>(sig_len);
+	auto buff2_uptr = std::make_unique<T[]>(sig_len);
+	T* P_prev = buff1_uptr.get();
+	T* P_curr = buff2_uptr.get();
 
-	// Horner iterations: k = N-1 down to 1
-	for (int64_t k = static_cast<int64_t>(degree) - 1; k >= 1; --k) {
-		inv_k = static_cast<T>(1.) / static_cast<T>(k);
+	std::memcpy(P_prev, log_sig, sig_len * sizeof(T));
 
-		// Compute buff[l] = sum_{l1+l2=l, l1>=1, l2>=1} (x[l1] * inv_k) * out[l2]
-		for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
-			std::fill(buff + level_index[target_level], buff + level_index[target_level + 1], static_cast<T>(0.));
+	for (uint64_t n = 2; n <= degree; ++n) {
+		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
 
-			for (uint64_t left_level = 1; left_level < target_level; ++left_level) {
+		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
+			std::fill(P_curr + level_index[target_level],
+				P_curr + level_index[target_level + 1], static_cast<T>(0.));
+
+			// l1 ranges from 1 to target_level-(n-1), so l2 >= n-1 (P_prev's support)
+			const uint64_t max_left = target_level - (n - 1);
+
+			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
 				uint64_t right_level = target_level - left_level;
 
-				T* res_ptr = buff + level_index[target_level];
+				T* res_ptr = P_curr + level_index[target_level];
 				const T* const left_ptr_end = log_sig + level_index[left_level + 1];
 #ifdef VEC
 				const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
-				const T* right_start = out + level_index[right_level];
+				const T* right_start = P_prev + level_index[right_level];
 				for (const T* left_ptr = log_sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
-					vec_mult_add(res_ptr, right_start, *left_ptr * inv_k, right_level_size);
+					vec_mult_add(res_ptr, right_start, *left_ptr * inv_n, right_level_size);
 					res_ptr += right_level_size;
 				}
 #else
-				const T* const right_ptr_end = out + level_index[right_level + 1];
+				const T* const right_ptr_end = P_prev + level_index[right_level + 1];
 				for (const T* left_ptr = log_sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
-					T val = *left_ptr * inv_k;
-					for (const T* right_ptr = out + level_index[right_level]; right_ptr < right_ptr_end; ++right_ptr) {
+					T val = *left_ptr * inv_n;
+					for (const T* right_ptr = P_prev + level_index[right_level]; right_ptr < right_ptr_end; ++right_ptr) {
 						*(res_ptr++) += val * *right_ptr;
 					}
 				}
@@ -92,26 +92,16 @@ void tensor_exp_(
 			}
 		}
 
-		// Update out: out[l] = x[l]/k + buff[l] for l >= 2, out[1] = x[1]/k
-		for (uint64_t l = 2; l <= degree; ++l) {
-			for (uint64_t i = level_index[l]; i < level_index[l + 1]; ++i) {
-				out[i] = log_sig[i] * inv_k + buff[i];
-			}
-		}
-		for (uint64_t i = level_index[1]; i < level_index[2]; ++i) {
-			out[i] = log_sig[i] * inv_k;
-		}
-		// out[0] = 1 (unchanged)
+		for (uint64_t i = level_index[n]; i < level_index[degree + 1]; ++i)
+			out[i] += P_curr[i];
+
+		std::swap(P_prev, P_curr);
 	}
 }
 
 // ---------------------------------------------------------------------------
-// tensor_exp_backprop_: backward pass through the Horner scheme
-//
-// Given dL/d(out) (the upstream gradient w.r.t. the signature),
-// computes dL/d(log_sig) (gradient w.r.t. the log-signature).
-//
-// Recomputes Horner intermediates rather than saving from forward.
+// tensor_exp_backprop_: backward pass through tensor_exp_
+// Recomputes P_1..P_N, then backprops from n=degree to 2.
 // ---------------------------------------------------------------------------
 
 template<std::floating_point T>
@@ -131,130 +121,99 @@ void tensor_exp_backprop_(
 	std::fill(d_logsig, d_logsig + sig_len, static_cast<T>(0.));
 
 	if (degree <= 1) {
-		// exp(x) = 1 + x, so d_logsig = d_sig (levels 1+)
-		for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i) {
+		for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i)
 			d_logsig[i] = d_sig[i];
-		}
 		return;
 	}
 
-	// Recompute all Horner intermediates S_N, S_{N-1}, ..., S_2
-	// S_N = 1 + x/N, S_k = 1 + (x/k) * S_{k+1}
-	// We need S_2, S_3, ..., S_N for the backward. Store them in a flat array.
-	const uint64_t num_intermediates = degree - 1; // S_2 through S_N
-	auto intermediates_uptr = std::make_unique<T[]>(sig_len * num_intermediates);
-	T* intermediates = intermediates_uptr.get();
+	// Recompute and store P_1..P_N (full sig_len per P for simple indexing)
+	auto P_all_uptr = std::make_unique<T[]>(sig_len * degree);
+	T* P_all = P_all_uptr.get();
+	std::fill(P_all + sig_len, P_all + sig_len * degree, static_cast<T>(0.));
 
-	auto buff_uptr = std::make_unique<T[]>(sig_len);
-	T* buff = buff_uptr.get();
+	std::memcpy(P_all, log_sig, sig_len * sizeof(T));
 
-	// Compute S_N first
-	T* S_current = intermediates + (num_intermediates - 1) * sig_len; // S_N slot
-	S_current[0] = static_cast<T>(1.);
-	T inv_k = static_cast<T>(1.) / static_cast<T>(degree);
-	for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i) {
-		S_current[i] = log_sig[i] * inv_k;
-	}
+	for (uint64_t n = 2; n <= degree; ++n) {
+		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
+		T* P_curr = P_all + (n - 1) * sig_len;
+		const T* P_prev = P_all + (n - 2) * sig_len;
 
-	// Compute S_{N-1}, ..., S_2 via Horner
-	for (int64_t k = static_cast<int64_t>(degree) - 1; k >= 2; --k) {
-		T* S_prev = S_current; // S_{k+1}
-		S_current = intermediates + (k - 2) * sig_len; // S_k slot (k=2 goes to index 0)
-		inv_k = static_cast<T>(1.) / static_cast<T>(k);
-
-		// Compute S_k = 1 + (x/k) * S_{k+1}
-		for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
-			std::fill(buff + level_index[target_level], buff + level_index[target_level + 1], static_cast<T>(0.));
-			for (uint64_t left_level = 1; left_level < target_level; ++left_level) {
+		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
+			// l1 ranges from 1 to target_level-(n-1), so l2 >= n-1 (P_prev's support)
+			const uint64_t max_left = target_level - (n - 1);
+			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
 				uint64_t right_level = target_level - left_level;
-				T* res_ptr = buff + level_index[target_level];
-				const T* const left_ptr_end = log_sig + level_index[left_level + 1];
-				const T* const right_ptr_end = S_prev + level_index[right_level + 1];
-				for (const T* left_ptr = log_sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
-					T val = *left_ptr * inv_k;
-					for (const T* right_ptr = S_prev + level_index[right_level]; right_ptr < right_ptr_end; ++right_ptr) {
-						*(res_ptr++) += val * *right_ptr;
-					}
+				T* res_ptr = P_curr + level_index[target_level];
+				const T* const left_end = log_sig + level_index[left_level + 1];
+#ifdef VEC
+				const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
+				const T* right_start = P_prev + level_index[right_level];
+				for (const T* lp = log_sig + level_index[left_level]; lp < left_end; ++lp) {
+					vec_mult_add(res_ptr, right_start, *lp * inv_n, right_level_size);
+					res_ptr += right_level_size;
 				}
-			}
-		}
-		S_current[0] = static_cast<T>(1.);
-		for (uint64_t i = level_index[1]; i < level_index[2]; ++i) {
-			S_current[i] = log_sig[i] * inv_k;
-		}
-		for (uint64_t l = 2; l <= degree; ++l) {
-			for (uint64_t i = level_index[l]; i < level_index[l + 1]; ++i) {
-				S_current[i] = log_sig[i] * inv_k + buff[i];
+#else
+				const T* const right_end = P_prev + level_index[right_level + 1];
+				for (const T* lp = log_sig + level_index[left_level]; lp < left_end; ++lp) {
+					T val = *lp * inv_n;
+					for (const T* rp = P_prev + level_index[right_level]; rp < right_end; ++rp)
+						*(res_ptr++) += val * *rp;
+				}
+#endif
 			}
 		}
 	}
 
-	// Backward pass: propagate dL/dS_1 back through Horner steps
-	// dS = current upstream gradient (starts as dL/dS_1 = d_sig)
-	auto dS_uptr = std::make_unique<T[]>(sig_len);
-	T* dS = dS_uptr.get();
-	std::memcpy(dS, d_sig, sig_len * sizeof(T));
+	for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i)
+		d_logsig[i] = d_sig[i];
 
-	auto dS_next_uptr = std::make_unique<T[]>(sig_len);
-	T* dS_next = dS_next_uptr.get();
+	auto dP1_uptr = std::make_unique<T[]>(sig_len);
+	auto dP2_uptr = std::make_unique<T[]>(sig_len);
+	T* dP = dP1_uptr.get();
+	T* dP_next = dP2_uptr.get();
+	std::fill(dP, dP + sig_len, static_cast<T>(0.));
 
-	// For k = 1, 2, ..., N-1:
-	// S_k = 1 + (x/k) * S_{k+1}
-	// dL/dx[l] += dS[l] / k  (additive term)
-	// dL/dS_{k+1}[l2] = sum_{l1} dS[l1+l2] / k * x[l1]  (tensor product backprop, right)
-	// dL/dx[l1] += sum_{l2} dS[l1+l2] / k * S_{k+1}[l2]  (tensor product backprop, left)
-	for (int64_t k = 1; k < static_cast<int64_t>(degree); ++k) {
-		inv_k = static_cast<T>(1.) / static_cast<T>(k);
-		const T* S_kp1 = intermediates + (k - 1) * sig_len; // S_{k+1} (k=1 -> index 0 = S_2)
+	for (int64_t n = static_cast<int64_t>(degree); n >= 2; --n) {
+		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
+		const T* P_prev = P_all + (n - 2) * sig_len;
 
-		// Accumulate dL/dx from additive term: dL/dx[l] += dS[l] / k
-		for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i) {
-			d_logsig[i] += dS[i] * inv_k;
-		}
+		std::fill(dP_next, dP_next + sig_len, static_cast<T>(0.));
 
-		// Backprop through tensor product: T = (x/k) * S_{k+1}
-		// where dS gives dL/dT at levels 2..degree
-		// Compute dL/dS_{k+1} and additional dL/dx
-		std::fill(dS_next, dS_next + sig_len, static_cast<T>(0.));
-
-		for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
-			for (uint64_t left_level = 1; left_level < target_level; ++left_level) {
+		for (uint64_t target_level = static_cast<uint64_t>(n); target_level <= degree; ++target_level) {
+			const uint64_t max_left = target_level - (n - 1);
+			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
 				uint64_t right_level = target_level - left_level;
 
-				const T* res_ptr = dS + level_index[target_level];
-				T* d_left_ptr = d_logsig + level_index[left_level];
-				const T* left_ptr = log_sig + level_index[left_level];
-				const T* const left_ptr_end = log_sig + level_index[left_level + 1];
-				T* d_right_ptr = dS_next + level_index[right_level];
-				const T* right_ptr = S_kp1 + level_index[right_level];
-				const T* const right_ptr_end = S_kp1 + level_index[right_level + 1];
+				const T* grad_ptr = d_sig + level_index[target_level];
+				const T* dP_ptr_base = dP + level_index[target_level];
+				T* d_left = d_logsig + level_index[left_level];
+				const T* lp_start = log_sig + level_index[left_level];
+				const T* const lp_end = log_sig + level_index[left_level + 1];
+				T* d_right = dP_next + level_index[right_level];
+				const T* rp_start = P_prev + level_index[right_level];
+				const T* const rp_end = P_prev + level_index[right_level + 1];
 
-				// dL/dx[l1] += sum_{l2} dS[l] * S_{k+1}[l2] * inv_k
-				// dL/dS_{k+1}[l2] += sum_{l1} dS[l] * x[l1] * inv_k
-				const T* rp = res_ptr;
-				for (const T* lp = left_ptr; lp < left_ptr_end; ++lp) {
+				const T* gp = grad_ptr;
+				const T* dp = dP_ptr_base;
+				for (const T* lp = lp_start; lp < lp_end; ++lp) {
 					T d_left_acc = static_cast<T>(0.);
-					T* drp = d_right_ptr;
-					for (const T* rrp = right_ptr; rrp < right_ptr_end; ++rrp) {
-						T dS_val = *(rp++) * inv_k;
-						d_left_acc += dS_val * *rrp;
-						*(drp++) += dS_val * *lp;
+					T* drp = d_right;
+					for (const T* rp = rp_start; rp < rp_end; ++rp) {
+						T upstream = (*(gp++) + *(dp++)) * inv_n;
+						d_left_acc += upstream * *rp;
+						*(drp++) += upstream * *lp;
 					}
-					*(d_left_ptr++) += d_left_acc;
+					*(d_left++) += d_left_acc;
 				}
 			}
 		}
 
-		// Swap dS and dS_next for the next iteration
-		std::swap(dS, dS_next);
+		std::swap(dP, dP_next);
 	}
 
-	// Final step: k = N, S_N = 1 + x/N
-	// dL/dx[l] += dS[l] / N
-	inv_k = static_cast<T>(1.) / static_cast<T>(degree);
-	for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i) {
-		d_logsig[i] += dS[i] * inv_k;
-	}
+	// dP holds chain gradient from P_2..P_N flowing back to P_1 = x
+	for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i)
+		d_logsig[i] += dP[i];
 }
 
 // ---------------------------------------------------------------------------
@@ -272,10 +231,64 @@ void sig_from_logsig_expanded(
 }
 
 // ---------------------------------------------------------------------------
+// Build the bracket expansion matrix E[m x sig_len] for all Lyndon words.
+// E[i] is the tensor algebra expansion of the i-th Lyndon bracket.
+// ---------------------------------------------------------------------------
+
+template<std::floating_point T>
+std::unique_ptr<T[]> build_bracket_expansions_(
+	uint64_t dimension, uint64_t degree
+) {
+	const BasisCache& cache = get_basis_cache(dimension, degree, 2);
+	const uint64_t sig_len = ::sig_length(dimension, degree);
+	const uint64_t m = cache.lyndon_idx.size();
+
+	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
+	uint64_t* level_index = level_index_uptr.get();
+	populate_level_index(level_index, dimension, degree + 2);
+
+	auto lyndon_words = all_lyndon_words(dimension, degree);
+	std::unordered_set<word, WordHash> lyndon_set(lyndon_words.begin(), lyndon_words.end());
+	std::unordered_map<word, uint64_t, WordHash> word_idx;
+	for (uint64_t i = 0; i < m; ++i)
+		word_idx[lyndon_words[i]] = i;
+
+	auto expansions = std::make_unique<T[]>(m * sig_len);
+
+	for (uint64_t i = 0; i < m; ++i) {
+		T* exp_i = expansions.get() + i * sig_len;
+		std::fill(exp_i, exp_i + sig_len, static_cast<T>(0.));
+
+		if (lyndon_words[i].size() == 1) {
+			exp_i[cache.lyndon_idx[i]] = static_cast<T>(1.);
+		}
+		else {
+			auto [u, v] = standard_factorization(lyndon_words[i], lyndon_set);
+			const T* exp_u = expansions.get() + word_idx.at(u) * sig_len;
+			const T* exp_v = expansions.get() + word_idx.at(v) * sig_len;
+
+			// exp_i = u⊗v - v⊗u (Lie bracket in tensor algebra)
+			for (uint64_t tl = 2; tl <= degree; ++tl) {
+				for (uint64_t l1 = 1; l1 < tl; ++l1) {
+					uint64_t l2 = tl - l1;
+					T* r = exp_i + level_index[tl];
+					for (const T* lu = exp_u + level_index[l1]; lu < exp_u + level_index[l1 + 1]; ++lu)
+						for (const T* rv = exp_v + level_index[l2]; rv < exp_v + level_index[l2 + 1]; ++rv)
+							*(r++) += *lu * *rv;
+					r = exp_i + level_index[tl];
+					for (const T* lv = exp_v + level_index[l1]; lv < exp_v + level_index[l1 + 1]; ++lv)
+						for (const T* ru = exp_u + level_index[l2]; ru < exp_u + level_index[l2 + 1]; ++ru)
+							*(r++) -= *lv * *ru;
+				}
+			}
+		}
+	}
+
+	return expansions;
+}
+
+// ---------------------------------------------------------------------------
 // Lyndon bracket expansion: reconstruct full tensor element from Lyndon coords
-//
-// For each Lyndon word w, compute its tensor algebra expansion via recursive
-// standard factorization: [u, v] = u⊗v - v⊗u. Then sum weighted by coefficients.
 // ---------------------------------------------------------------------------
 
 template<std::floating_point T>
@@ -286,91 +299,25 @@ void expand_lyndon_to_tensor_(
 	uint64_t degree,
 	int method
 ) {
-	// Always use method=2 cache for the projection matrix and Lyndon indices
 	const BasisCache& cache = get_basis_cache(dimension, degree, 2);
 	const uint64_t sig_len = ::sig_length(dimension, degree);
 	const uint64_t m = cache.lyndon_idx.size();
 
-	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
-	uint64_t* level_index = level_index_uptr.get();
-	populate_level_index(level_index, dimension, degree + 2);
-
-	// Convert to bracket coefficients:
-	// method=1: input is Lyndon word POSITION values -> apply P^{-1} to get bracket coefficients
-	// method=2: input IS already bracket coefficients
+	// method=1: apply P^{-1} to convert Lyndon word positions → bracket coefficients
 	auto coefs_uptr = std::make_unique<T[]>(m);
 	T* coefs = coefs_uptr.get();
 	std::memcpy(coefs, lyndon_coefs, m * sizeof(T));
-	if (method == 1) {
+	if (method == 1)
 		cache.inv_proj_mat.mul_vec_inplace_lower(coefs);
-	}
 
-	// Enumerate Lyndon words and build index map
-	auto lyndon_words = all_lyndon_words(dimension, degree);
-	std::unordered_set<word, WordHash> lyndon_set(lyndon_words.begin(), lyndon_words.end());
+	auto expansions = build_bracket_expansions_<T>(dimension, degree);
 
-	// Map from word to its index in the Lyndon word list
-	std::unordered_map<word, uint64_t, WordHash> word_to_lyndon_idx;
-	for (uint64_t i = 0; i < m; ++i) {
-		word_to_lyndon_idx[lyndon_words[i]] = i;
-	}
-
-	// Compute bracket expansions for each Lyndon word (in order of increasing length)
-	// Each expansion is a sig_length vector
-	auto expansions = std::make_unique<T[]>(m * sig_len);
-
-	for (uint64_t i = 0; i < m; ++i) {
-		T* exp_i = expansions.get() + i * sig_len;
-		std::fill(exp_i, exp_i + sig_len, static_cast<T>(0.));
-
-		if (lyndon_words[i].size() == 1) {
-			// Single letter: unit vector at position word_to_idx in level 1
-			exp_i[cache.lyndon_idx[i]] = static_cast<T>(1.);
-		}
-		else {
-			// Standard factorization: w = [u, v]
-			auto [u, v] = standard_factorization(lyndon_words[i], lyndon_set);
-			uint64_t u_idx = word_to_lyndon_idx.at(u);
-			uint64_t v_idx = word_to_lyndon_idx.at(v);
-			const T* exp_u = expansions.get() + u_idx * sig_len;
-			const T* exp_v = expansions.get() + v_idx * sig_len;
-
-			// exp_i = u⊗v - v⊗u (Lie bracket in tensor algebra)
-			for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
-				for (uint64_t l1 = 1; l1 < target_level; ++l1) {
-					uint64_t l2 = target_level - l1;
-					T* res = exp_i + level_index[target_level];
-					const T* left_u_end = exp_u + level_index[l1 + 1];
-					const T* right_v_start = exp_v + level_index[l2];
-					const T* right_v_end = exp_v + level_index[l2 + 1];
-					const T* left_v_end = exp_v + level_index[l1 + 1];
-					const T* right_u_start = exp_u + level_index[l2];
-					const T* right_u_end = exp_u + level_index[l2 + 1];
-
-					// u⊗v contribution
-					T* r = res;
-					for (const T* lu = exp_u + level_index[l1]; lu < left_u_end; ++lu)
-						for (const T* rv = right_v_start; rv < right_v_end; ++rv)
-							*(r++) += *lu * *rv;
-
-					// -v⊗u contribution
-					r = res;
-					for (const T* lv = exp_v + level_index[l1]; lv < left_v_end; ++lv)
-						for (const T* ru = right_u_start; ru < right_u_end; ++ru)
-							*(r++) -= *lv * *ru;
-				}
-			}
-		}
-	}
-
-	// Sum: expanded = sum_i coefs[i] * expansions[i]
 	std::fill(expanded, expanded + sig_len, static_cast<T>(0.));
 	for (uint64_t i = 0; i < m; ++i) {
 		if (coefs[i] == static_cast<T>(0.)) continue;
 		const T* exp_i = expansions.get() + i * sig_len;
-		for (uint64_t j = 0; j < sig_len; ++j) {
+		for (uint64_t j = 0; j < sig_len; ++j)
 			expanded[j] += coefs[i] * exp_i[j];
-		}
 	}
 }
 
@@ -419,82 +366,30 @@ void get_logsig_to_sig_backprop_(
 	case 1:
 	case 2: {
 		const uint64_t sig_len = ::sig_length(dimension, degree);
+		const BasisCache& cache = get_basis_cache(dimension, degree, 2);
+		const uint64_t m = cache.lyndon_idx.size();
 
-		// Forward: expand lyndon coords to tensor, then tensor_exp
-		// Backward: tensor_exp_backprop -> d_expanded, then backprop through expand
-
-		// Recompute expanded tensor element
 		auto expanded = std::make_unique<T[]>(sig_len);
 		expand_lyndon_to_tensor_<T>(log_sig, expanded.get(), dimension, degree, method);
 
-		// Backprop through tensor_exp
 		auto d_expanded = std::make_unique<T[]>(sig_len);
 		tensor_exp_backprop_<T>(d_expanded.get(), d_sig, expanded.get(), dimension, degree);
 
-		// Backprop through expand_lyndon_to_tensor (linear map)
-		// d_logsig[i] = sum_j d_expanded[j] * expansion[i][j]  (gather via E^T)
-		const BasisCache& cache = get_basis_cache(dimension, degree, 2);
-		uint64_t m = cache.lyndon_idx.size();
+		// Backprop through expand (linear map): d_coefs[i] = dot(d_expanded, expansion[i])
+		auto expansions = build_bracket_expansions_<T>(dimension, degree);
 
-		// Recompute bracket expansions
-		auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
-		populate_level_index(level_index_uptr.get(), dimension, degree + 2);
-
-		auto lyndon_words = all_lyndon_words(dimension, degree);
-		std::unordered_set<word, WordHash> lyndon_set(lyndon_words.begin(), lyndon_words.end());
-		std::unordered_map<word, uint64_t, WordHash> word_to_lyndon_idx_map;
-		for (uint64_t i = 0; i < m; ++i)
-			word_to_lyndon_idx_map[lyndon_words[i]] = i;
-
-		auto expansions = std::make_unique<T[]>(m * sig_len);
-		for (uint64_t i = 0; i < m; ++i) {
-			T* exp_i = expansions.get() + i * sig_len;
-			std::fill(exp_i, exp_i + sig_len, static_cast<T>(0.));
-
-			if (lyndon_words[i].size() == 1) {
-				exp_i[cache.lyndon_idx[i]] = static_cast<T>(1.);
-			}
-			else {
-				auto [u, v] = standard_factorization(lyndon_words[i], lyndon_set);
-				uint64_t u_idx = word_to_lyndon_idx_map.at(u);
-				uint64_t v_idx = word_to_lyndon_idx_map.at(v);
-				const T* exp_u = expansions.get() + u_idx * sig_len;
-				const T* exp_v = expansions.get() + v_idx * sig_len;
-				uint64_t* level_index = level_index_uptr.get();
-
-				for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
-					for (uint64_t l1 = 1; l1 < target_level; ++l1) {
-						uint64_t l2 = target_level - l1;
-						T* r = exp_i + level_index[target_level];
-						for (const T* lu = exp_u + level_index[l1]; lu < exp_u + level_index[l1 + 1]; ++lu)
-							for (const T* rv = exp_v + level_index[l2]; rv < exp_v + level_index[l2 + 1]; ++rv)
-								*(r++) += *lu * *rv;
-						r = exp_i + level_index[target_level];
-						for (const T* lv = exp_v + level_index[l1]; lv < exp_v + level_index[l1 + 1]; ++lv)
-							for (const T* ru = exp_u + level_index[l2]; ru < exp_u + level_index[l2 + 1]; ++ru)
-								*(r++) -= *lv * *ru;
-					}
-				}
-			}
-		}
-
-		// d_lyndon_coefs[i] = dot(d_expanded, expansion[i])
 		auto d_coefs = std::make_unique<T[]>(m);
 		for (uint64_t i = 0; i < m; ++i) {
 			T acc = static_cast<T>(0.);
 			const T* exp_i = expansions.get() + i * sig_len;
-			for (uint64_t j = 0; j < sig_len; ++j) {
+			for (uint64_t j = 0; j < sig_len; ++j)
 				acc += d_expanded[j] * exp_i[j];
-			}
 			d_coefs[i] = acc;
 		}
 
-		// Backprop through coefficient conversion:
 		// method=1: forward used P^{-1}, so backward applies (P^{-1})^T
-		// method=2: no conversion, no backprop needed
-		if (method == 1) {
+		if (method == 1)
 			cache.inv_proj_mat_transpose.mul_vec_inplace_upper(d_coefs.get());
-		}
 
 		std::memcpy(d_logsig, d_coefs.get(), m * sizeof(T));
 		break;
