@@ -634,6 +634,34 @@ extern "C" {
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
+	/** @defgroup logsig_to_sig_functions Log-signature to signature (tensor exponential) functions
+	* @{
+	*/
+	CPSIG_API int logsig_to_sig_f(const float* log_sig, float* out,
+		uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0) noexcept;
+	CPSIG_API int logsig_to_sig_d(const double* log_sig, double* out,
+		uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0) noexcept;
+
+	CPSIG_API int batch_logsig_to_sig_f(const float* log_sig, float* out,
+		uint64_t batch_size, uint64_t dimension, uint64_t degree,
+		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_logsig_to_sig_d(const double* log_sig, double* out,
+		uint64_t batch_size, uint64_t dimension, uint64_t degree,
+		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+
+	CPSIG_API int logsig_to_sig_backprop_f(const float* log_sig, float* out, const float* sig_derivs,
+		uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0) noexcept;
+	CPSIG_API int logsig_to_sig_backprop_d(const double* log_sig, double* out, const double* sig_derivs,
+		uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0) noexcept;
+
+	CPSIG_API int batch_logsig_to_sig_backprop_f(const float* log_sig, float* out, const float* sig_derivs,
+		uint64_t batch_size, uint64_t dimension, uint64_t degree,
+		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_logsig_to_sig_backprop_d(const double* log_sig, double* out, const double* sig_derivs,
+		uint64_t batch_size, uint64_t dimension, uint64_t degree,
+		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+	/** @} */
+
 	/** @defgroup sig_kernel_functions Signature kernel functions
 	* @{
 	*/

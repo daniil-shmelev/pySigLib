@@ -2174,5 +2174,82 @@ public:
             check_result(f, derivs, true_, dimension, length, true, true, 1.);
         }
     };
+    TEST_CLASS(logsigToSigTest) {
+    public:
+
+        // Round-trip: sig -> log_sig -> logsig_to_sig should recover original sig
+        TEST_METHOD(RoundTripDeg1) {
+            uint64_t dimension = 3, degree = 1;
+            uint64_t s = sig_length(dimension, degree);
+            // exp(x) = 1 + x for degree 1
+            std::vector<double> log_sig = { 0., 2., 3., 5. };
+            std::vector<double> true_ = { 1., 2., 3., 5. };
+            check_result(logsig_to_sig_d, log_sig, true_, dimension, degree, false, false, 0);
+        }
+
+        TEST_METHOD(RoundTripDeg2) {
+            uint64_t dimension = 2, degree = 2;
+            // Use a known sig/log-sig pair
+            std::vector<double> sig = { 1., 0., 1., 0., 1., -1., 0.5 };
+            std::vector<double> log_sig(sig.size());
+            sig_to_log_sig_d(sig.data(), log_sig.data(), dimension, degree, false, false, 0);
+            // Now round-trip
+            check_result(logsig_to_sig_d, log_sig, sig, dimension, degree, false, false, 0);
+        }
+
+        TEST_METHOD(RoundTripDeg3) {
+            uint64_t dimension = 3, degree = 3;
+            uint64_t s = sig_length(dimension, degree);
+            // Create a random-ish signature via a known path
+            std::vector<double> path = { 1., 2., 3., 4., 5., 6., 7., 8., 9. }; // 3x3 path
+            std::vector<double> sig(s);
+            batch_signature_d(path.data(), sig.data(), 1, dimension, 3, degree, false, false, 1., true, 1);
+            std::vector<double> log_sig(s);
+            sig_to_log_sig_d(sig.data(), log_sig.data(), dimension, degree, false, false, 0);
+            check_result(logsig_to_sig_d, log_sig, sig, dimension, degree, false, false, 0);
+        }
+
+        TEST_METHOD(RoundTripFloat32) {
+            uint64_t dimension = 2, degree = 3;
+            uint64_t s = sig_length(dimension, degree);
+            std::vector<float> path = { 1.f, 2.f, 3.f, 4.f, 5.f, 6.f };
+            std::vector<float> sig(s);
+            batch_signature_f(path.data(), sig.data(), 1, dimension, 3, degree, false, false, 1.f, true, 1);
+            std::vector<float> log_sig(s);
+            sig_to_log_sig_f(sig.data(), log_sig.data(), dimension, degree, false, false, 0);
+            std::vector<float> recovered(s);
+            logsig_to_sig_f(log_sig.data(), recovered.data(), dimension, degree, false, false, 0);
+            for (uint64_t i = 0; i < s; ++i)
+                Assert::IsTrue(abs(sig[i] - recovered[i]) < SINGLE_EPSILON);
+        }
+
+        TEST_METHOD(BatchRoundTrip) {
+            uint64_t dimension = 2, degree = 3, batch_size = 4;
+            uint64_t s = sig_length(dimension, degree);
+            std::vector<double> path = {
+                1., 2., 3., 4., 5., 6.,
+                2., 3., 4., 5., 6., 7.,
+                0., 1., 1., 0., 2., 1.,
+                3., 1., 4., 1., 5., 9.
+            };
+            std::vector<double> sig(s * batch_size);
+            batch_signature_d(path.data(), sig.data(), batch_size, dimension, 3, degree, false, false, 1., true, 1);
+            std::vector<double> log_sig(s * batch_size);
+            batch_sig_to_log_sig_d(sig.data(), log_sig.data(), batch_size, dimension, degree, false, false, 0, 1);
+            std::vector<double> recovered(s * batch_size);
+            batch_logsig_to_sig_d(log_sig.data(), recovered.data(), batch_size, dimension, degree, false, false, 0, 1);
+            for (uint64_t i = 0; i < s * batch_size; ++i)
+                Assert::IsTrue(abs(sig[i] - recovered[i]) < DOUBLE_EPSILON);
+        }
+
+        TEST_METHOD(ZeroLogSigGivesIdentity) {
+            uint64_t dimension = 3, degree = 3;
+            uint64_t s = sig_length(dimension, degree);
+            std::vector<double> log_sig(s, 0.);
+            std::vector<double> true_(s, 0.);
+            true_[0] = 1.; // identity signature
+            check_result(logsig_to_sig_d, log_sig, true_, dimension, degree, false, false, 0);
+        }
+    };
 }
 //TODO: add tests for transform_path

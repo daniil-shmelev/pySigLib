@@ -318,6 +318,26 @@ CPSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP = {
     "float64": CPSIG.batch_sig_to_log_sig_backprop_d
 }
 
+CPSIG_LOGSIG_TO_SIG = {
+    "float32": CPSIG.logsig_to_sig_f,
+    "float64": CPSIG.logsig_to_sig_d
+}
+
+CPSIG_BATCH_LOGSIG_TO_SIG = {
+    "float32": CPSIG.batch_logsig_to_sig_f,
+    "float64": CPSIG.batch_logsig_to_sig_d
+}
+
+CPSIG_LOGSIG_TO_SIG_BACKPROP = {
+    "float32": CPSIG.logsig_to_sig_backprop_f,
+    "float64": CPSIG.logsig_to_sig_backprop_d
+}
+
+CPSIG_BATCH_LOGSIG_TO_SIG_BACKPROP = {
+    "float32": CPSIG.batch_logsig_to_sig_backprop_f,
+    "float64": CPSIG.batch_logsig_to_sig_backprop_d
+}
+
 CPSIG_SIG_KERNEL = {
     "float32": CPSIG.sig_kernel_f,
     "float64": CPSIG.sig_kernel_d
