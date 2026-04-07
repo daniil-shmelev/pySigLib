@@ -29,6 +29,7 @@ from ..sig import sig as sig_forward
 from ..sig import sig_combine as sig_combine_forward
 from ..transform_path import transform_path as transform_path_forward
 from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
+from ..logsig_to_sig import logsig_to_sig as logsig_to_sig_forward
 from ..log_sig import log_sig as log_sig_forward
 from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
 from ..branched_sig import branched_sig as branched_sig_forward
@@ -50,6 +51,8 @@ from ._ffi import (
     log_sig_combine_backprop_ffi_call,
     sig_kernel_pde_ffi_call,
     sig_kernel_pde_backprop_ffi_call,
+    logsig_to_sig_ffi_call,
+    logsig_to_sig_backprop_ffi_call,
     log_sig_from_path_ffi_call,
     log_sig_from_path_backprop_ffi_call,
     branched_sig_ffi_call,
@@ -279,6 +282,58 @@ def sig_to_log_sig(
 
 
 sig_to_log_sig.__doc__ = sig_to_log_sig_forward.__doc__
+
+
+# ---------------------------------------------------------------------------
+# logsig_to_sig (tensor exponential)
+# ---------------------------------------------------------------------------
+
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4))
+def _logsig_to_sig(log_sig_arr, dimension, degree, method, n_jobs):
+    return logsig_to_sig_ffi_call(log_sig_arr, dimension, degree, method, n_jobs)
+
+
+def _logsig_to_sig_fwd(log_sig_arr, dimension, degree, method, n_jobs):
+    result = logsig_to_sig_ffi_call(log_sig_arr, dimension, degree, method, n_jobs)
+    return result, (log_sig_arr,)
+
+
+def _logsig_to_sig_bwd(dimension, degree, method, n_jobs, residual, cotangent):
+    log_sig_arr, = residual
+    grad = logsig_to_sig_backprop_ffi_call(log_sig_arr, cotangent, dimension, degree, method, n_jobs)
+    return (grad,)
+
+
+_logsig_to_sig.defvjp(_logsig_to_sig_fwd, _logsig_to_sig_bwd)
+
+
+def logsig_to_sig(
+    log_sig_arr,
+    dimension: int,
+    degree: int,
+    time_aug: bool = False,
+    lead_lag: bool = False,
+    method: int = 0,
+    n_jobs: int = 1,
+):
+    ensure_registered()
+
+    log_sig_arr = jnp.asarray(log_sig_arr)
+    _validate_sig_shape(log_sig_arr, "log_sig")
+
+    check_type(dimension, "dimension", int)
+    check_non_neg(dimension, "dimension")
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_type(method, "method", int)
+    if method != 0:
+        raise ValueError("logsig_to_sig currently only supports method=0 (expanded tensor form)")
+
+    aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
+    return _logsig_to_sig(log_sig_arr, aug_dim, degree, method, n_jobs)
+
+
+logsig_to_sig.__doc__ = logsig_to_sig_forward.__doc__
 
 
 # ---------------------------------------------------------------------------

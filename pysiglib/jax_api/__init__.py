@@ -15,7 +15,7 @@
 
 from .jax_api import (
     sig, sig_combine, transform_path,
-    sig_to_log_sig, log_sig, log_sig_combine,
+    sig_to_log_sig, logsig_to_sig, log_sig, log_sig_combine,
     sig_coef, sig_kernel, sig_kernel_gram,
     sig_score, expected_sig_score, sig_mmd,
     branched_sig, branched_sig_combine,
@@ -36,7 +36,7 @@ from ..load_siglib import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
 
 __all__ = [
     "sig", "sig_combine", "transform_path",
-    "sig_to_log_sig", "log_sig", "log_sig_combine",
+    "sig_to_log_sig", "logsig_to_sig", "log_sig", "log_sig_combine",
     "sig_kernel", "sig_kernel_gram",
     "sig_coef",
     "sig_score", "expected_sig_score", "sig_mmd",

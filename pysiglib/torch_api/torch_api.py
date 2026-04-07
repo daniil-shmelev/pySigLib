@@ -27,6 +27,8 @@ from ..log_sig_backprop import sig_to_log_sig_backprop, _log_sig_from_path_backp
 from ..static_kernels import StaticKernel
 from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
 from ..log_sig_combine import log_sig_combine_backprop
+from ..logsig_to_sig import logsig_to_sig as logsig_to_sig_forward
+from ..logsig_to_sig_backprop import logsig_to_sig_backprop
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel_backprop import sig_kernel_backprop
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
@@ -577,3 +579,38 @@ def branched_sig_combine(
     return BranchedSigCombine.apply(bsig1, bsig2, dimension, degree, n_jobs)
 
 branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
+
+
+class LogSigToSig(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, log_sig, dimension, degree, time_aug, lead_lag, method, n_jobs):
+        sig_ = logsig_to_sig_forward(log_sig, dimension, degree, time_aug, lead_lag, method, n_jobs)
+
+        ctx.save_for_backward(log_sig)
+        ctx.dimension = dimension
+        ctx.degree = degree
+        ctx.time_aug = time_aug
+        ctx.lead_lag = lead_lag
+        ctx.method = method
+        ctx.n_jobs = n_jobs
+
+        return sig_
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        log_sig_ = ctx.saved_tensors[0]
+        grad = logsig_to_sig_backprop(log_sig_, grad_output, ctx.dimension, ctx.degree, ctx.time_aug, ctx.lead_lag, ctx.method, ctx.n_jobs)
+        return grad, None, None, None, None, None, None
+
+def logsig_to_sig(
+        log_sig : Union[np.ndarray, torch.tensor],
+        dimension : int,
+        degree : int,
+        time_aug : bool = False,
+        lead_lag : bool = False,
+        method : int = 0,
+        n_jobs : int = 1
+) -> Union[np.ndarray, torch.tensor]:
+    return LogSigToSig.apply(log_sig, dimension, degree, time_aug, lead_lag, method, n_jobs)
+
+logsig_to_sig.__doc__ = logsig_to_sig_forward.__doc__

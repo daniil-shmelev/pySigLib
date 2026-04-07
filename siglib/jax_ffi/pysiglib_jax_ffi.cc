@@ -268,6 +268,9 @@ struct CpuFns<float> {
 
     static constexpr auto batch_log_sig_from_path = batch_log_sig_from_path_f;
     static constexpr auto batch_log_sig_from_path_backprop = batch_log_sig_from_path_backprop_f;
+
+    static constexpr auto batch_logsig_to_sig = batch_logsig_to_sig_f;
+    static constexpr auto batch_logsig_to_sig_backprop = batch_logsig_to_sig_backprop_f;
 };
 
 template <>
@@ -316,6 +319,9 @@ struct CpuFns<double> {
 
     static constexpr auto batch_log_sig_from_path = batch_log_sig_from_path_d;
     static constexpr auto batch_log_sig_from_path_backprop = batch_log_sig_from_path_backprop_d;
+
+    static constexpr auto batch_logsig_to_sig = batch_logsig_to_sig_d;
+    static constexpr auto batch_logsig_to_sig_backprop = batch_logsig_to_sig_backprop_d;
 };
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
@@ -380,6 +386,9 @@ struct CudaFns<float> {
 
     static constexpr auto batch_log_sig_from_path = batch_log_sig_from_path_cuda_f;
     static constexpr auto batch_log_sig_from_path_backprop = batch_log_sig_from_path_backprop_cuda_f;
+
+    static constexpr auto batch_logsig_to_sig = batch_logsig_to_sig_cuda_f;
+    static constexpr auto batch_logsig_to_sig_backprop = batch_logsig_to_sig_backprop_cuda_f;
 };
 
 template <>
@@ -428,6 +437,9 @@ struct CudaFns<double> {
 
     static constexpr auto batch_log_sig_from_path = batch_log_sig_from_path_cuda_d;
     static constexpr auto batch_log_sig_from_path_backprop = batch_log_sig_from_path_backprop_cuda_d;
+
+    static constexpr auto batch_logsig_to_sig = batch_logsig_to_sig_cuda_d;
+    static constexpr auto batch_logsig_to_sig_backprop = batch_logsig_to_sig_backprop_cuda_d;
 };
 #endif
 
@@ -2525,5 +2537,153 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigFromPathCuda, LogSigFromPathCuda,
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigFromPathBackpropCuda, LogSigFromPathBackpropCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+#endif
+
+// logsig_to_sig (tensor exponential)
+
+namespace {
+
+template <typename T>
+ffi::Error LogSigToSigCpuImpl(
+    std::int64_t dimension, std::int64_t degree, std::int64_t method, std::int64_t n_jobs,
+    ffi::AnyBuffer& log_sig, ffi::Result<ffi::AnyBuffer>& out
+) {
+    SigSpec spec;
+    if (auto msg = GetSigSpec(log_sig, spec); !msg.empty()) return InvalidArgument(msg);
+
+    std::uint64_t batch = spec.is_batch ? spec.batch_size : 1;
+    int err_code = CpuFns<T>::batch_logsig_to_sig(
+        BufferData<T>(log_sig), BufferData<T>(out),
+        batch,
+        static_cast<std::uint64_t>(dimension),
+        static_cast<std::uint64_t>(degree),
+        false, false,
+        static_cast<int>(method),
+        static_cast<int>(n_jobs)
+    );
+    if (err_code != 0) return NativeCallError("logsig_to_sig", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error LogSigToSigBackpropCpuImpl(
+    std::int64_t dimension, std::int64_t degree, std::int64_t method, std::int64_t n_jobs,
+    ffi::AnyBuffer& log_sig, ffi::AnyBuffer& cotangent, ffi::Result<ffi::AnyBuffer>& out
+) {
+    SigSpec spec;
+    if (auto msg = GetSigSpec(log_sig, spec); !msg.empty()) return InvalidArgument(msg);
+
+    std::uint64_t batch = spec.is_batch ? spec.batch_size : 1;
+    int err_code = CpuFns<T>::batch_logsig_to_sig_backprop(
+        BufferData<T>(log_sig), BufferData<T>(out), BufferData<T>(cotangent),
+        batch,
+        static_cast<std::uint64_t>(dimension),
+        static_cast<std::uint64_t>(degree),
+        false, false,
+        static_cast<int>(method),
+        static_cast<int>(n_jobs)
+    );
+    if (err_code != 0) return NativeCallError("logsig_to_sig_backprop", err_code);
+    return ffi::Error::Success();
+}
+
+ffi::Error LogSigToSigCpu(
+    std::int64_t dimension, std::int64_t degree, std::int64_t method, std::int64_t n_jobs,
+    ffi::AnyBuffer log_sig, ffi::Result<ffi::AnyBuffer> out
+) {
+    if (auto msg = ValidateFloatBuffer("log_sig", log_sig); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(log_sig), [&]<typename T>() -> ffi::Error {
+        return LogSigToSigCpuImpl<T>(dimension, degree, method, n_jobs, log_sig, out);
+    });
+}
+
+ffi::Error LogSigToSigBackpropCpu(
+    std::int64_t dimension, std::int64_t degree, std::int64_t method, std::int64_t n_jobs,
+    ffi::AnyBuffer log_sig, ffi::AnyBuffer cotangent, ffi::Result<ffi::AnyBuffer> out
+) {
+    if (auto msg = ValidateFloatBuffer("log_sig", log_sig); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(log_sig), [&]<typename T>() -> ffi::Error {
+        return LogSigToSigBackpropCpuImpl<T>(dimension, degree, method, n_jobs, log_sig, cotangent, out);
+    });
+}
+
+#ifdef PYSIGLIB_JAX_WITH_CUDA
+template <typename T>
+ffi::Error LogSigToSigCudaImpl(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t degree, std::int64_t method,
+    ffi::AnyBuffer& log_sig, ffi::Result<ffi::AnyBuffer>& out
+) {
+    SigSpec spec;
+    if (auto msg = GetSigSpec(log_sig, spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+
+    std::uint64_t batch = spec.is_batch ? spec.batch_size : 1;
+    int err_code = CudaFns<T>::batch_logsig_to_sig(
+        BufferData<T>(log_sig), BufferData<T>(out),
+        batch, static_cast<std::uint64_t>(dimension),
+        static_cast<std::uint64_t>(degree), static_cast<int>(method));
+    if (err_code != 0) return NativeCallError("logsig_to_sig_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error LogSigToSigBackpropCudaImpl(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t degree, std::int64_t method,
+    ffi::AnyBuffer& log_sig, ffi::AnyBuffer& cotangent, ffi::Result<ffi::AnyBuffer>& out
+) {
+    SigSpec spec;
+    if (auto msg = GetSigSpec(log_sig, spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+
+    std::uint64_t batch = spec.is_batch ? spec.batch_size : 1;
+    int err_code = CudaFns<T>::batch_logsig_to_sig_backprop(
+        BufferData<T>(log_sig), BufferData<T>(out), BufferData<T>(cotangent),
+        batch, static_cast<std::uint64_t>(dimension),
+        static_cast<std::uint64_t>(degree), static_cast<int>(method));
+    if (err_code != 0) return NativeCallError("logsig_to_sig_backprop_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+ffi::Error LogSigToSigCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t degree, std::int64_t method,
+    ffi::AnyBuffer log_sig, ffi::Result<ffi::AnyBuffer> out) {
+    if (auto msg = ValidateFloatBuffer("log_sig", log_sig); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(log_sig), [&]<typename T>() -> ffi::Error {
+        return LogSigToSigCudaImpl<T>(stream, dimension, degree, method, log_sig, out);
+    });
+}
+
+ffi::Error LogSigToSigBackpropCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t degree, std::int64_t method,
+    ffi::AnyBuffer log_sig, ffi::AnyBuffer cotangent, ffi::Result<ffi::AnyBuffer> out) {
+    if (auto msg = ValidateFloatBuffer("log_sig", log_sig); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(log_sig), [&]<typename T>() -> ffi::Error {
+        return LogSigToSigBackpropCudaImpl<T>(stream, dimension, degree, method, log_sig, cotangent, out);
+    });
+}
+#endif
+
+}  // namespace
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigToSigCpu, LogSigToSigCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("method").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigToSigBackpropCpu, LogSigToSigBackpropCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("method").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+#ifdef PYSIGLIB_JAX_WITH_CUDA
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigToSigCuda, LogSigToSigCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree").Attr<std::int64_t>("method")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigToSigBackpropCuda, LogSigToSigBackpropCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree").Attr<std::int64_t>("method")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif

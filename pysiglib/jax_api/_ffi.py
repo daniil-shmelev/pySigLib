@@ -80,6 +80,14 @@ _TARGETS = {
         "cpu": ("pysiglib_sig_kernel_pde_backprop_cpu", "PySigLibSigKernelPdeBackpropCpu"),
         "cuda": ("pysiglib_sig_kernel_pde_backprop_cuda", "PySigLibSigKernelPdeBackpropCuda"),
     },
+    "logsig_to_sig": {
+        "cpu": ("pysiglib_logsig_to_sig_cpu", "PySigLibLogSigToSigCpu"),
+        "cuda": ("pysiglib_logsig_to_sig_cuda", "PySigLibLogSigToSigCuda"),
+    },
+    "logsig_to_sig_backprop": {
+        "cpu": ("pysiglib_logsig_to_sig_backprop_cpu", "PySigLibLogSigToSigBackpropCpu"),
+        "cuda": ("pysiglib_logsig_to_sig_backprop_cuda", "PySigLibLogSigToSigBackpropCuda"),
+    },
     "log_sig_from_path": {
         "cpu": ("pysiglib_log_sig_from_path_cpu", "PySigLibLogSigFromPathCpu"),
         "cuda": ("pysiglib_log_sig_from_path_cuda", "PySigLibLogSigFromPathCuda"),
@@ -367,6 +375,26 @@ def sig_kernel_pde_backprop_ffi_call(gram, derivs, k_grid, dimension, dyadic_ord
                        dyadic_order_2=np.int64(dyadic_order_2),
                        return_grid=np.bool_(return_grid), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("sig_kernel_pde_backprop", (gram, derivs, k_grid), out_type, call_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# logsig_to_sig (tensor exponential)
+# ---------------------------------------------------------------------------
+
+def logsig_to_sig_ffi_call(log_sig_arr, dimension, degree, method, n_jobs):
+    _normalize_dtype(log_sig_arr.dtype)
+    out_type = jax.ShapeDtypeStruct(log_sig_arr.shape, log_sig_arr.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree),
+                       method=np.int64(method), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("logsig_to_sig", (log_sig_arr,), out_type, call_kwargs)
+
+
+def logsig_to_sig_backprop_ffi_call(log_sig_arr, cotangent, dimension, degree, method, n_jobs):
+    _normalize_dtype(log_sig_arr.dtype)
+    out_type = jax.ShapeDtypeStruct(log_sig_arr.shape, log_sig_arr.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree),
+                       method=np.int64(method), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("logsig_to_sig_backprop", (log_sig_arr, cotangent), out_type, call_kwargs)
 
 
 # ---------------------------------------------------------------------------
