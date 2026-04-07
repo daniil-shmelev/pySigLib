@@ -162,7 +162,7 @@ def logsig_to_sig(
     data = SigInputHandler(log_sig, input_len, "log_sig")
     result = SigOutputHandler(data, out_len)
 
-    if data.device == "cpu" or method != 0:
+    if data.device == "cpu":
         if data.is_batch:
             check_type(n_jobs, "n_jobs", int)
             if n_jobs == 0:

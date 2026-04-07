@@ -17,6 +17,8 @@
 #include "cusig.h"
 #include "cu_tensor_poly.h"
 #include "cu_atomic.h"
+#include "cu_exp_host.h"
+#include <type_traits>
 
 // =========================================================================
 // Device function: tensor_exp (Horner scheme)
@@ -337,6 +339,109 @@ __global__ void logsig_to_sig_backprop_kernel(
 }
 
 // =========================================================================
+// Methods 1/2 kernels: expansion matrix multiply + tensor_exp
+// =========================================================================
+
+template<typename T>
+__global__ void logsig_to_sig_m12_kernel(
+	const T* __restrict__ coefs,
+	T* __restrict__ out,
+	T* __restrict__ expanded_buf,
+	T* __restrict__ buff,
+	const T* __restrict__ d_expand_mat,
+	const uint64_t* __restrict__ d_level_index,
+	uint64_t degree,
+	uint64_t sig_len,
+	uint64_t m
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+
+	const T* my_coefs = coefs + batch_idx * m;
+	T* my_out = out + batch_idx * sig_len;
+	T* my_expanded = expanded_buf + batch_idx * sig_len;
+	T* my_buff = buff + batch_idx * sig_len;
+
+	extern __shared__ char smem[];
+	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem);
+	for (uint64_t i = tid; i < degree + 2; i += nthreads)
+		level_index_smem[i] = d_level_index[i];
+	__syncthreads();
+
+	for (uint64_t j = tid; j < sig_len; j += nthreads) {
+		T acc = static_cast<T>(0);
+		for (uint64_t i = 0; i < m; ++i)
+			acc += d_expand_mat[j * m + i] * my_coefs[i];
+		my_expanded[j] = acc;
+	}
+	__syncthreads();
+
+	tensor_exp_device<T>(my_expanded, my_out, my_buff, degree, level_index_smem);
+}
+
+template<typename T>
+__global__ void logsig_to_sig_m12_backprop_kernel(
+	T* __restrict__ d_coefs,
+	const T* __restrict__ d_sig,
+	const T* __restrict__ coefs,
+	const T* __restrict__ d_expand_mat,
+	T* __restrict__ expanded_buf,
+	T* __restrict__ d_expanded_buf,
+	T* __restrict__ intermediates,
+	T* __restrict__ buff,
+	T* __restrict__ dS_buf,
+	const uint64_t* __restrict__ d_level_index,
+	uint64_t degree,
+	uint64_t sig_len,
+	uint64_t m
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+
+	const uint64_t num_intermediates = degree - 1;
+
+	const T* my_coefs = coefs + batch_idx * m;
+	const T* my_d_sig = d_sig + batch_idx * sig_len;
+	T* my_d_coefs = d_coefs + batch_idx * m;
+	T* my_expanded = expanded_buf + batch_idx * sig_len;
+	T* my_d_expanded = d_expanded_buf + batch_idx * sig_len;
+	T* my_intermediates = intermediates + batch_idx * num_intermediates * sig_len;
+	T* my_buff = buff + batch_idx * sig_len;
+	T* my_dS = dS_buf + batch_idx * 2 * sig_len;
+	T* my_dS_next = my_dS + sig_len;
+
+	extern __shared__ char smem[];
+	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem);
+	for (uint64_t i = tid; i < degree + 2; i += nthreads)
+		level_index_smem[i] = d_level_index[i];
+	__syncthreads();
+
+	for (uint64_t j = tid; j < sig_len; j += nthreads) {
+		T acc = static_cast<T>(0);
+		for (uint64_t i = 0; i < m; ++i)
+			acc += d_expand_mat[j * m + i] * my_coefs[i];
+		my_expanded[j] = acc;
+	}
+	__syncthreads();
+
+	tensor_exp_backprop_device<T>(
+		my_d_expanded, my_d_sig, my_expanded,
+		my_intermediates, my_buff, my_dS, my_dS_next,
+		degree, level_index_smem
+	);
+
+	for (uint64_t i = tid; i < m; i += nthreads) {
+		T acc = static_cast<T>(0);
+		for (uint64_t j = 0; j < sig_len; ++j)
+			acc += my_d_expanded[j] * d_expand_mat[j * m + i];
+		my_d_coefs[i] = acc;
+	}
+	__syncthreads();
+}
+
+// =========================================================================
 // Workspace
 // =========================================================================
 
@@ -344,36 +449,43 @@ struct CUDAExpSigWorkspace {
 	void* d_buff = nullptr;
 	void* d_intermediates = nullptr;
 	void* d_dS = nullptr;
+	void* d_expanded = nullptr;
+	void* d_d_expanded = nullptr;
+	void* d_expand_mat = nullptr;
 	size_t buff_bytes = 0;
 	size_t intermediates_bytes = 0;
 	size_t dS_bytes = 0;
+	size_t expanded_bytes = 0;
+	size_t d_expanded_bytes = 0;
+	size_t expand_mat_bytes = 0;
 
-	void ensure_forward(size_t need_buff) {
-		if (need_buff > buff_bytes) {
-			if (d_buff) cudaFree(d_buff);
-			cudaMalloc(&d_buff, need_buff);
-			buff_bytes = need_buff;
+	void ensure(void*& ptr, size_t& current, size_t need) {
+		if (need > current) {
+			if (ptr) cudaFree(ptr);
+			cudaMalloc(&ptr, need);
+			current = need;
 		}
 	}
+
+	void ensure_forward(size_t need_buff) { ensure(d_buff, buff_bytes, need_buff); }
+	void ensure_expanded(size_t need) { ensure(d_expanded, expanded_bytes, need); }
+	void ensure_d_expanded(size_t need) { ensure(d_d_expanded, d_expanded_bytes, need); }
+	void ensure_expand_mat(size_t need) { ensure(d_expand_mat, expand_mat_bytes, need); }
 
 	void ensure_backward(size_t need_buff, size_t need_intermediates, size_t need_dS) {
 		ensure_forward(need_buff);
-		if (need_intermediates > intermediates_bytes) {
-			if (d_intermediates) cudaFree(d_intermediates);
-			cudaMalloc(&d_intermediates, need_intermediates);
-			intermediates_bytes = need_intermediates;
-		}
-		if (need_dS > dS_bytes) {
-			if (d_dS) cudaFree(d_dS);
-			cudaMalloc(&d_dS, need_dS);
-			dS_bytes = need_dS;
-		}
+		ensure(d_intermediates, intermediates_bytes, need_intermediates);
+		ensure(d_dS, dS_bytes, need_dS);
 	}
 
 	void free() {
-		if (d_buff) { cudaFree(d_buff); d_buff = nullptr; buff_bytes = 0; }
-		if (d_intermediates) { cudaFree(d_intermediates); d_intermediates = nullptr; intermediates_bytes = 0; }
-		if (d_dS) { cudaFree(d_dS); d_dS = nullptr; dS_bytes = 0; }
+		auto f = [](void*& p, size_t& s) { if (p) { cudaFree(p); p = nullptr; s = 0; } };
+		f(d_buff, buff_bytes);
+		f(d_intermediates, intermediates_bytes);
+		f(d_dS, dS_bytes);
+		f(d_expanded, expanded_bytes);
+		f(d_d_expanded, d_expanded_bytes);
+		f(d_expand_mat, expand_mat_bytes);
 	}
 
 	~CUDAExpSigWorkspace() { free(); }
@@ -394,8 +506,8 @@ void logsig_to_sig_cuda_(
 	uint64_t degree,
 	int method
 ) {
-	if (method != 0)
-		throw std::invalid_argument("logsig_to_sig_cuda: only method=0 is supported on CUDA");
+	if (method < 0 || method > 2)
+		throw std::invalid_argument("logsig_to_sig_cuda: method must be 0, 1, or 2");
 
 	const uint64_t sig_len = host_sig_length(dimension, degree);
 
@@ -412,17 +524,44 @@ void logsig_to_sig_cuda_(
 	cudaMalloc(&d_level_index, level_index_bytes);
 	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
 
-	g_exp_workspace.ensure_forward(sizeof(T) * batch_size * sig_len);
-
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
-	logsig_to_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
-		log_sig, out,
-		static_cast<T*>(g_exp_workspace.d_buff),
-		d_level_index, degree, sig_len
-	);
+	if (method == 0) {
+		g_exp_workspace.ensure_forward(sizeof(T) * batch_size * sig_len);
+
+		logsig_to_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
+			log_sig, out,
+			static_cast<T*>(g_exp_workspace.d_buff),
+			d_level_index, degree, sig_len
+		);
+	}
+	else {
+		const uint64_t m = get_lyndon_count(dimension, degree);
+
+		// Build expansion matrix on host via cu_exp_host.cpp (compiled with C++20)
+		auto h_expand = std::make_unique<T[]>(sig_len * m);
+		if constexpr (std::is_same_v<T, float>)
+			build_expansion_matrix_f(h_expand.get(), sig_len, m, dimension, degree, method);
+		else
+			build_expansion_matrix_d(h_expand.get(), sig_len, m, dimension, degree, method);
+
+		size_t mat_bytes = sizeof(T) * sig_len * m;
+		g_exp_workspace.ensure_expand_mat(mat_bytes);
+		cudaMemcpy(g_exp_workspace.d_expand_mat, h_expand.get(), mat_bytes, cudaMemcpyHostToDevice);
+
+		g_exp_workspace.ensure_forward(sizeof(T) * batch_size * sig_len);
+		g_exp_workspace.ensure_expanded(sizeof(T) * batch_size * sig_len);
+
+		logsig_to_sig_m12_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
+			log_sig, out,
+			static_cast<T*>(g_exp_workspace.d_expanded),
+			static_cast<T*>(g_exp_workspace.d_buff),
+			static_cast<T*>(g_exp_workspace.d_expand_mat),
+			d_level_index, degree, sig_len, m
+		);
+	}
 
 	cudaFree(d_level_index);
 	check_cuda_kernel_launch();
@@ -442,12 +581,12 @@ void logsig_to_sig_backprop_cuda_(
 	uint64_t degree,
 	int method
 ) {
-	if (method != 0)
-		throw std::invalid_argument("logsig_to_sig_backprop_cuda: only method=0 is supported on CUDA");
+	if (method < 0 || method > 2)
+		throw std::invalid_argument("logsig_to_sig_backprop_cuda: method must be 0, 1, or 2");
 
 	const uint64_t sig_len = host_sig_length(dimension, degree);
 
-	if (degree <= 1) {
+	if (degree <= 1 && method == 0) {
 		cudaMemcpy(d_logsig, d_sig, batch_size * sig_len * sizeof(T), cudaMemcpyDeviceToDevice);
 		return;
 	}
@@ -460,24 +599,59 @@ void logsig_to_sig_backprop_cuda_(
 	cudaMalloc(&d_level_index, level_index_bytes);
 	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
 
-	const uint64_t num_intermediates = degree - 1;
-	g_exp_workspace.ensure_backward(
-		sizeof(T) * batch_size * sig_len,
-		sizeof(T) * batch_size * num_intermediates * sig_len,
-		sizeof(T) * batch_size * 2 * sig_len
-	);
-
+	const uint64_t num_intermediates = degree >= 2 ? degree - 1 : 1;
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
-	logsig_to_sig_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
-		d_logsig, d_sig, log_sig,
-		static_cast<T*>(g_exp_workspace.d_intermediates),
-		static_cast<T*>(g_exp_workspace.d_buff),
-		static_cast<T*>(g_exp_workspace.d_dS),
-		d_level_index, degree, sig_len
-	);
+	if (method == 0) {
+		g_exp_workspace.ensure_backward(
+			sizeof(T) * batch_size * sig_len,
+			sizeof(T) * batch_size * num_intermediates * sig_len,
+			sizeof(T) * batch_size * 2 * sig_len
+		);
+
+		logsig_to_sig_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
+			d_logsig, d_sig, log_sig,
+			static_cast<T*>(g_exp_workspace.d_intermediates),
+			static_cast<T*>(g_exp_workspace.d_buff),
+			static_cast<T*>(g_exp_workspace.d_dS),
+			d_level_index, degree, sig_len
+		);
+	}
+	else {
+		const uint64_t m = get_lyndon_count(dimension, degree);
+
+		auto h_expand = std::make_unique<T[]>(sig_len * m);
+		if constexpr (std::is_same_v<T, float>)
+			build_expansion_matrix_f(h_expand.get(), sig_len, m, dimension, degree, method);
+		else
+			build_expansion_matrix_d(h_expand.get(), sig_len, m, dimension, degree, method);
+
+		size_t mat_bytes = sizeof(T) * sig_len * m;
+		g_exp_workspace.ensure_expand_mat(mat_bytes);
+		cudaMemcpy(g_exp_workspace.d_expand_mat, h_expand.get(), mat_bytes, cudaMemcpyHostToDevice);
+
+		g_exp_workspace.ensure_expanded(sizeof(T) * batch_size * sig_len);
+		g_exp_workspace.ensure_backward(
+			sizeof(T) * batch_size * sig_len,
+			sizeof(T) * batch_size * num_intermediates * sig_len,
+			sizeof(T) * batch_size * 2 * sig_len
+		);
+
+		g_exp_workspace.ensure_d_expanded(sizeof(T) * batch_size * sig_len);
+
+		logsig_to_sig_m12_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
+			d_logsig, d_sig, log_sig,
+			static_cast<T*>(g_exp_workspace.d_expand_mat),
+			static_cast<T*>(g_exp_workspace.d_expanded),
+			static_cast<T*>(g_exp_workspace.d_d_expanded),
+			static_cast<T*>(g_exp_workspace.d_intermediates),
+			static_cast<T*>(g_exp_workspace.d_buff),
+			static_cast<T*>(g_exp_workspace.d_dS),
+			d_level_index, degree, sig_len, m
+		);
+	}
 
 	cudaFree(d_level_index);
 	check_cuda_kernel_launch();
