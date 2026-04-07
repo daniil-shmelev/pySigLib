@@ -58,7 +58,7 @@ JAX Support
 ------------------------
 
 pySigLib provides an optional JAX API with full support for ``jax.jit``, ``jax.grad``, and ``jax.vmap``.
-To use it, install JAX before installing pySigLib:
+Requires **jaxlib >= 0.5.0** (Python 3.10+). To use it, install JAX before installing pySigLib:
 
 .. code-block:: console
 
