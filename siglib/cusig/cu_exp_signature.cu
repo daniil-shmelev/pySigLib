@@ -76,11 +76,12 @@ __device__ void tensor_exp_device(
 				}
 				__syncthreads();
 			}
-		}
 
-		for (uint64_t i = level_index[n] + tid; i < sig_len; i += nthreads)
-			out[i] += P_curr[i];
-		__syncthreads();
+			// Fuse accumulation into per-level loop
+			for (uint64_t i = tid; i < target_size; i += nthreads)
+				out[target_start + i] += P_curr[target_start + i];
+			__syncthreads();
+		}
 
 		T* tmp = P_prev;
 		P_prev = P_curr;

@@ -90,10 +90,11 @@ void tensor_exp_(
 				}
 #endif
 			}
-		}
 
-		for (uint64_t i = level_index[n]; i < level_index[degree + 1]; ++i)
-			out[i] += P_curr[i];
+			// Fuse accumulation into per-level loop (keeps data in cache)
+			for (uint64_t i = level_index[target_level]; i < level_index[target_level + 1]; ++i)
+				out[i] += P_curr[i];
+		}
 
 		std::swap(P_prev, P_curr);
 	}
@@ -173,6 +174,13 @@ void tensor_exp_backprop_(
 	T* dP_next = dP2_uptr.get();
 	std::fill(dP, dP + sig_len, static_cast<T>(0.));
 
+#ifdef VEC
+	// Scratch buffer for precomputed upstream values
+	const uint64_t max_right_size = level_index[degree] - level_index[degree - 1];
+	auto upstream_uptr = std::make_unique<T[]>(max_right_size);
+	T* upstream_buf = upstream_uptr.get();
+#endif
+
 	for (int64_t n = static_cast<int64_t>(degree); n >= 2; --n) {
 		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
 		const T* P_prev = P_all + (n - 2) * sig_len;
@@ -193,6 +201,18 @@ void tensor_exp_backprop_(
 				const T* rp_start = P_prev + level_index[right_level];
 				const T* const rp_end = P_prev + level_index[right_level + 1];
 
+#ifdef VEC
+				const uint64_t right_size = rp_end - rp_start;
+				const T* gp = grad_ptr;
+				const T* dp = dP_ptr_base;
+				for (const T* lp = lp_start; lp < lp_end; ++lp) {
+					vec_add_scaled(upstream_buf, gp, dp, inv_n, right_size);
+					gp += right_size;
+					dp += right_size;
+					*(d_left++) += dot_product(upstream_buf, rp_start, right_size);
+					vec_mult_add(d_right, upstream_buf, *lp, right_size);
+				}
+#else
 				const T* gp = grad_ptr;
 				const T* dp = dP_ptr_base;
 				for (const T* lp = lp_start; lp < lp_end; ++lp) {
@@ -205,6 +225,7 @@ void tensor_exp_backprop_(
 					}
 					*(d_left++) += d_left_acc;
 				}
+#endif
 			}
 		}
 

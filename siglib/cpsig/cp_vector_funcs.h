@@ -210,6 +210,31 @@ FORCE_INLINE void vec_mult_assign(double* out, const double* other, double scala
 	}
 }
 
+FORCE_INLINE float dot_product(const float* a, const float* b, size_t N) {
+	__m256 sum = _mm256_setzero_ps();
+
+	size_t k = 0;
+	size_t limit = N & ~7UL;
+	for (; k < limit; k += 8) {
+		__m256 va = _mm256_loadu_ps(&a[k]);
+		__m256 vb = _mm256_loadu_ps(&b[k]);
+		sum = _mm256_fmadd_ps(va, vb, sum);
+	}
+
+	__m128 hi = _mm256_extractf128_ps(sum, 1);
+	__m128 lo = _mm256_castps256_ps128(sum);
+	__m128 s128 = _mm_add_ps(lo, hi);
+	s128 = _mm_hadd_ps(s128, s128);
+	s128 = _mm_hadd_ps(s128, s128);
+	float out = _mm_cvtss_f32(s128);
+
+	for (; k < N; ++k) {
+		out += a[k] * b[k];
+	}
+
+	return out;
+}
+
 FORCE_INLINE double dot_product(const double* a, const double* b, size_t N) {
 	__m256d sum = _mm256_setzero_pd();
 
@@ -230,6 +255,30 @@ FORCE_INLINE double dot_product(const double* a, const double* b, size_t N) {
 	}
 
 	return out;
+}
+
+FORCE_INLINE void vec_add_scaled(float* out, const float* a, const float* b, float scalar, uint64_t size) {
+	const __m256 sv = _mm256_set1_ps(scalar);
+	uint64_t k = 0;
+	uint64_t limit = size & ~7ULL;
+	for (; k < limit; k += 8) {
+		__m256 va = _mm256_loadu_ps(&a[k]);
+		__m256 vb = _mm256_loadu_ps(&b[k]);
+		_mm256_storeu_ps(&out[k], _mm256_mul_ps(_mm256_add_ps(va, vb), sv));
+	}
+	for (; k < size; ++k) out[k] = (a[k] + b[k]) * scalar;
+}
+
+FORCE_INLINE void vec_add_scaled(double* out, const double* a, const double* b, double scalar, uint64_t size) {
+	const __m256d sv = _mm256_set1_pd(scalar);
+	uint64_t k = 0;
+	uint64_t limit = size & ~3ULL;
+	for (; k < limit; k += 4) {
+		__m256d va = _mm256_loadu_pd(&a[k]);
+		__m256d vb = _mm256_loadu_pd(&b[k]);
+		_mm256_storeu_pd(&out[k], _mm256_mul_pd(_mm256_add_pd(va, vb), sv));
+	}
+	for (; k < size; ++k) out[k] = (a[k] + b[k]) * scalar;
 }
 
 template<typename IndexFn>
@@ -389,6 +438,42 @@ FORCE_INLINE void vec_mult_assign(double* out, const double* other, double scala
     if (tail) {
         *out = (*other) * scalar;
     }
+}
+
+FORCE_INLINE float dot_product(const float* a, const float* b, size_t N) {
+	float32x4_t sum = vdupq_n_f32(0.0f);
+	size_t k = 0;
+	for (; k + 4 <= N; k += 4)
+		sum = vfmaq_f32(sum, vld1q_f32(&a[k]), vld1q_f32(&b[k]));
+	float out = vaddvq_f32(sum);
+	for (; k < N; ++k) out += a[k] * b[k];
+	return out;
+}
+
+FORCE_INLINE double dot_product(const double* a, const double* b, size_t N) {
+	float64x2_t sum = vdupq_n_f64(0.0);
+	size_t k = 0;
+	for (; k + 2 <= N; k += 2)
+		sum = vfmaq_f64(sum, vld1q_f64(&a[k]), vld1q_f64(&b[k]));
+	double out = vgetq_lane_f64(sum, 0) + vgetq_lane_f64(sum, 1);
+	for (; k < N; ++k) out += a[k] * b[k];
+	return out;
+}
+
+FORCE_INLINE void vec_add_scaled(float* out, const float* a, const float* b, float scalar, uint64_t size) {
+	float32x4_t sv = vdupq_n_f32(scalar);
+	uint64_t k = 0;
+	for (; k + 4 <= size; k += 4)
+		vst1q_f32(&out[k], vmulq_f32(vaddq_f32(vld1q_f32(&a[k]), vld1q_f32(&b[k])), sv));
+	for (; k < size; ++k) out[k] = (a[k] + b[k]) * scalar;
+}
+
+FORCE_INLINE void vec_add_scaled(double* out, const double* a, const double* b, double scalar, uint64_t size) {
+	float64x2_t sv = vdupq_n_f64(scalar);
+	uint64_t k = 0;
+	for (; k + 2 <= size; k += 2)
+		vst1q_f64(&out[k], vmulq_f64(vaddq_f64(vld1q_f64(&a[k]), vld1q_f64(&b[k])), sv));
+	for (; k < size; ++k) out[k] = (a[k] + b[k]) * scalar;
 }
 
 template<typename IndexFn>
