@@ -18,6 +18,7 @@
 
 #include "multithreading.h"
 #include "words.h"
+#include "log_sig_cache.h"
 #ifdef VEC
 #include "cp_vector_funcs.h"
 #endif
@@ -270,6 +271,109 @@ void sig_from_logsig_expanded(
 	tensor_exp_<T>(log_sig, out, dimension, degree);
 }
 
+// ---------------------------------------------------------------------------
+// Lyndon bracket expansion: reconstruct full tensor element from Lyndon coords
+//
+// For each Lyndon word w, compute its tensor algebra expansion via recursive
+// standard factorization: [u, v] = u⊗v - v⊗u. Then sum weighted by coefficients.
+// ---------------------------------------------------------------------------
+
+template<std::floating_point T>
+void expand_lyndon_to_tensor_(
+	const T* lyndon_coefs,
+	T* expanded,
+	uint64_t dimension,
+	uint64_t degree,
+	int method
+) {
+	// Always use method=2 cache for the projection matrix and Lyndon indices
+	const BasisCache& cache = get_basis_cache(dimension, degree, 2);
+	const uint64_t sig_len = ::sig_length(dimension, degree);
+	const uint64_t m = cache.lyndon_idx.size();
+
+	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
+	uint64_t* level_index = level_index_uptr.get();
+	populate_level_index(level_index, dimension, degree + 2);
+
+	// Convert to bracket coefficients:
+	// method=1: input is Lyndon word POSITION values -> apply P^{-1} to get bracket coefficients
+	// method=2: input IS already bracket coefficients
+	auto coefs_uptr = std::make_unique<T[]>(m);
+	T* coefs = coefs_uptr.get();
+	std::memcpy(coefs, lyndon_coefs, m * sizeof(T));
+	if (method == 1) {
+		cache.inv_proj_mat.mul_vec_inplace_lower(coefs);
+	}
+
+	// Enumerate Lyndon words and build index map
+	auto lyndon_words = all_lyndon_words(dimension, degree);
+	std::unordered_set<word, WordHash> lyndon_set(lyndon_words.begin(), lyndon_words.end());
+
+	// Map from word to its index in the Lyndon word list
+	std::unordered_map<word, uint64_t, WordHash> word_to_lyndon_idx;
+	for (uint64_t i = 0; i < m; ++i) {
+		word_to_lyndon_idx[lyndon_words[i]] = i;
+	}
+
+	// Compute bracket expansions for each Lyndon word (in order of increasing length)
+	// Each expansion is a sig_length vector
+	auto expansions = std::make_unique<T[]>(m * sig_len);
+
+	for (uint64_t i = 0; i < m; ++i) {
+		T* exp_i = expansions.get() + i * sig_len;
+		std::fill(exp_i, exp_i + sig_len, static_cast<T>(0.));
+
+		if (lyndon_words[i].size() == 1) {
+			// Single letter: unit vector at position word_to_idx in level 1
+			exp_i[cache.lyndon_idx[i]] = static_cast<T>(1.);
+		}
+		else {
+			// Standard factorization: w = [u, v]
+			auto [u, v] = standard_factorization(lyndon_words[i], lyndon_set);
+			uint64_t u_idx = word_to_lyndon_idx.at(u);
+			uint64_t v_idx = word_to_lyndon_idx.at(v);
+			const T* exp_u = expansions.get() + u_idx * sig_len;
+			const T* exp_v = expansions.get() + v_idx * sig_len;
+
+			// exp_i = u⊗v - v⊗u (Lie bracket in tensor algebra)
+			for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
+				for (uint64_t l1 = 1; l1 < target_level; ++l1) {
+					uint64_t l2 = target_level - l1;
+					T* res = exp_i + level_index[target_level];
+					const T* left_u_end = exp_u + level_index[l1 + 1];
+					const T* right_v_start = exp_v + level_index[l2];
+					const T* right_v_end = exp_v + level_index[l2 + 1];
+					const T* left_v_end = exp_v + level_index[l1 + 1];
+					const T* right_u_start = exp_u + level_index[l2];
+					const T* right_u_end = exp_u + level_index[l2 + 1];
+
+					// u⊗v contribution
+					T* r = res;
+					for (const T* lu = exp_u + level_index[l1]; lu < left_u_end; ++lu)
+						for (const T* rv = right_v_start; rv < right_v_end; ++rv)
+							*(r++) += *lu * *rv;
+
+					// -v⊗u contribution
+					r = res;
+					for (const T* lv = exp_v + level_index[l1]; lv < left_v_end; ++lv)
+						for (const T* ru = right_u_start; ru < right_u_end; ++ru)
+							*(r++) -= *lv * *ru;
+				}
+			}
+		}
+	}
+
+	// Sum: expanded = sum_i coefs[i] * expansions[i]
+	std::fill(expanded, expanded + sig_len, static_cast<T>(0.));
+	for (uint64_t i = 0; i < m; ++i) {
+		if (coefs[i] == static_cast<T>(0.)) continue;
+		const T* exp_i = expansions.get() + i * sig_len;
+		for (uint64_t j = 0; j < sig_len; ++j) {
+			expanded[j] += coefs[i] * exp_i[j];
+		}
+	}
+}
+
 template<std::floating_point T>
 void get_logsig_to_sig_(
 	const T* log_sig,
@@ -278,26 +382,26 @@ void get_logsig_to_sig_(
 	uint64_t degree,
 	int method = 0
 ) {
-	if (method != 0) {
-		throw std::runtime_error("logsig_to_sig currently only supports method=0 (expanded tensor form)");
+	switch (method) {
+	case 0:
+		sig_from_logsig_expanded<T>(log_sig, out, dimension, degree);
+		break;
+	case 1:
+	case 2: {
+		const uint64_t sig_len = ::sig_length(dimension, degree);
+		auto expanded = std::make_unique<T[]>(sig_len);
+		expand_lyndon_to_tensor_<T>(log_sig, expanded.get(), dimension, degree, method);
+		tensor_exp_<T>(expanded.get(), out, dimension, degree);
+		break;
 	}
-	sig_from_logsig_expanded<T>(log_sig, out, dimension, degree);
+	default:
+		throw std::runtime_error("method must be one of 0, 1 or 2");
+	}
 }
 
 // ---------------------------------------------------------------------------
 // Backward with method dispatch
 // ---------------------------------------------------------------------------
-
-template<std::floating_point T>
-void sig_from_logsig_expanded_backprop(
-	T* d_logsig,
-	const T* d_sig,
-	const T* log_sig,
-	uint64_t dimension,
-	uint64_t degree
-) {
-	tensor_exp_backprop_<T>(d_logsig, d_sig, log_sig, dimension, degree);
-}
 
 template<std::floating_point T>
 void get_logsig_to_sig_backprop_(
@@ -308,10 +412,96 @@ void get_logsig_to_sig_backprop_(
 	uint64_t degree,
 	int method = 0
 ) {
-	if (method != 0) {
-		throw std::runtime_error("logsig_to_sig_backprop currently only supports method=0 (expanded tensor form)");
+	switch (method) {
+	case 0:
+		tensor_exp_backprop_<T>(d_logsig, d_sig, log_sig, dimension, degree);
+		break;
+	case 1:
+	case 2: {
+		const uint64_t sig_len = ::sig_length(dimension, degree);
+
+		// Forward: expand lyndon coords to tensor, then tensor_exp
+		// Backward: tensor_exp_backprop -> d_expanded, then backprop through expand
+
+		// Recompute expanded tensor element
+		auto expanded = std::make_unique<T[]>(sig_len);
+		expand_lyndon_to_tensor_<T>(log_sig, expanded.get(), dimension, degree, method);
+
+		// Backprop through tensor_exp
+		auto d_expanded = std::make_unique<T[]>(sig_len);
+		tensor_exp_backprop_<T>(d_expanded.get(), d_sig, expanded.get(), dimension, degree);
+
+		// Backprop through expand_lyndon_to_tensor (linear map)
+		// d_logsig[i] = sum_j d_expanded[j] * expansion[i][j]  (gather via E^T)
+		const BasisCache& cache = get_basis_cache(dimension, degree, 2);
+		uint64_t m = cache.lyndon_idx.size();
+
+		// Recompute bracket expansions
+		auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
+		populate_level_index(level_index_uptr.get(), dimension, degree + 2);
+
+		auto lyndon_words = all_lyndon_words(dimension, degree);
+		std::unordered_set<word, WordHash> lyndon_set(lyndon_words.begin(), lyndon_words.end());
+		std::unordered_map<word, uint64_t, WordHash> word_to_lyndon_idx_map;
+		for (uint64_t i = 0; i < m; ++i)
+			word_to_lyndon_idx_map[lyndon_words[i]] = i;
+
+		auto expansions = std::make_unique<T[]>(m * sig_len);
+		for (uint64_t i = 0; i < m; ++i) {
+			T* exp_i = expansions.get() + i * sig_len;
+			std::fill(exp_i, exp_i + sig_len, static_cast<T>(0.));
+
+			if (lyndon_words[i].size() == 1) {
+				exp_i[cache.lyndon_idx[i]] = static_cast<T>(1.);
+			}
+			else {
+				auto [u, v] = standard_factorization(lyndon_words[i], lyndon_set);
+				uint64_t u_idx = word_to_lyndon_idx_map.at(u);
+				uint64_t v_idx = word_to_lyndon_idx_map.at(v);
+				const T* exp_u = expansions.get() + u_idx * sig_len;
+				const T* exp_v = expansions.get() + v_idx * sig_len;
+				uint64_t* level_index = level_index_uptr.get();
+
+				for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
+					for (uint64_t l1 = 1; l1 < target_level; ++l1) {
+						uint64_t l2 = target_level - l1;
+						T* r = exp_i + level_index[target_level];
+						for (const T* lu = exp_u + level_index[l1]; lu < exp_u + level_index[l1 + 1]; ++lu)
+							for (const T* rv = exp_v + level_index[l2]; rv < exp_v + level_index[l2 + 1]; ++rv)
+								*(r++) += *lu * *rv;
+						r = exp_i + level_index[target_level];
+						for (const T* lv = exp_v + level_index[l1]; lv < exp_v + level_index[l1 + 1]; ++lv)
+							for (const T* ru = exp_u + level_index[l2]; ru < exp_u + level_index[l2 + 1]; ++ru)
+								*(r++) -= *lv * *ru;
+					}
+				}
+			}
+		}
+
+		// d_lyndon_coefs[i] = dot(d_expanded, expansion[i])
+		auto d_coefs = std::make_unique<T[]>(m);
+		for (uint64_t i = 0; i < m; ++i) {
+			T acc = static_cast<T>(0.);
+			const T* exp_i = expansions.get() + i * sig_len;
+			for (uint64_t j = 0; j < sig_len; ++j) {
+				acc += d_expanded[j] * exp_i[j];
+			}
+			d_coefs[i] = acc;
+		}
+
+		// Backprop through coefficient conversion:
+		// method=1: forward used P^{-1}, so backward applies (P^{-1})^T
+		// method=2: no conversion, no backprop needed
+		if (method == 1) {
+			cache.inv_proj_mat_transpose.mul_vec_inplace_upper(d_coefs.get());
+		}
+
+		std::memcpy(d_logsig, d_coefs.get(), m * sizeof(T));
+		break;
 	}
-	sig_from_logsig_expanded_backprop<T>(d_logsig, d_sig, log_sig, dimension, degree);
+	default:
+		throw std::runtime_error("method must be one of 0, 1 or 2");
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -351,7 +541,7 @@ void batch_logsig_to_sig_(
 	if (degree == 0) throw std::invalid_argument("logsig_to_sig received degree 0");
 
 	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
-	const uint64_t input_length = ::sig_length(aug_dimension, degree);
+	const uint64_t input_length = method ? ::log_sig_length(aug_dimension, degree) : ::sig_length(aug_dimension, degree);
 	const uint64_t output_length = ::sig_length(aug_dimension, degree);
 
 	auto func = [&](const T* in_ptr, T* out_ptr) {
@@ -409,7 +599,7 @@ void batch_logsig_to_sig_backprop_(
 	if (degree == 0) throw std::invalid_argument("logsig_to_sig_backprop received degree 0");
 
 	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
-	const uint64_t input_length = ::sig_length(aug_dimension, degree);
+	const uint64_t input_length = method ? ::log_sig_length(aug_dimension, degree) : ::sig_length(aug_dimension, degree);
 	const uint64_t sig_len = ::sig_length(aug_dimension, degree);
 
 	if (n_jobs == 0) throw std::invalid_argument("n_jobs cannot be 0");

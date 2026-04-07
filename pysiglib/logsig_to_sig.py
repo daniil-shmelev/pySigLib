@@ -22,7 +22,7 @@ from .param_checks import check_type, check_non_neg
 from .error_codes import err_msg
 from .dtypes import (CPSIG_LOGSIG_TO_SIG, CPSIG_BATCH_LOGSIG_TO_SIG,
                      CUSIG_LOGSIG_TO_SIG_CUDA, CUSIG_BATCH_LOGSIG_TO_SIG_CUDA)
-from .sig_length import sig_length
+from .sig_length import sig_length, log_sig_length
 from .data_handlers import SigOutputHandler, SigInputHandler
 
 
@@ -100,14 +100,15 @@ def logsig_to_sig(
         degree : int,
         time_aug : bool = False,
         lead_lag : bool = False,
-        method : int = 0,
+        method : int = 1,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
     Computes the signature from the log-signature via the truncated tensor exponential.
     This is the inverse of :func:`pysiglib.sig_to_log_sig`.
 
-    Currently only ``method=0`` (expanded tensor form) is supported.
+    Supports all methods (``0``, ``1``, ``2``). For methods ``1`` and ``2``,
+    ``prepare_log_sig(dimension, degree, method=2)`` must be called first.
 
     :param log_sig: The log-signature or batch of log-signatures, given as a `numpy.ndarray` or `torch.tensor`.
         For a single log-signature, this must be of shape ``(sig_length,)``. For a batch, this must be
@@ -121,7 +122,7 @@ def logsig_to_sig(
     :type time_aug: bool
     :param lead_lag: Whether the signatures were computed with ``lead_lag=True``.
     :type lead_lag: bool
-    :param method: Must be ``0`` (expanded tensor form). Methods ``1`` and ``2`` are not yet supported.
+    :param method: Method to use (``0``, ``1``, or ``2``). Must match the method used to compute the log-signature.
     :type method: int
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
@@ -151,14 +152,15 @@ def logsig_to_sig(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(method, "method", int)
-    if method != 0:
-        raise ValueError("logsig_to_sig currently only supports method=0 (expanded tensor form)")
+    if method not in (0, 1, 2):
+        raise ValueError("method must be 0, 1, or 2")
 
     aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
 
-    sig_len = sig_length(aug_dimension, degree)
-    data = SigInputHandler(log_sig, sig_len, "log_sig")
-    result = SigOutputHandler(data, sig_len)
+    input_len = sig_length(aug_dimension, degree) if method == 0 else log_sig_length(aug_dimension, degree)
+    out_len = sig_length(aug_dimension, degree)
+    data = SigInputHandler(log_sig, input_len, "log_sig")
+    result = SigOutputHandler(data, out_len)
 
     if data.device == "cpu":
         if data.is_batch:

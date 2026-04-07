@@ -22,19 +22,19 @@ from .param_checks import check_type, check_non_neg
 from .error_codes import err_msg
 from .dtypes import (CPSIG_LOGSIG_TO_SIG_BACKPROP, CPSIG_BATCH_LOGSIG_TO_SIG_BACKPROP,
                      CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA, CUSIG_BATCH_LOGSIG_TO_SIG_BACKPROP_CUDA)
-from .sig_length import sig_length
-from .data_handlers import SigOutputHandler, MultipleSigInputHandler
+from .sig_length import sig_length, log_sig_length
+from .data_handlers import SigOutputHandler, SigInputHandler
 
 
 ######################################################
 # Python wrappers
 ######################################################
 
-def logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lead_lag, method):
+def logsig_to_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method):
     err_code = CPSIG_LOGSIG_TO_SIG_BACKPROP[data.dtype](
-        data.sig_ptr[0],
+        data.data_ptr,
         result.data_ptr,
-        data.sig_ptr[1],
+        derivs_data.data_ptr,
         dimension,
         degree,
         time_aug,
@@ -46,11 +46,11 @@ def logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lead_lag,
         raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
     return result.data
 
-def batch_logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lead_lag, method, n_jobs=1):
+def batch_logsig_to_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method, n_jobs=1):
     err_code = CPSIG_BATCH_LOGSIG_TO_SIG_BACKPROP[data.dtype](
-        data.sig_ptr[0],
+        data.data_ptr,
         result.data_ptr,
-        data.sig_ptr[1],
+        derivs_data.data_ptr,
         data.batch_size,
         dimension,
         degree,
@@ -64,11 +64,11 @@ def batch_logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lea
         raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
     return result.data
 
-def logsig_to_sig_backprop_cuda_(data, result, aug_dimension, degree, method):
+def logsig_to_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method):
     err_code = CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA[data.dtype](
-        data.sig_ptr[0],
+        data.data_ptr,
         result.data_ptr,
-        data.sig_ptr[1],
+        derivs_data.data_ptr,
         aug_dimension,
         degree,
         method
@@ -78,11 +78,11 @@ def logsig_to_sig_backprop_cuda_(data, result, aug_dimension, degree, method):
         raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
     return result.data
 
-def batch_logsig_to_sig_backprop_cuda_(data, result, aug_dimension, degree, method):
+def batch_logsig_to_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method):
     err_code = CUSIG_BATCH_LOGSIG_TO_SIG_BACKPROP_CUDA[data.dtype](
-        data.sig_ptr[0],
+        data.data_ptr,
         result.data_ptr,
-        data.sig_ptr[1],
+        derivs_data.data_ptr,
         data.batch_size,
         aug_dimension,
         degree,
@@ -105,7 +105,7 @@ def logsig_to_sig_backprop(
         degree : int,
         time_aug : bool = False,
         lead_lag : bool = False,
-        method : int = 0,
+        method : int = 1,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -114,7 +114,7 @@ def logsig_to_sig_backprop(
     Given upstream derivatives ``sig_derivs`` (dL/d(sig)), computes the gradient
     dL/d(log_sig).
 
-    Currently only ``method=0`` (expanded tensor form) is supported.
+    Supports all methods (``0``, ``1``, ``2``).
 
     :param log_sig: The log-signature used in the forward pass.
     :type log_sig: numpy.ndarray | torch.tensor
@@ -128,7 +128,7 @@ def logsig_to_sig_backprop(
     :type time_aug: bool
     :param lead_lag: Whether the signatures were computed with ``lead_lag=True``.
     :type lead_lag: bool
-    :param method: Must be ``0`` (expanded tensor form).
+    :param method: Method to use (``0``, ``1``, or ``2``). Must match the method used in the forward pass.
     :type method: int
     :param n_jobs: Number of threads to run in parallel.
     :type n_jobs: int
@@ -142,23 +142,25 @@ def logsig_to_sig_backprop(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(method, "method", int)
-    if method != 0:
-        raise ValueError("logsig_to_sig_backprop currently only supports method=0 (expanded tensor form)")
+    if method not in (0, 1, 2):
+        raise ValueError("method must be 0, 1, or 2")
 
     aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
 
+    input_len = sig_length(aug_dimension, degree) if method == 0 else log_sig_length(aug_dimension, degree)
     sig_len = sig_length(aug_dimension, degree)
-    data = MultipleSigInputHandler([log_sig, sig_derivs], sig_len, ["log_sig", "sig_derivs"])
-    result = SigOutputHandler(data, sig_len)
+    data = SigInputHandler(log_sig, input_len, "log_sig")
+    derivs_data = SigInputHandler(sig_derivs, sig_len, "sig_derivs")
+    result = SigOutputHandler(data, input_len)
 
     if data.device == "cpu":
         if data.is_batch:
             check_type(n_jobs, "n_jobs", int)
             if n_jobs == 0:
                 raise ValueError("n_jobs cannot be 0")
-            return batch_logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lead_lag, method, n_jobs)
-        return logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lead_lag, method)
+            return batch_logsig_to_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method, n_jobs)
+        return logsig_to_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method)
     else:
         if data.is_batch:
-            return batch_logsig_to_sig_backprop_cuda_(data, result, aug_dimension, degree, method)
-        return logsig_to_sig_backprop_cuda_(data, result, aug_dimension, degree, method)
+            return batch_logsig_to_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method)
+        return logsig_to_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method)

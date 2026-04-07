@@ -313,7 +313,7 @@ def logsig_to_sig(
     degree: int,
     time_aug: bool = False,
     lead_lag: bool = False,
-    method: int = 0,
+    method: int = 1,
     n_jobs: int = 1,
 ):
     ensure_registered()
@@ -326,8 +326,8 @@ def logsig_to_sig(
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
     check_type(method, "method", int)
-    if method != 0:
-        raise ValueError("logsig_to_sig currently only supports method=0 (expanded tensor form)")
+    if method not in (0, 1, 2):
+        raise ValueError("method must be 0, 1, or 2")
 
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
     return _logsig_to_sig(log_sig_arr, aug_dim, degree, method, n_jobs)

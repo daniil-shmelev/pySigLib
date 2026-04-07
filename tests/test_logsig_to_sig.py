@@ -34,43 +34,49 @@ ROUND_TRIP_CASES = [
 ]
 
 
+@pytest.mark.parametrize("method", [0, 1, 2])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("case", ROUND_TRIP_CASES)
-def test_logsig_to_sig_roundtrip_single(dtype, case):
+def test_logsig_to_sig_roundtrip_single(method, dtype, case):
     rng = np.random.default_rng(42)
     dim, degree = case["dim"], case["degree"]
     path = rng.uniform(size=(20, dim)).astype(dtype)
 
+    pysiglib.prepare_log_sig(dim, degree, method=2)
     sig_orig = pysiglib.sig(path, degree)
-    log_sig = pysiglib.sig_to_log_sig(sig_orig, dim, degree, method=0)
-    sig_recovered = pysiglib.logsig_to_sig(log_sig, dim, degree, method=0)
+    log_sig = pysiglib.sig_to_log_sig(sig_orig, dim, degree, method=method)
+    sig_recovered = pysiglib.logsig_to_sig(log_sig, dim, degree, method=method)
 
     check_close(sig_orig, sig_recovered, double_atol=1e-10)
 
 
+@pytest.mark.parametrize("method", [0, 1, 2])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("case", ROUND_TRIP_CASES)
-def test_logsig_to_sig_roundtrip_batch(dtype, case):
+def test_logsig_to_sig_roundtrip_batch(method, dtype, case):
     rng = np.random.default_rng(42)
     dim, degree = case["dim"], case["degree"]
     path = rng.uniform(size=(8, 20, dim)).astype(dtype)
 
+    pysiglib.prepare_log_sig(dim, degree, method=2)
     sig_orig = pysiglib.sig(path, degree)
-    log_sig = pysiglib.sig_to_log_sig(sig_orig, dim, degree, method=0)
-    sig_recovered = pysiglib.logsig_to_sig(log_sig, dim, degree, method=0)
+    log_sig = pysiglib.sig_to_log_sig(sig_orig, dim, degree, method=method)
+    sig_recovered = pysiglib.logsig_to_sig(log_sig, dim, degree, method=method)
 
     check_close(sig_orig, sig_recovered, double_atol=1e-10)
 
 
+@pytest.mark.parametrize("method", [0, 1, 2])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_logsig_to_sig_roundtrip_parallel(dtype):
+def test_logsig_to_sig_roundtrip_parallel(method, dtype):
     rng = np.random.default_rng(42)
     dim, degree = 3, 3
     path = rng.uniform(size=(16, 20, dim)).astype(dtype)
 
+    pysiglib.prepare_log_sig(dim, degree, method=2)
     sig_orig = pysiglib.sig(path, degree)
-    log_sig = pysiglib.sig_to_log_sig(sig_orig, dim, degree, method=0)
-    sig_recovered = pysiglib.logsig_to_sig(log_sig, dim, degree, method=0, n_jobs=-1)
+    log_sig = pysiglib.sig_to_log_sig(sig_orig, dim, degree, method=method)
+    sig_recovered = pysiglib.logsig_to_sig(log_sig, dim, degree, method=method, n_jobs=-1)
 
     check_close(sig_orig, sig_recovered, double_atol=1e-10)
 
@@ -101,15 +107,78 @@ def test_logsig_to_sig_degree_1():
     check_close(expected, sig, double_atol=1e-15)
 
 
-def test_logsig_to_sig_method_not_0_raises():
+def test_logsig_to_sig_invalid_method_raises():
     sig_len = pysiglib.sig_length(3, 3)
     log_sig = np.zeros(sig_len, dtype=np.float64)
 
-    with pytest.raises(ValueError, match="method=0"):
-        pysiglib.logsig_to_sig(log_sig, 3, 3, method=1)
+    with pytest.raises(ValueError):
+        pysiglib.logsig_to_sig(log_sig, 3, 3, method=3)
 
-    with pytest.raises(ValueError, match="method=0"):
-        pysiglib.logsig_to_sig(log_sig, 3, 3, method=2)
+    with pytest.raises(ValueError):
+        pysiglib.logsig_to_sig(log_sig, 3, 3, method=-1)
+
+
+# =========================================================================
+# Methods 1 and 2: round-trip
+# =========================================================================
+
+METHOD_CASES = [
+    {"dim": 2, "degree": 3, "method": 1},
+    {"dim": 3, "degree": 3, "method": 1},
+    {"dim": 3, "degree": 4, "method": 1},
+    {"dim": 2, "degree": 3, "method": 2},
+    {"dim": 3, "degree": 3, "method": 2},
+    {"dim": 3, "degree": 4, "method": 2},
+]
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("case", METHOD_CASES)
+def test_logsig_to_sig_method_roundtrip(dtype, case):
+    rng = np.random.default_rng(42)
+    dim, degree, method = case["dim"], case["degree"], case["method"]
+    path = rng.uniform(size=(4, 20, dim)).astype(dtype)
+
+    pysiglib.prepare_log_sig(dim, degree, method=2)
+    sig_orig = pysiglib.sig(path, degree)
+    log_sig = pysiglib.sig_to_log_sig(sig_orig, dim, degree, method=method)
+    sig_recovered = pysiglib.logsig_to_sig(log_sig, dim, degree, method=method)
+
+    check_close(sig_orig, sig_recovered, double_atol=1e-10)
+
+
+@pytest.mark.parametrize("case", [
+    {"dim": 3, "degree": 3, "method": 1},
+    {"dim": 3, "degree": 3, "method": 2},
+])
+def test_logsig_to_sig_method_backprop(case):
+    rng = np.random.default_rng(123)
+    dim, degree, method = case["dim"], case["degree"], case["method"]
+    pysiglib.prepare_log_sig(dim, degree, method=2)
+
+    path = rng.uniform(size=(10, dim)).astype(np.float64)
+    sig_orig = pysiglib.sig(path, degree)
+    log_sig = pysiglib.sig_to_log_sig(sig_orig, dim, degree, method=method)
+
+    sig_len = pysiglib.sig_length(dim, degree)
+    weights = rng.uniform(size=sig_len).astype(np.float64)
+
+    grad_analytic = pysiglib.logsig_to_sig_backprop(log_sig, weights, dim, degree, method=method)
+
+    eps = 1e-7
+    grad_numerical = np.zeros_like(log_sig)
+    for i in range(len(log_sig)):
+        lp = log_sig.copy()
+        lp[i] += eps
+        sp = pysiglib.logsig_to_sig(lp, dim, degree, method=method)
+
+        lm = log_sig.copy()
+        lm[i] -= eps
+        sm = pysiglib.logsig_to_sig(lm, dim, degree, method=method)
+
+        grad_numerical[i] = np.dot(weights, (sp - sm) / (2 * eps))
+
+    check_close(grad_analytic, grad_numerical, double_atol=1e-5)
 
 
 # =========================================================================

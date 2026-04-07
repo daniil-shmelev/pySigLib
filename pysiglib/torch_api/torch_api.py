@@ -608,7 +608,7 @@ def logsig_to_sig(
         degree : int,
         time_aug : bool = False,
         lead_lag : bool = False,
-        method : int = 0,
+        method : int = 1,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     return LogSigToSig.apply(log_sig, dimension, degree, time_aug, lead_lag, method, n_jobs)
