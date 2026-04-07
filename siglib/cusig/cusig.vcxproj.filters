@@ -79,6 +79,9 @@
     <CudaCompile Include="cu_log_sig_cache.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
+    <CudaCompile Include="cu_exp_signature.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
     <CudaCompile Include="cu_log_signature.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>

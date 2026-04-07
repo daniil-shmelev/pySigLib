@@ -120,6 +120,7 @@
     <ClInclude Include="cu_atomic.h" />
     <ClInclude Include="cu_log_sig_combine.h" />
     <CudaCompile Include="cu_path_transforms.cu" />
+    <CudaCompile Include="cu_exp_signature.cu" />
     <CudaCompile Include="cu_log_signature.cu" />
     <CudaCompile Include="cu_tensor_poly.cu" />
     <CudaCompile Include="cu_sig_kernel.h" />

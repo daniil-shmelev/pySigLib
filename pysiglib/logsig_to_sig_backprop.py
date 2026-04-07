@@ -20,7 +20,8 @@ import torch
 
 from .param_checks import check_type, check_non_neg
 from .error_codes import err_msg
-from .dtypes import CPSIG_LOGSIG_TO_SIG_BACKPROP, CPSIG_BATCH_LOGSIG_TO_SIG_BACKPROP
+from .dtypes import (CPSIG_LOGSIG_TO_SIG_BACKPROP, CPSIG_BATCH_LOGSIG_TO_SIG_BACKPROP,
+                     CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA, CUSIG_BATCH_LOGSIG_TO_SIG_BACKPROP_CUDA)
 from .sig_length import sig_length
 from .data_handlers import SigOutputHandler, MultipleSigInputHandler
 
@@ -57,6 +58,35 @@ def batch_logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lea
         lead_lag,
         method,
         n_jobs
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
+    return result.data
+
+def logsig_to_sig_backprop_cuda_(data, result, aug_dimension, degree, method):
+    err_code = CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA[data.dtype](
+        data.sig_ptr[0],
+        result.data_ptr,
+        data.sig_ptr[1],
+        aug_dimension,
+        degree,
+        method
+    )
+
+    if err_code:
+        raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
+    return result.data
+
+def batch_logsig_to_sig_backprop_cuda_(data, result, aug_dimension, degree, method):
+    err_code = CUSIG_BATCH_LOGSIG_TO_SIG_BACKPROP_CUDA[data.dtype](
+        data.sig_ptr[0],
+        result.data_ptr,
+        data.sig_ptr[1],
+        data.batch_size,
+        aug_dimension,
+        degree,
+        method
     )
 
     if err_code:
@@ -121,9 +151,14 @@ def logsig_to_sig_backprop(
     data = MultipleSigInputHandler([log_sig, sig_derivs], sig_len, ["log_sig", "sig_derivs"])
     result = SigOutputHandler(data, sig_len)
 
-    if data.is_batch:
-        check_type(n_jobs, "n_jobs", int)
-        if n_jobs == 0:
-            raise ValueError("n_jobs cannot be 0")
-        return batch_logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lead_lag, method, n_jobs)
-    return logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lead_lag, method)
+    if data.device == "cpu":
+        if data.is_batch:
+            check_type(n_jobs, "n_jobs", int)
+            if n_jobs == 0:
+                raise ValueError("n_jobs cannot be 0")
+            return batch_logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lead_lag, method, n_jobs)
+        return logsig_to_sig_backprop_(data, result, dimension, degree, time_aug, lead_lag, method)
+    else:
+        if data.is_batch:
+            return batch_logsig_to_sig_backprop_cuda_(data, result, aug_dimension, degree, method)
+        return logsig_to_sig_backprop_cuda_(data, result, aug_dimension, degree, method)
