@@ -47,6 +47,7 @@ cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["pysiglib"]
 sdist.exclude = [
+    "tests/",
     "docs/",
     ".github/",
     "*.psd",

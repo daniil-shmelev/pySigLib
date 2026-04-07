@@ -234,7 +234,7 @@ def test_sig_coef_backprop_time_aug_lead_lag_full_batch(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_coef_torch_api_full(device):
     X1 = torch.rand(size=(32, 100, 3), dtype=torch.float64, device=device, requires_grad = True)
-    X2 = torch.tensor(X1.clone().detach(), requires_grad = True)
+    X2 = X1.detach().clone().requires_grad_(True)
     words = pysiglib.words(3, 3)
 
     sig = pysiglib.torch_api.sig(X1, 3)
@@ -257,7 +257,7 @@ def test_sig_coef_torch_api_full(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_coef_time_aug_torch_api_full(device):
     X1 = torch.rand(size=(32, 100, 3), dtype=torch.float64, device=device, requires_grad = True)
-    X2 = torch.tensor(X1.clone().detach(), requires_grad = True)
+    X2 = X1.detach().clone().requires_grad_(True)
     words = pysiglib.words(4, 3)
 
     sig = pysiglib.torch_api.sig(X1, 3, time_aug=True)
@@ -280,7 +280,7 @@ def test_sig_coef_time_aug_torch_api_full(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_coef_lead_lag_torch_api_full(device):
     X1 = torch.rand(size=(32, 100, 2), dtype=torch.float64, device=device, requires_grad = True)
-    X2 = torch.tensor(X1.clone().detach(), requires_grad = True)
+    X2 = X1.detach().clone().requires_grad_(True)
     words = pysiglib.words(4, 3)
 
     sig = pysiglib.torch_api.sig(X1, 3, lead_lag=True)
@@ -303,7 +303,7 @@ def test_sig_coef_lead_lag_torch_api_full(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_coef_time_aug_lead_lag_torch_api_full(device):
     X1 = torch.rand(size=(32, 100, 2), dtype=torch.float64, device=device, requires_grad = True)
-    X2 = torch.tensor(X1.clone().detach(), requires_grad = True)
+    X2 = X1.detach().clone().requires_grad_(True)
     words = pysiglib.words(5, 3)
 
     sig = pysiglib.torch_api.sig(X1, 3, time_aug=True, lead_lag=True)
@@ -326,7 +326,7 @@ def test_sig_coef_time_aug_lead_lag_torch_api_full(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_extract_sig_coef_torch_api_full(device):
     X1 = torch.rand(size=(32, 100, 3), dtype=torch.float64, device=device, requires_grad = True)
-    X2 = torch.tensor(X1.clone().detach(), requires_grad = True)
+    X2 = X1.detach().clone().requires_grad_(True)
     words = pysiglib.words(3, 2)
 
     sig = pysiglib.torch_api.sig(X1, 3)

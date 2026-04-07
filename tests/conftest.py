@@ -1,33 +1,20 @@
-# Block signatory import if its native extension is broken.
-# signatory's _impl.pyd may trigger a Windows fatal exception
-# (STATUS_ENTRYPOINT_NOT_FOUND) when compiled against an incompatible
-# PyTorch version.  The SEH exception can corrupt the CUDA driver
-# context, causing unrelated numba-based tests to crash later.
+# Copyright 2025 Daniil Shmelev
 #
-# Pre-setting sys.modules["signatory"] = None makes subsequent
-# `import signatory` raise ModuleNotFoundError without loading any DLLs.
-# The try/except blocks in the test files handle this gracefully.
-
-import subprocess, sys
-
-def _signatory_is_importable():
-    """Check in a subprocess so a crash can't affect this process."""
-    try:
-        r = subprocess.run(
-            [sys.executable, "-c", "import signatory"],
-            capture_output=True, timeout=10,
-        )
-        return r.returncode == 0
-    except Exception:
-        return False
-
-if not _signatory_is_importable():
-    sys.modules["signatory"] = None
-
-# =========================================================================
-# Shared test utilities
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 # =========================================================================
 
+import os
+import functools
 import numpy as np
 import torch
 import pytest
@@ -42,12 +29,13 @@ def check_close(a, b, atol=None, single_atol=None, double_atol=None):
       float32 -> single_atol (default 1e-4)
       float64 -> double_atol (default 1e-10)
     """
-    a_ = np.array(a.cpu() if hasattr(a, 'cpu') else a)
-    b_ = np.array(b.cpu() if hasattr(b, 'cpu') else b)
+    a_ = a.detach().cpu().numpy() if hasattr(a, 'cpu') else np.asarray(a)
+    b_ = b.detach().cpu().numpy() if hasattr(b, 'cpu') else np.asarray(b)
     if atol is None:
         s = single_atol if single_atol is not None else 1e-4
         d = double_atol if double_atol is not None else 1e-10
-        atol = s if a_.dtype == np.float32 else d
+        # Use loose tolerance if either operand is float32
+        atol = s if (a_.dtype == np.float32 or b_.dtype == np.float32) else d
     max_diff = np.max(np.abs(a_ - b_))
     assert not max_diff > atol, f"Max diff: {max_diff}"
 
@@ -65,14 +53,27 @@ def assert_device(tensor, device):
     assert tensor.device.type == device, f"Expected device '{device}', got '{tensor.device.type}'"
 
 
-def get_true_sig_coefs(multi_indices, X, *args, **kwargs):
-    dim = X.shape[-1]
-    sig = pysiglib.signature(X, *args, **kwargs)
-    res = []
-    for idx in multi_indices:
-        flat_idx = 0
-        for i in idx:
-            flat_idx *= dim
-            flat_idx += i + 1
-        res.append(sig[..., flat_idx])
-    return np.array(res).T
+_FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+@functools.lru_cache(maxsize=None)
+def load_fixtures(filename):
+    """Load pre-computed reference data from a fixture file (cached)."""
+    path = os.path.join(_FIXTURE_DIR, filename)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"Fixture file not found: {path}\n"
+            f"Run the scripts in tests/fixtures/ to generate it."
+        )
+    return dict(np.load(path, allow_pickle=False))
+
+
+@pytest.fixture(autouse=True)
+def _skip_on_cuda_oom():
+    """Convert CUDA out-of-memory errors into test skips."""
+    try:
+        yield
+    except RuntimeError as e:
+        if "out of memory" in str(e).lower():
+            pytest.skip(f"Insufficient GPU memory: {e}")
+        raise

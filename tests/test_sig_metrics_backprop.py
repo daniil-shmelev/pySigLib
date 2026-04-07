@@ -120,7 +120,7 @@ def test_sig_score_backprop_random_batch(device, dyadic_order):
     X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double, requires_grad = True)
     Y = torch.rand(size=(4, len2, dim), device=device, dtype = torch.double)
 
-    d1 = torch.tensor([sig_score_fd(X.detach(), Y[i], dyadic_order) for i in range(4)]).sum(0)
+    d1 = torch.from_numpy(np.array([sig_score_fd(X.detach(), Y[i], dyadic_order) for i in range(4)])).sum(0)
     k = pysiglib.torch_api.sig_score(X, Y, dyadic_order)
     assert_device(k, device)
     k.backward(torch.ones(4, device=device))

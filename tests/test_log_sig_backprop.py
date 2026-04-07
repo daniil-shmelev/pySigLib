@@ -14,174 +14,176 @@
 # =========================================================================
 
 import pytest
-import numpy as np
 import torch
-import iisignature
-
-try:
-    import signatory
-except:
-    signatory = None
 
 import pysiglib.torch_api as pysiglib
+from conftest import DEVICES, check_close as _check_close, assert_device, load_fixtures
 from functools import partial
-from conftest import DEVICES, check_close as _check_close, assert_device
+
 check_close = partial(_check_close, double_atol=1e-5)
 
-np.random.seed(42)
-torch.manual_seed(42)
+FIXTURES = load_fixtures("reference_data.npz")
 
-@pytest.mark.skipif(signatory is None, reason="signatory not available")
+
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
 def test_sig_to_log_sig_backprop_expanded_random(device, deg, dtype):
-    X = torch.rand(size=(1, pysiglib.sig_length(1, deg)), requires_grad=True, dtype=dtype, device=device)
+    key_in = f"sig_to_logsig_bp_input__d{deg}"
+    key_exp = f"sig_to_logsig_bp_expected__d{deg}"
+    if key_in not in FIXTURES:
+        pytest.skip("sig_to_logsig fixture not available (signatory needed)")
+
+    X = torch.tensor(FIXTURES[key_in], dtype=dtype, device=device, requires_grad=True)
     ls = pysiglib.sig_to_log_sig(X, 1, deg, method=0)
     assert_device(ls, device)
-    derivs = torch.rand(size=ls.shape, dtype=dtype, device=device)
-    ls.backward(derivs)
-    d1 = X.grad[:, 1:]
+    ls.backward(torch.ones_like(ls))
 
-    X = X.clone().detach()[:, 1:].cpu()
-    X = torch.tensor(X, requires_grad=True)
-    derivs = derivs[:, 1:].cpu()
-    ls = signatory.signature_to_logsignature(X, 1, deg, mode="expand")
-    ls.backward(derivs)
-    d2 = X.grad
-    check_close(d1, d2)
+    expected = FIXTURES[key_exp]
+    # Fixture stores grad w.r.t. non-scalar part; pysiglib grad includes scalar term
+    check_close(expected, X.grad[:, 1:])
+
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
 def test_log_signature_backprop_expanded_random(device, deg, dtype):
-    X = torch.rand(size=(100, 5), requires_grad=True, dtype=dtype, device=device)
+    X = torch.tensor(FIXTURES["path"][0], dtype=dtype, device=device, requires_grad=True)
     ls = pysiglib.log_sig(X, deg, method=0)
     assert_device(ls, device)
-    derivs = torch.rand(size=ls.shape, dtype=dtype, device=device)
-    ls.backward(derivs)
-    d1 = X.grad
 
-    X = np.array(X.detach().cpu())
-    derivs = np.array(derivs.cpu())[1:]
-    s = iisignature.prepare(5, deg, "x")
-    d2 = iisignature.logsigbackprop(derivs, X, s, "x")
+    derivs = torch.tensor(
+        FIXTURES[f"logsig_bp_exp_derivs__d{deg}"][0], dtype=dtype, device=device
+    )
+    full_derivs = torch.zeros_like(ls)
+    full_derivs[1:] = derivs
+    ls.backward(full_derivs)
 
-    check_close(d1, d2)
+    expected = FIXTURES[f"logsig_bp_exp_expected__d{deg}"][0]
+    check_close(expected, X.grad)
+
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
 def test_batch_log_signature_backprop_expanded_random(device, deg, dtype):
-    X = torch.rand(size=(32, 100, 5), requires_grad=True, dtype=dtype, device=device)
+    X = torch.tensor(FIXTURES["path"], dtype=dtype, device=device, requires_grad=True)
     ls = pysiglib.log_sig(X, deg, method=0)
     assert_device(ls, device)
-    derivs = torch.rand(size=ls.shape, dtype=dtype, device=device)
-    ls.backward(derivs)
-    d1 = X.grad
 
-    X = np.array(X.detach().cpu())
-    derivs = np.array(derivs.cpu())[:, 1:]
-    s = iisignature.prepare(5, deg, "x")
-    d2 = iisignature.logsigbackprop(derivs, X, s, "x")
+    derivs = torch.tensor(
+        FIXTURES[f"logsig_bp_exp_derivs__d{deg}"], dtype=dtype, device=device
+    )
+    full_derivs = torch.zeros_like(ls)
+    full_derivs[:, 1:] = derivs
+    ls.backward(full_derivs)
 
-    check_close(d1, d2)
+    expected = FIXTURES[f"logsig_bp_exp_expected__d{deg}"]
+    check_close(expected, X.grad)
+
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
 def test_batch_log_signature_backprop_expanded_time_aug_random(device, deg, dtype):
-    X = torch.rand(size=(32, 100, 2), requires_grad=True, dtype=dtype, device=device)
+    X = torch.tensor(FIXTURES["path"], dtype=dtype, device=device, requires_grad=True)
     ls = pysiglib.log_sig(X, deg, time_aug=True, method=0)
     assert_device(ls, device)
-    derivs = torch.rand(size=ls.shape, dtype=dtype, device=device)
-    ls.backward(derivs)
-    d1 = X.grad
 
-    X = np.array(X.detach().cpu())
-    X = pysiglib.transform_path(X, time_aug=True)
-    derivs = np.array(derivs.cpu())[:, 1:]
-    s = iisignature.prepare(3, deg, "x")
-    d2 = iisignature.logsigbackprop(derivs, X, s, "x")[:, :, :-1]
+    derivs = torch.tensor(
+        FIXTURES[f"logsig_bp_exp_ta_derivs__d{deg}"], dtype=dtype, device=device
+    )
+    full_derivs = torch.zeros_like(ls)
+    full_derivs[:, 1:] = derivs
+    ls.backward(full_derivs)
 
-    check_close(d1, d2)
+    expected = FIXTURES[f"logsig_bp_exp_ta_expected__d{deg}"]
+    check_close(expected, X.grad)
 
-@pytest.mark.skipif(signatory is None, reason="signatory not available")
+
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
 def test_log_signature_lyndon_words_random(device, deg, dtype):
-    X = torch.rand(size=(1, 100, 5), dtype=dtype, device=device, requires_grad=True)
-    pysiglib.prepare_log_sig(5, deg, 1)
-    ls = pysiglib.log_sig(X[0], deg, method=1)
+    key_derivs = f"logsig_bp_words_derivs__d{deg}"
+    key_exp = f"logsig_bp_words_expected__d{deg}"
+    if key_derivs not in FIXTURES:
+        pytest.skip("Lyndon words backprop fixture not available (signatory needed)")
+
+    X = torch.tensor(FIXTURES["path"][:1], dtype=dtype, device=device, requires_grad=True)
+    pysiglib.prepare_log_sig(3, deg, 1)
+    ls = pysiglib.log_sig(X, deg, method=1)
     assert_device(ls, device)
-    derivs = torch.rand(size=ls.shape, device=device)
+
+    derivs = torch.tensor(
+        FIXTURES[key_derivs][:1], dtype=dtype, device=device
+    )
     ls.backward(derivs)
-    d2 = X.grad
 
-    X = torch.tensor(X.clone().detach().cpu(), requires_grad=True)
-    ls = signatory.logsignature(X, deg, mode="words")[0]
-    ls.backward(derivs.cpu())
-    d1 = X.grad
+    expected = FIXTURES[key_exp][:1]
+    check_close(expected, X.grad)
+    pysiglib.clear_cache()
 
-    check_close(d1, d2)
 
-@pytest.mark.skipif(signatory is None, reason="signatory not available")
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
 def test_batch_log_signature_lyndon_words_random(device, deg, dtype):
-    X = torch.rand(size=(32, 100, 5), dtype=dtype, device=device, requires_grad=True)
-    pysiglib.prepare_log_sig(5, deg, 1)
-    ls = pysiglib.log_sig(X[0], deg, method=1)
+    key_derivs = f"logsig_bp_words_derivs__d{deg}"
+    key_exp = f"logsig_bp_words_expected__d{deg}"
+    if key_derivs not in FIXTURES:
+        pytest.skip("Lyndon words backprop fixture not available (signatory needed)")
+
+    X = torch.tensor(FIXTURES["path"], dtype=dtype, device=device, requires_grad=True)
+    pysiglib.prepare_log_sig(3, deg, 1)
+    ls = pysiglib.log_sig(X, deg, method=1)
     assert_device(ls, device)
-    derivs = torch.rand(size=ls.shape, device=device)
+
+    derivs = torch.tensor(
+        FIXTURES[key_derivs], dtype=dtype, device=device
+    )
     ls.backward(derivs)
-    d2 = X.grad
 
-    X = torch.tensor(X.clone().detach().cpu(), requires_grad=True)
-    ls = signatory.logsignature(X, deg, mode="words")[0]
-    ls.backward(derivs.cpu())
-    d1 = X.grad
+    expected = FIXTURES[key_exp]
+    check_close(expected, X.grad)
+    pysiglib.clear_cache()
 
-    check_close(d1, d2)
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
 @pytest.mark.parametrize("method", [2, 3])
 def test_log_signature_backprop_lyndon_basis_random(device, deg, dtype, method):
-    X = torch.rand(size=(100, 5), requires_grad=True, dtype=dtype, device=device)
-    pysiglib.prepare_log_sig(5, deg, 2)
+    X = torch.tensor(FIXTURES["path"][0], dtype=dtype, device=device, requires_grad=True)
+    pysiglib.prepare_log_sig(3, deg, 2)
     ls = pysiglib.log_sig(X, deg, method=method)
     assert_device(ls, device)
-    derivs = torch.rand(size=ls.shape, dtype=dtype, device=device)
+
+    derivs = torch.tensor(
+        FIXTURES[f"logsig_bp_basis_derivs__d{deg}"][0], dtype=dtype, device=device
+    )
     ls.backward(derivs)
-    d1 = X.grad
 
-    X = np.array(X.detach().cpu())
-    derivs = np.array(derivs.cpu())
-    s = iisignature.prepare(5, deg, "s")
-    d2 = iisignature.logsigbackprop(derivs, X, s, "s")
+    expected = FIXTURES[f"logsig_bp_basis_expected__d{deg}"][0]
+    check_close(expected, X.grad)
+    pysiglib.clear_cache()
 
-    check_close(d1, d2)
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32])
 @pytest.mark.parametrize("method", [2, 3])
 def test_batch_log_signature_backprop_lyndon_basis_random(device, deg, dtype, method):
-    X = torch.rand(size=(32, 100, 5), requires_grad=True, dtype=dtype, device=device)
-    pysiglib.prepare_log_sig(5, deg, 2)
+    X = torch.tensor(FIXTURES["path"], dtype=dtype, device=device, requires_grad=True)
+    pysiglib.prepare_log_sig(3, deg, 2)
     ls = pysiglib.log_sig(X, deg, method=method)
     assert_device(ls, device)
-    derivs = torch.rand(size=ls.shape, dtype=dtype, device=device)
+
+    derivs = torch.tensor(
+        FIXTURES[f"logsig_bp_basis_derivs__d{deg}"], dtype=dtype, device=device
+    )
     ls.backward(derivs)
-    d1 = X.grad
 
-    X = np.array(X.detach().cpu())
-    derivs = np.array(derivs.cpu())
-    s = iisignature.prepare(5, deg, "s")
-    d2 = iisignature.logsigbackprop(derivs, X, s, "s")
-
-    check_close(d1, d2, single_atol=1e-3)
+    expected = FIXTURES[f"logsig_bp_basis_expected__d{deg}"]
+    check_close(expected, X.grad, single_atol=1e-3)
+    pysiglib.clear_cache()

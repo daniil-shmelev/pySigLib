@@ -16,30 +16,12 @@
 import pytest
 import numpy as np
 import torch
-import iisignature
 
 import pysiglib
 
-np.random.seed(42)
-torch.manual_seed(42)
+from conftest import DEVICES, check_close, assert_device, load_fixtures
 
-from conftest import DEVICES, check_close, assert_device
-
-def lead_lag(X):
-    lag = []
-    lead = []
-
-    for val_lag, val_lead in zip(X[:-1], X[1:]):
-        lag.append(val_lag)
-        lead.append(val_lag)
-
-        lag.append(val_lag)
-        lead.append(val_lead)
-
-    lag.append(X[-1])
-    lead.append(X[-1])
-
-    return np.c_[lag, lead]
+FIXTURES = load_fixtures("reference_data.npz")
 
 @pytest.mark.parametrize("device", DEVICES)
 def test_signature_trivial(device):
@@ -52,26 +34,26 @@ def test_signature_trivial(device):
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
 def test_signature_random(device, deg, dtype):
-    X = np.random.uniform(size=(100, 5)).astype(dtype)
-    iisig = iisignature.sig(X, deg).astype(dtype)
+    X = FIXTURES["path"][0].astype(dtype)
+    expected = FIXTURES[f"sig__d{deg}"][0]
     X_dev = torch.tensor(X, device=device)
     sig = pysiglib.sig(X_dev, deg)
     assert_device(sig, device)
-    check_close(iisig, sig[1:])
+    check_close(expected, sig[1:])
 
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 def test_signature_random_batch(device, deg):
-    X = np.random.uniform(size=(32, 100, 5))
-    iisig = iisignature.sig(X, deg)
+    X = FIXTURES["path"]
+    expected = FIXTURES[f"sig__d{deg}"]
     X_dev = torch.tensor(X, device=device)
     sig_serial = pysiglib.sig(X_dev, deg, n_jobs=1)
     sig_parallel = pysiglib.sig(X_dev, deg, n_jobs=-1)
     assert_device(sig_serial, device)
     assert_device(sig_parallel, device)
-    check_close(iisig, sig_serial[:, 1:])
-    check_close(iisig, sig_parallel[:, 1:])
+    check_close(expected, sig_serial[:, 1:])
+    check_close(expected, sig_parallel[:, 1:])
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -100,36 +82,30 @@ def test_signature_non_contiguous(device):
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 def test_signature_time_aug(device, deg):
-    X = np.random.uniform(size=(10, 4))
-    t = np.linspace(0, 1, 10)[:, np.newaxis]
-    X_aug = np.concatenate([X, t], axis = 1)
-    iisig = iisignature.sig(X_aug, deg)
+    X = FIXTURES["path"][0]
+    expected = FIXTURES[f"sig_ta__d{deg}"][0]
     X_dev = torch.tensor(X, device=device)
-    sig = pysiglib.sig(X_dev, deg, time_aug = True)
+    sig = pysiglib.sig(X_dev, deg, time_aug=True)
     assert_device(sig, device)
-    check_close(iisig, sig[1:])
+    check_close(expected, sig[1:])
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 def test_signature_lead_lag(device, deg):
-    X = np.random.uniform(size=(10, 2))
-    X_aug = lead_lag(X)
-    iisig = iisignature.sig(X_aug, deg)
+    X = FIXTURES["path_dim2"][0]
+    expected = FIXTURES[f"sig_ll__d{deg}"][0]
     X_dev = torch.tensor(X, device=device)
-    sig = pysiglib.sig(X_dev, deg, lead_lag = True)
+    sig = pysiglib.sig(X_dev, deg, lead_lag=True)
     assert_device(sig, device)
-    check_close(iisig, sig[1:])
+    check_close(expected, sig[1:])
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
 @pytest.mark.parametrize("dtype", [np.float64, np.float32])
 def test_signature_time_aug_lead_lag(device, deg, dtype):
-    X = np.random.uniform(size=(10, 2)).astype(dtype)
-    X_aug = lead_lag(X)
-    t = np.linspace(0, 1, 19)[:, np.newaxis]
-    X_aug = np.concatenate([X_aug, t], axis = 1)
-    iisig = iisignature.sig(X_aug, deg).astype(dtype)
+    X = FIXTURES["path_dim2"][0].astype(dtype)
+    expected = FIXTURES[f"sig_ta_ll__d{deg}"][0]
     X_dev = torch.tensor(X, device=device)
-    sig = pysiglib.sig(X_dev, deg, lead_lag = True, time_aug = True)
+    sig = pysiglib.sig(X_dev, deg, lead_lag=True, time_aug=True)
     assert_device(sig, device)
-    check_close(iisig, sig[1:])
+    check_close(expected, sig[1:])

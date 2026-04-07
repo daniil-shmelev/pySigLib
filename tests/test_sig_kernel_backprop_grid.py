@@ -264,8 +264,8 @@ def test_grid_backprop_torch_api_time_aug_batch(dyadic_order, device):
 @pytest.mark.parametrize("dyadic_order", range(2))
 @pytest.mark.parametrize("device", DEVICES)
 def test_grid_backprop_torch_api_lead_lag_batch(dyadic_order, device):
-    X = torch.tensor(torch.rand(size=(32, 5, 2)) / 200, dtype=torch.float64, device=device, requires_grad=True)
-    Y = torch.tensor(torch.rand(size=(32, 10, 2)) / 200, dtype=torch.float64, device=device, requires_grad=True)
+    X = (torch.rand(size=(32, 5, 2)) / 200).to(dtype=torch.float64, device=device).requires_grad_(True)
+    Y = (torch.rand(size=(32, 10, 2)) / 200).to(dtype=torch.float64, device=device).requires_grad_(True)
 
     k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, lead_lag=True, return_grid=True)
     assert_device(k_grid, device)
@@ -283,8 +283,8 @@ def test_grid_backprop_torch_api_lead_lag_batch(dyadic_order, device):
 @pytest.mark.parametrize("dyadic_order", range(2))
 @pytest.mark.parametrize("device", DEVICES)
 def test_grid_backprop_torch_api_time_aug_lead_lag_batch(dyadic_order, device):
-    X = torch.tensor(torch.rand(size=(32, 5, 2)) / 200, dtype=torch.float64, device=device, requires_grad=True)
-    Y = torch.tensor(torch.rand(size=(32, 10, 2)) / 200, dtype=torch.float64, device=device, requires_grad=True)
+    X = (torch.rand(size=(32, 5, 2)) / 200).to(dtype=torch.float64, device=device).requires_grad_(True)
+    Y = (torch.rand(size=(32, 10, 2)) / 200).to(dtype=torch.float64, device=device).requires_grad_(True)
 
     k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, time_aug=True, lead_lag=True, return_grid=True)
     assert_device(k_grid, device)
