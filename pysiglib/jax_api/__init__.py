@@ -18,6 +18,7 @@ from .jax_api import (
     sig_to_log_sig, log_sig, log_sig_combine,
     sig_coef, sig_kernel, sig_kernel_gram,
     sig_score, expected_sig_score, sig_mmd,
+    branched_sig, branched_sig_combine,
 )
 from .static_kernels_jax import (
     LinearKernel, ScaledLinearKernel, RBFKernel,
@@ -30,6 +31,7 @@ from ..sig_length import sig_length, log_sig_length
 from ..words import words_of_length, words, lyndon_words_of_length, lyndon_words, is_lyndon, word_to_idx, idx_to_word
 from ..sig_coef import extract_sig_coef
 from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache
+from ..branched_sig import prepare_branched_sig, branched_sig_length
 from ..load_siglib import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
 
 __all__ = [
@@ -38,6 +40,8 @@ __all__ = [
     "sig_kernel", "sig_kernel_gram",
     "sig_coef",
     "sig_score", "expected_sig_score", "sig_mmd",
+    "branched_sig", "branched_sig_combine",
+    "prepare_branched_sig", "branched_sig_length",
     "sig_length", "log_sig_length",
     "words_of_length", "words", "lyndon_words_of_length", "lyndon_words",
     "is_lyndon", "word_to_idx", "idx_to_word",

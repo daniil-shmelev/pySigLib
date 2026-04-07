@@ -60,6 +60,21 @@
     <ClInclude Include="cp_sig_coef.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="cp_bch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cp_bch_data.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cp_branched_cache.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cp_branched_signature.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cp_branched_trees.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cppch.cpp">
@@ -90,6 +105,15 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="cp_sig_coef.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_branched_cache.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_bch.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_branched_signature.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

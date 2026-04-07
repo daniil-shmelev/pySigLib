@@ -774,3 +774,214 @@ def test_jax_sig_mmd_matches_pysiglib(device, jitted, dtype, case):
 
     actual = jax.jit(fn)(s1_jax, s2_jax) if jitted else fn(s1_jax, s2_jax)
     check_close(np.asarray(expected), actual, double_atol=1e-5)
+
+
+# =========================================================================
+# branched_sig — forward
+# =========================================================================
+
+BRANCHED_SIG_CASES = [
+    {"shape": (10, 3), "degree": 1, "time_aug": False, "lead_lag": False},
+    {"shape": (8, 2), "degree": 2, "time_aug": True, "lead_lag": False},
+    {"shape": (10, 2), "degree": 2, "time_aug": False, "lead_lag": True},
+]
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("case", BRANCHED_SIG_CASES)
+def test_jax_branched_sig_matches_pysiglib(device, jitted, dtype, case):
+    rng = np.random.default_rng(42)
+    x = rng.uniform(size=case["shape"]).astype(dtype)
+    deg = case["degree"]
+    ta, ll = case["time_aug"], case["lead_lag"]
+    dim = case["shape"][-1]
+
+    pysiglib.prepare_branched_sig(dim, deg, time_aug=ta, lead_lag=ll)
+    expected = pysiglib.branched_sig(x, deg, time_aug=ta, lead_lag=ll)
+
+    x_jax = _as_jax_array(x, device, dtype)
+
+    def fn(path):
+        return jax_api.branched_sig(path, deg, time_aug=ta, lead_lag=ll)
+
+    actual = jax.jit(fn)(x_jax) if jitted else fn(x_jax)
+    check_close(expected, actual, double_atol=1e-8)
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("case", BRANCHED_SIG_CASES)
+def test_jax_branched_sig_batch_matches_pysiglib(device, jitted, dtype, case):
+    rng = np.random.default_rng(42)
+    batch = 4
+    x = rng.uniform(size=(batch,) + tuple(case["shape"])).astype(dtype)
+    deg = case["degree"]
+    ta, ll = case["time_aug"], case["lead_lag"]
+    dim = case["shape"][-1]
+
+    pysiglib.prepare_branched_sig(dim, deg, time_aug=ta, lead_lag=ll)
+    expected = pysiglib.branched_sig(x, deg, time_aug=ta, lead_lag=ll)
+
+    x_jax = _as_jax_array(x, device, dtype)
+
+    def fn(path):
+        return jax_api.branched_sig(path, deg, time_aug=ta, lead_lag=ll)
+
+    actual = jax.jit(fn)(x_jax) if jitted else fn(x_jax)
+    check_close(expected, actual, double_atol=1e-8)
+
+
+# =========================================================================
+# branched_sig — backward
+# =========================================================================
+
+BRANCHED_SIG_BACKWARD_CASES = [
+    {"shape": (10, 3), "degree": 1, "time_aug": False, "lead_lag": False},
+    {"shape": (8, 2), "degree": 2, "time_aug": True, "lead_lag": False},
+]
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("case", BRANCHED_SIG_BACKWARD_CASES)
+def test_jax_branched_sig_grad_matches_pysiglib(device, jitted, dtype, case):
+    rng = np.random.default_rng(123)
+    x = rng.uniform(size=case["shape"]).astype(dtype)
+    deg = case["degree"]
+    ta, ll = case["time_aug"], case["lead_lag"]
+    dim = case["shape"][-1]
+
+    pysiglib.prepare_branched_sig(dim, deg, time_aug=ta, lead_lag=ll)
+    bsig_ref = pysiglib.branched_sig(x, deg, time_aug=ta, lead_lag=ll)
+
+    weights = rng.uniform(size=bsig_ref.shape).astype(dtype)
+    grad_ref = pysiglib.branched_sig_backprop(
+        x, bsig_ref, weights, deg, time_aug=ta, lead_lag=ll
+    )
+
+    x_jax = _as_jax_array(x, device, dtype)
+    weights_jax = _as_jax_array(weights, device, dtype)
+
+    def loss_fn(path):
+        bsig = jax_api.branched_sig(path, deg, time_aug=ta, lead_lag=ll)
+        return jnp.sum(bsig * weights_jax)
+
+    grad_fn = jax.jit(jax.grad(loss_fn)) if jitted else jax.grad(loss_fn)
+    grad = grad_fn(x_jax)
+    check_close(grad_ref, grad, double_atol=1e-8)
+
+
+# =========================================================================
+# branched_sig_combine — forward
+# =========================================================================
+
+BRANCHED_SIG_COMBINE_CASES = [
+    {"dim": 3, "degree": 1},
+    {"dim": 2, "degree": 2},
+]
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("case", BRANCHED_SIG_COMBINE_CASES)
+def test_jax_branched_sig_combine_matches_pysiglib(device, jitted, dtype, case):
+    rng = np.random.default_rng(42)
+    dim, deg = case["dim"], case["degree"]
+
+    pysiglib.prepare_branched_sig(dim, deg)
+
+    x1 = rng.uniform(size=(10, dim)).astype(dtype)
+    x2 = rng.uniform(size=(8, dim)).astype(dtype)
+
+    bsig1 = pysiglib.branched_sig(x1, deg)
+    bsig2 = pysiglib.branched_sig(x2, deg)
+    expected = pysiglib.branched_sig_combine(bsig1, bsig2, dim, deg)
+
+    bsig1_jax = _as_jax_array(bsig1, device, dtype)
+    bsig2_jax = _as_jax_array(bsig2, device, dtype)
+
+    def fn(s1, s2):
+        return jax_api.branched_sig_combine(s1, s2, dim, deg)
+
+    actual = jax.jit(fn)(bsig1_jax, bsig2_jax) if jitted else fn(bsig1_jax, bsig2_jax)
+    check_close(expected, actual, double_atol=1e-8)
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("case", BRANCHED_SIG_COMBINE_CASES)
+def test_jax_branched_sig_combine_batch_matches_pysiglib(device, jitted, dtype, case):
+    rng = np.random.default_rng(42)
+    dim, deg = case["dim"], case["degree"]
+    batch = 4
+
+    pysiglib.prepare_branched_sig(dim, deg)
+
+    x1 = rng.uniform(size=(batch, 10, dim)).astype(dtype)
+    x2 = rng.uniform(size=(batch, 8, dim)).astype(dtype)
+
+    bsig1 = pysiglib.branched_sig(x1, deg)
+    bsig2 = pysiglib.branched_sig(x2, deg)
+    expected = pysiglib.branched_sig_combine(bsig1, bsig2, dim, deg)
+
+    bsig1_jax = _as_jax_array(bsig1, device, dtype)
+    bsig2_jax = _as_jax_array(bsig2, device, dtype)
+
+    def fn(s1, s2):
+        return jax_api.branched_sig_combine(s1, s2, dim, deg)
+
+    actual = jax.jit(fn)(bsig1_jax, bsig2_jax) if jitted else fn(bsig1_jax, bsig2_jax)
+    check_close(expected, actual, double_atol=1e-8)
+
+
+# =========================================================================
+# branched_sig_combine — backward
+# =========================================================================
+
+BRANCHED_SIG_COMBINE_BACKWARD_CASES = [
+    {"dim": 3, "degree": 1},
+    {"dim": 2, "degree": 2},
+]
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("case", BRANCHED_SIG_COMBINE_BACKWARD_CASES)
+def test_jax_branched_sig_combine_grad_matches_pysiglib(device, jitted, dtype, case):
+    rng = np.random.default_rng(123)
+    dim, deg = case["dim"], case["degree"]
+
+    pysiglib.prepare_branched_sig(dim, deg)
+
+    x1 = rng.uniform(size=(10, dim)).astype(dtype)
+    x2 = rng.uniform(size=(8, dim)).astype(dtype)
+
+    bsig1_np = pysiglib.branched_sig(x1, deg)
+    bsig2_np = pysiglib.branched_sig(x2, deg)
+    combined = pysiglib.branched_sig_combine(bsig1_np, bsig2_np, dim, deg)
+
+    weights = rng.uniform(size=combined.shape).astype(dtype)
+    grad_bsig1_ref, grad_bsig2_ref = pysiglib.branched_sig_combine_backprop(
+        weights, bsig1_np, bsig2_np, dim, deg
+    )
+
+    bsig1_jax = _as_jax_array(bsig1_np, device, dtype)
+    bsig2_jax = _as_jax_array(bsig2_np, device, dtype)
+    weights_jax = _as_jax_array(weights, device, dtype)
+
+    def loss_fn(s1, s2):
+        comb = jax_api.branched_sig_combine(s1, s2, dim, deg)
+        return jnp.sum(comb * weights_jax)
+
+    grad_fn = jax.jit(jax.grad(loss_fn, argnums=(0, 1))) if jitted else jax.grad(loss_fn, argnums=(0, 1))
+    grad_bsig1, grad_bsig2 = grad_fn(bsig1_jax, bsig2_jax)
+
+    check_close(grad_bsig1_ref, grad_bsig1, double_atol=1e-8)
+    check_close(grad_bsig2_ref, grad_bsig2, double_atol=1e-8)

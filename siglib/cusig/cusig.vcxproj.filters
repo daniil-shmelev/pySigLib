@@ -51,6 +51,9 @@
     <ClInclude Include="cu_atomic.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="cu_log_sig_combine.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cupch.cpp">
@@ -80,6 +83,9 @@
       <Filter>Source Files</Filter>
     </CudaCompile>
     <CudaCompile Include="cu_sig_coef.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="cu_log_sig_combine.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
   </ItemGroup>

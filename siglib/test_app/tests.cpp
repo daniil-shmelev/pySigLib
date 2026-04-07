@@ -1012,3 +1012,44 @@ void example_batch_log_sig_combine_backprop_cuda_d(
 
     std::cout << "done\n";
 }
+
+void example_branched_sig_d(
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t max_nodes,
+    int num_runs
+) {
+    print_header("Branched Signature Double");
+
+    prepare_branched_sig(dimension, max_nodes);
+    uint64_t out_size = branched_sig_length(dimension, max_nodes);
+    std::cout << "branched_sig_length(" << dimension << ", " << max_nodes << ") = " << out_size << std::endl;
+
+    std::vector<double> path = test_data<double>(dimension * length);
+    std::vector<double> out(out_size, 0.);
+
+    time_function(num_runs, branched_sig_d, path.data(), out.data(), dimension, length, max_nodes);
+
+    std::cout << "done\n";
+}
+
+void example_batch_branched_sig_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t max_nodes,
+    int n_jobs,
+    int num_runs
+) {
+    print_header("Batch Branched Signature Double");
+
+    prepare_branched_sig(dimension, max_nodes);
+    uint64_t out_size = branched_sig_length(dimension, max_nodes) * batch_size;
+
+    std::vector<double> path = test_data<double>(batch_size * dimension * length);
+    std::vector<double> out(out_size, 0.);
+
+    time_function(num_runs, batch_branched_sig_d, path.data(), out.data(), batch_size, dimension, length, max_nodes, n_jobs);
+
+    std::cout << "done\n";
+}

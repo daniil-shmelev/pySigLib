@@ -31,7 +31,8 @@ from ..transform_path import transform_path as transform_path_forward
 from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
 from ..log_sig import log_sig as log_sig_forward
 from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
-from ..log_sig import prepare_log_sig
+from ..branched_sig import branched_sig as branched_sig_forward
+from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
 from ..words import word_to_idx
 from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order
 from ._ffi import (
@@ -49,6 +50,12 @@ from ._ffi import (
     log_sig_combine_backprop_ffi_call,
     sig_kernel_pde_ffi_call,
     sig_kernel_pde_backprop_ffi_call,
+    log_sig_from_path_ffi_call,
+    log_sig_from_path_backprop_ffi_call,
+    branched_sig_ffi_call,
+    branched_sig_backprop_ffi_call,
+    branched_sig_combine_ffi_call,
+    branched_sig_combine_backprop_ffi_call,
 )
 
 
@@ -268,9 +275,6 @@ def sig_to_log_sig(
         )
 
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
-    if method in (1, 2):
-        prepare_log_sig(aug_dim, degree, method)
-
     return _sig_to_log_sig(sig_arr, aug_dim, degree, method, n_jobs)
 
 
@@ -278,8 +282,27 @@ sig_to_log_sig.__doc__ = sig_to_log_sig_forward.__doc__
 
 
 # ---------------------------------------------------------------------------
-# log_sig (pure Python composition — no FFI)
+# log_sig
 # ---------------------------------------------------------------------------
+
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3))
+def _log_sig_from_path(path, dimension, degree, n_jobs):
+    return log_sig_from_path_ffi_call(path, dimension, degree, n_jobs)
+
+
+def _log_sig_from_path_fwd(path, dimension, degree, n_jobs):
+    result = log_sig_from_path_ffi_call(path, dimension, degree, n_jobs)
+    return result, (path,)
+
+
+def _log_sig_from_path_bwd(dimension, degree, n_jobs, residual, cotangent):
+    path, = residual
+    grad = log_sig_from_path_backprop_ffi_call(cotangent, path, dimension, degree, n_jobs)
+    return (grad,)
+
+
+_log_sig_from_path.defvjp(_log_sig_from_path_fwd, _log_sig_from_path_bwd)
+
 
 def log_sig(
     path,
@@ -296,10 +319,10 @@ def log_sig(
     _validate_shape(path)
 
     if method == 3:
-        raise NotImplementedError(
-            "method=3 is not supported in the JAX API. "
-            "Use method=1 or method=2 instead."
-        )
+        if time_aug or lead_lag:
+            path = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
+        aug_dim = path.shape[-1]
+        return _log_sig_from_path(path, aug_dim, degree, n_jobs)
 
     dimension = path.shape[-1]
     sig_ = sig(path, degree, time_aug, lead_lag, end_time, True, n_jobs)
@@ -359,7 +382,6 @@ def log_sig_combine(
         raise ValueError("n_jobs cannot be 0")
 
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
-    prepare_log_sig(aug_dim, degree, 1)
     return _log_sig_combine(log_sig1, log_sig2, aug_dim, degree, n_jobs)
 
 
@@ -680,3 +702,107 @@ def sig_coef(
         else:
             idx.append(word_to_idx(w, aug_dim))
     return sig_[..., jnp.array(idx)]
+
+
+# ---------------------------------------------------------------------------
+# branched_sig
+# ---------------------------------------------------------------------------
+
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5))
+def _branched_sig(path, max_nodes, time_aug, lead_lag, end_time, n_jobs):
+    return branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs)
+
+
+def _branched_sig_fwd(path, max_nodes, time_aug, lead_lag, end_time, n_jobs):
+    bsig = branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs)
+    return bsig, (path, bsig)
+
+
+def _branched_sig_bwd(max_nodes, time_aug, lead_lag, end_time, n_jobs, residual, cotangent):
+    path, bsig = residual
+    grad = branched_sig_backprop_ffi_call(path, bsig, cotangent, max_nodes, time_aug, lead_lag, end_time, n_jobs)
+    return (grad,)
+
+
+_branched_sig.defvjp(_branched_sig_fwd, _branched_sig_bwd)
+
+
+def branched_sig(
+    path,
+    degree: int,
+    n_jobs: int = 1,
+    time_aug: bool = False,
+    lead_lag: bool = False,
+    end_time: float = 1.0,
+):
+    ensure_registered()
+
+    path = jnp.asarray(path)
+    _validate_shape(path)
+
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
+    check_type(end_time, "end_time", float)
+    check_type(n_jobs, "n_jobs", int)
+    if n_jobs == 0:
+        raise ValueError("n_jobs cannot be 0")
+
+    return _branched_sig(path, degree, time_aug, lead_lag, end_time, n_jobs)
+
+
+branched_sig.__doc__ = branched_sig_forward.__doc__
+
+
+# ---------------------------------------------------------------------------
+# branched_sig_combine
+# ---------------------------------------------------------------------------
+
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4))
+def _branched_sig_combine(bsig1, bsig2, dimension, max_nodes, n_jobs):
+    return branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs)
+
+
+def _branched_sig_combine_fwd(bsig1, bsig2, dimension, max_nodes, n_jobs):
+    result = branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs)
+    return result, (bsig1, bsig2)
+
+
+def _branched_sig_combine_bwd(dimension, max_nodes, n_jobs, residual, cotangent):
+    bsig1, bsig2 = residual
+    grad1, grad2 = branched_sig_combine_backprop_ffi_call(
+        cotangent, bsig1, bsig2, dimension, max_nodes, n_jobs
+    )
+    return (grad1, grad2)
+
+
+_branched_sig_combine.defvjp(_branched_sig_combine_fwd, _branched_sig_combine_bwd)
+
+
+def branched_sig_combine(
+    bsig1,
+    bsig2,
+    dimension: int,
+    degree: int,
+    n_jobs: int = 1,
+):
+    ensure_registered()
+
+    bsig1 = jnp.asarray(bsig1)
+    bsig2 = jnp.asarray(bsig2)
+    _validate_sig_shape(bsig1, "bsig1")
+    _validate_sig_shape(bsig2, "bsig2")
+
+    check_type(dimension, "dimension", int)
+    check_non_neg(dimension, "dimension")
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_type(n_jobs, "n_jobs", int)
+    if n_jobs == 0:
+        raise ValueError("n_jobs cannot be 0")
+
+    return _branched_sig_combine(bsig1, bsig2, dimension, degree, n_jobs)
+
+
+branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__

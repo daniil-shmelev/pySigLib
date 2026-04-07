@@ -28,6 +28,10 @@
     <ClInclude Include="..\cpsig\words.h" />
     <ClInclude Include="..\cpsig\cp_bch.h" />
     <ClInclude Include="..\cpsig\cp_bch_data.h" />
+    <ClInclude Include="..\cpsig\cp_branched_trees.h" />
+    <ClInclude Include="..\cpsig\cp_branched_cache.h" />
+    <ClInclude Include="..\cpsig\cp_branched_signature.h" />
+    <ClInclude Include="..\cpsig\disk_cache.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cpsig\cppch.cpp" />
@@ -42,6 +46,8 @@
     <ClCompile Include="cp_unit_tests.cpp" />
     <ClCompile Include="..\cpsig\log_sig_cache.cpp" />
     <ClCompile Include="..\cpsig\words.cpp" />
+    <ClCompile Include="..\cpsig\cp_branched_cache.cpp" />
+    <ClCompile Include="..\cpsig\cp_branched_signature.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

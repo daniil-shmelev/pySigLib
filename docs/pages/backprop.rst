@@ -19,3 +19,5 @@ Backpropagation
    backprop/log_sig_combine_backprop
    backprop/sig_kernel_backprop
    backprop/sig_kernel_gram_backprop
+   backprop/branched_sig_backprop
+   backprop/branched_sig_combine_backprop

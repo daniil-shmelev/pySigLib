@@ -657,6 +657,20 @@ extern "C" {
 		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
+	/** @defgroup log_sig_from_path_cuda_functions Log-signature from path CUDA functions
+	* @{
+	*/
+	CUSIG_API int batch_log_sig_from_path_cuda_f(const float* path, float* out,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int batch_log_sig_from_path_cuda_d(const double* path, double* out,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
+
+	CUSIG_API int batch_log_sig_from_path_backprop_cuda_f(const float* d_out, float* d_path, const float* path,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int batch_log_sig_from_path_backprop_cuda_d(const double* d_out, double* d_path, const double* path,
+		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
+
 	/** @defgroup clear_cache_cuda_functions Clear cache CUDA functions
 	* @{
 	*/
@@ -684,5 +698,32 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	CUSIG_API int set_cache_dir_cuda(const char* dir) noexcept;
+	/** @} */
+
+	/** @defgroup branched_sig_cuda_functions Branched signature CUDA functions
+	* @{
+	*/
+
+	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+
+	CUSIG_API int batch_branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	CUSIG_API int batch_branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+
+	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CUSIG_API int batch_branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CUSIG_API int batch_branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
+
+	CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CUSIG_API int batch_branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CUSIG_API int batch_branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
+
+	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+
+	CUSIG_API int batch_branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	CUSIG_API int batch_branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
 	/** @} */
 }

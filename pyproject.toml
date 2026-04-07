@@ -57,7 +57,7 @@ sdist.exclude = [
 ]
 
 [tool.scikit-build.cmake.define]
-PYSIGLIB_JAX_FFI = {env = "PYSIGLIB_JAX_FFI", default = "OFF"}
+PYSIGLIB_JAX_FFI = {env = "PYSIGLIB_JAX_FFI", default = "ON"}
 PYSIGLIB_CUDA      = {env = "CUSIG", default = "ON"}
 PYSIGLIB_AVX       = {env = "SIGLIB_VEC", default = "ON"}
 PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
