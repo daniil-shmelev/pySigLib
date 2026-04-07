@@ -153,7 +153,7 @@ def logsig_to_sig_backprop(
     derivs_data = SigInputHandler(sig_derivs, sig_len, "sig_derivs")
     result = SigOutputHandler(data, input_len)
 
-    if data.device == "cpu":
+    if data.device == "cpu" or method != 0:
         if data.is_batch:
             check_type(n_jobs, "n_jobs", int)
             if n_jobs == 0:

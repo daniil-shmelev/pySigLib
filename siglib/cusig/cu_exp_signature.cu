@@ -395,7 +395,7 @@ void logsig_to_sig_cuda_(
 	int method
 ) {
 	if (method != 0)
-		throw std::invalid_argument("logsig_to_sig_cuda: only method=0 is supported");
+		throw std::invalid_argument("logsig_to_sig_cuda: only method=0 is supported on CUDA");
 
 	const uint64_t sig_len = host_sig_length(dimension, degree);
 
@@ -443,12 +443,11 @@ void logsig_to_sig_backprop_cuda_(
 	int method
 ) {
 	if (method != 0)
-		throw std::invalid_argument("logsig_to_sig_backprop_cuda: only method=0 is supported");
+		throw std::invalid_argument("logsig_to_sig_backprop_cuda: only method=0 is supported on CUDA");
 
 	const uint64_t sig_len = host_sig_length(dimension, degree);
 
 	if (degree <= 1) {
-		// exp(x) = 1 + x, d_logsig = d_sig
 		cudaMemcpy(d_logsig, d_sig, batch_size * sig_len * sizeof(T), cudaMemcpyDeviceToDevice);
 		return;
 	}
