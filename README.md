@@ -127,7 +127,7 @@ k = pysiglib.sig_kernel(X, Y, dyadic_order=(3, 0))
 
 ## Contribution
 
-Pull requests are not being accepted at this time, but issues and suggestions are welcome.
+Contributions are welcome! Please open an issue first to discuss what you'd like to change, then submit a pull request.
 
 ## Citation
 If you found this library useful in your research, please consider citing the paper:
