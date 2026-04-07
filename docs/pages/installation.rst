@@ -54,6 +54,31 @@ Installation
 
       pySigLib does not support CUDA on macOS, and will build without it when installed.
 
+JAX Support
+------------------------
+
+pySigLib provides an optional JAX API with full support for ``jax.jit``, ``jax.grad``, and ``jax.vmap``.
+To use it, install JAX before installing pySigLib:
+
+.. code-block:: console
+
+    pip install jax
+    pip install pysiglib
+
+pySigLib will automatically detect JAX and build the XLA FFI bindings. If JAX is not installed,
+this is skipped and the rest of pySigLib works normally. To verify:
+
+.. code-block:: python
+
+    import pysiglib
+    print(pysiglib.BUILT_WITH_JAX_FFI)  # True if JAX FFI was built
+
+For GPU support with JAX, install the CUDA variant of JAX:
+
+.. code-block:: console
+
+    pip install jax[cuda12]
+
 Build Options
 ------------------------
 
@@ -69,6 +94,10 @@ The following environment variables can be used to control the build:
    * - ``CUSIG``
      - ``ON``
      - Set to ``0`` to disable CUDA and build for CPU only.
+   * - ``PYSIGLIB_JAX_FFI``
+     - ``ON``
+     - Set to ``0`` to disable JAX FFI support. When ``ON`` (default), JAX FFI
+       is built automatically if JAX is installed, and skipped otherwise.
    * - ``SIGLIB_VEC``
      - ``ON``
      - Set to ``0`` to disable AVX vectorization.

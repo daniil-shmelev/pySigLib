@@ -133,23 +133,56 @@ if(PYSIGLIB_JAX_FFI)
     set(_jax_probe_script [=[
 import importlib.util
 import pathlib
+import site
 import sys
 
-for mod in ("jaxlib", "jax"):
-    spec = importlib.util.find_spec(mod)
-    locs = getattr(spec, "submodule_search_locations", None) if spec else None
-    if not locs:
-        continue
+log = []
 
-    for root in locs:
-        root_path = pathlib.Path(root)
-        for candidate in (root_path / "include", root_path):
-            ffi_h = candidate / "xla" / "ffi" / "api" / "ffi.h"
-            c_api_h = candidate / "xla" / "ffi" / "api" / "c_api.h"
-            if ffi_h.exists() and c_api_h.exists():
-                sys.stdout.write(str(candidate))
-                raise SystemExit(0)
+def search_roots():
+    """Yield candidate jaxlib/jax root directories."""
+    # 1. Current interpreter (works with --no-build-isolation)
+    for mod in ("jaxlib", "jax"):
+        spec = importlib.util.find_spec(mod)
+        locs = getattr(spec, "submodule_search_locations", None) if spec else None
+        if locs:
+            for loc in locs:
+                log.append(f"  importlib found {mod}: {loc}")
+                yield loc
+        else:
+            log.append(f"  importlib: {mod} not found")
 
+    # 2. System/user site-packages (finds jaxlib in host env during isolated builds)
+    try:
+        sp = site.getsitepackages()
+    except AttributeError:
+        sp = []
+    try:
+        sp.append(site.getusersitepackages())
+    except AttributeError:
+        pass
+    log.append(f"  site-packages dirs: {sp}")
+    for d in sp:
+        for mod in ("jaxlib", "jax"):
+            p = pathlib.Path(d) / mod
+            if p.is_dir():
+                log.append(f"  site-packages found {mod}: {p}")
+                yield str(p)
+
+for root in search_roots():
+    root_path = pathlib.Path(root)
+    for candidate in (root_path / "include", root_path):
+        ffi_h = candidate / "xla" / "ffi" / "api" / "ffi.h"
+        c_api_h = candidate / "xla" / "ffi" / "api" / "c_api.h"
+        if ffi_h.exists() and c_api_h.exists():
+            log.append(f"  XLA FFI headers found: {candidate}")
+            sys.stderr.write("\n".join(log))
+            sys.stdout.write(str(candidate))
+            raise SystemExit(0)
+        else:
+            log.append(f"  checked {candidate}: ffi.h={ffi_h.exists()} c_api.h={c_api_h.exists()}")
+
+log.append("  no XLA FFI headers found")
+sys.stderr.write("\n".join(log))
 raise SystemExit(1)
 ]=])
 
@@ -195,6 +228,14 @@ message(STATUS "  JAX FFI opt   : ${PYSIGLIB_JAX_FFI}")
 message(STATUS "  JAX FFI       : ${_jax_ffi_enabled}")
 if(_jax_ffi_enabled)
     message(STATUS "  JAX include   : ${_jax_include_dir}")
+endif()
+if(PYSIGLIB_JAX_FFI AND _jax_include_error)
+    message(STATUS "  JAX probe log :")
+    # Print each line of the probe log as a separate STATUS message
+    string(REPLACE "\n" ";" _jax_log_lines "${_jax_include_error}")
+    foreach(_line IN LISTS _jax_log_lines)
+        message(STATUS "  ${_line}")
+    endforeach()
 endif()
 message(STATUS "  AVX enabled   : ${_enable_vec}")
 if(_enable_vec AND NOT APPLE)
