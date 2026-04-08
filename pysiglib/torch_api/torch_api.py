@@ -39,6 +39,10 @@ from ..sig_metrics import sig_mmd as sig_mmd_forward
 from ..transform_path import transform_path as transform_path_forward
 from ..transform_path_backprop import transform_path_backprop
 
+from ..linear_sig import linear_sig as linear_sig_forward
+from ..sig_join import sig_join as sig_join_forward
+from ..sig_join_backprop import sig_join_backprop
+
 from ..param_checks import check_type, check_word_or_word_list
 
 class Sig(torch.autograd.Function):
@@ -614,3 +618,43 @@ def logsig_to_sig(
     return LogSigToSig.apply(log_sig, dimension, degree, time_aug, lead_lag, method, n_jobs)
 
 logsig_to_sig.__doc__ = logsig_to_sig_forward.__doc__
+
+
+def linear_sig(
+        displacement : Union[np.ndarray, torch.tensor],
+        dimension : int,
+        degree : int,
+        n_jobs : int = 1
+) -> Union[np.ndarray, torch.tensor]:
+    return linear_sig_forward(displacement, dimension, degree, n_jobs)
+
+linear_sig.__doc__ = linear_sig_forward.__doc__
+
+class SigJoin(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, sig, displacement, dimension, degree, n_jobs):
+        result = sig_join_forward(sig, displacement, dimension, degree, n_jobs)
+
+        ctx.save_for_backward(sig, displacement)
+        ctx.dimension = dimension
+        ctx.degree = degree
+        ctx.n_jobs = n_jobs
+
+        return result
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        sig, displacement = ctx.saved_tensors
+        d_sig, d_displacement = sig_join_backprop(grad_output, sig, displacement, ctx.dimension, ctx.degree, ctx.n_jobs)
+        return d_sig, d_displacement, None, None, None
+
+def sig_join(
+        sig : Union[np.ndarray, torch.tensor],
+        displacement : Union[np.ndarray, torch.tensor],
+        dimension : int,
+        degree : int,
+        n_jobs : int = 1
+) -> Union[np.ndarray, torch.tensor]:
+    return SigJoin.apply(sig, displacement, dimension, degree, n_jobs)
+
+sig_join.__doc__ = sig_join_forward.__doc__

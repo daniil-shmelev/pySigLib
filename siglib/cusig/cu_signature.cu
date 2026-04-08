@@ -19,59 +19,7 @@
 #include "cu_tensor_poly.h"
 #include "cu_atomic.h"
 
-template<typename T>
-__device__ void linear_signature_device(
-	const T* __restrict__ increments,   // dimension many elements
-	T* __restrict__ out,                // sig_length many elements
-	uint64_t dimension,
-	uint64_t degree,
-	const uint64_t* __restrict__ level_index
-) {
-	// compute the linear signature of a single segment
-	// Each thread handles a strided portion of the output.
-
-	const int thread_id = threadIdx.x;
-	const int nthreads = blockDim.x;
-
-	// Level 0
-	if (thread_id == 0) out[0] = static_cast<T>(1.);
-
-	// Level 1
-	for (uint64_t i = thread_id; i < dimension; i += nthreads)
-		out[i + 1] = increments[i];
-
-	__syncthreads();
-
-	// Precompute stride decomposition for incremental index tracking (avoids repeated integer division)
-	// Use 32-bit integers for loop variables (faster on GPU than 64-bit)
-	const unsigned int dim32 = static_cast<unsigned int>(dimension);
-	const unsigned int stride_l = static_cast<unsigned int>(nthreads) / dimension;
-	const unsigned int stride_r = static_cast<unsigned int>(nthreads) % dimension;
-	const unsigned int base_l = static_cast<unsigned int>(thread_id) / dimension;
-	const unsigned int base_r = static_cast<unsigned int>(thread_id) % dimension;
-
-	// Higher levels
-	for (uint64_t level = 2; level <= degree; ++level) {
-		const T one_over_level = static_cast<T>(1) / static_cast<T>(level);
-		const uint64_t prev_start = level_index[level - 1];
-		const uint64_t prev_size = level_index[level] - level_index[level - 1];
-		const uint64_t cur_start = level_index[level];
-		const unsigned int cur_size = static_cast<unsigned int>(prev_size * dimension);
-
-		unsigned int cur_l = base_l;
-		unsigned int cur_r = base_r;
-		for (unsigned int idx = static_cast<unsigned int>(thread_id); idx < cur_size; idx += static_cast<unsigned int>(nthreads)) {
-			out[cur_start + idx] = out[prev_start + cur_l] * increments[cur_r] * one_over_level;
-			cur_l += stride_l;
-			cur_r += stride_r;
-			if (cur_r >= dim32) {
-				cur_r -= dim32;
-				cur_l++;
-			}
-		}
-		__syncthreads();
-	}
-}
+// linear_signature_device is defined in cu_tensor_poly.h (shared with cu_tensor_poly.cu)
 
 template<typename T>
 __global__ void signature_naive_ker(

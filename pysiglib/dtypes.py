@@ -237,6 +237,36 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.batch_logsig_to_sig_backprop_cuda_d
     }
 
+    CUSIG_LINEAR_SIG_CUDA = {
+        "float32": CUSIG.linear_sig_cuda_f,
+        "float64": CUSIG.linear_sig_cuda_d
+    }
+
+    CUSIG_BATCH_LINEAR_SIG_CUDA = {
+        "float32": CUSIG.batch_linear_sig_cuda_f,
+        "float64": CUSIG.batch_linear_sig_cuda_d
+    }
+
+    CUSIG_SIG_JOIN_CUDA = {
+        "float32": CUSIG.sig_join_cuda_f,
+        "float64": CUSIG.sig_join_cuda_d
+    }
+
+    CUSIG_BATCH_SIG_JOIN_CUDA = {
+        "float32": CUSIG.batch_sig_join_cuda_f,
+        "float64": CUSIG.batch_sig_join_cuda_d
+    }
+
+    CUSIG_SIG_JOIN_BACKPROP_CUDA = {
+        "float32": CUSIG.sig_join_backprop_cuda_f,
+        "float64": CUSIG.sig_join_backprop_cuda_d
+    }
+
+    CUSIG_BATCH_SIG_JOIN_BACKPROP_CUDA = {
+        "float32": CUSIG.batch_sig_join_backprop_cuda_f,
+        "float64": CUSIG.batch_sig_join_backprop_cuda_d
+    }
+
 CPSIG_BATCH_LOG_SIG_COMBINE = {
     "float32": CPSIG.batch_log_sig_combine_f,
     "float64": CPSIG.batch_log_sig_combine_d
@@ -360,6 +390,36 @@ CPSIG_LOGSIG_TO_SIG_BACKPROP = {
 CPSIG_BATCH_LOGSIG_TO_SIG_BACKPROP = {
     "float32": CPSIG.batch_logsig_to_sig_backprop_f,
     "float64": CPSIG.batch_logsig_to_sig_backprop_d
+}
+
+CPSIG_LINEAR_SIG = {
+    "float32": CPSIG.linear_sig_f,
+    "float64": CPSIG.linear_sig_d
+}
+
+CPSIG_BATCH_LINEAR_SIG = {
+    "float32": CPSIG.batch_linear_sig_f,
+    "float64": CPSIG.batch_linear_sig_d
+}
+
+CPSIG_SIG_JOIN = {
+    "float32": CPSIG.sig_join_f,
+    "float64": CPSIG.sig_join_d
+}
+
+CPSIG_BATCH_SIG_JOIN = {
+    "float32": CPSIG.batch_sig_join_f,
+    "float64": CPSIG.batch_sig_join_d
+}
+
+CPSIG_SIG_JOIN_BACKPROP = {
+    "float32": CPSIG.sig_join_backprop_f,
+    "float64": CPSIG.sig_join_backprop_d
+}
+
+CPSIG_BATCH_SIG_JOIN_BACKPROP = {
+    "float32": CPSIG.batch_sig_join_backprop_f,
+    "float64": CPSIG.batch_sig_join_backprop_d
 }
 
 CPSIG_SIG_KERNEL = {

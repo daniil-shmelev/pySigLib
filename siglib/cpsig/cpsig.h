@@ -240,6 +240,24 @@ extern "C" {
 	CPSIG_API int batch_sig_combine_backprop_d(const double* sig_combined_derivs, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
+	// linear_sig: signature of a single linear segment from a displacement vector
+	CPSIG_API int linear_sig_f(const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int linear_sig_d(const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int batch_linear_sig_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_linear_sig_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+
+	// sig_join: extend a signature by a displacement
+	CPSIG_API int sig_join_f(const float* sig, const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int sig_join_d(const double* sig, const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int batch_sig_join_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_sig_join_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+
+	// sig_join_backprop
+	CPSIG_API int sig_join_backprop_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int sig_join_backprop_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int batch_sig_join_backprop_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_sig_join_backprop_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+
 	/** @defgroup sig_coef_functions Signature coefficient functions
 	* @{
 	*/

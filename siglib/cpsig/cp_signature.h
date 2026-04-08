@@ -26,6 +26,7 @@
 #endif
 
 
+// Thin wrapper: computes displacement from two Points, delegates to shared core
 template<std::floating_point T>
 FORCE_INLINE void linear_signature_(
 	const Point<T>& start_pt,
@@ -33,34 +34,26 @@ FORCE_INLINE void linear_signature_(
 	T* out,
 	uint64_t dimension,
 	uint64_t degree,
-	uint64_t* level_index
-)
-{
-	//Computes the signature of a linear segment joining start_pt and end_pt
-	out[0] = static_cast<T>(1.);
-
+	const uint64_t* level_index
+) {
+	out[0] = static_cast<T>(1);
+	if (degree == 0) return;
 	for (uint64_t i = 0; i < dimension; ++i)
 		out[i + 1] = end_pt[i] - start_pt[i];
-	
-	T one_over_level;
-	T left_over_level;
 
 	for (uint64_t level = 2; level <= degree; ++level) {
-		one_over_level = static_cast<T>(1.) / level;
+		T one_over_level = static_cast<T>(1.) / level;
 		T* result_ptr = out + level_index[level];
-		const T* left_ptr_upper_bound = out + level_index[level];
-
+		const T* const left_end = out + level_index[level];
 #ifdef VEC
-		for (T* left_ptr = out + level_index[level - 1]; left_ptr != left_ptr_upper_bound; ++left_ptr, result_ptr += dimension) {
-			left_over_level = (*left_ptr) * one_over_level;
-			vec_mult_assign(result_ptr, out + 1, left_over_level, dimension);
+		for (const T* left_ptr = out + level_index[level - 1]; left_ptr != left_end; ++left_ptr, result_ptr += dimension) {
+			vec_mult_assign(result_ptr, out + 1, (*left_ptr) * one_over_level, dimension);
 		}
 #else
-		for (T* left_ptr = out + level_index[level - 1]; left_ptr != left_ptr_upper_bound; ++left_ptr) {
-			left_over_level = (*left_ptr) * one_over_level;
-			for (T* right_ptr = out + 1; right_ptr != out + dimension + 1; ++right_ptr) {
-				*(result_ptr++) = left_over_level * (*right_ptr);
-			}
+		for (const T* left_ptr = out + level_index[level - 1]; left_ptr != left_end; ++left_ptr) {
+			T val = (*left_ptr) * one_over_level;
+			for (uint64_t d = 0; d < dimension; ++d)
+				*(result_ptr++) = val * out[1 + d];
 		}
 #endif
 	}
@@ -83,7 +76,7 @@ void signature_naive_(
 	uint64_t* level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	linear_signature_(prev_pt, next_pt, out, dimension, degree, level_index); //Zeroth step
+	linear_signature_(prev_pt, next_pt, out, dimension, degree, level_index);
 
 	if (path.length() == 2) { return; }
 
@@ -96,9 +89,7 @@ void signature_naive_(
 	Point<T> last_pt(path.end());
 
 	for (; next_pt != last_pt; ++prev_pt, ++next_pt) {
-
 		linear_signature_(prev_pt, next_pt, linear_signature, dimension, degree, level_index);
-
 		sig_combine_inplace_(out, linear_signature, degree, level_index);
 	}
 }
@@ -120,7 +111,7 @@ FORCE_INLINE void signature_horner_(
 	uint64_t* const level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	linear_signature_(prev_pt, next_pt, out, dimension, degree, level_index); //Zeroth step
+	linear_signature_(prev_pt, next_pt, out, dimension, degree, level_index);
 
 	if (path.length() == 2) { return; }
 
@@ -640,8 +631,7 @@ void sig_backprop_inplace_(
 				increments[i] = prev_pt[i] - next_pt[i];
 
 			linear_signature_(prev_pt, next_pt, linear_signature, dimension, degree, level_index);
-			//sig_uncombine_linear_inplace_(sig, linear_signature, degree, level_index);
-			signature_horner_step_(sig, increments, dimension, degree, level_index, horner_step); //Uncombine linear sig using horner
+			signature_horner_step_(sig, increments, dimension, degree, level_index, horner_step);
 			uncombine_sig_deriv(sig, linear_signature, sig_derivs, local_derivs, dimension, degree, level_index);
 			linear_sig_deriv_to_increment_deriv(linear_signature, local_derivs, dimension, degree, level_index);
 
@@ -666,8 +656,7 @@ void sig_backprop_inplace_(
 				increments[i] = prev_pt[i] - next_pt[i];
 
 			linear_signature_(prev_pt, next_pt, linear_signature, dimension, degree, level_index);
-			//sig_uncombine_linear_inplace_(sig, linear_signature, degree, level_index);
-			signature_horner_step_(sig, increments, dimension, degree, level_index, horner_step); //Uncombine linear sig using horner
+			signature_horner_step_(sig, increments, dimension, degree, level_index, horner_step);
 			uncombine_sig_deriv(sig, linear_signature, sig_derivs, local_derivs, dimension, degree, level_index);
 			linear_sig_deriv_to_increment_deriv(linear_signature, local_derivs, dimension, degree, level_index);
 

@@ -279,6 +279,211 @@ void sig_combine_backprop_cuda_(
 }
 
 // =========================================================================
+// CUDA linear_sig kernel
+// =========================================================================
+
+template<typename T>
+__global__ void linear_sig_kernel(
+	const T* __restrict__ displacement,
+	T* __restrict__ out,
+	const uint64_t* __restrict__ d_level_index,
+	uint64_t dimension,
+	uint64_t degree,
+	uint64_t sig_len
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+
+	const T* my_disp = displacement + batch_idx * dimension;
+	T* my_out = out + batch_idx * sig_len;
+
+	extern __shared__ char smem[];
+	uint64_t* level_index = reinterpret_cast<uint64_t*>(smem);
+	for (uint64_t i = tid; i < degree + 2; i += nthreads)
+		level_index[i] = d_level_index[i];
+	__syncthreads();
+
+	linear_signature_device<T>(my_disp, my_out, dimension, degree, level_index);
+}
+
+template<typename T>
+void linear_sig_cuda_(
+	const T* displacement, T* out,
+	uint64_t batch_size, uint64_t dimension, uint64_t degree
+) {
+	if (dimension == 0) throw std::invalid_argument("linear_sig_cuda received dimension 0");
+	const uint64_t sig_len = host_sig_length(dimension, degree);
+
+	auto li = std::make_unique<uint64_t[]>(degree + 2);
+	host_populate_level_index(li.get(), dimension, degree + 2);
+	const size_t li_bytes = (degree + 2) * sizeof(uint64_t);
+
+	uint64_t* d_li = nullptr;
+	cudaMalloc(&d_li, li_bytes);
+	cudaMemcpy(d_li, li.get(), li_bytes, cudaMemcpyHostToDevice);
+
+	uint64_t max_level_size = li[degree + 1] - li[degree];
+	unsigned int threads = host_choose_threads_per_block(max_level_size);
+	size_t smem = li_bytes;
+
+	linear_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem>>>(
+		displacement, out, d_li, dimension, degree, sig_len
+	);
+
+	cudaFree(d_li);
+	check_cuda_kernel_launch();
+}
+
+// =========================================================================
+// CUDA sig_join kernel
+// =========================================================================
+
+template<typename T>
+__global__ void sig_join_kernel(
+	const T* __restrict__ sig,
+	const T* __restrict__ displacement,
+	T* __restrict__ out,
+	T* __restrict__ lsig_buf,
+	const uint64_t* __restrict__ d_level_index,
+	uint64_t dimension,
+	uint64_t degree,
+	uint64_t sig_len
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+
+	const T* my_sig = sig + batch_idx * sig_len;
+	const T* my_disp = displacement + batch_idx * dimension;
+	T* my_out = out + batch_idx * sig_len;
+	T* my_lsig = lsig_buf + batch_idx * sig_len;
+
+	extern __shared__ char smem[];
+	uint64_t* level_index = reinterpret_cast<uint64_t*>(smem);
+	for (uint64_t i = tid; i < degree + 2; i += nthreads)
+		level_index[i] = d_level_index[i];
+	__syncthreads();
+
+	// Compute linear signature of displacement
+	linear_signature_device<T>(my_disp, my_lsig, dimension, degree, level_index);
+
+	// Copy sig to out
+	for (uint64_t i = tid; i < sig_len; i += nthreads)
+		my_out[i] = my_sig[i];
+	__syncthreads();
+
+	// Combine in-place
+	sig_combine_inplace_device<T>(my_out, my_lsig, degree, level_index);
+}
+
+static void* g_sig_join_lsig_buf = nullptr;
+static size_t g_sig_join_lsig_bytes = 0;
+
+template<typename T>
+void sig_join_cuda_(
+	const T* sig, const T* displacement, T* out,
+	uint64_t batch_size, uint64_t dimension, uint64_t degree
+) {
+	if (dimension == 0) throw std::invalid_argument("sig_join_cuda received dimension 0");
+	const uint64_t sig_len = host_sig_length(dimension, degree);
+
+	auto li = std::make_unique<uint64_t[]>(degree + 2);
+	host_populate_level_index(li.get(), dimension, degree + 2);
+	const size_t li_bytes = (degree + 2) * sizeof(uint64_t);
+
+	uint64_t* d_li = nullptr;
+	cudaMalloc(&d_li, li_bytes);
+	cudaMemcpy(d_li, li.get(), li_bytes, cudaMemcpyHostToDevice);
+
+	// Workspace for linear sig
+	size_t need = sizeof(T) * batch_size * sig_len;
+	if (need > g_sig_join_lsig_bytes) {
+		if (g_sig_join_lsig_buf) cudaFree(g_sig_join_lsig_buf);
+		cudaMalloc(&g_sig_join_lsig_buf, need);
+		g_sig_join_lsig_bytes = need;
+	}
+
+	uint64_t max_level_size = li[degree + 1] - li[degree];
+	unsigned int threads = host_choose_threads_per_block(max_level_size);
+	size_t smem = li_bytes;
+
+	sig_join_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem>>>(
+		sig, displacement, out,
+		static_cast<T*>(g_sig_join_lsig_buf),
+		d_li, dimension, degree, sig_len
+	);
+
+	cudaFree(d_li);
+	check_cuda_kernel_launch();
+}
+
+// =========================================================================
+// CUDA sig_join_backprop
+// =========================================================================
+
+template<typename T>
+void sig_join_backprop_cuda_(
+	const T* d_out, T* d_sig, T* d_displacement,
+	const T* sig, const T* displacement,
+	uint64_t batch_size, uint64_t dimension, uint64_t degree
+) {
+	if (dimension == 0) throw std::invalid_argument("sig_join_backprop_cuda received dimension 0");
+	const uint64_t sig_len = host_sig_length(dimension, degree);
+
+	// Recompute linear_sig on device
+	size_t lsig_bytes = sizeof(T) * batch_size * sig_len;
+	T* d_lsig = nullptr;
+	cudaMalloc(&d_lsig, lsig_bytes);
+	linear_sig_cuda_<T>(displacement, d_lsig, batch_size, dimension, degree);
+
+	// Backprop through sig_combine: d_out -> d_sig, d_lsig_grad
+	T* d_lsig_grad = nullptr;
+	cudaMalloc(&d_lsig_grad, lsig_bytes);
+	sig_combine_backprop_cuda_core_<T>(d_out, d_sig, d_lsig_grad, sig, d_lsig, batch_size, dimension, degree);
+
+	// Backprop through linear_sig: d_displacement = d_lsig_grad at level 1
+	// For linear_sig, the displacement gradient is just level 1 of d_lsig_grad
+	// after applying the chain rule through the tensor product structure.
+	// Since linear_sig(dx)[k] = dx^{tensor k} / k!, the gradient is:
+	// d_displacement[i] = d_lsig[level1][i] + sum over higher levels
+	// This is exactly what linear_sig_deriv_to_increment_deriv computes.
+	// For simplicity, do this on CPU (the displacement is small).
+	auto h_lsig = std::make_unique<T[]>(sig_len * batch_size);
+	auto h_dlsig = std::make_unique<T[]>(sig_len * batch_size);
+	cudaMemcpy(h_lsig.get(), d_lsig, lsig_bytes, cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_dlsig.get(), d_lsig_grad, lsig_bytes, cudaMemcpyDeviceToHost);
+
+	auto li = std::make_unique<uint64_t[]>(degree + 2);
+	host_populate_level_index(li.get(), dimension, degree + 2);
+
+	auto h_ddisp = std::make_unique<T[]>(dimension * batch_size);
+	for (uint64_t b = 0; b < batch_size; ++b) {
+		T* lsig_b = h_lsig.get() + b * sig_len;
+		T* dlsig_b = h_dlsig.get() + b * sig_len;
+		// Backprop through linear_sig: dF/d(displacement) from dF/d(linear_sig)
+		for (uint64_t level = degree; level > 1; --level) {
+			const T one_over_level = static_cast<T>(1.) / static_cast<T>(level);
+			const uint64_t level_size = li[level] - li[level - 1];
+			for (uint64_t j = 0; j < level_size; ++j) {
+				const uint64_t offs1 = li[level] + dimension * j - 1;
+				const uint64_t offs2 = li[level - 1] + j;
+				for (uint64_t dd = 1; dd <= dimension; ++dd) {
+					const T ii = dlsig_b[offs1 + dd] * one_over_level;
+					dlsig_b[offs2] += lsig_b[dd] * ii;
+					dlsig_b[dd] += lsig_b[offs2] * ii;
+				}
+			}
+		}
+		std::memcpy(h_ddisp.get() + b * dimension, dlsig_b + 1, dimension * sizeof(T));
+	}
+	cudaMemcpy(d_displacement, h_ddisp.get(), sizeof(T) * dimension * batch_size, cudaMemcpyHostToDevice);
+
+	cudaFree(d_lsig);
+	cudaFree(d_lsig_grad);
+}
+
+// =========================================================================
 // SAFE_CALL macro
 // =========================================================================
 
@@ -348,5 +553,47 @@ extern "C" {
 		uint64_t batch_size, uint64_t dimension, uint64_t degree
 	) noexcept {
 		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree));
+	}
+
+	// linear_sig CUDA
+	CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(linear_sig_cuda_<float>(displacement, out, 1, dimension, degree));
+	}
+	CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(linear_sig_cuda_<double>(displacement, out, 1, dimension, degree));
+	}
+	CUSIG_API int batch_linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(linear_sig_cuda_<float>(displacement, out, batch_size, dimension, degree));
+	}
+	CUSIG_API int batch_linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(linear_sig_cuda_<double>(displacement, out, batch_size, dimension, degree));
+	}
+
+	// sig_join CUDA
+	CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(sig_join_cuda_<float>(sig, displacement, out, 1, dimension, degree));
+	}
+	CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(sig_join_cuda_<double>(sig, displacement, out, 1, dimension, degree));
+	}
+	CUSIG_API int batch_sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(sig_join_cuda_<float>(sig, displacement, out, batch_size, dimension, degree));
+	}
+	CUSIG_API int batch_sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(sig_join_cuda_<double>(sig, displacement, out, batch_size, dimension, degree));
+	}
+
+	// sig_join_backprop CUDA
+	CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<float>(d_out, d_sig, d_displacement, sig, displacement, 1, dimension, degree));
+	}
+	CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<double>(d_out, d_sig, d_displacement, sig, displacement, 1, dimension, degree));
+	}
+	CUSIG_API int batch_sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<float>(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree));
+	}
+	CUSIG_API int batch_sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
+		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<double>(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree));
 	}
 }
