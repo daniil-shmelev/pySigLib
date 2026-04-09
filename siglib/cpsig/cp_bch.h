@@ -41,6 +41,7 @@ struct BchCache {
 	std::vector<uint32_t> comm_k_j;
 	std::vector<int> comm_k_val;
 	std::vector<double> comm_k_val_d; // pre-cast to double
+	std::vector<uint32_t> comm_k_sparse_end; // per-output k: end index for entries with k_i < dim
 
 	// Input-grouped commutator table (CSR format, grouped by input index a)
 	// For each input index a, stores (k, partner, signed_c) triples where
@@ -344,6 +345,20 @@ inline void build_commutator_table(BchCache& cache) {
 		cache.comm_k_val_d[idx] = static_cast<double>(cache.comm_k_val[idx]);
 	}
 
+	// Sparse threshold: for each output k, find where k_i first reaches dimension.
+	// Entries within each k-group are ordered by (i, j) with i increasing,
+	// so entries with i < dimension come first.
+	cache.comm_k_sparse_end.resize(m);
+	for (uint64_t k = 0; k < m; ++k) {
+		uint32_t kend = cache.comm_k_ptr[k + 1];
+		uint32_t sparse_end = cache.comm_k_ptr[k];
+		for (uint32_t idx = cache.comm_k_ptr[k]; idx < kend; ++idx) {
+			if (cache.comm_k_i[idx] >= cache.dimension) break;
+			sparse_end = idx + 1;
+		}
+		cache.comm_k_sparse_end[k] = sparse_end;
+	}
+
 	// Build input-grouped commutator table (CSR format, grouped by input index a)
 	std::vector<uint32_t> a_counts(m, 0);
 	for (uint64_t i = 0; i < m; ++i) {
@@ -633,6 +648,61 @@ void batch_log_sig_combine_(
 }
 
 // ========================================================================
+// log_sig_combine_with_linear_impl_: BCH where the second operand is a
+// linear log-sig (only first dim entries nonzero). Skips commutator pairs
+// where both indices >= dim when either bracket operand is node 1.
+// ========================================================================
+
+template<std::floating_point T>
+void log_sig_combine_with_linear_impl_(
+	const T* RESTRICT log_sig1, const T* RESTRICT log_sig2, T* RESTRICT out,
+	const BchCache& cache, T* memo
+) {
+	uint64_t m = cache.m;
+	uint64_t dim = cache.dimension;
+	uint64_t m2 = cache.bch_coefficients.size();
+
+	std::memcpy(out, log_sig1, m * sizeof(T));
+	for (uint64_t i = 0; i < dim; ++i) out[i] += log_sig2[i];
+
+	if (m2 <= 2) return;
+
+	std::memcpy(memo, log_sig1, m * sizeof(T));
+	if (log_sig2 != memo + m)
+		std::memcpy(memo + m, log_sig2, m * sizeof(T));
+
+	const uint32_t* k_ptr = cache.comm_k_ptr.data();
+	const uint32_t* k_i = cache.comm_k_i.data();
+	const uint32_t* k_j = cache.comm_k_j.data();
+	const double* k_val_d = cache.comm_k_val_d.data();
+	const uint32_t* k_sparse_end = cache.comm_k_sparse_end.data();
+
+	for (uint64_t w = 2; w < m2; ++w) {
+		const uint64_t lf = cache.bch_left_factor[w];
+		const uint64_t rf = cache.bch_right_factor[w];
+		const T* v1 = memo + lf * m;
+		const T* v2 = memo + rf * m;
+		T* result = memo + w * m;
+		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
+
+		// When one operand is node 1 (the sparse displacement), use
+		// precomputed sparse_end bounds — no per-entry branch needed.
+		const bool sparse = (rf == 1 || lf == 1);
+
+		for (uint64_t k = 0; k < m; ++k) {
+			T sum = T(0);
+			const uint32_t start = k_ptr[k];
+			const uint32_t end = sparse ? k_sparse_end[k] : k_ptr[k + 1];
+			for (uint32_t idx = start; idx < end; ++idx) {
+				sum += static_cast<T>(k_val_d[idx]) * (v1[k_i[idx]] * v2[k_j[idx]] - v1[k_j[idx]] * v2[k_i[idx]]);
+			}
+			result[k] = sum;
+			if (c_w != T(0)) out[k] += c_w * sum;
+		}
+	}
+}
+
+// ========================================================================
 // log_sig_join_: extend a log-signature by a displacement via BCH
 // ========================================================================
 
@@ -643,42 +713,13 @@ void log_sig_join_impl_(
 ) {
 	uint64_t m = cache.m;
 	uint64_t dim = cache.dimension;
-	uint64_t m2 = cache.bch_coefficients.size();
 
-	// out = log_sig + displacement (level 1 only)
-	std::memcpy(out, log_sig, m * sizeof(T));
-	for (uint64_t i = 0; i < dim; ++i) out[i] += displacement[i];
-	if (m2 <= 2) return;
-
-	// memo[0] = log_sig, memo[1] = displacement (sparse: only first dim entries)
-	std::memcpy(memo, log_sig, m * sizeof(T));
+	// Build the linear log-sig in memo[1]: zero-fill + copy dim entries
 	std::fill(memo + m, memo + 2 * m, static_cast<T>(0));
 	std::memcpy(memo + m, displacement, dim * sizeof(T));
 
-	const uint32_t* k_ptr = cache.comm_k_ptr.data();
-	const uint32_t* k_i = cache.comm_k_i.data();
-	const uint32_t* k_j = cache.comm_k_j.data();
-	const double* k_val_d = cache.comm_k_val_d.data();
-
-	for (uint64_t w = 2; w < m2; ++w) {
-		const uint64_t lf = cache.bch_left_factor[w];
-		const uint64_t rf = cache.bch_right_factor[w];
-		const T* v1 = memo + lf * m;
-		const T* v2 = memo + rf * m;
-		T* result = memo + w * m;
-		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
-
-		for (uint64_t k = 0; k < m; ++k) {
-			T sum = T(0);
-			const uint32_t start = k_ptr[k];
-			const uint32_t end = k_ptr[k + 1];
-			for (uint32_t idx = start; idx < end; ++idx) {
-				sum += static_cast<T>(k_val_d[idx]) * (v1[k_i[idx]] * v2[k_j[idx]] - v1[k_j[idx]] * v2[k_i[idx]]);
-			}
-			result[k] = sum;
-			if (c_w != T(0)) out[k] += c_w * sum;
-		}
-	}
+	// Delegate to the sparse-aware BCH
+	log_sig_combine_with_linear_impl_<T>(log_sig, memo + m, out, cache, memo);
 }
 
 template<std::floating_point T>
@@ -872,7 +913,7 @@ void log_sig_from_path_(
 			seg[k] = pb[k] - pa[k];
 
 		std::swap(acc, src);
-		log_sig_combine_impl_<T>(src, seg, acc, cache, memo);
+		log_sig_combine_with_linear_impl_<T>(src, seg, acc, cache, memo);
 	}
 
 	if (acc != out) std::memcpy(out, acc, m * sizeof(T));
@@ -955,6 +996,64 @@ inline void log_sig_combine_impl_x4_(
 		}
 	}
 }
+// Like log_sig_combine_impl_x4_ but uses precomputed sparse bounds when
+// one BCH operand is the displacement (node 1).
+inline void log_sig_combine_with_linear_impl_x4_(
+	const double* RESTRICT ls1, const double* RESTRICT ls2, double* RESTRICT out,
+	const BchCache& cache, double* memo
+) {
+	uint64_t m = cache.m;
+	uint64_t dim = cache.dimension;
+	uint64_t m2 = cache.bch_coefficients.size();
+
+	// out = ls1 + ls2 (sparse: only first dim entries of ls2 matter)
+	for (uint64_t i = 0; i < dim; ++i)
+		SIMD4D_store(&out[i * 4], SIMD4D_add(SIMD4D_load(&ls1[i * 4]), SIMD4D_load(&ls2[i * 4])));
+	for (uint64_t i = dim; i < m; ++i)
+		SIMD4D_store(&out[i * 4], SIMD4D_load(&ls1[i * 4]));
+
+	if (m2 <= 2) return;
+
+	std::memcpy(memo, ls1, m * 4 * sizeof(double));
+	std::memcpy(memo + m * 4, ls2, m * 4 * sizeof(double));
+
+	const uint32_t* k_ptr = cache.comm_k_ptr.data();
+	const uint32_t* k_i = cache.comm_k_i.data();
+	const uint32_t* k_j = cache.comm_k_j.data();
+	const double* k_val_d = cache.comm_k_val_d.data();
+	const uint32_t* k_sparse_end = cache.comm_k_sparse_end.data();
+
+	for (uint64_t w = 2; w < m2; ++w) {
+		const uint64_t lf = cache.bch_left_factor[w];
+		const uint64_t rf = cache.bch_right_factor[w];
+		const double* v1 = memo + lf * m * 4;
+		const double* v2 = memo + rf * m * 4;
+		double* result = memo + w * m * 4;
+		const double c_w = cache.bch_coefficients[w];
+
+		const bool sparse = (rf == 1 || lf == 1);
+
+		for (uint64_t k = 0; k < m; ++k) {
+			SIMD4D v_sum = SIMD4D_zero();
+			const uint32_t start = k_ptr[k];
+			const uint32_t end = sparse ? k_sparse_end[k] : k_ptr[k + 1];
+			for (uint32_t idx = start; idx < end; ++idx) {
+				const uint32_t ci = k_i[idx];
+				const uint32_t cj = k_j[idx];
+				SIMD4D val = SIMD4D_set1(k_val_d[idx]);
+				v_sum = SIMD4D_fmadd(val,
+					SIMD4D_sub(SIMD4D_mul(SIMD4D_load(&v1[ci * 4]), SIMD4D_load(&v2[cj * 4])),
+					           SIMD4D_mul(SIMD4D_load(&v1[cj * 4]), SIMD4D_load(&v2[ci * 4]))),
+					v_sum);
+			}
+			SIMD4D_store(&result[k * 4], v_sum);
+			if (c_w != 0.0) {
+				SIMD4D v_cw = SIMD4D_set1(c_w);
+				SIMD4D_store(&out[k * 4], SIMD4D_fmadd(v_cw, v_sum, SIMD4D_load(&out[k * 4])));
+			}
+		}
+	}
+}
 #endif // VEC
 
 // Shared across AVX2 and NEON — no platform-specific intrinsics needed.
@@ -991,7 +1090,7 @@ inline void log_sig_from_path_x4_(
 		}
 
 		std::swap(acc, src);
-		log_sig_combine_impl_x4_(src, seg, acc, cache, memo);
+		log_sig_combine_with_linear_impl_x4_(src, seg, acc, cache, memo);
 	}
 
 	for (uint64_t k = 0; k < m; ++k)
