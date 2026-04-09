@@ -20,6 +20,9 @@
 #include "cp_bch_data.h"
 #include "words.h"
 #include "macros.h"
+#ifdef VEC
+#include "cp_vector_funcs.h"
+#endif
 
 // Sparse vector: list of (index, coefficient) pairs
 using SparseVec = std::vector<std::pair<uint64_t, int>>;
@@ -919,33 +922,7 @@ void log_sig_from_path_(
 	if (acc != out) std::memcpy(out, acc, m * sizeof(T));
 }
 
-#ifdef VEC
-// SIMD4D abstraction: 4-wide double operations for both AVX2 and NEON
-#ifndef __APPLE__
-using SIMD4D = __m256d;
-#define SIMD4D_zero()         _mm256_setzero_pd()
-#define SIMD4D_set1(x)        _mm256_set1_pd(x)
-#define SIMD4D_load(p)        _mm256_loadu_pd(p)
-#define SIMD4D_store(p, v)    _mm256_storeu_pd(p, v)
-#define SIMD4D_add(a, b)      _mm256_add_pd(a, b)
-#define SIMD4D_sub(a, b)      _mm256_sub_pd(a, b)
-#define SIMD4D_mul(a, b)      _mm256_mul_pd(a, b)
-#define SIMD4D_fmadd(a, b, c) _mm256_fmadd_pd(a, b, c)
-#else
-// NEON: two float64x2_t registers packed into a struct
-struct SIMD4D { float64x2_t lo, hi; };
-inline SIMD4D SIMD4D_zero() { return {vdupq_n_f64(0.0), vdupq_n_f64(0.0)}; }
-inline SIMD4D SIMD4D_set1(double x) { return {vdupq_n_f64(x), vdupq_n_f64(x)}; }
-inline SIMD4D SIMD4D_load(const double* p) { return {vld1q_f64(p), vld1q_f64(p + 2)}; }
-inline void SIMD4D_store(double* p, SIMD4D v) { vst1q_f64(p, v.lo); vst1q_f64(p + 2, v.hi); }
-inline SIMD4D SIMD4D_add(SIMD4D a, SIMD4D b) { return {vaddq_f64(a.lo, b.lo), vaddq_f64(a.hi, b.hi)}; }
-inline SIMD4D SIMD4D_sub(SIMD4D a, SIMD4D b) { return {vsubq_f64(a.lo, b.lo), vsubq_f64(a.hi, b.hi)}; }
-inline SIMD4D SIMD4D_mul(SIMD4D a, SIMD4D b) { return {vmulq_f64(a.lo, b.lo), vmulq_f64(a.hi, b.hi)}; }
-inline SIMD4D SIMD4D_fmadd(SIMD4D a, SIMD4D b, SIMD4D c) { return {vfmaq_f64(c.lo, a.lo, b.lo), vfmaq_f64(c.hi, a.hi, b.hi)}; }
-#endif
-#endif // VEC
-
-// 4-wide BCH combination using SIMD4D abstraction (works on both AVX2 and NEON).
+// 4-wide BCH combination (works on both AVX2 and NEON).
 #ifdef VEC
 inline void log_sig_combine_impl_x4_(
 	const double* RESTRICT ls1, const double* RESTRICT ls2, double* RESTRICT out,
@@ -954,9 +931,7 @@ inline void log_sig_combine_impl_x4_(
 	uint64_t m = cache.m;
 	uint64_t m2 = cache.bch_coefficients.size();
 
-	for (uint64_t i = 0; i < m; ++i)
-		SIMD4D_store(&out[i * 4], SIMD4D_add(SIMD4D_load(&ls1[i * 4]), SIMD4D_load(&ls2[i * 4])));
-
+	vec4_add(out, ls1, ls2, m);
 	if (m2 <= 2) return;
 
 	std::memcpy(memo, ls1, m * 4 * sizeof(double));
@@ -976,23 +951,9 @@ inline void log_sig_combine_impl_x4_(
 		const double c_w = cache.bch_coefficients[w];
 
 		for (uint64_t k = 0; k < m; ++k) {
-			SIMD4D v_sum = SIMD4D_zero();
-			const uint32_t start = k_ptr[k];
-			const uint32_t end = k_ptr[k + 1];
-			for (uint32_t idx = start; idx < end; ++idx) {
-				const uint32_t ci = k_i[idx];
-				const uint32_t cj = k_j[idx];
-				SIMD4D val = SIMD4D_set1(k_val_d[idx]);
-				v_sum = SIMD4D_fmadd(val,
-					SIMD4D_sub(SIMD4D_mul(SIMD4D_load(&v1[ci * 4]), SIMD4D_load(&v2[cj * 4])),
-					           SIMD4D_mul(SIMD4D_load(&v1[cj * 4]), SIMD4D_load(&v2[ci * 4]))),
-					v_sum);
-			}
-			SIMD4D_store(&result[k * 4], v_sum);
-			if (c_w != 0.0) {
-				SIMD4D v_cw = SIMD4D_set1(c_w);
-				SIMD4D_store(&out[k * 4], SIMD4D_fmadd(v_cw, v_sum, SIMD4D_load(&out[k * 4])));
-			}
+			vec4_commutator_accum(&result[k * 4], v1, v2, k_i, k_j, k_val_d, k_ptr[k], k_ptr[k + 1]);
+			if (c_w != 0.0)
+				vec4_fmadd(&out[k * 4], &result[k * 4], c_w, 1);
 		}
 	}
 }
@@ -1006,12 +967,8 @@ inline void log_sig_combine_with_linear_impl_x4_(
 	uint64_t dim = cache.dimension;
 	uint64_t m2 = cache.bch_coefficients.size();
 
-	// out = ls1 + ls2 (sparse: only first dim entries of ls2 matter)
-	for (uint64_t i = 0; i < dim; ++i)
-		SIMD4D_store(&out[i * 4], SIMD4D_add(SIMD4D_load(&ls1[i * 4]), SIMD4D_load(&ls2[i * 4])));
-	for (uint64_t i = dim; i < m; ++i)
-		SIMD4D_store(&out[i * 4], SIMD4D_load(&ls1[i * 4]));
-
+	vec4_add(out, ls1, ls2, dim);
+	std::memcpy(&out[dim * 4], &ls1[dim * 4], (m - dim) * 4 * sizeof(double));
 	if (m2 <= 2) return;
 
 	std::memcpy(memo, ls1, m * 4 * sizeof(double));
@@ -1030,27 +987,13 @@ inline void log_sig_combine_with_linear_impl_x4_(
 		const double* v2 = memo + rf * m * 4;
 		double* result = memo + w * m * 4;
 		const double c_w = cache.bch_coefficients[w];
-
 		const bool sparse = (rf == 1 || lf == 1);
 
 		for (uint64_t k = 0; k < m; ++k) {
-			SIMD4D v_sum = SIMD4D_zero();
-			const uint32_t start = k_ptr[k];
-			const uint32_t end = sparse ? k_sparse_end[k] : k_ptr[k + 1];
-			for (uint32_t idx = start; idx < end; ++idx) {
-				const uint32_t ci = k_i[idx];
-				const uint32_t cj = k_j[idx];
-				SIMD4D val = SIMD4D_set1(k_val_d[idx]);
-				v_sum = SIMD4D_fmadd(val,
-					SIMD4D_sub(SIMD4D_mul(SIMD4D_load(&v1[ci * 4]), SIMD4D_load(&v2[cj * 4])),
-					           SIMD4D_mul(SIMD4D_load(&v1[cj * 4]), SIMD4D_load(&v2[ci * 4]))),
-					v_sum);
-			}
-			SIMD4D_store(&result[k * 4], v_sum);
-			if (c_w != 0.0) {
-				SIMD4D v_cw = SIMD4D_set1(c_w);
-				SIMD4D_store(&out[k * 4], SIMD4D_fmadd(v_cw, v_sum, SIMD4D_load(&out[k * 4])));
-			}
+			vec4_commutator_accum(&result[k * 4], v1, v2, k_i, k_j, k_val_d,
+				k_ptr[k], sparse ? k_sparse_end[k] : k_ptr[k + 1]);
+			if (c_w != 0.0)
+				vec4_fmadd(&out[k * 4], &result[k * 4], c_w, 1);
 		}
 	}
 }
@@ -1135,19 +1078,8 @@ inline void log_sig_combine_backprop_impl_x4_(
 		double* result = memo + w * m * 4;
 		std::memset(result, 0, m * 4 * sizeof(double));
 
-		for (uint32_t p = 0; p < n_pairs; ++p) {
-			const uint32_t i = ij_i[p];
-			const uint32_t j = ij_j[p];
-			SIMD4D prod = SIMD4D_sub(SIMD4D_mul(SIMD4D_load(&v1[i * 4]), SIMD4D_load(&v2[j * 4])),
-			                         SIMD4D_mul(SIMD4D_load(&v1[j * 4]), SIMD4D_load(&v2[i * 4])));
-			const uint32_t start = ij_ptr[p];
-			const uint32_t end = ij_ptr[p + 1];
-			for (uint32_t idx = start; idx < end; ++idx) {
-				uint32_t k = ij_k[idx];
-				SIMD4D c = SIMD4D_set1(ij_c[idx]);
-				SIMD4D_store(&result[k * 4], SIMD4D_fmadd(c, prod, SIMD4D_load(&result[k * 4])));
-			}
-		}
+		for (uint32_t p = 0; p < n_pairs; ++p)
+			vec4_bracket_scatter(result, v1, v2, ij_i[p], ij_j[p], ij_k, ij_c, ij_ptr[p], ij_ptr[p + 1]);
 	}
 
 	// d_memo init
@@ -1155,13 +1087,10 @@ inline void log_sig_combine_backprop_impl_x4_(
 	for (uint64_t w = 2; w < m2; ++w) {
 		const double c_w = cache.bch_coefficients[w];
 		double* dm = d_memo + w * m * 4;
-		if (c_w != 0.0) {
-			SIMD4D vc = SIMD4D_set1(c_w);
-			for (uint64_t k = 0; k < m; ++k)
-				SIMD4D_store(&dm[k * 4], SIMD4D_mul(vc, SIMD4D_load(&d_out[k * 4])));
-		} else {
+		if (c_w != 0.0)
+			vec4_scale(dm, d_out, c_w, m);
+		else
 			std::memset(dm, 0, m * 4 * sizeof(double));
-		}
 	}
 
 	// Reverse BCH (pair-grouped, 4-wide)
@@ -1174,32 +1103,13 @@ inline void log_sig_combine_backprop_impl_x4_(
 		double* dm_lf = d_memo + lf * m * 4;
 		double* dm_rf = d_memo + rf * m * 4;
 
-		for (uint32_t p = 0; p < n_pairs; ++p) {
-			SIMD4D S = SIMD4D_zero();
-			const uint32_t start = ij_ptr[p];
-			const uint32_t end = ij_ptr[p + 1];
-			for (uint32_t idx = start; idx < end; ++idx)
-				S = SIMD4D_fmadd(SIMD4D_set1(ij_c[idx]), SIMD4D_load(&dm_w[ij_k[idx] * 4]), S);
-
-			const uint32_t i = ij_i[p];
-			const uint32_t j = ij_j[p];
-			SIMD4D v1i = SIMD4D_load(&v1[i * 4]);
-			SIMD4D v1j = SIMD4D_load(&v1[j * 4]);
-			SIMD4D v2i = SIMD4D_load(&v2[i * 4]);
-			SIMD4D v2j = SIMD4D_load(&v2[j * 4]);
-
-			SIMD4D_store(&dm_lf[i * 4], SIMD4D_fmadd(S, v2j, SIMD4D_load(&dm_lf[i * 4])));
-			SIMD4D_store(&dm_lf[j * 4], SIMD4D_sub(SIMD4D_load(&dm_lf[j * 4]), SIMD4D_mul(S, v2i)));
-			SIMD4D_store(&dm_rf[j * 4], SIMD4D_fmadd(S, v1i, SIMD4D_load(&dm_rf[j * 4])));
-			SIMD4D_store(&dm_rf[i * 4], SIMD4D_sub(SIMD4D_load(&dm_rf[i * 4]), SIMD4D_mul(S, v1j)));
-		}
+		for (uint32_t p = 0; p < n_pairs; ++p)
+			vec4_bracket_grad(dm_lf, dm_rf, dm_w, v1, v2, ij_i[p], ij_j[p], ij_k, ij_c, ij_ptr[p], ij_ptr[p + 1]);
 	}
 
 	// Accumulate leaf gradients
-	for (uint64_t k = 0; k < m; ++k) {
-		SIMD4D_store(&d_ls1[k * 4], SIMD4D_add(SIMD4D_load(&d_ls1[k * 4]), SIMD4D_load(&d_memo[k * 4])));
-		SIMD4D_store(&d_ls2[k * 4], SIMD4D_add(SIMD4D_load(&d_ls2[k * 4]), SIMD4D_load(&d_memo[(m + k) * 4])));
-	}
+	vec4_add_inplace(d_ls1, d_memo, m);
+	vec4_add_inplace(d_ls2, d_memo + m * 4, m);
 }
 
 // 4-wide backward for log_sig_from_path using BCH uncombination.
