@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from functools import partial
 
+import numpy as np
+
 try:
     import jax
     import jax.numpy as jnp
@@ -32,10 +34,16 @@ from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
 from ..logsig_to_sig import logsig_to_sig as logsig_to_sig_forward
 from ..log_sig import log_sig as log_sig_forward
 from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
+from ..sig_join import sig_join as sig_join_forward
+from ..sig_join_backprop import sig_join_backprop
+from ..log_sig_join import log_sig_join as log_sig_join_forward
+from ..log_sig_join_backprop import log_sig_join_backprop
+from ..linear_sig import linear_sig as linear_sig_forward
 from ..branched_sig import branched_sig as branched_sig_forward
 from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
 from ..words import word_to_idx
 from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order
+from ..sig_length import sig_length as _sig_length, log_sig_length as _log_sig_length
 from ._ffi import (
     _augmented_dim,
     ensure_registered,
@@ -441,6 +449,182 @@ def log_sig_combine(
 
 
 log_sig_combine.__doc__ = log_sig_combine_forward.__doc__
+
+
+# ---------------------------------------------------------------------------
+# sig_join
+# ---------------------------------------------------------------------------
+
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4))
+def _sig_join(sig_arr, displacement, dimension, degree, n_jobs):
+    out_len = _sig_length(dimension, degree)
+    out_shape = (*sig_arr.shape[:-1], out_len)
+    out_type = jax.ShapeDtypeStruct(out_shape, sig_arr.dtype)
+    return jax.pure_callback(
+        lambda s, d: sig_join_forward(np.asarray(s), np.asarray(d), dimension, degree, n_jobs),
+        out_type, sig_arr, displacement,
+    )
+
+
+def _sig_join_fwd(sig_arr, displacement, dimension, degree, n_jobs):
+    result = _sig_join(sig_arr, displacement, dimension, degree, n_jobs)
+    return result, (sig_arr, displacement)
+
+
+def _sig_join_bwd(dimension, degree, n_jobs, residual, cotangent):
+    sig_arr, displacement = residual
+    out_sig_type = jax.ShapeDtypeStruct(sig_arr.shape, sig_arr.dtype)
+    out_disp_type = jax.ShapeDtypeStruct(displacement.shape, displacement.dtype)
+    grad_sig, grad_disp = jax.pure_callback(
+        lambda co, s, d: sig_join_backprop(np.asarray(co), np.asarray(s), np.asarray(d), dimension, degree, n_jobs),
+        (out_sig_type, out_disp_type), cotangent, sig_arr, displacement,
+    )
+    return (grad_sig, grad_disp)
+
+
+_sig_join.defvjp(_sig_join_fwd, _sig_join_bwd)
+
+
+def sig_join(
+    sig_arr,
+    displacement,
+    dimension: int,
+    degree: int,
+    n_jobs: int = 1,
+):
+    """Extends a truncated signature by a single displacement vector (JAX).
+
+    This is the JAX equivalent of :func:`pysiglib.sig_join`.
+    Supports reverse-mode autodiff via ``jax.grad``.
+    """
+    ensure_registered()
+
+    sig_arr = jnp.asarray(sig_arr)
+    displacement = jnp.asarray(displacement)
+    _validate_sig_shape(sig_arr, "sig")
+
+    check_type(dimension, "dimension", int)
+    check_non_neg(dimension, "dimension")
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_type(n_jobs, "n_jobs", int)
+    if n_jobs == 0:
+        raise ValueError("n_jobs cannot be 0")
+
+    return _sig_join(sig_arr, displacement, dimension, degree, n_jobs)
+
+
+sig_join.__doc__ = sig_join_forward.__doc__
+
+
+# ---------------------------------------------------------------------------
+# log_sig_join
+# ---------------------------------------------------------------------------
+
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4))
+def _log_sig_join(log_sig_arr, displacement, dimension, degree, n_jobs):
+    out_len = _log_sig_length(dimension, degree)
+    out_shape = (*log_sig_arr.shape[:-1], out_len)
+    out_type = jax.ShapeDtypeStruct(out_shape, log_sig_arr.dtype)
+    return jax.pure_callback(
+        lambda ls, d: log_sig_join_forward(np.asarray(ls), np.asarray(d), dimension, degree, n_jobs),
+        out_type, log_sig_arr, displacement,
+    )
+
+
+def _log_sig_join_fwd(log_sig_arr, displacement, dimension, degree, n_jobs):
+    result = _log_sig_join(log_sig_arr, displacement, dimension, degree, n_jobs)
+    return result, (log_sig_arr, displacement)
+
+
+def _log_sig_join_bwd(dimension, degree, n_jobs, residual, cotangent):
+    log_sig_arr, displacement = residual
+    out_ls_type = jax.ShapeDtypeStruct(log_sig_arr.shape, log_sig_arr.dtype)
+    out_disp_type = jax.ShapeDtypeStruct(displacement.shape, displacement.dtype)
+    grad_ls, grad_disp = jax.pure_callback(
+        lambda co, ls, d: log_sig_join_backprop(np.asarray(co), np.asarray(ls), np.asarray(d), dimension, degree, n_jobs),
+        (out_ls_type, out_disp_type), cotangent, log_sig_arr, displacement,
+    )
+    return (grad_ls, grad_disp)
+
+
+_log_sig_join.defvjp(_log_sig_join_fwd, _log_sig_join_bwd)
+
+
+def log_sig_join(
+    log_sig_arr,
+    displacement,
+    dimension: int,
+    degree: int,
+    n_jobs: int = 1,
+):
+    """Extends a truncated log-signature by a single displacement vector (JAX).
+
+    This is the JAX equivalent of :func:`pysiglib.log_sig_join`.
+    Supports reverse-mode autodiff via ``jax.grad``.
+
+    .. note::
+
+        You must call ``pysiglib.prepare_log_sig(dimension, degree)`` before using this
+        function. This precomputes the Lyndon basis and BCH coefficients needed internally.
+    """
+    ensure_registered()
+
+    log_sig_arr = jnp.asarray(log_sig_arr)
+    displacement = jnp.asarray(displacement)
+    _validate_sig_shape(log_sig_arr, "log_sig")
+
+    check_type(dimension, "dimension", int)
+    check_non_neg(dimension, "dimension")
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_type(n_jobs, "n_jobs", int)
+    if n_jobs == 0:
+        raise ValueError("n_jobs cannot be 0")
+
+    return _log_sig_join(log_sig_arr, displacement, dimension, degree, n_jobs)
+
+
+log_sig_join.__doc__ = log_sig_join_forward.__doc__
+
+
+# ---------------------------------------------------------------------------
+# linear_sig
+# ---------------------------------------------------------------------------
+
+def linear_sig(
+    displacement,
+    dimension: int,
+    degree: int,
+    n_jobs: int = 1,
+):
+    """Computes the truncated signature of a single linear segment (JAX).
+
+    This is the JAX equivalent of :func:`pysiglib.linear_sig`.
+    Forward-only (no custom_vjp).
+    """
+    ensure_registered()
+
+    displacement = jnp.asarray(displacement)
+
+    check_type(dimension, "dimension", int)
+    check_non_neg(dimension, "dimension")
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_type(n_jobs, "n_jobs", int)
+    if n_jobs == 0:
+        raise ValueError("n_jobs cannot be 0")
+
+    out_len = _sig_length(dimension, degree)
+    out_shape = (*displacement.shape[:-1], out_len)
+    out_type = jax.ShapeDtypeStruct(out_shape, displacement.dtype)
+    return jax.pure_callback(
+        lambda d: linear_sig_forward(np.asarray(d), dimension, degree, n_jobs),
+        out_type, displacement,
+    )
+
+
+linear_sig.__doc__ = linear_sig_forward.__doc__
 
 
 # ---------------------------------------------------------------------------

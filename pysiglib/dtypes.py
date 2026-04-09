@@ -267,6 +267,16 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.batch_sig_join_backprop_cuda_d
     }
 
+    CUSIG_BATCH_LOG_SIG_JOIN_CUDA = {
+        "float32": CUSIG.batch_log_sig_join_cuda_f,
+        "float64": CUSIG.batch_log_sig_join_cuda_d
+    }
+
+    CUSIG_BATCH_LOG_SIG_JOIN_BACKPROP_CUDA = {
+        "float32": CUSIG.batch_log_sig_join_backprop_cuda_f,
+        "float64": CUSIG.batch_log_sig_join_backprop_cuda_d
+    }
+
 CPSIG_BATCH_LOG_SIG_COMBINE = {
     "float32": CPSIG.batch_log_sig_combine_f,
     "float64": CPSIG.batch_log_sig_combine_d
@@ -420,6 +430,26 @@ CPSIG_SIG_JOIN_BACKPROP = {
 CPSIG_BATCH_SIG_JOIN_BACKPROP = {
     "float32": CPSIG.batch_sig_join_backprop_f,
     "float64": CPSIG.batch_sig_join_backprop_d
+}
+
+CPSIG_LOG_SIG_JOIN = {
+    "float32": CPSIG.log_sig_join_f,
+    "float64": CPSIG.log_sig_join_d
+}
+
+CPSIG_BATCH_LOG_SIG_JOIN = {
+    "float32": CPSIG.batch_log_sig_join_f,
+    "float64": CPSIG.batch_log_sig_join_d
+}
+
+CPSIG_LOG_SIG_JOIN_BACKPROP = {
+    "float32": CPSIG.log_sig_join_backprop_f,
+    "float64": CPSIG.log_sig_join_backprop_d
+}
+
+CPSIG_BATCH_LOG_SIG_JOIN_BACKPROP = {
+    "float32": CPSIG.batch_log_sig_join_backprop_f,
+    "float64": CPSIG.batch_log_sig_join_backprop_d
 }
 
 CPSIG_SIG_KERNEL = {

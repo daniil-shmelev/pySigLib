@@ -21,6 +21,8 @@ from .sig_backprop import sig_backprop, sig_combine_backprop
 from .linear_sig import linear_sig
 from .sig_join import sig_join
 from .sig_join_backprop import sig_join_backprop
+from .log_sig_join import log_sig_join
+from .log_sig_join_backprop import log_sig_join_backprop
 from .sig_coef import extract_sig_coef, sig_coef
 from .sig_coef_backprop import sig_coef_backprop
 from .log_sig import set_cache_dir, prepare_log_sig, clear_cache, sig_to_log_sig, log_sig

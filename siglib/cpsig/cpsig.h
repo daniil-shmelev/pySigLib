@@ -638,6 +638,18 @@ extern "C" {
 		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
+	// log_sig_join: extend a log-signature by a displacement via BCH
+	CPSIG_API int log_sig_join_f(const float* log_sig, const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int log_sig_join_d(const double* log_sig, const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int batch_log_sig_join_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_log_sig_join_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+
+	// log_sig_join_backprop
+	CPSIG_API int log_sig_join_backprop_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int log_sig_join_backprop_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t dimension, uint64_t degree) noexcept;
+	CPSIG_API int batch_log_sig_join_backprop_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int batch_log_sig_join_backprop_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+
 	/** @defgroup log_sig_from_path_functions Log-signature from path functions
 	* @{
 	*/

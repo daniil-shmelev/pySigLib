@@ -14,3 +14,4 @@ Log Signatures
    /pages/log_signatures/logsig_to_sig
    /pages/log_signatures/log_sig
    /pages/log_signatures/log_sig_combine
+   /pages/log_signatures/log_sig_join

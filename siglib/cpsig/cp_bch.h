@@ -633,6 +633,214 @@ void batch_log_sig_combine_(
 }
 
 // ========================================================================
+// log_sig_join_: extend a log-signature by a displacement via BCH
+// ========================================================================
+
+template<std::floating_point T>
+void log_sig_join_impl_(
+	const T* RESTRICT log_sig, const T* RESTRICT displacement, T* RESTRICT out,
+	const BchCache& cache, T* memo
+) {
+	uint64_t m = cache.m;
+	uint64_t dim = cache.dimension;
+	uint64_t m2 = cache.bch_coefficients.size();
+
+	// out = log_sig + displacement (level 1 only)
+	std::memcpy(out, log_sig, m * sizeof(T));
+	for (uint64_t i = 0; i < dim; ++i) out[i] += displacement[i];
+	if (m2 <= 2) return;
+
+	// memo[0] = log_sig, memo[1] = displacement (sparse: only first dim entries)
+	std::memcpy(memo, log_sig, m * sizeof(T));
+	std::fill(memo + m, memo + 2 * m, static_cast<T>(0));
+	std::memcpy(memo + m, displacement, dim * sizeof(T));
+
+	const uint32_t* k_ptr = cache.comm_k_ptr.data();
+	const uint32_t* k_i = cache.comm_k_i.data();
+	const uint32_t* k_j = cache.comm_k_j.data();
+	const double* k_val_d = cache.comm_k_val_d.data();
+
+	for (uint64_t w = 2; w < m2; ++w) {
+		const uint64_t lf = cache.bch_left_factor[w];
+		const uint64_t rf = cache.bch_right_factor[w];
+		const T* v1 = memo + lf * m;
+		const T* v2 = memo + rf * m;
+		T* result = memo + w * m;
+		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
+
+		for (uint64_t k = 0; k < m; ++k) {
+			T sum = T(0);
+			const uint32_t start = k_ptr[k];
+			const uint32_t end = k_ptr[k + 1];
+			for (uint32_t idx = start; idx < end; ++idx) {
+				sum += static_cast<T>(k_val_d[idx]) * (v1[k_i[idx]] * v2[k_j[idx]] - v1[k_j[idx]] * v2[k_i[idx]]);
+			}
+			result[k] = sum;
+			if (c_w != T(0)) out[k] += c_w * sum;
+		}
+	}
+}
+
+template<std::floating_point T>
+void log_sig_join_(
+	const T* log_sig, const T* displacement, T* out,
+	uint64_t dimension, uint64_t degree
+) {
+	if (dimension == 0) throw std::invalid_argument("log_sig_join received dimension 0");
+	if (degree == 0) throw std::invalid_argument("log_sig_join received degree 0");
+
+	const BchCache& cache = get_bch_cache(dimension, degree);
+	uint64_t m = cache.m;
+
+	if (degree < 2) {
+		std::memcpy(out, log_sig, m * sizeof(T));
+		for (uint64_t i = 0; i < dimension; ++i) out[i] += displacement[i];
+		return;
+	}
+
+	uint64_t m2 = cache.bch_coefficients.size();
+	std::vector<T> memo(m2 * m);
+	log_sig_join_impl_<T>(log_sig, displacement, out, cache, memo.data());
+}
+
+template<std::floating_point T>
+void batch_log_sig_join_(
+	const T* log_sig, const T* displacement, T* out,
+	uint64_t batch_size, uint64_t dimension, uint64_t degree,
+	int n_jobs = 1
+) {
+	if (dimension == 0) throw std::invalid_argument("log_sig_join received dimension 0");
+	if (degree == 0) throw std::invalid_argument("log_sig_join received degree 0");
+
+	const BchCache& cache = get_bch_cache(dimension, degree);
+	uint64_t m = cache.m;
+
+	if (degree < 2) {
+		for (uint64_t b = 0; b < batch_size; ++b) {
+			std::memcpy(out + b * m, log_sig + b * m, m * sizeof(T));
+			for (uint64_t i = 0; i < dimension; ++i)
+				out[b * m + i] += displacement[b * dimension + i];
+		}
+		return;
+	}
+
+	uint64_t m2 = cache.bch_coefficients.size();
+
+	if (n_jobs != 1) {
+		auto func = [&](const T* ls, const T* disp, T* o) {
+			thread_local std::vector<T> tl_memo;
+			tl_memo.resize(m2 * m);
+			log_sig_join_impl_<T>(ls, disp, o, cache, tl_memo.data());
+		};
+		multi_threaded_batch_2<const T, const T, T>(func, log_sig, displacement, out, batch_size, m, dimension, m, n_jobs);
+	}
+	else {
+		std::vector<T> memo(m2 * m);
+		for (uint64_t b = 0; b < batch_size; ++b) {
+			log_sig_join_impl_<T>(log_sig + b * m, displacement + b * dimension, out + b * m,
+				cache, memo.data());
+		}
+	}
+}
+
+// ========================================================================
+// log_sig_join_backprop_: backward pass through log_sig_join
+// ========================================================================
+
+template<std::floating_point T>
+void log_sig_join_backprop_(
+	const T* d_out, T* d_logsig, T* d_displacement,
+	const T* log_sig, const T* displacement,
+	uint64_t dimension, uint64_t degree
+) {
+	if (dimension == 0) throw std::invalid_argument("log_sig_join_backprop received dimension 0");
+	if (degree == 0) throw std::invalid_argument("log_sig_join_backprop received degree 0");
+
+	const BchCache& cache = get_bch_cache(dimension, degree);
+	uint64_t m = cache.m;
+
+	if (degree < 2) {
+		std::memcpy(d_logsig, d_out, m * sizeof(T));
+		std::memcpy(d_displacement, d_out, dimension * sizeof(T));
+		return;
+	}
+
+	// Construct the linear log-sig for the backprop
+	auto linear_ls = std::make_unique<T[]>(m);
+	std::fill(linear_ls.get(), linear_ls.get() + m, static_cast<T>(0));
+	std::memcpy(linear_ls.get(), displacement, dimension * sizeof(T));
+
+	// Reuse log_sig_combine_backprop_impl_ — it handles the full BCH backward
+	auto d_ls2 = std::make_unique<T[]>(m);
+	uint64_t m2 = cache.bch_coefficients.size();
+	std::vector<T> workspace(2 * m2 * m);
+	log_sig_combine_backprop_impl_<T>(d_out, d_logsig, d_ls2.get(), log_sig, linear_ls.get(),
+		cache, workspace.data());
+
+	// d_displacement = first dim elements of d_ls2
+	std::memcpy(d_displacement, d_ls2.get(), dimension * sizeof(T));
+}
+
+template<std::floating_point T>
+void batch_log_sig_join_backprop_(
+	const T* d_out, T* d_logsig, T* d_displacement,
+	const T* log_sig, const T* displacement,
+	uint64_t batch_size, uint64_t dimension, uint64_t degree,
+	int n_jobs = 1
+) {
+	if (dimension == 0) throw std::invalid_argument("log_sig_join_backprop received dimension 0");
+	if (degree == 0) throw std::invalid_argument("log_sig_join_backprop received degree 0");
+
+	const BchCache& cache = get_bch_cache(dimension, degree);
+	uint64_t m = cache.m;
+
+	if (degree < 2) {
+		for (uint64_t b = 0; b < batch_size; ++b) {
+			std::memcpy(d_logsig + b * m, d_out + b * m, m * sizeof(T));
+			std::memcpy(d_displacement + b * dimension, d_out + b * m, dimension * sizeof(T));
+		}
+		return;
+	}
+
+	uint64_t m2 = cache.bch_coefficients.size();
+
+	auto func = [&](uint64_t start, uint64_t end) {
+		std::vector<T> workspace(2 * m2 * m);
+		auto linear_ls = std::make_unique<T[]>(m);
+		auto d_ls2 = std::make_unique<T[]>(m);
+		for (uint64_t b = start; b < end; ++b) {
+			std::fill(linear_ls.get(), linear_ls.get() + m, static_cast<T>(0));
+			std::memcpy(linear_ls.get(), displacement + b * dimension, dimension * sizeof(T));
+			log_sig_combine_backprop_impl_<T>(
+				d_out + b * m, d_logsig + b * m, d_ls2.get(),
+				log_sig + b * m, linear_ls.get(),
+				cache, workspace.data());
+			std::memcpy(d_displacement + b * dimension, d_ls2.get(), dimension * sizeof(T));
+		}
+	};
+
+	if (n_jobs == 0) throw std::invalid_argument("n_jobs cannot be 0");
+	const int max_threads = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
+	const uint64_t num_threads = std::min(static_cast<uint64_t>(std::max(max_threads, 1)), batch_size);
+
+	if (num_threads > 1) {
+		std::vector<std::thread> workers;
+		const uint64_t chunk = batch_size / num_threads;
+		const uint64_t remainder = batch_size % num_threads;
+		uint64_t start = 0;
+		for (uint64_t t = 0; t < num_threads; ++t) {
+			uint64_t end = start + chunk + (t < remainder ? 1 : 0);
+			workers.emplace_back(func, start, end);
+			start = end;
+		}
+		for (auto& w : workers) w.join();
+	}
+	else {
+		func(0, batch_size);
+	}
+}
+
+// ========================================================================
 // log_sig_from_path_: compute log-signature directly via sequential BCH
 // ========================================================================
 
