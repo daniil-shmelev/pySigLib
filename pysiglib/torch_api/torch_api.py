@@ -634,12 +634,13 @@ linear_sig.__doc__ = linear_sig_forward.__doc__
 
 class SigJoin(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, sig, displacement, dimension, degree, n_jobs):
-        result = sig_join_forward(sig, displacement, dimension, degree, n_jobs)
+    def forward(ctx, sig, displacement, dimension, degree, prepend, n_jobs):
+        result = sig_join_forward(sig, displacement, dimension, degree, prepend=prepend, n_jobs=n_jobs)
 
         ctx.save_for_backward(sig, displacement)
         ctx.dimension = dimension
         ctx.degree = degree
+        ctx.prepend = prepend
         ctx.n_jobs = n_jobs
 
         return result
@@ -647,17 +648,18 @@ class SigJoin(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         sig, displacement = ctx.saved_tensors
-        d_sig, d_displacement = sig_join_backprop(grad_output, sig, displacement, ctx.dimension, ctx.degree, ctx.n_jobs)
-        return d_sig, d_displacement, None, None, None
+        d_sig, d_displacement = sig_join_backprop(grad_output, sig, displacement, ctx.dimension, ctx.degree, prepend=ctx.prepend, n_jobs=ctx.n_jobs)
+        return d_sig, d_displacement, None, None, None, None
 
 def sig_join(
         sig : Union[np.ndarray, torch.tensor],
         displacement : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        prepend : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    return SigJoin.apply(sig, displacement, dimension, degree, n_jobs)
+    return SigJoin.apply(sig, displacement, dimension, degree, int(prepend), n_jobs)
 
 sig_join.__doc__ = sig_join_forward.__doc__
 

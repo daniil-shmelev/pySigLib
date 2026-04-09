@@ -29,20 +29,21 @@ if BUILT_WITH_CUDA:
     from .dtypes import CUSIG_BATCH_SIG_JOIN_CUDA
 
 
-def sig_join_(sig_data, disp_data, result, dimension, degree):
+def sig_join_(sig_data, disp_data, result, dimension, degree, prepend):
     err_code = CPSIG_SIG_JOIN[sig_data.dtype](
         sig_data.data_ptr,
         disp_data.data_ptr,
         result.data_ptr,
         dimension,
-        degree
+        degree,
+        prepend
     )
 
     if err_code:
         raise Exception("Error in pysiglib.sig_join: " + err_msg(err_code))
     return result.data
 
-def batch_sig_join_(sig_data, disp_data, result, dimension, degree, n_jobs):
+def batch_sig_join_(sig_data, disp_data, result, dimension, degree, prepend, n_jobs):
     err_code = CPSIG_BATCH_SIG_JOIN[sig_data.dtype](
         sig_data.data_ptr,
         disp_data.data_ptr,
@@ -50,6 +51,7 @@ def batch_sig_join_(sig_data, disp_data, result, dimension, degree, n_jobs):
         sig_data.batch_size,
         dimension,
         degree,
+        prepend,
         n_jobs
     )
 
@@ -58,14 +60,15 @@ def batch_sig_join_(sig_data, disp_data, result, dimension, degree, n_jobs):
     return result.data
 
 
-def sig_join_cuda_(sig_data, disp_data, result, dimension, degree):
+def sig_join_cuda_(sig_data, disp_data, result, dimension, degree, prepend):
     err_code = CUSIG_BATCH_SIG_JOIN_CUDA[sig_data.dtype](
         sig_data.data_ptr,
         disp_data.data_ptr,
         result.data_ptr,
         sig_data.batch_size,
         dimension,
-        degree
+        degree,
+        prepend
     )
 
     if err_code:
@@ -78,6 +81,7 @@ def sig_join(
         displacement : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        prepend : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -150,7 +154,7 @@ def sig_join(
 
     if sig_data.device == "cpu":
         if sig_data.is_batch:
-            return batch_sig_join_(sig_data, disp_data, result, dimension, degree, n_jobs)
-        return sig_join_(sig_data, disp_data, result, dimension, degree)
+            return batch_sig_join_(sig_data, disp_data, result, dimension, degree, prepend, n_jobs)
+        return sig_join_(sig_data, disp_data, result, dimension, degree, prepend)
     else:
-        return sig_join_cuda_(sig_data, disp_data, result, dimension, degree)
+        return sig_join_cuda_(sig_data, disp_data, result, dimension, degree, prepend)

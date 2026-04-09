@@ -10,4 +10,5 @@ API Reference
    /pages/signature_coefficients
    /pages/log_signatures
    /pages/signature_kernels
+   /pages/streams
    /pages/backprop

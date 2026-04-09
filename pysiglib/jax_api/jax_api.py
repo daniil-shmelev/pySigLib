@@ -455,28 +455,28 @@ log_sig_combine.__doc__ = log_sig_combine_forward.__doc__
 # sig_join
 # ---------------------------------------------------------------------------
 
-@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4))
-def _sig_join(sig_arr, displacement, dimension, degree, n_jobs):
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5))
+def _sig_join(sig_arr, displacement, dimension, degree, prepend, n_jobs):
     out_len = _sig_length(dimension, degree)
     out_shape = (*sig_arr.shape[:-1], out_len)
     out_type = jax.ShapeDtypeStruct(out_shape, sig_arr.dtype)
     return jax.pure_callback(
-        lambda s, d: sig_join_forward(np.asarray(s), np.asarray(d), dimension, degree, n_jobs),
+        lambda s, d: sig_join_forward(np.asarray(s), np.asarray(d), dimension, degree, prepend=prepend, n_jobs=n_jobs),
         out_type, sig_arr, displacement,
     )
 
 
-def _sig_join_fwd(sig_arr, displacement, dimension, degree, n_jobs):
-    result = _sig_join(sig_arr, displacement, dimension, degree, n_jobs)
+def _sig_join_fwd(sig_arr, displacement, dimension, degree, prepend, n_jobs):
+    result = _sig_join(sig_arr, displacement, dimension, degree, prepend, n_jobs)
     return result, (sig_arr, displacement)
 
 
-def _sig_join_bwd(dimension, degree, n_jobs, residual, cotangent):
+def _sig_join_bwd(dimension, degree, prepend, n_jobs, residual, cotangent):
     sig_arr, displacement = residual
     out_sig_type = jax.ShapeDtypeStruct(sig_arr.shape, sig_arr.dtype)
     out_disp_type = jax.ShapeDtypeStruct(displacement.shape, displacement.dtype)
     grad_sig, grad_disp = jax.pure_callback(
-        lambda co, s, d: sig_join_backprop(np.asarray(co), np.asarray(s), np.asarray(d), dimension, degree, n_jobs),
+        lambda co, s, d: sig_join_backprop(np.asarray(co), np.asarray(s), np.asarray(d), dimension, degree, prepend=prepend, n_jobs=n_jobs),
         (out_sig_type, out_disp_type), cotangent, sig_arr, displacement,
     )
     return (grad_sig, grad_disp)
@@ -490,6 +490,7 @@ def sig_join(
     displacement,
     dimension: int,
     degree: int,
+    prepend: bool = False,
     n_jobs: int = 1,
 ):
     """Extends a truncated signature by a single displacement vector (JAX).
@@ -511,7 +512,7 @@ def sig_join(
     if n_jobs == 0:
         raise ValueError("n_jobs cannot be 0")
 
-    return _sig_join(sig_arr, displacement, dimension, degree, n_jobs)
+    return _sig_join(sig_arr, displacement, dimension, degree, prepend, n_jobs)
 
 
 sig_join.__doc__ = sig_join_forward.__doc__

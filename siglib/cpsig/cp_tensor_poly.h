@@ -409,7 +409,8 @@ void sig_join_(
 	const T* displacement,
 	T* out,
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	bool prepend = false
 ) {
 	if (dimension == 0) { throw std::invalid_argument("sig_join received dimension 0"); }
 
@@ -423,8 +424,13 @@ void sig_join_(
 	T* lsig = lsig_uptr.get();
 	linear_sig_with_level_index_(displacement, lsig, dimension, degree, level_index);
 
-	std::memcpy(out, sig, siglength * sizeof(T));
-	sig_combine_inplace_(out, lsig, degree, level_index);
+	if (prepend) {
+		std::memcpy(out, lsig, siglength * sizeof(T));
+		sig_combine_inplace_(out, sig, degree, level_index);
+	} else {
+		std::memcpy(out, sig, siglength * sizeof(T));
+		sig_combine_inplace_(out, lsig, degree, level_index);
+	}
 }
 
 template<std::floating_point T>
@@ -435,6 +441,7 @@ void batch_sig_join_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
+	bool prepend = false,
 	int n_jobs = 1
 ) {
 	if (dimension == 0) { throw std::invalid_argument("sig_join received dimension 0"); }
@@ -445,22 +452,23 @@ void batch_sig_join_(
 
 	const uint64_t siglength = level_index[degree + 1];
 
-	// Per-element function with pre-computed level_index and reusable lsig buffer
 	auto func = [&](const T* sig_ptr, const T* disp_ptr, T* out_ptr) {
-		// Each thread needs its own lsig buffer in the multi-threaded case,
-		// but for single-threaded we reuse one buffer across iterations.
 		auto lsig_uptr = std::make_unique<T[]>(siglength);
 		T* lsig = lsig_uptr.get();
 		linear_sig_with_level_index_(disp_ptr, lsig, dimension, degree, level_index);
-		std::memcpy(out_ptr, sig_ptr, siglength * sizeof(T));
-		sig_combine_inplace_(out_ptr, lsig, degree, level_index);
+		if (prepend) {
+			std::memcpy(out_ptr, lsig, siglength * sizeof(T));
+			sig_combine_inplace_(out_ptr, sig_ptr, degree, level_index);
+		} else {
+			std::memcpy(out_ptr, sig_ptr, siglength * sizeof(T));
+			sig_combine_inplace_(out_ptr, lsig, degree, level_index);
+		}
 	};
 
 	if (n_jobs != 1) {
 		multi_threaded_batch_2<const T, const T, T>(func, sig, displacement, out, batch_size, siglength, dimension, siglength, n_jobs);
 	}
 	else {
-		// Single-threaded: allocate lsig once and reuse
 		auto lsig_uptr = std::make_unique<T[]>(siglength);
 		T* lsig = lsig_uptr.get();
 		const T* sig_ptr = sig;
@@ -468,8 +476,13 @@ void batch_sig_join_(
 		T* out_ptr = out;
 		for (uint64_t i = 0; i < batch_size; ++i, sig_ptr += siglength, disp_ptr += dimension, out_ptr += siglength) {
 			linear_sig_with_level_index_(disp_ptr, lsig, dimension, degree, level_index);
-			std::memcpy(out_ptr, sig_ptr, siglength * sizeof(T));
-			sig_combine_inplace_(out_ptr, lsig, degree, level_index);
+			if (prepend) {
+				std::memcpy(out_ptr, lsig, siglength * sizeof(T));
+				sig_combine_inplace_(out_ptr, sig_ptr, degree, level_index);
+			} else {
+				std::memcpy(out_ptr, sig_ptr, siglength * sizeof(T));
+				sig_combine_inplace_(out_ptr, lsig, degree, level_index);
+			}
 		}
 	}
 }
@@ -487,7 +500,8 @@ void sig_join_backprop_(
 	const T* sig,
 	const T* displacement,
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	bool prepend = false
 ) {
 	if (dimension == 0) { throw std::invalid_argument("sig_join_backprop received dimension 0"); }
 
@@ -506,8 +520,15 @@ void sig_join_backprop_(
 	auto d_lsig_uptr = std::make_unique<T[]>(siglength);
 	T* d_lsig = d_lsig_uptr.get();
 
-	std::memcpy(d_sig, d_out, siglength * sizeof(T));
-	uncombine_sig_deriv(sig, lsig, d_sig, d_lsig, dimension, degree, level_index);
+	if (prepend) {
+		// Forward was lsig ⊗ sig
+		std::memcpy(d_lsig, d_out, siglength * sizeof(T));
+		uncombine_sig_deriv(lsig, sig, d_lsig, d_sig, dimension, degree, level_index);
+	} else {
+		// Forward was sig ⊗ lsig
+		std::memcpy(d_sig, d_out, siglength * sizeof(T));
+		uncombine_sig_deriv(sig, lsig, d_sig, d_lsig, dimension, degree, level_index);
+	}
 	d_sig[0] = static_cast<T>(0);
 	d_lsig[0] = static_cast<T>(0);
 
@@ -531,6 +552,7 @@ void batch_sig_join_backprop_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
+	bool prepend = false,
 	int n_jobs = 1
 ) {
 	if (dimension == 0) { throw std::invalid_argument("sig_join_backprop received dimension 0"); }
@@ -545,7 +567,7 @@ void batch_sig_join_backprop_(
 				d_displacement + i * dimension,
 				sig + i * siglength,
 				displacement + i * dimension,
-				dimension, degree
+				dimension, degree, prepend
 			);
 		}
 	};

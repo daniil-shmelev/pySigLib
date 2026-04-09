@@ -29,7 +29,7 @@ if BUILT_WITH_CUDA:
     from .dtypes import CUSIG_BATCH_SIG_JOIN_BACKPROP_CUDA
 
 
-def sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree):
+def sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree, prepend):
     err_code = CPSIG_SIG_JOIN_BACKPROP[d_out_data.dtype](
         d_out_data.data_ptr,
         d_sig.data_ptr,
@@ -37,14 +37,15 @@ def sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension
         sig_data.data_ptr,
         disp_data.data_ptr,
         dimension,
-        degree
+        degree,
+        prepend
     )
 
     if err_code:
         raise Exception("Error in pysiglib.sig_join_backprop: " + err_msg(err_code))
     return d_sig.data, d_disp.data
 
-def batch_sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree, n_jobs):
+def batch_sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree, prepend, n_jobs):
     err_code = CPSIG_BATCH_SIG_JOIN_BACKPROP[d_out_data.dtype](
         d_out_data.data_ptr,
         d_sig.data_ptr,
@@ -54,6 +55,7 @@ def batch_sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dim
         d_out_data.batch_size,
         dimension,
         degree,
+        prepend,
         n_jobs
     )
 
@@ -62,7 +64,7 @@ def batch_sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dim
     return d_sig.data, d_disp.data
 
 
-def sig_join_backprop_cuda_(d_out_data, sig_data, disp_data, d_sig, d_disp, dimension, degree):
+def sig_join_backprop_cuda_(d_out_data, sig_data, disp_data, d_sig, d_disp, dimension, degree, prepend):
     err_code = CUSIG_BATCH_SIG_JOIN_BACKPROP_CUDA[d_out_data.dtype](
         d_out_data.data_ptr,
         d_sig.data_ptr,
@@ -71,7 +73,8 @@ def sig_join_backprop_cuda_(d_out_data, sig_data, disp_data, d_sig, d_disp, dime
         disp_data.data_ptr,
         d_out_data.batch_size,
         dimension,
-        degree
+        degree,
+        prepend
     )
 
     if err_code:
@@ -85,6 +88,7 @@ def sig_join_backprop(
         displacement : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        prepend : bool = False,
         n_jobs : int = 1
 ):
     """
@@ -165,7 +169,7 @@ def sig_join_backprop(
 
     if d_out_data.device == "cpu":
         if d_out_data.is_batch:
-            return batch_sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree, n_jobs)
-        return sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree)
+            return batch_sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree, prepend, n_jobs)
+        return sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree, prepend)
     else:
-        return sig_join_backprop_cuda_(d_out_data, sig_data, disp_data, d_sig, d_disp, dimension, degree)
+        return sig_join_backprop_cuda_(d_out_data, sig_data, disp_data, d_sig, d_disp, dimension, degree, prepend)
