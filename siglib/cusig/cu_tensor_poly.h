@@ -23,9 +23,19 @@
 inline uint64_t host_power(uint64_t base, uint64_t exp) {
 	uint64_t result = 1;
 	while (exp > 0) {
-		if (exp & 1) result *= base;
-		base *= base;
+		if (exp & 1) {
+			// result * base overflows iff base > UINT64_MAX / result
+			if (result != 0 && base > UINT64_MAX / result)
+				return 0;
+			result *= base;
+		}
 		exp >>= 1;
+		if (exp > 0) {
+			// base * base overflows iff base > UINT64_MAX / base
+			if (base != 0 && base > UINT64_MAX / base)
+				return 0;
+			base *= base;
+		}
 	}
 	return result;
 }
@@ -33,7 +43,10 @@ inline uint64_t host_power(uint64_t base, uint64_t exp) {
 inline uint64_t host_sig_length(uint64_t dimension, uint64_t degree) {
 	if (dimension == 0) return 1;
 	if (dimension == 1) return degree + 1;
-	return (host_power(dimension, degree + 1) - 1) / (dimension - 1);
+	const auto pwr = host_power(dimension, degree + 1);
+	if (pwr)
+		return (pwr - 1) / (dimension - 1);
+	return 0; // overflow
 }
 
 inline void host_populate_level_index(uint64_t* level_index, uint64_t dimension, uint64_t count) {

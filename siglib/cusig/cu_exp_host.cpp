@@ -86,12 +86,6 @@ static Word longest_lyndon_suffix(const Word& w, const std::unordered_set<Word, 
 	throw std::runtime_error("No Lyndon suffix found");
 }
 
-static uint64_t host_power(uint64_t base, uint64_t exp) {
-	uint64_t r = 1;
-	while (exp) { if (exp & 1) r *= base; base *= base; exp >>= 1; }
-	return r;
-}
-
 static void host_populate_level_index(uint64_t* li, uint64_t d, uint64_t count) {
 	li[0] = 0;
 	for (uint64_t i = 1; i < count; ++i) li[i] = li[i - 1] * d + 1;

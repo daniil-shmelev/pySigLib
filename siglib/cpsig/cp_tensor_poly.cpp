@@ -22,17 +22,19 @@
 uint64_t power(uint64_t base, uint64_t exp) noexcept {
     uint64_t result = 1;
     while (exp > 0) {
-        if (exp % 2 == 1) {
-            const auto _res = result * base;
-            if (_res < result)
-                return 0; // overflow
-            result = _res;
+        if (exp & 1) {
+            // result * base overflows iff base > UINT64_MAX / result
+            if (result != 0 && base > UINT64_MAX / result)
+                return 0;
+            result *= base;
         }
-        const auto _base = base * base;
-        if (_base < base)
-            return 0; // overflow
-        base = _base;
-        exp /= 2;
+        exp >>= 1;
+        if (exp > 0) {
+            // base * base overflows iff base > UINT64_MAX / base
+            if (base != 0 && base > UINT64_MAX / base)
+                return 0;
+            base *= base;
+        }
     }
     return result;
 }
