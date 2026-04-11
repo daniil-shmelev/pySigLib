@@ -37,6 +37,8 @@
 #include <memory>
 #include <string>
 #include <filesystem>
+#include <mutex>
+#include <shared_mutex>
 
 // =========================================================================
 // Shared CUDA error-checking helpers

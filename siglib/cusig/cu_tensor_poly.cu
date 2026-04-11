@@ -383,6 +383,7 @@ __global__ void sig_join_kernel(
 
 static void* g_sig_join_lsig_buf = nullptr;
 static size_t g_sig_join_lsig_bytes = 0;
+static std::mutex g_sig_join_lsig_mu;
 
 template<typename T>
 void sig_join_cuda_(
@@ -403,6 +404,7 @@ void sig_join_cuda_(
 
 	// Workspace for linear sig
 	size_t need = sizeof(T) * batch_size * sig_len;
+	std::lock_guard<std::mutex> lock(g_sig_join_lsig_mu);
 	if (need > g_sig_join_lsig_bytes) {
 		if (g_sig_join_lsig_buf) cudaFree(g_sig_join_lsig_buf);
 		cudaMalloc(&g_sig_join_lsig_buf, need);

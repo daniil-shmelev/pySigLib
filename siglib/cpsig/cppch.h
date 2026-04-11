@@ -34,6 +34,8 @@
 #include <stdlib.h>
 #include <utility>
 #include <thread>
+#include <mutex>
+#include <shared_mutex>
 #include <functional>
 #include <concepts>
 #include <variant>

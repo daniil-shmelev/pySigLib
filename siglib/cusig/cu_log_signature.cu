@@ -61,8 +61,10 @@ struct CUDALogSigWorkspace {
 };
 
 static CUDALogSigWorkspace g_workspace;
+static std::mutex g_workspace_mu;
 
 void free_cuda_log_sig_workspace_() {
+	std::lock_guard<std::mutex> lock(g_workspace_mu);
 	g_workspace.free();
 }
 
@@ -141,6 +143,7 @@ void sig_to_log_sig_cuda_core_(
 	// Allocate scratch buffers via workspace cache
 	const uint64_t buff1_len = degree >= 2 ? host_sig_length(dimension, degree - 1) : 1;
 
+	std::lock_guard<std::mutex> lock(g_workspace_mu);
 	g_workspace.ensure(0, sizeof(T) * batch_size * buff1_len, sizeof(T) * batch_size * sig_len);
 
 	// Choose threads per block based on largest level size
@@ -307,7 +310,7 @@ void sig_to_log_sig_cuda_m1_core_(
 	const uint64_t buff1_len = cache.buff1_len;
 	const uint64_t log_sig_len = cache.log_sig_len;
 
-	// Use cached workspace for scratch buffers
+	std::lock_guard<std::mutex> lock(g_workspace_mu);
 	g_workspace.ensure(
 		sizeof(T) * batch_size * sig_len,
 		sizeof(T) * batch_size * buff1_len,
@@ -345,7 +348,7 @@ void sig_to_log_sig_cuda_m2_core_(
 	const uint64_t buff1_len = cache.buff1_len;
 	const uint64_t log_sig_len = cache.log_sig_len;
 
-	// Use cached workspace for scratch buffers
+	std::lock_guard<std::mutex> lock(g_workspace_mu);
 	g_workspace.ensure(
 		sizeof(T) * batch_size * sig_len,
 		sizeof(T) * batch_size * buff1_len,
@@ -400,8 +403,10 @@ struct CUDALogSigBackpropWorkspace {
 };
 
 static CUDALogSigBackpropWorkspace g_bp_workspace;
+static std::mutex g_bp_workspace_mu;
 
 void free_cuda_log_sig_backprop_workspace_() {
+	std::lock_guard<std::mutex> lock(g_bp_workspace_mu);
 	g_bp_workspace.free();
 }
 
@@ -500,9 +505,10 @@ void sig_to_log_sig_backprop_cuda_core_(
 		sig_len;                     // buff2
 
 	const size_t derivs_size = sizeof(T) * batch_size * sig_len;
+
+	std::lock_guard<std::mutex> lock(g_bp_workspace_mu);
 	g_bp_workspace.ensure(sizeof(T) * batch_size * scratch_per_element, derivs_size);
 
-	// We need a mutable copy of derivs (the kernel modifies it via pointer swaps)
 	cudaMemcpy(g_bp_workspace.d_derivs, log_sig_derivs, derivs_size, cudaMemcpyDeviceToDevice);
 
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
@@ -606,6 +612,8 @@ void sig_to_log_sig_backprop_cuda_m1_core_(
 		sig_len + (degree > 1 ? (degree - 1) : 1) * buff1_len + sig_len + buff1_len + sig_len;
 
 	const size_t derivs_size = sizeof(T) * batch_size * sig_len;
+
+	std::lock_guard<std::mutex> lock(g_bp_workspace_mu);
 	g_bp_workspace.ensure(sizeof(T) * batch_size * scratch_per_element, derivs_size);
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t) + cache.threads_per_block * sizeof(T);
@@ -721,6 +729,8 @@ void sig_to_log_sig_backprop_cuda_m2_core_(
 		sig_len + (degree > 1 ? (degree - 1) : 1) * buff1_len + sig_len + buff1_len + sig_len;
 
 	const size_t derivs_size = sizeof(T) * batch_size * sig_len;
+
+	std::lock_guard<std::mutex> lock(g_bp_workspace_mu);
 	g_bp_workspace.ensure(sizeof(T) * batch_size * scratch_per_element, derivs_size);
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t) + cache.threads_per_block * sizeof(T);

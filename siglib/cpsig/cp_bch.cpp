@@ -17,6 +17,7 @@
 #include "cp_bch.h"
 
 std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BchCache>, PairHash> bch_cache;
+std::shared_mutex bch_cache_mu;
 
 extern "C" {
 

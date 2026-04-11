@@ -381,6 +381,11 @@ inline std::unordered_map<std::pair<uint64_t, uint64_t>, CUDALogSigCache, CuPair
 	return cache;
 }
 
+inline std::mutex& get_cuda_log_sig_cache_mu_() {
+	static std::mutex mu;
+	return mu;
+}
+
 inline void upload_csr_to_gpu_(
 	const CuSparseIntMatrix& mat,
 	int*& d_vals, uint64_t*& d_cols, uint64_t*& d_row_ptr
@@ -588,6 +593,7 @@ inline void populate_cuda_cache_entry_(
 inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int method, bool use_disk) {
 	auto key = std::make_pair(dimension, degree);
 	auto& cache_map = get_cuda_log_sig_cache_map_();
+	std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
 
 	auto it = cache_map.find(key);
 	if (it != cache_map.end()) {
@@ -670,6 +676,7 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_t degree, int method = 1) {
 	auto key = std::make_pair(dimension, degree);
 	auto& cache_map = get_cuda_log_sig_cache_map_();
+	std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
 	auto it = cache_map.find(key);
 
 	// Auto-reload from disk if memory cache is empty
@@ -718,7 +725,10 @@ void free_cuda_log_sig_backprop_workspace_();
 void clear_cuda_bch_cache_();
 
 inline void clear_cache_cuda_(bool use_disk) {
-	get_cuda_log_sig_cache_map_().clear();
+	{
+		std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
+		get_cuda_log_sig_cache_map_().clear();
+	}
 	clear_cuda_bch_cache_();
 	free_cuda_log_sig_workspace_();
 	free_cuda_log_sig_backprop_workspace_();

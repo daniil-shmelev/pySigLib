@@ -435,6 +435,7 @@ struct CUDAExpSigWorkspace {
 };
 
 static CUDAExpSigWorkspace g_exp_workspace;
+static std::mutex g_exp_workspace_mu;
 
 // =========================================================================
 // Host-side forward launch
@@ -469,6 +470,8 @@ void logsig_to_sig_cuda_(
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
+
+	std::lock_guard<std::mutex> lock(g_exp_workspace_mu);
 
 	if (method == 0) {
 		g_exp_workspace.ensure_forward(sizeof(T) * batch_size * 2 * sig_len);
@@ -549,6 +552,8 @@ void logsig_to_sig_backprop_cuda_(
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
+
+	std::lock_guard<std::mutex> lock(g_exp_workspace_mu);
 
 	if (method == 0) {
 		g_exp_workspace.ensure_backward(

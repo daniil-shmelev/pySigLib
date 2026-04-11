@@ -56,6 +56,7 @@ struct BasisCache {
 
 extern const char* version;
 extern std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BasisCache>, PairHash> basis_cache;
+extern std::shared_mutex basis_cache_mu;
 
 class CacheFile {
 public:

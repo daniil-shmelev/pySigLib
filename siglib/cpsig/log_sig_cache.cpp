@@ -17,11 +17,13 @@
 #include "cppch.h"
 #include "log_sig_cache.h"
 #include "cp_bch.h"
+#include "cp_branched_cache.h"
 
 const char* version = "v1";
 std::filesystem::path cache_dir;
 const char* cache_folder_name = "pysiglib_cache";
 std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BasisCache>, PairHash> basis_cache;
+std::shared_mutex basis_cache_mu;
 
 void serialize_vector(std::ostream& out, const std::vector<uint64_t>& v) {
 
@@ -95,47 +97,45 @@ void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_d
 
 	std::pair<uint64_t, uint64_t> key(dimension, degree);
 
-	auto it = basis_cache.find(key);
-	bool exists_in_memory = it != basis_cache.end() && it->second->method >= method;
-	if (!exists_in_memory) {
-
-		CacheFile file(dimension, degree);
-		if (use_disk) {
-			if (file.exists()) {
-				auto basis_obj = std::make_unique<BasisCache>();
-				file.read(basis_obj);
-				if (basis_obj->method >= method) {
-					basis_cache.insert_or_assign(key, std::move(basis_obj));
-					return;
-				}
-			}
-		}
-
-		std::vector<word> lyndon_words = all_lyndon_words(dimension, degree);
-		std::vector<uint64_t> lyndon_idx = all_lyndon_idx(dimension, degree);
-		SparseIntMatrix p, p_inv, p_inv_t;
-		if (method == 2) {
-			lyndon_proj_matrix(p, lyndon_words, lyndon_idx, dimension, degree);
-			p.inverse(p_inv);
-			p_inv.transpose(p_inv_t);
-		}
-
-
-		auto basis_obj = std::make_unique<BasisCache>(
-			method,
-			std::move(lyndon_idx),
-			std::move(p_inv),
-			std::move(p_inv_t)
-		);
-
-		//Save to disk
-		if (use_disk) {
-			file.write(basis_obj);
-		}
-
-		//Save to memory
-		basis_cache.insert_or_assign(key, std::move(basis_obj));
+	{
+		std::shared_lock rlock(basis_cache_mu);
+		auto it = basis_cache.find(key);
+		if (it != basis_cache.end() && it->second->method >= method) return;
 	}
+
+	CacheFile file(dimension, degree);
+	if (use_disk && file.exists()) {
+		auto basis_obj = std::make_unique<BasisCache>();
+		file.read(basis_obj);
+		if (basis_obj->method >= method) {
+			std::unique_lock wlock(basis_cache_mu);
+			basis_cache.insert_or_assign(key, std::move(basis_obj));
+			return;
+		}
+	}
+
+	std::vector<word> lyndon_words = all_lyndon_words(dimension, degree);
+	std::vector<uint64_t> lyndon_idx = all_lyndon_idx(dimension, degree);
+	SparseIntMatrix p, p_inv, p_inv_t;
+	if (method == 2) {
+		lyndon_proj_matrix(p, lyndon_words, lyndon_idx, dimension, degree);
+		p.inverse(p_inv);
+		p_inv.transpose(p_inv_t);
+	}
+
+	auto basis_obj = std::make_unique<BasisCache>(
+		method,
+		std::move(lyndon_idx),
+		std::move(p_inv),
+		std::move(p_inv_t)
+	);
+
+	if (use_disk) {
+		file.write(basis_obj);
+	}
+
+	std::unique_lock wlock(basis_cache_mu);
+	basis_cache.insert_or_assign(key, std::move(basis_obj));
 }
 
 const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int method) {
@@ -146,24 +146,26 @@ const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int metho
 
 	std::pair<uint64_t, uint64_t> key(dimension, degree);
 
-	auto it = basis_cache.find(key);
-	if (it == basis_cache.end() || it->second->method < method) {
-
-		//Check disk
-		CacheFile file(dimension, degree);
-		if (!file.exists())
-			throw std::runtime_error("Could not find basis cache");
-
-		auto basis_obj = std::make_unique<BasisCache>();
-		file.read(basis_obj);
-
-		if (basis_obj->method < method)
-			throw std::runtime_error("Could not find basis cache");
-
-		auto p = basis_cache.insert_or_assign(key, std::move(basis_obj));
-		return *(p.first->second);
+	{
+		std::shared_lock rlock(basis_cache_mu);
+		auto it = basis_cache.find(key);
+		if (it != basis_cache.end() && it->second->method >= method)
+			return *(it->second);
 	}
-	return *(it->second);
+
+	CacheFile file(dimension, degree);
+	if (!file.exists())
+		throw std::runtime_error("Could not find basis cache");
+
+	auto basis_obj = std::make_unique<BasisCache>();
+	file.read(basis_obj);
+
+	if (basis_obj->method < method)
+		throw std::runtime_error("Could not find basis cache");
+
+	std::unique_lock wlock(basis_cache_mu);
+	auto p = basis_cache.insert_or_assign(key, std::move(basis_obj));
+	return *(p.first->second);
 }
 
 void clear_cache_(bool use_disk) {
@@ -171,8 +173,12 @@ void clear_cache_(bool use_disk) {
 		set_default_cache_dir();
 	}
 
-	basis_cache.clear();
+	{
+		std::unique_lock wlock(basis_cache_mu);
+		basis_cache.clear();
+	}
 	clear_bch_cache();
+	clear_branched_sig_cache();
 
 	if (use_disk)
 		std::filesystem::remove_all(cache_dir / cache_folder_name);

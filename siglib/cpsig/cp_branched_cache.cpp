@@ -25,6 +25,7 @@ std::unordered_map<
 	std::unique_ptr<BranchedSigCache>,
 	PairHash
 > branched_sig_cache_map;
+std::shared_mutex branched_sig_cache_mu;
 
 // ---------------------------------------------------------------------------
 // Admissible cut enumeration and coproduct computation
@@ -229,14 +230,17 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, Branched
 void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk) {
 	std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
 
-	if (branched_sig_cache_map.find(key) != branched_sig_cache_map.end()) {
-		return;  // already cached in memory
+	{
+		std::shared_lock rlock(branched_sig_cache_mu);
+		if (branched_sig_cache_map.find(key) != branched_sig_cache_map.end())
+			return;
 	}
 
 	// Try loading from disk
 	if (use_disk) {
 		auto cache = std::make_unique<BranchedSigCache>();
 		if (read_branched_cache(dimension, max_nodes, *cache)) {
+			std::unique_lock wlock(branched_sig_cache_mu);
 			branched_sig_cache_map.insert_or_assign(key, std::move(cache));
 			return;
 		}
@@ -320,11 +324,13 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 		write_branched_cache(*cache);
 	}
 
+	std::unique_lock wlock(branched_sig_cache_mu);
 	branched_sig_cache_map.insert_or_assign(key, std::move(cache));
 }
 
 const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes) {
 	std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
+	std::shared_lock rlock(branched_sig_cache_mu);
 	auto it = branched_sig_cache_map.find(key);
 	if (it == branched_sig_cache_map.end()) {
 		throw std::runtime_error("Branched signature cache not found. Call prepare_branched_sig first.");
@@ -334,11 +340,18 @@ const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_
 
 uint64_t branched_sig_length_(uint64_t dimension, uint64_t max_nodes) {
 	std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
-	auto it = branched_sig_cache_map.find(key);
-	if (it != branched_sig_cache_map.end()) {
-		return it->second->total_length;
+	{
+		std::shared_lock rlock(branched_sig_cache_mu);
+		auto it = branched_sig_cache_map.find(key);
+		if (it != branched_sig_cache_map.end())
+			return it->second->total_length;
 	}
 	return compute_branched_sig_length(dimension, max_nodes);
+}
+
+void clear_branched_sig_cache() {
+	std::unique_lock wlock(branched_sig_cache_mu);
+	branched_sig_cache_map.clear();
 }
 
 // ---------------------------------------------------------------------------

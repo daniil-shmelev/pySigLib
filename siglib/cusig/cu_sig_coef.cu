@@ -25,6 +25,9 @@
 __constant__ double c_one_over_fact_d[SIG_COEF_CUDA_MAX_DEGREE + 1];
 __constant__ float  c_one_over_fact_f[SIG_COEF_CUDA_MAX_DEGREE + 1];
 
+// Serializes concurrent uploads to the __constant__ symbols above.
+static std::mutex c_one_over_fact_mu;
+
 // =========================================================================
 // Upload 1/k! to constant memory and return device pointer
 // =========================================================================
@@ -286,6 +289,7 @@ void sig_coef_cuda_(
 		return;
 	}
 
+	std::lock_guard<std::mutex> ovf_lock(c_one_over_fact_mu);
 	const T* d_one_over_fact = upload_one_over_fact<T>(max_degree);
 
 	// Upload prefix sums (single allocation, single memcpy)
@@ -712,6 +716,7 @@ void sig_coef_backprop_cuda_(
 
 	if (length <= 1 || max_degree == 0) return;
 
+	std::lock_guard<std::mutex> ovf_lock(c_one_over_fact_mu);
 	const T* d_ovf = upload_one_over_fact<T>(max_degree);
 
 	// Upload prefix sums

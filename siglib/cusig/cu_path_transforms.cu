@@ -27,6 +27,9 @@ __constant__ uint64_t transformed_dimension;
 __constant__ uint64_t transformed_length;
 __constant__ uint64_t transformed_path_size;
 
+// Serializes __constant__ uploads + kernel launches above.
+static std::mutex path_transform_constant_mu;
+
 template<typename T>
 __global__ void transform_path_internal_(
 	const T* data_in,
@@ -94,6 +97,8 @@ void transform_path_(
 	const uint64_t transformed_dimension_ = (lead_lag_ ? 2 * dimension_ : dimension_) + (time_aug_ ? 1 : 0);
 	const uint64_t transformed_path_size_ = transformed_length_ * transformed_dimension_;
 
+	std::lock_guard<std::mutex> lock(path_transform_constant_mu);
+
 	cudaMemcpyToSymbol(path_dimension, &dimension_, sizeof(uint64_t));
 	cudaMemcpyToSymbol(length, &length_, sizeof(uint64_t));
 	cudaMemcpyToSymbol(time_aug, &time_aug_, sizeof(bool));
@@ -106,7 +111,7 @@ void transform_path_(
 
 	transform_path_internal_ << <static_cast<unsigned int>(batch_size_), 32U >> > (data_in, data_out, end_time);
 
-	check_cuda_error();
+	check_cuda_kernel_launch();
 }
 
 template<typename T>
@@ -163,6 +168,8 @@ void transform_path_backprop_(
 	const uint64_t transformed_dimension_ = (lead_lag_ ? 2 * dimension_ : dimension_) + (time_aug_ ? 1 : 0);
 	const uint64_t transformed_path_size_ = transformed_length_ * transformed_dimension_;
 
+	std::lock_guard<std::mutex> lock(path_transform_constant_mu);
+
 	cudaMemcpyToSymbol(path_dimension, &dimension_, sizeof(uint64_t));
 	cudaMemcpyToSymbol(length, &length_, sizeof(uint64_t));
 	cudaMemcpyToSymbol(time_aug, &time_aug_, sizeof(bool));
@@ -180,7 +187,7 @@ void transform_path_backprop_(
 		transform_path_backprop_internal_ << <static_cast<unsigned int>(batch_size_), 32U >> > (derivs, data_out, end_time);
 	}
 
-	check_cuda_error();
+	check_cuda_kernel_launch();
 }
 
 #include "cu_macros.h"

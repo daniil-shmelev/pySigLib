@@ -18,6 +18,9 @@
 #include "cu_log_sig_combine.h"
 #include "cu_macros.h"
 
+static std::mutex s_backprop_workspace_mu;
+static std::mutex s_from_path_workspace_mu;
+
 // =========================================================================
 // CUDA kernel: one block per batch element, threads cooperate on lie_bracket
 // =========================================================================
@@ -546,6 +549,7 @@ void log_sig_combine_backprop_cuda_(
 	// Cached workspace to avoid cudaMalloc/cudaFree per call
 	static T* s_workspace = nullptr;
 	static size_t s_workspace_elems = 0;
+	std::lock_guard<std::mutex> lock(s_backprop_workspace_mu);
 
 	size_t needed_elems = batch_size * ws_per_batch;
 	if (needed_elems > s_workspace_elems) {
@@ -813,6 +817,7 @@ void log_sig_from_path_cuda_(
 	// Cached workspace
 	static T* s_workspace = nullptr;
 	static size_t s_workspace_elems = 0;
+	std::lock_guard<std::mutex> lock(s_from_path_workspace_mu);
 
 	size_t needed_elems = batch_size * ws_per_batch;
 	if (needed_elems > s_workspace_elems) {
