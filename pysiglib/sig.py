@@ -142,11 +142,9 @@ def sig_combine(
     result = SigOutputHandler(data, sig_len)
 
     if data.device == "cpu":
-        res = sig_combine_(data, result, aug_dimension, degree, n_jobs)
+        return sig_combine_(data, result, aug_dimension, degree, n_jobs)
     else:
-        res = sig_combine_cuda_(data, result, aug_dimension, degree)
-
-    return res
+        return sig_combine_cuda_(data, result, aug_dimension, degree)
 
 def sig_(data, result, degree, horner = True):
     err_code = CPSIG_SIGNATURE[data.dtype](

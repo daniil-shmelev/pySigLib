@@ -628,7 +628,21 @@ def linear_sig(
         degree : int,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    return linear_sig_forward(displacement, dimension, degree, n_jobs)
+    # Delegate to sig() on a 2-point path [0, v] to reuse Sig's autograd.
+    if isinstance(displacement, torch.Tensor):
+        if displacement.shape[-1] != dimension:
+            raise ValueError(
+                f"displacement last-dim ({displacement.shape[-1]}) does not match dimension ({dimension})")
+        zeros = torch.zeros_like(displacement)
+        path = torch.stack([zeros, displacement], dim=-2)
+    else:
+        displacement = np.asarray(displacement)
+        if displacement.shape[-1] != dimension:
+            raise ValueError(
+                f"displacement last-dim ({displacement.shape[-1]}) does not match dimension ({dimension})")
+        zeros = np.zeros_like(displacement)
+        path = np.stack([zeros, displacement], axis=-2)
+    return sig(path, degree, n_jobs=n_jobs)
 
 linear_sig.__doc__ = linear_sig_forward.__doc__
 

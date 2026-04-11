@@ -17,6 +17,7 @@ from typing import Union, List, Tuple
 import numpy as np
 import torch
 
+from .param_checks import check_pos, check_type
 from .sig_length import sig_length, log_sig_length
 from .sig_join import sig_join
 from .sig import sig_combine, sig
@@ -50,6 +51,23 @@ def _stack(arrays, like_arr):
         return torch.stack(arrays)
     else:
         return np.stack(arrays)
+
+
+def _is_push_batch_empty(points):
+    """Raise on bad shape. Return True if the batch is empty."""
+    if points.ndim != 2:
+        raise ValueError(
+            f"push_batch expects a 2D array of shape (n_points, dimension); "
+            f"got shape {tuple(points.shape)}")
+    return points.shape[0] == 0
+
+
+def _validate_push_point(point):
+    """Raise on bad point shape (must be 1D)."""
+    if point.ndim != 1:
+        raise ValueError(
+            f"push expects a 1D point of shape (dimension,); "
+            f"got shape {tuple(point.shape)}")
 
 
 class SigStream:
@@ -128,10 +146,12 @@ class SigStream:
         :param points: Points of shape ``(n, dimension)``.
         :type points: numpy.ndarray | torch.Tensor
         """
+        if _is_push_batch_empty(points):
+            return
         if self._last_point is None:
             self.push(points[0])
             points = points[1:]
-            if len(points) == 0:
+            if points.shape[0] == 0:
                 return
 
         if isinstance(points, torch.Tensor):
@@ -174,8 +194,11 @@ class SigStream:
         ei = end - self._start
         if si < 0 or ei >= len(self._sigs):
             raise IndexError(f"Indices [{start}, {end}] out of range [{self._start}, {self._start + len(self._sigs) - 1}]")
-        if si == 0:
-            return self._sigs[ei]
+        # Fast path: no pops + si==0 means combine is a no-op. Return a fresh
+        # copy so the caller can't mutate internal state.
+        if si == 0 and self._start == 0:
+            s = self._sigs[ei]
+            return s.clone() if isinstance(s, torch.Tensor) else s.copy()
         return self._sig_combine_fn(self._inv_sigs[si], self._sigs[ei], self._dimension, self._degree)
 
     def sig_batch(self, intervals: List[Tuple[int, int]]) -> Union[np.ndarray, torch.Tensor]:
@@ -256,6 +279,11 @@ class LogSigStream:
 
     def __init__(self, dimension: int, degree: int, method: int = 2,
                  _log_sig_join=None, _log_sig_combine=None, _log_sig=None):
+        if method not in (2, 3):
+            raise ValueError(
+                f"LogSigStream requires method=2 or method=3 (Lyndon basis); "
+                f"got method={method}. Method 1 uses the Hall basis which is "
+                f"incompatible with log_sig_combine/log_sig_join.")
         self._dimension = dimension
         self._degree = degree
         self._ls_len = log_sig_length(dimension, degree)
@@ -290,10 +318,12 @@ class LogSigStream:
         :param points: Points of shape ``(n, dimension)``.
         :type points: numpy.ndarray | torch.Tensor
         """
+        if _is_push_batch_empty(points):
+            return
         if self._last_point is None:
             self.push(points[0])
             points = points[1:]
-            if len(points) == 0:
+            if points.shape[0] == 0:
                 return
 
         if isinstance(points, torch.Tensor):
@@ -329,8 +359,10 @@ class LogSigStream:
         ei = end - self._start
         if si < 0 or ei >= len(self._log_sigs):
             raise IndexError(f"Indices [{start}, {end}] out of range [{self._start}, {self._start + len(self._log_sigs) - 1}]")
-        if si == 0:
-            return self._log_sigs[ei]
+        # Fast path: no pops + si==0 means BCH is a no-op. Return a fresh copy.
+        if si == 0 and self._start == 0:
+            ls = self._log_sigs[ei]
+            return ls.clone() if isinstance(ls, torch.Tensor) else ls.copy()
         return self._log_sig_combine_fn(-self._log_sigs[si], self._log_sigs[ei],
                                         self._dimension, self._degree)
 
@@ -383,6 +415,9 @@ class _WindowStream:
         self._pending = []   # unbatched points awaiting consolidation
         self._buffer = None  # consolidated array of points
         self._buf_len = 0
+        # Set when `stride > window_size` creates a gap between windows
+        # wider than the buffer currently holds; counts points to drop.
+        self._skip_next = 0
         self._windows = []
         self._next_window_end = window_size - 1
 
@@ -394,6 +429,10 @@ class _WindowStream:
         :param point: A point of shape ``(dimension,)``.
         :type point: numpy.ndarray | torch.Tensor
         """
+        _validate_push_point(point)
+        if self._skip_next > 0:
+            self._skip_next -= 1
+            return
         self._pending.append(point)
         self._buf_len += 1
         self._emit_windows()
@@ -405,6 +444,14 @@ class _WindowStream:
         :param points: Points of shape ``(n, dimension)``.
         :type points: numpy.ndarray | torch.Tensor
         """
+        if _is_push_batch_empty(points):
+            return
+        if self._skip_next > 0:
+            skip_count = min(self._skip_next, points.shape[0])
+            self._skip_next -= skip_count
+            points = points[skip_count:]
+            if points.shape[0] == 0:
+                return
         self._flush_pending()
         if self._buffer is None:
             self._buffer = points
@@ -444,11 +491,17 @@ class _WindowStream:
             self._windows.append(self._sig_fn(window_path, self._degree))
             self._next_window_end += self._stride
 
-        # Trim buffer: discard points before earliest future window start
+        # When `stride > window_size`, `earliest_needed` can exceed `_buf_len`;
+        # drop the whole buffer and defer the remainder to `_skip_next`.
         earliest_needed = self._next_window_end - self._window_size + 1
         if earliest_needed > 0:
-            self._buffer = self._buffer[earliest_needed:]
-            self._buf_len -= earliest_needed
+            if earliest_needed > self._buf_len:
+                self._skip_next += earliest_needed - self._buf_len
+                trim = self._buf_len
+            else:
+                trim = earliest_needed
+            self._buffer = self._buffer[trim:]
+            self._buf_len -= trim
             self._next_window_end -= earliest_needed
 
     def sig(self) -> Union[np.ndarray, torch.Tensor]:
@@ -499,6 +552,10 @@ class SigWindowStream(_WindowStream):
 
     def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1,
                  _sig=None):
+        check_type(window_size, "window_size", int)
+        check_type(stride, "stride", int)
+        check_pos(window_size, "window_size")
+        check_pos(stride, "stride")
         super().__init__(_sig or sig, degree, window_size, stride)
 
 
@@ -539,5 +596,9 @@ class LogSigWindowStream(_WindowStream):
 
     def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1,
                  method: int = 2, _log_sig=None):
+        check_type(window_size, "window_size", int)
+        check_type(stride, "stride", int)
+        check_pos(window_size, "window_size")
+        check_pos(stride, "stride")
         sig_fn = _log_sig or (lambda path, deg: log_sig(path, deg, method=method))
         super().__init__(sig_fn, degree, window_size, stride)

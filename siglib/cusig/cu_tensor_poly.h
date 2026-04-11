@@ -76,6 +76,10 @@ __device__ void sig_combine_inplace_device(
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
+	// A valid signature has level-0 = 1; the loop below only touches 1..N.
+	// Only thread 0 writes; no subsequent thread reads sig1[0], so no sync.
+	if (tid == 0) sig1[0] = static_cast<T>(1);
+
 	// Process from highest level down to 1
 	for (int64_t target_level = static_cast<int64_t>(degree); target_level > 0; --target_level) {
 

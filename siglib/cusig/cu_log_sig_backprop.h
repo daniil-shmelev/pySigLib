@@ -205,6 +205,8 @@ __device__ void tensor_log_backprop_device(
 	// Copy derivs to out
 	for (uint64_t i = tid; i < sig_len; i += nthreads)
 		out[i] = derivs[i];
+	// Forward forces log_sig[0] = 0 (constant), so d/d(sig[0]) = 0.
+	if (tid == 0) out[0] = static_cast<T>(0);
 	__syncthreads();
 
 	if (degree <= 1) return;

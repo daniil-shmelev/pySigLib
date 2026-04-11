@@ -30,11 +30,13 @@ void populate_level_index(uint64_t* level_index, uint64_t dimension, uint64_t de
 
 template<std::floating_point T>
 FORCE_INLINE void sig_combine_inplace_(
-	T* sig1, 
-	const T* sig2, 
-	uint64_t degree, 
+	T* sig1,
+	const T* sig2,
+	uint64_t degree,
 	const uint64_t* level_index
 ) {
+	// A valid signature has level-0 = 1; the loop below only touches 1..N.
+	sig1[0] = static_cast<T>(1.);
 
 	for (int64_t target_level = static_cast<int64_t>(degree); target_level > 0; --target_level) {
 		for (int64_t left_level = target_level - 1, right_level = 1;

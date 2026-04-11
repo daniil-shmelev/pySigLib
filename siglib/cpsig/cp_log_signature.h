@@ -269,6 +269,8 @@ void tensor_log_backprop_(
 	populate_level_index(level_index, dimension, degree + 2);
 
 	std::memcpy(out, derivs, sig_len_ * sizeof(T));
+	// Forward forces log_sig[0] = 0 (constant), so d/d(sig[0]) = 0.
+	out[0] = static_cast<T>(0.);
 
 	auto sig_copy_uptr = std::make_unique<T[]>(sig_len_);
 	T* sig_copy = sig_copy_uptr.get();

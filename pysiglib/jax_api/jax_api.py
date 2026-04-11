@@ -70,6 +70,32 @@ from ._ffi import (
 )
 
 
+# `jax.pure_callback` requires an explicit vmap strategy; without it
+# `jax.vmap` raises NotImplementedError. ``broadcast_all`` passes the
+# vmapped batch dim straight through to the numpy callback, which uses
+# the native batched path — much faster than ``sequential``. The numpy
+# functions only accept 1D or 2D inputs, so callbacks below flatten any
+# additional leading dims (e.g. from nested vmap) before calling them.
+_CALLBACK_VMAP_METHOD = "broadcast_all"
+
+
+def _flatten_leading(arr, feature_ndim=1):
+    """Collapse all dims except the trailing ``feature_ndim`` into a single
+    batch dim. Returns the flattened array and the original leading shape
+    (for restoring via ``_unflatten_leading``)."""
+    leading = arr.shape[:-feature_ndim]
+    if len(leading) <= 1:
+        return arr, leading
+    feature = arr.shape[-feature_ndim:]
+    return arr.reshape((-1,) + feature), leading
+
+
+def _unflatten_leading(arr, leading):
+    if len(leading) <= 1:
+        return arr
+    return arr.reshape(leading + arr.shape[1:])
+
+
 def _validate_shape(path) -> None:
     if path.ndim not in (2, 3):
         raise ValueError(f"path.shape must have length 2 or 3, got {path.ndim}.")
@@ -455,14 +481,35 @@ log_sig_combine.__doc__ = log_sig_combine_forward.__doc__
 # sig_join
 # ---------------------------------------------------------------------------
 
+def _sig_join_callback(s, d, dimension, degree, prepend, n_jobs):
+    s = np.asarray(s)
+    d = np.asarray(d)
+    s_flat, leading = _flatten_leading(s)
+    d_flat, _ = _flatten_leading(d)
+    out = sig_join_forward(s_flat, d_flat, dimension, degree, prepend=prepend, n_jobs=n_jobs)
+    return _unflatten_leading(out, leading)
+
+
+def _sig_join_bwd_callback(co, s, d, dimension, degree, prepend, n_jobs):
+    co = np.asarray(co)
+    s = np.asarray(s)
+    d = np.asarray(d)
+    co_flat, leading = _flatten_leading(co)
+    s_flat, _ = _flatten_leading(s)
+    d_flat, _ = _flatten_leading(d)
+    g_s, g_d = sig_join_backprop(co_flat, s_flat, d_flat, dimension, degree, prepend=prepend, n_jobs=n_jobs)
+    return _unflatten_leading(g_s, leading), _unflatten_leading(g_d, leading)
+
+
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5))
 def _sig_join(sig_arr, displacement, dimension, degree, prepend, n_jobs):
     out_len = _sig_length(dimension, degree)
     out_shape = (*sig_arr.shape[:-1], out_len)
     out_type = jax.ShapeDtypeStruct(out_shape, sig_arr.dtype)
     return jax.pure_callback(
-        lambda s, d: sig_join_forward(np.asarray(s), np.asarray(d), dimension, degree, prepend=prepend, n_jobs=n_jobs),
+        lambda s, d: _sig_join_callback(s, d, dimension, degree, prepend, n_jobs),
         out_type, sig_arr, displacement,
+        vmap_method=_CALLBACK_VMAP_METHOD,
     )
 
 
@@ -476,8 +523,9 @@ def _sig_join_bwd(dimension, degree, prepend, n_jobs, residual, cotangent):
     out_sig_type = jax.ShapeDtypeStruct(sig_arr.shape, sig_arr.dtype)
     out_disp_type = jax.ShapeDtypeStruct(displacement.shape, displacement.dtype)
     grad_sig, grad_disp = jax.pure_callback(
-        lambda co, s, d: sig_join_backprop(np.asarray(co), np.asarray(s), np.asarray(d), dimension, degree, prepend=prepend, n_jobs=n_jobs),
+        lambda co, s, d: _sig_join_bwd_callback(co, s, d, dimension, degree, prepend, n_jobs),
         (out_sig_type, out_disp_type), cotangent, sig_arr, displacement,
+        vmap_method=_CALLBACK_VMAP_METHOD,
     )
     return (grad_sig, grad_disp)
 
@@ -522,14 +570,35 @@ sig_join.__doc__ = sig_join_forward.__doc__
 # log_sig_join
 # ---------------------------------------------------------------------------
 
+def _log_sig_join_callback(ls, d, dimension, degree, n_jobs):
+    ls = np.asarray(ls)
+    d = np.asarray(d)
+    ls_flat, leading = _flatten_leading(ls)
+    d_flat, _ = _flatten_leading(d)
+    out = log_sig_join_forward(ls_flat, d_flat, dimension, degree, n_jobs)
+    return _unflatten_leading(out, leading)
+
+
+def _log_sig_join_bwd_callback(co, ls, d, dimension, degree, n_jobs):
+    co = np.asarray(co)
+    ls = np.asarray(ls)
+    d = np.asarray(d)
+    co_flat, leading = _flatten_leading(co)
+    ls_flat, _ = _flatten_leading(ls)
+    d_flat, _ = _flatten_leading(d)
+    g_ls, g_d = log_sig_join_backprop(co_flat, ls_flat, d_flat, dimension, degree, n_jobs)
+    return _unflatten_leading(g_ls, leading), _unflatten_leading(g_d, leading)
+
+
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4))
 def _log_sig_join(log_sig_arr, displacement, dimension, degree, n_jobs):
     out_len = _log_sig_length(dimension, degree)
     out_shape = (*log_sig_arr.shape[:-1], out_len)
     out_type = jax.ShapeDtypeStruct(out_shape, log_sig_arr.dtype)
     return jax.pure_callback(
-        lambda ls, d: log_sig_join_forward(np.asarray(ls), np.asarray(d), dimension, degree, n_jobs),
+        lambda ls, d: _log_sig_join_callback(ls, d, dimension, degree, n_jobs),
         out_type, log_sig_arr, displacement,
+        vmap_method=_CALLBACK_VMAP_METHOD,
     )
 
 
@@ -543,8 +612,9 @@ def _log_sig_join_bwd(dimension, degree, n_jobs, residual, cotangent):
     out_ls_type = jax.ShapeDtypeStruct(log_sig_arr.shape, log_sig_arr.dtype)
     out_disp_type = jax.ShapeDtypeStruct(displacement.shape, displacement.dtype)
     grad_ls, grad_disp = jax.pure_callback(
-        lambda co, ls, d: log_sig_join_backprop(np.asarray(co), np.asarray(ls), np.asarray(d), dimension, degree, n_jobs),
+        lambda co, ls, d: _log_sig_join_bwd_callback(co, ls, d, dimension, degree, n_jobs),
         (out_ls_type, out_disp_type), cotangent, log_sig_arr, displacement,
+        vmap_method=_CALLBACK_VMAP_METHOD,
     )
     return (grad_ls, grad_disp)
 
@@ -601,28 +671,16 @@ def linear_sig(
 ):
     """Computes the truncated signature of a single linear segment (JAX).
 
-    This is the JAX equivalent of :func:`pysiglib.linear_sig`.
-    Forward-only (no custom_vjp).
+    This is the JAX equivalent of :func:`pysiglib.linear_sig`. Implemented
+    as ``sig(stack([0, v]))`` so gradients flow through the ``sig`` FFI path.
     """
-    ensure_registered()
-
     displacement = jnp.asarray(displacement)
-
-    check_type(dimension, "dimension", int)
-    check_non_neg(dimension, "dimension")
-    check_type(degree, "degree", int)
-    check_non_neg(degree, "degree")
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
-
-    out_len = _sig_length(dimension, degree)
-    out_shape = (*displacement.shape[:-1], out_len)
-    out_type = jax.ShapeDtypeStruct(out_shape, displacement.dtype)
-    return jax.pure_callback(
-        lambda d: linear_sig_forward(np.asarray(d), dimension, degree, n_jobs),
-        out_type, displacement,
-    )
+    if displacement.shape[-1] != dimension:
+        raise ValueError(
+            f"displacement last-dim ({displacement.shape[-1]}) does not match dimension ({dimension})")
+    zeros = jnp.zeros_like(displacement)
+    path = jnp.stack([zeros, displacement], axis=-2)
+    return sig(path, degree, n_jobs=n_jobs)
 
 
 linear_sig.__doc__ = linear_sig_forward.__doc__

@@ -383,7 +383,10 @@ def sig_kernel_pde_backprop_ffi_call(gram, derivs, k_grid, dimension, dyadic_ord
 
 def logsig_to_sig_ffi_call(log_sig_arr, dimension, degree, method, n_jobs):
     _normalize_dtype(log_sig_arr.dtype)
-    out_type = jax.ShapeDtypeStruct(log_sig_arr.shape, log_sig_arr.dtype)
+    # Output is sig-shaped for every method; for methods 1 and 2 the input
+    # is log-sig-shaped (shorter), so `log_sig_arr.shape` can't be reused.
+    out_len = sig_length(dimension, degree)
+    out_type = jax.ShapeDtypeStruct((*log_sig_arr.shape[:-1], out_len), log_sig_arr.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree),
                        method=np.int64(method), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("logsig_to_sig", (log_sig_arr,), out_type, call_kwargs)
