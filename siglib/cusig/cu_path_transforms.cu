@@ -27,7 +27,6 @@ __constant__ uint64_t transformed_dimension;
 __constant__ uint64_t transformed_length;
 __constant__ uint64_t transformed_path_size;
 
-// Serializes __constant__ uploads + kernel launches above.
 static std::mutex path_transform_constant_mu;
 
 template<typename T>

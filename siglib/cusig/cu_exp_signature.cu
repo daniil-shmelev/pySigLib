@@ -471,6 +471,18 @@ void logsig_to_sig_cuda_(
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
+	// Host-only work done outside the workspace lock.
+	uint64_t m = 0;
+	std::unique_ptr<T[]> h_expand;
+	if (method != 0) {
+		m = get_lyndon_count(dimension, degree);
+		h_expand = std::make_unique<T[]>(sig_len * m);
+		if constexpr (std::is_same_v<T, float>)
+			build_expansion_matrix_f(h_expand.get(), sig_len, m, dimension, degree, method);
+		else
+			build_expansion_matrix_d(h_expand.get(), sig_len, m, dimension, degree, method);
+	}
+
 	std::lock_guard<std::mutex> lock(g_exp_workspace_mu);
 
 	if (method == 0) {
@@ -483,15 +495,6 @@ void logsig_to_sig_cuda_(
 		);
 	}
 	else {
-		const uint64_t m = get_lyndon_count(dimension, degree);
-
-		// Build expansion matrix on host via cu_exp_host.cpp (compiled with C++20)
-		auto h_expand = std::make_unique<T[]>(sig_len * m);
-		if constexpr (std::is_same_v<T, float>)
-			build_expansion_matrix_f(h_expand.get(), sig_len, m, dimension, degree, method);
-		else
-			build_expansion_matrix_d(h_expand.get(), sig_len, m, dimension, degree, method);
-
 		size_t mat_bytes = sizeof(T) * sig_len * m;
 		g_exp_workspace.ensure_expand_mat(mat_bytes);
 		cudaMemcpy(g_exp_workspace.d_expand_mat, h_expand.get(), mat_bytes, cudaMemcpyHostToDevice);
@@ -553,6 +556,17 @@ void logsig_to_sig_backprop_cuda_(
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
+	uint64_t m = 0;
+	std::unique_ptr<T[]> h_expand;
+	if (method != 0) {
+		m = get_lyndon_count(dimension, degree);
+		h_expand = std::make_unique<T[]>(sig_len * m);
+		if constexpr (std::is_same_v<T, float>)
+			build_expansion_matrix_f(h_expand.get(), sig_len, m, dimension, degree, method);
+		else
+			build_expansion_matrix_d(h_expand.get(), sig_len, m, dimension, degree, method);
+	}
+
 	std::lock_guard<std::mutex> lock(g_exp_workspace_mu);
 
 	if (method == 0) {
@@ -569,14 +583,6 @@ void logsig_to_sig_backprop_cuda_(
 		);
 	}
 	else {
-		const uint64_t m = get_lyndon_count(dimension, degree);
-
-		auto h_expand = std::make_unique<T[]>(sig_len * m);
-		if constexpr (std::is_same_v<T, float>)
-			build_expansion_matrix_f(h_expand.get(), sig_len, m, dimension, degree, method);
-		else
-			build_expansion_matrix_d(h_expand.get(), sig_len, m, dimension, degree, method);
-
 		size_t mat_bytes = sizeof(T) * sig_len * m;
 		g_exp_workspace.ensure_expand_mat(mat_bytes);
 		cudaMemcpy(g_exp_workspace.d_expand_mat, h_expand.get(), mat_bytes, cudaMemcpyHostToDevice);

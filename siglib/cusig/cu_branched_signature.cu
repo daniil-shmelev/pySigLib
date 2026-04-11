@@ -125,6 +125,7 @@ static std::unordered_map<
 	std::unique_ptr<BranchedSigCacheGPU>,
 	CuPairHash
 > s_gpu_cache_map;
+static std::mutex s_gpu_cache_map_mu;
 
 template<typename T>
 static void upload(T*& d_ptr, const T* h_data, size_t count) {
@@ -134,9 +135,12 @@ static void upload(T*& d_ptr, const T* h_data, size_t count) {
 
 static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, uint64_t max_nodes) {
 	auto key = std::make_pair(dimension, max_nodes);
-	auto it = s_gpu_cache_map.find(key);
-	if (it != s_gpu_cache_map.end())
-		return *(it->second);
+	{
+		std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
+		auto it = s_gpu_cache_map.find(key);
+		if (it != s_gpu_cache_map.end())
+			return *(it->second);
+	}
 
 	auto& fn = cpsig();
 
@@ -196,8 +200,14 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 	upload(gpu->d_inv_factorial_f32, inv_factorial_f32.data(), inv_factorial_f32.size());
 	upload(gpu->d_labels_data, h_labels_data.data(), h_labels_data.size());
 
+	std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
 	auto [ins, _] = s_gpu_cache_map.insert_or_assign(key, std::move(gpu));
 	return *(ins->second);
+}
+
+void clear_cuda_branched_sig_gpu_cache_() {
+	std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
+	s_gpu_cache_map.clear();
 }
 
 // =========================================================================

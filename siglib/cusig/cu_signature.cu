@@ -680,8 +680,10 @@ __global__ void set_sig_level0(T* out, uint64_t sig_size, uint64_t batch_size) {
 static constexpr int MAX_PER_WORD_STREAMS = 12;
 static cudaStream_t s_per_word_streams[MAX_PER_WORD_STREAMS] = {};
 static bool s_streams_initialized = false;
+static std::mutex s_streams_mu;
 
 static void ensure_streams() {
+	std::lock_guard<std::mutex> lock(s_streams_mu);
 	if (!s_streams_initialized) {
 		for (int i = 0; i < MAX_PER_WORD_STREAMS; ++i)
 			cudaStreamCreate(&s_per_word_streams[i]);
@@ -692,6 +694,7 @@ static void ensure_streams() {
 // Cached workspace for backward kernel's increment gradients (grow-only)
 static void* s_inc_grad_buf = nullptr;
 static size_t s_inc_grad_buf_size = 0;
+static std::mutex s_inc_grad_buf_mu;
 
 static void* ensure_inc_grad_buf(size_t needed) {
 	if (needed > s_inc_grad_buf_size) {
@@ -934,6 +937,7 @@ void sig_backprop_cuda_core_(
 
 	// Allocate increment gradients buffer (zeroed)
 	const size_t inc_grad_bytes = batch_size * steps * dimension * sizeof(T);
+	std::lock_guard<std::mutex> inc_lock(s_inc_grad_buf_mu);
 	T* d_inc_grads = static_cast<T*>(ensure_inc_grad_buf(inc_grad_bytes));
 	cudaMemset(d_inc_grads, 0, inc_grad_bytes);
 

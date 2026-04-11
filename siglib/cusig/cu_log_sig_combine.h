@@ -286,9 +286,15 @@ inline std::unordered_map<std::pair<uint64_t, uint64_t>, CUDABchCache, CuPairHas
 	return cache;
 }
 
+inline std::mutex& get_cuda_bch_cache_mu_() {
+	static std::mutex mu;
+	return mu;
+}
+
 inline void set_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 	auto key = std::make_pair(dimension, degree);
 	auto& cache_map = get_cuda_bch_cache_map_();
+	std::lock_guard<std::mutex> lock(get_cuda_bch_cache_mu_());
 	if (cache_map.find(key) != cache_map.end()) return;
 
 	const BchHardcodedData* hc = get_hardcoded_bch_data(degree);
@@ -388,14 +394,17 @@ inline void set_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 inline const CUDABchCache& get_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 	auto key = std::make_pair(dimension, degree);
 	auto& cache_map = get_cuda_bch_cache_map_();
-	auto it = cache_map.find(key);
-	if (it == cache_map.end()) {
-		set_cuda_bch_cache_(dimension, degree);
-		it = cache_map.find(key);
+	{
+		std::lock_guard<std::mutex> lock(get_cuda_bch_cache_mu_());
+		auto it = cache_map.find(key);
+		if (it != cache_map.end()) return it->second;
 	}
-	return it->second;
+	set_cuda_bch_cache_(dimension, degree);
+	std::lock_guard<std::mutex> lock(get_cuda_bch_cache_mu_());
+	return cache_map.at(key);
 }
 
 inline void clear_cuda_bch_cache_() {
+	std::lock_guard<std::mutex> lock(get_cuda_bch_cache_mu_());
 	get_cuda_bch_cache_map_().clear();
 }

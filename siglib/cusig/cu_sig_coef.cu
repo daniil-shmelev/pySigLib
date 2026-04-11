@@ -25,7 +25,6 @@
 __constant__ double c_one_over_fact_d[SIG_COEF_CUDA_MAX_DEGREE + 1];
 __constant__ float  c_one_over_fact_f[SIG_COEF_CUDA_MAX_DEGREE + 1];
 
-// Serializes concurrent uploads to the __constant__ symbols above.
 static std::mutex c_one_over_fact_mu;
 
 // =========================================================================
