@@ -1062,25 +1062,8 @@ void sig_backprop_cuda_(
 
 extern "C" {
 
+
 	CUSIG_API int signature_cuda_f(
-		const float* path, float* out,
-		uint64_t dimension, uint64_t length, uint64_t degree,
-		bool time_aug, bool lead_lag, float end_time,
-		bool horner
-	) noexcept {
-		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, 1, dimension, length, degree, time_aug, lead_lag, end_time, horner));
-	}
-
-	CUSIG_API int signature_cuda_d(
-		const double* path, double* out,
-		uint64_t dimension, uint64_t length, uint64_t degree,
-		bool time_aug, bool lead_lag, double end_time,
-		bool horner
-	) noexcept {
-		CUSIG_SAFE_CALL(signature_cuda_<double>(path, out, 1, dimension, length, degree, time_aug, lead_lag, end_time, horner));
-	}
-
-	CUSIG_API int batch_signature_cuda_f(
 		const float* path, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, float end_time,
@@ -1089,7 +1072,7 @@ extern "C" {
 		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner));
 	}
 
-	CUSIG_API int batch_signature_cuda_d(
+	CUSIG_API int signature_cuda_d(
 		const double* path, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, double end_time,
@@ -1102,25 +1085,8 @@ extern "C" {
 	// backprop
 	// =====================================================================
 
+
 	CUSIG_API int sig_backprop_cuda_f(
-		const float* path, float* out,
-		const float* sig_derivs, const float* sig,
-		uint64_t dimension, uint64_t length, uint64_t degree,
-		bool time_aug, bool lead_lag, float end_time
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, 1, dimension, length, degree, time_aug, lead_lag, end_time));
-	}
-
-	CUSIG_API int sig_backprop_cuda_d(
-		const double* path, double* out,
-		const double* sig_derivs, const double* sig,
-		uint64_t dimension, uint64_t length, uint64_t degree,
-		bool time_aug, bool lead_lag, double end_time
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, 1, dimension, length, degree, time_aug, lead_lag, end_time));
-	}
-
-	CUSIG_API int batch_sig_backprop_cuda_f(
 		const float* path, float* out,
 		const float* sig_derivs, const float* sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
@@ -1129,7 +1095,7 @@ extern "C" {
 		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time));
 	}
 
-	CUSIG_API int batch_sig_backprop_cuda_d(
+	CUSIG_API int sig_backprop_cuda_d(
 		const double* path, double* out,
 		const double* sig_derivs, const double* sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,

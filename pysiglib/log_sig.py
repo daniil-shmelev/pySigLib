@@ -19,12 +19,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_log_sig_method
+from .param_checks import check_type, check_non_neg, check_log_sig_method, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import (CPSIG_SIG_TO_LOG_SIG, CPSIG_BATCH_SIG_TO_LOG_SIG,
-                     CUSIG_SIG_TO_LOG_SIG_CUDA, CUSIG_BATCH_SIG_TO_LOG_SIG_CUDA,
-                     CPSIG_BATCH_LOG_SIG_FROM_PATH, CUSIG_BATCH_LOG_SIG_FROM_PATH_CUDA)
-from .sig_length import sig_length, log_sig_length
+from .dtypes import (CPSIG_SIG_TO_LOG_SIG,
+                     CUSIG_SIG_TO_LOG_SIG_CUDA,
+                     CPSIG_LOG_SIG_FROM_PATH, CUSIG_LOG_SIG_FROM_PATH_CUDA)
+from .sig_length import sig_length, log_sig_length, aug_dim
 from .sig import sig
 from .data_handlers import SigOutputHandler, SigInputHandler, PathInputHandler
 from .load_siglib import CPSIG, CUSIG, BUILT_WITH_CUDA
@@ -158,7 +158,7 @@ def prepare_log_sig(
     if method == 0 or method == 3:
         return
 
-    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     if device in ("cpu", "both"):
         err_code = CPSIG.prepare_log_sig(
@@ -222,65 +222,6 @@ def clear_cache(
         if err_code:
             raise Exception("Error in pysiglib.clear_cache (CUDA): " + err_msg(err_code))
 
-def sig_to_log_sig_(data, result, data_dimension, degree, time_aug, lead_lag, method):
-    err_code = CPSIG_SIG_TO_LOG_SIG[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data_dimension,
-        degree,
-        time_aug,
-        lead_lag,
-        method
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_to_log_sig: " + err_msg(err_code))
-    return result.data
-
-def batch_sig_to_log_sig_(data, result, data_dimension, degree, time_aug, lead_lag, method, n_jobs = 1):
-    err_code = CPSIG_BATCH_SIG_TO_LOG_SIG[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.batch_size,
-        data_dimension,
-        degree,
-        time_aug,
-        lead_lag,
-        method,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_to_log_sig: " + err_msg(err_code))
-    return result.data
-
-def sig_to_log_sig_cuda_(data, result, aug_dimension, degree, method):
-    err_code = CUSIG_SIG_TO_LOG_SIG_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        aug_dimension,
-        degree,
-        method
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_to_log_sig: " + err_msg(err_code))
-    return result.data
-
-def batch_sig_to_log_sig_cuda_(data, result, aug_dimension, degree, method):
-    err_code = CUSIG_BATCH_SIG_TO_LOG_SIG_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.batch_size,
-        aug_dimension,
-        degree,
-        method
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_to_log_sig: " + err_msg(err_code))
-    return result.data
-
 def sig_to_log_sig(
         sig : Union[np.ndarray, torch.tensor],
         dimension : int,
@@ -342,24 +283,25 @@ def sig_to_log_sig(
     if method == 3:
         raise ValueError("method=3 is not supported in sig_to_log_sig. Use log_sig(path, degree, method=3) instead.")
 
-    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     sig_len = sig_length(aug_dimension, degree)
     data = SigInputHandler(sig, sig_len, "sig")
     out_len = log_sig_length(aug_dimension, degree) if method else sig_len
     result = SigOutputHandler(data, out_len)
 
+    check_n_jobs(n_jobs)
     if data.device == "cpu":
-        if data.is_batch:
-            check_type(n_jobs, "n_jobs", int)
-            if n_jobs == 0:
-                raise ValueError("n_jobs cannot be 0")
-            return batch_sig_to_log_sig_(data, result, dimension, degree, time_aug, lead_lag, method, n_jobs)
-        return sig_to_log_sig_(data, result, dimension, degree, time_aug, lead_lag, method)
+        err_code = CPSIG_SIG_TO_LOG_SIG[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size,
+            dimension, degree, time_aug, lead_lag, method, n_jobs)
     else:
-        if data.is_batch:
-            return batch_sig_to_log_sig_cuda_(data, result, aug_dimension, degree, method)
-        return sig_to_log_sig_cuda_(data, result, aug_dimension, degree, method)
+        err_code = CUSIG_SIG_TO_LOG_SIG_CUDA[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size,
+            aug_dimension, degree, method)
+    if err_code:
+        raise Exception("Error in pysiglib.sig_to_log_sig: " + err_msg(err_code))
+    return result.data
 
 def log_sig(
         path : Union[np.ndarray, torch.tensor],
@@ -416,47 +358,24 @@ def log_sig(
         X_log_sig = pysiglib.log_sig(X, 3, lead_lag=True, method=2)
     """
     if method == 3:
-        return _log_sig_via_combine(path, degree, time_aug, lead_lag, end_time, n_jobs)
+        if time_aug or lead_lag:
+            path = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
+        aug_dim = path.shape[-1]
+        ls_len = log_sig_length(aug_dim, degree)
+        data = PathInputHandler(path, False, False, 1.0, "path")
+        result = SigOutputHandler(data, ls_len)
+        if data.device == "cpu":
+            err_code = CPSIG_LOG_SIG_FROM_PATH[data.dtype](
+                data.data_ptr, result.data_ptr, data.batch_size,
+                data.data_length, aug_dim, degree, n_jobs)
+        else:
+            err_code = CUSIG_LOG_SIG_FROM_PATH_CUDA[data.dtype](
+                data.data_ptr, result.data_ptr, data.batch_size,
+                data.data_length, aug_dim, degree)
+        if err_code:
+            raise Exception("Error in pysiglib.log_sig (method=3): " + err_msg(err_code))
+        return result.data
 
     sig_ = sig(path, degree, time_aug, lead_lag, end_time, True, n_jobs)
     dimension = path.shape[-1]
-    log_sig_ = sig_to_log_sig(sig_, dimension, degree, time_aug, lead_lag, method, n_jobs)
-    return log_sig_
-
-
-def _log_sig_via_combine(path, degree, time_aug, lead_lag, end_time, n_jobs):
-    """Compute log-signature via sequential BCH combination of per-segment log-signatures."""
-    if time_aug or lead_lag:
-        path = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
-
-    aug_dim = path.shape[-1]
-    ls_len = log_sig_length(aug_dim, degree)
-
-    data = PathInputHandler(path, False, False, 1.0, "path")
-    result = SigOutputHandler(data, ls_len)
-
-    if data.device == "cpu":
-        err_code = CPSIG_BATCH_LOG_SIG_FROM_PATH[data.dtype](
-            data.data_ptr,
-            result.data_ptr,
-            data.batch_size,
-            data.data_length,
-            aug_dim,
-            degree,
-            n_jobs
-        )
-        if err_code:
-            raise Exception("Error in pysiglib.log_sig (method=3): " + err_msg(err_code))
-    else:
-        err_code = CUSIG_BATCH_LOG_SIG_FROM_PATH_CUDA[data.dtype](
-            data.data_ptr,
-            result.data_ptr,
-            data.batch_size,
-            data.data_length,
-            aug_dim,
-            degree
-        )
-        if err_code:
-            raise Exception("Error in pysiglib.log_sig (method=3, CUDA): " + err_msg(err_code))
-
-    return result.data
+    return sig_to_log_sig(sig_, dimension, degree, time_aug, lead_lag, method, n_jobs)

@@ -329,23 +329,8 @@ void sig_coef_cuda_(
 
 extern "C" {
 
+
 	CUSIG_API int sig_coef_cuda_f(
-		const float* path, float* out, const uint64_t* multi_idx,
-		uint64_t num_multi_idx, const uint64_t* degrees,
-		uint64_t dimension, uint64_t length, bool prefixes
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_coef_cuda_<float>(path, out, multi_idx, num_multi_idx, degrees, 1, dimension, length, prefixes));
-	}
-
-	CUSIG_API int sig_coef_cuda_d(
-		const double* path, double* out, const uint64_t* multi_idx,
-		uint64_t num_multi_idx, const uint64_t* degrees,
-		uint64_t dimension, uint64_t length, bool prefixes
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_coef_cuda_<double>(path, out, multi_idx, num_multi_idx, degrees, 1, dimension, length, prefixes));
-	}
-
-	CUSIG_API int batch_sig_coef_cuda_f(
 		const float* path, float* out, const uint64_t* multi_idx,
 		uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes
@@ -353,7 +338,7 @@ extern "C" {
 		CUSIG_SAFE_CALL(sig_coef_cuda_<float>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, prefixes));
 	}
 
-	CUSIG_API int batch_sig_coef_cuda_d(
+	CUSIG_API int sig_coef_cuda_d(
 		const double* path, double* out, const uint64_t* multi_idx,
 		uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes
@@ -764,23 +749,8 @@ void sig_coef_backprop_cuda_(
 
 extern "C" {
 
+
 	CUSIG_API int sig_coef_backprop_cuda_f(
-		const float* path, float* out, const float* coefs, const float* derivs,
-		const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees,
-		uint64_t dimension, uint64_t length
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_coef_backprop_cuda_<float>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, 1, dimension, length));
-	}
-
-	CUSIG_API int sig_coef_backprop_cuda_d(
-		const double* path, double* out, const double* coefs, const double* derivs,
-		const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees,
-		uint64_t dimension, uint64_t length
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_coef_backprop_cuda_<double>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, 1, dimension, length));
-	}
-
-	CUSIG_API int batch_sig_coef_backprop_cuda_f(
 		const float* path, float* out, const float* coefs, const float* derivs,
 		const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t batch_size, uint64_t dimension, uint64_t length
@@ -788,7 +758,7 @@ extern "C" {
 		CUSIG_SAFE_CALL(sig_coef_backprop_cuda_<float>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length));
 	}
 
-	CUSIG_API int batch_sig_coef_backprop_cuda_d(
+	CUSIG_API int sig_coef_backprop_cuda_d(
 		const double* path, double* out, const double* coefs, const double* derivs,
 		const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees,
 		uint64_t batch_size, uint64_t dimension, uint64_t length

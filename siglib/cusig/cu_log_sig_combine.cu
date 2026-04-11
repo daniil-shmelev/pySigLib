@@ -185,7 +185,7 @@ __global__ void batch_log_sig_add_kernel_(
 // =========================================================================
 
 template<typename T>
-void batch_log_sig_combine_cuda_(
+void log_sig_combine_cuda_(
 	const T* log_sig1, const T* log_sig2, T* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) {
@@ -519,7 +519,7 @@ __global__ void batch_log_sig_combine_backprop_kernel_noshmem_(
 // =========================================================================
 
 template<typename T>
-void batch_log_sig_combine_backprop_cuda_(
+void log_sig_combine_backprop_cuda_(
 	const T* d_out, T* d_ls1, T* d_ls2,
 	const T* ls1, const T* ls2,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
@@ -785,7 +785,7 @@ __global__ void batch_log_sig_from_path_deg1_backprop_kernel_(
 }
 
 template<typename T>
-void batch_log_sig_from_path_cuda_(
+void log_sig_from_path_cuda_(
 	const T* path, T* out,
 	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
 ) {
@@ -1071,7 +1071,7 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 }
 
 template<typename T>
-void batch_log_sig_from_path_backprop_cuda_(
+void log_sig_from_path_backprop_cuda_(
 	const T* d_out, T* d_path, const T* path,
 	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
 ) {
@@ -1146,99 +1146,71 @@ void batch_log_sig_from_path_backprop_cuda_(
 
 extern "C" {
 
-CUSIG_API int batch_log_sig_from_path_backprop_cuda_f(
+CUSIG_API int log_sig_from_path_backprop_cuda_f(
 	const float* d_out, float* d_path, const float* path,
 	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_from_path_backprop_cuda_<float>(d_out, d_path, path, batch_size, length, dimension, degree));
+	CUSIG_SAFE_CALL(log_sig_from_path_backprop_cuda_<float>(d_out, d_path, path, batch_size, length, dimension, degree));
 }
 
-CUSIG_API int batch_log_sig_from_path_backprop_cuda_d(
+CUSIG_API int log_sig_from_path_backprop_cuda_d(
 	const double* d_out, double* d_path, const double* path,
 	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_from_path_backprop_cuda_<double>(d_out, d_path, path, batch_size, length, dimension, degree));
+	CUSIG_SAFE_CALL(log_sig_from_path_backprop_cuda_<double>(d_out, d_path, path, batch_size, length, dimension, degree));
 }
 
-CUSIG_API int batch_log_sig_from_path_cuda_f(
+CUSIG_API int log_sig_from_path_cuda_f(
 	const float* path, float* out,
 	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_from_path_cuda_<float>(path, out, batch_size, length, dimension, degree));
+	CUSIG_SAFE_CALL(log_sig_from_path_cuda_<float>(path, out, batch_size, length, dimension, degree));
 }
 
-CUSIG_API int batch_log_sig_from_path_cuda_d(
+CUSIG_API int log_sig_from_path_cuda_d(
 	const double* path, double* out,
 	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_from_path_cuda_<double>(path, out, batch_size, length, dimension, degree));
+	CUSIG_SAFE_CALL(log_sig_from_path_cuda_<double>(path, out, batch_size, length, dimension, degree));
 }
+
 
 CUSIG_API int log_sig_combine_cuda_f(
 	const float* log_sig1, const float* log_sig2, float* out,
-	uint64_t dimension, uint64_t degree
+	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_combine_cuda_<float>(log_sig1, log_sig2, out, 1, dimension, degree));
+	CUSIG_SAFE_CALL(log_sig_combine_cuda_<float>(log_sig1, log_sig2, out, batch_size, dimension, degree));
 }
 
 CUSIG_API int log_sig_combine_cuda_d(
 	const double* log_sig1, const double* log_sig2, double* out,
-	uint64_t dimension, uint64_t degree
-) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_combine_cuda_<double>(log_sig1, log_sig2, out, 1, dimension, degree));
-}
-
-CUSIG_API int batch_log_sig_combine_cuda_f(
-	const float* log_sig1, const float* log_sig2, float* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_combine_cuda_<float>(log_sig1, log_sig2, out, batch_size, dimension, degree));
+	CUSIG_SAFE_CALL(log_sig_combine_cuda_<double>(log_sig1, log_sig2, out, batch_size, dimension, degree));
 }
 
-CUSIG_API int batch_log_sig_combine_cuda_d(
-	const double* log_sig1, const double* log_sig2, double* out,
-	uint64_t batch_size, uint64_t dimension, uint64_t degree
-) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_combine_cuda_<double>(log_sig1, log_sig2, out, batch_size, dimension, degree));
-}
 
 CUSIG_API int log_sig_combine_backprop_cuda_f(
 	const float* d_out, float* d_ls1, float* d_ls2,
 	const float* ls1, const float* ls2,
-	uint64_t dimension, uint64_t degree
+	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_combine_backprop_cuda_<float>(d_out, d_ls1, d_ls2, ls1, ls2, 1, dimension, degree));
+	CUSIG_SAFE_CALL(log_sig_combine_backprop_cuda_<float>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree));
 }
 
 CUSIG_API int log_sig_combine_backprop_cuda_d(
 	const double* d_out, double* d_ls1, double* d_ls2,
 	const double* ls1, const double* ls2,
-	uint64_t dimension, uint64_t degree
-) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_combine_backprop_cuda_<double>(d_out, d_ls1, d_ls2, ls1, ls2, 1, dimension, degree));
-}
-
-CUSIG_API int batch_log_sig_combine_backprop_cuda_f(
-	const float* d_out, float* d_ls1, float* d_ls2,
-	const float* ls1, const float* ls2,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_combine_backprop_cuda_<float>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree));
-}
-
-CUSIG_API int batch_log_sig_combine_backprop_cuda_d(
-	const double* d_out, double* d_ls1, double* d_ls2,
-	const double* ls1, const double* ls2,
-	uint64_t batch_size, uint64_t dimension, uint64_t degree
-) noexcept {
-	CUSIG_SAFE_CALL(batch_log_sig_combine_backprop_cuda_<double>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree));
+	CUSIG_SAFE_CALL(log_sig_combine_backprop_cuda_<double>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree));
 }
 
 // =========================================================================
 // log_sig_join CUDA: construct linear log-sig on GPU, call log_sig_combine
 // =========================================================================
 
-CUSIG_API int batch_log_sig_join_cuda_f(
+CUSIG_API int log_sig_join_cuda_f(
 	const float* log_sig, const float* displacement, float* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) noexcept {
@@ -1251,13 +1223,13 @@ CUSIG_API int batch_log_sig_join_cuda_f(
 		// Copy displacement into first dim elements of each batch row
 		for (uint64_t b = 0; b < batch_size; ++b)
 			cudaMemcpy(d_linear + b * m, displacement + b * dimension, dimension * sizeof(float), cudaMemcpyDeviceToDevice);
-		batch_log_sig_combine_cuda_<float>(log_sig, d_linear, out, batch_size, dimension, degree);
+		log_sig_combine_cuda_<float>(log_sig, d_linear, out, batch_size, dimension, degree);
 		cudaFree(d_linear);
 		return 0;
 	} catch (const std::exception& e) { return -1; }
 }
 
-CUSIG_API int batch_log_sig_join_cuda_d(
+CUSIG_API int log_sig_join_cuda_d(
 	const double* log_sig, const double* displacement, double* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) noexcept {
@@ -1268,21 +1240,15 @@ CUSIG_API int batch_log_sig_join_cuda_d(
 		cudaMemset(d_linear, 0, batch_size * m * sizeof(double));
 		for (uint64_t b = 0; b < batch_size; ++b)
 			cudaMemcpy(d_linear + b * m, displacement + b * dimension, dimension * sizeof(double), cudaMemcpyDeviceToDevice);
-		batch_log_sig_combine_cuda_<double>(log_sig, d_linear, out, batch_size, dimension, degree);
+		log_sig_combine_cuda_<double>(log_sig, d_linear, out, batch_size, dimension, degree);
 		cudaFree(d_linear);
 		return 0;
 	} catch (const std::exception& e) { return -1; }
 }
 
-CUSIG_API int log_sig_join_cuda_f(const float* log_sig, const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept {
-	return batch_log_sig_join_cuda_f(log_sig, displacement, out, 1, dimension, degree);
-}
-CUSIG_API int log_sig_join_cuda_d(const double* log_sig, const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept {
-	return batch_log_sig_join_cuda_d(log_sig, displacement, out, 1, dimension, degree);
-}
 
 // log_sig_join backprop CUDA
-CUSIG_API int batch_log_sig_join_backprop_cuda_f(
+CUSIG_API int log_sig_join_backprop_cuda_f(
 	const float* d_out, float* d_logsig, float* d_displacement,
 	const float* log_sig, const float* displacement,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
@@ -1298,7 +1264,7 @@ CUSIG_API int batch_log_sig_join_backprop_cuda_f(
 		// Backprop through log_sig_combine
 		float* d_ls2 = nullptr;
 		cudaMalloc(&d_ls2, batch_size * m * sizeof(float));
-		batch_log_sig_combine_backprop_cuda_<float>(d_out, d_logsig, d_ls2, log_sig, d_linear, batch_size, dimension, degree);
+		log_sig_combine_backprop_cuda_<float>(d_out, d_logsig, d_ls2, log_sig, d_linear, batch_size, dimension, degree);
 		// Extract first dim elements of d_ls2 into d_displacement
 		for (uint64_t b = 0; b < batch_size; ++b)
 			cudaMemcpy(d_displacement + b * dimension, d_ls2 + b * m, dimension * sizeof(float), cudaMemcpyDeviceToDevice);
@@ -1308,7 +1274,7 @@ CUSIG_API int batch_log_sig_join_backprop_cuda_f(
 	} catch (const std::exception& e) { return -1; }
 }
 
-CUSIG_API int batch_log_sig_join_backprop_cuda_d(
+CUSIG_API int log_sig_join_backprop_cuda_d(
 	const double* d_out, double* d_logsig, double* d_displacement,
 	const double* log_sig, const double* displacement,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
@@ -1322,7 +1288,7 @@ CUSIG_API int batch_log_sig_join_backprop_cuda_d(
 			cudaMemcpy(d_linear + b * m, displacement + b * dimension, dimension * sizeof(double), cudaMemcpyDeviceToDevice);
 		double* d_ls2 = nullptr;
 		cudaMalloc(&d_ls2, batch_size * m * sizeof(double));
-		batch_log_sig_combine_backprop_cuda_<double>(d_out, d_logsig, d_ls2, log_sig, d_linear, batch_size, dimension, degree);
+		log_sig_combine_backprop_cuda_<double>(d_out, d_logsig, d_ls2, log_sig, d_linear, batch_size, dimension, degree);
 		for (uint64_t b = 0; b < batch_size; ++b)
 			cudaMemcpy(d_displacement + b * dimension, d_ls2 + b * m, dimension * sizeof(double), cudaMemcpyDeviceToDevice);
 		cudaFree(d_linear);
@@ -1331,11 +1297,5 @@ CUSIG_API int batch_log_sig_join_backprop_cuda_d(
 	} catch (const std::exception& e) { return -1; }
 }
 
-CUSIG_API int log_sig_join_backprop_cuda_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t dimension, uint64_t degree) noexcept {
-	return batch_log_sig_join_backprop_cuda_f(d_out, d_logsig, d_displacement, log_sig, displacement, 1, dimension, degree);
-}
-CUSIG_API int log_sig_join_backprop_cuda_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t dimension, uint64_t degree) noexcept {
-	return batch_log_sig_join_backprop_cuda_d(d_out, d_logsig, d_displacement, log_sig, displacement, 1, dimension, degree);
-}
 
 } // extern "C"

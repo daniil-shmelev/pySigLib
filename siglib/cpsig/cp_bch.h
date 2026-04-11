@@ -611,7 +611,7 @@ void log_sig_combine_(
 }
 
 template<std::floating_point T>
-void batch_log_sig_combine_(
+void log_sig_combine_(
 	const T* log_sig1, const T* log_sig2, T* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree,
 	int n_jobs = 1
@@ -633,21 +633,12 @@ void batch_log_sig_combine_(
 
 	uint64_t m2 = cache.bch_coefficients.size();
 
-	if (n_jobs != 1) {
-		auto func = [&](const T* ls1, const T* ls2, T* o) {
-			thread_local std::vector<T> tl_memo;
-			tl_memo.resize(m2 * m);
-			log_sig_combine_impl_<T>(ls1, ls2, o, cache, tl_memo.data());
-		};
-		multi_threaded_batch_2<const T, const T, T>(func, log_sig1, log_sig2, out, batch_size, m, m, m, n_jobs);
-	}
-	else {
-		std::vector<T> memo(m2 * m);
-		for (uint64_t i = 0; i < batch_size; ++i) {
-			log_sig_combine_impl_<T>(log_sig1 + i * m, log_sig2 + i * m, out + i * m,
-				cache, memo.data());
-		}
-	}
+	auto func = [&](const T* ls1, const T* ls2, T* o) {
+		thread_local std::vector<T> tl_memo;
+		tl_memo.resize(m2 * m);
+		log_sig_combine_impl_<T>(ls1, ls2, o, cache, tl_memo.data());
+	};
+	multi_threaded_batch_2<const T, const T, T>(func, log_sig1, log_sig2, out, batch_size, m, m, m, n_jobs);
 }
 
 // ========================================================================
@@ -748,7 +739,7 @@ void log_sig_join_(
 }
 
 template<std::floating_point T>
-void batch_log_sig_join_(
+void log_sig_join_(
 	const T* log_sig, const T* displacement, T* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree,
 	int n_jobs = 1
@@ -770,21 +761,12 @@ void batch_log_sig_join_(
 
 	uint64_t m2 = cache.bch_coefficients.size();
 
-	if (n_jobs != 1) {
-		auto func = [&](const T* ls, const T* disp, T* o) {
-			thread_local std::vector<T> tl_memo;
-			tl_memo.resize(m2 * m);
-			log_sig_join_impl_<T>(ls, disp, o, cache, tl_memo.data());
-		};
-		multi_threaded_batch_2<const T, const T, T>(func, log_sig, displacement, out, batch_size, m, dimension, m, n_jobs);
-	}
-	else {
-		std::vector<T> memo(m2 * m);
-		for (uint64_t b = 0; b < batch_size; ++b) {
-			log_sig_join_impl_<T>(log_sig + b * m, displacement + b * dimension, out + b * m,
-				cache, memo.data());
-		}
-	}
+	auto func = [&](const T* ls, const T* disp, T* o) {
+		thread_local std::vector<T> tl_memo;
+		tl_memo.resize(m2 * m);
+		log_sig_join_impl_<T>(ls, disp, o, cache, tl_memo.data());
+	};
+	multi_threaded_batch_2<const T, const T, T>(func, log_sig, displacement, out, batch_size, m, dimension, m, n_jobs);
 }
 
 // ========================================================================
@@ -826,7 +808,7 @@ void log_sig_join_backprop_(
 }
 
 template<std::floating_point T>
-void batch_log_sig_join_backprop_(
+void log_sig_join_backprop_(
 	const T* d_out, T* d_logsig, T* d_displacement,
 	const T* log_sig, const T* displacement,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree,
@@ -1224,58 +1206,16 @@ void batch_log_sig_from_path_(
 	uint64_t m2 = cache.bch_coefficients.size();
 	uint64_t path_stride = length * dimension;
 
-	if (n_jobs != 1) {
-		auto func = [&](const T* p, T* o) {
-			thread_local std::vector<T> tl_memo;
-			thread_local std::vector<T> tl_seg;
-			thread_local std::vector<T> tl_temp;
-			tl_memo.resize(m2 * m);
-			tl_seg.resize(m);
-			tl_temp.resize(m);
-			log_sig_from_path_<T>(p, o, length, dimension, cache, tl_memo.data(), tl_seg.data(), tl_temp.data());
-		};
-		multi_threaded_batch<const T, T>(func, path, out, batch_size, path_stride, m, n_jobs);
-	}
-	else {
-#ifdef VEC
-		if constexpr (std::is_same_v<T, double>) {
-			// SIMD path: process groups of 4 batch elements
-			std::vector<double> memo_x4((m2 + 1) * m * 4); // BCH memo + src buffer
-			std::vector<double> seg_x4(m * 4);
-			std::vector<double> temp_x4(m * 4);
-			uint64_t i = 0;
-			for (; i + 4 <= batch_size; i += 4) {
-				const double* ps[4] = {
-					path + (i+0)*path_stride, path + (i+1)*path_stride,
-					path + (i+2)*path_stride, path + (i+3)*path_stride };
-				double* os[4] = {
-					out + (i+0)*m, out + (i+1)*m,
-					out + (i+2)*m, out + (i+3)*m };
-				log_sig_from_path_x4_(ps, os, length, dimension, cache,
-					memo_x4.data(), seg_x4.data(), temp_x4.data());
-			}
-			// Scalar fallback for remaining elements
-			if (i < batch_size) {
-				std::vector<double> memo(m2 * m);
-				std::vector<double> seg(m);
-				std::vector<double> temp(m);
-				for (; i < batch_size; ++i) {
-					log_sig_from_path_<double>(path + i*path_stride, out + i*m,
-						length, dimension, cache, memo.data(), seg.data(), temp.data());
-				}
-			}
-		} else
-#endif
-		{
-			std::vector<T> memo(m2 * m);
-			std::vector<T> seg(m);
-			std::vector<T> temp(m);
-			for (uint64_t i = 0; i < batch_size; ++i) {
-				log_sig_from_path_<T>(path + i * path_stride, out + i * m,
-					length, dimension, cache, memo.data(), seg.data(), temp.data());
-			}
-		}
-	}
+	auto func = [&](const T* p, T* o) {
+		thread_local std::vector<T> tl_memo;
+		thread_local std::vector<T> tl_seg;
+		thread_local std::vector<T> tl_temp;
+		tl_memo.resize(m2 * m);
+		tl_seg.resize(m);
+		tl_temp.resize(m);
+		log_sig_from_path_<T>(p, o, length, dimension, cache, tl_memo.data(), tl_seg.data(), tl_temp.data());
+	};
+	multi_threaded_batch<const T, T>(func, path, out, batch_size, path_stride, m, n_jobs);
 }
 
 // ========================================================================
@@ -1402,52 +1342,12 @@ void batch_log_sig_from_path_backprop_(
 	// Workspace: 4*m (curr, prev, seg, neg_seg) + 3*m2*m (bch_ws + bch_bp_ws) + 3*m (d_acc, d_ls1, d_ls2)
 	uint64_t ws_size = 7 * m + 3 * m2 * m;
 
-	if (n_jobs != 1) {
-		auto func = [&](const T* dout, T* dp, const T* p) {
-			thread_local std::vector<T> tl_ws;
-			tl_ws.resize(ws_size);
-			log_sig_from_path_backprop_<T>(dout, dp, p, length, dimension, cache, tl_ws.data());
-		};
-		multi_threaded_batch_2<const T, T, const T>(func, d_out, d_path, path, batch_size, m, path_stride, path_stride, n_jobs);
-	}
-	else {
-#ifdef VEC
-		if constexpr (std::is_same_v<T, double>) {
-			// SIMD x4 backward: 4*m (curr,prev,seg,neg_seg) + 3*m2*m (bch_ws+bch_bp_ws) + 3*m (d_acc,d_ls1,d_ls2), all *4
-			uint64_t ws_size_x4 = (7 * m + 3 * m2 * m) * 4;
-			std::vector<double> ws_x4(ws_size_x4);
-			uint64_t i = 0;
-			for (; i + 4 <= batch_size; i += 4) {
-				const double* douts[4] = {
-					d_out + (i+0)*m, d_out + (i+1)*m,
-					d_out + (i+2)*m, d_out + (i+3)*m };
-				double* dpaths[4] = {
-					d_path + (i+0)*path_stride, d_path + (i+1)*path_stride,
-					d_path + (i+2)*path_stride, d_path + (i+3)*path_stride };
-				const double* ps[4] = {
-					path + (i+0)*path_stride, path + (i+1)*path_stride,
-					path + (i+2)*path_stride, path + (i+3)*path_stride };
-				log_sig_from_path_backprop_x4_(douts, dpaths, ps, length, dimension, cache, ws_x4.data());
-			}
-			if (i < batch_size) {
-				std::vector<double> ws(ws_size);
-				for (; i < batch_size; ++i) {
-					log_sig_from_path_backprop_<double>(
-						d_out + i*m, d_path + i*path_stride, path + i*path_stride,
-						length, dimension, cache, ws.data());
-				}
-			}
-		} else
-#endif
-		{
-			std::vector<T> ws(ws_size);
-			for (uint64_t i = 0; i < batch_size; ++i) {
-				log_sig_from_path_backprop_<T>(
-					d_out + i * m, d_path + i * path_stride, path + i * path_stride,
-					length, dimension, cache, ws.data());
-			}
-		}
-	}
+	auto func = [&](const T* dout, T* dp, const T* p) {
+		thread_local std::vector<T> tl_ws;
+		tl_ws.resize(ws_size);
+		log_sig_from_path_backprop_<T>(dout, dp, p, length, dimension, cache, tl_ws.data());
+	};
+	multi_threaded_batch_2<const T, T, const T>(func, d_out, d_path, path, batch_size, m, path_stride, path_stride, n_jobs);
 }
 
 // ========================================================================
@@ -1581,7 +1481,7 @@ void log_sig_combine_backprop_(
 }
 
 template<std::floating_point T>
-void batch_log_sig_combine_backprop_(
+void log_sig_combine_backprop_(
 	const T* d_out, T* d_ls1, T* d_ls2,
 	const T* ls1, const T* ls2,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree,
@@ -1603,20 +1503,10 @@ void batch_log_sig_combine_backprop_(
 
 	uint64_t m2 = cache.bch_coefficients.size();
 
-	if (n_jobs != 1) {
-		auto func = [&](const T* dout, T* dls1, T* dls2, const T* l1, const T* l2) {
-			thread_local std::vector<T> tl_workspace;
-			tl_workspace.resize(2 * m2 * m);
-			log_sig_combine_backprop_impl_<T>(dout, dls1, dls2, l1, l2, cache, tl_workspace.data());
-		};
-		multi_threaded_batch_4<T>(func, d_out, d_ls1, d_ls2, ls1, ls2, batch_size, m, m, m, m, m, n_jobs);
-	}
-	else {
-		std::vector<T> workspace(2 * m2 * m);
-		for (uint64_t i = 0; i < batch_size; ++i) {
-			log_sig_combine_backprop_impl_<T>(
-				d_out + i * m, d_ls1 + i * m, d_ls2 + i * m,
-				ls1 + i * m, ls2 + i * m, cache, workspace.data());
-		}
-	}
+	auto func = [&](const T* dout, T* dls1, T* dls2, const T* l1, const T* l2) {
+		thread_local std::vector<T> tl_workspace;
+		tl_workspace.resize(2 * m2 * m);
+		log_sig_combine_backprop_impl_<T>(dout, dls1, dls2, l1, l2, cache, tl_workspace.data());
+	};
+	multi_threaded_batch_4<T>(func, d_out, d_ls1, d_ls2, ls1, ls2, batch_size, m, m, m, m, m, n_jobs);
 }

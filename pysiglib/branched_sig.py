@@ -18,9 +18,11 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_BRANCHED_SIG, CPSIG_BATCH_BRANCHED_SIG, CPSIG_BRANCHED_SIG_COMBINE, CPSIG_BATCH_BRANCHED_SIG_COMBINE
+from .sig_length import aug_dim
+from .dtypes import (CPSIG_BRANCHED_SIG, CPSIG_BRANCHED_SIG_COMBINE,
+                     CUSIG_BRANCHED_SIG_CUDA, CUSIG_BRANCHED_SIG_COMBINE_CUDA)
 from .data_handlers import PathInputHandler, SigOutputHandler, MultipleSigInputHandler
 from .load_siglib import CPSIG
 
@@ -55,8 +57,8 @@ def prepare_branched_sig(
     check_type(lead_lag, "lead_lag", bool)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    aug_dim = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
-    err_code = CPSIG.prepare_branched_sig(aug_dim, degree, use_disk)
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
+    err_code = CPSIG.prepare_branched_sig(aug_dimension, degree, use_disk)
     if err_code:
         raise Exception("Error in pysiglib.prepare_branched_sig: " + err_msg(err_code))
 
@@ -106,13 +108,11 @@ def branched_sig(
     :return: Branched signature array of shape ``(bsig_len,)`` or ``(batch_size, bsig_len)``.
     """
     check_type(degree, "degree", int)
-    check_type(n_jobs, "n_jobs", int)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
     check_non_neg(degree, "degree")
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     dimension = data.data_dimension
@@ -120,57 +120,16 @@ def branched_sig(
     bsig_len = CPSIG.branched_sig_length(aug_dimension, degree)
     result = SigOutputHandler(data, bsig_len)
 
-    if data.device == "cuda":
-        from .dtypes import CUSIG_BRANCHED_SIG, CUSIG_BATCH_BRANCHED_SIG
-        if data.is_batch:
-            err_code = CUSIG_BATCH_BRANCHED_SIG[data.dtype](
-                data.data_ptr,
-                result.data_ptr,
-                data.batch_size,
-                dimension,
-                data.data_length,
-                degree,
-                data.time_aug,
-                data.lead_lag,
-                data.end_time
-            )
-        else:
-            err_code = CUSIG_BRANCHED_SIG[data.dtype](
-                data.data_ptr,
-                result.data_ptr,
-                dimension,
-                data.data_length,
-                degree,
-                data.time_aug,
-                data.lead_lag,
-                data.end_time
-            )
+    if data.device == "cpu":
+        err_code = CPSIG_BRANCHED_SIG[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size,
+            dimension, data.data_length, degree, n_jobs,
+            data.time_aug, data.lead_lag, data.end_time)
     else:
-        if data.is_batch:
-            err_code = CPSIG_BATCH_BRANCHED_SIG[data.dtype](
-                data.data_ptr,
-                result.data_ptr,
-                data.batch_size,
-                dimension,
-                data.data_length,
-                degree,
-                n_jobs,
-                data.time_aug,
-                data.lead_lag,
-                data.end_time
-            )
-        else:
-            err_code = CPSIG_BRANCHED_SIG[data.dtype](
-                data.data_ptr,
-                result.data_ptr,
-                dimension,
-                data.data_length,
-                degree,
-                data.time_aug,
-                data.lead_lag,
-                data.end_time
-            )
-
+        err_code = CUSIG_BRANCHED_SIG_CUDA[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size,
+            dimension, data.data_length, degree,
+            data.time_aug, data.lead_lag, data.end_time)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig: " + err_msg(err_code))
     return result.data
@@ -196,34 +155,22 @@ def branched_sig_combine(
     """
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
-    check_type(n_jobs, "n_jobs", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
+    check_n_jobs(n_jobs)
 
     bsig_len = CPSIG.branched_sig_length(dimension, degree)
     data = MultipleSigInputHandler([bsig1, bsig2], bsig_len, ["bsig1", "bsig2"])
     result = SigOutputHandler(data, bsig_len)
 
-    if data.device == "cuda":
-        from .dtypes import CUSIG_BRANCHED_SIG_COMBINE, CUSIG_BATCH_BRANCHED_SIG_COMBINE
-        if data.is_batch:
-            err_code = CUSIG_BATCH_BRANCHED_SIG_COMBINE[data.dtype](
-                data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
-                data.batch_size, dimension, degree)
-        else:
-            err_code = CUSIG_BRANCHED_SIG_COMBINE[data.dtype](
-                data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
-                dimension, degree)
+    if data.device == "cpu":
+        err_code = CPSIG_BRANCHED_SIG_COMBINE[data.dtype](
+            data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+            data.batch_size, dimension, degree, n_jobs)
     else:
-        if data.is_batch:
-            err_code = CPSIG_BATCH_BRANCHED_SIG_COMBINE[data.dtype](
-                data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
-                data.batch_size, dimension, degree, n_jobs)
-        else:
-            err_code = CPSIG_BRANCHED_SIG_COMBINE[data.dtype](
-                data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
-                dimension, degree)
-
+        err_code = CUSIG_BRANCHED_SIG_COMBINE_CUDA[data.dtype](
+            data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+            data.batch_size, dimension, degree)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine: " + err_msg(err_code))
     return result.data

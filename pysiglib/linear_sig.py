@@ -18,56 +18,11 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_LINEAR_SIG, CPSIG_BATCH_LINEAR_SIG
-from .load_siglib import BUILT_WITH_CUDA
+from .dtypes import CPSIG_LINEAR_SIG, CUSIG_LINEAR_SIG_CUDA
 from .sig_length import sig_length
 from .data_handlers import SigInputHandler, SigOutputHandler
-
-if BUILT_WITH_CUDA:
-    from .dtypes import CUSIG_LINEAR_SIG_CUDA, CUSIG_BATCH_LINEAR_SIG_CUDA
-
-
-def linear_sig_(data, result, dimension, degree):
-    err_code = CPSIG_LINEAR_SIG[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        dimension,
-        degree
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.linear_sig: " + err_msg(err_code))
-    return result.data
-
-def batch_linear_sig_(data, result, dimension, degree, n_jobs):
-    err_code = CPSIG_BATCH_LINEAR_SIG[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.batch_size,
-        dimension,
-        degree,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.linear_sig: " + err_msg(err_code))
-    return result.data
-
-
-def linear_sig_cuda_(data, result, dimension, degree):
-    err_code = CUSIG_BATCH_LINEAR_SIG_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.batch_size,
-        dimension,
-        degree
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.linear_sig (CUDA): " + err_msg(err_code))
-    return result.data
 
 
 def linear_sig(
@@ -124,17 +79,18 @@ def linear_sig(
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     sig_len = sig_length(dimension, degree)
     data = SigInputHandler(displacement, dimension, "displacement")
     result = SigOutputHandler(data, sig_len)
 
     if data.device == "cpu":
-        if data.is_batch:
-            return batch_linear_sig_(data, result, dimension, degree, n_jobs)
-        return linear_sig_(data, result, dimension, degree)
+        err_code = CPSIG_LINEAR_SIG[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size, dimension, degree, n_jobs)
     else:
-        return linear_sig_cuda_(data, result, dimension, degree)
+        err_code = CUSIG_LINEAR_SIG_CUDA[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size, dimension, degree)
+    if err_code:
+        raise Exception("Error in pysiglib.linear_sig: " + err_msg(err_code))
+    return result.data

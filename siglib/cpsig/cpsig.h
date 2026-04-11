@@ -34,7 +34,6 @@
 	#endif
 #endif
 
-
 extern "C" {
 
 	/** @defgroup transform_path_functions Transform path functions
@@ -42,30 +41,7 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Applies time-augmentation and/or the lead-lag transformation to a path of type float.
-	*
-	*
-	* @param data_in Pointer to input path data (row-major), size = `length * dimension`.
-	* @param data_out Pointer to output buffer (row-major, preallocated), size = `transformed_length * transformed_dimension`, where
-	*					`transformed_length = lead_lag ? length * 2 - 1 : length` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
-	* @param dimension Dimension of the path.
-	* @param length Length of the path.
-	* @param time_aug Whether to add time augmentation (default = false).
-	* @param lead_lag Whether to apply the lead-lag transform (default = false).
-	* @param end_time End time for time augmentation (default = 1.0).
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int transform_path_f(const float* data_in, float* data_out, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1.) noexcept;
-	/** @brief */
-	CPSIG_API int transform_path_d(const double* data_in, double* data_out, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
-	/** @} */
-
-	/** @defgroup batch_transform_path_functions Batch transform path functions
-	* @{
-	*/
-
-	/**
-	* @brief Applies time-augmentation and/or the lead-lag transformation to a batch of paths of type float.
+	* @brief Applies time-augmentation and/or the lead-lag transformation to a batch of paths.
 	*
 	*
 	* @param data_in Pointer to input path data (row-major), size = `batch_size * length * dimension`.
@@ -82,9 +58,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_transform_path_f(const float* data_in, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
+	CPSIG_API int transform_path_f(const float* data_in, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_transform_path_d(const double* data_in, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
+	CPSIG_API int transform_path_d(const double* data_in, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup transform_path_backprop_functions Transform path backprop functions
@@ -93,29 +69,6 @@ extern "C" {
 
 	/**
 	* @brief Backpropagation through the transform_path function.
-	*
-	*
-	* @param derivs Pointer to derivatives with respect to transformed path (row-major), size = `transformed_length * transformed_dimension`, where
-	*					`transformed_length = lead_lag ? length * 2 - 1 : length` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
-	* @param data_out Pointer to output buffer (row-major, preallocated), size = `length * dimension`.
-	* @param dimension Dimension of the original (pre-transformation) path.
-	* @param length Length of the original (pre-transformation) path.
-	* @param time_aug Whether time augmentation was applied (default = false).
-	* @param lead_lag Whether the lead-lag transform was applied (default = false).
-	* @param end_time End time for time augmentation (default = 1.0).
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int transform_path_backprop_f(const float* derivs, float* data_out, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1.) noexcept;
-	/** @brief */
-	CPSIG_API int transform_path_backprop_d(const double* derivs, double* data_out, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
-	/** @} */
-
-	/** @defgroup batch_transform_path_backprop_functions Batch transform path backprop functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagation through the batch_transform_path function.
 	*
 	*
 	* @param derivs Pointer to derivatives with respect to transformed path (row-major), size = `batch_size * transformed_length * transformed_dimension`, where
@@ -132,9 +85,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_transform_path_backprop_f(const float* derivs, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
+	CPSIG_API int transform_path_backprop_f(const float* derivs, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_transform_path_backprop_d(const double* derivs, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
+	CPSIG_API int transform_path_backprop_d(const double* derivs, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
 	/** @} */
 
 	/**
@@ -152,27 +105,7 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Combines two truncated signatures of the same degree and dimension into one signature.
-	*
-	*
-	* @param sig1 Pointer to the first truncated signature, size = `sig_length(dimension, degree)`.
-	* @param sig2 Pointer to the second truncated signature, size = `sig_length(dimension, degree)`. Must have the same degree and dimension as the first.
-	* @param out Pointer to the output buffer (preallocated), size = `sig_length(dimension, degree)`.
-	* @param dimension Dimension of the underlying paths.
-	* @param degree Truncation degree of the signatures.
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int sig_combine_f(const float* sig1, const float* sig2, float* out, uint64_t dimension, uint64_t degree) noexcept;
-	/** @brief */
-	CPSIG_API int sig_combine_d(const double* sig1, const double* sig2, double* out, uint64_t dimension, uint64_t degree) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_combine_functions Batch sig combine functions
-	* @{
-	*/
-
-	/**
-	* @brief Combines a batch of pairs of truncated signatures of the same degree and dimension.
+	* @brief Combines pairs of truncated signatures of the same degree and dimension.
 	*
 	*
 	* @param sig1 Pointer to the batch of first truncated signatures (row-major), size = `batch_size * sig_length(dimension, degree)`.
@@ -187,9 +120,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_sig_combine_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_combine_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_sig_combine_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_combine_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_combine_backprop_functions Sig combine backprop functions
@@ -198,28 +131,6 @@ extern "C" {
 
 	/**
 	* @brief Backpropagation through the sig_combine function.
-	*
-	*
-	* @param sig_combined_derivs Pointer to the derivatives with respect to the combined signature, size = `sig_length(dimension, degree)`.
-	* @param sig1_deriv Pointer to the output buffer for the derivatives with respect to sig1 (preallocated), size = `sig_length(dimension, degree)`.
-	* @param sig2_deriv Pointer to the output buffer for the derivatives with respect to sig2 (preallocated), size = `sig_length(dimension, degree)`.
-	* @param sig1 Pointer to the first truncated signature (precomputed), size = `sig_length(dimension, degree)`.
-	* @param sig2 Pointer to the second truncated signature (precomputed), size = `sig_length(dimension, degree)`. Must have the same degree and dimension as the first.
-	* @param dimension Dimension of the underlying path.
-	* @param degree Truncation degree of the signature.
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int sig_combine_backprop_f(const float* sig_combined_derivs, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t dimension, uint64_t degree) noexcept;
-	/** @brief */
-	CPSIG_API int sig_combine_backprop_d(const double* sig_combined_derivs, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t dimension, uint64_t degree) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_combine_backprop_functions Batch sig combine backprop functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagation through the batch_sig_combine function.
 	*
 	*
 	* @param sig_combined_derivs Pointer to the derivatives with respect to the combined signatures (row-major), size = `batch_size * sig_length(dimension, degree)`.
@@ -235,56 +146,24 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_sig_combine_backprop_f(const float* sig_combined_derivs, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_combine_backprop_f(const float* sig_combined_derivs, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_sig_combine_backprop_d(const double* sig_combined_derivs, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_combine_backprop_d(const double* sig_combined_derivs, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
 	// linear_sig: signature of a single linear segment from a displacement vector
-	CPSIG_API int linear_sig_f(const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept;
-	CPSIG_API int linear_sig_d(const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept;
-	CPSIG_API int batch_linear_sig_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_linear_sig_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int linear_sig_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int linear_sig_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 
 	// sig_join: extend a signature by a displacement
-	CPSIG_API int sig_join_f(const float* sig, const float* displacement, float* out, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	CPSIG_API int sig_join_d(const double* sig, const double* displacement, double* out, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	CPSIG_API int batch_sig_join_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_sig_join_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_join_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_join_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
 
 	// sig_join_backprop
-	CPSIG_API int sig_join_backprop_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	CPSIG_API int sig_join_backprop_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	CPSIG_API int batch_sig_join_backprop_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_sig_join_backprop_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_join_backprop_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_join_backprop_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
 
 	/** @defgroup sig_coef_functions Signature coefficient functions
-	* @{
-	*/
-
-	/**
-	* @brief For a path of type float, computes coefficients of its signature.
-	*
-	*
-	* @param path Pointer to path data (row-major), size = `length * dimension`.
-	* @param out Pointer to output buffer (preallocated), size = `prefixes ? sum(max(degrees[i], 1)) : num_multi_idx`.
-	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
-	* @param num_multi_idx Number of multi indices.
-	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.
-	* @param dimension Dimension of the path.
-	* @param length Length of the path.
-	* @param time_aug Whether to add time augmentation (default = false).
-	* @param lead_lag Whether to apply lead-lag transform (default = false).
-	* @param end_time End time for time augmentation (default = 1.0).
-	* @param prefixes If `true`, will additionally return coefficients for all prefixes of words (default = false).
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false) noexcept;
-	/** @brief */
-	CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_coef_functions Batch signature coefficient functions
 	* @{
 	*/
 
@@ -309,9 +188,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_coef_backprop_functions Signature coefficient backprop functions
@@ -320,33 +199,6 @@ extern "C" {
 
 	/**
 	* @brief Backpropagation through the sig_coef functions
-	*
-	*
-	* @param path Pointer to path data (row-major), size = `length * dimension`.
-	* @param out Pointer to output buffer (preallocated), size = `length * dimension`.
-	* @param coefs Pointer to coefficients computed using `sig_coef` with `prefixes=true`, size = `sum(degrees[i])`.
-	* @param derivs Pointer to derivatives with respect to coefficients,  size = `sum(degrees[i])`. **Modified in-place.**
-	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
-	* @param num_multi_idx Number of multi indices.
-	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.
-	* @param dimension Dimension of the path.
-	* @param length Length of the path.
-	* @param time_aug Whether time augmentation was applied (default = false).
-	* @param lead_lag Whether the lead-lag transform was applied (default = false).
-	* @param end_time End time for time augmentation (default = 1.0).
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1.) noexcept;
-	/** @brief */
-	CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_coef_backprop_functions Batch signature coefficient backprop functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagation through the batch_sig_coef functions
 	*
 	*
 	* @param path Pointer to path data (row-major), size = `batch_size * length * dimension`.
@@ -367,9 +219,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_sig_coef_backprop_f(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
+	CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_sig_coef_backprop_d(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
+	CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup signature_functions Signature functions
@@ -377,30 +229,7 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Computes the signature of a path of type float.
-	* @param path Pointer to path data (row-major), size = `length * dimension`.
-	* @param out Pointer to output buffer (preallocated), size = `sig_length(dimension, degree)`.
-	* @param dimension Dimension of the path.
-	* @param length Length of the path.
-	* @param degree Truncation degree of the signature.
-	* @param time_aug Whether to add time augmentation (default = false).
-	* @param lead_lag Whether to apply lead-lag transform (default = false).
-	* @param end_time End time for time augmentation (default = 1.0).
-	* @param horner Whether to use Horner's scheme (default = true).
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int signature_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true) noexcept; //bool time_aug = false, bool lead_lag = false, bool horner = true);
-	/** @brief */
-	CPSIG_API int signature_d(const double* path, double* out, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true) noexcept;
-	/** @} */
-
-
-	/** @defgroup batch_signature_functions Batch signature functions
-	* @{
-	*/
-
-	/**
-	* @brief Computes the signatures of a batch of paths of type float.
+	* @brief Computes the signatures of a batch of paths.
 	* @param path Pointer to path batch data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * sig_length(dimension, degree)`.
 	* @param batch_size Batch size of the paths.
@@ -416,11 +245,10 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, int n_jobs = 1) noexcept;
+	CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, int n_jobs = 1) noexcept;
+	CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, int n_jobs = 1) noexcept;
 	/** @} */
-
 
 	/** @defgroup sig_backprop_functions Signature backprop functions
 	* @{
@@ -428,31 +256,6 @@ extern "C" {
 
 	/**
 	* @brief Backpropagation through the signature_f function.
-	* 
-	* @param path Pointer to path data (row-major), size = `length * dimension`.
-	* @param out Pointer to output buffer (preallocated), size = `length * dimension`.
-	* @param sig_derivs Pointer to derivatives with respect to the signature, size = `sig_length(dimension, degree)`.
-	* @param sig Pointer to signature of the path (precomputed), size = `sig_length(dimension, degree)`.
-	* @param dimension Dimension of the path.
-	* @param length Length of the path.
-	* @param degree Truncation degree of the signature.
-	* @param time_aug Whether time augmentation was applied (default = false).
-	* @param lead_lag Whether the lead-lag transform was applied (default = false).
-	* @param end_time End time for time augmentation (default = 1.0).
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.) noexcept;
-	/** @brief */
-	CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
-	/** @} */
-
-
-	/** @defgroup batch_sig_backprop_functions Signature backprop functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagation through the batch_signature_f function.
 	*
 	* @param path Pointer to path batch data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * length * dimension`.
@@ -470,9 +273,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
+	CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
+	CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
 	/** @} */
 
 	/**
@@ -523,26 +326,6 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Converts a signature to a log signature using the specified method.
-	* @param sig Pointer to signature, size = `sig_length(dimension, degree)`.
-	* @param out Pointer to output buffer (preallocated), size = `method ? log_sig_length(dimension, degree) : sig_length(dimension, degree)`.
-	* @param dimension Dimension of the path.
-	* @param degree Truncation degree of the (log) signature.
-	* @param time_aug Whether time augmentation was used for the signature computation (default = false).
-	* @param lead_lag Whether the lead-lag transform was used for the signature computation (default = false).
-	* @param method The method to use for the log calculation (`0`, `1` or `2`). Please see the Python documentation for details.
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int sig_to_log_sig_f(const float* sig, float* out, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0) noexcept; //bool time_aug = false, bool lead_lag = false, bool horner = true);
-	/** @brief */
-	CPSIG_API int sig_to_log_sig_d(const double* sig, double* out, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_to_log_sig_functions Batch sig to log sig functions
-	* @{
-	*/
-
-	/**
 	* @brief Converts a batch of signatures to log signatures using the specified method.
 	* @param sig Pointer to batch of signatures (row-major), size = `batch_size * sig_length(dimension, degree)`.
 	* @param out Pointer to output buffer (preallocated), size = `batch_size * (method ? log_sig_length(dimension, degree) : sig_length(dimension, degree))`.
@@ -557,38 +340,18 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_sig_to_log_sig_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_to_log_sig_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_sig_to_log_sig_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_to_log_sig_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
 	/** @} */
 
+	
 	/** @defgroup sig_to_log_sig_backprop_functions Sig to log sig backprop functions
 	* @{
 	*/
 
 	/**
 	* @brief Backpropagates derivatives through the `sig_to_log_sig_f` function.
-	* @param sig Pointer to signature, size = `sig_length(dimension, degree)`.
-	* @param out Pointer to output buffer (preallocated), size = `sig_length(dimension, degree)`.
-	* @param log_sig_derivs Pointer to derivatives with respect to the log signature, size = `method ? log_sig_length(dimension, degree) : sig_length(dimension, degree)`.
-	* @param dimension Dimension of the path.
-	* @param degree Truncation degree of the (log) signature.
-	* @param time_aug Whether time augmentation was used for the signature computation (default = false).
-	* @param lead_lag Whether the lead-lag transform was used for the signature computation (default = false).
-	* @param method The method used for the log calculation (`0`, `1` or `2`). Please see the Python documentation for details.
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int sig_to_log_sig_backprop_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method) noexcept;
-	/** @brief */
-	CPSIG_API int sig_to_log_sig_backprop_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method) noexcept;
-	/** @} */
-	
-	/** @defgroup batch_sig_to_log_sig_backprop_functions Batch sig to log sig backprop functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagates derivatives through the `batch_sig_to_log_sig_f` function.
 	* @param sig Pointer to batch of signatures (row-major), size = `batch_size * sig_length(dimension, degree)`.
 	* @param out Pointer to output buffer (preallocated), size = `batch_size * sig_length(dimension, degree)`.
 	* @param log_sig_derivs Pointer to derivatives with respect to the log signature, size = `batch_size * (method ? log_sig_length(dimension, degree) : sig_length(dimension, degree))`.
@@ -603,9 +366,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_sig_to_log_sig_backprop_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, int n_jobs) noexcept;
+	CPSIG_API int sig_to_log_sig_backprop_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, int n_jobs) noexcept;
 	/** @brief */
-	CPSIG_API int batch_sig_to_log_sig_backprop_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, int n_jobs) noexcept;
+	CPSIG_API int sig_to_log_sig_backprop_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, int n_jobs) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_combine_functions Log sig combine functions
@@ -613,13 +376,8 @@ extern "C" {
 	*/
 
 	CPSIG_API int log_sig_combine_f(const float* log_sig1, const float* log_sig2, float* out,
-		uint64_t dimension, uint64_t degree) noexcept;
-	CPSIG_API int log_sig_combine_d(const double* log_sig1, const double* log_sig2, double* out,
-		uint64_t dimension, uint64_t degree) noexcept;
-
-	CPSIG_API int batch_log_sig_combine_f(const float* log_sig1, const float* log_sig2, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_log_sig_combine_d(const double* log_sig1, const double* log_sig2, double* out,
+	CPSIG_API int log_sig_combine_d(const double* log_sig1, const double* log_sig2, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -628,93 +386,53 @@ extern "C" {
 	*/
 
 	CPSIG_API int log_sig_combine_backprop_f(const float* d_out, float* d_ls1, float* d_ls2,
-		const float* ls1, const float* ls2, uint64_t dimension, uint64_t degree) noexcept;
-	CPSIG_API int log_sig_combine_backprop_d(const double* d_out, double* d_ls1, double* d_ls2,
-		const double* ls1, const double* ls2, uint64_t dimension, uint64_t degree) noexcept;
-
-	CPSIG_API int batch_log_sig_combine_backprop_f(const float* d_out, float* d_ls1, float* d_ls2,
 		const float* ls1, const float* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_log_sig_combine_backprop_d(const double* d_out, double* d_ls1, double* d_ls2,
+	CPSIG_API int log_sig_combine_backprop_d(const double* d_out, double* d_ls1, double* d_ls2,
 		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
 	// log_sig_join: extend a log-signature by a displacement via BCH
-	CPSIG_API int log_sig_join_f(const float* log_sig, const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept;
-	CPSIG_API int log_sig_join_d(const double* log_sig, const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept;
-	CPSIG_API int batch_log_sig_join_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_log_sig_join_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int log_sig_join_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int log_sig_join_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 
 	// log_sig_join_backprop
-	CPSIG_API int log_sig_join_backprop_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t dimension, uint64_t degree) noexcept;
-	CPSIG_API int log_sig_join_backprop_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t dimension, uint64_t degree) noexcept;
-	CPSIG_API int batch_log_sig_join_backprop_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_log_sig_join_backprop_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int log_sig_join_backprop_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	CPSIG_API int log_sig_join_backprop_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 
 	/** @defgroup log_sig_from_path_functions Log-signature from path functions
 	* @{
 	*/
-	CPSIG_API int batch_log_sig_from_path_f(const float* path, float* out,
+	CPSIG_API int log_sig_from_path_f(const float* path, float* out,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_log_sig_from_path_d(const double* path, double* out,
+	CPSIG_API int log_sig_from_path_d(const double* path, double* out,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 
-	CPSIG_API int batch_log_sig_from_path_backprop_f(const float* d_out, float* d_path, const float* path,
+	CPSIG_API int log_sig_from_path_backprop_f(const float* d_out, float* d_path, const float* path,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_log_sig_from_path_backprop_d(const double* d_out, double* d_path, const double* path,
+	CPSIG_API int log_sig_from_path_backprop_d(const double* d_out, double* d_path, const double* path,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup logsig_to_sig_functions Log-signature to signature (tensor exponential) functions
 	* @{
 	*/
-	CPSIG_API int logsig_to_sig_f(const float* log_sig, float* out,
-		uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0) noexcept;
-	CPSIG_API int logsig_to_sig_d(const double* log_sig, double* out,
-		uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0) noexcept;
 
-	CPSIG_API int batch_logsig_to_sig_f(const float* log_sig, float* out,
+	CPSIG_API int logsig_to_sig_f(const float* log_sig, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
 		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_logsig_to_sig_d(const double* log_sig, double* out,
+	CPSIG_API int logsig_to_sig_d(const double* log_sig, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
 		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
 
 	CPSIG_API int logsig_to_sig_backprop_f(const float* log_sig, float* out, const float* sig_derivs,
-		uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0) noexcept;
-	CPSIG_API int logsig_to_sig_backprop_d(const double* log_sig, double* out, const double* sig_derivs,
-		uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0) noexcept;
-
-	CPSIG_API int batch_logsig_to_sig_backprop_f(const float* log_sig, float* out, const float* sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
 		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_logsig_to_sig_backprop_d(const double* log_sig, double* out, const double* sig_derivs,
+	CPSIG_API int logsig_to_sig_backprop_d(const double* log_sig, double* out, const double* sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
 		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_kernel_functions Signature kernel functions
-	* @{
-	*/
-
-	/**
-	* @brief Computes the signature kernel of two paths from their gram matrix.
-	*
-	* @param gram Pointer to gram matrix data (row-major), size = `(length1 - 1) * (length2 - 1)`.
-	* @param out Pointer to output buffer (row-major, preallocated), size = `return_grid ? (((length1 - 1) << dyadic_order_1) + 1) * (((length2 - 1) << dyadic_order_2) + 1) : 1`.
-	* @param dimension Dimension of the path.
-	* @param length1 Length of the first path.
-	* @param length2 Length of the second path.
-	* @param dyadic_order_1 Dyadic refinement for the first path.
-	* @param dyadic_order_2 Dyadic refinement for the second path.
-	* @param return_grid Whether to return the entire PDE grid (default = false).
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int sig_kernel_f(const float* gram, float* out, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @brief */
-	CPSIG_API int sig_kernel_d(const double* gram, double* out, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_kernel_functions Batch signature kernel functions
 	* @{
 	*/
 
@@ -729,15 +447,15 @@ extern "C" {
 	* @param length2 Length of the second path.
 	* @param dyadic_order_1 Dyadic refinement for the first path.
 	* @param dyadic_order_2 Dyadic refinement for the second path.
-	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
-	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
-	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @param return_grid Whether to return the entire PDE grid (default = false).
+	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all
+	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
+	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_sig_kernel_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_kernel_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_sig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_kernel_backprop_functions Signature kernel backprop functions
@@ -746,30 +464,6 @@ extern "C" {
 
 	/**
 	* @brief Backpropagation through sig_kernel.
-	*
-	* @param gram Pointer to gram matrix data (row-major), size = `(length1 - 1) * (length2 - 1)`.
-	* @param out Pointer to output buffer (row-major, preallocated), size = `(length1 - 1) * (length2 - 1)`.
-	* @param derivs Pointer to input derivatives. If `return_grid` is false, points to a single scalar. If `return_grid` is true, points to a grid-sized array of size `(((length1 - 1) << dyadic_order_1) + 1) * (((length2 - 1) << dyadic_order_2) + 1)`.
-	* @param k_grid Pointer to signature kernel PDE grid (row-major, precomputed), size = `(((length1 - 1) << dyadic_order_1) + 1) * (((length2 - 1) << dyadic_order_2) + 1)`.
-	* @param dimension Dimension of the path.
-	* @param length1 Length of the first path.
-	* @param length2 Length of the second path.
-	* @param dyadic_order_1 Dyadic refinement for the first path.
-	* @param dyadic_order_2 Dyadic refinement for the second path.
-	* @param return_grid If true, derivs is expected to be grid-sized; if false, derivs points to a single scalar.
-	* @return Status code (0 = success).
-	*/
-	CPSIG_API int sig_kernel_backprop_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @brief */	
-	CPSIG_API int sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_kernel_backprop_functions Batch signature kernel backprop functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagation through batch_sig_kernel.
 	*
 	* @param gram Pointer to batch gram matrix data (row-major), size = `batch_size * (length1 - 1) * (length2 - 1)`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * (length1 - 1) * (length2 - 1)`.
@@ -781,15 +475,15 @@ extern "C" {
 	* @param length2 Length of the second paths.
 	* @param dyadic_order_1 Dyadic refinement for the first paths.
 	* @param dyadic_order_2 Dyadic refinement for the second paths.
-	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
-	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
-	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @param return_grid If true, derivs is expected to be grid-sized per batch element; if false, derivs has one scalar per batch element.
+	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all
+	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
+	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	CPSIG_API int batch_sig_kernel_backprop_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_kernel_backprop_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @brief */
-	CPSIG_API int batch_sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
+	CPSIG_API int sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup branched_sig_functions Branched signature functions
@@ -799,33 +493,20 @@ extern "C" {
 	CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk = false) noexcept;
 	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes) noexcept;
 
-	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
-	CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
 
-	CPSIG_API int batch_branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
-	CPSIG_API int batch_branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
-
-	CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t dimension, uint64_t max_nodes) noexcept;
-	CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t dimension, uint64_t max_nodes) noexcept;
-
-	CPSIG_API int batch_branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
+	CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
+	CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
 
 	CPSIG_API int get_branched_cache_sizes(uint64_t dimension, uint64_t max_nodes, uint64_t* total_length, uint64_t* num_trees, int* out_max_nodes, uint64_t* order_index_len, uint64_t* labels_data_len, uint64_t* labels_offsets_len, uint64_t* coprod_data_len, uint64_t* coprod_offsets_len) noexcept;
 	CPSIG_API int get_branched_cache_data(uint64_t dimension, uint64_t max_nodes, double* inv_tree_factorial, uint8_t* node_labels_data, uint64_t* node_labels_offsets, uint64_t* coproduct_data, uint64_t* coproduct_offsets, uint64_t* order_index) noexcept;
 
-	CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t dimension, uint64_t max_nodes) noexcept;
-	CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
+	CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
 
-	CPSIG_API int batch_branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
-	CPSIG_API int batch_branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
-
-	CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
-	CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
-
-	CPSIG_API int batch_branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
-	CPSIG_API int batch_branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
 	/** @} */
 }
-
 

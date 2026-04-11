@@ -205,32 +205,14 @@ template<std::floating_point T>
 void sig_kernel_(
 	const T* gram,
 	T* out,
-	uint64_t dimension,
-	uint64_t length1,
-	uint64_t length2,
-	uint64_t dyadic_order_1,
-	uint64_t dyadic_order_2,
-	bool return_grid
-) {
-	if (dimension == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
-	if (return_grid)
-		get_sig_kernel_grid_(gram, length1, length2, out, dyadic_order_1, dyadic_order_2);
-	else
-		get_sig_kernel_diag_(gram, length1, length2, out, dyadic_order_1, dyadic_order_2);
-}
-
-template<std::floating_point T>
-void batch_sig_kernel_(
-	const T* gram,
-	T* out,
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t length1,
 	uint64_t length2,
 	uint64_t dyadic_order_1,
 	uint64_t dyadic_order_2,
-	int n_jobs,
-	bool return_grid
+	bool return_grid,
+	int n_jobs
 ) {
 	if (dimension == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
 	if (!gram) {
@@ -239,7 +221,6 @@ void batch_sig_kernel_(
 	}
 
 	const uint64_t gram_length = (length1 - 1) * (length2 - 1);
-	const T* const data_end_1 = gram + gram_length * batch_size;
 	const uint64_t result_length = return_grid ? (((length1 - 1) << dyadic_order_1) + 1) * (((length2 - 1) << dyadic_order_2) + 1) : 1;
 
 	auto sig_kernel_func = [&](const T* const gram_ptr, T* const out_ptr) {
@@ -251,19 +232,7 @@ void batch_sig_kernel_(
 		}
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch(sig_kernel_func, gram, out, batch_size, gram_length, result_length, n_jobs);
-	}
-	else {
-		const T* gram_ptr = gram;
-		T* out_ptr = out;
-		for (;
-			gram_ptr < data_end_1;
-			gram_ptr += gram_length, out_ptr += result_length) {
-
-			sig_kernel_func(gram_ptr, out_ptr);
-		}
-	}
+	multi_threaded_batch(sig_kernel_func, gram, out, batch_size, gram_length, result_length, n_jobs);
 	return;
 }
 
@@ -401,8 +370,6 @@ void batch_sig_kernel_backprop_(
 		return;
 	}
 
-	const T* const data_end_1 = gram + gram_length * batch_size;
-
 	const uint64_t dyadic_length_1 = ((length1 - 1) << dyadic_order_1) + 1;
 	const uint64_t dyadic_length_2 = ((length2 - 1) << dyadic_order_2) + 1;
 	const uint64_t grid_length = dyadic_length_1 * dyadic_length_2;
@@ -413,20 +380,6 @@ void batch_sig_kernel_backprop_(
 		sig_kernel_backprop_(gram_ptr, out_ptr, deriv_ptr, k_grid_ptr, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid);
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch_3(sig_kernel_backprop_func, gram, derivs, k_grid, out, batch_size, gram_length, derivs_stride, grid_length, gram_length, n_jobs);
-	}
-	else {
-		const T* gram_ptr = gram;
-		T* out_ptr = out;
-		const T* deriv_ptr = derivs;
-		const T* k_grid_ptr = k_grid;
-		for (;
-			gram_ptr < data_end_1;
-			gram_ptr += gram_length, out_ptr += gram_length, deriv_ptr += derivs_stride, k_grid_ptr += grid_length) {
-
-			sig_kernel_backprop_func(gram_ptr, deriv_ptr, k_grid_ptr, out_ptr);
-		}
-	}
+	multi_threaded_batch_3(sig_kernel_backprop_func, gram, derivs, k_grid, out, batch_size, gram_length, derivs_stride, grid_length, gram_length, n_jobs);
 	return;
 }

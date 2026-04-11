@@ -19,74 +19,11 @@ import numpy as np
 import torch
 
 from .data_handlers import PathOutputHandler
-from .param_checks import check_type
+from .param_checks import check_type, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_TRANSFORM_PATH_BACKPROP, CPSIG_BATCH_TRANSFORM_PATH_BACKPROP, CUSIG_TRANSFORM_PATH_BACKPROP_CUDA, CUSIG_BATCH_TRANSFORM_PATH_BACKPROP_CUDA
+from .dtypes import CPSIG_TRANSFORM_PATH_BACKPROP, CUSIG_TRANSFORM_PATH_BACKPROP_CUDA
 
 from .data_handlers import PathInputHandler
-
-def transform_path_backprop_(data, result, length, dimension, time_aug, lead_lag, end_time):
-    err_code = CPSIG_TRANSFORM_PATH_BACKPROP[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        dimension,
-        length,
-        time_aug,
-        lead_lag,
-        end_time
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.transform_path_backprop: " + err_msg(err_code))
-    return result.data
-
-def batch_transform_path_backprop_(data, result, length, dimension, time_aug, lead_lag, end_time, n_jobs):
-    err_code = CPSIG_BATCH_TRANSFORM_PATH_BACKPROP[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.batch_size,
-        dimension,
-        length,
-        time_aug,
-        lead_lag,
-        end_time,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.transform_path_backprop: " + err_msg(err_code))
-    return result.data
-
-def transform_path_backprop_cuda_(data, result, length, dimension, time_aug, lead_lag, end_time):
-    err_code = CUSIG_TRANSFORM_PATH_BACKPROP_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        dimension,
-        length,
-        time_aug,
-        lead_lag,
-        end_time
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.transform_path_backprop: " + err_msg(err_code))
-    return result.data
-
-def batch_transform_path_backprop_cuda_(data, result, length, dimension, time_aug, lead_lag, end_time):
-    err_code = CUSIG_BATCH_TRANSFORM_PATH_BACKPROP_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.batch_size,
-        dimension,
-        length,
-        time_aug,
-        lead_lag,
-        end_time
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.transform_path_backprop: " + err_msg(err_code))
-    return result.data
 
 def transform_path_backprop(
     derivs : Union[np.ndarray, torch.tensor],
@@ -143,6 +80,7 @@ def transform_path_backprop(
     if (not time_aug) and (not lead_lag):
         return derivs
 
+    check_n_jobs(n_jobs)
     data = PathInputHandler(derivs, False, False, end_time, "path")
     length = (data.length + 1) // 2 if lead_lag else data.length
     dimension = data.dimension - 1 if time_aug else data.dimension
@@ -150,13 +88,13 @@ def transform_path_backprop(
         dimension = dimension // 2
     result = PathOutputHandler(length, dimension, data)
     if data.device == "cpu":
-        if data.is_batch:
-            check_type(n_jobs, "n_jobs", int)
-            if n_jobs == 0:
-                raise ValueError("n_jobs cannot be 0")
-            return batch_transform_path_backprop_(data, result, length, dimension, time_aug, lead_lag, end_time, n_jobs)
-        return transform_path_backprop_(data, result, length, dimension, time_aug, lead_lag, end_time)
+        err_code = CPSIG_TRANSFORM_PATH_BACKPROP[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size, dimension, length,
+            time_aug, lead_lag, end_time, n_jobs)
     else:
-        if data.is_batch:
-            return batch_transform_path_backprop_cuda_(data, result, length, dimension, time_aug, lead_lag, end_time)
-        return transform_path_backprop_cuda_(data, result, length, dimension, time_aug, lead_lag, end_time)
+        err_code = CUSIG_TRANSFORM_PATH_BACKPROP_CUDA[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size, dimension, length,
+            time_aug, lead_lag, end_time)
+    if err_code:
+        raise Exception("Error in pysiglib.transform_path_backprop: " + err_msg(err_code))
+    return result.data

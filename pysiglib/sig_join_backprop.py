@@ -18,68 +18,11 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIG_JOIN_BACKPROP, CPSIG_BATCH_SIG_JOIN_BACKPROP
-from .load_siglib import BUILT_WITH_CUDA
+from .dtypes import CPSIG_SIG_JOIN_BACKPROP, CUSIG_SIG_JOIN_BACKPROP_CUDA
 from .sig_length import sig_length
 from .data_handlers import SigInputHandler, SigOutputHandler
-
-if BUILT_WITH_CUDA:
-    from .dtypes import CUSIG_BATCH_SIG_JOIN_BACKPROP_CUDA
-
-
-def sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree, prepend):
-    err_code = CPSIG_SIG_JOIN_BACKPROP[d_out_data.dtype](
-        d_out_data.data_ptr,
-        d_sig.data_ptr,
-        d_disp.data_ptr,
-        sig_data.data_ptr,
-        disp_data.data_ptr,
-        dimension,
-        degree,
-        prepend
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_join_backprop: " + err_msg(err_code))
-    return d_sig.data, d_disp.data
-
-def batch_sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree, prepend, n_jobs):
-    err_code = CPSIG_BATCH_SIG_JOIN_BACKPROP[d_out_data.dtype](
-        d_out_data.data_ptr,
-        d_sig.data_ptr,
-        d_disp.data_ptr,
-        sig_data.data_ptr,
-        disp_data.data_ptr,
-        d_out_data.batch_size,
-        dimension,
-        degree,
-        prepend,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_join_backprop: " + err_msg(err_code))
-    return d_sig.data, d_disp.data
-
-
-def sig_join_backprop_cuda_(d_out_data, sig_data, disp_data, d_sig, d_disp, dimension, degree, prepend):
-    err_code = CUSIG_BATCH_SIG_JOIN_BACKPROP_CUDA[d_out_data.dtype](
-        d_out_data.data_ptr,
-        d_sig.data_ptr,
-        d_disp.data_ptr,
-        sig_data.data_ptr,
-        disp_data.data_ptr,
-        d_out_data.batch_size,
-        dimension,
-        degree,
-        prepend
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_join_backprop (CUDA): " + err_msg(err_code))
-    return d_sig.data, d_disp.data
 
 
 def sig_join_backprop(
@@ -143,9 +86,7 @@ def sig_join_backprop(
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     sig_len = sig_length(dimension, degree)
 
@@ -168,8 +109,15 @@ def sig_join_backprop(
     d_disp = SigOutputHandler(d_out_data, dimension)
 
     if d_out_data.device == "cpu":
-        if d_out_data.is_batch:
-            return batch_sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree, prepend, n_jobs)
-        return sig_join_backprop_(d_out_data, d_sig, d_disp, sig_data, disp_data, dimension, degree, prepend)
+        err_code = CPSIG_SIG_JOIN_BACKPROP[d_out_data.dtype](
+            d_out_data.data_ptr, d_sig.data_ptr, d_disp.data_ptr,
+            sig_data.data_ptr, disp_data.data_ptr,
+            d_out_data.batch_size, dimension, degree, prepend, n_jobs)
     else:
-        return sig_join_backprop_cuda_(d_out_data, sig_data, disp_data, d_sig, d_disp, dimension, degree, prepend)
+        err_code = CUSIG_SIG_JOIN_BACKPROP_CUDA[d_out_data.dtype](
+            d_out_data.data_ptr, d_sig.data_ptr, d_disp.data_ptr,
+            sig_data.data_ptr, disp_data.data_ptr,
+            d_out_data.batch_size, dimension, degree, prepend)
+    if err_code:
+        raise Exception("Error in pysiglib.sig_join_backprop: " + err_msg(err_code))
+    return d_sig.data, d_disp.data

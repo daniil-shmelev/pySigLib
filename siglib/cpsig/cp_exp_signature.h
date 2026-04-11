@@ -428,23 +428,6 @@ template<std::floating_point T>
 void logsig_to_sig_(
 	const T* log_sig,
 	T* out,
-	uint64_t dimension,
-	uint64_t degree,
-	bool time_aug = false,
-	bool lead_lag = false,
-	int method = 0
-) {
-	if (dimension == 0) throw std::invalid_argument("logsig_to_sig received dimension 0");
-	if (degree == 0) throw std::invalid_argument("logsig_to_sig received degree 0");
-
-	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
-	get_logsig_to_sig_<T>(log_sig, out, aug_dimension, degree, method);
-}
-
-template<std::floating_point T>
-void batch_logsig_to_sig_(
-	const T* log_sig,
-	T* out,
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
@@ -464,16 +447,7 @@ void batch_logsig_to_sig_(
 		get_logsig_to_sig_<T>(in_ptr, out_ptr, aug_dimension, degree, method);
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch(func, log_sig, out, batch_size, input_length, output_length, n_jobs);
-	}
-	else {
-		const T* in_ptr = log_sig;
-		T* out_ptr = out;
-		for (uint64_t i = 0; i < batch_size; ++i, in_ptr += input_length, out_ptr += output_length) {
-			func(in_ptr, out_ptr);
-		}
-	}
+	multi_threaded_batch(func, log_sig, out, batch_size, input_length, output_length, n_jobs);
 }
 
 // ---------------------------------------------------------------------------
@@ -482,24 +456,6 @@ void batch_logsig_to_sig_(
 
 template<std::floating_point T>
 void logsig_to_sig_backprop_(
-	const T* log_sig,
-	T* d_logsig,
-	const T* d_sig,
-	uint64_t dimension,
-	uint64_t degree,
-	bool time_aug = false,
-	bool lead_lag = false,
-	int method = 0
-) {
-	if (dimension == 0) throw std::invalid_argument("logsig_to_sig_backprop received dimension 0");
-	if (degree == 0) throw std::invalid_argument("logsig_to_sig_backprop received degree 0");
-
-	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
-	get_logsig_to_sig_backprop_<T>(d_logsig, d_sig, log_sig, aug_dimension, degree, method);
-}
-
-template<std::floating_point T>
-void batch_logsig_to_sig_backprop_(
 	const T* log_sig,
 	T* d_logsig,
 	const T* d_sig,

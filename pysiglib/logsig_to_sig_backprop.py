@@ -18,85 +18,13 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import (CPSIG_LOGSIG_TO_SIG_BACKPROP, CPSIG_BATCH_LOGSIG_TO_SIG_BACKPROP,
-                     CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA, CUSIG_BATCH_LOGSIG_TO_SIG_BACKPROP_CUDA)
-from .sig_length import sig_length, log_sig_length
+from .dtypes import (CPSIG_LOGSIG_TO_SIG_BACKPROP,
+                     CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA)
+from .sig_length import sig_length, log_sig_length, aug_dim
 from .data_handlers import SigOutputHandler, SigInputHandler
 
-
-######################################################
-# Python wrappers
-######################################################
-
-def logsig_to_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method):
-    err_code = CPSIG_LOGSIG_TO_SIG_BACKPROP[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        derivs_data.data_ptr,
-        dimension,
-        degree,
-        time_aug,
-        lead_lag,
-        method
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
-    return result.data
-
-def batch_logsig_to_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method, n_jobs=1):
-    err_code = CPSIG_BATCH_LOGSIG_TO_SIG_BACKPROP[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        derivs_data.data_ptr,
-        data.batch_size,
-        dimension,
-        degree,
-        time_aug,
-        lead_lag,
-        method,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
-    return result.data
-
-def logsig_to_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method):
-    err_code = CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        derivs_data.data_ptr,
-        aug_dimension,
-        degree,
-        method
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
-    return result.data
-
-def batch_logsig_to_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method):
-    err_code = CUSIG_BATCH_LOGSIG_TO_SIG_BACKPROP_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        derivs_data.data_ptr,
-        data.batch_size,
-        aug_dimension,
-        degree,
-        method
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
-    return result.data
-
-
-######################################################
-# Public API
-######################################################
 
 def logsig_to_sig_backprop(
         log_sig : Union[np.ndarray, torch.tensor],
@@ -145,7 +73,7 @@ def logsig_to_sig_backprop(
     if method not in (0, 1, 2):
         raise ValueError("method must be 0, 1, or 2")
 
-    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     input_len = sig_length(aug_dimension, degree) if method == 0 else log_sig_length(aug_dimension, degree)
     sig_len = sig_length(aug_dimension, degree)
@@ -153,14 +81,16 @@ def logsig_to_sig_backprop(
     derivs_data = SigInputHandler(sig_derivs, sig_len, "sig_derivs")
     result = SigOutputHandler(data, input_len)
 
+    check_n_jobs(n_jobs)
     if data.device == "cpu":
-        if data.is_batch:
-            check_type(n_jobs, "n_jobs", int)
-            if n_jobs == 0:
-                raise ValueError("n_jobs cannot be 0")
-            return batch_logsig_to_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method, n_jobs)
-        return logsig_to_sig_backprop_(data, derivs_data, result, dimension, degree, time_aug, lead_lag, method)
+        err_code = CPSIG_LOGSIG_TO_SIG_BACKPROP[data.dtype](
+            data.data_ptr, result.data_ptr, derivs_data.data_ptr,
+            data.batch_size, dimension, degree,
+            time_aug, lead_lag, method, n_jobs)
     else:
-        if data.is_batch:
-            return batch_logsig_to_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method)
-        return logsig_to_sig_backprop_cuda_(data, derivs_data, result, aug_dimension, degree, method)
+        err_code = CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA[data.dtype](
+            data.data_ptr, result.data_ptr, derivs_data.data_ptr,
+            data.batch_size, aug_dimension, degree, method)
+    if err_code:
+        raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
+    return result.data

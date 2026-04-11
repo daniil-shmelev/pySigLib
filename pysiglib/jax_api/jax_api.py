@@ -42,7 +42,7 @@ from ..linear_sig import linear_sig as linear_sig_forward
 from ..branched_sig import branched_sig as branched_sig_forward
 from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
 from ..words import word_to_idx
-from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order
+from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order, check_n_jobs
 from ..sig_length import sig_length as _sig_length, log_sig_length as _log_sig_length
 from ._ffi import (
     _augmented_dim,
@@ -143,9 +143,7 @@ def sig(
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
     check_type(horner, "horner", bool)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     return _sig(path, degree, time_aug, lead_lag, end_time, horner, n_jobs)
 
@@ -205,9 +203,7 @@ def sig_combine(
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     return _sig_combine(sig1, sig2, _augmented_dim(dimension, time_aug, lead_lag), degree, n_jobs)
 
@@ -256,9 +252,7 @@ def transform_path(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     return _transform_path(path, time_aug, lead_lag, end_time, n_jobs)
 
@@ -466,9 +460,7 @@ def log_sig_combine(
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
     return _log_sig_combine(log_sig1, log_sig2, aug_dim, degree, n_jobs)
@@ -556,9 +548,7 @@ def sig_join(
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     return _sig_join(sig_arr, displacement, dimension, degree, prepend, n_jobs)
 
@@ -649,9 +639,7 @@ def log_sig_join(
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     return _log_sig_join(log_sig_arr, displacement, dimension, degree, n_jobs)
 
@@ -752,9 +740,7 @@ def sig_kernel(
 
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
 
@@ -979,9 +965,7 @@ def sig_coef(
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
     check_type(prefixes, "prefixes", bool)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     dimension = path.shape[-1]
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
@@ -1043,9 +1027,7 @@ def branched_sig(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     return _branched_sig(path, degree, time_aug, lead_lag, end_time, n_jobs)
 
@@ -1096,9 +1078,7 @@ def branched_sig_combine(
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     return _branched_sig_combine(bsig1, bsig2, dimension, degree, n_jobs)
 

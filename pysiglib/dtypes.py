@@ -41,60 +41,42 @@ CPSIG_TRANSFORM_PATH = {
     "float64": CPSIG.transform_path_d
 }
 
-CPSIG_BATCH_TRANSFORM_PATH = {
-    "float32": CPSIG.batch_transform_path_f,
-    "float64": CPSIG.batch_transform_path_d
-}
-
 CPSIG_TRANSFORM_PATH_BACKPROP = {
     "float32": CPSIG.transform_path_backprop_f,
     "float64": CPSIG.transform_path_backprop_d
 }
 
-CPSIG_BATCH_TRANSFORM_PATH_BACKPROP = {
-    "float32": CPSIG.batch_transform_path_backprop_f,
-    "float64": CPSIG.batch_transform_path_backprop_d
-}
-
 CUSIG_TRANSFORM_PATH_CUDA = None
-CUSIG_BATCH_TRANSFORM_PATH_CUDA = None
 CUSIG_TRANSFORM_PATH_BACKPROP_CUDA = None
-CUSIG_BATCH_TRANSFORM_PATH_BACKPROP_CUDA = None
-CUSIG_BATCH_SIG_KERNEL_CUDA = None
-CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA = None
+CUSIG_SIG_KERNEL_CUDA = None
+CUSIG_SIG_KERNEL_BACKPROP_CUDA = None
 CUSIG_SIGNATURE_CUDA = None
-CUSIG_BATCH_SIGNATURE_CUDA = None
 CUSIG_SIG_BACKPROP_CUDA = None
-CUSIG_BATCH_SIG_BACKPROP_CUDA = None
 CUSIG_SIG_COMBINE_CUDA = None
-CUSIG_BATCH_SIG_COMBINE_CUDA = None
 CUSIG_SIG_COMBINE_BACKPROP_CUDA = None
-CUSIG_BATCH_SIG_COMBINE_BACKPROP_CUDA = None
 CUSIG_SIG_TO_LOG_SIG_CUDA = None
-CUSIG_BATCH_SIG_TO_LOG_SIG_CUDA = None
 CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA = None
-CUSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP_CUDA = None
 CUSIG_SIG_COEF_CUDA = None
-CUSIG_BATCH_SIG_COEF_CUDA = None
 CUSIG_SIG_COEF_BACKPROP_CUDA = None
-CUSIG_BATCH_SIG_COEF_BACKPROP_CUDA = None
-CUSIG_BATCH_LOG_SIG_COMBINE_CUDA = None
-CUSIG_BATCH_LOG_SIG_COMBINE_BACKPROP_CUDA = None
-CUSIG_BATCH_LOG_SIG_FROM_PATH_CUDA = None
-CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA = None
+CUSIG_LOG_SIG_COMBINE_CUDA = None
+CUSIG_LOG_SIG_COMBINE_BACKPROP_CUDA = None
+CUSIG_LOG_SIG_FROM_PATH_CUDA = None
+CUSIG_LOG_SIG_FROM_PATH_BACKPROP_CUDA = None
 CUSIG_LOGSIG_TO_SIG_CUDA = None
-CUSIG_BATCH_LOGSIG_TO_SIG_CUDA = None
 CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA = None
-CUSIG_BATCH_LOGSIG_TO_SIG_BACKPROP_CUDA = None
+CUSIG_LINEAR_SIG_CUDA = None
+CUSIG_SIG_JOIN_CUDA = None
+CUSIG_SIG_JOIN_BACKPROP_CUDA = None
+CUSIG_LOG_SIG_JOIN_CUDA = None
+CUSIG_LOG_SIG_JOIN_BACKPROP_CUDA = None
+CUSIG_BRANCHED_SIG_CUDA = None
+CUSIG_BRANCHED_SIG_COMBINE_CUDA = None
+CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA = None
+CUSIG_BRANCHED_SIG_BACKPROP_CUDA = None
 if BUILT_WITH_CUDA:
     CUSIG_TRANSFORM_PATH_CUDA = {
         "float32": CUSIG.transform_path_cuda_f,
         "float64": CUSIG.transform_path_cuda_d
-    }
-
-    CUSIG_BATCH_TRANSFORM_PATH_CUDA = {
-        "float32": CUSIG.batch_transform_path_cuda_f,
-        "float64": CUSIG.batch_transform_path_cuda_d
     }
 
     CUSIG_TRANSFORM_PATH_BACKPROP_CUDA = {
@@ -102,19 +84,14 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.transform_path_backprop_cuda_d
     }
 
-    CUSIG_BATCH_TRANSFORM_PATH_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_transform_path_backprop_cuda_f,
-        "float64": CUSIG.batch_transform_path_backprop_cuda_d
+    CUSIG_SIG_KERNEL_CUDA = {
+        "float32": CUSIG.sig_kernel_cuda_f,
+        "float64": CUSIG.sig_kernel_cuda_d
     }
 
-    CUSIG_BATCH_SIG_KERNEL_CUDA = {
-        "float32": CUSIG.batch_sig_kernel_cuda_f,
-        "float64": CUSIG.batch_sig_kernel_cuda_d
-    }
-
-    CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_sig_kernel_backprop_cuda_f,
-        "float64": CUSIG.batch_sig_kernel_backprop_cuda_d
+    CUSIG_SIG_KERNEL_BACKPROP_CUDA = {
+        "float32": CUSIG.sig_kernel_backprop_cuda_f,
+        "float64": CUSIG.sig_kernel_backprop_cuda_d
     }
 
     CUSIG_SIGNATURE_CUDA = {
@@ -122,19 +99,9 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.signature_cuda_d
     }
 
-    CUSIG_BATCH_SIGNATURE_CUDA = {
-        "float32": CUSIG.batch_signature_cuda_f,
-        "float64": CUSIG.batch_signature_cuda_d
-    }
-
     CUSIG_SIG_BACKPROP_CUDA = {
         "float32": CUSIG.sig_backprop_cuda_f,
         "float64": CUSIG.sig_backprop_cuda_d
-    }
-
-    CUSIG_BATCH_SIG_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_sig_backprop_cuda_f,
-        "float64": CUSIG.batch_sig_backprop_cuda_d
     }
 
     CUSIG_SIG_COMBINE_CUDA = {
@@ -142,19 +109,9 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.sig_combine_cuda_d
     }
 
-    CUSIG_BATCH_SIG_COMBINE_CUDA = {
-        "float32": CUSIG.batch_sig_combine_cuda_f,
-        "float64": CUSIG.batch_sig_combine_cuda_d
-    }
-
     CUSIG_SIG_COMBINE_BACKPROP_CUDA = {
         "float32": CUSIG.sig_combine_backprop_cuda_f,
         "float64": CUSIG.sig_combine_backprop_cuda_d
-    }
-
-    CUSIG_BATCH_SIG_COMBINE_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_sig_combine_backprop_cuda_f,
-        "float64": CUSIG.batch_sig_combine_backprop_cuda_d
     }
 
     CUSIG_SIG_TO_LOG_SIG_CUDA = {
@@ -162,19 +119,9 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.sig_to_log_sig_cuda_d
     }
 
-    CUSIG_BATCH_SIG_TO_LOG_SIG_CUDA = {
-        "float32": CUSIG.batch_sig_to_log_sig_cuda_f,
-        "float64": CUSIG.batch_sig_to_log_sig_cuda_d
-    }
-
     CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA = {
         "float32": CUSIG.sig_to_log_sig_backprop_cuda_f,
         "float64": CUSIG.sig_to_log_sig_backprop_cuda_d
-    }
-
-    CUSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_sig_to_log_sig_backprop_cuda_f,
-        "float64": CUSIG.batch_sig_to_log_sig_backprop_cuda_d
     }
 
     CUSIG_SIG_COEF_CUDA = {
@@ -182,39 +129,29 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.sig_coef_cuda_d
     }
 
-    CUSIG_BATCH_SIG_COEF_CUDA = {
-        "float32": CUSIG.batch_sig_coef_cuda_f,
-        "float64": CUSIG.batch_sig_coef_cuda_d
-    }
-
     CUSIG_SIG_COEF_BACKPROP_CUDA = {
         "float32": CUSIG.sig_coef_backprop_cuda_f,
         "float64": CUSIG.sig_coef_backprop_cuda_d
     }
 
-    CUSIG_BATCH_SIG_COEF_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_sig_coef_backprop_cuda_f,
-        "float64": CUSIG.batch_sig_coef_backprop_cuda_d
+    CUSIG_LOG_SIG_COMBINE_CUDA = {
+        "float32": CUSIG.log_sig_combine_cuda_f,
+        "float64": CUSIG.log_sig_combine_cuda_d
     }
 
-    CUSIG_BATCH_LOG_SIG_COMBINE_CUDA = {
-        "float32": CUSIG.batch_log_sig_combine_cuda_f,
-        "float64": CUSIG.batch_log_sig_combine_cuda_d
+    CUSIG_LOG_SIG_COMBINE_BACKPROP_CUDA = {
+        "float32": CUSIG.log_sig_combine_backprop_cuda_f,
+        "float64": CUSIG.log_sig_combine_backprop_cuda_d
     }
 
-    CUSIG_BATCH_LOG_SIG_COMBINE_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_log_sig_combine_backprop_cuda_f,
-        "float64": CUSIG.batch_log_sig_combine_backprop_cuda_d
+    CUSIG_LOG_SIG_FROM_PATH_CUDA = {
+        "float32": CUSIG.log_sig_from_path_cuda_f,
+        "float64": CUSIG.log_sig_from_path_cuda_d
     }
 
-    CUSIG_BATCH_LOG_SIG_FROM_PATH_CUDA = {
-        "float32": CUSIG.batch_log_sig_from_path_cuda_f,
-        "float64": CUSIG.batch_log_sig_from_path_cuda_d
-    }
-
-    CUSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_log_sig_from_path_backprop_cuda_f,
-        "float64": CUSIG.batch_log_sig_from_path_backprop_cuda_d
+    CUSIG_LOG_SIG_FROM_PATH_BACKPROP_CUDA = {
+        "float32": CUSIG.log_sig_from_path_backprop_cuda_f,
+        "float64": CUSIG.log_sig_from_path_backprop_cuda_d
     }
 
     CUSIG_LOGSIG_TO_SIG_CUDA = {
@@ -222,19 +159,9 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.logsig_to_sig_cuda_d
     }
 
-    CUSIG_BATCH_LOGSIG_TO_SIG_CUDA = {
-        "float32": CUSIG.batch_logsig_to_sig_cuda_f,
-        "float64": CUSIG.batch_logsig_to_sig_cuda_d
-    }
-
     CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA = {
         "float32": CUSIG.logsig_to_sig_backprop_cuda_f,
         "float64": CUSIG.logsig_to_sig_backprop_cuda_d
-    }
-
-    CUSIG_BATCH_LOGSIG_TO_SIG_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_logsig_to_sig_backprop_cuda_f,
-        "float64": CUSIG.batch_logsig_to_sig_backprop_cuda_d
     }
 
     CUSIG_LINEAR_SIG_CUDA = {
@@ -242,19 +169,9 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.linear_sig_cuda_d
     }
 
-    CUSIG_BATCH_LINEAR_SIG_CUDA = {
-        "float32": CUSIG.batch_linear_sig_cuda_f,
-        "float64": CUSIG.batch_linear_sig_cuda_d
-    }
-
     CUSIG_SIG_JOIN_CUDA = {
         "float32": CUSIG.sig_join_cuda_f,
         "float64": CUSIG.sig_join_cuda_d
-    }
-
-    CUSIG_BATCH_SIG_JOIN_CUDA = {
-        "float32": CUSIG.batch_sig_join_cuda_f,
-        "float64": CUSIG.batch_sig_join_cuda_d
     }
 
     CUSIG_SIG_JOIN_BACKPROP_CUDA = {
@@ -262,34 +179,29 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.sig_join_backprop_cuda_d
     }
 
-    CUSIG_BATCH_SIG_JOIN_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_sig_join_backprop_cuda_f,
-        "float64": CUSIG.batch_sig_join_backprop_cuda_d
+    CUSIG_LOG_SIG_JOIN_CUDA = {
+        "float32": CUSIG.log_sig_join_cuda_f,
+        "float64": CUSIG.log_sig_join_cuda_d
     }
 
-    CUSIG_BATCH_LOG_SIG_JOIN_CUDA = {
-        "float32": CUSIG.batch_log_sig_join_cuda_f,
-        "float64": CUSIG.batch_log_sig_join_cuda_d
+    CUSIG_LOG_SIG_JOIN_BACKPROP_CUDA = {
+        "float32": CUSIG.log_sig_join_backprop_cuda_f,
+        "float64": CUSIG.log_sig_join_backprop_cuda_d
     }
 
-    CUSIG_BATCH_LOG_SIG_JOIN_BACKPROP_CUDA = {
-        "float32": CUSIG.batch_log_sig_join_backprop_cuda_f,
-        "float64": CUSIG.batch_log_sig_join_backprop_cuda_d
-    }
-
-CPSIG_BATCH_LOG_SIG_COMBINE = {
-    "float32": CPSIG.batch_log_sig_combine_f,
-    "float64": CPSIG.batch_log_sig_combine_d
+CPSIG_LOG_SIG_COMBINE = {
+    "float32": CPSIG.log_sig_combine_f,
+    "float64": CPSIG.log_sig_combine_d
 }
 
-CPSIG_BATCH_LOG_SIG_FROM_PATH = {
-    "float32": CPSIG.batch_log_sig_from_path_f,
-    "float64": CPSIG.batch_log_sig_from_path_d
+CPSIG_LOG_SIG_FROM_PATH = {
+    "float32": CPSIG.log_sig_from_path_f,
+    "float64": CPSIG.log_sig_from_path_d
 }
 
-CPSIG_BATCH_LOG_SIG_FROM_PATH_BACKPROP = {
-    "float32": CPSIG.batch_log_sig_from_path_backprop_f,
-    "float64": CPSIG.batch_log_sig_from_path_backprop_d
+CPSIG_LOG_SIG_FROM_PATH_BACKPROP = {
+    "float32": CPSIG.log_sig_from_path_backprop_f,
+    "float64": CPSIG.log_sig_from_path_backprop_d
 }
 
 CPSIG_LOG_SIG_COMBINE_BACKPROP = {
@@ -297,19 +209,9 @@ CPSIG_LOG_SIG_COMBINE_BACKPROP = {
     "float64": CPSIG.log_sig_combine_backprop_d
 }
 
-CPSIG_BATCH_LOG_SIG_COMBINE_BACKPROP = {
-    "float32": CPSIG.batch_log_sig_combine_backprop_f,
-    "float64": CPSIG.batch_log_sig_combine_backprop_d
-}
-
 CPSIG_SIG_COEF = {
     "float32": CPSIG.sig_coef_f,
     "float64": CPSIG.sig_coef_d
-}
-
-CPSIG_BATCH_SIG_COEF = {
-    "float32": CPSIG.batch_sig_coef_f,
-    "float64": CPSIG.batch_sig_coef_d
 }
 
 CPSIG_SIG_COEF_BACKPROP = {
@@ -317,19 +219,9 @@ CPSIG_SIG_COEF_BACKPROP = {
     "float64": CPSIG.sig_coef_backprop_d
 }
 
-CPSIG_BATCH_SIG_COEF_BACKPROP = {
-    "float32": CPSIG.batch_sig_coef_backprop_f,
-    "float64": CPSIG.batch_sig_coef_backprop_d
-}
-
 CPSIG_SIGNATURE = {
     "float32": CPSIG.signature_f,
     "float64": CPSIG.signature_d
-}
-
-CPSIG_BATCH_SIGNATURE = {
-    "float32": CPSIG.batch_signature_f,
-    "float64": CPSIG.batch_signature_d
 }
 
 CPSIG_SIG_BACKPROP = {
@@ -337,19 +229,9 @@ CPSIG_SIG_BACKPROP = {
     "float64": CPSIG.sig_backprop_d
 }
 
-CPSIG_BATCH_SIG_BACKPROP = {
-    "float32": CPSIG.batch_sig_backprop_f,
-    "float64": CPSIG.batch_sig_backprop_d
-}
-
 CPSIG_SIG_COMBINE = {
     "float32": CPSIG.sig_combine_f,
     "float64": CPSIG.sig_combine_d
-}
-
-CPSIG_BATCH_SIG_COMBINE = {
-    "float32": CPSIG.batch_sig_combine_f,
-    "float64": CPSIG.batch_sig_combine_d
 }
 
 CPSIG_SIG_COMBINE_BACKPROP = {
@@ -357,19 +239,9 @@ CPSIG_SIG_COMBINE_BACKPROP = {
     "float64": CPSIG.sig_combine_backprop_d
 }
 
-CPSIG_BATCH_SIG_COMBINE_BACKPROP = {
-    "float32": CPSIG.batch_sig_combine_backprop_f,
-    "float64": CPSIG.batch_sig_combine_backprop_d
-}
-
 CPSIG_SIG_TO_LOG_SIG = {
     "float32": CPSIG.sig_to_log_sig_f,
     "float64": CPSIG.sig_to_log_sig_d
-}
-
-CPSIG_BATCH_SIG_TO_LOG_SIG = {
-    "float32": CPSIG.batch_sig_to_log_sig_f,
-    "float64": CPSIG.batch_sig_to_log_sig_d
 }
 
 CPSIG_SIG_TO_LOG_SIG_BACKPROP = {
@@ -377,19 +249,9 @@ CPSIG_SIG_TO_LOG_SIG_BACKPROP = {
     "float64": CPSIG.sig_to_log_sig_backprop_d
 }
 
-CPSIG_BATCH_SIG_TO_LOG_SIG_BACKPROP = {
-    "float32": CPSIG.batch_sig_to_log_sig_backprop_f,
-    "float64": CPSIG.batch_sig_to_log_sig_backprop_d
-}
-
 CPSIG_LOGSIG_TO_SIG = {
     "float32": CPSIG.logsig_to_sig_f,
     "float64": CPSIG.logsig_to_sig_d
-}
-
-CPSIG_BATCH_LOGSIG_TO_SIG = {
-    "float32": CPSIG.batch_logsig_to_sig_f,
-    "float64": CPSIG.batch_logsig_to_sig_d
 }
 
 CPSIG_LOGSIG_TO_SIG_BACKPROP = {
@@ -397,19 +259,9 @@ CPSIG_LOGSIG_TO_SIG_BACKPROP = {
     "float64": CPSIG.logsig_to_sig_backprop_d
 }
 
-CPSIG_BATCH_LOGSIG_TO_SIG_BACKPROP = {
-    "float32": CPSIG.batch_logsig_to_sig_backprop_f,
-    "float64": CPSIG.batch_logsig_to_sig_backprop_d
-}
-
 CPSIG_LINEAR_SIG = {
     "float32": CPSIG.linear_sig_f,
     "float64": CPSIG.linear_sig_d
-}
-
-CPSIG_BATCH_LINEAR_SIG = {
-    "float32": CPSIG.batch_linear_sig_f,
-    "float64": CPSIG.batch_linear_sig_d
 }
 
 CPSIG_SIG_JOIN = {
@@ -417,19 +269,9 @@ CPSIG_SIG_JOIN = {
     "float64": CPSIG.sig_join_d
 }
 
-CPSIG_BATCH_SIG_JOIN = {
-    "float32": CPSIG.batch_sig_join_f,
-    "float64": CPSIG.batch_sig_join_d
-}
-
 CPSIG_SIG_JOIN_BACKPROP = {
     "float32": CPSIG.sig_join_backprop_f,
     "float64": CPSIG.sig_join_backprop_d
-}
-
-CPSIG_BATCH_SIG_JOIN_BACKPROP = {
-    "float32": CPSIG.batch_sig_join_backprop_f,
-    "float64": CPSIG.batch_sig_join_backprop_d
 }
 
 CPSIG_LOG_SIG_JOIN = {
@@ -437,19 +279,9 @@ CPSIG_LOG_SIG_JOIN = {
     "float64": CPSIG.log_sig_join_d
 }
 
-CPSIG_BATCH_LOG_SIG_JOIN = {
-    "float32": CPSIG.batch_log_sig_join_f,
-    "float64": CPSIG.batch_log_sig_join_d
-}
-
 CPSIG_LOG_SIG_JOIN_BACKPROP = {
     "float32": CPSIG.log_sig_join_backprop_f,
     "float64": CPSIG.log_sig_join_backprop_d
-}
-
-CPSIG_BATCH_LOG_SIG_JOIN_BACKPROP = {
-    "float32": CPSIG.batch_log_sig_join_backprop_f,
-    "float64": CPSIG.batch_log_sig_join_backprop_d
 }
 
 CPSIG_SIG_KERNEL = {
@@ -457,19 +289,9 @@ CPSIG_SIG_KERNEL = {
     "float64": CPSIG.sig_kernel_d
 }
 
-CPSIG_BATCH_SIG_KERNEL = {
-    "float32": CPSIG.batch_sig_kernel_f,
-    "float64": CPSIG.batch_sig_kernel_d
-}
-
 CPSIG_SIG_KERNEL_BACKPROP = {
     "float32": CPSIG.sig_kernel_backprop_f,
     "float64": CPSIG.sig_kernel_backprop_d
-}
-
-CPSIG_BATCH_SIG_KERNEL_BACKPROP = {
-    "float32": CPSIG.batch_sig_kernel_backprop_f,
-    "float64": CPSIG.batch_sig_kernel_backprop_d
 }
 
 CPSIG_BRANCHED_SIG = {
@@ -477,19 +299,9 @@ CPSIG_BRANCHED_SIG = {
     "float64": CPSIG.branched_sig_d
 }
 
-CPSIG_BATCH_BRANCHED_SIG = {
-    "float32": CPSIG.batch_branched_sig_f,
-    "float64": CPSIG.batch_branched_sig_d
-}
-
 CPSIG_BRANCHED_SIG_COMBINE = {
     "float32": CPSIG.branched_sig_combine_f,
     "float64": CPSIG.branched_sig_combine_d
-}
-
-CPSIG_BATCH_BRANCHED_SIG_COMBINE = {
-    "float32": CPSIG.batch_branched_sig_combine_f,
-    "float64": CPSIG.batch_branched_sig_combine_d
 }
 
 CPSIG_BRANCHED_SIG_COMBINE_BACKPROP = {
@@ -497,55 +309,27 @@ CPSIG_BRANCHED_SIG_COMBINE_BACKPROP = {
     "float64": CPSIG.branched_sig_combine_backprop_d
 }
 
-CPSIG_BATCH_BRANCHED_SIG_COMBINE_BACKPROP = {
-    "float32": CPSIG.batch_branched_sig_combine_backprop_f,
-    "float64": CPSIG.batch_branched_sig_combine_backprop_d
-}
-
 CPSIG_BRANCHED_SIG_BACKPROP = {
     "float32": CPSIG.branched_sig_backprop_f,
     "float64": CPSIG.branched_sig_backprop_d
 }
 
-CPSIG_BATCH_BRANCHED_SIG_BACKPROP = {
-    "float32": CPSIG.batch_branched_sig_backprop_f,
-    "float64": CPSIG.batch_branched_sig_backprop_d
-}
-
 if BUILT_WITH_CUDA:
-    CUSIG_BRANCHED_SIG = {
+    CUSIG_BRANCHED_SIG_CUDA = {
         "float32": CUSIG.branched_sig_cuda_f,
         "float64": CUSIG.branched_sig_cuda_d
     }
 
-    CUSIG_BATCH_BRANCHED_SIG = {
-        "float32": CUSIG.batch_branched_sig_cuda_f,
-        "float64": CUSIG.batch_branched_sig_cuda_d
-    }
-
-    CUSIG_BRANCHED_SIG_COMBINE = {
+    CUSIG_BRANCHED_SIG_COMBINE_CUDA = {
         "float32": CUSIG.branched_sig_combine_cuda_f,
         "float64": CUSIG.branched_sig_combine_cuda_d
     }
-    CUSIG_BATCH_BRANCHED_SIG_COMBINE = {
-        "float32": CUSIG.batch_branched_sig_combine_cuda_f,
-        "float64": CUSIG.batch_branched_sig_combine_cuda_d
-    }
-    CUSIG_BRANCHED_SIG_COMBINE_BACKPROP = {
+    CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA = {
         "float32": CUSIG.branched_sig_combine_backprop_cuda_f,
         "float64": CUSIG.branched_sig_combine_backprop_cuda_d
     }
-    CUSIG_BATCH_BRANCHED_SIG_COMBINE_BACKPROP = {
-        "float32": CUSIG.batch_branched_sig_combine_backprop_cuda_f,
-        "float64": CUSIG.batch_branched_sig_combine_backprop_cuda_d
-    }
 
-    CUSIG_BRANCHED_SIG_BACKPROP = {
+    CUSIG_BRANCHED_SIG_BACKPROP_CUDA = {
         "float32": CUSIG.branched_sig_backprop_cuda_f,
         "float64": CUSIG.branched_sig_backprop_cuda_d
-    }
-
-    CUSIG_BATCH_BRANCHED_SIG_BACKPROP = {
-        "float32": CUSIG.batch_branched_sig_backprop_cuda_f,
-        "float64": CUSIG.batch_branched_sig_backprop_cuda_d
     }

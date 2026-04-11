@@ -16,6 +16,12 @@
 from .load_siglib import CPSIG
 from .param_checks import check_type, check_non_neg, check_pos
 
+
+def aug_dim(dimension: int, time_aug: bool, lead_lag: bool) -> int:
+    """Effective dimension after applying lead-lag and/or time augmentation."""
+    return (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+
+
 def sig_length(
         dimension : int,
         degree : int,
@@ -75,7 +81,7 @@ def sig_length(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
 
-    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     out = CPSIG.sig_length(aug_dimension, degree)
     if out == 0:
@@ -141,7 +147,7 @@ def log_sig_length(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
 
-    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     out = CPSIG.log_sig_length(aug_dimension, degree)
     if out == 0:

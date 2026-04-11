@@ -18,59 +18,11 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_LOG_SIG_JOIN, CPSIG_BATCH_LOG_SIG_JOIN
-from .load_siglib import BUILT_WITH_CUDA
+from .dtypes import CPSIG_LOG_SIG_JOIN, CUSIG_LOG_SIG_JOIN_CUDA
 from .sig_length import log_sig_length
 from .data_handlers import SigInputHandler, SigOutputHandler
-
-if BUILT_WITH_CUDA:
-    from .dtypes import CUSIG_BATCH_LOG_SIG_JOIN_CUDA
-
-
-def log_sig_join_(logsig_data, disp_data, result, dimension, degree):
-    err_code = CPSIG_LOG_SIG_JOIN[logsig_data.dtype](
-        logsig_data.data_ptr,
-        disp_data.data_ptr,
-        result.data_ptr,
-        dimension,
-        degree
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.log_sig_join: " + err_msg(err_code))
-    return result.data
-
-def batch_log_sig_join_(logsig_data, disp_data, result, dimension, degree, n_jobs):
-    err_code = CPSIG_BATCH_LOG_SIG_JOIN[logsig_data.dtype](
-        logsig_data.data_ptr,
-        disp_data.data_ptr,
-        result.data_ptr,
-        logsig_data.batch_size,
-        dimension,
-        degree,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.log_sig_join: " + err_msg(err_code))
-    return result.data
-
-
-def log_sig_join_cuda_(logsig_data, disp_data, result, dimension, degree):
-    err_code = CUSIG_BATCH_LOG_SIG_JOIN_CUDA[logsig_data.dtype](
-        logsig_data.data_ptr,
-        disp_data.data_ptr,
-        result.data_ptr,
-        logsig_data.batch_size,
-        dimension,
-        degree
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.log_sig_join (CUDA): " + err_msg(err_code))
-    return result.data
 
 
 def log_sig_join(
@@ -136,9 +88,7 @@ def log_sig_join(
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
     ls_len = log_sig_length(dimension, degree)
     logsig_data = SigInputHandler(log_sig, ls_len, "log_sig")
@@ -158,8 +108,13 @@ def log_sig_join(
     result = SigOutputHandler(logsig_data, ls_len)
 
     if logsig_data.device == "cpu":
-        if logsig_data.is_batch:
-            return batch_log_sig_join_(logsig_data, disp_data, result, dimension, degree, n_jobs)
-        return log_sig_join_(logsig_data, disp_data, result, dimension, degree)
+        err_code = CPSIG_LOG_SIG_JOIN[logsig_data.dtype](
+            logsig_data.data_ptr, disp_data.data_ptr, result.data_ptr,
+            logsig_data.batch_size, dimension, degree, n_jobs)
     else:
-        return log_sig_join_cuda_(logsig_data, disp_data, result, dimension, degree)
+        err_code = CUSIG_LOG_SIG_JOIN_CUDA[logsig_data.dtype](
+            logsig_data.data_ptr, disp_data.data_ptr, result.data_ptr,
+            logsig_data.batch_size, dimension, degree)
+    if err_code:
+        raise Exception("Error in pysiglib.log_sig_join: " + err_msg(err_code))
+    return result.data

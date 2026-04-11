@@ -21,91 +21,59 @@ std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BchCache>, Pai
 extern "C" {
 
 	CPSIG_API int log_sig_combine_f(const float* log_sig1, const float* log_sig2, float* out,
-		uint64_t dimension, uint64_t degree) noexcept {
-		SAFE_CALL(log_sig_combine_<float>(log_sig1, log_sig2, out, dimension, degree));
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
+		SAFE_CALL(log_sig_combine_<float>(log_sig1, log_sig2, out, batch_size, dimension, degree, n_jobs));
 	}
 
 	CPSIG_API int log_sig_combine_d(const double* log_sig1, const double* log_sig2, double* out,
-		uint64_t dimension, uint64_t degree) noexcept {
-		SAFE_CALL(log_sig_combine_<double>(log_sig1, log_sig2, out, dimension, degree));
-	}
-
-	CPSIG_API int batch_log_sig_combine_f(const float* log_sig1, const float* log_sig2, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-		SAFE_CALL(batch_log_sig_combine_<float>(log_sig1, log_sig2, out, batch_size, dimension, degree, n_jobs));
+		SAFE_CALL(log_sig_combine_<double>(log_sig1, log_sig2, out, batch_size, dimension, degree, n_jobs));
 	}
 
-	CPSIG_API int batch_log_sig_combine_d(const double* log_sig1, const double* log_sig2, double* out,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-		SAFE_CALL(batch_log_sig_combine_<double>(log_sig1, log_sig2, out, batch_size, dimension, degree, n_jobs));
-	}
-
-	CPSIG_API int batch_log_sig_from_path_f(const float* path, float* out,
+	CPSIG_API int log_sig_from_path_f(const float* path, float* out,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
 		SAFE_CALL(batch_log_sig_from_path_<float>(path, out, batch_size, length, dimension, degree, n_jobs));
 	}
 
-	CPSIG_API int batch_log_sig_from_path_d(const double* path, double* out,
+	CPSIG_API int log_sig_from_path_d(const double* path, double* out,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
 		SAFE_CALL(batch_log_sig_from_path_<double>(path, out, batch_size, length, dimension, degree, n_jobs));
 	}
 
-	CPSIG_API int batch_log_sig_from_path_backprop_f(const float* d_out, float* d_path, const float* path,
+	CPSIG_API int log_sig_from_path_backprop_f(const float* d_out, float* d_path, const float* path,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
 		SAFE_CALL(batch_log_sig_from_path_backprop_<float>(d_out, d_path, path, batch_size, length, dimension, degree, n_jobs));
 	}
 
-	CPSIG_API int batch_log_sig_from_path_backprop_d(const double* d_out, double* d_path, const double* path,
+	CPSIG_API int log_sig_from_path_backprop_d(const double* d_out, double* d_path, const double* path,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
 		SAFE_CALL(batch_log_sig_from_path_backprop_<double>(d_out, d_path, path, batch_size, length, dimension, degree, n_jobs));
 	}
 
 	CPSIG_API int log_sig_combine_backprop_f(const float* d_out, float* d_ls1, float* d_ls2,
-		const float* ls1, const float* ls2, uint64_t dimension, uint64_t degree) noexcept {
-		SAFE_CALL(log_sig_combine_backprop_<float>(d_out, d_ls1, d_ls2, ls1, ls2, dimension, degree));
+		const float* ls1, const float* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
+		SAFE_CALL(log_sig_combine_backprop_<float>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree, n_jobs));
 	}
 
 	CPSIG_API int log_sig_combine_backprop_d(const double* d_out, double* d_ls1, double* d_ls2,
-		const double* ls1, const double* ls2, uint64_t dimension, uint64_t degree) noexcept {
-		SAFE_CALL(log_sig_combine_backprop_<double>(d_out, d_ls1, d_ls2, ls1, ls2, dimension, degree));
-	}
-
-	CPSIG_API int batch_log_sig_combine_backprop_f(const float* d_out, float* d_ls1, float* d_ls2,
-		const float* ls1, const float* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-		SAFE_CALL(batch_log_sig_combine_backprop_<float>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree, n_jobs));
-	}
-
-	CPSIG_API int batch_log_sig_combine_backprop_d(const double* d_out, double* d_ls1, double* d_ls2,
 		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-		SAFE_CALL(batch_log_sig_combine_backprop_<double>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree, n_jobs));
+		SAFE_CALL(log_sig_combine_backprop_<double>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree, n_jobs));
 	}
 
 	// log_sig_join
-	CPSIG_API int log_sig_join_f(const float* log_sig, const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept {
-		SAFE_CALL(log_sig_join_<float>(log_sig, displacement, out, dimension, degree));
+	CPSIG_API int log_sig_join_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
+		SAFE_CALL(log_sig_join_<float>(log_sig, displacement, out, batch_size, dimension, degree, n_jobs));
 	}
-	CPSIG_API int log_sig_join_d(const double* log_sig, const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept {
-		SAFE_CALL(log_sig_join_<double>(log_sig, displacement, out, dimension, degree));
-	}
-	CPSIG_API int batch_log_sig_join_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-		SAFE_CALL(batch_log_sig_join_<float>(log_sig, displacement, out, batch_size, dimension, degree, n_jobs));
-	}
-	CPSIG_API int batch_log_sig_join_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-		SAFE_CALL(batch_log_sig_join_<double>(log_sig, displacement, out, batch_size, dimension, degree, n_jobs));
+	CPSIG_API int log_sig_join_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
+		SAFE_CALL(log_sig_join_<double>(log_sig, displacement, out, batch_size, dimension, degree, n_jobs));
 	}
 
 	// log_sig_join_backprop
-	CPSIG_API int log_sig_join_backprop_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t dimension, uint64_t degree) noexcept {
-		SAFE_CALL(log_sig_join_backprop_<float>(d_out, d_logsig, d_displacement, log_sig, displacement, dimension, degree));
+	CPSIG_API int log_sig_join_backprop_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
+		SAFE_CALL(log_sig_join_backprop_<float>(d_out, d_logsig, d_displacement, log_sig, displacement, batch_size, dimension, degree, n_jobs));
 	}
-	CPSIG_API int log_sig_join_backprop_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t dimension, uint64_t degree) noexcept {
-		SAFE_CALL(log_sig_join_backprop_<double>(d_out, d_logsig, d_displacement, log_sig, displacement, dimension, degree));
-	}
-	CPSIG_API int batch_log_sig_join_backprop_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-		SAFE_CALL(batch_log_sig_join_backprop_<float>(d_out, d_logsig, d_displacement, log_sig, displacement, batch_size, dimension, degree, n_jobs));
-	}
-	CPSIG_API int batch_log_sig_join_backprop_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-		SAFE_CALL(batch_log_sig_join_backprop_<double>(d_out, d_logsig, d_displacement, log_sig, displacement, batch_size, dimension, degree, n_jobs));
+	CPSIG_API int log_sig_join_backprop_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
+		SAFE_CALL(log_sig_join_backprop_<double>(d_out, d_logsig, d_displacement, log_sig, displacement, batch_size, dimension, degree, n_jobs));
 	}
 
 }

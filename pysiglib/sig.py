@@ -18,45 +18,11 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIGNATURE, CPSIG_BATCH_SIGNATURE, CPSIG_SIG_COMBINE, CPSIG_BATCH_SIG_COMBINE, CUSIG_SIGNATURE_CUDA, CUSIG_BATCH_SIGNATURE_CUDA, CUSIG_SIG_COMBINE_CUDA, CUSIG_BATCH_SIG_COMBINE_CUDA
-from .sig_length import sig_length
+from .dtypes import CPSIG_SIGNATURE, CPSIG_SIG_COMBINE, CUSIG_SIGNATURE_CUDA, CUSIG_SIG_COMBINE_CUDA
+from .sig_length import sig_length, aug_dim
 from .data_handlers import PathInputHandler, MultipleSigInputHandler, SigOutputHandler
-
-
-######################################################
-# Python wrappers
-######################################################
-
-def sig_combine_(data, result, aug_dimension, degree, n_jobs):
-    err_code = CPSIG_BATCH_SIG_COMBINE[data.dtype](
-        data.sig_ptr[0],
-        data.sig_ptr[1],
-        result.data_ptr,
-        data.batch_size,
-        aug_dimension,
-        degree,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_combine: " + err_msg(err_code))
-    return result.data
-
-def sig_combine_cuda_(data, result, aug_dimension, degree):
-    err_code = CUSIG_BATCH_SIG_COMBINE_CUDA[data.dtype](
-        data.sig_ptr[0],
-        data.sig_ptr[1],
-        result.data_ptr,
-        data.batch_size,
-        aug_dimension,
-        degree
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_combine: " + err_msg(err_code))
-    return result.data
 
 def sig_combine(
         sig1 : Union[np.ndarray, torch.tensor],
@@ -131,90 +97,24 @@ def sig_combine(
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
-    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     sig_len = sig_length(aug_dimension, degree)
     data = MultipleSigInputHandler([sig1, sig2], sig_len, ["sig1", "sig2"])
     result = SigOutputHandler(data, sig_len)
 
     if data.device == "cpu":
-        return sig_combine_(data, result, aug_dimension, degree, n_jobs)
+        err_code = CPSIG_SIG_COMBINE[data.dtype](
+            data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+            data.batch_size, aug_dimension, degree, n_jobs)
     else:
-        return sig_combine_cuda_(data, result, aug_dimension, degree)
-
-def sig_(data, result, degree, horner = True):
-    err_code = CPSIG_SIGNATURE[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.data_dimension,
-        data.data_length,
-        degree,
-        data.time_aug,
-        data.lead_lag,
-        data.end_time,
-        horner
-    )
-
+        err_code = CUSIG_SIG_COMBINE_CUDA[data.dtype](
+            data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+            data.batch_size, aug_dimension, degree)
     if err_code:
-        raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
-    return result.data
-
-def batch_sig_(data, result, degree, horner = True, n_jobs = 1):
-    err_code = CPSIG_BATCH_SIGNATURE[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.batch_size,
-        data.data_dimension,
-        data.data_length,
-        degree,
-        data.time_aug,
-        data.lead_lag,
-        data.end_time,
-        horner,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
-    return result.data
-
-def sig_cuda_(data, result, degree, horner = True):
-    err_code = CUSIG_SIGNATURE_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.data_dimension,
-        data.data_length,
-        degree,
-        data.time_aug,
-        data.lead_lag,
-        data.end_time,
-        horner
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
-    return result.data
-
-def batch_sig_cuda_(data, result, degree, horner = True):
-    err_code = CUSIG_BATCH_SIGNATURE_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.batch_size,
-        data.data_dimension,
-        data.data_length,
-        degree,
-        data.time_aug,
-        data.lead_lag,
-        data.end_time,
-        horner
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
+        raise Exception("Error in pysiglib.sig_combine: " + err_msg(err_code))
     return result.data
 
 def sig(
@@ -302,19 +202,22 @@ def sig(
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
 
+    check_n_jobs(n_jobs)
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     sig_len = sig_length(data.dimension, degree)
     result = SigOutputHandler(data, sig_len)
 
     if data.device == "cpu":
-        if data.is_batch:
-            check_type(n_jobs, "n_jobs", int)
-            if n_jobs == 0:
-                raise ValueError("n_jobs cannot be 0")
-            return batch_sig_(data, result, degree, horner, n_jobs)
-        return sig_(data, result, degree, horner)
+        err_code = CPSIG_SIGNATURE[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size,
+            data.data_dimension, data.data_length, degree,
+            data.time_aug, data.lead_lag, data.end_time, horner, n_jobs)
     else:
-        if data.is_batch:
-            return batch_sig_cuda_(data, result, degree, horner)
-        return sig_cuda_(data, result, degree, horner)
+        err_code = CUSIG_SIGNATURE_CUDA[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size,
+            data.data_dimension, data.data_length, degree,
+            data.time_aug, data.lead_lag, data.end_time, horner)
+    if err_code:
+        raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
+    return result.data
 

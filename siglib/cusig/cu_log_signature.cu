@@ -809,56 +809,30 @@ void sig_to_log_sig_cuda_(
 
 extern "C" {
 
+
 	CUSIG_API int sig_to_log_sig_cuda_f(
-		const float* sig, float* out,
-		uint64_t dimension, uint64_t degree, int method
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<float>(sig, out, 1, dimension, degree, method));
-	}
-
-	CUSIG_API int sig_to_log_sig_cuda_d(
-		const double* sig, double* out,
-		uint64_t dimension, uint64_t degree, int method
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<double>(sig, out, 1, dimension, degree, method));
-	}
-
-	CUSIG_API int batch_sig_to_log_sig_cuda_f(
 		const float* sig, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
 	) noexcept {
 		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<float>(sig, out, batch_size, dimension, degree, method));
 	}
 
-	CUSIG_API int batch_sig_to_log_sig_cuda_d(
+	CUSIG_API int sig_to_log_sig_cuda_d(
 		const double* sig, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
 	) noexcept {
 		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<double>(sig, out, batch_size, dimension, degree, method));
 	}
 
+
 	CUSIG_API int sig_to_log_sig_backprop_cuda_f(
-		const float* sig, float* out, const float* log_sig_derivs,
-		uint64_t dimension, uint64_t degree, int method
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<float>(sig, out, log_sig_derivs, 1, dimension, degree, method));
-	}
-
-	CUSIG_API int sig_to_log_sig_backprop_cuda_d(
-		const double* sig, double* out, const double* log_sig_derivs,
-		uint64_t dimension, uint64_t degree, int method
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<double>(sig, out, log_sig_derivs, 1, dimension, degree, method));
-	}
-
-	CUSIG_API int batch_sig_to_log_sig_backprop_cuda_f(
 		const float* sig, float* out, const float* log_sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
 	) noexcept {
 		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<float>(sig, out, log_sig_derivs, batch_size, dimension, degree, method));
 	}
 
-	CUSIG_API int batch_sig_to_log_sig_backprop_cuda_d(
+	CUSIG_API int sig_to_log_sig_backprop_cuda_d(
 		const double* sig, double* out, const double* log_sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
 	) noexcept {

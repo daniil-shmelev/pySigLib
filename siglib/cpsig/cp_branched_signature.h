@@ -125,25 +125,6 @@ template<std::floating_point T>
 void branched_signature_(
 	const T* path,
 	T* out,
-	uint64_t dimension,
-	uint64_t length,
-	uint64_t max_nodes,
-	bool time_aug = false,
-	bool lead_lag = false,
-	T end_time = static_cast<T>(1.)
-) {
-	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time);
-	const auto& cache = get_branched_sig_cache(path_obj.dimension(), max_nodes);
-	auto increment = std::make_unique<T[]>(path_obj.dimension());
-	auto temp = std::make_unique<T[]>(cache.total_length);
-	branched_signature_with_buffers_(path_obj, out, increment.get(), temp.get(), cache);
-}
-
-
-template<std::floating_point T>
-void batch_branched_signature_(
-	const T* path,
-	T* out,
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t length,
@@ -203,20 +184,6 @@ void branched_sig_combine_(
 	const T* bsig1,
 	const T* bsig2,
 	T* out,
-	uint64_t dimension,
-	uint64_t max_nodes
-) {
-	const auto& cache = get_branched_sig_cache(dimension, max_nodes);
-	std::memcpy(out, bsig1, cache.total_length * sizeof(T));
-	butcher_product_inplace_(out, bsig2, cache);
-}
-
-
-template<std::floating_point T>
-void batch_branched_sig_combine_(
-	const T* bsig1,
-	const T* bsig2,
-	T* out,
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
@@ -245,26 +212,6 @@ void batch_branched_sig_combine_(
 
 template<std::floating_point T>
 void branched_sig_combine_backprop_(
-	const T* bsig1,
-	const T* bsig2,
-	const T* derivs_in,
-	T* out1,
-	T* out2,
-	uint64_t dimension,
-	uint64_t max_nodes
-) {
-	const auto& cache = get_branched_sig_cache(dimension, max_nodes);
-	uint64_t total_len = cache.total_length;
-
-	// butcher_product_deriv_ expects dF_dX (modified in-place to dF/dX_prev=bsig1)
-	// and writes dF_dY (dF/dbsig2)
-	std::memcpy(out1, derivs_in, total_len * sizeof(T));
-	butcher_product_deriv_(bsig1, bsig2, out1, out2, cache);
-}
-
-
-template<std::floating_point T>
-void batch_branched_sig_combine_backprop_(
 	const T* bsig1,
 	const T* bsig2,
 	const T* derivs_in,
@@ -535,43 +482,6 @@ void branched_sig_backprop_inplace_(
 
 template<std::floating_point T>
 void branched_sig_backprop_(
-	const T* path,
-	T* out,
-	const T* bsig_derivs_in,
-	const T* bsig_in,
-	uint64_t dimension,
-	uint64_t length,
-	uint64_t max_nodes,
-	bool time_aug = false,
-	bool lead_lag = false,
-	T end_time = static_cast<T>(1.)
-) {
-	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time);
-	uint64_t aug_dim = path_obj.dimension();
-	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes);
-	uint64_t total_len = cache.total_length;
-
-	// Working copies (backprop modifies these in-place)
-	auto bsig_copy = std::make_unique<T[]>(total_len);
-	auto derivs_copy = std::make_unique<T[]>(total_len);
-	std::memcpy(bsig_copy.get(), bsig_in, total_len * sizeof(T));
-	std::memcpy(derivs_copy.get(), bsig_derivs_in, total_len * sizeof(T));
-
-	auto increment = std::make_unique<T[]>(aug_dim);
-	auto temp_Y = std::make_unique<T[]>(total_len);
-	auto local_derivs = std::make_unique<T[]>(total_len);
-	auto inc_derivs = std::make_unique<T[]>(aug_dim);
-
-	std::memset(out, 0, path_obj.data_length() * path_obj.data_dimension() * sizeof(T));
-
-	branched_sig_backprop_inplace_(
-		path_obj, out, derivs_copy.get(), bsig_copy.get(),
-		increment.get(), temp_Y.get(), local_derivs.get(), inc_derivs.get(), cache);
-}
-
-
-template<std::floating_point T>
-void batch_branched_sig_backprop_(
 	const T* path,
 	T* out,
 	const T* bsig_derivs_in,

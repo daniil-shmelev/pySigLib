@@ -507,51 +507,23 @@ void sig_join_backprop_cuda_(
 
 extern "C" {
 
+
 	CUSIG_API int sig_combine_cuda_f(
-		const float* sig1, const float* sig2, float* out,
-		uint64_t dimension, uint64_t degree
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_combine_cuda_<float>(sig1, sig2, out, 1, dimension, degree));
-	}
-
-	CUSIG_API int sig_combine_cuda_d(
-		const double* sig1, const double* sig2, double* out,
-		uint64_t dimension, uint64_t degree
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_combine_cuda_<double>(sig1, sig2, out, 1, dimension, degree));
-	}
-
-	CUSIG_API int batch_sig_combine_cuda_f(
 		const float* sig1, const float* sig2, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree
 	) noexcept {
 		CUSIG_SAFE_CALL(sig_combine_cuda_<float>(sig1, sig2, out, batch_size, dimension, degree));
 	}
 
-	CUSIG_API int batch_sig_combine_cuda_d(
+	CUSIG_API int sig_combine_cuda_d(
 		const double* sig1, const double* sig2, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree
 	) noexcept {
 		CUSIG_SAFE_CALL(sig_combine_cuda_<double>(sig1, sig2, out, batch_size, dimension, degree));
 	}
 
+
 	CUSIG_API int sig_combine_backprop_cuda_f(
-		const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv,
-		const float* sig1, const float* sig2,
-		uint64_t dimension, uint64_t degree
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, 1, dimension, degree));
-	}
-
-	CUSIG_API int sig_combine_backprop_cuda_d(
-		const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv,
-		const double* sig1, const double* sig2,
-		uint64_t dimension, uint64_t degree
-	) noexcept {
-		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, 1, dimension, degree));
-	}
-
-	CUSIG_API int batch_sig_combine_backprop_cuda_f(
 		const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv,
 		const float* sig1, const float* sig2,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree
@@ -559,7 +531,7 @@ extern "C" {
 		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree));
 	}
 
-	CUSIG_API int batch_sig_combine_backprop_cuda_d(
+	CUSIG_API int sig_combine_backprop_cuda_d(
 		const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv,
 		const double* sig1, const double* sig2,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree
@@ -568,44 +540,26 @@ extern "C" {
 	}
 
 	// linear_sig CUDA
-	CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept {
-		CUSIG_SAFE_CALL(linear_sig_cuda_<float>(displacement, out, 1, dimension, degree));
-	}
-	CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept {
-		CUSIG_SAFE_CALL(linear_sig_cuda_<double>(displacement, out, 1, dimension, degree));
-	}
-	CUSIG_API int batch_linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
+	CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
 		CUSIG_SAFE_CALL(linear_sig_cuda_<float>(displacement, out, batch_size, dimension, degree));
 	}
-	CUSIG_API int batch_linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
+	CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
 		CUSIG_SAFE_CALL(linear_sig_cuda_<double>(displacement, out, batch_size, dimension, degree));
 	}
 
 	// sig_join CUDA
-	CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
-		CUSIG_SAFE_CALL(sig_join_cuda_<float>(sig, displacement, out, 1, dimension, degree, prepend));
-	}
-	CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
-		CUSIG_SAFE_CALL(sig_join_cuda_<double>(sig, displacement, out, 1, dimension, degree, prepend));
-	}
-	CUSIG_API int batch_sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
+	CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
 		CUSIG_SAFE_CALL(sig_join_cuda_<float>(sig, displacement, out, batch_size, dimension, degree, prepend));
 	}
-	CUSIG_API int batch_sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
+	CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
 		CUSIG_SAFE_CALL(sig_join_cuda_<double>(sig, displacement, out, batch_size, dimension, degree, prepend));
 	}
 
 	// sig_join_backprop CUDA
-	CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
-		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<float>(d_out, d_sig, d_displacement, sig, displacement, 1, dimension, degree, prepend));
-	}
-	CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
-		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<double>(d_out, d_sig, d_displacement, sig, displacement, 1, dimension, degree, prepend));
-	}
-	CUSIG_API int batch_sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
+	CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
 		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<float>(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree, prepend));
 	}
-	CUSIG_API int batch_sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
+	CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
 		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<double>(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree, prepend));
 	}
 }

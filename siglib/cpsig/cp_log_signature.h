@@ -190,25 +190,6 @@ template<std::floating_point T>
 void sig_to_log_sig_(
 	const T* sig,
 	T* out,
-	uint64_t dimension,
-	uint64_t degree,
-	bool time_aug = false,
-	bool lead_lag = false,
-	int method = 0
-)
-{
-	if (dimension == 0) { throw std::invalid_argument("log signature received path of dimension 0"); }
-	if (degree == 0) { throw std::invalid_argument("log signature received degree 0"); }
-
-	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
-
-	get_log_sig_<T>(sig, out, aug_dimension, degree, method);
-}
-
-template<std::floating_point T>
-void batch_sig_to_log_sig_(
-	const T* sig,
-	T* out,
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
@@ -228,24 +209,12 @@ void batch_sig_to_log_sig_(
 
 	//General case
 	const uint64_t sig_len = sig_length(aug_dimension, degree);
-	const T* const data_end = sig + sig_len * batch_size;
 
 	auto log_sig_func = [&](const T* sig_ptr, T* out_ptr) {
 		get_log_sig_<T>(sig_ptr, out_ptr, aug_dimension, degree, method);
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch(log_sig_func, sig, out, batch_size, sig_len, result_length, n_jobs);
-	}
-	else {
-		const T* sig_ptr = sig;
-		T* out_ptr = out;
-		for (; sig_ptr < data_end;
-			sig_ptr += sig_len, out_ptr += result_length) {
-
-			log_sig_func(sig_ptr, out_ptr);
-		}
-	}
+	multi_threaded_batch(log_sig_func, sig, out, batch_size, sig_len, result_length, n_jobs);
 	return;
 }
 
@@ -392,30 +361,6 @@ void sig_to_log_sig_backprop_(
 	const T* sig,
 	T* out,
 	const T* log_sig_derivs,
-	uint64_t dimension,
-	uint64_t degree,
-	bool time_aug = false,
-	bool lead_lag = false,
-	int method = 0
-) {
-	if (dimension == 0) { throw std::invalid_argument("sig_backprop received path of dimension 0"); }
-
-	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
-
-	const uint64_t log_sig_len_ = method ? ::log_sig_length(aug_dimension, degree) : ::sig_length(aug_dimension, degree);
-
-	auto log_sig_derivs_copy_uptr = std::make_unique<T[]>(log_sig_len_);
-	T* log_sig_derivs_copy = log_sig_derivs_copy_uptr.get();
-	std::memcpy(log_sig_derivs_copy, log_sig_derivs, log_sig_len_ * sizeof(T));
-
-	get_sig_to_log_sig_backprop_<T>(sig, out, log_sig_derivs_copy, aug_dimension, degree, method);
-}
-
-template<std::floating_point T>
-void batch_sig_to_log_sig_backprop_(
-	const T* sig,
-	T* out,
-	const T* log_sig_derivs,
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
@@ -432,8 +377,6 @@ void batch_sig_to_log_sig_backprop_(
 	const uint64_t log_sig_len_ = method ? ::log_sig_length(aug_dimension, degree) : ::sig_length(aug_dimension, degree);
 
 	//General case
-	const T* const data_end = sig + sig_len_ * batch_size;
-
 	auto log_sig_derivs_copy_uptr = std::make_unique<T[]>(log_sig_len_ * batch_size);
 	T* log_sig_derivs_copy = log_sig_derivs_copy_uptr.get();
 	std::memcpy(log_sig_derivs_copy, log_sig_derivs, log_sig_len_ * batch_size * sizeof(T));
@@ -442,28 +385,16 @@ void batch_sig_to_log_sig_backprop_(
 		get_sig_to_log_sig_backprop_<T>(sig_ptr, out_ptr, log_sig_derivs_ptr, aug_dimension, degree, method);
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch_2(
-			log_sig_backprop_func,
-			sig,
-			log_sig_derivs_copy,
-			out,
-			batch_size,
-			sig_len_,
-			log_sig_len_,
-			sig_len_,
-			n_jobs
-		);
-	}
-	else {
-		T* log_sig_derivs_ptr = log_sig_derivs_copy;
-		const T* sig_ptr = sig;
-		T* out_ptr = out;
-		for (; sig_ptr < data_end;
-			log_sig_derivs_ptr += log_sig_len_, sig_ptr += sig_len_, out_ptr += sig_len_) {
-
-			log_sig_backprop_func(sig_ptr, log_sig_derivs_ptr, out_ptr);
-		}
-	}
+	multi_threaded_batch_2(
+		log_sig_backprop_func,
+		sig,
+		log_sig_derivs_copy,
+		out,
+		batch_size,
+		sig_len_,
+		log_sig_len_,
+		sig_len_,
+		n_jobs
+	);
 	return;
 }

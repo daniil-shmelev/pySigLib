@@ -35,7 +35,7 @@ void sig_coef_(
 );
 
 template<std::floating_point T>
-void batch_sig_coef_(
+void sig_coef_(
 	const T* path,
 	T* out,
 	const uint64_t* multi_idx,

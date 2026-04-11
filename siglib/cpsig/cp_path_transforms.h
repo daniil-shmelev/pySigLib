@@ -119,24 +119,12 @@ void batch_transform_path_(
 	const uint64_t result_length = dummy_path_obj.length() * dummy_path_obj.dimension();
 
 	const uint64_t flat_path_length = dimension * length;
-	const T* const data_end = data_in + flat_path_length * batch_size;
 
 	auto transform_func = [&](const T* const path_ptr, T* const out_ptr) {
 		transform_path_<T>(path_ptr, out_ptr, dimension, length, time_aug, lead_lag, end_time);
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch(transform_func, data_in, data_out, batch_size, flat_path_length, result_length, n_jobs);
-	}
-	else {
-		const T* path_ptr = data_in;
-		T* out_ptr = data_out;
-		for (; path_ptr < data_end;
-			path_ptr += flat_path_length, out_ptr += result_length) {
-
-			transform_func(path_ptr, out_ptr);
-		}
-	}
+	multi_threaded_batch(transform_func, data_in, data_out, batch_size, flat_path_length, result_length, n_jobs);
 	return;
 }
 
@@ -223,23 +211,11 @@ void batch_transform_path_backprop_(
 	const uint64_t result_length = length * dimension;
 
 	const uint64_t flat_path_length = dummy_path_obj.length() * dummy_path_obj.dimension();
-	const T* const data_end = derivs + flat_path_length * batch_size;
 
 	auto transform_func = [&](const T* const derivs_ptr, T* const out_ptr) {
 		transform_path_backprop_(derivs_ptr, out_ptr, dimension, length, time_aug, lead_lag, end_time);
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch(transform_func, derivs, data_out, batch_size, flat_path_length, result_length, n_jobs);
-	}
-	else {
-		const T* derivs_ptr = derivs;
-		T* out_ptr = data_out;
-		for (; derivs_ptr < data_end;
-			derivs_ptr += flat_path_length, out_ptr += result_length) {
-
-			transform_func(derivs_ptr, out_ptr);
-		}
-	}
+	multi_threaded_batch(transform_func, derivs, data_out, batch_size, flat_path_length, result_length, n_jobs);
 	return;
 }

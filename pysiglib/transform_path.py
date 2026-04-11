@@ -19,74 +19,11 @@ import numpy as np
 import torch
 
 from .data_handlers import PathOutputHandler
-from .param_checks import check_type
+from .param_checks import check_type, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_TRANSFORM_PATH, CPSIG_BATCH_TRANSFORM_PATH, CUSIG_TRANSFORM_PATH_CUDA, CUSIG_BATCH_TRANSFORM_PATH_CUDA
+from .dtypes import CPSIG_TRANSFORM_PATH, CUSIG_TRANSFORM_PATH_CUDA
 
 from .data_handlers import PathInputHandler
-
-def transform_path_(data, result):
-    err_code = CPSIG_TRANSFORM_PATH[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.data_dimension,
-        data.data_length,
-        data.time_aug,
-        data.lead_lag,
-        data.end_time
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.transform_path: " + err_msg(err_code))
-    return result.data
-
-def transform_path_cuda_(data, result):
-    err_code = CUSIG_TRANSFORM_PATH_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.data_dimension,
-        data.data_length,
-        data.time_aug,
-        data.lead_lag,
-        data.end_time
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.transform_path: " + err_msg(err_code))
-    return result.data
-
-def batch_transform_path_(data, result, n_jobs):
-    err_code = CPSIG_BATCH_TRANSFORM_PATH[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.batch_size,
-        data.data_dimension,
-        data.data_length,
-        data.time_aug,
-        data.lead_lag,
-        data.end_time,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.transform_path: " + err_msg(err_code))
-    return result.data
-
-def batch_transform_path_cuda_(data, result):
-    err_code = CUSIG_BATCH_TRANSFORM_PATH_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        data.batch_size,
-        data.data_dimension,
-        data.data_length,
-        data.time_aug,
-        data.lead_lag,
-        data.end_time
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.transform_path: " + err_msg(err_code))
-    return result.data
 
 def transform_path(
     path : Union[np.ndarray, torch.tensor],
@@ -191,16 +128,17 @@ def transform_path(
     if (not time_aug) and (not lead_lag):
         return path
 
+    check_n_jobs(n_jobs)
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     result = PathOutputHandler(data.length, data.dimension, data)
     if data.device == "cpu":
-        if data.is_batch:
-            check_type(n_jobs, "n_jobs", int)
-            if n_jobs == 0:
-                raise ValueError("n_jobs cannot be 0")
-            return batch_transform_path_(data, result, n_jobs)
-        return transform_path_(data, result)
+        err_code = CPSIG_TRANSFORM_PATH[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size, data.data_dimension,
+            data.data_length, data.time_aug, data.lead_lag, data.end_time, n_jobs)
     else:
-        if data.is_batch:
-            return batch_transform_path_cuda_(data, result)
-        return transform_path_cuda_(data, result)
+        err_code = CUSIG_TRANSFORM_PATH_CUDA[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size, data.data_dimension,
+            data.data_length, data.time_aug, data.lead_lag, data.end_time)
+    if err_code:
+        raise Exception("Error in pysiglib.transform_path: " + err_msg(err_code))
+    return result.data

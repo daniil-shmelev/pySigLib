@@ -20,43 +20,11 @@ import numpy as np
 import torch
 
 from .transform_path import transform_path
-from .param_checks import check_type, parse_dyadic_order, dyadic_grid_length
+from .param_checks import check_type, parse_dyadic_order, dyadic_grid_length, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_BATCH_SIG_KERNEL, DTYPES, CUSIG_BATCH_SIG_KERNEL_CUDA
+from .dtypes import CPSIG_SIG_KERNEL, DTYPES, CUSIG_SIG_KERNEL_CUDA
 from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOutputHandler
 from .static_kernels import StaticKernel, LinearKernel, Context
-
-def sig_kernel_(data, result, gram, dyadic_order_1, dyadic_order_2, n_jobs, return_grid):
-    err_code = CPSIG_BATCH_SIG_KERNEL[data.dtype](
-        cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]])),
-        result.data_ptr,
-        data.batch_size,
-        data.dimension,
-        data.length[0],
-        data.length[1],
-        dyadic_order_1,
-        dyadic_order_2,
-        n_jobs,
-        return_grid
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_kernel: " + err_msg(err_code))
-
-def sig_kernel_cuda_(data, result, gram, dyadic_order_1, dyadic_order_2, return_grid):
-    err_code = CUSIG_BATCH_SIG_KERNEL_CUDA[data.dtype](
-        cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]])),
-        result.data_ptr, data.batch_size,
-        data.dimension,
-        data.length[0],
-        data.length[1],
-        dyadic_order_1,
-        dyadic_order_2,
-        return_grid
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_kernel: " + err_msg(err_code))
 
 def sig_kernel(
         path1 : Union[np.ndarray, torch.tensor],
@@ -176,9 +144,7 @@ def sig_kernel(
     """
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
 
@@ -213,11 +179,20 @@ def sig_kernel(
         raise ValueError("kernel must be a child class of pysiglib.StaticKernel")
 
     gram = static_kernel(ctx, torch_path1, torch_path2)
+    gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
 
     if data.device == "cpu":
-        sig_kernel_(data, result, gram, dyadic_order_1, dyadic_order_2, n_jobs, return_grid)
+        err_code = CPSIG_SIG_KERNEL[data.dtype](
+            gram_ptr, result.data_ptr, data.batch_size, data.dimension,
+            data.length[0], data.length[1],
+            dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
     else:
-        sig_kernel_cuda_(data, result, gram, dyadic_order_1, dyadic_order_2, return_grid)
+        err_code = CUSIG_SIG_KERNEL_CUDA[data.dtype](
+            gram_ptr, result.data_ptr, data.batch_size, data.dimension,
+            data.length[0], data.length[1],
+            dyadic_order_1, dyadic_order_2, return_grid)
+    if err_code:
+        raise Exception("Error in pysiglib.sig_kernel: " + err_msg(err_code))
 
     if isinstance(result.data, np.ndarray):
         has_bad = np.isnan(result.data).any() or np.isinf(result.data).any()

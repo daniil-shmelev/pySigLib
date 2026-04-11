@@ -18,42 +18,11 @@ from typing import Tuple, Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_BATCH_LOG_SIG_COMBINE, CUSIG_BATCH_LOG_SIG_COMBINE_CUDA, CPSIG_BATCH_LOG_SIG_COMBINE_BACKPROP, CUSIG_BATCH_LOG_SIG_COMBINE_BACKPROP_CUDA
-from .sig_length import log_sig_length
+from .dtypes import CPSIG_LOG_SIG_COMBINE, CUSIG_LOG_SIG_COMBINE_CUDA, CPSIG_LOG_SIG_COMBINE_BACKPROP, CUSIG_LOG_SIG_COMBINE_BACKPROP_CUDA
+from .sig_length import log_sig_length, aug_dim
 from .data_handlers import MultipleSigInputHandler, SigOutputHandler
-
-
-def log_sig_combine_(data, result, aug_dimension, degree, n_jobs):
-    err_code = CPSIG_BATCH_LOG_SIG_COMBINE[data.dtype](
-        data.sig_ptr[0],
-        data.sig_ptr[1],
-        result.data_ptr,
-        data.batch_size,
-        aug_dimension,
-        degree,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.log_sig_combine: " + err_msg(err_code))
-    return result.data
-
-
-def log_sig_combine_cuda_(data, result, aug_dimension, degree):
-    err_code = CUSIG_BATCH_LOG_SIG_COMBINE_CUDA[data.dtype](
-        data.sig_ptr[0],
-        data.sig_ptr[1],
-        result.data_ptr,
-        data.batch_size,
-        aug_dimension,
-        degree
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.log_sig_combine (CUDA): " + err_msg(err_code))
-    return result.data
 
 
 def log_sig_combine(
@@ -105,57 +74,25 @@ def log_sig_combine(
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
-    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     ls_len = log_sig_length(aug_dimension, degree)
     data = MultipleSigInputHandler([log_sig1, log_sig2], ls_len, ["log_sig1", "log_sig2"])
     result = SigOutputHandler(data, ls_len)
 
-    if data.device != "cpu":
-        if CUSIG_BATCH_LOG_SIG_COMBINE_CUDA is None:
-            raise RuntimeError("CUDA log_sig_combine requires cusig (built with CUDA support)")
-        return log_sig_combine_cuda_(data, result, aug_dimension, degree)
-
-    return log_sig_combine_(data, result, aug_dimension, degree, n_jobs)
-
-
-def log_sig_combine_backprop_cpu_(data, result1, result2, aug_dimension, degree, n_jobs):
-    err_code = CPSIG_BATCH_LOG_SIG_COMBINE_BACKPROP[data.dtype](
-        data.sig_ptr[2],
-        result1.data_ptr,
-        result2.data_ptr,
-        data.sig_ptr[0],
-        data.sig_ptr[1],
-        data.batch_size,
-        aug_dimension,
-        degree,
-        n_jobs
-    )
-
+    if data.device == "cpu":
+        err_code = CPSIG_LOG_SIG_COMBINE[data.dtype](
+            data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+            data.batch_size, aug_dimension, degree, n_jobs)
+    else:
+        err_code = CUSIG_LOG_SIG_COMBINE_CUDA[data.dtype](
+            data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+            data.batch_size, aug_dimension, degree)
     if err_code:
-        raise Exception("Error in pysiglib.log_sig_combine_backprop: " + err_msg(err_code))
-    return result1.data, result2.data
-
-
-def log_sig_combine_backprop_cuda_(data, result1, result2, aug_dimension, degree):
-    err_code = CUSIG_BATCH_LOG_SIG_COMBINE_BACKPROP_CUDA[data.dtype](
-        data.sig_ptr[2],
-        result1.data_ptr,
-        result2.data_ptr,
-        data.sig_ptr[0],
-        data.sig_ptr[1],
-        data.batch_size,
-        aug_dimension,
-        degree
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.log_sig_combine_backprop (CUDA): " + err_msg(err_code))
-    return result1.data, result2.data
+        raise Exception("Error in pysiglib.log_sig_combine: " + err_msg(err_code))
+    return result.data
 
 
 def log_sig_combine_backprop(
@@ -199,20 +136,25 @@ def log_sig_combine_backprop(
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
 
-    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     ls_len = log_sig_length(aug_dimension, degree)
     data = MultipleSigInputHandler([ls1, ls2, deriv], ls_len, ["ls1", "ls2", "deriv"])
     result1 = SigOutputHandler(data, ls_len)
     result2 = SigOutputHandler(data, ls_len)
 
-    if data.device != "cpu":
-        if CUSIG_BATCH_LOG_SIG_COMBINE_BACKPROP_CUDA is None:
-            raise RuntimeError("CUDA log_sig_combine_backprop requires cusig (built with CUDA support)")
-        return log_sig_combine_backprop_cuda_(data, result1, result2, aug_dimension, degree)
-
-    return log_sig_combine_backprop_cpu_(data, result1, result2, aug_dimension, degree, n_jobs)
+    if data.device == "cpu":
+        err_code = CPSIG_LOG_SIG_COMBINE_BACKPROP[data.dtype](
+            data.sig_ptr[2], result1.data_ptr, result2.data_ptr,
+            data.sig_ptr[0], data.sig_ptr[1],
+            data.batch_size, aug_dimension, degree, n_jobs)
+    else:
+        err_code = CUSIG_LOG_SIG_COMBINE_BACKPROP_CUDA[data.dtype](
+            data.sig_ptr[2], result1.data_ptr, result2.data_ptr,
+            data.sig_ptr[0], data.sig_ptr[1],
+            data.batch_size, aug_dimension, degree)
+    if err_code:
+        raise Exception("Error in pysiglib.log_sig_combine_backprop: " + err_msg(err_code))
+    return result1.data, result2.data

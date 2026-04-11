@@ -200,3 +200,19 @@ def test_sig_kernel_full_grid_time_aug_lead_lag(device):
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
+
+
+# Regression test: ensures the CPU sig_kernel n_jobs argument actually
+# multi-threads. Previously the C++ template's `(int n_jobs, bool return_grid)`
+# parameter order disagreed with the extern-C signature, so any n_jobs > 1 was
+# silently coerced to n_jobs == 1 and the multi-threaded code path was never
+# entered.
+@pytest.mark.parametrize("return_grid", [False, True])
+def test_sig_kernel_n_jobs_equivalence(return_grid):
+    X = torch.tensor(FIXTURES["kern_X"], device="cpu", dtype=torch.double)
+    Y = torch.tensor(FIXTURES["kern_Y"], device="cpu", dtype=torch.double)
+
+    serial = pysiglib.sig_kernel(X, Y, 1, n_jobs=1, return_grid=return_grid)
+    parallel = pysiglib.sig_kernel(X, Y, 1, n_jobs=-1, return_grid=return_grid)
+
+    check_close(serial, parallel)

@@ -21,35 +21,21 @@
 
 extern "C" {
 
-	CPSIG_API int sig_kernel_f(const float* gram, float* out, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_<float>(gram, out, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+
+	CPSIG_API int sig_kernel_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid, int n_jobs) noexcept {
+		SAFE_CALL(sig_kernel_<float>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid, n_jobs));
 	}
 
-	CPSIG_API int sig_kernel_d(const double* gram, double* out, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_<double>(gram, out, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+	CPSIG_API int sig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid, int n_jobs) noexcept {
+		SAFE_CALL(sig_kernel_<double>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid, n_jobs));
 	}
 
-	CPSIG_API int batch_sig_kernel_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid, int n_jobs) noexcept {
-		SAFE_CALL(batch_sig_kernel_<float>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid, n_jobs));
-	}
 
-	CPSIG_API int batch_sig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid, int n_jobs) noexcept {
-		SAFE_CALL(batch_sig_kernel_<double>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid, n_jobs));
-	}
-
-	CPSIG_API int sig_kernel_backprop_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_backprop_<float>(gram, out, derivs, k_grid, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
-	}
-
-	CPSIG_API int sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid) noexcept {
-		SAFE_CALL(sig_kernel_backprop_<double>(gram, out, derivs, k_grid, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
-	}
-
-	CPSIG_API int batch_sig_kernel_backprop_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid, int n_jobs) noexcept {
+	CPSIG_API int sig_kernel_backprop_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid, int n_jobs) noexcept {
 		SAFE_CALL(batch_sig_kernel_backprop_<float>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid, n_jobs));
 	}
 
-	CPSIG_API int batch_sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid, int n_jobs) noexcept {
+	CPSIG_API int sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid, int n_jobs) noexcept {
 		SAFE_CALL(batch_sig_kernel_backprop_<double>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid, n_jobs));
 	}
 }

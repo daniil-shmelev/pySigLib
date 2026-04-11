@@ -354,46 +354,6 @@ void signature_horner_step_(
 
 template<std::floating_point T>
 void signature_(
-	const T* path,
-	T* out,
-	uint64_t dimension,
-	uint64_t length,
-	uint64_t degree,
-	bool time_aug = false,
-	bool lead_lag = false,
-	T end_time = 1.,
-	bool horner = true
-)
-{
-	if (dimension == 0) { throw std::invalid_argument("signature received path of dimension 0"); }
-
-	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time); //Work with path_obj to capture time_aug, lead_lag transformations
-
-	if (path_obj.length() <= 1) {
-		out[0] = static_cast<T>(1.);
-		uint64_t result_length = ::sig_length(path_obj.dimension(), degree);
-		std::fill(out + 1, out + result_length, static_cast<T>(0.));
-		return;
-	}
-	if (degree == 0) { out[0] = static_cast<T>(1.); return; }
-	if (degree == 1) {
-		Point<T> first_pt = path_obj.begin();
-		Point<T> last_pt = --path_obj.end();
-		out[0] = static_cast<T>(1.);
-		uint64_t dimension_ = path_obj.dimension();
-		for (uint64_t i = 0; i < dimension_; ++i)
-			out[i + 1] = last_pt[i] - first_pt[i];
-		return; 
-	}
-
-	if (horner)
-		call_signature_horner_(path_obj, out, degree);
-	else
-		signature_naive_(path_obj, out, degree);
-}
-
-template<std::floating_point T>
-void batch_signature_(
 	const T* path, 
 	T* out, 
 	uint64_t batch_size,
@@ -430,7 +390,6 @@ void batch_signature_(
 
 	//General case and degree = 1 case
 	const uint64_t flat_path_length = dimension * length;
-	const T* const data_end = path + flat_path_length * batch_size;
 
 	auto sig_func = [&](const T* path_ptr, T* out_ptr) {
 		Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
@@ -449,18 +408,7 @@ void batch_signature_(
 		}
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, result_length, n_jobs);
-	}
-	else {
-		const T* path_ptr = path;
-		T* out_ptr = out;
-		for (; path_ptr < data_end;
-			path_ptr += flat_path_length, out_ptr += result_length) {
-
-			sig_func(path_ptr, out_ptr);
-		}
-	}
+	multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, result_length, n_jobs);
 	return;
 }
 
@@ -470,43 +418,6 @@ void batch_signature_(
 
 template<std::floating_point T>
 void sig_backprop_(
-	const T* path,
-	T* out, 
-	const T* sig_derivs, 
-	const T* sig, 
-	uint64_t dimension,
-	uint64_t length,
-	uint64_t degree,
-	bool time_aug = false,
-	bool lead_lag = false,
-	T end_time = 1.
-) {
-	
-	if (dimension == 0) { throw std::invalid_argument("sig_backprop received path of dimension 0"); }
-
-	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time);
-
-	if (path_obj.length() <= 1 || degree == 0) {
-		uint64_t result_length = dimension * length;
-		std::fill(out, out + result_length, static_cast<T>(0.));
-		return;
-	}
-
-	std::fill(out, out + length * dimension, static_cast<T>(0.));
-	const uint64_t sig_len_ = ::sig_length(path_obj.dimension(), degree);
-
-	auto sig_derivs_copy_uptr = std::make_unique<T[]>(sig_len_);
-	T* sig_derivs_copy = sig_derivs_copy_uptr.get();
-	std::memcpy(sig_derivs_copy, sig_derivs, sig_len_ * sizeof(T));
-	
-	auto sig_copy_uptr = std::make_unique<T[]>(sig_len_);
-	T* sig_copy = sig_copy_uptr.get();
-	std::memcpy(sig_copy, sig, sig_len_ * sizeof(T));
-	sig_backprop_inplace_(path_obj, out, sig_derivs_copy, sig_copy, degree, sig_len_);
-}
-
-template<std::floating_point T>
-void batch_sig_backprop_(
 	const T* path, 
 	T* out,
 	const T* sig_derivs, 
@@ -537,8 +448,6 @@ void batch_sig_backprop_(
 	}
 
 	//General case
-	const T* const data_end = path + flat_path_length * batch_size;
-
 	auto sig_derivs_copy_uptr = std::make_unique<T[]>(sig_len_ * batch_size);
 	T* sig_derivs_copy = sig_derivs_copy_uptr.get();
 	std::memcpy(sig_derivs_copy, sig_derivs, sig_len_ * batch_size * sizeof(T));
@@ -552,32 +461,19 @@ void batch_sig_backprop_(
 		sig_backprop_inplace_<T>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree, sig_len_);
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch_3(
-			sig_backprop_func,
-			path,
-			sig_derivs_copy,
-			sig_copy,
-			out, 
-			batch_size,
-			flat_path_length,
-			sig_len_,
-			sig_len_,
-			flat_path_length,
-			n_jobs
-		);
-	}
-	else {
-		const T* path_ptr = path;
-		T* sig_derivs_ptr = sig_derivs_copy;
-		T* sig_ptr = sig_copy;
-		T* out_ptr = out;
-		for (; path_ptr < data_end;
-			path_ptr += flat_path_length, sig_derivs_ptr += sig_len_, sig_ptr += sig_len_, out_ptr += flat_path_length) {
-
-			sig_backprop_func(path_ptr, sig_derivs_ptr, sig_ptr, out_ptr);
-		}
-	}
+	multi_threaded_batch_3(
+		sig_backprop_func,
+		path,
+		sig_derivs_copy,
+		sig_copy,
+		out,
+		batch_size,
+		flat_path_length,
+		sig_len_,
+		sig_len_,
+		flat_path_length,
+		n_jobs
+	);
 	return;
 }
 

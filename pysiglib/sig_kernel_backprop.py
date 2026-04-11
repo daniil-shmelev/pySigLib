@@ -22,49 +22,11 @@ import torch
 from .transform_path import transform_path
 from .transform_path_backprop import transform_path_backprop
 from .sig_kernel import sig_kernel
-from .param_checks import check_type, parse_dyadic_order
+from .param_checks import check_type, parse_dyadic_order, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_BATCH_SIG_KERNEL_BACKPROP, DTYPES, CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA
+from .dtypes import CPSIG_SIG_KERNEL_BACKPROP, DTYPES, CUSIG_SIG_KERNEL_BACKPROP_CUDA
 from .data_handlers import MultiplePathInputHandler, ScalarInputHandler, GridOutputHandler, PathInputHandler
 from .static_kernels import StaticKernel, LinearKernel, Context
-
-def sig_kernel_backprop_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
-
-    err_code = CPSIG_BATCH_SIG_KERNEL_BACKPROP[data.dtype](
-        cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]])),
-        result.data_ptr,
-        derivs_data.data_ptr,
-        k_grid_data.data_ptr,
-        data.batch_size,
-        data.dimension,
-        data.length[0],
-        data.length[1],
-        dyadic_order_1,
-        dyadic_order_2,
-        return_grid,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_kernel_backprop: " + err_msg(err_code))
-
-def sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid):
-    err_code = CUSIG_BATCH_SIG_KERNEL_BACKPROP_CUDA[data.dtype](
-        cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]])),
-        result.data_ptr,
-        derivs_data.data_ptr,
-        k_grid_data.data_ptr,
-        data.batch_size,
-        data.dimension,
-        data.length[0],
-        data.length[1],
-        dyadic_order_1,
-        dyadic_order_2,
-        return_grid
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_kernel_backprop: " + err_msg(err_code))
 
 def gram_deriv(
         derivs_data,
@@ -78,12 +40,20 @@ def gram_deriv(
 ) -> Union[np.ndarray, torch.tensor]:
 
     result = GridOutputHandler(data.length[0] - 1, data.length[1] - 1, derivs_data) #Derivatives with respect to gram matrix
+    gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
 
     if data.device == "cpu":
-        sig_kernel_backprop_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
+        err_code = CPSIG_SIG_KERNEL_BACKPROP[data.dtype](
+            gram_ptr, result.data_ptr, derivs_data.data_ptr, k_grid_data.data_ptr,
+            data.batch_size, data.dimension, data.length[0], data.length[1],
+            dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
     else:
-        sig_kernel_backprop_cuda_(data, derivs_data, result, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid)
-
+        err_code = CUSIG_SIG_KERNEL_BACKPROP_CUDA[data.dtype](
+            gram_ptr, result.data_ptr, derivs_data.data_ptr, k_grid_data.data_ptr,
+            data.batch_size, data.dimension, data.length[0], data.length[1],
+            dyadic_order_1, dyadic_order_2, return_grid)
+    if err_code:
+        raise Exception("Error in pysiglib.sig_kernel_backprop: " + err_msg(err_code))
     return torch.as_tensor(result.data)
 
 def sig_kernel_backprop(
@@ -195,9 +165,7 @@ def sig_kernel_backprop(
         print(dpath1)
 
     """
-    check_type(n_jobs, "n_jobs", int)
-    if n_jobs == 0:
-        raise ValueError("n_jobs cannot be 0")
+    check_n_jobs(n_jobs)
     check_type(left_deriv, "left_deriv", bool)
     check_type(right_deriv, "right_deriv", bool)
     if not (left_deriv or right_deriv):

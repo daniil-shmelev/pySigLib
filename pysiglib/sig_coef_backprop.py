@@ -19,88 +19,11 @@ from ctypes import c_uint64, POINTER, cast
 import numpy as np
 import torch
 
-from .param_checks import check_word_or_word_list, check_type
+from .param_checks import check_word_or_word_list, check_type, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIG_COEF_BACKPROP, CPSIG_BATCH_SIG_COEF_BACKPROP, CUSIG_SIG_COEF_BACKPROP_CUDA, CUSIG_BATCH_SIG_COEF_BACKPROP_CUDA
+from .dtypes import CPSIG_SIG_COEF_BACKPROP, CUSIG_SIG_COEF_BACKPROP_CUDA
 from .data_handlers import PathInputHandler, MultipleSigInputHandler, PathOutputHandler
 
-
-def sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr):
-    err_code = CPSIG_SIG_COEF_BACKPROP[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        deriv_data.data[0].data_ptr,
-        deriv_data.data[1].data_ptr,
-        multi_indices_ptr,
-        num_multi_indices,
-        degrees_ptr,
-        data.data_dimension,
-        data.data_length,
-        data.time_aug,
-        data.lead_lag,
-        data.end_time
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_coef_backprop: " + err_msg(err_code))
-    return result.data
-
-def batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, n_jobs = 1):
-    err_code = CPSIG_BATCH_SIG_COEF_BACKPROP[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        deriv_data.data[0].data_ptr,
-        deriv_data.data[1].data_ptr,
-        multi_indices_ptr,
-        num_multi_indices,
-        degrees_ptr,
-        data.batch_size,
-        data.data_dimension,
-        data.data_length,
-        data.time_aug,
-        data.lead_lag,
-        data.end_time,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_coef_backprop: " + err_msg(err_code))
-    return result.data
-
-def sig_coef_backprop_cuda_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr):
-    err_code = CUSIG_SIG_COEF_BACKPROP_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        deriv_data.data[0].data_ptr,
-        deriv_data.data[1].data_ptr,
-        multi_indices_ptr,
-        num_multi_indices,
-        degrees_ptr,
-        data.data_dimension,
-        data.data_length
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_coef_backprop (CUDA): " + err_msg(err_code))
-    return result.data
-
-def batch_sig_coef_backprop_cuda_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr):
-    err_code = CUSIG_BATCH_SIG_COEF_BACKPROP_CUDA[data.dtype](
-        data.data_ptr,
-        result.data_ptr,
-        deriv_data.data[0].data_ptr,
-        deriv_data.data[1].data_ptr,
-        multi_indices_ptr,
-        num_multi_indices,
-        degrees_ptr,
-        data.batch_size,
-        data.data_dimension,
-        data.data_length
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_coef_backprop (CUDA): " + err_msg(err_code))
-    return result.data
 
 def sig_coef_backprop(
         path : Union[np.ndarray, torch.tensor],
@@ -243,18 +166,20 @@ def sig_coef_backprop(
 
     result = PathOutputHandler(data.data_length, data.data_dimension, data)
 
+    check_n_jobs(n_jobs)
     if data.device == "cpu":
-        if data.is_batch:
-            check_type(n_jobs, "n_jobs", int)
-            if n_jobs == 0:
-                raise ValueError("n_jobs cannot be 0")
-            res = batch_sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr, n_jobs)
-        else:
-            res = sig_coef_backprop_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr)
+        err_code = CPSIG_SIG_COEF_BACKPROP[data.dtype](
+            data.data_ptr, result.data_ptr,
+            deriv_data.data[0].data_ptr, deriv_data.data[1].data_ptr,
+            multi_indices_ptr, num_multi_indices, degrees_ptr,
+            data.batch_size, data.data_dimension, data.data_length,
+            data.time_aug, data.lead_lag, data.end_time, n_jobs)
     else:
-        if data.is_batch:
-            res = batch_sig_coef_backprop_cuda_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr)
-        else:
-            res = sig_coef_backprop_cuda_(data, result, deriv_data, multi_indices_ptr, num_multi_indices, degrees_ptr)
-
-    return res
+        err_code = CUSIG_SIG_COEF_BACKPROP_CUDA[data.dtype](
+            data.data_ptr, result.data_ptr,
+            deriv_data.data[0].data_ptr, deriv_data.data[1].data_ptr,
+            multi_indices_ptr, num_multi_indices, degrees_ptr,
+            data.batch_size, data.data_dimension, data.data_length)
+    if err_code:
+        raise Exception("Error in pysiglib.sig_coef_backprop: " + err_msg(err_code))
+    return result.data

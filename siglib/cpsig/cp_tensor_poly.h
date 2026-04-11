@@ -296,28 +296,11 @@ void batch_sig_combine_(
 	if (dimension == 0) { throw std::invalid_argument("sig_combine received dimension 0"); }
 
 	const uint64_t siglength = ::sig_length(dimension, degree);
-	const T* const sig1_end = sig1 + siglength * batch_size;
-
 	auto sig_combine_func = [&](const T* sig1_ptr, const T* sig2_ptr, T* out_ptr) {
 		sig_combine_(sig1_ptr, sig2_ptr, out_ptr, dimension, degree);
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch_2<const T, const T, T>(sig_combine_func, sig1, sig2, out, batch_size, siglength, siglength, siglength, n_jobs);
-	}
-	else {
-		const T* sig1_ptr = sig1;
-		const T* sig2_ptr = sig2;
-		T* out_ptr = out;
-		for (;
-			sig1_ptr < sig1_end;
-			sig1_ptr += siglength,
-			sig2_ptr += siglength,
-			out_ptr += siglength) {
-
-			sig_combine_func(sig1_ptr, sig2_ptr, out_ptr);
-		}
-	}
+	multi_threaded_batch_2<const T, const T, T>(sig_combine_func, sig1, sig2, out, batch_size, siglength, siglength, siglength, n_jobs);
 	return;
 }
 
@@ -389,15 +372,7 @@ void batch_linear_sig_(
 		linear_sig_<T>(in_ptr, out_ptr, dimension, degree);
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch(func, displacement, out, batch_size, dimension, siglength, n_jobs);
-	}
-	else {
-		const T* in_ptr = displacement;
-		T* out_ptr = out;
-		for (uint64_t i = 0; i < batch_size; ++i, in_ptr += dimension, out_ptr += siglength)
-			func(in_ptr, out_ptr);
-	}
+	multi_threaded_batch(func, displacement, out, batch_size, dimension, siglength, n_jobs);
 }
 
 // ---------------------------------------------------------------------------
@@ -407,36 +382,6 @@ void batch_linear_sig_(
 
 template<std::floating_point T>
 void sig_join_(
-	const T* sig,
-	const T* displacement,
-	T* out,
-	uint64_t dimension,
-	uint64_t degree,
-	bool prepend = false
-) {
-	if (dimension == 0) { throw std::invalid_argument("sig_join received dimension 0"); }
-
-	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
-	uint64_t* level_index = level_index_uptr.get();
-	populate_level_index(level_index, dimension, degree + 2);
-
-	const uint64_t siglength = level_index[degree + 1];
-
-	auto lsig_uptr = std::make_unique<T[]>(siglength);
-	T* lsig = lsig_uptr.get();
-	linear_sig_with_level_index_(displacement, lsig, dimension, degree, level_index);
-
-	if (prepend) {
-		std::memcpy(out, lsig, siglength * sizeof(T));
-		sig_combine_inplace_(out, sig, degree, level_index);
-	} else {
-		std::memcpy(out, sig, siglength * sizeof(T));
-		sig_combine_inplace_(out, lsig, degree, level_index);
-	}
-}
-
-template<std::floating_point T>
-void batch_sig_join_(
 	const T* sig,
 	const T* displacement,
 	T* out,
@@ -467,26 +412,7 @@ void batch_sig_join_(
 		}
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch_2<const T, const T, T>(func, sig, displacement, out, batch_size, siglength, dimension, siglength, n_jobs);
-	}
-	else {
-		auto lsig_uptr = std::make_unique<T[]>(siglength);
-		T* lsig = lsig_uptr.get();
-		const T* sig_ptr = sig;
-		const T* disp_ptr = displacement;
-		T* out_ptr = out;
-		for (uint64_t i = 0; i < batch_size; ++i, sig_ptr += siglength, disp_ptr += dimension, out_ptr += siglength) {
-			linear_sig_with_level_index_(disp_ptr, lsig, dimension, degree, level_index);
-			if (prepend) {
-				std::memcpy(out_ptr, lsig, siglength * sizeof(T));
-				sig_combine_inplace_(out_ptr, sig_ptr, degree, level_index);
-			} else {
-				std::memcpy(out_ptr, sig_ptr, siglength * sizeof(T));
-				sig_combine_inplace_(out_ptr, lsig, degree, level_index);
-			}
-		}
-	}
+	multi_threaded_batch_2<const T, const T, T>(func, sig, displacement, out, batch_size, siglength, dimension, siglength, n_jobs);
 }
 
 // ---------------------------------------------------------------------------
@@ -647,27 +573,6 @@ void batch_sig_combine_backprop_(
 		sig_combine_backprop_(sig_combined_deriv_ptr, sig1_deriv_ptr, sig2_deriv_ptr, sig1_ptr, sig2_ptr, dimension, degree);
 	};
 
-	if (n_jobs != 1) {
-		multi_threaded_batch_4<T>(sig_combine_backprop_func, sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, siglength, siglength, siglength, siglength, siglength, n_jobs);
-	}
-	else {
-		const T* sig_combined_derivs_ptr = sig_combined_deriv;
-		T* sig1_deriv_ptr = sig1_deriv;
-		T* sig2_deriv_ptr = sig2_deriv;
-		const T* sig1_ptr = sig1;
-		const T* sig2_ptr = sig2;
-		const T* sig1_end = sig1 + batch_size * siglength;
-		for (;
-			sig1_ptr < sig1_end;
-			sig_combined_derivs_ptr += siglength,
-			sig1_deriv_ptr += siglength,
-			sig2_deriv_ptr += siglength,
-			sig1_ptr += siglength,
-			sig2_ptr += siglength
-			) {
-
-			sig_combine_backprop_func(sig_combined_derivs_ptr, sig1_deriv_ptr, sig2_deriv_ptr, sig1_ptr, sig2_ptr);
-		}
-	}
+	multi_threaded_batch_4<T>(sig_combine_backprop_func, sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, siglength, siglength, siglength, siglength, siglength, n_jobs);
 	return;
 }

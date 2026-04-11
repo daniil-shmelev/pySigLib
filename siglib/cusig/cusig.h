@@ -27,35 +27,13 @@
 
 extern "C" {
 
+	
 	/** @defgroup transform_path_cuda_functions Transform path CUDA functions
 	* @{
 	*/
 
 	/**
-	* @brief Applies time-augmentation and/or the lead-lag transformation to a path of type float.
-	*
-	*
-	* @param data_in Pointer to input path data (row-major), size = `length * dimension`.
-	* @param data_out Pointer to output buffer (row-major, preallocated), size = `transformed_length * transformed_dimension`, where
-	*					`transformed_length = lead_lag ? length_ * 2 - 1` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
-	* @param dimension Dimension of the path.
-	* @param length Length of the path.
-	* @param time_aug Whether to add time augmentation (default = false).
-	* @param lead_lag Whether to apply the lead-lag transform (default = false).
-	* @param end_time End time for time augmentation (default = 1.0).
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int transform_path_cuda_f(const float* data_in, float* data_out, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time = 1.) noexcept;
-	/** @brief */
-	CUSIG_API int transform_path_cuda_d(const double* data_in, double* data_out, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time = 1.) noexcept;
-	/** @} */
-	
-	/** @defgroup batch_transform_path_cuda_functions Batch transform path CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Applies time-augmentation and/or the lead-lag transformation to a batch of paths of type float.
+	* @brief Applies time-augmentation and/or the lead-lag transformation to a batch of paths.
 	*
 	*
 	* @param data_in Pointer to input path data (row-major), size = `batch_size * length * dimension`.
@@ -69,40 +47,18 @@ extern "C" {
 	* @param end_time End time for time augmentation (default = 1.0).
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_transform_path_cuda_f(const float* data_in, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time = 1.) noexcept;
+	CUSIG_API int transform_path_cuda_f(const float* data_in, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time = 1.) noexcept;
 	/** @brief */
-	CUSIG_API int batch_transform_path_cuda_d(const double* data_in, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time = 1.) noexcept;
+	CUSIG_API int transform_path_cuda_d(const double* data_in, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time = 1.) noexcept;
 	/** @} */
 	
+
 	/** @defgroup transform_path_backprop_cuda_functions Transform path backprop CUDA functions
 	* @{
 	*/
 
 	/**
 	* @brief Backpropagation through the transform_path_cuda function
-	*
-	*
-	* @param derivs Pointer to derivatives with respect to transformed path (row-major), size = `transformed_length * transformed_dimension`, where
-	*					`transformed_length = lead_lag ? length_ * 2 - 1` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
-	* @param data_out Pointer to output buffer (row-major, preallocated), size = `length * dimension`.
-	* @param dimension Dimension of the original (pre-transformation) path.
-	* @param length Length of the original (pre-transformation) path.
-	* @param time_aug Whether time augmentation was applied (default = false).
-	* @param lead_lag Whether the lead-lag transform was applied (default = false).
-	* @param end_time End time for time augmentation (default = 1.0).
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int transform_path_backprop_cuda_f(const float* derivs, float* data_out, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time = 1.) noexcept;
-	/** @brief */
-	CUSIG_API int transform_path_backprop_cuda_d(const double* derivs, double* data_out, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time = 1.) noexcept;
-	/** @} */
-
-	/** @defgroup batch_transform_path_backprop_cuda_functions Batch transform path backprop CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagation through the batch_transform_path_cuda function
 	*
 	*
 	* @param derivs Pointer to derivatives with respect to transformed path (row-major), size = `batch_size * transformed_length * transformed_dimension`, where
@@ -116,34 +72,12 @@ extern "C" {
 	* @param end_time End time for time augmentation (default = 1.0).
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_transform_path_backprop_cuda_f(const float* derivs, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time = 1.) noexcept;
+	CUSIG_API int transform_path_backprop_cuda_f(const float* derivs, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time = 1.) noexcept;
 	/** @brief */
-	CUSIG_API int batch_transform_path_backprop_cuda_d(const double* derivs, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time = 1.) noexcept;
+	CUSIG_API int transform_path_backprop_cuda_d(const double* derivs, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time = 1.) noexcept;
 	/** @} */
 
 	/** @defgroup sig_kernel_cuda_functions Sig kernel CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Computes the signature kernel of two paths from their gram matrix.
-	*
-	* @param gram Pointer to gram matrix data (row-major), size = `(length1 - 1) * (length2 - 1)`.
-	* @param out Pointer to output buffer (row-major, preallocated), size = `return_grid ? (((length1 - 1) << dyadic_order_1) + 1) * (((length2 - 1) << dyadic_order_2) + 1) : 1`.
-	* @param dimension Dimension of the path.
-	* @param length1 Length of the first path.
-	* @param length2 Length of the second path.
-	* @param dyadic_order_1 Dyadic refinement for the first path.
-	* @param dyadic_order_2 Dyadic refinement for the second path.
-	* @param return_grid Whether to return the entire PDE grid (default = false).
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int sig_kernel_cuda_f(const float* gram, float* out, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @brief */
-	CUSIG_API int sig_kernel_cuda_d(const double* gram, double* out, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_kernel_cuda_functions Batch sig kernel CUDA functions
 	* @{
 	*/
 
@@ -161,9 +95,9 @@ extern "C" {
 	* @param return_grid Whether to return the entire PDE grid (default = false).
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_sig_kernel_cuda_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
+	CUSIG_API int sig_kernel_cuda_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @brief */
-	CUSIG_API int batch_sig_kernel_cuda_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
+	CUSIG_API int sig_kernel_cuda_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
 
 	/** @defgroup sig_kernel_backprop_cuda_functions Sig kernel backprop CUDA functions
@@ -172,30 +106,6 @@ extern "C" {
 
 	/**
 	* @brief Backpropagation through sig_kernel.
-	*
-	* @param gram Pointer to gram matrix data (row-major), size = `(length1 - 1) * (length2 - 1)`.
-	* @param out Pointer to output buffer (row-major, preallocated), size = `(length1 - 1) * (length2 - 1)`.
-	* @param derivs Pointer to input derivatives. If `return_grid` is false, points to a single scalar. If `return_grid` is true, points to a grid-sized array of size `(((length1 - 1) << dyadic_order_1) + 1) * (((length2 - 1) << dyadic_order_2) + 1)`.
-	* @param k_grid Pointer to signature kernel PDE grid (row-major, precomputed), size = `(((length1 - 1) << dyadic_order_1) + 1) * (((length2 - 1) << dyadic_order_2) + 1)`.
-	* @param dimension Dimension of the path.
-	* @param length1 Length of the first path.
-	* @param length2 Length of the second path.
-	* @param dyadic_order_1 Dyadic refinement for the first path.
-	* @param dyadic_order_2 Dyadic refinement for the second path.
-	* @param return_grid If true, derivs is expected to be grid-sized; if false, derivs points to a single scalar.
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int sig_kernel_backprop_cuda_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @brief */
-	CUSIG_API int sig_kernel_backprop_cuda_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_kernel_backprop_cuda_functions Batch sig kernel backprop CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagation through batch_sig_kernel.
 	*
 	* @param gram Pointer to batch gram matrix data (row-major), size = `batch_size * (length1 - 1) * (length2 - 1)`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * (length1 - 1) * (length2 - 1)`.
@@ -210,9 +120,9 @@ extern "C" {
 	* @param return_grid If true, derivs is expected to be grid-sized per batch element; if false, derivs has one scalar per batch element.
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_sig_kernel_backprop_cuda_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
+	CUSIG_API int sig_kernel_backprop_cuda_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @brief */
-	CUSIG_API int batch_sig_kernel_backprop_cuda_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
+	CUSIG_API int sig_kernel_backprop_cuda_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
 
 	/** @defgroup signature_cuda_functions Signature CUDA functions
@@ -220,35 +130,7 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Computes the truncated signature of a path of type float on the GPU.
-	*
-	* The signature is computed using the Horner algorithm by default, which is more
-	* efficient for longer paths and higher degrees. A naive algorithm (Chen's identity
-	* applied iteratively) can be used as a fallback by setting `horner = false`.
-	*
-	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
-	* @param out Pointer to output buffer (row-major, preallocated, on device), size = `sig_length(transformed_dimension, degree)`,
-	*			  where `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
-	* @param dimension Dimension of the path.
-	* @param length Length of the path.
-	* @param degree Truncation degree of the signature.
-	* @param time_aug Whether to add time augmentation (default = false).
-	* @param lead_lag Whether to apply the lead-lag transform (default = false).
-	* @param end_time End time for time augmentation (default = 1.0).
-	* @param horner Whether to use the Horner algorithm (default = true).
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true) noexcept;
-	/** @brief */
-	CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true) noexcept;
-	/** @} */
-
-	/** @defgroup batch_signature_cuda_functions Batch signature CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Computes the truncated signatures of a batch of paths of type float on the GPU.
+	* @brief Computes the truncated signatures of a batch of paths on the GPU.
 	*
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated, on device), size = `batch_size * sig_length(transformed_dimension, degree)`,
@@ -263,39 +145,12 @@ extern "C" {
 	* @param horner Whether to use the Horner algorithm (default = true).
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true) noexcept;
+	CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true) noexcept;
 	/** @brief */
-	CUSIG_API int batch_signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true) noexcept;
+	CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_cuda_functions Signature backpropagation CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagates through the signature computation on the GPU (float).
-	*
-	* Given the forward signature and derivatives dF/d(sig), computes derivatives
-	* dF/d(path) with respect to the original path.
-	*
-	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
-	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as path.
-	* @param sig_derivs Pointer to dF/d(sig) (on device), size = `sig_length(transformed_dimension, degree)`.
-	* @param sig Pointer to forward signature (on device), same size as sig_derivs.
-	* @param dimension Dimension of the path.
-	* @param length Length of the path.
-	* @param degree Truncation degree of the signature.
-	* @param time_aug Whether time augmentation was applied (default = false).
-	* @param lead_lag Whether the lead-lag transform was applied (default = false).
-	* @param end_time End time for time augmentation (default = 1.0).
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
-	/** @brief */
-	CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_backprop_cuda_functions Batch signature backpropagation CUDA functions
 	* @{
 	*/
 
@@ -315,34 +170,12 @@ extern "C" {
 	* @param end_time End time for time augmentation (default = 1.0).
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
 	/** @brief */
-	CUSIG_API int batch_sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
 	/** @} */
 
 	/** @defgroup sig_combine_cuda_functions Signature combine CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Combines two truncated signatures on the GPU using Chen's identity (tensor product).
-	*
-	* Given two signatures S(x1) and S(x2), computes S(x1) ⊗ S(x2) = S(x1 * x2),
-	* where x1 * x2 is the concatenation of paths x1 and x2.
-	*
-	* @param sig1 Pointer to first signature (row-major, on device), size = `sig_length(dimension, degree)`.
-	* @param sig2 Pointer to second signature (row-major, on device), same size as sig1.
-	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as sig1.
-	* @param dimension Dimension of the underlying path space.
-	* @param degree Truncation degree of the signatures.
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int sig_combine_cuda_f(const float* sig1, const float* sig2, float* out, uint64_t dimension, uint64_t degree) noexcept;
-	/** @brief */
-	CUSIG_API int sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t dimension, uint64_t degree) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_combine_cuda_functions Batch signature combine CUDA functions
 	* @{
 	*/
 
@@ -357,35 +190,12 @@ extern "C" {
 	* @param degree Truncation degree of the signatures.
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_sig_combine_cuda_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int sig_combine_cuda_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @brief */
-	CUSIG_API int batch_sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
 	/** @defgroup sig_combine_backprop_cuda_functions Signature combine backprop CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagation through sig_combine on the GPU.
-	*
-	* Given dF/d(sig_combine(sig1, sig2)), computes dF/d(sig1) and dF/d(sig2).
-	*
-	* @param sig_combined_deriv Pointer to input derivatives (on device), size = `sig_length(dimension, degree)`.
-	* @param sig1_deriv Pointer to output sig1 derivatives (on device, preallocated).
-	* @param sig2_deriv Pointer to output sig2 derivatives (on device, preallocated).
-	* @param sig1 Pointer to first signature (on device).
-	* @param sig2 Pointer to second signature (on device).
-	* @param dimension Dimension of the underlying path space.
-	* @param degree Truncation degree of the signatures.
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int sig_combine_backprop_cuda_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t dimension, uint64_t degree) noexcept;
-	/** @brief */
-	CUSIG_API int sig_combine_backprop_cuda_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t dimension, uint64_t degree) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_combine_backprop_cuda_functions Batch signature combine backprop CUDA functions
 	* @{
 	*/
 
@@ -402,36 +212,12 @@ extern "C" {
 	* @param degree Truncation degree of the signatures.
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_sig_combine_backprop_cuda_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int sig_combine_backprop_cuda_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @brief */
-	CUSIG_API int batch_sig_combine_backprop_cuda_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int sig_combine_backprop_cuda_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
 	/** @defgroup sig_to_log_sig_cuda_functions Sig to log sig CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Converts a signature to its log signature on the GPU using the specified method.
-	*
-	* Method 0: expanded tensor log (output size = sig_length).
-	* Method 1: Lyndon words (output size = log_sig_length).
-	* Method 2: Lyndon basis (output size = log_sig_length).
-	* Methods 1 and 2 require a prior call to prepare_log_sig_cuda.
-	*
-	* @param sig Pointer to input signature (on device), size = `sig_length(dimension, degree)`.
-	* @param out Pointer to output buffer (on device, preallocated).
-	* @param dimension Dimension of the underlying path space.
-	* @param degree Truncation degree of the signature.
-	* @param method Method for log signature computation (0, 1, or 2).
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t dimension, uint64_t degree, int method) noexcept;
-	/** @brief */
-	CUSIG_API int sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t dimension, uint64_t degree, int method) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_to_log_sig_cuda_functions Batch sig to log sig CUDA functions
 	* @{
 	*/
 
@@ -446,9 +232,9 @@ extern "C" {
 	* @param method Method for log signature computation (0, 1, or 2).
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	CUSIG_API int sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
 	/** @brief */
-	CUSIG_API int batch_sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	CUSIG_API int sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
 	/** @} */
 
 	/** @defgroup sig_to_log_sig_backprop_cuda_functions Sig to log sig backprop CUDA functions
@@ -457,26 +243,6 @@ extern "C" {
 
 	/**
 	* @brief Backpropagates through the sig_to_log_sig_cuda function.
-	*
-	* @param sig Pointer to input signature (on device), size = `sig_length(dimension, degree)`.
-	* @param out Pointer to output buffer (on device, preallocated), size = `sig_length(dimension, degree)`.
-	* @param log_sig_derivs Pointer to dF/d(log_sig) (on device).
-	* @param dimension Dimension of the underlying path space.
-	* @param degree Truncation degree of the signature.
-	* @param method Method for log signature computation (0, 1, or 2).
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int sig_to_log_sig_backprop_cuda_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t dimension, uint64_t degree, int method) noexcept;
-	/** @brief */
-	CUSIG_API int sig_to_log_sig_backprop_cuda_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t dimension, uint64_t degree, int method) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_to_log_sig_backprop_cuda_functions Batch sig to log sig backprop CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagates through the batch_sig_to_log_sig_cuda function.
 	*
 	* @param sig Pointer to batch of input signatures (on device), size = `batch_size * sig_length(dimension, degree)`.
 	* @param out Pointer to output buffer (on device, preallocated), size = `batch_size * sig_length(dimension, degree)`.
@@ -487,9 +253,9 @@ extern "C" {
 	* @param method Method for log signature computation (0, 1, or 2).
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_sig_to_log_sig_backprop_cuda_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	CUSIG_API int sig_to_log_sig_backprop_cuda_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
 	/** @brief */
-	CUSIG_API int batch_sig_to_log_sig_backprop_cuda_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	CUSIG_API int sig_to_log_sig_backprop_cuda_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
 	/** @} */
 
 	/** @defgroup prepare_log_sig_cuda_functions Prepare log sig CUDA functions
@@ -513,31 +279,6 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Computes signature coefficients for specified multi-indices on the GPU.
-	*
-	* Each multi-index (word) specifies a sequence of channels, and the function computes
-	* the corresponding iterated integral (signature coefficient) of the path.
-	*
-	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
-	* @param out Pointer to output buffer (on device, preallocated).
-	* @param multi_idx Pointer to flattened multi-indices (on device).
-	* @param num_multi_idx Number of multi-indices (words).
-	* @param degrees Pointer to degree of each multi-index (on device), size = `num_multi_idx`.
-	* @param dimension Dimension of the path.
-	* @param length Length of the path.
-	* @param prefixes If true, output all prefix coefficients; if false, output only the final coefficient.
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
-	/** @brief */
-	CUSIG_API int sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_coef_cuda_functions Batch sig coef CUDA functions
-	* @{
-	*/
-
-	/**
 	* @brief Computes signature coefficients for a batch of paths on the GPU.
 	*
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
@@ -551,9 +292,9 @@ extern "C" {
 	* @param prefixes If true, output all prefix coefficients; if false, output only the final coefficient.
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
 	/** @brief */
-	CUSIG_API int batch_sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	CUSIG_API int sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
 	/** @} */
 
 	/** @defgroup sig_coef_backprop_cuda_functions Sig coef backprop CUDA functions
@@ -562,29 +303,6 @@ extern "C" {
 
 	/**
 	* @brief Backpropagates through sig_coef_cuda on the GPU.
-	*
-	* @param path Pointer to input path data (row-major, on device), size = `length * dimension`.
-	* @param out Pointer to output buffer (on device, preallocated), size = `length * dimension`.
-	* @param coefs Pointer to prefix coefficients from forward pass (on device).
-	* @param derivs Pointer to dF/d(coefs) (on device), same size as coefs.
-	* @param multi_idx Pointer to flattened multi-indices (on device).
-	* @param num_multi_idx Number of multi-indices (words).
-	* @param degrees Pointer to degree of each multi-index (on device), size = `num_multi_idx`.
-	* @param dimension Dimension of the path.
-	* @param length Length of the path.
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length) noexcept;
-	/** @brief */
-	CUSIG_API int sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t dimension, uint64_t length) noexcept;
-	/** @} */
-
-	/** @defgroup batch_sig_coef_backprop_cuda_functions Batch sig coef backprop CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Backpropagates through batch_sig_coef_cuda on the GPU.
 	*
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (on device, preallocated), size = `batch_size * length * dimension`.
@@ -598,31 +316,12 @@ extern "C" {
 	* @param length Length of the paths.
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
+	CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
 	/** @brief */
-	CUSIG_API int batch_sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
+	CUSIG_API int sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_combine_cuda_functions Log sig combine CUDA functions
-	* @{
-	*/
-
-	/**
-	* @brief Combines two truncated log-signatures on the GPU using the BCH formula.
-	*
-	* @param log_sig1 Pointer to first log-signature (on device), size = `log_sig_length(dimension, degree)`.
-	* @param log_sig2 Pointer to second log-signature (on device), same size as log_sig1.
-	* @param out Pointer to output buffer (on device, preallocated), same size as log_sig1.
-	* @param dimension Dimension of the underlying path space.
-	* @param degree Truncation degree of the log-signatures.
-	* @return Status code (0 = success).
-	*/
-	CUSIG_API int log_sig_combine_cuda_f(const float* log_sig1, const float* log_sig2, float* out, uint64_t dimension, uint64_t degree) noexcept;
-	/** @brief */
-	CUSIG_API int log_sig_combine_cuda_d(const double* log_sig1, const double* log_sig2, double* out, uint64_t dimension, uint64_t degree) noexcept;
-	/** @} */
-
-	/** @defgroup batch_log_sig_combine_cuda_functions Batch log sig combine CUDA functions
 	* @{
 	*/
 
@@ -637,9 +336,9 @@ extern "C" {
 	* @param degree Truncation degree of the log-signatures.
 	* @return Status code (0 = success).
 	*/
-	CUSIG_API int batch_log_sig_combine_cuda_f(const float* log_sig1, const float* log_sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int log_sig_combine_cuda_f(const float* log_sig1, const float* log_sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @brief */
-	CUSIG_API int batch_log_sig_combine_cuda_d(const double* log_sig1, const double* log_sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int log_sig_combine_cuda_d(const double* log_sig1, const double* log_sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_combine_backprop_cuda_functions Log sig combine backprop CUDA functions
@@ -647,13 +346,8 @@ extern "C" {
 	*/
 
 	CUSIG_API int log_sig_combine_backprop_cuda_f(const float* d_out, float* d_ls1, float* d_ls2,
-		const float* ls1, const float* ls2, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int log_sig_combine_backprop_cuda_d(const double* d_out, double* d_ls1, double* d_ls2,
-		const double* ls1, const double* ls2, uint64_t dimension, uint64_t degree) noexcept;
-
-	CUSIG_API int batch_log_sig_combine_backprop_cuda_f(const float* d_out, float* d_ls1, float* d_ls2,
 		const float* ls1, const float* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int batch_log_sig_combine_backprop_cuda_d(const double* d_out, double* d_ls1, double* d_ls2,
+	CUSIG_API int log_sig_combine_backprop_cuda_d(const double* d_out, double* d_ls1, double* d_ls2,
 		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
@@ -661,35 +355,27 @@ extern "C" {
 	* @{
 	*/
 	CUSIG_API int logsig_to_sig_cuda_f(const float* log_sig, float* out,
-		uint64_t dimension, uint64_t degree, int method) noexcept;
-	CUSIG_API int logsig_to_sig_cuda_d(const double* log_sig, double* out,
-		uint64_t dimension, uint64_t degree, int method) noexcept;
-	CUSIG_API int batch_logsig_to_sig_cuda_f(const float* log_sig, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
-	CUSIG_API int batch_logsig_to_sig_cuda_d(const double* log_sig, double* out,
+	CUSIG_API int logsig_to_sig_cuda_d(const double* log_sig, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
 
 	CUSIG_API int logsig_to_sig_backprop_cuda_f(const float* log_sig, float* d_logsig, const float* d_sig,
-		uint64_t dimension, uint64_t degree, int method) noexcept;
-	CUSIG_API int logsig_to_sig_backprop_cuda_d(const double* log_sig, double* d_logsig, const double* d_sig,
-		uint64_t dimension, uint64_t degree, int method) noexcept;
-	CUSIG_API int batch_logsig_to_sig_backprop_cuda_f(const float* log_sig, float* d_logsig, const float* d_sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
-	CUSIG_API int batch_logsig_to_sig_backprop_cuda_d(const double* log_sig, double* d_logsig, const double* d_sig,
+	CUSIG_API int logsig_to_sig_backprop_cuda_d(const double* log_sig, double* d_logsig, const double* d_sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_from_path_cuda_functions Log-signature from path CUDA functions
 	* @{
 	*/
-	CUSIG_API int batch_log_sig_from_path_cuda_f(const float* path, float* out,
+	CUSIG_API int log_sig_from_path_cuda_f(const float* path, float* out,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int batch_log_sig_from_path_cuda_d(const double* path, double* out,
+	CUSIG_API int log_sig_from_path_cuda_d(const double* path, double* out,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
 
-	CUSIG_API int batch_log_sig_from_path_backprop_cuda_f(const float* d_out, float* d_path, const float* path,
+	CUSIG_API int log_sig_from_path_backprop_cuda_f(const float* d_out, float* d_path, const float* path,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int batch_log_sig_from_path_backprop_cuda_d(const double* d_out, double* d_path, const double* path,
+	CUSIG_API int log_sig_from_path_backprop_cuda_d(const double* d_out, double* d_path, const double* path,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
@@ -726,56 +412,36 @@ extern "C" {
 	* @{
 	*/
 
-	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
-	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
 
-	CUSIG_API int batch_branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
-	CUSIG_API int batch_branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
 
-	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t dimension, uint64_t max_nodes) noexcept;
-	CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t dimension, uint64_t max_nodes) noexcept;
-	CUSIG_API int batch_branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
-	CUSIG_API int batch_branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
+	CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
 
-	CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t dimension, uint64_t max_nodes) noexcept;
-	CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t dimension, uint64_t max_nodes) noexcept;
-	CUSIG_API int batch_branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
-	CUSIG_API int batch_branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept;
-
-	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
-	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
-
-	CUSIG_API int batch_branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
-	CUSIG_API int batch_branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
 	/** @} */
 
 	// linear_sig CUDA
-	CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int batch_linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int batch_linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 
 	// sig_join CUDA
-	CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	CUSIG_API int batch_sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	CUSIG_API int batch_sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
+	CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
+	CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
 
 	// sig_join_backprop CUDA
-	CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	CUSIG_API int batch_sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	CUSIG_API int batch_sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
+	CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
+	CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
 
 	// log_sig_join CUDA
-	CUSIG_API int log_sig_join_cuda_f(const float* log_sig, const float* displacement, float* out, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int log_sig_join_cuda_d(const double* log_sig, const double* displacement, double* out, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int batch_log_sig_join_cuda_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int batch_log_sig_join_cuda_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int log_sig_join_cuda_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int log_sig_join_cuda_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 
 	// log_sig_join_backprop CUDA
-	CUSIG_API int log_sig_join_backprop_cuda_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int log_sig_join_backprop_cuda_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int batch_log_sig_join_backprop_cuda_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
-	CUSIG_API int batch_log_sig_join_backprop_cuda_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int log_sig_join_backprop_cuda_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	CUSIG_API int log_sig_join_backprop_cuda_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 }

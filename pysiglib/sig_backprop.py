@@ -18,74 +18,11 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler
-from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_BATCH_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CPSIG_BATCH_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP_CUDA, CUSIG_BATCH_SIG_BACKPROP_CUDA, CUSIG_SIG_COMBINE_BACKPROP_CUDA, CUSIG_BATCH_SIG_COMBINE_BACKPROP_CUDA
-from .sig_length import sig_length
-
-def sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, dimension, degree):
-    err_code = CPSIG_SIG_COMBINE_BACKPROP[sig_data.dtype](
-        sig_data.sig_ptr[2],
-        sig1_deriv.data_ptr,
-        sig2_deriv.data_ptr,
-        sig_data.sig_ptr[0],
-        sig_data.sig_ptr[1],
-        dimension,
-        degree
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_combine_backprop: " + err_msg(err_code))
-    return sig1_deriv.data, sig2_deriv.data
-
-def batch_sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, dimension, degree, n_jobs):
-    err_code = CPSIG_BATCH_SIG_COMBINE_BACKPROP[sig_data.dtype](
-        sig_data.sig_ptr[2],
-        sig1_deriv.data_ptr,
-        sig2_deriv.data_ptr,
-        sig_data.sig_ptr[0],
-        sig_data.sig_ptr[1],
-        sig_data.batch_size,
-        dimension,
-        degree,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_combine_backprop: " + err_msg(err_code))
-    return sig1_deriv.data, sig2_deriv.data
-
-def sig_combine_backprop_cuda_(sig_data, sig1_deriv, sig2_deriv, dimension, degree):
-    err_code = CUSIG_SIG_COMBINE_BACKPROP_CUDA[sig_data.dtype](
-        sig_data.sig_ptr[2],
-        sig1_deriv.data_ptr,
-        sig2_deriv.data_ptr,
-        sig_data.sig_ptr[0],
-        sig_data.sig_ptr[1],
-        dimension,
-        degree
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_combine_backprop: " + err_msg(err_code))
-    return sig1_deriv.data, sig2_deriv.data
-
-def batch_sig_combine_backprop_cuda_(sig_data, sig1_deriv, sig2_deriv, dimension, degree):
-    err_code = CUSIG_BATCH_SIG_COMBINE_BACKPROP_CUDA[sig_data.dtype](
-        sig_data.sig_ptr[2],
-        sig1_deriv.data_ptr,
-        sig2_deriv.data_ptr,
-        sig_data.sig_ptr[0],
-        sig_data.sig_ptr[1],
-        sig_data.batch_size,
-        dimension,
-        degree
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_combine_backprop: " + err_msg(err_code))
-    return sig1_deriv.data, sig2_deriv.data
+from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP_CUDA, CUSIG_SIG_COMBINE_BACKPROP_CUDA
+from .sig_length import sig_length, aug_dim
 
 def sig_combine_backprop(
         deriv : Union[np.ndarray, torch.tensor],
@@ -158,104 +95,28 @@ def sig_combine_backprop(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
 
-    aug_dimension = (2 * dimension if lead_lag else dimension) + (1 if time_aug else 0)
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
     sig_len = sig_length(aug_dimension, degree)
 
+    check_n_jobs(n_jobs)
     sig_data = MultipleSigInputHandler([sig1, sig2, deriv], sig_len, ["sig1", "sig2", "sig_combined_deriv"])
 
     sig1_deriv = SigOutputHandler(sig_data, sig_len)
     sig2_deriv = SigOutputHandler(sig_data, sig_len)
 
     if sig_data.device == "cpu":
-        if sig_data.is_batch:
-            check_type(n_jobs, "n_jobs", int)
-            if n_jobs == 0:
-                raise ValueError("n_jobs cannot be 0")
-            res1, res2 = batch_sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, aug_dimension, degree, n_jobs)
-        else:
-            res1, res2 = sig_combine_backprop_(sig_data, sig1_deriv, sig2_deriv, aug_dimension, degree)
+        err_code = CPSIG_SIG_COMBINE_BACKPROP[sig_data.dtype](
+            sig_data.sig_ptr[2], sig1_deriv.data_ptr, sig2_deriv.data_ptr,
+            sig_data.sig_ptr[0], sig_data.sig_ptr[1],
+            sig_data.batch_size, aug_dimension, degree, n_jobs)
     else:
-        if sig_data.is_batch:
-            res1, res2 = batch_sig_combine_backprop_cuda_(sig_data, sig1_deriv, sig2_deriv, aug_dimension, degree)
-        else:
-            res1, res2 = sig_combine_backprop_cuda_(sig_data, sig1_deriv, sig2_deriv, aug_dimension, degree)
-
-    return res1, res2
-
-def sig_backprop_(path_data, sig_data, result, degree):
-    err_code = CPSIG_SIG_BACKPROP[path_data.dtype](
-        path_data.data_ptr,
-        result.data_ptr,
-        sig_data.sig_ptr[1],
-        sig_data.sig_ptr[0],
-        path_data.data_dimension,
-        path_data.data_length,
-        degree,
-        path_data. time_aug,
-        path_data.lead_lag,
-        path_data.end_time
-    )
-
+        err_code = CUSIG_SIG_COMBINE_BACKPROP_CUDA[sig_data.dtype](
+            sig_data.sig_ptr[2], sig1_deriv.data_ptr, sig2_deriv.data_ptr,
+            sig_data.sig_ptr[0], sig_data.sig_ptr[1],
+            sig_data.batch_size, aug_dimension, degree)
     if err_code:
-        raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
-    return result.data
-
-def batch_sig_backprop_(path_data, sig_data, result, degree, n_jobs):
-    err_code = CPSIG_BATCH_SIG_BACKPROP[path_data.dtype](
-        path_data.data_ptr,
-        result.data_ptr,
-        sig_data.sig_ptr[1],
-        sig_data.sig_ptr[0],
-        path_data.batch_size,
-        path_data.data_dimension,
-        path_data.data_length,
-        degree,
-        path_data.time_aug,
-        path_data.lead_lag,
-        path_data.end_time,
-        n_jobs
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
-    return result.data
-
-def sig_backprop_cuda_(path_data, sig_data, result, degree):
-    err_code = CUSIG_SIG_BACKPROP_CUDA[path_data.dtype](
-        path_data.data_ptr,
-        result.data_ptr,
-        sig_data.sig_ptr[1],
-        sig_data.sig_ptr[0],
-        path_data.data_dimension,
-        path_data.data_length,
-        degree,
-        path_data.time_aug,
-        path_data.lead_lag,
-        path_data.end_time
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
-    return result.data
-
-def batch_sig_backprop_cuda_(path_data, sig_data, result, degree):
-    err_code = CUSIG_BATCH_SIG_BACKPROP_CUDA[path_data.dtype](
-        path_data.data_ptr,
-        result.data_ptr,
-        sig_data.sig_ptr[1],
-        sig_data.sig_ptr[0],
-        path_data.batch_size,
-        path_data.data_dimension,
-        path_data.data_length,
-        degree,
-        path_data.time_aug,
-        path_data.lead_lag,
-        path_data.end_time
-    )
-
-    if err_code:
-        raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
-    return result.data
+        raise Exception("Error in pysiglib.sig_combine_backprop: " + err_msg(err_code))
+    return sig1_deriv.data, sig2_deriv.data
 
 def sig_backprop(
         path : Union[np.ndarray, torch.tensor],
@@ -348,14 +209,19 @@ def sig_backprop(
     if path_data.is_batch != sig_data.is_batch or path_data.batch_size != sig_data.batch_size:
         raise ValueError("path, sig and sig_derivs must have the same batch sizes")
 
+    check_n_jobs(n_jobs)
     if path_data.device == "cpu":
-        if path_data.is_batch:
-            check_type(n_jobs, "n_jobs", int)
-            if n_jobs == 0:
-                raise ValueError("n_jobs cannot be 0")
-            return batch_sig_backprop_(path_data, sig_data, result, degree, n_jobs)
-        return sig_backprop_(path_data, sig_data, result, degree)
+        err_code = CPSIG_SIG_BACKPROP[path_data.dtype](
+            path_data.data_ptr, result.data_ptr,
+            sig_data.sig_ptr[1], sig_data.sig_ptr[0],
+            path_data.batch_size, path_data.data_dimension, path_data.data_length,
+            degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, n_jobs)
     else:
-        if path_data.is_batch:
-            return batch_sig_backprop_cuda_(path_data, sig_data, result, degree)
-        return sig_backprop_cuda_(path_data, sig_data, result, degree)
+        err_code = CUSIG_SIG_BACKPROP_CUDA[path_data.dtype](
+            path_data.data_ptr, result.data_ptr,
+            sig_data.sig_ptr[1], sig_data.sig_ptr[0],
+            path_data.batch_size, path_data.data_dimension, path_data.data_length,
+            degree, path_data.time_aug, path_data.lead_lag, path_data.end_time)
+    if err_code:
+        raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
+    return result.data
