@@ -185,6 +185,19 @@ def _normalize_dtype(dtype) -> np.dtype:
     return dtype
 
 
+def _check_same_dtype(*arrays) -> np.dtype:
+    """Validate that every array has a supported float dtype and that all
+    arrays share the same dtype. Returns the common dtype."""
+    if not arrays:
+        raise ValueError("at least one array required")
+    dt = _normalize_dtype(arrays[0].dtype)
+    for a in arrays[1:]:
+        other = _normalize_dtype(a.dtype)
+        if other != dt:
+            raise TypeError(f"dtype mismatch: {dt} vs {other}")
+    return dt
+
+
 def _target_name(op: str, platform: str) -> str:
     return _TARGETS[op][platform][0]
 
@@ -225,9 +238,9 @@ def _sig_shape(path_shape, degree: int, time_aug: bool, lead_lag: bool) -> tuple
 
 
 def _make_ffi_call(op_name, inputs, out_type, call_kwargs):
-    cpu_call = jax.ffi.ffi_call(_target_name(op_name, "cpu"), out_type, vmap_method="sequential")
+    cpu_call = jax.ffi.ffi_call(_target_name(op_name, "cpu"), out_type, vmap_method="broadcast_all")
     if BUILT_WITH_CUDA:
-        cuda_call = jax.ffi.ffi_call(_target_name(op_name, "cuda"), out_type, vmap_method="sequential")
+        cuda_call = jax.ffi.ffi_call(_target_name(op_name, "cuda"), out_type, vmap_method="broadcast_all")
         return jax.lax.platform_dependent(
             *inputs,
             cpu=lambda *args: cpu_call(*args, **call_kwargs),
@@ -249,7 +262,7 @@ def sig_ffi_call(path, degree, time_aug, lead_lag, end_time, horner, n_jobs):
 
 
 def sig_backprop_ffi_call(path, sig_, cotangent, degree, time_aug, lead_lag, end_time, n_jobs):
-    _normalize_dtype(path.dtype)
+    _check_same_dtype(path, sig_, cotangent)
     out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
@@ -261,14 +274,14 @@ def sig_backprop_ffi_call(path, sig_, cotangent, degree, time_aug, lead_lag, end
 # ---------------------------------------------------------------------------
 
 def sig_combine_ffi_call(sig1, sig2, dimension, degree, n_jobs):
-    _normalize_dtype(sig1.dtype)
+    _check_same_dtype(sig1, sig2)
     out_type = jax.ShapeDtypeStruct(sig1.shape, sig1.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("sig_combine", (sig1, sig2), out_type, call_kwargs)
 
 
 def sig_combine_backprop_ffi_call(cotangent, sig1, sig2, dimension, degree, n_jobs):
-    _normalize_dtype(sig1.dtype)
+    _check_same_dtype(cotangent, sig1, sig2)
     grad_type = jax.ShapeDtypeStruct(sig1.shape, sig1.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("sig_combine_backprop", (cotangent, sig1, sig2), (grad_type, grad_type), call_kwargs)
@@ -320,7 +333,7 @@ def sig_to_log_sig_ffi_call(sig_arr, dimension, degree, method, n_jobs):
 
 
 def sig_to_log_sig_backprop_ffi_call(sig_arr, cotangent, dimension, degree, method, n_jobs):
-    _normalize_dtype(sig_arr.dtype)
+    _check_same_dtype(sig_arr, cotangent)
     out_type = jax.ShapeDtypeStruct(sig_arr.shape, sig_arr.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree),
                        method=np.int64(method), n_jobs=np.int64(n_jobs))
@@ -332,14 +345,14 @@ def sig_to_log_sig_backprop_ffi_call(sig_arr, cotangent, dimension, degree, meth
 # ---------------------------------------------------------------------------
 
 def log_sig_combine_ffi_call(ls1, ls2, dimension, degree, n_jobs):
-    _normalize_dtype(ls1.dtype)
+    _check_same_dtype(ls1, ls2)
     out_type = jax.ShapeDtypeStruct(ls1.shape, ls1.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("log_sig_combine", (ls1, ls2), out_type, call_kwargs)
 
 
 def log_sig_combine_backprop_ffi_call(cotangent, ls1, ls2, dimension, degree, n_jobs):
-    _normalize_dtype(ls1.dtype)
+    _check_same_dtype(cotangent, ls1, ls2)
     grad_type = jax.ShapeDtypeStruct(ls1.shape, ls1.dtype)
     out_type = (grad_type, grad_type)
     call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree), n_jobs=np.int64(n_jobs))
@@ -368,7 +381,7 @@ def sig_kernel_pde_ffi_call(gram, dimension, dyadic_order_1, dyadic_order_2, ret
 
 
 def sig_kernel_pde_backprop_ffi_call(gram, derivs, k_grid, dimension, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
-    _normalize_dtype(gram.dtype)
+    _check_same_dtype(gram, derivs, k_grid)
     out_type = jax.ShapeDtypeStruct(gram.shape, gram.dtype)
     call_kwargs = dict(dimension=np.int64(dimension),
                        dyadic_order_1=np.int64(dyadic_order_1),
@@ -393,7 +406,7 @@ def logsig_to_sig_ffi_call(log_sig_arr, dimension, degree, method, n_jobs):
 
 
 def logsig_to_sig_backprop_ffi_call(log_sig_arr, cotangent, dimension, degree, method, n_jobs):
-    _normalize_dtype(log_sig_arr.dtype)
+    _check_same_dtype(log_sig_arr, cotangent)
     out_type = jax.ShapeDtypeStruct(log_sig_arr.shape, log_sig_arr.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree),
                        method=np.int64(method), n_jobs=np.int64(n_jobs))
@@ -413,7 +426,7 @@ def log_sig_from_path_ffi_call(path, dimension, degree, n_jobs):
 
 
 def log_sig_from_path_backprop_ffi_call(cotangent, path, dimension, degree, n_jobs):
-    _normalize_dtype(path.dtype)
+    _check_same_dtype(cotangent, path)
     out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("log_sig_from_path_backprop", (cotangent, path), out_type, call_kwargs)
@@ -442,7 +455,7 @@ def branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs)
 
 
 def branched_sig_backprop_ffi_call(path, bsig, cotangent, max_nodes, time_aug, lead_lag, end_time, n_jobs):
-    _normalize_dtype(path.dtype)
+    _check_same_dtype(path, bsig, cotangent)
     out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
     call_kwargs = dict(max_nodes=np.int64(max_nodes), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
@@ -454,14 +467,14 @@ def branched_sig_backprop_ffi_call(path, bsig, cotangent, max_nodes, time_aug, l
 # ---------------------------------------------------------------------------
 
 def branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs):
-    _normalize_dtype(bsig1.dtype)
+    _check_same_dtype(bsig1, bsig2)
     out_type = jax.ShapeDtypeStruct(bsig1.shape, bsig1.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("branched_sig_combine", (bsig1, bsig2), out_type, call_kwargs)
 
 
 def branched_sig_combine_backprop_ffi_call(cotangent, bsig1, bsig2, dimension, max_nodes, n_jobs):
-    _normalize_dtype(bsig1.dtype)
+    _check_same_dtype(cotangent, bsig1, bsig2)
     grad_type = jax.ShapeDtypeStruct(bsig1.shape, bsig1.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("branched_sig_combine_backprop", (cotangent, bsig1, bsig2), (grad_type, grad_type), call_kwargs)

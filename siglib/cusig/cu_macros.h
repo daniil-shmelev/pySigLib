@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include <charconv>
+
 // Unified error-handling macro for all cusig exported functions.
 // Error codes match pysiglib/error_codes.py:
 //   0      = success
@@ -66,10 +68,15 @@
             return 9;                                                   \
         auto cuda_pos = msg.find("CUDA Error (");                       \
         if (cuda_pos != std::string::npos) {                            \
-            auto num_start = cuda_pos + 12;                             \
-            auto num_end = msg.find(')', num_start);                    \
-            if (num_end != std::string::npos)                           \
-                return 100000 + std::stoi(msg.substr(num_start, num_end - num_start)); \
+            const auto num_start = cuda_pos + 12;                       \
+            const auto num_end = msg.find(')', num_start);              \
+            if (num_end != std::string::npos) {                         \
+                int code = 0;                                           \
+                const char* beg = msg.data() + num_start;               \
+                const char* end_ptr = msg.data() + num_end;             \
+                if (std::from_chars(beg, end_ptr, code).ec == std::errc{}) \
+                    return 100000 + code;                               \
+            }                                                           \
         }                                                               \
         return 10;                                                      \
     }                                                                   \

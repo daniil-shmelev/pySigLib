@@ -129,8 +129,8 @@ static std::mutex s_gpu_cache_map_mu;
 
 template<typename T>
 static void upload(T*& d_ptr, const T* h_data, size_t count) {
-	cudaMalloc(&d_ptr, count * sizeof(T));
-	cudaMemcpy(d_ptr, h_data, count * sizeof(T), cudaMemcpyHostToDevice);
+	CUDA_CHECK(cudaMalloc(&d_ptr, count * sizeof(T)));
+	CUDA_CHECK(cudaMemcpy(d_ptr, h_data, count * sizeof(T), cudaMemcpyHostToDevice));
 }
 
 static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, uint64_t max_nodes) {

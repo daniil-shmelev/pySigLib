@@ -554,15 +554,13 @@ void log_sig_combine_backprop_cuda_(
 	size_t needed_elems = batch_size * ws_per_batch;
 	if (needed_elems > s_workspace_elems) {
 		if (s_workspace) { cudaFree(s_workspace); s_workspace = nullptr; s_workspace_elems = 0; }
-		// Check available memory and determine chunk size
 		size_t free_mem, total_mem;
 		cudaMemGetInfo(&free_mem, &total_mem);
 		uint64_t max_batch = free_mem / (ws_per_batch * sizeof(T) * 2);
 		if (max_batch < 1) max_batch = 1;
 		uint64_t alloc_batch = std::min(batch_size, max_batch);
 		size_t alloc_elems = alloc_batch * ws_per_batch;
-		cudaMalloc(&s_workspace, alloc_elems * sizeof(T));
-		check_cuda_error();
+		CUDA_CHECK(cudaMalloc(&s_workspace, alloc_elems * sizeof(T)));
 		s_workspace_elems = alloc_elems;
 	}
 
@@ -828,8 +826,7 @@ void log_sig_from_path_cuda_(
 		if (max_batch < 1) max_batch = 1;
 		uint64_t alloc_batch = std::min(batch_size, max_batch);
 		size_t alloc_elems = alloc_batch * ws_per_batch;
-		cudaMalloc(&s_workspace, alloc_elems * sizeof(T));
-		check_cuda_error();
+		CUDA_CHECK(cudaMalloc(&s_workspace, alloc_elems * sizeof(T)));
 		s_workspace_elems = alloc_elems;
 	}
 

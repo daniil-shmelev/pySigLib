@@ -15,6 +15,7 @@
 
 #pragma once
 #include "cppch.h"
+#include "disk_cache.h"
 
 struct Entry {
     uint64_t col;
@@ -264,18 +265,31 @@ public:
 
         in.read(reinterpret_cast<char*>(&out.n), sizeof(out.n));
         in.read(reinterpret_cast<char*>(&out.m), sizeof(out.m));
+        if (!in) throw std::runtime_error("Tried to read an invalid cache file: sparse matrix header");
+        if (out.n > MAX_CACHE_VECTOR_SIZE || out.m > MAX_CACHE_VECTOR_SIZE)
+            throw std::runtime_error("Tried to read an invalid cache file: sparse matrix dimension exceeds limit");
 
+        check_stream_has_bytes(in, out.n * sizeof(uint64_t), "sparse matrix row headers");
+
+        out.rows.clear();
         out.rows.resize(out.n);
 
         for (uint64_t i = 0; i < out.n; ++i) {
             uint64_t nnz;
             in.read(reinterpret_cast<char*>(&nnz), sizeof(nnz));
+            if (!in) throw std::runtime_error("Tried to read an invalid cache file: sparse matrix nnz");
+            if (nnz > out.m)
+                throw std::runtime_error("Tried to read an invalid cache file: sparse matrix row nnz exceeds column count");
+
+            if (nnz > 0)
+                check_stream_has_bytes(in, nnz * (sizeof(uint64_t) + sizeof(int)), "sparse matrix row body");
 
             out.rows[i].resize(nnz);
             for (uint64_t k = 0; k < nnz; ++k) {
                 in.read(reinterpret_cast<char*>(&out.rows[i][k].col), sizeof(uint64_t));
                 in.read(reinterpret_cast<char*>(&out.rows[i][k].val), sizeof(int));
             }
+            if (!in) throw std::runtime_error("Tried to read an invalid cache file: sparse matrix entry read");
         }
     }
 };

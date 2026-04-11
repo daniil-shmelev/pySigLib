@@ -22,6 +22,11 @@
 
 constexpr uint64_t cache_magic_number = 0x70797369676C6962;  // "pysiglib"
 
+// Upper bound on any single deserialized cache vector. Well above any
+// realistic (dim, deg) signature size; blocks gigabyte-scale allocations
+// from a corrupt or malicious file in a shared cache dir.
+inline constexpr uint64_t MAX_CACHE_VECTOR_SIZE = 1'000'000'000ULL;
+
 extern std::filesystem::path cache_dir;
 extern const char* cache_folder_name;
 
@@ -30,3 +35,14 @@ void set_cache_dir_(const char* dir);
 
 void serialize_vector(std::ostream& out, const std::vector<uint64_t>& v);
 void deserialize_vector(std::istream& in, std::vector<uint64_t>& out);
+
+// Verify `need` bytes are still available on `in`; throws if not. Leaves
+// the stream position unchanged.
+inline void check_stream_has_bytes(std::istream& in, uint64_t need, const char* label) {
+	const std::streampos here = in.tellg();
+	in.seekg(0, std::ios::end);
+	const std::streampos end = in.tellg();
+	in.seekg(here);
+	if (here < 0 || end < 0 || static_cast<uint64_t>(end - here) < need)
+		throw std::runtime_error(std::string("Tried to read an invalid cache file: ") + label);
+}

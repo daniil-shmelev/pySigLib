@@ -698,8 +698,8 @@ static std::mutex s_inc_grad_buf_mu;
 
 static void* ensure_inc_grad_buf(size_t needed) {
 	if (needed > s_inc_grad_buf_size) {
-		if (s_inc_grad_buf) cudaFree(s_inc_grad_buf);
-		cudaMalloc(&s_inc_grad_buf, needed);
+		if (s_inc_grad_buf) { cudaFree(s_inc_grad_buf); s_inc_grad_buf = nullptr; s_inc_grad_buf_size = 0; }
+		CUDA_CHECK(cudaMalloc(&s_inc_grad_buf, needed));
 		s_inc_grad_buf_size = needed;
 	}
 	return s_inc_grad_buf;
@@ -840,11 +840,10 @@ void signature_cuda_core_(
 	const size_t aligned_li_bytes = (level_index_bytes + sizeof(T) - 1) / sizeof(T) * sizeof(T);
 	const size_t workspace_bytes = batch_size * sig_len * sizeof(T);
 
-	char* d_alloc;
-	cudaMalloc(&d_alloc, aligned_li_bytes + workspace_bytes);
-	uint64_t* d_level_index = reinterpret_cast<uint64_t*>(d_alloc);
-	T* d_linear_sig = reinterpret_cast<T*>(d_alloc + aligned_li_bytes);
-	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
+	CudaBuf<char> d_alloc(aligned_li_bytes + workspace_bytes);
+	uint64_t* d_level_index = reinterpret_cast<uint64_t*>(d_alloc.get());
+	T* d_linear_sig = reinterpret_cast<T*>(d_alloc.get() + aligned_li_bytes);
+	CUDA_CHECK(cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
 
 	signature_naive_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 		path, out, d_level_index,
@@ -852,10 +851,7 @@ void signature_cuda_core_(
 		d_linear_sig
 	);
 
-	cudaDeviceSynchronize();
-	cudaFree(d_alloc);
-
-	check_cuda_error();
+	check_cuda_kernel_launch();
 }
 
 // Forward-declare transform_path_ from cu_path_transforms.cu
@@ -893,15 +889,12 @@ void signature_cuda_(
 	if (time_aug || lead_lag) {
 		// Transform path on GPU
 		const uint64_t t_path_size = batch_size * t_length * t_dimension;
-		T* d_transformed;
-		cudaMalloc(&d_transformed, t_path_size * sizeof(T));
+		CudaBuf<T> d_transformed(t_path_size * sizeof(T));
 
-		transform_path_<T>(path, d_transformed, batch_size, dimension, length, time_aug, lead_lag, end_time);
+		transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
 		cudaDeviceSynchronize();
 
-		signature_cuda_core_<T>(d_transformed, out, batch_size, t_dimension, t_length, degree, horner);
-
-		cudaFree(d_transformed);
+		signature_cuda_core_<T>(d_transformed.get(), out, batch_size, t_dimension, t_length, degree, horner);
 	}
 	else {
 		signature_cuda_core_<T>(path, out, batch_size, dimension, length, degree, horner);
@@ -1027,34 +1020,19 @@ void sig_backprop_cuda_(
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
 
 	if (time_aug || lead_lag) {
-		// Transform path on GPU
 		const uint64_t t_path_size = batch_size * t_length * t_dimension;
-		T* d_transformed = nullptr;
-		T* d_transformed_derivs = nullptr;
+		CudaBuf<T> d_transformed(t_path_size * sizeof(T));
 
-		try {
-			cudaMalloc(&d_transformed, t_path_size * sizeof(T));
+		transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
 
-			transform_path_<T>(path, d_transformed, batch_size, dimension, length, time_aug, lead_lag, end_time);
+		CudaBuf<T> d_transformed_derivs(t_path_size * sizeof(T));
 
-			// Backprop on transformed path -> derivs w.r.t. transformed path
-			cudaMalloc(&d_transformed_derivs, t_path_size * sizeof(T));
+		sig_backprop_cuda_core_<T>(d_transformed.get(), d_transformed_derivs.get(), sig_derivs, sig,
+			batch_size, t_dimension, t_length, degree);
 
-			sig_backprop_cuda_core_<T>(d_transformed, d_transformed_derivs, sig_derivs, sig,
-				batch_size, t_dimension, t_length, degree);
+		d_transformed.reset();
 
-			cudaFree(d_transformed);
-			d_transformed = nullptr;
-
-			// Apply transform_path_backprop to get derivs w.r.t. original path
-			transform_path_backprop_<T>(d_transformed_derivs, out, batch_size, dimension, length, time_aug, lead_lag, end_time);
-
-			cudaFree(d_transformed_derivs);
-		} catch (...) {
-			if (d_transformed) cudaFree(d_transformed);
-			if (d_transformed_derivs) cudaFree(d_transformed_derivs);
-			throw;
-		}
+		transform_path_backprop_<T>(d_transformed_derivs.get(), out, batch_size, dimension, length, time_aug, lead_lag, end_time);
 	}
 	else {
 		sig_backprop_cuda_core_<T>(path, out, sig_derivs, sig, batch_size, dimension, length, degree);

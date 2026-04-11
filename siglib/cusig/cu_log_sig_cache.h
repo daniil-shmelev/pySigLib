@@ -24,6 +24,20 @@
 #include <filesystem>
 #include <fstream>
 
+// Disk-cache security: bound on any deserialized vector to block
+// gigabyte-scale allocations from a corrupt or malicious cache file in
+// the shared user cache dir. Mirrors cpsig's MAX_CACHE_VECTOR_SIZE.
+inline constexpr uint64_t kCuMaxCacheVectorSize = 1'000'000'000ULL;
+
+inline void cu_check_stream_has_bytes_(std::istream& in, uint64_t need, const char* label) {
+	const std::streampos here = in.tellg();
+	in.seekg(0, std::ios::end);
+	const std::streampos end = in.tellg();
+	in.seekg(here);
+	if (here < 0 || end < 0 || static_cast<uint64_t>(end - here) < need)
+		throw std::runtime_error(std::string("Tried to read an invalid cache file: ") + label);
+}
+
 // =========================================================================
 // Lyndon word utilities (host-side, ported from cpsig/words.h + words.cpp)
 // =========================================================================
@@ -233,15 +247,30 @@ public:
 	static void deserialize(std::istream& in, CuSparseIntMatrix& out) {
 		in.read(reinterpret_cast<char*>(&out.n), sizeof(out.n));
 		in.read(reinterpret_cast<char*>(&out.m), sizeof(out.m));
+		if (!in) throw std::runtime_error("Tried to read an invalid cache file: sparse matrix header");
+		if (out.n > kCuMaxCacheVectorSize || out.m > kCuMaxCacheVectorSize)
+			throw std::runtime_error("Tried to read an invalid cache file: sparse matrix dimension exceeds limit");
+
+		cu_check_stream_has_bytes_(in, out.n * sizeof(uint64_t), "sparse matrix row headers");
+
+		out.rows.clear();
 		out.rows.resize(out.n);
 		for (uint64_t i = 0; i < out.n; ++i) {
 			uint64_t nnz;
 			in.read(reinterpret_cast<char*>(&nnz), sizeof(nnz));
+			if (!in) throw std::runtime_error("Tried to read an invalid cache file: sparse matrix nnz");
+			if (nnz > out.m)
+				throw std::runtime_error("Tried to read an invalid cache file: sparse matrix row nnz exceeds column count");
+
+			if (nnz > 0)
+				cu_check_stream_has_bytes_(in, nnz * (sizeof(uint64_t) + sizeof(int)), "sparse matrix row body");
+
 			out.rows[i].resize(nnz);
 			for (uint64_t k = 0; k < nnz; ++k) {
 				in.read(reinterpret_cast<char*>(&out.rows[i][k].col), sizeof(uint64_t));
 				in.read(reinterpret_cast<char*>(&out.rows[i][k].val), sizeof(int));
 			}
+			if (!in) throw std::runtime_error("Tried to read an invalid cache file: sparse matrix entry read");
 		}
 	}
 };
@@ -410,15 +439,15 @@ inline void upload_csr_to_gpu_(
 	h_row_ptr[mat.n] = idx;
 
 	if (nnz > 0) {
-		cudaMalloc(&d_vals, nnz * sizeof(int));
-		cudaMemcpy(d_vals, h_vals.data(), nnz * sizeof(int), cudaMemcpyHostToDevice);
+		CUDA_CHECK(cudaMalloc(&d_vals, nnz * sizeof(int)));
+		CUDA_CHECK(cudaMemcpy(d_vals, h_vals.data(), nnz * sizeof(int), cudaMemcpyHostToDevice));
 
-		cudaMalloc(&d_cols, nnz * sizeof(uint64_t));
-		cudaMemcpy(d_cols, h_cols.data(), nnz * sizeof(uint64_t), cudaMemcpyHostToDevice);
+		CUDA_CHECK(cudaMalloc(&d_cols, nnz * sizeof(uint64_t)));
+		CUDA_CHECK(cudaMemcpy(d_cols, h_cols.data(), nnz * sizeof(uint64_t), cudaMemcpyHostToDevice));
 	}
 
-	cudaMalloc(&d_row_ptr, (mat.n + 1) * sizeof(uint64_t));
-	cudaMemcpy(d_row_ptr, h_row_ptr.data(), (mat.n + 1) * sizeof(uint64_t), cudaMemcpyHostToDevice);
+	CUDA_CHECK(cudaMalloc(&d_row_ptr, (mat.n + 1) * sizeof(uint64_t)));
+	CUDA_CHECK(cudaMemcpy(d_row_ptr, h_row_ptr.data(), (mat.n + 1) * sizeof(uint64_t), cudaMemcpyHostToDevice));
 }
 
 inline void upload_sparse_matrix_(CUDALogSigCache& entry, uint64_t dimension, uint64_t degree) {
@@ -465,9 +494,20 @@ inline void cu_serialize_vector_(std::ostream& out, const std::vector<uint64_t>&
 inline void cu_deserialize_vector_(std::istream& in, std::vector<uint64_t>& out) {
 	uint64_t size;
 	in.read(reinterpret_cast<char*>(&size), sizeof(size));
-	out.resize(size);
+	if (!in)
+		throw std::runtime_error("Tried to read an invalid cache file: vector size header");
+	if (size > kCuMaxCacheVectorSize)
+		throw std::runtime_error("Tried to read an invalid cache file: vector size exceeds limit");
+
 	if (size > 0) {
+		cu_check_stream_has_bytes_(in, size * sizeof(uint64_t), "vector body");
+		out.resize(size);
 		in.read(reinterpret_cast<char*>(out.data()), size * sizeof(uint64_t));
+		if (!in)
+			throw std::runtime_error("Tried to read an invalid cache file: vector body read");
+	}
+	else {
+		out.clear();
 	}
 }
 
@@ -571,21 +611,18 @@ inline void populate_cuda_cache_entry_(
 	uint64_t log_sig_len = lyndon_idx.size();
 	entry.log_sig_len = log_sig_len;
 
-	// Upload lyndon_idx to GPU
-	cudaMalloc(&entry.d_lyndon_idx, log_sig_len * sizeof(uint64_t));
-	cudaMemcpy(entry.d_lyndon_idx, lyndon_idx.data(), log_sig_len * sizeof(uint64_t), cudaMemcpyHostToDevice);
+	CUDA_CHECK(cudaMalloc(&entry.d_lyndon_idx, log_sig_len * sizeof(uint64_t)));
+	CUDA_CHECK(cudaMemcpy(entry.d_lyndon_idx, lyndon_idx.data(), log_sig_len * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-	// Cache level_index on GPU
 	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
 	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
-	cudaMalloc(&entry.d_level_index, level_index_bytes);
-	cudaMemcpy(entry.d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
+	CUDA_CHECK(cudaMalloc(&entry.d_level_index, level_index_bytes));
+	CUDA_CHECK(cudaMemcpy(entry.d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
 
 	entry.sig_len = host_sig_length(dimension, degree);
 	entry.buff1_len = degree >= 2 ? host_sig_length(dimension, degree - 1) : 1;
 
-	// Compute threads_per_block from max level size
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	entry.threads_per_block = host_choose_threads_per_block(max_level_size);
 }

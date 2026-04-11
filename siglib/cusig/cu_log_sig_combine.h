@@ -310,34 +310,31 @@ inline void set_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 	std::vector<int> h_k_val;
 	cu_build_transposed_commutator_table_(dimension, degree, h_k_ptr, h_k_i, h_k_j, h_k_val, cache.m);
 
-	// Upload BCH data
-	cudaMalloc(&cache.d_bch_coefficients, cache.m2 * sizeof(double));
-	cudaMemcpy(cache.d_bch_coefficients, hc->coefficients, cache.m2 * sizeof(double), cudaMemcpyHostToDevice);
+	CUDA_CHECK(cudaMalloc(&cache.d_bch_coefficients, cache.m2 * sizeof(double)));
+	CUDA_CHECK(cudaMemcpy(cache.d_bch_coefficients, hc->coefficients, cache.m2 * sizeof(double), cudaMemcpyHostToDevice));
 
-	cudaMalloc(&cache.d_bch_left_factor, cache.m2 * sizeof(uint64_t));
-	cudaMemcpy(cache.d_bch_left_factor, hc->left_factor, cache.m2 * sizeof(uint64_t), cudaMemcpyHostToDevice);
+	CUDA_CHECK(cudaMalloc(&cache.d_bch_left_factor, cache.m2 * sizeof(uint64_t)));
+	CUDA_CHECK(cudaMemcpy(cache.d_bch_left_factor, hc->left_factor, cache.m2 * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-	cudaMalloc(&cache.d_bch_right_factor, cache.m2 * sizeof(uint64_t));
-	cudaMemcpy(cache.d_bch_right_factor, hc->right_factor, cache.m2 * sizeof(uint64_t), cudaMemcpyHostToDevice);
+	CUDA_CHECK(cudaMalloc(&cache.d_bch_right_factor, cache.m2 * sizeof(uint64_t)));
+	CUDA_CHECK(cudaMemcpy(cache.d_bch_right_factor, hc->right_factor, cache.m2 * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-	// Upload transposed commutator table
 	uint32_t nnz = h_k_ptr.back();
 
-	cudaMalloc(&cache.d_comm_k_ptr, (cache.m + 1) * sizeof(uint32_t));
-	cudaMemcpy(cache.d_comm_k_ptr, h_k_ptr.data(), (cache.m + 1) * sizeof(uint32_t), cudaMemcpyHostToDevice);
+	CUDA_CHECK(cudaMalloc(&cache.d_comm_k_ptr, (cache.m + 1) * sizeof(uint32_t)));
+	CUDA_CHECK(cudaMemcpy(cache.d_comm_k_ptr, h_k_ptr.data(), (cache.m + 1) * sizeof(uint32_t), cudaMemcpyHostToDevice));
 
 	if (nnz > 0) {
-		cudaMalloc(&cache.d_comm_k_i, nnz * sizeof(uint32_t));
-		cudaMemcpy(cache.d_comm_k_i, h_k_i.data(), nnz * sizeof(uint32_t), cudaMemcpyHostToDevice);
+		CUDA_CHECK(cudaMalloc(&cache.d_comm_k_i, nnz * sizeof(uint32_t)));
+		CUDA_CHECK(cudaMemcpy(cache.d_comm_k_i, h_k_i.data(), nnz * sizeof(uint32_t), cudaMemcpyHostToDevice));
 
-		cudaMalloc(&cache.d_comm_k_j, nnz * sizeof(uint32_t));
-		cudaMemcpy(cache.d_comm_k_j, h_k_j.data(), nnz * sizeof(uint32_t), cudaMemcpyHostToDevice);
+		CUDA_CHECK(cudaMalloc(&cache.d_comm_k_j, nnz * sizeof(uint32_t)));
+		CUDA_CHECK(cudaMemcpy(cache.d_comm_k_j, h_k_j.data(), nnz * sizeof(uint32_t), cudaMemcpyHostToDevice));
 
-		cudaMalloc(&cache.d_comm_k_val, nnz * sizeof(int));
-		cudaMemcpy(cache.d_comm_k_val, h_k_val.data(), nnz * sizeof(int), cudaMemcpyHostToDevice);
+		CUDA_CHECK(cudaMalloc(&cache.d_comm_k_val, nnz * sizeof(int)));
+		CUDA_CHECK(cudaMemcpy(cache.d_comm_k_val, h_k_val.data(), nnz * sizeof(int), cudaMemcpyHostToDevice));
 	}
 
-	// Build input-grouped commutator table from k-grouped data
 	struct AEntry { uint32_t k; uint32_t partner; int signed_c; };
 	std::vector<std::vector<AEntry>> entries_by_a(cache.m);
 	for (uint64_t k = 0; k < cache.m; ++k) {
@@ -350,7 +347,6 @@ inline void set_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 		}
 	}
 
-	// Flatten to CSR
 	std::vector<uint32_t> h_a_ptr(cache.m + 1);
 	uint32_t a_offset = 0;
 	for (uint64_t a = 0; a < cache.m; ++a) {
@@ -372,22 +368,20 @@ inline void set_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 		}
 	}
 
-	// Upload to GPU
-	cudaMalloc(&cache.d_comm_a_ptr, (cache.m + 1) * sizeof(uint32_t));
-	cudaMemcpy(cache.d_comm_a_ptr, h_a_ptr.data(), (cache.m + 1) * sizeof(uint32_t), cudaMemcpyHostToDevice);
+	CUDA_CHECK(cudaMalloc(&cache.d_comm_a_ptr, (cache.m + 1) * sizeof(uint32_t)));
+	CUDA_CHECK(cudaMemcpy(cache.d_comm_a_ptr, h_a_ptr.data(), (cache.m + 1) * sizeof(uint32_t), cudaMemcpyHostToDevice));
 
 	if (a_nnz > 0) {
-		cudaMalloc(&cache.d_comm_a_k, a_nnz * sizeof(uint32_t));
-		cudaMemcpy(cache.d_comm_a_k, h_a_k.data(), a_nnz * sizeof(uint32_t), cudaMemcpyHostToDevice);
+		CUDA_CHECK(cudaMalloc(&cache.d_comm_a_k, a_nnz * sizeof(uint32_t)));
+		CUDA_CHECK(cudaMemcpy(cache.d_comm_a_k, h_a_k.data(), a_nnz * sizeof(uint32_t), cudaMemcpyHostToDevice));
 
-		cudaMalloc(&cache.d_comm_a_partner, a_nnz * sizeof(uint32_t));
-		cudaMemcpy(cache.d_comm_a_partner, h_a_partner.data(), a_nnz * sizeof(uint32_t), cudaMemcpyHostToDevice);
+		CUDA_CHECK(cudaMalloc(&cache.d_comm_a_partner, a_nnz * sizeof(uint32_t)));
+		CUDA_CHECK(cudaMemcpy(cache.d_comm_a_partner, h_a_partner.data(), a_nnz * sizeof(uint32_t), cudaMemcpyHostToDevice));
 
-		cudaMalloc(&cache.d_comm_a_signed_c, a_nnz * sizeof(int));
-		cudaMemcpy(cache.d_comm_a_signed_c, h_a_signed_c.data(), a_nnz * sizeof(int), cudaMemcpyHostToDevice);
+		CUDA_CHECK(cudaMalloc(&cache.d_comm_a_signed_c, a_nnz * sizeof(int)));
+		CUDA_CHECK(cudaMemcpy(cache.d_comm_a_signed_c, h_a_signed_c.data(), a_nnz * sizeof(int), cudaMemcpyHostToDevice));
 	}
 
-	check_cuda_error();
 	cache_map.emplace(key, std::move(cache));
 }
 

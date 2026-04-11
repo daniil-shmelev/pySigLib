@@ -35,18 +35,18 @@ struct CUDALogSigWorkspace {
 
 	void ensure(size_t need_temp, size_t need_buff1, size_t need_buff2) {
 		if (need_temp > temp_bytes) {
-			if (d_temp) cudaFree(d_temp);
-			cudaMalloc(&d_temp, need_temp);
+			if (d_temp) { cudaFree(d_temp); d_temp = nullptr; temp_bytes = 0; }
+			CUDA_CHECK(cudaMalloc(&d_temp, need_temp));
 			temp_bytes = need_temp;
 		}
 		if (need_buff1 > buff1_bytes) {
-			if (d_buff1) cudaFree(d_buff1);
-			cudaMalloc(&d_buff1, need_buff1);
+			if (d_buff1) { cudaFree(d_buff1); d_buff1 = nullptr; buff1_bytes = 0; }
+			CUDA_CHECK(cudaMalloc(&d_buff1, need_buff1));
 			buff1_bytes = need_buff1;
 		}
 		if (need_buff2 > buff2_bytes) {
-			if (d_buff2) cudaFree(d_buff2);
-			cudaMalloc(&d_buff2, need_buff2);
+			if (d_buff2) { cudaFree(d_buff2); d_buff2 = nullptr; buff2_bytes = 0; }
+			CUDA_CHECK(cudaMalloc(&d_buff2, need_buff2));
 			buff2_bytes = need_buff2;
 		}
 	}
@@ -136,9 +136,8 @@ void sig_to_log_sig_cuda_core_(
 
 	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
 
-	uint64_t* d_level_index = nullptr;
-	cudaMalloc(&d_level_index, level_index_bytes);
-	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
+	CudaBuf<uint64_t> d_level_index(level_index_bytes);
+	CUDA_CHECK(cudaMemcpy(d_level_index.get(), level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
 
 	// Allocate scratch buffers via workspace cache
 	const uint64_t buff1_len = degree >= 2 ? host_sig_length(dimension, degree - 1) : 1;
@@ -157,10 +156,9 @@ void sig_to_log_sig_cuda_core_(
 		sig, out,
 		static_cast<T*>(g_workspace.d_buff1),
 		static_cast<T*>(g_workspace.d_buff2),
-		d_level_index, degree, sig_len, buff1_len
+		d_level_index.get(), degree, sig_len, buff1_len
 	);
 
-	cudaFree(d_level_index);
 	check_cuda_kernel_launch();
 }
 
@@ -383,13 +381,13 @@ struct CUDALogSigBackpropWorkspace {
 
 	void ensure(size_t need_buf, size_t need_derivs) {
 		if (need_buf > buf_bytes) {
-			if (d_buf) cudaFree(d_buf);
-			cudaMalloc(&d_buf, need_buf);
+			if (d_buf) { cudaFree(d_buf); d_buf = nullptr; buf_bytes = 0; }
+			CUDA_CHECK(cudaMalloc(&d_buf, need_buf));
 			buf_bytes = need_buf;
 		}
 		if (need_derivs > derivs_bytes) {
-			if (d_derivs) cudaFree(d_derivs);
-			cudaMalloc(&d_derivs, need_derivs);
+			if (d_derivs) { cudaFree(d_derivs); d_derivs = nullptr; derivs_bytes = 0; }
+			CUDA_CHECK(cudaMalloc(&d_derivs, need_derivs));
 			derivs_bytes = need_derivs;
 		}
 	}
@@ -492,9 +490,8 @@ void sig_to_log_sig_backprop_cuda_core_(
 	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
 	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
 
-	uint64_t* d_level_index = nullptr;
-	cudaMalloc(&d_level_index, level_index_bytes);
-	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
+	CudaBuf<uint64_t> d_level_index(level_index_bytes);
+	CUDA_CHECK(cudaMemcpy(d_level_index.get(), level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
 
 	// Scratch per element: sig_copy + partial_logs + other_derivs + buff1 + buff2
 	const uint64_t scratch_per_element =
@@ -509,7 +506,7 @@ void sig_to_log_sig_backprop_cuda_core_(
 	std::lock_guard<std::mutex> lock(g_bp_workspace_mu);
 	g_bp_workspace.ensure(sizeof(T) * batch_size * scratch_per_element, derivs_size);
 
-	cudaMemcpy(g_bp_workspace.d_derivs, log_sig_derivs, derivs_size, cudaMemcpyDeviceToDevice);
+	CUDA_CHECK(cudaMemcpy(g_bp_workspace.d_derivs, log_sig_derivs, derivs_size, cudaMemcpyDeviceToDevice));
 
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
@@ -518,10 +515,9 @@ void sig_to_log_sig_backprop_cuda_core_(
 	sig_to_log_sig_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 		sig, out, static_cast<T*>(g_bp_workspace.d_derivs),
 		static_cast<T*>(g_bp_workspace.d_buf),
-		d_level_index, dimension, degree, sig_len, buff1_len, scratch_per_element
+		d_level_index.get(), dimension, degree, sig_len, buff1_len, scratch_per_element
 	);
 
-	cudaFree(d_level_index);
 	check_cuda_kernel_launch();
 }
 

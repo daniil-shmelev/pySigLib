@@ -319,19 +319,17 @@ void linear_sig_cuda_(
 	host_populate_level_index(li.get(), dimension, degree + 2);
 	const size_t li_bytes = (degree + 2) * sizeof(uint64_t);
 
-	uint64_t* d_li = nullptr;
-	cudaMalloc(&d_li, li_bytes);
-	cudaMemcpy(d_li, li.get(), li_bytes, cudaMemcpyHostToDevice);
+	CudaBuf<uint64_t> d_li(li_bytes);
+	CUDA_CHECK(cudaMemcpy(d_li.get(), li.get(), li_bytes, cudaMemcpyHostToDevice));
 
 	uint64_t max_level_size = li[degree + 1] - li[degree];
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem = li_bytes;
 
 	linear_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem>>>(
-		displacement, out, d_li, dimension, degree, sig_len
+		displacement, out, d_li.get(), dimension, degree, sig_len
 	);
 
-	cudaFree(d_li);
 	check_cuda_kernel_launch();
 }
 
@@ -398,16 +396,18 @@ void sig_join_cuda_(
 	host_populate_level_index(li.get(), dimension, degree + 2);
 	const size_t li_bytes = (degree + 2) * sizeof(uint64_t);
 
-	uint64_t* d_li = nullptr;
-	cudaMalloc(&d_li, li_bytes);
-	cudaMemcpy(d_li, li.get(), li_bytes, cudaMemcpyHostToDevice);
+	CudaBuf<uint64_t> d_li(li_bytes);
+	CUDA_CHECK(cudaMemcpy(d_li.get(), li.get(), li_bytes, cudaMemcpyHostToDevice));
 
-	// Workspace for linear sig
 	size_t need = sizeof(T) * batch_size * sig_len;
 	std::lock_guard<std::mutex> lock(g_sig_join_lsig_mu);
 	if (need > g_sig_join_lsig_bytes) {
-		if (g_sig_join_lsig_buf) cudaFree(g_sig_join_lsig_buf);
-		cudaMalloc(&g_sig_join_lsig_buf, need);
+		if (g_sig_join_lsig_buf) {
+			cudaFree(g_sig_join_lsig_buf);
+			g_sig_join_lsig_buf = nullptr;
+			g_sig_join_lsig_bytes = 0;
+		}
+		CUDA_CHECK(cudaMalloc(&g_sig_join_lsig_buf, need));
 		g_sig_join_lsig_bytes = need;
 	}
 
@@ -418,10 +418,9 @@ void sig_join_cuda_(
 	sig_join_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem>>>(
 		sig, displacement, out,
 		static_cast<T*>(g_sig_join_lsig_buf),
-		d_li, dimension, degree, sig_len, prepend
+		d_li.get(), dimension, degree, sig_len, prepend
 	);
 
-	cudaFree(d_li);
 	check_cuda_kernel_launch();
 }
 
@@ -441,19 +440,17 @@ void sig_join_backprop_cuda_(
 
 	// Recompute linear_sig on device
 	size_t lsig_bytes = sizeof(T) * batch_size * sig_len;
-	T* d_lsig = nullptr;
-	cudaMalloc(&d_lsig, lsig_bytes);
-	linear_sig_cuda_<T>(displacement, d_lsig, batch_size, dimension, degree);
+	CudaBuf<T> d_lsig(lsig_bytes);
+	linear_sig_cuda_<T>(displacement, d_lsig.get(), batch_size, dimension, degree);
 
 	// Backprop through sig_combine: d_out -> d_sig, d_lsig_grad
-	T* d_lsig_grad = nullptr;
-	cudaMalloc(&d_lsig_grad, lsig_bytes);
+	CudaBuf<T> d_lsig_grad(lsig_bytes);
 	if (prepend) {
 		// Forward was lsig ⊗ sig
-		sig_combine_backprop_cuda_core_<T>(d_out, d_lsig_grad, d_sig, d_lsig, sig, batch_size, dimension, degree);
+		sig_combine_backprop_cuda_core_<T>(d_out, d_lsig_grad.get(), d_sig, d_lsig.get(), sig, batch_size, dimension, degree);
 	} else {
 		// Forward was sig ⊗ lsig
-		sig_combine_backprop_cuda_core_<T>(d_out, d_sig, d_lsig_grad, sig, d_lsig, batch_size, dimension, degree);
+		sig_combine_backprop_cuda_core_<T>(d_out, d_sig, d_lsig_grad.get(), sig, d_lsig.get(), batch_size, dimension, degree);
 	}
 
 	// Backprop through linear_sig: d_displacement = d_lsig_grad at level 1
@@ -465,8 +462,8 @@ void sig_join_backprop_cuda_(
 	// For simplicity, do this on CPU (the displacement is small).
 	auto h_lsig = std::make_unique<T[]>(sig_len * batch_size);
 	auto h_dlsig = std::make_unique<T[]>(sig_len * batch_size);
-	cudaMemcpy(h_lsig.get(), d_lsig, lsig_bytes, cudaMemcpyDeviceToHost);
-	cudaMemcpy(h_dlsig.get(), d_lsig_grad, lsig_bytes, cudaMemcpyDeviceToHost);
+	CUDA_CHECK(cudaMemcpy(h_lsig.get(), d_lsig.get(), lsig_bytes, cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(h_dlsig.get(), d_lsig_grad.get(), lsig_bytes, cudaMemcpyDeviceToHost));
 
 	auto li = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(li.get(), dimension, degree + 2);
@@ -491,10 +488,7 @@ void sig_join_backprop_cuda_(
 		}
 		std::memcpy(h_ddisp.get() + b * dimension, dlsig_b + 1, dimension * sizeof(T));
 	}
-	cudaMemcpy(d_displacement, h_ddisp.get(), sizeof(T) * dimension * batch_size, cudaMemcpyHostToDevice);
-
-	cudaFree(d_lsig);
-	cudaFree(d_lsig_grad);
+	CUDA_CHECK(cudaMemcpy(d_displacement, h_ddisp.get(), sizeof(T) * dimension * batch_size, cudaMemcpyHostToDevice));
 }
 
 // =========================================================================

@@ -405,8 +405,8 @@ struct CUDAExpSigWorkspace {
 
 	void ensure(void*& ptr, size_t& current, size_t need) {
 		if (need > current) {
-			if (ptr) cudaFree(ptr);
-			cudaMalloc(&ptr, need);
+			if (ptr) { cudaFree(ptr); ptr = nullptr; current = 0; }
+			CUDA_CHECK(cudaMalloc(&ptr, need));
 			current = need;
 		}
 	}
@@ -463,15 +463,13 @@ void logsig_to_sig_cuda_(
 	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
 
 	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
-	uint64_t* d_level_index = nullptr;
-	cudaMalloc(&d_level_index, level_index_bytes);
-	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
+	CudaBuf<uint64_t> d_level_index(level_index_bytes);
+	CUDA_CHECK(cudaMemcpy(d_level_index.get(), level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
 
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
-	// Host-only work done outside the workspace lock.
 	uint64_t m = 0;
 	std::unique_ptr<T[]> h_expand;
 	if (method != 0) {
@@ -491,13 +489,13 @@ void logsig_to_sig_cuda_(
 		logsig_to_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
 			log_sig, out,
 			static_cast<T*>(g_exp_workspace.d_buff),
-			d_level_index, degree, sig_len
+			d_level_index.get(), degree, sig_len
 		);
 	}
 	else {
 		size_t mat_bytes = sizeof(T) * sig_len * m;
 		g_exp_workspace.ensure_expand_mat(mat_bytes);
-		cudaMemcpy(g_exp_workspace.d_expand_mat, h_expand.get(), mat_bytes, cudaMemcpyHostToDevice);
+		CUDA_CHECK(cudaMemcpy(g_exp_workspace.d_expand_mat, h_expand.get(), mat_bytes, cudaMemcpyHostToDevice));
 
 		g_exp_workspace.ensure_forward(sizeof(T) * batch_size * 2 * sig_len);
 		g_exp_workspace.ensure_expanded(sizeof(T) * batch_size * sig_len);
@@ -507,11 +505,10 @@ void logsig_to_sig_cuda_(
 			static_cast<T*>(g_exp_workspace.d_expanded),
 			static_cast<T*>(g_exp_workspace.d_buff),
 			static_cast<T*>(g_exp_workspace.d_expand_mat),
-			d_level_index, degree, sig_len, m
+			d_level_index.get(), degree, sig_len, m
 		);
 	}
 
-	cudaFree(d_level_index);
 	check_cuda_kernel_launch();
 }
 
@@ -548,9 +545,8 @@ void logsig_to_sig_backprop_cuda_(
 	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
 
 	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
-	uint64_t* d_level_index = nullptr;
-	cudaMalloc(&d_level_index, level_index_bytes);
-	cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice);
+	CudaBuf<uint64_t> d_level_index(level_index_bytes);
+	CUDA_CHECK(cudaMemcpy(d_level_index.get(), level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
 
 	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
@@ -579,13 +575,13 @@ void logsig_to_sig_backprop_cuda_(
 			d_logsig, d_sig, log_sig,
 			static_cast<T*>(g_exp_workspace.d_intermediates),
 			static_cast<T*>(g_exp_workspace.d_dS),
-			d_level_index, degree, sig_len
+			d_level_index.get(), degree, sig_len
 		);
 	}
 	else {
 		size_t mat_bytes = sizeof(T) * sig_len * m;
 		g_exp_workspace.ensure_expand_mat(mat_bytes);
-		cudaMemcpy(g_exp_workspace.d_expand_mat, h_expand.get(), mat_bytes, cudaMemcpyHostToDevice);
+		CUDA_CHECK(cudaMemcpy(g_exp_workspace.d_expand_mat, h_expand.get(), mat_bytes, cudaMemcpyHostToDevice));
 
 		g_exp_workspace.ensure_expanded(sizeof(T) * batch_size * sig_len);
 		g_exp_workspace.ensure_backward(
@@ -602,11 +598,10 @@ void logsig_to_sig_backprop_cuda_(
 			static_cast<T*>(g_exp_workspace.d_d_expanded),
 			static_cast<T*>(g_exp_workspace.d_intermediates),
 			static_cast<T*>(g_exp_workspace.d_dS),
-			d_level_index, degree, sig_len, m
+			d_level_index.get(), degree, sig_len, m
 		);
 	}
 
-	cudaFree(d_level_index);
 	check_cuda_kernel_launch();
 }
 

@@ -59,4 +59,38 @@ inline void check_cuda_kernel_launch() {
 	check_cuda_error();
 }
 
+// Wraps a CUDA runtime call; throws std::runtime_error if it returns non-success.
+#define CUDA_CHECK(call) do { \
+	cudaError_t _cuda_err = (call); \
+	if (_cuda_err != cudaSuccess) \
+		throw std::runtime_error("CUDA Error (" + std::to_string(static_cast<int>(_cuda_err)) + "): " + cudaGetErrorString(_cuda_err)); \
+} while (0)
+
+// RAII wrapper for a cudaMalloc'd device buffer. Frees automatically on scope exit
+// (including exception unwind). `release()` transfers ownership out.
+template<typename T>
+class CudaBuf {
+public:
+	CudaBuf() noexcept : ptr_(nullptr) {}
+	explicit CudaBuf(size_t bytes) {
+		void* p = nullptr;
+		CUDA_CHECK(cudaMalloc(&p, bytes));
+		ptr_ = static_cast<T*>(p);
+	}
+	CudaBuf(const CudaBuf&) = delete;
+	CudaBuf& operator=(const CudaBuf&) = delete;
+	CudaBuf(CudaBuf&& o) noexcept : ptr_(o.ptr_) { o.ptr_ = nullptr; }
+	CudaBuf& operator=(CudaBuf&& o) noexcept {
+		if (this != &o) { reset(); ptr_ = o.ptr_; o.ptr_ = nullptr; }
+		return *this;
+	}
+	~CudaBuf() { reset(); }
+	T* get() const noexcept { return ptr_; }
+	operator T*() const noexcept { return ptr_; }
+	T* release() noexcept { T* p = ptr_; ptr_ = nullptr; return p; }
+	void reset() noexcept { if (ptr_) { cudaFree(ptr_); ptr_ = nullptr; } }
+private:
+	T* ptr_;
+};
+
 #endif //PCH_H

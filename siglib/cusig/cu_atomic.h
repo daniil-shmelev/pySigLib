@@ -17,9 +17,8 @@
 #include "cuda_runtime.h"
 
 // =========================================================================
-// Custom atomicAdd for double: CAS-based implementation for sm_50/52
-// (Native atomicAdd(double*,double) requires sm_60+)
-// For float, we just forward to the built-in atomicAdd.
+// Custom atomicAdd for double: native on sm_60+, CAS fallback otherwise.
+// For float, forward to the built-in atomicAdd.
 // =========================================================================
 
 template<typename T>
@@ -32,12 +31,19 @@ __device__ __forceinline__ void myAtomicAdd<float>(float* address, float val) {
 
 template<>
 __device__ __forceinline__ void myAtomicAdd<double>(double* address, double val) {
+#if __CUDA_ARCH__ >= 600
+	atomicAdd(address, val);
+#else
+	// CAS fallback for pre-Pascal. Compares raw bit patterns so that a
+	// NaN at *address does not spin forever (NaN != NaN under FP compare).
 	unsigned long long int* address_as_ull = reinterpret_cast<unsigned long long int*>(address);
-	unsigned long long int old = *address_as_ull;
 	unsigned long long int assumed;
+	unsigned long long int old = atomicAdd(address_as_ull, 0ULL);  // atomic load
 	do {
 		assumed = old;
-		old = atomicCAS(address_as_ull, assumed,
-			__double_as_longlong(val + __longlong_as_double(assumed)));
+		const double d_assumed = __longlong_as_double(assumed);
+		const unsigned long long int desired = __double_as_longlong(d_assumed + val);
+		old = atomicCAS(address_as_ull, assumed, desired);
 	} while (assumed != old);
+#endif
 }

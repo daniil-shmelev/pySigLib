@@ -195,32 +195,49 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, Branched
 	std::ifstream in(path, std::ios::binary);
 	if (!in) return false;
 
+	// Read into a fresh local first; only move into `c` on full success.
+	BranchedSigCache tmp;
+
 	uint64_t magic;
 	in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-	if (magic != cache_magic_number)
+	if (!in || magic != cache_magic_number)
 		throw std::runtime_error("Tried to read an invalid cache file. Cache may have been corrupted.");
 
-	in.read(reinterpret_cast<char*>(&c.dimension), sizeof(c.dimension));
-	in.read(reinterpret_cast<char*>(&c.max_nodes), sizeof(c.max_nodes));
-	if (c.dimension != dimension || c.max_nodes != max_nodes)
+	in.read(reinterpret_cast<char*>(&tmp.dimension), sizeof(tmp.dimension));
+	in.read(reinterpret_cast<char*>(&tmp.max_nodes), sizeof(tmp.max_nodes));
+	if (!in || tmp.dimension != dimension || tmp.max_nodes != max_nodes)
 		return false;
-	in.read(reinterpret_cast<char*>(&c.total_length), sizeof(c.total_length));
-	deserialize_vector(in, c.order_index);
+	in.read(reinterpret_cast<char*>(&tmp.total_length), sizeof(tmp.total_length));
+	if (!in || tmp.total_length > MAX_CACHE_VECTOR_SIZE)
+		throw std::runtime_error("Tried to read an invalid cache file: branched total_length exceeds limit");
 
+	deserialize_vector(in, tmp.order_index);
+
+	// inv_tree_factorial: bounded by total_length - 1 (num_trees).
 	uint64_t n;
 	in.read(reinterpret_cast<char*>(&n), sizeof(n));
-	c.inv_tree_factorial.resize(n);
-	if (n > 0) in.read(reinterpret_cast<char*>(c.inv_tree_factorial.data()), n * sizeof(double));
+	if (!in || n > MAX_CACHE_VECTOR_SIZE || n + 1 > tmp.total_length)
+		throw std::runtime_error("Tried to read an invalid cache file: branched inv_tree_factorial size invalid");
+	check_stream_has_bytes(in, n * sizeof(double), "branched inv_tree_factorial body");
+	tmp.inv_tree_factorial.resize(n);
+	if (n > 0) in.read(reinterpret_cast<char*>(tmp.inv_tree_factorial.data()), n * sizeof(double));
 
+	// node_labels_data: raw bytes, also bounded.
 	in.read(reinterpret_cast<char*>(&n), sizeof(n));
-	c.node_labels_data.resize(n);
-	if (n > 0) in.read(reinterpret_cast<char*>(c.node_labels_data.data()), n);
+	if (!in || n > MAX_CACHE_VECTOR_SIZE)
+		throw std::runtime_error("Tried to read an invalid cache file: branched node_labels_data size invalid");
+	check_stream_has_bytes(in, n, "branched node_labels_data body");
+	tmp.node_labels_data.resize(n);
+	if (n > 0) in.read(reinterpret_cast<char*>(tmp.node_labels_data.data()), n);
 
-	deserialize_vector(in, c.node_labels_offsets);
-	deserialize_vector(in, c.coproduct_data);
-	deserialize_vector(in, c.coproduct_offsets);
+	deserialize_vector(in, tmp.node_labels_offsets);
+	deserialize_vector(in, tmp.coproduct_data);
+	deserialize_vector(in, tmp.coproduct_offsets);
 
-	return in.good();
+	if (!in.good()) return false;
+
+	c = std::move(tmp);
+	return true;
 }
 
 // ---------------------------------------------------------------------------

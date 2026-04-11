@@ -343,15 +343,13 @@ void sig_kernel_cuda_(
 	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1_ + dyadic_order_2_));
 
 	if (!return_grid) {
-		T* initial_condition;
-		cudaMalloc((void**)&initial_condition, p.main_dyadic_length * batch_size_ * sizeof(T));
+		CudaBuf<T> initial_condition(p.main_dyadic_length * batch_size_ * sizeof(T));
 		const uint64_t fill_n = p.main_dyadic_length * batch_size_;
-		fill_kernel<<<static_cast<unsigned int>((fill_n + 255) / 256), 256U>>>(initial_condition, static_cast<T>(1.), fill_n);
+		fill_kernel<<<static_cast<unsigned int>((fill_n + 255) / 256), 256U>>>(initial_condition.get(), static_cast<T>(1.), fill_n);
 
-		goursat_pde<<<static_cast<unsigned int>(batch_size_), 32U>>>(initial_condition, gram, dyadic_frac, p);
+		goursat_pde<<<static_cast<unsigned int>(batch_size_), 32U>>>(initial_condition.get(), gram, dyadic_frac, p);
 
-		gather_last<<<static_cast<unsigned int>((batch_size_ + 255) / 256), 256U>>>(initial_condition, out, p.main_dyadic_length, batch_size_);
-		cudaFree(initial_condition);
+		gather_last<<<static_cast<unsigned int>((batch_size_ + 255) / 256), 256U>>>(initial_condition.get(), out, p.main_dyadic_length, batch_size_);
 	}
 	else {
 		const uint64_t fill_n = batch_size_ * p.grid_length;
@@ -360,7 +358,7 @@ void sig_kernel_cuda_(
 		goursat_pde_full<<<static_cast<unsigned int>(batch_size_), 32U>>>(out, gram, dyadic_frac, p);
 	}
 
-	check_cuda_error();
+	check_cuda_kernel_launch();
 }
 
 template<typename T, bool order> //order is True if dyadic_length_2 <= dyadic_length_1
@@ -629,22 +627,19 @@ void sig_kernel_backprop_cuda_(
 	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1_ + dyadic_order_2_));
 	const uint64_t derivs_length_ = return_grid ? p.grid_length : 1;
 
-	cudaMemset(out, 0, batch_size_ * p.gram_length * sizeof(T));
+	CUDA_CHECK(cudaMemset(out, 0, batch_size_ * p.gram_length * sizeof(T)));
 
 	// Single allocation for all 3 initial condition buffers
 	const uint64_t ic_size = p.main_dyadic_length * batch_size_;
-	T* d_ic_buf;
-	cudaMalloc((void**)&d_ic_buf, 3 * ic_size * sizeof(T));
-	cudaMemset(d_ic_buf, 0, 3 * ic_size * sizeof(T));
-	T* d_initial_condition = d_ic_buf;
-	T* d_a_initial_condition = d_ic_buf + ic_size;
-	T* d_b_initial_condition = d_ic_buf + 2 * ic_size;
+	CudaBuf<T> d_ic_buf(3 * ic_size * sizeof(T));
+	CUDA_CHECK(cudaMemset(d_ic_buf.get(), 0, 3 * ic_size * sizeof(T)));
+	T* d_initial_condition = d_ic_buf.get();
+	T* d_a_initial_condition = d_ic_buf.get() + ic_size;
+	T* d_b_initial_condition = d_ic_buf.get() + 2 * ic_size;
 
 	goursat_pde_deriv<<<static_cast<unsigned int>(batch_size_), 32U>>>(d_initial_condition, d_a_initial_condition, d_b_initial_condition, gram, derivs, k_grid, out, dyadic_frac, return_grid, derivs_length_, p);
 
-	cudaFree(d_ic_buf);
-
-	check_cuda_error();
+	check_cuda_kernel_launch();
 }
 
 #include "cu_macros.h"

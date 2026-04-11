@@ -39,10 +39,20 @@ void deserialize_vector(std::istream& in, std::vector<uint64_t>& out) {
 
 	uint64_t size;
 	in.read(reinterpret_cast<char*>(&size), sizeof(size));
+	if (!in)
+		throw std::runtime_error("Tried to read an invalid cache file: vector size header");
+	if (size > MAX_CACHE_VECTOR_SIZE)
+		throw std::runtime_error("Tried to read an invalid cache file: vector size exceeds limit");
 
-	out.resize(size);
 	if (size > 0) {
+		check_stream_has_bytes(in, size * sizeof(uint64_t), "vector body");
+		out.resize(size);
 		in.read(reinterpret_cast<char*>(out.data()), size * sizeof(uint64_t));
+		if (!in)
+			throw std::runtime_error("Tried to read an invalid cache file: vector body read");
+	}
+	else {
+		out.clear();
 	}
 }
 
