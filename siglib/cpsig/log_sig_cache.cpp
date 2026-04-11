@@ -102,10 +102,12 @@ void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_d
 		CacheFile file(dimension, degree);
 		if (use_disk) {
 			if (file.exists()) {
-				// Pull into memory
 				auto basis_obj = std::make_unique<BasisCache>();
-				basis_cache.insert_or_assign(key, std::move(basis_obj));
-				return;
+				file.read(basis_obj);
+				if (basis_obj->method >= method) {
+					basis_cache.insert_or_assign(key, std::move(basis_obj));
+					return;
+				}
 			}
 		}
 

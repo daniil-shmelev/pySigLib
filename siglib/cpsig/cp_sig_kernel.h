@@ -24,6 +24,19 @@
 #include "cp_vector_funcs.h"
 #endif
 
+inline void validate_sig_kernel_dims_(
+	uint64_t length1, uint64_t length2,
+	uint64_t dyadic_order_1, uint64_t dyadic_order_2
+) {
+	if (length1 == 0 || length2 == 0)
+		throw std::invalid_argument("sig_kernel: paths must have length >= 1");
+	if (dyadic_order_1 >= 63 || dyadic_order_2 >= 63 || dyadic_order_1 + dyadic_order_2 >= 63)
+		throw std::invalid_argument("sig_kernel: dyadic_order too large");
+	if ((length1 - 1) > (UINT64_MAX >> dyadic_order_1) ||
+	    (length2 - 1) > (UINT64_MAX >> dyadic_order_2))
+		throw std::invalid_argument("sig_kernel: path length * dyadic refinement would overflow");
+}
+
 /* Signature kernel PDE solver (CPU).
  *
  * Forward recurrence (Day/Wazwaz second-order scheme):
@@ -215,6 +228,7 @@ void sig_kernel_(
 	int n_jobs
 ) {
 	if (dimension == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
+	validate_sig_kernel_dims_(length1, length2, dyadic_order_1, dyadic_order_2);
 	if (!gram) {
 		std::fill(out, out + batch_size, static_cast<T>(1.));
 		return;
@@ -362,6 +376,7 @@ void batch_sig_kernel_backprop_(
 	int n_jobs
 ) {
 	if (dimension == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
+	validate_sig_kernel_dims_(length1, length2, dyadic_order_1, dyadic_order_2);
 
 	const uint64_t gram_length = (length1 - 1) * (length2 - 1);
 

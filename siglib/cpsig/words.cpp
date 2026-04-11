@@ -67,7 +67,13 @@ uint64_t word_to_idx(word w, uint64_t dimension) {
 
 	uint64_t idx = 0;
 	for (uint64_t i : w) {
-		idx = idx * dimension + (i + 1);
+		if (dimension != 0 && idx > UINT64_MAX / dimension)
+			throw std::overflow_error("word_to_idx: index overflow");
+		const uint64_t mul = idx * dimension;
+		const uint64_t add = i + 1;
+		if (mul > UINT64_MAX - add)
+			throw std::overflow_error("word_to_idx: index overflow");
+		idx = mul + add;
 	}
 	return idx;
 }
@@ -111,11 +117,13 @@ uint64_t concatenate_idx(uint64_t i, uint64_t j, uint64_t len_j, uint64_t dimens
 	// If i and j correspond to word_to_idx(a) and word_to_idx(b),
 	// then this function outputs word_to_idx(c) where c is the
 	// concatenation of a and b.
-	uint64_t idx = i;
-	idx *= ::power(dimension, len_j);
-	idx += j;
-	return idx;
-
+	const uint64_t p = ::power(dimension, len_j);
+	if (!p || (i != 0 && i > UINT64_MAX / p))
+		throw std::overflow_error("concatenate_idx: index overflow");
+	const uint64_t mul = i * p;
+	if (mul > UINT64_MAX - j)
+		throw std::overflow_error("concatenate_idx: index overflow");
+	return mul + j;
 }
 
 void lyndon_proj_matrix(
@@ -129,6 +137,8 @@ void lyndon_proj_matrix(
 
 	std::unordered_set<word, WordHash> lyndon_set(lyndon_words.begin(), lyndon_words.end());
 	uint64_t n = sig_length(dimension, degree);
+	if (n == 0)
+		throw std::overflow_error("lyndon_proj_matrix: sig_length overflow");
 	uint64_t m = lyndon_words.size();
 
 	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);

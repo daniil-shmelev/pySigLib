@@ -88,7 +88,14 @@ static Word longest_lyndon_suffix(const Word& w, const std::unordered_set<Word, 
 
 static void host_populate_level_index(uint64_t* li, uint64_t d, uint64_t count) {
 	li[0] = 0;
-	for (uint64_t i = 1; i < count; ++i) li[i] = li[i - 1] * d + 1;
+	for (uint64_t i = 1; i < count; ++i) {
+		if (d != 0 && li[i - 1] > UINT64_MAX / d)
+			throw std::overflow_error("host_populate_level_index: level_index overflow");
+		const uint64_t mul = li[i - 1] * d;
+		if (mul > UINT64_MAX - 1)
+			throw std::overflow_error("host_populate_level_index: level_index overflow");
+		li[i] = mul + 1;
+	}
 }
 
 // =========================================================================

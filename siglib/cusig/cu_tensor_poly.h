@@ -42,17 +42,27 @@ inline uint64_t host_power(uint64_t base, uint64_t exp) {
 
 inline uint64_t host_sig_length(uint64_t dimension, uint64_t degree) {
 	if (dimension == 0) return 1;
-	if (dimension == 1) return degree + 1;
+	if (dimension == 1) {
+		if (degree == UINT64_MAX)
+			throw std::overflow_error("host_sig_length: degree overflow");
+		return degree + 1;
+	}
 	const auto pwr = host_power(dimension, degree + 1);
-	if (pwr)
-		return (pwr - 1) / (dimension - 1);
-	return 0; // overflow
+	if (!pwr)
+		throw std::overflow_error("host_sig_length: sig length overflow");
+	return (pwr - 1) / (dimension - 1);
 }
 
 inline void host_populate_level_index(uint64_t* level_index, uint64_t dimension, uint64_t count) {
 	level_index[0] = 0;
-	for (uint64_t i = 1; i < count; ++i)
-		level_index[i] = level_index[i - 1] * dimension + 1;
+	for (uint64_t i = 1; i < count; ++i) {
+		if (dimension != 0 && level_index[i - 1] > UINT64_MAX / dimension)
+			throw std::overflow_error("host_populate_level_index: level_index overflow");
+		const uint64_t mul = level_index[i - 1] * dimension;
+		if (mul > UINT64_MAX - 1)
+			throw std::overflow_error("host_populate_level_index: level_index overflow");
+		level_index[i] = mul + 1;
+	}
 }
 
 // =========================================================================

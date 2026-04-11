@@ -475,8 +475,8 @@ void sig_to_log_sig_backprop_cuda_core_(
 	const uint64_t sig_len = host_sig_length(dimension, degree);
 
 	if (degree <= 1) {
-		// degree 0 or 1: out = derivs (identity backprop)
 		cudaMemcpy(out, log_sig_derivs, batch_size * sig_len * sizeof(T), cudaMemcpyDeviceToDevice);
+		cudaMemset2D(out, sig_len * sizeof(T), 0, sizeof(T), batch_size);
 		return;
 	}
 

@@ -15,6 +15,8 @@
 
 #pragma once
 #include "cppch.h"
+#include <mutex>
+#include <exception>
 
 
 inline unsigned int get_max_threads() {
@@ -34,18 +36,41 @@ inline void spawn_batch_threads(uint64_t batch_size, int n_jobs, Worker worker) 
 
 	const uint64_t num_threads = std::min(static_cast<uint64_t>(max_threads), batch_size);
 	std::vector<std::thread> workers;
+	workers.reserve(num_threads);
+
+	std::mutex err_mu;
+	std::exception_ptr first_err;
+
+	auto wrapped_worker = [&](uint64_t s, uint64_t e) {
+		try {
+			worker(s, e);
+		}
+		catch (...) {
+			std::lock_guard<std::mutex> lk(err_mu);
+			if (!first_err) first_err = std::current_exception();
+		}
+	};
 
 	const uint64_t chunk = batch_size / num_threads;
 	const uint64_t remainder = batch_size % num_threads;
 	uint64_t start = 0;
-	for (uint64_t t = 0; t < num_threads; ++t) {
-		uint64_t end = start + chunk + (t < remainder ? 1 : 0);
-		workers.emplace_back(worker, start, end);
-		start = end;
+	try {
+		for (uint64_t t = 0; t < num_threads; ++t) {
+			uint64_t end = start + chunk + (t < remainder ? 1 : 0);
+			workers.emplace_back(wrapped_worker, start, end);
+			start = end;
+		}
+	}
+	catch (...) {
+		for (auto& w : workers) if (w.joinable()) w.join();
+		throw;
 	}
 
 	for (auto& w : workers)
 		w.join();
+
+	if (first_err)
+		std::rethrow_exception(first_err);
 }
 
 // Contiguous chunk assignment: each thread processes a contiguous block

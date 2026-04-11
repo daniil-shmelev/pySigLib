@@ -521,7 +521,7 @@ void sig_backprop_inplace_(
 		T* neg = pos - data_dimension;
 		bool parity = false;
 
-		for (; next_pt != first_pt; --prev_pt, --next_pt, parity = !parity) {
+		while (next_pt != first_pt) {
 
 			for (uint64_t i = 0; i < dimension; ++i)
 				increments[i] = prev_pt[i] - next_pt[i];
@@ -539,14 +539,21 @@ void sig_backprop_inplace_(
 				pos[d] += s[d];
 				neg[d] -= s[d];
 			}
-			if (parity) {
-				pos -= data_dimension;
-				neg -= data_dimension;
+
+			--next_pt;
+			if (next_pt != first_pt) {
+				--prev_pt;
+				if (parity) {
+					pos -= data_dimension;
+					neg -= data_dimension;
+				}
+				parity = !parity;
 			}
 		}
 	}
 	else {
-		for (T* pos = out + (path.length() - 1) * data_dimension; next_pt != first_pt; --prev_pt, --next_pt, pos -= data_dimension) {
+		T* pos = out + (data_length - 1) * data_dimension;
+		while (next_pt != first_pt) {
 
 			for (uint64_t i = 0; i < dimension; ++i)
 				increments[i] = prev_pt[i] - next_pt[i];
@@ -556,7 +563,6 @@ void sig_backprop_inplace_(
 			uncombine_sig_deriv(sig, linear_signature, sig_derivs, local_derivs, dimension, degree, level_index);
 			linear_sig_deriv_to_increment_deriv(linear_signature, local_derivs, dimension, degree, level_index);
 
-			//T* pos = out + i * dimension;
 			T* neg = pos - data_dimension;
 			T* s = local_derivs + 1;
 			for (uint64_t d = 0; d < data_dimension; ++d) {
@@ -564,6 +570,11 @@ void sig_backprop_inplace_(
 				neg[d] -= s[d];
 			}
 
+			--next_pt;
+			if (next_pt != first_pt) {
+				--prev_pt;
+				pos -= data_dimension;
+			}
 		}
 	}
 }

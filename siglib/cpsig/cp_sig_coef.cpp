@@ -159,17 +159,22 @@ void sig_coef_(
 
 	uint64_t max_degree = 0;
 	uint64_t result_length = 0;
+	uint64_t idx_total = 0;
 	for (uint64_t i = 0; i < num_multi_idx; ++i) {
 		max_degree = std::max(max_degree, degrees[i]);
 		result_length += (prefixes && degrees[i]) ? degrees[i] : 1;
+		idx_total += degrees[i];
 	}
+
+	const uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
+	for (uint64_t k = 0; k < idx_total; ++k)
+		if (multi_idx[k] >= aug_dim)
+			throw std::invalid_argument("sig_coef: multi_idx element out of range");
 
 	if (length <= 1) {
 		std::fill(out, out + result_length, static_cast<T>(0.));
 		return;
 	}
-
-	//TODO: check indices < dim
 
 	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time);
 
@@ -429,7 +434,7 @@ FORCE_INLINE void single_sig_coef_backprop_(
 	T* neg = pos - data_dimension;
 	bool parity = false;
 
-	for (; next_pt != first_pt; --next_pt, --prev_pt, parity = !parity) {
+	while (next_pt != first_pt) {
 
 		// Populate incr
 		for (uint64_t i = 0; i < degree; ++i) {
@@ -444,9 +449,14 @@ FORCE_INLINE void single_sig_coef_backprop_(
 
 		update_coef_derivs_(derivs, incr, degree, one_over_fact);
 
-		if (!lead_lag || parity) {
-			pos -= data_dimension;
-			neg -= data_dimension;
+		--next_pt;
+		if (next_pt != first_pt) {
+			--prev_pt;
+			if (!lead_lag || parity) {
+				pos -= data_dimension;
+				neg -= data_dimension;
+			}
+			parity = !parity;
 		}
 	}
 }
@@ -526,6 +536,18 @@ void sig_coef_backprop_(
 
 	if (dimension == 0) { throw std::invalid_argument("sig_coef_backprop received path of dimension 0"); }
 
+	uint64_t max_degree = 0;
+	uint64_t idx_total = 0;
+	for (uint64_t i = 0; i < num_multi_idx; ++i) {
+		max_degree = std::max(max_degree, degrees[i]);
+		idx_total += degrees[i];
+	}
+
+	const uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
+	for (uint64_t k = 0; k < idx_total; ++k)
+		if (multi_idx[k] >= aug_dim)
+			throw std::invalid_argument("sig_coef_backprop: multi_idx element out of range");
+
 	const uint64_t path_length = dimension * length;
 	std::fill(out, out + path_length, static_cast<T>(0.));
 
@@ -533,14 +555,7 @@ void sig_coef_backprop_(
 		return;
 	}
 
-	//TODO: check indices < dim
-
 	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time);
-
-	uint64_t max_degree = 0;
-	for (uint64_t i = 0; i < num_multi_idx; ++i) {
-		max_degree = std::max(max_degree, degrees[i]);
-	}
 
 	auto one_over_fact_uptr = std::make_unique<T[]>(max_degree + 1);
 	T* one_over_fact = one_over_fact_uptr.get();

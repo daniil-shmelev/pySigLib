@@ -409,36 +409,34 @@ void branched_sig_backprop_ker(
 				local_derivs[i + 1] = s_derivs[i + 1];
 			__syncthreads();
 
-			// Differentiate through coproduct terms
-			if (tid < num_trees) {
-				uint32_t fi = tid + 1;
-				T dF_tau = s_derivs[fi];
-				if (dF_tau != T(0)) {
-					uint32_t pos = s_coprod_off[tid];
-					uint32_t pend = s_coprod_off[tid + 1];
-					while (pos < pend) {
-						uint32_t nf = s_coprod_data[pos++];
-						uint32_t trunk_flat = s_coprod_data[pos++];
-						uint32_t forest_start = pos;
+			const T dF_tau = (tid < num_trees) ? s_derivs[tid + 1] : T(0);
+			__syncthreads();
 
-						T forest_product = T(1);
-						#pragma unroll 4
-						for (uint32_t j = 0; j < nf; ++j)
-							forest_product *= s_bsig[s_coprod_data[pos++]];
+			if (tid < num_trees && dF_tau != T(0)) {
+				uint32_t pos = s_coprod_off[tid];
+				uint32_t pend = s_coprod_off[tid + 1];
+				while (pos < pend) {
+					uint32_t nf = s_coprod_data[pos++];
+					uint32_t trunk_flat = s_coprod_data[pos++];
+					uint32_t forest_start = pos;
 
-						myAtomicAdd(&local_derivs[trunk_flat], dF_tau * forest_product);
+					T forest_product = T(1);
+					#pragma unroll 4
+					for (uint32_t j = 0; j < nf; ++j)
+						forest_product *= s_bsig[s_coprod_data[pos++]];
 
-						if (nf > 0) {
-							T base = dF_tau * temp_Y[trunk_flat];
-							for (uint32_t k = 0; k < nf; ++k) {
-								uint32_t fk = s_coprod_data[forest_start + k];
-								T partial = base;
-								for (uint32_t j = 0; j < nf; ++j) {
-									if (j != k)
-										partial *= s_bsig[s_coprod_data[forest_start + j]];
-								}
-								myAtomicAdd(&s_derivs[fk], partial);
+					myAtomicAdd(&local_derivs[trunk_flat], dF_tau * forest_product);
+
+					if (nf > 0) {
+						T base = dF_tau * temp_Y[trunk_flat];
+						for (uint32_t k = 0; k < nf; ++k) {
+							uint32_t fk = s_coprod_data[forest_start + k];
+							T partial = base;
+							for (uint32_t j = 0; j < nf; ++j) {
+								if (j != k)
+									partial *= s_bsig[s_coprod_data[forest_start + j]];
 							}
+							myAtomicAdd(&s_derivs[fk], partial);
 						}
 					}
 				}

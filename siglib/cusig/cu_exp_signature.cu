@@ -451,13 +451,12 @@ void logsig_to_sig_cuda_(
 ) {
 	if (method < 0 || method > 2)
 		throw std::invalid_argument("logsig_to_sig_cuda: method must be 0, 1, or 2");
+	if (dimension == 0)
+		throw std::invalid_argument("logsig_to_sig_cuda received dimension 0");
+	if (degree == 0)
+		throw std::invalid_argument("logsig_to_sig_cuda received degree 0");
 
 	const uint64_t sig_len = host_sig_length(dimension, degree);
-
-	if (degree == 0) {
-		cudaMemset(out, 0, batch_size * sizeof(T));
-		return;
-	}
 
 	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
@@ -526,11 +525,16 @@ void logsig_to_sig_backprop_cuda_(
 ) {
 	if (method < 0 || method > 2)
 		throw std::invalid_argument("logsig_to_sig_backprop_cuda: method must be 0, 1, or 2");
+	if (dimension == 0)
+		throw std::invalid_argument("logsig_to_sig_backprop_cuda received dimension 0");
+	if (degree == 0)
+		throw std::invalid_argument("logsig_to_sig_backprop_cuda received degree 0");
 
 	const uint64_t sig_len = host_sig_length(dimension, degree);
 
-	if (degree <= 1 && method == 0) {
+	if (degree == 1 && method == 0) {
 		cudaMemcpy(d_logsig, d_sig, batch_size * sig_len * sizeof(T), cudaMemcpyDeviceToDevice);
+		cudaMemset2D(d_logsig, sig_len * sizeof(T), 0, sizeof(T), batch_size);
 		return;
 	}
 

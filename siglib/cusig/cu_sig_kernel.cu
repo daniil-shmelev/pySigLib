@@ -30,6 +30,17 @@ struct SigKernelParams {
 	uint64_t gram_length, grid_length;
 };
 
+static void validate_sig_kernel_dims_(uint64_t length1, uint64_t length2,
+	uint64_t dyadic_order_1, uint64_t dyadic_order_2) {
+	if (length1 == 0 || length2 == 0)
+		throw std::invalid_argument("sig_kernel_cuda: paths must have length >= 1");
+	if (dyadic_order_1 >= 63 || dyadic_order_2 >= 63 || dyadic_order_1 + dyadic_order_2 >= 63)
+		throw std::invalid_argument("sig_kernel_cuda: dyadic_order too large");
+	if ((length1 - 1) > (UINT64_MAX >> dyadic_order_1) ||
+	    (length2 - 1) > (UINT64_MAX >> dyadic_order_2))
+		throw std::invalid_argument("sig_kernel_cuda: path length * dyadic refinement would overflow");
+}
+
 static SigKernelParams make_params(uint64_t length1_, uint64_t length2_,
 	uint64_t dyadic_order_1_, uint64_t dyadic_order_2_) {
 	SigKernelParams p;
@@ -326,6 +337,7 @@ void sig_kernel_cuda_(
 	const bool return_grid
 ) {
 	if (dimension_ == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
+	validate_sig_kernel_dims_(length1_, length2_, dyadic_order_1_, dyadic_order_2_);
 
 	const SigKernelParams p = make_params(length1_, length2_, dyadic_order_1_, dyadic_order_2_);
 	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1_ + dyadic_order_2_));
@@ -611,6 +623,7 @@ void sig_kernel_backprop_cuda_(
 	const bool return_grid
 ) {
 	if (dimension_ == 0) { throw std::invalid_argument("signature kernel received path of dimension 0"); }
+	validate_sig_kernel_dims_(length1_, length2_, dyadic_order_1_, dyadic_order_2_);
 
 	const SigKernelParams p = make_params(length1_, length2_, dyadic_order_1_, dyadic_order_2_);
 	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1_ + dyadic_order_2_));

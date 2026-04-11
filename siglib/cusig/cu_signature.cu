@@ -768,17 +768,20 @@ void signature_per_word_core_(
 	}
 
 	if (use_streams) {
-		// Event-based sync: join worker streams into stream 0, then single host sync
 		cudaEvent_t done;
 		cudaEventCreateWithFlags(&done, cudaEventDisableTiming);
-		for (uint64_t k = 1; k < degree && k < MAX_PER_WORD_STREAMS; ++k) {
+		const uint64_t n_custom = std::min<uint64_t>(degree, MAX_PER_WORD_STREAMS);
+		for (uint64_t k = 1; k < n_custom; ++k) {
 			cudaEventRecord(done, s_per_word_streams[k]);
+			cudaStreamWaitEvent(s_per_word_streams[0], done, 0);
+		}
+		if (degree > MAX_PER_WORD_STREAMS) {
+			cudaEventRecord(done, 0);
 			cudaStreamWaitEvent(s_per_word_streams[0], done, 0);
 		}
 		cudaEventDestroy(done);
 		cudaStreamSynchronize(s_per_word_streams[0]);
 	} else {
-		// Default stream — all kernels are ordered, just sync once
 		cudaDeviceSynchronize();
 	}
 
@@ -971,8 +974,6 @@ void sig_backprop_cuda_core_(
 		#undef LAUNCH_BWD
 	}
 
-	for (uint64_t k = 0; k < degree && k < MAX_PER_WORD_STREAMS; ++k)
-		cudaStreamSynchronize(s_per_word_streams[k]);
 	cudaDeviceSynchronize();
 
 	// Convert increment gradients to path gradients

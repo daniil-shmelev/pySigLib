@@ -105,7 +105,7 @@ extern "C" CPSIG_API uint64_t log_sig_length(uint64_t dimension, uint64_t degree
         int64_t i_sum = 0;
         for (uint64_t d : divisors[i]) {
             uint64_t p = power(dimension, d);
-            if (!p)
+            if (!p || p > static_cast<uint64_t>(INT64_MAX))
                 return 0; // overflow
 
             int64_t m = mobius(i / d);
@@ -129,8 +129,14 @@ extern "C" CPSIG_API uint64_t log_sig_length(uint64_t dimension, uint64_t degree
 
 void populate_level_index(uint64_t* level_index, uint64_t dimension, uint64_t degree) {
     level_index[0] = 0;
-    for (uint64_t i = 1; i < degree; i++)
-        level_index[i] = level_index[i - 1] * dimension + 1;
+    for (uint64_t i = 1; i < degree; i++) {
+        if (dimension != 0 && level_index[i - 1] > UINT64_MAX / dimension)
+            throw std::overflow_error("populate_level_index: level_index overflow");
+        const uint64_t mul = level_index[i - 1] * dimension;
+        if (mul > UINT64_MAX - 1)
+            throw std::overflow_error("populate_level_index: level_index overflow");
+        level_index[i] = mul + 1;
+    }
 }
 
 extern "C" {

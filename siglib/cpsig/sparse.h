@@ -89,7 +89,7 @@ public:
 
     bool is_nonzero(uint64_t i, uint64_t j) const {
 #ifdef _DEBUG
-        if (i > n || j > m) {
+        if (i >= n || j >= m) {
             throw std::out_of_range("i,j out of range in SparseIntMatrix.is_nonzero");
         }
 #endif
@@ -103,8 +103,8 @@ public:
 
     int get(uint64_t i, uint64_t j) const {
 #ifdef _DEBUG
-        if (i > n || j > m) {
-            throw std::out_of_range("i,j out of range in SparseIntMatrix.is_nonzero");
+        if (i >= n || j >= m) {
+            throw std::out_of_range("i,j out of range in SparseIntMatrix.get");
         }
 #endif
 
@@ -118,7 +118,7 @@ public:
 
     void insert_entry(uint64_t i, uint64_t j, int v) {
 #ifdef _DEBUG
-        if (i > n || j > m) {
+        if (i >= n || j >= m) {
             throw std::out_of_range("i,j out of range in SparseIntMatrix.insert_entry");
         }
 #endif
@@ -127,7 +127,7 @@ public:
 
     void drop_row(uint64_t i) {
 #ifdef _DEBUG
-        if (i > n) {
+        if (i >= n) {
             throw std::out_of_range("i out of range in SparseIntMatrix.drop_row");
         }
 #endif
@@ -177,6 +177,7 @@ public:
 
     void transpose(SparseIntMatrix& out) const {
         out.resize(m, n);
+        for (auto& row : out.rows) row.clear();
 
         for (uint64_t i = 0; i < n; ++i) {
             for (const auto& e : rows[i]) {
@@ -209,7 +210,7 @@ public:
     }
 
     bool operator==(const SparseIntMatrix& other) const {
-        if (n != other.n) return false;
+        if (n != other.n || m != other.m) return false;
 
         for (uint64_t i = 0; i < n; ++i) {
             std::unordered_map<uint64_t, int> row;
@@ -231,8 +232,8 @@ public:
 
     void add_to_entry(uint64_t i, uint64_t j, int v) {
 #ifdef _DEBUG
-        if (i > n || j > m) {
-            throw std::out_of_range("i,j out of range in SparseIntMatrix.insert_entry");
+        if (i >= n || j >= m) {
+            throw std::out_of_range("i,j out of range in SparseIntMatrix.add_to_entry");
         }
 #endif
         for (auto& e : rows[i]) {
