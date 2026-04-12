@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term, prepend_scalar
 from .error_codes import err_msg
 from .dtypes import (CPSIG_LOGSIG_TO_SIG_BACKPROP,
                      CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA)
@@ -34,6 +34,7 @@ def logsig_to_sig_backprop(
         time_aug : bool = False,
         lead_lag : bool = False,
         method : int = 1,
+        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -63,6 +64,8 @@ def logsig_to_sig_backprop(
     :return: Gradient dL/d(log_sig), same shape as ``log_sig``.
     :rtype: numpy.ndarray | torch.tensor
     """
+    scalar_term = resolve_scalar_term(scalar_term)
+
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
@@ -73,6 +76,9 @@ def logsig_to_sig_backprop(
     if method not in (0, 1, 2):
         raise ValueError("method must be 0, 1, or 2")
 
+    if not scalar_term:
+        sig_derivs = prepend_scalar(sig_derivs, 0)
+
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     input_len = sig_length(aug_dimension, degree) if method == 0 else log_sig_length(aug_dimension, degree)
@@ -82,6 +88,8 @@ def logsig_to_sig_backprop(
     result = SigOutputHandler(data, input_len)
 
     if data.batch_size == 0:
+        if not scalar_term and method == 0:
+            return result.data[..., 1:]
         return result.data
 
     check_n_jobs(n_jobs)
@@ -96,4 +104,6 @@ def logsig_to_sig_backprop(
             data.batch_size, aug_dimension, degree, method)
     if err_code:
         raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
+    if not scalar_term and method == 0:
+        return result.data[..., 1:]
     return result.data

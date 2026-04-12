@@ -83,7 +83,6 @@ def log_sig_join(
         displacement = np.random.uniform(size=(dimension,))
         extended_ls = pysiglib.log_sig_join(ls, displacement, dimension, degree)
     """
-
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)

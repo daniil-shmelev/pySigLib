@@ -489,7 +489,7 @@ def _sig_join_bwd_callback(co, s, d, dimension, degree, prepend, n_jobs):
     co_flat, leading = _flatten_leading(co)
     s_flat, _ = _flatten_leading(s)
     d_flat, _ = _flatten_leading(d)
-    g_s, g_d = sig_join_backprop(co_flat, s_flat, d_flat, dimension, degree, prepend=prepend, n_jobs=n_jobs)
+    g_s, g_d = sig_join_backprop(co_flat, s_flat, d_flat, dimension, degree, scalar_term=True, prepend=prepend, n_jobs=n_jobs)
     return _unflatten_leading(g_s, leading), _unflatten_leading(g_d, leading)
 
 
@@ -576,7 +576,7 @@ def _log_sig_join_bwd_callback(co, ls, d, dimension, degree, n_jobs):
     co_flat, leading = _flatten_leading(co)
     ls_flat, _ = _flatten_leading(ls)
     d_flat, _ = _flatten_leading(d)
-    g_ls, g_d = log_sig_join_backprop(co_flat, ls_flat, d_flat, dimension, degree, n_jobs)
+    g_ls, g_d = log_sig_join_backprop(co_flat, ls_flat, d_flat, dimension, degree, scalar_term=True, n_jobs=n_jobs)
     return _unflatten_leading(g_ls, leading), _unflatten_leading(g_d, leading)
 
 

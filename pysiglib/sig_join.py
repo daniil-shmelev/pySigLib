@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
 from .error_codes import err_msg
 from .dtypes import CPSIG_SIG_JOIN, CUSIG_SIG_JOIN_CUDA
 from .sig_length import sig_length
@@ -31,6 +31,7 @@ def sig_join(
         dimension : int,
         degree : int,
         prepend : bool = False,
+        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -54,6 +55,14 @@ def sig_join(
     :type dimension: int
     :param degree: Truncation level of the signature, :math:`N`.
     :type degree: int
+    :param prepend: If True, prepend the linear segment to the front of the path rather than
+        appending it at the end. In that case this computes :math:`S(v) \\otimes S(x) = S(v * x)`.
+        Default is False.
+    :type prepend: bool
+    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
+        (the empty-word term). If False, this leading element is stripped from the output.
+        The default will change to False in pySigLib v4.0.
+    :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
@@ -75,6 +84,8 @@ def sig_join(
         displacement = np.random.uniform(size=(dimension,))
         extended_sig = pysiglib.sig_join(sig, displacement, dimension, degree)
     """
+
+    scalar_term = resolve_scalar_term(scalar_term)
 
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
@@ -98,6 +109,8 @@ def sig_join(
     result = SigOutputHandler(sig_data, sig_len)
 
     if sig_data.batch_size == 0:
+        if not scalar_term:
+            return result.data[..., 1:]
         return result.data
 
     if sig_data.device == "cpu":
@@ -110,4 +123,6 @@ def sig_join(
             sig_data.batch_size, dimension, degree, prepend)
     if err_code:
         raise Exception("Error in pysiglib.sig_join: " + err_msg(err_code))
+    if not scalar_term:
+        return result.data[..., 1:]
     return result.data

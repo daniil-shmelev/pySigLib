@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
 from .error_codes import err_msg
 from .dtypes import (CPSIG_LOGSIG_TO_SIG,
                      CUSIG_LOGSIG_TO_SIG_CUDA)
@@ -33,6 +33,7 @@ def logsig_to_sig(
         time_aug : bool = False,
         lead_lag : bool = False,
         method : int = 1,
+        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -56,6 +57,10 @@ def logsig_to_sig(
     :type lead_lag: bool
     :param method: Method to use (``0``, ``1``, or ``2``). Must match the method used to compute the log-signature.
     :type method: int
+    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
+        (the empty-word term). If False, this leading element is stripped from the output.
+        The default will change to False in pySigLib v4.0.
+    :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
@@ -77,6 +82,8 @@ def logsig_to_sig(
         sig_recovered = pysiglib.logsig_to_sig(log_sig, 5, degree, method=0)
         # sig_recovered ≈ sig
     """
+    scalar_term = resolve_scalar_term(scalar_term)
+
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
@@ -95,6 +102,8 @@ def logsig_to_sig(
     result = SigOutputHandler(data, out_len)
 
     if data.batch_size == 0:
+        if not scalar_term:
+            return result.data[..., 1:]
         return result.data
 
     check_n_jobs(n_jobs)
@@ -108,4 +117,6 @@ def logsig_to_sig(
             aug_dimension, degree, method)
     if err_code:
         raise Exception("Error in pysiglib.logsig_to_sig: " + err_msg(err_code))
+    if not scalar_term:
+        return result.data[..., 1:]
     return result.data

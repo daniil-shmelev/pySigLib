@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
 from .error_codes import err_msg
 from .dtypes import CPSIG_SIGNATURE, CPSIG_SIG_COMBINE, CUSIG_SIGNATURE_CUDA, CUSIG_SIG_COMBINE_CUDA
 from .sig_length import sig_length, aug_dim
@@ -31,6 +31,7 @@ def sig_combine(
         degree : int,
         time_aug : bool = False,
         lead_lag : bool = False,
+        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -59,6 +60,10 @@ def sig_combine(
     :param lead_lag: Whether the lead lag transformation was applied before computing
         the signature.
     :type lead_lag: bool
+    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
+        (the empty-word term). If False, this leading element is stripped from the output.
+        The default will change to False in pySigLib v4.0.
+    :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
@@ -91,6 +96,8 @@ def sig_combine(
         sig = pysiglib.sig(X_concat, degree)
     """
 
+    scalar_term = resolve_scalar_term(scalar_term)
+
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
@@ -106,6 +113,8 @@ def sig_combine(
     result = SigOutputHandler(data, sig_len)
 
     if data.batch_size == 0:
+        if not scalar_term:
+            return result.data[..., 1:]
         return result.data
 
     if data.device == "cpu":
@@ -118,6 +127,8 @@ def sig_combine(
             data.batch_size, aug_dimension, degree)
     if err_code:
         raise Exception("Error in pysiglib.sig_combine: " + err_msg(err_code))
+    if not scalar_term:
+        return result.data[..., 1:]
     return result.data
 
 def sig(
@@ -127,6 +138,7 @@ def sig(
         lead_lag : bool = False,
         end_time : float = 1.,
         horner : bool = True,
+        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -156,6 +168,10 @@ def sig(
     :type end_time: float
     :param horner: If True, will use Horner's algorithm for polynomial multiplication.
     :type horner: bool
+    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
+        (the empty-word term). If False, this leading element is stripped from the output.
+        The default will change to False in pySigLib v4.0.
+    :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
@@ -198,6 +214,8 @@ def sig(
         print(sigs)
 
     """
+    scalar_term = resolve_scalar_term(scalar_term)
+
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
     check_type(horner, "horner", bool)
@@ -225,5 +243,7 @@ def sig(
             data.time_aug, data.lead_lag, data.end_time, horner)
     if err_code:
         raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
+    if not scalar_term:
+        return result.data[..., 1:]
     return result.data
 

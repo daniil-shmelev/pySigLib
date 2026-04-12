@@ -67,7 +67,6 @@ def log_sig_combine(
     :return: Combined log-signature (Lyndon basis)
     :rtype: numpy.ndarray | torch.tensor
     """
-
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)

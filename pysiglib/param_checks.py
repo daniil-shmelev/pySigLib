@@ -142,3 +142,23 @@ def check_word_or_word_list(param, max_val, param_name):
     raise TypeError(param_name + " must be a tuple of integers or a list of tuples of integers.")
 
 
+def prepend_scalar(arr, value):
+    """Prepend a scalar value (0 or 1) along the last axis. Works with numpy and torch."""
+    if isinstance(arr, np.ndarray):
+        fill = np.full((*arr.shape[:-1], 1), value, dtype=arr.dtype)
+        return np.concatenate([fill, arr], axis=-1)
+    fill = torch.full((*arr.shape[:-1], 1), value, dtype=arr.dtype, device=arr.device)
+    return torch.cat([fill, arr], dim=-1)
+
+
+def resolve_scalar_term(scalar_term):
+    """Resolve scalar_term: None (unset) emits FutureWarning and defaults to True."""
+    if scalar_term is None:
+        warnings.warn(
+            "scalar_term will default to False in pySigLib v4.0. "
+            "Pass scalar_term=True to keep the current behavior, "
+            "or scalar_term=False to opt in to the new default.",
+            FutureWarning, stacklevel=3
+        )
+        return True
+    return scalar_term

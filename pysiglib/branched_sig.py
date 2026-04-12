@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
 from .error_codes import err_msg
 from .sig_length import aug_dim
 from .dtypes import (CPSIG_BRANCHED_SIG, CPSIG_BRANCHED_SIG_COMBINE,
@@ -83,12 +83,15 @@ def prepare_branched_sig(
         raise Exception("Error in pysiglib.prepare_branched_sig: " + err_msg(err_code))
 
 
-def branched_sig_length(dimension: int, degree: int) -> int:
+def branched_sig_length(dimension: int, degree: int, scalar_term: bool = True) -> int:
     """
     Returns the length of a truncated branched signature.
 
     :param dimension: Dimension of the underlying path.
     :param degree: Maximum tree order (number of nodes).
+    :param scalar_term: If True (default), includes the empty-tree scalar term at index 0
+        in the length. If False, the returned length is one less (matching ``branched_sig``
+        output with ``scalar_term=False``).
     :return: Length of the branched signature array.
     """
     check_type(dimension, "dimension", int)
@@ -98,17 +101,18 @@ def branched_sig_length(dimension: int, degree: int) -> int:
     out = CPSIG.branched_sig_length(dimension, degree)
     if out == 0:
         raise ValueError("Invalid parameters or integer overflow in branched_sig_length")
-    return out
+    return out - (0 if scalar_term else 1)
 
 
 def branched_sig(
         path: Union[np.ndarray, torch.Tensor],
         degree: int,
-        tree_order: str = "recursive",
-        n_jobs: int = 1,
         time_aug: bool = False,
         lead_lag: bool = False,
         end_time: float = 1.0,
+        tree_order: str = "recursive",
+        scalar_term = None,
+        n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated branched signature of a path or batch of paths.
@@ -122,15 +126,21 @@ def branched_sig(
 
     :param path: Path of shape ``(length, dimension)`` or ``(*batch_dims, length, dimension)``.
     :param degree: Maximum tree order (number of nodes).
-    :param tree_order: Tree ordering convention for the output coefficients.
-        ``"recursive"`` (default) uses the C++ recursive construction order.
-        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
-    :param n_jobs: Number of parallel threads for batch processing.
     :param time_aug: If True, prepend a time channel to the path.
     :param lead_lag: If True, apply the lead-lag transformation.
     :param end_time: End time for the time augmentation channel.
+    :param tree_order: Tree ordering convention for the output coefficients.
+        ``"recursive"`` (default) uses the C++ recursive construction order.
+        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
+    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
+        (the empty-word term). If False, this leading element is stripped from the output.
+        The default will change to False in pySigLib v4.0.
+    :type scalar_term: bool
+    :param n_jobs: Number of parallel threads for batch processing.
     :return: Branched signature array of shape ``(bsig_len,)`` or ``(*batch_dims, bsig_len)``.
     """
+    scalar_term = resolve_scalar_term(scalar_term)
+
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(degree, "degree", int)
@@ -147,6 +157,8 @@ def branched_sig(
     result = SigOutputHandler(data, bsig_len)
 
     if data.batch_size == 0:
+        if not scalar_term:
+            return result.data[..., 1:]
         return result.data
 
     if data.device == "cpu":
@@ -163,6 +175,8 @@ def branched_sig(
         raise Exception("Error in pysiglib.branched_sig: " + err_msg(err_code))
     if tree_order != "recursive":
         _permute_bsig(result.data, aug_dimension, degree)
+    if not scalar_term:
+        return result.data[..., 1:]
     return result.data
 
 
@@ -172,6 +186,7 @@ def branched_sig_combine(
         dimension: int,
         degree: int,
         tree_order: str = "recursive",
+        scalar_term = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -185,9 +200,15 @@ def branched_sig_combine(
     :param tree_order: Tree ordering convention for inputs and output.
         ``"recursive"`` (default) uses the C++ recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
+    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
+        (the empty-word term). If False, this leading element is stripped from the output.
+        The default will change to False in pySigLib v4.0.
+    :type scalar_term: bool
     :param n_jobs: Number of parallel threads for batch processing.
     :return: Combined branched signature, in the same ordering as the inputs.
     """
+    scalar_term = resolve_scalar_term(scalar_term)
+
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(dimension, "dimension", int)
@@ -205,6 +226,8 @@ def branched_sig_combine(
     result = SigOutputHandler(data, bsig_len)
 
     if data.batch_size == 0:
+        if not scalar_term:
+            return result.data[..., 1:]
         return result.data
 
     if data.device == "cpu":
@@ -219,4 +242,6 @@ def branched_sig_combine(
         raise Exception("Error in pysiglib.branched_sig_combine: " + err_msg(err_code))
     if tree_order != "recursive":
         _permute_bsig(result.data, dimension, degree)
+    if not scalar_term:
+        return result.data[..., 1:]
     return result.data

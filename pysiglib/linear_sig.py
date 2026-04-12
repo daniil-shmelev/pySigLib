@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
 from .error_codes import err_msg
 from .dtypes import CPSIG_LINEAR_SIG, CUSIG_LINEAR_SIG_CUDA
 from .sig_length import sig_length
@@ -29,6 +29,7 @@ def linear_sig(
         displacement : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -48,6 +49,10 @@ def linear_sig(
     :type dimension: int
     :param degree: Truncation level of the signature, :math:`N`.
     :type degree: int
+    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
+        (the empty-word term). If False, this leading element is stripped from the output.
+        The default will change to False in pySigLib v4.0.
+    :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
@@ -75,6 +80,8 @@ def linear_sig(
         lsigs = pysiglib.linear_sig(displacements, dimension, degree, n_jobs=-1)
     """
 
+    scalar_term = resolve_scalar_term(scalar_term)
+
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
@@ -86,6 +93,8 @@ def linear_sig(
     result = SigOutputHandler(data, sig_len)
 
     if data.batch_size == 0:
+        if not scalar_term:
+            return result.data[..., 1:]
         return result.data
 
     if data.device == "cpu":
@@ -96,4 +105,6 @@ def linear_sig(
             data.data_ptr, result.data_ptr, data.batch_size, dimension, degree)
     if err_code:
         raise Exception("Error in pysiglib.linear_sig: " + err_msg(err_code))
+    if not scalar_term:
+        return result.data[..., 1:]
     return result.data

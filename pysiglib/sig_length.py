@@ -26,7 +26,8 @@ def sig_length(
         dimension : int,
         degree : int,
         time_aug : bool = False,
-        lead_lag : bool = False
+        lead_lag : bool = False,
+        scalar_term : bool = True,
 ) -> int:
     """
     Returns the length of a truncated signature,
@@ -86,7 +87,7 @@ def sig_length(
     out = CPSIG.sig_length(aug_dimension, degree)
     if out == 0:
         raise ValueError("Integer overflow encountered in sig_length")
-    return out
+    return out - (0 if scalar_term else 1)
 
 def log_sig_length(
         dimension : int,

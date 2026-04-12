@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term, prepend_scalar
 from .error_codes import err_msg
 from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler
 from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP_CUDA, CUSIG_SIG_COMBINE_BACKPROP_CUDA
@@ -32,6 +32,7 @@ def sig_combine_backprop(
         degree : int,
         time_aug : bool = False,
         lead_lag : bool = False,
+        scalar_term = None,
         n_jobs : int = 1
 ):
     """
@@ -88,12 +89,17 @@ def sig_combine_backprop(
         print(dsig1)
 
     """
+    scalar_term = resolve_scalar_term(scalar_term)
+
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
+
+    if not scalar_term:
+        deriv = prepend_scalar(deriv, 0)
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
     sig_len = sig_length(aug_dimension, degree)
@@ -105,6 +111,8 @@ def sig_combine_backprop(
     sig2_deriv = SigOutputHandler(sig_data, sig_len)
 
     if sig_data.batch_size == 0:
+        if not scalar_term:
+            return sig1_deriv.data[..., 1:], sig2_deriv.data[..., 1:]
         return sig1_deriv.data, sig2_deriv.data
 
     if sig_data.device == "cpu":
@@ -119,6 +127,8 @@ def sig_combine_backprop(
             sig_data.batch_size, aug_dimension, degree)
     if err_code:
         raise Exception("Error in pysiglib.sig_combine_backprop: " + err_msg(err_code))
+    if not scalar_term:
+        return sig1_deriv.data[..., 1:], sig2_deriv.data[..., 1:]
     return sig1_deriv.data, sig2_deriv.data
 
 def sig_backprop(
@@ -129,6 +139,7 @@ def sig_backprop(
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
+        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -192,11 +203,16 @@ def sig_backprop(
         print(path_derivs)
 
     """
+    scalar_term = resolve_scalar_term(scalar_term)
+
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
+
+    if not scalar_term:
+        sig_derivs = prepend_scalar(sig_derivs, 0)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     sig_len = sig_length(path_data.dimension, degree)

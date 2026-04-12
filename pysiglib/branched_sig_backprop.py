@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term, prepend_scalar
 from .error_codes import err_msg
 from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CPSIG_BRANCHED_SIG_COMBINE_BACKPROP,
@@ -38,6 +38,7 @@ def branched_sig_backprop(
         lead_lag: bool = False,
         end_time: float = 1.0,
         tree_order: str = "recursive",
+        scalar_term = None,
         n_jobs: int = 1
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -57,6 +58,8 @@ def branched_sig_backprop(
     :param n_jobs: Number of parallel threads for batch processing.
     :return: Path derivatives, same shape as ``path``.
     """
+    scalar_term = resolve_scalar_term(scalar_term)
+
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(degree, "degree", int)
@@ -65,6 +68,9 @@ def branched_sig_backprop(
     check_type(end_time, "end_time", float)
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
+
+    if not scalar_term:
+        bsig_derivs = prepend_scalar(bsig_derivs, 0)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     dimension = path_data.data_dimension
@@ -105,6 +111,7 @@ def branched_sig_combine_backprop(
         dimension: int,
         degree: int,
         tree_order: str = "recursive",
+        scalar_term = None,
         n_jobs: int = 1
 ) -> tuple:
     """
@@ -122,6 +129,8 @@ def branched_sig_combine_backprop(
     :param n_jobs: Number of parallel threads for batch processing.
     :return: Tuple ``(dF/d(bsig1), dF/d(bsig2))``.
     """
+    scalar_term = resolve_scalar_term(scalar_term)
+
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(dimension, "dimension", int)
@@ -129,6 +138,9 @@ def branched_sig_combine_backprop(
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
+
+    if not scalar_term:
+        derivs = prepend_scalar(derivs, 0)
 
     if tree_order != "recursive":
         derivs = _inv_permute_bsig(derivs, dimension, degree)
@@ -141,6 +153,8 @@ def branched_sig_combine_backprop(
     result2 = SigOutputHandler(data, bsig_len)
 
     if data.batch_size == 0:
+        if not scalar_term:
+            return result1.data[..., 1:], result2.data[..., 1:]
         return result1.data, result2.data
 
     if data.device == "cpu":
@@ -158,4 +172,6 @@ def branched_sig_combine_backprop(
     if tree_order != "recursive":
         _permute_bsig(result1.data, dimension, degree)
         _permute_bsig(result2.data, dimension, degree)
+    if not scalar_term:
+        return result1.data[..., 1:], result2.data[..., 1:]
     return result1.data, result2.data
