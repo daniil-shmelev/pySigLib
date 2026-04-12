@@ -1,0 +1,97 @@
+# Copyright 2026 Daniil Shmelev
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# =========================================================================
+
+import numpy as np
+import pytest
+import pysiglib
+
+
+PARAMS = [(2, 3), (2, 4), (3, 3), (3, 2), (4, 2)]
+
+
+class TestRoundTrip:
+    @pytest.mark.parametrize("dim, deg", PARAMS)
+    def test_idx_to_tree_to_idx(self, dim, deg):
+        bsig_len = pysiglib.branched_sig_length(dim, deg)
+        for i in range(bsig_len):
+            tree = pysiglib.idx_to_tree(i, dim, deg)
+            assert pysiglib.tree_to_idx(tree, dim, deg) == i
+
+    @pytest.mark.parametrize("dim, deg", PARAMS)
+    def test_tree_to_idx_to_tree(self, dim, deg):
+        all_trees = pysiglib.trees(dim, deg)
+        for tree in all_trees:
+            idx = pysiglib.tree_to_idx(tree, dim, deg)
+            assert pysiglib.idx_to_tree(idx, dim, deg) == tree
+
+
+class TestLengthMatch:
+    @pytest.mark.parametrize("dim, deg", PARAMS)
+    def test_trees_length_matches_branched_sig_length(self, dim, deg):
+        assert len(pysiglib.trees(dim, deg)) == pysiglib.branched_sig_length(dim, deg)
+
+    @pytest.mark.parametrize("dim, deg", PARAMS)
+    def test_trees_of_order_sum(self, dim, deg):
+        total = 1  # empty tree
+        for order in range(1, deg + 1):
+            total += len(pysiglib.trees_of_order(dim, order))
+        assert total == pysiglib.branched_sig_length(dim, deg)
+
+
+class TestEmptyTree:
+    def test_empty_tree_at_idx_0(self):
+        assert pysiglib.idx_to_tree(0, 2, 3) is None
+
+    def test_tree_to_idx_empty(self):
+        assert pysiglib.tree_to_idx(None, 2, 3) == 0
+
+    def test_trees_of_order_0(self):
+        assert pysiglib.trees_of_order(2, 0) == [None]
+
+
+class TestSingleNodeTrees:
+    @pytest.mark.parametrize("dim", [2, 3, 5])
+    def test_order_1_trees(self, dim):
+        t = pysiglib.trees_of_order(dim, 1)
+        assert len(t) == dim
+        for label in range(dim):
+            assert t[label] == (label,)
+
+    @pytest.mark.parametrize("dim", [2, 3])
+    def test_single_node_indices(self, dim):
+        for label in range(dim):
+            assert pysiglib.tree_to_idx((label,), dim, 3) == label + 1
+
+
+class TestCoefficientExtraction:
+    @pytest.mark.parametrize("dim, deg", [(2, 3), (3, 3)])
+    def test_single_node_matches_sig_level1(self, dim, deg):
+        rng = np.random.default_rng(42)
+        path = rng.standard_normal((20, dim))
+
+        pysiglib.prepare_branched_sig(dim, deg)
+        bsig = pysiglib.branched_sig(path, deg)
+        sig = pysiglib.sig(path, 1)
+
+        for label in range(dim):
+            idx = pysiglib.tree_to_idx((label,), dim, deg)
+            np.testing.assert_allclose(bsig[idx], sig[label + 1], atol=1e-10)
+
+
+class TestValidation:
+    def test_idx_out_of_range(self):
+        bsig_len = pysiglib.branched_sig_length(2, 3)
+        with pytest.raises(ValueError):
+            pysiglib.idx_to_tree(bsig_len, 2, 3)

@@ -26,6 +26,7 @@ from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA)
 from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler
 from .load_siglib import CPSIG
+from .branched_sig import _inv_permute_bsig, _permute_bsig
 
 
 def branched_sig_backprop(
@@ -36,6 +37,7 @@ def branched_sig_backprop(
         time_aug: bool = False,
         lead_lag: bool = False,
         end_time: float = 1.0,
+        tree_order: str = "recursive",
         n_jobs: int = 1
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -55,6 +57,8 @@ def branched_sig_backprop(
     :param n_jobs: Number of parallel threads for batch processing.
     :return: Path derivatives, same shape as ``path``.
     """
+    if tree_order not in ("recursive", "canonical"):
+        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(degree, "degree", int)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
@@ -65,6 +69,11 @@ def branched_sig_backprop(
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     dimension = path_data.data_dimension
     aug_dimension = path_data.dimension
+
+    if tree_order != "recursive":
+        bsig = _inv_permute_bsig(bsig, aug_dimension, degree)
+        bsig_derivs = _inv_permute_bsig(bsig_derivs, aug_dimension, degree)
+
     bsig_len = CPSIG.branched_sig_length(aug_dimension, degree)
     sig_data = MultipleSigInputHandler([bsig, bsig_derivs], bsig_len, ["bsig", "bsig_derivs"])
     result = PathOutputHandler(path_data.data_length, path_data.data_dimension, path_data)
@@ -95,6 +104,7 @@ def branched_sig_combine_backprop(
         bsig2: Union[np.ndarray, torch.Tensor],
         dimension: int,
         degree: int,
+        tree_order: str = "recursive",
         n_jobs: int = 1
 ) -> tuple:
     """
@@ -112,11 +122,18 @@ def branched_sig_combine_backprop(
     :param n_jobs: Number of parallel threads for batch processing.
     :return: Tuple ``(dF/d(bsig1), dF/d(bsig2))``.
     """
+    if tree_order not in ("recursive", "canonical"):
+        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
+
+    if tree_order != "recursive":
+        derivs = _inv_permute_bsig(derivs, dimension, degree)
+        bsig1 = _inv_permute_bsig(bsig1, dimension, degree)
+        bsig2 = _inv_permute_bsig(bsig2, dimension, degree)
 
     bsig_len = CPSIG.branched_sig_length(dimension, degree)
     data = MultipleSigInputHandler([derivs, bsig1, bsig2], bsig_len, ["derivs", "bsig1", "bsig2"])
@@ -138,4 +155,7 @@ def branched_sig_combine_backprop(
             data.batch_size, dimension, degree)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine_backprop: " + err_msg(err_code))
+    if tree_order != "recursive":
+        _permute_bsig(result1.data, dimension, degree)
+        _permute_bsig(result2.data, dimension, degree)
     return result1.data, result2.data

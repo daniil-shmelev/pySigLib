@@ -15,6 +15,7 @@
 
 from ..load_siglib import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
 from ..words import words_of_length, words, lyndon_words_of_length, lyndon_words, is_lyndon, word_to_idx, idx_to_word
+from ..trees import trees, trees_of_order, tree_to_idx, idx_to_tree
 from ..transform_path import transform_path
 from ..sig_length import sig_length, log_sig_length
 from ..sig_coef import extract_sig_coef

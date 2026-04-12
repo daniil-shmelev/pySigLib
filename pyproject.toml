@@ -12,7 +12,7 @@ readme = "README.md"
 authors = [
     { name = "Daniil Shmelev", email = "daniil.shmelev23@imperial.ac.uk" },
 ]
-dependencies = ["numpy", "torch"]
+dependencies = ["numpy", "torch", "kauri @ git+https://github.com/daniil-shmelev/kauri.git"]
 
 classifiers = [
     "Development Status :: 4 - Beta",

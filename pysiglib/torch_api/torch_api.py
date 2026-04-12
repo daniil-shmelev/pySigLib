@@ -521,12 +521,13 @@ from ..branched_sig_backprop import branched_sig_backprop, branched_sig_combine_
 
 class BranchedSig(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path, degree, time_aug, lead_lag, end_time, n_jobs):
-        bsig = branched_sig_forward(path, degree, n_jobs=n_jobs,
+    def forward(ctx, path, degree, tree_order, time_aug, lead_lag, end_time, n_jobs):
+        bsig = branched_sig_forward(path, degree, tree_order=tree_order, n_jobs=n_jobs,
                                      time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
 
         ctx.save_for_backward(path, bsig)
         ctx.degree = degree
+        ctx.tree_order = tree_order
         ctx.time_aug = time_aug
         ctx.lead_lag = lead_lag
         ctx.end_time = end_time
@@ -538,29 +539,33 @@ class BranchedSig(torch.autograd.Function):
     def backward(ctx, grad_output):
         path, bsig = ctx.saved_tensors
         grad = branched_sig_backprop(path, bsig, grad_output, ctx.degree,
-                                     ctx.time_aug, ctx.lead_lag, ctx.end_time, ctx.n_jobs)
-        return grad, None, None, None, None, None
+                                     ctx.time_aug, ctx.lead_lag, ctx.end_time,
+                                     tree_order=ctx.tree_order, n_jobs=ctx.n_jobs)
+        return grad, None, None, None, None, None, None
 
 def branched_sig(
         path: Union[np.ndarray, torch.Tensor],
         degree: int,
+        tree_order: str = "recursive",
         n_jobs: int = 1,
         time_aug: bool = False,
         lead_lag: bool = False,
-        end_time: float = 1.0
+        end_time: float = 1.0,
 ) -> Union[np.ndarray, torch.Tensor]:
-    return BranchedSig.apply(path, degree, time_aug, lead_lag, end_time, n_jobs)
+    return BranchedSig.apply(path, degree, tree_order, time_aug, lead_lag, end_time, n_jobs)
 
 branched_sig.__doc__ = branched_sig_forward.__doc__
 
 
 class BranchedSigCombine(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, bsig1, bsig2, dimension, degree, n_jobs):
-        combined = branched_sig_combine_forward(bsig1, bsig2, dimension, degree, n_jobs)
+    def forward(ctx, bsig1, bsig2, dimension, degree, tree_order, n_jobs):
+        combined = branched_sig_combine_forward(bsig1, bsig2, dimension, degree,
+                                                 tree_order=tree_order, n_jobs=n_jobs)
         ctx.save_for_backward(bsig1, bsig2)
         ctx.dimension = dimension
         ctx.degree = degree
+        ctx.tree_order = tree_order
         ctx.n_jobs = n_jobs
         return combined
 
@@ -568,17 +573,19 @@ class BranchedSigCombine(torch.autograd.Function):
     def backward(ctx, grad_output):
         bsig1, bsig2 = ctx.saved_tensors
         d1, d2 = branched_sig_combine_backprop(
-            grad_output, bsig1, bsig2, ctx.dimension, ctx.degree, ctx.n_jobs)
-        return d1, d2, None, None, None
+            grad_output, bsig1, bsig2, ctx.dimension, ctx.degree,
+            tree_order=ctx.tree_order, n_jobs=ctx.n_jobs)
+        return d1, d2, None, None, None, None
 
 def branched_sig_combine(
         bsig1: Union[np.ndarray, torch.Tensor],
         bsig2: Union[np.ndarray, torch.Tensor],
         dimension: int,
         degree: int,
-        n_jobs: int = 1
+        tree_order: str = "recursive",
+        n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
-    return BranchedSigCombine.apply(bsig1, bsig2, dimension, degree, n_jobs)
+    return BranchedSigCombine.apply(bsig1, bsig2, dimension, degree, tree_order, n_jobs)
 
 branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
 

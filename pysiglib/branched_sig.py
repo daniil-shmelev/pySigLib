@@ -25,6 +25,26 @@ from .dtypes import (CPSIG_BRANCHED_SIG, CPSIG_BRANCHED_SIG_COMBINE,
                      CUSIG_BRANCHED_SIG_CUDA, CUSIG_BRANCHED_SIG_COMBINE_CUDA)
 from .data_handlers import PathInputHandler, SigOutputHandler, MultipleSigInputHandler
 from .load_siglib import CPSIG
+import kauri
+
+
+def _permute_bsig(data, dimension, degree):
+    """Permute branched sig from recursive order to canonical order (in-place)."""
+    perm = kauri.canonical_to_recursive_permutation(dimension, degree)
+    data[..., 1:] = data[..., 1:][..., perm]
+    return data
+
+
+def _inv_permute_bsig(data, dimension, degree):
+    """Permute branched sig from canonical order to recursive order. Returns a new array."""
+    inv_perm = kauri.recursive_to_canonical_permutation(dimension, degree)
+    if isinstance(data, np.ndarray):
+        out = np.empty_like(data)
+    else:
+        out = torch.empty_like(data)
+    out[..., :1] = data[..., :1]
+    out[..., 1:] = data[..., 1:][..., inv_perm]
+    return out
 
 
 def prepare_branched_sig(
@@ -84,10 +104,11 @@ def branched_sig_length(dimension: int, degree: int) -> int:
 def branched_sig(
         path: Union[np.ndarray, torch.Tensor],
         degree: int,
+        tree_order: str = "recursive",
         n_jobs: int = 1,
         time_aug: bool = False,
         lead_lag: bool = False,
-        end_time: float = 1.0
+        end_time: float = 1.0,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated branched signature of a path or batch of paths.
@@ -99,14 +120,19 @@ def branched_sig(
     where ``dimension`` is the augmented dimension (accounting for
     ``time_aug`` and ``lead_lag``).
 
-    :param path: Path of shape ``(length, dimension)`` or ``(batch_size, length, dimension)``.
+    :param path: Path of shape ``(length, dimension)`` or ``(*batch_dims, length, dimension)``.
     :param degree: Maximum tree order (number of nodes).
+    :param tree_order: Tree ordering convention for the output coefficients.
+        ``"recursive"`` (default) uses the C++ recursive construction order.
+        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :param n_jobs: Number of parallel threads for batch processing.
     :param time_aug: If True, prepend a time channel to the path.
     :param lead_lag: If True, apply the lead-lag transformation.
     :param end_time: End time for the time augmentation channel.
-    :return: Branched signature array of shape ``(bsig_len,)`` or ``(batch_size, bsig_len)``.
+    :return: Branched signature array of shape ``(bsig_len,)`` or ``(*batch_dims, bsig_len)``.
     """
+    if tree_order not in ("recursive", "canonical"):
+        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(degree, "degree", int)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
@@ -135,6 +161,8 @@ def branched_sig(
             data.time_aug, data.lead_lag, data.end_time)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig: " + err_msg(err_code))
+    if tree_order != "recursive":
+        _permute_bsig(result.data, aug_dimension, degree)
     return result.data
 
 
@@ -143,24 +171,34 @@ def branched_sig_combine(
         bsig2: Union[np.ndarray, torch.Tensor],
         dimension: int,
         degree: int,
-        n_jobs: int = 1
+        tree_order: str = "recursive",
+        n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Combines two truncated branched signatures via the Butcher product
     (the analogue of Chen's identity for branched rough paths).
 
-    :param bsig1: First branched signature.
-    :param bsig2: Second branched signature.
+    :param bsig1: First branched signature, in the ordering specified by ``tree_order``.
+    :param bsig2: Second branched signature, in the ordering specified by ``tree_order``.
     :param dimension: Dimension of the underlying path.
     :param degree: Maximum tree order (number of nodes).
+    :param tree_order: Tree ordering convention for inputs and output.
+        ``"recursive"`` (default) uses the C++ recursive construction order.
+        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :param n_jobs: Number of parallel threads for batch processing.
-    :return: Combined branched signature.
+    :return: Combined branched signature, in the same ordering as the inputs.
     """
+    if tree_order not in ("recursive", "canonical"):
+        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
+
+    if tree_order != "recursive":
+        bsig1 = _inv_permute_bsig(bsig1, dimension, degree)
+        bsig2 = _inv_permute_bsig(bsig2, dimension, degree)
 
     bsig_len = CPSIG.branched_sig_length(dimension, degree)
     data = MultipleSigInputHandler([bsig1, bsig2], bsig_len, ["bsig1", "bsig2"])
@@ -179,4 +217,6 @@ def branched_sig_combine(
             data.batch_size, dimension, degree)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine: " + err_msg(err_code))
+    if tree_order != "recursive":
+        _permute_bsig(result.data, dimension, degree)
     return result.data
