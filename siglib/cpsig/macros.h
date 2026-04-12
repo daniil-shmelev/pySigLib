@@ -45,6 +45,8 @@
 //   10 = generic runtime_error
 //   11 = unknown exception
 
+#include "../shared/errors.h"
+
 #define SAFE_CALL(function_call)                                        \
     try {                                                               \
         function_call;                                                  \
@@ -65,19 +67,12 @@
         std::cerr << e.what();                                          \
         return 4;                                                       \
     }                                                                   \
+    catch (coded_runtime_error& e) {                                    \
+        std::cerr << e.what();                                          \
+        return e.code;                                                  \
+    }                                                                   \
     catch (std::runtime_error& e) {                                     \
-        std::string msg = e.what();                                     \
-        std::cerr << msg;                                               \
-        if (msg == "Could not find basis cache")                        \
-            return 5;                                                   \
-        if (msg.rfind("Directory ", 0) == 0)                            \
-            return 6;                                                   \
-        if (msg == "Failed to get default cache directory.")             \
-            return 7;                                                   \
-        if (msg == "Unexpected internal error. Cache directory was not set correctly.") \
-            return 8;                                                   \
-        if (msg == "Tried to read an invalid cache file. Cache may have been corrupted.") \
-            return 9;                                                   \
+        std::cerr << e.what();                                          \
         return 10;                                                      \
     }                                                                   \
     catch (...) {                                                       \

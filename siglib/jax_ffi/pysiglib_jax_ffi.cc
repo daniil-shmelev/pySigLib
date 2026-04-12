@@ -1534,6 +1534,7 @@ ffi::Error SigKernelPdeBackpropCudaImpl(
 
 ffi::Error SigKernelPdeCuda(cudaStream_t stream, std::int64_t dimension,
     std::int64_t dyadic_order_1, std::int64_t dyadic_order_2, bool return_grid,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer gram, ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
@@ -1543,6 +1544,7 @@ ffi::Error SigKernelPdeCuda(cudaStream_t stream, std::int64_t dimension,
 
 ffi::Error SigKernelPdeBackpropCuda(cudaStream_t stream, std::int64_t dimension,
     std::int64_t dyadic_order_1, std::int64_t dyadic_order_2, bool return_grid,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer gram, ffi::AnyBuffer derivs, ffi::AnyBuffer k_grid,
     ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty()) return InvalidArgument(msg);
@@ -1795,14 +1797,14 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPdeCuda, SigKernelPdeCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension")
         .Attr<std::int64_t>("dyadic_order_1").Attr<std::int64_t>("dyadic_order_2")
-        .Attr<bool>("return_grid")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPdeBackpropCuda, SigKernelPdeBackpropCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension")
         .Attr<std::int64_t>("dyadic_order_1").Attr<std::int64_t>("dyadic_order_2")
-        .Attr<bool>("return_grid")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
 

@@ -438,16 +438,24 @@ inline void upload_csr_to_gpu_(
 	}
 	h_row_ptr[mat.n] = idx;
 
-	if (nnz > 0) {
-		CUDA_CHECK(cudaMalloc(&d_vals, nnz * sizeof(int)));
-		CUDA_CHECK(cudaMemcpy(d_vals, h_vals.data(), nnz * sizeof(int), cudaMemcpyHostToDevice));
+	CudaBuf<int> buf_vals;
+	CudaBuf<uint64_t> buf_cols;
+	CudaBuf<uint64_t> buf_row_ptr;
 
-		CUDA_CHECK(cudaMalloc(&d_cols, nnz * sizeof(uint64_t)));
-		CUDA_CHECK(cudaMemcpy(d_cols, h_cols.data(), nnz * sizeof(uint64_t), cudaMemcpyHostToDevice));
+	if (nnz > 0) {
+		buf_vals = CudaBuf<int>(nnz * sizeof(int));
+		CUDA_CHECK(cudaMemcpy(buf_vals.get(), h_vals.data(), nnz * sizeof(int), cudaMemcpyHostToDevice));
+
+		buf_cols = CudaBuf<uint64_t>(nnz * sizeof(uint64_t));
+		CUDA_CHECK(cudaMemcpy(buf_cols.get(), h_cols.data(), nnz * sizeof(uint64_t), cudaMemcpyHostToDevice));
 	}
 
-	CUDA_CHECK(cudaMalloc(&d_row_ptr, (mat.n + 1) * sizeof(uint64_t)));
-	CUDA_CHECK(cudaMemcpy(d_row_ptr, h_row_ptr.data(), (mat.n + 1) * sizeof(uint64_t), cudaMemcpyHostToDevice));
+	buf_row_ptr = CudaBuf<uint64_t>((mat.n + 1) * sizeof(uint64_t));
+	CUDA_CHECK(cudaMemcpy(buf_row_ptr.get(), h_row_ptr.data(), (mat.n + 1) * sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+	d_vals = buf_vals.release();
+	d_cols = buf_cols.release();
+	d_row_ptr = buf_row_ptr.release();
 }
 
 inline void upload_sparse_matrix_(CUDALogSigCache& entry, uint64_t dimension, uint64_t degree) {
@@ -514,7 +522,7 @@ inline void cu_deserialize_vector_(std::istream& in, std::vector<uint64_t>& out)
 inline void set_cache_dir_cuda_(const char* dir) {
 	std::filesystem::path dir_path = dir;
 	if (!std::filesystem::exists(dir_path)) {
-		throw std::runtime_error("Directory " + std::string(dir) + " does not exist.");
+		throw directory_not_found_error("Directory " + std::string(dir) + " does not exist.");
 	}
 	std::filesystem::path cache_path = dir_path / cu_cache_folder_name;
 	if (!std::filesystem::exists(cache_path)) {
@@ -529,7 +537,7 @@ inline void set_default_cuda_cache_dir_() {
 	size_t len;
 	const errno_t err = _dupenv_s(&dir, &len, "LOCALAPPDATA");
 	if (err || !dir) {
-		throw std::runtime_error("Failed to get default cache directory.");
+		throw default_cache_dir_error("Failed to get default cache directory.");
 	}
 #elif __APPLE__
 	std::string dir_str = std::string(std::getenv("HOME")) + "/Library/Caches";
@@ -560,7 +568,7 @@ public:
 	CuCacheFile(uint64_t dimension, uint64_t degree) {
 		auto& dir = get_cuda_cache_dir_();
 		if (dir.empty() || !std::filesystem::exists(dir / cu_cache_folder_name))
-			throw std::runtime_error("Unexpected internal error. Cache directory was not set correctly.");
+			throw cache_dir_not_set_error("Unexpected internal error. Cache directory was not set correctly.");
 		file_name_ = std::to_string(dimension) + "_" + std::to_string(degree) + "_" + cu_cache_version + ".bin";
 		file_path_ = dir / cu_cache_folder_name / file_name_;
 	}
@@ -587,7 +595,7 @@ public:
 		uint64_t magic;
 		in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
 		if (magic != cu_cache_magic_number)
-			throw std::runtime_error("Tried to read an invalid cache file. Cache may have been corrupted.");
+			throw corrupted_cache_error("Tried to read an invalid cache file. Cache may have been corrupted.");
 		in.read(reinterpret_cast<char*>(&method), sizeof(method));
 		cu_deserialize_vector_(in, lyndon_idx);
 		CuSparseIntMatrix::deserialize(in, inv_proj_mat);

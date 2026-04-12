@@ -22,7 +22,11 @@
 #define CUSIG_API
 #endif
 #else
+#ifdef _WIN32
 #define CUSIG_API __declspec(dllimport)
+#else
+#define CUSIG_API
+#endif
 #endif
 
 extern "C" {

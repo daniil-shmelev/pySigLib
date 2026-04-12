@@ -16,6 +16,7 @@
 #pragma once
 
 #include <charconv>
+#include "../shared/errors.h"
 
 // Unified error-handling macro for all cusig exported functions.
 // Error codes match pysiglib/error_codes.py:
@@ -53,19 +54,13 @@
         std::cerr << e.what();                                          \
         return 4;                                                       \
     }                                                                   \
+    catch (coded_runtime_error& e) {                                    \
+        std::cerr << e.what();                                          \
+        return e.code;                                                  \
+    }                                                                   \
     catch (std::runtime_error& e) {                                     \
         std::string msg = e.what();                                     \
         std::cerr << msg;                                               \
-        if (msg.find("cache not found") != std::string::npos)           \
-            return 5;                                                   \
-        if (msg.rfind("Directory ", 0) == 0)                            \
-            return 6;                                                   \
-        if (msg == "Failed to get default cache directory.")             \
-            return 7;                                                   \
-        if (msg == "Unexpected internal error. Cache directory was not set correctly.") \
-            return 8;                                                   \
-        if (msg == "Tried to read an invalid cache file. Cache may have been corrupted.") \
-            return 9;                                                   \
         auto cuda_pos = msg.find("CUDA Error (");                       \
         if (cuda_pos != std::string::npos) {                            \
             const auto num_start = cuda_pos + 12;                       \

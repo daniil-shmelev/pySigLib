@@ -36,6 +36,9 @@ class Point;
 
 template<std::floating_point T>
 class Path {
+	static T compute_time_step(uint64_t length, T end_time) {
+		return length > 1 ? end_time / (length - 1) : static_cast<T>(0);
+	}
 public:
 
 	Path(const T* data_, uint64_t dimension_, uint64_t length_, bool time_aug_ = false, bool lead_lag_ = false, T end_time_ = 1.) :
@@ -47,7 +50,7 @@ public:
 		_data_size{ dimension_ * length_ },
 		_time_aug{ time_aug_ },
 		_lead_lag{ lead_lag_ },
-		_time_step{ end_time_ / (_length - 1) } {
+		_time_step{ compute_time_step(_length, end_time_) } {
 	}
 
 	Path(const std::span<const T> data_, uint64_t dimension_, uint64_t length_, bool time_aug_ = false, bool lead_lag_ = false, T end_time_ = 1.) :
@@ -59,7 +62,7 @@ public:
 		_data_size{ dimension_ * length_ },
 		_time_aug{ time_aug_ },
 		_lead_lag{ lead_lag_ },
-		_time_step{ end_time_ / (_length - 1) } {
+		_time_step{ compute_time_step(_length, end_time_) } {
 		if (data_.size() != dimension_ * length_)
 			throw std::invalid_argument("1D vector is not the correct shape for a path of dimension " + std::to_string(dimension_) + " and length " + std::to_string(length_));
 	}
@@ -85,7 +88,7 @@ public:
 		_data_size{ other._data_size },
 		_time_aug{ time_aug_ },
 		_lead_lag{ lead_lag_ },
-		_time_step{ end_time_ / (_length - 1) } {
+		_time_step{ compute_time_step(_length, end_time_) } {
 	}
 
 	virtual ~Path() {}
@@ -111,7 +114,7 @@ public:
 
 	Point<T> operator[](uint64_t i) const { 
 #ifdef _DEBUG
-		if (i < 0 || i >= _length)
+		if (i >= _length)
 			throw std::out_of_range("Argument out of bounds in Path::operator[]");
 #endif
 		return Point<T>(this, i);

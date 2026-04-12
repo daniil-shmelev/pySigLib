@@ -172,24 +172,35 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 			h_coprod_data.data(), h_coprod_offsets.data(), h_order_index.data()) != 0)
 		throw std::runtime_error("cu_branched_signature: get_branched_cache_data failed");
 
-	// Convert to 32-bit for GPU
+	// Convert to 32-bit for GPU (with overflow check)
+	auto safe_narrow = [](const uint64_t* src, uint32_t* dst, size_t n) {
+		for (size_t i = 0; i < n; ++i) {
+			if (src[i] > UINT32_MAX)
+				throw std::overflow_error("Branched sig cache value exceeds uint32 range");
+			dst[i] = static_cast<uint32_t>(src[i]);
+		}
+	};
 	std::vector<uint32_t> coprod_data32(coprod_data_len);
 	std::vector<uint32_t> coprod_offsets32(coprod_offsets_len);
 	std::vector<uint32_t> labels_offsets32(labels_offsets_len);
 	std::vector<uint32_t> order_index32(order_index_len);
-	for (size_t i = 0; i < coprod_data_len; ++i) coprod_data32[i] = static_cast<uint32_t>(h_coprod_data[i]);
-	for (size_t i = 0; i < coprod_offsets_len; ++i) coprod_offsets32[i] = static_cast<uint32_t>(h_coprod_offsets[i]);
-	for (size_t i = 0; i < labels_offsets_len; ++i) labels_offsets32[i] = static_cast<uint32_t>(h_labels_offsets[i]);
-	for (size_t i = 0; i < order_index_len; ++i) order_index32[i] = static_cast<uint32_t>(h_order_index[i]);
+	safe_narrow(h_coprod_data, coprod_data32.data(), coprod_data_len);
+	safe_narrow(h_coprod_offsets, coprod_offsets32.data(), coprod_offsets_len);
+	safe_narrow(h_labels_offsets, labels_offsets32.data(), labels_offsets_len);
+	safe_narrow(h_order_index, order_index32.data(), order_index_len);
 
 	std::vector<float> inv_factorial_f32(num_trees);
 	for (size_t i = 0; i < num_trees; ++i) inv_factorial_f32[i] = static_cast<float>(h_inv_factorial[i]);
 
 	// Upload to GPU
 	auto gpu = std::make_unique<BranchedSigCacheGPU>();
-	gpu->total_length = static_cast<uint32_t>(total_length);
-	gpu->num_trees = static_cast<uint32_t>(num_trees);
-	gpu->coprod_data_len = static_cast<uint32_t>(coprod_data_len);
+	auto narrow32 = [](uint64_t v) -> uint32_t {
+		if (v > UINT32_MAX) throw std::overflow_error("Branched sig cache value exceeds uint32 range");
+		return static_cast<uint32_t>(v);
+	};
+	gpu->total_length = narrow32(total_length);
+	gpu->num_trees = narrow32(num_trees);
+	gpu->coprod_data_len = narrow32(coprod_data_len);
 	gpu->max_nodes = out_max_nodes;
 
 	upload(gpu->d_coprod_data32, coprod_data32.data(), coprod_data32.size());
@@ -795,15 +806,12 @@ void branched_sig_cuda_(
 
 	if (time_aug || lead_lag) {
 		const uint64_t t_path_size = batch_size * t_length * t_dimension;
-		T* d_transformed;
-		cudaMalloc(&d_transformed, t_path_size * sizeof(T));
+		CudaBuf<T> d_transformed(t_path_size * sizeof(T));
 
-		transform_path_<T>(path, d_transformed, batch_size, dimension, length, time_aug, lead_lag, end_time);
+		transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
 		cudaDeviceSynchronize();
 
-		branched_sig_cuda_core_<T>(d_transformed, out, batch_size, t_dimension, t_length, max_nodes);
-
-		cudaFree(d_transformed);
+		branched_sig_cuda_core_<T>(d_transformed.get(), out, batch_size, t_dimension, t_length, max_nodes);
 	}
 	else {
 		branched_sig_cuda_core_<T>(path, out, batch_size, dimension, length, max_nodes);

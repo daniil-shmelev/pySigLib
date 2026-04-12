@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <iostream>
 #include <memory>
+#include <cstring>
 #include <string>
 #include <filesystem>
 #include <mutex>

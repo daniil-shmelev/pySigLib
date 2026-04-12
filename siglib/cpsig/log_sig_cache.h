@@ -15,6 +15,7 @@
 
 #pragma once
 #include "cppch.h"
+#include "../shared/errors.h"
 #include "cp_tensor_poly.h"
 #include "words.h"
 #include "sparse.h"
@@ -63,7 +64,7 @@ public:
 
 	CacheFile(uint64_t dimension_, uint64_t degree_) {
 		if (cache_dir.empty() || !std::filesystem::exists(cache_dir / cache_folder_name))
-			throw std::runtime_error("Unexpected internal error. Cache directory was not set correctly.");
+			throw cache_dir_not_set_error("Unexpected internal error. Cache directory was not set correctly.");
 
 		dimension = dimension_;
 		degree = degree_;
@@ -86,7 +87,7 @@ public:
 		uint64_t magic;
 		in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
 		if (magic != cache_magic_number)
-			throw std::runtime_error("Tried to read an invalid cache file. Cache may have been corrupted.");
+			throw corrupted_cache_error("Tried to read an invalid cache file. Cache may have been corrupted.");
 		obj->deserialize(in);
 	}
 

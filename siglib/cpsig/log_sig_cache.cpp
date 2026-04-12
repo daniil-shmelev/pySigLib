@@ -59,7 +59,7 @@ void deserialize_vector(std::istream& in, std::vector<uint64_t>& out) {
 void set_cache_dir_(const char* dir) {
 	std::filesystem::path dir_path = dir;
 	if (!std::filesystem::exists(dir_path)) {
-		throw std::runtime_error("Directory " + std::string(dir) + " does not exist.");
+		throw directory_not_found_error("Directory " + std::string(dir) + " does not exist.");
 	}
 	std::filesystem::path pysiglib_cache_path = dir_path / cache_folder_name;
 	if (!std::filesystem::exists(pysiglib_cache_path)) {
@@ -76,7 +76,7 @@ void set_default_cache_dir() {
 	const errno_t err = _dupenv_s(&dir, &len, "LOCALAPPDATA");
 
 	if (err || !dir) {
-		throw std::runtime_error("Failed to get default cache directory.");
+		throw default_cache_dir_error("Failed to get default cache directory.");
 	}
 
 #elif __APPLE__
@@ -165,13 +165,13 @@ const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int metho
 
 	CacheFile file(dimension, degree);
 	if (!file.exists())
-		throw std::runtime_error("Could not find basis cache");
+		throw cache_not_found_error("Could not find basis cache");
 
 	auto basis_obj = std::make_unique<BasisCache>();
 	file.read(basis_obj);
 
 	if (basis_obj->method < method)
-		throw std::runtime_error("Could not find basis cache");
+		throw cache_not_found_error("Could not find basis cache");
 
 	std::unique_lock wlock(basis_cache_mu);
 	auto p = basis_cache.insert_or_assign(key, std::move(basis_obj));

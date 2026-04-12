@@ -201,7 +201,7 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, Branched
 	uint64_t magic;
 	in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
 	if (!in || magic != cache_magic_number)
-		throw std::runtime_error("Tried to read an invalid cache file. Cache may have been corrupted.");
+		throw corrupted_cache_error("Tried to read an invalid cache file. Cache may have been corrupted.");
 
 	in.read(reinterpret_cast<char*>(&tmp.dimension), sizeof(tmp.dimension));
 	in.read(reinterpret_cast<char*>(&tmp.max_nodes), sizeof(tmp.max_nodes));
