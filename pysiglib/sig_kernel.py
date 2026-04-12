@@ -22,6 +22,15 @@ import torch
 from .transform_path import transform_path
 from .param_checks import check_type, parse_dyadic_order, dyadic_grid_length, check_n_jobs
 from .error_codes import err_msg
+
+
+def _ensure_3d(t):
+    """Ensure a path tensor is exactly 3D (batch, length, dim) for torch.bmm."""
+    if t.ndim == 2:
+        return t.unsqueeze(0)
+    if t.ndim > 3:
+        return t.reshape(-1, t.shape[-2], t.shape[-1])
+    return t
 from .dtypes import CPSIG_SIG_KERNEL, DTYPES, CUSIG_SIG_KERNEL_CUDA
 from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOutputHandler
 from .static_kernels import StaticKernel, LinearKernel, Context
@@ -164,12 +173,11 @@ def sig_kernel(
         dyadic_len_2 = dyadic_grid_length(data.length[1], dyadic_order_2)
         result = GridOutputHandler(dyadic_len_1, dyadic_len_2, data)
 
-    torch_path1 = torch.as_tensor(data.path[0])  # Avoids data copy
-    torch_path2 = torch.as_tensor(data.path[1])
+    if data.batch_size == 0:
+        return result.data
 
-    if not data.is_batch:
-        torch_path1 = torch_path1.unsqueeze(0)
-        torch_path2 = torch_path2.unsqueeze(0)
+    torch_path1 = _ensure_3d(torch.as_tensor(data.path[0]))
+    torch_path2 = _ensure_3d(torch.as_tensor(data.path[1]))
 
     ctx = Context()
 

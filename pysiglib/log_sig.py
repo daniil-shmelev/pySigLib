@@ -290,6 +290,9 @@ def sig_to_log_sig(
     out_len = log_sig_length(aug_dimension, degree) if method else sig_len
     result = SigOutputHandler(data, out_len)
 
+    if data.batch_size == 0:
+        return result.data
+
     check_n_jobs(n_jobs)
     if data.device == "cpu":
         err_code = CPSIG_SIG_TO_LOG_SIG[data.dtype](
@@ -364,6 +367,8 @@ def log_sig(
         ls_len = log_sig_length(aug_dim, degree)
         data = PathInputHandler(path, False, False, 1.0, "path")
         result = SigOutputHandler(data, ls_len)
+        if data.batch_size == 0:
+            return result.data
         if data.device == "cpu":
             err_code = CPSIG_LOG_SIG_FROM_PATH[data.dtype](
                 data.data_ptr, result.data_ptr, data.batch_size,

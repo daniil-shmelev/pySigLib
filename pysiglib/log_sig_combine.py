@@ -82,6 +82,9 @@ def log_sig_combine(
     data = MultipleSigInputHandler([log_sig1, log_sig2], ls_len, ["log_sig1", "log_sig2"])
     result = SigOutputHandler(data, ls_len)
 
+    if data.batch_size == 0:
+        return result.data
+
     if data.device == "cpu":
         err_code = CPSIG_LOG_SIG_COMBINE[data.dtype](
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
@@ -144,6 +147,9 @@ def log_sig_combine_backprop(
     data = MultipleSigInputHandler([ls1, ls2, deriv], ls_len, ["ls1", "ls2", "deriv"])
     result1 = SigOutputHandler(data, ls_len)
     result2 = SigOutputHandler(data, ls_len)
+
+    if data.batch_size == 0:
+        return result1.data, result2.data
 
     if data.device == "cpu":
         err_code = CPSIG_LOG_SIG_COMBINE_BACKPROP[data.dtype](

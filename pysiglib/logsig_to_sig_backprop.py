@@ -81,6 +81,9 @@ def logsig_to_sig_backprop(
     derivs_data = SigInputHandler(sig_derivs, sig_len, "sig_derivs")
     result = SigOutputHandler(data, input_len)
 
+    if data.batch_size == 0:
+        return result.data
+
     check_n_jobs(n_jobs)
     if data.device == "cpu":
         err_code = CPSIG_LOGSIG_TO_SIG_BACKPROP[data.dtype](

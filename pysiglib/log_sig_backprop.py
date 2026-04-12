@@ -113,6 +113,10 @@ def sig_to_log_sig_backprop(
         raise ValueError("sig and log_sig_derivs must have the same dtype")
 
     result = SigOutputHandler(data, sig_len)
+
+    if data.batch_size == 0:
+        return result.data
+
     check_n_jobs(n_jobs)
     if data.device == "cpu":
         err_code = CPSIG_SIG_TO_LOG_SIG_BACKPROP[data.dtype](
@@ -147,6 +151,9 @@ def _log_sig_from_path_backprop(
         raise ValueError("grad_output and path must have the same dtype")
 
     result = PathOutputHandler(data.data_length, data.data_dimension, data)
+
+    if data.batch_size == 0:
+        return result.data
 
     if data.device == "cpu":
         err_code = CPSIG_LOG_SIG_FROM_PATH_BACKPROP[data.dtype](

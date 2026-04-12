@@ -87,6 +87,10 @@ def transform_path_backprop(
     if lead_lag:
         dimension = dimension // 2
     result = PathOutputHandler(length, dimension, data)
+
+    if data.batch_size == 0:
+        return result.data
+
     if data.device == "cpu":
         err_code = CPSIG_TRANSFORM_PATH_BACKPROP[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size, dimension, length,

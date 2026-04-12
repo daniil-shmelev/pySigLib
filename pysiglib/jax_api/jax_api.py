@@ -97,8 +97,8 @@ def _unflatten_leading(arr, leading):
 
 
 def _validate_shape(path) -> None:
-    if path.ndim not in (2, 3):
-        raise ValueError(f"path.shape must have length 2 or 3, got {path.ndim}.")
+    if path.ndim < 2:
+        raise ValueError(f"path must have at least rank 2, got {path.ndim}.")
     if path.shape[-1] == 0:
         raise ValueError("path must have at least one channel.")
 
@@ -156,8 +156,8 @@ sig.__doc__ = sig_forward.__doc__
 # ---------------------------------------------------------------------------
 
 def _validate_sig_shape(arr, name="signature"):
-    if arr.ndim not in (1, 2):
-        raise ValueError(f"{name}.shape must have length 1 or 2, got {arr.ndim}.")
+    if arr.ndim < 1:
+        raise ValueError(f"{name} must have at least rank 1, got {arr.ndim}.")
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4))
@@ -689,10 +689,7 @@ def _sig_kernel_pde_fwd(gram, dimension, dyadic_order_1, dyadic_order_2, return_
     if return_grid:
         result = k_grid
     else:
-        if k_grid.ndim == 2:
-            result = k_grid[-1, -1]
-        else:
-            result = k_grid[:, -1, -1]
+        result = k_grid[..., -1, -1]
     return result, (gram, k_grid)
 
 
@@ -733,8 +730,8 @@ def sig_kernel(
     path1 = jnp.asarray(path1)
     path2 = jnp.asarray(path2)
 
-    if path1.ndim not in (2, 3) or path2.ndim not in (2, 3):
-        raise ValueError("path1 and path2 must have ndim 2 or 3.")
+    if path1.ndim < 2 or path2.ndim < 2:
+        raise ValueError("path1 and path2 must have at least rank 2.")
     if path1.ndim != path2.ndim:
         raise ValueError("path1 and path2 must have the same ndim.")
 
@@ -768,7 +765,7 @@ def sig_kernel(
         result = _sig_kernel_pde(gram, dimension, do1, do2, True, n_jobs)
     else:
         k_grid = _sig_kernel_pde(gram, dimension, do1, do2, True, n_jobs)
-        result = k_grid[:, -1, -1]
+        result = k_grid[..., -1, -1]
 
     if normalize:
         k1 = sig_kernel(path1, path1, dyadic_order, static_kernel, n_jobs=n_jobs)

@@ -166,6 +166,9 @@ def sig_coef_backprop(
 
     result = PathOutputHandler(data.data_length, data.data_dimension, data)
 
+    if data.batch_size == 0:
+        return result.data
+
     check_n_jobs(n_jobs)
     if data.device == "cpu":
         err_code = CPSIG_SIG_COEF_BACKPROP[data.dtype](

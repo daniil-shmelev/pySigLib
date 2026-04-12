@@ -132,62 +132,65 @@ std::string ValidateSameFloatDtype(const char* lhs_name, LhsBuffer& lhs, const c
 template <typename BufferT>
 std::string GetPathSpec(BufferT& path, PathSpec& spec) {
     const auto dims = BufferDims(path);
+    if (dims.size() < 2) {
+        std::ostringstream oss;
+        oss << "path must have at least rank 2, got rank " << dims.size();
+        return oss.str();
+    }
+
+    spec.length = static_cast<std::uint64_t>(dims[dims.size() - 2]);
+    spec.dimension = static_cast<std::uint64_t>(dims[dims.size() - 1]);
+
     if (dims.size() == 2) {
         spec.is_batch = false;
         spec.batch_size = 1;
-        spec.length = static_cast<std::uint64_t>(dims[0]);
-        spec.dimension = static_cast<std::uint64_t>(dims[1]);
-        return {};
-    }
-
-    if (dims.size() == 3) {
+    } else {
         spec.is_batch = true;
-        spec.batch_size = static_cast<std::uint64_t>(dims[0]);
-        spec.length = static_cast<std::uint64_t>(dims[1]);
-        spec.dimension = static_cast<std::uint64_t>(dims[2]);
-        return {};
+        spec.batch_size = 1;
+        for (size_t i = 0; i < dims.size() - 2; ++i) {
+            spec.batch_size *= static_cast<std::uint64_t>(dims[i]);
+        }
     }
-
-    std::ostringstream oss;
-    oss << "path must have rank 2 or 3, got rank " << dims.size();
-    return oss.str();
+    return {};
 }
 
 template <typename BufferT>
 std::string CheckSigOutputShape(BufferT& out, const PathSpec& spec, std::uint64_t sig_len) {
     const auto dims = BufferDims(out);
+    if (dims.size() < 1) return "unexpected signature output shape";
 
-    if (!spec.is_batch && dims.size() == 1 && static_cast<std::uint64_t>(dims[0]) == sig_len) {
-        return {};
+    if (static_cast<std::uint64_t>(dims[dims.size() - 1]) != sig_len) {
+        return "unexpected signature output shape";
     }
 
-    if (spec.is_batch && dims.size() == 2 &&
-        static_cast<std::uint64_t>(dims[0]) == spec.batch_size &&
-        static_cast<std::uint64_t>(dims[1]) == sig_len) {
-        return {};
+    std::uint64_t leading = 1;
+    for (size_t i = 0; i < dims.size() - 1; ++i) {
+        leading *= static_cast<std::uint64_t>(dims[i]);
     }
-
-    return "unexpected signature output shape";
+    if (leading != spec.batch_size) {
+        return "unexpected signature output shape";
+    }
+    return {};
 }
 
 template <typename BufferT>
 std::string CheckGradOutputShape(BufferT& out, const PathSpec& spec) {
     const auto dims = BufferDims(out);
+    if (dims.size() < 2) return "unexpected signature backprop output shape";
 
-    if (!spec.is_batch && dims.size() == 2 &&
-        static_cast<std::uint64_t>(dims[0]) == spec.length &&
-        static_cast<std::uint64_t>(dims[1]) == spec.dimension) {
-        return {};
+    if (static_cast<std::uint64_t>(dims[dims.size() - 2]) != spec.length ||
+        static_cast<std::uint64_t>(dims[dims.size() - 1]) != spec.dimension) {
+        return "unexpected signature backprop output shape";
     }
 
-    if (spec.is_batch && dims.size() == 3 &&
-        static_cast<std::uint64_t>(dims[0]) == spec.batch_size &&
-        static_cast<std::uint64_t>(dims[1]) == spec.length &&
-        static_cast<std::uint64_t>(dims[2]) == spec.dimension) {
-        return {};
+    std::uint64_t leading = 1;
+    for (size_t i = 0; i < dims.size() - 2; ++i) {
+        leading *= static_cast<std::uint64_t>(dims[i]);
     }
-
-    return "unexpected signature backprop output shape";
+    if (leading != spec.batch_size) {
+        return "unexpected signature backprop output shape";
+    }
+    return {};
 }
 
 inline std::string ValidateArgs(std::int64_t degree, std::int64_t n_jobs, const PathSpec& spec) {
@@ -746,21 +749,23 @@ struct SigSpec {
 template <typename BufferT>
 std::string GetSigSpec(BufferT& buf, SigSpec& spec) {
     const auto dims = BufferDims(buf);
+    if (dims.size() < 1) {
+        return "signature must have at least rank 1";
+    }
+
+    spec.sig_len = static_cast<std::uint64_t>(dims[dims.size() - 1]);
+
     if (dims.size() == 1) {
         spec.is_batch = false;
         spec.batch_size = 1;
-        spec.sig_len = static_cast<std::uint64_t>(dims[0]);
-        return {};
-    }
-    if (dims.size() == 2) {
+    } else {
         spec.is_batch = true;
-        spec.batch_size = static_cast<std::uint64_t>(dims[0]);
-        spec.sig_len = static_cast<std::uint64_t>(dims[1]);
-        return {};
+        spec.batch_size = 1;
+        for (size_t i = 0; i < dims.size() - 1; ++i) {
+            spec.batch_size *= static_cast<std::uint64_t>(dims[i]);
+        }
     }
-    std::ostringstream oss;
-    oss << "signature must have rank 1 or 2, got rank " << dims.size();
-    return oss.str();
+    return {};
 }
 
 template <typename T>
@@ -1005,8 +1010,10 @@ ffi::Error TransformPathBackpropCpuImpl(
     // cotangent has transformed shape; out has original shape
     // C++ backprop takes original dimension and length
     const auto dims = BufferDims(cotangent);
-    bool is_batch = (dims.size() == 3);
-    std::uint64_t batch_size = is_batch ? static_cast<std::uint64_t>(dims[0]) : 1;
+    std::uint64_t batch_size = 1;
+    for (size_t i = 0; i + 2 < dims.size(); ++i) {
+        batch_size *= static_cast<std::uint64_t>(dims[i]);
+    }
 
     const auto* cot_ptr = BufferData<T>(cotangent);
     auto* out_ptr = BufferData<T>(out);
@@ -1096,8 +1103,10 @@ ffi::Error TransformPathBackpropCudaImpl(
     ffi::Result<ffi::AnyBuffer>& out
 ) {
     const auto dims = BufferDims(cotangent);
-    bool is_batch = (dims.size() == 3);
-    std::uint64_t batch_size = is_batch ? static_cast<std::uint64_t>(dims[0]) : 1;
+    std::uint64_t batch_size = 1;
+    for (size_t i = 0; i + 2 < dims.size(); ++i) {
+        batch_size *= static_cast<std::uint64_t>(dims[i]);
+    }
 
     const auto sync_status = cudaStreamSynchronize(stream);
     if (sync_status != cudaSuccess) return InternalError(cudaGetErrorString(sync_status));
@@ -1404,21 +1413,24 @@ struct GramSpec {
 template <typename BufferT>
 std::string GetGramSpec(BufferT& buf, GramSpec& spec) {
     const auto dims = BufferDims(buf);
+    if (dims.size() < 2) {
+        return "gram must have at least rank 2";
+    }
+
+    spec.length1 = static_cast<std::uint64_t>(dims[dims.size() - 2]);
+    spec.length2 = static_cast<std::uint64_t>(dims[dims.size() - 1]);
+
     if (dims.size() == 2) {
         spec.is_batch = false;
         spec.batch_size = 1;
-        spec.length1 = static_cast<std::uint64_t>(dims[0]);
-        spec.length2 = static_cast<std::uint64_t>(dims[1]);
-        return {};
-    }
-    if (dims.size() == 3) {
+    } else {
         spec.is_batch = true;
-        spec.batch_size = static_cast<std::uint64_t>(dims[0]);
-        spec.length1 = static_cast<std::uint64_t>(dims[1]);
-        spec.length2 = static_cast<std::uint64_t>(dims[2]);
-        return {};
+        spec.batch_size = 1;
+        for (size_t i = 0; i < dims.size() - 2; ++i) {
+            spec.batch_size *= static_cast<std::uint64_t>(dims[i]);
+        }
     }
-    return "gram must have rank 2 or 3";
+    return {};
 }
 
 template <typename T>

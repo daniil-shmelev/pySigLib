@@ -45,7 +45,6 @@ def test_signature_type_error(args):
 
 @pytest.mark.parametrize("X, deg", [
     (np.array([0., 1.]), 2),
-    (np.array([[[[0.]]], [[[1.]]]]), 2),
     (np.array([[0.], [1.]]), -1),
 ])
 def test_signature_value_error(X, deg):

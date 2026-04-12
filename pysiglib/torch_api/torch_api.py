@@ -301,10 +301,7 @@ class SigKernel(torch.autograd.Function):
 
         if return_grid:
             return k_grid
-        elif len(k_grid.shape) == 3:
-            return k_grid[:, -1, -1]
-        else:
-            return k_grid[-1, -1]
+        return k_grid[..., -1, -1]
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -360,8 +357,7 @@ class SigKernelGram(torch.autograd.Function):
 
         if return_grid:
             return k_grid
-        else:
-            return k_grid[:, :, -1, -1]
+        return k_grid[..., -1, -1]
 
     @staticmethod
     def backward(ctx, grad_output):

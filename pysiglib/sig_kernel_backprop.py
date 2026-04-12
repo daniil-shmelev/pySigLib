@@ -21,7 +21,7 @@ import torch
 
 from .transform_path import transform_path
 from .transform_path_backprop import transform_path_backprop
-from .sig_kernel import sig_kernel
+from .sig_kernel import sig_kernel, _ensure_3d
 from .param_checks import check_type, parse_dyadic_order, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import CPSIG_SIG_KERNEL_BACKPROP, DTYPES, CUSIG_SIG_KERNEL_BACKPROP_CUDA
@@ -179,10 +179,16 @@ def sig_kernel_backprop(
 
     data = MultiplePathInputHandler([path1, path2], False, False, end_time, ["path1", "path2"])
 
+    if data.batch_size == 0:
+        from .data_handlers import PathOutputHandler
+        ld = PathOutputHandler(data.data[0].data_length, data.data[0].data_dimension, data.data[0]).data
+        rd = PathOutputHandler(data.data[1].data_length, data.data[1].data_dimension, data.data[1]).data
+        return (ld if left_deriv else None), (rd if right_deriv else None)
+
     if return_grid:
         derivs_data = PathInputHandler(derivs, False, False, 0., "derivs")
     else:
-        derivs_data = ScalarInputHandler(derivs, data.is_batch, "derivs")
+        derivs_data = ScalarInputHandler(derivs, bool(data.batch_shape), "derivs")
 
     if not (derivs_data.type_ == data.type_ and derivs_data.device == data.device):
         raise ValueError("derivs, path1 and path2 must all be numpy arrays or all torch tensors on the same device")
@@ -195,9 +201,8 @@ def sig_kernel_backprop(
     if k_grid is None:
         k_grid = sig_kernel(torch.as_tensor(path1), torch.as_tensor(path2), dyadic_order, static_kernel, False, False, end_time, n_jobs, True)
 
-    if not data.is_batch:
-        torch_path1 = torch_path1.unsqueeze(0)
-        torch_path2 = torch_path2.unsqueeze(0)
+    torch_path1 = _ensure_3d(torch_path1)
+    torch_path2 = _ensure_3d(torch_path2)
 
     ctx = Context()
 

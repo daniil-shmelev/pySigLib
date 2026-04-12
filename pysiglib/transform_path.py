@@ -131,6 +131,10 @@ def transform_path(
     check_n_jobs(n_jobs)
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     result = PathOutputHandler(data.length, data.dimension, data)
+
+    if data.batch_size == 0:
+        return result.data
+
     if data.device == "cpu":
         err_code = CPSIG_TRANSFORM_PATH[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size, data.data_dimension,

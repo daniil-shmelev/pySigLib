@@ -69,6 +69,9 @@ def branched_sig_backprop(
     sig_data = MultipleSigInputHandler([bsig, bsig_derivs], bsig_len, ["bsig", "bsig_derivs"])
     result = PathOutputHandler(path_data.data_length, path_data.data_dimension, path_data)
 
+    if path_data.batch_size == 0:
+        return result.data
+
     if path_data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG_BACKPROP[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
@@ -119,6 +122,9 @@ def branched_sig_combine_backprop(
     data = MultipleSigInputHandler([derivs, bsig1, bsig2], bsig_len, ["derivs", "bsig1", "bsig2"])
     result1 = SigOutputHandler(data, bsig_len)
     result2 = SigOutputHandler(data, bsig_len)
+
+    if data.batch_size == 0:
+        return result1.data, result2.data
 
     if data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG_COMBINE_BACKPROP[data.dtype](

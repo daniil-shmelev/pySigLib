@@ -120,6 +120,9 @@ def branched_sig(
     bsig_len = CPSIG.branched_sig_length(aug_dimension, degree)
     result = SigOutputHandler(data, bsig_len)
 
+    if data.batch_size == 0:
+        return result.data
+
     if data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
@@ -162,6 +165,9 @@ def branched_sig_combine(
     bsig_len = CPSIG.branched_sig_length(dimension, degree)
     data = MultipleSigInputHandler([bsig1, bsig2], bsig_len, ["bsig1", "bsig2"])
     result = SigOutputHandler(data, bsig_len)
+
+    if data.batch_size == 0:
+        return result.data
 
     if data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG_COMBINE[data.dtype](

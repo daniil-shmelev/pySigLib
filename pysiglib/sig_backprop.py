@@ -104,6 +104,9 @@ def sig_combine_backprop(
     sig1_deriv = SigOutputHandler(sig_data, sig_len)
     sig2_deriv = SigOutputHandler(sig_data, sig_len)
 
+    if sig_data.batch_size == 0:
+        return sig1_deriv.data, sig2_deriv.data
+
     if sig_data.device == "cpu":
         err_code = CPSIG_SIG_COMBINE_BACKPROP[sig_data.dtype](
             sig_data.sig_ptr[2], sig1_deriv.data_ptr, sig2_deriv.data_ptr,
@@ -206,8 +209,11 @@ def sig_backprop(
 
     result = PathOutputHandler(path_data.data_length, path_data.data_dimension, path_data)
 
-    if path_data.is_batch != sig_data.is_batch or path_data.batch_size != sig_data.batch_size:
-        raise ValueError("path, sig and sig_derivs must have the same batch sizes")
+    if path_data.batch_size == 0:
+        return result.data
+
+    if path_data.batch_shape != sig_data.batch_shape:
+        raise ValueError("path, sig and sig_derivs must have the same batch shape")
 
     check_n_jobs(n_jobs)
     if path_data.device == "cpu":

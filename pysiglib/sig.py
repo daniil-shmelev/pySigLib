@@ -105,6 +105,9 @@ def sig_combine(
     data = MultipleSigInputHandler([sig1, sig2], sig_len, ["sig1", "sig2"])
     result = SigOutputHandler(data, sig_len)
 
+    if data.batch_size == 0:
+        return result.data
+
     if data.device == "cpu":
         err_code = CPSIG_SIG_COMBINE[data.dtype](
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
@@ -206,6 +209,9 @@ def sig(
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     sig_len = sig_length(data.dimension, degree)
     result = SigOutputHandler(data, sig_len)
+
+    if data.batch_size == 0:
+        return result.data
 
     if data.device == "cpu":
         err_code = CPSIG_SIGNATURE[data.dtype](

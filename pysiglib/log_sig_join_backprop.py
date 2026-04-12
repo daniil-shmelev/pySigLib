@@ -104,15 +104,16 @@ def log_sig_join_backprop(
         raise ValueError("d_out, log_sig and displacement must all be numpy arrays or all torch tensors")
     if d_out_data.dtype != logsig_data.dtype or logsig_data.dtype != disp_data.dtype:
         raise ValueError("d_out, log_sig and displacement must have the same dtype")
-    if d_out_data.is_batch != logsig_data.is_batch or logsig_data.is_batch != disp_data.is_batch:
-        raise ValueError("d_out, log_sig and displacement must all be unbatched or all batched")
-    if d_out_data.is_batch and (d_out_data.batch_size != logsig_data.batch_size or logsig_data.batch_size != disp_data.batch_size):
-        raise ValueError("d_out, log_sig and displacement must have the same batch size")
+    if not (d_out_data.batch_shape == logsig_data.batch_shape == disp_data.batch_shape):
+        raise ValueError("d_out, log_sig and displacement must have the same batch shape")
     if d_out_data.device != logsig_data.device or logsig_data.device != disp_data.device:
         raise ValueError("d_out, log_sig and displacement must be on the same device")
 
     d_logsig = SigOutputHandler(d_out_data, ls_len)
     d_disp = SigOutputHandler(d_out_data, dimension)
+
+    if d_out_data.batch_size == 0:
+        return d_logsig.data, d_disp.data
 
     if d_out_data.device == "cpu":
         err_code = CPSIG_LOG_SIG_JOIN_BACKPROP[d_out_data.dtype](

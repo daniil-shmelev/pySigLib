@@ -14,6 +14,7 @@
 # =========================================================================
 
 from ctypes import POINTER, cast
+from math import prod
 
 import numpy as np
 import torch
@@ -34,36 +35,16 @@ def _check_cuda_available(device):
         )
 
 def make_output(obj, data, shape):
+    full_shape = (*obj.batch_shape, *shape)
     if obj.type_ == "numpy":
         dtype_ = np.float32 if data.dtype == "float32" else np.float64
         obj.device = "cpu"
-        if obj.is_batch:
-            obj.data = np.empty(
-                shape=(obj.batch_size, *shape),
-                dtype=dtype_
-            )
-        else:
-            obj.data = np.empty(
-                shape=shape,
-                dtype=dtype_
-            )
+        obj.data = np.empty(shape=full_shape, dtype=dtype_)
         obj.data_ptr = obj.data.ctypes.data_as(POINTER(DTYPES[obj.dtype]))
-
     else:
         dtype_ = torch.float32 if data.dtype == "float32" else torch.float64
         obj.device = data.device if hasattr(data, "device") else "cpu"
-        if obj.is_batch:
-            obj.data = torch.empty(
-                size=(obj.batch_size, *shape),
-                dtype=dtype_,
-                device=obj.device
-            )
-        else:
-            obj.data = torch.empty(
-                size=shape,
-                dtype=dtype_,
-                device=obj.device
-            )
+        obj.data = torch.empty(size=full_shape, dtype=dtype_, device=obj.device)
         obj.data_ptr = cast(obj.data.data_ptr(), POINTER(DTYPES[obj.dtype]))
 
 class SigInputHandler:
@@ -75,16 +56,12 @@ class SigInputHandler:
         self.sig = ensure_own_contiguous_storage(sig_)
         check_dtype(self.sig, param_name)
 
-        if len(self.sig.shape) == 1:
-            self.is_batch = False
-            self.batch_size = 1
-            length = self.sig.shape[0]
-        elif len(self.sig.shape) == 2:
-            self.is_batch = True
-            self.batch_size = self.sig.shape[0]
-            length = self.sig.shape[1]
-        else:
-            raise ValueError(param_name + ".shape must have length 1 or 2, got length " + str(len(self.sig.shape)) + " instead.")
+        if len(self.sig.shape) < 1:
+            raise ValueError(param_name + " must have at least rank 1, got rank 0.")
+
+        self.batch_shape = tuple(self.sig.shape[:-1])
+        self.batch_size = prod(self.batch_shape) if self.batch_shape else 1
+        length = self.sig.shape[-1]
 
         if length != sig_len:
             raise ValueError(param_name + " is of incorrect length. Expected " + str(sig_len) + ", got " + str(length))
@@ -115,14 +92,14 @@ class MultipleSigInputHandler:
         if not all(d.dtype == self.data[0].dtype for d in self.data):
             raise ValueError(names_str(sig_name_list) + " must have the same dtype")
 
-        if not all(d.shape == self.sig[0].shape for d in self.sig):
-            raise ValueError(names_str(sig_name_list) + " have different shapes")
+        if not all(d.batch_shape == self.data[0].batch_shape for d in self.data):
+            raise ValueError(names_str(sig_name_list) + " have different batch shapes")
 
         if not all(d.device == self.data[0].device for d in self.data):
             raise ValueError(names_str(sig_name_list) + " must be on the same device")
 
         self.dtype = self.data[0].dtype
-        self.is_batch = self.data[0].is_batch
+        self.batch_shape = self.data[0].batch_shape
         self.batch_size = self.data[0].batch_size
         self.type_ = self.data[0].type_
         self.sig_ptr = [d.data_ptr for d in self.data]
@@ -138,11 +115,10 @@ class SigOutputHandler:
     Handle output which is (shaped like) a signature or a batch of signatures
     """
     def __init__(self, data, sig_len):
+        self.batch_shape = data.batch_shape
         self.batch_size = data.batch_size
-        self.is_batch = data.is_batch
         self.type_ = data.type_
         self.dtype = data.dtype
-        self.result_length = self.batch_size * sig_len
         make_output(self, data, (sig_len,))
 
 class PathInputHandler:
@@ -159,19 +135,14 @@ class PathInputHandler:
         self.lead_lag = lead_lag
         self.end_time = end_time
 
-        if len(self.path.shape) == 2:
-            self.is_batch = False
-            self.batch_size = 1
-            self.data_length = self.path.shape[0]
-            self.data_dimension = self.path.shape[1]
-        elif len(self.path.shape) == 3:
-            self.is_batch = True
-            self.batch_size = self.path.shape[0]
-            self.data_length = self.path.shape[1]
-            self.data_dimension = self.path.shape[2]
-        else:
+        if len(self.path.shape) < 2:
             raise ValueError(
-                self.param_name + ".shape must have length 2 or 3, got length " + str(len(self.path.shape)) + " instead.")
+                self.param_name + " must have at least rank 2, got rank " + str(len(self.path.shape)) + ".")
+
+        self.batch_shape = tuple(self.path.shape[:-2])
+        self.batch_size = prod(self.batch_shape) if self.batch_shape else 1
+        self.data_length = self.path.shape[-2]
+        self.data_dimension = self.path.shape[-1]
 
         if self.data_dimension == 0:
             raise ValueError(
@@ -216,12 +187,9 @@ class MultiplePathInputHandler:
         if not all(d.dtype == self.data[0].dtype for d in self.data):
             raise ValueError(names_str(path_names) + " must have the same dtype")
 
-        if not all(d.is_batch == self.data[0].is_batch for d in self.data):
-            raise ValueError(names_str(path_names) + " must all be 2d arrays or all 3d arrays")
-
         if check_batch:
-            if not all(d.batch_size == self.data[0].batch_size for d in self.data):
-                raise ValueError(names_str(path_names) + " have different batch sizes")
+            if not all(d.batch_shape == self.data[0].batch_shape for d in self.data):
+                raise ValueError(names_str(path_names) + " have different batch shapes")
 
         if not all(d.data_dimension == self.data[0].data_dimension for d in self.data):
             raise ValueError(names_str(path_names) + " have different dimensions")
@@ -236,8 +204,8 @@ class MultiplePathInputHandler:
         self.dimension = self.data[0].dimension
 
         if check_batch:
+            self.batch_shape = self.data[0].batch_shape
             self.batch_size = self.data[0].batch_size
-            self.is_batch = self.data[0].is_batch
 
 class ScalarInputHandler:
     """
@@ -245,14 +213,12 @@ class ScalarInputHandler:
     """
     def __init__(self, data_, is_batch = False, data_name = "scalars"):
         self.data_name = data_name
-        self.is_batch = is_batch
         check_type_multiple(data_, data_name, (np.ndarray, torch.Tensor))
         self.data = ensure_own_contiguous_storage(data_)
         check_dtype(self.data, data_name)
 
-        if len(self.data.shape) > 1:
-            raise ValueError(data_name + " must be a 1D array")
-        self.batch_size = self.data.shape[0] if is_batch else 1
+        self.batch_shape = tuple(self.data.shape) if is_batch else ()
+        self.batch_size = prod(self.batch_shape) if self.batch_shape else 1
 
         if isinstance(self.data, np.ndarray):
             self.type_ = "numpy"
@@ -272,7 +238,7 @@ class ScalarOutputHandler:
     def __init__(self, data):
         self.dtype = data.dtype
         self.type_ = data.type_
-        self.is_batch = True
+        self.batch_shape = data.batch_shape
         self.batch_size = data.batch_size
         make_output(self, data, tuple())
 
@@ -283,23 +249,17 @@ class GridOutputHandler:
     def __init__(self, x_size, y_size, data):
         self.x_size = x_size
         self.y_size = y_size
+        self.batch_shape = data.batch_shape
         self.batch_size = data.batch_size
-        self.is_batch = data.is_batch
         self.type_ = data.type_
         self.dtype = data.dtype
         make_output(self, data, (self.x_size, self.y_size))
 
     def transpose(self):
         if self.type_ == "numpy":
-            if self.is_batch:
-                self.data = np.transpose(self.data, (0, 2, 1))
-            else:
-                self.data = np.transpose(self.data, (1, 0))
+            self.data = np.swapaxes(self.data, -2, -1)
         else:
-            if self.is_batch:
-                self.data = torch.transpose(self.data, 1, 2)
-            else:
-                self.data = torch.transpose(self.data, 0, 1)
+            self.data = torch.transpose(self.data, -2, -1)
 
 class PathOutputHandler(GridOutputHandler):
     """

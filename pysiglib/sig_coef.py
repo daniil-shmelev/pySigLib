@@ -235,6 +235,9 @@ def sig_coef(
 
     result = SigOutputHandler(data, result_length)
 
+    if data.batch_size == 0:
+        return result.data
+
     check_n_jobs(n_jobs)
     if data.device == "cpu":
         err_code = CPSIG_SIG_COEF[data.dtype](

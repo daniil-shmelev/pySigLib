@@ -85,6 +85,9 @@ def linear_sig(
     data = SigInputHandler(displacement, dimension, "displacement")
     result = SigOutputHandler(data, sig_len)
 
+    if data.batch_size == 0:
+        return result.data
+
     if data.device == "cpu":
         err_code = CPSIG_LINEAR_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size, dimension, degree, n_jobs)
