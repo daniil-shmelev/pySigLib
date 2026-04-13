@@ -17,70 +17,12 @@
 #include "cusig.h"
 #include "cu_macros.h"
 #include "cu_atomic.h"
-
-// We load the branched-sig cache from cpsig.dll at runtime via LoadLibrary /
-// GetProcAddress.  This avoids any C++17 vs C++20 ABI issues between nvcc
-// (C++17) and the cpsig MSVC build (C++20).
+#include "../shared/branched_cache.h"
 
 #include <cstdint>
 #include <vector>
 #include <memory>
 #include <unordered_map>
-
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
-
-// =========================================================================
-// cpsig dynamic-loading helpers
-// =========================================================================
-
-typedef int (*fn_prepare_branched_sig)(uint64_t, uint64_t);
-typedef int (*fn_get_branched_cache_sizes)(
-	uint64_t, uint64_t,
-	uint64_t*, uint64_t*, int*,
-	uint64_t*, uint64_t*, uint64_t*, uint64_t*, uint64_t*);
-typedef int (*fn_get_branched_cache_data)(
-	uint64_t, uint64_t,
-	double*, uint8_t*, uint64_t*, uint64_t*, uint64_t*, uint64_t*);
-
-struct CpSigFuncs {
-	fn_prepare_branched_sig prepare = nullptr;
-	fn_get_branched_cache_sizes get_sizes = nullptr;
-	fn_get_branched_cache_data get_data = nullptr;
-};
-
-static CpSigFuncs load_cpsig_funcs() {
-	CpSigFuncs f;
-#ifdef _WIN32
-	// cpsig.dll is already loaded in the process (Python loaded it first)
-	HMODULE h = GetModuleHandleA("cpsig.dll");
-	if (!h)
-		h = LoadLibraryA("cpsig.dll");
-	if (!h)
-		throw std::runtime_error("cu_branched_signature: cannot find cpsig.dll");
-	f.prepare   = (fn_prepare_branched_sig)GetProcAddress(h, "prepare_branched_sig");
-	f.get_sizes = (fn_get_branched_cache_sizes)GetProcAddress(h, "get_branched_cache_sizes");
-	f.get_data  = (fn_get_branched_cache_data)GetProcAddress(h, "get_branched_cache_data");
-#else
-	void* h = dlopen("libcpsig.so", RTLD_NOW | RTLD_NOLOAD);
-	if (!h) h = dlopen("libcpsig.so", RTLD_NOW);
-	if (!h) throw std::runtime_error("cu_branched_signature: cannot find libcpsig.so");
-	f.prepare   = (fn_prepare_branched_sig)dlsym(h, "prepare_branched_sig");
-	f.get_sizes = (fn_get_branched_cache_sizes)dlsym(h, "get_branched_cache_sizes");
-	f.get_data  = (fn_get_branched_cache_data)dlsym(h, "get_branched_cache_data");
-#endif
-	if (!f.prepare || !f.get_sizes || !f.get_data)
-		throw std::runtime_error("cu_branched_signature: missing cpsig export functions");
-	return f;
-}
-
-static CpSigFuncs& cpsig() {
-	static CpSigFuncs f = load_cpsig_funcs();
-	return f;
-}
 
 // =========================================================================
 // GPU cache: mirrors BranchedSigCache on device memory
@@ -142,35 +84,10 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 			return *(it->second);
 	}
 
-	auto& fn = cpsig();
+	// Build cache on CPU using shared header (no cpsig.dll dependency)
+	BranchedSigCache c = build_branched_sig_cache(dimension, max_nodes);
 
-	// Ensure the CPU cache is prepared
-	if (fn.prepare(dimension, max_nodes) != 0)
-		throw std::runtime_error("cu_branched_signature: prepare_branched_sig failed");
-
-	// Query sizes
-	uint64_t total_length, num_trees;
-	int out_max_nodes;
-	uint64_t order_index_len, labels_data_len, labels_offsets_len;
-	uint64_t coprod_data_len, coprod_offsets_len;
-	if (fn.get_sizes(dimension, max_nodes,
-			&total_length, &num_trees, &out_max_nodes,
-			&order_index_len, &labels_data_len, &labels_offsets_len,
-			&coprod_data_len, &coprod_offsets_len) != 0)
-		throw std::runtime_error("cu_branched_signature: get_branched_cache_sizes failed");
-
-	// Allocate host buffers and fetch data
-	std::vector<double> h_inv_factorial(num_trees);
-	std::vector<uint8_t> h_labels_data(labels_data_len);
-	std::vector<uint64_t> h_labels_offsets(labels_offsets_len);
-	std::vector<uint64_t> h_coprod_data(coprod_data_len);
-	std::vector<uint64_t> h_coprod_offsets(coprod_offsets_len);
-	std::vector<uint64_t> h_order_index(order_index_len);
-
-	if (fn.get_data(dimension, max_nodes,
-			h_inv_factorial.data(), h_labels_data.data(), h_labels_offsets.data(),
-			h_coprod_data.data(), h_coprod_offsets.data(), h_order_index.data()) != 0)
-		throw std::runtime_error("cu_branched_signature: get_branched_cache_data failed");
+	uint64_t num_trees = c.total_length - 1;
 
 	// Convert to 32-bit for GPU (with overflow check)
 	auto safe_narrow = [](const uint64_t* src, uint32_t* dst, size_t n) {
@@ -180,17 +97,17 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 			dst[i] = static_cast<uint32_t>(src[i]);
 		}
 	};
-	std::vector<uint32_t> coprod_data32(coprod_data_len);
-	std::vector<uint32_t> coprod_offsets32(coprod_offsets_len);
-	std::vector<uint32_t> labels_offsets32(labels_offsets_len);
-	std::vector<uint32_t> order_index32(order_index_len);
-	safe_narrow(h_coprod_data.data(), coprod_data32.data(), coprod_data_len);
-	safe_narrow(h_coprod_offsets.data(), coprod_offsets32.data(), coprod_offsets_len);
-	safe_narrow(h_labels_offsets.data(), labels_offsets32.data(), labels_offsets_len);
-	safe_narrow(h_order_index.data(), order_index32.data(), order_index_len);
+	std::vector<uint32_t> coprod_data32(c.coproduct_data.size());
+	std::vector<uint32_t> coprod_offsets32(c.coproduct_offsets.size());
+	std::vector<uint32_t> labels_offsets32(c.node_labels_offsets.size());
+	std::vector<uint32_t> order_index32(c.order_index.size());
+	safe_narrow(c.coproduct_data.data(), coprod_data32.data(), c.coproduct_data.size());
+	safe_narrow(c.coproduct_offsets.data(), coprod_offsets32.data(), c.coproduct_offsets.size());
+	safe_narrow(c.node_labels_offsets.data(), labels_offsets32.data(), c.node_labels_offsets.size());
+	safe_narrow(c.order_index.data(), order_index32.data(), c.order_index.size());
 
 	std::vector<float> inv_factorial_f32(num_trees);
-	for (size_t i = 0; i < num_trees; ++i) inv_factorial_f32[i] = static_cast<float>(h_inv_factorial[i]);
+	for (size_t i = 0; i < num_trees; ++i) inv_factorial_f32[i] = static_cast<float>(c.inv_tree_factorial[i]);
 
 	// Upload to GPU
 	auto gpu = std::make_unique<BranchedSigCacheGPU>();
@@ -198,18 +115,18 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 		if (v > UINT32_MAX) throw std::overflow_error("Branched sig cache value exceeds uint32 range");
 		return static_cast<uint32_t>(v);
 	};
-	gpu->total_length = narrow32(total_length);
+	gpu->total_length = narrow32(c.total_length);
 	gpu->num_trees = narrow32(num_trees);
-	gpu->coprod_data_len = narrow32(coprod_data_len);
-	gpu->max_nodes = out_max_nodes;
+	gpu->coprod_data_len = narrow32(c.coproduct_data.size());
+	gpu->max_nodes = static_cast<int>(max_nodes);
 
 	upload(gpu->d_coprod_data32, coprod_data32.data(), coprod_data32.size());
 	upload(gpu->d_coprod_offsets32, coprod_offsets32.data(), coprod_offsets32.size());
 	upload(gpu->d_labels_offsets32, labels_offsets32.data(), labels_offsets32.size());
 	upload(gpu->d_order_index32, order_index32.data(), order_index32.size());
-	upload(gpu->d_inv_factorial_f64, h_inv_factorial.data(), h_inv_factorial.size());
+	upload(gpu->d_inv_factorial_f64, c.inv_tree_factorial.data(), c.inv_tree_factorial.size());
 	upload(gpu->d_inv_factorial_f32, inv_factorial_f32.data(), inv_factorial_f32.size());
-	upload(gpu->d_labels_data, h_labels_data.data(), h_labels_data.size());
+	upload(gpu->d_labels_data, c.node_labels_data.data(), c.node_labels_data.size());
 
 	std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
 	auto [ins, _] = s_gpu_cache_map.insert_or_assign(key, std::move(gpu));
