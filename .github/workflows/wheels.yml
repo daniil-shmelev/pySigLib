@@ -177,12 +177,18 @@ jobs:
     # PAID RUNNER — $0.052/minute, only step that costs money.
     # Expected runtime: 2-4 minutes per run (~$0.10-0.20).
     #
+    # Gated by the `deployment` environment — required reviewers must
+    # approve before the paid GPU runner is scheduled, regardless of who
+    # triggered the workflow. This prevents any future collaborator with
+    # write access from accidentally (or maliciously) burning GPU minutes.
+    #
     # timeout-minutes caps total job duration at 15 minutes, so an
     # infinite loop / hang / stuck download cannot run forever. At
     # $0.052/min that caps the worst-case cost per run at ~$0.78.
     # Individual steps have tighter timeouts inside that budget.
     # The repo-level spending limit (Settings → Billing) is the
     # ultimate safety net regardless of per-job timeouts.
+    environment: deployment
     runs-on: linux_4_core_gpu
     timeout-minutes: 15
     steps:

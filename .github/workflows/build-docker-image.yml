@@ -30,6 +30,11 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # Gated by the `deployment` environment — any job that pushes externally
+    # (ghcr.io, PyPI, TestPyPI) or spends paid resources routes through here.
+    # Required reviewers on the environment enforce human approval before
+    # the job can run, regardless of who triggered the workflow.
+    environment: deployment
     permissions:
       contents: read
       packages: write
