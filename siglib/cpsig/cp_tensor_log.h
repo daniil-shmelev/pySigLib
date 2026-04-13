@@ -16,7 +16,7 @@
 #pragma once
 #include "cppch.h"
 
-#include "cp_tensor_poly.h"
+#include "cp_sig_combine.h"
 #include "cp_signature.h"
 #include "words.h"
 #include "log_sig_cache.h"

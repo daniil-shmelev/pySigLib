@@ -15,7 +15,8 @@
 
 #include "cppch.h"
 #include "cpsig.h"
-#include "cp_tensor_poly.h"
+#include "cp_sig_combine.h"
+#include "cp_sig_join.h"
 #include "multithreading.h"
 #include "macros.h"
 

@@ -21,7 +21,7 @@
 // CUDA device function: uncombine_sig_deriv_zero
 //
 // Backpropagation through the tensor product (Chen's identity).
-// Ported from cp_tensor_poly.h uncombine_sig_deriv_zero.
+// Ported from cp_sig_combine.h uncombine_sig_deriv_zero.
 //
 // sig1:             original signature (read-only)
 // sig2:             partial log (read-only)

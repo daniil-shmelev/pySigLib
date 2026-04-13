@@ -15,7 +15,7 @@
 
 #include "CppUnitTest.h"
 #include "cpsig.h"
-#include "cp_tensor_poly.h"
+#include "cp_sig_combine.h"
 #include "cp_path.h"
 #include "cp_signature.h"
 #include "cp_sig_kernel.h"

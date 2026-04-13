@@ -17,7 +17,7 @@
 #include "cppch.h"
 
 #include "multithreading.h"
-#include "cp_tensor_poly.h"
+#include "cp_sig_combine.h"
 
 #include "cp_path.h"
 #include "macros.h"

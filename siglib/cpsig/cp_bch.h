@@ -15,7 +15,7 @@
 
 #pragma once
 #include "cppch.h"
-#include "cp_tensor_poly.h"
+#include "cp_sig_combine.h"
 #include "cp_tensor_log.h"
 #include "cp_bch_data.h"
 #include "words.h"

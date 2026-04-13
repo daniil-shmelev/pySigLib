@@ -16,7 +16,6 @@
 #pragma once
 #include "cppch.h"
 #include "../shared/errors.h"
-#include "cp_tensor_poly.h"
 #include "words.h"
 #include "sparse.h"
 #include "disk_cache.h"

@@ -13,9 +13,12 @@
  * limitations under the License.
  * ========================================================================= */
 
+#pragma once
 #include "cppch.h"
 #include "cpsig.h"
-#include <iostream>
 
-#include "cp_path.h"
+// Calculate power
+// Return 0 on error (integer overflow)
+uint64_t power(uint64_t base, uint64_t exp) noexcept;
 
+void populate_level_index(uint64_t* level_index, uint64_t dimension, uint64_t degree);
