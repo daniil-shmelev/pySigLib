@@ -62,10 +62,23 @@ struct BranchedSigCacheGPU {
 // Reuse the hash from cu_log_sig_cache.h
 #include "cu_log_sig_cache.h"
 
+using CuBranchedCacheKey = std::tuple<uint64_t, uint64_t, bool>;
+
+struct CuBranchedCacheKeyHash {
+	std::size_t operator()(const CuBranchedCacheKey& k) const noexcept {
+		std::size_t h1 = std::hash<uint64_t>{}(std::get<0>(k));
+		std::size_t h2 = std::hash<uint64_t>{}(std::get<1>(k));
+		std::size_t h3 = std::hash<bool>{}(std::get<2>(k));
+		h1 ^= (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+		h1 ^= (h3 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+		return h1;
+	}
+};
+
 static std::unordered_map<
-	std::pair<uint64_t, uint64_t>,
+	CuBranchedCacheKey,
 	std::unique_ptr<BranchedSigCacheGPU>,
-	CuPairHash
+	CuBranchedCacheKeyHash
 > s_gpu_cache_map;
 static std::mutex s_gpu_cache_map_mu;
 
@@ -80,8 +93,8 @@ static void upload(T*& d_ptr, const T* h_data, size_t count) {
 	CUDA_CHECK(cudaMemcpy(d_ptr, h_data, count * sizeof(T), cudaMemcpyHostToDevice));
 }
 
-static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, uint64_t max_nodes) {
-	auto key = std::make_pair(dimension, max_nodes);
+static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, uint64_t max_nodes, bool planar = false) {
+	CuBranchedCacheKey key(dimension, max_nodes, planar);
 	{
 		std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
 		auto it = s_gpu_cache_map.find(key);
@@ -90,7 +103,7 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 	}
 
 	// Build cache on CPU using shared header (no cpsig.dll dependency)
-	BranchedSigCache c = build_branched_sig_cache(dimension, max_nodes);
+	BranchedSigCache c = build_branched_sig_cache(dimension, max_nodes, planar);
 
 	uint64_t num_trees = c.total_length - 1;
 
@@ -586,9 +599,10 @@ void branched_sig_combine_backprop_ker(
 template<typename T>
 void branched_sig_combine_cuda_(
 	const T* bsig1, const T* bsig2, T* out,
-	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes
+	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes,
+	bool planar = false
 ) {
-	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes);
+	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
 	if (block < 32) block = 32;
 	if (block > 1024) throw std::invalid_argument("CUDA branched sig combine: num_trees > 1024 not supported");
@@ -609,9 +623,10 @@ void branched_sig_combine_cuda_(
 template<typename T>
 void branched_sig_combine_backprop_cuda_(
 	const T* bsig1, const T* bsig2, const T* derivs, T* out1, T* out2,
-	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes
+	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes,
+	bool planar = false
 ) {
-	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes);
+	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
 	if (block < 32) block = 32;
 	if (block > 1024) throw std::invalid_argument("CUDA branched sig combine backprop: num_trees > 1024 not supported");
@@ -640,9 +655,10 @@ void branched_sig_cuda_core_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t length,
-	uint64_t max_nodes
+	uint64_t max_nodes,
+	bool planar = false
 ) {
-	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes);
+	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 
 	// Single-point paths have no increments => identity branched sig
 	if (length <= 1) {
@@ -721,7 +737,8 @@ void branched_sig_cuda_(
 	uint64_t max_nodes,
 	bool time_aug,
 	bool lead_lag,
-	T end_time
+	T end_time,
+	bool planar = false
 ) {
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
@@ -733,10 +750,10 @@ void branched_sig_cuda_(
 		transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
 		cudaDeviceSynchronize();
 
-		branched_sig_cuda_core_<T>(d_transformed.get(), out, batch_size, t_dimension, t_length, max_nodes);
+		branched_sig_cuda_core_<T>(d_transformed.get(), out, batch_size, t_dimension, t_length, max_nodes, planar);
 	}
 	else {
-		branched_sig_cuda_core_<T>(path, out, batch_size, dimension, length, max_nodes);
+		branched_sig_cuda_core_<T>(path, out, batch_size, dimension, length, max_nodes, planar);
 	}
 }
 
@@ -753,9 +770,10 @@ void branched_sig_backprop_cuda_core_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t length,
-	uint64_t max_nodes
+	uint64_t max_nodes,
+	bool planar = false
 ) {
-	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes);
+	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 
 	// Single-point paths have no increments => zero path gradients
 	if (length <= 1) {
@@ -825,7 +843,8 @@ void branched_sig_backprop_cuda_(
 	uint64_t max_nodes,
 	bool time_aug,
 	bool lead_lag,
-	T end_time
+	T end_time,
+	bool planar = false
 ) {
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
@@ -841,7 +860,7 @@ void branched_sig_backprop_cuda_(
 
 			cudaMalloc(&d_transformed_derivs, t_path_size * sizeof(T));
 			branched_sig_backprop_cuda_core_<T>(d_transformed, d_transformed_derivs, bsig_derivs, bsig,
-				batch_size, t_dimension, t_length, max_nodes);
+				batch_size, t_dimension, t_length, max_nodes, planar);
 
 			cudaFree(d_transformed);
 			d_transformed = nullptr;
@@ -856,7 +875,7 @@ void branched_sig_backprop_cuda_(
 	}
 	else {
 		branched_sig_backprop_cuda_core_<T>(path, out, bsig_derivs, bsig,
-			batch_size, dimension, length, max_nodes);
+			batch_size, dimension, length, max_nodes, planar);
 	}
 }
 
@@ -867,35 +886,35 @@ void branched_sig_backprop_cuda_(
 extern "C" {
 
 
-	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_cuda_<float>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time));
+	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_cuda_<float>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar));
 	}
 
-	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time));
+	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar));
 	}
 
-	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<float>(bsig1, bsig2, out, batch_size, dimension, max_nodes));
+	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<float>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar));
 	}
-	CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<double>(bsig1, bsig2, out, batch_size, dimension, max_nodes));
-	}
-
-	CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<float>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes));
-	}
-	CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes));
+	CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<double>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar));
 	}
 
-
-	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time));
+	CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<float>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar));
+	}
+	CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar));
 	}
 
-	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time));
+
+	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar));
+	}
+
+	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar));
 	}
 
 }

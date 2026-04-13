@@ -23,6 +23,7 @@
 struct BranchedSigCache {
 	uint64_t dimension = 0;
 	uint64_t max_nodes = 0;
+	bool planar = false;
 	uint64_t total_length = 0;  // 1 + num_trees (includes empty tree at index 0)
 
 	// order_index[n] = index in the trees vector where order-n trees start.
@@ -150,14 +151,115 @@ inline void enumerate_admissible_cuts(
 	}
 }
 
+// Enumerate admissible cuts for a planar tree. Same as the non-planar version
+// except the trunk's child ordering is preserved (no sort) to respect planarity.
+inline void enumerate_planar_admissible_cuts(
+	uint64_t tree_idx,
+	const std::vector<DecoratedTreeInfo>& trees,
+	const std::vector<uint64_t>& order_index,
+	const TreeIndexMap& tree_map,
+	const std::vector<std::vector<CutResult>>& memo,
+	std::vector<CutResult>& results
+) {
+	const auto& tree = trees[tree_idx];
+	const auto& children = tree.canonical.child_ids;
+
+	if (children.empty()) return;
+
+	struct ChildOption {
+		const std::vector<uint64_t>* forest_ptr;
+		uint64_t single_forest;
+		int64_t trunk_child;
+		bool is_cut;
+	};
+
+	std::vector<std::vector<ChildOption>> all_child_options;
+	all_child_options.reserve(children.size());
+
+	for (uint64_t child_idx : children) {
+		std::vector<ChildOption> options;
+		options.reserve(2 + memo[child_idx].size());
+		options.push_back({ nullptr, child_idx, -1, true });
+		options.push_back({ nullptr, 0, static_cast<int64_t>(child_idx), false });
+		for (const auto& sub_cut : memo[child_idx]) {
+			options.push_back({ &sub_cut.forest, 0, static_cast<int64_t>(sub_cut.trunk), false });
+		}
+		all_child_options.push_back(std::move(options));
+	}
+
+	uint64_t num_children = children.size();
+	std::vector<uint64_t> indices(num_children, 0);
+
+	std::vector<uint64_t> forest;
+	CanonicalTree trunk_canonical;
+	forest.reserve(num_children);
+	trunk_canonical.child_ids.reserve(num_children);
+
+	while (true) {
+		forest.clear();
+		trunk_canonical.child_ids.clear();
+		bool all_kept_empty = true;
+
+		for (uint64_t c = 0; c < num_children; ++c) {
+			const auto& opt = all_child_options[c][indices[c]];
+			if (opt.is_cut) {
+				forest.push_back(opt.single_forest);
+			} else {
+				if (opt.forest_ptr) {
+					for (uint64_t f : *opt.forest_ptr)
+						forest.push_back(f);
+				}
+				if (opt.trunk_child >= 0)
+					trunk_canonical.child_ids.push_back(static_cast<uint64_t>(opt.trunk_child));
+			}
+			if (indices[c] != 1)
+				all_kept_empty = false;
+		}
+
+		if (!all_kept_empty) {
+			// Planar: do NOT sort trunk_canonical.child_ids (preserve order)
+			trunk_canonical.root_label = tree.canonical.root_label;
+			trunk_canonical.num_nodes = 1;
+			for (uint64_t tc : trunk_canonical.child_ids)
+				trunk_canonical.num_nodes += trees[tc].canonical.num_nodes;
+
+			uint64_t trunk_idx;
+			if (trunk_canonical.num_nodes == 1) {
+				trunk_idx = order_index[1] + trunk_canonical.root_label;
+			}
+			else {
+				auto it = tree_map.find(trunk_canonical);
+				if (it == tree_map.end())
+					throw std::runtime_error("Planar tree not found in enumeration");
+				trunk_idx = it->second;
+			}
+
+			results.push_back(CutResult{ {forest.begin(), forest.end()}, trunk_idx });
+		}
+
+		int64_t pos = static_cast<int64_t>(num_children) - 1;
+		while (pos >= 0) {
+			indices[pos]++;
+			if (indices[pos] < all_child_options[pos].size()) break;
+			indices[pos] = 0;
+			--pos;
+		}
+		if (pos < 0) break;
+	}
+}
+
 // Build a BranchedSigCache from scratch (pure computation, no disk cache or threading).
-inline BranchedSigCache build_branched_sig_cache(uint64_t dimension, uint64_t max_nodes) {
+inline BranchedSigCache build_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool planar = false) {
 	BranchedSigCache cache;
 	cache.dimension = dimension;
 	cache.max_nodes = max_nodes;
+	cache.planar = planar;
 
 	std::vector<DecoratedTreeInfo> trees;
-	enumerate_all_decorated_trees(dimension, max_nodes, trees, cache.order_index);
+	if (planar)
+		enumerate_all_planar_decorated_trees(dimension, max_nodes, trees, cache.order_index);
+	else
+		enumerate_all_decorated_trees(dimension, max_nodes, trees, cache.order_index);
 
 	uint64_t num_trees = trees.size();
 	cache.total_length = 1 + num_trees;
@@ -188,7 +290,10 @@ inline BranchedSigCache build_branched_sig_cache(uint64_t dimension, uint64_t ma
 		uint64_t ostart = cache.order_index[order];
 		uint64_t oend = cache.order_index[order + 1];
 		for (uint64_t i = ostart; i < oend; i += dimension) {
-			enumerate_admissible_cuts(i, trees, cache.order_index, tree_map, all_cuts, all_cuts[i]);
+			if (planar)
+				enumerate_planar_admissible_cuts(i, trees, cache.order_index, tree_map, all_cuts, all_cuts[i]);
+			else
+				enumerate_admissible_cuts(i, trees, cache.order_index, tree_map, all_cuts, all_cuts[i]);
 			for (uint64_t L = 1; L < dimension && i + L < oend; ++L) {
 				auto& dest = all_cuts[i + L];
 				dest.resize(all_cuts[i].size());

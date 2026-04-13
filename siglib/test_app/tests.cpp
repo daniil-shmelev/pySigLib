@@ -815,13 +815,13 @@ void example_batch_branched_sig_d(
 ) {
     print_header("Batch Branched Signature Double");
 
-    prepare_branched_sig(dimension, max_nodes, false);
-    uint64_t out_size = branched_sig_length(dimension, max_nodes) * batch_size;
+    prepare_branched_sig(dimension, max_nodes, false, false);
+    uint64_t out_size = branched_sig_length(dimension, max_nodes, false) * batch_size;
 
     std::vector<double> path = test_data<double>(batch_size * dimension * length);
     std::vector<double> out(out_size, 0.);
 
-    time_function(num_runs, branched_sig_d, path.data(), out.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1.);
+    time_function(num_runs, branched_sig_d, path.data(), out.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1., false);
 
     std::cout << "done\n";
 }

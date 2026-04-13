@@ -18,6 +18,6 @@
 #include "../shared/branched_cache.h"
 #include "words.h"  // for PairHash
 
-void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk = false);
-const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes);
+void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk = false, bool planar = false);
+const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool planar = false);
 void clear_branched_sig_cache();
