@@ -15,7 +15,7 @@
 
 #include "cupch.h"
 #include "cusig.h"
-#include "cu_tensor_poly.h"
+#include "cu_utils.h"
 #include "cu_atomic.h"
 #include "cu_exp_host.h"
 #include <type_traits>

@@ -9,7 +9,7 @@ add_library(cusig SHARED
     cu_sig_coef.cu
     cu_sig_kernel.cu
     cu_signature.cu
-    cu_tensor_poly.cu
+    cu_sig_combine.cu
     cupch.cpp
 )
 

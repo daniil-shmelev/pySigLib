@@ -15,7 +15,7 @@
 
 #pragma once
 #include "cupch.h"
-#include "cu_tensor_poly.h"
+#include "cu_utils.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdint>

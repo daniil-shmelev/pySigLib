@@ -16,10 +16,10 @@
 #include "cupch.h"
 #include "cusig.h"
 #include "cu_signature.h"
-#include "cu_tensor_poly.h"
+#include "cu_sig_combine.h"
 #include "cu_atomic.h"
 
-// linear_signature_device is defined in cu_tensor_poly.h (shared with cu_tensor_poly.cu)
+// linear_signature_device is defined in cu_sig_combine.h
 
 template<typename T>
 __global__ void signature_naive_ker(

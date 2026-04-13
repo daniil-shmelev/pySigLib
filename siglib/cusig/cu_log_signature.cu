@@ -15,7 +15,7 @@
 
 #include "cupch.h"
 #include "cusig.h"
-#include "cu_tensor_poly.h"
+#include "cu_utils.h"
 #include "cu_log_signature.h"
 #include "cu_log_sig_backprop.h"
 #include "cu_log_sig_cache.h"

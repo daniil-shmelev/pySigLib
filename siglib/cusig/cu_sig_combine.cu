@@ -15,7 +15,7 @@
 
 #include "cupch.h"
 #include "cusig.h"
-#include "cu_tensor_poly.h"
+#include "cu_sig_combine.h"
 
 // =========================================================================
 // CUDA sig_combine kernel
