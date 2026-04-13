@@ -120,6 +120,9 @@ def lyndon_words_of_length(
     check_non_neg(alphabet_size, "alphabet_size")
     check_non_neg(length, "length")
 
+    if alphabet_size == 0 or length == 0:
+        return []
+
     res = []
     word = [0]
     while word:

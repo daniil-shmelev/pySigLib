@@ -46,6 +46,7 @@ from ..log_sig_join import log_sig_join as log_sig_join_forward
 from ..log_sig_join_backprop import log_sig_join_backprop
 
 from ..param_checks import check_type, check_word_or_word_list, resolve_scalar_term, prepend_scalar
+from ..sig_kernel import _safe_normalize
 
 class Sig(torch.autograd.Function):
     @staticmethod
@@ -313,6 +314,7 @@ class SigKernel(torch.autograd.Function):
         k_grid = sig_kernel_forward(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, True)
 
         ctx.save_for_backward(k_grid, path1, path2)
+        ctx.batch_shape = path1.shape[:-2]
         ctx.dyadic_order = dyadic_order
         ctx.static_kernel = static_kernel
         ctx.time_aug = time_aug
@@ -331,11 +333,29 @@ class SigKernel(torch.autograd.Function):
         right_deriv = ctx.needs_input_grad[1]
 
         k_grid, path1, path2 = ctx.saved_tensors
-        new_derivs = sig_kernel_backprop(grad_output, path1, path2, ctx.dyadic_order, ctx.static_kernel,
-                                         ctx.time_aug, ctx.lead_lag, ctx.end_time,
-                                         left_deriv, right_deriv, k_grid, ctx.n_jobs, ctx.return_grid)
+        batch_shape = ctx.batch_shape
 
-        return new_derivs[0], new_derivs[1], None, None, None, None, None, None, None
+        # Flatten multi-dim batch to 3D for sig_kernel_backprop
+        if len(batch_shape) > 1:
+            flat_path1 = path1.reshape(-1, path1.shape[-2], path1.shape[-1])
+            flat_path2 = path2.reshape(-1, path2.shape[-2], path2.shape[-1])
+            flat_k_grid = k_grid.reshape(-1, k_grid.shape[-2], k_grid.shape[-1])
+            if ctx.return_grid:
+                flat_grad = grad_output.reshape(-1, grad_output.shape[-2], grad_output.shape[-1])
+            else:
+                flat_grad = grad_output.reshape(-1)
+        else:
+            flat_path1, flat_path2, flat_k_grid, flat_grad = path1, path2, k_grid, grad_output
+
+        new_derivs = sig_kernel_backprop(flat_grad, flat_path1, flat_path2, ctx.dyadic_order, ctx.static_kernel,
+                                         ctx.time_aug, ctx.lead_lag, ctx.end_time,
+                                         left_deriv, right_deriv, flat_k_grid, ctx.n_jobs, ctx.return_grid)
+
+        # Reshape gradients back to original batch shape
+        d0 = new_derivs[0].reshape(path1.shape) if new_derivs[0] is not None else None
+        d1 = new_derivs[1].reshape(path2.shape) if new_derivs[1] is not None else None
+
+        return d0, d1, None, None, None, None, None, None, None
 
 def sig_kernel(
         path1 : Union[np.ndarray, torch.tensor],
@@ -355,7 +375,7 @@ def sig_kernel(
     if normalize:
         k1 = SigKernel.apply(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
         k2 = SigKernel.apply(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
-        k = k / torch.sqrt(torch.clamp(k1 * k2, min=1e-30))
+        k = _safe_normalize(k, k1, k2, "sig_kernel(normalize=True)")
     return k
 
 sig_kernel.__doc__ = sig_kernel_forward.__doc__
@@ -415,7 +435,7 @@ def sig_kernel_gram(
     if normalize:
         d1 = SigKernel.apply(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
         d2 = d1 if path1 is path2 else SigKernel.apply(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
-        gram = gram / torch.sqrt(torch.clamp(d1.unsqueeze(1) * d2.unsqueeze(0), min=1e-30))
+        gram = _safe_normalize(gram, d1.unsqueeze(1), d2.unsqueeze(0), "sig_kernel_gram(normalize=True)")
     return gram
 
 sig_kernel_gram.__doc__ = sig_kernel_gram_forward.__doc__

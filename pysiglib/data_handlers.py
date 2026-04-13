@@ -64,7 +64,15 @@ class SigInputHandler:
         length = self.sig.shape[-1]
 
         if length != sig_len:
-            raise ValueError(param_name + " is of incorrect length. Expected " + str(sig_len) + ", got " + str(length))
+            hint = ""
+            if length == sig_len - 1:
+                hint = (
+                    " (Hint: the input appears to be 1 element short -- was it computed with "
+                    "scalar_term=False? Input signatures must always include the leading scalar "
+                    "term. Use scalar_term=True when computing input signatures, and only use "
+                    "scalar_term=False to control the output format.)"
+                )
+            raise ValueError(param_name + " is of incorrect length. Expected " + str(sig_len) + ", got " + str(length) + hint)
 
         if isinstance(self.sig, np.ndarray):
             self.type_ = "numpy"

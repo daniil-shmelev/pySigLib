@@ -229,6 +229,8 @@ def sig(
     result = SigOutputHandler(data, sig_len)
 
     if data.batch_size == 0:
+        if not scalar_term:
+            return result.data[..., 1:]
         return result.data
 
     if data.device == "cpu":

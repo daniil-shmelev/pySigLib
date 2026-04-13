@@ -36,11 +36,10 @@ from .param_checks import check_type, check_non_neg
 # Public API
 # ---------------------------------------------------------------------------
 
-@cache
 def trees_of_order(
         dimension: int,
         order: int
-) -> list[tuple]:
+) -> tuple[tuple]:
     """
     Returns all decorated rooted trees with exactly ``order`` nodes,
     in canonical ordering.
@@ -49,8 +48,8 @@ def trees_of_order(
     :type dimension: int
     :param order: Exact number of nodes.
     :type order: int
-    :return: List of trees as tuples in kauri convention.
-    :rtype: list[tuple]
+    :return: Tuple of trees as tuples in kauri convention.
+    :rtype: tuple[tuple]
 
     Example:
     ---------
@@ -61,23 +60,27 @@ def trees_of_order(
 
         # All single-node trees over dimension 2
         t = pysiglib.trees_of_order(2, 1)
-        print(t) # [(0,), (1,)]
+        print(t) # ((0,), (1,))
 
     """
     check_type(dimension, "dimension", int)
     check_type(order, "order", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(order, "order")
-    if order == 0:
-        return [None]
-    return [t.sorted_list_repr() for t in kauri.colored_trees_of_order(order, dimension)]
+    return _trees_of_order_cached(dimension, order)
 
 
 @cache
+def _trees_of_order_cached(dimension, order):
+    if order == 0:
+        return (None,)
+    return tuple(t.sorted_list_repr() for t in kauri.colored_trees_of_order(order, dimension))
+
+
 def trees(
         dimension: int,
         degree: int
-) -> list[tuple]:
+) -> tuple[tuple]:
     """
     Returns all decorated rooted trees up to a given degree (max nodes),
     starting with the empty tree (``None``), in canonical ordering.
@@ -87,7 +90,7 @@ def trees(
     :param degree: Maximum number of nodes per tree.
     :type degree: int
     :return: All decorated rooted trees up to the given degree.
-    :rtype: list[tuple]
+    :rtype: tuple[tuple]
 
     Example:
     ---------
@@ -97,17 +100,21 @@ def trees(
         import pysiglib
 
         t = pysiglib.trees(2, 2)
-        print(t) # [None, (0,), (1,), ((0,), 0), ((1,), 0), ((0,), 1), ((1,), 1)]
+        print(t) # (None, (0,), (1,), ((0,), 0), ((1,), 0), ((0,), 1), ((1,), 1))
 
     """
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return [t.sorted_list_repr() for t in kauri.colored_trees(dimension, degree)]
+    return _trees_cached(dimension, degree)
 
 
 @cache
+def _trees_cached(dimension, degree):
+    return tuple(t.sorted_list_repr() for t in kauri.colored_trees(dimension, degree))
+
+
 def tree_to_idx(
         tree,
         dimension: int,
@@ -120,7 +127,7 @@ def tree_to_idx(
 
     Trees use the kauri tuple convention:
 
-    - Empty tree: ``None`` — index 0
+    - Empty tree: ``None`` -- index 0
     - Leaf: ``(label,)`` where ``label`` is in ``[0, dimension)``
     - Internal node: ``(child_1, child_2, ..., root_label)``
 
@@ -154,14 +161,16 @@ def tree_to_idx(
     check_type(degree, "degree", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-
-    if tree is None:
-        return 0
-
-    return kauri.colored_tree_to_idx(kauri.Tree(tree), dimension, degree)
+    return _tree_to_idx_cached(tree, dimension, degree)
 
 
 @cache
+def _tree_to_idx_cached(tree, dimension, degree):
+    if tree is None:
+        return 0
+    return kauri.colored_tree_to_idx(kauri.Tree(tree), dimension, degree)
+
+
 def idx_to_tree(
         idx: int,
         dimension: int,
@@ -197,6 +206,10 @@ def idx_to_tree(
     check_non_neg(idx, "idx")
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
+    return _idx_to_tree_cached(idx, dimension, degree)
 
+
+@cache
+def _idx_to_tree_cached(idx, dimension, degree):
     kt = kauri.idx_to_colored_tree(idx, dimension, degree)
     return kt.sorted_list_repr()

@@ -31,6 +31,29 @@ def _ensure_3d(t):
     if t.ndim > 3:
         return t.reshape(-1, t.shape[-2], t.shape[-1])
     return t
+
+
+_NORMALIZE_WARNING = (
+    "encountered non-positive K(x,x)*K(y,y). "
+    "This indicates the PDE solver has not converged. Increase dyadic_order, "
+    "scale down your paths, or use a bounded static kernel (e.g., RBFKernel). "
+    "Affected entries will be set to NaN."
+)
+
+
+def _safe_normalize(result, k1, k2, func_name, stacklevel=2):
+    """Normalize kernel values by sqrt(K(x,x)*K(y,y)), setting NaN where denom <= 0."""
+    denom = k1 * k2
+    if isinstance(result, np.ndarray):
+        bad = denom <= 0
+        if np.any(bad):
+            warnings.warn(func_name + ": " + _NORMALIZE_WARNING, RuntimeWarning, stacklevel=stacklevel + 1)
+        return np.where(bad, np.nan, result / np.sqrt(np.maximum(denom, 1e-30)))
+    bad = denom <= 0
+    if bad.any():
+        warnings.warn(func_name + ": " + _NORMALIZE_WARNING, RuntimeWarning, stacklevel=stacklevel + 1)
+    safe = torch.sqrt(torch.clamp(denom, min=1e-30))
+    return torch.where(bad, float('nan'), result / safe)
 from .dtypes import CPSIG_SIG_KERNEL, DTYPES, CUSIG_SIG_KERNEL_CUDA
 from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOutputHandler
 from .static_kernels import StaticKernel, LinearKernel, Context
@@ -218,13 +241,9 @@ def sig_kernel(
         )
 
     if normalize:
-        # Paths are already transformed at this point, so pass time_aug=False, lead_lag=False
         k1 = sig_kernel(path1, path1, dyadic_order, static_kernel, n_jobs=n_jobs)
         k2 = sig_kernel(path2, path2, dyadic_order, static_kernel, n_jobs=n_jobs)
-        if isinstance(result.data, np.ndarray):
-            result.data = result.data / np.sqrt(np.maximum(k1 * k2, 1e-30))
-        else:
-            result.data = result.data / torch.sqrt(torch.clamp(k1 * k2, min=1e-30))
+        result.data = _safe_normalize(result.data, k1, k2, "sig_kernel(normalize=True)")
 
     return result.data
 
@@ -427,7 +446,7 @@ def sig_kernel_gram(
     if normalize:
         d1 = sig_kernel(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs)
         d2 = sig_kernel(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs) if not symmetric else d1
-        res = res / torch.sqrt(torch.clamp(d1.unsqueeze(1) * d2.unsqueeze(0), min=1e-30))
+        res = _safe_normalize(res, d1.unsqueeze(1), d2.unsqueeze(0), "sig_kernel_gram(normalize=True)")
 
     if data.type_ == "numpy":
         return res.numpy()

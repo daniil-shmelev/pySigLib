@@ -58,7 +58,7 @@ class TestEmptyTree:
         assert pysiglib.tree_to_idx(None, 2, 3) == 0
 
     def test_trees_of_order_0(self):
-        assert pysiglib.trees_of_order(2, 0) == [None]
+        assert pysiglib.trees_of_order(2, 0) == (None,)
 
 
 class TestSingleNodeTrees:
