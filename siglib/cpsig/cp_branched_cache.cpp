@@ -357,17 +357,6 @@ const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_
 	return *(it->second);
 }
 
-uint64_t branched_sig_length_(uint64_t dimension, uint64_t max_nodes) {
-	std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
-	{
-		std::shared_lock rlock(branched_sig_cache_mu);
-		auto it = branched_sig_cache_map.find(key);
-		if (it != branched_sig_cache_map.end())
-			return it->second->total_length;
-	}
-	return compute_branched_sig_length(dimension, max_nodes);
-}
-
 void clear_branched_sig_cache() {
 	std::unique_lock wlock(branched_sig_cache_mu);
 	branched_sig_cache_map.clear();

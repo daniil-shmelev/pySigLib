@@ -7,7 +7,9 @@ add_library(cpsig SHARED
     cp_sig_coef.cpp
     cp_sig_kernel.cpp
     cp_signature.cpp
-    cp_tensor_poly.cpp
+    cp_utils.cpp
+    cp_sig_combine.cpp
+    cp_sig_join.cpp
     cppch.cpp
     cpsig.cpp
     log_sig_cache.cpp

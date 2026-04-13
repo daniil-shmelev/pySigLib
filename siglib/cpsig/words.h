@@ -15,7 +15,7 @@
 
 #pragma once
 #include "cppch.h"
-#include "cp_sig_utils.h"
+#include "cp_utils.h"
 #include "sparse.h"
 
 typedef std::vector<uint64_t> word;

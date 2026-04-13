@@ -53,7 +53,3 @@ extern std::shared_mutex branched_sig_cache_mu;
 void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk = false);
 const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes);
 void clear_branched_sig_cache();
-
-// Returns the length of a branched signature vector (1 + number of trees).
-// Uses the cache if available, otherwise enumerates trees directly.
-uint64_t branched_sig_length_(uint64_t dimension, uint64_t max_nodes);
