@@ -46,6 +46,7 @@ Homepage = "https://github.com/daniil-shmelev/pySigLib"
 cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["pysiglib"]
+wheel.py-api = "py3"
 sdist.exclude = [
     "tests/",
     "docs/",
@@ -62,6 +63,30 @@ PYSIGLIB_JAX_FFI = {env = "PYSIGLIB_JAX_FFI", default = "ON"}
 PYSIGLIB_CUDA      = {env = "CUSIG", default = "ON"}
 PYSIGLIB_AVX       = {env = "SIGLIB_VEC", default = "ON"}
 PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
+
+# -----------------------------------------------------------------------
+# cibuildwheel configuration (used by .github/workflows/wheels.yml)
+# -----------------------------------------------------------------------
+# Defaults assume CPU-only. Each CI job overrides CIBW_ENVIRONMENT
+# (and CIBW_MANYLINUX_X86_64_IMAGE for the CUDA Linux build) as needed.
+# These settings are only read when cibuildwheel is invoked — a plain
+# `pip install .` uses scikit-build-core directly and ignores this block.
+[tool.cibuildwheel]
+build = "cp311-*"
+skip = "pp* *-musllinux_* *-win32 *i686"
+build-verbosity = 1
+environment = { PYSIGLIB_JAX_FFI = "OFF", SIGLIB_VEC = "ON", CUSIG = "OFF" }
+test-requires = ["pytest"]
+test-command = 'python -c "import pysiglib, pysiglib.torch_api; print(f\"imports OK: pysiglib {pysiglib.__version__}, BUILT_WITH_CUDA={pysiglib.load_siglib.BUILT_WITH_CUDA}, BUILT_WITH_AVX={pysiglib.load_siglib.BUILT_WITH_AVX}\")"'
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux_2_28"
+# CUDA Linux build overrides manylinux-x86_64-image to a custom manylinux+CUDA image;
+# the libcuda/libnvidia excludes are harmless for CPU wheels (nothing to exclude).
+repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*'"
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]
 
 [tool.coverage.run]
 source_pkgs = ["pysiglib"]

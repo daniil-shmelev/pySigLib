@@ -1,0 +1,38 @@
+# Custom manylinux_2_28 image with CUDA 12.4 toolkit for building pysiglib CUDA wheels
+# via cibuildwheel. Extends pypa's standard manylinux_2_28_x86_64 image (AlmaLinux 8 +
+# gcc 12) and drops the NVIDIA CUDA 12.4 toolkit on top.
+#
+# Build locally:
+#   docker build -t pysiglib-manylinux-cuda12:local -f Dockerfile.manylinux-cuda12 .
+#
+# Reference from pyproject.toml:
+#   [tool.cibuildwheel.linux]
+#   manylinux-x86_64-image = "pysiglib-manylinux-cuda12:local"
+#
+# Note: install via the .run file (~4.4 GB) instead of dnf because NVIDIA's
+# rhel8 yum repo metadata is currently inconsistent — repomd.xml references
+# content hashes that 404 from the CDN. The runfile is a single self-contained
+# blob with no metadata indirection.
+
+FROM quay.io/pypa/manylinux_2_28_x86_64
+
+ARG CUDA_VERSION=12.9.1
+ARG CUDA_DRIVER=575.57.08
+ARG CUDA_RUN_URL=https://developer.download.nvidia.com/compute/cuda/${CUDA_VERSION}/local_installers/cuda_${CUDA_VERSION}_${CUDA_DRIVER}_linux.run
+# Note: bumped from 12.4 → 12.9 because manylinux_2_28 base image was updated
+# to gcc 14, and CUDA < 12.8 nvcc doesn't accept gcc 14's libstdc++ headers
+# (rejects __bfloat16_t literal, __is_array intrinsic, __type_pack_element).
+# CUDA 12.8 was the first release to officially support gcc 14 as host compiler.
+
+RUN curl -fL --retry 3 --retry-delay 10 -o /tmp/cuda.run "${CUDA_RUN_URL}" && \
+    sh /tmp/cuda.run --silent --toolkit --override && \
+    rm /tmp/cuda.run && \
+    rm -rf /var/log/cuda-installer.log /tmp/cuda-installer.log /tmp/NVIDIA_CUDA-*
+
+ENV PATH=/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+ENV CUDA_HOME=/usr/local/cuda
+ENV CUDACXX=/usr/local/cuda/bin/nvcc
+
+# Smoke-check that nvcc is on PATH during image build (fails fast if CUDA install broke)
+RUN nvcc --version

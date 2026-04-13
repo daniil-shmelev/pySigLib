@@ -1,0 +1,297 @@
+name: Wheels
+
+# Build pysiglib wheels for all supported platforms (CPU + CUDA on Linux/Windows,
+# CPU-only on macOS), then test each wheel against a fresh install on every
+# target platform + Python version. Does not upload to PyPI — that's a future
+# workflow gated by environment protection rules.
+#
+# Manual trigger only (workflow_dispatch). You can run it from the Actions tab
+# or via: gh workflow run wheels.yml --ref <branch>
+#
+# Cost: most jobs run on GitHub's free runners. The only paid step is
+# test-linux-cuda, which targets `linux_4_core_gpu` at $0.052/min, ~2-4 min
+# per run (~$0.10-0.20 per CI invocation). Set an Actions spending limit at
+# Settings → Billing → Actions → Spending limit before enabling this workflow.
+#
+# Prerequisites before first run:
+#   1. Run `build-docker-image.yml` once to publish the manylinux+CUDA image
+#      to ghcr.io/<owner>/pysiglib-manylinux-cuda12:cuda-12.9.1
+#   2. Enable Actions billing with a spending limit (required for GPU runner)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_gpu_tests:
+        description: 'Run paid GPU test job (linux_4_core_gpu, ~$0.15/run)'
+        type: boolean
+        default: true
+
+env:
+  # CUDA arch list used by Linux+Windows CUDA builds. See wheels_plan.md
+  # "CUDA arch list" section for the rationale (covers every NVIDIA GPU
+  # from Maxwell to Blackwell via explicit SASS + minor-version forward compat).
+  CUDA_ARCH: "50;60;70;75;80;86;89;90;100;120"
+
+jobs:
+  # ============================================================
+  # Linux CPU wheel
+  # ============================================================
+  build-linux-cpu:
+    name: Build Linux CPU wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pypa/cibuildwheel@v2.21
+        env:
+          CIBW_ENVIRONMENT: CUSIG=OFF PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-cpu
+          path: wheelhouse/*.whl
+
+  # ============================================================
+  # Linux CUDA wheel (uses ghcr.io custom manylinux+CUDA image)
+  # ============================================================
+  build-linux-cuda:
+    name: Build Linux CUDA wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute image name
+        id: image
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "name=ghcr.io/${OWNER}/pysiglib-manylinux-cuda12:cuda-12.9.1" >> "$GITHUB_OUTPUT"
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pypa/cibuildwheel@v2.21
+        env:
+          CIBW_MANYLINUX_X86_64_IMAGE: ${{ steps.image.outputs.name }}
+          CIBW_ENVIRONMENT: CUSIG=ON PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON CUDA_ARCH=${{ env.CUDA_ARCH }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-cuda
+          path: wheelhouse/*.whl
+
+  # ============================================================
+  # Windows CPU wheel
+  # ============================================================
+  build-windows-cpu:
+    name: Build Windows CPU wheel
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pypa/cibuildwheel@v2.21
+        env:
+          CIBW_ENVIRONMENT: CUSIG=OFF PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-cpu
+          path: wheelhouse/*.whl
+
+  # ============================================================
+  # Windows CUDA wheel (CUDA installed natively via Jimver action)
+  # ============================================================
+  build-windows-cuda:
+    name: Build Windows CUDA wheel
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.9.1'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cudart_dev", "thrust", "visual_studio_integration"]'
+      - name: Verify nvcc
+        shell: pwsh
+        run: nvcc --version
+      - uses: pypa/cibuildwheel@v2.21
+        env:
+          CIBW_ENVIRONMENT: CUSIG=ON PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON CUDA_ARCH=${{ env.CUDA_ARCH }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-cuda
+          path: wheelhouse/*.whl
+
+  # ============================================================
+  # macOS wheel (CPU-only, both arm64 and x86_64 via cibuildwheel archs config)
+  # ============================================================
+  build-macos:
+    name: Build macOS wheels
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pypa/cibuildwheel@v2.21
+        env:
+          CIBW_ENVIRONMENT: CUSIG=OFF PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos
+          path: wheelhouse/*.whl
+
+  # ============================================================
+  # Test jobs — install the built wheels in a fresh environment and
+  # run the test suite. These validate both "the wheel installs cleanly"
+  # and "the Python code continues to work end-to-end" across the minimum
+  # (3.9) and latest (3.13) Python versions we support.
+  # ============================================================
+
+  test-linux-cpu:
+    name: Test Linux CPU wheel (py${{ matrix.python-version }})
+    needs: build-linux-cpu
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux-cpu
+          path: dist
+      - name: Install wheel + test deps
+        run: |
+          pip install --upgrade pip
+          pip install dist/*.whl
+          pip install pytest
+      # CUDA-marked tests auto-skip via conftest.py skip_no_cuda marker
+      # when BUILT_WITH_CUDA is False (which is the case for the CPU wheel).
+      - name: Run test suite
+        run: pytest tests/ -v
+
+  test-linux-cuda:
+    name: Test Linux CUDA wheel (GPU)
+    needs: build-linux-cuda
+    if: ${{ github.event.inputs.run_gpu_tests == 'true' }}
+    # PAID RUNNER — $0.052/minute, only step that costs money.
+    # Expected runtime: 2-4 minutes per run (~$0.10-0.20).
+    #
+    # timeout-minutes caps total job duration at 15 minutes, so an
+    # infinite loop / hang / stuck download cannot run forever. At
+    # $0.052/min that caps the worst-case cost per run at ~$0.78.
+    # Individual steps have tighter timeouts inside that budget.
+    # The repo-level spending limit (Settings → Billing) is the
+    # ultimate safety net regardless of per-job timeouts.
+    runs-on: linux_4_core_gpu
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+        timeout-minutes: 3
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux-cuda
+          path: dist
+        timeout-minutes: 2
+      - name: Install wheel + test deps
+        timeout-minutes: 5
+        run: |
+          python -m pip install --upgrade pip
+          pip install dist/*.whl
+          pip install pytest pytest-timeout
+      - name: Verify GPU and CUDA availability
+        timeout-minutes: 1
+        run: |
+          nvidia-smi
+          python -c "import torch; print('torch.cuda.is_available():', torch.cuda.is_available()); print('device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
+          python -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
+      - name: Run full test suite (including CUDA tests)
+        # pytest-timeout kills individual tests that run longer than 60s, so
+        # a single hung test can't consume the rest of the job budget.
+        timeout-minutes: 8
+        run: pytest tests/ -v --timeout=60
+
+  test-windows-cpu:
+    name: Test Windows CPU wheel (py${{ matrix.python-version }})
+    needs: build-windows-cpu
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-windows-cpu
+          path: dist
+      - name: Install wheel + test deps
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          Get-ChildItem dist\*.whl | ForEach-Object { pip install $_.FullName }
+          pip install pytest
+      - name: Run CPU test suite
+        shell: pwsh
+        run: pytest tests/ -v
+
+  test-macos:
+    name: Test macOS wheel (py${{ matrix.python-version }})
+    needs: build-macos
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-macos
+          path: dist
+      - name: Install wheel + test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install dist/*.whl
+          pip install pytest
+      - name: Run CPU test suite
+        run: pytest tests/ -v
+
+  # ============================================================
+  # Aggregate all built wheels into one downloadable artifact
+  # ============================================================
+  collect-wheels:
+    name: Collect all wheels
+    needs:
+      - build-linux-cpu
+      - build-linux-cuda
+      - build-windows-cpu
+      - build-windows-cuda
+      - build-macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: List collected wheels
+        run: |
+          ls -la dist/
+          echo ""
+          for f in dist/*.whl; do
+            size=$(du -h "$f" | cut -f1)
+            echo "$size  $(basename "$f")"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: all-wheels
+          path: dist/*.whl
