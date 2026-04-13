@@ -40,6 +40,7 @@
 #include <filesystem>
 #include <mutex>
 #include <shared_mutex>
+#include "../shared/errors.h"
 
 // =========================================================================
 // Shared CUDA error-checking helpers

@@ -184,10 +184,10 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 	std::vector<uint32_t> coprod_offsets32(coprod_offsets_len);
 	std::vector<uint32_t> labels_offsets32(labels_offsets_len);
 	std::vector<uint32_t> order_index32(order_index_len);
-	safe_narrow(h_coprod_data, coprod_data32.data(), coprod_data_len);
-	safe_narrow(h_coprod_offsets, coprod_offsets32.data(), coprod_offsets_len);
-	safe_narrow(h_labels_offsets, labels_offsets32.data(), labels_offsets_len);
-	safe_narrow(h_order_index, order_index32.data(), order_index_len);
+	safe_narrow(h_coprod_data.data(), coprod_data32.data(), coprod_data_len);
+	safe_narrow(h_coprod_offsets.data(), coprod_offsets32.data(), coprod_offsets_len);
+	safe_narrow(h_labels_offsets.data(), labels_offsets32.data(), labels_offsets_len);
+	safe_narrow(h_order_index.data(), order_index32.data(), order_index_len);
 
 	std::vector<float> inv_factorial_f32(num_trees);
 	for (size_t i = 0; i < num_trees; ++i) inv_factorial_f32[i] = static_cast<float>(h_inv_factorial[i]);
