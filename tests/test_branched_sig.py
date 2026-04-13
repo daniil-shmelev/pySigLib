@@ -20,6 +20,8 @@ import itertools
 
 import kauri
 import kauri.bck
+import kauri.mkw
+import kauri.mkw
 
 import pysiglib
 from conftest import DEVICES, check_close, skip_no_cuda
@@ -762,3 +764,624 @@ def test_branched_sig_combine_torch_api_cuda(d=2, N=3):
     pysiglib.torch_api.branched_sig_combine(b1_cpu, b2_cpu, d, N).sum().backward()
     check_close(b1_cpu.grad, bsig1.grad, double_atol=1e-10)
     check_close(b2_cpu.grad, bsig2.grad, double_atol=1e-10)
+
+
+# ===========================================================================
+# Planar branched signature tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Helpers: kauri MKW-based reference implementation for planar branched sigs
+# ---------------------------------------------------------------------------
+
+def enumerate_decorated_planar_trees(d, N):
+    """Enumerate all decorated planar trees up to order N with d labels."""
+    all_trees = []
+    for order in range(1, N + 1):
+        for t in kauri.colored_planar_trees_of_order(order, d):
+            all_trees.append(t)
+    return all_trees
+
+
+def linear_planar_branched_sig_ref(z, trees):
+    """Reference linear planar branched sig: X(tau) = prod z[dec(v)] / gamma(tau)."""
+    coeffs = {}
+    for t in trees:
+        # PlanarTree.sorted_list_repr() returns self.list_repr (ordered, not sorted)
+        # so _extract_decs works identically: slr[-1] is root color, slr[:-1] are children
+        decs = []
+        _extract_decs(t.sorted_list_repr(), decs)
+        gamma = t.factorial()
+        num = 1.0
+        for dec in decs:
+            num *= z[dec]
+        coeffs[t.sorted_list_repr()] = num / gamma
+    return coeffs
+
+
+def planar_branched_sig_reference(path, d, N):
+    """Compute planar branched sig using kauri.mkw.map_product as ground truth.
+
+    kauri.mkw.map_product uses the NCK coproduct on PlanarTree objects, which
+    computes the correct convolution product for scalar-valued MKW characters
+    (shuffle coefficients cancel with the 1/k! factors).
+    """
+    trees = enumerate_decorated_planar_trees(d, N)
+
+    X = kauri.Map(lambda t: 1.0 if t.nodes() == 0 else 0.0)
+
+    for n in range(len(path) - 1):
+        z = path[n + 1] - path[n]
+        coeffs = linear_planar_branched_sig_ref(z, trees)
+
+        def make_char(c):
+            def char_func(t):
+                if t.nodes() == 0:
+                    return 1.0
+                return c.get(t.sorted_list_repr(), 0.0)
+            return char_func
+
+        Y = kauri.Map(make_char(coeffs))
+        X = kauri.mkw.map_product(X, Y)
+
+    return np.array([X(t) for t in trees])
+
+
+def compute_kauri_to_pysiglib_planar_permutation(d, N):
+    """Find permutation mapping kauri planar tree order to pysiglib planar tree order.
+
+    Uses a multi-segment path with irrational increments to break all symmetries.
+    """
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    trees = enumerate_decorated_planar_trees(d, N)
+    num_trees = len(trees)
+
+    path = np.zeros((3, d))
+    for i in range(d):
+        path[1, i] = np.pi * (i + 1) + np.e * (i + 1)**2
+        path[2, i] = path[1, i] + np.sqrt(2) * (i + 1) + np.log(i + 2)
+
+    pysig_bsig = np.array(pysiglib.branched_sig(path, N, planar=True), dtype=np.float64)
+    pysig_coeffs = pysig_bsig[1:]
+    kauri_arr = planar_branched_sig_reference(path, d, N)
+
+    perm = np.zeros(num_trees, dtype=int)
+    used = set()
+    for ki in range(num_trees):
+        best_idx = -1
+        best_diff = float('inf')
+        for pi in range(num_trees):
+            if pi in used:
+                continue
+            diff = abs(kauri_arr[ki] - pysig_coeffs[pi])
+            if diff < best_diff:
+                best_diff = diff
+                best_idx = pi
+        assert best_diff < 1e-8, f"No match for planar kauri tree {ki}: best_diff={best_diff}"
+        perm[ki] = best_idx
+        used.add(best_idx)
+
+    return perm
+
+
+def reorder_kauri_to_pysiglib_planar(kauri_arr, perm):
+    """Reorder a kauri-ordered planar array to match pysiglib ordering."""
+    result = np.empty_like(kauri_arr)
+    for ki in range(len(perm)):
+        result[perm[ki]] = kauri_arr[ki]
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Planar length tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("d,N,expected", [
+    (1, 1, 2),    # 1 + 1
+    (1, 2, 3),    # 2 + 1
+    (1, 3, 5),    # 3 + 2  (same as non-planar for d=1)
+    (2, 1, 3),    # 1 + 2
+    (2, 2, 7),    # 3 + 4  (same as non-planar: single child ⇒ no ordering difference)
+    (2, 3, 23),   # 7 + 16 (non-planar: 21; +2 from (•₀,•₁) vs (•₁,•₀) orderings)
+    (3, 1, 4),    # 1 + 3
+    (3, 2, 13),   # 4 + 9
+])
+def test_planar_branched_sig_length(d, N, expected):
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    assert pysiglib.branched_sig_length(d, N, planar=True) == expected
+
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_planar_branched_sig_length_vs_kauri(d, N):
+    # colored_planar_trees_up_to_order includes the empty tree (order 0),
+    # which corresponds to the scalar term — so the count equals pysiglib's length directly.
+    expected = len(list(kauri.colored_planar_trees_up_to_order(N, d)))
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    assert pysiglib.branched_sig_length(d, N, planar=True) == expected
+
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 3), (2, 4)])
+def test_planar_branched_sig_length_geq_nonplanar(d, N):
+    """Planar length is at least non-planar length (more trees due to ordering)."""
+    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    assert pysiglib.branched_sig_length(d, N, planar=True) >= pysiglib.branched_sig_length(d, N)
+
+
+# ---------------------------------------------------------------------------
+# Planar correctness tests
+# ---------------------------------------------------------------------------
+
+def test_planar_branched_sig_trivial_path():
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    path = np.array([[1.0, 2.0], [1.0, 2.0]])
+    bsig = pysiglib.branched_sig(path, N, planar=True)
+    assert bsig[0] == pytest.approx(1.0)
+    assert np.allclose(bsig[1:], 0.0, atol=1e-14)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_planar_branched_sig_single_segment(d, N):
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    perm = compute_kauri_to_pysiglib_planar_permutation(d, N)
+
+    np.random.seed(1000)
+    z = np.random.randn(d)
+    path = np.zeros((2, d))
+    path[1] = z
+
+    bsig = pysiglib.branched_sig(path, N, planar=True)
+
+    trees = enumerate_decorated_planar_trees(d, N)
+    ref_coeffs = linear_planar_branched_sig_ref(z, trees)
+    ref = np.array([ref_coeffs[t.sorted_list_repr()] for t in trees])
+    ref_reordered = reorder_kauri_to_pysiglib_planar(ref, perm)
+
+    assert bsig[0] == pytest.approx(1.0)
+    np.testing.assert_allclose(bsig[1:], ref_reordered, atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2), (2, 4)])
+def test_planar_branched_sig_vs_kauri(d, N):
+    """Primary correctness test: compare against kauri MKW map product."""
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    perm = compute_kauri_to_pysiglib_planar_permutation(d, N)
+
+    np.random.seed(1001)
+    L = 10
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig = pysiglib.branched_sig(path, N, planar=True)
+    ref = planar_branched_sig_reference(path, d, N)
+    ref_reordered = reorder_kauri_to_pysiglib_planar(ref, perm)
+
+    assert bsig[0] == pytest.approx(1.0)
+    np.testing.assert_allclose(bsig[1:], ref_reordered, atol=1e-10)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_concatenation(d, N):
+    """Chen's identity: bsig(X*Y) == branched_sig_combine(bsig(X), bsig(Y))."""
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1002)
+    L1, L2 = 5, 6
+    path1 = np.cumsum(np.random.randn(L1, d) * 0.1, axis=0)
+    path2_increments = np.random.randn(L2 - 1, d) * 0.1
+    path2 = np.vstack([path1[-1:], path1[-1] + np.cumsum(path2_increments, axis=0)])
+
+    bsig1 = pysiglib.branched_sig(path1, N, planar=True)
+    bsig2 = pysiglib.branched_sig(path2, N, planar=True)
+    combined = pysiglib.branched_sig_combine(bsig1, bsig2, d, N, planar=True)
+
+    full_path = np.vstack([path1, path2[1:]])
+    bsig_full = pysiglib.branched_sig(full_path, N, planar=True)
+
+    np.testing.assert_allclose(combined, bsig_full, atol=1e-10)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_planar_branched_sig_batch(d, N):
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1003)
+    B, L = 5, 8
+    paths = np.random.randn(B, L, d)
+
+    batch_result = pysiglib.branched_sig(paths, N, planar=True)
+    for i in range(B):
+        single = pysiglib.branched_sig(paths[i], N, planar=True)
+        np.testing.assert_allclose(batch_result[i], single, atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_batch_parallel(d, N):
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1004)
+    B, L = 10, 8
+    paths = np.random.randn(B, L, d)
+
+    serial = pysiglib.branched_sig(paths, N, n_jobs=1, planar=True)
+    parallel = pysiglib.branched_sig(paths, N, n_jobs=-1, planar=True)
+    np.testing.assert_allclose(serial, parallel, atol=1e-14)
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+def test_planar_branched_sig_dtypes(dtype):
+    d, N = 2, 2
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    path = np.random.randn(5, d).astype(dtype)
+    bsig = pysiglib.branched_sig(path, N, planar=True)
+    assert bsig[0] == pytest.approx(1.0, abs=1e-5)
+    assert len(bsig) == pysiglib.branched_sig_length(d, N, planar=True)
+
+
+def test_planar_branched_sig_degree_1_matches_standard():
+    """At degree 1, planar branched sig == standard sig level 1 (same as non-planar)."""
+    d = 3
+    pysiglib.prepare_branched_sig(d, 1, planar=True)
+    np.random.seed(1005)
+    path = np.cumsum(np.random.randn(20, d) * 0.1, axis=0)
+
+    bsig = pysiglib.branched_sig(path, 1, planar=True)
+    total_incr = path[-1] - path[0]
+    np.testing.assert_allclose(bsig[0], 1.0, atol=1e-14)
+    np.testing.assert_allclose(bsig[1:], total_incr, atol=1e-12)
+
+
+def test_planar_branched_sig_degree_1_matches_nonplanar():
+    """At degree 1, planar and non-planar branched sigs are identical."""
+    d, N = 3, 1
+    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1006)
+    path = np.cumsum(np.random.randn(15, d) * 0.1, axis=0)
+
+    bsig_np = pysiglib.branched_sig(path, N)
+    bsig_pl = pysiglib.branched_sig(path, N, planar=True)
+    np.testing.assert_allclose(bsig_pl, bsig_np, atol=1e-14)
+
+
+# ---------------------------------------------------------------------------
+# Planar time_aug and lead_lag tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_planar_branched_sig_time_aug_matches_manual(d, N):
+    aug_dim = d + 1
+    pysiglib.prepare_branched_sig(aug_dim, N, planar=True)
+    np.random.seed(1100)
+    L = 10
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig_flag = pysiglib.branched_sig(path, N, time_aug=True, planar=True)
+
+    t = np.linspace(0, 1, L)[:, np.newaxis]
+    path_aug = np.concatenate([path, t], axis=1)
+    bsig_manual = pysiglib.branched_sig(path_aug, N, planar=True)
+
+    np.testing.assert_allclose(bsig_flag, bsig_manual, atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_lead_lag_matches_manual(d, N):
+    aug_dim = 2 * d
+    pysiglib.prepare_branched_sig(aug_dim, N, planar=True)
+    np.random.seed(1101)
+    L = 8
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig_flag = pysiglib.branched_sig(path, N, lead_lag=True, planar=True)
+
+    path_ll = np.array(pysiglib.transform_path(path, lead_lag=True))
+    bsig_manual = pysiglib.branched_sig(path_ll, N, planar=True)
+
+    np.testing.assert_allclose(bsig_flag, bsig_manual, atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_time_aug_lead_lag_matches_manual(d, N):
+    aug_dim = 2 * d + 1
+    pysiglib.prepare_branched_sig(aug_dim, N, planar=True)
+    np.random.seed(1102)
+    L = 8
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig_flag = pysiglib.branched_sig(path, N, time_aug=True, lead_lag=True, planar=True)
+
+    path_t = np.array(pysiglib.transform_path(path, time_aug=True, lead_lag=True))
+    bsig_manual = pysiglib.branched_sig(path_t, N, planar=True)
+
+    np.testing.assert_allclose(bsig_flag, bsig_manual, atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_time_aug_batch(d, N):
+    aug_dim = d + 1
+    pysiglib.prepare_branched_sig(aug_dim, N, planar=True)
+    np.random.seed(1103)
+    B, L = 4, 10
+    paths = np.random.randn(B, L, d)
+
+    batch_result = pysiglib.branched_sig(paths, N, time_aug=True, planar=True)
+    for i in range(B):
+        single = pysiglib.branched_sig(paths[i], N, time_aug=True, planar=True)
+        np.testing.assert_allclose(batch_result[i], single, atol=1e-12)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_lead_lag_concatenation(d, N):
+    """Chen's identity should hold with lead_lag enabled for planar sigs."""
+    aug_dim = 2 * d
+    pysiglib.prepare_branched_sig(aug_dim, N, planar=True)
+    np.random.seed(1104)
+    L1, L2 = 5, 6
+    path1 = np.cumsum(np.random.randn(L1, d) * 0.1, axis=0)
+    path2_inc = np.random.randn(L2 - 1, d) * 0.1
+    path2 = np.vstack([path1[-1:], path1[-1] + np.cumsum(path2_inc, axis=0)])
+
+    bsig1 = pysiglib.branched_sig(path1, N, lead_lag=True, planar=True)
+    bsig2 = pysiglib.branched_sig(path2, N, lead_lag=True, planar=True)
+    combined = pysiglib.branched_sig_combine(bsig1, bsig2, aug_dim, N, planar=True)
+
+    full_path = np.vstack([path1, path2[1:]])
+    bsig_full = pysiglib.branched_sig(full_path, N, lead_lag=True, planar=True)
+
+    np.testing.assert_allclose(combined, bsig_full, atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Planar CUDA tests
+# ---------------------------------------------------------------------------
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2), (2, 4)])
+def test_planar_branched_sig_cuda_matches_cpu(d, N):
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1200)
+    path = np.cumsum(np.random.randn(10, d) * 0.1, axis=0)
+    path_t = torch.tensor(path)
+
+    cpu = pysiglib.branched_sig(path_t, N, planar=True)
+    cuda = pysiglib.branched_sig(path_t.cuda(), N, planar=True)
+    check_close(cpu, cuda, double_atol=1e-12)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_planar_branched_sig_cuda_batch(d, N):
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1201)
+    B, L = 8, 12
+    paths = torch.tensor(np.random.randn(B, L, d)).cuda()
+
+    batch_result = pysiglib.branched_sig(paths, N, planar=True)
+    for i in range(B):
+        single = pysiglib.branched_sig(paths[i], N, planar=True)
+        check_close(batch_result[i], single, double_atol=1e-12)
+
+
+@skip_no_cuda
+def test_planar_branched_sig_cuda_trivial():
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    path = torch.tensor([[1.0, 2.0], [1.0, 2.0]], dtype=torch.float64).cuda()
+    bsig = pysiglib.branched_sig(path, N, planar=True)
+    assert float(bsig[0].cpu()) == pytest.approx(1.0)
+    assert torch.allclose(bsig[1:], torch.zeros(bsig.shape[0] - 1, device="cuda", dtype=torch.float64), atol=1e-14)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_cuda_time_aug(d, N):
+    aug_dim = d + 1
+    pysiglib.prepare_branched_sig(aug_dim, N, planar=True)
+    np.random.seed(1202)
+    path = torch.tensor(np.cumsum(np.random.randn(10, d) * 0.1, axis=0))
+
+    cpu = pysiglib.branched_sig(path, N, time_aug=True, planar=True)
+    cuda = pysiglib.branched_sig(path.cuda(), N, time_aug=True, planar=True)
+    check_close(cpu, cuda, double_atol=1e-12)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_cuda_lead_lag(d, N):
+    aug_dim = 2 * d
+    pysiglib.prepare_branched_sig(aug_dim, N, planar=True)
+    np.random.seed(1203)
+    path = torch.tensor(np.cumsum(np.random.randn(8, d) * 0.1, axis=0))
+
+    cpu = pysiglib.branched_sig(path, N, lead_lag=True, planar=True)
+    cuda = pysiglib.branched_sig(path.cuda(), N, lead_lag=True, planar=True)
+    check_close(cpu, cuda, double_atol=1e-12)
+
+
+@skip_no_cuda
+def test_planar_branched_sig_cuda_float32():
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1204)
+    path = torch.tensor(np.random.randn(8, d).astype(np.float32)).cuda()
+
+    cuda = pysiglib.branched_sig(path, N, planar=True)
+    cpu = pysiglib.branched_sig(path.cpu(), N, planar=True)
+    check_close(cpu, cuda, single_atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Planar backpropagation tests
+# ---------------------------------------------------------------------------
+
+def _finite_diff_planar_branched_sig(path_np, d, N, eps=1e-8):
+    """dF/dpath via finite differences where F = sum(planar_branched_sig)."""
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    grad = np.zeros_like(path_np)
+    f0 = np.array(pysiglib.branched_sig(path_np, N, planar=True)).sum()
+    for i in range(path_np.shape[0]):
+        for j in range(path_np.shape[1]):
+            path_p = path_np.copy()
+            path_p[i, j] += eps
+            f1 = np.array(pysiglib.branched_sig(path_p, N, planar=True)).sum()
+            grad[i, j] = (f1 - f0) / eps
+    return grad
+
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_planar_branched_sig_backprop_finite_diff(d, N):
+    """Planar backprop matches finite differences with F = sum(bsig)."""
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1300)
+    L = 5
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig = pysiglib.branched_sig(path, N, planar=True)
+    derivs = np.ones(len(bsig))
+
+    grad_bp = np.array(pysiglib.branched_sig_backprop(path, bsig, derivs, N, planar=True))
+    grad_fd = _finite_diff_planar_branched_sig(path, d, N)
+
+    np.testing.assert_allclose(grad_bp, grad_fd, atol=1e-4)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_backprop_random_derivs(d, N):
+    """Planar backprop with random upstream derivatives matches finite differences."""
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1301)
+    L = 5
+    path = np.cumsum(np.random.randn(L, d) * 0.1, axis=0)
+
+    bsig = pysiglib.branched_sig(path, N, planar=True)
+    derivs = np.random.randn(len(bsig))
+
+    grad_bp = np.array(pysiglib.branched_sig_backprop(path, bsig, derivs, N, planar=True))
+
+    eps = 1e-8
+    grad_fd = np.zeros_like(path)
+    for i in range(path.shape[0]):
+        for j in range(path.shape[1]):
+            path_p = path.copy()
+            path_p[i, j] += eps
+            bsig_p = np.array(pysiglib.branched_sig(path_p, N, planar=True))
+            grad_fd[i, j] = np.dot(derivs, bsig_p - np.array(bsig)) / eps
+
+    np.testing.assert_allclose(grad_bp, grad_fd, atol=1e-4)
+
+
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_backprop_batch(d, N):
+    """Batched planar backprop matches single-path backprop."""
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1302)
+    B, L = 4, 6
+    paths = np.random.randn(B, L, d)
+
+    bsigs = pysiglib.branched_sig(paths, N, planar=True)
+    derivs = np.random.randn(B, bsigs.shape[1])
+
+    batch_grad = np.array(pysiglib.branched_sig_backprop(paths, bsigs, derivs, N, planar=True))
+    for i in range(B):
+        single_grad = np.array(pysiglib.branched_sig_backprop(
+            paths[i], bsigs[i], derivs[i], N, planar=True))
+        np.testing.assert_allclose(batch_grad[i], single_grad, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Planar CUDA backprop tests
+# ---------------------------------------------------------------------------
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_planar_branched_sig_backprop_cuda_matches_cpu(d, N):
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1400)
+    path = torch.tensor(np.cumsum(np.random.randn(8, d) * 0.1, axis=0), dtype=torch.float64)
+    bsig = pysiglib.branched_sig(path, N, planar=True)
+    derivs = torch.rand(bsig.shape, dtype=torch.float64)
+
+    cpu_grad = pysiglib.branched_sig_backprop(path, bsig, derivs, N, planar=True)
+    cuda_grad = pysiglib.branched_sig_backprop(path.cuda(), bsig.cuda(), derivs.cuda(), N, planar=True)
+    check_close(cpu_grad, cuda_grad, double_atol=1e-10)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_backprop_cuda_batch(d, N):
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1401)
+    B, L = 4, 6
+    paths = torch.tensor(np.random.randn(B, L, d), dtype=torch.float64, device='cuda')
+    bsigs = pysiglib.branched_sig(paths, N, planar=True)
+    derivs = torch.rand(bsigs.shape, dtype=torch.float64, device='cuda')
+
+    batch_grad = pysiglib.branched_sig_backprop(paths, bsigs, derivs, N, planar=True)
+    for i in range(B):
+        single_grad = pysiglib.branched_sig_backprop(paths[i], bsigs[i], derivs[i], N, planar=True)
+        check_close(batch_grad[i], single_grad, double_atol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Planar combine backprop tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+def test_planar_branched_sig_combine_backprop_finite_diff(d, N):
+    """Planar combine backprop matches finite differences."""
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1500)
+    bsig_len = pysiglib.branched_sig_length(d, N, planar=True)
+    bsig1 = np.random.randn(bsig_len)
+    bsig2 = np.random.randn(bsig_len)
+    derivs = np.random.randn(bsig_len)
+
+    d1, d2 = pysiglib.branched_sig_combine_backprop(derivs, bsig1, bsig2, d, N, planar=True)
+
+    eps = 1e-8
+    fd1 = np.zeros(bsig_len)
+    for i in range(bsig_len):
+        b1p = bsig1.copy()
+        b1p[i] += eps
+        cp = np.array(pysiglib.branched_sig_combine(b1p, bsig2, d, N, planar=True))
+        cm = np.array(pysiglib.branched_sig_combine(bsig1, bsig2, d, N, planar=True))
+        fd1[i] = np.dot(derivs, (cp - cm)) / eps
+    np.testing.assert_allclose(d1, fd1, atol=1e-4)
+
+    fd2 = np.zeros(bsig_len)
+    for i in range(bsig_len):
+        b2p = bsig2.copy()
+        b2p[i] += eps
+        cp = np.array(pysiglib.branched_sig_combine(bsig1, b2p, d, N, planar=True))
+        cm = np.array(pysiglib.branched_sig_combine(bsig1, bsig2, d, N, planar=True))
+        fd2[i] = np.dot(derivs, (cp - cm)) / eps
+    np.testing.assert_allclose(d2, fd2, atol=1e-4)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_combine_cuda_matches_cpu(d, N):
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1501)
+    bsig_len = pysiglib.branched_sig_length(d, N, planar=True)
+    bsig1 = torch.tensor(np.random.randn(bsig_len), dtype=torch.float64)
+    bsig2 = torch.tensor(np.random.randn(bsig_len), dtype=torch.float64)
+
+    cpu = pysiglib.branched_sig_combine(bsig1, bsig2, d, N, planar=True)
+    cuda = pysiglib.branched_sig_combine(bsig1.cuda(), bsig2.cuda(), d, N, planar=True)
+    check_close(cpu, cuda, double_atol=1e-12)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("d,N", [(2, 3)])
+def test_planar_branched_sig_combine_backprop_cuda_matches_cpu(d, N):
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(1502)
+    bsig_len = pysiglib.branched_sig_length(d, N, planar=True)
+    bsig1 = torch.tensor(np.random.randn(bsig_len), dtype=torch.float64)
+    bsig2 = torch.tensor(np.random.randn(bsig_len), dtype=torch.float64)
+    derivs = torch.tensor(np.random.randn(bsig_len), dtype=torch.float64)
+
+    d1_cpu, d2_cpu = pysiglib.branched_sig_combine_backprop(derivs, bsig1, bsig2, d, N, planar=True)
+    d1_cuda, d2_cuda = pysiglib.branched_sig_combine_backprop(
+        derivs.cuda(), bsig1.cuda(), bsig2.cuda(), d, N, planar=True)
+    check_close(d1_cpu, d1_cuda, double_atol=1e-10)
+    check_close(d2_cpu, d2_cuda, double_atol=1e-10)
