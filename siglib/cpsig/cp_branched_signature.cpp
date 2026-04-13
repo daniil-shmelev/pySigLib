@@ -20,6 +20,19 @@
 
 extern "C" {
 
+	CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk) noexcept {
+		SAFE_CALL(prepare_branched_sig_cache(dimension, max_nodes, use_disk));
+	}
+
+	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes) noexcept {
+		try {
+			return branched_sig_length_(dimension, max_nodes);
+		}
+		catch (...) {
+			return 0;
+		}
+	}
+
 	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time) noexcept {
 		SAFE_CALL(branched_signature_<float>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time));
 	}

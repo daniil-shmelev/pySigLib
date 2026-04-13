@@ -154,9 +154,11 @@ static void enumerate_admissible_cuts(
 // Disk cache serialization
 // ---------------------------------------------------------------------------
 
+static constexpr const char* branched_cache_version = "v1";
+
 static std::filesystem::path branched_cache_file_path(uint64_t dimension, uint64_t max_nodes) {
 	return cache_dir / cache_folder_name /
-		("branched_" + std::to_string(dimension) + "_" + std::to_string(max_nodes) + "_v1.bin");
+		("branched_" + std::to_string(dimension) + "_" + std::to_string(max_nodes) + "_" + branched_cache_version + ".bin");
 }
 
 static void write_branched_cache(const BranchedSigCache& c) {
@@ -376,19 +378,6 @@ void clear_branched_sig_cache() {
 // ---------------------------------------------------------------------------
 
 extern "C" {
-
-	CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk) noexcept {
-		SAFE_CALL(prepare_branched_sig_cache(dimension, max_nodes, use_disk));
-	}
-
-	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes) noexcept {
-		try {
-			return branched_sig_length_(dimension, max_nodes);
-		}
-		catch (...) {
-			return 0;
-		}
-	}
 
 	// Returns the cache arrays' sizes so cusig can allocate before calling
 	// get_branched_cache_data.  Returns 0 on success, 1 on error.
