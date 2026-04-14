@@ -1035,6 +1035,8 @@ def branched_sig(
 
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
+    if tree_order != "recursive" and planar:
+        raise ValueError("tree_order has no effect for planar branched signatures")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
@@ -1096,6 +1098,8 @@ def branched_sig_combine(
 
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
+    if tree_order != "recursive" and planar:
+        raise ValueError("tree_order has no effect for planar branched signatures")
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)

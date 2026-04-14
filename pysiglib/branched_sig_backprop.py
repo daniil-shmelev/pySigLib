@@ -64,6 +64,8 @@ def branched_sig_backprop(
 
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
+    if tree_order != "recursive" and planar:
+        raise ValueError("tree_order has no effect for planar branched signatures")
     check_type(degree, "degree", int)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
@@ -138,6 +140,8 @@ def branched_sig_combine_backprop(
 
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
+    if tree_order != "recursive" and planar:
+        raise ValueError("tree_order has no effect for planar branched signatures")
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_type(planar, "planar", bool)
