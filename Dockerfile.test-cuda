@@ -25,7 +25,11 @@ RUN apt-get update -qq && \
 
 # Pin nothing here — torch tracks whatever CUDA runtime the base image ships.
 # Rebuild the image whenever you need to bump the torch version.
-RUN python3 -m pip install --no-cache-dir --break-system-packages \
+#
+# Ubuntu 22.04's system pip (22.0.2) predates PEP 668 and does not recognize
+# --break-system-packages; installing system-wide just works. If the base
+# image bumps to ubuntu24.04 or newer, the flag will need adding back.
+RUN python3 -m pip install --no-cache-dir \
         numpy \
         pytest \
         pytest-timeout \

@@ -255,7 +255,7 @@ jobs:
         run: |
           $scriptBody = @'
           set -e
-          python3 -m pip install --quiet --break-system-packages /workspace/dist/*.whl
+          python3 -m pip install --quiet /workspace/dist/*.whl
           nvidia-smi
           python3 -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
           python3 -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
