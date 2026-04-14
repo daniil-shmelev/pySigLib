@@ -45,7 +45,17 @@ if(_enable_vec)
         # Apple Silicon, so -ftree-vectorize alone is sufficient.
         target_compile_options(cpsig PRIVATE -ftree-vectorize)
     else()
-        target_compile_options(cpsig PRIVATE -march=native -ftree-vectorize)
+        # Under cibuildwheel (CI wheel builds), target the portable AVX2
+        # baseline (x86-64-v3 = Haswell 2013+). -march=native would emit
+        # AVX-512 whenever the build runner happens to have it, then crash
+        # end users with SIGILL on CPUs that don't. For source installs,
+        # -march=native still applies so local developers get maximum perf
+        # on their own hardware.
+        if(DEFINED ENV{CIBUILDWHEEL})
+            target_compile_options(cpsig PRIVATE -march=x86-64-v3 -ftree-vectorize)
+        else()
+            target_compile_options(cpsig PRIVATE -march=native -ftree-vectorize)
+        endif()
         # -fopt-info-vec-missed is GCC-only; Clang uses -Rpass-missed=loop-vectorize
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             target_compile_options(cpsig PRIVATE -fopt-info-vec-missed)
