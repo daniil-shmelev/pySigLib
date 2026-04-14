@@ -250,6 +250,12 @@ jobs:
         run: |
           $scriptBody = @'
           set -e
+          # Ubuntu 22.04's system pip (22.0.2) mis-resolves PEP 508 direct-URL
+          # dependencies like `kauri @ git+https://...`, producing "project
+          # name unknown" and then falling back to an unrelated kauri on PyPI.
+          # Upgrading to a modern pip fixes the resolver. No-op once
+          # Dockerfile.test-cuda is rebuilt (upgrade is baked in there too).
+          python3 -m pip install --quiet --upgrade pip
           python3 -m pip install --quiet /workspace/dist/*.whl
           nvidia-smi
           python3 -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"

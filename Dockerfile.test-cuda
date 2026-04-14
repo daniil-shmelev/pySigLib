@@ -23,12 +23,19 @@ RUN apt-get update -qq && \
         ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
+# Ubuntu 22.04 ships pip 22.0.2, which mis-resolves PEP 508 direct-URL deps
+# (e.g., `kauri @ git+https://...`): it extracts "unknown" as the project
+# name and then falls back to searching PyPI for an unrelated package. Pin
+# to a modern pip so the pysiglib wheel's runtime `pip install` works.
+RUN python3 -m pip install --no-cache-dir --upgrade pip
+
 # Pin nothing here — torch tracks whatever CUDA runtime the base image ships.
 # Rebuild the image whenever you need to bump the torch version.
 #
-# Ubuntu 22.04's system pip (22.0.2) predates PEP 668 and does not recognize
-# --break-system-packages; installing system-wide just works. If the base
-# image bumps to ubuntu24.04 or newer, the flag will need adding back.
+# Ubuntu 22.04's system pip predated PEP 668 and did not recognize
+# --break-system-packages; after the pip upgrade above we're on a newer pip
+# but the base Python is still not externally-managed, so system-wide
+# installs continue to work without the flag.
 RUN python3 -m pip install --no-cache-dir \
         numpy \
         pytest \
