@@ -18,6 +18,7 @@ from __future__ import annotations
 from functools import partial
 
 import numpy as np
+import kauri
 
 try:
     import jax
@@ -158,6 +159,16 @@ sig.__doc__ = sig_forward.__doc__
 def _validate_sig_shape(arr, name="signature"):
     if arr.ndim < 1:
         raise ValueError(f"{name} must have at least rank 1, got {arr.ndim}.")
+
+
+def _permute_bsig_jax(data, dimension: int, degree: int):
+    perm = np.asarray(kauri.canonical_to_recursive_permutation(dimension, degree), dtype=np.int32)
+    return jnp.concatenate([data[..., :1], jnp.take(data[..., 1:], perm, axis=-1)], axis=-1)
+
+
+def _inv_permute_bsig_jax(data, dimension: int, degree: int):
+    perm = np.asarray(kauri.recursive_to_canonical_permutation(dimension, degree), dtype=np.int32)
+    return jnp.concatenate([data[..., :1], jnp.take(data[..., 1:], perm, axis=-1)], axis=-1)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4))
@@ -987,19 +998,20 @@ def sig_coef(
 # branched_sig
 # ---------------------------------------------------------------------------
 
-@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5))
-def _branched_sig(path, max_nodes, time_aug, lead_lag, end_time, n_jobs):
-    return branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs)
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
+def _branched_sig(path, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
+    return branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar)
 
 
-def _branched_sig_fwd(path, max_nodes, time_aug, lead_lag, end_time, n_jobs):
-    bsig = branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs)
+def _branched_sig_fwd(path, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
+    bsig = branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar)
     return bsig, (path, bsig)
 
 
-def _branched_sig_bwd(max_nodes, time_aug, lead_lag, end_time, n_jobs, residual, cotangent):
+def _branched_sig_bwd(max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, residual, cotangent):
     path, bsig = residual
-    grad = branched_sig_backprop_ffi_call(path, bsig, cotangent, max_nodes, time_aug, lead_lag, end_time, n_jobs)
+    grad = branched_sig_backprop_ffi_call(
+        path, bsig, cotangent, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar)
     return (grad,)
 
 
@@ -1009,24 +1021,33 @@ _branched_sig.defvjp(_branched_sig_fwd, _branched_sig_bwd)
 def branched_sig(
     path,
     degree: int,
-    n_jobs: int = 1,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
+    tree_order: str = "recursive",
+    n_jobs: int = 1,
+    planar: bool = False,
 ):
     ensure_registered()
 
     path = jnp.asarray(path)
     _validate_shape(path)
 
+    if tree_order not in ("recursive", "canonical"):
+        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
+    check_type(planar, "planar", bool)
     check_n_jobs(n_jobs)
 
-    return _branched_sig(path, degree, time_aug, lead_lag, end_time, n_jobs)
+    result = _branched_sig(path, degree, time_aug, lead_lag, end_time, n_jobs, planar)
+    if tree_order != "recursive" and not planar:
+        aug_dim = _augmented_dim(path.shape[-1], time_aug, lead_lag)
+        result = _permute_bsig_jax(result, aug_dim, degree)
+    return result
 
 
 branched_sig.__doc__ = branched_sig_forward.__doc__
@@ -1036,20 +1057,20 @@ branched_sig.__doc__ = branched_sig_forward.__doc__
 # branched_sig_combine
 # ---------------------------------------------------------------------------
 
-@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4))
-def _branched_sig_combine(bsig1, bsig2, dimension, max_nodes, n_jobs):
-    return branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs)
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5))
+def _branched_sig_combine(bsig1, bsig2, dimension, max_nodes, n_jobs, planar):
+    return branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs, planar)
 
 
-def _branched_sig_combine_fwd(bsig1, bsig2, dimension, max_nodes, n_jobs):
-    result = branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs)
+def _branched_sig_combine_fwd(bsig1, bsig2, dimension, max_nodes, n_jobs, planar):
+    result = branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs, planar)
     return result, (bsig1, bsig2)
 
 
-def _branched_sig_combine_bwd(dimension, max_nodes, n_jobs, residual, cotangent):
+def _branched_sig_combine_bwd(dimension, max_nodes, n_jobs, planar, residual, cotangent):
     bsig1, bsig2 = residual
     grad1, grad2 = branched_sig_combine_backprop_ffi_call(
-        cotangent, bsig1, bsig2, dimension, max_nodes, n_jobs
+        cotangent, bsig1, bsig2, dimension, max_nodes, n_jobs, planar
     )
     return (grad1, grad2)
 
@@ -1062,7 +1083,9 @@ def branched_sig_combine(
     bsig2,
     dimension: int,
     degree: int,
+    tree_order: str = "recursive",
     n_jobs: int = 1,
+    planar: bool = False,
 ):
     ensure_registered()
 
@@ -1071,13 +1094,23 @@ def branched_sig_combine(
     _validate_sig_shape(bsig1, "bsig1")
     _validate_sig_shape(bsig2, "bsig2")
 
+    if tree_order not in ("recursive", "canonical"):
+        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
+    check_type(planar, "planar", bool)
     check_n_jobs(n_jobs)
 
-    return _branched_sig_combine(bsig1, bsig2, dimension, degree, n_jobs)
+    if tree_order != "recursive" and not planar:
+        bsig1 = _inv_permute_bsig_jax(bsig1, dimension, degree)
+        bsig2 = _inv_permute_bsig_jax(bsig2, dimension, degree)
+
+    result = _branched_sig_combine(bsig1, bsig2, dimension, degree, n_jobs, planar)
+    if tree_order != "recursive" and not planar:
+        result = _permute_bsig_jax(result, dimension, degree)
+    return result
 
 
 branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
