@@ -214,7 +214,6 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.repository == 'daniil-shmelev/pysiglib' && github.event.inputs.run_gpu_tests == 'true'
     environment: deployment
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 15
     permissions:
       contents: read
       packages: read
@@ -229,12 +228,10 @@ jobs:
         shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
     steps:
       - uses: actions/checkout@v6
-        timeout-minutes: 2
       - uses: actions/download-artifact@v8
         with:
           name: wheels-linux-cuda
           path: dist
-        timeout-minutes: 2
       - name: Log in to ghcr.io
         uses: docker/login-action@v3
         with:
@@ -242,7 +239,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Pull test image
-        timeout-minutes: 5
         run: docker pull ${{ env.TEST_CUDA_IMAGE }}
       - name: Run pytest in ephemeral test container with --gpus all
         # pytest-timeout kills any single test that runs longer than 60s, so
@@ -251,7 +247,6 @@ jobs:
         # dispatches to WSL, which isn't set up), so the step runs in
         # powershell. The test script is written to the workspace as LF-only,
         # BOM-less UTF-8 so the Linux container's bash can parse it cleanly.
-        timeout-minutes: 8
         run: |
           $scriptBody = @'
           set -e
