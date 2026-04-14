@@ -21,7 +21,6 @@ import pysiglib
 from conftest import check_close, skip_no_cuda
 
 
-@skip_no_cuda
 def test_branched_sig_combine_torch_api(d=2, N=3):
     """torch_api branched_sig_combine backward works."""
     pysiglib.prepare_branched_sig(d, N)
