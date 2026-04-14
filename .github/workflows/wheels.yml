@@ -218,6 +218,15 @@ jobs:
     permissions:
       contents: read
       packages: read
+    defaults:
+      run:
+        # Windows PowerShell 5.1 on self-hosted runners defaults to the
+        # 'Restricted' execution policy, which refuses to source GHA's
+        # generated .ps1 wrapper scripts. Add -ExecutionPolicy Bypass so
+        # workflows run on a fresh runner without the user having to modify
+        # the host's execution policy (which would also be a global change
+        # affecting other software on the machine).
+        shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
     steps:
       - uses: actions/checkout@v6
         timeout-minutes: 2
@@ -233,7 +242,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Pull test image
-        shell: powershell
         timeout-minutes: 5
         run: docker pull ${{ env.TEST_CUDA_IMAGE }}
       - name: Run pytest in ephemeral test container with --gpus all
@@ -244,7 +252,6 @@ jobs:
         # powershell. The test script is written to the workspace as LF-only,
         # BOM-less UTF-8 so the Linux container's bash can parse it cleanly.
         timeout-minutes: 8
-        shell: powershell
         run: |
           $scriptBody = @'
           set -e
