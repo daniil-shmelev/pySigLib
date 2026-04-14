@@ -8,15 +8,19 @@ name: Wheels
 # Manual trigger only (workflow_dispatch). You can run it from the Actions tab
 # or via: gh workflow run wheels.yml --ref <branch>
 #
-# Cost: most jobs run on GitHub's free runners. The only paid step is
-# test-linux-cuda, which targets `linux_4_core_gpu` at $0.052/min, ~2-4 min
-# per run (~$0.10-0.20 per CI invocation). Set an Actions spending limit at
-# Settings → Billing → Actions → Spending limit before enabling this workflow.
+# Cost: all jobs run on GHA's free runners or the self-hosted Windows runner.
+# No paid GPU resources are involved.
 #
 # Prerequisites before first run:
-#   1. Run `build-docker-image.yml` once to publish the manylinux+CUDA image
-#      to ghcr.io/<owner>/pysiglib-manylinux-cuda12:cuda-12.9.1
-#   2. Enable Actions billing with a spending limit (required for GPU runner)
+#   1. Run `build-docker-image.yml` once to publish the manylinux+CUDA build
+#      image to ghcr.io/<owner>/pysiglib-manylinux-cuda12:cuda-12.9.1 (used by
+#      the build-linux-cuda wheel build job).
+#   2. Run `build-test-image.yml` once to publish the CUDA test image to
+#      ghcr.io/<owner>/pysiglib-test-cuda12:cuda-12.9.1 (used by test-linux-cuda
+#      to avoid re-downloading torch on every run).
+#   3. Register a self-hosted Windows runner with Docker Desktop + WSL2 + the
+#      NVIDIA driver, labelled [self-hosted, Windows, X64]. The test-linux-cuda
+#      job runs there via the `deployment` environment gate.
 
 on:
   workflow_dispatch:
@@ -177,61 +181,85 @@ jobs:
           pip install --upgrade pip
           pip install dist/*.whl
           pip install pytest
-      # CUDA-marked tests auto-skip via conftest.py skip_no_cuda marker
-      # when BUILT_WITH_CUDA is False (which is the case for the CPU wheel).
       - name: Run test suite
         run: pytest tests/ -v
 
+  # ============================================================
+  # test-linux-cuda runs on a SELF-HOSTED Windows runner because GHA's free
+  # hosted runners don't expose a GPU. The runner has Docker Desktop + WSL2 +
+  # the NVIDIA driver, so a Linux container started with --gpus all can reach
+  # the host's RTX 4060.
+  #
+  # The test image is pre-built by build-test-image.yml and pushed to ghcr.io
+  # with torch + pytest baked in, so each run only needs to `pip install` the
+  # wheel under test (~seconds) instead of redownloading ~2 GB of torch.
+  #
+  # Security model for the self-hosted runner on a public repo:
+  #   1. wheels.yml only triggers on workflow_dispatch (no PR trigger), so
+  #      fork PRs structurally cannot fire this job.
+  #   2. The actor check below restricts execution to manual triggers from
+  #      the canonical repo (defense in depth — even if a future trigger is
+  #      added, fork-originated runs still get skipped).
+  #   3. The `deployment` environment gate requires manual approval before
+  #      the job actually schedules work on the runner.
+  #   4. Tests run inside an ephemeral Docker container destroyed with --rm
+  #      after the job, so any code that does run cannot persist on the host
+  #      or read host files outside the workspace mount.
   test-linux-cuda:
     name: Test Linux CUDA wheel (GPU)
     needs: build-linux-cuda
-    if: ${{ github.event.inputs.run_gpu_tests == 'true' }}
-    # PAID RUNNER — $0.052/minute, only step that costs money.
-    # Expected runtime: 2-4 minutes per run (~$0.10-0.20).
-    #
-    # Gated by the `deployment` environment — required reviewers must
-    # approve before the paid GPU runner is scheduled, regardless of who
-    # triggered the workflow. This prevents any future collaborator with
-    # write access from accidentally (or maliciously) burning GPU minutes.
-    #
-    # timeout-minutes caps total job duration at 15 minutes, so an
-    # infinite loop / hang / stuck download cannot run forever. At
-    # $0.052/min that caps the worst-case cost per run at ~$0.78.
-    # Individual steps have tighter timeouts inside that budget.
-    # The repo-level spending limit (Settings → Billing) is the
-    # ultimate safety net regardless of per-job timeouts.
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'daniil-shmelev/pysiglib' && github.event.inputs.run_gpu_tests == 'true'
     environment: deployment
-    runs-on: linux_4_core_gpu
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
         timeout-minutes: 2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-        timeout-minutes: 3
       - uses: actions/download-artifact@v4
         with:
           name: wheels-linux-cuda
           path: dist
         timeout-minutes: 2
-      - name: Install wheel + test deps
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute test image name
+        id: image
+        shell: bash
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "name=ghcr.io/${OWNER}/pysiglib-test-cuda12:cuda-12.9.1" >> "$GITHUB_OUTPUT"
+      - name: Pull test image
+        shell: bash
         timeout-minutes: 5
-        run: |
-          python -m pip install --upgrade pip
-          pip install dist/*.whl
-          pip install pytest pytest-timeout
-      - name: Verify GPU and CUDA availability
-        timeout-minutes: 1
-        run: |
-          nvidia-smi
-          python -c "import torch; print('torch.cuda.is_available():', torch.cuda.is_available()); print('device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
-          python -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
-      - name: Run full test suite (including CUDA tests)
-        # pytest-timeout kills individual tests that run longer than 60s, so
-        # a single hung test can't consume the rest of the job budget.
+        run: docker pull ${{ steps.image.outputs.name }}
+      - name: Run pytest in ephemeral test container with --gpus all
+        # pytest-timeout kills any single test that runs longer than 60s, so
+        # a hung kernel cannot consume the whole job budget. Container is
+        # destroyed by --rm immediately after the run completes.
         timeout-minutes: 8
-        run: pytest tests/ -v --timeout=60
+        shell: bash
+        run: |
+          set -e
+          WS=$(cygpath -u "${GITHUB_WORKSPACE}")
+          docker run --rm --gpus all \
+            -v "${WS}:/workspace" \
+            -w /tmp \
+            ${{ steps.image.outputs.name }} \
+            bash -c '
+              set -e
+              python3 -m pip install --quiet --break-system-packages /workspace/dist/*.whl
+              nvidia-smi
+              python3 -c "import torch; print(\"cuda:\", torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"none\")"
+              python3 -c "import pysiglib; print(\"BUILT_WITH_CUDA:\", pysiglib.load_siglib.BUILT_WITH_CUDA)"
+              pytest /workspace/tests/ -v --timeout=60
+            '
 
   test-windows-cpu:
     name: Test Windows CPU wheel (py${{ matrix.python-version }})
