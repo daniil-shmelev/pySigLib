@@ -39,7 +39,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # GHA ubuntu-latest runners ship with ~14 GB free disk. The CUDA 12.9
       # runfile is ~4.5 GB and installs to ~6 GB, so we aggressively free

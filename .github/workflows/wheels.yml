@@ -35,6 +35,9 @@ env:
   # "CUDA arch list" section for the rationale (covers every NVIDIA GPU
   # from Maxwell to Blackwell via explicit SASS + minor-version forward compat).
   CUDA_ARCH: "50;60;70;75;80;86;89;90;100;120"
+  # Pre-built CUDA test image (pushed by build-test-image.yml). Owner is
+  # hardcoded because the workflow is already gated to the canonical repo.
+  TEST_CUDA_IMAGE: ghcr.io/daniil-shmelev/pysiglib-test-cuda12:cuda-12.9.1
 
 jobs:
   # ============================================================
@@ -44,11 +47,11 @@ jobs:
     name: Build Linux CPU wheel
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pypa/cibuildwheel@v2.21
         env:
           CIBW_ENVIRONMENT: CUSIG=OFF PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-cpu
           path: wheelhouse/*.whl
@@ -63,7 +66,7 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Compute image name
         id: image
         run: |
@@ -82,7 +85,7 @@ jobs:
           # env parser treats as statement terminators unless quoted. Wrap in
           # double quotes so the semicolons stay inside the value.
           CIBW_ENVIRONMENT: 'CUSIG=ON PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON CUDA_ARCH="${{ env.CUDA_ARCH }}"'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-cuda
           path: wheelhouse/*.whl
@@ -94,11 +97,11 @@ jobs:
     name: Build Windows CPU wheel
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pypa/cibuildwheel@v2.21
         env:
           CIBW_ENVIRONMENT: CUSIG=OFF PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-cpu
           path: wheelhouse/*.whl
@@ -110,7 +113,7 @@ jobs:
     name: Build Windows CUDA wheel
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install CUDA toolkit
         # v0.2.35 is the first Jimver release to support CUDA 12.9.1 on Windows.
         # Older v0.2.21 only supported up to 12.8.0.
@@ -132,7 +135,7 @@ jobs:
           # CUDA_ARCH value contains semicolons — must be quoted so cibuildwheel's
           # shell-style env parser doesn't split on them.
           CIBW_ENVIRONMENT: 'CUSIG=ON PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON CUDA_ARCH="${{ env.CUDA_ARCH }}"'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-cuda
           path: wheelhouse/*.whl
@@ -144,11 +147,11 @@ jobs:
     name: Build macOS wheels
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pypa/cibuildwheel@v2.21
         env:
           CIBW_ENVIRONMENT: CUSIG=OFF PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-macos
           path: wheelhouse/*.whl
@@ -168,11 +171,11 @@ jobs:
       matrix:
         python-version: ['3.9', '3.13']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: wheels-linux-cpu
           path: dist
@@ -216,9 +219,9 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         timeout-minutes: 2
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: wheels-linux-cuda
           path: dist
@@ -229,37 +232,37 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Compute test image name
-        id: image
-        shell: bash
-        run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          echo "name=ghcr.io/${OWNER}/pysiglib-test-cuda12:cuda-12.9.1" >> "$GITHUB_OUTPUT"
       - name: Pull test image
-        shell: bash
+        shell: powershell
         timeout-minutes: 5
-        run: docker pull ${{ steps.image.outputs.name }}
+        run: docker pull ${{ env.TEST_CUDA_IMAGE }}
       - name: Run pytest in ephemeral test container with --gpus all
         # pytest-timeout kills any single test that runs longer than 60s, so
-        # a hung kernel cannot consume the whole job budget. Container is
-        # destroyed by --rm immediately after the run completes.
+        # a hung kernel cannot consume the whole job budget. The self-hosted
+        # Windows runner has no bash installed (C:\Windows\System32\bash.exe
+        # dispatches to WSL, which isn't set up), so the step runs in
+        # powershell. The test script is written to the workspace as LF-only,
+        # BOM-less UTF-8 so the Linux container's bash can parse it cleanly.
         timeout-minutes: 8
-        shell: bash
+        shell: powershell
         run: |
+          $scriptBody = @'
           set -e
-          WS=$(cygpath -u "${GITHUB_WORKSPACE}")
-          docker run --rm --gpus all \
-            -v "${WS}:/workspace" \
-            -w /tmp \
-            ${{ steps.image.outputs.name }} \
-            bash -c '
-              set -e
-              python3 -m pip install --quiet --break-system-packages /workspace/dist/*.whl
-              nvidia-smi
-              python3 -c "import torch; print(\"cuda:\", torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"none\")"
-              python3 -c "import pysiglib; print(\"BUILT_WITH_CUDA:\", pysiglib.load_siglib.BUILT_WITH_CUDA)"
-              pytest /workspace/tests/ -v --timeout=60
-            '
+          python3 -m pip install --quiet --break-system-packages /workspace/dist/*.whl
+          nvidia-smi
+          python3 -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
+          python3 -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
+          pytest /workspace/tests/ -v --timeout=60
+          '@
+          $ws = $env:GITHUB_WORKSPACE
+          $scriptPath = Join-Path $ws "run-cuda-tests.sh"
+          $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+          [System.IO.File]::WriteAllText($scriptPath, $scriptBody.Replace("`r`n", "`n"), $utf8NoBom)
+          docker run --rm --gpus all `
+            -v "${ws}:/workspace" `
+            -w /tmp `
+            ${{ env.TEST_CUDA_IMAGE }} `
+            bash /workspace/run-cuda-tests.sh
 
   test-windows-cpu:
     name: Test Windows CPU wheel (py${{ matrix.python-version }})
@@ -269,11 +272,11 @@ jobs:
       matrix:
         python-version: ['3.9', '3.13']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: wheels-windows-cpu
           path: dist
@@ -295,11 +298,11 @@ jobs:
       matrix:
         python-version: ['3.9', '3.13']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: wheels-macos
           path: dist
@@ -324,7 +327,7 @@ jobs:
       - build-macos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheels-*
           path: dist
@@ -337,7 +340,7 @@ jobs:
             size=$(du -h "$f" | cut -f1)
             echo "$size  $(basename "$f")"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: all-wheels
           path: dist/*.whl

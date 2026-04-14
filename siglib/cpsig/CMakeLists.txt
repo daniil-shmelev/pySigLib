@@ -28,7 +28,15 @@ if(_enable_vec)
     target_compile_definitions(cpsig PRIVATE VEC)
 
     if(MSVC)
-        if(_has_avx512f)
+        # Under cibuildwheel, force the portable AVX2 baseline. Without this,
+        # _has_avx512f reflects the build runner's CPU — GHA's windows-latest
+        # is an Intel Xeon Platinum with AVX-512, so the wheel would embed
+        # AVX-512 instructions and SIGILL on consumer CPUs that don't have it
+        # (13th/14th-gen Intel Core P-cores with AVX-512 fused off, AMD Zen<4,
+        # older Intel). Mirror of the non-MSVC CIBUILDWHEEL branch below.
+        if(DEFINED ENV{CIBUILDWHEEL})
+            target_compile_options(cpsig PRIVATE /arch:AVX2)
+        elseif(_has_avx512f)
             target_compile_options(cpsig PRIVATE /arch:AVX512)
         elseif(_has_avx2)
             target_compile_options(cpsig PRIVATE /arch:AVX2)
