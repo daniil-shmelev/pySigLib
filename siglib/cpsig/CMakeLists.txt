@@ -37,6 +37,13 @@ if(_enable_vec)
         endif()
         # Match B2: <toolset>msvc:<cxxflags>"/Qvec-report:2"
         target_compile_options(cpsig PRIVATE /Qvec-report:2)
+    elseif(APPLE)
+        # Don't use -march=native on Apple: clang resolves "native" against the
+        # host CPU (apple-mN), and not every clang version in the Xcode toolchain
+        # recognises the newest Apple CPU names (e.g. apple-m3), which can break
+        # the build with "unknown target CPU" errors. NEON is baseline on arm64
+        # Apple Silicon, so -ftree-vectorize alone is sufficient.
+        target_compile_options(cpsig PRIVATE -ftree-vectorize)
     else()
         target_compile_options(cpsig PRIVATE -march=native -ftree-vectorize)
         # -fopt-info-vec-missed is GCC-only; Clang uses -Rpass-missed=loop-vectorize

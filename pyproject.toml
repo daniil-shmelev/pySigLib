@@ -86,7 +86,11 @@ manylinux-x86_64-image = "manylinux_2_28"
 repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*'"
 
 [tool.cibuildwheel.macos]
-archs = ["x86_64", "arm64"]
+# arm64-only: Intel Mac cross-compile from arm64 hosts on GHA surfaced a
+# series of hard-to-solve issues (OS-based SIMD guards, missing std::filesystem
+# support, -march=native mis-resolution) that weren't worth fighting for a
+# target audience of ~zero. macosx_arm64 covers all modern Mac users.
+archs = ["arm64"]
 
 [tool.coverage.run]
 source_pkgs = ["pysiglib"]

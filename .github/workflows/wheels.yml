@@ -74,7 +74,10 @@ jobs:
       - uses: pypa/cibuildwheel@v2.21
         env:
           CIBW_MANYLINUX_X86_64_IMAGE: ${{ steps.image.outputs.name }}
-          CIBW_ENVIRONMENT: CUSIG=ON PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON CUDA_ARCH=${{ env.CUDA_ARCH }}
+          # CUDA_ARCH value contains semicolons, which cibuildwheel's shell-style
+          # env parser treats as statement terminators unless quoted. Wrap in
+          # double quotes so the semicolons stay inside the value.
+          CIBW_ENVIRONMENT: 'CUSIG=ON PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON CUDA_ARCH="${{ env.CUDA_ARCH }}"'
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-cuda
@@ -105,17 +108,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install CUDA toolkit
-        uses: Jimver/cuda-toolkit@v0.2.21
+        # v0.2.35 is the first Jimver release to support CUDA 12.9.1 on Windows.
+        # Older v0.2.21 only supported up to 12.8.0.
+        #
+        # sub-packages must use Windows-native NVIDIA installer names, not
+        # Linux package names. `cudart_dev` doesn't exist as a Windows
+        # sub-package — `cudart` already bundles runtime libs + headers on
+        # Windows.
+        uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: '12.9.1'
           method: 'network'
-          sub-packages: '["nvcc", "cudart", "cudart_dev", "thrust", "visual_studio_integration"]'
+          sub-packages: '["nvcc", "cudart", "thrust", "visual_studio_integration"]'
       - name: Verify nvcc
         shell: pwsh
         run: nvcc --version
       - uses: pypa/cibuildwheel@v2.21
         env:
-          CIBW_ENVIRONMENT: CUSIG=ON PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON CUDA_ARCH=${{ env.CUDA_ARCH }}
+          # CUDA_ARCH value contains semicolons — must be quoted so cibuildwheel's
+          # shell-style env parser doesn't split on them.
+          CIBW_ENVIRONMENT: 'CUSIG=ON PYSIGLIB_JAX_FFI=OFF SIGLIB_VEC=ON CUDA_ARCH="${{ env.CUDA_ARCH }}"'
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-windows-cuda
