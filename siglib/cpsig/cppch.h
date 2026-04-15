@@ -19,8 +19,7 @@
 // However, files listed here are ALL re-compiled if any one of them is updated between builds.
 // Do not add files here that you will be updating frequently as this negates the performance advantage.
 
-#ifndef CPPCH_H
-#define CPPCH_H
+#pragma once
 
 #include <cstdint>
 #include <cstdlib>
@@ -54,5 +53,3 @@
 #include <arm_neon.h>
 #endif
 #endif
-
-#endif //CPPCH_H

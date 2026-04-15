@@ -26,7 +26,7 @@ struct BasisCache {
 	SparseIntMatrix inv_proj_mat;
 	SparseIntMatrix inv_proj_mat_transpose;
 
-	BasisCache() {}
+	BasisCache() = default;
 
 	BasisCache(
 		int method_,
@@ -76,12 +76,20 @@ public:
 
 	void write(std::unique_ptr<BasisCache>& obj) const {
 		std::ofstream out(file_path, std::ios::binary);
+		if (!out)
+			throw std::filesystem::filesystem_error(
+				"Failed to open cache file for writing", file_path,
+				std::make_error_code(std::errc::io_error));
 		out.write(reinterpret_cast<const char*>(&cache_magic_number), sizeof(cache_magic_number));
 		obj->serialize(out);
 	}
 
 	void read(std::unique_ptr<BasisCache>& obj) {
 		std::ifstream in(file_path, std::ios::binary);
+		if (!in)
+			throw std::filesystem::filesystem_error(
+				"Failed to open cache file for reading", file_path,
+				std::make_error_code(std::errc::io_error));
 		uint64_t magic;
 		in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
 		if (magic != cache_magic_number)

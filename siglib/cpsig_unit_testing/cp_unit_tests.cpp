@@ -229,15 +229,15 @@ public:
 
             std::vector<double> poly1;
             poly1.resize(poly_len_);
-            signature_d(path1.data(), poly1.data(), (uint64_t)1, dimension, 3, degree, 1);
+            (void)signature_d(path1.data(), poly1.data(), (uint64_t)1, dimension, 3, degree, 1);
 
             std::vector<double> poly2;
             poly2.resize(poly_len_);
-            signature_d(path2.data(), poly2.data(), (uint64_t)1, dimension, 3, degree, 1);
+            (void)signature_d(path2.data(), poly2.data(), (uint64_t)1, dimension, 3, degree, 1);
 
             std::vector<double> true_sig;
             true_sig.resize(poly_len_);
-            signature_d(path.data(), true_sig.data(), (uint64_t)1, dimension, 5, degree, 1);
+            (void)signature_d(path.data(), true_sig.data(), (uint64_t)1, dimension, 5, degree, 1);
             check_result_2(f, poly1, poly2, true_sig, (uint64_t)1, dimension, degree, 1);
         }
 
@@ -259,15 +259,15 @@ public:
 
             std::vector<double> poly1;
             poly1.resize(res_len_);
-            signature_d(path1.data(), poly1.data(), batch_size, dimension, 3, degree);
+            (void)signature_d(path1.data(), poly1.data(), batch_size, dimension, 3, degree);
 
             std::vector<double> poly2;
             poly2.resize(res_len_);
-            signature_d(path2.data(), poly2.data(), batch_size, dimension, 2, degree);
+            (void)signature_d(path2.data(), poly2.data(), batch_size, dimension, 2, degree);
 
             std::vector<double> true_sig;
             true_sig.resize(res_len_);
-            signature_d(path.data(), true_sig.data(), batch_size, dimension, 4, degree);
+            (void)signature_d(path.data(), true_sig.data(), batch_size, dimension, 4, degree);
             check_result_2(f, poly1, poly2, true_sig, batch_size, dimension, degree, 1);
             check_result_2(f, poly1, poly2, true_sig, batch_size, dimension, degree, -1);
         }
@@ -1465,7 +1465,7 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, 1);
         }
 
@@ -1481,9 +1481,9 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
-            clear_cache(true); // Clear disk
-            prepare_log_sig(dimension, degree, 1, true);
-            clear_cache(false); // Remove from memory but keep on disk
+            (void)clear_cache(true); // Clear disk
+            (void)prepare_log_sig(dimension, degree, 1, true);
+            (void)clear_cache(false); // Remove from memory but keep on disk
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, 1);
         }
 
@@ -1499,7 +1499,7 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, 1);
         }
 
@@ -1508,7 +1508,7 @@ public:
             uint64_t dimension = 2, degree = 2;
             std::vector<double> true_ = { 0., 1., 1. };
             std::vector<double> sig = { 1., 0., 1., 0., 1., -1., 0.5 };
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, 1);
         }
 
@@ -1530,7 +1530,7 @@ public:
                 -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
                 -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
             };
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, 1);
         }
 
@@ -1545,7 +1545,7 @@ public:
                1., 1., 1., 0.5, 0.5, 0.5, 0.5,
                1., 0., 1., 0., 1., -1., 0.5 };
 
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, 3, dimension, degree, false, false, 1, 1);
             check_result(f, sig, true_, 3, dimension, degree, false, false, 1, -1);
         }
@@ -1556,7 +1556,7 @@ public:
             std::vector<float> true_ = { 9.f, 4.f, -2.5f, -5.25f, 5.5f };
             std::vector<float> sig = { 1.f, 9.f, 4.f, 40.5f, 15.5f, 20.5f, 8.f, 121.5f, 37.5f,
                                 64.5f, 24.5f, 60.f, 13.f, 34.5f, 10.f + 2.f / 3.f };
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, true, false, 1, 1);
         }
 
@@ -1565,7 +1565,7 @@ public:
             uint64_t dimension = 1, degree = 3;
             std::vector<float> true_ = { 9.f, 9.f, -31.5f, 26.75f, 11.75f };
             std::vector<float> sig = { 1.f, 9.f, 9.f, 40.5f, 9.f, 72.f, 40.5f, 121.5f, 6.5f, 68.f, -8.5f, 290.f, 98.f, 275.f, 121.5f };
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, true, 1, 1);
         }
 
@@ -1576,7 +1576,7 @@ public:
             out.resize(batch * sig_length(dimension * 2, degree));
             std::vector<double> sig;
             sig.resize(batch * sig_length(dimension * 2, degree));
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             f(sig.data(), out.data(), batch, dimension, degree, false, true, 1, 1);
         }
     };
@@ -1590,7 +1590,7 @@ public:
             std::vector<double> deriv = { 1., 1., 1. };
             std::vector<double> true_ = { 0., .5, .5, 0., 1., 0., 0. };
             std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, 1);
         }
 
@@ -1600,7 +1600,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3. };
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, 1);
         }
 
@@ -1610,7 +1610,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, 1);
         }
 
@@ -1620,7 +1620,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3. };
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 1, 1);
         }
 
@@ -1630,7 +1630,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5., 6. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 1, 1);
         }
 
@@ -1640,7 +1640,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5., 1., -2., 3., -4., 5., 1., 1., 1., 1., 1. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0., 0., -21., 8., 4., 8., 0., -12.5, 0., -4., 0., 5., 0., 0., 0., 0., 0., 1.375, 0.5625, 0.5, 1.25, 0., -0.25, 0., 1., 0., 1., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
-            prepare_log_sig(dimension, degree, 1);
+            (void)prepare_log_sig(dimension, degree, 1);
             check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 1, 1);
             check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 1, -1);
         }
@@ -1661,7 +1661,7 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
-            prepare_log_sig(dimension, degree, 2);
+            (void)prepare_log_sig(dimension, degree, 2);
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, 1);
         }
 
@@ -1677,9 +1677,9 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
-            clear_cache(true); // Clear disk
-            prepare_log_sig(dimension, degree, 2, true);
-            clear_cache(false); // Clear memory
+            (void)clear_cache(true); // Clear disk
+            (void)prepare_log_sig(dimension, degree, 2, true);
+            (void)clear_cache(false); // Clear memory
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, 1);
         }
 
@@ -1696,7 +1696,7 @@ public:
                                               -20.5f - 1.f / 3.f, -19.f, -14.f - 1.f / 3.f, -7.f, -16.f - 2.f / 3.f,
                                               -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
                                               -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f };
-            prepare_log_sig(dimension, degree, 2);
+            (void)prepare_log_sig(dimension, degree, 2);
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, 1);
         }
     };
@@ -1710,7 +1710,7 @@ public:
             std::vector<double> deriv = { 1., 1., 1. };
             std::vector<double> true_ = { 0., .5, .5, 0., 1., 0., 0. };
             std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
-            prepare_log_sig(dimension, degree, 2);
+            (void)prepare_log_sig(dimension, degree, 2);
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, 1);
         }
 
@@ -1720,7 +1720,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3. };
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            prepare_log_sig(dimension, degree, 2);
+            (void)prepare_log_sig(dimension, degree, 2);
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, 1);
         }
 
@@ -1730,7 +1730,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            prepare_log_sig(dimension, degree, 2);
+            (void)prepare_log_sig(dimension, degree, 2);
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, 1);
         }
 
@@ -1740,7 +1740,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3. };
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            prepare_log_sig(dimension, degree, 2);
+            (void)prepare_log_sig(dimension, degree, 2);
             check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 2, 1);
         }
 
@@ -1750,7 +1750,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5., 6. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            prepare_log_sig(dimension, degree, 2);
+            (void)prepare_log_sig(dimension, degree, 2);
             check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 2, 1);
         }
 
@@ -1760,7 +1760,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5., 1., -2., 3., -4., 5., 1., 1., 1., 1., 1. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0., 0., -21., 8., 4., 8., 0., -12.5, 0., -4., 0., 5., 0., 0., 0., 0., 0., 1.375, 0.5625, 0.5, 1.25, 0., -0.25, 0., 1., 0., 1., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
-            prepare_log_sig(dimension, degree, 2);
+            (void)prepare_log_sig(dimension, degree, 2);
             check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 2, 1);
             check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 2, -1);
         }
@@ -2073,14 +2073,14 @@ public:
             // Scalar backprop with deriv=1.0
             double one = 1.0;
             std::vector<double> out_scalar((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_scalar.data(), &one, k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
+            (void)sig_kernel_backprop_d(gram.data(), out_scalar.data(), &one, k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
 
             // Grid backprop with derivs_grid = 0 everywhere except [length1-1, length2-1] = 1.0
             uint64_t grid_length = length1 * length2;
             std::vector<double> derivs_grid(grid_length, 0.);
             derivs_grid[grid_length - 1] = 1.0; // last element
             std::vector<double> out_grid((length1 - 1) * (length2 - 1), 0.);
-            sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, true, 1);
+            (void)sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, true, 1);
 
             for (uint64_t i = 0; i < out_scalar.size(); ++i)
                 Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
@@ -2098,7 +2098,7 @@ public:
             std::vector<double> derivs_scalar = { 1., 1. };
             uint64_t out_size = (length1 - 1) * (length2 - 1) * batch_size;
             std::vector<double> out_scalar(out_size, 0.);
-            sig_kernel_backprop_d(gram.data(), out_scalar.data(), derivs_scalar.data(), k_grid.data(), batch_size, dimension, length1, length2, 0, 0, false, 1);
+            (void)sig_kernel_backprop_d(gram.data(), out_scalar.data(), derivs_scalar.data(), k_grid.data(), batch_size, dimension, length1, length2, 0, 0, false, 1);
 
             // Grid batch backprop with derivs_grid = 0 everywhere except [-1,-1] = 1.0
             uint64_t grid_length = length1 * length2;
@@ -2106,7 +2106,7 @@ public:
             derivs_grid[grid_length - 1] = 1.0;
             derivs_grid[2 * grid_length - 1] = 1.0;
             std::vector<double> out_grid(out_size, 0.);
-            sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), batch_size, dimension, length1, length2, 0, 0, true, 1);
+            (void)sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), batch_size, dimension, length1, length2, 0, 0, true, 1);
 
             for (uint64_t i = 0; i < out_size; ++i)
                 Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
@@ -2123,7 +2123,7 @@ public:
             uint64_t grid_length = length * length;
             std::vector<double> derivs_grid(grid_length, 0.0001);
             std::vector<double> out_grid(out_size, 0.);
-            sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), (uint64_t)1, dimension, length, length, 0, 0, true, 1);
+            (void)sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), (uint64_t)1, dimension, length, length, 0, 0, true, 1);
 
             for (uint64_t i = 0; i < out_size; ++i)
                 Assert::IsTrue(abs(true_[i] - out_grid[i]) < DOUBLE_EPSILON);
@@ -2192,7 +2192,7 @@ public:
             // Use a known sig/log-sig pair
             std::vector<double> sig = { 1., 0., 1., 0., 1., -1., 0.5 };
             std::vector<double> log_sig(sig.size());
-            sig_to_log_sig_d(sig.data(), log_sig.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
+            (void)sig_to_log_sig_d(sig.data(), log_sig.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
             // Now round-trip
             check_result(logsig_to_sig_d, log_sig, sig, (uint64_t)1, dimension, degree, false, false, 0, 1);
         }
@@ -2203,9 +2203,9 @@ public:
             // Create a random-ish signature via a known path
             std::vector<double> path = { 1., 2., 3., 4., 5., 6., 7., 8., 9. }; // 3x3 path
             std::vector<double> sig(s);
-            signature_d(path.data(), sig.data(), 1, dimension, 3, degree, false, false, 1., true, 1);
+            (void)signature_d(path.data(), sig.data(), 1, dimension, 3, degree, false, false, 1., true, 1);
             std::vector<double> log_sig(s);
-            sig_to_log_sig_d(sig.data(), log_sig.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
+            (void)sig_to_log_sig_d(sig.data(), log_sig.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
             check_result(logsig_to_sig_d, log_sig, sig, (uint64_t)1, dimension, degree, false, false, 0, 1);
         }
 
@@ -2214,11 +2214,11 @@ public:
             uint64_t s = sig_length(dimension, degree);
             std::vector<float> path = { 1.f, 2.f, 3.f, 4.f, 5.f, 6.f };
             std::vector<float> sig(s);
-            signature_f(path.data(), sig.data(), 1, dimension, 3, degree, false, false, 1.f, true, 1);
+            (void)signature_f(path.data(), sig.data(), 1, dimension, 3, degree, false, false, 1.f, true, 1);
             std::vector<float> log_sig(s);
-            sig_to_log_sig_f(sig.data(), log_sig.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
+            (void)sig_to_log_sig_f(sig.data(), log_sig.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
             std::vector<float> recovered(s);
-            logsig_to_sig_f(log_sig.data(), recovered.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
+            (void)logsig_to_sig_f(log_sig.data(), recovered.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
             for (uint64_t i = 0; i < s; ++i)
                 Assert::IsTrue(abs(sig[i] - recovered[i]) < SINGLE_EPSILON);
         }
@@ -2233,11 +2233,11 @@ public:
                 3., 1., 4., 1., 5., 9.
             };
             std::vector<double> sig(s * batch_size);
-            signature_d(path.data(), sig.data(), batch_size, dimension, 3, degree, false, false, 1., true, 1);
+            (void)signature_d(path.data(), sig.data(), batch_size, dimension, 3, degree, false, false, 1., true, 1);
             std::vector<double> log_sig(s * batch_size);
-            sig_to_log_sig_d(sig.data(), log_sig.data(), batch_size, dimension, degree, false, false, 0, 1);
+            (void)sig_to_log_sig_d(sig.data(), log_sig.data(), batch_size, dimension, degree, false, false, 0, 1);
             std::vector<double> recovered(s * batch_size);
-            logsig_to_sig_d(log_sig.data(), recovered.data(), batch_size, dimension, degree, false, false, 0, 1);
+            (void)logsig_to_sig_d(log_sig.data(), recovered.data(), batch_size, dimension, degree, false, false, 0, 1);
             for (uint64_t i = 0; i < s * batch_size; ++i)
                 Assert::IsTrue(abs(sig[i] - recovered[i]) < DOUBLE_EPSILON);
         }

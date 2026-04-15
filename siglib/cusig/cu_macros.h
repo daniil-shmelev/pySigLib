@@ -38,27 +38,27 @@
     try {                                                               \
         function_call;                                                  \
     }                                                                   \
-    catch (std::bad_alloc&) {                                           \
+    catch (const std::bad_alloc&) {                                     \
         std::cerr << "Failed to allocate memory";                       \
         return 1;                                                       \
     }                                                                   \
-    catch (std::invalid_argument& e) {                                  \
+    catch (const std::invalid_argument& e) {                            \
         std::cerr << e.what();                                          \
         return 2;                                                       \
     }                                                                   \
-    catch (std::out_of_range& e) {                                      \
+    catch (const std::out_of_range& e) {                                \
         std::cerr << e.what();                                          \
         return 3;                                                       \
     }                                                                   \
-    catch (std::filesystem::filesystem_error& e) {                      \
+    catch (const std::filesystem::filesystem_error& e) {                \
         std::cerr << e.what();                                          \
         return 4;                                                       \
     }                                                                   \
-    catch (coded_runtime_error& e) {                                    \
+    catch (const coded_runtime_error& e) {                              \
         std::cerr << e.what();                                          \
         return e.code;                                                  \
     }                                                                   \
-    catch (std::runtime_error& e) {                                     \
+    catch (const std::runtime_error& e) {                               \
         std::string msg = e.what();                                     \
         std::cerr << msg;                                               \
         auto cuda_pos = msg.find("CUDA Error (");                       \

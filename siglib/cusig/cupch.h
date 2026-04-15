@@ -19,8 +19,7 @@
 // However, files listed here are ALL re-compiled if any one of them is updated between builds.
 // Do not add files here that you will be updating frequently as this negates the performance advantage.
 
-#ifndef CUPCH_H
-#define CUPCH_H
+#pragma once
 
 // add headers that you want to pre-compile here
 
@@ -94,5 +93,3 @@ public:
 private:
 	T* ptr_;
 };
-
-#endif //PCH_H

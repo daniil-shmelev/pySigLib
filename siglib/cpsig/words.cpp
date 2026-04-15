@@ -13,11 +13,10 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
 #include "cppch.h"
 #include "words.h"
 
-bool is_lyndon(word w) {
+bool is_lyndon(const word& w) {
 	const uint64_t n = w.size();
 	if (n == 0)
 		return false;
@@ -61,7 +60,7 @@ std::vector<word> all_lyndon_words(uint64_t dimension, uint64_t degree) {
 	return res;
 }
 
-uint64_t word_to_idx(word w, uint64_t dimension) {
+uint64_t word_to_idx(const word& w, uint64_t dimension) {
 	if (!w.size())
 		return 0;
 
@@ -81,13 +80,14 @@ uint64_t word_to_idx(word w, uint64_t dimension) {
 std::vector<uint64_t> all_lyndon_idx(uint64_t dimension, uint64_t degree) {
 	std::vector<word> words = all_lyndon_words(dimension, degree);
 	std::vector<uint64_t> res;
-	for (word w : words) {
+	res.reserve(words.size());
+	for (const auto& w : words) {
 		res.push_back(word_to_idx(w, dimension));
 	}
 	return res;
 }
 
-word longest_lyndon_suffix_(word w, const std::unordered_set<word, WordHash>& lyndon_set) {
+word longest_lyndon_suffix_(const word& w, const std::unordered_set<word, WordHash>& lyndon_set) {
 	uint64_t n = w.size();
 	for (uint64_t i = 1; i < n; ++i) {
 		word suffix(w.begin() + i, w.end());
@@ -107,7 +107,7 @@ std::pair<word, word> standard_factorization(
 	return { l, m };
 }
 
-word concatenate_words(word& a, word& b) {
+word concatenate_words(const word& a, const word& b) {
 	word c(a);
 	c.insert(c.end(), b.begin(), b.end());
 	return c;
@@ -154,7 +154,7 @@ void lyndon_proj_matrix(
 	}
 
 	for (uint64_t i = 0; i < m; ++i) {
-		word w = lyndon_words[i];
+		const word& w = lyndon_words[i];
 
 		if (w.size() == 1) {
 			full_mat_transpose.insert_entry(i, w[0] + 1, 1);

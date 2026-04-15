@@ -16,9 +16,6 @@
 #pragma once
 #include "cppch.h"
 
-#pragma pack(push)
-//#pragma pack(1)
-
 template<std::floating_point T>
 class PointImpl;
 
@@ -91,7 +88,7 @@ public:
 		_time_step{ compute_time_step(_length, end_time_) } {
 	}
 
-	virtual ~Path() {}
+	~Path() = default;
 
 	Path<T>& operator=(const Path&) = delete;
 
@@ -493,5 +490,3 @@ private:
 	}
 #endif
 };
-
-#pragma pack(pop)

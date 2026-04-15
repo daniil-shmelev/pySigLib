@@ -108,10 +108,16 @@ void set_default_cache_dir() {
 	}
 
 #elif __APPLE__
-	std::string dir_str = std::string(std::getenv("HOME")) + "/Library/Caches";
+	const char* home = std::getenv("HOME");
+	if (!home)
+		throw default_cache_dir_error("$HOME is not set; cannot determine default cache directory.");
+	std::string dir_str = std::string(home) + "/Library/Caches";
 	const char* dir = dir_str.c_str();
 #else
-	std::string dir_str = std::string(std::getenv("HOME")) + "/.cache";
+	const char* home = std::getenv("HOME");
+	if (!home)
+		throw default_cache_dir_error("$HOME is not set; cannot determine default cache directory.");
+	std::string dir_str = std::string(home) + "/.cache";
 	const char* dir = dir_str.c_str();
 #endif
 

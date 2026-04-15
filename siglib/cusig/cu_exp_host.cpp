@@ -33,11 +33,14 @@
 
 typedef std::vector<uint64_t> Word;
 
+// Golden-ratio (Fibonacci) hash spreader — same constant used by boost::hash_combine.
+static constexpr std::size_t kFibHashConst = 0x9e3779b97f4a7c15ULL;
+
 struct WordHash {
 	std::size_t operator()(const Word& w) const noexcept {
 		std::size_t h = 0;
 		for (uint64_t x : w)
-			h ^= std::hash<uint64_t>{}(x) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+			h ^= std::hash<uint64_t>{}(x) + kFibHashConst + (h << 6) + (h >> 2);
 		return h;
 	}
 };

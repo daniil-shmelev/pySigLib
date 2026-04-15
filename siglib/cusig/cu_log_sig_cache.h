@@ -44,12 +44,15 @@ inline void cu_check_stream_has_bytes_(std::istream& in, uint64_t need, const ch
 
 typedef std::vector<uint64_t> cu_word;
 
+// Golden-ratio (Fibonacci) hash spreader — same constant used by boost::hash_combine.
+static constexpr std::size_t kFibHashConst = 0x9e3779b97f4a7c15ULL;
+
 struct CuWordHash {
 	std::size_t operator()(const cu_word& w) const noexcept {
 		std::size_t h = 0;
 		for (uint64_t x : w) {
 			h ^= std::hash<uint64_t>{}(x)
-				+0x9e3779b97f4a7c15ULL
+				+ kFibHashConst
 				+ (h << 6)
 				+ (h >> 2);
 		}
@@ -61,7 +64,7 @@ struct CuPairHash {
 	std::size_t operator()(const std::pair<uint64_t, uint64_t>& p) const noexcept {
 		std::size_t h1 = std::hash<uint64_t>{}(p.first);
 		std::size_t h2 = std::hash<uint64_t>{}(p.second);
-		return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+		return h1 ^ (h2 + kFibHashConst + (h1 << 6) + (h1 >> 2));
 	}
 };
 
@@ -106,11 +109,17 @@ inline std::vector<cu_word> cu_all_lyndon_words(uint64_t dimension, uint64_t deg
 	return res;
 }
 
-inline uint64_t cu_word_to_idx(cu_word w, uint64_t dimension) {
+inline uint64_t cu_word_to_idx(const cu_word& w, uint64_t dimension) {
 	if (!w.size()) return 0;
 	uint64_t idx = 0;
 	for (uint64_t i : w) {
-		idx = idx * dimension + (i + 1);
+		if (dimension != 0 && idx > UINT64_MAX / dimension)
+			throw std::overflow_error("cu_word_to_idx: index overflow");
+		const uint64_t mul = idx * dimension;
+		const uint64_t add = i + 1;
+		if (mul > UINT64_MAX - add)
+			throw std::overflow_error("cu_word_to_idx: index overflow");
+		idx = mul + add;
 	}
 	return idx;
 }
@@ -118,7 +127,8 @@ inline uint64_t cu_word_to_idx(cu_word w, uint64_t dimension) {
 inline std::vector<uint64_t> cu_all_lyndon_idx(uint64_t dimension, uint64_t degree) {
 	std::vector<cu_word> words = cu_all_lyndon_words(dimension, degree);
 	std::vector<uint64_t> res;
-	for (cu_word w : words) {
+	res.reserve(words.size());
+	for (const cu_word& w : words) {
 		res.push_back(cu_word_to_idx(w, dimension));
 	}
 	return res;
@@ -162,6 +172,23 @@ public:
 	CuSparseIntMatrix() : n(0), m(0), rows(0) {}
 	CuSparseIntMatrix(uint64_t n_) : n(n_), m(n_), rows(n_) {}
 	CuSparseIntMatrix(uint64_t n_, uint64_t m_) : n(n_), m(m_), rows(n_) {}
+
+	CuSparseIntMatrix(const CuSparseIntMatrix&) = default;
+	CuSparseIntMatrix& operator=(const CuSparseIntMatrix&) = default;
+
+	CuSparseIntMatrix(CuSparseIntMatrix&& other) noexcept
+		: n{ std::exchange(other.n, 0) },
+		  m{ std::exchange(other.m, 0) },
+		  rows{ std::move(other.rows) } {}
+
+	CuSparseIntMatrix& operator=(CuSparseIntMatrix&& other) noexcept {
+		if (this != &other) {
+			n = std::exchange(other.n, 0);
+			m = std::exchange(other.m, 0);
+			rows = std::move(other.rows);
+		}
+		return *this;
+	}
 
 	void resize(uint64_t n_, uint64_t m_) {
 		n = n_; m = m_;
@@ -540,10 +567,16 @@ inline void set_default_cuda_cache_dir_() {
 		throw default_cache_dir_error("Failed to get default cache directory.");
 	}
 #elif __APPLE__
-	std::string dir_str = std::string(std::getenv("HOME")) + "/Library/Caches";
+	const char* home = std::getenv("HOME");
+	if (!home)
+		throw default_cache_dir_error("$HOME is not set; cannot determine default cache directory.");
+	std::string dir_str = std::string(home) + "/Library/Caches";
 	const char* dir = dir_str.c_str();
 #else
-	std::string dir_str = std::string(std::getenv("HOME")) + "/.cache";
+	const char* home = std::getenv("HOME");
+	if (!home)
+		throw default_cache_dir_error("$HOME is not set; cannot determine default cache directory.");
+	std::string dir_str = std::string(home) + "/.cache";
 	const char* dir = dir_str.c_str();
 #endif
 	set_cache_dir_cuda_(dir);
@@ -581,6 +614,10 @@ public:
 	           const CuSparseIntMatrix& inv_proj_mat,
 	           const CuSparseIntMatrix& inv_proj_mat_t) const {
 		std::ofstream out(file_path_, std::ios::binary);
+		if (!out)
+			throw std::filesystem::filesystem_error(
+				"Failed to open CUDA cache file for writing", file_path_,
+				std::make_error_code(std::errc::io_error));
 		out.write(reinterpret_cast<const char*>(&cu_cache_magic_number), sizeof(cu_cache_magic_number));
 		out.write(reinterpret_cast<const char*>(&method), sizeof(method));
 		cu_serialize_vector_(out, lyndon_idx);
@@ -592,6 +629,10 @@ public:
 	          CuSparseIntMatrix& inv_proj_mat,
 	          CuSparseIntMatrix& inv_proj_mat_t) const {
 		std::ifstream in(file_path_, std::ios::binary);
+		if (!in)
+			throw std::filesystem::filesystem_error(
+				"Failed to open CUDA cache file for reading", file_path_,
+				std::make_error_code(std::errc::io_error));
 		uint64_t magic;
 		in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
 		if (magic != cu_cache_magic_number)

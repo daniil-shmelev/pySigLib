@@ -40,10 +40,21 @@ public:
         : n(n_), m(m_), rows(n_) {
     }
 
-    SparseIntMatrix(SparseIntMatrix&& other) noexcept {
-        n = other.n;
-        m = other.m;
-        rows.swap(other.rows);
+    SparseIntMatrix(const SparseIntMatrix&) = default;
+    SparseIntMatrix& operator=(const SparseIntMatrix&) = default;
+
+    SparseIntMatrix(SparseIntMatrix&& other) noexcept
+        : n{ std::exchange(other.n, 0) },
+          m{ std::exchange(other.m, 0) },
+          rows{ std::move(other.rows) } {}
+
+    SparseIntMatrix& operator=(SparseIntMatrix&& other) noexcept {
+        if (this != &other) {
+            n = std::exchange(other.n, 0);
+            m = std::exchange(other.m, 0);
+            rows = std::move(other.rows);
+        }
+        return *this;
     }
 
     void resize(uint64_t n_, uint64_t m_) {
@@ -151,8 +162,9 @@ public:
             out.insert_entry(i, i, 1);
         }
 
+        std::unordered_map<uint64_t, int> row_i;
         for (uint64_t i = 0; i < n; ++i) {
-            std::unordered_map<uint64_t, int> row_i;
+            row_i.clear();
 
             for (const auto& e : rows[i]) {
                 uint64_t k = e.col;

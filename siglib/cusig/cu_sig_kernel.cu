@@ -69,35 +69,33 @@ __global__ void gather_last(const T* src, T* dst, uint64_t stride, uint64_t n) {
 	if (i < n) dst[i] = src[(i + 1) * stride - 1];
 }
 
+template<typename T> __device__ inline constexpr T k_twelfth() { return static_cast<T>(1.0 / 12.0); }
+template<typename T> __device__ inline constexpr T k_sixth()   { return static_cast<T>(1.0 /  6.0); }
 
 template<typename T>
 inline __device__ void get_a_b(T& a, T& b, const T* gram, uint64_t idx, T dyadic_frac) {
-	const T twelth = static_cast<T>(1.) / 12;
 	const T gram_val = gram[idx] * dyadic_frac;
-	const T gram_val_2 = gram_val * gram_val * twelth;
+	const T gram_val_2 = gram_val * gram_val * k_twelfth<T>();
 	a = static_cast<T>(1.) + static_cast<T>(0.5) * gram_val + gram_val_2;
 	b = static_cast<T>(1.) - gram_val_2;
 }
 
 template<typename T>
 inline __device__ void get_a(T& a, const T* gram, uint64_t idx, T dyadic_frac) {
-	const T twelth = static_cast<T>(1.) / 12;
 	T gram_val = gram[idx] * dyadic_frac;
-	a = static_cast<T>(1.) + gram_val * (0.5 + gram_val * twelth);
+	a = static_cast<T>(1.) + gram_val * (0.5 + gram_val * k_twelfth<T>());
 }
 
 template<typename T>
 inline __device__ void get_b(T& b, const T* gram, uint64_t idx, T dyadic_frac) {
-	const T twelth = static_cast<T>(1.) / 12;
 	const T gram_val = gram[idx] * dyadic_frac;
-	b = static_cast<T>(1.) - gram_val * gram_val * twelth;
+	b = static_cast<T>(1.) - gram_val * gram_val * k_twelfth<T>();
 }
 
 template<typename T>
 inline __device__ void get_a_b_deriv(T& a_deriv, T& b_deriv, const T* gram, uint64_t idx, T dyadic_frac) {
-	const T sixth = static_cast<T>(1.) / 6;
 	const T gram_val = gram[idx] * dyadic_frac;
-	b_deriv = -gram_val * sixth * dyadic_frac;
+	b_deriv = -gram_val * k_sixth<T>() * dyadic_frac;
 	a_deriv = static_cast<T>(0.5) * dyadic_frac - b_deriv;
 }
 
@@ -116,8 +114,7 @@ inline __device__ T gram_val(const T* gram, uint64_t ii, uint64_t jj, T dyadic_f
 
 template<typename T>
 inline __device__ T pde_stencil(T prev_j, T prev_jm1, T pprev_jm1, T deriv) {
-	const T twelth = static_cast<T>(1.) / 12;
-	const T deriv2 = deriv * deriv * twelth;
+	const T deriv2 = deriv * deriv * k_twelfth<T>();
 	return (prev_j + prev_jm1) * (static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2)
 		- pprev_jm1 * (static_cast<T>(1.) - deriv2);
 }

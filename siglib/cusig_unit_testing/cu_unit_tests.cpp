@@ -1812,7 +1812,7 @@ public:
             std::vector<double> deriv = { 1., 1., 1. };
             std::vector<double> true_ = { 0., .5, .5, 0., 1., 0., 0. };
             std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
-            prepare_log_sig_cuda(dimension, degree, 1);
+            (void)prepare_log_sig_cuda(dimension, degree, 1);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
         }
 
@@ -1821,7 +1821,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3. };
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            prepare_log_sig_cuda(dimension, degree, 1);
+            (void)prepare_log_sig_cuda(dimension, degree, 1);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
         }
 
@@ -1830,7 +1830,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            prepare_log_sig_cuda(dimension, degree, 1);
+            (void)prepare_log_sig_cuda(dimension, degree, 1);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
         }
 
@@ -1839,7 +1839,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3. };
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            prepare_log_sig_cuda(dimension, degree, 1);
+            (void)prepare_log_sig_cuda(dimension, degree, 1);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
         }
 
@@ -1848,7 +1848,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            prepare_log_sig_cuda(dimension, degree, 1);
+            (void)prepare_log_sig_cuda(dimension, degree, 1);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
         }
 
@@ -1857,7 +1857,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5., 1., -2., 3., -4., 5., 1., 1., 1., 1., 1. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0., 0., -21., 8., 4., 8., 0., -12.5, 0., -4., 0., 5., 0., 0., 0., 0., 0., 1.375, 0.5625, 0.5, 1.25, 0., -0.25, 0., 1., 0., 1., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
-            prepare_log_sig_cuda(dimension, degree, 1);
+            (void)prepare_log_sig_cuda(dimension, degree, 1);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 1);
         }
     };
@@ -1874,7 +1874,7 @@ public:
             std::vector<double> deriv = { 1., 1., 1. };
             std::vector<double> true_ = { 0., .5, .5, 0., 1., 0., 0. };
             std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
-            prepare_log_sig_cuda(dimension, degree, 2);
+            (void)prepare_log_sig_cuda(dimension, degree, 2);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
         }
 
@@ -1883,7 +1883,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3. };
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            prepare_log_sig_cuda(dimension, degree, 2);
+            (void)prepare_log_sig_cuda(dimension, degree, 2);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
         }
 
@@ -1892,7 +1892,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            prepare_log_sig_cuda(dimension, degree, 2);
+            (void)prepare_log_sig_cuda(dimension, degree, 2);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
         }
 
@@ -1901,7 +1901,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3. };
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            prepare_log_sig_cuda(dimension, degree, 2);
+            (void)prepare_log_sig_cuda(dimension, degree, 2);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
         }
 
@@ -1910,7 +1910,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            prepare_log_sig_cuda(dimension, degree, 2);
+            (void)prepare_log_sig_cuda(dimension, degree, 2);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
         }
 
@@ -1919,7 +1919,7 @@ public:
             std::vector<double> deriv = { 1., 2., 3., 4., 5., 1., -2., 3., -4., 5., 1., 1., 1., 1., 1. };
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0., 0., -21., 8., 4., 8., 0., -12.5, 0., -4., 0., 5., 0., 0., 0., 0., 0., 1.375, 0.5625, 0.5, 1.25, 0., -0.25, 0., 1., 0., 1., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
-            prepare_log_sig_cuda(dimension, degree, 2);
+            (void)prepare_log_sig_cuda(dimension, degree, 2);
             check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 2);
         }
     };

@@ -56,7 +56,7 @@ __global__ void transform_path_internal_(
 	T* const data_out_ = data_out + blockIdx.x * p.transformed_path_size;
 
 	if (!(p.time_aug || p.lead_lag)) {
-		for (uint64_t i = thread_id; i < p.path_size; i += 32)
+		for (uint64_t i = thread_id; i < p.path_size; i += blockDim.x)
 			data_out_[i] = static_cast<T>(data_in_[i]);
 	}
 
@@ -64,21 +64,21 @@ __global__ void transform_path_internal_(
 		const uint64_t twice_dimension = 2 * p.path_dimension;
 		const uint64_t twice_transformed_dimension = 2 * p.transformed_dimension;
 
-		for (uint64_t i = thread_id; i < p.length; i += 32) {
+		for (uint64_t i = thread_id; i < p.length; i += blockDim.x) {
 			for (uint64_t j = 0; j < p.path_dimension; ++j) {
 				data_out_[i * twice_transformed_dimension + j] = static_cast<T>(data_in_[i * p.path_dimension + j]);
 				data_out_[i * twice_transformed_dimension + j + p.path_dimension] = static_cast<T>(data_in_[i * p.path_dimension + j]);
 			}
 		}
 
-		for (uint64_t i = thread_id; i < p.length - 1; i += 32) {
+		for (uint64_t i = thread_id; i < p.length - 1; i += blockDim.x) {
 			for (uint64_t j = 0; j < twice_dimension; ++j) {
 				data_out_[i * twice_transformed_dimension + p.transformed_dimension + j] = static_cast<T>(data_in_[i * p.path_dimension + j]);
 			}
 		}
 	}
 	else {
-		for (uint64_t i = thread_id; i < p.length; i += 32) {
+		for (uint64_t i = thread_id; i < p.length; i += blockDim.x) {
 			for (uint64_t j = 0; j < p.path_dimension; ++j) {
 				data_out_[i * p.transformed_dimension + j] = static_cast<T>(data_in_[i * p.path_dimension + j]);
 			}
@@ -88,7 +88,7 @@ __global__ void transform_path_internal_(
 	if (p.time_aug) {
 		const T scale = end_time / (p.transformed_length - 1);
 
-		for (uint64_t i = thread_id; i < p.transformed_length; i += 32) {
+		for (uint64_t i = thread_id; i < p.transformed_length; i += blockDim.x) {
 			data_out_[(i + 1) * p.transformed_dimension - 1] = i * scale;
 		}
 	}
@@ -128,21 +128,21 @@ __global__ void transform_path_backprop_internal_(
 		const uint64_t twice_dimension = 2 * p.path_dimension;
 		const uint64_t twice_transformed_dimension = 2 * p.transformed_dimension;
 
-		for (uint64_t i = thread_id; i < p.length; i += 32) {
+		for (uint64_t i = thread_id; i < p.length; i += blockDim.x) {
 			for (uint64_t j = 0; j < p.path_dimension; ++j) {
 				data_out_[i * p.path_dimension + j] = derivs_[i * twice_transformed_dimension + j];
 				data_out_[i * p.path_dimension + j] += derivs_[i * twice_transformed_dimension + p.path_dimension + j];
 			}
 		}
 
-		for (uint64_t i = thread_id; i < p.length - 1; i += 32) {
+		for (uint64_t i = thread_id; i < p.length - 1; i += blockDim.x) {
 			for (uint64_t j = 0; j < twice_dimension; ++j) {
 				data_out_[i * p.path_dimension + j] += derivs_[i * twice_transformed_dimension + p.transformed_dimension + j];
 			}
 		}
 	}
 	else {
-		for (uint64_t i = thread_id; i < p.length; i += 32) {
+		for (uint64_t i = thread_id; i < p.length; i += blockDim.x) {
 			for (uint64_t j = 0; j < p.path_dimension; ++j) {
 				data_out_[i * p.path_dimension + j] = derivs_[i * p.transformed_dimension + j];
 			}

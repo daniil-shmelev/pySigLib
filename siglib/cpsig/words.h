@@ -20,12 +20,15 @@
 
 typedef std::vector<uint64_t> word;
 
+// Golden-ratio (Fibonacci) hash spreader — same constant used by boost::hash_combine.
+static constexpr std::size_t kFibHashConst = 0x9e3779b97f4a7c15ULL;
+
 struct WordHash {
 	std::size_t operator()(const word& w) const noexcept {
 		std::size_t h = 0;
 		for (uint64_t x : w) {
 			h ^= std::hash<uint64_t>{}(x)
-				+0x9e3779b97f4a7c15ULL
+				+ kFibHashConst
 				+ (h << 6)
 				+ (h >> 2);
 		}
@@ -37,16 +40,16 @@ struct PairHash {
 	std::size_t operator()(const std::pair<uint64_t, uint64_t>& p) const noexcept {
 		std::size_t h1 = std::hash<uint64_t>{}(p.first);
 		std::size_t h2 = std::hash<uint64_t>{}(p.second);
-		return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+		return h1 ^ (h2 + kFibHashConst + (h1 << 6) + (h1 >> 2));
 	}
 };
 
-bool is_lyndon(word w);
+bool is_lyndon(const word& w);
 std::vector<word> all_lyndon_words(uint64_t dimension, uint64_t degree);
 std::vector<uint64_t> all_lyndon_idx(uint64_t dimension, uint64_t degree);
-uint64_t word_to_idx(word w, uint64_t dimension);
-word longest_lyndon_suffix_(word w, const std::unordered_set<word, WordHash>& lyndon_words);
-word concatenate_words(word& a, word& b);
+uint64_t word_to_idx(const word& w, uint64_t dimension);
+word longest_lyndon_suffix_(const word& w, const std::unordered_set<word, WordHash>& lyndon_words);
+word concatenate_words(const word& a, const word& b);
 uint64_t concatenate_idx(uint64_t i, uint64_t j, uint64_t len_j, uint64_t dimension);
 
 std::pair<word, word> standard_factorization(
