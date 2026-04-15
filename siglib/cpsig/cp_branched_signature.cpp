@@ -16,44 +16,97 @@
 #include "cppch.h"
 #include "cpsig.h"
 #include "cp_branched_signature.h"
+#include "cp_branched_cache.h"
 #include "macros.h"
 
 extern "C" {
 
-	CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk) noexcept {
-		SAFE_CALL(prepare_branched_sig_cache(dimension, max_nodes, use_disk));
+	CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk, bool planar) noexcept {
+		SAFE_CALL(prepare_branched_sig_cache(dimension, max_nodes, use_disk, planar));
 	}
 
-	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time) noexcept {
-		SAFE_CALL(branched_signature_<float>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time));
+	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time, bool planar) noexcept {
+		SAFE_CALL(branched_signature_<float>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar));
 	}
 
-	CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time) noexcept {
-		SAFE_CALL(branched_signature_<double>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time));
+	CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time, bool planar) noexcept {
+		SAFE_CALL(branched_signature_<double>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar));
 	}
 
-	CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {
-		SAFE_CALL(branched_sig_combine_<float>(bsig1, bsig2, out, batch_size, dimension, max_nodes, n_jobs));
+	CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar) noexcept {
+		SAFE_CALL(branched_sig_combine_<float>(bsig1, bsig2, out, batch_size, dimension, max_nodes, n_jobs, planar));
 	}
 
-	CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {
-		SAFE_CALL(branched_sig_combine_<double>(bsig1, bsig2, out, batch_size, dimension, max_nodes, n_jobs));
+	CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar) noexcept {
+		SAFE_CALL(branched_sig_combine_<double>(bsig1, bsig2, out, batch_size, dimension, max_nodes, n_jobs, planar));
 	}
 
-	CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {
-		SAFE_CALL(branched_sig_combine_backprop_<float>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, n_jobs));
+	CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar) noexcept {
+		SAFE_CALL(branched_sig_combine_backprop_<float>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, n_jobs, planar));
 	}
 
-	CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {
-		SAFE_CALL(branched_sig_combine_backprop_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, n_jobs));
+	CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar) noexcept {
+		SAFE_CALL(branched_sig_combine_backprop_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, n_jobs, planar));
 	}
 
-	CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time) noexcept {
-		SAFE_CALL(branched_sig_backprop_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time));
+	CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time, bool planar) noexcept {
+		SAFE_CALL(branched_sig_backprop_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar));
 	}
 
-	CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time) noexcept {
-		SAFE_CALL(branched_sig_backprop_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time));
+	CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time, bool planar) noexcept {
+		SAFE_CALL(branched_sig_backprop_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar));
+	}
+
+	// Returns the cache arrays' sizes so callers can allocate before calling
+	// get_branched_cache_data. Returns 0 on success, 1 on error.
+	CPSIG_API int get_branched_cache_sizes(
+		uint64_t dimension, uint64_t max_nodes, bool planar,
+		uint64_t* total_length,
+		uint64_t* num_trees,
+		int* out_max_nodes,
+		uint64_t* order_index_len,
+		uint64_t* labels_data_len,
+		uint64_t* labels_offsets_len,
+		uint64_t* coprod_data_len,
+		uint64_t* coprod_offsets_len
+	) noexcept {
+		try {
+			const auto& c = get_branched_sig_cache(dimension, max_nodes, planar);
+			*total_length = c.total_length;
+			*num_trees = c.total_length - 1;
+			*out_max_nodes = static_cast<int>(c.max_nodes);
+			*order_index_len = c.order_index.size();
+			*labels_data_len = c.node_labels_data.size();
+			*labels_offsets_len = c.node_labels_offsets.size();
+			*coprod_data_len = c.coproduct_data.size();
+			*coprod_offsets_len = c.coproduct_offsets.size();
+			return 0;
+		}
+		catch (...) { return 1; }
+	}
+
+	// Copies cache arrays into caller-provided buffers.
+	// Caller must allocate buffers of the sizes returned by get_branched_cache_sizes.
+	CPSIG_API int get_branched_cache_data(
+		uint64_t dimension, uint64_t max_nodes, bool planar,
+		double* inv_tree_factorial,
+		uint8_t* node_labels_data,
+		uint64_t* node_labels_offsets,
+		uint64_t* coproduct_data,
+		uint64_t* coproduct_offsets,
+		uint64_t* order_index
+	) noexcept {
+		try {
+			const auto& c = get_branched_sig_cache(dimension, max_nodes, planar);
+			memcpy(inv_tree_factorial, c.inv_tree_factorial.data(), c.inv_tree_factorial.size() * sizeof(double));
+			memcpy(node_labels_data, c.node_labels_data.data(), c.node_labels_data.size() * sizeof(uint8_t));
+			memcpy(node_labels_offsets, c.node_labels_offsets.data(), c.node_labels_offsets.size() * sizeof(uint64_t));
+			memcpy(coproduct_data, c.coproduct_data.data(), c.coproduct_data.size() * sizeof(uint64_t));
+			memcpy(coproduct_offsets, c.coproduct_offsets.data(), c.coproduct_offsets.size() * sizeof(uint64_t));
+			memcpy(order_index, c.order_index.data(), c.order_index.size() * sizeof(uint64_t));
+			return 0;
+		}
+		catch (...) { return 1; }
 	}
 
 }

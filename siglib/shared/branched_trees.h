@@ -168,3 +168,101 @@ inline uint64_t compute_branched_sig_length(uint64_t dimension, uint64_t max_nod
 	enumerate_all_decorated_trees(dimension, max_nodes, trees, order_index);
 	return 1 + trees.size();
 }
+
+
+// =========================================================================
+// Planar (ordered) tree enumeration
+// =========================================================================
+
+// Enumerate ordered sequences of tree indices whose total node count equals target_nodes.
+// Unlike enumerate_child_multisets, children can appear in any order (no min_idx constraint).
+// Trees are ordered by num_nodes (non-decreasing) so `continue`/`break` logic is safe.
+inline void enumerate_child_sequences(
+	uint64_t target_nodes,
+	const std::vector<DecoratedTreeInfo>& all_trees,
+	uint64_t total_count,
+	std::vector<uint64_t>& current,
+	std::vector<std::vector<uint64_t>>& results
+) {
+	if (target_nodes == 0) {
+		results.push_back(current);
+		return;
+	}
+
+	for (uint64_t idx = 0; idx < total_count; ++idx) {
+		uint64_t n = all_trees[idx].canonical.num_nodes;
+		if (n > target_nodes) break;
+		current.push_back(idx);
+		enumerate_child_sequences(target_nodes - n, all_trees, total_count, current, results);
+		current.pop_back();
+	}
+}
+
+inline void enumerate_all_planar_decorated_trees(
+	uint64_t dimension,
+	uint64_t max_nodes,
+	std::vector<DecoratedTreeInfo>& trees,
+	std::vector<uint64_t>& order_index
+) {
+	if (dimension > 255)
+		throw std::invalid_argument("branched signature dimension must be <= 255");
+
+	trees.clear();
+	order_index.clear();
+	order_index.resize(max_nodes + 2, 0);
+
+	for (uint64_t order = 1; order <= max_nodes; ++order) {
+		order_index[order] = trees.size();
+
+		if (order == 1) {
+			for (uint8_t label = 0; label < static_cast<uint8_t>(dimension); ++label) {
+				DecoratedTreeInfo info;
+				info.canonical.num_nodes = 1;
+				info.canonical.root_label = label;
+				info.tree_factorial = 1.0;
+				info.node_labels.push_back(label);
+				trees.push_back(std::move(info));
+			}
+		}
+		else {
+			uint64_t current_count = trees.size();
+
+			std::vector<std::vector<uint64_t>> child_sequences;
+			std::vector<uint64_t> current_seq;
+			enumerate_child_sequences(order - 1, trees, current_count,
+				current_seq, child_sequences);
+
+			for (const auto& children : child_sequences) {
+				if (children.empty()) continue;
+
+				// Fully construct label=0, derive label=1..d-1 by copy+patch
+				uint64_t base_idx = trees.size();
+				for (uint8_t label = 0; label < static_cast<uint8_t>(dimension); ++label) {
+					DecoratedTreeInfo info;
+					if (label == 0) {
+						info.canonical.num_nodes = order;
+						info.canonical.root_label = 0;
+						info.canonical.child_ids = children;  // ordered, NOT sorted
+						info.tree_factorial = compute_tree_factorial(info.canonical, trees);
+						collect_labels(info.canonical, trees, info.node_labels);
+					} else {
+						info = trees[base_idx];  // copy from label=0
+						info.canonical.root_label = label;
+						info.node_labels[0] = label;
+					}
+
+					trees.push_back(std::move(info));
+				}
+			}
+		}
+	}
+
+	order_index[max_nodes + 1] = trees.size();
+}
+
+inline uint64_t compute_planar_branched_sig_length(uint64_t dimension, uint64_t max_nodes) {
+	std::vector<DecoratedTreeInfo> trees;
+	std::vector<uint64_t> order_index;
+	enumerate_all_planar_decorated_trees(dimension, max_nodes, trees, order_index);
+	return 1 + trees.size();
+}

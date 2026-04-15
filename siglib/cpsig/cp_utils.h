@@ -24,4 +24,4 @@ uint64_t power(uint64_t base, uint64_t exp) noexcept;
 void populate_level_index(uint64_t* level_index, uint64_t dimension, uint64_t degree);
 
 // Length of a branched signature vector (1 + number of trees up to max_nodes).
-uint64_t branched_sig_length_(uint64_t dimension, uint64_t max_nodes);
+uint64_t branched_sig_length_(uint64_t dimension, uint64_t max_nodes, bool planar = false);

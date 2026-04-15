@@ -132,10 +132,11 @@ void branched_signature_(
 	int n_jobs,
 	bool time_aug = false,
 	bool lead_lag = false,
-	T end_time = static_cast<T>(1.)
+	T end_time = static_cast<T>(1.),
+	bool planar = false
 ) {
 	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
-	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes);
+	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 	uint64_t flat_path_length = length * dimension;
 
@@ -187,9 +188,10 @@ void branched_sig_combine_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int n_jobs
+	int n_jobs,
+	bool planar = false
 ) {
-	const auto& cache = get_branched_sig_cache(dimension, max_nodes);
+	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 
 	auto thread_func = [&](const T* sig1_ptr, const T* sig2_ptr, T* out_ptr) {
@@ -220,9 +222,10 @@ void branched_sig_combine_backprop_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int n_jobs
+	int n_jobs,
+	bool planar = false
 ) {
-	const auto& cache = get_branched_sig_cache(dimension, max_nodes);
+	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 
 	auto work = [&](uint64_t b) {
@@ -493,10 +496,11 @@ void branched_sig_backprop_(
 	int n_jobs,
 	bool time_aug = false,
 	bool lead_lag = false,
-	T end_time = static_cast<T>(1.)
+	T end_time = static_cast<T>(1.),
+	bool planar = false
 ) {
 	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
-	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes);
+	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 	uint64_t flat_path_length = length * dimension;
 

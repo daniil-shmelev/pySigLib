@@ -20,11 +20,24 @@
 #include "macros.h"
 
 namespace {
+using BranchedCacheKey = std::tuple<uint64_t, uint64_t, bool>;
+
+struct BranchedCacheKeyHash {
+	std::size_t operator()(const BranchedCacheKey& k) const noexcept {
+		std::size_t h1 = std::hash<uint64_t>{}(std::get<0>(k));
+		std::size_t h2 = std::hash<uint64_t>{}(std::get<1>(k));
+		std::size_t h3 = std::hash<bool>{}(std::get<2>(k));
+		h1 ^= (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+		h1 ^= (h3 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+		return h1;
+	}
+};
+
 struct BranchedSigCacheRegistry {
 	std::unordered_map<
-		std::pair<uint64_t, uint64_t>,
+		BranchedCacheKey,
 		std::unique_ptr<BranchedSigCache>,
-		PairHash
+		BranchedCacheKeyHash
 	> map;
 	std::shared_mutex mu;
 };
@@ -42,9 +55,10 @@ BranchedSigCacheRegistry& branched_sig_cache_registry() {
 
 static constexpr const char* branched_cache_version = "v1";
 
-static std::filesystem::path branched_cache_file_path(uint64_t dimension, uint64_t max_nodes) {
+static std::filesystem::path branched_cache_file_path(uint64_t dimension, uint64_t max_nodes, bool planar) {
+	const char* prefix = planar ? "planar_branched_" : "branched_";
 	return get_cache_dir() / cache_folder_name /
-		("branched_" + std::to_string(dimension) + "_" + std::to_string(max_nodes) + "_" + branched_cache_version + ".bin");
+		(prefix + std::to_string(dimension) + "_" + std::to_string(max_nodes) + "_" + branched_cache_version + ".bin");
 }
 
 static void write_branched_cache(const BranchedSigCache& c) {
@@ -52,7 +66,7 @@ static void write_branched_cache(const BranchedSigCache& c) {
 	if (!std::filesystem::exists(dir))
 		std::filesystem::create_directory(dir);
 
-	std::ofstream out(branched_cache_file_path(c.dimension, c.max_nodes), std::ios::binary);
+	std::ofstream out(branched_cache_file_path(c.dimension, c.max_nodes, c.planar), std::ios::binary);
 	if (!out) return;
 
 	out.write(reinterpret_cast<const char*>(&cache_magic_number), sizeof(cache_magic_number));
@@ -74,8 +88,8 @@ static void write_branched_cache(const BranchedSigCache& c) {
 	serialize_vector(out, c.coproduct_offsets);
 }
 
-static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, BranchedSigCache& c) {
-	auto path = branched_cache_file_path(dimension, max_nodes);
+static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool planar, BranchedSigCache& c) {
+	auto path = branched_cache_file_path(dimension, max_nodes, planar);
 	if (!std::filesystem::exists(path)) return false;
 
 	std::ifstream in(path, std::ios::binary);
@@ -130,8 +144,8 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, Branched
 // Cache construction
 // ---------------------------------------------------------------------------
 
-void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk) {
-	std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
+void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk, bool planar) {
+	BranchedCacheKey key(dimension, max_nodes, planar);
 	auto& reg = branched_sig_cache_registry();
 
 	{
@@ -143,7 +157,8 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 	// Try loading from disk
 	if (use_disk) {
 		auto cache = std::make_unique<BranchedSigCache>();
-		if (read_branched_cache(dimension, max_nodes, *cache)) {
+		if (read_branched_cache(dimension, max_nodes, planar, *cache)) {
+			cache->planar = planar;
 			std::unique_lock wlock(reg.mu);
 			reg.map.insert_or_assign(key, std::move(cache));
 			return;
@@ -151,7 +166,7 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 	}
 
 	// Compute from scratch using shared builder
-	auto cache = std::make_unique<BranchedSigCache>(build_branched_sig_cache(dimension, max_nodes));
+	auto cache = std::make_unique<BranchedSigCache>(build_branched_sig_cache(dimension, max_nodes, planar));
 
 	if (use_disk) {
 		write_branched_cache(*cache);
@@ -161,8 +176,8 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 	reg.map.insert_or_assign(key, std::move(cache));
 }
 
-const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes) {
-	std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
+const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool planar) {
+	BranchedCacheKey key(dimension, max_nodes, planar);
 	auto& reg = branched_sig_cache_registry();
 	std::shared_lock rlock(reg.mu);
 	auto it = reg.map.find(key);
@@ -177,4 +192,3 @@ void clear_branched_sig_cache() {
 	std::unique_lock wlock(reg.mu);
 	reg.map.clear();
 }
-

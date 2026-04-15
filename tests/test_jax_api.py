@@ -875,6 +875,68 @@ def test_jax_branched_sig_grad_matches_pysiglib(device, jitted, dtype, case):
     check_close(grad_ref, grad, double_atol=1e-8)
 
 
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+def test_jax_branched_sig_planar_matches_pysiglib(device, jitted):
+    rng = np.random.default_rng(4242)
+    x = rng.uniform(size=(8, 2)).astype(np.float64)
+    deg = 2
+
+    pysiglib.prepare_branched_sig(2, deg, planar=True)
+    expected = pysiglib.branched_sig(x, deg, planar=True)
+
+    x_jax = _as_jax_array(x, device, np.float64)
+
+    def fn(path):
+        return jax_api.branched_sig(path, deg, planar=True)
+
+    actual = jax.jit(fn)(x_jax) if jitted else fn(x_jax)
+    check_close(expected, actual, double_atol=1e-8)
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+def test_jax_branched_sig_canonical_matches_pysiglib(device, jitted):
+    rng = np.random.default_rng(4343)
+    x = rng.uniform(size=(7, 2)).astype(np.float64)
+    deg = 3
+
+    pysiglib.prepare_branched_sig(2, deg)
+    expected = pysiglib.branched_sig(x, deg, tree_order="canonical")
+
+    x_jax = _as_jax_array(x, device, np.float64)
+
+    def fn(path):
+        return jax_api.branched_sig(path, deg, tree_order="canonical")
+
+    actual = jax.jit(fn)(x_jax) if jitted else fn(x_jax)
+    check_close(expected, actual, double_atol=1e-8)
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+def test_jax_branched_sig_planar_grad_matches_pysiglib(device, jitted):
+    rng = np.random.default_rng(4344)
+    x = rng.uniform(size=(7, 2)).astype(np.float64)
+    deg = 2
+
+    pysiglib.prepare_branched_sig(2, deg, planar=True)
+    bsig_ref = pysiglib.branched_sig(x, deg, planar=True)
+    weights = rng.uniform(size=bsig_ref.shape).astype(np.float64)
+    grad_ref = pysiglib.branched_sig_backprop(x, bsig_ref, weights, deg, planar=True)
+
+    x_jax = _as_jax_array(x, device, np.float64)
+    weights_jax = _as_jax_array(weights, device, np.float64)
+
+    def loss_fn(path):
+        bsig = jax_api.branched_sig(path, deg, planar=True)
+        return jnp.sum(bsig * weights_jax)
+
+    grad_fn = jax.jit(jax.grad(loss_fn)) if jitted else jax.grad(loss_fn)
+    grad = grad_fn(x_jax)
+    check_close(grad_ref, grad, double_atol=1e-8)
+
+
 # =========================================================================
 # branched_sig_combine — forward
 # =========================================================================
@@ -978,6 +1040,91 @@ def test_jax_branched_sig_combine_grad_matches_pysiglib(device, jitted, dtype, c
 
     def loss_fn(s1, s2):
         comb = jax_api.branched_sig_combine(s1, s2, dim, deg)
+        return jnp.sum(comb * weights_jax)
+
+    grad_fn = jax.jit(jax.grad(loss_fn, argnums=(0, 1))) if jitted else jax.grad(loss_fn, argnums=(0, 1))
+    grad_bsig1, grad_bsig2 = grad_fn(bsig1_jax, bsig2_jax)
+
+    check_close(grad_bsig1_ref, grad_bsig1, double_atol=1e-8)
+    check_close(grad_bsig2_ref, grad_bsig2, double_atol=1e-8)
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+def test_jax_branched_sig_combine_planar_matches_pysiglib(device, jitted):
+    rng = np.random.default_rng(4444)
+    dim, deg = 2, 2
+
+    pysiglib.prepare_branched_sig(dim, deg, planar=True)
+
+    x1 = rng.uniform(size=(9, dim)).astype(np.float64)
+    x2 = rng.uniform(size=(6, dim)).astype(np.float64)
+
+    bsig1 = pysiglib.branched_sig(x1, deg, planar=True)
+    bsig2 = pysiglib.branched_sig(x2, deg, planar=True)
+    expected = pysiglib.branched_sig_combine(bsig1, bsig2, dim, deg, planar=True)
+
+    bsig1_jax = _as_jax_array(bsig1, device, np.float64)
+    bsig2_jax = _as_jax_array(bsig2, device, np.float64)
+
+    def fn(s1, s2):
+        return jax_api.branched_sig_combine(s1, s2, dim, deg, planar=True)
+
+    actual = jax.jit(fn)(bsig1_jax, bsig2_jax) if jitted else fn(bsig1_jax, bsig2_jax)
+    check_close(expected, actual, double_atol=1e-8)
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+def test_jax_branched_sig_combine_canonical_matches_pysiglib(device, jitted):
+    rng = np.random.default_rng(4545)
+    dim, deg = 2, 3
+
+    pysiglib.prepare_branched_sig(dim, deg)
+
+    x1 = rng.uniform(size=(8, dim)).astype(np.float64)
+    x2 = rng.uniform(size=(7, dim)).astype(np.float64)
+
+    bsig1 = pysiglib.branched_sig(x1, deg, tree_order="canonical")
+    bsig2 = pysiglib.branched_sig(x2, deg, tree_order="canonical")
+    expected = pysiglib.branched_sig_combine(
+        bsig1, bsig2, dim, deg, tree_order="canonical")
+
+    bsig1_jax = _as_jax_array(bsig1, device, np.float64)
+    bsig2_jax = _as_jax_array(bsig2, device, np.float64)
+
+    def fn(s1, s2):
+        return jax_api.branched_sig_combine(s1, s2, dim, deg, tree_order="canonical")
+
+    actual = jax.jit(fn)(bsig1_jax, bsig2_jax) if jitted else fn(bsig1_jax, bsig2_jax)
+    check_close(expected, actual, double_atol=1e-8)
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+def test_jax_branched_sig_combine_planar_grad_matches_pysiglib(device, jitted):
+    rng = np.random.default_rng(4546)
+    dim, deg = 2, 2
+
+    pysiglib.prepare_branched_sig(dim, deg, planar=True)
+
+    x1 = rng.uniform(size=(8, dim)).astype(np.float64)
+    x2 = rng.uniform(size=(7, dim)).astype(np.float64)
+
+    bsig1_np = pysiglib.branched_sig(x1, deg, planar=True)
+    bsig2_np = pysiglib.branched_sig(x2, deg, planar=True)
+    combined = pysiglib.branched_sig_combine(bsig1_np, bsig2_np, dim, deg, planar=True)
+
+    weights = rng.uniform(size=combined.shape).astype(np.float64)
+    grad_bsig1_ref, grad_bsig2_ref = pysiglib.branched_sig_combine_backprop(
+        weights, bsig1_np, bsig2_np, dim, deg, planar=True)
+
+    bsig1_jax = _as_jax_array(bsig1_np, device, np.float64)
+    bsig2_jax = _as_jax_array(bsig2_np, device, np.float64)
+    weights_jax = _as_jax_array(weights, device, np.float64)
+
+    def loss_fn(s1, s2):
+        comb = jax_api.branched_sig_combine(s1, s2, dim, deg, planar=True)
         return jnp.sum(comb * weights_jax)
 
     grad_fn = jax.jit(jax.grad(loss_fn, argnums=(0, 1))) if jitted else jax.grad(loss_fn, argnums=(0, 1))

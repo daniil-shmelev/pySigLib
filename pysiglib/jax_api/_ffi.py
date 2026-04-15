@@ -436,29 +436,29 @@ def log_sig_from_path_backprop_ffi_call(cotangent, path, dimension, degree, n_jo
 # branched_sig
 # ---------------------------------------------------------------------------
 
-def _branched_sig_shape(path_shape, dimension, max_nodes, time_aug, lead_lag):
+def _branched_sig_shape(path_shape, dimension, max_nodes, time_aug, lead_lag, planar):
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
-    out_len = branched_sig_length(aug_dim, max_nodes)
+    out_len = branched_sig_length(aug_dim, max_nodes, planar=planar)
     if out_len == 0:
         raise ValueError("Branched signature length overflow.")
     return (*path_shape[:-2], out_len)
 
 
-def branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs):
+def branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
     _normalize_dtype(path.dtype)
     dimension = path.shape[-1]
     out_type = jax.ShapeDtypeStruct(
-        _branched_sig_shape(path.shape, dimension, max_nodes, time_aug, lead_lag), path.dtype)
+        _branched_sig_shape(path.shape, dimension, max_nodes, time_aug, lead_lag, planar), path.dtype)
     call_kwargs = dict(max_nodes=np.int64(max_nodes), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
-                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
+                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
     return _make_ffi_call("branched_sig", (path,), out_type, call_kwargs)
 
 
-def branched_sig_backprop_ffi_call(path, bsig, cotangent, max_nodes, time_aug, lead_lag, end_time, n_jobs):
+def branched_sig_backprop_ffi_call(path, bsig, cotangent, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
     _check_same_dtype(path, bsig, cotangent)
     out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
     call_kwargs = dict(max_nodes=np.int64(max_nodes), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
-                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
+                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
     return _make_ffi_call("branched_sig_backprop", (path, bsig, cotangent), out_type, call_kwargs)
 
 
@@ -466,15 +466,17 @@ def branched_sig_backprop_ffi_call(path, bsig, cotangent, max_nodes, time_aug, l
 # branched_sig_combine
 # ---------------------------------------------------------------------------
 
-def branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs):
+def branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs, planar):
     _check_same_dtype(bsig1, bsig2)
     out_type = jax.ShapeDtypeStruct(bsig1.shape, bsig1.dtype)
-    call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes), n_jobs=np.int64(n_jobs))
+    call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
+                       n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
     return _make_ffi_call("branched_sig_combine", (bsig1, bsig2), out_type, call_kwargs)
 
 
-def branched_sig_combine_backprop_ffi_call(cotangent, bsig1, bsig2, dimension, max_nodes, n_jobs):
+def branched_sig_combine_backprop_ffi_call(cotangent, bsig1, bsig2, dimension, max_nodes, n_jobs, planar):
     _check_same_dtype(cotangent, bsig1, bsig2)
     grad_type = jax.ShapeDtypeStruct(bsig1.shape, bsig1.dtype)
-    call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes), n_jobs=np.int64(n_jobs))
+    call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
+                       n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
     return _make_ffi_call("branched_sig_combine_backprop", (cotangent, bsig1, bsig2), (grad_type, grad_type), call_kwargs)

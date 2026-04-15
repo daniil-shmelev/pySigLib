@@ -1828,7 +1828,7 @@ namespace {
 
 template <typename T>
 ffi::Error BranchedSigCpuImpl(
-    std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs,
+    std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer& path, ffi::Result<ffi::AnyBuffer>& out
 ) {
     PathSpec spec;
@@ -1842,7 +1842,7 @@ ffi::Error BranchedSigCpuImpl(
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs),
-        time_aug, lead_lag, static_cast<T>(end_time)
+        time_aug, lead_lag, static_cast<T>(end_time), planar
     );
     if (err_code != 0) return NativeCallError("branched_sig", err_code);
     return ffi::Error::Success();
@@ -1850,7 +1850,7 @@ ffi::Error BranchedSigCpuImpl(
 
 template <typename T>
 ffi::Error BranchedSigBackpropCpuImpl(
-    std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs,
+    std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer& path, ffi::AnyBuffer& bsig, ffi::AnyBuffer& cotangent,
     ffi::Result<ffi::AnyBuffer>& out
 ) {
@@ -1867,37 +1867,37 @@ ffi::Error BranchedSigBackpropCpuImpl(
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs),
-        time_aug, lead_lag, static_cast<T>(end_time)
+        time_aug, lead_lag, static_cast<T>(end_time), planar
     );
     if (err_code != 0) return NativeCallError("branched_sig_backprop", err_code);
     return ffi::Error::Success();
 }
 
 ffi::Error BranchedSigCpu(
-    std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs,
+    std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer path, ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateFloatBuffer("path", path); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
-        return BranchedSigCpuImpl<T>(max_nodes, time_aug, lead_lag, end_time, n_jobs, path, out);
+        return BranchedSigCpuImpl<T>(max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, out);
     });
 }
 
 ffi::Error BranchedSigBackpropCpu(
-    std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs,
+    std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer path, ffi::AnyBuffer bsig, ffi::AnyBuffer cotangent,
     ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateFloatBuffer("path", path); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
-        return BranchedSigBackpropCpuImpl<T>(max_nodes, time_aug, lead_lag, end_time, n_jobs, path, bsig, cotangent, out);
+        return BranchedSigBackpropCpuImpl<T>(max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, bsig, cotangent, out);
     });
 }
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
 ffi::Error BranchedSigCudaImpl(
-    cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time,
+    cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t /*n_jobs*/, bool planar,
     ffi::AnyBuffer& path, ffi::Result<ffi::AnyBuffer>& out
 ) {
     PathSpec spec;
@@ -1908,14 +1908,14 @@ ffi::Error BranchedSigCudaImpl(
     int err_code = CudaFns<T>::bsig(BufferData<T>(path), BufferData<T>(out),
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
-        static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time));
+        static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time), planar);
     if (err_code != 0) return NativeCallError("branched_sig_cuda", err_code);
     return ffi::Error::Success();
 }
 
 template <typename T>
 ffi::Error BranchedSigBackpropCudaImpl(
-    cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time,
+    cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t /*n_jobs*/, bool planar,
     ffi::AnyBuffer& path, ffi::AnyBuffer& bsig, ffi::AnyBuffer& cotangent,
     ffi::Result<ffi::AnyBuffer>& out
 ) {
@@ -1927,29 +1927,29 @@ ffi::Error BranchedSigBackpropCudaImpl(
     int err_code = CudaFns<T>::bsig_backprop(BufferData<T>(path), BufferData<T>(out), BufferData<T>(cotangent), BufferData<T>(bsig),
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
-        static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time));
+        static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time), planar);
     if (err_code != 0) return NativeCallError("branched_sig_backprop_cuda", err_code);
     return ffi::Error::Success();
 }
 
 ffi::Error BranchedSigCuda(
-    cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time,
+    cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer path, ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateFloatBuffer("path", path); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
-        return BranchedSigCudaImpl<T>(stream, max_nodes, time_aug, lead_lag, end_time, path, out);
+        return BranchedSigCudaImpl<T>(stream, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, out);
     });
 }
 
 ffi::Error BranchedSigBackpropCuda(
-    cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time,
+    cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer path, ffi::AnyBuffer bsig, ffi::AnyBuffer cotangent,
     ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateFloatBuffer("path", path); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
-        return BranchedSigBackpropCudaImpl<T>(stream, max_nodes, time_aug, lead_lag, end_time, path, bsig, cotangent, out);
+        return BranchedSigBackpropCudaImpl<T>(stream, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, bsig, cotangent, out);
     });
 }
 #endif
@@ -1960,7 +1960,7 @@ ffi::Error BranchedSigBackpropCuda(
 
 template <typename T>
 ffi::Error BranchedSigCombineCpuImpl(
-    std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs,
+    std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer& bsig1, ffi::AnyBuffer& bsig2, ffi::Result<ffi::AnyBuffer>& out
 ) {
     SigSpec spec;
@@ -1968,14 +1968,14 @@ ffi::Error BranchedSigCombineCpuImpl(
 
     int err_code = CpuFns<T>::bsig_combine(BufferData<T>(bsig1), BufferData<T>(bsig2), BufferData<T>(out),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs));
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs), planar);
     if (err_code != 0) return NativeCallError("branched_sig_combine", err_code);
     return ffi::Error::Success();
 }
 
 template <typename T>
 ffi::Error BranchedSigCombineBackpropCpuImpl(
-    std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs,
+    std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer& cotangent, ffi::AnyBuffer& bsig1, ffi::AnyBuffer& bsig2,
     ffi::Result<ffi::AnyBuffer>& grad1, ffi::Result<ffi::AnyBuffer>& grad2
 ) {
@@ -1985,31 +1985,31 @@ ffi::Error BranchedSigCombineBackpropCpuImpl(
     int err_code = CpuFns<T>::bsig_combine_backprop(BufferData<T>(bsig1), BufferData<T>(bsig2), BufferData<T>(cotangent),
         BufferData<T>(grad1), BufferData<T>(grad2),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs));
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs), planar);
     if (err_code != 0) return NativeCallError("branched_sig_combine_backprop", err_code);
     return ffi::Error::Success();
 }
 
-ffi::Error BranchedSigCombineCpu(std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs,
+ffi::Error BranchedSigCombineCpu(std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer bsig1, ffi::AnyBuffer bsig2, ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateSameFloatDtype("bsig1", bsig1, "bsig2", bsig2); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(bsig1), [&]<typename T>() -> ffi::Error {
-        return BranchedSigCombineCpuImpl<T>(dimension, max_nodes, n_jobs, bsig1, bsig2, out);
+        return BranchedSigCombineCpuImpl<T>(dimension, max_nodes, n_jobs, planar, bsig1, bsig2, out);
     });
 }
 
-ffi::Error BranchedSigCombineBackpropCpu(std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs,
+ffi::Error BranchedSigCombineBackpropCpu(std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer cotangent, ffi::AnyBuffer bsig1, ffi::AnyBuffer bsig2,
     ffi::Result<ffi::AnyBuffer> grad1, ffi::Result<ffi::AnyBuffer> grad2) {
     if (auto msg = ValidateSameFloatDtype("bsig1", bsig1, "bsig2", bsig2); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(bsig1), [&]<typename T>() -> ffi::Error {
-        return BranchedSigCombineBackpropCpuImpl<T>(dimension, max_nodes, n_jobs, cotangent, bsig1, bsig2, grad1, grad2);
+        return BranchedSigCombineBackpropCpuImpl<T>(dimension, max_nodes, n_jobs, planar, cotangent, bsig1, bsig2, grad1, grad2);
     });
 }
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
-ffi::Error BranchedSigCombineCudaImpl(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes,
+ffi::Error BranchedSigCombineCudaImpl(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t /*n_jobs*/, bool planar,
     ffi::AnyBuffer& bsig1, ffi::AnyBuffer& bsig2, ffi::Result<ffi::AnyBuffer>& out) {
     SigSpec spec;
     if (auto msg = GetSigSpec(bsig1, spec); !msg.empty()) return InvalidArgument(msg);
@@ -2017,13 +2017,13 @@ ffi::Error BranchedSigCombineCudaImpl(cudaStream_t stream, std::int64_t dimensio
     if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
     int err_code = CudaFns<T>::bsig_combine(BufferData<T>(bsig1), BufferData<T>(bsig2), BufferData<T>(out),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes));
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), planar);
     if (err_code != 0) return NativeCallError("branched_sig_combine_cuda", err_code);
     return ffi::Error::Success();
 }
 
 template <typename T>
-ffi::Error BranchedSigCombineBackpropCudaImpl(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes,
+ffi::Error BranchedSigCombineBackpropCudaImpl(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t /*n_jobs*/, bool planar,
     ffi::AnyBuffer& cotangent, ffi::AnyBuffer& bsig1, ffi::AnyBuffer& bsig2,
     ffi::Result<ffi::AnyBuffer>& grad1, ffi::Result<ffi::AnyBuffer>& grad2) {
     SigSpec spec;
@@ -2033,25 +2033,25 @@ ffi::Error BranchedSigCombineBackpropCudaImpl(cudaStream_t stream, std::int64_t 
     int err_code = CudaFns<T>::bsig_combine_backprop(BufferData<T>(bsig1), BufferData<T>(bsig2), BufferData<T>(cotangent),
         BufferData<T>(grad1), BufferData<T>(grad2),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes));
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), planar);
     if (err_code != 0) return NativeCallError("branched_sig_combine_backprop_cuda", err_code);
     return ffi::Error::Success();
 }
 
-ffi::Error BranchedSigCombineCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes,
+ffi::Error BranchedSigCombineCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer bsig1, ffi::AnyBuffer bsig2, ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateSameFloatDtype("bsig1", bsig1, "bsig2", bsig2); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(bsig1), [&]<typename T>() -> ffi::Error {
-        return BranchedSigCombineCudaImpl<T>(stream, dimension, max_nodes, bsig1, bsig2, out);
+        return BranchedSigCombineCudaImpl<T>(stream, dimension, max_nodes, n_jobs, planar, bsig1, bsig2, out);
     });
 }
 
-ffi::Error BranchedSigCombineBackpropCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes,
+ffi::Error BranchedSigCombineBackpropCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer cotangent, ffi::AnyBuffer bsig1, ffi::AnyBuffer bsig2,
     ffi::Result<ffi::AnyBuffer> grad1, ffi::Result<ffi::AnyBuffer> grad2) {
     if (auto msg = ValidateSameFloatDtype("bsig1", bsig1, "bsig2", bsig2); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(bsig1), [&]<typename T>() -> ffi::Error {
-        return BranchedSigCombineBackpropCudaImpl<T>(stream, dimension, max_nodes, cotangent, bsig1, bsig2, grad1, grad2);
+        return BranchedSigCombineBackpropCudaImpl<T>(stream, dimension, max_nodes, n_jobs, planar, cotangent, bsig1, bsig2, grad1, grad2);
     });
 }
 #endif
@@ -2186,46 +2186,48 @@ ffi::Error LogSigFromPathBackpropCuda(cudaStream_t stream, std::int64_t dimensio
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCpu, BranchedSigCpu,
     ffi::Ffi::Bind().Attr<std::int64_t>("max_nodes")
-        .Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time").Attr<std::int64_t>("n_jobs")
+        .Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
         .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigBackpropCpu, BranchedSigBackpropCpu,
     ffi::Ffi::Bind().Attr<std::int64_t>("max_nodes")
-        .Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time").Attr<std::int64_t>("n_jobs")
+        .Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCuda, BranchedSigCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("max_nodes").Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
         .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigBackpropCuda, BranchedSigBackpropCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("max_nodes").Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
 
 // branched_sig_combine
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCombineCpu, BranchedSigCombineCpu,
-    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs")
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCombineBackpropCpu, BranchedSigCombineBackpropCpu,
-    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs")
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCombineCuda, BranchedSigCombineCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
-        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes")
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCombineBackpropCuda, BranchedSigCombineBackpropCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
-        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes")
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
