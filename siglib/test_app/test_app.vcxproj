@@ -85,9 +85,6 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <CudaCompile Include="test_app.cpp" />
-  </ItemGroup>
-  <ItemGroup>
     <None Include="Jamfile.jam" />
   </ItemGroup>
   <ItemGroup>
@@ -97,6 +94,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dll_funcs.cpp" />
+    <ClCompile Include="test_app.cpp" />
     <ClCompile Include="tests.cpp" />
     <ClCompile Include="utils.cpp" />
   </ItemGroup>

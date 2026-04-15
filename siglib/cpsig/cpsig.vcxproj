@@ -109,7 +109,6 @@
     <ClInclude Include="cp_sig_coef.h" />
     <ClInclude Include="cp_sig_kernel.h" />
     <ClInclude Include="cp_signature.h" />
-    <ClInclude Include="cp_tensor_poly.h" />
     <ClInclude Include="cp_vector_funcs.h" />
     <ClInclude Include="log_sig_cache.h" />
     <ClInclude Include="macros.h" />
@@ -118,9 +117,13 @@
     <ClInclude Include="words.h" />
     <ClInclude Include="cp_bch.h" />
     <ClInclude Include="cp_bch_data.h" />
-    <ClInclude Include="cp_branched_trees.h" />
     <ClInclude Include="cp_branched_cache.h" />
     <ClInclude Include="cp_branched_signature.h" />
+    <ClInclude Include="cp_exp_signature.h" />
+    <ClInclude Include="cp_sig_combine.h" />
+    <ClInclude Include="cp_sig_join.h" />
+    <ClInclude Include="cp_tensor_log.h" />
+    <ClInclude Include="cp_utils.h" />
     <ClInclude Include="disk_cache.h" />
   </ItemGroup>
   <ItemGroup>
@@ -135,11 +138,13 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="cp_tensor_poly.cpp" />
-    <ClCompile Include="log_sig_cache.cpp" />
-    <ClCompile Include="words.cpp" />
     <ClCompile Include="cp_branched_cache.cpp" />
     <ClCompile Include="cp_branched_signature.cpp" />
+    <ClCompile Include="cp_sig_combine.cpp" />
+    <ClCompile Include="cp_sig_join.cpp" />
+    <ClCompile Include="cp_utils.cpp" />
+    <ClCompile Include="log_sig_cache.cpp" />
+    <ClCompile Include="words.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

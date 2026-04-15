@@ -1,7 +1,7 @@
 name: Build CUDA test image
 
 # Builds Dockerfile.test-cuda and pushes it to the GitHub Container Registry
-# as ghcr.io/<owner>/pysiglib-test-cuda12. The wheels.yml `test-linux-cuda`
+# as ghcr.io/<owner>/pysiglib-test-cuda12. The release.yml `test-linux-cuda`
 # job pulls the resulting image on every run so it doesn't have to redownload
 # torch + apt packages inside an ephemeral nvidia/cuda container each time.
 #

@@ -2,7 +2,7 @@ name: Build manylinux+CUDA image
 
 # Builds Dockerfile.manylinux-cuda12 and pushes it to the GitHub Container
 # Registry as ghcr.io/<owner>/pysiglib-manylinux-cuda12. Run this manually
-# whenever the base image or CUDA toolkit version bumps. The wheels.yml
+# whenever the base image or CUDA toolkit version bumps. The release.yml
 # workflow pulls the resulting image for its CUDA Linux build job.
 #
 # Prerequisites: none. The built-in GITHUB_TOKEN is authorized to push to

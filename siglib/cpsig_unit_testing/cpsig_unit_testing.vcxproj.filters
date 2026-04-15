@@ -27,10 +27,37 @@
     <ClInclude Include="..\cpsig\cpsig.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpsig\cp_tensor_poly.h">
+    <ClInclude Include="..\cpsig\cp_bch.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\cp_bch_data.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\cp_branched_cache.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\cp_branched_signature.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\cp_exp_signature.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\cp_log_signature.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
     <ClInclude Include="..\cpsig\cp_path.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\cp_path_transforms.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\cp_sig_coef.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\cp_sig_combine.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\cp_sig_join.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
     <ClInclude Include="..\cpsig\cp_sig_kernel.h">
@@ -39,22 +66,31 @@
     <ClInclude Include="..\cpsig\cp_signature.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpsig\cp_path_transforms.h">
+    <ClInclude Include="..\cpsig\cp_tensor_log.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpsig\cp_log_signature.h">
+    <ClInclude Include="..\cpsig\cp_utils.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpsig\words.h">
+    <ClInclude Include="..\cpsig\cp_vector_funcs.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpsig\sparse.h">
+    <ClInclude Include="..\cpsig\disk_cache.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
     <ClInclude Include="..\cpsig\log_sig_cache.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
-    <ClInclude Include="..\cpsig\cp_sig_coef.h">
+    <ClInclude Include="..\cpsig\macros.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\multithreading.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\sparse.h">
+      <Filter>Header Files\cpsig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cpsig\words.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
   </ItemGroup>
@@ -65,8 +101,29 @@
     <ClCompile Include="..\cpsig\cpsig.cpp">
       <Filter>Source Files\cpsig</Filter>
     </ClCompile>
-    <ClCompile Include="..\cpsig\cp_unit_tests.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\cpsig\cp_bch.cpp">
+      <Filter>Source Files\cpsig</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpsig\cp_branched_cache.cpp">
+      <Filter>Source Files\cpsig</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpsig\cp_branched_signature.cpp">
+      <Filter>Source Files\cpsig</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpsig\cp_log_signatures.cpp">
+      <Filter>Source Files\cpsig</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpsig\cp_path_transforms.cpp">
+      <Filter>Source Files\cpsig</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpsig\cp_sig_coef.cpp">
+      <Filter>Source Files\cpsig</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpsig\cp_sig_combine.cpp">
+      <Filter>Source Files\cpsig</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpsig\cp_sig_join.cpp">
+      <Filter>Source Files\cpsig</Filter>
     </ClCompile>
     <ClCompile Include="..\cpsig\cp_sig_kernel.cpp">
       <Filter>Source Files\cpsig</Filter>
@@ -74,23 +131,17 @@
     <ClCompile Include="..\cpsig\cp_signature.cpp">
       <Filter>Source Files\cpsig</Filter>
     </ClCompile>
-    <ClCompile Include="..\cpsig\cp_tensor_poly.cpp">
-      <Filter>Source Files\cpsig</Filter>
-    </ClCompile>
-    <ClCompile Include="..\cpsig\cp_path_transforms.cpp">
-      <Filter>Source Files\cpsig</Filter>
-    </ClCompile>
-    <ClCompile Include="..\cpsig\cp_log_signatures.cpp">
-      <Filter>Source Files\cpsig</Filter>
-    </ClCompile>
-    <ClCompile Include="..\cpsig\words.cpp">
+    <ClCompile Include="..\cpsig\cp_utils.cpp">
       <Filter>Source Files\cpsig</Filter>
     </ClCompile>
     <ClCompile Include="..\cpsig\log_sig_cache.cpp">
       <Filter>Source Files\cpsig</Filter>
     </ClCompile>
-    <ClCompile Include="..\cpsig\cp_sig_coef.cpp">
+    <ClCompile Include="..\cpsig\words.cpp">
       <Filter>Source Files\cpsig</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_unit_tests.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

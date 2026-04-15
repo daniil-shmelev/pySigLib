@@ -1,10 +1,13 @@
 [build-system]
-requires = ["scikit-build-core>=0.10"]
+# jaxlib is build-time only — scikit-build-core installs it into the isolated
+# build env so CMake's XLA FFI probe can find xla/ffi/api/ffi.h. The produced
+# wheel has no runtime dependency on jaxlib.
+requires = ["scikit-build-core>=0.10", "jaxlib>=0.5.0"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "pysiglib"
-version = "2.3.0"
+version = "3.0.0rc1"
 description = "Fast Signature Computations on CPU and GPU"
 requires-python = ">=3.9"
 license = "Apache-2.0"
@@ -12,7 +15,7 @@ readme = "README.md"
 authors = [
     { name = "Daniil Shmelev", email = "daniil.shmelev23@imperial.ac.uk" },
 ]
-dependencies = ["numpy", "torch", "kauri @ git+https://github.com/daniil-shmelev/kauri.git"]
+dependencies = ["numpy", "torch", "kauri>=2.1.0"]
 
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -35,9 +38,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-jax = [
-    "jax",
-]
+jax  = ["jax"]
+cuda = ["pysiglib-cuda==3.0.0rc1"]
 
 [project.urls]
 Homepage = "https://github.com/daniil-shmelev/pySigLib"
@@ -60,12 +62,10 @@ sdist.exclude = [
 
 [tool.scikit-build.cmake.define]
 PYSIGLIB_JAX_FFI = {env = "PYSIGLIB_JAX_FFI", default = "ON"}
-PYSIGLIB_CUDA      = {env = "CUSIG", default = "ON"}
-PYSIGLIB_AVX       = {env = "SIGLIB_VEC", default = "ON"}
-PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
+PYSIGLIB_AVX     = {env = "SIGLIB_VEC", default = "ON"}
 
 # -----------------------------------------------------------------------
-# cibuildwheel configuration (used by .github/workflows/wheels.yml)
+# cibuildwheel configuration (used by .github/workflows/release.yml)
 # -----------------------------------------------------------------------
 # Defaults assume CPU-only. Each CI job overrides CIBW_ENVIRONMENT
 # (and CIBW_MANYLINUX_X86_64_IMAGE for the CUDA Linux build) as needed.
@@ -75,7 +75,7 @@ PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
 build = "cp311-*"
 skip = "pp* *-musllinux_* *-win32 *i686"
 build-verbosity = 1
-environment = { PYSIGLIB_JAX_FFI = "OFF", SIGLIB_VEC = "ON", CUSIG = "OFF" }
+environment = { SIGLIB_VEC = "ON" }
 test-requires = ["pytest"]
 test-command = 'python -c "import pysiglib, pysiglib.torch_api; print(f\"imports OK: pysiglib {pysiglib.__version__}, BUILT_WITH_CUDA={pysiglib.load_siglib.BUILT_WITH_CUDA}, BUILT_WITH_AVX={pysiglib.load_siglib.BUILT_WITH_AVX}\")"'
 

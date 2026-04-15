@@ -1,3 +1,8 @@
+# Install dest overridden by pysiglib-cuda plugin's CMakeLists.txt.
+if(NOT DEFINED CUSIG_INSTALL_DESTINATION)
+    set(CUSIG_INSTALL_DESTINATION "pysiglib")
+endif()
+
 add_library(cusig SHARED
     cu_branched_signature.cu
     cu_exp_host.cpp
@@ -83,6 +88,6 @@ endif()
 
 # ---- Install ----------------------------------------------------------------
 install(TARGETS cusig
-    LIBRARY DESTINATION pysiglib
-    RUNTIME DESTINATION pysiglib   # .dll on Windows
+    LIBRARY DESTINATION ${CUSIG_INSTALL_DESTINATION}
+    RUNTIME DESTINATION ${CUSIG_INSTALL_DESTINATION}   # .dll on Windows
 )

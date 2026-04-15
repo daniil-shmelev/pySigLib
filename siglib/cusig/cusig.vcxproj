@@ -109,21 +109,22 @@
     <ClInclude Include="cuda_constants.h" />
     <ClInclude Include="cusig.h" />
     <ClInclude Include="cupch.h" />
-    <ClInclude Include="cu_path_transforms.h" />
-    <ClInclude Include="cu_signature.h" />
-    <ClInclude Include="cu_tensor_poly.h" />
-    <ClInclude Include="cu_log_signature.h" />
-    <ClInclude Include="cu_log_sig_cache.h" />
-    <ClInclude Include="cu_log_sig_backprop.h" />
-    <ClInclude Include="cu_sig_coef.h" />
-    <ClInclude Include="cu_macros.h" />
     <ClInclude Include="cu_atomic.h" />
+    <ClInclude Include="cu_exp_host.h" />
+    <ClInclude Include="cu_log_signature.h" />
+    <ClInclude Include="cu_log_sig_backprop.h" />
+    <ClInclude Include="cu_log_sig_cache.h" />
     <ClInclude Include="cu_log_sig_combine.h" />
+    <ClInclude Include="cu_macros.h" />
+    <ClInclude Include="cu_path_transforms.h" />
+    <ClInclude Include="cu_sig_coef.h" />
+    <ClInclude Include="cu_sig_combine.h" />
+    <ClInclude Include="cu_sig_kernel.h" />
+    <ClInclude Include="cu_signature.h" />
+    <ClInclude Include="cu_utils.h" />
     <CudaCompile Include="cu_path_transforms.cu" />
     <CudaCompile Include="cu_exp_signature.cu" />
     <CudaCompile Include="cu_log_signature.cu" />
-    <CudaCompile Include="cu_tensor_poly.cu" />
-    <CudaCompile Include="cu_sig_kernel.h" />
     <CudaCompile Include="cu_signature.cu" />
   </ItemGroup>
   <ItemGroup>
@@ -136,11 +137,12 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="cu_sig_kernel.cu" />
-    <CudaCompile Include="cu_log_sig_cache.cu" />
-    <CudaCompile Include="cu_sig_coef.cu" />
-    <CudaCompile Include="cu_log_sig_combine.cu" />
     <CudaCompile Include="cu_branched_signature.cu" />
+    <CudaCompile Include="cu_log_sig_cache.cu" />
+    <CudaCompile Include="cu_log_sig_combine.cu" />
+    <CudaCompile Include="cu_sig_coef.cu" />
+    <CudaCompile Include="cu_sig_combine.cu" />
+    <CudaCompile Include="cu_sig_kernel.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

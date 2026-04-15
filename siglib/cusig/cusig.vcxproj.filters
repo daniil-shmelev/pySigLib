@@ -27,9 +27,6 @@
     <ClInclude Include="cu_path_transforms.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="cu_tensor_poly.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="cu_signature.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -54,6 +51,18 @@
     <ClInclude Include="cu_log_sig_combine.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="cu_exp_host.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cu_sig_combine.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cu_sig_kernel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cu_utils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cupch.cpp">
@@ -64,34 +73,34 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="cu_sig_kernel.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
-    <CudaCompile Include="cu_sig_kernel.h">
-      <Filter>Header Files</Filter>
-    </CudaCompile>
-    <CudaCompile Include="cu_path_transforms.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
-    <CudaCompile Include="cu_tensor_poly.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
-    <CudaCompile Include="cu_signature.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
-    <CudaCompile Include="cu_log_sig_cache.cu">
+    <CudaCompile Include="cu_branched_signature.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
     <CudaCompile Include="cu_exp_signature.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
+    <CudaCompile Include="cu_log_sig_cache.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="cu_log_sig_combine.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
     <CudaCompile Include="cu_log_signature.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="cu_path_transforms.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
     <CudaCompile Include="cu_sig_coef.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
-    <CudaCompile Include="cu_log_sig_combine.cu">
+    <CudaCompile Include="cu_sig_combine.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="cu_sig_kernel.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="cu_signature.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
   </ItemGroup>

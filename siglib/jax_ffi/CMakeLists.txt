@@ -17,12 +17,6 @@ target_include_directories(pysiglib_jax_ffi PRIVATE
 
 target_link_libraries(pysiglib_jax_ffi PRIVATE cpsig)
 
-if(_cuda_enabled)
-    target_compile_definitions(pysiglib_jax_ffi PRIVATE PYSIGLIB_JAX_WITH_CUDA)
-    target_include_directories(pysiglib_jax_ffi PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../cusig")
-    target_link_libraries(pysiglib_jax_ffi PRIVATE cusig CUDA::cudart)
-endif()
-
 install(TARGETS pysiglib_jax_ffi
     LIBRARY DESTINATION pysiglib
     RUNTIME DESTINATION pysiglib

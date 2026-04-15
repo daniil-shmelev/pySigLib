@@ -20,12 +20,11 @@ import ctypes
 from ctypes import c_char_p, c_float, c_double, c_int, c_uint64, c_bool, POINTER
 
 ######################################################
-# Figure out how pysiglib was built, in particular
-# whether CUDA is being used
+# Figure out how pysiglib was built
 ######################################################
 
 try:
-    from ._config import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
+    from ._config import SYSTEM, BUILT_WITH_AVX
 except ImportError as exc:
     raise RuntimeError("Could not import configuration properties from _config.py - package may not have been built correctly.") from exc
 
@@ -38,35 +37,34 @@ if SYSTEM != platform.system():
     raise RuntimeError("System on which pySigLib was built does not match the current system - package may not have been built correctly.")
 
 ######################################################
-# Load the cpsig and cusig libraries
+# Load cpsig + discover cusig via the pysiglib-cuda plugin
 ######################################################
 
-CPSIG, CUSIG = None, None
-
-# winmode = 0 is necessary here
-# https://github.com/NVIDIA/warp/issues/24
+# winmode=0 on Windows — see https://github.com/NVIDIA/warp/issues/24
+def _load_native_lib(directory, base_name):
+    if SYSTEM == 'Windows':
+        return ctypes.CDLL(os.path.join(directory, f'{base_name}.dll'), winmode=0)
+    if SYSTEM == 'Linux':
+        return ctypes.CDLL(os.path.join(directory, f'lib{base_name}.so'))
+    if SYSTEM == 'Darwin':
+        return ctypes.CDLL(os.path.join(directory, f'lib{base_name}.dylib'))
+    raise RuntimeError(f"Unsupported OS: {SYSTEM}")
 
 DIR_ = os.path.dirname(sys.modules['pysiglib'].__file__)
+CPSIG = _load_native_lib(DIR_, 'cpsig')
 
-if SYSTEM == 'Windows':
-    CPSIG_PATH = os.path.join(DIR_, 'cpsig.dll')
-    CPSIG = ctypes.CDLL(CPSIG_PATH, winmode = 0)
-
-    if BUILT_WITH_CUDA:
-        CUSIG_PATH = os.path.join(DIR_, 'cusig.dll')
-        CUSIG = ctypes.CDLL(CUSIG_PATH, winmode=0)
-elif SYSTEM == "Linux":
-    CPSIG_PATH = os.path.join(DIR_, 'libcpsig.so')
-    CPSIG = ctypes.CDLL(CPSIG_PATH, winmode=0)
-
-    if BUILT_WITH_CUDA:
-        CUSIG_PATH = os.path.join(DIR_, 'libcusig.so')
-        CUSIG = ctypes.CDLL(CUSIG_PATH, winmode=0)
-elif SYSTEM == 'Darwin':
-    CPSIG_PATH = os.path.join(DIR_, 'libcpsig.dylib')
-    CPSIG = ctypes.CDLL(CPSIG_PATH)
-else:
-    raise Exception("Unsupported OS during pysiglib.py")
+CUSIG = None
+BUILT_WITH_CUDA = False
+try:
+    import pysiglib_cuda as _cuda_plugin
+except ImportError:
+    _cuda_plugin = None
+if _cuda_plugin is not None:
+    try:
+        CUSIG = _load_native_lib(os.path.dirname(_cuda_plugin.__file__), 'cusig')
+        BUILT_WITH_CUDA = True
+    except OSError:
+        pass
 
 ######################################################
 # Set argtypes and restypes for all imported functions

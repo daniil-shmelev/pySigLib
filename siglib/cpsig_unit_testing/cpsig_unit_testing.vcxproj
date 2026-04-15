@@ -13,41 +13,46 @@
   <ItemGroup>
     <ClInclude Include="..\cpsig\cppch.h" />
     <ClInclude Include="..\cpsig\cpsig.h" />
+    <ClInclude Include="..\cpsig\cp_bch.h" />
+    <ClInclude Include="..\cpsig\cp_bch_data.h" />
+    <ClInclude Include="..\cpsig\cp_branched_cache.h" />
+    <ClInclude Include="..\cpsig\cp_branched_signature.h" />
+    <ClInclude Include="..\cpsig\cp_exp_signature.h" />
     <ClInclude Include="..\cpsig\cp_log_signature.h" />
     <ClInclude Include="..\cpsig\cp_path.h" />
     <ClInclude Include="..\cpsig\cp_path_transforms.h" />
-    <ClInclude Include="..\cpsig\cp_signature.h" />
     <ClInclude Include="..\cpsig\cp_sig_coef.h" />
+    <ClInclude Include="..\cpsig\cp_sig_combine.h" />
+    <ClInclude Include="..\cpsig\cp_sig_join.h" />
     <ClInclude Include="..\cpsig\cp_sig_kernel.h" />
-    <ClInclude Include="..\cpsig\cp_tensor_poly.h" />
-    <ClInclude Include="..\cpsig\log_sig_cache.h" />
+    <ClInclude Include="..\cpsig\cp_signature.h" />
+    <ClInclude Include="..\cpsig\cp_tensor_log.h" />
+    <ClInclude Include="..\cpsig\cp_utils.h" />
     <ClInclude Include="..\cpsig\cp_vector_funcs.h" />
+    <ClInclude Include="..\cpsig\disk_cache.h" />
+    <ClInclude Include="..\cpsig\log_sig_cache.h" />
     <ClInclude Include="..\cpsig\macros.h" />
     <ClInclude Include="..\cpsig\multithreading.h" />
     <ClInclude Include="..\cpsig\sparse.h" />
     <ClInclude Include="..\cpsig\words.h" />
-    <ClInclude Include="..\cpsig\cp_bch.h" />
-    <ClInclude Include="..\cpsig\cp_bch_data.h" />
-    <ClInclude Include="..\cpsig\cp_branched_trees.h" />
-    <ClInclude Include="..\cpsig\cp_branched_cache.h" />
-    <ClInclude Include="..\cpsig\cp_branched_signature.h" />
-    <ClInclude Include="..\cpsig\disk_cache.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cpsig\cppch.cpp" />
-    <ClCompile Include="..\cpsig\cp_bch.cpp" />
     <ClCompile Include="..\cpsig\cpsig.cpp" />
-    <ClCompile Include="..\cpsig\cp_log_signatures.cpp" />
-    <ClCompile Include="..\cpsig\cp_path_transforms.cpp" />
-    <ClCompile Include="..\cpsig\cp_signature.cpp" />
-    <ClCompile Include="..\cpsig\cp_sig_coef.cpp" />
-    <ClCompile Include="..\cpsig\cp_sig_kernel.cpp" />
-    <ClCompile Include="..\cpsig\cp_tensor_poly.cpp" />
-    <ClCompile Include="cp_unit_tests.cpp" />
-    <ClCompile Include="..\cpsig\log_sig_cache.cpp" />
-    <ClCompile Include="..\cpsig\words.cpp" />
+    <ClCompile Include="..\cpsig\cp_bch.cpp" />
     <ClCompile Include="..\cpsig\cp_branched_cache.cpp" />
     <ClCompile Include="..\cpsig\cp_branched_signature.cpp" />
+    <ClCompile Include="..\cpsig\cp_log_signatures.cpp" />
+    <ClCompile Include="..\cpsig\cp_path_transforms.cpp" />
+    <ClCompile Include="..\cpsig\cp_sig_coef.cpp" />
+    <ClCompile Include="..\cpsig\cp_sig_combine.cpp" />
+    <ClCompile Include="..\cpsig\cp_sig_join.cpp" />
+    <ClCompile Include="..\cpsig\cp_sig_kernel.cpp" />
+    <ClCompile Include="..\cpsig\cp_signature.cpp" />
+    <ClCompile Include="..\cpsig\cp_utils.cpp" />
+    <ClCompile Include="..\cpsig\log_sig_cache.cpp" />
+    <ClCompile Include="..\cpsig\words.cpp" />
+    <ClCompile Include="cp_unit_tests.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

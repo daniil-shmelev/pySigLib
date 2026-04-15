@@ -24,9 +24,6 @@
     <ClInclude Include="cp_path.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="cp_tensor_poly.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="cp_signature.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -72,7 +69,22 @@
     <ClInclude Include="cp_branched_signature.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="cp_branched_trees.h">
+    <ClInclude Include="disk_cache.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cp_exp_signature.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cp_sig_combine.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cp_sig_join.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cp_tensor_log.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cp_utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -81,9 +93,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="cpsig.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="cp_tensor_poly.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="cp_path_transforms.cpp">
@@ -114,6 +123,15 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="cp_branched_signature.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_sig_combine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_sig_join.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_utils.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

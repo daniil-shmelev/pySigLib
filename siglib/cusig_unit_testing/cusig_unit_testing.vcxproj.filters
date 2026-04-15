@@ -21,37 +21,52 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\cusig\cuda_constants.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
     <ClInclude Include="..\cusig\cupch.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
     <ClInclude Include="..\cusig\cusig.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
-    <ClInclude Include="..\cusig\cu_sig_kernel.h">
+    <ClInclude Include="..\cusig\cu_atomic.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
-    <ClInclude Include="..\cusig\cu_path_transforms.h">
-      <Filter>Header Files\cusig</Filter>
-    </ClInclude>
-    <ClInclude Include="..\cusig\cu_signature.h">
-      <Filter>Header Files\cusig</Filter>
-    </ClInclude>
-    <ClInclude Include="..\cusig\cu_tensor_poly.h">
+    <ClInclude Include="..\cusig\cu_exp_host.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
     <ClInclude Include="..\cusig\cu_log_signature.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
+    <ClInclude Include="..\cusig\cu_log_sig_backprop.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
     <ClInclude Include="..\cusig\cu_log_sig_cache.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
-    <ClInclude Include="..\cusig\cu_log_sig_backprop.h">
+    <ClInclude Include="..\cusig\cu_log_sig_combine.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_macros.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_path_transforms.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
     <ClInclude Include="..\cusig\cu_sig_coef.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
-    <ClInclude Include="..\cusig\cu_macros.h">
+    <ClInclude Include="..\cusig\cu_sig_combine.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_sig_kernel.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_signature.h">
+      <Filter>Header Files\cusig</Filter>
+    </ClInclude>
+    <ClInclude Include="..\cusig\cu_utils.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
   </ItemGroup>
@@ -59,30 +74,42 @@
     <ClCompile Include="..\cusig\cupch.cpp">
       <Filter>Source Files\cusig</Filter>
     </ClCompile>
-    <ClCompile Include="..\cusig\cu_unit_tests.cpp">
+    <ClCompile Include="..\cusig\cu_exp_host.cpp">
+      <Filter>Source Files\cusig</Filter>
+    </ClCompile>
+    <ClCompile Include="cu_unit_tests.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="..\cusig\cu_sig_kernel.cu">
+    <CudaCompile Include="..\cusig\cu_branched_signature.cu">
       <Filter>Source Files\cusig</Filter>
     </CudaCompile>
-    <CudaCompile Include="..\cusig\cu_path_transforms.cu">
-      <Filter>Source Files\cusig</Filter>
-    </CudaCompile>
-    <CudaCompile Include="..\cusig\cu_signature.cu">
-      <Filter>Source Files\cusig</Filter>
-    </CudaCompile>
-    <CudaCompile Include="..\cusig\cu_tensor_poly.cu">
-      <Filter>Source Files\cusig</Filter>
-    </CudaCompile>
-    <CudaCompile Include="..\cusig\cu_log_signature.cu">
+    <CudaCompile Include="..\cusig\cu_exp_signature.cu">
       <Filter>Source Files\cusig</Filter>
     </CudaCompile>
     <CudaCompile Include="..\cusig\cu_log_sig_cache.cu">
       <Filter>Source Files\cusig</Filter>
     </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_log_sig_combine.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_log_signature.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_path_transforms.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
     <CudaCompile Include="..\cusig\cu_sig_coef.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_sig_combine.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_sig_kernel.cu">
+      <Filter>Source Files\cusig</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\cusig\cu_signature.cu">
       <Filter>Source Files\cusig</Filter>
     </CudaCompile>
   </ItemGroup>
