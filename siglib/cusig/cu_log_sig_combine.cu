@@ -240,7 +240,7 @@ void log_sig_combine_cuda_(
 	cudaMalloc(&d_memo, chunk_size * memo_per_batch * sizeof(T));
 	check_cuda_error();
 
-	unsigned int threads = std::min(static_cast<uint64_t>(256), m);
+	unsigned int threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(256), m));
 	threads = ((threads + 31) / 32) * 32;
 	if (threads < 32) threads = 32;
 
@@ -585,7 +585,7 @@ void log_sig_combine_backprop_cuda_(
 	uint64_t chunk_size = s_workspace_elems / ws_per_batch;
 	if (chunk_size > batch_size) chunk_size = batch_size;
 
-	unsigned int threads = std::min(static_cast<uint64_t>(64), m);
+	unsigned int threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(64), m));
 	threads = ((threads + 31) / 32) * 32;
 	if (threads < 32) threads = 32;
 
@@ -818,7 +818,7 @@ void log_sig_from_path_cuda_(
 	uint64_t m2 = cache.m2;
 
 	if (degree < 2) {
-		unsigned int threads = std::min(static_cast<uint64_t>(256), m);
+		unsigned int threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(256), m));
 		threads = ((threads + 31) / 32) * 32;
 		if (threads < 32) threads = 32;
 		batch_log_sig_from_path_deg1_kernel_<T><<<static_cast<unsigned int>(batch_size), threads>>>(
@@ -851,7 +851,7 @@ void log_sig_from_path_cuda_(
 	uint64_t chunk_size = s_workspace_elems / ws_per_batch;
 	if (chunk_size > batch_size) chunk_size = batch_size;
 
-	unsigned int threads = std::min(static_cast<uint64_t>(64), m);
+	unsigned int threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(64), m));
 	threads = ((threads + 31) / 32) * 32;
 	if (threads < 32) threads = 32;
 
@@ -1102,13 +1102,12 @@ void log_sig_from_path_backprop_cuda_(
 	const CUDABchCache& cache = get_cuda_bch_cache_(dimension, degree);
 	uint64_t m = cache.m;
 	uint64_t m2 = cache.m2;
-	uint64_t n_segs = length - 1;
 
 	if (degree < 2) {
 		// Forward: out[k] = path[last][k] - path[first][k]
 		// Backward: d_path[last][k] = +d_out[k], d_path[first][k] = -d_out[k], rest = 0
 		cudaMemset(d_path, 0, batch_size * length * dimension * sizeof(T));
-		unsigned int deg1_threads = std::min(static_cast<uint64_t>(256), m);
+		unsigned int deg1_threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(256), m));
 		deg1_threads = ((deg1_threads + 31) / 32) * 32;
 		if (deg1_threads < 32) deg1_threads = 32;
 		batch_log_sig_from_path_deg1_backprop_kernel_<T><<<static_cast<unsigned int>(batch_size), deg1_threads>>>(
@@ -1131,7 +1130,7 @@ void log_sig_from_path_backprop_cuda_(
 	cudaMalloc(&d_workspace, chunk_size * ws_per_batch * sizeof(T));
 	check_cuda_error();
 
-	unsigned int threads = std::min(static_cast<uint64_t>(64), m);
+	unsigned int threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(64), m));
 	threads = ((threads + 31) / 32) * 32;
 	if (threads < 32) threads = 32;
 
@@ -1246,7 +1245,7 @@ CUSIG_API int log_sig_join_cuda_f(
 		log_sig_combine_cuda_<float>(log_sig, d_linear, out, batch_size, dimension, degree);
 		cudaFree(d_linear);
 		return 0;
-	} catch (const std::exception& e) { return -1; }
+	} catch (const std::exception&) { return -1; }
 }
 
 CUSIG_API int log_sig_join_cuda_d(
@@ -1263,7 +1262,7 @@ CUSIG_API int log_sig_join_cuda_d(
 		log_sig_combine_cuda_<double>(log_sig, d_linear, out, batch_size, dimension, degree);
 		cudaFree(d_linear);
 		return 0;
-	} catch (const std::exception& e) { return -1; }
+	} catch (const std::exception&) { return -1; }
 }
 
 
@@ -1291,7 +1290,7 @@ CUSIG_API int log_sig_join_backprop_cuda_f(
 		cudaFree(d_linear);
 		cudaFree(d_ls2);
 		return 0;
-	} catch (const std::exception& e) { return -1; }
+	} catch (const std::exception&) { return -1; }
 }
 
 CUSIG_API int log_sig_join_backprop_cuda_d(
@@ -1314,7 +1313,7 @@ CUSIG_API int log_sig_join_backprop_cuda_d(
 		cudaFree(d_linear);
 		cudaFree(d_ls2);
 		return 0;
-	} catch (const std::exception& e) { return -1; }
+	} catch (const std::exception&) { return -1; }
 }
 
 

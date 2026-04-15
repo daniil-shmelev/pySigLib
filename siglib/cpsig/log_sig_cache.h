@@ -21,7 +21,7 @@
 #include "disk_cache.h"
 
 struct BasisCache {
-	int method;
+	int method = 0;
 	std::vector<uint64_t> lyndon_idx;
 	SparseIntMatrix inv_proj_mat;
 	SparseIntMatrix inv_proj_mat_transpose;

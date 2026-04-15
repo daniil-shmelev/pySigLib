@@ -20,8 +20,8 @@
 #include <functional>
 
 struct CanonicalTree {
-	uint64_t num_nodes;
-	uint8_t root_label;
+	uint64_t num_nodes = 0;
+	uint8_t root_label = 0;
 	std::vector<uint64_t> child_ids; // indices into the global decorated tree list, sorted
 
 	bool operator<(const CanonicalTree& other) const {
@@ -50,7 +50,7 @@ struct CanonicalTreeHash {
 struct DecoratedTreeInfo {
 	CanonicalTree canonical;
 	std::vector<uint8_t> node_labels;  // all node labels in pre-order traversal
-	double tree_factorial;             // gamma(tau)
+	double tree_factorial = 0.0;       // gamma(tau)
 };
 
 inline double compute_tree_factorial(

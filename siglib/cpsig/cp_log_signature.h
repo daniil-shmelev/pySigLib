@@ -693,7 +693,6 @@ void batch_log_sig_from_path_backprop_(
 	}
 
 	uint64_t m2 = cache.bch_coefficients.size();
-	uint64_t n_segs = length - 1;
 	uint64_t path_stride = length * dimension;
 	// Workspace: 4*m (curr, prev, seg, neg_seg) + 3*m2*m (bch_ws + bch_bp_ws) + 3*m (d_acc, d_ls1, d_ls2)
 	uint64_t ws_size = 7 * m + 3 * m2 * m;

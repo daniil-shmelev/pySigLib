@@ -28,9 +28,9 @@
 using SparseVec = std::vector<std::pair<uint64_t, int>>;
 
 struct BchCache {
-	uint64_t dimension;
-	uint64_t degree;
-	uint64_t m; // = log_sig_length(dimension, degree)
+	uint64_t dimension = 0;
+	uint64_t degree = 0;
+	uint64_t m = 0; // = log_sig_length(dimension, degree)
 
 	// commutator_table[i * m + j] = [e_i, e_j] for i < j
 	std::vector<SparseVec> commutator_table;

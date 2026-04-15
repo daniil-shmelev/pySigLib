@@ -21,9 +21,9 @@
 #include <memory>
 
 struct BranchedSigCache {
-	uint64_t dimension;
-	uint64_t max_nodes;
-	uint64_t total_length;  // 1 + num_trees (includes empty tree at index 0)
+	uint64_t dimension = 0;
+	uint64_t max_nodes = 0;
+	uint64_t total_length = 0;  // 1 + num_trees (includes empty tree at index 0)
 
 	// order_index[n] = index in the trees vector where order-n trees start.
 	// Flat sig index = tree_vector_index + 1 (offset by 1 for empty tree at index 0).
@@ -48,7 +48,7 @@ struct BranchedSigCache {
 // Result of a single admissible cut
 struct CutResult {
 	std::vector<uint64_t> forest;  // tree indices of pruned subtrees
-	uint64_t trunk;                // tree index of the remaining trunk
+	uint64_t trunk = 0;            // tree index of the remaining trunk
 };
 
 using TreeIndexMap = std::unordered_map<CanonicalTree, uint64_t, CanonicalTreeHash>;
