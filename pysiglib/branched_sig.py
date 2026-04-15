@@ -28,16 +28,22 @@ from .load_siglib import CPSIG
 import kauri
 
 
-def _permute_bsig(data, dimension, degree):
+def _permute_bsig(data, dimension, degree, planar=False):
     """Permute branched sig from recursive order to canonical order (in-place)."""
-    perm = kauri.canonical_to_recursive_permutation(dimension, degree)
+    if planar:
+        perm = kauri.planar_canonical_to_recursive_permutation(dimension, degree)
+    else:
+        perm = kauri.canonical_to_recursive_permutation(dimension, degree)
     data[..., 1:] = data[..., 1:][..., perm]
     return data
 
 
-def _inv_permute_bsig(data, dimension, degree):
+def _inv_permute_bsig(data, dimension, degree, planar=False):
     """Permute branched sig from canonical order to recursive order. Returns a new array."""
-    inv_perm = kauri.recursive_to_canonical_permutation(dimension, degree)
+    if planar:
+        inv_perm = kauri.planar_recursive_to_canonical_permutation(dimension, degree)
+    else:
+        inv_perm = kauri.recursive_to_canonical_permutation(dimension, degree)
     if isinstance(data, np.ndarray):
         out = np.empty_like(data)
     else:
@@ -149,8 +155,6 @@ def branched_sig(
 
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
-    if tree_order != "recursive" and planar:
-        raise ValueError("tree_order has no effect for planar branched signatures")
     check_type(degree, "degree", int)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
@@ -182,8 +186,8 @@ def branched_sig(
             data.time_aug, data.lead_lag, data.end_time, planar)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig: " + err_msg(err_code))
-    if tree_order != "recursive" and not planar:
-        _permute_bsig(result.data, aug_dimension, degree)
+    if tree_order != "recursive":
+        _permute_bsig(result.data, aug_dimension, degree, planar=planar)
     if not scalar_term:
         return result.data[..., 1:]
     return result.data
@@ -222,8 +226,6 @@ def branched_sig_combine(
 
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
-    if tree_order != "recursive" and planar:
-        raise ValueError("tree_order has no effect for planar branched signatures")
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_type(planar, "planar", bool)
@@ -231,9 +233,9 @@ def branched_sig_combine(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
-    if tree_order != "recursive" and not planar:
-        bsig1 = _inv_permute_bsig(bsig1, dimension, degree)
-        bsig2 = _inv_permute_bsig(bsig2, dimension, degree)
+    if tree_order != "recursive":
+        bsig1 = _inv_permute_bsig(bsig1, dimension, degree, planar=planar)
+        bsig2 = _inv_permute_bsig(bsig2, dimension, degree, planar=planar)
 
     bsig_len = CPSIG.branched_sig_length(dimension, degree, planar)
     data = MultipleSigInputHandler([bsig1, bsig2], bsig_len, ["bsig1", "bsig2"])
@@ -254,8 +256,8 @@ def branched_sig_combine(
             data.batch_size, dimension, degree, planar)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine: " + err_msg(err_code))
-    if tree_order != "recursive" and not planar:
-        _permute_bsig(result.data, dimension, degree)
+    if tree_order != "recursive":
+        _permute_bsig(result.data, dimension, degree, planar=planar)
     if not scalar_term:
         return result.data[..., 1:]
     return result.data

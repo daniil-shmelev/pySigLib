@@ -137,9 +137,7 @@ extern "C" CPSIG_API uint64_t log_sig_length(uint64_t dimension, uint64_t degree
 }
 
 uint64_t branched_sig_length_(uint64_t dimension, uint64_t max_nodes, bool planar) {
-    if (planar)
-        return compute_planar_branched_sig_length(dimension, max_nodes);
-    return compute_branched_sig_length(dimension, max_nodes);
+    return compute_branched_sig_length(dimension, max_nodes, planar);
 }
 
 extern "C" {

@@ -59,26 +59,18 @@ struct BranchedSigCacheGPU {
 	}
 };
 
-// Reuse the hash from cu_log_sig_cache.h
+// Reuse CuPairHash from cu_log_sig_cache.h. The planar flag is packed into bit
+// 63 of max_nodes (combinatorially bounded, so the top bit is unused).
 #include "cu_log_sig_cache.h"
 
-using CuBranchedCacheKey = std::tuple<uint64_t, uint64_t, bool>;
-
-struct CuBranchedCacheKeyHash {
-	std::size_t operator()(const CuBranchedCacheKey& k) const noexcept {
-		std::size_t h1 = std::hash<uint64_t>{}(std::get<0>(k));
-		std::size_t h2 = std::hash<uint64_t>{}(std::get<1>(k));
-		std::size_t h3 = std::hash<bool>{}(std::get<2>(k));
-		h1 ^= (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
-		h1 ^= (h3 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
-		return h1;
-	}
-};
+static inline std::pair<uint64_t, uint64_t> make_cu_branched_key(uint64_t dimension, uint64_t max_nodes, bool planar) {
+	return { dimension, max_nodes | (static_cast<uint64_t>(planar) << 63) };
+}
 
 static std::unordered_map<
-	CuBranchedCacheKey,
+	std::pair<uint64_t, uint64_t>,
 	std::unique_ptr<BranchedSigCacheGPU>,
-	CuBranchedCacheKeyHash
+	CuPairHash
 > s_gpu_cache_map;
 static std::mutex s_gpu_cache_map_mu;
 
@@ -94,7 +86,7 @@ static void upload(T*& d_ptr, const T* h_data, size_t count) {
 }
 
 static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, uint64_t max_nodes, bool planar = false) {
-	CuBranchedCacheKey key(dimension, max_nodes, planar);
+	const auto key = make_cu_branched_key(dimension, max_nodes, planar);
 	{
 		std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
 		auto it = s_gpu_cache_map.find(key);
@@ -147,7 +139,7 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 	upload(gpu->d_labels_data, c.node_labels_data.data(), c.node_labels_data.size());
 
 	std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
-	auto [ins, _] = s_gpu_cache_map.insert_or_assign(key, std::move(gpu));
+	auto [ins, _] = s_gpu_cache_map.try_emplace(key, std::move(gpu));
 	return *(ins->second);
 }
 

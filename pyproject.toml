@@ -18,7 +18,7 @@ readme = "README.md"
 authors = [
     { name = "Daniil Shmelev", email = "daniil.shmelev23@imperial.ac.uk" },
 ]
-dependencies = ["numpy", "torch", "kauri>=2.1.0"]
+dependencies = ["numpy", "torch", "kauri>=2.1.1"]
 
 classifiers = [
     "Development Status :: 4 - Beta",

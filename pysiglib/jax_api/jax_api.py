@@ -161,13 +161,19 @@ def _validate_sig_shape(arr, name="signature"):
         raise ValueError(f"{name} must have at least rank 1, got {arr.ndim}.")
 
 
-def _permute_bsig_jax(data, dimension: int, degree: int):
-    perm = np.asarray(kauri.canonical_to_recursive_permutation(dimension, degree), dtype=np.int32)
+def _permute_bsig_jax(data, dimension: int, degree: int, planar: bool = False):
+    if planar:
+        perm = np.asarray(kauri.planar_canonical_to_recursive_permutation(dimension, degree), dtype=np.int32)
+    else:
+        perm = np.asarray(kauri.canonical_to_recursive_permutation(dimension, degree), dtype=np.int32)
     return jnp.concatenate([data[..., :1], jnp.take(data[..., 1:], perm, axis=-1)], axis=-1)
 
 
-def _inv_permute_bsig_jax(data, dimension: int, degree: int):
-    perm = np.asarray(kauri.recursive_to_canonical_permutation(dimension, degree), dtype=np.int32)
+def _inv_permute_bsig_jax(data, dimension: int, degree: int, planar: bool = False):
+    if planar:
+        perm = np.asarray(kauri.planar_recursive_to_canonical_permutation(dimension, degree), dtype=np.int32)
+    else:
+        perm = np.asarray(kauri.recursive_to_canonical_permutation(dimension, degree), dtype=np.int32)
     return jnp.concatenate([data[..., :1], jnp.take(data[..., 1:], perm, axis=-1)], axis=-1)
 
 
@@ -1035,8 +1041,6 @@ def branched_sig(
 
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
-    if tree_order != "recursive" and planar:
-        raise ValueError("tree_order has no effect for planar branched signatures")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
@@ -1046,9 +1050,9 @@ def branched_sig(
     check_n_jobs(n_jobs)
 
     result = _branched_sig(path, degree, time_aug, lead_lag, end_time, n_jobs, planar)
-    if tree_order != "recursive" and not planar:
+    if tree_order != "recursive":
         aug_dim = _augmented_dim(path.shape[-1], time_aug, lead_lag)
-        result = _permute_bsig_jax(result, aug_dim, degree)
+        result = _permute_bsig_jax(result, aug_dim, degree, planar=planar)
     return result
 
 
@@ -1098,8 +1102,6 @@ def branched_sig_combine(
 
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
-    if tree_order != "recursive" and planar:
-        raise ValueError("tree_order has no effect for planar branched signatures")
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
@@ -1107,13 +1109,13 @@ def branched_sig_combine(
     check_type(planar, "planar", bool)
     check_n_jobs(n_jobs)
 
-    if tree_order != "recursive" and not planar:
-        bsig1 = _inv_permute_bsig_jax(bsig1, dimension, degree)
-        bsig2 = _inv_permute_bsig_jax(bsig2, dimension, degree)
+    if tree_order != "recursive":
+        bsig1 = _inv_permute_bsig_jax(bsig1, dimension, degree, planar=planar)
+        bsig2 = _inv_permute_bsig_jax(bsig2, dimension, degree, planar=planar)
 
     result = _branched_sig_combine(bsig1, bsig2, dimension, degree, n_jobs, planar)
-    if tree_order != "recursive" and not planar:
-        result = _permute_bsig_jax(result, dimension, degree)
+    if tree_order != "recursive":
+        result = _permute_bsig_jax(result, dimension, degree, planar=planar)
     return result
 
 

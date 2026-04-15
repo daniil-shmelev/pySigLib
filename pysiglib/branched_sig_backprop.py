@@ -64,8 +64,6 @@ def branched_sig_backprop(
 
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
-    if tree_order != "recursive" and planar:
-        raise ValueError("tree_order has no effect for planar branched signatures")
     check_type(degree, "degree", int)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
@@ -81,9 +79,9 @@ def branched_sig_backprop(
     dimension = path_data.data_dimension
     aug_dimension = path_data.dimension
 
-    if tree_order != "recursive" and not planar:
-        bsig = _inv_permute_bsig(bsig, aug_dimension, degree)
-        bsig_derivs = _inv_permute_bsig(bsig_derivs, aug_dimension, degree)
+    if tree_order != "recursive":
+        bsig = _inv_permute_bsig(bsig, aug_dimension, degree, planar=planar)
+        bsig_derivs = _inv_permute_bsig(bsig_derivs, aug_dimension, degree, planar=planar)
 
     bsig_len = CPSIG.branched_sig_length(aug_dimension, degree, planar)
     sig_data = MultipleSigInputHandler([bsig, bsig_derivs], bsig_len, ["bsig", "bsig_derivs"])
@@ -140,8 +138,6 @@ def branched_sig_combine_backprop(
 
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
-    if tree_order != "recursive" and planar:
-        raise ValueError("tree_order has no effect for planar branched signatures")
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_type(planar, "planar", bool)
@@ -152,10 +148,10 @@ def branched_sig_combine_backprop(
     if not scalar_term:
         derivs = prepend_scalar(derivs, 0)
 
-    if tree_order != "recursive" and not planar:
-        derivs = _inv_permute_bsig(derivs, dimension, degree)
-        bsig1 = _inv_permute_bsig(bsig1, dimension, degree)
-        bsig2 = _inv_permute_bsig(bsig2, dimension, degree)
+    if tree_order != "recursive":
+        derivs = _inv_permute_bsig(derivs, dimension, degree, planar=planar)
+        bsig1 = _inv_permute_bsig(bsig1, dimension, degree, planar=planar)
+        bsig2 = _inv_permute_bsig(bsig2, dimension, degree, planar=planar)
 
     bsig_len = CPSIG.branched_sig_length(dimension, degree, planar)
     data = MultipleSigInputHandler([derivs, bsig1, bsig2], bsig_len, ["derivs", "bsig1", "bsig2"])
@@ -179,9 +175,9 @@ def branched_sig_combine_backprop(
             data.batch_size, dimension, degree, planar)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine_backprop: " + err_msg(err_code))
-    if tree_order != "recursive" and not planar:
-        _permute_bsig(result1.data, dimension, degree)
-        _permute_bsig(result2.data, dimension, degree)
+    if tree_order != "recursive":
+        _permute_bsig(result1.data, dimension, degree, planar=planar)
+        _permute_bsig(result2.data, dimension, degree, planar=planar)
     if not scalar_term:
         return result1.data[..., 1:], result2.data[..., 1:]
     return result1.data, result2.data

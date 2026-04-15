@@ -20,24 +20,18 @@
 #include "macros.h"
 
 namespace {
-using BranchedCacheKey = std::tuple<uint64_t, uint64_t, bool>;
-
-struct BranchedCacheKeyHash {
-	std::size_t operator()(const BranchedCacheKey& k) const noexcept {
-		std::size_t h1 = std::hash<uint64_t>{}(std::get<0>(k));
-		std::size_t h2 = std::hash<uint64_t>{}(std::get<1>(k));
-		std::size_t h3 = std::hash<bool>{}(std::get<2>(k));
-		h1 ^= (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
-		h1 ^= (h3 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
-		return h1;
-	}
-};
+// max_nodes is combinatorially bounded (dozens at most), so bit 63 is free for
+// the planar flag. Packing it lets us reuse PairHash instead of maintaining a
+// parallel tuple-hash.
+inline std::pair<uint64_t, uint64_t> make_key(uint64_t dimension, uint64_t max_nodes, bool planar) {
+	return { dimension, max_nodes | (static_cast<uint64_t>(planar) << 63) };
+}
 
 struct BranchedSigCacheRegistry {
 	std::unordered_map<
-		BranchedCacheKey,
+		std::pair<uint64_t, uint64_t>,
 		std::unique_ptr<BranchedSigCache>,
-		BranchedCacheKeyHash
+		PairHash
 	> map;
 	std::shared_mutex mu;
 };
@@ -145,7 +139,7 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool pla
 // ---------------------------------------------------------------------------
 
 void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk, bool planar) {
-	BranchedCacheKey key(dimension, max_nodes, planar);
+	const auto key = make_key(dimension, max_nodes, planar);
 	auto& reg = branched_sig_cache_registry();
 
 	{
@@ -160,24 +154,26 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 		if (read_branched_cache(dimension, max_nodes, planar, *cache)) {
 			cache->planar = planar;
 			std::unique_lock wlock(reg.mu);
-			reg.map.insert_or_assign(key, std::move(cache));
+			reg.map.try_emplace(key, std::move(cache));
 			return;
 		}
 	}
 
-	// Compute from scratch using shared builder
+	// Compute from scratch using shared builder (expensive — can take seconds).
 	auto cache = std::make_unique<BranchedSigCache>(build_branched_sig_cache(dimension, max_nodes, planar));
 
 	if (use_disk) {
 		write_branched_cache(*cache);
 	}
 
+	// try_emplace: if a concurrent caller raced us to the write lock and
+	// populated the slot first, keep theirs and drop our rebuild.
 	std::unique_lock wlock(reg.mu);
-	reg.map.insert_or_assign(key, std::move(cache));
+	reg.map.try_emplace(key, std::move(cache));
 }
 
 const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool planar) {
-	BranchedCacheKey key(dimension, max_nodes, planar);
+	const auto key = make_key(dimension, max_nodes, planar);
 	auto& reg = branched_sig_cache_registry();
 	std::shared_lock rlock(reg.mu);
 	auto it = reg.map.find(key);
