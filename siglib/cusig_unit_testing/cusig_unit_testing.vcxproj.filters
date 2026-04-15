@@ -21,9 +21,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\cusig\cuda_constants.h">
-      <Filter>Header Files\cusig</Filter>
-    </ClInclude>
     <ClInclude Include="..\cusig\cupch.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>

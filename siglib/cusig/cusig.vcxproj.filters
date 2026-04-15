@@ -21,9 +21,6 @@
     <ClInclude Include="cupch.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="cuda_constants.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="cu_path_transforms.h">
       <Filter>Header Files</Filter>
     </ClInclude>

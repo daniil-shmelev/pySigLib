@@ -17,64 +17,79 @@
 #include "cusig.h"
 #include "cu_path_transforms.h"
 
-__constant__ uint64_t path_dimension;
-__constant__ uint64_t length;
-__constant__ bool time_aug;
-__constant__ bool lead_lag;
-__constant__ uint64_t path_size;
+namespace {
+struct TransformPathParams {
+	uint64_t path_dimension;
+	uint64_t length;
+	uint64_t path_size;
+	uint64_t transformed_dimension;
+	uint64_t transformed_length;
+	uint64_t transformed_path_size;
+	bool     time_aug;
+	bool     lead_lag;
+};
 
-__constant__ uint64_t transformed_dimension;
-__constant__ uint64_t transformed_length;
-__constant__ uint64_t transformed_path_size;
-
-static std::mutex path_transform_constant_mu;
+static TransformPathParams make_params(uint64_t dimension_, uint64_t length_, bool time_aug_, bool lead_lag_) {
+	TransformPathParams p;
+	p.path_dimension         = dimension_;
+	p.length                 = length_;
+	p.path_size              = dimension_ * length_;
+	p.transformed_length     = lead_lag_ ? 2 * length_ - 1 : length_;
+	p.transformed_dimension  = (lead_lag_ ? 2 * dimension_ : dimension_) + (time_aug_ ? 1 : 0);
+	p.transformed_path_size  = p.transformed_length * p.transformed_dimension;
+	p.time_aug               = time_aug_;
+	p.lead_lag               = lead_lag_;
+	return p;
+}
+}  // anonymous namespace
 
 template<typename T>
 __global__ void transform_path_internal_(
 	const T* data_in,
 	T* data_out,
+	TransformPathParams p,
 	T end_time
 ) {
 	const int thread_id = threadIdx.x;
 
-	const T* const data_in_ = data_in + blockIdx.x * path_size;
-	T* const data_out_ = data_out + blockIdx.x * transformed_path_size;
+	const T* const data_in_ = data_in + blockIdx.x * p.path_size;
+	T* const data_out_ = data_out + blockIdx.x * p.transformed_path_size;
 
-	if (!(time_aug || lead_lag)) {
-		for (uint64_t i = thread_id; i < path_size; i += 32)
+	if (!(p.time_aug || p.lead_lag)) {
+		for (uint64_t i = thread_id; i < p.path_size; i += 32)
 			data_out_[i] = static_cast<T>(data_in_[i]);
 	}
 
-	if (lead_lag) {
-		const uint64_t twice_dimension = 2 * path_dimension;
-		const uint64_t twice_transformed_dimension = 2 * transformed_dimension;
+	if (p.lead_lag) {
+		const uint64_t twice_dimension = 2 * p.path_dimension;
+		const uint64_t twice_transformed_dimension = 2 * p.transformed_dimension;
 
-		for (uint64_t i = thread_id; i < length; i += 32) {
-			for (uint64_t j = 0; j < path_dimension; ++j) {
-				data_out_[i * twice_transformed_dimension + j] = static_cast<T>(data_in_[i * path_dimension + j]);
-				data_out_[i * twice_transformed_dimension + j + path_dimension] = static_cast<T>(data_in_[i * path_dimension + j]);
+		for (uint64_t i = thread_id; i < p.length; i += 32) {
+			for (uint64_t j = 0; j < p.path_dimension; ++j) {
+				data_out_[i * twice_transformed_dimension + j] = static_cast<T>(data_in_[i * p.path_dimension + j]);
+				data_out_[i * twice_transformed_dimension + j + p.path_dimension] = static_cast<T>(data_in_[i * p.path_dimension + j]);
 			}
 		}
 
-		for (uint64_t i = thread_id; i < length - 1; i += 32) {
+		for (uint64_t i = thread_id; i < p.length - 1; i += 32) {
 			for (uint64_t j = 0; j < twice_dimension; ++j) {
-				data_out_[i * twice_transformed_dimension + transformed_dimension + j] = static_cast<T>(data_in_[i * path_dimension + j]);
+				data_out_[i * twice_transformed_dimension + p.transformed_dimension + j] = static_cast<T>(data_in_[i * p.path_dimension + j]);
 			}
 		}
 	}
 	else {
-		for (uint64_t i = thread_id; i < length; i += 32) {
-			for (uint64_t j = 0; j < path_dimension; ++j) {
-				data_out_[i * transformed_dimension + j] = static_cast<T>(data_in_[i * path_dimension + j]);
+		for (uint64_t i = thread_id; i < p.length; i += 32) {
+			for (uint64_t j = 0; j < p.path_dimension; ++j) {
+				data_out_[i * p.transformed_dimension + j] = static_cast<T>(data_in_[i * p.path_dimension + j]);
 			}
 		}
 	}
 
-	if (time_aug) {
-		const T scale = end_time / (transformed_length - 1);
+	if (p.time_aug) {
+		const T scale = end_time / (p.transformed_length - 1);
 
-		for (uint64_t i = thread_id; i < transformed_length; i += 32) {
-			data_out_[(i + 1) * transformed_dimension - 1] = i * scale;
+		for (uint64_t i = thread_id; i < p.transformed_length; i += 32) {
+			data_out_[(i + 1) * p.transformed_dimension - 1] = i * scale;
 		}
 	}
 }
@@ -90,25 +105,9 @@ void transform_path_(
 	bool lead_lag_,
 	T end_time
 ) {
-	const uint64_t path_size_ = dimension_ * length_;
+	const TransformPathParams p = make_params(dimension_, length_, time_aug_, lead_lag_);
 
-	const uint64_t transformed_length_ = lead_lag_ ? 2 * length_ - 1 : length_;
-	const uint64_t transformed_dimension_ = (lead_lag_ ? 2 * dimension_ : dimension_) + (time_aug_ ? 1 : 0);
-	const uint64_t transformed_path_size_ = transformed_length_ * transformed_dimension_;
-
-	std::lock_guard<std::mutex> lock(path_transform_constant_mu);
-
-	cudaMemcpyToSymbol(path_dimension, &dimension_, sizeof(uint64_t));
-	cudaMemcpyToSymbol(length, &length_, sizeof(uint64_t));
-	cudaMemcpyToSymbol(time_aug, &time_aug_, sizeof(bool));
-	cudaMemcpyToSymbol(lead_lag, &lead_lag_, sizeof(bool));
-	cudaMemcpyToSymbol(path_size, &path_size_, sizeof(uint64_t));
-
-	cudaMemcpyToSymbol(transformed_dimension, &transformed_dimension_, sizeof(uint64_t));
-	cudaMemcpyToSymbol(transformed_length, &transformed_length_, sizeof(uint64_t));
-	cudaMemcpyToSymbol(transformed_path_size, &transformed_path_size_, sizeof(uint64_t));
-
-	transform_path_internal_ << <static_cast<unsigned int>(batch_size_), 32U >> > (data_in, data_out, end_time);
+	transform_path_internal_ << <static_cast<unsigned int>(batch_size_), 32U >> > (data_in, data_out, p, end_time);
 
 	check_cuda_kernel_launch();
 }
@@ -117,34 +116,35 @@ template<typename T>
 __global__ void transform_path_backprop_internal_(
 	const T* derivs,
 	T* data_out,
+	TransformPathParams p,
 	T end_time
 ) {
 	const int thread_id = threadIdx.x;
 
-	const T* const derivs_ = derivs + blockIdx.x * transformed_path_size;
-	T* const data_out_ = data_out + blockIdx.x * path_size;
+	const T* const derivs_ = derivs + blockIdx.x * p.transformed_path_size;
+	T* const data_out_ = data_out + blockIdx.x * p.path_size;
 
-	if (lead_lag) {
-		const uint64_t twice_dimension = 2 * path_dimension;
-		const uint64_t twice_transformed_dimension = 2 * transformed_dimension;
+	if (p.lead_lag) {
+		const uint64_t twice_dimension = 2 * p.path_dimension;
+		const uint64_t twice_transformed_dimension = 2 * p.transformed_dimension;
 
-		for (uint64_t i = thread_id; i < length; i += 32) {
-			for (uint64_t j = 0; j < path_dimension; ++j) {
-				data_out_[i * path_dimension + j] = derivs_[i * twice_transformed_dimension + j];
-				data_out_[i * path_dimension + j] += derivs_[i * twice_transformed_dimension + path_dimension + j];
+		for (uint64_t i = thread_id; i < p.length; i += 32) {
+			for (uint64_t j = 0; j < p.path_dimension; ++j) {
+				data_out_[i * p.path_dimension + j] = derivs_[i * twice_transformed_dimension + j];
+				data_out_[i * p.path_dimension + j] += derivs_[i * twice_transformed_dimension + p.path_dimension + j];
 			}
 		}
 
-		for (uint64_t i = thread_id; i < length - 1; i += 32) {
+		for (uint64_t i = thread_id; i < p.length - 1; i += 32) {
 			for (uint64_t j = 0; j < twice_dimension; ++j) {
-				data_out_[i * path_dimension + j] += derivs_[i * twice_transformed_dimension + transformed_dimension + j];
+				data_out_[i * p.path_dimension + j] += derivs_[i * twice_transformed_dimension + p.transformed_dimension + j];
 			}
 		}
 	}
 	else {
-		for (uint64_t i = thread_id; i < length; i += 32) {
-			for (uint64_t j = 0; j < path_dimension; ++j) {
-				data_out_[i * path_dimension + j] = derivs_[i * transformed_dimension + j];
+		for (uint64_t i = thread_id; i < p.length; i += 32) {
+			for (uint64_t j = 0; j < p.path_dimension; ++j) {
+				data_out_[i * p.path_dimension + j] = derivs_[i * p.transformed_dimension + j];
 			}
 		}
 	}
@@ -161,29 +161,12 @@ void transform_path_backprop_(
 	bool lead_lag_,
 	T end_time
 ) {
-	const uint64_t path_size_ = dimension_ * length_;
-
-	const uint64_t transformed_length_ = lead_lag_ ? 2 * length_ - 1 : length_;
-	const uint64_t transformed_dimension_ = (lead_lag_ ? 2 * dimension_ : dimension_) + (time_aug_ ? 1 : 0);
-	const uint64_t transformed_path_size_ = transformed_length_ * transformed_dimension_;
-
-	std::lock_guard<std::mutex> lock(path_transform_constant_mu);
-
-	cudaMemcpyToSymbol(path_dimension, &dimension_, sizeof(uint64_t));
-	cudaMemcpyToSymbol(length, &length_, sizeof(uint64_t));
-	cudaMemcpyToSymbol(time_aug, &time_aug_, sizeof(bool));
-	cudaMemcpyToSymbol(lead_lag, &lead_lag_, sizeof(bool));
-	cudaMemcpyToSymbol(path_size, &path_size_, sizeof(uint64_t));
-
-	cudaMemcpyToSymbol(transformed_dimension, &transformed_dimension_, sizeof(uint64_t));
-	cudaMemcpyToSymbol(transformed_length, &transformed_length_, sizeof(uint64_t));
-	cudaMemcpyToSymbol(transformed_path_size, &transformed_path_size_, sizeof(uint64_t));
-
 	if (!(lead_lag_ || time_aug_)) {
-		cudaMemcpy(data_out, derivs, batch_size_ * path_size_ * sizeof(T), cudaMemcpyDeviceToDevice);
+		cudaMemcpy(data_out, derivs, batch_size_ * dimension_ * length_ * sizeof(T), cudaMemcpyDeviceToDevice);
 	}
 	else {
-		transform_path_backprop_internal_ << <static_cast<unsigned int>(batch_size_), 32U >> > (derivs, data_out, end_time);
+		const TransformPathParams p = make_params(dimension_, length_, time_aug_, lead_lag_);
+		transform_path_backprop_internal_ << <static_cast<unsigned int>(batch_size_), 32U >> > (derivs, data_out, p, end_time);
 	}
 
 	check_cuda_kernel_launch();
