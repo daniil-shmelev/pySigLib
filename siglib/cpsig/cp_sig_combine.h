@@ -132,12 +132,12 @@ FORCE_INLINE void sig_uncombine_linear_inplace_(
 
 template<std::floating_point T>
 FORCE_INLINE void uncombine_sig_deriv(
-	const T* sig1,
-	const T* sig2,
-	T* sig_concat_deriv, 
-	T* sig2_deriv,
+	const T* __restrict sig1,
+	const T* __restrict sig2,
+	T* __restrict sig_concat_deriv,
+	T* __restrict sig2_deriv,
 	uint64_t dimension,
-	uint64_t degree, 
+	uint64_t degree,
 	const uint64_t* level_index
 ) {
 	//sig1, sig2 are two signatures, and sig_concat is
@@ -152,14 +152,17 @@ FORCE_INLINE void uncombine_sig_deriv(
 	for (uint64_t level = degree; level > 0; --level) {
 		for (uint64_t left_level = level - 1, right_level = 1; left_level > 0; --left_level, ++right_level) {
 			T* result_ptr = sig_concat_deriv + level_index[level];
-			T* right_ptr_ = sig2_deriv + level_index[right_level];
-			const T* const right_ptr_upper_bound = sig2_deriv + level_index[right_level + 1];
-			const T* const left_ptr_upper_bound = sig1 + level_index[left_level + 1];
+			T* const right_base = sig2_deriv + level_index[right_level];
+			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
+			const T* const left_base = sig1 + level_index[left_level];
 
-			for (const T* left_ptr = sig1 + level_index[left_level]; left_ptr != left_ptr_upper_bound; ++left_ptr) {
-				for (T* right_ptr = right_ptr_; right_ptr != right_ptr_upper_bound; ++right_ptr) {
-					*right_ptr += *(result_ptr++) * *left_ptr;
+			for (uint64_t i = 0; i < left_size; ++i) {
+				const T scalar = left_base[i];
+				for (uint64_t k = 0; k < right_size; ++k) {
+					right_base[k] += result_ptr[k] * scalar;
 				}
+				result_ptr += right_size;
 			}
 		}
 	}
@@ -168,14 +171,18 @@ FORCE_INLINE void uncombine_sig_deriv(
 	for (uint64_t left_level = 1; left_level < degree; ++left_level) {
 		for (uint64_t level = left_level + 1, right_level = 1; level <= degree; ++level, ++right_level) {
 			T* result_ptr = sig_concat_deriv + level_index[level];
-			const T* const left_ptr_upper_bound = sig_concat_deriv + level_index[left_level + 1];
-			const T* right_ptr_ = sig2 + level_index[right_level];
-			const T* const right_ptr_upper_bound = sig2 + level_index[right_level + 1];
+			T* const left_base = sig_concat_deriv + level_index[left_level];
+			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
+			const T* const right_base = sig2 + level_index[right_level];
+			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
 
-			for (T* left_ptr = sig_concat_deriv + level_index[left_level]; left_ptr != left_ptr_upper_bound; ++left_ptr) {
-				for (const T* right_ptr = right_ptr_; right_ptr != right_ptr_upper_bound; ++right_ptr) {
-					*left_ptr += *(result_ptr++) * (*right_ptr);
+			for (uint64_t i = 0; i < left_size; ++i) {
+				T accum = 0;
+				for (uint64_t k = 0; k < right_size; ++k) {
+					accum += result_ptr[k] * right_base[k];
 				}
+				left_base[i] += accum;
+				result_ptr += right_size;
 			}
 		}
 	}
@@ -184,10 +191,10 @@ FORCE_INLINE void uncombine_sig_deriv(
 
 template<std::floating_point T>
 FORCE_INLINE void uncombine_sig_deriv_zero(
-	const T* sig1,
-	const T* sig2,
-	T* sig_concat_deriv,
-	T* sig2_deriv,
+	const T* __restrict sig1,
+	const T* __restrict sig2,
+	T* __restrict sig_concat_deriv,
+	T* __restrict sig2_deriv,
 	uint64_t dimension,
 	uint64_t degree,
 	const uint64_t* level_index
@@ -198,14 +205,17 @@ FORCE_INLINE void uncombine_sig_deriv_zero(
 	for (int64_t level = degree; level > 0; --level) {
 		for (int64_t left_level = level - 1, right_level = 1; left_level > 0; --left_level, ++right_level) {
 			T* result_ptr = sig_concat_deriv + level_index[level];
-			T* right_ptr_ = sig2_deriv + level_index[right_level];
-			const T* const right_ptr_upper_bound = sig2_deriv + level_index[right_level + 1];
-			const T* const left_ptr_upper_bound = sig1 + level_index[left_level + 1];
+			T* const right_base = sig2_deriv + level_index[right_level];
+			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
+			const T* const left_base = sig1 + level_index[left_level];
 
-			for (const T* left_ptr = sig1 + level_index[left_level]; left_ptr != left_ptr_upper_bound; ++left_ptr) {
-				for (T* right_ptr = right_ptr_; right_ptr != right_ptr_upper_bound; ++right_ptr) {
-					*right_ptr += *(result_ptr++) * *left_ptr;
+			for (uint64_t i = 0; i < left_size; ++i) {
+				const T scalar = left_base[i];
+				for (uint64_t k = 0; k < right_size; ++k) {
+					right_base[k] += result_ptr[k] * scalar;
 				}
+				result_ptr += right_size;
 			}
 		}
 	}
@@ -215,14 +225,18 @@ FORCE_INLINE void uncombine_sig_deriv_zero(
 		std::fill(sig_concat_deriv + level_index[left_level], sig_concat_deriv + level_index[left_level + 1], static_cast<T>(0.));
 		for (uint64_t level = left_level + 1, right_level = 1; level <= degree; ++level, ++right_level) {
 			T* result_ptr = sig_concat_deriv + level_index[level];
-			const T* const left_ptr_upper_bound = sig_concat_deriv + level_index[left_level + 1];
-			const T* right_ptr_ = sig2 + level_index[right_level];
-			const T* const right_ptr_upper_bound = sig2 + level_index[right_level + 1];
+			T* const left_base = sig_concat_deriv + level_index[left_level];
+			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
+			const T* const right_base = sig2 + level_index[right_level];
+			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
 
-			for (T* left_ptr = sig_concat_deriv + level_index[left_level]; left_ptr != left_ptr_upper_bound; ++left_ptr) {
-				for (const T* right_ptr = right_ptr_; right_ptr != right_ptr_upper_bound; ++right_ptr) {
-					*left_ptr += *(result_ptr++) * (*right_ptr);
+			for (uint64_t i = 0; i < left_size; ++i) {
+				T accum = 0;
+				for (uint64_t k = 0; k < right_size; ++k) {
+					accum += result_ptr[k] * right_base[k];
 				}
+				left_base[i] += accum;
+				result_ptr += right_size;
 			}
 		}
 	}
