@@ -44,6 +44,7 @@
     <CudaCompile Include="..\cusig\cu_sig_combine.cu" />
     <CudaCompile Include="..\cusig\cu_sig_kernel.cu" />
     <CudaCompile Include="..\cusig\cu_signature.cu" />
+    <CudaCompile Include="..\cusig\cusig_lifecycle.cu" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

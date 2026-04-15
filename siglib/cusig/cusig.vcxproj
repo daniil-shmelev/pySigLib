@@ -143,6 +143,7 @@
     <CudaCompile Include="cu_sig_coef.cu" />
     <CudaCompile Include="cu_sig_combine.cu" />
     <CudaCompile Include="cu_sig_kernel.cu" />
+    <CudaCompile Include="cusig_lifecycle.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

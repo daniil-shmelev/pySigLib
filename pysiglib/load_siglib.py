@@ -615,3 +615,29 @@ CPSIG.logsig_to_sig_backprop_f.argtypes = (POINTER(c_float), POINTER(c_float), P
 CPSIG.logsig_to_sig_backprop_f.restype = c_int
 CPSIG.logsig_to_sig_backprop_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_bool, c_bool, c_int, c_int)
 CPSIG.logsig_to_sig_backprop_d.restype = c_int
+
+######################################################
+# shutdown
+######################################################
+
+CPSIG.cpsig_shutdown.argtypes = ()
+CPSIG.cpsig_shutdown.restype = None
+
+if BUILT_WITH_CUDA:
+    CUSIG.cusig_shutdown.argtypes = ()
+    CUSIG.cusig_shutdown.restype = None
+
+import atexit
+
+def _shutdown():
+    try:
+        CPSIG.cpsig_shutdown()
+    except Exception:
+        pass
+    if CUSIG is not None:
+        try:
+            CUSIG.cusig_shutdown()
+        except Exception:
+            pass
+
+atexit.register(_shutdown)

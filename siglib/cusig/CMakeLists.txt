@@ -15,6 +15,7 @@ add_library(cusig SHARED
     cu_sig_kernel.cu
     cu_signature.cu
     cu_sig_combine.cu
+    cusig_lifecycle.cu
     cupch.cpp
 )
 

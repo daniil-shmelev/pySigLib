@@ -321,6 +321,9 @@ extern "C" {
 	*/
 	CPSIG_API int clear_cache(bool use_disk = false) noexcept;
 
+	/** @brief Release all in-memory cpsig caches. Idempotent; subsequent calls lazily re-populate. */
+	CPSIG_API void cpsig_shutdown() noexcept;
+
 	/** @defgroup sig_to_log_sig_functions Sig to log sig functions
 	* @{
 	*/

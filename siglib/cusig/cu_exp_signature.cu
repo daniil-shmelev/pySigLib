@@ -437,6 +437,11 @@ struct CUDAExpSigWorkspace {
 static CUDAExpSigWorkspace g_exp_workspace;
 static std::mutex g_exp_workspace_mu;
 
+void release_exp_sig_state() {
+	std::lock_guard<std::mutex> lock(g_exp_workspace_mu);
+	g_exp_workspace.free();
+}
+
 // =========================================================================
 // Host-side forward launch
 // =========================================================================

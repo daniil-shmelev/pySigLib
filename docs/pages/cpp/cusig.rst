@@ -7,6 +7,7 @@ of the mathematical operations, for which we refer the user to the corresponding
 .. toctree::
    :titlesonly:
 
+   cusig/cu_lifecycle
    cusig/cu_transform_path
    cusig/cu_sig_combine
    cusig/cu_signature

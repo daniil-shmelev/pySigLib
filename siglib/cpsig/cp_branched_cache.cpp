@@ -19,13 +19,20 @@
 #include "disk_cache.h"
 #include "macros.h"
 
-// Global cache map
-std::unordered_map<
-	std::pair<uint64_t, uint64_t>,
-	std::unique_ptr<BranchedSigCache>,
-	PairHash
-> branched_sig_cache_map;
-std::shared_mutex branched_sig_cache_mu;
+namespace {
+struct BranchedSigCacheRegistry {
+	std::unordered_map<
+		std::pair<uint64_t, uint64_t>,
+		std::unique_ptr<BranchedSigCache>,
+		PairHash
+	> map;
+	std::shared_mutex mu;
+};
+BranchedSigCacheRegistry& branched_sig_cache_registry() {
+	static BranchedSigCacheRegistry r;
+	return r;
+}
+}  // anonymous namespace
 
 // Cut enumeration and cache building are in shared/branched_cache.h
 
@@ -36,13 +43,12 @@ std::shared_mutex branched_sig_cache_mu;
 static constexpr const char* branched_cache_version = "v1";
 
 static std::filesystem::path branched_cache_file_path(uint64_t dimension, uint64_t max_nodes) {
-	return cache_dir / cache_folder_name /
+	return get_cache_dir() / cache_folder_name /
 		("branched_" + std::to_string(dimension) + "_" + std::to_string(max_nodes) + "_" + branched_cache_version + ".bin");
 }
 
 static void write_branched_cache(const BranchedSigCache& c) {
-	if (cache_dir.empty()) set_default_cache_dir();
-	auto dir = cache_dir / cache_folder_name;
+	auto dir = get_cache_dir() / cache_folder_name;
 	if (!std::filesystem::exists(dir))
 		std::filesystem::create_directory(dir);
 
@@ -69,7 +75,6 @@ static void write_branched_cache(const BranchedSigCache& c) {
 }
 
 static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, BranchedSigCache& c) {
-	if (cache_dir.empty()) set_default_cache_dir();
 	auto path = branched_cache_file_path(dimension, max_nodes);
 	if (!std::filesystem::exists(path)) return false;
 
@@ -127,10 +132,11 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, Branched
 
 void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk) {
 	std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
+	auto& reg = branched_sig_cache_registry();
 
 	{
-		std::shared_lock rlock(branched_sig_cache_mu);
-		if (branched_sig_cache_map.find(key) != branched_sig_cache_map.end())
+		std::shared_lock rlock(reg.mu);
+		if (reg.map.find(key) != reg.map.end())
 			return;
 	}
 
@@ -138,8 +144,8 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 	if (use_disk) {
 		auto cache = std::make_unique<BranchedSigCache>();
 		if (read_branched_cache(dimension, max_nodes, *cache)) {
-			std::unique_lock wlock(branched_sig_cache_mu);
-			branched_sig_cache_map.insert_or_assign(key, std::move(cache));
+			std::unique_lock wlock(reg.mu);
+			reg.map.insert_or_assign(key, std::move(cache));
 			return;
 		}
 	}
@@ -151,22 +157,24 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 		write_branched_cache(*cache);
 	}
 
-	std::unique_lock wlock(branched_sig_cache_mu);
-	branched_sig_cache_map.insert_or_assign(key, std::move(cache));
+	std::unique_lock wlock(reg.mu);
+	reg.map.insert_or_assign(key, std::move(cache));
 }
 
 const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes) {
 	std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
-	std::shared_lock rlock(branched_sig_cache_mu);
-	auto it = branched_sig_cache_map.find(key);
-	if (it == branched_sig_cache_map.end()) {
+	auto& reg = branched_sig_cache_registry();
+	std::shared_lock rlock(reg.mu);
+	auto it = reg.map.find(key);
+	if (it == reg.map.end()) {
 		throw std::runtime_error("Branched signature cache not found. Call prepare_branched_sig first.");
 	}
 	return *(it->second);
 }
 
 void clear_branched_sig_cache() {
-	std::unique_lock wlock(branched_sig_cache_mu);
-	branched_sig_cache_map.clear();
+	auto& reg = branched_sig_cache_registry();
+	std::unique_lock wlock(reg.mu);
+	reg.map.clear();
 }
 

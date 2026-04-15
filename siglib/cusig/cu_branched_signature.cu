@@ -69,6 +69,11 @@ static std::unordered_map<
 > s_gpu_cache_map;
 static std::mutex s_gpu_cache_map_mu;
 
+void release_branched_sig_gpu_state() {
+	std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
+	s_gpu_cache_map.clear();
+}
+
 template<typename T>
 static void upload(T*& d_ptr, const T* h_data, size_t count) {
 	CUDA_CHECK(cudaMalloc(&d_ptr, count * sizeof(T)));

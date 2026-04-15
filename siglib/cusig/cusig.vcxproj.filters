@@ -103,5 +103,8 @@
     <CudaCompile Include="cu_signature.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
+    <CudaCompile Include="cusig_lifecycle.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
   </ItemGroup>
 </Project>

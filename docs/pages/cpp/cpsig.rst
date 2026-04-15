@@ -7,6 +7,7 @@ of the mathematical operations, for which we refer the user to the corresponding
 .. toctree::
    :titlesonly:
 
+   cpsig/cp_lifecycle
    cpsig/cp_sig_length
    cpsig/cp_transform_path
    cpsig/cp_sig_combine

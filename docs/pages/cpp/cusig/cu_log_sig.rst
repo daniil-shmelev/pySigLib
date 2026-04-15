@@ -7,12 +7,6 @@ prepare_log_sig_cuda
 .. doxygengroup:: prepare_log_sig_cuda_functions
    :content-only:
 
-clear_cache_cuda
------------------
-
-.. doxygengroup:: clear_cache_cuda_functions
-   :content-only:
-
 sig_to_log_sig_cuda
 --------------------
 

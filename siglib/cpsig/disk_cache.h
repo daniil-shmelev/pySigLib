@@ -27,8 +27,11 @@ constexpr uint64_t cache_magic_number = 0x70797369676C6962;  // "pysiglib"
 // from a corrupt or malicious file in a shared cache dir.
 inline constexpr uint64_t MAX_CACHE_VECTOR_SIZE = 1'000'000'000ULL;
 
-extern std::filesystem::path cache_dir;
 extern const char* cache_folder_name;
+
+// Thread-safe accessor for the cache directory. Returns a copy under a shared
+// lock; lazily initializes to the platform default on first call.
+std::filesystem::path get_cache_dir();
 
 void set_default_cache_dir();
 void set_cache_dir_(const char* dir);

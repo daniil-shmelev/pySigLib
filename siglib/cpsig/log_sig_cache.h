@@ -55,20 +55,19 @@ struct BasisCache {
 };
 
 extern const char* version;
-extern std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BasisCache>, PairHash> basis_cache;
-extern std::shared_mutex basis_cache_mu;
 
 class CacheFile {
 public:
 
 	CacheFile(uint64_t dimension_, uint64_t degree_) {
-		if (cache_dir.empty() || !std::filesystem::exists(cache_dir / cache_folder_name))
+		auto dir = get_cache_dir();
+		if (dir.empty() || !std::filesystem::exists(dir / cache_folder_name))
 			throw cache_dir_not_set_error("Unexpected internal error. Cache directory was not set correctly.");
 
 		dimension = dimension_;
 		degree = degree_;
 		file_name = std::to_string(dimension) + "_" + std::to_string(degree) + "_" + version + ".bin";
-		file_path = cache_dir / cache_folder_name / file_name;
+		file_path = dir / cache_folder_name / file_name;
 	}
 
 	bool exists() const {

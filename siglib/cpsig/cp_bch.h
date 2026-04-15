@@ -74,8 +74,15 @@ struct BchCache {
 	std::vector<uint64_t> bch_right_factor;
 };
 
-extern std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BchCache>, PairHash> bch_cache;
-extern std::shared_mutex bch_cache_mu;
+struct BchCacheRegistry {
+	std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BchCache>, PairHash> map;
+	std::shared_mutex mu;
+};
+
+inline BchCacheRegistry& bch_cache_registry() {
+	static BchCacheRegistry r;
+	return r;
+}
 
 // ========================================================================
 // BCH coefficients via 2-letter tensor algebra
@@ -445,9 +452,10 @@ inline void build_commutator_table(BchCache& cache) {
 
 inline void set_bch_cache(uint64_t dimension, uint64_t degree) {
 	std::pair<uint64_t, uint64_t> key(dimension, degree);
+	auto& reg = bch_cache_registry();
 	{
-		std::shared_lock rlock(bch_cache_mu);
-		if (bch_cache.find(key) != bch_cache.end()) return;
+		std::shared_lock rlock(reg.mu);
+		if (reg.map.find(key) != reg.map.end()) return;
 	}
 
 	// Ensure the d-letter basis cache is set (needed for commutator table)
@@ -476,25 +484,27 @@ inline void set_bch_cache(uint64_t dimension, uint64_t degree) {
 	// Build commutator table for d-letter Lyndon basis
 	build_commutator_table(*cache);
 
-	std::unique_lock wlock(bch_cache_mu);
-	bch_cache.insert_or_assign(key, std::move(cache));
+	std::unique_lock wlock(reg.mu);
+	reg.map.insert_or_assign(key, std::move(cache));
 }
 
 inline const BchCache& get_bch_cache(uint64_t dimension, uint64_t degree) {
 	std::pair<uint64_t, uint64_t> key(dimension, degree);
+	auto& reg = bch_cache_registry();
 	{
-		std::shared_lock rlock(bch_cache_mu);
-		auto it = bch_cache.find(key);
-		if (it != bch_cache.end()) return *(it->second);
+		std::shared_lock rlock(reg.mu);
+		auto it = reg.map.find(key);
+		if (it != reg.map.end()) return *(it->second);
 	}
 	set_bch_cache(dimension, degree);
-	std::shared_lock rlock(bch_cache_mu);
-	return *bch_cache.at(key);
+	std::shared_lock rlock(reg.mu);
+	return *reg.map.at(key);
 }
 
 inline void clear_bch_cache() {
-	std::unique_lock wlock(bch_cache_mu);
-	bch_cache.clear();
+	auto& reg = bch_cache_registry();
+	std::unique_lock wlock(reg.mu);
+	reg.map.clear();
 }
 
 // ========================================================================

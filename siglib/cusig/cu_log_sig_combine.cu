@@ -18,8 +18,26 @@
 #include "cu_log_sig_combine.h"
 #include "cu_macros.h"
 
+// Type-erased via void* because the hosting functions are templated over
+// float/double — both share one buffer, sized to the larger allocation.
 static std::mutex s_backprop_workspace_mu;
+static void*      s_bp_ws_buf          = nullptr;
+static size_t     s_bp_ws_bytes        = 0;
+
 static std::mutex s_from_path_workspace_mu;
+static void*      s_fp_ws_buf          = nullptr;
+static size_t     s_fp_ws_bytes        = 0;
+
+void release_log_sig_combine_state() {
+	{
+		std::lock_guard<std::mutex> lock(s_backprop_workspace_mu);
+		if (s_bp_ws_buf) { cudaFree(s_bp_ws_buf); s_bp_ws_buf = nullptr; s_bp_ws_bytes = 0; }
+	}
+	{
+		std::lock_guard<std::mutex> lock(s_from_path_workspace_mu);
+		if (s_fp_ws_buf) { cudaFree(s_fp_ws_buf); s_fp_ws_buf = nullptr; s_fp_ws_bytes = 0; }
+	}
+}
 
 // =========================================================================
 // CUDA kernel: one block per batch element, threads cooperate on lie_bracket
@@ -546,23 +564,23 @@ void log_sig_combine_backprop_cuda_(
 	// Workspace: 2 * m2 * m per batch element (memo + d_memo)
 	uint64_t ws_per_batch = 2 * m2 * m;
 
-	// Cached workspace to avoid cudaMalloc/cudaFree per call
-	static T* s_workspace = nullptr;
-	static size_t s_workspace_elems = 0;
 	std::lock_guard<std::mutex> lock(s_backprop_workspace_mu);
 
-	size_t needed_elems = batch_size * ws_per_batch;
-	if (needed_elems > s_workspace_elems) {
-		if (s_workspace) { cudaFree(s_workspace); s_workspace = nullptr; s_workspace_elems = 0; }
+	size_t needed_bytes = batch_size * ws_per_batch * sizeof(T);
+	if (needed_bytes > s_bp_ws_bytes) {
+		if (s_bp_ws_buf) { cudaFree(s_bp_ws_buf); s_bp_ws_buf = nullptr; s_bp_ws_bytes = 0; }
 		size_t free_mem, total_mem;
 		cudaMemGetInfo(&free_mem, &total_mem);
 		uint64_t max_batch = free_mem / (ws_per_batch * sizeof(T) * 2);
 		if (max_batch < 1) max_batch = 1;
 		uint64_t alloc_batch = std::min(batch_size, max_batch);
-		size_t alloc_elems = alloc_batch * ws_per_batch;
-		CUDA_CHECK(cudaMalloc(&s_workspace, alloc_elems * sizeof(T)));
-		s_workspace_elems = alloc_elems;
+		size_t alloc_bytes = alloc_batch * ws_per_batch * sizeof(T);
+		CUDA_CHECK(cudaMalloc(&s_bp_ws_buf, alloc_bytes));
+		s_bp_ws_bytes = alloc_bytes;
 	}
+
+	T* s_workspace = reinterpret_cast<T*>(s_bp_ws_buf);
+	size_t s_workspace_elems = s_bp_ws_bytes / sizeof(T);
 
 	uint64_t chunk_size = s_workspace_elems / ws_per_batch;
 	if (chunk_size > batch_size) chunk_size = batch_size;
@@ -812,23 +830,23 @@ void log_sig_from_path_cuda_(
 
 	uint64_t ws_per_batch = m2 * m;
 
-	// Cached workspace
-	static T* s_workspace = nullptr;
-	static size_t s_workspace_elems = 0;
 	std::lock_guard<std::mutex> lock(s_from_path_workspace_mu);
 
-	size_t needed_elems = batch_size * ws_per_batch;
-	if (needed_elems > s_workspace_elems) {
-		if (s_workspace) { cudaFree(s_workspace); s_workspace = nullptr; s_workspace_elems = 0; }
+	size_t needed_bytes = batch_size * ws_per_batch * sizeof(T);
+	if (needed_bytes > s_fp_ws_bytes) {
+		if (s_fp_ws_buf) { cudaFree(s_fp_ws_buf); s_fp_ws_buf = nullptr; s_fp_ws_bytes = 0; }
 		size_t free_mem, total_mem;
 		cudaMemGetInfo(&free_mem, &total_mem);
 		uint64_t max_batch = free_mem / (ws_per_batch * sizeof(T) * 2);
 		if (max_batch < 1) max_batch = 1;
 		uint64_t alloc_batch = std::min(batch_size, max_batch);
-		size_t alloc_elems = alloc_batch * ws_per_batch;
-		CUDA_CHECK(cudaMalloc(&s_workspace, alloc_elems * sizeof(T)));
-		s_workspace_elems = alloc_elems;
+		size_t alloc_bytes = alloc_batch * ws_per_batch * sizeof(T);
+		CUDA_CHECK(cudaMalloc(&s_fp_ws_buf, alloc_bytes));
+		s_fp_ws_bytes = alloc_bytes;
 	}
+
+	T* s_workspace = reinterpret_cast<T*>(s_fp_ws_buf);
+	size_t s_workspace_elems = s_fp_ws_bytes / sizeof(T);
 
 	uint64_t chunk_size = s_workspace_elems / ws_per_batch;
 	if (chunk_size > batch_size) chunk_size = batch_size;

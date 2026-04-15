@@ -17,9 +17,6 @@
 #include "cp_bch.h"
 #include "cp_log_signature.h"
 
-std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BchCache>, PairHash> bch_cache;
-std::shared_mutex bch_cache_mu;
-
 extern "C" {
 
 	CPSIG_API int log_sig_combine_f(const float* log_sig1, const float* log_sig2, float* out,

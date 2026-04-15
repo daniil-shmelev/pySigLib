@@ -448,4 +448,7 @@ extern "C" {
 	// log_sig_join_backprop CUDA
 	CUSIG_API int log_sig_join_backprop_cuda_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	CUSIG_API int log_sig_join_backprop_cuda_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+
+	/** @brief Release all cached device allocations and the CUDA stream pool. Synchronizes the device first. Idempotent. */
+	CUSIG_API void cusig_shutdown() noexcept;
 }

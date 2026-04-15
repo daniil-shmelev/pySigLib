@@ -1,20 +1,10 @@
 Log sig functions
 ===================
 
-set_cache_dir
----------------
-
-.. doxygenfunction:: set_cache_dir
-
 prepare_log_sig
 -----------------
 
 .. doxygenfunction:: prepare_log_sig
-
-clear_cache
----------------
-
-.. doxygenfunction:: clear_cache
 
 sig_to_log_sig
 ---------------

@@ -383,6 +383,15 @@ static void* g_sig_join_lsig_buf = nullptr;
 static size_t g_sig_join_lsig_bytes = 0;
 static std::mutex g_sig_join_lsig_mu;
 
+void release_sig_combine_state() {
+	std::lock_guard<std::mutex> lock(g_sig_join_lsig_mu);
+	if (g_sig_join_lsig_buf) {
+		cudaFree(g_sig_join_lsig_buf);
+		g_sig_join_lsig_buf = nullptr;
+		g_sig_join_lsig_bytes = 0;
+	}
+}
+
 template<typename T>
 void sig_join_cuda_(
 	const T* sig, const T* displacement, T* out,

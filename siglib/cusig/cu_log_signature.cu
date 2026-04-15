@@ -408,6 +408,11 @@ void free_cuda_log_sig_backprop_workspace_() {
 	g_bp_workspace.free();
 }
 
+void release_log_sig_state() {
+	free_cuda_log_sig_workspace_();
+	free_cuda_log_sig_backprop_workspace_();
+}
+
 // =========================================================================
 // CUDA sig_to_log_sig_backprop kernel (method 0 — expanded tensor log)
 //

@@ -20,10 +20,37 @@
 #include "cp_branched_cache.h"
 
 const char* version = "v1";
-std::filesystem::path cache_dir;
 const char* cache_folder_name = "pysiglib_cache";
-std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BasisCache>, PairHash> basis_cache;
-std::shared_mutex basis_cache_mu;
+
+namespace {
+struct BasisCacheRegistry {
+	std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BasisCache>, PairHash> map;
+	std::shared_mutex mu;
+};
+BasisCacheRegistry& basis_cache_registry() {
+	static BasisCacheRegistry r;
+	return r;
+}
+void clear_basis_cache() {
+	auto& reg = basis_cache_registry();
+	std::unique_lock lk(reg.mu);
+	reg.map.clear();
+}
+}  // anonymous namespace
+
+static std::filesystem::path cache_dir;
+static std::shared_mutex cache_dir_mu;
+
+std::filesystem::path get_cache_dir() {
+	{
+		std::shared_lock rlk(cache_dir_mu);
+		if (!cache_dir.empty())
+			return cache_dir;
+	}
+	set_default_cache_dir();
+	std::shared_lock rlk(cache_dir_mu);
+	return cache_dir;
+}
 
 void serialize_vector(std::ostream& out, const std::vector<uint64_t>& v) {
 
@@ -65,6 +92,7 @@ void set_cache_dir_(const char* dir) {
 	if (!std::filesystem::exists(pysiglib_cache_path)) {
 		std::filesystem::create_directories(pysiglib_cache_path);
 	}
+	std::unique_lock lk(cache_dir_mu);
 	cache_dir = dir_path;
 }
 
@@ -87,7 +115,20 @@ void set_default_cache_dir() {
 	const char* dir = dir_str.c_str();
 #endif
 
-	set_cache_dir_(dir);
+	std::filesystem::path dir_path = dir;
+	if (std::filesystem::exists(dir_path)) {
+		std::filesystem::path pysiglib_cache_path = dir_path / cache_folder_name;
+		if (!std::filesystem::exists(pysiglib_cache_path)) {
+			std::filesystem::create_directories(pysiglib_cache_path);
+		}
+	}
+
+	// Only install if still unset: don't clobber an explicit set_cache_dir_().
+	{
+		std::unique_lock lk(cache_dir_mu);
+		if (cache_dir.empty())
+			cache_dir = dir_path;
+	}
 
 #ifdef _WIN32
 	free(dir);
@@ -98,19 +139,18 @@ void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_d
 	if (method < 1)
 		return;
 
-	if (cache_dir.empty()) {
-		set_default_cache_dir();
-	}
+	auto dir = get_cache_dir();
 
-	if (!std::filesystem::exists(cache_dir / cache_folder_name))
-		std::filesystem::create_directory(cache_dir / cache_folder_name);
+	if (!std::filesystem::exists(dir / cache_folder_name))
+		std::filesystem::create_directory(dir / cache_folder_name);
 
 	std::pair<uint64_t, uint64_t> key(dimension, degree);
+	auto& reg = basis_cache_registry();
 
 	{
-		std::shared_lock rlock(basis_cache_mu);
-		auto it = basis_cache.find(key);
-		if (it != basis_cache.end() && it->second->method >= method) return;
+		std::shared_lock rlock(reg.mu);
+		auto it = reg.map.find(key);
+		if (it != reg.map.end() && it->second->method >= method) return;
 	}
 
 	CacheFile file(dimension, degree);
@@ -118,8 +158,8 @@ void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_d
 		auto basis_obj = std::make_unique<BasisCache>();
 		file.read(basis_obj);
 		if (basis_obj->method >= method) {
-			std::unique_lock wlock(basis_cache_mu);
-			basis_cache.insert_or_assign(key, std::move(basis_obj));
+			std::unique_lock wlock(reg.mu);
+			reg.map.insert_or_assign(key, std::move(basis_obj));
 			return;
 		}
 	}
@@ -144,22 +184,19 @@ void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_d
 		file.write(basis_obj);
 	}
 
-	std::unique_lock wlock(basis_cache_mu);
-	basis_cache.insert_or_assign(key, std::move(basis_obj));
+	std::unique_lock wlock(reg.mu);
+	reg.map.insert_or_assign(key, std::move(basis_obj));
 }
 
 const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int method) {
 
-	if (cache_dir.empty()) {
-		set_default_cache_dir();
-	}
-
 	std::pair<uint64_t, uint64_t> key(dimension, degree);
+	auto& reg = basis_cache_registry();
 
 	{
-		std::shared_lock rlock(basis_cache_mu);
-		auto it = basis_cache.find(key);
-		if (it != basis_cache.end() && it->second->method >= method)
+		std::shared_lock rlock(reg.mu);
+		auto it = reg.map.find(key);
+		if (it != reg.map.end() && it->second->method >= method)
 			return *(it->second);
 	}
 
@@ -173,25 +210,20 @@ const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int metho
 	if (basis_obj->method < method)
 		throw cache_not_found_error("Could not find basis cache");
 
-	std::unique_lock wlock(basis_cache_mu);
-	auto p = basis_cache.insert_or_assign(key, std::move(basis_obj));
+	std::unique_lock wlock(reg.mu);
+	auto p = reg.map.insert_or_assign(key, std::move(basis_obj));
 	return *(p.first->second);
 }
 
 void clear_cache_(bool use_disk) {
-	if (cache_dir.empty()) {
-		set_default_cache_dir();
-	}
+	auto dir = get_cache_dir();
 
-	{
-		std::unique_lock wlock(basis_cache_mu);
-		basis_cache.clear();
-	}
+	clear_basis_cache();
 	clear_bch_cache();
 	clear_branched_sig_cache();
 
 	if (use_disk)
-		std::filesystem::remove_all(cache_dir / cache_folder_name);
+		std::filesystem::remove_all(dir / cache_folder_name);
 }
 
 extern "C" {
@@ -206,6 +238,13 @@ extern "C" {
 
 	CPSIG_API int clear_cache(bool use_disk) noexcept {
 		SAFE_CALL(clear_cache_(use_disk));
+	}
+
+	CPSIG_API void cpsig_shutdown() noexcept {
+		try { clear_basis_cache();                                       } catch (...) {}
+		try { clear_bch_cache();                                         } catch (...) {}
+		try { clear_branched_sig_cache();                                } catch (...) {}
+		try { std::unique_lock lk(cache_dir_mu);   cache_dir.clear();    } catch (...) {}
 	}
 
 }
