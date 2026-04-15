@@ -1,8 +1,11 @@
 [build-system]
-# jaxlib is build-time only — scikit-build-core installs it into the isolated
-# build env so CMake's XLA FFI probe can find xla/ffi/api/ffi.h. The produced
-# wheel has no runtime dependency on jaxlib.
-requires = ["scikit-build-core>=0.10", "jaxlib>=0.5.0"]
+# jaxlib is a build-time only dependency used to locate the XLA FFI headers.
+# jaxlib >= 0.5 requires Python >= 3.10, so on 3.9 we skip it and the CMake
+# probe falls through to disable the JAX FFI for that build.
+requires = [
+    "scikit-build-core>=0.10",
+    "jaxlib>=0.5.0; python_version>='3.10'",
+]
 build-backend = "scikit_build_core.build"
 
 [project]
