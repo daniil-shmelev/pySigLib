@@ -20,6 +20,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build cpsig + benchmarks
+        env:
+          CIBUILDWHEEL: "1"  # use -march=x86-64-v3 (AVX2); -march=native may emit AVX-512 that Valgrind can't simulate
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
