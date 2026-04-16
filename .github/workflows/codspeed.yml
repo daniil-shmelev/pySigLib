@@ -1,0 +1,33 @@
+name: CodSpeed Benchmarks
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  benchmarks:
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build cpsig + benchmarks
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPYSIGLIB_BENCHMARKS=ON \
+            -DPYSIGLIB_JAX_FFI=OFF \
+            -DCODSPEED_MODE=simulation
+          cmake --build build --target bench_cpsig -j$(nproc)
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: ./build/benchmarks/bench_cpsig

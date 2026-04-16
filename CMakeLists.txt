@@ -29,6 +29,7 @@ find_package(Python COMPONENTS Interpreter REQUIRED)
 # ---------------------------------------------------------------------------
 option(PYSIGLIB_AVX  "Enable AVX/NEON vectorization"      ON)
 option(PYSIGLIB_JAX_FFI "Build JAX FFI support when headers are available" ON)
+option(PYSIGLIB_BENCHMARKS "Build CodSpeed / Google Benchmark harness" OFF)
 
 # ---------------------------------------------------------------------------
 # Match the original B2 / batch-script build: static CRT (/MT) on MSVC
@@ -298,4 +299,8 @@ add_subdirectory(siglib/cpsig)
 
 if(_jax_ffi_enabled)
     add_subdirectory(siglib/jax_ffi)
+endif()
+
+if(PYSIGLIB_BENCHMARKS)
+    add_subdirectory(benchmarks)
 endif()
