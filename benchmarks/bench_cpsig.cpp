@@ -65,7 +65,7 @@ static void BM_transform_path(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_transform_path)->Args({1280, 16, 2048})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_transform_path)->Args({128, 16, 2048})->Unit(benchmark::kMillisecond);
 
 static void BM_transform_path_backprop(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -83,7 +83,7 @@ static void BM_transform_path_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_transform_path_backprop)->Args({1536, 16, 2048})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_transform_path_backprop)->Args({128, 16, 2048})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // Signature forward / backward
@@ -104,7 +104,7 @@ static void BM_sig(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig)->Args({192, 5, 32, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig)->Args({16, 5, 32, 7})->Unit(benchmark::kMillisecond);
 
 static void BM_sig_backprop(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -124,7 +124,7 @@ static void BM_sig_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_backprop)->Args({8, 5, 32, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_backprop)->Args({4, 5, 32, 7})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // Sig combine / backprop
@@ -145,7 +145,7 @@ static void BM_sig_combine(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_combine)->Args({640, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_combine)->Args({64, 5, 7})->Unit(benchmark::kMillisecond);
 
 static void BM_sig_combine_backprop(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -166,7 +166,7 @@ static void BM_sig_combine_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(d_sig1.data());
     }
 }
-BENCHMARK(BM_sig_combine_backprop)->Args({256, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_combine_backprop)->Args({32, 5, 7})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // Linear sig / sig_join / sig_join_backprop
@@ -186,7 +186,7 @@ static void BM_linear_sig(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_linear_sig)->Args({2560, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_linear_sig)->Args({256, 5, 7})->Unit(benchmark::kMillisecond);
 
 static void BM_sig_join(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -204,7 +204,7 @@ static void BM_sig_join(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_join)->Args({640, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_join)->Args({64, 5, 7})->Unit(benchmark::kMillisecond);
 
 static void BM_sig_join_backprop(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -225,7 +225,7 @@ static void BM_sig_join_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(d_sig.data());
     }
 }
-BENCHMARK(BM_sig_join_backprop)->Args({256, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_join_backprop)->Args({32, 5, 7})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // Sig coef / backprop
@@ -250,7 +250,7 @@ static void BM_sig_coef(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_coef)->Args({640, 3, 64, 6, 128})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_coef)->Args({64, 3, 64, 6, 128})->Unit(benchmark::kMillisecond);
 
 static void BM_sig_coef_backprop(benchmark::State& state) {
     const uint64_t batch   = state.range(0);
@@ -276,7 +276,7 @@ static void BM_sig_coef_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_coef_backprop)->Args({256, 3, 64, 6, 128})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_coef_backprop)->Args({64, 3, 64, 6, 128})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // Sig to log sig / backprop (method 0 = expanded)
@@ -299,7 +299,7 @@ static void BM_sig_to_log_sig(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_to_log_sig)->Args({512, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_to_log_sig)->Args({64, 5, 7})->Unit(benchmark::kMillisecond);
 
 static void BM_sig_to_log_sig_backprop(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -319,7 +319,7 @@ static void BM_sig_to_log_sig_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_to_log_sig_backprop)->Args({128, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_to_log_sig_backprop)->Args({32, 5, 7})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // logsig_to_sig (tensor exp) / backprop
@@ -342,7 +342,7 @@ static void BM_logsig_to_sig(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_logsig_to_sig)->Args({192, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_logsig_to_sig)->Args({32, 5, 7})->Unit(benchmark::kMillisecond);
 
 static void BM_logsig_to_sig_backprop(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -363,7 +363,7 @@ static void BM_logsig_to_sig_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_logsig_to_sig_backprop)->Args({64, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_logsig_to_sig_backprop)->Args({16, 5, 7})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // Log sig from path (BCH method) / backprop
@@ -386,7 +386,7 @@ static void BM_log_sig_from_path(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_log_sig_from_path)->Args({96, 3, 64, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_from_path)->Args({16, 3, 64, 6})->Unit(benchmark::kMillisecond);
 
 static void BM_log_sig_from_path_backprop(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -407,7 +407,7 @@ static void BM_log_sig_from_path_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(d_path.data());
     }
 }
-BENCHMARK(BM_log_sig_from_path_backprop)->Args({32, 3, 64, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_from_path_backprop)->Args({8, 3, 64, 6})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // Log sig combine / backprop
@@ -431,7 +431,7 @@ static void BM_log_sig_combine(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_log_sig_combine)->Args({6144, 3, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_combine)->Args({512, 3, 6})->Unit(benchmark::kMillisecond);
 
 static void BM_log_sig_combine_backprop(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -454,7 +454,7 @@ static void BM_log_sig_combine_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(d_ls1.data());
     }
 }
-BENCHMARK(BM_log_sig_combine_backprop)->Args({4096, 3, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_combine_backprop)->Args({512, 3, 6})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // Log sig join / backprop
@@ -478,7 +478,7 @@ static void BM_log_sig_join(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_log_sig_join)->Args({6144, 3, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_join)->Args({512, 3, 6})->Unit(benchmark::kMillisecond);
 
 static void BM_log_sig_join_backprop(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -501,7 +501,7 @@ static void BM_log_sig_join_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(d_ls.data());
     }
 }
-BENCHMARK(BM_log_sig_join_backprop)->Args({4096, 3, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_join_backprop)->Args({512, 3, 6})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // Sig kernel / backprop
@@ -522,7 +522,7 @@ static void BM_sig_kernel(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_kernel)->Args({3072, 5, 128, 128})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_kernel)->Args({256, 5, 128, 128})->Unit(benchmark::kMillisecond);
 
 static void BM_sig_kernel_backprop(benchmark::State& state) {
     const uint64_t batch = state.range(0);
@@ -543,7 +543,7 @@ static void BM_sig_kernel_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_kernel_backprop)->Args({3072, 5, 128, 128})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_kernel_backprop)->Args({256, 5, 128, 128})->Unit(benchmark::kMillisecond);
 
 // =========================================================================
 // Branched sig / backprop / combine / combine_backprop
@@ -566,7 +566,7 @@ static void BM_branched_sig(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_branched_sig)->Args({1024, 3, 64, 4})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_branched_sig)->Args({64, 3, 64, 4})->Unit(benchmark::kMillisecond);
 
 static void BM_branched_sig_backprop(benchmark::State& state) {
     const uint64_t batch     = state.range(0);
@@ -588,7 +588,7 @@ static void BM_branched_sig_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_branched_sig_backprop)->Args({640, 3, 64, 4})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_branched_sig_backprop)->Args({64, 3, 64, 4})->Unit(benchmark::kMillisecond);
 
 static void BM_branched_sig_combine(benchmark::State& state) {
     const uint64_t batch     = state.range(0);
@@ -608,7 +608,7 @@ static void BM_branched_sig_combine(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_branched_sig_combine)->Args({73728, 3, 4})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_branched_sig_combine)->Args({4096, 3, 4})->Unit(benchmark::kMillisecond);
 
 static void BM_branched_sig_combine_backprop(benchmark::State& state) {
     const uint64_t batch     = state.range(0);
@@ -631,6 +631,6 @@ static void BM_branched_sig_combine_backprop(benchmark::State& state) {
         benchmark::DoNotOptimize(out1.data());
     }
 }
-BENCHMARK(BM_branched_sig_combine_backprop)->Args({24576, 3, 4})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_branched_sig_combine_backprop)->Args({4096, 3, 4})->Unit(benchmark::kMillisecond);
 
 BENCHMARK_MAIN();
