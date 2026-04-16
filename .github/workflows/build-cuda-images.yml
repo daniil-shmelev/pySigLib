@@ -53,21 +53,32 @@ jobs:
             image_name: pysiglib-manylinux-cuda12
             cache_scope: manylinux-cuda12
             free_disk: true
-    if: ${{ github.event.inputs.target == 'both' || github.event.inputs.target == matrix.key }}
     steps:
+      - name: Skip if not selected
+        id: gate
+        run: |
+          if [ "${{ github.event.inputs.target }}" = "both" ] || [ "${{ github.event.inputs.target }}" = "${{ matrix.key }}" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v6
+        if: ${{ steps.gate.outputs.run == 'true' }}
 
       - name: Free disk space
-        if: ${{ matrix.free_disk }}
+        if: ${{ steps.gate.outputs.run == 'true' && matrix.free_disk }}
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           sudo rm -rf /usr/local/lib/android /usr/local/.ghcup
           df -h
 
       - name: Set up Docker Buildx
+        if: ${{ steps.gate.outputs.run == 'true' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to ghcr.io
+        if: ${{ steps.gate.outputs.run == 'true' }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -75,6 +86,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compute image tags
+        if: ${{ steps.gate.outputs.run == 'true' }}
         id: tags
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
@@ -87,7 +99,7 @@ jobs:
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
-        if: ${{ matrix.key == 'test' }}
+        if: ${{ steps.gate.outputs.run == 'true' && matrix.key == 'test' }}
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -100,7 +112,7 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.cache_scope }},mode=max
 
       - name: Build and push
-        if: ${{ matrix.key == 'manylinux' }}
+        if: ${{ steps.gate.outputs.run == 'true' && matrix.key == 'manylinux' }}
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -114,5 +126,6 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.cache_scope }},mode=max
 
       - name: Report image size
+        if: ${{ steps.gate.outputs.run == 'true' }}
         run: |
           docker images ${{ steps.tags.outputs.image }} --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}' || true
