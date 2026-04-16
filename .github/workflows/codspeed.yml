@@ -3,7 +3,9 @@ name: CodSpeed Benchmarks
 on:
   push:
     branches: ["main"]
+    paths: ["siglib/cpsig/**"]
   pull_request:
+    paths: ["siglib/cpsig/**"]
   workflow_dispatch:
 
 permissions:
