@@ -41,7 +41,6 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-jax  = ["jax"]
 cuda = ["pysiglib-cuda==3.0.0rc1"]
 
 [project.urls]
