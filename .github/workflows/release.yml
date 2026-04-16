@@ -1,27 +1,13 @@
 name: Release
 
-# Build pysiglib (base wheel: cpsig + CPU JAX FFI on every platform) and
-# pysiglib-cuda (CUDA plugin wheel: cusig on Linux + Windows only), then
-# test each wheel against a fresh install on every target platform + Python
-# version. Does not upload to PyPI — that's a future workflow gated by
-# environment protection rules.
-#
-# Manual trigger only (workflow_dispatch). You can run it from the Actions tab
-# or via: gh workflow run release.yml --ref <branch>
-#
-# Cost: all jobs run on GHA's free runners or the self-hosted Windows runner.
-# No paid GPU resources are involved.
+# Builds pysiglib and pysiglib-cuda wheels, then tests fresh installs across
+# the supported platforms. This workflow does not publish to PyPI.
 #
 # Prerequisites before first run:
-#   1. Run `build-docker-image.yml` once to publish the manylinux+CUDA build
-#      image to ghcr.io/<owner>/pysiglib-manylinux-cuda12:cuda-12.9.1 (used by
-#      the build-linux-cuda wheel build job).
-#   2. Run `build-test-image.yml` once to publish the CUDA test image to
-#      ghcr.io/<owner>/pysiglib-test-cuda12:cuda-12.9.1 (used by test-linux-cuda
-#      to avoid re-downloading torch on every run).
-#   3. Register a self-hosted Windows runner with Docker Desktop + WSL2 + the
-#      NVIDIA driver, labelled [self-hosted, Windows, X64]. The test-linux-cuda
-#      job runs there via the `deployment` environment gate.
+#   1. Run `build-cuda-images.yml` once to publish the manylinux build image
+#      and CUDA test image to GHCR.
+#   2. Register a self-hosted Windows runner with Docker Desktop + WSL2 + the
+#      NVIDIA driver, labelled [self-hosted, Windows, X64].
 
 on:
   workflow_dispatch:
@@ -36,12 +22,9 @@ on:
         default: true
 
 env:
-  # CUDA arch list used by Linux+Windows CUDA builds. See wheels_plan.md
-  # "CUDA arch list" section for the rationale (covers every NVIDIA GPU
-  # from Maxwell to Blackwell via explicit SASS + minor-version forward compat).
+  # Shared CUDA arch list for Linux and Windows plugin builds.
   CUDA_ARCH: "50;60;70;75;80;86;89;90;100;120"
-  # Pre-built CUDA test image (pushed by build-test-image.yml). Owner is
-  # hardcoded because the workflow is already gated to the canonical repo.
+  # Pre-built CUDA test image from build-cuda-images.yml.
   TEST_CUDA_IMAGE: ghcr.io/daniil-shmelev/pysiglib-test-cuda12:cuda-12.9.1
 
 jobs:
@@ -62,7 +45,7 @@ jobs:
           path: wheelhouse/*.whl
 
   # ============================================================
-  # Linux CUDA wheel (uses ghcr.io custom manylinux+CUDA image)
+  # Linux CUDA wheel
   # ============================================================
   build-linux-cuda:
     name: Build Linux CUDA plugin wheel (pysiglib-cuda)
@@ -88,8 +71,7 @@ jobs:
           package-dir: plugins/cuda
         env:
           CIBW_MANYLINUX_X86_64_IMAGE: ${{ steps.image.outputs.name }}
-          # CUDA_ARCH contains semicolons — wrap in double quotes so cibuildwheel's
-          # shell-style env parser doesn't split on them.
+          # Quote CUDA_ARCH so cibuildwheel keeps the semicolon-delimited list intact.
           CIBW_ENVIRONMENT: 'CUDA_ARCH="${{ env.CUDA_ARCH }}"'
       - uses: actions/upload-artifact@v7
         with:
@@ -113,7 +95,7 @@ jobs:
           path: wheelhouse/*.whl
 
   # ============================================================
-  # Windows CUDA wheel (CUDA installed natively via Jimver action)
+  # Windows CUDA wheel
   # ============================================================
   build-windows-cuda:
     name: Build Windows CUDA plugin wheel (pysiglib-cuda)
@@ -121,13 +103,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install CUDA toolkit
-        # v0.2.35 is the first Jimver release to support CUDA 12.9.1 on Windows.
-        # Older v0.2.21 only supported up to 12.8.0.
-        #
-        # sub-packages must use Windows-native NVIDIA installer names, not
-        # Linux package names. `cudart_dev` doesn't exist as a Windows
-        # sub-package — `cudart` already bundles runtime libs + headers on
-        # Windows.
+        # Use Windows-native sub-package names; on Windows `cudart` already
+        # includes the runtime libraries and headers.
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: '12.9.1'
@@ -140,8 +117,7 @@ jobs:
         with:
           package-dir: plugins/cuda
         env:
-          # CUDA_ARCH contains semicolons — wrap in double quotes so cibuildwheel's
-          # shell-style env parser doesn't split on them.
+          # Quote CUDA_ARCH so cibuildwheel keeps the semicolon-delimited list intact.
           CIBW_ENVIRONMENT: 'CUDA_ARCH="${{ env.CUDA_ARCH }}"'
       - uses: actions/upload-artifact@v7
         with:
@@ -149,7 +125,7 @@ jobs:
           path: wheelhouse/*.whl
 
   # ============================================================
-  # macOS wheel (CPU-only, both arm64 and x86_64 via cibuildwheel archs config)
+  # macOS wheel
   # ============================================================
   build-macos:
     name: Build macOS wheels
