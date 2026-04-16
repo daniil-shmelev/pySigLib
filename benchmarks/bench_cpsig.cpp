@@ -50,587 +50,407 @@ static std::vector<double> random_data(uint64_t n, unsigned seed = 42) {
 // =========================================================================
 
 static void BM_transform_path(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t len   = state.range(2);
-
-    auto path = random_data(batch * dim * len, 1);
-    const uint64_t out_dim = 2 * dim;
-    const uint64_t out_len = 2 * len - 1;
-    std::vector<double> out(batch * out_dim * out_len);
-
+    auto path = random_data(16 * 8 * 512, 1);
+    std::vector<double> out(16 * 16 * 1023);
     for (auto _ : state) {
-        ::transform_path_d(path.data(), out.data(), batch, dim, len,
-                           false, true, 1.0);
+        ::transform_path_d(path.data(), out.data(), 16, 8, 512, false, true, 1.0);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_transform_path)->Args({128, 16, 2048})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_transform_path)->Unit(benchmark::kMicrosecond);
 
 static void BM_transform_path_backprop(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t len   = state.range(2);
-
-    const uint64_t t_dim = 2 * dim;
-    const uint64_t t_len = 2 * len - 1;
-    auto derivs = random_data(batch * t_dim * t_len, 1);
-    std::vector<double> out(batch * dim * len);
-
+    auto derivs = random_data(16 * 16 * 1023, 1);
+    std::vector<double> out(16 * 8 * 512);
     for (auto _ : state) {
-        ::transform_path_backprop_d(derivs.data(), out.data(),
-                                    batch, dim, len, false, true, 1.0);
+        ::transform_path_backprop_d(derivs.data(), out.data(), 16, 8, 512, false, true, 1.0);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_transform_path_backprop)->Args({128, 16, 2048})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_transform_path_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Signature forward / backward
 // =========================================================================
 
 static void BM_sig(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t len   = state.range(2);
-    const uint64_t deg   = state.range(3);
-
-    auto path = random_data(batch * dim * len);
-    const uint64_t slen = ::sig_length(dim, deg);
-    std::vector<double> out(batch * slen);
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto path = random_data(4 * 4 * 32);
+    std::vector<double> out(4 * slen);
     for (auto _ : state) {
-        ::signature_d(path.data(), out.data(), batch, dim, len, deg);
+        ::signature_d(path.data(), out.data(), 4, 4, 32, 5);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig)->Args({16, 5, 32, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig)->Unit(benchmark::kMicrosecond);
 
 static void BM_sig_backprop(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t len   = state.range(2);
-    const uint64_t deg   = state.range(3);
-
-    auto path = random_data(batch * dim * len, 1);
-    const uint64_t slen = ::sig_length(dim, deg);
-    auto sig       = random_data(batch * slen, 2);
-    auto sig_deriv = random_data(batch * slen, 3);
-    std::vector<double> out(batch * dim * len);
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto path = random_data(4 * 4 * 32, 1);
+    auto sig = random_data(4 * slen, 2);
+    auto sig_deriv = random_data(4 * slen, 3);
+    std::vector<double> out(4 * 4 * 32);
     for (auto _ : state) {
-        ::sig_backprop_d(path.data(), out.data(), sig_deriv.data(),
-                         sig.data(), batch, dim, len, deg);
+        ::sig_backprop_d(path.data(), out.data(), sig_deriv.data(), sig.data(), 4, 4, 32, 5);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_backprop)->Args({4, 5, 32, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Sig combine / backprop
 // =========================================================================
 
 static void BM_sig_combine(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t slen = ::sig_length(dim, deg);
-    auto sig1 = random_data(batch * slen, 1);
-    auto sig2 = random_data(batch * slen, 2);
-    std::vector<double> out(batch * slen);
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto sig1 = random_data(8 * slen, 1);
+    auto sig2 = random_data(8 * slen, 2);
+    std::vector<double> out(8 * slen);
     for (auto _ : state) {
-        ::sig_combine_d(sig1.data(), sig2.data(), out.data(), batch, dim, deg);
+        ::sig_combine_d(sig1.data(), sig2.data(), out.data(), 8, 4, 5);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_combine)->Args({64, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_combine)->Unit(benchmark::kMicrosecond);
 
 static void BM_sig_combine_backprop(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t slen = ::sig_length(dim, deg);
-    auto sig1        = random_data(batch * slen, 1);
-    auto sig2        = random_data(batch * slen, 2);
-    auto combo_deriv = random_data(batch * slen, 3);
-    std::vector<double> d_sig1(batch * slen);
-    std::vector<double> d_sig2(batch * slen);
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto sig1 = random_data(8 * slen, 1);
+    auto sig2 = random_data(8 * slen, 2);
+    auto combo_deriv = random_data(8 * slen, 3);
+    std::vector<double> d_sig1(8 * slen);
+    std::vector<double> d_sig2(8 * slen);
     for (auto _ : state) {
-        ::sig_combine_backprop_d(combo_deriv.data(), d_sig1.data(),
-                                 d_sig2.data(), sig1.data(), sig2.data(),
-                                 batch, dim, deg);
+        ::sig_combine_backprop_d(combo_deriv.data(), d_sig1.data(), d_sig2.data(),
+                                 sig1.data(), sig2.data(), 8, 4, 5);
         benchmark::DoNotOptimize(d_sig1.data());
     }
 }
-BENCHMARK(BM_sig_combine_backprop)->Args({32, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_combine_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Linear sig / sig_join / sig_join_backprop
 // =========================================================================
 
 static void BM_linear_sig(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    auto displacement = random_data(batch * dim, 1);
-    const uint64_t slen = ::sig_length(dim, deg);
-    std::vector<double> out(batch * slen);
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto displacement = random_data(16 * 4, 1);
+    std::vector<double> out(16 * slen);
     for (auto _ : state) {
-        ::linear_sig_d(displacement.data(), out.data(), batch, dim, deg);
+        ::linear_sig_d(displacement.data(), out.data(), 16, 4, 5);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_linear_sig)->Args({256, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_linear_sig)->Unit(benchmark::kMicrosecond);
 
 static void BM_sig_join(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t slen = ::sig_length(dim, deg);
-    auto sig = random_data(batch * slen, 1);
-    auto displacement = random_data(batch * dim, 2);
-    std::vector<double> out(batch * slen);
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto sig = random_data(8 * slen, 1);
+    auto displacement = random_data(8 * 4, 2);
+    std::vector<double> out(8 * slen);
     for (auto _ : state) {
-        ::sig_join_d(sig.data(), displacement.data(), out.data(),
-                     batch, dim, deg);
+        ::sig_join_d(sig.data(), displacement.data(), out.data(), 8, 4, 5);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_join)->Args({64, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_join)->Unit(benchmark::kMicrosecond);
 
 static void BM_sig_join_backprop(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t slen = ::sig_length(dim, deg);
-    auto sig = random_data(batch * slen, 1);
-    auto displacement = random_data(batch * dim, 2);
-    auto d_out_data = random_data(batch * slen, 3);
-    std::vector<double> d_sig(batch * slen);
-    std::vector<double> d_disp(batch * dim);
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto sig = random_data(8 * slen, 1);
+    auto displacement = random_data(8 * 4, 2);
+    auto d_out_data = random_data(8 * slen, 3);
+    std::vector<double> d_sig(8 * slen);
+    std::vector<double> d_disp(8 * 4);
     for (auto _ : state) {
         ::sig_join_backprop_d(d_out_data.data(), d_sig.data(), d_disp.data(),
-                              sig.data(), displacement.data(),
-                              batch, dim, deg);
+                              sig.data(), displacement.data(), 8, 4, 5);
         benchmark::DoNotOptimize(d_sig.data());
     }
 }
-BENCHMARK(BM_sig_join_backprop)->Args({32, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_join_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Sig coef / backprop
 // =========================================================================
 
 static void BM_sig_coef(benchmark::State& state) {
-    const uint64_t batch   = state.range(0);
-    const uint64_t dim     = state.range(1);
-    const uint64_t len     = state.range(2);
-    const uint64_t deg     = state.range(3);
-    const uint64_t n_words = state.range(4);
-
-    auto path = random_data(batch * dim * len, 1);
-    std::vector<uint64_t> degrees(n_words, deg);
-    std::vector<uint64_t> multi_idx(n_words * deg, 0);
-    std::vector<double> out(batch * n_words);
-
+    auto path = random_data(8 * 3 * 32, 1);
+    std::vector<uint64_t> degrees(32, 4);
+    std::vector<uint64_t> multi_idx(32 * 4, 0);
+    std::vector<double> out(8 * 32);
     for (auto _ : state) {
         ::sig_coef_d(path.data(), out.data(), multi_idx.data(),
-                     n_words, degrees.data(), batch, dim, len,
+                     32, degrees.data(), 8, 3, 32,
                      false, false, 1.0, false);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_coef)->Args({64, 3, 64, 6, 128})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_coef)->Unit(benchmark::kMicrosecond);
 
 static void BM_sig_coef_backprop(benchmark::State& state) {
-    const uint64_t batch   = state.range(0);
-    const uint64_t dim     = state.range(1);
-    const uint64_t len     = state.range(2);
-    const uint64_t deg     = state.range(3);
-    const uint64_t n_words = state.range(4);
-
-    auto path = random_data(batch * dim * len, 1);
-    std::vector<uint64_t> degrees(n_words, deg);
-    std::vector<uint64_t> multi_idx(n_words * deg, 0);
-    const uint64_t prefix_size = deg * n_words;
-    auto coefs  = random_data(batch * prefix_size, 2);
-    auto derivs = random_data(batch * prefix_size, 3);
-    std::vector<double> out(batch * dim * len);
-
+    auto path = random_data(8 * 3 * 32, 1);
+    std::vector<uint64_t> degrees(32, 4);
+    std::vector<uint64_t> multi_idx(32 * 4, 0);
+    const uint64_t prefix_size = 4 * 32;
+    auto coefs = random_data(8 * prefix_size, 2);
+    auto derivs = random_data(8 * prefix_size, 3);
+    std::vector<double> out(8 * 3 * 32);
     for (auto _ : state) {
         auto derivs_copy = derivs;
         ::sig_coef_backprop_d(path.data(), out.data(), coefs.data(),
                               derivs_copy.data(), multi_idx.data(),
-                              n_words, degrees.data(), batch, dim, len,
+                              32, degrees.data(), 8, 3, 32,
                               false, false, 1.0);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_coef_backprop)->Args({64, 3, 64, 6, 128})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_coef_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Sig to log sig / backprop (method 0 = expanded)
 // =========================================================================
 
 static void BM_sig_to_log_sig(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t slen = ::sig_length(dim, deg);
-    auto sig = random_data(batch * slen, 1);
-    std::vector<double> out(batch * slen);
-
-    check(::prepare_log_sig(dim, deg, 0, false), "prepare_log_sig");
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto sig = random_data(8 * slen, 1);
+    std::vector<double> out(8 * slen);
+    check(::prepare_log_sig(4, 5, 0, false), "prepare_log_sig");
     for (auto _ : state) {
-        ::sig_to_log_sig_d(sig.data(), out.data(), batch, dim, deg,
-                           false, false, 0);
+        ::sig_to_log_sig_d(sig.data(), out.data(), 8, 4, 5, false, false, 0);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_to_log_sig)->Args({64, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_to_log_sig)->Unit(benchmark::kMicrosecond);
 
 static void BM_sig_to_log_sig_backprop(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t slen = ::sig_length(dim, deg);
-    auto sig = random_data(batch * slen, 1);
-    auto ls_derivs = random_data(batch * slen, 2);
-    std::vector<double> out(batch * slen);
-
-    check(::prepare_log_sig(dim, deg, 0, false), "prepare_log_sig");
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto sig = random_data(8 * slen, 1);
+    auto ls_derivs = random_data(8 * slen, 2);
+    std::vector<double> out(8 * slen);
+    check(::prepare_log_sig(4, 5, 0, false), "prepare_log_sig");
     for (auto _ : state) {
         ::sig_to_log_sig_backprop_d(sig.data(), out.data(), ls_derivs.data(),
-                                    batch, dim, deg, false, false, 0, 1);
+                                    8, 4, 5, false, false, 0, 1);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_to_log_sig_backprop)->Args({32, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_to_log_sig_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // logsig_to_sig (tensor exp) / backprop
 // =========================================================================
 
 static void BM_logsig_to_sig(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t slen = ::sig_length(dim, deg);
-    auto log_sig = random_data(batch * slen, 1);
-    std::vector<double> out(batch * slen);
-
-    check(::prepare_log_sig(dim, deg, 0, false), "prepare_log_sig");
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto log_sig = random_data(8 * slen, 1);
+    std::vector<double> out(8 * slen);
+    check(::prepare_log_sig(4, 5, 0, false), "prepare_log_sig");
     for (auto _ : state) {
-        ::logsig_to_sig_d(log_sig.data(), out.data(), batch, dim, deg,
-                          false, false, 0);
+        ::logsig_to_sig_d(log_sig.data(), out.data(), 8, 4, 5, false, false, 0);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_logsig_to_sig)->Args({32, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_logsig_to_sig)->Unit(benchmark::kMicrosecond);
 
 static void BM_logsig_to_sig_backprop(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t slen = ::sig_length(dim, deg);
-    auto log_sig = random_data(batch * slen, 1);
-    auto sig_derivs = random_data(batch * slen, 2);
-    std::vector<double> out(batch * slen);
-
-    check(::prepare_log_sig(dim, deg, 0, false), "prepare_log_sig");
-
+    const uint64_t slen = ::sig_length(4, 5);
+    auto log_sig = random_data(8 * slen, 1);
+    auto sig_derivs = random_data(8 * slen, 2);
+    std::vector<double> out(8 * slen);
+    check(::prepare_log_sig(4, 5, 0, false), "prepare_log_sig");
     for (auto _ : state) {
         ::logsig_to_sig_backprop_d(log_sig.data(), out.data(),
-                                   sig_derivs.data(), batch, dim, deg,
-                                   false, false, 0);
+                                   sig_derivs.data(), 8, 4, 5, false, false, 0);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_logsig_to_sig_backprop)->Args({16, 5, 7})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_logsig_to_sig_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Log sig from path (BCH method) / backprop
 // =========================================================================
 
 static void BM_log_sig_from_path(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t len   = state.range(2);
-    const uint64_t deg   = state.range(3);
-
-    auto path = random_data(batch * dim * len, 1);
-    const uint64_t ls_len = ::log_sig_length(dim, deg);
-    std::vector<double> out(batch * ls_len);
-
-    check(::prepare_log_sig(dim, deg, 3, false), "prepare_log_sig");
-
+    const uint64_t ls_len = ::log_sig_length(3, 5);
+    auto path = random_data(4 * 3 * 32, 1);
+    std::vector<double> out(4 * ls_len);
+    check(::prepare_log_sig(3, 5, 3, false), "prepare_log_sig");
     for (auto _ : state) {
-        ::log_sig_from_path_d(path.data(), out.data(), batch, len, dim, deg);
+        ::log_sig_from_path_d(path.data(), out.data(), 4, 32, 3, 5);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_log_sig_from_path)->Args({16, 3, 64, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_from_path)->Unit(benchmark::kMicrosecond);
 
 static void BM_log_sig_from_path_backprop(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t len   = state.range(2);
-    const uint64_t deg   = state.range(3);
-
-    auto path = random_data(batch * dim * len, 1);
-    const uint64_t ls_len = ::log_sig_length(dim, deg);
-    auto d_out_data = random_data(batch * ls_len, 2);
-    std::vector<double> d_path(batch * dim * len);
-
-    check(::prepare_log_sig(dim, deg, 3, false), "prepare_log_sig");
-
+    const uint64_t ls_len = ::log_sig_length(3, 5);
+    auto path = random_data(4 * 3 * 32, 1);
+    auto d_out_data = random_data(4 * ls_len, 2);
+    std::vector<double> d_path(4 * 3 * 32);
+    check(::prepare_log_sig(3, 5, 3, false), "prepare_log_sig");
     for (auto _ : state) {
         ::log_sig_from_path_backprop_d(d_out_data.data(), d_path.data(),
-                                       path.data(), batch, len, dim, deg);
+                                       path.data(), 4, 32, 3, 5);
         benchmark::DoNotOptimize(d_path.data());
     }
 }
-BENCHMARK(BM_log_sig_from_path_backprop)->Args({8, 3, 64, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_from_path_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Log sig combine / backprop
 // =========================================================================
 
 static void BM_log_sig_combine(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t ls_len = ::log_sig_length(dim, deg);
-    auto ls1 = random_data(batch * ls_len, 1);
-    auto ls2 = random_data(batch * ls_len, 2);
-    std::vector<double> out(batch * ls_len);
-
-    check(::prepare_log_sig(dim, deg, 3, false), "prepare_log_sig");
-
+    const uint64_t ls_len = ::log_sig_length(3, 5);
+    auto ls1 = random_data(64 * ls_len, 1);
+    auto ls2 = random_data(64 * ls_len, 2);
+    std::vector<double> out(64 * ls_len);
+    check(::prepare_log_sig(3, 5, 3, false), "prepare_log_sig");
     for (auto _ : state) {
-        ::log_sig_combine_d(ls1.data(), ls2.data(), out.data(),
-                            batch, dim, deg);
+        ::log_sig_combine_d(ls1.data(), ls2.data(), out.data(), 64, 3, 5);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_log_sig_combine)->Args({512, 3, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_combine)->Unit(benchmark::kMicrosecond);
 
 static void BM_log_sig_combine_backprop(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t ls_len = ::log_sig_length(dim, deg);
-    auto ls1 = random_data(batch * ls_len, 1);
-    auto ls2 = random_data(batch * ls_len, 2);
-    auto d_out_data = random_data(batch * ls_len, 3);
-    std::vector<double> d_ls1(batch * ls_len);
-    std::vector<double> d_ls2(batch * ls_len);
-
-    check(::prepare_log_sig(dim, deg, 3, false), "prepare_log_sig");
-
+    const uint64_t ls_len = ::log_sig_length(3, 5);
+    auto ls1 = random_data(64 * ls_len, 1);
+    auto ls2 = random_data(64 * ls_len, 2);
+    auto d_out_data = random_data(64 * ls_len, 3);
+    std::vector<double> d_ls1(64 * ls_len);
+    std::vector<double> d_ls2(64 * ls_len);
+    check(::prepare_log_sig(3, 5, 3, false), "prepare_log_sig");
     for (auto _ : state) {
         ::log_sig_combine_backprop_d(d_out_data.data(), d_ls1.data(),
                                      d_ls2.data(), ls1.data(), ls2.data(),
-                                     batch, dim, deg);
+                                     64, 3, 5);
         benchmark::DoNotOptimize(d_ls1.data());
     }
 }
-BENCHMARK(BM_log_sig_combine_backprop)->Args({512, 3, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_combine_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Log sig join / backprop
 // =========================================================================
 
 static void BM_log_sig_join(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t ls_len = ::log_sig_length(dim, deg);
-    auto log_sig = random_data(batch * ls_len, 1);
-    auto displacement = random_data(batch * dim, 2);
-    std::vector<double> out(batch * ls_len);
-
-    check(::prepare_log_sig(dim, deg, 3, false), "prepare_log_sig");
-
+    const uint64_t ls_len = ::log_sig_length(3, 5);
+    auto log_sig = random_data(64 * ls_len, 1);
+    auto displacement = random_data(64 * 3, 2);
+    std::vector<double> out(64 * ls_len);
+    check(::prepare_log_sig(3, 5, 3, false), "prepare_log_sig");
     for (auto _ : state) {
-        ::log_sig_join_d(log_sig.data(), displacement.data(), out.data(),
-                         batch, dim, deg);
+        ::log_sig_join_d(log_sig.data(), displacement.data(), out.data(), 64, 3, 5);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_log_sig_join)->Args({512, 3, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_join)->Unit(benchmark::kMicrosecond);
 
 static void BM_log_sig_join_backprop(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t deg   = state.range(2);
-
-    const uint64_t ls_len = ::log_sig_length(dim, deg);
-    auto log_sig = random_data(batch * ls_len, 1);
-    auto displacement = random_data(batch * dim, 2);
-    auto d_out_data = random_data(batch * ls_len, 3);
-    std::vector<double> d_ls(batch * ls_len);
-    std::vector<double> d_disp(batch * dim);
-
-    check(::prepare_log_sig(dim, deg, 3, false), "prepare_log_sig");
-
+    const uint64_t ls_len = ::log_sig_length(3, 5);
+    auto log_sig = random_data(64 * ls_len, 1);
+    auto displacement = random_data(64 * 3, 2);
+    auto d_out_data = random_data(64 * ls_len, 3);
+    std::vector<double> d_ls(64 * ls_len);
+    std::vector<double> d_disp(64 * 3);
+    check(::prepare_log_sig(3, 5, 3, false), "prepare_log_sig");
     for (auto _ : state) {
         ::log_sig_join_backprop_d(d_out_data.data(), d_ls.data(),
                                   d_disp.data(), log_sig.data(),
-                                  displacement.data(), batch, dim, deg);
+                                  displacement.data(), 64, 3, 5);
         benchmark::DoNotOptimize(d_ls.data());
     }
 }
-BENCHMARK(BM_log_sig_join_backprop)->Args({512, 3, 6})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_log_sig_join_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Sig kernel / backprop
 // =========================================================================
 
 static void BM_sig_kernel(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t len1  = state.range(2);
-    const uint64_t len2  = state.range(3);
-
-    auto gram = random_data(batch * (len1 - 1) * (len2 - 1), 1);
-    std::vector<double> out(batch);
-
+    auto gram = random_data(32 * 63 * 63, 1);
+    std::vector<double> out(32);
     for (auto _ : state) {
-        ::sig_kernel_d(gram.data(), out.data(), batch, dim,
-                       len1, len2, 0, 0, false);
+        ::sig_kernel_d(gram.data(), out.data(), 32, 3, 64, 64, 0, 0, false);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_kernel)->Args({256, 5, 128, 128})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_kernel)->Unit(benchmark::kMicrosecond);
 
 static void BM_sig_kernel_backprop(benchmark::State& state) {
-    const uint64_t batch = state.range(0);
-    const uint64_t dim   = state.range(1);
-    const uint64_t len1  = state.range(2);
-    const uint64_t len2  = state.range(3);
-
-    const uint64_t gram_size = (len1 - 1) * (len2 - 1);
-    auto gram  = random_data(batch * gram_size, 1);
-    auto deriv = random_data(batch, 2);
-    auto k_grid = random_data(batch * len1 * len2, 3);
-    std::vector<double> out(batch * gram_size);
-
+    auto gram = random_data(32 * 63 * 63, 1);
+    auto deriv = random_data(32, 2);
+    auto k_grid = random_data(32 * 64 * 64, 3);
+    std::vector<double> out(32 * 63 * 63);
     for (auto _ : state) {
         ::sig_kernel_backprop_d(gram.data(), out.data(), deriv.data(),
-                                k_grid.data(), batch, dim, len1, len2,
-                                0, 0, false);
+                                k_grid.data(), 32, 3, 64, 64, 0, 0, false);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_kernel_backprop)->Args({256, 5, 128, 128})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_kernel_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Branched sig / backprop / combine / combine_backprop
 // =========================================================================
 
 static void BM_branched_sig(benchmark::State& state) {
-    const uint64_t batch     = state.range(0);
-    const uint64_t dim       = state.range(1);
-    const uint64_t len       = state.range(2);
-    const uint64_t max_nodes = state.range(3);
-
-    check(::prepare_branched_sig(dim, max_nodes, false, false), "prepare_branched_sig");
-    const uint64_t blen = ::branched_sig_length(dim, max_nodes, false);
-
-    auto path = random_data(batch * dim * len, 1);
-    std::vector<double> out(batch * blen);
-
+    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, false);
+    auto path = random_data(8 * 3 * 32, 1);
+    std::vector<double> out(8 * blen);
     for (auto _ : state) {
-        ::branched_sig_d(path.data(), out.data(), batch, dim, len, max_nodes);
+        ::branched_sig_d(path.data(), out.data(), 8, 3, 32, 4);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_branched_sig)->Args({64, 3, 64, 4})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_branched_sig)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_backprop(benchmark::State& state) {
-    const uint64_t batch     = state.range(0);
-    const uint64_t dim       = state.range(1);
-    const uint64_t len       = state.range(2);
-    const uint64_t max_nodes = state.range(3);
-
-    check(::prepare_branched_sig(dim, max_nodes, false, false), "prepare_branched_sig");
-    const uint64_t blen = ::branched_sig_length(dim, max_nodes, false);
-
-    auto path = random_data(batch * dim * len, 1);
-    auto bsig = random_data(batch * blen, 2);
-    auto bsig_derivs = random_data(batch * blen, 3);
-    std::vector<double> out(batch * dim * len);
-
+    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, false);
+    auto path = random_data(8 * 3 * 32, 1);
+    auto bsig = random_data(8 * blen, 2);
+    auto bsig_derivs = random_data(8 * blen, 3);
+    std::vector<double> out(8 * 3 * 32);
     for (auto _ : state) {
         ::branched_sig_backprop_d(path.data(), out.data(), bsig_derivs.data(),
-                                  bsig.data(), batch, dim, len, max_nodes);
+                                  bsig.data(), 8, 3, 32, 4);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_branched_sig_backprop)->Args({64, 3, 64, 4})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_branched_sig_backprop)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_combine(benchmark::State& state) {
-    const uint64_t batch     = state.range(0);
-    const uint64_t dim       = state.range(1);
-    const uint64_t max_nodes = state.range(2);
-
-    check(::prepare_branched_sig(dim, max_nodes, false, false), "prepare_branched_sig");
-    const uint64_t blen = ::branched_sig_length(dim, max_nodes, false);
-
-    auto bsig1 = random_data(batch * blen, 1);
-    auto bsig2 = random_data(batch * blen, 2);
-    std::vector<double> out(batch * blen);
-
+    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, false);
+    auto bsig1 = random_data(64 * blen, 1);
+    auto bsig2 = random_data(64 * blen, 2);
+    std::vector<double> out(64 * blen);
     for (auto _ : state) {
-        ::branched_sig_combine_d(bsig1.data(), bsig2.data(), out.data(),
-                                 batch, dim, max_nodes);
+        ::branched_sig_combine_d(bsig1.data(), bsig2.data(), out.data(), 64, 3, 4);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_branched_sig_combine)->Args({4096, 3, 4})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_branched_sig_combine)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_combine_backprop(benchmark::State& state) {
-    const uint64_t batch     = state.range(0);
-    const uint64_t dim       = state.range(1);
-    const uint64_t max_nodes = state.range(2);
-
-    check(::prepare_branched_sig(dim, max_nodes, false, false), "prepare_branched_sig");
-    const uint64_t blen = ::branched_sig_length(dim, max_nodes, false);
-
-    auto bsig1 = random_data(batch * blen, 1);
-    auto bsig2 = random_data(batch * blen, 2);
-    auto derivs = random_data(batch * blen, 3);
-    std::vector<double> out1(batch * blen);
-    std::vector<double> out2(batch * blen);
-
+    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, false);
+    auto bsig1 = random_data(64 * blen, 1);
+    auto bsig2 = random_data(64 * blen, 2);
+    auto derivs = random_data(64 * blen, 3);
+    std::vector<double> out1(64 * blen);
+    std::vector<double> out2(64 * blen);
     for (auto _ : state) {
         ::branched_sig_combine_backprop_d(bsig1.data(), bsig2.data(),
                                           derivs.data(), out1.data(),
-                                          out2.data(), batch, dim, max_nodes);
+                                          out2.data(), 64, 3, 4);
         benchmark::DoNotOptimize(out1.data());
     }
 }
-BENCHMARK(BM_branched_sig_combine_backprop)->Args({4096, 3, 4})->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_branched_sig_combine_backprop)->Unit(benchmark::kMicrosecond);
 
 BENCHMARK_MAIN();
