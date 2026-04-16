@@ -64,10 +64,6 @@ if(_enable_vec)
         else()
             target_compile_options(cpsig PRIVATE -march=native -ftree-vectorize)
         endif()
-        # -fopt-info-vec-missed is GCC-only; Clang uses -Rpass-missed=loop-vectorize
-        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-            target_compile_options(cpsig PRIVATE -fopt-info-vec-missed)
-        endif()
     endif()
 endif()
 
