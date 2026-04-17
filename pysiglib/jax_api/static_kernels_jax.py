@@ -25,6 +25,17 @@ gram matrix ``(B, L-1, L-1)``.
 import math
 import jax.numpy as jnp
 
+from ..static_kernels import (
+    LinearKernel as _BaseLinearKernel,
+    ScaledLinearKernel as _BaseScaledLinearKernel,
+    RBFKernel as _BaseRBFKernel,
+    PolynomialKernel as _BasePolynomialKernel,
+    Matern12Kernel as _BaseMatern12Kernel,
+    Matern32Kernel as _BaseMatern32Kernel,
+    Matern52Kernel as _BaseMatern52Kernel,
+    RationalQuadraticKernel as _BaseRationalQuadraticKernel,
+)
+
 
 def _double_diff(K):
     return K[:, 1:, 1:] - K[:, :-1, 1:] - K[:, 1:, :-1] + K[:, :-1, :-1]
@@ -37,7 +48,7 @@ def _squared_dist(x, y):
 
 
 class LinearKernel:
-    """Linear kernel: kappa(x, y) = <x, y>."""
+    __doc__ = _BaseLinearKernel.__doc__
 
     def __call__(self, x, y):
         dx = jnp.diff(x, axis=1)
@@ -46,7 +57,7 @@ class LinearKernel:
 
 
 class ScaledLinearKernel:
-    """Scaled linear kernel: kappa(x, y) = scale^2 * <x, y>."""
+    __doc__ = _BaseScaledLinearKernel.__doc__
 
     def __init__(self, scale: float = 1.):
         self._scale_sq = scale ** 2
@@ -58,7 +69,7 @@ class ScaledLinearKernel:
 
 
 class RBFKernel:
-    """RBF kernel: kappa(x, y) = exp(-||x - y||^2 / sigma)."""
+    __doc__ = _BaseRBFKernel.__doc__
 
     def __init__(self, sigma: float):
         self._one_over_sigma = 1. / sigma
@@ -70,7 +81,7 @@ class RBFKernel:
 
 
 class PolynomialKernel:
-    """Polynomial kernel: kappa(x, y) = scale * (<x, y> + gamma)^degree."""
+    __doc__ = _BasePolynomialKernel.__doc__
 
     def __init__(self, degree: float = 3., gamma: float = 1., scale: float = 1.):
         self.degree = degree
@@ -85,7 +96,7 @@ class PolynomialKernel:
 
 
 class Matern12Kernel:
-    """Matern-1/2 kernel: kappa(x, y) = exp(-||x - y|| / sigma)."""
+    __doc__ = _BaseMatern12Kernel.__doc__
 
     def __init__(self, sigma: float):
         self._one_over_sigma = 1. / sigma
@@ -97,7 +108,7 @@ class Matern12Kernel:
 
 
 class Matern32Kernel:
-    """Matern-3/2 kernel."""
+    __doc__ = _BaseMatern32Kernel.__doc__
 
     def __init__(self, sigma: float):
         self._sqrt3_over_sigma = math.sqrt(3.) / sigma
@@ -109,7 +120,7 @@ class Matern32Kernel:
 
 
 class Matern52Kernel:
-    """Matern-5/2 kernel."""
+    __doc__ = _BaseMatern52Kernel.__doc__
 
     def __init__(self, sigma: float):
         self._sqrt5_over_sigma = math.sqrt(5.) / sigma
@@ -121,7 +132,7 @@ class Matern52Kernel:
 
 
 class RationalQuadraticKernel:
-    """Rational quadratic kernel: kappa(x, y) = (1 + ||x-y||^2 / (2*alpha*sigma^2))^(-alpha)."""
+    __doc__ = _BaseRationalQuadraticKernel.__doc__
 
     def __init__(self, sigma: float, alpha: float = 1.):
         self.alpha = alpha

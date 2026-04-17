@@ -25,12 +25,26 @@ from .log_sig_join import log_sig_join
 from .log_sig_combine import log_sig_combine
 from .log_sig import log_sig
 
+try:
+    import jax
+    import jax.numpy as jnp
+    _HAS_JAX = True
+except ImportError:
+    _HAS_JAX = False
+
+
+def _is_jax(x):
+    """Return True if ``x`` is a JAX array. Returns False if JAX is not installed."""
+    return _HAS_JAX and isinstance(x, jax.Array)
+
 
 def _make_zero(length, batch_shape, like_arr):
     """Create a zero array of shape ``(*batch_shape, length)`` matching dtype/device of ``like_arr``."""
     full_shape = (*batch_shape, length)
     if isinstance(like_arr, torch.Tensor):
         return torch.zeros(full_shape, dtype=like_arr.dtype, device=like_arr.device)
+    if _is_jax(like_arr):
+        return jnp.zeros(full_shape, dtype=like_arr.dtype)
     return np.zeros(full_shape, dtype=like_arr.dtype)
 
 
@@ -43,6 +57,9 @@ def _make_identity_sig(sig_len, batch_shape, like_arr, scalar_term=True):
     """
     identity = _make_zero(sig_len, batch_shape, like_arr)
     if scalar_term:
+        # JAX arrays are immutable; use functional update.
+        if _is_jax(identity):
+            return identity.at[..., 0].set(1.0)
         identity[..., 0] = 1.0
     return identity
 
@@ -51,6 +68,8 @@ def _stack(arrays, like_arr):
     """Stack arrays along a new leading dimension."""
     if isinstance(like_arr, torch.Tensor):
         return torch.stack(arrays)
+    if _is_jax(like_arr):
+        return jnp.stack(arrays)
     return np.stack(arrays)
 
 
@@ -95,6 +114,8 @@ def _cat_time(a, b):
     """Concatenate along the time axis (axis ``-2``)."""
     if isinstance(a, torch.Tensor):
         return torch.cat([a, b], dim=-2)
+    if _is_jax(a):
+        return jnp.concatenate([a, b], axis=-2)
     return np.concatenate([a, b], axis=-2)
 
 
@@ -102,6 +123,8 @@ def _expand_time(point):
     """Insert a length-1 time axis at position ``-2``: ``(*batch, dim) -> (*batch, 1, dim)``."""
     if isinstance(point, torch.Tensor):
         return point.unsqueeze(-2)
+    if _is_jax(point):
+        return jnp.expand_dims(point, axis=-2)
     return point[..., np.newaxis, :]
 
 
@@ -109,6 +132,9 @@ def _flip_time(path):
     """Reverse along the time axis (axis ``-2``) and return a contiguous copy."""
     if isinstance(path, torch.Tensor):
         return path.flip(-2).contiguous()
+    if _is_jax(path):
+        # JAX arrays are immutable; jnp.flip returns a fresh array.
+        return jnp.flip(path, axis=-2)
     return np.flip(path, axis=-2).copy()
 
 
@@ -116,7 +142,20 @@ def _last_time_step(points):
     """Extract the last time-step, preserving batch shape. Returns an owning copy."""
     if isinstance(points, torch.Tensor):
         return points[..., -1, :].contiguous()
+    if _is_jax(points):
+        # JAX arrays are immutable; the slice already owns its data.
+        return points[..., -1, :]
     return points[..., -1, :].copy()
+
+
+def _copy_sig(s):
+    """Return a fresh copy of a signature tensor (not a view)."""
+    if isinstance(s, torch.Tensor):
+        return s.clone()
+    if _is_jax(s):
+        # JAX arrays are immutable; returning the same reference is safe.
+        return s
+    return s.copy()
 
 
 class SigStream:
@@ -128,11 +167,11 @@ class SigStream:
     for each point. Any interval signature is computed via Chen's identity:
     ``S(a, b) = S(0, a)^{-1} * S(0, b)``.
 
-    Supports both numpy arrays and torch tensors (with autograd). Accepts a single
-    path or a batch of independent paths — the batch shape is inferred from the first
-    ``push`` / ``push_batch`` call and locked in for the rest of the stream's lifetime.
-    A single ``SigStream`` instance can therefore track many independent paths in
-    parallel.
+    Supports numpy arrays, torch tensors (with autograd via ``pysiglib.torch_api``),
+    and JAX arrays (via ``pysiglib.jax_api``). Accepts a single path or a batch of
+    independent paths — the batch shape is inferred from the first ``push`` /
+    ``push_batch`` call and locked in for the rest of the stream's lifetime. A single
+    ``SigStream`` instance can therefore track many independent paths in parallel.
 
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -278,8 +317,7 @@ class SigStream:
         # Fast path: no pops + si==0 means combine is a no-op. Return a fresh
         # copy so the caller can't mutate internal state.
         if si == 0 and self._start == 0:
-            s = self._sigs[ei]
-            return s.clone() if isinstance(s, torch.Tensor) else s.copy()
+            return _copy_sig(self._sigs[ei])
         return self._sig_combine_fn(
             self._inv_sigs[si], self._sigs[ei], self._dimension, self._degree)
 
@@ -334,9 +372,10 @@ class LogSigStream:
     is computed via BCH: ``L(a, b) = BCH(-L(0, a), L(0, b))``, since the inverse of a
     log-signature is its negation.
 
-    Supports both numpy arrays and torch tensors (with autograd). Accepts a single
-    path or a batch of independent paths — the batch shape is inferred from the first
-    ``push`` / ``push_batch`` call and locked in for the rest of the stream's lifetime.
+    Supports numpy arrays, torch tensors (with autograd via ``pysiglib.torch_api``),
+    and JAX arrays (via ``pysiglib.jax_api``). Accepts a single path or a batch of
+    independent paths — the batch shape is inferred from the first ``push`` /
+    ``push_batch`` call and locked in for the rest of the stream's lifetime.
 
     .. note::
 
@@ -477,8 +516,7 @@ class LogSigStream:
             raise IndexError(f"Indices [{start}, {end}] out of range [{self._start}, {self._start + len(self._log_sigs) - 1}]")
         # Fast path: no pops + si==0 means BCH is a no-op. Return a fresh copy.
         if si == 0 and self._start == 0:
-            ls = self._log_sigs[ei]
-            return ls.clone() if isinstance(ls, torch.Tensor) else ls.copy()
+            return _copy_sig(self._log_sigs[ei])
         return self._log_sig_combine_fn(
             -self._log_sigs[si], self._log_sigs[ei],
             self._dimension, self._degree)
