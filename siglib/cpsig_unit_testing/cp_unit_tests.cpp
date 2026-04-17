@@ -214,7 +214,7 @@ public:
             std::vector<double> poly = { 1., 1., 1., 1./2, 1./2, 1./2, 1./2 };
             std::vector<double> true_res = { 1., 2., 2., 2., 2., 2., 2. };
 
-            check_result_2(f, poly, poly, true_res, (uint64_t)1, 2, 2, 1);
+            check_result_2(f, poly, poly, true_res, (uint64_t)1, 2, 2, true, 1);
         }
 
         TEST_METHOD(PolyMultSigTest)
@@ -238,7 +238,7 @@ public:
             std::vector<double> true_sig;
             true_sig.resize(poly_len_);
             (void)signature_d(path.data(), true_sig.data(), (uint64_t)1, dimension, 5, degree, 1);
-            check_result_2(f, poly1, poly2, true_sig, (uint64_t)1, dimension, degree, 1);
+            check_result_2(f, poly1, poly2, true_sig, (uint64_t)1, dimension, degree, true, 1);
         }
 
         TEST_METHOD(BatchPolyMultSigTest)
@@ -268,8 +268,8 @@ public:
             std::vector<double> true_sig;
             true_sig.resize(res_len_);
             (void)signature_d(path.data(), true_sig.data(), batch_size, dimension, 4, degree);
-            check_result_2(f, poly1, poly2, true_sig, batch_size, dimension, degree, 1);
-            check_result_2(f, poly1, poly2, true_sig, batch_size, dimension, degree, -1);
+            check_result_2(f, poly1, poly2, true_sig, batch_size, dimension, degree, true, 1);
+            check_result_2(f, poly1, poly2, true_sig, batch_size, dimension, degree, true, -1);
         }
 
         TEST_METHOD(BatchPolyMultStressTest)
@@ -283,7 +283,7 @@ public:
             std::vector<double> out;
             out.resize(batch_size * sig_length(dimension, degree));
 
-            int err = sig_combine_d(poly.data(), poly.data(), out.data(), batch_size, dimension, degree, -1);
+            int err = sig_combine_d(poly.data(), poly.data(), out.data(), batch_size, dimension, degree, true, -1);
             Assert::IsFalse(err);
         }
     };
@@ -872,21 +872,21 @@ public:
             auto f = signature_d;
             std::vector<double> path;
             std::vector<double> true_sig;
-            Assert::AreEqual(2, f(path.data(), true_sig.data(), (uint64_t)1, 0, 0, 0, false, false, 1., true, 1));
+            Assert::AreEqual(2, f(path.data(), true_sig.data(), (uint64_t)1, 0, 0, 0, false, false, 1., true, true, 1));
 
             true_sig.push_back(1.);
-            check_result(f, path, true_sig, (uint64_t)1, 1, 0, 0, false, false, 1., true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, 1, 0, 0, false, false, 1., true, true, 1);
 
             path.push_back(0.);
-            check_result(f, path, true_sig, (uint64_t)1, 1, 1, 0, false, false, 1., true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, 1, 1, 0, false, false, 1., true, true, 1);
 
             true_sig.push_back(0.);
-            check_result(f, path, true_sig, (uint64_t)1, 1, 0, 1, false, false, 1., true, 1);
-            check_result(f, path, true_sig, (uint64_t)1, 1, 1, 1, false, false, 1., true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, 1, 0, 1, false, false, 1., true, true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, 1, 1, 1, false, false, 1., true, true, 1);
 
             path.push_back(1.);
             true_sig[1] = 1.;
-            check_result(f, path, true_sig, (uint64_t)1, 1, 2, 1, false, false, 1., true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, 1, 2, 1, false, false, 1., true, true, 1);
         }
         TEST_METHOD(LinearPathTest) {
             auto f = signature_d;
@@ -900,7 +900,7 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { true_sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { true_sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { true_sig[i] = 1 / 6.; }
-            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true, 1);
         }
 
         TEST_METHOD(LinearPathTest2) {
@@ -915,7 +915,7 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { true_sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { true_sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { true_sig[i] = 1 / 6.; }
-            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true, 1);
         }
 
         TEST_METHOD(ManualSigTest) {
@@ -923,7 +923,7 @@ public:
             uint64_t dimension = 2, length = 4, degree = 2;
             std::vector<double> path = { 0., 0., 1., 0.5, 4., 0., 0., 1. };
             std::vector<double> true_sig = { 1., 0., 1., 0., 1., -1., 0.5 };
-            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true, 1);
         }
         TEST_METHOD(ManualSigTest2) {
             auto f = signature_f;
@@ -942,7 +942,7 @@ public:
                 -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
                 -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
             };
-            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, true, true, 1);
         }
 
         TEST_METHOD(BatchSigTest) {
@@ -956,8 +956,8 @@ public:
                 1., 1., 1., 0.5, 0.5, 0.5, 0.5,
                 1., 0., 1., 0., 1., -1., 0.5 };
 
-            check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, 1);
-            check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, -1);
+            check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, true, 1);
+            check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, true, -1);
         }
 
         TEST_METHOD(BatchSigTestDegree1) {
@@ -971,8 +971,8 @@ public:
                 1., 1., 1.,
                 1., 0., 1. };
 
-            check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, 1);
-            check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, -1);
+            check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, true, 1);
+            check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, true, -1);
         }
 
         TEST_METHOD(ManualTimeAugTest) {
@@ -982,7 +982,7 @@ public:
             std::vector<float> true_sig = { 1.f, 9.f, 4.f, 40.5f, 15.5f, 20.5f, 8.f, 121.5f, 37.5f,
                                 64.5f, 24.5f, 60.f, 13.f, 34.5f, 10.f + 2.f/3.f };
             float end_time = length - 1.f;
-            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true, true, 1);
         }
 
         TEST_METHOD(ManualLeadLagTest) {
@@ -990,7 +990,7 @@ public:
             uint64_t dimension = 1, length = 5, degree = 3;
             std::vector<float> path = { 0.f, 5.f, 2.f, 4.f, 9.f };
             std::vector<float> true_sig = { 1.f, 9.f, 9.f, 40.5f, 9.f, 72.f, 40.5f, 121.5f, 6.5f, 68.f, -8.5f, 290.f, 98.f, 275.f, 121.5f };
-            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1.f, true, 1);
+            check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1.f, true, true, 1);
         }
 
         TEST_METHOD(BigLeadLagTest) {
@@ -1000,7 +1000,7 @@ public:
             path.resize(batch * length * dimension);
             std::vector<double> out;
             out.resize(batch * sig_length(dimension * 2, degree));
-            f(path.data(), out.data(), batch, dimension, length, degree, false, true, 1., true, 1);
+            f(path.data(), out.data(), batch, dimension, length, degree, false, true, 1., true, true, 1);
         }
     };
 
@@ -1013,7 +1013,7 @@ public:
             std::vector<double> deriv = { 1., 1., 1., 1., 1., 1., 1. };
             std::vector<double> true_ = { -3., -3., 3., 3. };
             std::vector<double> sig = {1., 1., 1., 1./2, 1./2, 1./2, 1./2};
-            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, false, false, 1., 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, false, false, 1., true, 1);
         }
 
         TEST_METHOD(ManualTest) {
@@ -1023,7 +1023,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6. };
             std::vector<double> true_ = { -7.5, -10., -0.5, 0.25, 8., 9.75 };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, false, false, 1., 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, false, false, 1., true, 1);
         }
 
         TEST_METHOD(ManualTest2) {
@@ -1033,7 +1033,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> true_ = { -19.625, -23.625, -1.25, 0.625, 20.875, 23. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, false, false, 1., 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, false, false, 1., true, 1);
         }
 
         TEST_METHOD(ManualTestAsBatch) {
@@ -1043,7 +1043,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6. };
             std::vector<double> true_ = { -7.5, -10., -0.5, 0.25, 8., 9.75 };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            check_result(f, path, true_, deriv.data(), sig.data(), 1, dimension, length, degree, false, false, 1., 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), 1, dimension, length, degree, false, false, 1., true, 1);
         }
 
         TEST_METHOD(ManualTest2AsBatch) {
@@ -1053,7 +1053,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> true_ = { -19.625, -23.625, -1.25, 0.625, 20.875, 23. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            check_result(f, path, true_, deriv.data(), sig.data(), 1, dimension, length, degree, false, false, 1., 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), 1, dimension, length, degree, false, false, 1., true, 1);
         }
 
         TEST_METHOD(ManualBatchTest) {
@@ -1063,8 +1063,8 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14., 1., 1., -2., 3., -4., 5., -6., 7., -8., 9., -10., 11., -12., 13., -14., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1. };
             std::vector<double> true_ = { -19.625, -23.625, -1.25, 0.625, 20.875, 23., -162.5, -103.5, -81.0, 245.5, 243.5, -142.0, -0.625, -0.625, 0., 0., 0.625, 0.625 };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1./48, 1./24, 1./24, 1./12, 1./24, 1./12, 1./12, 1./6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5./6, 3., 9., 2., 13., 2., 6., 1. + 1./3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1./48, -1./24, -1./24,  1./12, -1./24, 1./48, 1./48, -1./6 };
-            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, false, false, 1., 1);
-            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, false, false, 1., -1);
+            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, false, false, 1., true, 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, false, false, 1., true, -1);
         }
 
         TEST_METHOD(TimeAugTest) {
@@ -1075,7 +1075,7 @@ public:
             std::vector<double> true_ = { -54., -4.5, 58.5 };
             std::vector<double> sig = { 1., 1., 2., 0.5, 2.5, -0.5, 2., 1./6, 1.5 + 1./3, -1-1./6, 2 + 1./6, 1./3, 2./3, -0.5-1./3, 1 + 1./3 };
             double end_time = length - 1.;
-            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, true, false, end_time, 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, true, false, end_time, true, 1);
         }
 
         TEST_METHOD(BatchTimeAugTest) {
@@ -1087,8 +1087,8 @@ public:
             std::vector<double> sig = { 1., 1., 2., 0.5, 2.5, -0.5, 2., 1. / 6, 1.5 + 1. / 3, -1 - 1. / 6, 2 + 1. / 6, 1. / 3, 2. / 3, -0.5 - 1. / 3, 1 + 1. / 3,
             1., 6., 2., 18., 6., 6., 2., 36., 12., 12., 4., 12., 4., 4., 4./3};
             double end_time = length - 1.;
-            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, true, false, end_time, 1);
-            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, true, false, end_time, -1);
+            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, true, false, end_time, true, 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, true, false, end_time, true, -1);
         }
 
         TEST_METHOD(LeadLagTest) {
@@ -1098,7 +1098,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> true_ = { -76., 5.5, 70.5 };
             std::vector<double> sig = { 1., 1., 1., .5, -2., 3., .5, 1./6, -2., 2., 1., .5, -4., 3.5, 1./6 };
-            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, false, true, 1., 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, false, true, 1., true, 1);
         }
 
         TEST_METHOD(BatchLeadLagTest) {
@@ -1109,8 +1109,8 @@ public:
             std::vector<double> true_ = { -76., 5.5, 70.5, -170., 0., 170. };
             std::vector<double> sig = { 1., 1., 1., .5, -2., 3., .5, 1. / 6, -2., 2., 1., .5, -4., 3.5, 1. / 6,
             1., 6., 6., 18., 9., 27., 18., 36., 13.5, 27., 13.5, 67.5, 27., 67.5, 36. };
-            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, false, true, 1., 1);
-            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, false, true, 1., -1);
+            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, false, true, 1., true, 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, false, true, 1., true, -1);
         }
 
         TEST_METHOD(TimeAugLeadLagTest) {
@@ -1121,7 +1121,7 @@ public:
             std::vector<double> true_ = { -98., -6., 104. };
             std::vector<double> sig = { 1., 1., 1., 4., .5, -2., 4.5, 3., .5, 5.5, -.5, -1.5, 8. };
             double end_time = length * 2. - 2.;
-            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, true, true, end_time, 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), (uint64_t)1, dimension, length, degree, true, true, end_time, true, 1);
         }
 
         TEST_METHOD(BatchTimeAugLeadLagTest) {
@@ -1133,8 +1133,8 @@ public:
             std::vector<double> sig = { 1., 1., 1., 4., .5, -2., 4.5, 3., .5, 5.5, -.5, -1.5, 8.,
             1., 6., 6., 4., 18., 9., 9., 27., 18., 15., 15., 9., 8. };
             double end_time = length * 2. - 2.;
-            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, true, true, end_time, 1);
-            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, true, true, end_time, -1);
+            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, true, true, end_time, true, 1);
+            check_result(f, path, true_, deriv.data(), sig.data(), batch_size, dimension, length, degree, true, true, end_time, true, -1);
         }
     };
 
@@ -1150,7 +1150,7 @@ public:
             std::vector<double> true_ = { 1., 5., 8., 3., 4., 5., 6., 1., 9., 12., 3., 4., 5., 6. };
 
             auto func = [&](double* sig_combined_derivs, double* out, double* sig1, double* sig2, uint64_t dimension, uint64_t degree) {
-                f(sig_combined_derivs, out, out + result_length, sig1, sig2, (uint64_t)1, dimension, degree, 1);
+                f(sig_combined_derivs, out, out + result_length, sig1, sig2, (uint64_t)1, dimension, degree, true, 1);
                 };
 
 
@@ -1173,7 +1173,7 @@ public:
                 1., 6., 8., 3., 4., 5., 6. };
 
             auto func = [&](double* sig_combined_derivs, double* out, double* sig1, double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) {
-                f(sig_combined_derivs, out, out + result_length, sig1, sig2, batch_size, dimension, degree, n_jobs);
+                f(sig_combined_derivs, out, out + result_length, sig1, sig2, batch_size, dimension, degree, true, n_jobs);
                 };
 
 
@@ -1286,7 +1286,7 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(LinearPathTest2) {
@@ -1301,7 +1301,7 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(ManualLogSigTest) {
@@ -1309,7 +1309,7 @@ public:
             uint64_t dimension = 2, degree = 2;
             std::vector<double> true_ = { 0., 0., 1., 0., 1., -1., 0. };
             std::vector<double> sig = { 1., 0., 1., 0., 1., -1., 0.5 };
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(ManualLogSigTest2) {
@@ -1334,7 +1334,7 @@ public:
                 -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
                 -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
             };
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(BatchLogSigTest) {
@@ -1349,8 +1349,8 @@ public:
                 1., 1., 1., 0.5, 0.5, 0.5, 0.5,
                 1., 0., 1., 0., 1., -1., 0.5 };
 
-            check_result(f, sig, true_, 3, dimension, degree, false, false, 0, 1);
-            check_result(f, sig, true_, 3, dimension, degree, false, false, 0, -1);
+            check_result(f, sig, true_, 3, dimension, degree, false, false, 0, true, 1);
+            check_result(f, sig, true_, 3, dimension, degree, false, false, 0, true, -1);
         }
 
         TEST_METHOD(ManualTimeAugTest) {
@@ -1360,7 +1360,7 @@ public:
                                 10.5f, 5.5f, -5.25f, -11.f, 5.5f, 0.f};
             std::vector<float> sig = { 1.f, 9.f, 4.f, 40.5f, 15.5f, 20.5f, 8.f, 121.5f, 37.5f,
                                 64.5f, 24.5f, 60.f, 13.f, 34.5f, 10.f + 2.f / 3.f };
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, true, false, 0, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, true, false, 0, true, 1);
         }
 
         TEST_METHOD(ManualLeadLagTest) {
@@ -1368,7 +1368,7 @@ public:
             uint64_t dimension = 1, degree = 3;
             std::vector<float> true_ = { 0., 9., 9., 0., -31.5, 31.5, 0., 0., 26.75, -53.5, 11.75, 26.75, -23.5, 11.75, 0. };
             std::vector<float> sig = { 1., 9., 9., 40.5, 9., 72., 40.5, 121.5, 6.5, 68., -8.5, 290., 98., 275., 121.5 };
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, true, 0, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, true, 0, true, 1);
         }
 
         TEST_METHOD(BigLeadLagTest) {
@@ -1378,7 +1378,7 @@ public:
             out.resize(batch * sig_length(dimension * 2, degree));
             std::vector<double> sig;
             sig.resize(batch * sig_length(dimension * 2, degree));
-            f(sig.data(), out.data(), batch, dimension, degree, false, true, 0, 1);
+            f(sig.data(), out.data(), batch, dimension, degree, false, true, 0, true, 1);
         }
     };
 
@@ -1391,7 +1391,7 @@ public:
             std::vector<double> deriv = { 1., 1., 1., 1., 1., 1., 1. };
             std::vector<double> true_ = { 1., -1., -1.,  1.,  1.,  1.,  1. };
             std::vector<double> sig = {1., 1., 1., 0.5, 0.5, 0.5, 0.5};
-            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(ManualTest) {
@@ -1400,7 +1400,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6. };
             std::vector<double> true_ = { 1., -5., -6.25, 3., 4., 5., 6. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(ManualTest2) {
@@ -1409,7 +1409,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> true_ = { 1., 6.5, 7.6875, -10, -11.25, -12.5, -13.75, 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(ManualTestAsBatch) {
@@ -1418,7 +1418,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6. };
             std::vector<double> true_ = { 1., -5., -6.25, 3., 4., 5., 6. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 0, 1);
+            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(ManualTest2AsBatch) {
@@ -1427,7 +1427,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> true_ = { 1., 6.5, 7.6875, -10, -11.25, -12.5, -13.75, 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 0, 1);
+            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(ManualBatchTest) {
@@ -1436,8 +1436,8 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14., 1., 1., -2., 3., -4., 5., -6., 7., -8., 9., -10., 11., -12., 13., -14., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1. };
             std::vector<double> true_ = { 1., 6.5, 7.6875, -10., -11.25, -12.5, -13.75, 7., 8., 9., 10., 11., 12., 13., 14., 1., 66., 30.25, -35., 15.5, -46., 14.5, 7., -8., 9., -10., 11., -12., 13., -14., 1., 1.625, 1.625, 1.5, 1.5, 1.5, 1.5, 1., 1., 1., 1., 1., 1., 1., 1. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
-            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 0, 1);
-            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 0, -1);
+            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 0, true, 1);
+            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 0, true, -1);
         }
 
         TEST_METHOD(ManualDim1Test) {
@@ -1446,7 +1446,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8. };
             std::vector<double> true_ = { 1., -1., 8., 9., 1., -8., -9., -1., 8. };
             std::vector<double> sig = { 1., 1., 2., 3., 4., 5., 6., 7., 8. };
-            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
     };
 
@@ -1466,7 +1466,7 @@ public:
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
         TEST_METHOD(LinearPathCacheTest) {
@@ -1484,7 +1484,7 @@ public:
             (void)clear_cache(true); // Clear disk
             (void)prepare_log_sig(dimension, degree, 1, true);
             (void)clear_cache(false); // Remove from memory but keep on disk
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
         TEST_METHOD(LinearPathTest2) {
@@ -1500,7 +1500,7 @@ public:
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
         TEST_METHOD(ManualLogSigTest) {
@@ -1509,7 +1509,7 @@ public:
             std::vector<double> true_ = { 0., 1., 1. };
             std::vector<double> sig = { 1., 0., 1., 0., 1., -1., 0.5 };
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
         TEST_METHOD(ManualLogSigTest2) {
@@ -1531,7 +1531,7 @@ public:
                 -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
             };
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
         TEST_METHOD(BatchLogSigTest) {
@@ -1546,8 +1546,8 @@ public:
                1., 0., 1., 0., 1., -1., 0.5 };
 
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, 3, dimension, degree, false, false, 1, 1);
-            check_result(f, sig, true_, 3, dimension, degree, false, false, 1, -1);
+            check_result(f, sig, true_, 3, dimension, degree, false, false, 1, true, 1);
+            check_result(f, sig, true_, 3, dimension, degree, false, false, 1, true, -1);
         }
 
         TEST_METHOD(ManualTimeAugTest) {
@@ -1557,7 +1557,7 @@ public:
             std::vector<float> sig = { 1.f, 9.f, 4.f, 40.5f, 15.5f, 20.5f, 8.f, 121.5f, 37.5f,
                                 64.5f, 24.5f, 60.f, 13.f, 34.5f, 10.f + 2.f / 3.f };
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, true, false, 1, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, true, false, 1, true, 1);
         }
 
         TEST_METHOD(ManualLeadLagTest) {
@@ -1566,7 +1566,7 @@ public:
             std::vector<float> true_ = { 9.f, 9.f, -31.5f, 26.75f, 11.75f };
             std::vector<float> sig = { 1.f, 9.f, 9.f, 40.5f, 9.f, 72.f, 40.5f, 121.5f, 6.5f, 68.f, -8.5f, 290.f, 98.f, 275.f, 121.5f };
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, true, 1, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, true, 1, true, 1);
         }
 
         TEST_METHOD(BigLeadLagTest) {
@@ -1577,7 +1577,7 @@ public:
             std::vector<double> sig;
             sig.resize(batch * sig_length(dimension * 2, degree));
             (void)prepare_log_sig(dimension, degree, 1);
-            f(sig.data(), out.data(), batch, dimension, degree, false, true, 1, 1);
+            f(sig.data(), out.data(), batch, dimension, degree, false, true, 1, true, 1);
         }
     };
 
@@ -1591,7 +1591,7 @@ public:
             std::vector<double> true_ = { 0., .5, .5, 0., 1., 0., 0. };
             std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, 1);
+            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
         TEST_METHOD(ManualTest) {
@@ -1601,7 +1601,7 @@ public:
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, 1);
+            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
         TEST_METHOD(ManualTest2) {
@@ -1611,7 +1611,7 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, 1);
+            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
         TEST_METHOD(ManualTestAsBatch) {
@@ -1621,7 +1621,7 @@ public:
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 1, 1);
+            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 1, true, 1);
         }
 
         TEST_METHOD(ManualTest2AsBatch) {
@@ -1631,7 +1631,7 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 1, 1);
+            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 1, true, 1);
         }
 
         TEST_METHOD(ManualBatchTest) {
@@ -1641,8 +1641,8 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0., 0., -21., 8., 4., 8., 0., -12.5, 0., -4., 0., 5., 0., 0., 0., 0., 0., 1.375, 0.5625, 0.5, 1.25, 0., -0.25, 0., 1., 0., 1., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
             (void)prepare_log_sig(dimension, degree, 1);
-            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 1, 1);
-            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 1, -1);
+            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 1, true, 1);
+            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 1, true, -1);
         }
     };
 
@@ -1662,7 +1662,7 @@ public:
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
             (void)prepare_log_sig(dimension, degree, 2);
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
 
         TEST_METHOD(LinearPathCacheTest) {
@@ -1680,7 +1680,7 @@ public:
             (void)clear_cache(true); // Clear disk
             (void)prepare_log_sig(dimension, degree, 2, true);
             (void)clear_cache(false); // Clear memory
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
 
         TEST_METHOD(ManualLogSigTest2) {
@@ -1697,7 +1697,7 @@ public:
                                               -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
                                               -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f };
             (void)prepare_log_sig(dimension, degree, 2);
-            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, 1);
+            check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
     };
 
@@ -1711,7 +1711,7 @@ public:
             std::vector<double> true_ = { 0., .5, .5, 0., 1., 0., 0. };
             std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
             (void)prepare_log_sig(dimension, degree, 2);
-            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, 1);
+            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
 
         TEST_METHOD(ManualTest) {
@@ -1721,7 +1721,7 @@ public:
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
             (void)prepare_log_sig(dimension, degree, 2);
-            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, 1);
+            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
 
         TEST_METHOD(ManualTest2) {
@@ -1731,7 +1731,7 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
             (void)prepare_log_sig(dimension, degree, 2);
-            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, 1);
+            check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
 
         TEST_METHOD(ManualTestAsBatch) {
@@ -1741,7 +1741,7 @@ public:
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
             (void)prepare_log_sig(dimension, degree, 2);
-            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 2, 1);
+            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 2, true, 1);
         }
 
         TEST_METHOD(ManualTest2AsBatch) {
@@ -1751,7 +1751,7 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
             (void)prepare_log_sig(dimension, degree, 2);
-            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 2, 1);
+            check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 2, true, 1);
         }
 
         TEST_METHOD(ManualBatchTest) {
@@ -1761,8 +1761,8 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0., 0., -21., 8., 4., 8., 0., -12.5, 0., -4., 0., 5., 0., 0., 0., 0., 0., 1.375, 0.5625, 0.5, 1.25, 0., -0.25, 0., 1., 0., 1., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
             (void)prepare_log_sig(dimension, degree, 2);
-            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 2, 1);
-            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 2, -1);
+            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 2, true, 1);
+            check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 2, true, -1);
         }
     };
 
@@ -2184,7 +2184,7 @@ public:
             // exp(x) = 1 + x for degree 1
             std::vector<double> log_sig = { 0., 2., 3., 5. };
             std::vector<double> true_ = { 1., 2., 3., 5. };
-            check_result(logsig_to_sig_d, log_sig, true_, (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(logsig_to_sig_d, log_sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(RoundTripDeg2) {
@@ -2194,7 +2194,7 @@ public:
             std::vector<double> log_sig(sig.size());
             (void)sig_to_log_sig_d(sig.data(), log_sig.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
             // Now round-trip
-            check_result(logsig_to_sig_d, log_sig, sig, (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(logsig_to_sig_d, log_sig, sig, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(RoundTripDeg3) {
@@ -2206,7 +2206,7 @@ public:
             (void)signature_d(path.data(), sig.data(), 1, dimension, 3, degree, false, false, 1., true, 1);
             std::vector<double> log_sig(s);
             (void)sig_to_log_sig_d(sig.data(), log_sig.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
-            check_result(logsig_to_sig_d, log_sig, sig, (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(logsig_to_sig_d, log_sig, sig, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
         TEST_METHOD(RoundTripFloat32) {
@@ -2248,7 +2248,7 @@ public:
             std::vector<double> log_sig(s, 0.);
             std::vector<double> true_(s, 0.);
             true_[0] = 1.; // identity signature
-            check_result(logsig_to_sig_d, log_sig, true_, (uint64_t)1, dimension, degree, false, false, 0, 1);
+            check_result(logsig_to_sig_d, log_sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
     };
 }

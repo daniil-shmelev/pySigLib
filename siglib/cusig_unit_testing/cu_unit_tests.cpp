@@ -828,21 +828,21 @@ public:
             auto f = signature_cuda_d;
             std::vector<double> path;
             std::vector<double> true_sig;
-            Assert::AreEqual(2, f(nullptr, nullptr, (uint64_t)1, 0, 0, 0, false, false, 1., true));
+            Assert::AreEqual(2, f(nullptr, nullptr, (uint64_t)1, 0, 0, 0, false, false, 1., true, true));
 
             true_sig.push_back(1.);
-            check_result_typed(f, path, true_sig, (uint64_t)1, 1, 0, 0, false, false, 1., true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, 1, 0, 0, false, false, 1., true, true);
 
             path.push_back(0.);
-            check_result_typed(f, path, true_sig, (uint64_t)1, 1, 1, 0, false, false, 1., true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, 1, 1, 0, false, false, 1., true, true);
 
             true_sig.push_back(0.);
-            check_result_typed(f, path, true_sig, (uint64_t)1, 1, 0, 1, false, false, 1., true);
-            check_result_typed(f, path, true_sig, (uint64_t)1, 1, 1, 1, false, false, 1., true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, 1, 0, 1, false, false, 1., true, true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, 1, 1, 1, false, false, 1., true, true);
 
             path.push_back(1.);
             true_sig[1] = 1.;
-            check_result_typed(f, path, true_sig, (uint64_t)1, 1, 2, 1, false, false, 1., true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, 1, 2, 1, false, false, 1., true, true);
         }
 
         TEST_METHOD(LinearPathTest) {
@@ -857,7 +857,7 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { true_sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { true_sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { true_sig[i] = 1 / 6.; }
-            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true);
         }
 
         TEST_METHOD(LinearPathTest2) {
@@ -872,7 +872,7 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { true_sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { true_sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { true_sig[i] = 1 / 6.; }
-            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true);
         }
 
         TEST_METHOD(ManualSigTest) {
@@ -880,7 +880,7 @@ public:
             uint64_t dimension = 2, length = 4, degree = 2;
             std::vector<double> path = { 0., 0., 1., 0.5, 4., 0., 0., 1. };
             std::vector<double> true_sig = { 1., 0., 1., 0., 1., -1., 0.5 };
-            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true);
         }
 
         TEST_METHOD(ManualSigTestDirect) {
@@ -888,7 +888,7 @@ public:
             uint64_t dimension = 2, length = 4, degree = 2;
             std::vector<double> path = { 0., 0., 1., 0.5, 4., 0., 0., 1. };
             std::vector<double> true_sig = { 1., 0., 1., 0., 1., -1., 0.5 };
-            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., false);
+            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., false, true);
         }
 
         TEST_METHOD(ManualTimeAugTest) {
@@ -898,7 +898,7 @@ public:
             std::vector<double> true_sig = { 1., 9., 4., 40.5, 15.5, 20.5, 8., 121.5, 37.5,
                                 64.5, 24.5, 60., 13., 34.5, 10. + 2. / 3. };
             double end_time = length - 1.;
-            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true, true);
         }
 
         TEST_METHOD(ManualLeadLagTest) {
@@ -906,7 +906,7 @@ public:
             uint64_t dimension = 1, length = 5, degree = 3;
             std::vector<double> path = { 0., 5., 2., 4., 9. };
             std::vector<double> true_sig = { 1., 9., 9., 40.5, 9., 72., 40.5, 121.5, 6.5, 68., -8.5, 290., 98., 275., 121.5 };
-            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1., true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1., true, true);
         }
     };
 
@@ -930,7 +930,7 @@ public:
                 -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
                 -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
             };
-            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, true, true);
         }
 
         TEST_METHOD(ManualSigTest2Direct) {
@@ -950,7 +950,7 @@ public:
                 -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
                 -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
             };
-            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, false);
+            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, false, true);
         }
 
         TEST_METHOD(ManualTimeAugTest) {
@@ -960,7 +960,7 @@ public:
             std::vector<float> true_sig = { 1.f, 9.f, 4.f, 40.5f, 15.5f, 20.5f, 8.f, 121.5f, 37.5f,
                                 64.5f, 24.5f, 60.f, 13.f, 34.5f, 10.f + 2.f / 3.f };
             float end_time = static_cast<float>(length - 1);
-            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true, true);
         }
 
         TEST_METHOD(ManualLeadLagTest) {
@@ -968,7 +968,7 @@ public:
             uint64_t dimension = 1, length = 5, degree = 3;
             std::vector<float> path = { 0.f, 5.f, 2.f, 4.f, 9.f };
             std::vector<float> true_sig = { 1.f, 9.f, 9.f, 40.5f, 9.f, 72.f, 40.5f, 121.5f, 6.5f, 68.f, -8.5f, 290.f, 98.f, 275.f, 121.5f };
-            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1.f, true);
+            check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1.f, true, true);
         }
     };
 
@@ -986,7 +986,7 @@ public:
                 1., 1., 1., 0.5, 0.5, 0.5, 0.5,
                 1., 0., 1., 0., 1., -1., 0.5 };
 
-            check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., true);
+            check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., true, true);
         }
 
         TEST_METHOD(BatchSigTestDirect) {
@@ -1000,7 +1000,7 @@ public:
                 1., 1., 1., 0.5, 0.5, 0.5, 0.5,
                 1., 0., 1., 0., 1., -1., 0.5 };
 
-            check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., false);
+            check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., false, true);
         }
 
         TEST_METHOD(BatchSigTestDegree1) {
@@ -1014,7 +1014,7 @@ public:
                 1., 1., 1.,
                 1., 0., 1. };
 
-            check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., true);
+            check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., true, true);
         }
 
         TEST_METHOD(BigLeadLagTest) {
@@ -1032,7 +1032,7 @@ public:
             cudaMalloc(&d_out, sizeof(double) * out.size());
             cudaMemcpy(d_path, path.data(), sizeof(double) * path.size(), cudaMemcpyHostToDevice);
 
-            int err = f(d_path, d_out, batch, dimension, length, degree, false, true, 1., true);
+            int err = f(d_path, d_out, batch, dimension, length, degree, false, true, 1., true, true);
 
             cudaMemcpy(out.data(), d_out, sizeof(double) * out.size(), cudaMemcpyDeviceToHost);
             cudaFree(d_path);
@@ -1067,7 +1067,7 @@ public:
                 -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
                 -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
             };
-            check_result_typed(f, path, true_sig, (uint64_t)2, dimension, length, degree, false, false, 1.f, true);
+            check_result_typed(f, path, true_sig, (uint64_t)2, dimension, length, degree, false, false, 1.f, true, true);
         }
     };
 
@@ -1107,7 +1107,7 @@ public:
         cudaMemcpy(d_sig, sig.data(), sizeof(T) * sig.size(), cudaMemcpyHostToDevice);
         cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(T) * sig_derivs.size(), cudaMemcpyHostToDevice);
 
-        int err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree, time_aug, lead_lag, end_time);
+        int err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree, time_aug, lead_lag, end_time, true);
         cudaDeviceSynchronize();
 
         cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);
@@ -1161,7 +1161,7 @@ public:
         cudaMemcpy(d_sig, sig.data(), sizeof(T) * sig.size(), cudaMemcpyHostToDevice);
         cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(T) * sig_derivs.size(), cudaMemcpyHostToDevice);
 
-        int err = f(d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time);
+        int err = f(d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, true);
         cudaDeviceSynchronize();
 
         cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);
@@ -1312,7 +1312,7 @@ public:
             std::vector<double> poly = { 1., 1., 1., 1. / 2, 1. / 2, 1. / 2, 1. / 2 };
             std::vector<double> true_res = { 1., 2., 2., 2., 2., 2., 2. };
 
-            check_result_2_typed(f, poly, poly, true_res, (uint64_t)1, (uint64_t)2, (uint64_t)2);
+            check_result_2_typed(f, poly, poly, true_res, (uint64_t)1, (uint64_t)2, (uint64_t)2, true);
         }
 
         TEST_METHOD(PolyMultSigTest)
@@ -1330,7 +1330,7 @@ public:
             std::vector<double> poly2 = compute_sig_on_gpu(path2, dimension, 3, degree);
             std::vector<double> true_sig = compute_sig_on_gpu(path, dimension, 5, degree);
 
-            check_result_2_typed(f, poly1, poly2, true_sig, (uint64_t)1, dimension, (uint64_t)degree);
+            check_result_2_typed(f, poly1, poly2, true_sig, (uint64_t)1, dimension, (uint64_t)degree, true);
         }
     };
 
@@ -1343,7 +1343,7 @@ public:
             std::vector<float> poly = { 1.f, 1.f, 1.f, 1.f / 2, 1.f / 2, 1.f / 2, 1.f / 2 };
             std::vector<float> true_res = { 1.f, 2.f, 2.f, 2.f, 2.f, 2.f, 2.f };
 
-            check_result_2_typed(f, poly, poly, true_res, (uint64_t)1, (uint64_t)2, (uint64_t)2);
+            check_result_2_typed(f, poly, poly, true_res, (uint64_t)1, (uint64_t)2, (uint64_t)2, true);
         }
 
         TEST_METHOD(PolyMultSigTest)
@@ -1358,7 +1358,7 @@ public:
             std::vector<float> poly2 = compute_sig_on_gpu(path2, dimension, (uint64_t)3, degree);
             std::vector<float> true_sig = compute_sig_on_gpu(path, dimension, (uint64_t)5, degree);
 
-            check_result_2_typed(f, poly1, poly2, true_sig, (uint64_t)1, dimension, (uint64_t)degree);
+            check_result_2_typed(f, poly1, poly2, true_sig, (uint64_t)1, dimension, (uint64_t)degree, true);
         }
     };
 
@@ -1384,7 +1384,7 @@ public:
             std::vector<double> poly2 = compute_batch_sig_on_gpu(path2, batch_size, dimension, 2, degree);
             std::vector<double> true_sig = compute_batch_sig_on_gpu(path, batch_size, dimension, 4, degree);
 
-            check_result_2_typed(f, poly1, poly2, true_sig, batch_size, dimension, (uint64_t)degree);
+            check_result_2_typed(f, poly1, poly2, true_sig, batch_size, dimension, (uint64_t)degree, true);
         }
 
         TEST_METHOD(BatchPolyMultSigTestFloat)
@@ -1405,7 +1405,7 @@ public:
             std::vector<float> poly2 = compute_batch_sig_on_gpu<float>(path2, batch_size, dimension, 2, degree);
             std::vector<float> true_sig = compute_batch_sig_on_gpu<float>(path, batch_size, dimension, 4, degree);
 
-            check_result_2_typed(f, poly1, poly2, true_sig, batch_size, dimension, (uint64_t)degree);
+            check_result_2_typed(f, poly1, poly2, true_sig, batch_size, dimension, (uint64_t)degree, true);
         }
 
         TEST_METHOD(BatchPolyMultStressTest)
@@ -1563,14 +1563,14 @@ public:
             for (uint64_t i = 1; i < dimension + 1; ++i) { sig[i] = 1.; }
             for (uint64_t i = dimension + 1; i < level_3_start; ++i) { sig[i] = 1 / 2.; }
             for (uint64_t i = level_3_start; i < level_4_start; ++i) { sig[i] = 1 / 6.; }
-            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(ManualLogSigTest) {
             uint64_t dimension = 2, degree = 2;
             std::vector<double> true_ = { 0., 0., 1., 0., 1., -1., 0. };
             std::vector<double> sig = { 1., 0., 1., 0., 1., -1., 0.5 };
-            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(ManualLogSigTest2Float) {
@@ -1594,7 +1594,7 @@ public:
                 -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
                 -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
             };
-            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(BatchLogSigTest) {
@@ -1608,7 +1608,7 @@ public:
                 1., 1., 1., 0.5, 0.5, 0.5, 0.5,
                 1., 0., 1., 0., 1., -1., 0.5 };
 
-            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, (uint64_t)3, dimension, (uint64_t)degree, 0);
+            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, (uint64_t)3, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(ManualTimeAugTest) {
@@ -1619,7 +1619,7 @@ public:
                                 10.5f, 5.5f, -5.25f, -11.f, 5.5f, 0.f };
             std::vector<float> sig = { 1.f, 9.f, 4.f, 40.5f, 15.5f, 20.5f, 8.f, 121.5f, 37.5f,
                                 64.5f, 24.5f, 60.f, 13.f, 34.5f, 10.f + 2.f / 3.f };
-            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(ManualLeadLagTest) {
@@ -1628,7 +1628,7 @@ public:
             uint64_t dimension = 2, degree = 3;
             std::vector<float> true_ = { 0.f, 9.f, 9.f, 0.f, -31.5f, 31.5f, 0.f, 0.f, 26.75f, -53.5f, 11.75f, 26.75f, -23.5f, 11.75f, 0.f };
             std::vector<float> sig = { 1.f, 9.f, 9.f, 40.5f, 9.f, 72.f, 40.5f, 121.5f, 6.5f, 68.f, -8.5f, 290.f, 98.f, 275.f, 121.5f };
-            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_typed(sig_to_log_sig_cuda_f, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(BigLeadLagTest) {
@@ -1659,7 +1659,7 @@ public:
             uint64_t dimension = 3, degree = 1;
             std::vector<double> sig = { 1., 2., 3., 4. };
             std::vector<double> true_ = { 0., 2., 3., 4. };
-            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_typed(sig_to_log_sig_cuda_d, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(StressTest) {
@@ -1748,7 +1748,7 @@ public:
             std::vector<double> deriv = { 1., 1., 1., 1., 1., 1., 1. };
             std::vector<double> true_ = { 1., -1., -1.,  1.,  1.,  1.,  1. };
             std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(ManualTest) {
@@ -1756,7 +1756,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6. };
             std::vector<double> true_ = { 1., -5., -6.25, 3., 4., 5., 6. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(ManualTest2) {
@@ -1764,7 +1764,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> true_ = { 1., 6.5, 7.6875, -10, -11.25, -12.5, -13.75, 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(ManualTestAsBatch) {
@@ -1772,7 +1772,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6. };
             std::vector<double> true_ = { 1., -5., -6.25, 3., 4., 5., 6. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(ManualTest2AsBatch) {
@@ -1780,7 +1780,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> true_ = { 1., 6.5, 7.6875, -10, -11.25, -12.5, -13.75, 7., 8., 9., 10., 11., 12., 13., 14. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(ManualBatchTest) {
@@ -1788,7 +1788,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14., 1., 1., -2., 3., -4., 5., -6., 7., -8., 9., -10., 11., -12., 13., -14., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1. };
             std::vector<double> true_ = { 1., 6.5, 7.6875, -10., -11.25, -12.5, -13.75, 7., 8., 9., 10., 11., 12., 13., 14., 1., 66., 30.25, -35., 15.5, -46., 14.5, 7., -8., 9., -10., 11., -12., 13., -14., 1., 1.625, 1.625, 1.5, 1.5, 1.5, 1.5, 1., 1., 1., 1., 1., 1., 1., 1. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 0);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 0, true);
         }
 
         TEST_METHOD(ManualDim1Test) {
@@ -1796,7 +1796,7 @@ public:
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8. };
             std::vector<double> true_ = { 1., -1., 8., 9., 1., -8., -9., -1., 8. };
             std::vector<double> sig = { 1., 1., 2., 3., 4., 5., 6., 7., 8. };
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
     };
 
@@ -1813,7 +1813,7 @@ public:
             std::vector<double> true_ = { 0., .5, .5, 0., 1., 0., 0. };
             std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
             (void)prepare_log_sig_cuda(dimension, degree, 1);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1, true);
         }
 
         TEST_METHOD(ManualTest) {
@@ -1822,7 +1822,7 @@ public:
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
             (void)prepare_log_sig_cuda(dimension, degree, 1);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1, true);
         }
 
         TEST_METHOD(ManualTest2) {
@@ -1831,7 +1831,7 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
             (void)prepare_log_sig_cuda(dimension, degree, 1);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1, true);
         }
 
         TEST_METHOD(ManualTestAsBatch) {
@@ -1840,7 +1840,7 @@ public:
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
             (void)prepare_log_sig_cuda(dimension, degree, 1);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1, true);
         }
 
         TEST_METHOD(ManualTest2AsBatch) {
@@ -1849,7 +1849,7 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
             (void)prepare_log_sig_cuda(dimension, degree, 1);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 1, true);
         }
 
         TEST_METHOD(ManualBatchTest) {
@@ -1858,7 +1858,7 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0., 0., -21., 8., 4., 8., 0., -12.5, 0., -4., 0., 5., 0., 0., 0., 0., 0., 1.375, 0.5625, 0.5, 1.25, 0., -0.25, 0., 1., 0., 1., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
             (void)prepare_log_sig_cuda(dimension, degree, 1);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 1);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 1, true);
         }
     };
 
@@ -1875,7 +1875,7 @@ public:
             std::vector<double> true_ = { 0., .5, .5, 0., 1., 0., 0. };
             std::vector<double> sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5 };
             (void)prepare_log_sig_cuda(dimension, degree, 2);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2, true);
         }
 
         TEST_METHOD(ManualTest) {
@@ -1884,7 +1884,7 @@ public:
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
             (void)prepare_log_sig_cuda(dimension, degree, 2);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2, true);
         }
 
         TEST_METHOD(ManualTest2) {
@@ -1893,7 +1893,7 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
             (void)prepare_log_sig_cuda(dimension, degree, 2);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2, true);
         }
 
         TEST_METHOD(ManualTestAsBatch) {
@@ -1902,7 +1902,7 @@ public:
             std::vector<double> true_ = { 0., -0.5, 1.25, 0., 3., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5 };
             (void)prepare_log_sig_cuda(dimension, degree, 2);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2, true);
         }
 
         TEST_METHOD(ManualTest2AsBatch) {
@@ -1911,7 +1911,7 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -0.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6 };
             (void)prepare_log_sig_cuda(dimension, degree, 2);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, (uint64_t)1, dimension, (uint64_t)degree, 2, true);
         }
 
         TEST_METHOD(ManualBatchTest) {
@@ -1920,7 +1920,7 @@ public:
             std::vector<double> true_ = { 0., 0.75, 2.375, -2., -.5, 0., -1.25, 0., 4., 0., 5., 0., 0., 0., 0., 0., -21., 8., 4., 8., 0., -12.5, 0., -4., 0., 5., 0., 0., 0., 0., 0., 1.375, 0.5625, 0.5, 1.25, 0., -0.25, 0., 1., 0., 1., 0., 0., 0., 0. };
             std::vector<double> sig = { 1., 0.5, 1., 0.125, 0.25, 0.25, 0.5, 1. / 48, 1. / 24, 1. / 24, 1. / 12, 1. / 24, 1. / 12, 1. / 12, 1. / 6, 1., 5., 2., 12.5, 3., 7., 2., 20. + 5. / 6, 3., 9., 2., 13., 2., 6., 1. + 1. / 3, 1., 0.5, -1., 0.125, -0.25, -0.25, 0.5, 1. / 48, -1. / 24, -1. / 24,  1. / 12, -1. / 24, 1. / 48, 1. / 48, -1. / 6 };
             (void)prepare_log_sig_cuda(dimension, degree, 2);
-            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 2);
+            check_result_backprop_typed(sig_to_log_sig_backprop_cuda_d, sig, true_, deriv, batch_size, dimension, (uint64_t)degree, 2, true);
         }
     };
 
