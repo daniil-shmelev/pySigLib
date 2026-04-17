@@ -31,22 +31,51 @@ import kauri
 
 from .param_checks import check_type, check_non_neg
 
+
+def _check_tree_order(tree_order):
+    if tree_order not in ("recursive", "canonical"):
+        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
+
+
+def _canonical_to_recursive_perm(dimension, degree, planar):
+    if planar:
+        return kauri.planar_canonical_to_recursive_permutation(dimension, degree)
+    return kauri.canonical_to_recursive_permutation(dimension, degree)
+
+
+def _recursive_to_canonical_perm(dimension, degree, planar):
+    if planar:
+        return kauri.planar_recursive_to_canonical_permutation(dimension, degree)
+    return kauri.recursive_to_canonical_permutation(dimension, degree)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def trees_of_order(
         dimension: int,
-        order: int
+        order: int,
+        tree_order: str = "canonical",
+        planar: bool = False,
 ) -> tuple[tuple]:
     """
-    Returns all decorated rooted trees with exactly ``order`` nodes,
-    in canonical ordering.
+    Returns all decorated rooted trees with exactly ``order`` nodes, in the
+    specified ordering.
 
     :param dimension: Path dimension (alphabet size).
     :type dimension: int
     :param order: Exact number of nodes.
     :type order: int
+    :param tree_order: Tree ordering convention. ``"canonical"`` (default) uses
+        the shape-first order matching :func:`tree_to_idx` and
+        ``branched_sig(..., tree_order="canonical")``. ``"recursive"`` uses the
+        recursive bottom-up construction order matching
+        ``branched_sig(..., tree_order="recursive")`` (the default).
+    :type tree_order: str
+    :param planar: If True, enumerate planar (ordered) trees in which the
+        order of children matters.
+    :type planar: bool
     :return: Tuple of trees as tuples in kauri convention.
     :rtype: tuple[tuple]
 
@@ -62,32 +91,55 @@ def trees_of_order(
         print(t) # ((0,), (1,))
 
     """
+    _check_tree_order(tree_order)
     check_type(dimension, "dimension", int)
     check_type(order, "order", int)
+    check_type(planar, "planar", bool)
     check_non_neg(dimension, "dimension")
     check_non_neg(order, "order")
-    return _trees_of_order_cached(dimension, order)
+    return _trees_of_order_cached(dimension, order, tree_order, planar)
 
 
 @cache
-def _trees_of_order_cached(dimension, order):
+def _trees_of_order_cached(dimension, order, tree_order, planar):
     if order == 0:
         return (None,)
-    return tuple(t.sorted_list_repr() for t in kauri.colored_trees_of_order(order, dimension))
+    if tree_order == "canonical":
+        if planar:
+            return tuple(t.sorted_list_repr() for t in kauri.colored_planar_trees_of_order(order, dimension))
+        return tuple(t.sorted_list_repr() for t in kauri.colored_trees_of_order(order, dimension))
+    # Recursive ordering: compute all trees up to `order` in recursive order,
+    # then slice off the last stratum (trees of exactly `order` nodes).
+    from .branched_sig import branched_sig_length
+    all_trees = _trees_cached(dimension, order, "recursive", planar)
+    lower = branched_sig_length(dimension, order - 1, scalar_term=True, planar=planar)
+    upper = branched_sig_length(dimension, order, scalar_term=True, planar=planar)
+    return all_trees[lower:upper]
 
 
 def trees(
         dimension: int,
-        degree: int
+        degree: int,
+        tree_order: str = "canonical",
+        planar: bool = False,
 ) -> tuple[tuple]:
     """
     Returns all decorated rooted trees up to a given degree (max nodes),
-    starting with the empty tree (``None``), in canonical ordering.
+    starting with the empty tree (``None``), in the specified ordering.
 
     :param dimension: Path dimension (alphabet size).
     :type dimension: int
     :param degree: Maximum number of nodes per tree.
     :type degree: int
+    :param tree_order: Tree ordering convention. ``"canonical"`` (default) uses
+        the shape-first order matching :func:`tree_to_idx` and
+        ``branched_sig(..., tree_order="canonical")``. ``"recursive"`` uses the
+        recursive bottom-up construction order matching
+        ``branched_sig(..., tree_order="recursive")`` (the default).
+    :type tree_order: str
+    :param planar: If True, enumerate planar (ordered) trees in which the
+        order of children matters.
+    :type planar: bool
     :return: All decorated rooted trees up to the given degree.
     :rtype: tuple[tuple]
 
@@ -102,28 +154,49 @@ def trees(
         print(t) # (None, (0,), (1,), ((0,), 0), ((1,), 0), ((0,), 1), ((1,), 1))
 
     """
+    _check_tree_order(tree_order)
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
+    check_type(planar, "planar", bool)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return _trees_cached(dimension, degree)
+    return _trees_cached(dimension, degree, tree_order, planar)
 
 
 @cache
-def _trees_cached(dimension, degree):
-    return tuple(t.sorted_list_repr() for t in kauri.colored_trees(dimension, degree))
+def _trees_cached(dimension, degree, tree_order, planar):
+    if tree_order == "canonical":
+        if planar:
+            canonical = tuple(
+                t.sorted_list_repr() for t in kauri.colored_planar_trees_up_to_order(degree, dimension)
+            )
+        else:
+            canonical = tuple(t.sorted_list_repr() for t in kauri.colored_trees(dimension, degree))
+        return canonical
+    # Recursive: start from canonical and permute the non-empty trees.
+    canonical = _trees_cached(dimension, degree, "canonical", planar)
+    if len(canonical) <= 1:
+        return canonical
+    perm = _canonical_to_recursive_perm(dimension, degree, planar)
+    # perm[i] = recursive position of the canonical non-empty tree at index i.
+    # Build recursive-ordered list: recursive[0] = None; recursive[perm[i] + 1] = canonical[i + 1].
+    n_non_empty = len(canonical) - 1
+    recursive = [None] * (n_non_empty + 1)
+    for i in range(n_non_empty):
+        recursive[perm[i] + 1] = canonical[i + 1]
+    return tuple(recursive)
 
 
 def tree_to_idx(
         tree,
         dimension: int,
         degree: int,
+        tree_order: str = "canonical",
         planar: bool = False,
 ) -> int:
     """
     Given a decorated rooted tree, returns its flat index in the
-    canonical enumeration (matching :func:`branched_sig` with
-    ``tree_order="canonical"``).
+    branched-signature coefficient vector.
 
     Trees use the kauri tuple convention:
 
@@ -136,8 +209,12 @@ def tree_to_idx(
     :type dimension: int
     :param degree: Maximum number of nodes (same as ``degree`` in :func:`branched_sig`).
     :type degree: int
-    :param planar: If True, use the planar (ordered) canonical enumeration
-        matching ``branched_sig(..., planar=True, tree_order="canonical")``.
+    :param tree_order: Tree ordering convention. ``"canonical"`` (default)
+        matches ``branched_sig(..., tree_order="canonical")``. ``"recursive"``
+        matches ``branched_sig(..., tree_order="recursive")`` (the default).
+    :type tree_order: str
+    :param planar: If True, use the planar (ordered) enumeration matching
+        ``branched_sig(..., planar=True)``.
     :type planar: bool
     :return: Flat index in the branched signature vector.
     :rtype: int
@@ -160,32 +237,39 @@ def tree_to_idx(
         print(f"Index: {idx}, Coefficient: {bsig[idx]}")
 
     """
+    _check_tree_order(tree_order)
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_type(planar, "planar", bool)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return _tree_to_idx_cached(tree, dimension, degree, planar)
+    return _tree_to_idx_cached(tree, dimension, degree, tree_order, planar)
 
 
 @cache
-def _tree_to_idx_cached(tree, dimension, degree, planar):
+def _tree_to_idx_cached(tree, dimension, degree, tree_order, planar):
     if tree is None:
         return 0
     if planar:
-        return kauri.colored_planar_tree_to_idx(kauri.PlanarTree(tree), dimension, degree)
-    return kauri.colored_tree_to_idx(kauri.Tree(tree), dimension, degree)
+        canonical_idx = kauri.colored_planar_tree_to_idx(kauri.PlanarTree(tree), dimension, degree)
+    else:
+        canonical_idx = kauri.colored_tree_to_idx(kauri.Tree(tree), dimension, degree)
+    if tree_order == "canonical":
+        return canonical_idx
+    perm = _canonical_to_recursive_perm(dimension, degree, planar)
+    return int(perm[canonical_idx - 1]) + 1
 
 
 def idx_to_tree(
         idx: int,
         dimension: int,
         degree: int,
+        tree_order: str = "canonical",
         planar: bool = False,
 ) -> tuple:
     """
-    Given a flat index in the canonical enumeration, returns the
-    corresponding decorated rooted tree as a tuple.
+    Given a flat index in the branched-signature coefficient vector, returns
+    the corresponding decorated rooted tree as a tuple.
 
     :param idx: Flat index in the branched signature vector.
     :type idx: int
@@ -193,9 +277,12 @@ def idx_to_tree(
     :type dimension: int
     :param degree: Maximum number of nodes (same as ``degree`` in :func:`branched_sig`).
     :type degree: int
+    :param tree_order: Tree ordering convention. ``"canonical"`` (default)
+        matches ``branched_sig(..., tree_order="canonical")``. ``"recursive"``
+        matches ``branched_sig(..., tree_order="recursive")`` (the default).
+    :type tree_order: str
     :param planar: If True, interpret ``idx`` in the planar (ordered)
-        canonical enumeration matching
-        ``branched_sig(..., planar=True, tree_order="canonical")``.
+        enumeration matching ``branched_sig(..., planar=True)``.
     :type planar: bool
     :return: Decorated rooted tree (None for empty tree, tuple otherwise).
     :rtype: tuple or None
@@ -218,13 +305,21 @@ def idx_to_tree(
     check_non_neg(idx, "idx")
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return _idx_to_tree_cached(idx, dimension, degree, planar)
+    _check_tree_order(tree_order)
+    return _idx_to_tree_cached(idx, dimension, degree, tree_order, planar)
 
 
 @cache
-def _idx_to_tree_cached(idx, dimension, degree, planar):
-    if planar:
-        kt = kauri.idx_to_colored_planar_tree(idx, dimension, degree)
+def _idx_to_tree_cached(idx, dimension, degree, tree_order, planar):
+    if idx == 0:
+        return None
+    if tree_order == "recursive":
+        inv_perm = _recursive_to_canonical_perm(dimension, degree, planar)
+        canonical_idx = int(inv_perm[idx - 1]) + 1
     else:
-        kt = kauri.idx_to_colored_tree(idx, dimension, degree)
+        canonical_idx = idx
+    if planar:
+        kt = kauri.idx_to_colored_planar_tree(canonical_idx, dimension, degree)
+    else:
+        kt = kauri.idx_to_colored_tree(canonical_idx, dimension, degree)
     return kt.sorted_list_repr()
