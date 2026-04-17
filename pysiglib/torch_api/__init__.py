@@ -32,25 +32,29 @@ from ..streams import (
 
 class SigStream(_SigStream):
     """SigStream with PyTorch autograd support. See :class:`pysiglib.SigStream`."""
-    def __init__(self, dimension: int, degree: int):
-        super().__init__(dimension, degree, _sig_join=sig_join, _sig_combine=sig_combine, _sig=sig)
+    def __init__(self, dimension: int, degree: int, scalar_term=None, n_jobs: int = 1):
+        super().__init__(dimension, degree, scalar_term=scalar_term, n_jobs=n_jobs,
+                         _sig_join=sig_join, _sig_combine=sig_combine, _sig=sig)
 
 class LogSigStream(_LogSigStream):
     """LogSigStream with PyTorch autograd support. See :class:`pysiglib.LogSigStream`."""
-    def __init__(self, dimension: int, degree: int, method: int = 2):
-        super().__init__(dimension, degree, method=method,
+    def __init__(self, dimension: int, degree: int, method: int = 2, n_jobs: int = 1):
+        super().__init__(dimension, degree, method=method, n_jobs=n_jobs,
                          _log_sig_join=log_sig_join, _log_sig_combine=log_sig_combine,
-                         _log_sig=lambda path, deg: log_sig(path, deg, method=method))
+                         _log_sig=log_sig)
 
 class SigWindowStream(_SigWindowStream):
     """SigWindowStream with PyTorch autograd support. See :class:`pysiglib.SigWindowStream`."""
-    def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1):
-        super().__init__(dimension, degree, window_size, stride, _sig=sig)
+    def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1,
+                 scalar_term=None, n_jobs: int = 1):
+        super().__init__(dimension, degree, window_size, stride,
+                         scalar_term=scalar_term, n_jobs=n_jobs, _sig=sig)
 
 class LogSigWindowStream(_LogSigWindowStream):
     """LogSigWindowStream with PyTorch autograd support. See :class:`pysiglib.LogSigWindowStream`."""
-    def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1, method: int = 2):
-        super().__init__(dimension, degree, window_size, stride, method=method,
-                         _log_sig=lambda path, deg: log_sig(path, deg, method=method))
+    def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1,
+                 method: int = 2, n_jobs: int = 1):
+        super().__init__(dimension, degree, window_size, stride,
+                         method=method, n_jobs=n_jobs, _log_sig=log_sig)
 
 signature = sig

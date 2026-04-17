@@ -17,7 +17,7 @@ from typing import Union, List, Tuple
 import numpy as np
 import torch
 
-from .param_checks import check_pos, check_type
+from .param_checks import check_pos, check_type, check_n_jobs, resolve_scalar_term
 from .sig_length import sig_length, log_sig_length
 from .sig_join import sig_join
 from .sig import sig_combine, sig
@@ -34,10 +34,16 @@ def _make_zero(length, batch_shape, like_arr):
     return np.zeros(full_shape, dtype=like_arr.dtype)
 
 
-def _make_identity_sig(sig_len, batch_shape, like_arr):
-    """Create an identity signature ``[1, 0, ..., 0]`` of shape ``(*batch_shape, sig_len)``."""
+def _make_identity_sig(sig_len, batch_shape, like_arr, scalar_term=True):
+    """Create an identity signature of shape ``(*batch_shape, sig_len)``.
+
+    With ``scalar_term=True`` the result is ``[1, 0, ..., 0]``; with ``scalar_term=False``
+    the leading 1 is stripped and the identity becomes all zeros (the sig of a
+    zero-length path is zero in every tensor level ≥ 1).
+    """
     identity = _make_zero(sig_len, batch_shape, like_arr)
-    identity[..., 0] = 1.0
+    if scalar_term:
+        identity[..., 0] = 1.0
     return identity
 
 
@@ -126,12 +132,21 @@ class SigStream:
     path or a batch of independent paths — the batch shape is inferred from the first
     ``push`` / ``push_batch`` call and locked in for the rest of the stream's lifetime.
     A single ``SigStream`` instance can therefore track many independent paths in
-    parallel, reusing the batch-aware C++ kernels under the hood.
+    parallel.
 
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
     :param degree: Truncation level of the signature, :math:`N`.
     :type degree: int
+    :param scalar_term: If True (default), stored signatures include the leading constant
+        1 at index 0. If False, the leading element is stripped. The default will change
+        to False in pySigLib v4.0.
+    :type scalar_term: bool
+    :param n_jobs: Number of threads to run in parallel in the internal ``sig``,
+        ``sig_join`` and ``sig_combine`` calls. If ``n_jobs = 1`` the computation is
+        serial. If ``-1``, all available threads are used. For ``n_jobs < -1``,
+        ``max_threads + 1 + n_jobs`` threads are used.
+    :type n_jobs: int
 
     Example::
 
@@ -151,13 +166,24 @@ class SigStream:
         s = stream.sig(10, 30)  # shape (8, sig_length)
     """
 
-    def __init__(self, dimension: int, degree: int, _sig_join=None, _sig_combine=None, _sig=None):
+    def __init__(self, dimension: int, degree: int,
+                 scalar_term=None, n_jobs: int = 1,
+                 _sig_join=None, _sig_combine=None, _sig=None):
+        scalar_term = resolve_scalar_term(scalar_term)
+        check_n_jobs(n_jobs)
         self._dimension = dimension
         self._degree = degree
-        self._sig_len = sig_length(dimension, degree, scalar_term=True)
-        self._sig_join_fn = _sig_join or sig_join
-        self._sig_combine_fn = _sig_combine or sig_combine
-        self._sig_fn = _sig or sig
+        self._scalar_term = scalar_term
+        self._sig_len = sig_length(dimension, degree, scalar_term=scalar_term)
+        raw_sig = _sig or sig
+        raw_sig_join = _sig_join or sig_join
+        raw_sig_combine = _sig_combine or sig_combine
+        self._sig_fn = lambda path, deg: raw_sig(
+            path, deg, scalar_term=scalar_term, n_jobs=n_jobs)
+        self._sig_combine_fn = lambda s1, s2, dim, deg: raw_sig_combine(
+            s1, s2, dim, deg, scalar_term=scalar_term, n_jobs=n_jobs)
+        self._sig_join_fn = lambda s, disp, dim, deg, prepend=False: raw_sig_join(
+            s, disp, dim, deg, prepend=prepend, scalar_term=scalar_term, n_jobs=n_jobs)
         self._sigs = []      # cumulative forward sigs at each checkpoint
         self._inv_sigs = []  # cumulative inverse sigs at each checkpoint
         self._last_point = None
@@ -177,13 +203,15 @@ class SigStream:
         if self._last_point is None:
             self._batch_shape = batch
             self._last_point = point
-            identity = _make_identity_sig(self._sig_len, batch, point)
+            identity = _make_identity_sig(self._sig_len, batch, point, self._scalar_term)
             self._sigs.append(identity)
             self._inv_sigs.append(identity)
             return
         displacement = point - self._last_point
-        new_sig = self._sig_join_fn(self._sigs[-1], displacement, self._dimension, self._degree)
-        new_inv = self._sig_join_fn(self._inv_sigs[-1], -displacement, self._dimension, self._degree, prepend=True)
+        new_sig = self._sig_join_fn(
+            self._sigs[-1], displacement, self._dimension, self._degree)
+        new_inv = self._sig_join_fn(
+            self._inv_sigs[-1], -displacement, self._dimension, self._degree, prepend=True)
         self._sigs.append(new_sig)
         self._inv_sigs.append(new_inv)
         self._last_point = point
@@ -212,10 +240,12 @@ class SigStream:
         batch_path_rev = _flip_time(batch_path)
 
         batch_sig = self._sig_fn(batch_path, self._degree)
-        new_cumulative = self._sig_combine_fn(self._sigs[-1], batch_sig, self._dimension, self._degree)
+        new_cumulative = self._sig_combine_fn(
+            self._sigs[-1], batch_sig, self._dimension, self._degree)
 
         batch_sig_rev = self._sig_fn(batch_path_rev, self._degree)
-        new_inv = self._sig_combine_fn(batch_sig_rev, self._inv_sigs[-1], self._dimension, self._degree)
+        new_inv = self._sig_combine_fn(
+            batch_sig_rev, self._inv_sigs[-1], self._dimension, self._degree)
 
         self._sigs.append(new_cumulative)
         self._inv_sigs.append(new_inv)
@@ -250,7 +280,8 @@ class SigStream:
         if si == 0 and self._start == 0:
             s = self._sigs[ei]
             return s.clone() if isinstance(s, torch.Tensor) else s.copy()
-        return self._sig_combine_fn(self._inv_sigs[si], self._sigs[ei], self._dimension, self._degree)
+        return self._sig_combine_fn(
+            self._inv_sigs[si], self._sigs[ei], self._dimension, self._degree)
 
     def sig_batch(self, intervals: List[Tuple[int, int]]) -> Union[np.ndarray, torch.Tensor]:
         """
@@ -316,6 +347,16 @@ class LogSigStream:
     :type dimension: int
     :param degree: Truncation level of the log-signature, :math:`N`.
     :type degree: int
+    :param method: Method to use for internal log-signature computation
+        (``2`` or ``3``). Method ``2`` uses the Lyndon bracket basis via the
+        signature-to-log-signature projection; method ``3`` computes log-sigs
+        directly from the path via BCH.
+    :type method: int
+    :param n_jobs: Number of threads to run in parallel in internal ``log_sig``,
+        ``log_sig_join`` and ``log_sig_combine`` calls. ``-1`` uses all
+        available threads; for ``n_jobs < -1``, ``max_threads + 1 + n_jobs``
+        threads are used.
+    :type n_jobs: int
 
     Example::
 
@@ -338,18 +379,26 @@ class LogSigStream:
     """
 
     def __init__(self, dimension: int, degree: int, method: int = 2,
+                 n_jobs: int = 1,
                  _log_sig_join=None, _log_sig_combine=None, _log_sig=None):
         if method not in (2, 3):
             raise ValueError(
                 f"LogSigStream requires method=2 or method=3 (Lyndon basis); "
                 f"got method={method}. Method 1 uses the Hall basis which is "
                 f"incompatible with log_sig_combine/log_sig_join.")
+        check_n_jobs(n_jobs)
         self._dimension = dimension
         self._degree = degree
         self._ls_len = log_sig_length(dimension, degree)
-        self._log_sig_join_fn = _log_sig_join or log_sig_join
-        self._log_sig_combine_fn = _log_sig_combine or log_sig_combine
-        self._log_sig_fn = _log_sig or (lambda path, deg: log_sig(path, deg, method=method))
+        raw_log_sig = _log_sig or log_sig
+        raw_log_sig_join = _log_sig_join or log_sig_join
+        raw_log_sig_combine = _log_sig_combine or log_sig_combine
+        self._log_sig_fn = lambda path, deg: raw_log_sig(
+            path, deg, method=method, n_jobs=n_jobs)
+        self._log_sig_combine_fn = lambda s1, s2, dim, deg: raw_log_sig_combine(
+            s1, s2, dim, deg, n_jobs=n_jobs)
+        self._log_sig_join_fn = lambda ls, disp, dim, deg: raw_log_sig_join(
+            ls, disp, dim, deg, n_jobs=n_jobs)
         self._log_sigs = []
         self._last_point = None
         self._start = 0
@@ -370,7 +419,8 @@ class LogSigStream:
             self._log_sigs.append(_make_zero(self._ls_len, batch, point))
             return
         displacement = point - self._last_point
-        new_ls = self._log_sig_join_fn(self._log_sigs[-1], displacement, self._dimension, self._degree)
+        new_ls = self._log_sig_join_fn(
+            self._log_sigs[-1], displacement, self._dimension, self._degree)
         self._log_sigs.append(new_ls)
         self._last_point = point
 
@@ -396,7 +446,8 @@ class LogSigStream:
         batch_path = _cat_time(last_expanded, points)
 
         batch_ls = self._log_sig_fn(batch_path, self._degree)
-        new_cumulative = self._log_sig_combine_fn(self._log_sigs[-1], batch_ls, self._dimension, self._degree)
+        new_cumulative = self._log_sig_combine_fn(
+            self._log_sigs[-1], batch_ls, self._dimension, self._degree)
 
         self._log_sigs.append(new_cumulative)
         self._last_point = _last_time_step(points)
@@ -428,8 +479,9 @@ class LogSigStream:
         if si == 0 and self._start == 0:
             ls = self._log_sigs[ei]
             return ls.clone() if isinstance(ls, torch.Tensor) else ls.copy()
-        return self._log_sig_combine_fn(-self._log_sigs[si], self._log_sigs[ei],
-                                        self._dimension, self._degree)
+        return self._log_sig_combine_fn(
+            -self._log_sigs[si], self._log_sigs[ei],
+            self._dimension, self._degree)
 
     def sig_batch(self, intervals: List[Tuple[int, int]]) -> Union[np.ndarray, torch.Tensor]:
         """
@@ -619,6 +671,13 @@ class SigWindowStream(_WindowStream):
     :type window_size: int
     :param stride: Number of points between successive window starts. Default 1.
     :type stride: int
+    :param scalar_term: If True (default), each emitted window signature includes
+        the leading constant 1. If False, the leading element is stripped. The
+        default will change to False in pySigLib v4.0.
+    :type scalar_term: bool
+    :param n_jobs: Number of threads to run in parallel in the internal per-window
+        ``sig`` calls. ``-1`` uses all available threads.
+    :type n_jobs: int
 
     Example::
 
@@ -640,12 +699,16 @@ class SigWindowStream(_WindowStream):
     """
 
     def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1,
-                 _sig=None):
+                 scalar_term=None, n_jobs: int = 1, _sig=None):
         check_type(window_size, "window_size", int)
         check_type(stride, "stride", int)
         check_pos(window_size, "window_size")
         check_pos(stride, "stride")
-        super().__init__(_sig or sig, dimension, degree, window_size, stride)
+        scalar_term = resolve_scalar_term(scalar_term)
+        check_n_jobs(n_jobs)
+        raw_sig = _sig or sig
+        sig_fn = lambda path, deg: raw_sig(path, deg, scalar_term=scalar_term, n_jobs=n_jobs)
+        super().__init__(sig_fn, dimension, degree, window_size, stride)
 
 
 class LogSigWindowStream(_WindowStream):
@@ -670,6 +733,11 @@ class LogSigWindowStream(_WindowStream):
     :type window_size: int
     :param stride: Number of points between successive window starts. Default 1.
     :type stride: int
+    :param method: Method used for per-window log-signature computation (``2`` or ``3``).
+    :type method: int
+    :param n_jobs: Number of threads to run in parallel in the internal per-window
+        ``log_sig`` calls. ``-1`` uses all available threads.
+    :type n_jobs: int
 
     Example::
 
@@ -685,10 +753,11 @@ class LogSigWindowStream(_WindowStream):
     """
 
     def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1,
-                 method: int = 2, _log_sig=None):
+                 method: int = 2, n_jobs: int = 1, _log_sig=None):
         check_type(window_size, "window_size", int)
         check_type(stride, "stride", int)
         check_pos(window_size, "window_size")
         check_pos(stride, "stride")
-        sig_fn = _log_sig or (lambda path, deg: log_sig(path, deg, method=method))
+        check_n_jobs(n_jobs)
+        sig_fn = _log_sig or (lambda path, deg: log_sig(path, deg, method=method, n_jobs=n_jobs))
         super().__init__(sig_fn, dimension, degree, window_size, stride)

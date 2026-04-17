@@ -435,3 +435,102 @@ class TestBatchedGradients:
         # Every batch element was summed into the loss, so every batch element's grad is non-zero.
         for k in range(3):
             assert not torch.all(paths.grad[k] == 0)
+
+
+# ---- scalar_term flag tests ----
+
+class TestScalarTermFlag:
+    def test_sig_stream_scalar_term_false_push_batch(self):
+        dim, deg = 3, 3
+        path = np.random.randn(20, dim)
+        stream_true = pysiglib.SigStream(dim, deg, scalar_term=True)
+        stream_false = pysiglib.SigStream(dim, deg, scalar_term=False)
+        stream_true.push_batch(path)
+        stream_false.push_batch(path)
+        full_true = stream_true.sig(0, 1)
+        full_false = stream_false.sig(0, 1)
+        assert full_true.shape[-1] == full_false.shape[-1] + 1
+        np.testing.assert_allclose(full_true[..., 1:], full_false, rtol=1e-10)
+        direct = pysiglib.sig(path, deg, scalar_term=False)
+        np.testing.assert_allclose(full_false, direct, rtol=1e-3, atol=1e-10)
+
+    def test_sig_stream_scalar_term_false_push(self):
+        dim, deg = 3, 3
+        path = np.random.randn(15, dim)
+        stream = pysiglib.SigStream(dim, deg, scalar_term=False)
+        for i in range(len(path)):
+            stream.push(path[i])
+        result = stream.sig(0, len(path) - 1)
+        direct = pysiglib.sig(path, deg, scalar_term=False)
+        assert result.shape == direct.shape
+        np.testing.assert_allclose(result, direct, rtol=1e-3, atol=1e-10)
+
+    def test_sig_stream_scalar_term_false_interval(self):
+        dim, deg = 3, 3
+        path = np.random.randn(30, dim)
+        stream = pysiglib.SigStream(dim, deg, scalar_term=False)
+        for i in range(len(path)):
+            stream.push(path[i])
+        result = stream.sig(5, 15)
+        direct = pysiglib.sig(path[5:16], deg, scalar_term=False)
+        np.testing.assert_allclose(result, direct, rtol=1e-3, atol=1e-10)
+
+    def test_sig_window_stream_scalar_term_false(self):
+        dim, deg = 3, 3
+        path = np.random.randn(50, dim)
+        ws = pysiglib.SigWindowStream(dim, deg, window_size=10, stride=5,
+                                      scalar_term=False)
+        ws.push_batch(path)
+        windows = ws.sig()
+        for i in range(ws.num_windows):
+            direct = pysiglib.sig(path[i * 5:i * 5 + 10], deg, scalar_term=False)
+            np.testing.assert_allclose(windows[i], direct, rtol=1e-3, atol=1e-10)
+
+
+# ---- n_jobs flag tests ----
+
+class TestNJobsFlag:
+    """n_jobs is a performance knob; correctness is identical across values.
+    Verify the flag is accepted and produces matching numerical results."""
+
+    def test_sig_stream_n_jobs_matches_serial(self):
+        path = np.random.randn(30, 3)
+        stream_serial = pysiglib.SigStream(3, 3, n_jobs=1)
+        stream_parallel = pysiglib.SigStream(3, 3, n_jobs=-1)
+        stream_serial.push_batch(path)
+        stream_parallel.push_batch(path)
+        np.testing.assert_allclose(stream_serial.sig(0, 1),
+                                   stream_parallel.sig(0, 1),
+                                   rtol=1e-10, atol=1e-12)
+
+    def test_log_sig_stream_n_jobs_accepted(self):
+        pysiglib.prepare_log_sig(3, 3, method=2)
+        path = np.random.randn(20, 3)
+        stream = pysiglib.LogSigStream(3, 3, n_jobs=-1)
+        stream.push_batch(path)
+        result = stream.sig(0, 1)
+        direct = pysiglib.log_sig(path, 3, method=2)
+        np.testing.assert_allclose(result, direct, rtol=1e-3, atol=1e-10)
+
+    def test_sig_window_stream_n_jobs_accepted(self):
+        path = np.random.randn(30, 3)
+        ws = pysiglib.SigWindowStream(3, 3, window_size=10, stride=5, n_jobs=-1)
+        ws.push_batch(path)
+        assert ws.num_windows == 5
+
+    def test_log_sig_window_stream_n_jobs_accepted(self):
+        pysiglib.prepare_log_sig(3, 3, method=2)
+        path = np.random.randn(30, 3)
+        ws = pysiglib.LogSigWindowStream(3, 3, window_size=10, stride=5, n_jobs=-1)
+        ws.push_batch(path)
+        assert ws.num_windows == 5
+
+    @pytest.mark.parametrize("factory", [
+        lambda: pysiglib.SigStream(3, 3, n_jobs=0),
+        lambda: pysiglib.LogSigStream(3, 3, n_jobs=0),
+        lambda: pysiglib.SigWindowStream(3, 3, window_size=5, n_jobs=0),
+        lambda: pysiglib.LogSigWindowStream(3, 3, window_size=5, n_jobs=0),
+    ], ids=["SigStream", "LogSigStream", "SigWindowStream", "LogSigWindowStream"])
+    def test_n_jobs_zero_rejected(self, factory):
+        with pytest.raises(ValueError, match="n_jobs cannot be 0"):
+            factory()
