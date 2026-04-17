@@ -141,7 +141,7 @@ class SigStream:
     def push_batch(self, points: Union[np.ndarray, torch.Tensor]) -> None:
         """
         Append multiple points to the stream. Computes the batch signature in a
-        single native call rather than per-point sequential joins.
+        single batched call rather than per-point sequential joins.
 
         :param points: Points of shape ``(n, dimension)``.
         :type points: numpy.ndarray | torch.Tensor
@@ -313,7 +313,7 @@ class LogSigStream:
     def push_batch(self, points: Union[np.ndarray, torch.Tensor]) -> None:
         """
         Append multiple points to the stream. Computes the batch log-signature in a
-        single native call rather than per-point sequential joins.
+        single batched call rather than per-point sequential joins.
 
         :param points: Points of shape ``(n, dimension)``.
         :type points: numpy.ndarray | torch.Tensor

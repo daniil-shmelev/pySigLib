@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term, prepend_scalar
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
 from .error_codes import err_msg
 from .dtypes import (CPSIG_LOGSIG_TO_SIG_BACKPROP,
                      CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA)
@@ -45,12 +45,9 @@ def logsig_to_sig_backprop(
 
     Supports all methods (``0``, ``1``, ``2``).
 
-    :param log_sig: The log-signature used in the forward pass, of shape
-        ``(..., log_sig_length)`` for methods ``1`` and ``2``, or ``(..., sig_length)``
-        for method ``0`` (expanded basis).
+    :param log_sig: The log-signature used in the forward pass.
     :type log_sig: numpy.ndarray | torch.tensor
-    :param sig_derivs: Upstream derivatives dL/d(sig), of shape ``(..., sig_length)``.
-        Leading batch dimensions must match those of ``log_sig``.
+    :param sig_derivs: Upstream derivatives dL/d(sig), same shape as the signature output.
     :type sig_derivs: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
@@ -79,13 +76,10 @@ def logsig_to_sig_backprop(
     if method not in (0, 1, 2):
         raise ValueError("method must be 0, 1, or 2")
 
-    if not scalar_term:
-        sig_derivs = prepend_scalar(sig_derivs, 0)
-
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     input_len = sig_length(aug_dimension, degree, scalar_term=True) if method == 0 else log_sig_length(aug_dimension, degree)
-    sig_len = sig_length(aug_dimension, degree, scalar_term=True)
+    sig_len = sig_length(aug_dimension, degree, scalar_term=scalar_term)
     data = SigInputHandler(log_sig, input_len, "log_sig")
     derivs_data = SigInputHandler(sig_derivs, sig_len, "sig_derivs")
     result = SigOutputHandler(data, input_len)
@@ -100,11 +94,11 @@ def logsig_to_sig_backprop(
         err_code = CPSIG_LOGSIG_TO_SIG_BACKPROP[data.dtype](
             data.data_ptr, result.data_ptr, derivs_data.data_ptr,
             data.batch_size, dimension, degree,
-            time_aug, lead_lag, method, n_jobs)
+            time_aug, lead_lag, method, scalar_term, n_jobs)
     else:
         err_code = CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA[data.dtype](
             data.data_ptr, result.data_ptr, derivs_data.data_ptr,
-            data.batch_size, aug_dimension, degree, method)
+            data.batch_size, aug_dimension, degree, method, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
     if not scalar_term and method == 0:

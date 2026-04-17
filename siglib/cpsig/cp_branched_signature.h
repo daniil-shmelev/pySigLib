@@ -133,12 +133,25 @@ void branched_signature_(
 	bool time_aug = false,
 	bool lead_lag = false,
 	T end_time = static_cast<T>(1.),
-	bool planar = false
+	bool planar = false,
+	bool scalar_term = true
 ) {
 	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 	uint64_t flat_path_length = length * dimension;
+	uint64_t out_stride = scalar_term ? total_len : total_len - 1;
+
+	auto compute_one = [&](const T* path_ptr, T* out_ptr, T* increment, T* temp) {
+		Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
+		if (scalar_term) {
+			branched_signature_with_buffers_(path_obj, out_ptr, increment, temp, cache);
+		} else {
+			std::vector<T> buf(total_len);
+			branched_signature_with_buffers_(path_obj, buf.data(), increment, temp, cache);
+			std::memcpy(out_ptr, buf.data() + 1, (total_len - 1) * sizeof(T));
+		}
+	};
 
 	if (n_jobs == 1 || batch_size == 1) {
 		auto increment = std::make_unique<T[]>(aug_dim);
@@ -146,10 +159,9 @@ void branched_signature_(
 		const T* path_ptr = path;
 		T* out_ptr = out;
 		for (uint64_t b = 0; b < batch_size; ++b) {
-			Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
-			branched_signature_with_buffers_(path_obj, out_ptr, increment.get(), temp.get(), cache);
+			compute_one(path_ptr, out_ptr, increment.get(), temp.get());
 			path_ptr += flat_path_length;
-			out_ptr += total_len;
+			out_ptr += out_stride;
 		}
 	}
 	else {
@@ -167,11 +179,8 @@ void branched_signature_(
 				auto increment = std::make_unique<T[]>(aug_dim);
 				auto temp = std::make_unique<T[]>(total_len);
 				for (uint64_t b = t; b < batch_size; b += max_threads) {
-					Path<T> path_obj(path + b * flat_path_length, dimension, length, time_aug, lead_lag, end_time);
-					branched_signature_with_buffers_(
-						path_obj,
-						out + b * total_len,
-						increment.get(), temp.get(), cache);
+					compute_one(path + b * flat_path_length, out + b * out_stride,
+						increment.get(), temp.get());
 				}
 			});
 		}
@@ -189,25 +198,48 @@ void branched_sig_combine_(
 	uint64_t dimension,
 	uint64_t max_nodes,
 	int n_jobs,
-	bool planar = false
+	bool planar = false,
+	bool scalar_term = true
 ) {
 	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
+	uint64_t stride = scalar_term ? total_len : total_len - 1;
 
-	auto thread_func = [&](const T* sig1_ptr, const T* sig2_ptr, T* out_ptr) {
-		std::memcpy(out_ptr, sig1_ptr, total_len * sizeof(T));
-		butcher_product_inplace_(out_ptr, sig2_ptr, cache);
-	};
+	if (scalar_term) {
+		auto thread_func = [&](const T* sig1_ptr, const T* sig2_ptr, T* out_ptr) {
+			std::memcpy(out_ptr, sig1_ptr, total_len * sizeof(T));
+			butcher_product_inplace_(out_ptr, sig2_ptr, cache);
+		};
 
-	if (n_jobs == 1 || batch_size == 1) {
-		for (uint64_t b = 0; b < batch_size; ++b) {
-			thread_func(bsig1 + b * total_len, bsig2 + b * total_len, out + b * total_len);
+		if (n_jobs == 1 || batch_size == 1) {
+			for (uint64_t b = 0; b < batch_size; ++b)
+				thread_func(bsig1 + b * total_len, bsig2 + b * total_len, out + b * total_len);
+		} else {
+			multi_threaded_batch_2(thread_func,
+				const_cast<T*>(bsig1), const_cast<T*>(bsig2), out,
+				batch_size, total_len, total_len, total_len, n_jobs);
 		}
-	}
-	else {
-		multi_threaded_batch_2(thread_func,
-			const_cast<T*>(bsig1), const_cast<T*>(bsig2), out,
-			batch_size, total_len, total_len, total_len, n_jobs);
+	} else {
+		// Per-element copy: reconstruct full buffers, compute, strip
+		auto thread_func = [&](const T* sig1_ptr, const T* sig2_ptr, T* out_ptr) {
+			std::vector<T> s1(total_len), s2(total_len), buf(total_len);
+			s1[0] = static_cast<T>(1);
+			std::memcpy(s1.data() + 1, sig1_ptr, (total_len - 1) * sizeof(T));
+			s2[0] = static_cast<T>(1);
+			std::memcpy(s2.data() + 1, sig2_ptr, (total_len - 1) * sizeof(T));
+			std::memcpy(buf.data(), s1.data(), total_len * sizeof(T));
+			butcher_product_inplace_(buf.data(), s2.data(), cache);
+			std::memcpy(out_ptr, buf.data() + 1, (total_len - 1) * sizeof(T));
+		};
+
+		if (n_jobs == 1 || batch_size == 1) {
+			for (uint64_t b = 0; b < batch_size; ++b)
+				thread_func(bsig1 + b * stride, bsig2 + b * stride, out + b * stride);
+		} else {
+			multi_threaded_batch_2(thread_func,
+				const_cast<T*>(bsig1), const_cast<T*>(bsig2), out,
+				batch_size, stride, stride, stride, n_jobs);
+		}
 	}
 }
 
@@ -223,15 +255,34 @@ void branched_sig_combine_backprop_(
 	uint64_t dimension,
 	uint64_t max_nodes,
 	int n_jobs,
-	bool planar = false
+	bool planar = false,
+	bool scalar_term = true
 ) {
 	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
+	uint64_t stride = scalar_term ? total_len : total_len - 1;
 
 	auto work = [&](uint64_t b) {
-		uint64_t off = b * total_len;
-		std::memcpy(out1 + off, derivs_in + off, total_len * sizeof(T));
-		butcher_product_deriv_(bsig1 + off, bsig2 + off, out1 + off, out2 + off, cache);
+		if (scalar_term) {
+			uint64_t off = b * total_len;
+			std::memcpy(out1 + off, derivs_in + off, total_len * sizeof(T));
+			butcher_product_deriv_(bsig1 + off, bsig2 + off, out1 + off, out2 + off, cache);
+		} else {
+			// Per-element copy: reconstruct full buffers
+			std::vector<T> s1(total_len), s2(total_len), df(total_len);
+			std::vector<T> d1(total_len), d2(total_len);
+			uint64_t off = b * stride;
+			s1[0] = static_cast<T>(1);
+			std::memcpy(s1.data() + 1, bsig1 + off, (total_len - 1) * sizeof(T));
+			s2[0] = static_cast<T>(1);
+			std::memcpy(s2.data() + 1, bsig2 + off, (total_len - 1) * sizeof(T));
+			df[0] = static_cast<T>(0);
+			std::memcpy(df.data() + 1, derivs_in + off, (total_len - 1) * sizeof(T));
+			std::memcpy(d1.data(), df.data(), total_len * sizeof(T));
+			butcher_product_deriv_(s1.data(), s2.data(), d1.data(), d2.data(), cache);
+			std::memcpy(out1 + off, d1.data() + 1, (total_len - 1) * sizeof(T));
+			std::memcpy(out2 + off, d2.data() + 1, (total_len - 1) * sizeof(T));
+		}
 	};
 
 	if (n_jobs == 1 || batch_size == 1) {
@@ -497,20 +548,30 @@ void branched_sig_backprop_(
 	bool time_aug = false,
 	bool lead_lag = false,
 	T end_time = static_cast<T>(1.),
-	bool planar = false
+	bool planar = false,
+	bool scalar_term = true
 ) {
 	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 	uint64_t flat_path_length = length * dimension;
+	uint64_t in_stride = scalar_term ? total_len : total_len - 1;
 
 	auto work = [&](uint64_t b, T* increment, T* temp_Y, T* local_derivs, T* inc_derivs) {
 		Path<T> path_obj(path + b * flat_path_length, dimension, length, time_aug, lead_lag, end_time);
 
 		auto bsig_copy = std::make_unique<T[]>(total_len);
 		auto derivs_copy = std::make_unique<T[]>(total_len);
-		std::memcpy(bsig_copy.get(), bsig_in + b * total_len, total_len * sizeof(T));
-		std::memcpy(derivs_copy.get(), bsig_derivs_in + b * total_len, total_len * sizeof(T));
+
+		if (scalar_term) {
+			std::memcpy(bsig_copy.get(), bsig_in + b * total_len, total_len * sizeof(T));
+			std::memcpy(derivs_copy.get(), bsig_derivs_in + b * total_len, total_len * sizeof(T));
+		} else {
+			bsig_copy[0] = static_cast<T>(1);
+			std::memcpy(bsig_copy.get() + 1, bsig_in + b * in_stride, (total_len - 1) * sizeof(T));
+			derivs_copy[0] = static_cast<T>(0);
+			std::memcpy(derivs_copy.get() + 1, bsig_derivs_in + b * in_stride, (total_len - 1) * sizeof(T));
+		}
 
 		T* out_ptr = out + b * flat_path_length;
 		std::memset(out_ptr, 0, flat_path_length * sizeof(T));

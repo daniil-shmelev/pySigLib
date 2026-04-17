@@ -28,9 +28,10 @@ FORCE_INLINE void linear_sig_with_level_index_(
 	T* out,
 	uint64_t dimension,
 	uint64_t degree,
-	const uint64_t* level_index
+	const uint64_t* level_index,
+	bool scalar_term = true
 ) {
-	out[0] = static_cast<T>(1);
+	if (scalar_term) out[0] = static_cast<T>(1);
 	if (degree == 0) return;
 	std::memcpy(out + 1, displacement, dimension * sizeof(T));
 
@@ -57,7 +58,8 @@ void linear_sig_(
 	const T* displacement,
 	T* out,
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) { throw std::invalid_argument("linear_sig received dimension 0"); }
 
@@ -65,7 +67,14 @@ void linear_sig_(
 	uint64_t* level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	linear_sig_with_level_index_(displacement, out, dimension, degree, level_index);
+	const uint64_t full_len = level_index[degree + 1];
+	if (scalar_term) {
+		linear_sig_with_level_index_(displacement, out, dimension, degree, level_index);
+	} else {
+		std::vector<T> buf(full_len);
+		linear_sig_with_level_index_(displacement, buf.data(), dimension, degree, level_index);
+		std::memcpy(out, buf.data() + 1, (full_len - 1) * sizeof(T));
+	}
 }
 
 template<std::floating_point T>
@@ -75,17 +84,19 @@ void batch_linear_sig_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
+	bool scalar_term = true,
 	int n_jobs = 1
 ) {
 	if (dimension == 0) { throw std::invalid_argument("linear_sig received dimension 0"); }
 
-	const uint64_t siglength = ::sig_length(dimension, degree);
+	const uint64_t full_len = ::sig_length(dimension, degree);
+	const uint64_t stride = scalar_term ? full_len : full_len - 1;
 
 	auto func = [&](const T* in_ptr, T* out_ptr) {
-		linear_sig_<T>(in_ptr, out_ptr, dimension, degree);
+		linear_sig_<T>(in_ptr, out_ptr, dimension, degree, scalar_term);
 	};
 
-	multi_threaded_batch(func, displacement, out, batch_size, dimension, siglength, n_jobs);
+	multi_threaded_batch(func, displacement, out, batch_size, dimension, stride, n_jobs);
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +113,7 @@ void sig_join_(
 	uint64_t dimension,
 	uint64_t degree,
 	bool prepend = false,
+	bool scalar_term = true,
 	int n_jobs = 1
 ) {
 	if (dimension == 0) { throw std::invalid_argument("sig_join received dimension 0"); }
@@ -110,22 +122,41 @@ void sig_join_(
 	uint64_t* level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	const uint64_t siglength = level_index[degree + 1];
+	const uint64_t full_len = level_index[degree + 1];
+	const uint64_t sig_stride = scalar_term ? full_len : full_len - 1;
 
-	auto func = [&](const T* sig_ptr, const T* disp_ptr, T* out_ptr) {
-		auto lsig_uptr = std::make_unique<T[]>(siglength);
-		T* lsig = lsig_uptr.get();
-		linear_sig_with_level_index_(disp_ptr, lsig, dimension, degree, level_index);
-		if (prepend) {
-			std::memcpy(out_ptr, lsig, siglength * sizeof(T));
-			sig_combine_inplace_(out_ptr, sig_ptr, degree, level_index);
-		} else {
-			std::memcpy(out_ptr, sig_ptr, siglength * sizeof(T));
-			sig_combine_inplace_(out_ptr, lsig, degree, level_index);
-		}
-	};
-
-	multi_threaded_batch_2<const T, const T, T>(func, sig, displacement, out, batch_size, siglength, dimension, siglength, n_jobs);
+	if (scalar_term) {
+		auto func = [&](const T* sig_ptr, const T* disp_ptr, T* out_ptr) {
+			auto lsig_uptr = std::make_unique<T[]>(full_len);
+			T* lsig = lsig_uptr.get();
+			linear_sig_with_level_index_(disp_ptr, lsig, dimension, degree, level_index);
+			if (prepend) {
+				std::memcpy(out_ptr, lsig, full_len * sizeof(T));
+				sig_combine_inplace_(out_ptr, sig_ptr, degree, level_index);
+			} else {
+				std::memcpy(out_ptr, sig_ptr, full_len * sizeof(T));
+				sig_combine_inplace_(out_ptr, lsig, degree, level_index);
+			}
+		};
+		multi_threaded_batch_2<const T, const T, T>(func, sig, displacement, out, batch_size, full_len, dimension, full_len, n_jobs);
+	} else {
+		// Per-element copy: reconstruct full buffers, compute, strip
+		auto func = [&](const T* sig_ptr, const T* disp_ptr, T* out_ptr) {
+			std::vector<T> sig_full(full_len), lsig(full_len), out_full(full_len);
+			sig_full[0] = static_cast<T>(1);
+			std::memcpy(sig_full.data() + 1, sig_ptr, (full_len - 1) * sizeof(T));
+			linear_sig_with_level_index_(disp_ptr, lsig.data(), dimension, degree, level_index);
+			if (prepend) {
+				std::memcpy(out_full.data(), lsig.data(), full_len * sizeof(T));
+				sig_combine_inplace_(out_full.data(), sig_full.data(), degree, level_index);
+			} else {
+				std::memcpy(out_full.data(), sig_full.data(), full_len * sizeof(T));
+				sig_combine_inplace_(out_full.data(), lsig.data(), degree, level_index);
+			}
+			std::memcpy(out_ptr, out_full.data() + 1, (full_len - 1) * sizeof(T));
+		};
+		multi_threaded_batch_2<const T, const T, T>(func, sig, displacement, out, batch_size, sig_stride, dimension, sig_stride, n_jobs);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +173,8 @@ void sig_join_backprop_(
 	const T* displacement,
 	uint64_t dimension,
 	uint64_t degree,
-	bool prepend = false
+	bool prepend = false,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) { throw std::invalid_argument("sig_join_backprop received dimension 0"); }
 
@@ -150,37 +182,54 @@ void sig_join_backprop_(
 	uint64_t* level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	const uint64_t siglength = level_index[degree + 1];
+	const uint64_t full_len = level_index[degree + 1];
+	const uint64_t in_stride = scalar_term ? full_len : full_len - 1;
 
-	// Recompute linear_sig
-	auto lsig_uptr = std::make_unique<T[]>(siglength);
+	// Recompute linear_sig (always full)
+	auto lsig_uptr = std::make_unique<T[]>(full_len);
 	T* lsig = lsig_uptr.get();
-	linear_sig_<T>(displacement, lsig, dimension, degree);
+	linear_sig_<T>(displacement, lsig, dimension, degree, /*scalar_term=*/true);
 
-	// Backprop through sig_combine: d_out -> d_sig, d_lsig
-	auto d_lsig_uptr = std::make_unique<T[]>(siglength);
+	// Full-size buffers for the inner backprop
+	auto d_out_full_uptr = std::make_unique<T[]>(full_len);
+	auto d_sig_full_uptr = std::make_unique<T[]>(full_len);
+	auto sig_full_uptr = std::make_unique<T[]>(full_len);
+	T* d_out_full = d_out_full_uptr.get();
+	T* d_sig_full = d_sig_full_uptr.get();
+	T* sig_full = sig_full_uptr.get();
+
+	if (scalar_term) {
+		std::memcpy(d_out_full, d_out, full_len * sizeof(T));
+		std::memcpy(sig_full, sig, full_len * sizeof(T));
+	} else {
+		d_out_full[0] = static_cast<T>(0);
+		std::memcpy(d_out_full + 1, d_out, (full_len - 1) * sizeof(T));
+		sig_full[0] = static_cast<T>(1);
+		std::memcpy(sig_full + 1, sig, (full_len - 1) * sizeof(T));
+	}
+
+	auto d_lsig_uptr = std::make_unique<T[]>(full_len);
 	T* d_lsig = d_lsig_uptr.get();
 
 	if (prepend) {
-		// Forward was lsig ⊗ sig
-		std::memcpy(d_lsig, d_out, siglength * sizeof(T));
-		uncombine_sig_deriv(lsig, sig, d_lsig, d_sig, dimension, degree, level_index);
+		std::memcpy(d_lsig, d_out_full, full_len * sizeof(T));
+		uncombine_sig_deriv(lsig, sig_full, d_lsig, d_sig_full, dimension, degree, level_index);
 	} else {
-		// Forward was sig ⊗ lsig
-		std::memcpy(d_sig, d_out, siglength * sizeof(T));
-		uncombine_sig_deriv(sig, lsig, d_sig, d_lsig, dimension, degree, level_index);
+		std::memcpy(d_sig_full, d_out_full, full_len * sizeof(T));
+		uncombine_sig_deriv(sig_full, lsig, d_sig_full, d_lsig, dimension, degree, level_index);
 	}
-	d_sig[0] = static_cast<T>(0);
+	d_sig_full[0] = static_cast<T>(0);
 	d_lsig[0] = static_cast<T>(0);
 
-	// Backprop through linear_sig: d_lsig -> d_displacement
-	// linear_sig is: level k = (dx^{⊗k}) / k!
-	// d(displacement)[i] = sum over all words containing letter i, weighted by position
-	// Simplest: use linear_sig_deriv_to_increment_deriv which already exists
 	linear_sig_deriv_to_increment_deriv(lsig, d_lsig, dimension, degree, level_index);
-
-	// d_lsig at level 1 now contains d_displacement
 	std::memcpy(d_displacement, d_lsig + 1, dimension * sizeof(T));
+
+	// Copy d_sig to caller's buffer
+	if (scalar_term) {
+		std::memcpy(d_sig, d_sig_full, full_len * sizeof(T));
+	} else {
+		std::memcpy(d_sig, d_sig_full + 1, (full_len - 1) * sizeof(T));
+	}
 }
 
 template<std::floating_point T>
@@ -194,21 +243,23 @@ void batch_sig_join_backprop_(
 	uint64_t dimension,
 	uint64_t degree,
 	bool prepend = false,
+	bool scalar_term = true,
 	int n_jobs = 1
 ) {
 	if (dimension == 0) { throw std::invalid_argument("sig_join_backprop received dimension 0"); }
 
-	const uint64_t siglength = ::sig_length(dimension, degree);
+	const uint64_t full_len = ::sig_length(dimension, degree);
+	const uint64_t sig_stride = scalar_term ? full_len : full_len - 1;
 
 	auto func = [&](uint64_t start, uint64_t end) {
 		for (uint64_t i = start; i < end; ++i) {
 			sig_join_backprop_<T>(
-				d_out + i * siglength,
-				d_sig + i * siglength,
+				d_out + i * sig_stride,
+				d_sig + i * sig_stride,
 				d_displacement + i * dimension,
-				sig + i * siglength,
+				sig + i * sig_stride,
 				displacement + i * dimension,
-				dimension, degree, prepend
+				dimension, degree, prepend, scalar_term
 			);
 		}
 	};

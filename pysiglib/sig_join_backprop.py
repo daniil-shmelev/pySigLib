@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term, prepend_scalar
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
 from .error_codes import err_msg
 from .dtypes import CPSIG_SIG_JOIN_BACKPROP, CUSIG_SIG_JOIN_BACKPROP_CUDA
 from .sig_length import sig_length
@@ -44,23 +44,16 @@ def sig_join_backprop(
     :math:`\\partial F / \\partial S(x)` and :math:`\\partial F / \\partial v`.
 
     :param d_out: Derivative with respect to the output of sig_join,
-        :math:`\\partial F / \\partial S(x * v)`, of shape ``(..., sig_length)``.
+        :math:`\\partial F / \\partial S(x * v)`
     :type d_out: numpy.ndarray | torch.tensor
-    :param sig: The original truncated signature, :math:`S(x)`, of shape ``(..., sig_length)``.
+    :param sig: The original truncated signature, :math:`S(x)`
     :type sig: numpy.ndarray | torch.tensor
-    :param displacement: The displacement vector, :math:`v`, of shape ``(..., dimension)``.
+    :param displacement: The displacement vector, :math:`v`
     :type displacement: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
     :param degree: Truncation level of the signatures, :math:`N`
     :type degree: int
-    :param prepend: Whether the linear segment was prepended (rather than appended)
-        in the original :func:`sig_join` call. Must match that setting. Default is False.
-    :type prepend: bool
-    :param scalar_term: If True (default), ``d_out`` is expected to include the leading
-        constant-term entry at index 0. If False, the leading entry is treated as
-        implicitly zero. The default will change to False in pySigLib v4.0.
-    :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
@@ -98,10 +91,7 @@ def sig_join_backprop(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
-    if not scalar_term:
-        d_out = prepend_scalar(d_out, 0)
-
-    sig_len = sig_length(dimension, degree, scalar_term=True)
+    sig_len = sig_length(dimension, degree, scalar_term=scalar_term)
 
     d_out_data = SigInputHandler(d_out, sig_len, "d_out")
     sig_data = SigInputHandler(sig, sig_len, "sig")
@@ -120,22 +110,18 @@ def sig_join_backprop(
     d_disp = SigOutputHandler(d_out_data, dimension)
 
     if d_out_data.batch_size == 0:
-        if not scalar_term:
-            return d_sig.data[..., 1:], d_disp.data
         return d_sig.data, d_disp.data
 
     if d_out_data.device == "cpu":
         err_code = CPSIG_SIG_JOIN_BACKPROP[d_out_data.dtype](
             d_out_data.data_ptr, d_sig.data_ptr, d_disp.data_ptr,
             sig_data.data_ptr, disp_data.data_ptr,
-            d_out_data.batch_size, dimension, degree, prepend, n_jobs)
+            d_out_data.batch_size, dimension, degree, prepend, scalar_term, n_jobs)
     else:
         err_code = CUSIG_SIG_JOIN_BACKPROP_CUDA[d_out_data.dtype](
             d_out_data.data_ptr, d_sig.data_ptr, d_disp.data_ptr,
             sig_data.data_ptr, disp_data.data_ptr,
-            d_out_data.batch_size, dimension, degree, prepend)
+            d_out_data.batch_size, dimension, degree, prepend, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.sig_join_backprop: " + err_msg(err_code))
-    if not scalar_term:
-        return d_sig.data[..., 1:], d_disp.data
     return d_sig.data, d_disp.data

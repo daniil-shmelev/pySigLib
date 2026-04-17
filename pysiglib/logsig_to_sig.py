@@ -43,9 +43,9 @@ def logsig_to_sig(
     Supports all methods (``0``, ``1``, ``2``). For methods ``1`` and ``2``,
     ``prepare_log_sig(dimension, degree, method=2)`` must be called first.
 
-    :param log_sig: The log-signature or batch of log-signatures, of shape
-        ``(..., log_sig_length)`` for methods ``1`` and ``2``, or ``(..., sig_length)``
-        for method ``0`` (expanded basis).
+    :param log_sig: The log-signature or batch of log-signatures, given as a `numpy.ndarray` or `torch.tensor`.
+        For a single log-signature, this must be of shape ``(sig_length,)``. For a batch, this must be
+        of shape ``(batch_size, sig_length)``.
     :type log_sig: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
@@ -97,26 +97,22 @@ def logsig_to_sig(
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     input_len = sig_length(aug_dimension, degree, scalar_term=True) if method == 0 else log_sig_length(aug_dimension, degree)
-    out_len = sig_length(aug_dimension, degree, scalar_term=True)
+    out_len = sig_length(aug_dimension, degree, scalar_term=scalar_term)
     data = SigInputHandler(log_sig, input_len, "log_sig")
     result = SigOutputHandler(data, out_len)
 
     if data.batch_size == 0:
-        if not scalar_term:
-            return result.data[..., 1:]
         return result.data
 
     check_n_jobs(n_jobs)
     if data.device == "cpu":
         err_code = CPSIG_LOGSIG_TO_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
-            dimension, degree, time_aug, lead_lag, method, n_jobs)
+            dimension, degree, time_aug, lead_lag, method, scalar_term, n_jobs)
     else:
         err_code = CUSIG_LOGSIG_TO_SIG_CUDA[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
-            aug_dimension, degree, method)
+            aug_dimension, degree, method, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.logsig_to_sig: " + err_msg(err_code))
-    if not scalar_term:
-        return result.data[..., 1:]
     return result.data

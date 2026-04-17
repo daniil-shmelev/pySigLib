@@ -585,14 +585,145 @@ void branched_sig_combine_backprop_ker(
 }
 
 // =========================================================================
+// scalar_term=false staging helpers (zero-overhead when scalar_term=true)
+// =========================================================================
+
+template<typename T>
+__global__ void bsig_prepend_one_kernel(
+	const T* __restrict__ in_stripped,
+	T* __restrict__ out_full,
+	uint64_t full_len
+) {
+	const uint64_t b = blockIdx.y;
+	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	if (i >= full_len) return;
+	T* dst = out_full + b * full_len;
+	if (i == 0) dst[0] = static_cast<T>(1);
+	else dst[i] = in_stripped[b * (full_len - 1) + (i - 1)];
+}
+
+template<typename T>
+__global__ void bsig_prepend_zero_kernel(
+	const T* __restrict__ in_stripped,
+	T* __restrict__ out_full,
+	uint64_t full_len
+) {
+	const uint64_t b = blockIdx.y;
+	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	if (i >= full_len) return;
+	T* dst = out_full + b * full_len;
+	if (i == 0) dst[0] = static_cast<T>(0);
+	else dst[i] = in_stripped[b * (full_len - 1) + (i - 1)];
+}
+
+template<typename T>
+__global__ void bsig_strip_kernel(
+	const T* __restrict__ in_full,
+	T* __restrict__ out_stripped,
+	uint64_t full_len
+) {
+	const uint64_t b = blockIdx.y;
+	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	if (i + 1 >= full_len) return;
+	out_stripped[b * (full_len - 1) + i] = in_full[b * full_len + (i + 1)];
+}
+
+template<typename T>
+static void bsig_stage_prepend_one_(const T* in_stripped, T* out_full, uint64_t batch_size, uint64_t full_len) {
+	const unsigned int block = 256;
+	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
+	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
+	bsig_prepend_one_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len);
+}
+
+template<typename T>
+static void bsig_stage_prepend_zero_(const T* in_stripped, T* out_full, uint64_t batch_size, uint64_t full_len) {
+	const unsigned int block = 256;
+	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
+	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
+	bsig_prepend_zero_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len);
+}
+
+template<typename T>
+static void bsig_stage_strip_(const T* in_full, T* out_stripped, uint64_t batch_size, uint64_t full_len) {
+	const unsigned int block = 256;
+	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
+	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
+	bsig_strip_kernel<T><<<grid, block>>>(in_full, out_stripped, full_len);
+}
+
+// =========================================================================
 // Host-side launchers
 // =========================================================================
+
+// Forward declarations for the _core_ functions defined below (scalar_term=true bodies).
+template<typename T>
+void branched_sig_combine_cuda_core_(
+	const T* bsig1, const T* bsig2, T* out,
+	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes,
+	bool planar
+);
+template<typename T>
+void branched_sig_combine_backprop_cuda_core_(
+	const T* bsig1, const T* bsig2, const T* derivs, T* out1, T* out2,
+	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes,
+	bool planar
+);
 
 template<typename T>
 void branched_sig_combine_cuda_(
 	const T* bsig1, const T* bsig2, T* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes,
-	bool planar = false
+	bool planar = false,
+	bool scalar_term = true
+) {
+	if (scalar_term) {
+		branched_sig_combine_cuda_core_<T>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar);
+		return;
+	}
+	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
+	const uint64_t full_len = gc.total_length;
+	CudaBuf<T> d_b1(batch_size * full_len * sizeof(T));
+	CudaBuf<T> d_b2(batch_size * full_len * sizeof(T));
+	CudaBuf<T> d_out(batch_size * full_len * sizeof(T));
+	bsig_stage_prepend_one_<T>(bsig1, d_b1.get(), batch_size, full_len);
+	bsig_stage_prepend_one_<T>(bsig2, d_b2.get(), batch_size, full_len);
+	branched_sig_combine_cuda_core_<T>(d_b1.get(), d_b2.get(), d_out.get(), batch_size, dimension, max_nodes, planar);
+	bsig_stage_strip_<T>(d_out.get(), out, batch_size, full_len);
+}
+
+template<typename T>
+void branched_sig_combine_backprop_cuda_(
+	const T* bsig1, const T* bsig2, const T* derivs, T* out1, T* out2,
+	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes,
+	bool planar = false,
+	bool scalar_term = true
+) {
+	if (scalar_term) {
+		branched_sig_combine_backprop_cuda_core_<T>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar);
+		return;
+	}
+	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
+	const uint64_t full_len = gc.total_length;
+	CudaBuf<T> d_b1(batch_size * full_len * sizeof(T));
+	CudaBuf<T> d_b2(batch_size * full_len * sizeof(T));
+	CudaBuf<T> d_der(batch_size * full_len * sizeof(T));
+	CudaBuf<T> d_o1(batch_size * full_len * sizeof(T));
+	CudaBuf<T> d_o2(batch_size * full_len * sizeof(T));
+	bsig_stage_prepend_one_<T>(bsig1, d_b1.get(), batch_size, full_len);
+	bsig_stage_prepend_one_<T>(bsig2, d_b2.get(), batch_size, full_len);
+	bsig_stage_prepend_zero_<T>(derivs, d_der.get(), batch_size, full_len);
+	branched_sig_combine_backprop_cuda_core_<T>(d_b1.get(), d_b2.get(), d_der.get(), d_o1.get(), d_o2.get(),
+		batch_size, dimension, max_nodes, planar);
+	bsig_stage_strip_<T>(d_o1.get(), out1, batch_size, full_len);
+	bsig_stage_strip_<T>(d_o2.get(), out2, batch_size, full_len);
+}
+
+template<typename T>
+void branched_sig_combine_cuda_core_(
+	const T* bsig1, const T* bsig2, T* out,
+	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes,
+	bool planar
 ) {
 	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
@@ -613,10 +744,10 @@ void branched_sig_combine_cuda_(
 }
 
 template<typename T>
-void branched_sig_combine_backprop_cuda_(
+void branched_sig_combine_backprop_cuda_core_(
 	const T* bsig1, const T* bsig2, const T* derivs, T* out1, T* out2,
 	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes,
-	bool planar = false
+	bool planar
 ) {
 	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
@@ -730,10 +861,21 @@ void branched_sig_cuda_(
 	bool time_aug,
 	bool lead_lag,
 	T end_time,
-	bool planar = false
+	bool planar = false,
+	bool scalar_term = true
 ) {
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
+
+	// For scalar_term=false, stage output through a full-sized buffer and strip the scalar.
+	T* core_out = out;
+	CudaBuf<T> d_out_full;
+	const auto& gc = get_or_upload_gpu_cache(t_dimension, max_nodes, planar);
+	const uint64_t full_len = gc.total_length;
+	if (!scalar_term) {
+		d_out_full = CudaBuf<T>(batch_size * full_len * sizeof(T));
+		core_out = d_out_full.get();
+	}
 
 	if (time_aug || lead_lag) {
 		const uint64_t t_path_size = batch_size * t_length * t_dimension;
@@ -742,10 +884,14 @@ void branched_sig_cuda_(
 		transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
 		cudaDeviceSynchronize();
 
-		branched_sig_cuda_core_<T>(d_transformed.get(), out, batch_size, t_dimension, t_length, max_nodes, planar);
+		branched_sig_cuda_core_<T>(d_transformed.get(), core_out, batch_size, t_dimension, t_length, max_nodes, planar);
 	}
 	else {
-		branched_sig_cuda_core_<T>(path, out, batch_size, dimension, length, max_nodes, planar);
+		branched_sig_cuda_core_<T>(path, core_out, batch_size, dimension, length, max_nodes, planar);
+	}
+
+	if (!scalar_term) {
+		bsig_stage_strip_<T>(core_out, out, batch_size, full_len);
 	}
 }
 
@@ -836,10 +982,27 @@ void branched_sig_backprop_cuda_(
 	bool time_aug,
 	bool lead_lag,
 	T end_time,
-	bool planar = false
+	bool planar = false,
+	bool scalar_term = true
 ) {
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
+
+	// Stage bsig and bsig_derivs to full-size buffers when scalar_term=false.
+	const T* core_bsig = bsig;
+	const T* core_derivs = bsig_derivs;
+	CudaBuf<T> d_bsig_full;
+	CudaBuf<T> d_derivs_full;
+	if (!scalar_term) {
+		const auto& gc = get_or_upload_gpu_cache(t_dimension, max_nodes, planar);
+		const uint64_t full_len = gc.total_length;
+		d_bsig_full = CudaBuf<T>(batch_size * full_len * sizeof(T));
+		d_derivs_full = CudaBuf<T>(batch_size * full_len * sizeof(T));
+		bsig_stage_prepend_one_<T>(bsig, d_bsig_full.get(), batch_size, full_len);
+		bsig_stage_prepend_zero_<T>(bsig_derivs, d_derivs_full.get(), batch_size, full_len);
+		core_bsig = d_bsig_full.get();
+		core_derivs = d_derivs_full.get();
+	}
 
 	if (time_aug || lead_lag) {
 		const uint64_t t_path_size = batch_size * t_length * t_dimension;
@@ -851,7 +1014,7 @@ void branched_sig_backprop_cuda_(
 			transform_path_<T>(path, d_transformed, batch_size, dimension, length, time_aug, lead_lag, end_time);
 
 			cudaMalloc(&d_transformed_derivs, t_path_size * sizeof(T));
-			branched_sig_backprop_cuda_core_<T>(d_transformed, d_transformed_derivs, bsig_derivs, bsig,
+			branched_sig_backprop_cuda_core_<T>(d_transformed, d_transformed_derivs, core_derivs, core_bsig,
 				batch_size, t_dimension, t_length, max_nodes, planar);
 
 			cudaFree(d_transformed);
@@ -866,7 +1029,7 @@ void branched_sig_backprop_cuda_(
 		}
 	}
 	else {
-		branched_sig_backprop_cuda_core_<T>(path, out, bsig_derivs, bsig,
+		branched_sig_backprop_cuda_core_<T>(path, out, core_derivs, core_bsig,
 			batch_size, dimension, length, max_nodes, planar);
 	}
 }
@@ -878,35 +1041,35 @@ void branched_sig_backprop_cuda_(
 extern "C" {
 
 
-	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_cuda_<float>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar));
+	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_cuda_<float>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term));
 	}
 
-	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar));
+	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term));
 	}
 
-	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<float>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar));
+	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<float>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar, scalar_term));
 	}
-	CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<double>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar));
-	}
-
-	CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<float>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar));
-	}
-	CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar));
+	CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<double>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar, scalar_term));
 	}
 
-
-	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar));
+	CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<float>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar, scalar_term));
+	}
+	CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar, scalar_term));
 	}
 
-	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar));
+
+	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term));
+	}
+
+	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term));
 	}
 
 }

@@ -92,24 +92,23 @@ def prepare_branched_sig(
         raise Exception("Error in pysiglib.prepare_branched_sig: " + err_msg(err_code))
 
 
-def branched_sig_length(dimension: int, degree: int, scalar_term = None, planar: bool = False) -> int:
+def branched_sig_length(dimension: int, degree: int, planar: bool = False, scalar_term=None) -> int:
     """
     Returns the length of a truncated branched signature.
 
     :param dimension: Dimension of the underlying path.
     :param degree: Maximum tree order (number of nodes).
+    :param planar: If True, return the length for planar (ordered) branched signatures.
     :param scalar_term: If True (default), includes the empty-tree scalar term at index 0
         in the length. If False, the returned length is one less (matching ``branched_sig``
-        output with ``scalar_term=False``). Must match the ``scalar_term`` value used
-        with :func:`branched_sig`. The default will change to False in pySigLib v4.0.
-    :param planar: If True, return the length for planar (ordered) branched signatures.
+        output with ``scalar_term=False``).
     :return: Length of the branched signature array.
     """
-    scalar_term = resolve_scalar_term(scalar_term)
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
+    scalar_term = resolve_scalar_term(scalar_term)
     out = CPSIG.branched_sig_length(dimension, degree, planar)
     if out == 0:
         raise ValueError("Invalid parameters or integer overflow in branched_sig_length")
@@ -123,9 +122,9 @@ def branched_sig(
         lead_lag: bool = False,
         end_time: float = 1.0,
         tree_order: str = "recursive",
+        planar: bool = False,
         scalar_term = None,
         n_jobs: int = 1,
-        planar: bool = False,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated branched signature of a path or batch of paths.
@@ -137,21 +136,21 @@ def branched_sig(
     before first use, where ``dimension`` is the augmented dimension
     (accounting for ``time_aug`` and ``lead_lag``).
 
-    :param path: Path of shape ``(..., length, dimension)``.
+    :param path: Path of shape ``(length, dimension)`` or ``(*batch_dims, length, dimension)``.
     :param degree: Maximum tree order (number of nodes).
     :param time_aug: If True, prepend a time channel to the path.
     :param lead_lag: If True, apply the lead-lag transformation.
     :param end_time: End time for the time augmentation channel.
     :param tree_order: Tree ordering convention for the output coefficients.
-        ``"recursive"`` (default) uses the recursive bottom-up construction order.
+        ``"recursive"`` (default) uses the recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
+    :param planar: If True, compute the planar (ordered) branched signature.
     :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
         (the empty-word term). If False, this leading element is stripped from the output.
         The default will change to False in pySigLib v4.0.
     :type scalar_term: bool
     :param n_jobs: Number of parallel threads for batch processing.
-    :param planar: If True, compute the planar (ordered) branched signature.
-    :return: Branched signature array of shape ``(..., bsig_len)``.
+    :return: Branched signature array of shape ``(bsig_len,)`` or ``(*batch_dims, bsig_len)``.
     """
     scalar_term = resolve_scalar_term(scalar_term)
 
@@ -168,30 +167,26 @@ def branched_sig(
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     dimension = data.data_dimension
     aug_dimension = data.dimension
-    bsig_len = CPSIG.branched_sig_length(aug_dimension, degree, planar)
+    bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
     result = SigOutputHandler(data, bsig_len)
 
     if data.batch_size == 0:
-        if not scalar_term:
-            return result.data[..., 1:]
         return result.data
 
     if data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             dimension, data.data_length, degree, n_jobs,
-            data.time_aug, data.lead_lag, data.end_time, planar)
+            data.time_aug, data.lead_lag, data.end_time, planar, scalar_term)
     else:
         err_code = CUSIG_BRANCHED_SIG_CUDA[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             dimension, data.data_length, degree,
-            data.time_aug, data.lead_lag, data.end_time, planar)
+            data.time_aug, data.lead_lag, data.end_time, planar, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig: " + err_msg(err_code))
     if tree_order != "recursive":
         _permute_bsig(result.data, aug_dimension, degree, planar=planar)
-    if not scalar_term:
-        return result.data[..., 1:]
     return result.data
 
 
@@ -201,9 +196,9 @@ def branched_sig_combine(
         dimension: int,
         degree: int,
         tree_order: str = "recursive",
+        planar: bool = False,
         scalar_term = None,
         n_jobs: int = 1,
-        planar: bool = False,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Combines two truncated branched signatures via the Butcher product
@@ -214,14 +209,14 @@ def branched_sig_combine(
     :param dimension: Dimension of the underlying path.
     :param degree: Maximum tree order (number of nodes).
     :param tree_order: Tree ordering convention for inputs and output.
-        ``"recursive"`` (default) uses the recursive bottom-up construction order.
+        ``"recursive"`` (default) uses the recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
+    :param planar: If True, combine planar (ordered) branched signatures.
     :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
         (the empty-word term). If False, this leading element is stripped from the output.
         The default will change to False in pySigLib v4.0.
     :type scalar_term: bool
     :param n_jobs: Number of parallel threads for batch processing.
-    :param planar: If True, combine planar (ordered) branched signatures.
     :return: Combined branched signature, in the same ordering as the inputs.
     """
     scalar_term = resolve_scalar_term(scalar_term)
@@ -239,27 +234,23 @@ def branched_sig_combine(
         bsig1 = _inv_permute_bsig(bsig1, dimension, degree, planar=planar)
         bsig2 = _inv_permute_bsig(bsig2, dimension, degree, planar=planar)
 
-    bsig_len = CPSIG.branched_sig_length(dimension, degree, planar)
+    bsig_len = branched_sig_length(dimension, degree, planar=planar, scalar_term=scalar_term)
     data = MultipleSigInputHandler([bsig1, bsig2], bsig_len, ["bsig1", "bsig2"])
     result = SigOutputHandler(data, bsig_len)
 
     if data.batch_size == 0:
-        if not scalar_term:
-            return result.data[..., 1:]
         return result.data
 
     if data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG_COMBINE[data.dtype](
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
-            data.batch_size, dimension, degree, n_jobs, planar)
+            data.batch_size, dimension, degree, n_jobs, planar, scalar_term)
     else:
         err_code = CUSIG_BRANCHED_SIG_COMBINE_CUDA[data.dtype](
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
-            data.batch_size, dimension, degree, planar)
+            data.batch_size, dimension, degree, planar, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine: " + err_msg(err_code))
     if tree_order != "recursive":
         _permute_bsig(result.data, dimension, degree, planar=planar)
-    if not scalar_term:
-        return result.data[..., 1:]
     return result.data

@@ -26,17 +26,20 @@
 
 template<typename T>
 __global__ void sig_combine_kernel(
-	const T* __restrict__ sig1,          // [batch_size * sig_len]
-	const T* __restrict__ sig2,          // [batch_size * sig_len]
-	T* __restrict__ out,                 // [batch_size * sig_len]
+	const T* __restrict__ sig1,          // [batch_size * sig_stride]
+	const T* __restrict__ sig2,          // [batch_size * sig_stride]
+	T* __restrict__ out,                 // [batch_size * sig_stride]
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term
 ) {
 	const uint64_t batch_idx = blockIdx.x;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
-	// Compute level_index in shared memory (no device malloc needed)
+	// Compute level_index in shared memory (no device malloc needed).
+	// For scalar_term=false, decrement entries 1..degree+1 so that offsets
+	// address the layout without the leading scalar at index 0.
 	extern __shared__ char smem[];
 	uint64_t* level_index = reinterpret_cast<uint64_t*>(smem);
 
@@ -44,16 +47,20 @@ __global__ void sig_combine_kernel(
 		level_index[0] = 0;
 		for (uint64_t i = 1; i < degree + 2; ++i)
 			level_index[i] = level_index[i - 1] * dimension + 1;
+		if (!scalar_term) {
+			for (uint64_t i = 1; i < degree + 2; ++i)
+				level_index[i] -= 1;
+		}
 	}
 	__syncthreads();
 
-	const uint64_t sig_len = level_index[degree + 1];
-	const T* my_sig1 = sig1 + batch_idx * sig_len;
-	const T* my_sig2 = sig2 + batch_idx * sig_len;
-	T* my_out = out + batch_idx * sig_len;
+	const uint64_t sig_stride = level_index[degree + 1];
+	const T* my_sig1 = sig1 + batch_idx * sig_stride;
+	const T* my_sig2 = sig2 + batch_idx * sig_stride;
+	T* my_out = out + batch_idx * sig_stride;
 
-	// Level 0: scalar component = 1
-	if (tid == 0)
+	// Level 0: scalar component = 1 (only when scalar_term is present)
+	if (tid == 0 && scalar_term)
 		my_out[0] = static_cast<T>(1);
 
 	// Each level reads only from the original sig1 and sig2,
@@ -94,15 +101,19 @@ void sig_combine_cuda_core_(
 	T* out,
 	uint64_t batch_size,
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term = true
 ) {
 	const uint64_t sig_len = host_sig_length(dimension, degree);
 
 	if (degree == 0) {
-		// Signature of degree 0 is just the scalar 1; combine is trivially 1
-		auto ones = std::make_unique<T[]>(batch_size);
-		std::fill(ones.get(), ones.get() + batch_size, static_cast<T>(1));
-		cudaMemcpy(out, ones.get(), batch_size * sizeof(T), cudaMemcpyHostToDevice);
+		// Signature of degree 0 is just the scalar 1 (length-1 layout when scalar_term=true).
+		// When scalar_term=false, degree-0 output has zero-length — nothing to write.
+		if (scalar_term) {
+			auto ones = std::make_unique<T[]>(batch_size);
+			std::fill(ones.get(), ones.get() + batch_size, static_cast<T>(1));
+			cudaMemcpy(out, ones.get(), batch_size * sizeof(T), cudaMemcpyHostToDevice);
+		}
 		return;
 	}
 
@@ -117,7 +128,7 @@ void sig_combine_cuda_core_(
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
 	sig_combine_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-		sig1, sig2, out, dimension, degree
+		sig1, sig2, out, dimension, degree, scalar_term
 	);
 
 	check_cuda_kernel_launch();
@@ -130,10 +141,11 @@ void sig_combine_cuda_(
 	T* out,
 	uint64_t batch_size,
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_combine_cuda received dimension 0");
-	sig_combine_cuda_core_<T>(sig1, sig2, out, batch_size, dimension, degree);
+	sig_combine_cuda_core_<T>(sig1, sig2, out, batch_size, dimension, degree, scalar_term);
 }
 
 // =========================================================================
@@ -150,14 +162,15 @@ void sig_combine_cuda_(
 template<typename T>
 __global__ void __launch_bounds__(256)
 sig_combine_backprop_kernel(
-	const T* __restrict__ d_out,         // [batch_size * sig_len]
-	T* __restrict__ sig1_deriv,          // [batch_size * sig_len]
-	T* __restrict__ sig2_deriv,          // [batch_size * sig_len]
-	const T* __restrict__ sig1,          // [batch_size * sig_len]
-	const T* __restrict__ sig2,          // [batch_size * sig_len]
+	const T* __restrict__ d_out,         // [batch_size * sig_stride]
+	T* __restrict__ sig1_deriv,          // [batch_size * sig_stride]
+	T* __restrict__ sig2_deriv,          // [batch_size * sig_stride]
+	const T* __restrict__ sig1,          // [batch_size * sig_stride]
+	const T* __restrict__ sig2,          // [batch_size * sig_stride]
 	uint64_t dimension,
 	uint64_t degree,
-	uint64_t sig_len
+	uint64_t sig_len,                    // elements to iterate per batch (sig_stride)
+	bool scalar_term
 ) {
 	extern __shared__ char smem[];
 	uint64_t* level_index = reinterpret_cast<uint64_t*>(smem);
@@ -165,6 +178,10 @@ sig_combine_backprop_kernel(
 		level_index[0] = 0;
 		for (uint64_t i = 1; i < degree + 2; ++i)
 			level_index[i] = level_index[i - 1] * dimension + 1;
+		if (!scalar_term) {
+			for (uint64_t i = 1; i < degree + 2; ++i)
+				level_index[i] -= 1;
+		}
 	}
 	__syncthreads();
 
@@ -176,7 +193,8 @@ sig_combine_backprop_kernel(
 	const T* my_sig2 = sig2 + offset;
 	const T* my_sig1 = sig1 + offset;
 
-	if (elem == 0) {
+	// Scalar-term slot (index 0) only exists when scalar_term=true.
+	if (scalar_term && elem == 0) {
 		sig1_deriv[offset] = static_cast<T>(0);
 		sig2_deriv[offset] = static_cast<T>(0);
 		return;
@@ -239,25 +257,31 @@ void sig_combine_backprop_cuda_core_(
 	const T* sig2,
 	uint64_t batch_size,
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term = true
 ) {
 	if (degree == 0) {
-		cudaMemcpy(sig1_deriv, sig_combined_deriv, batch_size * sizeof(T), cudaMemcpyDeviceToDevice);
-		cudaMemcpy(sig2_deriv, sig_combined_deriv, batch_size * sizeof(T), cudaMemcpyDeviceToDevice);
+		// With scalar_term=true the output holds a single scalar = 1*1; derivs of index 0 are 0.
+		// With scalar_term=false there is no element at all.
+		if (scalar_term) {
+			cudaMemset(sig1_deriv, 0, batch_size * sizeof(T));
+			cudaMemset(sig2_deriv, 0, batch_size * sizeof(T));
+		}
 		return;
 	}
 
-	uint64_t sig_len = host_sig_length(dimension, degree);
+	const uint64_t full_len = host_sig_length(dimension, degree);
+	const uint64_t sig_stride = scalar_term ? full_len : full_len - 1;
 
 	unsigned int threads_per_block = 256;
-	unsigned int grid_x = static_cast<unsigned int>((sig_len + threads_per_block - 1) / threads_per_block);
+	unsigned int grid_x = static_cast<unsigned int>((sig_stride + threads_per_block - 1) / threads_per_block);
 	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
 	sig_combine_backprop_kernel<T><<<grid, threads_per_block, smem_size>>>(
 		sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2,
-		dimension, degree, sig_len
+		dimension, degree, sig_stride, scalar_term
 	);
 
 	check_cuda_kernel_launch();
@@ -272,10 +296,11 @@ void sig_combine_backprop_cuda_(
 	const T* sig2,
 	uint64_t batch_size,
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_combine_backprop_cuda received dimension 0");
-	sig_combine_backprop_cuda_core_<T>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree);
+	sig_combine_backprop_cuda_core_<T>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree, scalar_term);
 }
 
 // =========================================================================
@@ -289,14 +314,15 @@ __global__ void linear_sig_kernel(
 	const uint64_t* __restrict__ d_level_index,
 	uint64_t dimension,
 	uint64_t degree,
-	uint64_t sig_len
+	uint64_t sig_stride,
+	bool scalar_term
 ) {
 	const uint64_t batch_idx = blockIdx.x;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
 	const T* my_disp = displacement + batch_idx * dimension;
-	T* my_out = out + batch_idx * sig_len;
+	T* my_out = out + batch_idx * sig_stride;
 
 	extern __shared__ char smem[];
 	uint64_t* level_index = reinterpret_cast<uint64_t*>(smem);
@@ -304,16 +330,28 @@ __global__ void linear_sig_kernel(
 		level_index[i] = d_level_index[i];
 	__syncthreads();
 
-	linear_signature_device<T>(my_disp, my_out, dimension, degree, level_index);
+	// When scalar_term is false, shift offsets by -1 so that
+	// level 1 starts at index 0 (no leading scalar slot in the output).
+	if (!scalar_term) {
+		if (tid == 0) {
+			for (uint64_t i = 1; i < degree + 2; ++i)
+				level_index[i] -= 1;
+		}
+		__syncthreads();
+	}
+
+	linear_signature_device<T>(my_disp, my_out, dimension, degree, level_index, scalar_term);
 }
 
 template<typename T>
 void linear_sig_cuda_(
 	const T* displacement, T* out,
-	uint64_t batch_size, uint64_t dimension, uint64_t degree
+	uint64_t batch_size, uint64_t dimension, uint64_t degree,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("linear_sig_cuda received dimension 0");
-	const uint64_t sig_len = host_sig_length(dimension, degree);
+	const uint64_t full_len = host_sig_length(dimension, degree);
+	const uint64_t sig_stride = scalar_term ? full_len : full_len - 1;
 
 	auto li = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(li.get(), dimension, degree + 2);
@@ -327,7 +365,7 @@ void linear_sig_cuda_(
 	size_t smem = li_bytes;
 
 	linear_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem>>>(
-		displacement, out, d_li.get(), dimension, degree, sig_len
+		displacement, out, d_li.get(), dimension, degree, sig_stride, scalar_term
 	);
 
 	check_cuda_kernel_launch();
@@ -346,17 +384,19 @@ __global__ void sig_join_kernel(
 	const uint64_t* __restrict__ d_level_index,
 	uint64_t dimension,
 	uint64_t degree,
-	uint64_t sig_len,
-	bool prepend
+	uint64_t sig_stride,
+	bool prepend,
+	bool scalar_term
 ) {
 	const uint64_t batch_idx = blockIdx.x;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
-	const T* my_sig = sig + batch_idx * sig_len;
+	const T* my_sig = sig + batch_idx * sig_stride;
 	const T* my_disp = displacement + batch_idx * dimension;
-	T* my_out = out + batch_idx * sig_len;
-	T* my_lsig = lsig_buf + batch_idx * sig_len;
+	T* my_out = out + batch_idx * sig_stride;
+	// lsig_buf is allocated with sig_stride per batch element.
+	T* my_lsig = lsig_buf + batch_idx * sig_stride;
 
 	extern __shared__ char smem[];
 	uint64_t* level_index = reinterpret_cast<uint64_t*>(smem);
@@ -364,18 +404,28 @@ __global__ void sig_join_kernel(
 		level_index[i] = d_level_index[i];
 	__syncthreads();
 
-	linear_signature_device<T>(my_disp, my_lsig, dimension, degree, level_index);
+	// When scalar_term=false, shift offsets so that level k starts at
+	// level_index[k]-1 (level 1 starts at 0).
+	if (!scalar_term) {
+		if (tid == 0) {
+			for (uint64_t i = 1; i < degree + 2; ++i)
+				level_index[i] -= 1;
+		}
+		__syncthreads();
+	}
+
+	linear_signature_device<T>(my_disp, my_lsig, dimension, degree, level_index, scalar_term);
 
 	if (prepend) {
-		for (uint64_t i = tid; i < sig_len; i += nthreads)
+		for (uint64_t i = tid; i < sig_stride; i += nthreads)
 			my_out[i] = my_lsig[i];
 		__syncthreads();
-		sig_combine_inplace_device<T>(my_out, my_sig, degree, level_index);
+		sig_combine_inplace_device<T>(my_out, my_sig, degree, level_index, scalar_term);
 	} else {
-		for (uint64_t i = tid; i < sig_len; i += nthreads)
+		for (uint64_t i = tid; i < sig_stride; i += nthreads)
 			my_out[i] = my_sig[i];
 		__syncthreads();
-		sig_combine_inplace_device<T>(my_out, my_lsig, degree, level_index);
+		sig_combine_inplace_device<T>(my_out, my_lsig, degree, level_index, scalar_term);
 	}
 }
 
@@ -396,10 +446,12 @@ template<typename T>
 void sig_join_cuda_(
 	const T* sig, const T* displacement, T* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree,
-	bool prepend = false
+	bool prepend = false,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_join_cuda received dimension 0");
-	const uint64_t sig_len = host_sig_length(dimension, degree);
+	const uint64_t full_len = host_sig_length(dimension, degree);
+	const uint64_t sig_stride = scalar_term ? full_len : full_len - 1;
 
 	auto li = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(li.get(), dimension, degree + 2);
@@ -408,7 +460,7 @@ void sig_join_cuda_(
 	CudaBuf<uint64_t> d_li(li_bytes);
 	CUDA_CHECK(cudaMemcpy(d_li.get(), li.get(), li_bytes, cudaMemcpyHostToDevice));
 
-	size_t need = sizeof(T) * batch_size * sig_len;
+	size_t need = sizeof(T) * batch_size * sig_stride;
 	std::lock_guard<std::mutex> lock(g_sig_join_lsig_mu);
 	if (need > g_sig_join_lsig_bytes) {
 		if (g_sig_join_lsig_buf) {
@@ -427,7 +479,7 @@ void sig_join_cuda_(
 	sig_join_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem>>>(
 		sig, displacement, out,
 		static_cast<T*>(g_sig_join_lsig_buf),
-		d_li.get(), dimension, degree, sig_len, prepend
+		d_li.get(), dimension, degree, sig_stride, prepend, scalar_term
 	);
 
 	check_cuda_kernel_launch();
@@ -442,60 +494,95 @@ void sig_join_backprop_cuda_(
 	const T* d_out, T* d_sig, T* d_displacement,
 	const T* sig, const T* displacement,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree,
-	bool prepend = false
+	bool prepend = false,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_join_backprop_cuda received dimension 0");
-	const uint64_t sig_len = host_sig_length(dimension, degree);
+	const uint64_t full_len = host_sig_length(dimension, degree);
+	const uint64_t sig_stride = scalar_term ? full_len : full_len - 1;
 
-	// Recompute linear_sig on device
-	size_t lsig_bytes = sizeof(T) * batch_size * sig_len;
+	// Recompute linear_sig on device (same stride/layout as caller's sig).
+	size_t lsig_bytes = sizeof(T) * batch_size * sig_stride;
 	CudaBuf<T> d_lsig(lsig_bytes);
-	linear_sig_cuda_<T>(displacement, d_lsig.get(), batch_size, dimension, degree);
+	linear_sig_cuda_<T>(displacement, d_lsig.get(), batch_size, dimension, degree, scalar_term);
 
 	// Backprop through sig_combine: d_out -> d_sig, d_lsig_grad
 	CudaBuf<T> d_lsig_grad(lsig_bytes);
 	if (prepend) {
 		// Forward was lsig ⊗ sig
-		sig_combine_backprop_cuda_core_<T>(d_out, d_lsig_grad.get(), d_sig, d_lsig.get(), sig, batch_size, dimension, degree);
+		sig_combine_backprop_cuda_core_<T>(d_out, d_lsig_grad.get(), d_sig, d_lsig.get(), sig, batch_size, dimension, degree, scalar_term);
 	} else {
 		// Forward was sig ⊗ lsig
-		sig_combine_backprop_cuda_core_<T>(d_out, d_sig, d_lsig_grad.get(), sig, d_lsig.get(), batch_size, dimension, degree);
+		sig_combine_backprop_cuda_core_<T>(d_out, d_sig, d_lsig_grad.get(), sig, d_lsig.get(), batch_size, dimension, degree, scalar_term);
 	}
 
-	// Backprop through linear_sig: d_displacement = d_lsig_grad at level 1
-	// For linear_sig, the displacement gradient is just level 1 of d_lsig_grad
-	// after applying the chain rule through the tensor product structure.
-	// Since linear_sig(dx)[k] = dx^{tensor k} / k!, the gradient is:
-	// d_displacement[i] = d_lsig[level1][i] + sum over higher levels
-	// This is exactly what linear_sig_deriv_to_increment_deriv computes.
-	// For simplicity, do this on CPU (the displacement is small).
-	auto h_lsig = std::make_unique<T[]>(sig_len * batch_size);
-	auto h_dlsig = std::make_unique<T[]>(sig_len * batch_size);
-	CUDA_CHECK(cudaMemcpy(h_lsig.get(), d_lsig.get(), lsig_bytes, cudaMemcpyDeviceToHost));
-	CUDA_CHECK(cudaMemcpy(h_dlsig.get(), d_lsig_grad.get(), lsig_bytes, cudaMemcpyDeviceToHost));
-
+	// Backprop through linear_sig on the host (displacement is small).
+	// The host-side loop below uses the scalar_term=true layout; for scalar_term=false
+	// we stage into a full-length buffer with a synthetic scalar-0 slot, then strip it.
 	auto li = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(li.get(), dimension, degree + 2);
 
 	auto h_ddisp = std::make_unique<T[]>(dimension * batch_size);
-	for (uint64_t b = 0; b < batch_size; ++b) {
-		T* lsig_b = h_lsig.get() + b * sig_len;
-		T* dlsig_b = h_dlsig.get() + b * sig_len;
-		// Backprop through linear_sig: dF/d(displacement) from dF/d(linear_sig)
-		for (uint64_t level = degree; level > 1; --level) {
-			const T one_over_level = static_cast<T>(1.) / static_cast<T>(level);
-			const uint64_t level_size = li[level] - li[level - 1];
-			for (uint64_t j = 0; j < level_size; ++j) {
-				const uint64_t offs1 = li[level] + dimension * j - 1;
-				const uint64_t offs2 = li[level - 1] + j;
-				for (uint64_t dd = 1; dd <= dimension; ++dd) {
-					const T ii = dlsig_b[offs1 + dd] * one_over_level;
-					dlsig_b[offs2] += lsig_b[dd] * ii;
-					dlsig_b[dd] += lsig_b[offs2] * ii;
+
+	if (scalar_term) {
+		auto h_lsig = std::make_unique<T[]>(full_len * batch_size);
+		auto h_dlsig = std::make_unique<T[]>(full_len * batch_size);
+		CUDA_CHECK(cudaMemcpy(h_lsig.get(), d_lsig.get(), lsig_bytes, cudaMemcpyDeviceToHost));
+		CUDA_CHECK(cudaMemcpy(h_dlsig.get(), d_lsig_grad.get(), lsig_bytes, cudaMemcpyDeviceToHost));
+
+		for (uint64_t b = 0; b < batch_size; ++b) {
+			T* lsig_b = h_lsig.get() + b * full_len;
+			T* dlsig_b = h_dlsig.get() + b * full_len;
+			for (uint64_t level = degree; level > 1; --level) {
+				const T one_over_level = static_cast<T>(1.) / static_cast<T>(level);
+				const uint64_t level_size = li[level] - li[level - 1];
+				for (uint64_t j = 0; j < level_size; ++j) {
+					const uint64_t offs1 = li[level] + dimension * j - 1;
+					const uint64_t offs2 = li[level - 1] + j;
+					for (uint64_t dd = 1; dd <= dimension; ++dd) {
+						const T ii = dlsig_b[offs1 + dd] * one_over_level;
+						dlsig_b[offs2] += lsig_b[dd] * ii;
+						dlsig_b[dd] += lsig_b[offs2] * ii;
+					}
 				}
 			}
+			std::memcpy(h_ddisp.get() + b * dimension, dlsig_b + 1, dimension * sizeof(T));
 		}
-		std::memcpy(h_ddisp.get() + b * dimension, dlsig_b + 1, dimension * sizeof(T));
+	} else {
+		// Stage into full-length buffer with scalar-0 slot prepended.
+		auto h_lsig = std::make_unique<T[]>(full_len * batch_size);
+		auto h_dlsig = std::make_unique<T[]>(full_len * batch_size);
+		auto tmp_lsig = std::make_unique<T[]>(sig_stride);
+		auto tmp_dlsig = std::make_unique<T[]>(sig_stride);
+		for (uint64_t b = 0; b < batch_size; ++b) {
+			CUDA_CHECK(cudaMemcpy(tmp_lsig.get(), d_lsig.get() + b * sig_stride, sig_stride * sizeof(T), cudaMemcpyDeviceToHost));
+			CUDA_CHECK(cudaMemcpy(tmp_dlsig.get(), d_lsig_grad.get() + b * sig_stride, sig_stride * sizeof(T), cudaMemcpyDeviceToHost));
+			T* lsig_b = h_lsig.get() + b * full_len;
+			T* dlsig_b = h_dlsig.get() + b * full_len;
+			lsig_b[0] = static_cast<T>(1);
+			dlsig_b[0] = static_cast<T>(0);
+			std::memcpy(lsig_b + 1, tmp_lsig.get(), sig_stride * sizeof(T));
+			std::memcpy(dlsig_b + 1, tmp_dlsig.get(), sig_stride * sizeof(T));
+		}
+
+		for (uint64_t b = 0; b < batch_size; ++b) {
+			T* lsig_b = h_lsig.get() + b * full_len;
+			T* dlsig_b = h_dlsig.get() + b * full_len;
+			for (uint64_t level = degree; level > 1; --level) {
+				const T one_over_level = static_cast<T>(1.) / static_cast<T>(level);
+				const uint64_t level_size = li[level] - li[level - 1];
+				for (uint64_t j = 0; j < level_size; ++j) {
+					const uint64_t offs1 = li[level] + dimension * j - 1;
+					const uint64_t offs2 = li[level - 1] + j;
+					for (uint64_t dd = 1; dd <= dimension; ++dd) {
+						const T ii = dlsig_b[offs1 + dd] * one_over_level;
+						dlsig_b[offs2] += lsig_b[dd] * ii;
+						dlsig_b[dd] += lsig_b[offs2] * ii;
+					}
+				}
+			}
+			std::memcpy(h_ddisp.get() + b * dimension, dlsig_b + 1, dimension * sizeof(T));
+		}
 	}
 	CUDA_CHECK(cudaMemcpy(d_displacement, h_ddisp.get(), sizeof(T) * dimension * batch_size, cudaMemcpyHostToDevice));
 }
@@ -515,56 +602,56 @@ extern "C" {
 
 	CUSIG_API int sig_combine_cuda_f(
 		const float* sig1, const float* sig2, float* out,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_combine_cuda_<float>(sig1, sig2, out, batch_size, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_cuda_<float>(sig1, sig2, out, batch_size, dimension, degree, scalar_term));
 	}
 
 	CUSIG_API int sig_combine_cuda_d(
 		const double* sig1, const double* sig2, double* out,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_combine_cuda_<double>(sig1, sig2, out, batch_size, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_cuda_<double>(sig1, sig2, out, batch_size, dimension, degree, scalar_term));
 	}
 
 
 	CUSIG_API int sig_combine_backprop_cuda_f(
 		const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv,
 		const float* sig1, const float* sig2,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree, scalar_term));
 	}
 
 	CUSIG_API int sig_combine_backprop_cuda_d(
 		const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv,
 		const double* sig1, const double* sig2,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree));
+		CUSIG_SAFE_CALL(sig_combine_backprop_cuda_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree, scalar_term));
 	}
 
 	// linear_sig CUDA
-	CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
-		CUSIG_SAFE_CALL(linear_sig_cuda_<float>(displacement, out, batch_size, dimension, degree));
+	CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(linear_sig_cuda_<float>(displacement, out, batch_size, dimension, degree, scalar_term));
 	}
-	CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept {
-		CUSIG_SAFE_CALL(linear_sig_cuda_<double>(displacement, out, batch_size, dimension, degree));
+	CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(linear_sig_cuda_<double>(displacement, out, batch_size, dimension, degree, scalar_term));
 	}
 
 	// sig_join CUDA
-	CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
-		CUSIG_SAFE_CALL(sig_join_cuda_<float>(sig, displacement, out, batch_size, dimension, degree, prepend));
+	CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(sig_join_cuda_<float>(sig, displacement, out, batch_size, dimension, degree, prepend, scalar_term));
 	}
-	CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
-		CUSIG_SAFE_CALL(sig_join_cuda_<double>(sig, displacement, out, batch_size, dimension, degree, prepend));
+	CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(sig_join_cuda_<double>(sig, displacement, out, batch_size, dimension, degree, prepend, scalar_term));
 	}
 
 	// sig_join_backprop CUDA
-	CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
-		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<float>(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree, prepend));
+	CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<float>(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree, prepend, scalar_term));
 	}
-	CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend) noexcept {
-		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<double>(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree, prepend));
+	CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend, bool scalar_term) noexcept {
+		CUSIG_SAFE_CALL(sig_join_backprop_cuda_<double>(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree, prepend, scalar_term));
 	}
 }

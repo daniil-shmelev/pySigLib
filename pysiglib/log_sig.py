@@ -236,7 +236,9 @@ def sig_to_log_sig(
     Computes the log signature from the signature, using the specified method. For details,
     see the page :doc:`Computing Log Signatures </pages/log_signatures/log_sig_methods>`.
 
-    :param sig: The signature or batch of signatures, of shape ``(..., sig_length)``.
+    :param sig: The signature or batch of signatures, given as a `numpy.ndarray` or `torch.tensor`.
+        For a single signature, this must be of shape ``sig_length``. For a batch of paths, this must
+        be of shape ``(batch_size, sig_length)``.
     :type sig: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
@@ -291,29 +293,25 @@ def sig_to_log_sig(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    sig_len = sig_length(aug_dimension, degree, scalar_term=True)
+    sig_len = sig_length(aug_dimension, degree, scalar_term=scalar_term)
     data = SigInputHandler(sig, sig_len, "sig")
-    out_len = log_sig_length(aug_dimension, degree) if method else sig_len
+    out_len = log_sig_length(aug_dimension, degree) if method else sig_length(aug_dimension, degree, scalar_term=scalar_term)
     result = SigOutputHandler(data, out_len)
 
     if data.batch_size == 0:
-        if not scalar_term and method == 0:
-            return result.data[..., 1:]
         return result.data
 
     check_n_jobs(n_jobs)
     if data.device == "cpu":
         err_code = CPSIG_SIG_TO_LOG_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
-            dimension, degree, time_aug, lead_lag, method, n_jobs)
+            dimension, degree, time_aug, lead_lag, method, scalar_term, n_jobs)
     else:
         err_code = CUSIG_SIG_TO_LOG_SIG_CUDA[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
-            aug_dimension, degree, method)
+            aug_dimension, degree, method, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.sig_to_log_sig: " + err_msg(err_code))
-    if not scalar_term and method == 0:
-        return result.data[..., 1:]
     return result.data
 
 def log_sig(
@@ -330,7 +328,9 @@ def log_sig(
     Computes the log signature using the specified method. For details,
     see the page :doc:`Computing Log Signatures </pages/log_signatures/log_sig_methods>`.
 
-    :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
+    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
+        For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
+        be of shape ``(batch_size, length, dimension)``.
     :type path: numpy.ndarray | torch.tensor
     :param degree: Truncation degree of the (log) signature(s).
     :type degree: int
@@ -398,6 +398,6 @@ def log_sig(
         return result.data
 
     # Methods 0-2: compute sig then project to log sig.
-    sig_ = sig(path, degree, scalar_term=True, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, horner=True, n_jobs=n_jobs)
+    sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, horner=True, n_jobs=n_jobs)
     dimension = path.shape[-1]
     return sig_to_log_sig(sig_, dimension, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)

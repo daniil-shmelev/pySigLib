@@ -47,10 +47,9 @@ def sig_join(
 
     where :math:`S(v)` is the signature of the linear path defined by :math:`v`.
 
-    :param sig: The existing truncated signature, of shape ``(..., sig_length)``.
+    :param sig: The existing truncated signature, of shape ``(sig_length,)`` or ``(batch_size, sig_length)``.
     :type sig: numpy.ndarray | torch.tensor
-    :param displacement: The displacement vector, of shape ``(..., dimension)``.
-        Leading batch dimensions must match those of ``sig``.
+    :param displacement: The displacement vector, of shape ``(dimension,)`` or ``(batch_size, dimension)``.
     :type displacement: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -94,7 +93,7 @@ def sig_join(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
-    sig_len = sig_length(dimension, degree, scalar_term=True)
+    sig_len = sig_length(dimension, degree, scalar_term=scalar_term)
     sig_data = SigInputHandler(sig, sig_len, "sig")
     disp_data = SigInputHandler(displacement, dimension, "displacement")
 
@@ -110,20 +109,16 @@ def sig_join(
     result = SigOutputHandler(sig_data, sig_len)
 
     if sig_data.batch_size == 0:
-        if not scalar_term:
-            return result.data[..., 1:]
         return result.data
 
     if sig_data.device == "cpu":
         err_code = CPSIG_SIG_JOIN[sig_data.dtype](
             sig_data.data_ptr, disp_data.data_ptr, result.data_ptr,
-            sig_data.batch_size, dimension, degree, prepend, n_jobs)
+            sig_data.batch_size, dimension, degree, prepend, scalar_term, n_jobs)
     else:
         err_code = CUSIG_SIG_JOIN_CUDA[sig_data.dtype](
             sig_data.data_ptr, disp_data.data_ptr, result.data_ptr,
-            sig_data.batch_size, dimension, degree, prepend)
+            sig_data.batch_size, dimension, degree, prepend, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.sig_join: " + err_msg(err_code))
-    if not scalar_term:
-        return result.data[..., 1:]
     return result.data

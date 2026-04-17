@@ -120,9 +120,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_combine_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_combine_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @brief */
-	[[nodiscard]] CPSIG_API int sig_combine_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_combine_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_combine_backprop_functions Sig combine backprop functions
@@ -146,22 +146,22 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_combine_backprop_f(const float* sig_combined_derivs, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_combine_backprop_f(const float* sig_combined_derivs, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @brief */
-	[[nodiscard]] CPSIG_API int sig_combine_backprop_d(const double* sig_combined_derivs, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_combine_backprop_d(const double* sig_combined_derivs, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	// linear_sig: signature of a single linear segment from a displacement vector
-	[[nodiscard]] CPSIG_API int linear_sig_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
-	[[nodiscard]] CPSIG_API int linear_sig_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int linear_sig_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int linear_sig_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
 
 	// sig_join: extend a signature by a displacement
-	[[nodiscard]] CPSIG_API int sig_join_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
-	[[nodiscard]] CPSIG_API int sig_join_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_join_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_join_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
 
 	// sig_join_backprop
-	[[nodiscard]] CPSIG_API int sig_join_backprop_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
-	[[nodiscard]] CPSIG_API int sig_join_backprop_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_join_backprop_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_join_backprop_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
 
 	/** @defgroup sig_coef_functions Signature coefficient functions
 	* @{
@@ -245,9 +245,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @brief */
-	[[nodiscard]] CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_functions Signature backprop functions
@@ -273,9 +273,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @brief */
-	[[nodiscard]] CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/**
@@ -343,9 +343,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_to_log_sig_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_to_log_sig_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @brief */
-	[[nodiscard]] CPSIG_API int sig_to_log_sig_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_to_log_sig_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	
@@ -369,9 +369,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_to_log_sig_backprop_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, int n_jobs) noexcept;
+	[[nodiscard]] CPSIG_API int sig_to_log_sig_backprop_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @brief */
-	[[nodiscard]] CPSIG_API int sig_to_log_sig_backprop_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, int n_jobs) noexcept;
+	[[nodiscard]] CPSIG_API int sig_to_log_sig_backprop_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_combine_functions Log sig combine functions
@@ -422,17 +422,17 @@ extern "C" {
 
 	[[nodiscard]] CPSIG_API int logsig_to_sig_f(const float* log_sig, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
-		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+		bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
 	[[nodiscard]] CPSIG_API int logsig_to_sig_d(const double* log_sig, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
-		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+		bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
 
 	[[nodiscard]] CPSIG_API int logsig_to_sig_backprop_f(const float* log_sig, float* out, const float* sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
-		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+		bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
 	[[nodiscard]] CPSIG_API int logsig_to_sig_backprop_d(const double* log_sig, double* out, const double* sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
-		bool time_aug = false, bool lead_lag = false, int method = 0, int n_jobs = 1) noexcept;
+		bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_kernel_functions Signature kernel functions
@@ -496,17 +496,17 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk = false, bool planar = false) noexcept;
 	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
 
-	[[nodiscard]] CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false) noexcept;
-	[[nodiscard]] CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true) noexcept;
 
-	[[nodiscard]] CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false) noexcept;
-	[[nodiscard]] CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 
-	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false) noexcept;
-	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 
-	[[nodiscard]] CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false) noexcept;
-	[[nodiscard]] CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true) noexcept;
 	/** @} */
 }
 
