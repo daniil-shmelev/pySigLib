@@ -43,7 +43,7 @@ from ..linear_sig import linear_sig as linear_sig_forward
 from ..branched_sig import branched_sig as branched_sig_forward
 from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
 from ..words import word_to_idx
-from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order, check_n_jobs
+from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order, check_n_jobs, resolve_scalar_term
 from ..sig_length import sig_length as _sig_length, log_sig_length as _log_sig_length
 from ._ffi import (
     _augmented_dim,
@@ -131,9 +131,11 @@ def sig(
     lead_lag: bool = False,
     end_time: float = 1.0,
     horner: bool = True,
+    scalar_term=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
+    scalar_term = resolve_scalar_term(scalar_term)
 
     path = jnp.asarray(path)
     _validate_shape(path)
@@ -146,7 +148,10 @@ def sig(
     check_type(horner, "horner", bool)
     check_n_jobs(n_jobs)
 
-    return _sig(path, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+    result = _sig(path, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+    if not scalar_term:
+        result = result[..., 1:]
+    return result
 
 
 sig.__doc__ = sig_forward.__doc__
@@ -205,9 +210,11 @@ def sig_combine(
     degree: int,
     time_aug: bool = False,
     lead_lag: bool = False,
+    scalar_term=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
+    scalar_term = resolve_scalar_term(scalar_term)
 
     sig1 = jnp.asarray(sig1)
     sig2 = jnp.asarray(sig2)
@@ -222,7 +229,10 @@ def sig_combine(
     check_type(lead_lag, "lead_lag", bool)
     check_n_jobs(n_jobs)
 
-    return _sig_combine(sig1, sig2, _augmented_dim(dimension, time_aug, lead_lag), degree, n_jobs)
+    result = _sig_combine(sig1, sig2, _augmented_dim(dimension, time_aug, lead_lag), degree, n_jobs)
+    if not scalar_term:
+        result = result[..., 1:]
+    return result
 
 
 sig_combine.__doc__ = sig_combine_forward.__doc__
@@ -307,9 +317,11 @@ def sig_to_log_sig(
     time_aug: bool = False,
     lead_lag: bool = False,
     method: int = 1,
+    scalar_term=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
+    scalar_term = resolve_scalar_term(scalar_term)
 
     sig_arr = jnp.asarray(sig_arr)
     _validate_sig_shape(sig_arr, "sig")
@@ -317,13 +329,19 @@ def sig_to_log_sig(
     if method not in (0, 1, 2, 3):
         raise ValueError(f"method must be 0, 1, 2, or 3, got {method}")
     if method == 3:
-        raise NotImplementedError(
-            "method=3 is not supported in the JAX API. "
-            "Use method=1 or method=2 instead."
+        raise ValueError(
+            "method=3 is not supported in sig_to_log_sig. "
+            "Use log_sig(path, degree, method=3) instead."
         )
 
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
-    return _sig_to_log_sig(sig_arr, aug_dim, degree, method, n_jobs)
+
+    result = _sig_to_log_sig(sig_arr, aug_dim, degree, method, n_jobs)
+    # Only method=0 output has a scalar-term entry to strip; methods 1 and 2
+    # return Lyndon-basis arrays with no scalar term.
+    if not scalar_term and method == 0:
+        result = result[..., 1:]
+    return result
 
 
 sig_to_log_sig.__doc__ = sig_to_log_sig_forward.__doc__
@@ -359,9 +377,11 @@ def logsig_to_sig(
     time_aug: bool = False,
     lead_lag: bool = False,
     method: int = 1,
+    scalar_term=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
+    scalar_term = resolve_scalar_term(scalar_term)
 
     log_sig_arr = jnp.asarray(log_sig_arr)
     _validate_sig_shape(log_sig_arr, "log_sig")
@@ -375,7 +395,11 @@ def logsig_to_sig(
         raise ValueError("method must be 0, 1, or 2")
 
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
-    return _logsig_to_sig(log_sig_arr, aug_dim, degree, method, n_jobs)
+
+    result = _logsig_to_sig(log_sig_arr, aug_dim, degree, method, n_jobs)
+    if not scalar_term:
+        result = result[..., 1:]
+    return result
 
 
 logsig_to_sig.__doc__ = logsig_to_sig_forward.__doc__
@@ -411,9 +435,11 @@ def log_sig(
     lead_lag: bool = False,
     end_time: float = 1.0,
     method: int = 1,
+    scalar_term=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
+    scalar_term = resolve_scalar_term(scalar_term)
 
     path = jnp.asarray(path)
     _validate_shape(path)
@@ -422,11 +448,12 @@ def log_sig(
         if time_aug or lead_lag:
             path = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
         aug_dim = path.shape[-1]
+        # method=3 output is Lyndon-basis (no scalar term), so scalar_term is a no-op.
         return _log_sig_from_path(path, aug_dim, degree, n_jobs)
 
     dimension = path.shape[-1]
-    sig_ = sig(path, degree, time_aug, lead_lag, end_time, True, n_jobs)
-    return sig_to_log_sig(sig_, dimension, degree, time_aug, lead_lag, method, n_jobs)
+    sig_ = sig(path, degree, time_aug, lead_lag, end_time, True, scalar_term=True, n_jobs=n_jobs)
+    return sig_to_log_sig(sig_, dimension, degree, time_aug, lead_lag, method, scalar_term=scalar_term, n_jobs=n_jobs)
 
 
 log_sig.__doc__ = log_sig_forward.__doc__
@@ -512,7 +539,7 @@ def _sig_join_bwd_callback(co, s, d, dimension, degree, prepend, n_jobs):
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5))
 def _sig_join(sig_arr, displacement, dimension, degree, prepend, n_jobs):
-    out_len = _sig_length(dimension, degree)
+    out_len = _sig_length(dimension, degree, scalar_term=True)
     out_shape = (*sig_arr.shape[:-1], out_len)
     out_type = jax.ShapeDtypeStruct(out_shape, sig_arr.dtype)
     return jax.pure_callback(
@@ -548,6 +575,7 @@ def sig_join(
     dimension: int,
     degree: int,
     prepend: bool = False,
+    scalar_term=None,
     n_jobs: int = 1,
 ):
     """Extends a truncated signature by a single displacement vector (JAX).
@@ -556,6 +584,7 @@ def sig_join(
     Supports reverse-mode autodiff via ``jax.grad``.
     """
     ensure_registered()
+    scalar_term = resolve_scalar_term(scalar_term)
 
     sig_arr = jnp.asarray(sig_arr)
     displacement = jnp.asarray(displacement)
@@ -567,7 +596,10 @@ def sig_join(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
-    return _sig_join(sig_arr, displacement, dimension, degree, prepend, n_jobs)
+    result = _sig_join(sig_arr, displacement, dimension, degree, prepend, n_jobs)
+    if not scalar_term:
+        result = result[..., 1:]
+    return result
 
 
 sig_join.__doc__ = sig_join_forward.__doc__
@@ -672,6 +704,7 @@ def linear_sig(
     displacement,
     dimension: int,
     degree: int,
+    scalar_term=None,
     n_jobs: int = 1,
 ):
     """Computes the truncated signature of a single linear segment (JAX).
@@ -679,13 +712,14 @@ def linear_sig(
     This is the JAX equivalent of :func:`pysiglib.linear_sig`. Implemented
     as ``sig(stack([0, v]))`` so gradients flow through the ``sig`` FFI path.
     """
+    scalar_term = resolve_scalar_term(scalar_term)
     displacement = jnp.asarray(displacement)
     if displacement.shape[-1] != dimension:
         raise ValueError(
             f"displacement last-dim ({displacement.shape[-1]}) does not match dimension ({dimension})")
     zeros = jnp.zeros_like(displacement)
     path = jnp.stack([zeros, displacement], axis=-2)
-    return sig(path, degree, n_jobs=n_jobs)
+    return sig(path, degree, scalar_term=scalar_term, n_jobs=n_jobs)
 
 
 linear_sig.__doc__ = linear_sig_forward.__doc__
@@ -739,8 +773,7 @@ def sig_kernel(
 ):
     """Compute signature kernel between paired paths using JAX.
 
-    This composes the static kernel evaluation (pure JAX) with the
-    PDE solver (C++ FFI). Fully differentiable via JAX autodiff.
+    Fully differentiable via JAX autodiff.
     """
     ensure_registered()
 
@@ -1031,10 +1064,12 @@ def branched_sig(
     lead_lag: bool = False,
     end_time: float = 1.0,
     tree_order: str = "recursive",
+    scalar_term=None,
     n_jobs: int = 1,
     planar: bool = False,
 ):
     ensure_registered()
+    scalar_term = resolve_scalar_term(scalar_term)
 
     path = jnp.asarray(path)
     _validate_shape(path)
@@ -1053,6 +1088,8 @@ def branched_sig(
     if tree_order != "recursive":
         aug_dim = _augmented_dim(path.shape[-1], time_aug, lead_lag)
         result = _permute_bsig_jax(result, aug_dim, degree, planar=planar)
+    if not scalar_term:
+        result = result[..., 1:]
     return result
 
 
@@ -1090,10 +1127,12 @@ def branched_sig_combine(
     dimension: int,
     degree: int,
     tree_order: str = "recursive",
+    scalar_term=None,
     n_jobs: int = 1,
     planar: bool = False,
 ):
     ensure_registered()
+    scalar_term = resolve_scalar_term(scalar_term)
 
     bsig1 = jnp.asarray(bsig1)
     bsig2 = jnp.asarray(bsig2)
@@ -1116,6 +1155,8 @@ def branched_sig_combine(
     result = _branched_sig_combine(bsig1, bsig2, dimension, degree, n_jobs, planar)
     if tree_order != "recursive":
         result = _permute_bsig_jax(result, dimension, degree, planar=planar)
+    if not scalar_term:
+        result = result[..., 1:]
     return result
 
 

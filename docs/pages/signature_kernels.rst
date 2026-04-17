@@ -1,6 +1,11 @@
 Signature Kernels
 ========================
 
+This section covers the signature kernel and its Gram matrix, along with
+higher-level statistics built on top (scoring rules and MMD). It also covers
+the library of static kernels on :math:`\mathbb{R}^d` which can be supplied as
+the base kernel lifted by the signature kernel.
+
 .. toctree::
    :titlesonly:
    :maxdepth: 2

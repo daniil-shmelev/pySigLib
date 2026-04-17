@@ -1,16 +1,62 @@
 Installation
 ========================
 
+Install from PyPI
+------------------------
+
+The recommended way to install pySigLib is from PyPI using pre-built wheels.
+No compiler toolchain is required — wheels are published for Windows, Linux,
+and macOS (arm64).
+
+.. code-block:: console
+
+    pip install pysiglib              # CPU only
+    pip install pysiglib[cuda]        # with CUDA GPU support
+
+The ``[cuda]`` extra installs the companion ``pysiglib-cuda`` plugin, which
+ships the CUDA binaries (``cusig``).
+
+JAX support
+++++++++++++++++++++++++++++++
+
+The XLA FFI bindings for JAX are already built into every pySigLib wheel, so
+there is no pySigLib-side extra to install. Just install JAX separately:
+
+.. code-block:: console
+
+    pip install jax
+
+For GPU-accelerated JAX, use its CUDA variant:
+
+.. code-block:: console
+
+    pip install pysiglib[cuda] jax[cuda12]
+
+To verify the installation:
+
+.. code-block:: python
+
+    import pysiglib
+    print(pysiglib.__version__)
+    print(pysiglib.BUILT_WITH_CUDA)    # True if CUDA backend loaded
+    print(pysiglib.BUILT_WITH_JAX_FFI) # True if JAX FFI available
+
+Install from source
+------------------------
+
+If you need a custom build (unsupported platform, alternative CUDA version,
+development work), pySigLib can be built from source. This requires a C++
+compiler toolchain.
+
 .. tab-set::
 
    .. tab-item:: Windows
 
-      pySigLib requires an installation of the MSVC compiler in order to compile the package.
-      Please ensure this exists, then run:
+      Requires MSVC. Once installed, run:
 
       .. code-block:: console
 
-          pip install pysiglib
+          pip install pysiglib --no-binary pysiglib
 
       pySigLib will automatically detect CUDA, provided the ``CUDA_PATH`` environment variable is set correctly.
       To manually disable CUDA and build pySigLib for CPU only, set the ``CUSIG`` environment variable to ``0``:
@@ -18,16 +64,15 @@ Installation
       .. code-block:: console
 
           set CUSIG=0
-          pip install pysiglib
+          pip install pysiglib --no-binary pysiglib
 
    .. tab-item:: Linux
 
-      pySigLib requires an installation of the GCC compiler in order to compile the package.
-      Please ensure this exists, then run:
+      Requires GCC. Once installed, run:
 
       .. code-block:: console
 
-          pip install pysiglib
+          pip install pysiglib --no-binary pysiglib
 
       pySigLib will automatically detect CUDA, provided the ``CUDA_PATH`` environment variable is set correctly.
       On most systems, this path will be ``/usr/lib/nvidia-cuda-toolkit`` and one can set it manually by running:
@@ -41,46 +86,40 @@ Installation
       .. code-block:: bash
 
           export CUSIG=0
-          pip install pysiglib
+          pip install pysiglib --no-binary pysiglib
 
    .. tab-item:: macOS
 
-      pySigLib requires the Xcode Command Line Tools in order to compile the package.
-      Please ensure these are installed (``xcode-select --install``), then run:
+      Requires the Xcode Command Line Tools (``xcode-select --install``). Once installed, run:
 
       .. code-block:: console
 
-          pip install pysiglib
+          pip install pysiglib --no-binary pysiglib
 
       pySigLib does not support CUDA on macOS, and will build without it when installed.
 
-JAX Support
-------------------------
+JAX support (source builds)
+++++++++++++++++++++++++++++++
 
-pySigLib provides an optional JAX API with full support for ``jax.jit``, ``jax.grad``, and ``jax.vmap``.
-Requires **jaxlib >= 0.5.0** (Python 3.10+). To use it, install JAX before installing pySigLib:
+When building from source, pySigLib automatically detects JAX and builds the
+XLA FFI bindings if JAX is installed. Requires **jaxlib >= 0.5.0** (Python
+3.10+):
 
 .. code-block:: console
 
     pip install jax
-    pip install pysiglib
+    pip install pysiglib --no-binary pysiglib
 
-pySigLib will automatically detect JAX and build the XLA FFI bindings. If JAX is not installed,
-this is skipped and the rest of pySigLib works normally. To verify:
+If JAX is not installed at build time, the FFI bindings are skipped and the
+rest of pySigLib works normally. To verify:
 
 .. code-block:: python
 
     import pysiglib
-    print(pysiglib.BUILT_WITH_JAX_FFI)  # True if JAX FFI was built
+    print(pysiglib.BUILT_WITH_JAX_FFI)
 
-For GPU support with JAX, install the CUDA variant of JAX:
-
-.. code-block:: console
-
-    pip install jax[cuda12]
-
-Build Options
-------------------------
+Build options
+++++++++++++++++++++++++++++++
 
 The following environment variables can be used to control the build:
 
@@ -107,8 +146,8 @@ The following environment variables can be used to control the build:
        ``all`` (all architectures), ``all-major``, or a semicolon-separated list
        (e.g. ``"80;89;90"``). Use ``all`` when building portable wheels.
 
-Editable Installs
-------------------------
+Editable installs
+++++++++++++++++++++++++++++++
 
 pySigLib supports editable installs for development:
 

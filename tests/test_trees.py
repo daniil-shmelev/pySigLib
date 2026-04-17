@@ -30,6 +30,13 @@ class TestRoundTrip:
             assert pysiglib.tree_to_idx(tree, dim, deg) == i
 
     @pytest.mark.parametrize("dim, deg", PARAMS)
+    def test_planar_idx_to_tree_to_idx(self, dim, deg):
+        bsig_len = pysiglib.branched_sig_length(dim, deg, planar=True)
+        for i in range(bsig_len):
+            tree = pysiglib.idx_to_tree(i, dim, deg, planar=True)
+            assert pysiglib.tree_to_idx(tree, dim, deg, planar=True) == i
+
+    @pytest.mark.parametrize("dim, deg", PARAMS)
     def test_tree_to_idx_to_tree(self, dim, deg):
         all_trees = pysiglib.trees(dim, deg)
         for tree in all_trees:
@@ -88,6 +95,29 @@ class TestCoefficientExtraction:
         for label in range(dim):
             idx = pysiglib.tree_to_idx((label,), dim, deg)
             np.testing.assert_allclose(bsig[idx], sig[label + 1], atol=1e-10)
+
+    def test_planar_canonical_index_matches_planar_output(self):
+        dim, deg = 2, 3
+        rng = np.random.default_rng(7)
+        path = rng.standard_normal((8, dim)).astype(np.float64)
+
+        pysiglib.prepare_branched_sig(dim, deg, planar=False)
+        bsig_nonplanar = pysiglib.branched_sig(path, deg, planar=False, tree_order="canonical")
+        pysiglib.prepare_branched_sig(dim, deg, planar=True)
+        bsig_planar = pysiglib.branched_sig(path, deg, planar=True, tree_order="canonical")
+
+        tree = (((0,), 0), 0)
+        idx_nonplanar = pysiglib.tree_to_idx(tree, dim, deg, planar=False)
+        idx_planar = pysiglib.tree_to_idx(tree, dim, deg, planar=True)
+
+        assert len(bsig_nonplanar) == 21
+        assert len(bsig_planar) == 23
+        assert idx_nonplanar == 7
+        assert idx_planar != idx_nonplanar
+        assert pysiglib.idx_to_tree(idx_planar, dim, deg, planar=True) == tree
+        assert pysiglib.idx_to_tree(idx_nonplanar, dim, deg, planar=False) == tree
+        assert bsig_planar[idx_planar] == pytest.approx(bsig_nonplanar[idx_nonplanar])
+        assert bsig_planar[idx_nonplanar] != pytest.approx(bsig_nonplanar[idx_nonplanar])
 
 
 class TestValidation:

@@ -44,9 +44,7 @@ def sig_coef_backprop(
     ``pysiglib.sig_coef`` using ``prefixes=True``, and ``derivs`` must be the derivatives
     with respect to this extended array.
 
-    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
-        For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
-        be of shape ``(batch_size, length, dimension)``.
+    :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
     :type path: numpy.ndarray | torch.tensor
     :param words: Multi-indices :math:`I` indexing the signature coefficients, given as a list
         of lists of integers in :math:`[0, d-1]`, where :math:`d` is the dimension of the path(s).

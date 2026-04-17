@@ -45,9 +45,12 @@ def logsig_to_sig_backprop(
 
     Supports all methods (``0``, ``1``, ``2``).
 
-    :param log_sig: The log-signature used in the forward pass.
+    :param log_sig: The log-signature used in the forward pass, of shape
+        ``(..., log_sig_length)`` for methods ``1`` and ``2``, or ``(..., sig_length)``
+        for method ``0`` (expanded basis).
     :type log_sig: numpy.ndarray | torch.tensor
-    :param sig_derivs: Upstream derivatives dL/d(sig), same shape as the signature output.
+    :param sig_derivs: Upstream derivatives dL/d(sig), of shape ``(..., sig_length)``.
+        Leading batch dimensions must match those of ``log_sig``.
     :type sig_derivs: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
@@ -81,8 +84,8 @@ def logsig_to_sig_backprop(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    input_len = sig_length(aug_dimension, degree) if method == 0 else log_sig_length(aug_dimension, degree)
-    sig_len = sig_length(aug_dimension, degree)
+    input_len = sig_length(aug_dimension, degree, scalar_term=True) if method == 0 else log_sig_length(aug_dimension, degree)
+    sig_len = sig_length(aug_dimension, degree, scalar_term=True)
     data = SigInputHandler(log_sig, input_len, "log_sig")
     derivs_data = SigInputHandler(sig_derivs, sig_len, "sig_derivs")
     result = SigOutputHandler(data, input_len)

@@ -47,9 +47,10 @@ def sig_join(
 
     where :math:`S(v)` is the signature of the linear path defined by :math:`v`.
 
-    :param sig: The existing truncated signature, of shape ``(sig_length,)`` or ``(batch_size, sig_length)``.
+    :param sig: The existing truncated signature, of shape ``(..., sig_length)``.
     :type sig: numpy.ndarray | torch.tensor
-    :param displacement: The displacement vector, of shape ``(dimension,)`` or ``(batch_size, dimension)``.
+    :param displacement: The displacement vector, of shape ``(..., dimension)``.
+        Leading batch dimensions must match those of ``sig``.
     :type displacement: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -93,7 +94,7 @@ def sig_join(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
-    sig_len = sig_length(dimension, degree)
+    sig_len = sig_length(dimension, degree, scalar_term=True)
     sig_data = SigInputHandler(sig, sig_len, "sig")
     disp_data = SigInputHandler(displacement, dimension, "displacement")
 

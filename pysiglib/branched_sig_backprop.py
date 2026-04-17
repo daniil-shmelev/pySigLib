@@ -56,6 +56,12 @@ def branched_sig_backprop(
     :param time_aug: Whether time augmentation was used in the forward pass.
     :param lead_lag: Whether lead-lag was used in the forward pass.
     :param end_time: End time for time augmentation.
+    :param tree_order: Tree ordering convention used in the forward call. Must match
+        that call's value. Accepts ``"recursive"`` (default) or ``"canonical"``.
+    :param scalar_term: If True (default), ``bsig`` and ``bsig_derivs`` are expected to
+        include the leading constant-term entry at index 0. If False, the leading
+        entries are treated as implicitly 1 / 0. The default will change to False in
+        pySigLib v4.0.
     :param n_jobs: Number of parallel threads for batch processing.
     :param planar: If True, backpropagate through planar branched signature.
     :return: Path derivatives, same shape as ``path``.
@@ -130,6 +136,12 @@ def branched_sig_combine_backprop(
     :param bsig2: Second branched signature input to the forward combine.
     :param dimension: Dimension of the underlying path.
     :param degree: Maximum tree order.
+    :param tree_order: Tree ordering convention used in the forward call. Must match
+        that call's value. Accepts ``"recursive"`` (default) or ``"canonical"``.
+    :param scalar_term: If True (default), ``derivs``, ``bsig1`` and ``bsig2`` are
+        expected to include the leading constant-term entry at index 0. If False, the
+        leading entries are treated as implicitly 1 / 0. The default will change to
+        False in pySigLib v4.0.
     :param n_jobs: Number of parallel threads for batch processing.
     :param planar: If True, backpropagate through planar branched sig combine.
     :return: Tuple ``(dF/d(bsig1), dF/d(bsig2))``.

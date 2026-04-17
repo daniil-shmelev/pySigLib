@@ -302,7 +302,7 @@ class LogSigFromPath(torch.autograd.Function):
         return d_path, None, None, None, None, None
 
 def _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_jobs):
-    """Compute log-signature via sequential BCH combination with C++ forward and backward."""
+    """Compute log-signature via sequential BCH combination with native forward and backward."""
     if isinstance(path, torch.Tensor) and path.requires_grad:
         return LogSigFromPath.apply(path, degree, time_aug, lead_lag, end_time, n_jobs)
     else:

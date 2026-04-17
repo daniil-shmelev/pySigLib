@@ -1,6 +1,12 @@
 Log Signatures
 ========================
 
+This section covers log-signature computation, conversion to and from signatures, and
+combination via the Baker-Campbell-Hausdorff formula.
+
+See :doc:`log_signatures/log_sig_methods` for a comparison of the available
+log-signature algorithms and guidance on choosing between them.
+
 .. toctree::
    :titlesonly:
    :maxdepth: 2

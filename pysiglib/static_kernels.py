@@ -212,7 +212,8 @@ def _undo_double_diff(derivs, like):
 
 class PolynomialKernel(StaticKernel):
     """
-    The polynomial kernel, defined by :math:`\\kappa(x, y) = \\text{scale} \\cdot \\left( \\langle x, y \\rangle + \\gamma \\right)^{\\text{degree}}`.
+    The polynomial kernel, defined by :math:`\\kappa(x, y) = \\text{scale} \\cdot \\left( \\langle x, y \\rangle + \\gamma \\right)^d`,
+    where :math:`d` is the ``degree`` parameter.
     """
 
     def __init__(self, degree : float = 3., gamma : float = 1., scale : float = 1.):

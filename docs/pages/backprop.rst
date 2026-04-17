@@ -1,6 +1,9 @@
 Backpropagation
 ========================
 
+Explicit vector-Jacobian product functions for each forward operation, used by the
+PyTorch and JAX integrations and available for direct use in custom gradient pipelines.
+
 .. warning::
 
     Where possible, ``pysiglib.torch_api`` should be used rather than explicitly calling

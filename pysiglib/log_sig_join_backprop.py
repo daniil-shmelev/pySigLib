@@ -36,22 +36,25 @@ def log_sig_join_backprop(
     """
     This function is required to backpropagate through ``pysiglib.log_sig_join``.
     Given the derivatives of a scalar function :math:`F` with respect to the
-    result of ``pysiglib.log_sig_join``, :math:`\\partial F / \\partial \\log S(x * v)`,
+    result of ``pysiglib.log_sig_join``, :math:`\\partial F / \\partial L(x * v)`,
     returns the derivatives of :math:`F` with respect to the original log-signature
     and the displacement vector,
-    :math:`\\partial F / \\partial \\log S(x)` and :math:`\\partial F / \\partial v`.
+    :math:`\\partial F / \\partial L(x)` and :math:`\\partial F / \\partial v`.
 
     .. note::
 
-        You must call ``pysiglib.prepare_log_sig(dimension, degree)`` before using this
-        function. This precomputes the Lyndon basis and BCH coefficients needed internally.
+        ``log_sig`` is expected in the Lyndon bracket basis (``method=2`` output). You
+        must call ``pysiglib.prepare_log_sig(dimension, degree, method=2)`` before using
+        this function. This precomputes the Lyndon basis and BCH coefficients needed
+        internally.
 
     :param d_out: Derivative with respect to the output of log_sig_join,
-        :math:`\\partial F / \\partial \\log S(x * v)`
+        :math:`\\partial F / \\partial L(x * v)`, of shape ``(..., log_sig_length)``.
     :type d_out: numpy.ndarray | torch.tensor
-    :param log_sig: The original truncated log-signature, :math:`\\log S(x)`
+    :param log_sig: The original truncated log-signature, :math:`L(x)`,
+        of shape ``(..., log_sig_length)``.
     :type log_sig: numpy.ndarray | torch.tensor
-    :param displacement: The displacement vector, :math:`v`
+    :param displacement: The displacement vector, :math:`v`, of shape ``(..., dimension)``.
     :type displacement: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -73,10 +76,10 @@ def log_sig_join_backprop(
         import pysiglib
 
         dimension, degree = 5, 3
-        pysiglib.prepare_log_sig(dimension, degree)
+        pysiglib.prepare_log_sig(dimension, degree, method=2)
 
         path = np.random.uniform(size=(100, dimension))
-        ls = pysiglib.log_sig(path, degree)
+        ls = pysiglib.log_sig(path, degree, method=2)
         displacement = np.random.uniform(size=(dimension,))
 
         extended = pysiglib.log_sig_join(ls, displacement, dimension, degree)

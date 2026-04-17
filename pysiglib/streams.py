@@ -109,7 +109,7 @@ class SigStream:
     def __init__(self, dimension: int, degree: int, _sig_join=None, _sig_combine=None, _sig=None):
         self._dimension = dimension
         self._degree = degree
-        self._sig_len = sig_length(dimension, degree)
+        self._sig_len = sig_length(dimension, degree, scalar_term=True)
         self._sig_join_fn = _sig_join or sig_join
         self._sig_combine_fn = _sig_combine or sig_combine
         self._sig_fn = _sig or sig
@@ -141,7 +141,7 @@ class SigStream:
     def push_batch(self, points: Union[np.ndarray, torch.Tensor]) -> None:
         """
         Append multiple points to the stream. Computes the batch signature in a
-        single C++ call rather than per-point sequential joins.
+        single native call rather than per-point sequential joins.
 
         :param points: Points of shape ``(n, dimension)``.
         :type points: numpy.ndarray | torch.Tensor
@@ -313,7 +313,7 @@ class LogSigStream:
     def push_batch(self, points: Union[np.ndarray, torch.Tensor]) -> None:
         """
         Append multiple points to the stream. Computes the batch log-signature in a
-        single C++ call rather than per-point sequential joins.
+        single native call rather than per-point sequential joins.
 
         :param points: Points of shape ``(n, dimension)``.
         :type points: numpy.ndarray | torch.Tensor

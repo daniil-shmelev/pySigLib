@@ -23,7 +23,7 @@ pySigLib |release|
 
 .. rst-class:: landing-tagline
 
-Fast Signature, Log Signature and Signature Kernel Computations on CPU and GPU.
+A high-performance library for path signatures and rough path methods on CPU and GPU.
 
 .. grid:: 3
    :gutter: 3
@@ -87,8 +87,9 @@ Fast Signature, Log Signature and Signature Kernel Computations on CPU and GPU.
    /pages/signatures
    /pages/signature_coefficients
    /pages/log_signatures
-   /pages/signature_kernels
    /pages/branched_signatures
+   /pages/signature_kernels
+   /pages/streams
    /pages/backprop
 
 .. toctree::

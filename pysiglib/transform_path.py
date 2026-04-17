@@ -76,9 +76,7 @@ def transform_path(
     When both ``time_aug`` and ``lead_lag`` are set to ``True``, time-augmentation is applied
     after the lead-lag transformation.
 
-    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
-        For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
-        be of shape ``(batch_size, length, dimension)``.
+    :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
     :type path: numpy.ndarray | torch.tensor
     :param time_aug: If ``True``, applies time-augmentation by adding a linear channel to the path
         spanning :math:`[0, t_L]`. :math:`t_L` is given by the parameter ``end_time`` and defaults to 1.

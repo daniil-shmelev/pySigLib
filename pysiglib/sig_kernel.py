@@ -91,13 +91,12 @@ def sig_kernel(
     Optionally, a static kernel can be specified. For details, see the documentation on
     :doc:`static kernels </pages/signature_kernels/static_kernels>`.
 
-    :param path1: The first underlying path or batch of paths, given as a `numpy.ndarray` or
-        `torch.tensor`. For a single path, this must be of shape ``(length_1, dimension)``. For a
-        batch of paths, this must be of shape ``(batch_size, length_1, dimension)``.
+    :param path1: The first underlying path or batch of paths, of shape
+        ``(..., length_1, dimension)``.
     :type path1: numpy.ndarray | torch.tensor
-    :param path2: The second underlying path or batch of paths, given as a `numpy.ndarray`
-        or `torch.tensor`. For a single path, this must be of shape ``(length_2, dimension)``.
-        For a batch of paths, this must be of shape ``(batch_size, length_2, dimension)``.
+    :param path2: The second underlying path or batch of paths, of shape
+        ``(..., length_2, dimension)``. Leading batch dimensions must match those of
+        ``path1``.
     :type path2: numpy.ndarray | torch.tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
@@ -287,13 +286,11 @@ def sig_kernel_gram(
     Optionally, a static kernel can be specified. For details, see the documentation on
     :doc:`static kernels </pages/signature_kernels/static_kernels>`.
 
-    :param path1: The first underlying path or batch of paths, given as a `numpy.ndarray` or
-        `torch.tensor`. For a single path, this must be of shape ``(length_1, dimension)``. For a
-        batch of paths, this must be of shape ``(batch_size_1, length_1, dimension)``.
+    :param path1: The first batch of paths, of shape ``(..., batch_size_1, length_1, dimension)``.
     :type path1: numpy.ndarray | torch.tensor
-    :param path2: The second underlying path or batch of paths, given as a `numpy.ndarray`
-        or `torch.tensor`. For a single path, this must be of shape ``(length_2, dimension)``.
-        For a batch of paths, this must be of shape ``(batch_size_2, length_2, dimension)``.
+    :param path2: The second batch of paths, of shape ``(..., batch_size_2, length_2, dimension)``.
+        Leading batch dimensions (everything before ``batch_size_2``) must match those of
+        ``path1``.
     :type path2: numpy.ndarray | torch.tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers

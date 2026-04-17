@@ -1,6 +1,9 @@
 Words
 ========================
 
+Utilities for enumerating and indexing the words that label signature coefficients and
+the Lyndon words that form a basis for the free Lie algebra used by log-signatures.
+
 .. toctree::
    :titlesonly:
    :maxdepth: 2

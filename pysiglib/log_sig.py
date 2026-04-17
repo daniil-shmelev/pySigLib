@@ -236,9 +236,7 @@ def sig_to_log_sig(
     Computes the log signature from the signature, using the specified method. For details,
     see the page :doc:`Computing Log Signatures </pages/log_signatures/log_sig_methods>`.
 
-    :param sig: The signature or batch of signatures, given as a `numpy.ndarray` or `torch.tensor`.
-        For a single signature, this must be of shape ``sig_length``. For a batch of paths, this must
-        be of shape ``(batch_size, sig_length)``.
+    :param sig: The signature or batch of signatures, of shape ``(..., sig_length)``.
     :type sig: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
@@ -293,7 +291,7 @@ def sig_to_log_sig(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    sig_len = sig_length(aug_dimension, degree)
+    sig_len = sig_length(aug_dimension, degree, scalar_term=True)
     data = SigInputHandler(sig, sig_len, "sig")
     out_len = log_sig_length(aug_dimension, degree) if method else sig_len
     result = SigOutputHandler(data, out_len)
@@ -332,9 +330,7 @@ def log_sig(
     Computes the log signature using the specified method. For details,
     see the page :doc:`Computing Log Signatures </pages/log_signatures/log_sig_methods>`.
 
-    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
-        For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
-        be of shape ``(batch_size, length, dimension)``.
+    :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
     :type path: numpy.ndarray | torch.tensor
     :param degree: Truncation degree of the (log) signature(s).
     :type degree: int

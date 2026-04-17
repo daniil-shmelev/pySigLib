@@ -9,6 +9,7 @@ API Reference
    /pages/signatures
    /pages/signature_coefficients
    /pages/log_signatures
+   /pages/branched_signatures
    /pages/signature_kernels
    /pages/streams
    /pages/backprop

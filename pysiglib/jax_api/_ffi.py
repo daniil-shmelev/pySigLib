@@ -231,7 +231,7 @@ def ensure_registered() -> None:
 
 def _sig_shape(path_shape, degree: int, time_aug: bool, lead_lag: bool) -> tuple[int, ...]:
     dimension = path_shape[-1]
-    out_len = sig_length(_augmented_dim(dimension, time_aug, lead_lag), degree)
+    out_len = sig_length(_augmented_dim(dimension, time_aug, lead_lag), degree, scalar_term=True)
     if out_len == 0:
         raise ValueError("Signature length overflow.")
     return (*path_shape[:-2], out_len)
@@ -323,7 +323,7 @@ def transform_path_backprop_ffi_call(cotangent, orig_dimension, orig_length, tim
 def sig_to_log_sig_ffi_call(sig_arr, dimension, degree, method, n_jobs):
     _normalize_dtype(sig_arr.dtype)
     if method == 0:
-        out_len = sig_length(dimension, degree)
+        out_len = sig_length(dimension, degree, scalar_term=True)
     else:
         out_len = log_sig_length(dimension, degree)
     out_type = jax.ShapeDtypeStruct((*sig_arr.shape[:-1], out_len), sig_arr.dtype)
@@ -398,7 +398,7 @@ def logsig_to_sig_ffi_call(log_sig_arr, dimension, degree, method, n_jobs):
     _normalize_dtype(log_sig_arr.dtype)
     # Output is sig-shaped for every method; for methods 1 and 2 the input
     # is log-sig-shaped (shorter), so `log_sig_arr.shape` can't be reused.
-    out_len = sig_length(dimension, degree)
+    out_len = sig_length(dimension, degree, scalar_term=True)
     out_type = jax.ShapeDtypeStruct((*log_sig_arr.shape[:-1], out_len), log_sig_arr.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree),
                        method=np.int64(method), n_jobs=np.int64(n_jobs))
@@ -438,7 +438,7 @@ def log_sig_from_path_backprop_ffi_call(cotangent, path, dimension, degree, n_jo
 
 def _branched_sig_shape(path_shape, dimension, max_nodes, time_aug, lead_lag, planar):
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
-    out_len = branched_sig_length(aug_dim, max_nodes, planar=planar)
+    out_len = branched_sig_length(aug_dim, max_nodes, scalar_term=True, planar=planar)
     if out_len == 0:
         raise ValueError("Branched signature length overflow.")
     return (*path_shape[:-2], out_len)

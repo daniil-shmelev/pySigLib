@@ -43,11 +43,12 @@ def sig_combine_backprop(
     :math:`\\partial F / \\partial S(x_1)` and :math:`\\partial F / \\partial S(x_2)`.
 
     :param deriv: Derivative with respect to the combined signature,
-        :math:`\\partial F / \\partial S(x_1 * x_2)`
+        :math:`\\partial F / \\partial S(x_1 * x_2)`, of shape ``(..., sig_length)``.
     :type sig_combine_deriv: numpy.ndarray | torch.tensor
-    :param sig1: The first truncated signature
+    :param sig1: The first truncated signature, of shape ``(..., sig_length)``.
     :type sig1: numpy.ndarray | torch.tensor
-    :param sig2: The second truncated signature. Must have the same degree and dimension as the first.
+    :param sig2: The second truncated signature, of shape ``(..., sig_length)``.
+        Must have the same leading batch dimensions, degree and dimension as the first.
     :type sig2: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -59,6 +60,11 @@ def sig_combine_backprop(
     :param lead_lag: Whether the lead lag transformation was applied before computing
         the signature.
     :type lead_lag: bool
+    :param scalar_term: If True (default), ``deriv``, ``sig1`` and ``sig2`` are expected
+        to include the leading constant-term entry at index 0. If False, the leading
+        entries are treated as implicitly 1 (signatures) / 0 (derivative). The default
+        will change to False in pySigLib v4.0.
+    :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
@@ -102,7 +108,7 @@ def sig_combine_backprop(
         deriv = prepend_scalar(deriv, 0)
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
-    sig_len = sig_length(aug_dimension, degree)
+    sig_len = sig_length(aug_dimension, degree, scalar_term=True)
 
     check_n_jobs(n_jobs)
     sig_data = MultipleSigInputHandler([sig1, sig2, deriv], sig_len, ["sig1", "sig2", "sig_combined_deriv"])
@@ -149,11 +155,9 @@ def sig_backprop(
     derivatives of :math:`F` with respect to the underlying path,
     :math:`\\partial F / \\partial x`.
 
-    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
-        For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
-        be of shape ``(batch_size, length, dimension)``.
+    :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
     :type path: numpy.ndarray | torch.tensor
-    :param sig: Signature(s) of the path or batch of paths.
+    :param sig: Signature(s) of the path or batch of paths, of shape ``(..., sig_length)``.
     :type sig: numpy.ndarray | torch.tensor
     :param sig_derivs: Derivatives of the scalar function :math:`F` with respect to the signature(s),
         :math:`\\partial F / \\partial S(x)`. This must be an array of the same shape as the
@@ -167,6 +171,15 @@ def sig_backprop(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
+    :param scalar_term: If True (default), ``sig`` and ``sig_derivs`` are expected to
+        include the leading constant-term entry at index 0. If False, the leading
+        entries are treated as implicitly 1 (signature) / 0 (derivative). The default
+        will change to False in pySigLib v4.0.
+    :type scalar_term: bool
+    :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
+        If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
+        threads are used. For example if n_jobs = -2, all threads but one are used.
+    :type n_jobs: int
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.tensor
@@ -215,7 +228,7 @@ def sig_backprop(
         sig_derivs = prepend_scalar(sig_derivs, 0)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
-    sig_len = sig_length(path_data.dimension, degree)
+    sig_len = sig_length(path_data.dimension, degree, scalar_term=True)
     sig_data = MultipleSigInputHandler([sig, sig_derivs], sig_len, ["sig", "sig_derivs"])
 
     if path_data.type_ != sig_data.type_:

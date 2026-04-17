@@ -37,22 +37,25 @@ def log_sig_join(
     Baker-Campbell-Hausdorff (BCH) formula. This is the log-signature analogue of
     ``sig_join``.
 
-    Given a log-signature :math:`\\log S(x)` and a displacement :math:`v`, this computes
+    Given a log-signature :math:`L(x)` and a displacement :math:`v`, this computes
 
     .. math::
 
-        \\log S(x * v) = \\text{BCH}(\\log S(x), v),
+        L(x * v) = \\text{BCH}(L(x), v),
 
     where :math:`v` is embedded as a degree-1 element of the free Lie algebra.
 
     .. note::
 
-        You must call ``pysiglib.prepare_log_sig(dimension, degree)`` before using this
-        function. This precomputes the Lyndon basis and BCH coefficients needed internally.
+        ``log_sig`` is expected in the Lyndon bracket basis (``method=2`` output). You
+        must call ``pysiglib.prepare_log_sig(dimension, degree, method=2)`` before using
+        this function. This precomputes the Lyndon basis and BCH coefficients needed
+        internally.
 
-    :param log_sig: The existing truncated log-signature, of shape ``(log_sig_length,)`` or ``(batch_size, log_sig_length)``.
+    :param log_sig: The existing truncated log-signature, of shape ``(..., log_sig_length)``.
     :type log_sig: numpy.ndarray | torch.tensor
-    :param displacement: The displacement vector, of shape ``(dimension,)`` or ``(batch_size, dimension)``.
+    :param displacement: The displacement vector, of shape ``(..., dimension)``.
+        Leading batch dimensions must match those of ``log_sig``.
     :type displacement: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -62,7 +65,7 @@ def log_sig_join(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :return: Extended log-signature, :math:`\\log S(x * v)`.
+    :return: Extended log-signature, :math:`L(x * v)`.
     :rtype: numpy.ndarray | torch.tensor
 
     Example:
@@ -75,10 +78,10 @@ def log_sig_join(
 
         dimension = 5
         degree = 3
-        pysiglib.prepare_log_sig(dimension, degree)
+        pysiglib.prepare_log_sig(dimension, degree, method=2)
 
         path = np.random.uniform(size=(100, dimension))
-        ls = pysiglib.log_sig(path, degree)
+        ls = pysiglib.log_sig(path, degree, method=2)
 
         displacement = np.random.uniform(size=(dimension,))
         extended_ls = pysiglib.log_sig_join(ls, displacement, dimension, degree)

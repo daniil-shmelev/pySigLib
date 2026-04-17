@@ -35,12 +35,11 @@ def sig_score(
     Optionally, a static kernel can be specified. For details, see the documentation on
     :doc:`static kernels </pages/signature_kernels/static_kernels>`.
 
-    :param sample: The batch of sample paths drawn from :math:`\\mu`, given as a `numpy.ndarray` or
-        `torch.tensor`. This must be of shape ``(batch_size_1, length_1, dimension)``.
+    :param sample: The batch of sample paths drawn from :math:`\\mu`, of shape
+        ``(..., batch_size_1, length_1, dimension)``.
     :type sample: numpy.ndarray | torch.tensor
-    :param y: The path(s) y, given as a `numpy.ndarray` or `torch.tensor`. For a single path,
-        this must be of shape ``(length_2, dimension)``. For a batch of paths, this must be of shape
-        ``(batch_size_2, length_2, dimension)``.
+    :param y: The path(s) y, of shape ``(..., length_2, dimension)``. Leading batch
+        dimensions must match those of ``sample``.
     :type y: numpy.ndarray | torch.tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
@@ -161,11 +160,12 @@ def expected_sig_score(
     Optionally, a static kernel can be specified. For details, see the documentation on
     :doc:`static kernels </pages/signature_kernels/static_kernels>`.
 
-    :param sample1: The batch of sample paths drawn from :math:`\\mu`, given as a `numpy.ndarray` or
-        `torch.tensor`. This must be of shape ``(batch_size_1, length_1, dimension)``.
+    :param sample1: The batch of sample paths drawn from :math:`\\mu`, of shape
+        ``(..., batch_size_1, length_1, dimension)``.
     :type sample1: numpy.ndarray | torch.tensor
-    :param sample2: The batch of sample paths drawn from :math:`\\nu`, given as a `numpy.ndarray` or
-        `torch.tensor`. This must be of shape ``(batch_size_2, length_2, dimension)``.
+    :param sample2: The batch of sample paths drawn from :math:`\\nu`, of shape
+        ``(..., batch_size_2, length_2, dimension)``. Leading batch dimensions must match
+        those of ``sample1``.
     :type sample2: numpy.ndarray | torch.tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
@@ -272,11 +272,12 @@ def sig_mmd(
     Optionally, a static kernel can be specified. For details, see the documentation on
     :doc:`static kernels </pages/signature_kernels/static_kernels>`.
 
-    :param sample1: The batch of sample paths drawn from :math:`\\mu`, given as a `numpy.ndarray` or
-        `torch.tensor`. This must be of shape ``(batch_size_1, length_1, dimension)``.
+    :param sample1: The batch of sample paths drawn from :math:`\\mu`, of shape
+        ``(..., batch_size_1, length_1, dimension)``.
     :type sample1: numpy.ndarray | torch.tensor
-    :param sample2: The batch of sample paths drawn from :math:`\\nu`, given as a `numpy.ndarray` or
-        `torch.tensor`. This must be of shape ``(batch_size_2, length_2, dimension)``.
+    :param sample2: The batch of sample paths drawn from :math:`\\nu`, of shape
+        ``(..., batch_size_2, length_2, dimension)``. Leading batch dimensions must match
+        those of ``sample1``.
     :type sample2: numpy.ndarray | torch.tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers

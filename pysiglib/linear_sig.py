@@ -41,9 +41,8 @@ def linear_sig(
 
         S(v) = \\left(1, v, \\frac{v^{\\otimes 2}}{2!}, \\ldots, \\frac{v^{\\otimes N}}{N!}\\right).
 
-    :param displacement: The displacement vector or batch of displacement vectors.
-        For a single displacement, this must be of shape ``(dimension,)``.
-        For a batch, this must be of shape ``(batch_size, dimension)``.
+    :param displacement: The displacement vector or batch of displacement vectors,
+        of shape ``(..., dimension)``.
     :type displacement: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -88,7 +87,7 @@ def linear_sig(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
-    sig_len = sig_length(dimension, degree)
+    sig_len = sig_length(dimension, degree, scalar_term=True)
     data = SigInputHandler(displacement, dimension, "displacement")
     result = SigOutputHandler(data, sig_len)
 

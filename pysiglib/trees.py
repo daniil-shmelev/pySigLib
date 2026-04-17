@@ -31,7 +31,6 @@ import kauri
 
 from .param_checks import check_type, check_non_neg
 
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -118,7 +117,8 @@ def _trees_cached(dimension, degree):
 def tree_to_idx(
         tree,
         dimension: int,
-        degree: int
+        degree: int,
+        planar: bool = False,
 ) -> int:
     """
     Given a decorated rooted tree, returns its flat index in the
@@ -136,6 +136,9 @@ def tree_to_idx(
     :type dimension: int
     :param degree: Maximum number of nodes (same as ``degree`` in :func:`branched_sig`).
     :type degree: int
+    :param planar: If True, use the planar (ordered) canonical enumeration
+        matching ``branched_sig(..., planar=True, tree_order="canonical")``.
+    :type planar: bool
     :return: Flat index in the branched signature vector.
     :rtype: int
 
@@ -159,22 +162,26 @@ def tree_to_idx(
     """
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
+    check_type(planar, "planar", bool)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return _tree_to_idx_cached(tree, dimension, degree)
+    return _tree_to_idx_cached(tree, dimension, degree, planar)
 
 
 @cache
-def _tree_to_idx_cached(tree, dimension, degree):
+def _tree_to_idx_cached(tree, dimension, degree, planar):
     if tree is None:
         return 0
+    if planar:
+        return kauri.colored_planar_tree_to_idx(kauri.PlanarTree(tree), dimension, degree)
     return kauri.colored_tree_to_idx(kauri.Tree(tree), dimension, degree)
 
 
 def idx_to_tree(
         idx: int,
         dimension: int,
-        degree: int
+        degree: int,
+        planar: bool = False,
 ) -> tuple:
     """
     Given a flat index in the canonical enumeration, returns the
@@ -186,6 +193,10 @@ def idx_to_tree(
     :type dimension: int
     :param degree: Maximum number of nodes (same as ``degree`` in :func:`branched_sig`).
     :type degree: int
+    :param planar: If True, interpret ``idx`` in the planar (ordered)
+        canonical enumeration matching
+        ``branched_sig(..., planar=True, tree_order="canonical")``.
+    :type planar: bool
     :return: Decorated rooted tree (None for empty tree, tuple otherwise).
     :rtype: tuple or None
 
@@ -203,13 +214,17 @@ def idx_to_tree(
     check_type(idx, "idx", int)
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
+    check_type(planar, "planar", bool)
     check_non_neg(idx, "idx")
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return _idx_to_tree_cached(idx, dimension, degree)
+    return _idx_to_tree_cached(idx, dimension, degree, planar)
 
 
 @cache
-def _idx_to_tree_cached(idx, dimension, degree):
-    kt = kauri.idx_to_colored_tree(idx, dimension, degree)
+def _idx_to_tree_cached(idx, dimension, degree, planar):
+    if planar:
+        kt = kauri.idx_to_colored_planar_tree(idx, dimension, degree)
+    else:
+        kt = kauri.idx_to_colored_tree(idx, dimension, degree)
     return kt.sorted_list_repr()

@@ -81,17 +81,16 @@ def sig_kernel_backprop(
 
     :param derivs: Derivatives with respect to a signature kernel or batch
         of signature kernels, :math:`\\partial F / \\left< S(x), S(y) \\right>`.
-        If ``return_grid=False``, this should be an array of shape ``(batch_size,)``.
-        If ``return_grid=True``, this should have the same shape as the PDE grid returned by
-        ``pysiglib.sig_kernel(..., return_grid=True)``.
+        If ``return_grid=False``, this should be of shape ``(...)`` matching the leading
+        batch dimensions of the paths. If ``return_grid=True``, this should have the same
+        shape as the PDE grid returned by ``pysiglib.sig_kernel(..., return_grid=True)``.
     :type derivs: numpy.ndarray | torch.tensor
-    :param path1: The first underlying path or batch of paths, given as a `numpy.ndarray` or
-        `torch.tensor`. For a single path, this must be of shape ``(length_1, dimension)``. For a
-        batch of paths, this must be of shape ``(batch_size, length_1, dimension)``.
+    :param path1: The first underlying path or batch of paths, of shape
+        ``(..., length_1, dimension)``.
     :type path1: numpy.ndarray | torch.tensor
-    :param path2: The second underlying path or batch of paths, given as a `numpy.ndarray`
-        or `torch.tensor`. For a single path, this must be of shape ``(length_2, dimension)``.
-        For a batch of paths, this must be of shape ``(batch_size, length_2, dimension)``.
+    :param path2: The second underlying path or batch of paths, of shape
+        ``(..., length_2, dimension)``. Leading batch dimensions must match those of
+        ``path1``.
     :type path2: numpy.ndarray | torch.tensor
     :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
     :type dyadic_order: int | tuple
@@ -257,18 +256,16 @@ def sig_kernel_gram_backprop(
 
     :param derivs: Derivatives with respect to a gram matrix of signature kernels,
         :math:`\\partial F / G`.
-        If ``return_grid=False``, this should have shape ``(batch_size_1, batch_size_2)``.
+        If ``return_grid=False``, this should have shape ``(..., batch_size_1, batch_size_2)``.
         If ``return_grid=True``, this should have shape
-        ``(batch_size_1, batch_size_2, length_1, length_2)``, matching the output of
+        ``(..., batch_size_1, batch_size_2, length_1, length_2)``, matching the output of
         ``pysiglib.sig_kernel_gram(..., return_grid=True)``.
     :type derivs: numpy.ndarray | torch.tensor
-    :param path1: The first underlying path or batch of paths, given as a `numpy.ndarray` or
-        `torch.tensor`. For a single path, this must be of shape ``(length_1, dimension)``. For a
-        batch of paths, this must be of shape ``(batch_size_1, length_1, dimension)``.
+    :param path1: The first batch of paths, of shape ``(..., batch_size_1, length_1, dimension)``.
     :type path1: numpy.ndarray | torch.tensor
-    :param path2: The second underlying path or batch of paths, given as a `numpy.ndarray`
-        or `torch.tensor`. For a single path, this must be of shape ``(length_2, dimension)``.
-        For a batch of paths, this must be of shape ``(batch_size_2, length_2, dimension)``.
+    :param path2: The second batch of paths, of shape ``(..., batch_size_2, length_2, dimension)``.
+        Leading batch dimensions (everything before ``batch_size_2``) must match those of
+        ``path1``.
     :type path2: numpy.ndarray | torch.tensor
     :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
     :type dyadic_order: int | tuple

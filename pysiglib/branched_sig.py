@@ -92,7 +92,7 @@ def prepare_branched_sig(
         raise Exception("Error in pysiglib.prepare_branched_sig: " + err_msg(err_code))
 
 
-def branched_sig_length(dimension: int, degree: int, scalar_term: bool = True, planar: bool = False) -> int:
+def branched_sig_length(dimension: int, degree: int, scalar_term = None, planar: bool = False) -> int:
     """
     Returns the length of a truncated branched signature.
 
@@ -100,10 +100,12 @@ def branched_sig_length(dimension: int, degree: int, scalar_term: bool = True, p
     :param degree: Maximum tree order (number of nodes).
     :param scalar_term: If True (default), includes the empty-tree scalar term at index 0
         in the length. If False, the returned length is one less (matching ``branched_sig``
-        output with ``scalar_term=False``).
+        output with ``scalar_term=False``). Must match the ``scalar_term`` value used
+        with :func:`branched_sig`. The default will change to False in pySigLib v4.0.
     :param planar: If True, return the length for planar (ordered) branched signatures.
     :return: Length of the branched signature array.
     """
+    scalar_term = resolve_scalar_term(scalar_term)
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_non_neg(dimension, "dimension")
@@ -135,13 +137,13 @@ def branched_sig(
     before first use, where ``dimension`` is the augmented dimension
     (accounting for ``time_aug`` and ``lead_lag``).
 
-    :param path: Path of shape ``(length, dimension)`` or ``(*batch_dims, length, dimension)``.
+    :param path: Path of shape ``(..., length, dimension)``.
     :param degree: Maximum tree order (number of nodes).
     :param time_aug: If True, prepend a time channel to the path.
     :param lead_lag: If True, apply the lead-lag transformation.
     :param end_time: End time for the time augmentation channel.
     :param tree_order: Tree ordering convention for the output coefficients.
-        ``"recursive"`` (default) uses the C++ recursive construction order.
+        ``"recursive"`` (default) uses the recursive bottom-up construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
         (the empty-word term). If False, this leading element is stripped from the output.
@@ -149,7 +151,7 @@ def branched_sig(
     :type scalar_term: bool
     :param n_jobs: Number of parallel threads for batch processing.
     :param planar: If True, compute the planar (ordered) branched signature.
-    :return: Branched signature array of shape ``(bsig_len,)`` or ``(*batch_dims, bsig_len)``.
+    :return: Branched signature array of shape ``(..., bsig_len)``.
     """
     scalar_term = resolve_scalar_term(scalar_term)
 
@@ -212,7 +214,7 @@ def branched_sig_combine(
     :param dimension: Dimension of the underlying path.
     :param degree: Maximum tree order (number of nodes).
     :param tree_order: Tree ordering convention for inputs and output.
-        ``"recursive"`` (default) uses the C++ recursive construction order.
+        ``"recursive"`` (default) uses the recursive bottom-up construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
         (the empty-word term). If False, this leading element is stripped from the output.

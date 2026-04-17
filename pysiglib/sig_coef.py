@@ -36,9 +36,7 @@ def extract_sig_coef(
     """
     Extracts signature coefficients from a signature or batch of signatures.
 
-    :param sig: The signature or batch of signatures, given as a `numpy.ndarray` or `torch.tensor`.
-        For a single signature, this must be of shape ``sig_length``. For a batch of paths, this must
-        be of shape ``(batch_size, sig_length)``.
+    :param sig: The signature or batch of signatures, of shape ``(..., sig_length)``.
     :type sig: numpy.ndarray | torch.tensor
     :param words: Word or list of words at which to extract coefficients.
     :type words: tuple[int, ...] | list[tuple[int, ...]]]
@@ -48,8 +46,8 @@ def extract_sig_coef(
     :type time_aug: bool
     :param lead_lag: Whether the signatures were computed with ``lead_lag=True``.
     :type lead_lag: bool
-    :return: Signature coefficients of shape ``num_words`` or batch of signature
-        coefficients of shape ``(batch_size, num_words)``.
+    :return: Signature coefficients of shape ``(..., num_words)``, matching the leading
+        batch dimensions of ``sig``.
     :rtype: numpy.ndarray | torch.tensor
 
     Example:
@@ -118,9 +116,7 @@ def sig_coef(
 
         S(x)^I_{[s,t]} := \\int_{s < t_1 < \\cdots < t_k < t} dx^{i_1}_{t_1} \\otimes dx^{i_2}_{t_2} \\otimes \\cdots \\otimes dx^{i_k}_{t_k}.
 
-    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
-        For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
-        be of shape ``(batch_size, length, dimension)``.
+    :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
     :type path: numpy.ndarray | torch.tensor
     :param words: Multi-indices :math:`I` at which to evaluate signature coefficients, given as a list
         of lists of integers in :math:`[0, d-1]`, where :math:`d` is the dimension of the path(s). For example,
@@ -144,8 +140,8 @@ def sig_coef(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :return: Signature coefficients of shape ``num_words`` or batch of signature
-        coefficients of shape ``(batch_size, num_words)``.
+    :return: Signature coefficients of shape ``(..., num_words)``, matching the leading
+        batch dimensions of ``path``.
     :rtype: numpy.ndarray | torch.tensor
 
     .. note::

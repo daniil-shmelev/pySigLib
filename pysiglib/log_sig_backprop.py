@@ -45,13 +45,12 @@ def sig_to_log_sig_backprop(
     derivatives of :math:`F` with respect to the signature,
     :math:`\\partial F / \\partial S(x)`.
 
-    :param sig: The signature or batch of signatures, given as a `numpy.ndarray` or `torch.tensor`.
-        For a single signature, this must be of shape ``sig_length``. For a batch of paths, this must
-        be of shape ``(batch_size, sig_length)``.
+    :param sig: The signature or batch of signatures, of shape ``(..., sig_length)``.
     :type sig: numpy.ndarray | torch.tensor
     :param log_sig_derivs: Derivatives of the scalar function :math:`F` with respect to the log signature(s),
-        :math:`\\partial F / \\partial S(x)`. This must be an array of the same shape as the
-        log signature(s).
+        :math:`\\partial F / \\partial S(x)`, of shape ``(..., log_sig_length)`` for
+        methods ``1`` and ``2``, or ``(..., sig_length)`` for method ``0``. Leading
+        batch dimensions must match those of ``sig``.
     :type log_sig_derivs: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
@@ -110,8 +109,8 @@ def sig_to_log_sig_backprop(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    sig_len = sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
-    log_sig_len = log_sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag) if method else sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
+    sig_len = sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag, scalar_term=True)
+    log_sig_len = log_sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag) if method else sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag, scalar_term=True)
     data = SigInputHandler(sig, sig_len, "sig")
     derivs_data = SigInputHandler(log_sig_derivs, log_sig_len, "log_sig_derivs")
 

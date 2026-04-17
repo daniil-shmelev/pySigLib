@@ -18,4 +18,3 @@ and ``jax.grad`` differentiation.
 
     pySigLib must be built with JAX FFI support enabled (requires jaxlib >= 0.5.0, Python 3.10+).
     Check ``pysiglib.BUILT_WITH_JAX_FFI`` to verify.
-    ``sig_to_log_sig`` with ``method=3`` is not supported — use ``log_sig(method=3)`` instead.

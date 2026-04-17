@@ -43,9 +43,9 @@ def logsig_to_sig(
     Supports all methods (``0``, ``1``, ``2``). For methods ``1`` and ``2``,
     ``prepare_log_sig(dimension, degree, method=2)`` must be called first.
 
-    :param log_sig: The log-signature or batch of log-signatures, given as a `numpy.ndarray` or `torch.tensor`.
-        For a single log-signature, this must be of shape ``(sig_length,)``. For a batch, this must be
-        of shape ``(batch_size, sig_length)``.
+    :param log_sig: The log-signature or batch of log-signatures, of shape
+        ``(..., log_sig_length)`` for methods ``1`` and ``2``, or ``(..., sig_length)``
+        for method ``0`` (expanded basis).
     :type log_sig: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
@@ -96,8 +96,8 @@ def logsig_to_sig(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    input_len = sig_length(aug_dimension, degree) if method == 0 else log_sig_length(aug_dimension, degree)
-    out_len = sig_length(aug_dimension, degree)
+    input_len = sig_length(aug_dimension, degree, scalar_term=True) if method == 0 else log_sig_length(aug_dimension, degree)
+    out_len = sig_length(aug_dimension, degree, scalar_term=True)
     data = SigInputHandler(log_sig, input_len, "log_sig")
     result = SigOutputHandler(data, out_len)
 

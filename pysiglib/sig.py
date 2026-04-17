@@ -46,9 +46,10 @@ def sig_combine(
 
     where :math:`x_1 * x_2` is the concatenation of the two paths :math:`x_1, x_2`.
 
-    :param sig1: The first truncated signature
+    :param sig1: The first truncated signature, of shape ``(..., sig_length)``.
     :type sig1: numpy.ndarray | torch.tensor
-    :param sig2: The second truncated signature. Must have the same degree and dimension as the first.
+    :param sig2: The second truncated signature, of shape ``(..., sig_length)``.
+        Must have the same leading batch dimensions, degree and dimension as the first.
     :type sig2: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -108,7 +109,7 @@ def sig_combine(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    sig_len = sig_length(aug_dimension, degree)
+    sig_len = sig_length(aug_dimension, degree, scalar_term=True)
     data = MultipleSigInputHandler([sig1, sig2], sig_len, ["sig1", "sig2"])
     result = SigOutputHandler(data, sig_len)
 
@@ -152,9 +153,7 @@ def sig(
 
         S(x)^{(k)}_{[s,t]} := \\int_{s < t_1 < \\cdots < t_k < t} dx_{t_1} \\otimes dx_{t_2} \\otimes \\cdots \\otimes dx_{t_k} \\in \\left(\\mathbb{R}^d\\right)^{\\otimes k}.
 
-    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
-        For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
-        be of shape ``(batch_size, length, dimension)``.
+    :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
     :type path: numpy.ndarray | torch.tensor
     :param degree: The truncation level of the signature, :math:`N`.
     :type degree: int
@@ -225,7 +224,7 @@ def sig(
 
     check_n_jobs(n_jobs)
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
-    sig_len = sig_length(data.dimension, degree)
+    sig_len = sig_length(data.dimension, degree, scalar_term=True)
     result = SigOutputHandler(data, sig_len)
 
     if data.batch_size == 0:

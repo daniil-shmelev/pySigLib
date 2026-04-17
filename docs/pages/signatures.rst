@@ -1,6 +1,9 @@
 Signatures
 ========================
 
+This section covers functions for computing truncated signatures and for
+combining or extending them without recomputing from scratch.
+
 .. toctree::
    :titlesonly:
    :maxdepth: 2
