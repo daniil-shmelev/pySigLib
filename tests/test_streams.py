@@ -207,7 +207,7 @@ class TestLogSigWindowStream:
             np.testing.assert_allclose(window_ls[i], direct, rtol=1e-8)
 
 
-# ---- Torch tensor tests (no autograd — base API is forward-only) ----
+# ---- Torch tensor tests (no autograd - base API is forward-only) ----
 
 class TestTorchTensors:
     def test_sig_stream_torch(self, batch_shape):

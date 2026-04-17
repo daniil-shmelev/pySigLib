@@ -40,7 +40,7 @@ if SYSTEM != platform.system():
 # Load cpsig + discover cusig via the pysiglib-cuda plugin
 ######################################################
 
-# winmode=0 on Windows — see https://github.com/NVIDIA/warp/issues/24
+# winmode=0 on Windows - see https://github.com/NVIDIA/warp/issues/24
 def _load_native_lib(directory, base_name):
     if SYSTEM == 'Windows':
         return ctypes.CDLL(os.path.join(directory, f'{base_name}.dll'), winmode=0)

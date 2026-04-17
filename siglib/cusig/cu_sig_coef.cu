@@ -355,7 +355,7 @@ extern "C" {
 // =========================================================================
 
 // Note: signed_one_over_fact ((-1)^k / k!) is computed inline from one_over_fact
-// to reduce register pressure — sign flip is free with compile-time unrolling.
+// to reduce register pressure - sign flip is free with compile-time unrolling.
 
 // =========================================================================
 // Generic backprop kernel (variable degree per word)
@@ -439,7 +439,7 @@ __global__ void sig_coef_backprop_kernel(
 			}
 		}
 
-		// update_path_derivs_ → collect into cur_upd
+		// update_path_derivs_ -> collect into cur_upd
 		T cur_upd[SIG_COEF_CUDA_MAX_DEGREE];
 		{
 			T upd = d[0];
@@ -592,7 +592,7 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 			}
 		}
 
-		// update_path_derivs_ → collect into cur_upd
+		// update_path_derivs_ -> collect into cur_upd
 		T cur_upd[DEGREE];
 		{
 			T upd = d[0];

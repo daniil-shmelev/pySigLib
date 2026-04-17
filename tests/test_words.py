@@ -41,7 +41,7 @@ def test_lyndon_words_3():
 
 def test_idx_to_word():
     dimension, degree = 3, 4
-    m = pysiglib.sig_length(3, 4)
+    m = pysiglib.sig_length(dimension, degree)
 
     for idx in range(m):
         w = pysiglib.idx_to_word(idx, dimension)

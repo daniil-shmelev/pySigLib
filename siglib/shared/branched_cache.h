@@ -57,7 +57,7 @@ using TreeIndexMap = std::unordered_map<CanonicalTree, uint64_t, CanonicalTreeHa
 // Enumerate all admissible cuts for a tree using memoized child cuts.
 // When planar=true, preserve child ordering (no sort) so distinct left-to-right
 // arrangements produce distinct canonical trees and forests.
-// Note: the planar coproduct stored here is the NCK (Foissy) one; its Δ-dual convolution numerically equals the MKW convolution on scalar characters via shuffle/factorial cancellation.
+// Note: the planar coproduct stored here is the NCK (Foissy) one; its \Delta-dual convolution numerically equals the MKW convolution on scalar characters via shuffle/factorial cancellation.
 inline void enumerate_admissible_cuts(
 	uint64_t tree_idx,
 	const std::vector<DecoratedTreeInfo>& trees,

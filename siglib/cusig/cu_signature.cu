@@ -768,7 +768,7 @@ void signature_per_word_core_(
 	size_t smem = actual_chunk * dimension * sizeof(T);
 
 	// For small total output sizes, skip streams and launch sequentially
-	// on the default stream — avoids event create/destroy and stream sync overhead.
+	// on the default stream - avoids event create/destroy and stream sync overhead.
 	const uint64_t top_level = host_power(dimension, degree);
 	const bool use_streams = (top_level > 4096);
 

@@ -1612,7 +1612,7 @@ public:
         }
 
         TEST_METHOD(ManualTimeAugTest) {
-            // CPU test passes time_aug=true with dimension=1 → aug_dimension=2
+            // CPU test passes time_aug=true with dimension=1 -> aug_dimension=2
             // CUDA: we pass dimension=2 directly (the signature is already in the augmented space)
             uint64_t dimension = 2, degree = 3;
             std::vector<float> true_ = { 0.f, 9.f, 4.f, 0.f, -2.5f, 2.5f, 0.f, 0.f, -5.25f,
@@ -1623,7 +1623,7 @@ public:
         }
 
         TEST_METHOD(ManualLeadLagTest) {
-            // CPU test passes lead_lag=true with dimension=1 → aug_dimension=2
+            // CPU test passes lead_lag=true with dimension=1 -> aug_dimension=2
             // CUDA: we pass dimension=2 directly
             uint64_t dimension = 2, degree = 3;
             std::vector<float> true_ = { 0.f, 9.f, 9.f, 0.f, -31.5f, 31.5f, 0.f, 0.f, 26.75f, -53.5f, 11.75f, 26.75f, -23.5f, 11.75f, 0.f };
@@ -1632,7 +1632,7 @@ public:
         }
 
         TEST_METHOD(BigLeadLagTest) {
-            // CPU test: lead_lag=true, dimension=2 → aug_dimension=4
+            // CPU test: lead_lag=true, dimension=2 -> aug_dimension=4
             // Just check it doesn't crash/error
             uint64_t dimension = 4, degree = 2, batch = 1;
             uint64_t slen = sig_length_(dimension, degree);
@@ -1687,7 +1687,7 @@ public:
     };
 
     // =========================================================================
-    // Helper for backprop tests: 3 device inputs (sig, derivs → out)
+    // Helper for backprop tests: 3 device inputs (sig, derivs -> out)
     // fn signature: int f(const T* sig, T* out, const T* derivs, ...)
     // =========================================================================
 

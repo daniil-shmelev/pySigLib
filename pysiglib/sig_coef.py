@@ -92,7 +92,7 @@ def extract_sig_coef(
     words = check_word_or_word_list(words, aug_dimension, "word")
 
     sig_len = sig.shape[-1]
-    data = SigInputHandler(sig, sig_len, "sig")
+    SigInputHandler(sig, sig_len, "sig")  # validates shape/dtype; return unused
 
     idx = [word_to_idx(w, aug_dimension) for w in words]
 
@@ -196,7 +196,7 @@ def sig_coef(
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
 
-    # CUDA sig_coef doesn't support time_aug/lead_lag natively —
+    # CUDA sig_coef doesn't support time_aug/lead_lag natively -
     # transform the path first, then recurse with no augmentation flags.
     if data.device != "cpu" and (time_aug or lead_lag):
         from .transform_path import transform_path

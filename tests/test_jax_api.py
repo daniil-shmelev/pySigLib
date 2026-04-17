@@ -137,7 +137,7 @@ def test_jax_sig_grad_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# sig_combine — forward
+# sig_combine - forward
 # =========================================================================
 
 SIG_COMBINE_CASES = [
@@ -202,7 +202,7 @@ def test_jax_sig_combine_batch_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# sig_combine — backward
+# sig_combine - backward
 # =========================================================================
 
 SIG_COMBINE_BACKWARD_CASES = [
@@ -249,7 +249,7 @@ def test_jax_sig_combine_grad_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# transform_path — forward
+# transform_path - forward
 # =========================================================================
 
 TRANSFORM_PATH_CASES = [
@@ -283,7 +283,7 @@ def test_jax_transform_path_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# transform_path — backward
+# transform_path - backward
 # =========================================================================
 
 TRANSFORM_PATH_BACKWARD_CASES = [
@@ -320,7 +320,7 @@ def test_jax_transform_path_grad_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# sig_to_log_sig — forward
+# sig_to_log_sig - forward
 # =========================================================================
 
 SIG_TO_LOG_SIG_CASES = [
@@ -385,7 +385,7 @@ def test_jax_sig_to_log_sig_batch_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# sig_to_log_sig — backward
+# sig_to_log_sig - backward
 # =========================================================================
 
 SIG_TO_LOG_SIG_BACKWARD_CASES = [
@@ -429,7 +429,7 @@ def test_jax_sig_to_log_sig_grad_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# log_sig — forward (composition of sig + sig_to_log_sig)
+# log_sig - forward (composition of sig + sig_to_log_sig)
 # =========================================================================
 
 LOG_SIG_CASES = [
@@ -468,7 +468,7 @@ def test_jax_log_sig_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# log_sig_combine — forward
+# log_sig_combine - forward
 # =========================================================================
 
 LOG_SIG_COMBINE_CASES = [
@@ -538,7 +538,7 @@ def test_jax_log_sig_combine_batch_matches_pysiglib(device, jitted, dtype, case)
 
 
 # =========================================================================
-# log_sig_combine — backward
+# log_sig_combine - backward
 # =========================================================================
 
 LOG_SIG_COMBINE_BACKWARD_CASES = [
@@ -587,7 +587,7 @@ def test_jax_log_sig_combine_grad_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# sig_kernel — forward
+# sig_kernel - forward
 # =========================================================================
 
 SIG_KERNEL_CASES = [
@@ -631,7 +631,7 @@ def test_jax_sig_kernel_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# sig_kernel — backward
+# sig_kernel - backward
 # =========================================================================
 
 SIG_KERNEL_BACKWARD_CASES = [
@@ -674,7 +674,7 @@ def test_jax_sig_kernel_grad_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# sig_kernel_gram — forward
+# sig_kernel_gram - forward
 # =========================================================================
 
 SIG_KERNEL_GRAM_CASES = [
@@ -709,7 +709,7 @@ def test_jax_sig_kernel_gram_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# sig_coef — forward (without and with prefixes)
+# sig_coef - forward (without and with prefixes)
 # =========================================================================
 
 SIG_COEF_CASES = [
@@ -742,7 +742,7 @@ def test_jax_sig_coef_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# sig_mmd — forward
+# sig_mmd - forward
 # =========================================================================
 
 SIG_MMD_CASES = [
@@ -777,7 +777,7 @@ def test_jax_sig_mmd_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# branched_sig — forward
+# branched_sig - forward
 # =========================================================================
 
 BRANCHED_SIG_CASES = [
@@ -835,7 +835,7 @@ def test_jax_branched_sig_batch_matches_pysiglib(device, jitted, dtype, case):
 
 
 # =========================================================================
-# branched_sig — backward
+# branched_sig - backward
 # =========================================================================
 
 BRANCHED_SIG_BACKWARD_CASES = [
@@ -938,7 +938,7 @@ def test_jax_branched_sig_planar_grad_matches_pysiglib(device, jitted):
 
 
 # =========================================================================
-# branched_sig_combine — forward
+# branched_sig_combine - forward
 # =========================================================================
 
 BRANCHED_SIG_COMBINE_CASES = [
@@ -1003,7 +1003,7 @@ def test_jax_branched_sig_combine_batch_matches_pysiglib(device, jitted, dtype, 
 
 
 # =========================================================================
-# branched_sig_combine — backward
+# branched_sig_combine - backward
 # =========================================================================
 
 BRANCHED_SIG_COMBINE_BACKWARD_CASES = [

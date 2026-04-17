@@ -27,6 +27,13 @@ from ..branched_sig import branched_sig_length
 
 import jax
 
+# ``jax.ffi`` was graduated from ``jax.extend.ffi`` in JAX 0.5; support both so
+# the package works against JAX 0.4.x and 0.5+.
+if hasattr(jax, "ffi"):
+    _jax_ffi = jax.ffi
+else:
+    import jax.extend.ffi as _jax_ffi
+
 
 _FFI_LIB = None
 _REGISTERED = False
@@ -166,6 +173,22 @@ def _load_ffi_library():
             "so the XLA FFI headers are available at build time."
         )
 
+    # On Windows, ``winmode=0`` disables LOAD_LIBRARY_SEARCH_USER_DIRS, so the
+    # DLL dependencies (notably ``cusig.dll``) aren't resolvable from the
+    # pysiglib package directory via ``os.add_dll_directory``. Pre-load any
+    # sibling DLLs that live next to the jax-ffi library so their handles are
+    # already open when the FFI DLL's imports are resolved.
+    if SYSTEM == "Windows":
+        for sibling in ("cpsig.dll", "cusig.dll"):
+            try:
+                sibling_path = _find_native_lib(sibling)
+            except OSError:
+                continue
+            try:
+                ctypes.CDLL(sibling_path, winmode=0)
+            except OSError:
+                pass
+
     lib_path = _find_native_lib(_ffi_library_filename())
     if SYSTEM in {"Windows", "Linux"}:
         _FFI_LIB = ctypes.CDLL(lib_path, winmode=0)
@@ -211,18 +234,18 @@ def ensure_registered() -> None:
 
     for op_targets in _TARGETS.values():
         target_name, symbol_name = op_targets["cpu"]
-        jax.ffi.register_ffi_target(
+        _jax_ffi.register_ffi_target(
             target_name,
-            jax.ffi.pycapsule(getattr(lib, symbol_name)),
+            _jax_ffi.pycapsule(getattr(lib, symbol_name)),
             platform="cpu",
         )
 
     if BUILT_WITH_CUDA:
         for op_targets in _TARGETS.values():
             target_name, symbol_name = op_targets["cuda"]
-            jax.ffi.register_ffi_target(
+            _jax_ffi.register_ffi_target(
                 target_name,
-                jax.ffi.pycapsule(getattr(lib, symbol_name)),
+                _jax_ffi.pycapsule(getattr(lib, symbol_name)),
                 platform="CUDA",
             )
 
@@ -238,9 +261,9 @@ def _sig_shape(path_shape, degree: int, time_aug: bool, lead_lag: bool) -> tuple
 
 
 def _make_ffi_call(op_name, inputs, out_type, call_kwargs):
-    cpu_call = jax.ffi.ffi_call(_target_name(op_name, "cpu"), out_type, vmap_method="broadcast_all")
+    cpu_call = _jax_ffi.ffi_call(_target_name(op_name, "cpu"), out_type, vmap_method="broadcast_all")
     if BUILT_WITH_CUDA:
-        cuda_call = jax.ffi.ffi_call(_target_name(op_name, "cuda"), out_type, vmap_method="broadcast_all")
+        cuda_call = _jax_ffi.ffi_call(_target_name(op_name, "cuda"), out_type, vmap_method="broadcast_all")
         return jax.lax.platform_dependent(
             *inputs,
             cpu=lambda *args: cpu_call(*args, **call_kwargs),

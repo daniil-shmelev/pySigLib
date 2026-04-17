@@ -21,8 +21,8 @@
 #include <type_traits>
 
 // =========================================================================
-// tensor_exp: exp(x) = 1 + P_1 + ... + P_N, P_1=x, P_n=x⊗P_{n-1}/n
-// P_n has min level n → level-skipping. buff must be 2*sig_len.
+// tensor_exp: exp(x) = 1 + P_1 + ... + P_N, P_1=x, P_n=x \otimes P_{n-1}/n
+// P_n has min level n -> level-skipping. buff must be 2*sig_len.
 // =========================================================================
 
 template<typename T>
@@ -506,7 +506,7 @@ static void exp_stage_strip_(const T* in_full, T* out_stripped, uint64_t batch_s
 	exp_strip_scalar_kernel<T><<<grid, block>>>(in_full, out_stripped, full_len);
 }
 
-// Core kernel launches factored out — same body as before; callers now handle
+// Core kernel launches factored out - same body as before; callers now handle
 // scalar_term staging. This keeps scalar_term=true zero-overhead.
 template<typename T>
 void logsig_to_sig_cuda_core_(

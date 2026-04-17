@@ -740,8 +740,8 @@ def reorder_kauri_to_pysiglib_planar(kauri_arr, perm):
     (1, 2, 3),    # 2 + 1
     (1, 3, 5),    # 3 + 2  (same as non-planar for d=1)
     (2, 1, 3),    # 1 + 2
-    (2, 2, 7),    # 3 + 4  (same as non-planar: single child ⇒ no ordering difference)
-    (2, 3, 23),   # 7 + 16 (non-planar: 21; +2 from (•₀,•₁) vs (•₁,•₀) orderings)
+    (2, 2, 7),    # 3 + 4  (same as non-planar: single child => no ordering difference)
+    (2, 3, 23),   # 7 + 16 (non-planar: 21; +2 from (*_0,*_1) vs (*_1,*_0) orderings)
     (3, 1, 4),    # 1 + 3
     (3, 2, 13),   # 4 + 9
 ])
@@ -753,7 +753,7 @@ def test_planar_branched_sig_length(d, N, expected):
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
 def test_planar_branched_sig_length_vs_kauri(d, N):
     # colored_planar_trees_up_to_order includes the empty tree (order 0),
-    # which corresponds to the scalar term — so the count equals pysiglib's length directly.
+    # which corresponds to the scalar term - so the count equals pysiglib's length directly.
     expected = len(list(kauri.colored_planar_trees_up_to_order(N, d)))
     pysiglib.prepare_branched_sig(d, N, planar=True)
     assert pysiglib.branched_sig_length(d, N, planar=True) == expected
