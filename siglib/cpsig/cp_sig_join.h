@@ -183,53 +183,53 @@ void sig_join_backprop_(
 	populate_level_index(level_index, dimension, degree + 2);
 
 	const uint64_t full_len = level_index[degree + 1];
-	const uint64_t in_stride = scalar_term ? full_len : full_len - 1;
 
 	// Recompute linear_sig (always full)
 	auto lsig_uptr = std::make_unique<T[]>(full_len);
 	T* lsig = lsig_uptr.get();
 	linear_sig_<T>(displacement, lsig, dimension, degree, /*scalar_term=*/true);
 
-	// Full-size buffers for the inner backprop
-	auto d_out_full_uptr = std::make_unique<T[]>(full_len);
-	auto d_sig_full_uptr = std::make_unique<T[]>(full_len);
-	auto sig_full_uptr = std::make_unique<T[]>(full_len);
-	T* d_out_full = d_out_full_uptr.get();
-	T* d_sig_full = d_sig_full_uptr.get();
-	T* sig_full = sig_full_uptr.get();
+	auto d_lsig_uptr = std::make_unique<T[]>(full_len);
+	T* d_lsig = d_lsig_uptr.get();
 
 	if (scalar_term) {
-		std::memcpy(d_out_full, d_out, full_len * sizeof(T));
-		std::memcpy(sig_full, sig, full_len * sizeof(T));
+		// Fast path: operate directly on the caller's buffers.
+		if (prepend) {
+			std::memcpy(d_lsig, d_out, full_len * sizeof(T));
+			uncombine_sig_deriv(lsig, sig, d_lsig, d_sig, dimension, degree, level_index);
+		} else {
+			std::memcpy(d_sig, d_out, full_len * sizeof(T));
+			uncombine_sig_deriv(sig, lsig, d_sig, d_lsig, dimension, degree, level_index);
+		}
+		d_sig[0] = static_cast<T>(0);
 	} else {
+		// Slow path: callers' buffers omit the scalar term, so we materialise
+		// full-length temporaries, run the backprop, and copy back without index 0.
+		auto d_out_full_uptr = std::make_unique<T[]>(full_len);
+		auto d_sig_full_uptr = std::make_unique<T[]>(full_len);
+		auto sig_full_uptr = std::make_unique<T[]>(full_len);
+		T* d_out_full = d_out_full_uptr.get();
+		T* d_sig_full = d_sig_full_uptr.get();
+		T* sig_full = sig_full_uptr.get();
+
 		d_out_full[0] = static_cast<T>(0);
 		std::memcpy(d_out_full + 1, d_out, (full_len - 1) * sizeof(T));
 		sig_full[0] = static_cast<T>(1);
 		std::memcpy(sig_full + 1, sig, (full_len - 1) * sizeof(T));
-	}
 
-	auto d_lsig_uptr = std::make_unique<T[]>(full_len);
-	T* d_lsig = d_lsig_uptr.get();
-
-	if (prepend) {
-		std::memcpy(d_lsig, d_out_full, full_len * sizeof(T));
-		uncombine_sig_deriv(lsig, sig_full, d_lsig, d_sig_full, dimension, degree, level_index);
-	} else {
-		std::memcpy(d_sig_full, d_out_full, full_len * sizeof(T));
-		uncombine_sig_deriv(sig_full, lsig, d_sig_full, d_lsig, dimension, degree, level_index);
+		if (prepend) {
+			std::memcpy(d_lsig, d_out_full, full_len * sizeof(T));
+			uncombine_sig_deriv(lsig, sig_full, d_lsig, d_sig_full, dimension, degree, level_index);
+		} else {
+			std::memcpy(d_sig_full, d_out_full, full_len * sizeof(T));
+			uncombine_sig_deriv(sig_full, lsig, d_sig_full, d_lsig, dimension, degree, level_index);
+		}
+		std::memcpy(d_sig, d_sig_full + 1, (full_len - 1) * sizeof(T));
 	}
-	d_sig_full[0] = static_cast<T>(0);
 	d_lsig[0] = static_cast<T>(0);
 
 	linear_sig_deriv_to_increment_deriv(lsig, d_lsig, dimension, degree, level_index);
 	std::memcpy(d_displacement, d_lsig + 1, dimension * sizeof(T));
-
-	// Copy d_sig to caller's buffer
-	if (scalar_term) {
-		std::memcpy(d_sig, d_sig_full, full_len * sizeof(T));
-	} else {
-		std::memcpy(d_sig, d_sig_full + 1, (full_len - 1) * sizeof(T));
-	}
 }
 
 template<std::floating_point T>
