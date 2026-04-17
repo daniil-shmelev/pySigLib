@@ -153,9 +153,9 @@ extern "C" {
 	* @param horner Whether to use the Horner algorithm (default = true).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true) noexcept;
+	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true, bool scalar_term = true) noexcept;
 	/** @brief */
-	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true) noexcept;
+	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_cuda_functions Signature backpropagation CUDA functions
@@ -178,9 +178,9 @@ extern "C" {
 	* @param end_time End time for time augmentation (default = 1.0).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f) noexcept;
+	[[nodiscard]] CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true) noexcept;
 	/** @brief */
-	[[nodiscard]] CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1.) noexcept;
+	[[nodiscard]] CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true) noexcept;
 	/** @} */
 
 	/** @defgroup sig_combine_cuda_functions Signature combine CUDA functions
@@ -198,9 +198,9 @@ extern "C" {
 	* @param degree Truncation degree of the signatures.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_combine_cuda_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	[[nodiscard]] CUSIG_API int sig_combine_cuda_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
 	/** @brief */
-	[[nodiscard]] CUSIG_API int sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	[[nodiscard]] CUSIG_API int sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
 	/** @} */
 
 	/** @defgroup sig_combine_backprop_cuda_functions Signature combine backprop CUDA functions
@@ -220,9 +220,9 @@ extern "C" {
 	* @param degree Truncation degree of the signatures.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_combine_backprop_cuda_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	[[nodiscard]] CUSIG_API int sig_combine_backprop_cuda_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
 	/** @brief */
-	[[nodiscard]] CUSIG_API int sig_combine_backprop_cuda_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	[[nodiscard]] CUSIG_API int sig_combine_backprop_cuda_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
 	/** @} */
 
 	/** @defgroup sig_to_log_sig_cuda_functions Sig to log sig CUDA functions
@@ -240,9 +240,9 @@ extern "C" {
 	* @param method Method for log signature computation (0, 1, or 2).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	[[nodiscard]] CUSIG_API int sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 	/** @brief */
-	[[nodiscard]] CUSIG_API int sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	[[nodiscard]] CUSIG_API int sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 	/** @} */
 
 	/** @defgroup sig_to_log_sig_backprop_cuda_functions Sig to log sig backprop CUDA functions
@@ -261,9 +261,9 @@ extern "C" {
 	* @param method Method for log signature computation (0, 1, or 2).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_to_log_sig_backprop_cuda_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	[[nodiscard]] CUSIG_API int sig_to_log_sig_backprop_cuda_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 	/** @brief */
-	[[nodiscard]] CUSIG_API int sig_to_log_sig_backprop_cuda_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+	[[nodiscard]] CUSIG_API int sig_to_log_sig_backprop_cuda_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 	/** @} */
 
 	/** @defgroup prepare_log_sig_cuda_functions Prepare log sig CUDA functions
@@ -363,14 +363,14 @@ extern "C" {
 	* @{
 	*/
 	[[nodiscard]] CUSIG_API int logsig_to_sig_cuda_f(const float* log_sig, float* out,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 	[[nodiscard]] CUSIG_API int logsig_to_sig_cuda_d(const double* log_sig, double* out,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 
 	[[nodiscard]] CUSIG_API int logsig_to_sig_backprop_cuda_f(const float* log_sig, float* d_logsig, const float* d_sig,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 	[[nodiscard]] CUSIG_API int logsig_to_sig_backprop_cuda_d(const double* log_sig, double* d_logsig, const double* d_sig,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method) noexcept;
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_from_path_cuda_functions Log-signature from path CUDA functions
@@ -420,30 +420,30 @@ extern "C" {
 	* @{
 	*/
 
-	[[nodiscard]] CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false) noexcept;
-	[[nodiscard]] CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true) noexcept;
 
-	[[nodiscard]] CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
-	[[nodiscard]] CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
 
-	[[nodiscard]] CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
-	[[nodiscard]] CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
 
-	[[nodiscard]] CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false) noexcept;
-	[[nodiscard]] CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true) noexcept;
 	/** @} */
 
 	// linear_sig CUDA
-	[[nodiscard]] CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
-	[[nodiscard]] CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	[[nodiscard]] CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
 
 	// sig_join CUDA
-	[[nodiscard]] CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	[[nodiscard]] CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
+	[[nodiscard]] CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
 
 	// sig_join_backprop CUDA
-	[[nodiscard]] CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
-	[[nodiscard]] CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false) noexcept;
+	[[nodiscard]] CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
 
 	// log_sig_join CUDA
 	[[nodiscard]] CUSIG_API int log_sig_join_cuda_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;

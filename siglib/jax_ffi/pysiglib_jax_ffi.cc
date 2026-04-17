@@ -211,10 +211,10 @@ inline std::uint64_t AugmentedDimension(std::uint64_t dimension, bool time_aug, 
 }
 
 template <typename T>
-using CpuSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int) noexcept;
+using CpuSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, int) noexcept;
 
 template <typename T>
-using CpuSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, int) noexcept;
+using CpuSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int) noexcept;
 
 template <typename T>
 struct CpuFns;
@@ -291,10 +291,10 @@ struct CpuFns<double> {
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
-using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool) noexcept;
+using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool) noexcept;
 
 template <typename T>
-using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T) noexcept;
+using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool) noexcept;
 
 template <typename T>
 struct CudaFns;
@@ -422,6 +422,7 @@ ffi::Error SigCpuImpl(
         lead_lag,
         static_cast<T>(end_time),
         horner,
+        true,
         static_cast<int>(n_jobs)
     );
 
@@ -478,6 +479,7 @@ ffi::Error SigBackpropCpuImpl(
         time_aug,
         lead_lag,
         static_cast<T>(end_time),
+        true,
         static_cast<int>(n_jobs)
     );
 
@@ -534,7 +536,8 @@ ffi::Error SigCudaImpl(
         time_aug,
         lead_lag,
         static_cast<T>(end_time),
-        horner
+        horner,
+        true
     );
 
     if (err_code != 0) {
@@ -595,7 +598,8 @@ ffi::Error SigBackpropCudaImpl(
         static_cast<std::uint64_t>(degree),
         time_aug,
         lead_lag,
-        static_cast<T>(end_time)
+        static_cast<T>(end_time),
+        true
     );
 
     if (err_code != 0) {
@@ -796,6 +800,7 @@ ffi::Error SigCombineCpuImpl(
         spec.is_batch ? spec.batch_size : 1,
         static_cast<std::uint64_t>(dimension),
         static_cast<std::uint64_t>(degree),
+        true,
         static_cast<int>(n_jobs)
     );
 
@@ -828,6 +833,7 @@ ffi::Error SigCombineBackpropCpuImpl(
         spec.is_batch ? spec.batch_size : 1,
         static_cast<std::uint64_t>(dimension),
         static_cast<std::uint64_t>(degree),
+        true,
         static_cast<int>(n_jobs)
     );
 
@@ -893,7 +899,8 @@ ffi::Error SigCombineCudaImpl(
         sig1_ptr, sig2_ptr, out_ptr,
         spec.is_batch ? spec.batch_size : 1,
         static_cast<std::uint64_t>(dimension),
-        static_cast<std::uint64_t>(degree)
+        static_cast<std::uint64_t>(degree),
+        true
     );
 
     if (err_code != 0) return NativeCallError("sig_combine_cuda", err_code);
@@ -927,7 +934,8 @@ ffi::Error SigCombineBackpropCudaImpl(
         cot_ptr, grad1_ptr, grad2_ptr, sig1_ptr, sig2_ptr,
         spec.is_batch ? spec.batch_size : 1,
         static_cast<std::uint64_t>(dimension),
-        static_cast<std::uint64_t>(degree)
+        static_cast<std::uint64_t>(degree),
+        true
     );
 
     if (err_code != 0) return NativeCallError("sig_combine_backprop_cuda", err_code);
@@ -1187,6 +1195,7 @@ ffi::Error SigToLogSigCpuImpl(
         static_cast<std::uint64_t>(degree),
         false, false,
         static_cast<int>(method),
+        true,
         static_cast<int>(n_jobs)
     );
 
@@ -1218,6 +1227,7 @@ ffi::Error SigToLogSigBackpropCpuImpl(
         static_cast<std::uint64_t>(degree),
         false, false,
         static_cast<int>(method),
+        true,
         static_cast<int>(n_jobs)
     );
 
@@ -1258,7 +1268,7 @@ ffi::Error SigToLogSigCudaImpl(
 
     int err_code = CudaFns<T>::sig_to_log_sig(BufferData<T>(sig_buf), BufferData<T>(out),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(degree), static_cast<int>(method));
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(degree), static_cast<int>(method), true);
     if (err_code != 0) return NativeCallError("sig_to_log_sig_cuda", err_code);
     return ffi::Error::Success();
 }
@@ -1275,7 +1285,7 @@ ffi::Error SigToLogSigBackpropCudaImpl(
 
     int err_code = CudaFns<T>::sig_to_log_sig_backprop(BufferData<T>(sig_buf), BufferData<T>(out), BufferData<T>(cotangent),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(degree), static_cast<int>(method));
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(degree), static_cast<int>(method), true);
     if (err_code != 0) return NativeCallError("sig_to_log_sig_backprop_cuda", err_code);
     return ffi::Error::Success();
 }
@@ -1842,7 +1852,7 @@ ffi::Error BranchedSigCpuImpl(
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs),
-        time_aug, lead_lag, static_cast<T>(end_time), planar
+        time_aug, lead_lag, static_cast<T>(end_time), planar, true
     );
     if (err_code != 0) return NativeCallError("branched_sig", err_code);
     return ffi::Error::Success();
@@ -1867,7 +1877,7 @@ ffi::Error BranchedSigBackpropCpuImpl(
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs),
-        time_aug, lead_lag, static_cast<T>(end_time), planar
+        time_aug, lead_lag, static_cast<T>(end_time), planar, true
     );
     if (err_code != 0) return NativeCallError("branched_sig_backprop", err_code);
     return ffi::Error::Success();
@@ -1908,7 +1918,7 @@ ffi::Error BranchedSigCudaImpl(
     int err_code = CudaFns<T>::bsig(BufferData<T>(path), BufferData<T>(out),
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
-        static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time), planar);
+        static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time), planar, true);
     if (err_code != 0) return NativeCallError("branched_sig_cuda", err_code);
     return ffi::Error::Success();
 }
@@ -1927,7 +1937,7 @@ ffi::Error BranchedSigBackpropCudaImpl(
     int err_code = CudaFns<T>::bsig_backprop(BufferData<T>(path), BufferData<T>(out), BufferData<T>(cotangent), BufferData<T>(bsig),
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
-        static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time), planar);
+        static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time), planar, true);
     if (err_code != 0) return NativeCallError("branched_sig_backprop_cuda", err_code);
     return ffi::Error::Success();
 }
@@ -1968,7 +1978,7 @@ ffi::Error BranchedSigCombineCpuImpl(
 
     int err_code = CpuFns<T>::bsig_combine(BufferData<T>(bsig1), BufferData<T>(bsig2), BufferData<T>(out),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs), planar);
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs), planar, true);
     if (err_code != 0) return NativeCallError("branched_sig_combine", err_code);
     return ffi::Error::Success();
 }
@@ -1985,7 +1995,7 @@ ffi::Error BranchedSigCombineBackpropCpuImpl(
     int err_code = CpuFns<T>::bsig_combine_backprop(BufferData<T>(bsig1), BufferData<T>(bsig2), BufferData<T>(cotangent),
         BufferData<T>(grad1), BufferData<T>(grad2),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs), planar);
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs), planar, true);
     if (err_code != 0) return NativeCallError("branched_sig_combine_backprop", err_code);
     return ffi::Error::Success();
 }
@@ -2017,7 +2027,7 @@ ffi::Error BranchedSigCombineCudaImpl(cudaStream_t stream, std::int64_t dimensio
     if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
     int err_code = CudaFns<T>::bsig_combine(BufferData<T>(bsig1), BufferData<T>(bsig2), BufferData<T>(out),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), planar);
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), planar, true);
     if (err_code != 0) return NativeCallError("branched_sig_combine_cuda", err_code);
     return ffi::Error::Success();
 }
@@ -2033,7 +2043,7 @@ ffi::Error BranchedSigCombineBackpropCudaImpl(cudaStream_t stream, std::int64_t 
     int err_code = CudaFns<T>::bsig_combine_backprop(BufferData<T>(bsig1), BufferData<T>(bsig2), BufferData<T>(cotangent),
         BufferData<T>(grad1), BufferData<T>(grad2),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), planar);
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), planar, true);
     if (err_code != 0) return NativeCallError("branched_sig_combine_backprop_cuda", err_code);
     return ffi::Error::Success();
 }
@@ -2274,6 +2284,7 @@ ffi::Error LogSigToSigCpuImpl(
         static_cast<std::uint64_t>(degree),
         false, false,
         static_cast<int>(method),
+        true,
         static_cast<int>(n_jobs)
     );
     if (err_code != 0) return NativeCallError("logsig_to_sig", err_code);
@@ -2296,6 +2307,7 @@ ffi::Error LogSigToSigBackpropCpuImpl(
         static_cast<std::uint64_t>(degree),
         false, false,
         static_cast<int>(method),
+        true,
         static_cast<int>(n_jobs)
     );
     if (err_code != 0) return NativeCallError("logsig_to_sig_backprop", err_code);
@@ -2337,7 +2349,7 @@ ffi::Error LogSigToSigCudaImpl(
     int err_code = CudaFns<T>::logsig_to_sig(
         BufferData<T>(log_sig), BufferData<T>(out),
         batch, static_cast<std::uint64_t>(dimension),
-        static_cast<std::uint64_t>(degree), static_cast<int>(method));
+        static_cast<std::uint64_t>(degree), static_cast<int>(method), true);
     if (err_code != 0) return NativeCallError("logsig_to_sig_cuda", err_code);
     return ffi::Error::Success();
 }
@@ -2356,7 +2368,7 @@ ffi::Error LogSigToSigBackpropCudaImpl(
     int err_code = CudaFns<T>::logsig_to_sig_backprop(
         BufferData<T>(log_sig), BufferData<T>(out), BufferData<T>(cotangent),
         batch, static_cast<std::uint64_t>(dimension),
-        static_cast<std::uint64_t>(degree), static_cast<int>(method));
+        static_cast<std::uint64_t>(degree), static_cast<int>(method), true);
     if (err_code != 0) return NativeCallError("logsig_to_sig_backprop_cuda", err_code);
     return ffi::Error::Success();
 }

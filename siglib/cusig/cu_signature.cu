@@ -29,17 +29,18 @@ __global__ void signature_naive_ker(
 	uint64_t dimension,
 	uint64_t length,
 	uint64_t degree,
-	uint64_t sig_len,
+	uint64_t sig_stride,
 	uint64_t path_flat_len,
-	T* __restrict__ linear_sig_workspace  // [batch_size * sig_len]
+	T* __restrict__ linear_sig_workspace,  // [batch_size * sig_stride]
+	bool scalar_term
 ) {
 	const uint64_t batch_idx = blockIdx.x;
 	const int thread_id = threadIdx.x;
 	const int nthreads = blockDim.x;
 
 	const T* my_path = path + batch_idx * path_flat_len;
-	T* my_out = out + batch_idx * sig_len;
-	T* my_linear_sig = linear_sig_workspace + batch_idx * sig_len;
+	T* my_out = out + batch_idx * sig_stride;
+	T* my_linear_sig = linear_sig_workspace + batch_idx * sig_stride;
 
 	// ---- Shared memory: increments + level_index ----
 	extern __shared__ char smem[];
@@ -52,6 +53,16 @@ __global__ void signature_naive_ker(
 		level_index_smem[i] = d_level_index[i];
 	__syncthreads();
 
+	// For scalar_term=false, shift offsets by -1 so that level k starts at
+	// level_index[k]-1 (level 1 starts at 0).
+	if (!scalar_term) {
+		if (thread_id == 0) {
+			for (uint64_t i = 1; i < degree + 2; ++i)
+				level_index_smem[i] -= 1;
+		}
+		__syncthreads();
+	}
+
 	const T* prev_pt = my_path;
 	const T* next_pt = my_path + dimension;
 
@@ -61,7 +72,7 @@ __global__ void signature_naive_ker(
 	__syncthreads();
 
 	// Linear signature of first segment
-	linear_signature_device(increments, my_out, dimension, degree, level_index_smem);
+	linear_signature_device(increments, my_out, dimension, degree, level_index_smem, scalar_term);
 	__syncthreads();
 
 	if (length <= 2) return;
@@ -74,10 +85,10 @@ __global__ void signature_naive_ker(
 			increments[i] = next_pt[i] - prev_pt[i];
 		__syncthreads();
 
-		linear_signature_device(increments, my_linear_sig, dimension, degree, level_index_smem);
+		linear_signature_device(increments, my_linear_sig, dimension, degree, level_index_smem, scalar_term);
 		__syncthreads();
 
-		sig_combine_inplace_device(my_out, my_linear_sig, degree, level_index_smem);
+		sig_combine_inplace_device(my_out, my_linear_sig, degree, level_index_smem, scalar_term);
 		__syncthreads();
 	}
 }
@@ -118,7 +129,8 @@ __global__ void signature_per_word_ker(
 	const uint64_t sig_size,
 	const uint64_t level_offset,
 	const uint64_t level_size,
-	const uint64_t path_stride        // length * dim
+	const uint64_t path_stride,       // length * dim
+	const bool scalar_term
 ) {
 	static_assert(DEGREE >= 1 && DEGREE <= 12, "DEGREE must be 1-12");
 
@@ -179,9 +191,9 @@ __global__ void signature_per_word_ker(
 
 	if (active) {
 		out[batch_idx * sig_size + level_offset + word_idx] = pref[DEGREE];
-		// Level-1 kernel also writes the constant term (level 0)
+		// Level-1 kernel also writes the constant term (level 0) when present.
 		if constexpr (DEGREE == 1) {
-			if (word_idx == 0)
+			if (word_idx == 0 && scalar_term)
 				out[batch_idx * sig_size] = T(1);
 		}
 	}
@@ -204,7 +216,8 @@ __global__ void signature_per_word_generic_ker(
 	const uint64_t sig_size,
 	const uint64_t level_offset,
 	const uint64_t level_size,
-	const uint64_t path_stride
+	const uint64_t path_stride,
+	const bool /*scalar_term*/  // only relevant for the k==1 scalar write in the templated kernel
 ) {
 	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
 	const uint64_t batch_idx = blockIdx.y;
@@ -282,7 +295,8 @@ void sig_backprop_per_word_generic_ker(
 	const uint64_t sig_size,
 	const uint64_t level_offset,
 	const uint64_t level_size,
-	const uint64_t path_stride
+	const uint64_t path_stride,
+	const bool scalar_term
 ) {
 	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
 	const uint64_t batch_idx = blockIdx.y;
@@ -311,7 +325,9 @@ void sig_backprop_per_word_generic_ker(
 	T pref[MAX_GENERIC_DEGREE + 1];
 	pref[0] = T(1);
 	if (active) {
-		uint64_t off = 1;
+		// In scalar_term layout, level 1 starts at index 1 (skip the scalar at 0).
+		// In no-scalar layout, level 1 starts at index 0.
+		uint64_t off = scalar_term ? 1 : 0;
 		uint64_t d_pow = static_cast<uint64_t>(dim);
 		uint64_t pref_word = 0;
 		for (int lvl = 1; lvl < degree; ++lvl) {
@@ -464,7 +480,8 @@ void sig_backprop_per_word_ker(
 	const uint64_t sig_size,
 	const uint64_t level_offset,
 	const uint64_t level_size,
-	const uint64_t path_stride
+	const uint64_t path_stride,
+	const bool scalar_term
 ) {
 	static_assert(DEGREE >= 1 && DEGREE <= 12, "DEGREE must be 1-12");
 
@@ -500,7 +517,8 @@ void sig_backprop_per_word_ker(
 	if (active) {
 		// Load prefix signature values from the forward signature array
 		// pref[k] = S(prefix word of length k)
-		uint64_t off = 1; // skip level 0 (scalar 1) in pysiglib's sig layout
+		// With scalar_term: level 1 starts at index 1; without: it starts at 0.
+		uint64_t off = scalar_term ? 1 : 0;
 		uint64_t d_pow = static_cast<uint64_t>(dim);
 		uint64_t pref_word = 0;
 		for (int lvl = 1; lvl < DEGREE; ++lvl) {
@@ -733,9 +751,11 @@ void signature_per_word_core_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t length,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term = true
 ) {
-	const uint64_t sig_len = host_sig_length(dimension, degree);
+	const uint64_t full_sig_len = host_sig_length(dimension, degree);
+	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
 	const uint64_t path_stride = length * dimension;
 	const int steps = static_cast<int>(length - 1);
 	const int dim = static_cast<int>(dimension);
@@ -757,7 +777,8 @@ void signature_per_word_core_(
 
 	for (uint64_t k = 1; k <= degree; ++k) {
 		uint64_t level_size = host_power(dimension, k);
-		uint64_t level_offset = li[k];
+		// In scalar_term=false layout, level offsets shift down by 1.
+		uint64_t level_offset = scalar_term ? li[k] : (li[k] - 1);
 		unsigned int block = 128;
 		if (level_size < 128) block = 32;
 		unsigned int grid_x = (unsigned int)((level_size + block - 1) / block);
@@ -767,7 +788,7 @@ void signature_per_word_core_(
 
 		#define LAUNCH_DEGREE(D) \
 			case D: signature_per_word_ker<T, D><<<grid, block, smem, stream>>>( \
-				path, out, dim, steps, sig_len, level_offset, level_size, path_stride); break;
+				path, out, dim, steps, sig_stride, level_offset, level_size, path_stride, scalar_term); break;
 
 		switch (k) {
 			LAUNCH_DEGREE(1)
@@ -785,7 +806,7 @@ void signature_per_word_core_(
 			default:
 				signature_per_word_generic_ker<T><<<grid, block, smem, stream>>>(
 					path, out, dim, steps, static_cast<int>(k),
-					sig_len, level_offset, level_size, path_stride);
+					sig_stride, level_offset, level_size, path_stride, scalar_term);
 				break;
 		}
 		#undef LAUNCH_DEGREE
@@ -815,35 +836,44 @@ void signature_per_word_core_(
 template<typename T>
 void signature_cuda_core_(
 	const T* path,          // GPU pointer, shape [batch_size, length, dimension] flattened
-	T* out,                 // GPU pointer, shape [batch_size, sig_len] flattened
+	T* out,                 // GPU pointer, shape [batch_size, sig_stride] flattened
 	uint64_t batch_size,
 	uint64_t dimension,     // transformed dimension
 	uint64_t length,        // transformed length
 	uint64_t degree,
-	bool horner
+	bool horner,
+	bool scalar_term = true
 ) {
-	const uint64_t sig_len = host_sig_length(dimension, degree);
+	const uint64_t full_sig_len = host_sig_length(dimension, degree);
+	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
 	const uint64_t path_flat_len = dimension * length;
 
 	// Handle trivial cases
 	if (length <= 1) {
-		// sig = (1, 0, 0, ..., 0) for each batch element
-		cudaMemset(out, 0, batch_size * sig_len * sizeof(T));
-		T one = static_cast<T>(1);
-		for (uint64_t i = 0; i < batch_size; ++i)
-			cudaMemcpy(out + i * sig_len, &one, sizeof(T), cudaMemcpyHostToDevice);
+		// sig = (1, 0, 0, ..., 0) for each batch element. In scalar_term=false layout
+		// the output is (0, 0, ...). Either way, zero the buffer then optionally write
+		// the leading 1.
+		cudaMemset(out, 0, batch_size * sig_stride * sizeof(T));
+		if (scalar_term) {
+			T one = static_cast<T>(1);
+			for (uint64_t i = 0; i < batch_size; ++i)
+				cudaMemcpy(out + i * sig_stride, &one, sizeof(T), cudaMemcpyHostToDevice);
+		}
 		return;
 	}
 
 	if (degree == 0) {
-		auto ones = std::make_unique<T[]>(batch_size);
-		std::fill(ones.get(), ones.get() + batch_size, static_cast<T>(1));
-		cudaMemcpy(out, ones.get(), batch_size * sizeof(T), cudaMemcpyHostToDevice);
+		// degree-0 output is just the scalar 1 (nothing when scalar_term=false).
+		if (scalar_term) {
+			auto ones = std::make_unique<T[]>(batch_size);
+			std::fill(ones.get(), ones.get() + batch_size, static_cast<T>(1));
+			cudaMemcpy(out, ones.get(), batch_size * sizeof(T), cudaMemcpyHostToDevice);
+		}
 		return;
 	}
 
 	if (horner) {
-		signature_per_word_core_<T>(path, out, batch_size, dimension, length, degree);
+		signature_per_word_core_<T>(path, out, batch_size, dimension, length, degree, scalar_term);
 		return;
 	}
 
@@ -859,7 +889,7 @@ void signature_cuda_core_(
 
 	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
 	const size_t aligned_li_bytes = (level_index_bytes + sizeof(T) - 1) / sizeof(T) * sizeof(T);
-	const size_t workspace_bytes = batch_size * sig_len * sizeof(T);
+	const size_t workspace_bytes = batch_size * sig_stride * sizeof(T);
 
 	CudaBuf<char> d_alloc(aligned_li_bytes + workspace_bytes);
 	uint64_t* d_level_index = reinterpret_cast<uint64_t*>(d_alloc.get());
@@ -868,8 +898,8 @@ void signature_cuda_core_(
 
 	signature_naive_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 		path, out, d_level_index,
-		dimension, length, degree, sig_len, path_flat_len,
-		d_linear_sig
+		dimension, length, degree, sig_stride, path_flat_len,
+		d_linear_sig, scalar_term
 	);
 
 	check_cuda_kernel_launch();
@@ -899,7 +929,8 @@ void signature_cuda_(
 	bool time_aug,
 	bool lead_lag,
 	T end_time,
-	bool horner
+	bool horner,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("signature_cuda received path of dimension 0");
 
@@ -915,10 +946,10 @@ void signature_cuda_(
 		transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
 		cudaDeviceSynchronize();
 
-		signature_cuda_core_<T>(d_transformed.get(), out, batch_size, t_dimension, t_length, degree, horner);
+		signature_cuda_core_<T>(d_transformed.get(), out, batch_size, t_dimension, t_length, degree, horner, scalar_term);
 	}
 	else {
-		signature_cuda_core_<T>(path, out, batch_size, dimension, length, degree, horner);
+		signature_cuda_core_<T>(path, out, batch_size, dimension, length, degree, horner, scalar_term);
 	}
 }
 
@@ -931,9 +962,11 @@ void sig_backprop_cuda_core_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t length,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term = true
 ) {
-	const uint64_t sig_len = host_sig_length(dimension, degree);
+	const uint64_t full_sig_len = host_sig_length(dimension, degree);
+	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
 	const uint64_t path_flat_len = dimension * length;
 
 	if (length <= 1 || degree == 0) {
@@ -968,7 +1001,7 @@ void sig_backprop_cuda_core_(
 	// Launch per-word backward kernel for each level
 	for (uint64_t k = 1; k <= degree; ++k) {
 		uint64_t level_size = host_power(dimension, k);
-		uint64_t level_offset = li[k];
+		uint64_t level_offset = scalar_term ? li[k] : (li[k] - 1);
 		unsigned int grid_x = static_cast<unsigned int>((level_size + block - 1) / block);
 		dim3 grid(grid_x, static_cast<unsigned int>(batch_size), 1);
 		cudaStream_t stream = (k <= MAX_PER_WORD_STREAMS)
@@ -976,8 +1009,8 @@ void sig_backprop_cuda_core_(
 
 		#define LAUNCH_BWD(D) \
 			case D: sig_backprop_per_word_ker<T, D><<<grid, block, smem_size, stream>>>( \
-				path, sig, sig_derivs, d_inc_grads, dim, steps, sig_len, \
-				level_offset, level_size, length * dimension); break;
+				path, sig, sig_derivs, d_inc_grads, dim, steps, sig_stride, \
+				level_offset, level_size, length * dimension, scalar_term); break;
 
 		switch (k) {
 			LAUNCH_BWD(1)  LAUNCH_BWD(2)  LAUNCH_BWD(3)  LAUNCH_BWD(4)
@@ -986,7 +1019,7 @@ void sig_backprop_cuda_core_(
 			default:
 				sig_backprop_per_word_generic_ker<T><<<grid, block, smem_size, stream>>>(
 					path, sig, sig_derivs, d_inc_grads, dim, steps, static_cast<int>(k),
-					sig_len, level_offset, level_size, length * dimension);
+					sig_stride, level_offset, level_size, length * dimension, scalar_term);
 				break;
 		}
 		#undef LAUNCH_BWD
@@ -1033,7 +1066,8 @@ void sig_backprop_cuda_(
 	uint64_t degree,
 	bool time_aug,
 	bool lead_lag,
-	T end_time
+	T end_time,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_backprop_cuda received path of dimension 0");
 
@@ -1049,14 +1083,14 @@ void sig_backprop_cuda_(
 		CudaBuf<T> d_transformed_derivs(t_path_size * sizeof(T));
 
 		sig_backprop_cuda_core_<T>(d_transformed.get(), d_transformed_derivs.get(), sig_derivs, sig,
-			batch_size, t_dimension, t_length, degree);
+			batch_size, t_dimension, t_length, degree, scalar_term);
 
 		d_transformed.reset();
 
 		transform_path_backprop_<T>(d_transformed_derivs.get(), out, batch_size, dimension, length, time_aug, lead_lag, end_time);
 	}
 	else {
-		sig_backprop_cuda_core_<T>(path, out, sig_derivs, sig, batch_size, dimension, length, degree);
+		sig_backprop_cuda_core_<T>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, scalar_term);
 	}
 }
 
@@ -1071,18 +1105,18 @@ extern "C" {
 		const float* path, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, float end_time,
-		bool horner
+		bool horner, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner));
+		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term));
 	}
 
 	CUSIG_API int signature_cuda_d(
 		const double* path, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, double end_time,
-		bool horner
+		bool horner, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner));
+		CUSIG_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term));
 	}
 
 	// =====================================================================
@@ -1094,18 +1128,18 @@ extern "C" {
 		const float* path, float* out,
 		const float* sig_derivs, const float* sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
-		bool time_aug, bool lead_lag, float end_time
+		bool time_aug, bool lead_lag, float end_time, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term));
 	}
 
 	CUSIG_API int sig_backprop_cuda_d(
 		const double* path, double* out,
 		const double* sig_derivs, const double* sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
-		bool time_aug, bool lead_lag, double end_time
+		bool time_aug, bool lead_lag, double end_time, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term));
 	}
 
 }

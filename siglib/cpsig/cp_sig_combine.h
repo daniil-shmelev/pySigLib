@@ -27,10 +27,10 @@ FORCE_INLINE void sig_combine_inplace_(
 	T* sig1,
 	const T* sig2,
 	uint64_t degree,
-	const uint64_t* level_index
+	const uint64_t* level_index,
+	bool scalar_term = true
 ) {
-	// A valid signature has level-0 = 1; the loop below only touches 1..N.
-	sig1[0] = static_cast<T>(1.);
+	if (scalar_term) sig1[0] = static_cast<T>(1.);
 
 	for (int64_t target_level = static_cast<int64_t>(degree); target_level > 0; --target_level) {
 		for (int64_t left_level = target_level - 1, right_level = 1;
@@ -276,7 +276,8 @@ void sig_combine_(
 	const T* sig2,
 	T* out,
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term = true
 )
 {
 	if (dimension == 0) { throw std::invalid_argument("sig_combine received dimension 0"); }
@@ -285,9 +286,21 @@ void sig_combine_(
 	uint64_t* level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	std::memcpy(out, sig1, sizeof(T) * level_index[degree + 1]);
+	const uint64_t full_len = level_index[degree + 1];
+	if (scalar_term) {
+		std::memcpy(out, sig1, sizeof(T) * full_len);
+		sig_combine_inplace_(out, sig2, degree, level_index);
+	} else {
+		// Caller's buffers omit the scalar at index 0.
+		// Decrement level_index so offsets map to the no-scalar layout.
+		auto ns_li_uptr = std::make_unique<uint64_t[]>(degree + 2);
+		uint64_t* ns_li = ns_li_uptr.get();
+		ns_li[0] = 0; // unused
+		for (uint64_t k = 1; k < degree + 2; ++k) ns_li[k] = level_index[k] - 1;
 
-	sig_combine_inplace_(out, sig2, degree, level_index);
+		std::memcpy(out, sig1, sizeof(T) * (full_len - 1));
+		sig_combine_inplace_(out, sig2, degree, ns_li, /*scalar_term=*/false);
+	}
 }
 
 template<std::floating_point T>
@@ -298,17 +311,19 @@ void batch_sig_combine_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
+	bool scalar_term = true,
 	int n_jobs = 1
 )
 {
 	if (dimension == 0) { throw std::invalid_argument("sig_combine received dimension 0"); }
 
-	const uint64_t siglength = ::sig_length(dimension, degree);
+	const uint64_t full_len = ::sig_length(dimension, degree);
+	const uint64_t stride = scalar_term ? full_len : full_len - 1;
 	auto sig_combine_func = [&](const T* sig1_ptr, const T* sig2_ptr, T* out_ptr) {
-		sig_combine_(sig1_ptr, sig2_ptr, out_ptr, dimension, degree);
+		sig_combine_(sig1_ptr, sig2_ptr, out_ptr, dimension, degree, scalar_term);
 	};
 
-	multi_threaded_batch_2<const T, const T, T>(sig_combine_func, sig1, sig2, out, batch_size, siglength, siglength, siglength, n_jobs);
+	multi_threaded_batch_2<const T, const T, T>(sig_combine_func, sig1, sig2, out, batch_size, stride, stride, stride, n_jobs);
 	return;
 }
 
@@ -347,6 +362,7 @@ void batch_sig_combine_backprop_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
+	bool scalar_term = true,
 	int n_jobs = 1
 )
 {
@@ -356,14 +372,29 @@ void batch_sig_combine_backprop_(
 	uint64_t* level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	const uint64_t siglength = level_index[degree + 1];
+	const uint64_t full_len = level_index[degree + 1];
+	const uint64_t stride = scalar_term ? full_len : full_len - 1;
 
-	std::memcpy(sig1_deriv, sig_combined_deriv, sizeof(T) * siglength * batch_size);
+	if (scalar_term) {
+		std::memcpy(sig1_deriv, sig_combined_deriv, sizeof(T) * full_len * batch_size);
+	}
 
-	auto sig_combine_backprop_func = [&](const T* sig_combined_deriv_ptr, T* sig1_deriv_ptr, T* sig2_deriv_ptr, const T* sig1_ptr, const T* sig2_ptr) {
-		sig_combine_backprop_(sig_combined_deriv_ptr, sig1_deriv_ptr, sig2_deriv_ptr, sig1_ptr, sig2_ptr, dimension, degree);
+	auto sig_combine_backprop_func = [&](const T* d_ptr, T* d1_ptr, T* d2_ptr, const T* s1_ptr, const T* s2_ptr) {
+		if (scalar_term) {
+			sig_combine_backprop_(d_ptr, d1_ptr, d2_ptr, s1_ptr, s2_ptr, dimension, degree);
+		} else {
+			std::vector<T> df(full_len), s1(full_len), s2(full_len);
+			std::vector<T> d1(full_len), d2(full_len);
+			df[0] = T(0); std::memcpy(df.data()+1, d_ptr, (full_len-1)*sizeof(T));
+			s1[0] = T(1); std::memcpy(s1.data()+1, s1_ptr, (full_len-1)*sizeof(T));
+			s2[0] = T(1); std::memcpy(s2.data()+1, s2_ptr, (full_len-1)*sizeof(T));
+			std::memcpy(d1.data(), df.data(), full_len*sizeof(T));
+			uncombine_sig_deriv(s1.data(), s2.data(), d1.data(), d2.data(), dimension, degree, level_index);
+			std::memcpy(d1_ptr, d1.data()+1, (full_len-1)*sizeof(T));
+			std::memcpy(d2_ptr, d2.data()+1, (full_len-1)*sizeof(T));
+		}
 	};
 
-	multi_threaded_batch_4<T>(sig_combine_backprop_func, sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, siglength, siglength, siglength, siglength, siglength, n_jobs);
+	multi_threaded_batch_4<T>(sig_combine_backprop_func, sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, stride, stride, stride, stride, stride, n_jobs);
 	return;
 }

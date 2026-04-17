@@ -446,6 +446,88 @@ void release_exp_sig_state() {
 // Host-side forward launch
 // =========================================================================
 
+// Helper kernels for scalar_term=false staging.
+template<typename T>
+__global__ void exp_prepend_scalar_one_kernel(
+	const T* __restrict__ in_stripped,
+	T* __restrict__ out_full,
+	uint64_t full_len
+) {
+	const uint64_t b = blockIdx.y;
+	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	if (i >= full_len) return;
+	T* dst = out_full + b * full_len;
+	if (i == 0) dst[0] = static_cast<T>(1);
+	else dst[i] = in_stripped[b * (full_len - 1) + (i - 1)];
+}
+
+template<typename T>
+__global__ void exp_strip_scalar_kernel(
+	const T* __restrict__ in_full,
+	T* __restrict__ out_stripped,
+	uint64_t full_len
+) {
+	const uint64_t b = blockIdx.y;
+	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	if (i + 1 >= full_len) return;
+	out_stripped[b * (full_len - 1) + i] = in_full[b * full_len + (i + 1)];
+}
+
+template<typename T>
+__global__ void exp_prepend_zero_kernel(
+	const T* __restrict__ in_stripped,   // stripped log-sig (log-sig[0]=0 is implicit)
+	T* __restrict__ out_full,
+	uint64_t full_len
+) {
+	const uint64_t b = blockIdx.y;
+	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	if (i >= full_len) return;
+	T* dst = out_full + b * full_len;
+	if (i == 0) dst[0] = static_cast<T>(0);
+	else dst[i] = in_stripped[b * (full_len - 1) + (i - 1)];
+}
+
+template<typename T>
+static void exp_stage_prepend_(const T* in_stripped, T* out_full, uint64_t batch_size, uint64_t full_len, bool prepend_one) {
+	const unsigned int block = 256;
+	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
+	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
+	if (prepend_one)
+		exp_prepend_scalar_one_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len);
+	else
+		exp_prepend_zero_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len);
+}
+
+template<typename T>
+static void exp_stage_strip_(const T* in_full, T* out_stripped, uint64_t batch_size, uint64_t full_len) {
+	const unsigned int block = 256;
+	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
+	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
+	exp_strip_scalar_kernel<T><<<grid, block>>>(in_full, out_stripped, full_len);
+}
+
+// Core kernel launches factored out — same body as before; callers now handle
+// scalar_term staging. This keeps scalar_term=true zero-overhead.
+template<typename T>
+void logsig_to_sig_cuda_core_(
+	const T* log_sig,
+	T* out,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t degree,
+	int method
+);
+template<typename T>
+void logsig_to_sig_backprop_cuda_core_(
+	const T* log_sig,
+	T* d_logsig,
+	const T* d_sig,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t degree,
+	int method
+);
+
 template<typename T>
 void logsig_to_sig_cuda_(
 	const T* log_sig,
@@ -453,7 +535,8 @@ void logsig_to_sig_cuda_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
-	int method
+	int method,
+	bool scalar_term = true
 ) {
 	if (method < 0 || method > 2)
 		throw std::invalid_argument("logsig_to_sig_cuda: method must be 0, 1, or 2");
@@ -462,6 +545,64 @@ void logsig_to_sig_cuda_(
 	if (degree == 0)
 		throw std::invalid_argument("logsig_to_sig_cuda received degree 0");
 
+	if (scalar_term) {
+		logsig_to_sig_cuda_core_<T>(log_sig, out, batch_size, dimension, degree, method);
+		return;
+	}
+
+	// scalar_term=false. Input is full-sized regardless of method (the Python
+	// wrapper always passes the sig-layout length for method==0 and the log-sig
+	// length for method==1/2). Only the output is stripped.
+	const uint64_t full_len = host_sig_length(dimension, degree);
+	CudaBuf<T> d_out_full(batch_size * full_len * sizeof(T));
+	logsig_to_sig_cuda_core_<T>(log_sig, d_out_full.get(), batch_size, dimension, degree, method);
+	exp_stage_strip_<T>(d_out_full.get(), out, batch_size, full_len);
+}
+
+template<typename T>
+void logsig_to_sig_backprop_cuda_(
+	const T* log_sig,
+	T* d_logsig,
+	const T* d_sig,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t degree,
+	int method,
+	bool scalar_term = true
+) {
+	if (method < 0 || method > 2)
+		throw std::invalid_argument("logsig_to_sig_backprop_cuda: method must be 0, 1, or 2");
+	if (dimension == 0)
+		throw std::invalid_argument("logsig_to_sig_backprop_cuda received dimension 0");
+	if (degree == 0)
+		throw std::invalid_argument("logsig_to_sig_backprop_cuda received degree 0");
+
+	if (scalar_term) {
+		logsig_to_sig_backprop_cuda_core_<T>(log_sig, d_logsig, d_sig, batch_size, dimension, degree, method);
+		return;
+	}
+
+	// scalar_term=false: input `log_sig` is full-size (method=0) or log-sig-shaped (method>0).
+	// `d_sig` is stripped (sig-shaped minus scalar).
+	// `d_logsig` must be full-size for method=0 (Python strips afterward) or log-sig-shaped for method>0.
+	const uint64_t full_len = host_sig_length(dimension, degree);
+	CudaBuf<T> d_dsig_full(batch_size * full_len * sizeof(T));
+	CUDA_CHECK(cudaMemset(d_dsig_full.get(), 0, batch_size * full_len * sizeof(T)));
+	exp_stage_prepend_<T>(d_sig, d_dsig_full.get(), batch_size, full_len, /*prepend_one=*/false);
+
+	logsig_to_sig_backprop_cuda_core_<T>(log_sig, d_logsig, d_dsig_full.get(), batch_size, dimension, degree, method);
+}
+
+// Original forward implementation, renamed to _core_.
+template<typename T>
+void logsig_to_sig_cuda_core_(
+	const T* log_sig,
+	T* out,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t degree,
+	int method
+) {
 	const uint64_t sig_len = host_sig_length(dimension, degree);
 
 	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
@@ -521,8 +662,9 @@ void logsig_to_sig_cuda_(
 // Host-side backward launch
 // =========================================================================
 
+// Renamed: original backprop body, now called from the dispatcher.
 template<typename T>
-void logsig_to_sig_backprop_cuda_(
+void logsig_to_sig_backprop_cuda_core_(
 	const T* log_sig,
 	T* d_logsig,
 	const T* d_sig,
@@ -531,13 +673,6 @@ void logsig_to_sig_backprop_cuda_(
 	uint64_t degree,
 	int method
 ) {
-	if (method < 0 || method > 2)
-		throw std::invalid_argument("logsig_to_sig_backprop_cuda: method must be 0, 1, or 2");
-	if (dimension == 0)
-		throw std::invalid_argument("logsig_to_sig_backprop_cuda received dimension 0");
-	if (degree == 0)
-		throw std::invalid_argument("logsig_to_sig_backprop_cuda received degree 0");
-
 	const uint64_t sig_len = host_sig_length(dimension, degree);
 
 	if (degree == 1 && method == 0) {
@@ -621,31 +756,31 @@ extern "C" {
 
 	CUSIG_API int logsig_to_sig_cuda_f(
 		const float* log_sig, float* out,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(logsig_to_sig_cuda_<float>(log_sig, out, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(logsig_to_sig_cuda_<float>(log_sig, out, batch_size, dimension, degree, method, scalar_term));
 	}
 
 	CUSIG_API int logsig_to_sig_cuda_d(
 		const double* log_sig, double* out,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(logsig_to_sig_cuda_<double>(log_sig, out, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(logsig_to_sig_cuda_<double>(log_sig, out, batch_size, dimension, degree, method, scalar_term));
 	}
 
 
 	CUSIG_API int logsig_to_sig_backprop_cuda_f(
 		const float* log_sig, float* d_logsig, const float* d_sig,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(logsig_to_sig_backprop_cuda_<float>(log_sig, d_logsig, d_sig, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(logsig_to_sig_backprop_cuda_<float>(log_sig, d_logsig, d_sig, batch_size, dimension, degree, method, scalar_term));
 	}
 
 	CUSIG_API int logsig_to_sig_backprop_cuda_d(
 		const double* log_sig, double* d_logsig, const double* d_sig,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(logsig_to_sig_backprop_cuda_<double>(log_sig, d_logsig, d_sig, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(logsig_to_sig_backprop_cuda_<double>(log_sig, d_logsig, d_sig, batch_size, dimension, degree, method, scalar_term));
 	}
 
 }

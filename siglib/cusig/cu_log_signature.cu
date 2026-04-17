@@ -115,6 +115,51 @@ __global__ void sig_to_log_sig_kernel(
 // Host-side sig_to_log_sig core launch (method 0)
 // =========================================================================
 
+// Helper kernels: scalar_term=false staging between full and stripped layouts.
+// These run once per call, only on the scalar_term=false branch — zero cost
+// when scalar_term=true.
+template<typename T>
+__global__ void prepend_scalar_one_kernel(
+	const T* __restrict__ in_stripped,   // [batch, full_len-1]
+	T* __restrict__ out_full,            // [batch, full_len]
+	uint64_t full_len
+) {
+	const uint64_t b = blockIdx.y;
+	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	if (i >= full_len) return;
+	T* dst = out_full + b * full_len;
+	if (i == 0) dst[0] = static_cast<T>(1);
+	else dst[i] = in_stripped[b * (full_len - 1) + (i - 1)];
+}
+
+template<typename T>
+__global__ void strip_scalar_kernel(
+	const T* __restrict__ in_full,       // [batch, full_len]
+	T* __restrict__ out_stripped,        // [batch, full_len-1]
+	uint64_t full_len
+) {
+	const uint64_t b = blockIdx.y;
+	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	if (i + 1 >= full_len) return;
+	out_stripped[b * (full_len - 1) + i] = in_full[b * full_len + (i + 1)];
+}
+
+template<typename T>
+static void stage_prepend_(const T* in_stripped, T* out_full, uint64_t batch_size, uint64_t full_len) {
+	const unsigned int block = 256;
+	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
+	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
+	prepend_scalar_one_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len);
+}
+
+template<typename T>
+static void stage_strip_(const T* in_full, T* out_stripped, uint64_t batch_size, uint64_t full_len) {
+	const unsigned int block = 256;
+	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
+	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
+	strip_scalar_kernel<T><<<grid, block>>>(in_full, out_stripped, full_len);
+}
+
 template<typename T>
 void sig_to_log_sig_cuda_core_(
 	const T* sig,
@@ -759,13 +804,42 @@ void sig_to_log_sig_backprop_cuda_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
-	int method
+	int method,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_to_log_sig_backprop_cuda received dimension 0");
 	if (degree == 0) throw std::invalid_argument("sig_to_log_sig_backprop_cuda received degree 0");
 
+	if (scalar_term) {
+		// Hot path: unchanged.
+		if (method == 0) {
+			sig_to_log_sig_backprop_cuda_core_<T>(sig, out, log_sig_derivs, batch_size, dimension, degree);
+		}
+		else if (method == 1) {
+			sig_to_log_sig_backprop_cuda_m1_core_<T>(sig, out, log_sig_derivs, batch_size, dimension, degree);
+		}
+		else if (method == 2) {
+			sig_to_log_sig_backprop_cuda_m2_core_<T>(sig, out, log_sig_derivs, batch_size, dimension, degree);
+		}
+		else {
+			throw std::invalid_argument("sig_to_log_sig_backprop_cuda: method must be 0, 1, or 2");
+		}
+		return;
+	}
+
+	// scalar_term=false for backprop. The Python wrapper passes:
+	//   sig: FULL length (always)
+	//   log_sig_derivs: sig-shaped stripped (method=0) or log-sig-shaped (method>0)
+	//   out (d_sig): FULL length (Python strips afterward)
+	const uint64_t full_len = host_sig_length(dimension, degree);
+
 	if (method == 0) {
-		sig_to_log_sig_backprop_cuda_core_<T>(sig, out, log_sig_derivs, batch_size, dimension, degree);
+		// log_sig_derivs is stripped; stage into a full-size buffer.
+		CudaBuf<T> d_lsd_full(batch_size * full_len * sizeof(T));
+		// d(log_sig)/d... leading slot is 0 (log_sig[0] is constant).
+		CUDA_CHECK(cudaMemset(d_lsd_full.get(), 0, batch_size * full_len * sizeof(T)));
+		stage_prepend_<T>(log_sig_derivs, d_lsd_full.get(), batch_size, full_len);
+		sig_to_log_sig_backprop_cuda_core_<T>(sig, out, d_lsd_full.get(), batch_size, dimension, degree);
 	}
 	else if (method == 1) {
 		sig_to_log_sig_backprop_cuda_m1_core_<T>(sig, out, log_sig_derivs, batch_size, dimension, degree);
@@ -789,19 +863,46 @@ void sig_to_log_sig_cuda_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
-	int method
+	int method,
+	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_to_log_sig_cuda received dimension 0");
 	if (degree == 0) throw std::invalid_argument("sig_to_log_sig_cuda received degree 0");
 
+	if (scalar_term) {
+		// Hot path: unchanged.
+		if (method == 0) {
+			sig_to_log_sig_cuda_core_<T>(sig, out, batch_size, dimension, degree);
+		}
+		else if (method == 1) {
+			sig_to_log_sig_cuda_m1_core_<T>(sig, out, batch_size, dimension, degree);
+		}
+		else if (method == 2) {
+			sig_to_log_sig_cuda_m2_core_<T>(sig, out, batch_size, dimension, degree);
+		}
+		else {
+			throw std::invalid_argument("sig_to_log_sig_cuda: method must be 0, 1, or 2");
+		}
+		return;
+	}
+
+	// scalar_term=false: stage input/output through full-sized buffers.
+	const uint64_t full_len = host_sig_length(dimension, degree);
+	CudaBuf<T> d_sig_full(batch_size * full_len * sizeof(T));
+	stage_prepend_<T>(sig, d_sig_full.get(), batch_size, full_len);
+
 	if (method == 0) {
-		sig_to_log_sig_cuda_core_<T>(sig, out, batch_size, dimension, degree);
+		// Output is sig-shaped. Stage through a full-sized output buffer.
+		CudaBuf<T> d_out_full(batch_size * full_len * sizeof(T));
+		sig_to_log_sig_cuda_core_<T>(d_sig_full.get(), d_out_full.get(), batch_size, dimension, degree);
+		stage_strip_<T>(d_out_full.get(), out, batch_size, full_len);
 	}
 	else if (method == 1) {
-		sig_to_log_sig_cuda_m1_core_<T>(sig, out, batch_size, dimension, degree);
+		// Output is log-sig-shaped (no scalar concept); write directly.
+		sig_to_log_sig_cuda_m1_core_<T>(d_sig_full.get(), out, batch_size, dimension, degree);
 	}
 	else if (method == 2) {
-		sig_to_log_sig_cuda_m2_core_<T>(sig, out, batch_size, dimension, degree);
+		sig_to_log_sig_cuda_m2_core_<T>(d_sig_full.get(), out, batch_size, dimension, degree);
 	}
 	else {
 		throw std::invalid_argument("sig_to_log_sig_cuda: method must be 0, 1, or 2");
@@ -823,30 +924,30 @@ extern "C" {
 
 	CUSIG_API int sig_to_log_sig_cuda_f(
 		const float* sig, float* out,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<float>(sig, out, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<float>(sig, out, batch_size, dimension, degree, method, scalar_term));
 	}
 
 	CUSIG_API int sig_to_log_sig_cuda_d(
 		const double* sig, double* out,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<double>(sig, out, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<double>(sig, out, batch_size, dimension, degree, method, scalar_term));
 	}
 
 
 	CUSIG_API int sig_to_log_sig_backprop_cuda_f(
 		const float* sig, float* out, const float* log_sig_derivs,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<float>(sig, out, log_sig_derivs, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<float>(sig, out, log_sig_derivs, batch_size, dimension, degree, method, scalar_term));
 	}
 
 	CUSIG_API int sig_to_log_sig_backprop_cuda_d(
 		const double* sig, double* out, const double* log_sig_derivs,
-		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method
+		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<double>(sig, out, log_sig_derivs, batch_size, dimension, degree, method));
+		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<double>(sig, out, log_sig_derivs, batch_size, dimension, degree, method, scalar_term));
 	}
 }

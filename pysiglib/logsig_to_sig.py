@@ -96,27 +96,23 @@ def logsig_to_sig(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    input_len = sig_length(aug_dimension, degree) if method == 0 else log_sig_length(aug_dimension, degree)
-    out_len = sig_length(aug_dimension, degree)
+    input_len = sig_length(aug_dimension, degree, scalar_term=True) if method == 0 else log_sig_length(aug_dimension, degree)
+    out_len = sig_length(aug_dimension, degree, scalar_term=scalar_term)
     data = SigInputHandler(log_sig, input_len, "log_sig")
     result = SigOutputHandler(data, out_len)
 
     if data.batch_size == 0:
-        if not scalar_term:
-            return result.data[..., 1:]
         return result.data
 
     check_n_jobs(n_jobs)
     if data.device == "cpu":
         err_code = CPSIG_LOGSIG_TO_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
-            dimension, degree, time_aug, lead_lag, method, n_jobs)
+            dimension, degree, time_aug, lead_lag, method, scalar_term, n_jobs)
     else:
         err_code = CUSIG_LOGSIG_TO_SIG_CUDA[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
-            aug_dimension, degree, method)
+            aug_dimension, degree, method, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.logsig_to_sig: " + err_msg(err_code))
-    if not scalar_term:
-        return result.data[..., 1:]
     return result.data

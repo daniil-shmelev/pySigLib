@@ -302,7 +302,7 @@ class LogSigFromPath(torch.autograd.Function):
         return d_path, None, None, None, None, None
 
 def _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_jobs):
-    """Compute log-signature via sequential BCH combination with C++ forward and backward."""
+    """Compute log-signature via sequential BCH combination."""
     if isinstance(path, torch.Tensor) and path.requires_grad:
         return LogSigFromPath.apply(path, degree, time_aug, lead_lag, end_time, n_jobs)
     else:
@@ -563,7 +563,7 @@ from ..branched_sig_backprop import branched_sig_backprop, branched_sig_combine_
 
 class BranchedSig(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path, degree, time_aug, lead_lag, end_time, tree_order, scalar_term, n_jobs, planar):
+    def forward(ctx, path, degree, time_aug, lead_lag, end_time, tree_order, planar, scalar_term, n_jobs):
         bsig = branched_sig_forward(path, degree, scalar_term=True, tree_order=tree_order, n_jobs=n_jobs,
                                      time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, planar=planar)
 
@@ -588,7 +588,7 @@ class BranchedSig(torch.autograd.Function):
             grad_output = prepend_scalar(grad_output, 0)
         grad = branched_sig_backprop(path, bsig, grad_output, ctx.degree,
                                      scalar_term=True, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
-                                     tree_order=ctx.tree_order, n_jobs=ctx.n_jobs, planar=ctx.planar)
+                                     tree_order=ctx.tree_order, planar=ctx.planar, n_jobs=ctx.n_jobs)
         return grad, None, None, None, None, None, None, None, None
 
 def branched_sig(
@@ -598,21 +598,21 @@ def branched_sig(
         lead_lag: bool = False,
         end_time: float = 1.0,
         tree_order: str = "recursive",
+        planar: bool = False,
         scalar_term = None,
         n_jobs: int = 1,
-        planar: bool = False,
 ) -> Union[np.ndarray, torch.Tensor]:
     scalar_term = resolve_scalar_term(scalar_term)
-    return BranchedSig.apply(path, degree, time_aug, lead_lag, end_time, tree_order, scalar_term, n_jobs, planar)
+    return BranchedSig.apply(path, degree, time_aug, lead_lag, end_time, tree_order, planar, scalar_term, n_jobs)
 
 branched_sig.__doc__ = branched_sig_forward.__doc__
 
 
 class BranchedSigCombine(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, bsig1, bsig2, dimension, degree, tree_order, scalar_term, n_jobs, planar):
+    def forward(ctx, bsig1, bsig2, dimension, degree, tree_order, planar, scalar_term, n_jobs):
         combined = branched_sig_combine_forward(bsig1, bsig2, dimension, degree,
-                                                 scalar_term=True, tree_order=tree_order, n_jobs=n_jobs, planar=planar)
+                                                 scalar_term=True, tree_order=tree_order, planar=planar, n_jobs=n_jobs)
         ctx.save_for_backward(bsig1, bsig2)
         ctx.dimension = dimension
         ctx.degree = degree
@@ -632,7 +632,7 @@ class BranchedSigCombine(torch.autograd.Function):
             grad_output = prepend_scalar(grad_output, 0)
         d1, d2 = branched_sig_combine_backprop(
             grad_output, bsig1, bsig2, ctx.dimension, ctx.degree,
-            scalar_term=True, tree_order=ctx.tree_order, n_jobs=ctx.n_jobs, planar=ctx.planar)
+            scalar_term=True, tree_order=ctx.tree_order, planar=ctx.planar, n_jobs=ctx.n_jobs)
         return d1, d2, None, None, None, None, None, None
 
 def branched_sig_combine(
@@ -641,12 +641,12 @@ def branched_sig_combine(
         dimension: int,
         degree: int,
         tree_order: str = "recursive",
+        planar: bool = False,
         scalar_term = None,
         n_jobs: int = 1,
-        planar: bool = False,
 ) -> Union[np.ndarray, torch.Tensor]:
     scalar_term = resolve_scalar_term(scalar_term)
-    return BranchedSigCombine.apply(bsig1, bsig2, dimension, degree, tree_order, scalar_term, n_jobs, planar)
+    return BranchedSigCombine.apply(bsig1, bsig2, dimension, degree, tree_order, planar, scalar_term, n_jobs)
 
 branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
 

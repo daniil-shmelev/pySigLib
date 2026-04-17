@@ -31,14 +31,16 @@ __device__ void sig_combine_inplace_device(
 	T* __restrict__ sig1,
 	const T* __restrict__ sig2,
 	uint64_t degree,
-	const uint64_t* __restrict__ level_index
+	const uint64_t* __restrict__ level_index,
+	bool scalar_term = true
 ) {
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
 	// A valid signature has level-0 = 1; the loop below only touches 1..N.
 	// Only thread 0 writes; no subsequent thread reads sig1[0], so no sync.
-	if (tid == 0) sig1[0] = static_cast<T>(1);
+	// When scalar_term is false there is no slot at index 0.
+	if (tid == 0 && scalar_term) sig1[0] = static_cast<T>(1);
 
 	// Process from highest level down to 1
 	for (int64_t target_level = static_cast<int64_t>(degree); target_level > 0; --target_level) {
@@ -82,14 +84,17 @@ __device__ void linear_signature_device(
 	T* __restrict__ out,
 	uint64_t dimension,
 	uint64_t degree,
-	const uint64_t* __restrict__ level_index
+	const uint64_t* __restrict__ level_index,
+	bool scalar_term = true
 ) {
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
-	if (tid == 0) out[0] = static_cast<T>(1);
+	// level_index[1] is the offset of level 1 (0 when !scalar_term, 1 when scalar_term).
+	if (tid == 0 && scalar_term) out[0] = static_cast<T>(1);
+	const uint64_t level1_start = level_index[1];
 	for (uint64_t i = tid; i < dimension; i += nthreads)
-		out[i + 1] = increments[i];
+		out[level1_start + i] = increments[i];
 	__syncthreads();
 
 	const unsigned int dim32 = static_cast<unsigned int>(dimension);

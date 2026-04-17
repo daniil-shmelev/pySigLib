@@ -512,7 +512,7 @@ def _sig_join_bwd_callback(co, s, d, dimension, degree, prepend, n_jobs):
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5))
 def _sig_join(sig_arr, displacement, dimension, degree, prepend, n_jobs):
-    out_len = _sig_length(dimension, degree)
+    out_len = _sig_length(dimension, degree, scalar_term=True)
     out_shape = (*sig_arr.shape[:-1], out_len)
     out_type = jax.ShapeDtypeStruct(out_shape, sig_arr.dtype)
     return jax.pure_callback(
@@ -740,7 +740,7 @@ def sig_kernel(
     """Compute signature kernel between paired paths using JAX.
 
     This composes the static kernel evaluation (pure JAX) with the
-    PDE solver (C++ FFI). Fully differentiable via JAX autodiff.
+    PDE solver. Fully differentiable via JAX autodiff.
     """
     ensure_registered()
 

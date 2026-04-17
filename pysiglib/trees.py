@@ -38,7 +38,8 @@ from .param_checks import check_type, check_non_neg
 
 def trees_of_order(
         dimension: int,
-        order: int
+        order: int,
+        planar: bool = False
 ) -> tuple[tuple]:
     """
     Returns all decorated rooted trees with exactly ``order`` nodes,
@@ -48,6 +49,8 @@ def trees_of_order(
     :type dimension: int
     :param order: Exact number of nodes.
     :type order: int
+    :param planar: If True, return planar (ordered) trees.
+    :type planar: bool
     :return: Tuple of trees as tuples in kauri convention.
     :rtype: tuple[tuple]
 
@@ -67,19 +70,23 @@ def trees_of_order(
     check_type(order, "order", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(order, "order")
-    return _trees_of_order_cached(dimension, order)
+    check_type(planar, "planar", bool)
+    return _trees_of_order_cached(dimension, order, planar)
 
 
 @cache
-def _trees_of_order_cached(dimension, order):
+def _trees_of_order_cached(dimension, order, planar=False):
     if order == 0:
         return (None,)
+    if planar:
+        return tuple(t.sorted_list_repr() for t in kauri.colored_planar_trees_of_order(order, dimension))
     return tuple(t.sorted_list_repr() for t in kauri.colored_trees_of_order(order, dimension))
 
 
 def trees(
         dimension: int,
-        degree: int
+        degree: int,
+        planar: bool = False
 ) -> tuple[tuple]:
     """
     Returns all decorated rooted trees up to a given degree (max nodes),
@@ -89,6 +96,8 @@ def trees(
     :type dimension: int
     :param degree: Maximum number of nodes per tree.
     :type degree: int
+    :param planar: If True, return planar (ordered) trees.
+    :type planar: bool
     :return: All decorated rooted trees up to the given degree.
     :rtype: tuple[tuple]
 
@@ -107,18 +116,22 @@ def trees(
     check_type(degree, "degree", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return _trees_cached(dimension, degree)
+    check_type(planar, "planar", bool)
+    return _trees_cached(dimension, degree, planar)
 
 
 @cache
-def _trees_cached(dimension, degree):
+def _trees_cached(dimension, degree, planar=False):
+    if planar:
+        return tuple(t.sorted_list_repr() for t in kauri.colored_planar_trees_up_to_order(dimension, degree))
     return tuple(t.sorted_list_repr() for t in kauri.colored_trees(dimension, degree))
 
 
 def tree_to_idx(
         tree,
         dimension: int,
-        degree: int
+        degree: int,
+        planar: bool = False
 ) -> int:
     """
     Given a decorated rooted tree, returns its flat index in the
@@ -136,6 +149,8 @@ def tree_to_idx(
     :type dimension: int
     :param degree: Maximum number of nodes (same as ``degree`` in :func:`branched_sig`).
     :type degree: int
+    :param planar: If True, use planar (ordered) tree indexing.
+    :type planar: bool
     :return: Flat index in the branched signature vector.
     :rtype: int
 
@@ -161,20 +176,24 @@ def tree_to_idx(
     check_type(degree, "degree", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return _tree_to_idx_cached(tree, dimension, degree)
+    check_type(planar, "planar", bool)
+    return _tree_to_idx_cached(tree, dimension, degree, planar)
 
 
 @cache
-def _tree_to_idx_cached(tree, dimension, degree):
+def _tree_to_idx_cached(tree, dimension, degree, planar=False):
     if tree is None:
         return 0
+    if planar:
+        return kauri.colored_planar_tree_to_idx(kauri.PlanarTree(tree), dimension, degree)
     return kauri.colored_tree_to_idx(kauri.Tree(tree), dimension, degree)
 
 
 def idx_to_tree(
         idx: int,
         dimension: int,
-        degree: int
+        degree: int,
+        planar: bool = False
 ) -> tuple:
     """
     Given a flat index in the canonical enumeration, returns the
@@ -186,6 +205,8 @@ def idx_to_tree(
     :type dimension: int
     :param degree: Maximum number of nodes (same as ``degree`` in :func:`branched_sig`).
     :type degree: int
+    :param planar: If True, use planar (ordered) tree indexing.
+    :type planar: bool
     :return: Decorated rooted tree (None for empty tree, tuple otherwise).
     :rtype: tuple or None
 
@@ -206,10 +227,14 @@ def idx_to_tree(
     check_non_neg(idx, "idx")
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return _idx_to_tree_cached(idx, dimension, degree)
+    check_type(planar, "planar", bool)
+    return _idx_to_tree_cached(idx, dimension, degree, planar)
 
 
 @cache
-def _idx_to_tree_cached(idx, dimension, degree):
-    kt = kauri.idx_to_colored_tree(idx, dimension, degree)
+def _idx_to_tree_cached(idx, dimension, degree, planar=False):
+    if planar:
+        kt = kauri.idx_to_colored_planar_tree(idx, dimension, degree)
+    else:
+        kt = kauri.idx_to_colored_tree(idx, dimension, degree)
     return kt.sorted_list_repr()

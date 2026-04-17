@@ -56,6 +56,7 @@ void sig_to_log_sig_(
 	bool time_aug = false,
 	bool lead_lag = false,
 	int method = 0,
+	bool scalar_term = true,
 	int n_jobs = 1
 )
 {
@@ -65,16 +66,32 @@ void sig_to_log_sig_(
 
 	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 
-	const uint64_t result_length = method ? ::log_sig_length(aug_dimension, degree) : ::sig_length(aug_dimension, degree);
+	const uint64_t sig_len = ::sig_length(aug_dimension, degree);
+	const uint64_t logsig_len = ::log_sig_length(aug_dimension, degree);
+	const uint64_t full_out_len = method ? logsig_len : sig_len;
+	const uint64_t in_stride = scalar_term ? sig_len : sig_len - 1;
+	const uint64_t out_stride = (method == 0 && !scalar_term) ? (sig_len - 1) : full_out_len;
 
-	//General case
-	const uint64_t sig_len = sig_length(aug_dimension, degree);
-
-	auto log_sig_func = [&](const T* sig_ptr, T* out_ptr) {
-		get_log_sig_<T>(sig_ptr, out_ptr, aug_dimension, degree, method);
-	};
-
-	multi_threaded_batch(log_sig_func, sig, out, batch_size, sig_len, result_length, n_jobs);
+	if (scalar_term) {
+		auto f = [&](const T* sig_ptr, T* out_ptr) {
+			get_log_sig_<T>(sig_ptr, out_ptr, aug_dimension, degree, method);
+		};
+		multi_threaded_batch(f, sig, out, batch_size, in_stride, out_stride, n_jobs);
+	} else {
+		auto f = [&](const T* sig_ptr, T* out_ptr) {
+			std::vector<T> sig_full(sig_len);
+			sig_full[0] = static_cast<T>(1);
+			std::memcpy(sig_full.data() + 1, sig_ptr, (sig_len - 1) * sizeof(T));
+			if (method == 0) {
+				std::vector<T> out_full(sig_len);
+				get_log_sig_<T>(sig_full.data(), out_full.data(), aug_dimension, degree, method);
+				std::memcpy(out_ptr, out_full.data() + 1, (sig_len - 1) * sizeof(T));
+			} else {
+				get_log_sig_<T>(sig_full.data(), out_ptr, aug_dimension, degree, method);
+			}
+		};
+		multi_threaded_batch(f, sig, out, batch_size, in_stride, out_stride, n_jobs);
+	}
 	return;
 }
 
@@ -117,35 +134,94 @@ void sig_to_log_sig_backprop_(
 	bool time_aug = false,
 	bool lead_lag = false,
 	int method = 0,
+	bool scalar_term = true,
 	int n_jobs = 1
 ) {
 	if (dimension == 0) { throw std::invalid_argument("sig_backprop received path of dimension 0"); }
 
 	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
-	
+
 	const uint64_t sig_len_ = ::sig_length(aug_dimension, degree);
-	const uint64_t log_sig_len_ = method ? ::log_sig_length(aug_dimension, degree) : ::sig_length(aug_dimension, degree);
+	const uint64_t log_sig_len_ = method ? ::log_sig_length(aug_dimension, degree) : sig_len_;
 
-	//General case
-	auto log_sig_derivs_copy_uptr = std::make_unique<T[]>(log_sig_len_ * batch_size);
-	T* log_sig_derivs_copy = log_sig_derivs_copy_uptr.get();
-	std::memcpy(log_sig_derivs_copy, log_sig_derivs, log_sig_len_ * batch_size * sizeof(T));
+	// Determine caller strides
+	const uint64_t sig_in_stride = scalar_term ? sig_len_ : sig_len_ - 1;
+	// log_sig_derivs: logsig-shaped (method>0, unaffected) or sig-shaped (method==0, may be stripped)
+	const uint64_t lsd_stride = (method == 0 && !scalar_term) ? (sig_len_ - 1) : log_sig_len_;
+	// Output is sig-shaped
+	const uint64_t out_stride = scalar_term ? sig_len_ : sig_len_ - 1;
 
-	auto log_sig_backprop_func = [&](const T* sig_ptr, T* log_sig_derivs_ptr, T* out_ptr) {
-		get_sig_to_log_sig_backprop_<T>(sig_ptr, out_ptr, log_sig_derivs_ptr, aug_dimension, degree, method);
-	};
+	if (scalar_term) {
+		auto log_sig_derivs_copy_uptr = std::make_unique<T[]>(log_sig_len_ * batch_size);
+		T* log_sig_derivs_copy = log_sig_derivs_copy_uptr.get();
+		std::memcpy(log_sig_derivs_copy, log_sig_derivs, log_sig_len_ * batch_size * sizeof(T));
 
-	multi_threaded_batch_2(
-		log_sig_backprop_func,
-		sig,
-		log_sig_derivs_copy,
-		out,
-		batch_size,
-		sig_len_,
-		log_sig_len_,
-		sig_len_,
-		n_jobs
-	);
+		auto log_sig_backprop_func = [&](const T* sig_ptr, T* log_sig_derivs_ptr, T* out_ptr) {
+			get_sig_to_log_sig_backprop_<T>(sig_ptr, out_ptr, log_sig_derivs_ptr, aug_dimension, degree, method);
+		};
+
+		multi_threaded_batch_2(
+			log_sig_backprop_func,
+			sig,
+			log_sig_derivs_copy,
+			out,
+			batch_size,
+			sig_len_,
+			log_sig_len_,
+			sig_len_,
+			n_jobs
+		);
+	} else {
+		// Per-element: prepend scalars to sig input and (if method==0) to log_sig_derivs,
+		// compute on full buffers, strip output
+		auto log_sig_derivs_copy_uptr = std::make_unique<T[]>(log_sig_len_ * batch_size);
+		T* log_sig_derivs_copy = log_sig_derivs_copy_uptr.get();
+
+		if (method == 0) {
+			// log_sig_derivs is sig-shaped with scalar stripped
+			for (uint64_t b = 0; b < batch_size; ++b) {
+				log_sig_derivs_copy[b * log_sig_len_] = static_cast<T>(0);
+				std::memcpy(log_sig_derivs_copy + b * log_sig_len_ + 1,
+					log_sig_derivs + b * lsd_stride, lsd_stride * sizeof(T));
+			}
+		} else {
+			std::memcpy(log_sig_derivs_copy, log_sig_derivs, log_sig_len_ * batch_size * sizeof(T));
+		}
+
+		// sig input needs prepending per-element
+		auto sig_full_uptr = std::make_unique<T[]>(sig_len_ * batch_size);
+		T* sig_full = sig_full_uptr.get();
+		for (uint64_t b = 0; b < batch_size; ++b) {
+			sig_full[b * sig_len_] = static_cast<T>(1);
+			std::memcpy(sig_full + b * sig_len_ + 1,
+				sig + b * sig_in_stride, sig_in_stride * sizeof(T));
+		}
+
+		// Output buffer (full size), then strip
+		auto out_full_uptr = std::make_unique<T[]>(sig_len_ * batch_size);
+		T* out_full = out_full_uptr.get();
+
+		auto log_sig_backprop_func = [&](const T* sig_ptr, T* log_sig_derivs_ptr, T* out_ptr) {
+			get_sig_to_log_sig_backprop_<T>(sig_ptr, out_ptr, log_sig_derivs_ptr, aug_dimension, degree, method);
+		};
+
+		multi_threaded_batch_2(
+			log_sig_backprop_func,
+			sig_full,
+			log_sig_derivs_copy,
+			out_full,
+			batch_size,
+			sig_len_,
+			log_sig_len_,
+			sig_len_,
+			n_jobs
+		);
+
+		// Strip output
+		for (uint64_t b = 0; b < batch_size; ++b) {
+			std::memcpy(out + b * out_stride, out_full + b * sig_len_ + 1, out_stride * sizeof(T));
+		}
+	}
 	return;
 }
 

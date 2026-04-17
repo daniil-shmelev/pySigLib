@@ -14,7 +14,7 @@
 # =========================================================================
 
 from .load_siglib import CPSIG
-from .param_checks import check_type, check_non_neg, check_pos
+from .param_checks import check_type, check_non_neg, check_pos, resolve_scalar_term
 
 
 def aug_dim(dimension: int, time_aug: bool, lead_lag: bool) -> int:
@@ -27,7 +27,7 @@ def sig_length(
         degree : int,
         time_aug : bool = False,
         lead_lag : bool = False,
-        scalar_term : bool = True,
+        scalar_term = None,
 ) -> int:
     """
     Returns the length of a truncated signature,
@@ -82,6 +82,7 @@ def sig_length(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
 
+    scalar_term = resolve_scalar_term(scalar_term)
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
     out = CPSIG.sig_length(aug_dimension, degree)

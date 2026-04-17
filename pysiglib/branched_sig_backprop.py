@@ -18,15 +18,14 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term, prepend_scalar
+from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
 from .error_codes import err_msg
 from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CPSIG_BRANCHED_SIG_COMBINE_BACKPROP,
                      CUSIG_BRANCHED_SIG_BACKPROP_CUDA,
                      CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA)
 from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler
-from .load_siglib import CPSIG
-from .branched_sig import _inv_permute_bsig, _permute_bsig
+from .branched_sig import _inv_permute_bsig, _permute_bsig, branched_sig_length
 
 
 def branched_sig_backprop(
@@ -38,9 +37,9 @@ def branched_sig_backprop(
         lead_lag: bool = False,
         end_time: float = 1.0,
         tree_order: str = "recursive",
+        planar: bool = False,
         scalar_term = None,
         n_jobs: int = 1,
-        planar: bool = False
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Backpropagates through the branched signature computation.
@@ -56,8 +55,15 @@ def branched_sig_backprop(
     :param time_aug: Whether time augmentation was used in the forward pass.
     :param lead_lag: Whether lead-lag was used in the forward pass.
     :param end_time: End time for time augmentation.
-    :param n_jobs: Number of parallel threads for batch processing.
+    :param tree_order: Tree ordering convention of ``bsig`` and ``bsig_derivs``.
+        ``"recursive"`` (default) uses the recursive construction order.
+        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :param planar: If True, backpropagate through planar branched signature.
+    :param scalar_term: If True (default), ``bsig`` and ``bsig_derivs`` include the leading constant
+        at index 0. If False, the leading element is assumed stripped from both inputs.
+        The default will change to False in pySigLib v4.0.
+    :type scalar_term: bool
+    :param n_jobs: Number of parallel threads for batch processing.
     :return: Path derivatives, same shape as ``path``.
     """
     scalar_term = resolve_scalar_term(scalar_term)
@@ -72,9 +78,6 @@ def branched_sig_backprop(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
-    if not scalar_term:
-        bsig_derivs = prepend_scalar(bsig_derivs, 0)
-
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     dimension = path_data.data_dimension
     aug_dimension = path_data.dimension
@@ -83,7 +86,7 @@ def branched_sig_backprop(
         bsig = _inv_permute_bsig(bsig, aug_dimension, degree, planar=planar)
         bsig_derivs = _inv_permute_bsig(bsig_derivs, aug_dimension, degree, planar=planar)
 
-    bsig_len = CPSIG.branched_sig_length(aug_dimension, degree, planar)
+    bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
     sig_data = MultipleSigInputHandler([bsig, bsig_derivs], bsig_len, ["bsig", "bsig_derivs"])
     result = PathOutputHandler(path_data.data_length, path_data.data_dimension, path_data)
 
@@ -95,13 +98,13 @@ def branched_sig_backprop(
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, dimension, path_data.data_length, degree, n_jobs,
-            path_data.time_aug, path_data.lead_lag, path_data.end_time, planar)
+            path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term)
     else:
         err_code = CUSIG_BRANCHED_SIG_BACKPROP_CUDA[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, dimension, path_data.data_length, degree,
-            path_data.time_aug, path_data.lead_lag, path_data.end_time, planar)
+            path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_backprop: " + err_msg(err_code))
     return result.data
@@ -114,9 +117,9 @@ def branched_sig_combine_backprop(
         dimension: int,
         degree: int,
         tree_order: str = "recursive",
+        planar: bool = False,
         scalar_term = None,
         n_jobs: int = 1,
-        planar: bool = False
 ) -> tuple:
     """
     Backpropagates through the branched signature combine (Butcher product).
@@ -130,8 +133,16 @@ def branched_sig_combine_backprop(
     :param bsig2: Second branched signature input to the forward combine.
     :param dimension: Dimension of the underlying path.
     :param degree: Maximum tree order.
-    :param n_jobs: Number of parallel threads for batch processing.
+    :param tree_order: Tree ordering convention of ``derivs``, ``bsig1``, ``bsig2`` and the returned gradients.
+        ``"recursive"`` (default) uses the recursive construction order.
+        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :param planar: If True, backpropagate through planar branched sig combine.
+    :param scalar_term: If True (default), ``derivs``, ``bsig1``, ``bsig2`` include the leading constant
+        at index 0, and the returned gradients include it as well. If False, the leading element is
+        assumed stripped from all inputs, and the returned gradients also omit it.
+        The default will change to False in pySigLib v4.0.
+    :type scalar_term: bool
+    :param n_jobs: Number of parallel threads for batch processing.
     :return: Tuple ``(dF/d(bsig1), dF/d(bsig2))``.
     """
     scalar_term = resolve_scalar_term(scalar_term)
@@ -145,39 +156,32 @@ def branched_sig_combine_backprop(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
-    if not scalar_term:
-        derivs = prepend_scalar(derivs, 0)
-
     if tree_order != "recursive":
         derivs = _inv_permute_bsig(derivs, dimension, degree, planar=planar)
         bsig1 = _inv_permute_bsig(bsig1, dimension, degree, planar=planar)
         bsig2 = _inv_permute_bsig(bsig2, dimension, degree, planar=planar)
 
-    bsig_len = CPSIG.branched_sig_length(dimension, degree, planar)
+    bsig_len = branched_sig_length(dimension, degree, planar=planar, scalar_term=scalar_term)
     data = MultipleSigInputHandler([derivs, bsig1, bsig2], bsig_len, ["derivs", "bsig1", "bsig2"])
     result1 = SigOutputHandler(data, bsig_len)
     result2 = SigOutputHandler(data, bsig_len)
 
     if data.batch_size == 0:
-        if not scalar_term:
-            return result1.data[..., 1:], result2.data[..., 1:]
         return result1.data, result2.data
 
     if data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG_COMBINE_BACKPROP[data.dtype](
             data.sig_ptr[1], data.sig_ptr[2], data.sig_ptr[0],
             result1.data_ptr, result2.data_ptr,
-            data.batch_size, dimension, degree, n_jobs, planar)
+            data.batch_size, dimension, degree, n_jobs, planar, scalar_term)
     else:
         err_code = CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA[data.dtype](
             data.sig_ptr[1], data.sig_ptr[2], data.sig_ptr[0],
             result1.data_ptr, result2.data_ptr,
-            data.batch_size, dimension, degree, planar)
+            data.batch_size, dimension, degree, planar, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine_backprop: " + err_msg(err_code))
     if tree_order != "recursive":
         _permute_bsig(result1.data, dimension, degree, planar=planar)
         _permute_bsig(result2.data, dimension, degree, planar=planar)
-    if not scalar_term:
-        return result1.data[..., 1:], result2.data[..., 1:]
     return result1.data, result2.data

@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_log_sig_method, check_n_jobs, resolve_scalar_term, prepend_scalar
+from .param_checks import check_type, check_non_neg, check_log_sig_method, check_n_jobs, resolve_scalar_term
 from .error_codes import err_msg
 from .dtypes import (CPSIG_SIG_TO_LOG_SIG_BACKPROP,
                      CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA,
@@ -105,13 +105,10 @@ def sig_to_log_sig_backprop(
     check_type(method, "method", int)
     check_log_sig_method(method)
 
-    if not scalar_term and method == 0:
-        log_sig_derivs = prepend_scalar(log_sig_derivs, 0)
-
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    sig_len = sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
-    log_sig_len = log_sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag) if method else sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
+    sig_len = sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag, scalar_term=True)
+    log_sig_len = log_sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag) if method else sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag, scalar_term=scalar_term)
     data = SigInputHandler(sig, sig_len, "sig")
     derivs_data = SigInputHandler(log_sig_derivs, log_sig_len, "log_sig_derivs")
 
@@ -130,11 +127,11 @@ def sig_to_log_sig_backprop(
         err_code = CPSIG_SIG_TO_LOG_SIG_BACKPROP[data.dtype](
             data.data_ptr, result.data_ptr, derivs_data.data_ptr,
             data.batch_size, dimension, degree,
-            time_aug, lead_lag, method, n_jobs)
+            time_aug, lead_lag, method, scalar_term, n_jobs)
     else:
         err_code = CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA[data.dtype](
             data.data_ptr, result.data_ptr, derivs_data.data_ptr,
-            data.batch_size, aug_dimension, degree, method)
+            data.batch_size, aug_dimension, degree, method, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.sig_to_log_sig_backprop: " + err_msg(err_code))
     if not scalar_term:

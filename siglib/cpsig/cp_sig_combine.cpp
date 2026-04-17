@@ -20,20 +20,30 @@
 
 extern "C" {
 
-    CPSIG_API int sig_combine_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-        SAFE_CALL(batch_sig_combine_<float>(sig1, sig2, out, batch_size, dimension, degree, n_jobs));
+    CPSIG_API int sig_combine_f(const float* sig1, const float* sig2, float* out,
+        uint64_t batch_size, uint64_t dimension, uint64_t degree,
+        bool scalar_term, int n_jobs) noexcept {
+        SAFE_CALL(batch_sig_combine_<float>(sig1, sig2, out, batch_size, dimension, degree, scalar_term, n_jobs));
     }
 
-	CPSIG_API int sig_combine_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-		SAFE_CALL(batch_sig_combine_<double>(sig1, sig2, out, batch_size, dimension, degree, n_jobs));
-	}
+    CPSIG_API int sig_combine_d(const double* sig1, const double* sig2, double* out,
+        uint64_t batch_size, uint64_t dimension, uint64_t degree,
+        bool scalar_term, int n_jobs) noexcept {
+        SAFE_CALL(batch_sig_combine_<double>(sig1, sig2, out, batch_size, dimension, degree, scalar_term, n_jobs));
+    }
 
-	CPSIG_API int sig_combine_backprop_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-		SAFE_CALL(batch_sig_combine_backprop_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree, n_jobs));
-	}
+    CPSIG_API int sig_combine_backprop_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv,
+        const float* sig1, const float* sig2,
+        uint64_t batch_size, uint64_t dimension, uint64_t degree,
+        bool scalar_term, int n_jobs) noexcept {
+        SAFE_CALL(batch_sig_combine_backprop_<float>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree, scalar_term, n_jobs));
+    }
 
-    CPSIG_API int sig_combine_backprop_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
-        SAFE_CALL(batch_sig_combine_backprop_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree, n_jobs));
+    CPSIG_API int sig_combine_backprop_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv,
+        const double* sig1, const double* sig2,
+        uint64_t batch_size, uint64_t dimension, uint64_t degree,
+        bool scalar_term, int n_jobs) noexcept {
+        SAFE_CALL(batch_sig_combine_backprop_<double>(sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, dimension, degree, scalar_term, n_jobs));
     }
 
 }

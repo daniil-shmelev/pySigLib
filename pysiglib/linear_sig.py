@@ -88,23 +88,19 @@ def linear_sig(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
-    sig_len = sig_length(dimension, degree)
+    sig_len = sig_length(dimension, degree, scalar_term=scalar_term)
     data = SigInputHandler(displacement, dimension, "displacement")
     result = SigOutputHandler(data, sig_len)
 
     if data.batch_size == 0:
-        if not scalar_term:
-            return result.data[..., 1:]
         return result.data
 
     if data.device == "cpu":
         err_code = CPSIG_LINEAR_SIG[data.dtype](
-            data.data_ptr, result.data_ptr, data.batch_size, dimension, degree, n_jobs)
+            data.data_ptr, result.data_ptr, data.batch_size, dimension, degree, scalar_term, n_jobs)
     else:
         err_code = CUSIG_LINEAR_SIG_CUDA[data.dtype](
-            data.data_ptr, result.data_ptr, data.batch_size, dimension, degree)
+            data.data_ptr, result.data_ptr, data.batch_size, dimension, degree, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.linear_sig: " + err_msg(err_code))
-    if not scalar_term:
-        return result.data[..., 1:]
     return result.data
