@@ -7,6 +7,11 @@ set_target_properties(pysiglib_jax_ffi PROPERTIES
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
     WINDOWS_EXPORT_ALL_SYMBOLS ON
+    # Resolve libcpsig next to this DLL. Needed by auditwheel on Linux and
+    # for the wheel to be importable without setting LD_LIBRARY_PATH.
+    INSTALL_RPATH "$ORIGIN"
+    BUILD_WITH_INSTALL_RPATH TRUE
+    MACOSX_RPATH TRUE
 )
 
 target_include_directories(pysiglib_jax_ffi PRIVATE

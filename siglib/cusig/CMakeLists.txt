@@ -29,36 +29,20 @@ set_target_properties(cusig PROPERTIES
 target_include_directories(cusig PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
 target_compile_definitions(cusig PRIVATE CUSIG_EXPORTS NDEBUG)
 
-# ---------------------------------------------------------------------------
-# Match old build_cusig.bat nvcc flags:
-#   -lineinfo   (debug line info in device code)
-#   --dopt=on   (device code optimizer)
-# ---------------------------------------------------------------------------
+# nvcc flags: -lineinfo (device-code line info), --dopt=on (device optimizer).
 target_compile_options(cusig PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo;--dopt=on>
 )
 
-# ---------------------------------------------------------------------------
-# Match old build_cusig.bat cl.exe flags for cupch.cpp:
-#   /Oi  — enable intrinsic functions
-#   /GL  — whole-program optimization (requires /LTCG at link)
-#   /Gy  — function-level linking (enables /OPT:REF)
-#   /sdl — additional security development checks
-#   /Zi  — generate PDB debug info
-#   /permissive- — strict C++ conformance
-# ---------------------------------------------------------------------------
 if(MSVC)
+    # cl.exe flags for cupch.cpp: /GL whole-program opt, /Gy func-level linking,
+    # /Oi intrinsics, /sdl security checks, /Zi PDB, /permissive- strict C++.
     set_source_files_properties(cupch.cpp PROPERTIES
         COMPILE_FLAGS "/Oi /GL /Gy /sdl /Zi /permissive-"
     )
-
-    # Old build defines (Unicode mode, not MBCS)
     target_compile_definitions(cusig PRIVATE _USRDLL _UNICODE UNICODE)
 endif()
 
-# ---------------------------------------------------------------------------
-# Link libraries
-# ---------------------------------------------------------------------------
 target_link_libraries(cusig PRIVATE CUDA::cudart)
 
 # cudadevrt is needed for separable compilation (device linking).
@@ -71,14 +55,9 @@ else()
     endif()
 endif()
 
-# ---------------------------------------------------------------------------
-# Match old build_cusig.bat link.exe flags:
-#   /LTCG:incremental — link-time code generation (pairs with /GL)
-#   /OPT:REF          — eliminate unreferenced functions/data
-#   /OPT:ICF          — fold identical COMDATs
-#   /DEBUG             — generate PDB
-# ---------------------------------------------------------------------------
 if(MSVC)
+    # link.exe flags: /LTCG pairs with /GL, /OPT:REF drops unused code, /OPT:ICF
+    # folds identical COMDATs, /DEBUG emits a PDB.
     target_link_options(cusig PRIVATE
         /LTCG:incremental
         /OPT:REF

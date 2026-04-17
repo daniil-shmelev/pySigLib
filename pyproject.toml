@@ -1,7 +1,6 @@
 [build-system]
-# jaxlib is a build-time only dependency used to locate the XLA FFI headers.
-# jaxlib >= 0.5 requires Python >= 3.10, so on 3.9 we skip it and the CMake
-# probe falls through to disable the JAX FFI for that build.
+# jaxlib provides the XLA FFI headers at build time. Skipped on Python 3.9
+# (jaxlib>=0.5 needs Python 3.10+); CMake then disables JAX FFI for that build.
 requires = [
     "scikit-build-core>=0.10",
     "jaxlib>=0.5.0; python_version>='3.10'",
@@ -66,13 +65,7 @@ sdist.exclude = [
 PYSIGLIB_JAX_FFI = {env = "PYSIGLIB_JAX_FFI", default = "ON"}
 PYSIGLIB_AVX     = {env = "SIGLIB_VEC", default = "ON"}
 
-# -----------------------------------------------------------------------
-# cibuildwheel configuration (used by .github/workflows/release.yml)
-# -----------------------------------------------------------------------
-# Defaults assume CPU-only. Each CI job overrides CIBW_ENVIRONMENT
-# (and CIBW_MANYLINUX_X86_64_IMAGE for the CUDA Linux build) as needed.
-# These settings are only read when cibuildwheel is invoked — a plain
-# `pip install .` uses scikit-build-core directly and ignores this block.
+# cibuildwheel config (release.yml only). `pip install .` ignores this.
 [tool.cibuildwheel]
 build = "cp311-*"
 skip = "pp* *-musllinux_* *-win32 *i686"
@@ -83,24 +76,15 @@ test-command = 'python -c "import pysiglib, pysiglib.torch_api; print(f\"imports
 
 [tool.cibuildwheel.linux]
 manylinux-x86_64-image = "manylinux_2_28"
-# CUDA Linux build overrides manylinux-x86_64-image to a custom manylinux+CUDA image;
-# the libcuda/libnvidia excludes are harmless for CPU wheels (nothing to exclude).
-# libcpsig/libcusig/libpysiglib_jax_ffi are internal shared libs bundled inside
-# the wheel and loaded via ctypes - exclude them from auditwheel's dependency
-# resolution, otherwise repair fails trying to locate their "source" on the
-# build host.
+# Exclude system-CUDA libs (libcuda, libnvidia) and our own bundled libs
+# (libcpsig, libcusig, libpysiglib_jax_ffi) from auditwheel dependency resolution.
 repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*' --exclude 'libcpsig.so*' --exclude 'libcusig.so*' --exclude 'libpysiglib_jax_ffi.so*'"
 
 [tool.cibuildwheel.macos]
-# arm64-only: Intel Mac cross-compile from arm64 hosts on GHA surfaced a
-# series of hard-to-solve issues (OS-based SIMD guards, missing std::filesystem
-# support, -march=native mis-resolution) that weren't worth fighting for a
-# target audience of ~zero. macosx_arm64 covers all modern Mac users.
+# arm64 only. Intel Mac cross-compile has too many toolchain issues for ~zero users.
 archs = ["arm64"]
-# delocate default errors on the inter-dylib references between our own
-# bundled libs (libpysiglib_jax_ffi.dylib -> libcpsig.dylib); they're all in
-# the same pysiglib/ package dir and loaded via ctypes, so missing-dep
-# detection is a false positive here.
+# --ignore-missing-dependencies: our bundled dylibs reference each other
+# (libpysiglib_jax_ffi -> libcpsig); all in pysiglib/, loaded via ctypes.
 repair-wheel-command = "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} --ignore-missing-dependencies"
 
 [tool.coverage.run]

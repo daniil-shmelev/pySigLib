@@ -20,20 +20,16 @@ target_compile_features(cpsig PRIVATE cxx_std_20)
 target_include_directories(cpsig PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
 target_compile_definitions(cpsig PRIVATE CPSIG_EXPORTS)
 
-# B2 uses <threading>multi — on Linux this adds -pthread
 target_link_libraries(cpsig PRIVATE Threads::Threads)
 
 # ---- Vectorization ----------------------------------------------------------
+# Under cibuildwheel, force a portable AVX2 baseline so wheels don't embed
+# AVX-512 (built on a CPU that has it) and then SIGILL on end-user CPUs that
+# don't. Local source installs get -march=native for max perf.
 if(_enable_vec)
     target_compile_definitions(cpsig PRIVATE VEC)
 
     if(MSVC)
-        # Under cibuildwheel, force the portable AVX2 baseline. Without this,
-        # _has_avx512f reflects the build runner's CPU — GHA's windows-latest
-        # is an Intel Xeon Platinum with AVX-512, so the wheel would embed
-        # AVX-512 instructions and SIGILL on consumer CPUs that don't have it
-        # (13th/14th-gen Intel Core P-cores with AVX-512 fused off, AMD Zen<4,
-        # older Intel). Mirror of the non-MSVC CIBUILDWHEEL branch below.
         if(DEFINED ENV{CIBUILDWHEEL})
             target_compile_options(cpsig PRIVATE /arch:AVX2)
         elseif(_has_avx512f)
@@ -43,22 +39,12 @@ if(_enable_vec)
         elseif(_has_avx)
             target_compile_options(cpsig PRIVATE /arch:AVX)
         endif()
-        # Match B2: <toolset>msvc:<cxxflags>"/Qvec-report:2"
         target_compile_options(cpsig PRIVATE /Qvec-report:2)
     elseif(APPLE)
-        # Don't use -march=native on Apple: clang resolves "native" against the
-        # host CPU (apple-mN), and not every clang version in the Xcode toolchain
-        # recognises the newest Apple CPU names (e.g. apple-m3), which can break
-        # the build with "unknown target CPU" errors. NEON is baseline on arm64
-        # Apple Silicon, so -ftree-vectorize alone is sufficient.
+        # No -march=native: some clang versions don't recognise the newest
+        # apple-mN CPU names and fail with "unknown target CPU".
         target_compile_options(cpsig PRIVATE -ftree-vectorize)
     else()
-        # Under cibuildwheel (CI wheel builds), target the portable AVX2
-        # baseline (x86-64-v3 = Haswell 2013+). -march=native would emit
-        # AVX-512 whenever the build runner happens to have it, then crash
-        # end users with SIGILL on CPUs that don't. For source installs,
-        # -march=native still applies so local developers get maximum perf
-        # on their own hardware.
         if(DEFINED ENV{CIBUILDWHEEL})
             target_compile_options(cpsig PRIVATE -march=x86-64-v3 -ftree-vectorize)
         else()

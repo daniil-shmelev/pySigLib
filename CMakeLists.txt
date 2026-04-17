@@ -31,14 +31,11 @@ option(PYSIGLIB_AVX  "Enable AVX/NEON vectorization"      ON)
 option(PYSIGLIB_JAX_FFI "Build JAX FFI support when headers are available" ON)
 option(PYSIGLIB_BENCHMARKS "Build CodSpeed / Google Benchmark harness" OFF)
 
-# ---------------------------------------------------------------------------
-# Match the original B2 / batch-script build: static CRT (/MT) on MSVC
-# ---------------------------------------------------------------------------
+# Static CRT (/MT) on MSVC, to match the original B2 build.
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-# Threading — B2 uses <threading>multi which adds -pthread on Linux
 find_package(Threads REQUIRED)
 
 # ---------------------------------------------------------------------------
@@ -79,14 +76,8 @@ if(PYSIGLIB_AVX)
 endif()
 
 # ---------------------------------------------------------------------------
-# JAX FFI detection
-#
-# This is optional. We probe the active Python environment for JAX / jaxlib
-# headers used by the XLA FFI interface. If found, we enable the JAX FFI
-# subproject; otherwise we build without it.
-#
-# Under uv, extra build dependencies may place jax/jaxlib into the isolated
-# build environment, so this probe will usually succeed there when requested.
+# JAX FFI detection (optional). Probe the Python env for jaxlib's XLA FFI
+# headers; enable the JAX FFI subproject if found.
 # ---------------------------------------------------------------------------
 if(PYSIGLIB_JAX_FFI)
     set(_jax_probe_script [=[

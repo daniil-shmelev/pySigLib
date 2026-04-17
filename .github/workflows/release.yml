@@ -197,8 +197,7 @@ jobs:
           python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: built wheel reports '+actual+', workflow input expected '+expected; print('Version verified:', actual)"
       - name: Run test suite
         working-directory: ${{ runner.temp }}
-        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
-
+        run: pytest ${{ github.workspace }}/tests/ -v
   # ============================================================
   # Linux distro compatibility matrix. The main test-linux-cpu job above
   # only exercises ubuntu-latest; this one runs the *same* CPU wheel
@@ -267,7 +266,7 @@ jobs:
               # resolves `import pysiglib` from site-packages rather than
               # from the checked-out /workspace/pysiglib/ source tree.
               cd /tmp
-              $PY -m pytest --import-mode=importlib /workspace/tests/ -v
+              $PY -m pytest /workspace/tests/ -v
             '
 
   # ============================================================
@@ -439,8 +438,7 @@ jobs:
           python -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
       - name: Run full test suite
         working-directory: ${{ runner.temp }}
-        run: pytest ${{ github.workspace }}/tests/ -v --timeout=60 --import-mode=importlib
-
+        run: pytest ${{ github.workspace }}/tests/ -v --timeout=60
   test-windows-cpu:
     name: Test Windows CPU wheel (py${{ matrix.python-version }})
     needs: build-windows-cpu
@@ -475,8 +473,7 @@ jobs:
       - name: Run CPU test suite
         shell: pwsh
         working-directory: ${{ runner.temp }}
-        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
-
+        run: pytest ${{ github.workspace }}/tests/ -v
   test-macos:
     name: Test macOS wheel (py${{ matrix.python-version }})
     needs: build-macos
@@ -508,10 +505,15 @@ jobs:
           python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: built wheel reports '+actual+', workflow input expected '+expected; print('Version verified:', actual)"
       - name: Run CPU test suite
         working-directory: ${{ runner.temp }}
-        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
-
+        run: pytest ${{ github.workspace }}/tests/ -v
   # ============================================================
-  # Aggregate all built wheels into one downloadable artifact
+  # Aggregate all built wheels into one downloadable artifact.
+  # Gated on every test job so the `all-wheels` artifact is only produced
+  # for a release bundle that actually passed its tests. GPU tests are
+  # allowed to be `skipped` (when the user dispatches with
+  # run_gpu_tests=false) thanks to `!failure() && !cancelled()`, but any
+  # actual test FAILURE blocks the collect step and every publish job
+  # downstream.
   # ============================================================
   collect-wheels:
     name: Collect all wheels
@@ -521,6 +523,13 @@ jobs:
       - build-windows-cpu
       - build-windows-cuda
       - build-macos
+      - test-linux-cpu
+      - test-linux-distros
+      - test-windows-cpu
+      - test-macos
+      - test-linux-cuda
+      - test-windows-cuda
+    if: ${{ always() && !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -551,11 +560,7 @@ jobs:
   publish-testpypi-cpu:
     name: Publish pysiglib to TestPyPI
     needs:
-      - test-linux-cpu
-      - test-linux-distros
-      - test-windows-cpu
-      - test-macos
-      - collect-wheels
+      - collect-wheels  # transitively requires all CPU + (optional) GPU tests
     if: ${{ inputs.publish_to_pypi }}
     runs-on: ubuntu-latest
     environment:
@@ -590,9 +595,7 @@ jobs:
   publish-testpypi-cuda:
     name: Publish pysiglib-cuda to TestPyPI
     needs:
-      - test-linux-cuda
-      - test-windows-cuda
-      - collect-wheels
+      - collect-wheels  # transitively requires GPU tests to have passed
     if: ${{ inputs.publish_to_pypi && inputs.run_gpu_tests }}
     runs-on: ubuntu-latest
     environment:
@@ -658,8 +661,7 @@ jobs:
           python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: '+actual+' vs '+expected; print('Version verified:', actual)"
       - name: Run test suite
         working-directory: ${{ runner.temp }}
-        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
-
+        run: pytest ${{ github.workspace }}/tests/ -v
   test-from-testpypi-windows:
     name: Test TestPyPI install on Windows (py${{ matrix.python-version }})
     needs: publish-testpypi-cpu
@@ -698,8 +700,7 @@ jobs:
       - name: Run test suite
         shell: pwsh
         working-directory: ${{ runner.temp }}
-        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
-
+        run: pytest ${{ github.workspace }}/tests/ -v
   test-from-testpypi-macos:
     name: Test TestPyPI install on macOS (py${{ matrix.python-version }})
     needs: publish-testpypi-cpu
@@ -737,8 +738,7 @@ jobs:
           python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: '+actual+' vs '+expected; print('Version verified:', actual)"
       - name: Run test suite
         working-directory: ${{ runner.temp }}
-        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
-
+        run: pytest ${{ github.workspace }}/tests/ -v
   # ============================================================
   # Production PyPI publish — CPU wheels.
   # Gated by the `pypi` environment, which should require manual reviewer
