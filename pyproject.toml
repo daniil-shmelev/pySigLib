@@ -85,7 +85,11 @@ test-command = 'python -c "import pysiglib, pysiglib.torch_api; print(f\"imports
 manylinux-x86_64-image = "manylinux_2_28"
 # CUDA Linux build overrides manylinux-x86_64-image to a custom manylinux+CUDA image;
 # the libcuda/libnvidia excludes are harmless for CPU wheels (nothing to exclude).
-repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*'"
+# libcpsig/libcusig/libpysiglib_jax_ffi are internal shared libs bundled inside
+# the wheel and loaded via ctypes - exclude them from auditwheel's dependency
+# resolution, otherwise repair fails trying to locate their "source" on the
+# build host.
+repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*' --exclude 'libcpsig.so*' --exclude 'libcusig.so*' --exclude 'libpysiglib_jax_ffi.so*'"
 
 [tool.cibuildwheel.macos]
 # arm64-only: Intel Mac cross-compile from arm64 hosts on GHA surfaced a
@@ -93,6 +97,11 @@ repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcu
 # support, -march=native mis-resolution) that weren't worth fighting for a
 # target audience of ~zero. macosx_arm64 covers all modern Mac users.
 archs = ["arm64"]
+# delocate default errors on the inter-dylib references between our own
+# bundled libs (libpysiglib_jax_ffi.dylib -> libcpsig.dylib); they're all in
+# the same pysiglib/ package dir and loaded via ctypes, so missing-dep
+# detection is a false positive here.
+repair-wheel-command = "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} --ignore-missing-dependencies"
 
 [tool.coverage.run]
 source_pkgs = ["pysiglib"]

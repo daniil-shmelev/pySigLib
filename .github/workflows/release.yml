@@ -1,13 +1,24 @@
 name: Release
 
-# Builds pysiglib and pysiglib-cuda wheels, then tests fresh installs across
-# the supported platforms. This workflow does not publish to PyPI.
+# Builds pysiglib and pysiglib-cuda wheels, tests fresh installs across the
+# supported platforms, and (optionally, gated by `publish_to_pypi`) publishes
+# to TestPyPI, installs from TestPyPI and runs the test suite, then publishes
+# to PyPI.
 #
 # Prerequisites before first run:
 #   1. Run `build-cuda-images.yml` once to publish the manylinux build image
 #      and CUDA test image to GHCR.
 #   2. Register a self-hosted Windows runner with Docker Desktop + WSL2 + the
 #      NVIDIA driver, labelled [self-hosted, Windows, X64].
+#   3. To enable PyPI publishing (publish_to_pypi=true):
+#      a. Configure Trusted Publishing on TestPyPI and PyPI for both the
+#         `pysiglib` and `pysiglib-cuda12` projects. Each trusted publisher
+#         entry must point at this repo, this workflow file, and the
+#         environment name (`testpypi` / `pypi`).
+#      b. Create two GitHub repo environments:
+#         - `testpypi` (no required reviewers — auto-proceeds after tests pass)
+#         - `pypi` (required reviewers = release approvers; holds the prod push
+#           behind a manual gate after the TestPyPI install succeeds)
 
 on:
   workflow_dispatch:
@@ -20,6 +31,10 @@ on:
         description: 'Run GPU test jobs on the self-hosted Windows runner.'
         type: boolean
         default: true
+      publish_to_pypi:
+        description: 'Publish to TestPyPI, run a fresh-install smoke test, then publish to PyPI. Requires Trusted Publishing + `testpypi` / `pypi` environments to be configured (see release.yml header).'
+        type: boolean
+        default: false
 
 env:
   # Shared CUDA arch list for Linux and Windows plugin builds.
@@ -171,13 +186,18 @@ jobs:
           pip install --upgrade pip
           pip install dist/*.whl
           pip install pytest 'jax; python_version >= "3.10"'
+      # The next two steps run from runner.temp so `import pysiglib` resolves
+      # to the installed wheel in site-packages instead of the checked-out
+      # source tree (which lacks the generated _config.py and native libs).
       - name: Verify installed version matches input
+        working-directory: ${{ runner.temp }}
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
           python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: built wheel reports '+actual+', workflow input expected '+expected; print('Version verified:', actual)"
       - name: Run test suite
-        run: pytest tests/ -v
+        working-directory: ${{ runner.temp }}
+        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
 
   # ============================================================
   # Linux distro compatibility matrix. The main test-linux-cpu job above
@@ -402,18 +422,24 @@ jobs:
           python -m pip install --upgrade pip
           Get-ChildItem dist\*.whl | ForEach-Object { pip install $_.FullName }
           pip install pytest pytest-timeout torch 'jax; python_version >= "3.10"'
+      # The next three steps run from runner.temp so `import pysiglib` resolves
+      # to the installed wheel in site-packages instead of the checked-out
+      # source tree (which lacks the generated _config.py and native libs).
       - name: Verify installed version matches input
+        working-directory: ${{ runner.temp }}
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
           python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: built wheel reports '+actual+', workflow input expected '+expected; print('Version verified:', actual)"
       - name: Verify GPU + CUDA visibility
+        working-directory: ${{ runner.temp }}
         run: |
           nvidia-smi
           python -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
           python -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
       - name: Run full test suite
-        run: pytest tests/ -v --timeout=60
+        working-directory: ${{ runner.temp }}
+        run: pytest ${{ github.workspace }}/tests/ -v --timeout=60 --import-mode=importlib
 
   test-windows-cpu:
     name: Test Windows CPU wheel (py${{ matrix.python-version }})
@@ -437,15 +463,19 @@ jobs:
           python -m pip install --upgrade pip
           Get-ChildItem dist\*.whl | ForEach-Object { pip install $_.FullName }
           pip install pytest 'jax; python_version >= "3.10"'
+      # The next two steps run from runner.temp so `import pysiglib` resolves
+      # to the installed wheel, not the checked-out source tree.
       - name: Verify installed version matches input
         shell: pwsh
+        working-directory: ${{ runner.temp }}
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
           python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: built wheel reports '+actual+', workflow input expected '+expected; print('Version verified:', actual)"
       - name: Run CPU test suite
         shell: pwsh
-        run: pytest tests/ -v
+        working-directory: ${{ runner.temp }}
+        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
 
   test-macos:
     name: Test macOS wheel (py${{ matrix.python-version }})
@@ -468,13 +498,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install dist/*.whl
           pip install pytest 'jax; python_version >= "3.10"'
+      # The next two steps run from runner.temp so `import pysiglib` resolves
+      # to the installed wheel, not the checked-out source tree.
       - name: Verify installed version matches input
+        working-directory: ${{ runner.temp }}
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
           python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: built wheel reports '+actual+', workflow input expected '+expected; print('Version verified:', actual)"
       - name: Run CPU test suite
-        run: pytest tests/ -v
+        working-directory: ${{ runner.temp }}
+        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
 
   # ============================================================
   # Aggregate all built wheels into one downloadable artifact
@@ -506,3 +540,272 @@ jobs:
         with:
           name: all-wheels
           path: dist/*.whl
+
+  # ============================================================
+  # TestPyPI publish — CPU wheels.
+  # Deploys pysiglib (base) wheels to test.pypi.org. All CPU test jobs must
+  # have passed first. Uses OIDC Trusted Publishing; the `testpypi` environment
+  # has no required reviewers, so this proceeds automatically once the tests
+  # are green.
+  # ============================================================
+  publish-testpypi-cpu:
+    name: Publish pysiglib to TestPyPI
+    needs:
+      - test-linux-cpu
+      - test-linux-distros
+      - test-windows-cpu
+      - test-macos
+      - collect-wheels
+    if: ${{ inputs.publish_to_pypi }}
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/pysiglib/
+    permissions:
+      id-token: write  # required for OIDC Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-linux-cpu
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-windows-cpu
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-macos
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+          skip-existing: true
+
+  # ============================================================
+  # TestPyPI publish — CUDA plugin wheels.
+  # Only runs if GPU tests were enabled (and therefore passed); skipped
+  # otherwise so a CPU-only release cycle still publishes the base package.
+  # ============================================================
+  publish-testpypi-cuda:
+    name: Publish pysiglib-cuda to TestPyPI
+    needs:
+      - test-linux-cuda
+      - test-windows-cuda
+      - collect-wheels
+    if: ${{ inputs.publish_to_pypi && inputs.run_gpu_tests }}
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/pysiglib-cuda12/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-linux-cuda
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-windows-cuda
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+          skip-existing: true
+
+  # ============================================================
+  # Fresh-install smoke tests pulling pysiglib straight from TestPyPI.
+  # TestPyPI does not mirror all transitive dependencies, so we pass
+  # --extra-index-url pointing at real PyPI so numpy/torch/jax resolve.
+  # A short retry loop absorbs TestPyPI's occasional propagation delay.
+  # ============================================================
+  test-from-testpypi-linux:
+    name: Test TestPyPI install on Linux (py${{ matrix.python-version }})
+    needs: publish-testpypi-cpu
+    if: ${{ inputs.publish_to_pypi }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.13']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install from TestPyPI
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          pip install --upgrade pip
+          for i in 1 2 3 4 5; do
+            if pip install \
+                 --index-url https://test.pypi.org/simple/ \
+                 --extra-index-url https://pypi.org/simple/ \
+                 "pysiglib==${EXPECTED_VERSION}"; then
+              break
+            fi
+            echo "TestPyPI install failed (attempt $i), retrying in 15s..."
+            sleep 15
+          done
+          pip install pytest 'jax; python_version >= "3.10"'
+      - name: Verify installed version
+        working-directory: ${{ runner.temp }}
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: '+actual+' vs '+expected; print('Version verified:', actual)"
+      - name: Run test suite
+        working-directory: ${{ runner.temp }}
+        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
+
+  test-from-testpypi-windows:
+    name: Test TestPyPI install on Windows (py${{ matrix.python-version }})
+    needs: publish-testpypi-cpu
+    if: ${{ inputs.publish_to_pypi }}
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ['3.13']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install from TestPyPI
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          python -m pip install --upgrade pip
+          for ($i = 1; $i -le 5; $i++) {
+            pip install --index-url https://test.pypi.org/simple/ `
+                        --extra-index-url https://pypi.org/simple/ `
+                        "pysiglib==$env:EXPECTED_VERSION"
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "TestPyPI install failed (attempt $i), retrying in 15s..."
+            Start-Sleep -Seconds 15
+          }
+          pip install pytest 'jax; python_version >= "3.10"'
+      - name: Verify installed version
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: '+actual+' vs '+expected; print('Version verified:', actual)"
+      - name: Run test suite
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
+
+  test-from-testpypi-macos:
+    name: Test TestPyPI install on macOS (py${{ matrix.python-version }})
+    needs: publish-testpypi-cpu
+    if: ${{ inputs.publish_to_pypi }}
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ['3.13']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install from TestPyPI
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          python -m pip install --upgrade pip
+          for i in 1 2 3 4 5; do
+            if pip install \
+                 --index-url https://test.pypi.org/simple/ \
+                 --extra-index-url https://pypi.org/simple/ \
+                 "pysiglib==${EXPECTED_VERSION}"; then
+              break
+            fi
+            echo "TestPyPI install failed (attempt $i), retrying in 15s..."
+            sleep 15
+          done
+          pip install pytest 'jax; python_version >= "3.10"'
+      - name: Verify installed version
+        working-directory: ${{ runner.temp }}
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          python -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: '+actual+' vs '+expected; print('Version verified:', actual)"
+      - name: Run test suite
+        working-directory: ${{ runner.temp }}
+        run: pytest ${{ github.workspace }}/tests/ -v --import-mode=importlib
+
+  # ============================================================
+  # Production PyPI publish — CPU wheels.
+  # Gated by the `pypi` environment, which should require manual reviewer
+  # approval. Runs only after the TestPyPI install tests pass on every OS,
+  # so by this point we have high confidence the wheel installs cleanly.
+  # ============================================================
+  publish-pypi-cpu:
+    name: Publish pysiglib to PyPI
+    needs:
+      - test-from-testpypi-linux
+      - test-from-testpypi-windows
+      - test-from-testpypi-macos
+    if: ${{ inputs.publish_to_pypi }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pysiglib/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-linux-cpu
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-windows-cpu
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-macos
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  # ============================================================
+  # Production PyPI publish — CUDA plugin.
+  # Depends on the base-package PyPI publish (so users who run
+  # `pip install pysiglib-cuda12` can also pull a working `pysiglib`) plus
+  # TestPyPI publish of the plugin wheels. No fresh-install test for the
+  # CUDA plugin — its install mechanics match the CPU wheel; the only
+  # extra thing it does is drop cusig.dll next to pysiglib, which the
+  # test-linux-cuda / test-windows-cuda jobs have already exercised against
+  # the local wheel.
+  # ============================================================
+  publish-pypi-cuda:
+    name: Publish pysiglib-cuda to PyPI
+    needs:
+      - publish-testpypi-cuda
+      - publish-pypi-cpu
+    if: ${{ inputs.publish_to_pypi && inputs.run_gpu_tests }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pysiglib-cuda12/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-linux-cuda
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-windows-cuda
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
