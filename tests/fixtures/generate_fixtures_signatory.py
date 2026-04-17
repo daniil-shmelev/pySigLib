@@ -43,7 +43,7 @@ if not os.path.exists(OUT_PATH):
     raise RuntimeError("Run generate_fixtures_iisig.py first to create shared paths")
 
 existing = dict(np.load(OUT_PATH, allow_pickle=False))
-path = existing["path"]  # (2, 10, 3) — shared with iisig script
+path = existing["path"]  # (2, 10, 3) - shared with iisig script
 
 torch.manual_seed(54321)
 

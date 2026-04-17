@@ -312,7 +312,7 @@ void branched_sig_backprop_ker(
 			inc[d] = bp[(seg + 1) * dim + d] - bp[seg * dim + d];
 		__syncthreads();
 
-		// --- 2. Linear branched sig → temp_Y ---
+		// --- 2. Linear branched sig -> temp_Y ---
 		if (tid == 0) temp_Y[0] = T(1);
 		if (tid < num_trees) {
 			T prod = T(1);
@@ -398,7 +398,7 @@ void branched_sig_backprop_ker(
 			__syncthreads();
 		}
 
-		// --- 5. Linear bsig deriv → increment derivs ---
+		// --- 5. Linear bsig deriv -> increment derivs ---
 		// Zero inc_derivs
 		for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
 			inc_derivs[d] = T(0);
@@ -478,7 +478,7 @@ void branched_sig_combine_ker(
 		O[i] = X[i];
 	__syncthreads();
 
-	// Butcher product: out = butcher_product(X, Y) — process high to low order
+	// Butcher product: out = butcher_product(X, Y) - process high to low order
 	for (int order = max_nodes; order >= 1; --order) {
 		uint32_t ostart = s_order_idx[order];
 		uint32_t oend = s_order_idx[order + 1];

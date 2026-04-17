@@ -645,7 +645,7 @@ void bch_combine_linear_impl_(
 		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
 
 		// When one operand is node 1 (the sparse displacement), use
-		// precomputed sparse_end bounds — no per-entry branch needed.
+		// precomputed sparse_end bounds - no per-entry branch needed.
 		const bool sparse = (rf == 1 || lf == 1);
 
 		for (uint64_t k = 0; k < m; ++k) {

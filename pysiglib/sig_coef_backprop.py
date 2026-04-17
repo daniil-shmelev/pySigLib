@@ -109,7 +109,7 @@ def sig_coef_backprop(
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
 
-    # CUDA sig_coef_backprop doesn't support time_aug/lead_lag natively —
+    # CUDA sig_coef_backprop doesn't support time_aug/lead_lag natively -
     # transform the path first, backprop, then backprop through the transform.
     if data.device != "cpu" and (time_aug or lead_lag):
         from .transform_path import transform_path
@@ -128,7 +128,7 @@ def sig_coef_backprop(
         raise ValueError("Expected coefs.shape[-1] == " + str(coefs_len) + ". Please make sure coefs was generated using prefixes=True.")
 
     # CUDA kernel doesn't handle empty words (degree 0) correctly.
-    # Since S() = 1 is constant, its gradient is always zero — safely skip.
+    # Since S() = 1 is constant, its gradient is always zero - safely skip.
     if data.device != "cpu" and any(len(w) == 0 for w in words):
         keep_indices = []
         pos = 0

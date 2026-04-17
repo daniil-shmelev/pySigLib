@@ -25,24 +25,41 @@ from .log_sig_join import log_sig_join
 from .log_sig_combine import log_sig_combine
 from .log_sig import log_sig
 
+try:
+    import jax
+    import jax.numpy as jnp
+    _HAS_JAX = True
+except ImportError:
+    _HAS_JAX = False
+
+
+def _is_jax(x):
+    """Return True if ``x`` is a JAX array. Returns False if JAX is not installed."""
+    return _HAS_JAX and isinstance(x, jax.Array)
+
 
 def _make_zero(length, batch_shape, like_arr):
-    """Create a zero array of shape ``(*batch_shape, length)`` matching dtype/device of ``like_arr``."""
+    """Create a zero array of shape ``(..., length)`` matching dtype/device of ``like_arr``."""
     full_shape = (*batch_shape, length)
     if isinstance(like_arr, torch.Tensor):
         return torch.zeros(full_shape, dtype=like_arr.dtype, device=like_arr.device)
+    if _is_jax(like_arr):
+        return jnp.zeros(full_shape, dtype=like_arr.dtype)
     return np.zeros(full_shape, dtype=like_arr.dtype)
 
 
 def _make_identity_sig(sig_len, batch_shape, like_arr, scalar_term=True):
-    """Create an identity signature of shape ``(*batch_shape, sig_len)``.
+    """Create an identity signature of shape ``(..., sig_len)``.
 
     With ``scalar_term=True`` the result is ``[1, 0, ..., 0]``; with ``scalar_term=False``
     the leading 1 is stripped and the identity becomes all zeros (the sig of a
-    zero-length path is zero in every tensor level ≥ 1).
+    zero-length path is zero in every tensor level >= 1).
     """
     identity = _make_zero(sig_len, batch_shape, like_arr)
     if scalar_term:
+        # JAX arrays are immutable; use functional update.
+        if _is_jax(identity):
+            return identity.at[..., 0].set(1.0)
         identity[..., 0] = 1.0
     return identity
 
@@ -51,18 +68,20 @@ def _stack(arrays, like_arr):
     """Stack arrays along a new leading dimension."""
     if isinstance(like_arr, torch.Tensor):
         return torch.stack(arrays)
+    if _is_jax(like_arr):
+        return jnp.stack(arrays)
     return np.stack(arrays)
 
 
 def _validate_push_point(point, expected_dim, expected_batch_shape):
     """Validate a ``push(point)`` argument and return its inferred batch shape.
 
-    Point must have shape ``(*batch, dimension)``. If the stream already has a
+    Point must have shape ``(..., dimension)``. If the stream already has a
     locked-in batch shape, the input shape must match it.
     """
     if point.ndim < 1 or point.shape[-1] != expected_dim:
         raise ValueError(
-            f"push expects a point of shape (*batch, {expected_dim}); "
+            f"push expects a point of shape (..., {expected_dim}); "
             f"got shape {tuple(point.shape)}")
     batch = tuple(point.shape[:-1])
     if expected_batch_shape is not None and batch != expected_batch_shape:
@@ -75,12 +94,12 @@ def _validate_push_point(point, expected_dim, expected_batch_shape):
 def _validate_push_batch(points, expected_dim, expected_batch_shape):
     """Validate a ``push_batch(points)`` argument and return ``(batch_shape, n_points)``.
 
-    Points must have shape ``(*batch, n_points, dimension)``. If the stream already
+    Points must have shape ``(..., n_points, dimension)``. If the stream already
     has a locked-in batch shape, the input shape must match it.
     """
     if points.ndim < 2 or points.shape[-1] != expected_dim:
         raise ValueError(
-            f"push_batch expects points of shape (*batch, n_points, {expected_dim}); "
+            f"push_batch expects points of shape (..., n_points, {expected_dim}); "
             f"got shape {tuple(points.shape)}")
     batch = tuple(points.shape[:-2])
     n_points = points.shape[-2]
@@ -95,13 +114,17 @@ def _cat_time(a, b):
     """Concatenate along the time axis (axis ``-2``)."""
     if isinstance(a, torch.Tensor):
         return torch.cat([a, b], dim=-2)
+    if _is_jax(a):
+        return jnp.concatenate([a, b], axis=-2)
     return np.concatenate([a, b], axis=-2)
 
 
 def _expand_time(point):
-    """Insert a length-1 time axis at position ``-2``: ``(*batch, dim) -> (*batch, 1, dim)``."""
+    """Insert a length-1 time axis at position ``-2``: ``(..., dim) -> (..., 1, dim)``."""
     if isinstance(point, torch.Tensor):
         return point.unsqueeze(-2)
+    if _is_jax(point):
+        return jnp.expand_dims(point, axis=-2)
     return point[..., np.newaxis, :]
 
 
@@ -109,6 +132,9 @@ def _flip_time(path):
     """Reverse along the time axis (axis ``-2``) and return a contiguous copy."""
     if isinstance(path, torch.Tensor):
         return path.flip(-2).contiguous()
+    if _is_jax(path):
+        # JAX arrays are immutable; jnp.flip returns a fresh array.
+        return jnp.flip(path, axis=-2)
     return np.flip(path, axis=-2).copy()
 
 
@@ -116,7 +142,20 @@ def _last_time_step(points):
     """Extract the last time-step, preserving batch shape. Returns an owning copy."""
     if isinstance(points, torch.Tensor):
         return points[..., -1, :].contiguous()
+    if _is_jax(points):
+        # JAX arrays are immutable; the slice already owns its data.
+        return points[..., -1, :]
     return points[..., -1, :].copy()
+
+
+def _copy_sig(s):
+    """Return a fresh copy of a signature tensor (not a view)."""
+    if isinstance(s, torch.Tensor):
+        return s.clone()
+    if _is_jax(s):
+        # JAX arrays are immutable; returning the same reference is safe.
+        return s
+    return s.copy()
 
 
 class SigStream:
@@ -128,11 +167,11 @@ class SigStream:
     for each point. Any interval signature is computed via Chen's identity:
     ``S(a, b) = S(0, a)^{-1} * S(0, b)``.
 
-    Supports both numpy arrays and torch tensors (with autograd). Accepts a single
-    path or a batch of independent paths — the batch shape is inferred from the first
-    ``push`` / ``push_batch`` call and locked in for the rest of the stream's lifetime.
-    A single ``SigStream`` instance can therefore track many independent paths in
-    parallel.
+    Supports numpy arrays, torch tensors (with autograd via ``pysiglib.torch_api``),
+    and JAX arrays (via ``pysiglib.jax_api``). Accepts a single path or a batch of
+    independent paths - the batch shape is inferred from the first ``push`` /
+    ``push_batch`` call and locked in for the rest of the stream's lifetime. A single
+    ``SigStream`` instance can therefore track many independent paths in parallel.
 
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -195,8 +234,9 @@ class SigStream:
         Append a single point (or batch of points, one per tracked path) and update
         the cumulative signature.
 
-        :param point: Shape ``(*batch, dimension)``. ``batch`` is either empty
-            (single-path stream) or matches the batch shape locked in by the first push.
+        :param point: Shape ``(..., dimension)``. The leading batch dimensions are
+            either empty (single-path stream) or match the batch shape locked in by
+            the first push.
         :type point: numpy.ndarray | torch.Tensor
         """
         batch = _validate_push_point(point, self._dimension, self._batch_shape)
@@ -221,8 +261,9 @@ class SigStream:
         Append multiple points to the stream. Computes the batch signature in a
         single batched call rather than per-point sequential joins.
 
-        :param points: Shape ``(*batch, n_points, dimension)``. ``batch`` is either
-            empty (single-path stream) or matches the batch shape locked in by the first push.
+        :param points: Shape ``(..., n_points, dimension)``. The leading batch
+            dimensions are either empty (single-path stream) or match the batch
+            shape locked in by the first push.
         :type points: numpy.ndarray | torch.Tensor
         """
         batch, n_points = _validate_push_batch(points, self._dimension, self._batch_shape)
@@ -267,7 +308,7 @@ class SigStream:
         :type start: int
         :param end: End index (absolute, inclusive).
         :type end: int
-        :return: The signature of shape ``(*batch, sig_length)`` for the interval
+        :return: The signature of shape ``(..., sig_length)`` for the interval
             ``path[start:end+1]``.
         :rtype: numpy.ndarray | torch.Tensor
         """
@@ -278,8 +319,7 @@ class SigStream:
         # Fast path: no pops + si==0 means combine is a no-op. Return a fresh
         # copy so the caller can't mutate internal state.
         if si == 0 and self._start == 0:
-            s = self._sigs[ei]
-            return s.clone() if isinstance(s, torch.Tensor) else s.copy()
+            return _copy_sig(self._sigs[ei])
         return self._sig_combine_fn(
             self._inv_sigs[si], self._sigs[ei], self._dimension, self._degree)
 
@@ -289,7 +329,7 @@ class SigStream:
 
         :param intervals: List of ``(start, end)`` pairs.
         :type intervals: list[tuple[int, int]]
-        :return: Stacked signatures of shape ``(K, *batch, sig_length)``.
+        :return: Stacked signatures of shape ``(K, ..., sig_length)``.
         :rtype: numpy.ndarray | torch.Tensor
         """
         results = [self.sig(s, e) for s, e in intervals]
@@ -299,7 +339,7 @@ class SigStream:
         """
         Return the expanding (cumulative) signatures ``S(0, 0), S(0, 1), ..., S(0, t)``.
 
-        :return: Stacked signatures of shape ``(n, *batch, sig_length)``.
+        :return: Stacked signatures of shape ``(n, ..., sig_length)``.
         :rtype: numpy.ndarray | torch.Tensor
         """
         return _stack(self._sigs, self._sigs[0])
@@ -334,9 +374,10 @@ class LogSigStream:
     is computed via BCH: ``L(a, b) = BCH(-L(0, a), L(0, b))``, since the inverse of a
     log-signature is its negation.
 
-    Supports both numpy arrays and torch tensors (with autograd). Accepts a single
-    path or a batch of independent paths — the batch shape is inferred from the first
-    ``push`` / ``push_batch`` call and locked in for the rest of the stream's lifetime.
+    Supports numpy arrays, torch tensors (with autograd via ``pysiglib.torch_api``),
+    and JAX arrays (via ``pysiglib.jax_api``). Accepts a single path or a batch of
+    independent paths - the batch shape is inferred from the first ``push`` /
+    ``push_batch`` call and locked in for the rest of the stream's lifetime.
 
     .. note::
 
@@ -409,7 +450,7 @@ class LogSigStream:
         Append a single point (or batch of points, one per tracked path) and update
         the cumulative log-signature.
 
-        :param point: Shape ``(*batch, dimension)``.
+        :param point: Shape ``(..., dimension)``.
         :type point: numpy.ndarray | torch.Tensor
         """
         batch = _validate_push_point(point, self._dimension, self._batch_shape)
@@ -429,7 +470,7 @@ class LogSigStream:
         Append multiple points to the stream. Computes the batch log-signature in a
         single batched call rather than per-point sequential joins.
 
-        :param points: Shape ``(*batch, n_points, dimension)``.
+        :param points: Shape ``(..., n_points, dimension)``.
         :type points: numpy.ndarray | torch.Tensor
         """
         batch, n_points = _validate_push_batch(points, self._dimension, self._batch_shape)
@@ -467,7 +508,7 @@ class LogSigStream:
         :type start: int
         :param end: End index (absolute, inclusive).
         :type end: int
-        :return: The log-signature of shape ``(*batch, log_sig_length)`` for the
+        :return: The log-signature of shape ``(..., log_sig_length)`` for the
             interval ``path[start:end+1]``.
         :rtype: numpy.ndarray | torch.Tensor
         """
@@ -477,8 +518,7 @@ class LogSigStream:
             raise IndexError(f"Indices [{start}, {end}] out of range [{self._start}, {self._start + len(self._log_sigs) - 1}]")
         # Fast path: no pops + si==0 means BCH is a no-op. Return a fresh copy.
         if si == 0 and self._start == 0:
-            ls = self._log_sigs[ei]
-            return ls.clone() if isinstance(ls, torch.Tensor) else ls.copy()
+            return _copy_sig(self._log_sigs[ei])
         return self._log_sig_combine_fn(
             -self._log_sigs[si], self._log_sigs[ei],
             self._dimension, self._degree)
@@ -489,7 +529,7 @@ class LogSigStream:
 
         :param intervals: List of ``(start, end)`` pairs.
         :type intervals: list[tuple[int, int]]
-        :return: Stacked log-signatures of shape ``(K, *batch, log_sig_length)``.
+        :return: Stacked log-signatures of shape ``(K, ..., log_sig_length)``.
         :rtype: numpy.ndarray | torch.Tensor
         """
         results = [self.sig(s, e) for s, e in intervals]
@@ -499,7 +539,7 @@ class LogSigStream:
         """
         Return the expanding (cumulative) log-signatures.
 
-        :return: Stacked log-signatures of shape ``(n, *batch, log_sig_length)``.
+        :return: Stacked log-signatures of shape ``(n, ..., log_sig_length)``.
         :rtype: numpy.ndarray | torch.Tensor
         """
         return _stack(self._log_sigs, self._log_sigs[0])
@@ -538,7 +578,7 @@ class _WindowStream:
         self._window_size = window_size
         self._stride = stride
         self._pending = []   # unbatched points awaiting consolidation
-        self._buffer = None  # consolidated array of points, shape (*batch, buf_len, dim)
+        self._buffer = None  # consolidated array of points, shape (..., buf_len, dim)
         self._buf_len = 0
         # Set when `stride > window_size` creates a gap between windows
         # wider than the buffer currently holds; counts points to drop.
@@ -552,7 +592,7 @@ class _WindowStream:
         Append a single point (or batch of points). If a new window is completed,
         its (log-)signature is computed and stored.
 
-        :param point: Shape ``(*batch, dimension)``.
+        :param point: Shape ``(..., dimension)``.
         :type point: numpy.ndarray | torch.Tensor
         """
         batch = _validate_push_point(point, self._dimension, self._batch_shape)
@@ -569,7 +609,7 @@ class _WindowStream:
         """
         Append multiple points, emitting windows as they become complete.
 
-        :param points: Shape ``(*batch, n_points, dimension)``.
+        :param points: Shape ``(..., n_points, dimension)``.
         :type points: numpy.ndarray | torch.Tensor
         """
         batch, n_points = _validate_push_batch(points, self._dimension, self._batch_shape)
@@ -635,7 +675,7 @@ class _WindowStream:
         """
         Return the stacked (log-)signatures of all complete windows.
 
-        :return: Array of shape ``(num_windows, *batch, sig_length)``.
+        :return: Array of shape ``(num_windows, ..., sig_length)``.
         :rtype: numpy.ndarray | torch.Tensor
         """
         if not self._windows:
@@ -659,7 +699,7 @@ class SigWindowStream(_WindowStream):
     windowed signatures. A new window is emitted every ``stride`` points once
     enough points have been accumulated to fill the window.
 
-    Accepts a single path or a batch of independent paths — the batch shape is
+    Accepts a single path or a batch of independent paths - the batch shape is
     inferred from the first ``push`` / ``push_batch`` call. Windows are extracted
     along the time axis only; each batch element is windowed independently.
 
@@ -717,7 +757,7 @@ class LogSigWindowStream(_WindowStream):
     windowed log-signatures. A new window is emitted every ``stride`` points once
     enough points have been accumulated to fill the window.
 
-    Accepts a single path or a batch of independent paths — the batch shape is
+    Accepts a single path or a batch of independent paths - the batch shape is
     inferred from the first ``push`` / ``push_batch`` call.
 
     .. note::

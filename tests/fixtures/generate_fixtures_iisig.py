@@ -41,7 +41,7 @@ DEGS = range(1, 6)
 data = {}
 
 # =========================================================================
-# Shared input paths — also used by signatory script (must run first)
+# Shared input paths - also used by signatory script (must run first)
 # =========================================================================
 
 path = np.random.uniform(size=(10, 10, DIM))

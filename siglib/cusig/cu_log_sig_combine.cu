@@ -19,7 +19,7 @@
 #include "cu_macros.h"
 
 // Type-erased via void* because the hosting functions are templated over
-// float/double — both share one buffer, sized to the larger allocation.
+// float/double - both share one buffer, sized to the larger allocation.
 static std::mutex s_backprop_workspace_mu;
 static void*      s_bp_ws_buf          = nullptr;
 static size_t     s_bp_ws_bytes        = 0;
@@ -628,7 +628,7 @@ void log_sig_combine_backprop_cuda_(
 }
 
 // =========================================================================
-// CUDA kernel: log_sig_from_path — full segment loop inside the kernel
+// CUDA kernel: log_sig_from_path - full segment loop inside the kernel
 // =========================================================================
 
 template<typename T>
@@ -890,7 +890,7 @@ void log_sig_from_path_cuda_(
 // =========================================================================
 
 // Backward using BCH uncombination: recovers each intermediate via BCH(curr, -seg).
-// No O(N*m) intermediate storage — uses O(m) memory per batch element.
+// No O(N*m) intermediate storage - uses O(m) memory per batch element.
 template<typename T>
 __global__ void batch_log_sig_from_path_backprop_kernel_(
 	const T* __restrict__ d_out,

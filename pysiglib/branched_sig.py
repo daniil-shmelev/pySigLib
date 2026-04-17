@@ -136,7 +136,7 @@ def branched_sig(
     before first use, where ``dimension`` is the augmented dimension
     (accounting for ``time_aug`` and ``lead_lag``).
 
-    :param path: Path of shape ``(length, dimension)`` or ``(*batch_dims, length, dimension)``.
+    :param path: Path of shape ``(length, dimension)`` or ``(..., length, dimension)``.
     :param degree: Maximum tree order (number of nodes).
     :param time_aug: If True, prepend a time channel to the path.
     :param lead_lag: If True, apply the lead-lag transformation.
@@ -150,7 +150,7 @@ def branched_sig(
         The default will change to False in pySigLib v4.0.
     :type scalar_term: bool
     :param n_jobs: Number of parallel threads for batch processing.
-    :return: Branched signature array of shape ``(bsig_len,)`` or ``(*batch_dims, bsig_len)``.
+    :return: Branched signature array of shape ``(bsig_len,)`` or ``(..., bsig_len)``.
     """
     scalar_term = resolve_scalar_term(scalar_term)
 

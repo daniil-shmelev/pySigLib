@@ -19,7 +19,7 @@
 
 // ---------------------------------------------------------------------------
 // linear_sig_: signature of a single linear segment from a displacement vector
-// out[0] = 1, out[level k] = dx^{⊗k} / k!
+// out[0] = 1, out[level k] = dx^{\otimes k} / k!
 // ---------------------------------------------------------------------------
 
 template<std::floating_point T>

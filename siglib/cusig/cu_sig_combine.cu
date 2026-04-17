@@ -64,7 +64,7 @@ __global__ void sig_combine_kernel(
 		my_out[0] = static_cast<T>(1);
 
 	// Each level reads only from the original sig1 and sig2,
-	// so all levels are independent — no syncs needed between them.
+	// so all levels are independent - no syncs needed between them.
 	for (uint64_t target_level = 1; target_level <= degree; ++target_level) {
 		const uint64_t target_start = level_index[target_level];
 		const uint64_t target_size = level_index[target_level + 1] - target_start;
@@ -108,7 +108,7 @@ void sig_combine_cuda_core_(
 
 	if (degree == 0) {
 		// Signature of degree 0 is just the scalar 1 (length-1 layout when scalar_term=true).
-		// When scalar_term=false, degree-0 output has zero-length — nothing to write.
+		// When scalar_term=false, degree-0 output has zero-length - nothing to write.
 		if (scalar_term) {
 			auto ones = std::make_unique<T[]>(batch_size);
 			std::fill(ones.get(), ones.get() + batch_size, static_cast<T>(1));
@@ -509,10 +509,10 @@ void sig_join_backprop_cuda_(
 	// Backprop through sig_combine: d_out -> d_sig, d_lsig_grad
 	CudaBuf<T> d_lsig_grad(lsig_bytes);
 	if (prepend) {
-		// Forward was lsig ⊗ sig
+		// Forward was lsig \otimes sig
 		sig_combine_backprop_cuda_core_<T>(d_out, d_lsig_grad.get(), d_sig, d_lsig.get(), sig, batch_size, dimension, degree, scalar_term);
 	} else {
-		// Forward was sig ⊗ lsig
+		// Forward was sig \otimes lsig
 		sig_combine_backprop_cuda_core_<T>(d_out, d_sig, d_lsig_grad.get(), sig, d_lsig.get(), batch_size, dimension, degree, scalar_term);
 	}
 

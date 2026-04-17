@@ -44,7 +44,7 @@ inline void cu_check_stream_has_bytes_(std::istream& in, uint64_t need, const ch
 
 typedef std::vector<uint64_t> cu_word;
 
-// Golden-ratio (Fibonacci) hash spreader — same constant used by boost::hash_combine.
+// Golden-ratio (Fibonacci) hash spreader - same constant used by boost::hash_combine.
 static constexpr std::size_t kFibHashConst = 0x9e3779b97f4a7c15ULL;
 
 struct CuWordHash {
@@ -370,7 +370,7 @@ inline void cu_lyndon_proj_matrix(
 }
 
 // =========================================================================
-// CUDALogSigCache — holds GPU-resident arrays for methods 1 and 2
+// CUDALogSigCache - holds GPU-resident arrays for methods 1 and 2
 // =========================================================================
 
 struct CUDALogSigCache {
@@ -683,7 +683,7 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 
 	auto it = cache_map.find(key);
 	if (it != cache_map.end()) {
-		// Entry exists — upgrade to method 2 if needed
+		// Entry exists - upgrade to method 2 if needed
 		if (method == 2 && it->second.d_sparse_row_ptr == nullptr) {
 			// Try loading sparse matrices from disk
 			if (use_disk) {
@@ -706,7 +706,7 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 		return;
 	}
 
-	// Full cache miss — try loading from disk
+	// Full cache miss - try loading from disk
 	if (use_disk) {
 		ensure_cuda_cache_dir_();
 		CuCacheFile file(dimension, degree);
@@ -789,28 +789,28 @@ inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_
 					it = cache_map.find(key);
 				}
 			} catch (...) {
-				// Disk load failed — fall through to error
+				// Disk load failed - fall through to error
 			}
 		}
 	}
 
 	if (it == cache_map.end()) {
-		throw std::runtime_error("CUDA log sig cache not found — call prepare_log_sig_cuda first");
+		throw std::runtime_error("CUDA log sig cache not found - call prepare_log_sig_cuda first");
 	}
 	if (method == 2 && it->second.d_sparse_row_ptr == nullptr) {
-		throw std::runtime_error("CUDA log sig cache not found for method 2 — call prepare_log_sig_cuda with method=2 first");
+		throw std::runtime_error("CUDA log sig cache not found for method 2 - call prepare_log_sig_cuda with method=2 first");
 	}
 	return it->second;
 }
 
-// Forward declarations — defined in cu_log_signature.cu
+// Forward declarations - defined in cu_log_signature.cu
 void free_cuda_log_sig_workspace_();
 void free_cuda_log_sig_backprop_workspace_();
 
-// Forward declaration — defined in cu_log_sig_combine.h
+// Forward declaration - defined in cu_log_sig_combine.h
 void clear_cuda_bch_cache_();
 
-// Forward declaration — defined in cu_branched_signature.cu
+// Forward declaration - defined in cu_branched_signature.cu
 void clear_cuda_branched_sig_gpu_cache_();
 
 inline void clear_cache_cuda_(bool use_disk) {

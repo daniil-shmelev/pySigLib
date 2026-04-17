@@ -377,7 +377,7 @@ void log_sig_join_backprop_(
 	std::fill(linear_ls.get(), linear_ls.get() + m, static_cast<T>(0));
 	std::memcpy(linear_ls.get(), displacement, dimension * sizeof(T));
 
-	// Reuse bch_combine_backprop_impl_ — it handles the full BCH backward
+	// Reuse bch_combine_backprop_impl_ - it handles the full BCH backward
 	auto d_ls2 = std::make_unique<T[]>(m);
 	uint64_t m2 = cache.bch_coefficients.size();
 	std::vector<T> workspace(2 * m2 * m);
@@ -486,7 +486,7 @@ void log_sig_from_path_(
 }
 
 
-// Shared across AVX2 and NEON — no platform-specific intrinsics needed.
+// Shared across AVX2 and NEON - no platform-specific intrinsics needed.
 #ifdef VEC
 inline void log_sig_from_path_x4_(
 	const double* paths[4], double* outs[4],
@@ -702,7 +702,7 @@ void log_sig_from_path_backprop_(
 		for (uint64_t k = 0; k < dimension; ++k)
 			seg[k] = pb[k] - pa[k];
 
-		// curr = BCH(curr, seg) — reuse prev as temp output, then swap
+		// curr = BCH(curr, seg) - reuse prev as temp output, then swap
 		bch_combine_impl_<T>(curr, seg, prev, cache, bch_ws);
 		std::swap(curr, prev);
 	}
@@ -721,7 +721,7 @@ void log_sig_from_path_backprop_(
 			neg_seg[k] = -(pb[k] - pa[k]);
 		}
 
-		// Recover prev = BCH(curr, -seg) — the "uncombine" step
+		// Recover prev = BCH(curr, -seg) - the "uncombine" step
 		bch_combine_impl_<T>(curr, neg_seg, prev, cache, bch_ws);
 
 		// Backprop through BCH(prev, seg) -> curr
