@@ -27,6 +27,9 @@ env:
   # Pre-built CUDA test image from build-cuda-images.yml.
   TEST_CUDA_IMAGE: ghcr.io/daniil-shmelev/pysiglib-test-cuda12:cuda-12.9.1
 
+permissions:
+  contents: read
+
 jobs:
   # ============================================================
   # Linux CPU wheel
