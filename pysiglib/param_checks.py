@@ -26,7 +26,7 @@ def get_type_str(type_):
         if hasattr(type_, '__name__'):
             return type_.__name__
         return str(type_)
-    except:
+    except Exception:
         return "UNKNOWN"
 
 def check_type(param, param_name, type_):

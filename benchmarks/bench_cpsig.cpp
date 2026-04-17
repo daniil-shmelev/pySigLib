@@ -20,7 +20,7 @@
 #include <random>
 #include <vector>
 
-// Suppress [[nodiscard]] warnings — we ignore status codes in hot loops.
+// Suppress [[nodiscard]] warnings - we ignore status codes in hot loops.
 #ifdef _MSC_VER
 #pragma warning(disable: 4834)
 #elif defined(__GNUC__) || defined(__clang__)

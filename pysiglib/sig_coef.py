@@ -92,7 +92,7 @@ def extract_sig_coef(
     words = check_word_or_word_list(words, aug_dimension, "word")
 
     sig_len = sig.shape[-1]
-    data = SigInputHandler(sig, sig_len, "sig")
+    SigInputHandler(sig, sig_len, "sig")  # validates shape/dtype; return unused
 
     idx = [word_to_idx(w, aug_dimension) for w in words]
 

@@ -877,7 +877,6 @@ def sig_kernel_gram(
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
 
-    batch1 = path1.shape[0]
     batch2 = path2.shape[0]
 
     if time_aug or lead_lag:

@@ -40,7 +40,6 @@ def _finite_diff_check(ls1, ls2, d_out, dimension, degree, eps=1e-6, n_jobs=1, d
     assert_device(d_ls1, device)
     assert_device(d_ls2, device)
 
-    ls_len = ls1.shape[-1]
     is_batch = ls1.dim() == 2
 
     # --- check d_ls1 ---
