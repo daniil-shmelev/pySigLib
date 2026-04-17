@@ -53,7 +53,7 @@ pip install pysiglib              # CPU only
 pip install pysiglib[cuda]        # with CUDA GPU support
 ```
 
-The JAX integration is built into the wheel — install JAX separately
+The JAX integration is built into the wheel - install JAX separately
 (`pip install jax`) if you want to use it.
 
 For detailed and up-to-date installation instructions, including how to build
@@ -108,6 +108,15 @@ X  = np.random.uniform(size=(32, 1000, 10))
 ls = pysiglib.log_sig(X, degree=5, method=1)
 ```
 
+### Branched signatures
+
+```python
+pysiglib.prepare_branched_sig(dimension=5, degree=4)
+
+X    = np.random.randn(32, 1000, 5)
+bsig = pysiglib.branched_sig(X, degree=4)
+```
+
 ### Signature kernels
 
 ```python
@@ -119,19 +128,6 @@ k = pysiglib.sig_kernel(X, Y, dyadic_order=1)
 X = np.random.uniform(size=(32,  100, 10))
 Y = np.random.uniform(size=(32, 5000, 10))
 k = pysiglib.sig_kernel(X, Y, dyadic_order=(3, 0))
-```
-
-### Branched signatures
-
-Branched signatures index iterated integrals by decorated rooted trees instead
-of words, capturing the non-geometric rough path of Ito semimartingales and
-other processes where the chain rule fails.
-
-```python
-pysiglib.prepare_branched_sig(dimension=5, degree=4)
-
-X    = np.random.randn(32, 1000, 5)
-bsig = pysiglib.branched_sig(X, degree=4)
 ```
 
 ### PyTorch autograd
@@ -170,7 +166,7 @@ grad = jax.grad(signature_norm)(X)
 ### Online signature streams
 
 Incrementally update a signature as new points arrive, and query any interval
-in O(1) via Chen's identity — useful for real-time data or sliding-window
+in O(1) via Chen's identity - useful for real-time data or sliding-window
 features.
 
 ```python
@@ -181,13 +177,6 @@ for point in incoming_points:
 full     = stream.sig_all()      # signature of the entire path so far
 interval = stream.sig(100, 200)  # signature on [t=100, t=200]
 ```
-
-## Benchmarks
-
-Every exported C++ function is benchmarked in CI via
-[CodSpeed](https://codspeed.io/daniil-shmelev/pySigLib), which runs on a virtual
-CPU for hardware-independent, reproducible measurements. Every PR touching
-`siglib/cpsig/**` is checked for regressions against `main`.
 
 ## Citation
 
