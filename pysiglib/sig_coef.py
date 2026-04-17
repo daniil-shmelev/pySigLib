@@ -196,7 +196,7 @@ def sig_coef(
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
 
-    # CUDA sig_coef doesn't support time_aug/lead_lag natively —
+    # CUDA sig_coef doesn't support time_aug/lead_lag natively -
     # transform the path first, then recurse with no augmentation flags.
     if data.device != "cpu" and (time_aug or lead_lag):
         from .transform_path import transform_path

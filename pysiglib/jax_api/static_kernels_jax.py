@@ -16,7 +16,7 @@
 """
 JAX-native static kernels for use with ``jax_api.sig_kernel``.
 
-These are pure JAX implementations — backward passes are handled
+These are pure JAX implementations - backward passes are handled
 automatically by JAX autodiff. Each kernel is a callable that takes
 two batched paths ``(B, L, D)`` and returns the double-differenced
 gram matrix ``(B, L-1, L-1)``.

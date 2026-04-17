@@ -14,7 +14,7 @@
  * ========================================================================= */
 
 // Host-side expansion matrix computation for logsig_to_sig methods 1/2.
-// Pure C++ — no CUDA headers, no cpsig dependency.
+// Pure C++ - no CUDA headers, no cpsig dependency.
 
 #include "cu_exp_host.h"
 
@@ -33,7 +33,7 @@
 
 typedef std::vector<uint64_t> Word;
 
-// Golden-ratio (Fibonacci) hash spreader — same constant used by boost::hash_combine.
+// Golden-ratio (Fibonacci) hash spreader - same constant used by boost::hash_combine.
 static constexpr std::size_t kFibHashConst = 0x9e3779b97f4a7c15ULL;
 
 struct WordHash {
@@ -156,8 +156,8 @@ static void build_expansion_matrix_impl(
 	}
 
 	// Build the projection matrix P and its inverse (for method=1)
-	// P maps Lyndon bracket basis → Lyndon word coordinates
-	// P^{-1} maps Lyndon word coordinates → bracket coefficients
+	// P maps Lyndon bracket basis -> Lyndon word coordinates
+	// P^{-1} maps Lyndon word coordinates -> bracket coefficients
 	//
 	// For method=2: E[j,i] = expansion[i][j] (direct)
 	// For method=1: E[:,k] = sum_i (P^{-1})[i,k] * expansion[i]
@@ -170,7 +170,7 @@ static void build_expansion_matrix_impl(
 				h_expand[j * m + i] = expansions[i * sig_len + j];
 	}
 	else {
-		// method=1: need P^{-1} to convert Lyndon word positions → bracket coefficients
+		// method=1: need P^{-1} to convert Lyndon word positions -> bracket coefficients
 		// Build P (lower triangular, ones on diagonal) then solve P * coefs = unit_k for each k
 
 		// Build P: P[i,j] = expansion[j] evaluated at lyndon_idx[i]

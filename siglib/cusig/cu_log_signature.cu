@@ -21,7 +21,7 @@
 #include "cu_log_sig_cache.h"
 
 // =========================================================================
-// Scratch buffer workspace — cached across calls to avoid per-call
+// Scratch buffer workspace - cached across calls to avoid per-call
 // cudaMalloc/cudaFree of large buffers
 // =========================================================================
 
@@ -69,7 +69,7 @@ void free_cuda_log_sig_workspace_() {
 }
 
 // =========================================================================
-// CUDA sig_to_log_sig kernel (method 0 — expanded tensor log)
+// CUDA sig_to_log_sig kernel (method 0 - expanded tensor log)
 //
 // Each block handles one batch element.
 // =========================================================================
@@ -116,7 +116,7 @@ __global__ void sig_to_log_sig_kernel(
 // =========================================================================
 
 // Helper kernels: scalar_term=false staging between full and stripped layouts.
-// These run once per call, only on the scalar_term=false branch — zero cost
+// These run once per call, only on the scalar_term=false branch - zero cost
 // when scalar_term=true.
 template<typename T>
 __global__ void prepend_scalar_one_kernel(
@@ -210,8 +210,8 @@ void sig_to_log_sig_cuda_core_(
 // =========================================================================
 // CUDA sig_to_log_sig method 1 kernel (Lyndon words)
 //
-// Phase 1: Copy sig → temp, compute tensor log in-place
-// Phase 2: Gather — out[i] = temp[lyndon_idx[i]]
+// Phase 1: Copy sig -> temp, compute tensor log in-place
+// Phase 2: Gather - out[i] = temp[lyndon_idx[i]]
 // =========================================================================
 
 template<typename T>
@@ -262,8 +262,8 @@ __global__ void sig_to_log_sig_m1_kernel(
 // =========================================================================
 // CUDA sig_to_log_sig method 2 kernel (Lyndon basis)
 //
-// Phase 1: Copy sig → temp, compute tensor log in-place
-// Phase 2: Gather — out[i] = temp[lyndon_idx[i]]
+// Phase 1: Copy sig -> temp, compute tensor log in-place
+// Phase 2: Gather - out[i] = temp[lyndon_idx[i]]
 // Phase 3: Apply sparse lower-triangular matrix multiply (parallel)
 //          Copy gathered values to temp scratch, then:
 //          out[i] = temp[i] + sum_j(sparse_mat[i][j] * temp[j])
@@ -415,7 +415,7 @@ void sig_to_log_sig_cuda_m2_core_(
 }
 
 // =========================================================================
-// Backprop workspace — cached across calls
+// Backprop workspace - cached across calls
 // =========================================================================
 
 struct CUDALogSigBackpropWorkspace {
@@ -459,7 +459,7 @@ void release_log_sig_state() {
 }
 
 // =========================================================================
-// CUDA sig_to_log_sig_backprop kernel (method 0 — expanded tensor log)
+// CUDA sig_to_log_sig_backprop kernel (method 0 - expanded tensor log)
 //
 // Each block handles one batch element.
 // Scratch per element: sig_copy(sig_len) + partial_logs((degree-1)*buff1_len)

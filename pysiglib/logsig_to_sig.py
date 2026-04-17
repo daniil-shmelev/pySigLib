@@ -80,7 +80,7 @@ def logsig_to_sig(
         sig = pysiglib.sig(path, degree)
         log_sig = pysiglib.sig_to_log_sig(sig, 5, degree, method=0)
         sig_recovered = pysiglib.logsig_to_sig(log_sig, 5, degree, method=0)
-        # sig_recovered ≈ sig
+        # sig_recovered \approx sig
     """
     scalar_term = resolve_scalar_term(scalar_term)
 

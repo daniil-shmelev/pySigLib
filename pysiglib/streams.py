@@ -53,7 +53,7 @@ def _make_identity_sig(sig_len, batch_shape, like_arr, scalar_term=True):
 
     With ``scalar_term=True`` the result is ``[1, 0, ..., 0]``; with ``scalar_term=False``
     the leading 1 is stripped and the identity becomes all zeros (the sig of a
-    zero-length path is zero in every tensor level ≥ 1).
+    zero-length path is zero in every tensor level >= 1).
     """
     identity = _make_zero(sig_len, batch_shape, like_arr)
     if scalar_term:
@@ -169,7 +169,7 @@ class SigStream:
 
     Supports numpy arrays, torch tensors (with autograd via ``pysiglib.torch_api``),
     and JAX arrays (via ``pysiglib.jax_api``). Accepts a single path or a batch of
-    independent paths — the batch shape is inferred from the first ``push`` /
+    independent paths - the batch shape is inferred from the first ``push`` /
     ``push_batch`` call and locked in for the rest of the stream's lifetime. A single
     ``SigStream`` instance can therefore track many independent paths in parallel.
 
@@ -374,7 +374,7 @@ class LogSigStream:
 
     Supports numpy arrays, torch tensors (with autograd via ``pysiglib.torch_api``),
     and JAX arrays (via ``pysiglib.jax_api``). Accepts a single path or a batch of
-    independent paths — the batch shape is inferred from the first ``push`` /
+    independent paths - the batch shape is inferred from the first ``push`` /
     ``push_batch`` call and locked in for the rest of the stream's lifetime.
 
     .. note::
@@ -697,7 +697,7 @@ class SigWindowStream(_WindowStream):
     windowed signatures. A new window is emitted every ``stride`` points once
     enough points have been accumulated to fill the window.
 
-    Accepts a single path or a batch of independent paths — the batch shape is
+    Accepts a single path or a batch of independent paths - the batch shape is
     inferred from the first ``push`` / ``push_batch`` call. Windows are extracted
     along the time axis only; each batch element is windowed independently.
 
@@ -755,7 +755,7 @@ class LogSigWindowStream(_WindowStream):
     windowed log-signatures. A new window is emitted every ``stride`` points once
     enough points have been accumulated to fill the window.
 
-    Accepts a single path or a batch of independent paths — the batch shape is
+    Accepts a single path or a batch of independent paths - the batch shape is
     inferred from the first ``push`` / ``push_batch`` call.
 
     .. note::

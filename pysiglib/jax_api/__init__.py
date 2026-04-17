@@ -36,7 +36,7 @@ from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache
 from ..branched_sig import prepare_branched_sig, branched_sig_length
 from ..load_siglib import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
 
-# ``Context`` / ``StaticKernel`` are shared with the base API — users writing
+# ``Context`` / ``StaticKernel`` are shared with the base API - users writing
 # custom kernels inherit from the same ABC in both environments.
 from ..static_kernels import Context, StaticKernel
 

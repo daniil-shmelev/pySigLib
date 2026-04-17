@@ -159,7 +159,7 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 		}
 	}
 
-	// Compute from scratch using shared builder (expensive — can take seconds).
+	// Compute from scratch using shared builder (expensive - can take seconds).
 	auto cache = std::make_unique<BranchedSigCache>(build_branched_sig_cache(dimension, max_nodes, planar));
 
 	if (use_disk) {

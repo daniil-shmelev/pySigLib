@@ -27,8 +27,8 @@
 // tensor_exp_: truncated tensor exponential via power series
 //
 //   exp(x) = 1 + P_1 + P_2 + ... + P_N
-//   P_1 = x, P_n = x ⊗ P_{n-1} / n
-//   P_n has min level n → level-skipping reduces work for large n.
+//   P_1 = x, P_n = x \otimes P_{n-1} / n
+//   P_n has min level n -> level-skipping reduces work for large n.
 // ---------------------------------------------------------------------------
 
 template<std::floating_point T>
@@ -288,7 +288,7 @@ std::unique_ptr<T[]> build_bracket_expansions_(
 			const T* exp_u = expansions.get() + word_idx.at(u) * sig_len;
 			const T* exp_v = expansions.get() + word_idx.at(v) * sig_len;
 
-			// exp_i = u⊗v - v⊗u (Lie bracket in tensor algebra)
+			// exp_i = u \otimes v - v \otimes u (Lie bracket in tensor algebra)
 			for (uint64_t tl = 2; tl <= degree; ++tl) {
 				for (uint64_t l1 = 1; l1 < tl; ++l1) {
 					uint64_t l2 = tl - l1;
@@ -324,7 +324,7 @@ void expand_lyndon_to_tensor_(
 	const uint64_t sig_len = ::sig_length(dimension, degree);
 	const uint64_t m = cache.lyndon_idx.size();
 
-	// method=1: apply P^{-1} to convert Lyndon word positions → bracket coefficients
+	// method=1: apply P^{-1} to convert Lyndon word positions -> bracket coefficients
 	auto coefs_uptr = std::make_unique<T[]>(m);
 	T* coefs = coefs_uptr.get();
 	std::memcpy(coefs, lyndon_coefs, m * sizeof(T));

@@ -111,7 +111,7 @@ def log_sig_length(
 
     where :math:`d` is the dimension of the underlying path, :math:`N`
     is the truncation level of the log signature and :math:`\\mu` is
-    the Möbius function.
+    the Mobius function.
 
     :param dimension: Dimension of the underlying path, :math:`d`
     :type dimension: int

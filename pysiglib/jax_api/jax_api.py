@@ -80,7 +80,7 @@ from ._ffi import (
 # `jax.pure_callback` requires an explicit vmap strategy; without it
 # `jax.vmap` raises NotImplementedError. ``broadcast_all`` passes the
 # vmapped batch dim straight through to the numpy callback, which uses
-# the native batched path — much faster than ``sequential``. The numpy
+# the native batched path - much faster than ``sequential``. The numpy
 # functions only accept 1D or 2D inputs, so callbacks below flatten any
 # additional leading dims (e.g. from nested vmap) before calling them.
 _CALLBACK_VMAP_METHOD = "broadcast_all"
@@ -1005,7 +1005,7 @@ sig_mmd.__doc__ = sig_mmd_forward.__doc__
 
 
 # ---------------------------------------------------------------------------
-# sig_coef (pure JAX composition — compute sig then index)
+# sig_coef (pure JAX composition - compute sig then index)
 # ---------------------------------------------------------------------------
 
 def sig_coef(

@@ -315,7 +315,7 @@ void branched_sig_combine_backprop_(
 // =========================================================================
 
 // Reverse the Butcher product: recover X_prev from X_combined and Y.
-// X_combined[τ] = X_prev[τ] + Y[τ] + Σ_cuts Y[trunk] * ∏ X_prev[forest_i]
+// X_combined[\tau] = X_prev[\tau] + Y[\tau] + \Sigma_cuts Y[trunk] * \prod X_prev[forest_i]
 // Solved for X_prev by processing order 1 to max_nodes (forward order).
 template<std::floating_point T>
 void butcher_uncombine_inplace_(
@@ -365,7 +365,7 @@ void butcher_product_deriv_(
 ) {
 	uint64_t num_trees = cache.total_length - 1;
 
-	// Initialize dF_dY = dF_dX (the Y[τ] direct term)
+	// Initialize dF_dY = dF_dX (the Y[\tau] direct term)
 	dF_dY[0] = static_cast<T>(0);
 	std::memcpy(dF_dY + 1, dF_dX + 1, num_trees * sizeof(T));
 
@@ -407,8 +407,8 @@ void butcher_product_deriv_(
 
 
 // Convert tree-level derivatives to increment derivatives.
-// Y[τ] = (∏ increment[labels[j]]) / γ(τ)
-// dF/d(increment[d]) = Σ_τ dF/dY[τ] * (1/γ(τ)) * Σ_{j:label[j]=d} ∏_{k≠j} increment[label[k]]
+// Y[\tau] = (\prod increment[labels[j]]) / \gamma(\tau)
+// dF/d(increment[d]) = \Sigma_\tau dF/dY[\tau] * (1/\gamma(\tau)) * \Sigma_{j:label[j]=d} \prod_{k!=j} increment[label[k]]
 template<std::floating_point T>
 void linear_bsig_deriv_to_increment_deriv_(
 	const T* dF_dY,
