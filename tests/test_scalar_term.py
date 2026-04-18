@@ -138,6 +138,9 @@ class TestTorchAutograd:
 
 class TestFutureWarning:
     def test_warning_emitted_when_unset(self):
+        # `resolve_scalar_term` only warns once per process; reset the flag
+        # so this test is order-independent within the suite.
+        pysiglib.param_checks._WARNED_SCALAR_TERM = False
         path = _path()
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
