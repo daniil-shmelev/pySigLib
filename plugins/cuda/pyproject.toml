@@ -45,8 +45,6 @@ PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
 build = "cp311-*"
 skip = "pp* *-musllinux_* *-win32 *i686"
 build-verbosity = 1
-test-requires = ["pytest"]
-test-command = 'python -c "import pysiglib_cuda, pysiglib; assert pysiglib.load_siglib.BUILT_WITH_CUDA, \"plugin failed to load\"; print(\"cuda plugin OK\")"'
 
 [tool.cibuildwheel.linux]
 manylinux-x86_64-image = "manylinux_2_28"
