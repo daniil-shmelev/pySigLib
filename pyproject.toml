@@ -73,7 +73,7 @@ PYSIGLIB_AVX     = {env = "SIGLIB_VEC", default = "ON"}
 # cibuildwheel config (release.yml only). `pip install .` ignores this.
 [tool.cibuildwheel]
 build = "cp311-*"
-skip = "pp* *-musllinux_* *-win32 *i686"
+skip = "*-musllinux_* *-win32 *i686"
 build-verbosity = 1
 environment = { SIGLIB_VEC = "ON" }
 test-requires = ["pytest"]

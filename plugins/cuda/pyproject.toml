@@ -50,7 +50,7 @@ PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
 
 [tool.cibuildwheel]
 build = "cp311-*"
-skip = "pp* *-musllinux_* *-win32 *i686"
+skip = "*-musllinux_* *-win32 *i686"
 build-verbosity = 1
 
 [tool.cibuildwheel.linux]

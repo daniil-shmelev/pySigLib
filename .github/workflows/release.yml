@@ -12,13 +12,19 @@ name: Release
 #      NVIDIA driver, labelled [self-hosted, Windows, X64].
 #   3. To enable PyPI publishing (publish_to_pypi=true):
 #      a. Configure Trusted Publishing on TestPyPI and PyPI for both the
-#         `pysiglib` and `pysiglib-cuda12` projects. Each trusted publisher
+#         `pysiglib` and `pysiglib-cuda` projects. Each trusted publisher
 #         entry must point at this repo, this workflow file, and the
 #         environment name (`testpypi` / `pypi`).
-#      b. Create two GitHub repo environments:
-#         - `testpypi` (no required reviewers — auto-proceeds after tests pass)
-#         - `pypi` (required reviewers = release approvers; holds the prod push
-#           behind a manual gate after the TestPyPI install succeeds)
+#      b. Create three GitHub repo environments:
+#         - `testpypi` - OIDC binding only, NO required reviewers.
+#         - `pypi`     - OIDC binding only, NO required reviewers.
+#         - `deployment` - required reviewers = release approvers. This is
+#           the single approval surface used by the three gate jobs
+#           (gate-cuda-tests, approve-testpypi-publish, approve-pypi-publish).
+#         Each gate is a dedicated `environment: deployment` job that pauses
+#         for manual approval before downstream work proceeds. Do NOT put
+#         reviewers on `testpypi` or `pypi` - double-gating the same env
+#         would cause a duplicate prompt on every publish job.
 
 on:
   workflow_dispatch:
@@ -120,16 +126,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
-      # Cache the installed CUDA toolkit directory AND the Visual Studio
-      # BuildCustomizations dir where Jimver's `visual_studio_integration`
-      # sub-package drops CUDA's MSBuild .props / .targets files. Without
-      # the VS files cached, a cache hit would skip Jimver entirely and the
-      # next CMake configure would fail with "No CUDA toolset found" because
-      # the VS generator can't locate the CUDA build rules.
-      # Bump the key suffix if CUDA version, sub-packages, or paths change.
+      # Cache CUDA + the VS BuildCustomizations dir where visual_studio_integration
+      # drops MSBuild .props/.targets; skipping that dir breaks "No CUDA toolset
+      # found" on cache hit. Bump the key suffix when version/subpackages change.
       - name: Cache CUDA toolkit
         id: cuda-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
@@ -137,8 +139,6 @@ jobs:
           key: cuda-win-12.9.1-nvcc-cudart-thrust-vsint-v2
       - name: Install CUDA toolkit
         if: steps.cuda-cache.outputs.cache-hit != 'true'
-        # Use Windows-native sub-package names; on Windows `cudart` already
-        # includes the runtime libraries and headers.
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: '12.9.1'
@@ -212,9 +212,9 @@ jobs:
           pip install --upgrade pip
           pip install dist/*.whl
           pip install pytest 'jax>=0.9.1; python_version >= "3.11"'
-      # The next two steps run from runner.temp so `import pysiglib` resolves
-      # to the installed wheel in site-packages instead of the checked-out
-      # source tree (which lacks the generated _config.py and native libs).
+      # Downstream steps use `working-directory: ${{ runner.temp }}` so `import
+      # pysiglib` resolves to the installed wheel, not the checked-out source
+      # tree (which lacks the generated _config.py and native libs).
       - name: Verify installed version matches input
         working-directory: ${{ runner.temp }}
         env:
@@ -308,32 +308,11 @@ jobs:
     steps:
       - run: echo "GPU tests approved - proceeding on the self-hosted runner."
 
-  # ============================================================
-  # test-linux-cuda and test-windows-cuda both run on the SELF-HOSTED Windows
-  # runner. That runner has Docker Desktop + WSL2 + the NVIDIA driver, so a
-  # Linux container started with --gpus all can reach the host's RTX 4060;
-  # Windows-native tests (test-windows-cuda) exec directly against the host
-  # GPU because the Windows CUDA wheel already bundles cudart via delvewheel.
-  #
-  # The Linux test image is pre-built by build-test-image.yml and pushed to
-  # ghcr.io with torch + pytest baked in, so test-linux-cuda only needs to
-  # `pip install` the wheel under test (~seconds) instead of redownloading
-  # ~2 GB of torch on every run.
-  #
-  # Security model (applies to both CUDA test jobs below):
-  #   1. release.yml only triggers on workflow_dispatch (no PR trigger), so
-  #      fork PRs structurally cannot fire these jobs.
-  #   2. The actor check below restricts execution to manual triggers from
-  #      the canonical repo.
-  #   3. The upstream gate-cuda-tests job routes through the `deployment`
-  #      environment for a single manual approval that authorizes every
-  #      CUDA test job in the run.
-  #   4. test-linux-cuda runs inside an ephemeral Docker container destroyed
-  #      with --rm, so any code that does run cannot persist on the host or
-  #      read host files outside the workspace mount. test-windows-cuda
-  #      cannot use the same container trick because the wheel is Windows
-  #      native, so it relies on items 1-3 above plus the canonical-repo
-  #      actor check for isolation.
+  # Both CUDA test jobs run on the self-hosted Windows runner (Docker +
+  # WSL2 + NVIDIA driver). Linux tests go through an ephemeral --rm
+  # container; Windows tests run directly on the host. Security relies on:
+  # workflow_dispatch trigger only, canonical-repo actor check below,
+  # gate-cuda-tests for manual approval, and Docker's --rm for Linux.
   test-linux-cuda:
     name: Test Linux CUDA wheel (GPU)
     needs:
@@ -342,23 +321,19 @@ jobs:
       - gate-cuda-tests
     if: github.event_name == 'workflow_dispatch' && github.repository == 'daniil-shmelev/pysiglib' && github.event.inputs.run_gpu_tests == 'true'
     runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: read
     defaults:
       run:
-        # Windows PowerShell 5.1 on self-hosted runners defaults to the
-        # 'Restricted' execution policy, which refuses to source GHA's
-        # generated .ps1 wrapper scripts. Add -ExecutionPolicy Bypass so
-        # workflows run on a fresh runner without the user having to modify
-        # the host's execution policy (which would also be a global change
-        # affecting other software on the machine).
+        # -ExecutionPolicy Bypass: default Restricted policy on self-hosted
+        # Windows refuses to source GHA's generated .ps1 wrappers.
         shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
     steps:
       - uses: actions/checkout@v6
-      # Both the base pysiglib wheel (contains cpsig + CPU JAX FFI) and the
-      # pysiglib-cuda plugin wheel (contains cusig) must be installed for
-      # CUDA tests to run. The base wheel is downloaded first; the plugin
+      # Both the base pysiglib wheel (cpsig + CPU JAX FFI) and the
+      # pysiglib-cuda plugin (cusig + CUDA JAX FFI) must be installed. The
       # wheel is then downloaded into the same `dist/` directory so a single
       # `pip install dist/*.whl` inside the test container picks up both.
       - uses: actions/download-artifact@v8
@@ -378,14 +353,9 @@ jobs:
       - name: Pull test image
         run: docker pull ${{ env.TEST_CUDA_IMAGE }}
       - name: Run pytest in ephemeral test container with --gpus all
-        # pytest-timeout kills any single test that runs longer than 60s, so
-        # a hung kernel cannot consume the whole job budget. The self-hosted
-        # Windows runner has no bash installed (C:\Windows\System32\bash.exe
-        # dispatches to WSL, which isn't set up), so the step runs in
-        # powershell. The test script is written to the workspace as LF-only,
-        # BOM-less UTF-8 so the Linux container's bash can parse it cleanly.
-        # EXPECTED_VERSION is forwarded into the container via -e so the
-        # version-check line inside the bash script can read it.
+        # PowerShell writes a bash script as LF-only BOM-less UTF-8 so the
+        # Linux container can parse it. pytest-timeout guards against hung
+        # kernels. EXPECTED_VERSION is forwarded in via `docker run -e`.
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
@@ -420,24 +390,15 @@ jobs:
       - gate-cuda-tests
     if: github.event_name == 'workflow_dispatch' && github.repository == 'daniil-shmelev/pysiglib' && github.event.inputs.run_gpu_tests == 'true'
     runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
     defaults:
       run:
-        # Same Restricted-execution-policy override as test-linux-cuda;
-        # needed because Windows PowerShell 5.1 on the self-hosted runner
-        # otherwise refuses to source GHA's generated .ps1 wrapper.
         shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
     steps:
       - uses: actions/checkout@v6
-      # No actions/setup-python: setup-python's Windows installer conflicts
-      # with the runner's pre-existing Python 3.13 and produces a broken
-      # tool-cache install (missing Lib). Use the system Python 3.13 at
-      # `C:\Users\Shmelev\AppData\Local\Programs\Python\Python313\` instead
-      # - it's first on PATH. The Python-version matrix is redundant here:
-      # the py3-none-win_amd64 wheel is universal across Python 3.x, and
-      # py3.9 coverage is already exercised by `test-windows-cpu` on the
-      # hosted runner.
-      # Both the base pysiglib wheel (cpsig + CPU JAX FFI) and the
-      # pysiglib-cuda plugin wheel (cusig) must be installed.
+      # Uses the runner's system Python 3.13 (setup-python on this runner
+      # produces a broken tool-cache install). Both wheels (base CPU + CUDA
+      # plugin) must be installed; see test-linux-cuda for the same pattern.
       - uses: actions/download-artifact@v8
         with:
           name: wheels-windows-cpu
@@ -446,20 +407,27 @@ jobs:
         with:
           name: wheels-windows-cuda
           path: dist
+      # Ephemeral per-run venv isolates this job from leftover state on the
+      # self-hosted runner (stale installs, pytest plugins, Python 3.12/3.13
+      # site-packages drift). Prepending Scripts\ to GITHUB_PATH makes all
+      # subsequent python/pip/pytest calls resolve through the venv.
+      - name: Create ephemeral venv
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP "venv-$env:GITHUB_RUN_ID"
+          if (Test-Path $venv) { Remove-Item -Recurse -Force $venv }
+          python -m venv $venv
+          "$venv\Scripts" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          "PYSIGLIB_TEST_VENV=$venv" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "venv: $venv"
       - name: Install wheels + test deps
         run: |
-          # Use `python -m pip` throughout so pip and subsequent `python -c`
-          # calls run in the same interpreter. The Python-version marker
-          # cannot be quoted through the nested PowerShell, so gate on the
-          # major version in PowerShell and pass jax without a marker.
+          # The Python-version marker cannot be quoted through the nested
+          # PowerShell, so gate jax in PowerShell and install without a marker.
           python -m pip install --upgrade pip
           Get-ChildItem dist\*.whl | ForEach-Object { python -m pip install $_.FullName }
           python -m pip install pytest pytest-timeout torch
           $needs_jax = & python -c "import sys; print('yes' if sys.version_info >= (3,11) else 'no')"
           if ($needs_jax.Trim() -eq 'yes') { python -m pip install 'jax>=0.9.1' }
-      # The next three steps run from runner.temp so `import pysiglib` resolves
-      # to the installed wheel in site-packages instead of the checked-out
-      # source tree (which lacks the generated _config.py and native libs).
       - name: Verify installed version matches input
         working-directory: ${{ runner.temp }}
         env:
@@ -474,11 +442,13 @@ jobs:
           python -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
       - name: Run full test suite
         working-directory: ${{ runner.temp }}
-        # `python -m pytest` rather than bare `pytest.exe`, because the
-        # self-hosted runner has multiple Python installs and the first
-        # pytest.exe on PATH may belong to a different interpreter than the
-        # one where the wheel was installed.
         run: python -m pytest ${{ github.workspace }}/tests/ -v --timeout=60
+      - name: Remove ephemeral venv
+        if: always()
+        run: |
+          if ($env:PYSIGLIB_TEST_VENV -and (Test-Path $env:PYSIGLIB_TEST_VENV)) {
+            Remove-Item -Recurse -Force $env:PYSIGLIB_TEST_VENV
+          }
   test-windows-cpu:
     name: Test Windows CPU wheel (py${{ matrix.python-version }})
     needs: build-windows-cpu
@@ -501,8 +471,6 @@ jobs:
           python -m pip install --upgrade pip
           Get-ChildItem dist\*.whl | ForEach-Object { pip install $_.FullName }
           pip install pytest 'jax>=0.9.1; python_version >= "3.11"'
-      # The next two steps run from runner.temp so `import pysiglib` resolves
-      # to the installed wheel, not the checked-out source tree.
       - name: Verify installed version matches input
         shell: pwsh
         working-directory: ${{ runner.temp }}
@@ -535,8 +503,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install dist/*.whl
           pip install pytest 'jax>=0.9.1; python_version >= "3.11"'
-      # The next two steps run from runner.temp so `import pysiglib` resolves
-      # to the installed wheel, not the checked-out source tree.
       - name: Verify installed version matches input
         working-directory: ${{ runner.temp }}
         env:
@@ -590,16 +556,22 @@ jobs:
           name: all-wheels
           path: dist/*.whl
 
-  # ============================================================
-  # TestPyPI publish — CPU wheels.
-  # Deploys pysiglib (base) wheels to test.pypi.org. All CPU test jobs must
-  # have passed first. Uses OIDC Trusted Publishing; the `testpypi` environment
-  # has no required reviewers, so this proceeds automatically once the tests
-  # are green.
-  # ============================================================
+  # Manual approval gate before TestPyPI publish. Single approval unblocks
+  # both publish-testpypi-cpu and publish-testpypi-cuda.
+  approve-testpypi-publish:
+    name: Approve TestPyPI publish
+    needs:
+      - collect-wheels
+    if: ${{ inputs.publish_to_pypi }}
+    environment: deployment
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "TestPyPI publish approved - proceeding."
+
   publish-testpypi-cpu:
     name: Publish pysiglib to TestPyPI
     needs:
+      - approve-testpypi-publish
       - collect-wheels  # transitively requires all CPU + (optional) GPU tests
     if: ${{ inputs.publish_to_pypi }}
     runs-on: ubuntu-latest
@@ -627,20 +599,18 @@ jobs:
           packages-dir: dist/
           skip-existing: true
 
-  # ============================================================
-  # TestPyPI publish — CUDA plugin wheels.
-  # Only runs if GPU tests were enabled (and therefore passed); skipped
-  # otherwise so a CPU-only release cycle still publishes the base package.
-  # ============================================================
+  # Skipped on CPU-only releases (run_gpu_tests=false) so the base package
+  # still publishes.
   publish-testpypi-cuda:
     name: Publish pysiglib-cuda to TestPyPI
     needs:
+      - approve-testpypi-publish
       - collect-wheels  # transitively requires GPU tests to have passed
     if: ${{ inputs.publish_to_pypi && inputs.run_gpu_tests }}
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/pysiglib-cuda12/
+      url: https://test.pypi.org/project/pysiglib-cuda/
     permissions:
       id-token: write
     steps:
@@ -658,12 +628,8 @@ jobs:
           packages-dir: dist/
           skip-existing: true
 
-  # ============================================================
-  # Fresh-install smoke tests pulling pysiglib straight from TestPyPI.
-  # TestPyPI does not mirror all transitive dependencies, so we pass
-  # --extra-index-url pointing at real PyPI so numpy/torch/jax resolve.
-  # A short retry loop absorbs TestPyPI's occasional propagation delay.
-  # ============================================================
+  # Fresh-install smoke tests pulling from TestPyPI. --extra-index-url on
+  # PyPI for transitive deps; retry loop absorbs TestPyPI propagation delay.
   test-from-testpypi-linux:
     name: Test TestPyPI install on Linux (py${{ matrix.python-version }})
     needs: publish-testpypi-cpu
@@ -682,16 +648,18 @@ jobs:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
           pip install --upgrade pip
+          installed=0
           for i in 1 2 3 4 5; do
             if pip install \
                  --index-url https://test.pypi.org/simple/ \
                  --extra-index-url https://pypi.org/simple/ \
                  "pysiglib==${EXPECTED_VERSION}"; then
-              break
+              installed=1; break
             fi
             echo "TestPyPI install failed (attempt $i), retrying in 15s..."
             sleep 15
           done
+          [ "$installed" = 1 ] || { echo "TestPyPI install failed after 5 attempts"; exit 1; }
           pip install pytest 'jax>=0.9.1; python_version >= "3.11"'
       - name: Verify installed version
         working-directory: ${{ runner.temp }}
@@ -721,14 +689,16 @@ jobs:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
           python -m pip install --upgrade pip
+          $installed = $false
           for ($i = 1; $i -le 5; $i++) {
             pip install --index-url https://test.pypi.org/simple/ `
                         --extra-index-url https://pypi.org/simple/ `
                         "pysiglib==$env:EXPECTED_VERSION"
-            if ($LASTEXITCODE -eq 0) { break }
+            if ($LASTEXITCODE -eq 0) { $installed = $true; break }
             Write-Host "TestPyPI install failed (attempt $i), retrying in 15s..."
             Start-Sleep -Seconds 15
           }
+          if (-not $installed) { Write-Error "TestPyPI install failed after 5 attempts"; exit 1 }
           pip install pytest 'jax>=0.9.1; python_version >= "3.11"'
       - name: Verify installed version
         shell: pwsh
@@ -759,16 +729,18 @@ jobs:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
           python -m pip install --upgrade pip
+          installed=0
           for i in 1 2 3 4 5; do
             if pip install \
                  --index-url https://test.pypi.org/simple/ \
                  --extra-index-url https://pypi.org/simple/ \
                  "pysiglib==${EXPECTED_VERSION}"; then
-              break
+              installed=1; break
             fi
             echo "TestPyPI install failed (attempt $i), retrying in 15s..."
             sleep 15
           done
+          [ "$installed" = 1 ] || { echo "TestPyPI install failed after 5 attempts"; exit 1; }
           pip install pytest 'jax>=0.9.1; python_version >= "3.11"'
       - name: Verify installed version
         working-directory: ${{ runner.temp }}
@@ -780,14 +752,10 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: pytest ${{ github.workspace }}/tests/ -v
 
-  # ============================================================
-  # Fresh-install GPU smoke tests pulling pysiglib-cuda from TestPyPI.
-  # Runs on the same self-hosted runner as the local-wheel GPU tests,
-  # gated by the shared `gate-cuda-tests` approval so there's no second
-  # prompt mid-run. Installing pysiglib-cuda from TestPyPI transitively
-  # pulls in pysiglib (base) from TestPyPI, so this round-trips both
-  # wheels through the index before the production publish.
-  # ============================================================
+  # Fresh-install GPU smoke tests: `pip install pysiglib-cuda` from TestPyPI
+  # transitively pulls pysiglib (base), round-tripping both wheels through
+  # the index before the production publish. Shares gate-cuda-tests so no
+  # second approval prompt mid-run.
   test-from-testpypi-cuda-linux:
     name: Test TestPyPI install (Linux CUDA)
     needs:
@@ -796,6 +764,7 @@ jobs:
       - gate-cuda-tests
     if: ${{ inputs.publish_to_pypi && inputs.run_gpu_tests }}
     runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: read
@@ -823,16 +792,18 @@ jobs:
           python3 -m pip install --quiet --upgrade pip setuptools wheel
           # Retry TestPyPI install to absorb propagation delay. Real PyPI
           # is used as a fallback index for torch/numpy/jax transitive deps.
+          installed=0
           for i in 1 2 3 4 5; do
             if python3 -m pip install --quiet \
                  --index-url https://test.pypi.org/simple/ \
                  --extra-index-url https://pypi.org/simple/ \
                  "pysiglib-cuda==${EXPECTED_VERSION}"; then
-              break
+              installed=1; break
             fi
             echo "TestPyPI install failed (attempt $i), retrying in 15s..."
             sleep 15
           done
+          [ "$installed" = 1 ] || { echo "TestPyPI install failed after 5 attempts"; exit 1; }
           cd /tmp
           python3 -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: '+actual+' vs '+expected; print('Version verified:', actual)"
           nvidia-smi
@@ -859,6 +830,7 @@ jobs:
       - gate-cuda-tests
     if: ${{ inputs.publish_to_pypi && inputs.run_gpu_tests }}
     runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
     defaults:
       run:
         shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
@@ -866,23 +838,30 @@ jobs:
       - uses: actions/checkout@v6
       # No actions/setup-python: see `test-windows-cuda` for rationale. Use
       # the system Python 3.13 that's first on PATH.
+      # Per-run ephemeral venv, same pattern as `test-windows-cuda`.
+      - name: Create ephemeral venv
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP "venv-$env:GITHUB_RUN_ID"
+          if (Test-Path $venv) { Remove-Item -Recurse -Force $venv }
+          python -m venv $venv
+          "$venv\Scripts" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          "PYSIGLIB_TEST_VENV=$venv" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "venv: $venv"
       - name: Install from TestPyPI + test deps
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
-          # Use `python -m pip` throughout so pip and subsequent `python -c`
-          # calls run in the same interpreter. The Python-version marker
-          # cannot be quoted through the nested PowerShell, so gate on the
-          # major version in PowerShell and pass jax without a marker.
           python -m pip install --upgrade pip
+          $installed = $false
           for ($i = 1; $i -le 5; $i++) {
             python -m pip install --index-url https://test.pypi.org/simple/ `
                         --extra-index-url https://pypi.org/simple/ `
                         "pysiglib-cuda==$env:EXPECTED_VERSION"
-            if ($LASTEXITCODE -eq 0) { break }
+            if ($LASTEXITCODE -eq 0) { $installed = $true; break }
             Write-Host "TestPyPI install failed (attempt $i), retrying in 15s..."
             Start-Sleep -Seconds 15
           }
+          if (-not $installed) { Write-Error "TestPyPI install failed after 5 attempts"; exit 1 }
           python -m pip install pytest pytest-timeout torch
           $needs_jax = & python -c "import sys; print('yes' if sys.version_info >= (3,11) else 'no')"
           if ($needs_jax.Trim() -eq 'yes') { python -m pip install 'jax>=0.9.1' }
@@ -900,18 +879,36 @@ jobs:
           python -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
       - name: Run full test suite
         working-directory: ${{ runner.temp }}
-        # See note in test-windows-cuda about bare `pytest` vs `python -m pytest`.
         run: python -m pytest ${{ github.workspace }}/tests/ -v --timeout=60
+      - name: Remove ephemeral venv
+        if: always()
+        run: |
+          if ($env:PYSIGLIB_TEST_VENV -and (Test-Path $env:PYSIGLIB_TEST_VENV)) {
+            Remove-Item -Recurse -Force $env:PYSIGLIB_TEST_VENV
+          }
 
-  # ============================================================
-  # Production PyPI publish - CPU wheels.
-  # Gated by the `pypi` environment, which should require manual reviewer
-  # approval. Runs only after the TestPyPI install tests pass on every OS,
-  # so by this point we have high confidence the wheel installs cleanly.
-  # ============================================================
+  # Manual approval gate before production PyPI publish. Waits for every
+  # TestPyPI install test (CPU + CUDA) to finish before prompting.
+  # `!failure() && !cancelled()` lets CUDA tests be `skipped` when
+  # run_gpu_tests=false without blocking a CPU-only release.
+  approve-pypi-publish:
+    name: Approve PyPI publish
+    needs:
+      - test-from-testpypi-linux
+      - test-from-testpypi-windows
+      - test-from-testpypi-macos
+      - test-from-testpypi-cuda-linux
+      - test-from-testpypi-cuda-windows
+    if: ${{ always() && !failure() && !cancelled() && inputs.publish_to_pypi }}
+    environment: deployment
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Production PyPI publish approved - proceeding."
+
   publish-pypi-cpu:
     name: Publish pysiglib to PyPI
     needs:
+      - approve-pypi-publish
       - test-from-testpypi-linux
       - test-from-testpypi-windows
       - test-from-testpypi-macos
@@ -939,16 +936,12 @@ jobs:
         with:
           packages-dir: dist/
 
-  # ============================================================
-  # Production PyPI publish — CUDA plugin.
-  # Gated by the fresh-install GPU tests (which transitively require the
-  # TestPyPI CUDA publish) plus the base-package PyPI publish. The latter
-  # ensures `pip install pysiglib-cuda12` from PyPI can pull a working
-  # `pysiglib` at the same version.
-  # ============================================================
+  # publish-pypi-cpu must land before the CUDA plugin so `pip install
+  # pysiglib-cuda` can resolve the pinned `pysiglib` version from PyPI.
   publish-pypi-cuda:
     name: Publish pysiglib-cuda to PyPI
     needs:
+      - approve-pypi-publish
       - test-from-testpypi-cuda-linux
       - test-from-testpypi-cuda-windows
       - publish-pypi-cpu
@@ -956,7 +949,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/pysiglib-cuda12/
+      url: https://pypi.org/project/pysiglib-cuda/
     permissions:
       id-token: write
     steps:
