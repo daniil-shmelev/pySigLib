@@ -474,7 +474,11 @@ jobs:
           python -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
       - name: Run full test suite
         working-directory: ${{ runner.temp }}
-        run: pytest ${{ github.workspace }}/tests/ -v --timeout=60
+        # `python -m pytest` rather than bare `pytest.exe`, because the
+        # self-hosted runner has multiple Python installs and the first
+        # pytest.exe on PATH may belong to a different interpreter than the
+        # one where the wheel was installed.
+        run: python -m pytest ${{ github.workspace }}/tests/ -v --timeout=60
   test-windows-cpu:
     name: Test Windows CPU wheel (py${{ matrix.python-version }})
     needs: build-windows-cpu
@@ -896,10 +900,11 @@ jobs:
           python -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
       - name: Run full test suite
         working-directory: ${{ runner.temp }}
-        run: pytest ${{ github.workspace }}/tests/ -v --timeout=60
+        # See note in test-windows-cuda about bare `pytest` vs `python -m pytest`.
+        run: python -m pytest ${{ github.workspace }}/tests/ -v --timeout=60
 
   # ============================================================
-  # Production PyPI publish — CPU wheels.
+  # Production PyPI publish - CPU wheels.
   # Gated by the `pypi` environment, which should require manual reviewer
   # approval. Runs only after the TestPyPI install tests pass on every OS,
   # so by this point we have high confidence the wheel installs cleanly.
