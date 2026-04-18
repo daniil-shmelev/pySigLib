@@ -120,7 +120,18 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+      # Cache the installed CUDA toolkit directory. Jimver/cuda-toolkit
+      # otherwise downloads + installs CUDA (4+ GB, 5-8 min) on every run.
+      # Cache key is pinned to the CUDA version + sub-package set; bump the
+      # key suffix if either changes.
+      - name: Cache CUDA toolkit
+        id: cuda-cache
+        uses: actions/cache@v4
+        with:
+          path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
+          key: cuda-win-12.9.1-nvcc-cudart-thrust-vsint-v1
       - name: Install CUDA toolkit
+        if: steps.cuda-cache.outputs.cache-hit != 'true'
         # Use Windows-native sub-package names; on Windows `cudart` already
         # includes the runtime libraries and headers.
         uses: Jimver/cuda-toolkit@v0.2.35
@@ -128,6 +139,16 @@ jobs:
           cuda: '12.9.1'
           method: 'network'
           sub-packages: '["nvcc", "cudart", "thrust", "visual_studio_integration"]'
+      - name: Expose CUDA env on cache hit
+        if: steps.cuda-cache.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: |
+          $root = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9"
+          "CUDA_PATH=$root"        | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CUDA_PATH_V12_9=$root"  | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CUDA_HOME=$root"        | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$root\bin"              | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          "$root\libnvvp"          | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       - name: Verify nvcc
         shell: pwsh
         run: nvcc --version
@@ -365,6 +386,9 @@ jobs:
         run: |
           $scriptBody = @'
           set -e
+          # kauri 2.1.1 is an sdist on PyPI (no wheel); the baked-in pip in
+          # the test container is too old to build it, so upgrade first.
+          python3 -m pip install --quiet --upgrade pip setuptools wheel
           python3 -m pip install --quiet /workspace/dist/*.whl 'jax>=0.9.1; python_version >= "3.11"'
           python3 -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: built wheel reports '+actual+', workflow input expected '+expected; print('Version verified:', actual)"
           nvidia-smi
@@ -419,7 +443,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           Get-ChildItem dist\*.whl | ForEach-Object { pip install $_.FullName }
-          pip install pytest pytest-timeout torch 'jax>=0.9.1; python_version >= "3.11"'
+          # The self-hosted runner's nested PowerShell invocation strips the
+          # inner double quotes from the pip marker `python_version >= "3.11"`,
+          # so do the Python-version gate in PowerShell and install jax without
+          # a marker.
+          pip install pytest pytest-timeout torch
+          $needs_jax = & python -c "import sys; print('yes' if sys.version_info >= (3,11) else 'no')"
+          if ($needs_jax.Trim() -eq 'yes') { pip install 'jax>=0.9.1' }
       # The next three steps run from runner.temp so `import pysiglib` resolves
       # to the installed wheel in site-packages instead of the checked-out
       # source tree (which lacks the generated _config.py and native libs).
@@ -777,6 +807,9 @@ jobs:
         run: |
           $scriptBody = @'
           set -e
+          # kauri 2.1.1 is an sdist on PyPI (no wheel); the baked-in pip in
+          # the test container is too old to build it, so upgrade first.
+          python3 -m pip install --quiet --upgrade pip setuptools wheel
           # Retry TestPyPI install to absorb propagation delay. Real PyPI
           # is used as a fallback index for torch/numpy/jax transitive deps.
           for i in 1 2 3 4 5; do
@@ -839,7 +872,13 @@ jobs:
             Write-Host "TestPyPI install failed (attempt $i), retrying in 15s..."
             Start-Sleep -Seconds 15
           }
-          pip install pytest pytest-timeout torch 'jax>=0.9.1; python_version >= "3.11"'
+          # The self-hosted runner's nested PowerShell invocation strips the
+          # inner double quotes from the pip marker `python_version >= "3.11"`,
+          # so do the Python-version gate in PowerShell and install jax without
+          # a marker.
+          pip install pytest pytest-timeout torch
+          $needs_jax = & python -c "import sys; print('yes' if sys.version_info >= (3,11) else 'no')"
+          if ($needs_jax.Trim() -eq 'yes') { pip install 'jax>=0.9.1' }
       - name: Verify installed version
         working-directory: ${{ runner.temp }}
         env:
