@@ -88,9 +88,9 @@ import site
 import sys
 
 log = []
-MIN_JAXLIB = (0, 5, 0)
+MIN_JAXLIB = (0, 9, 1)
 
-# Check jaxlib version first — older versions have incompatible XLA FFI headers
+# Check jaxlib version first - older versions have incompatible XLA FFI headers
 def get_jaxlib_version():
     """Return jaxlib version tuple, or None if not found."""
     for finder in (

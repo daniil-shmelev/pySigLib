@@ -33,7 +33,7 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
-          python3 -m pip install pytest jax
+          python3 -m pip install pytest 'jax>=0.9.1; python_version >= "3.11"'
           python3 -m pip install kauri
 
       - name: Install package

@@ -27,12 +27,36 @@ from ..branched_sig import branched_sig_length
 
 import jax
 
-# ``jax.ffi`` was graduated from ``jax.extend.ffi`` in JAX 0.5; support both so
-# the package works against JAX 0.4.x and 0.5+.
-if hasattr(jax, "ffi"):
-    _jax_ffi = jax.ffi
-else:
-    import jax.extend.ffi as _jax_ffi
+# jax>=0.9.1 is the first release whose XLA FFI framework version is 0.3,
+# matching what our compiled handlers declare. Older jax versions raise a
+# cryptic XlaRuntimeError at handler registration; fail early with a clear
+# message instead.
+_MIN_JAX = (0, 9, 1)
+
+
+def _parse_version(v):
+    out = []
+    for part in v.split("."):
+        num = ""
+        for c in part:
+            if c.isdigit():
+                num += c
+            else:
+                break
+        if num:
+            out.append(int(num))
+    return tuple(out)
+
+
+if _parse_version(jax.__version__)[:3] < _MIN_JAX:
+    raise ImportError(
+        "pysiglib.jax_api requires jax>=0.9.1 (XLA FFI API 0.3); "
+        "found jax==" + jax.__version__ + ". "
+        "Install a compatible jax via: pip install 'pysiglib[jax]' "
+        "or pip install 'jax>=0.9.1'."
+    )
+
+_jax_ffi = jax.ffi
 
 
 _FFI_LIB = None

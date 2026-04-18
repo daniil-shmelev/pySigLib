@@ -1,9 +1,10 @@
 [build-system]
-# jaxlib provides the XLA FFI headers at build time. Skipped on Python 3.9
-# (jaxlib>=0.5 needs Python 3.10+); CMake then disables JAX FFI for that build.
+# jaxlib provides the XLA FFI headers at build time. Pinned to >=0.9.1 so the
+# headers expose XLA_FFI_API_MINOR=3 (needed by our compiled handlers). Skipped
+# on Python <3.11 (jax dropped 3.10 in 0.7.0); CMake then disables JAX FFI.
 requires = [
     "scikit-build-core>=0.10",
-    "jaxlib>=0.5.0; python_version>='3.10'",
+    "jaxlib>=0.9.1; python_version>='3.11'",
 ]
 build-backend = "scikit_build_core.build"
 
@@ -41,6 +42,10 @@ classifiers = [
 
 [project.optional-dependencies]
 cuda = ["pysiglib-cuda==3.0.0rc1"]
+# jax>=0.9.1 is the first release whose XLA FFI framework version is 0.3,
+# matching what our FFI handlers are compiled against. Older jax versions
+# will fail at handler registration with an API-version-mismatch error.
+jax = ["jax>=0.9.1"]
 
 [project.urls]
 Homepage = "https://github.com/daniil-shmelev/pySigLib"
