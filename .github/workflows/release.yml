@@ -413,16 +413,13 @@ jobs:
             bash /workspace/run-cuda-tests.sh
 
   test-windows-cuda:
-    name: Test Windows CUDA wheel (py${{ matrix.python-version }})
+    name: Test Windows CUDA wheel
     needs:
       - build-windows-cpu
       - build-windows-cuda
       - gate-cuda-tests
     if: github.event_name == 'workflow_dispatch' && github.repository == 'daniil-shmelev/pysiglib' && github.event.inputs.run_gpu_tests == 'true'
     runs-on: [self-hosted, Windows, X64]
-    strategy:
-      matrix:
-        python-version: ['3.9', '3.13']
     defaults:
       run:
         # Same Restricted-execution-policy override as test-linux-cuda;
@@ -431,9 +428,14 @@ jobs:
         shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
+      # No actions/setup-python: setup-python's Windows installer conflicts
+      # with the runner's pre-existing Python 3.13 and produces a broken
+      # tool-cache install (missing Lib). Use the system Python 3.13 at
+      # `C:\Users\Shmelev\AppData\Local\Programs\Python\Python313\` instead
+      # - it's first on PATH. The Python-version matrix is redundant here:
+      # the py3-none-win_amd64 wheel is universal across Python 3.x, and
+      # py3.9 coverage is already exercised by `test-windows-cpu` on the
+      # hosted runner.
       # Both the base pysiglib wheel (cpsig + CPU JAX FFI) and the
       # pysiglib-cuda plugin wheel (cusig) must be installed.
       - uses: actions/download-artifact@v8
@@ -446,13 +448,10 @@ jobs:
           path: dist
       - name: Install wheels + test deps
         run: |
-          # The self-hosted Windows runner has a system Python 3.12 with pip
-          # on PATH. Bare `pip` resolves to that 3.12's pip, not to the
-          # setup-python 3.13 toolcache that `python` resolves to. Always use
-          # `python -m pip` so install and subsequent `python -c ...` run in
-          # the same interpreter. Likewise the Python-version marker cannot
-          # be quoted through the nested PowerShell, so gate on the major
-          # version in PowerShell and pass jax without a marker.
+          # Use `python -m pip` throughout so pip and subsequent `python -c`
+          # calls run in the same interpreter. The Python-version marker
+          # cannot be quoted through the nested PowerShell, so gate on the
+          # major version in PowerShell and pass jax without a marker.
           python -m pip install --upgrade pip
           Get-ChildItem dist\*.whl | ForEach-Object { python -m pip install $_.FullName }
           python -m pip install pytest pytest-timeout torch
@@ -849,34 +848,28 @@ jobs:
             bash /workspace/run-cuda-testpypi-tests.sh
 
   test-from-testpypi-cuda-windows:
-    name: Test TestPyPI install (Windows CUDA) (py${{ matrix.python-version }})
+    name: Test TestPyPI install (Windows CUDA)
     needs:
       - publish-testpypi-cpu
       - publish-testpypi-cuda
       - gate-cuda-tests
     if: ${{ inputs.publish_to_pypi && inputs.run_gpu_tests }}
     runs-on: [self-hosted, Windows, X64]
-    strategy:
-      matrix:
-        python-version: ['3.13']
     defaults:
       run:
         shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
+      # No actions/setup-python: see `test-windows-cuda` for rationale. Use
+      # the system Python 3.13 that's first on PATH.
       - name: Install from TestPyPI + test deps
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
-          # The self-hosted Windows runner has a system Python 3.12 with pip
-          # on PATH. Bare `pip` would resolve to that 3.12's pip, not to the
-          # setup-python toolcache that `python` resolves to; use `python -m
-          # pip` throughout so install and subsequent `python -c ...` run in
-          # the same interpreter. The Python-version marker cannot be quoted
-          # through the nested PowerShell, so gate jax in PowerShell instead.
+          # Use `python -m pip` throughout so pip and subsequent `python -c`
+          # calls run in the same interpreter. The Python-version marker
+          # cannot be quoted through the nested PowerShell, so gate on the
+          # major version in PowerShell and pass jax without a marker.
           python -m pip install --upgrade pip
           for ($i = 1; $i -le 5; $i++) {
             python -m pip install --index-url https://test.pypi.org/simple/ `
