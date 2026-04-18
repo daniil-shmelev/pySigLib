@@ -21,7 +21,13 @@ import sys
 
 import numpy as np
 
-from ..load_siglib import BUILT_WITH_CUDA, BUILT_WITH_JAX_FFI, SYSTEM
+from ..load_siglib import (
+    BUILT_WITH_CUDA,
+    BUILT_WITH_JAX_FFI,
+    PYSIGLIB_CUDA_DIR,
+    SYSTEM,
+    native_lib_filename,
+)
 from ..sig_length import sig_length, log_sig_length
 from ..branched_sig import branched_sig_length
 
@@ -59,7 +65,8 @@ if _parse_version(jax.__version__)[:3] < _MIN_JAX:
 _jax_ffi = jax.ffi
 
 
-_FFI_LIB = None
+_CPU_LIB = None
+_CUDA_LIB = None
 _REGISTERED = False
 
 _TARGETS = {
@@ -175,21 +182,32 @@ def _find_native_lib(filename: str) -> str:
     )
 
 
-def _ffi_library_filename() -> str:
+def _open_cdll(path: str) -> ctypes.CDLL:
+    """ctypes.CDLL wrapper that applies winmode=0 on Windows."""
     if SYSTEM == "Windows":
-        return "pysiglib_jax_ffi.dll"
-    if SYSTEM == "Linux":
-        return "libpysiglib_jax_ffi.so"
-    if SYSTEM == "Darwin":
-        return "libpysiglib_jax_ffi.dylib"
-    raise RuntimeError(f"Unsupported platform: {SYSTEM}")
+        return ctypes.CDLL(path, winmode=0)
+    return ctypes.CDLL(path)
 
 
-def _load_ffi_library():
-    global _FFI_LIB
+def _preload_windows_dll(path: str) -> None:
+    """winmode=0 disables LOAD_LIBRARY_SEARCH_USER_DIRS, so a freshly-loaded
+    DLL cannot resolve its imports from its own install directory. Pre-loading
+    the sibling puts its handle in the process table, which satisfies the
+    loader when it later resolves imports of a dependent DLL.
+    """
+    if SYSTEM != "Windows":
+        return
+    try:
+        ctypes.CDLL(path, winmode=0)
+    except OSError:
+        pass
 
-    if _FFI_LIB is not None:
-        return _FFI_LIB
+
+def _load_cpu_ffi_library() -> ctypes.CDLL:
+    """Load the base pysiglib wheel's CPU-only JAX FFI library."""
+    global _CPU_LIB
+    if _CPU_LIB is not None:
+        return _CPU_LIB
 
     if not BUILT_WITH_JAX_FFI:
         raise RuntimeError(
@@ -197,28 +215,57 @@ def _load_ffi_library():
             "so the XLA FFI headers are available at build time."
         )
 
-    # On Windows, ``winmode=0`` disables LOAD_LIBRARY_SEARCH_USER_DIRS, so the
-    # DLL dependencies (notably ``cusig.dll``) aren't resolvable from the
-    # pysiglib package directory via ``os.add_dll_directory``. Pre-load any
-    # sibling DLLs that live next to the jax-ffi library so their handles are
-    # already open when the FFI DLL's imports are resolved.
     if SYSTEM == "Windows":
-        for sibling in ("cpsig.dll", "cusig.dll"):
-            try:
-                sibling_path = _find_native_lib(sibling)
-            except OSError:
-                continue
-            try:
-                ctypes.CDLL(sibling_path, winmode=0)
-            except OSError:
-                pass
+        try:
+            _preload_windows_dll(_find_native_lib(native_lib_filename("cpsig")))
+        except OSError:
+            pass
 
-    lib_path = _find_native_lib(_ffi_library_filename())
-    if SYSTEM in {"Windows", "Linux"}:
-        _FFI_LIB = ctypes.CDLL(lib_path, winmode=0)
-    else:
-        _FFI_LIB = ctypes.CDLL(lib_path)
-    return _FFI_LIB
+    _CPU_LIB = _open_cdll(_find_native_lib(native_lib_filename("pysiglib_jax_ffi_cpu")))
+    return _CPU_LIB
+
+
+def _plugin_has_jax_ffi() -> bool:
+    """True only if the pysiglib-cuda plugin shipped a _config.py declaring
+    BUILT_WITH_JAX_FFI=True (i.e. the plugin build found jaxlib headers).
+    """
+    if PYSIGLIB_CUDA_DIR is None:
+        return False
+    try:
+        from pysiglib_cuda import _config as _plugin_config
+    except ImportError:
+        return False
+    return bool(getattr(_plugin_config, "BUILT_WITH_JAX_FFI", False))
+
+
+def _load_cuda_ffi_library():
+    """Load the pysiglib-cuda plugin's CUDA JAX FFI library, or return None
+    if the plugin is not installed, was built without JAX FFI, or is missing
+    the expected DLL. `ensure_registered` promotes None to a hard error when
+    BUILT_WITH_CUDA is True.
+    """
+    global _CUDA_LIB
+    if _CUDA_LIB is not None:
+        return _CUDA_LIB
+
+    if not _plugin_has_jax_ffi():
+        return None
+
+    lib_path = os.path.join(PYSIGLIB_CUDA_DIR, native_lib_filename("pysiglib_jax_ffi_cuda"))
+    if not os.path.exists(lib_path):
+        return None
+
+    if SYSTEM == "Windows":
+        try:
+            _preload_windows_dll(_find_native_lib(native_lib_filename("cpsig")))
+        except OSError:
+            pass
+        cusig_path = os.path.join(PYSIGLIB_CUDA_DIR, native_lib_filename("cusig"))
+        if os.path.exists(cusig_path):
+            _preload_windows_dll(cusig_path)
+
+    _CUDA_LIB = _open_cdll(lib_path)
+    return _CUDA_LIB
 
 
 def _augmented_dim(dimension, time_aug, lead_lag):
@@ -254,22 +301,30 @@ def ensure_registered() -> None:
     if _REGISTERED:
         return
 
-    lib = _load_ffi_library()
-
+    cpu_lib = _load_cpu_ffi_library()
     for op_targets in _TARGETS.values():
         target_name, symbol_name = op_targets["cpu"]
         _jax_ffi.register_ffi_target(
             target_name,
-            _jax_ffi.pycapsule(getattr(lib, symbol_name)),
+            _jax_ffi.pycapsule(getattr(cpu_lib, symbol_name)),
             platform="cpu",
         )
 
     if BUILT_WITH_CUDA:
+        cuda_lib = _load_cuda_ffi_library()
+        if cuda_lib is None:
+            raise RuntimeError(
+                "pysiglib-cuda is installed but its JAX FFI CUDA library is missing. "
+                "The plugin likely pre-dates the JAX FFI split, or its build could not "
+                "locate jaxlib headers. Install jaxlib and reinstall the plugin:\n"
+                "    pip install 'jaxlib>=0.9.1'\n"
+                "    pip install --no-cache-dir --force-reinstall 'pysiglib-cuda'"
+            )
         for op_targets in _TARGETS.values():
             target_name, symbol_name = op_targets["cuda"]
             _jax_ffi.register_ffi_target(
                 target_name,
-                _jax_ffi.pycapsule(getattr(lib, symbol_name)),
+                _jax_ffi.pycapsule(getattr(cuda_lib, symbol_name)),
                 platform="CUDA",
             )
 

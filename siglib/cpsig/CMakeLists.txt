@@ -54,7 +54,12 @@ if(_enable_vec)
 endif()
 
 # ---- Install ----------------------------------------------------------------
-install(TARGETS cpsig
-    LIBRARY DESTINATION pysiglib
-    RUNTIME DESTINATION pysiglib   # .dll on Windows
-)
+# CPSIG_SKIP_INSTALL lets dependents (e.g. the pysiglib-cuda plugin, which
+# needs cpsig at link time but must not ship it in its own wheel) add cpsig
+# via add_subdirectory() without pulling the library into their install set.
+if(NOT CPSIG_SKIP_INSTALL)
+    install(TARGETS cpsig
+        LIBRARY DESTINATION pysiglib
+        RUNTIME DESTINATION pysiglib   # .dll on Windows
+    )
+endif()

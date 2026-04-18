@@ -1,11 +1,18 @@
 [build-system]
-requires = ["scikit-build-core>=0.10"]
+# jaxlib provides the XLA FFI headers the pysiglib_jax_ffi_cuda target
+# compiles against. Pinned to match the base pysiglib build (>=0.9.1 for
+# XLA_FFI_API_MINOR=3). If absent at build time, FindJaxlib.cmake sets
+# JAXLIB_FOUND=FALSE and the plugin falls back to cusig-only (no CUDA FFI).
+requires = [
+    "scikit-build-core>=0.10",
+    "jaxlib>=0.9.1; python_version>='3.11'",
+]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "pysiglib-cuda"
 version = "3.0.0rc1"
-description = "CUDA plugin for pysiglib — ships cusig.{so,dll}."
+description = "CUDA plugin for pysiglib. Ships cusig and pysiglib_jax_ffi_cuda."
 requires-python = ">=3.9"
 license = "Apache-2.0"
 readme = "README.md"
@@ -48,4 +55,6 @@ build-verbosity = 1
 
 [tool.cibuildwheel.linux]
 manylinux-x86_64-image = "manylinux_2_28"
-repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*'"
+# Exclude system-CUDA libs AND libcpsig (base wheel ships it) and
+# libpysiglib_jax_ffi_cuda itself (bundled by this wheel).
+repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*' --exclude 'libcpsig.so*' --exclude 'libpysiglib_jax_ffi_cuda.so*'"

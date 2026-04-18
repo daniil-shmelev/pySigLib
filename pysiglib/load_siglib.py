@@ -40,28 +40,39 @@ if SYSTEM != platform.system():
 # Load cpsig + discover cusig via the pysiglib-cuda plugin
 ######################################################
 
+def native_lib_filename(base_name):
+    """Platform-specific filename for a shared library (no directory prefix)."""
+    if SYSTEM == 'Windows':
+        return f'{base_name}.dll'
+    if SYSTEM == 'Linux':
+        return f'lib{base_name}.so'
+    if SYSTEM == 'Darwin':
+        return f'lib{base_name}.dylib'
+    raise RuntimeError(f"Unsupported OS: {SYSTEM}")
+
+
 # winmode=0 on Windows - see https://github.com/NVIDIA/warp/issues/24
 def _load_native_lib(directory, base_name):
+    path = os.path.join(directory, native_lib_filename(base_name))
     if SYSTEM == 'Windows':
-        return ctypes.CDLL(os.path.join(directory, f'{base_name}.dll'), winmode=0)
-    if SYSTEM == 'Linux':
-        return ctypes.CDLL(os.path.join(directory, f'lib{base_name}.so'))
-    if SYSTEM == 'Darwin':
-        return ctypes.CDLL(os.path.join(directory, f'lib{base_name}.dylib'))
-    raise RuntimeError(f"Unsupported OS: {SYSTEM}")
+        return ctypes.CDLL(path, winmode=0)
+    return ctypes.CDLL(path)
+
 
 DIR_ = os.path.dirname(sys.modules['pysiglib'].__file__)
 CPSIG = _load_native_lib(DIR_, 'cpsig')
 
 CUSIG = None
 BUILT_WITH_CUDA = False
+PYSIGLIB_CUDA_DIR = None
 try:
     import pysiglib_cuda as _cuda_plugin
 except ImportError:
     _cuda_plugin = None
 if _cuda_plugin is not None:
+    PYSIGLIB_CUDA_DIR = os.path.dirname(_cuda_plugin.__file__)
     try:
-        CUSIG = _load_native_lib(os.path.dirname(_cuda_plugin.__file__), 'cusig')
+        CUSIG = _load_native_lib(PYSIGLIB_CUDA_DIR, 'cusig')
         BUILT_WITH_CUDA = True
     except OSError:
         pass
