@@ -441,15 +441,18 @@ jobs:
           path: dist
       - name: Install wheels + test deps
         run: |
+          # The self-hosted Windows runner has a system Python 3.12 with pip
+          # on PATH. Bare `pip` resolves to that 3.12's pip, not to the
+          # setup-python 3.13 toolcache that `python` resolves to. Always use
+          # `python -m pip` so install and subsequent `python -c ...` run in
+          # the same interpreter. Likewise the Python-version marker cannot
+          # be quoted through the nested PowerShell, so gate on the major
+          # version in PowerShell and pass jax without a marker.
           python -m pip install --upgrade pip
-          Get-ChildItem dist\*.whl | ForEach-Object { pip install $_.FullName }
-          # The self-hosted runner's nested PowerShell invocation strips the
-          # inner double quotes from the pip marker `python_version >= "3.11"`,
-          # so do the Python-version gate in PowerShell and install jax without
-          # a marker.
-          pip install pytest pytest-timeout torch
+          Get-ChildItem dist\*.whl | ForEach-Object { python -m pip install $_.FullName }
+          python -m pip install pytest pytest-timeout torch
           $needs_jax = & python -c "import sys; print('yes' if sys.version_info >= (3,11) else 'no')"
-          if ($needs_jax.Trim() -eq 'yes') { pip install 'jax>=0.9.1' }
+          if ($needs_jax.Trim() -eq 'yes') { python -m pip install 'jax>=0.9.1' }
       # The next three steps run from runner.temp so `import pysiglib` resolves
       # to the installed wheel in site-packages instead of the checked-out
       # source tree (which lacks the generated _config.py and native libs).
@@ -863,22 +866,24 @@ jobs:
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
+          # The self-hosted Windows runner has a system Python 3.12 with pip
+          # on PATH. Bare `pip` would resolve to that 3.12's pip, not to the
+          # setup-python toolcache that `python` resolves to; use `python -m
+          # pip` throughout so install and subsequent `python -c ...` run in
+          # the same interpreter. The Python-version marker cannot be quoted
+          # through the nested PowerShell, so gate jax in PowerShell instead.
           python -m pip install --upgrade pip
           for ($i = 1; $i -le 5; $i++) {
-            pip install --index-url https://test.pypi.org/simple/ `
+            python -m pip install --index-url https://test.pypi.org/simple/ `
                         --extra-index-url https://pypi.org/simple/ `
                         "pysiglib-cuda==$env:EXPECTED_VERSION"
             if ($LASTEXITCODE -eq 0) { break }
             Write-Host "TestPyPI install failed (attempt $i), retrying in 15s..."
             Start-Sleep -Seconds 15
           }
-          # The self-hosted runner's nested PowerShell invocation strips the
-          # inner double quotes from the pip marker `python_version >= "3.11"`,
-          # so do the Python-version gate in PowerShell and install jax without
-          # a marker.
-          pip install pytest pytest-timeout torch
+          python -m pip install pytest pytest-timeout torch
           $needs_jax = & python -c "import sys; print('yes' if sys.version_info >= (3,11) else 'no')"
-          if ($needs_jax.Trim() -eq 'yes') { pip install 'jax>=0.9.1' }
+          if ($needs_jax.Trim() -eq 'yes') { python -m pip install 'jax>=0.9.1' }
       - name: Verify installed version
         working-directory: ${{ runner.temp }}
         env:
