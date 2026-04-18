@@ -120,16 +120,21 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
-      # Cache the installed CUDA toolkit directory. Jimver/cuda-toolkit
-      # otherwise downloads + installs CUDA (4+ GB, 5-8 min) on every run.
-      # Cache key is pinned to the CUDA version + sub-package set; bump the
-      # key suffix if either changes.
+      # Cache the installed CUDA toolkit directory AND the Visual Studio
+      # BuildCustomizations dir where Jimver's `visual_studio_integration`
+      # sub-package drops CUDA's MSBuild .props / .targets files. Without
+      # the VS files cached, a cache hit would skip Jimver entirely and the
+      # next CMake configure would fail with "No CUDA toolset found" because
+      # the VS generator can't locate the CUDA build rules.
+      # Bump the key suffix if CUDA version, sub-packages, or paths change.
       - name: Cache CUDA toolkit
         id: cuda-cache
         uses: actions/cache@v4
         with:
-          path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
-          key: cuda-win-12.9.1-nvcc-cudart-thrust-vsint-v1
+          path: |
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
+            C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\VC\v170\BuildCustomizations
+          key: cuda-win-12.9.1-nvcc-cudart-thrust-vsint-v2
       - name: Install CUDA toolkit
         if: steps.cuda-cache.outputs.cache-hit != 'true'
         # Use Windows-native sub-package names; on Windows `cudart` already
