@@ -675,7 +675,7 @@ def _log_sig_join_callback(ls, d, dimension, degree, n_jobs):
     d = np.asarray(d)
     ls_flat, leading = _flatten_leading(ls)
     d_flat, _ = _flatten_leading(d)
-    out = log_sig_join_forward(ls_flat, d_flat, dimension, degree, n_jobs)
+    out = log_sig_join_forward(ls_flat, d_flat, dimension, degree, n_jobs=n_jobs)
     return _unflatten_leading(out, leading)
 
 
