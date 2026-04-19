@@ -587,15 +587,26 @@ void logsig_to_sig_backprop_cuda_(
 		return;
 	}
 
-	// scalar_term=false: input `log_sig` is full-size (method=0) or log-sig-shaped (method>0).
-	// `d_sig` is stripped (sig-shaped minus scalar).
-	// `d_logsig` must be full-size for method=0 (Python strips afterward) or log-sig-shaped for method>0.
+	// scalar_term=false. Python wrapper layouts:
+	//   method==0: log_sig is sig-shaped stripped (prepend 0 to reach full); d_sig
+	//              is sig-shaped stripped (prepend 0); d_logsig is sig-shaped stripped
+	//              (compute into full buffer, strip afterwards).
+	//   method==1/2: log_sig and d_logsig are log-sig-shaped (no scalar concept);
+	//                only d_sig is stripped.
 	const uint64_t full_len = host_sig_length(dimension, degree);
+
 	CudaBuf<T> d_dsig_full(batch_size * full_len * sizeof(T));
-	CUDA_CHECK(cudaMemset(d_dsig_full.get(), 0, batch_size * full_len * sizeof(T)));
 	exp_stage_prepend_<T>(d_sig, d_dsig_full.get(), batch_size, full_len, /*prepend_one=*/false);
 
-	logsig_to_sig_backprop_cuda_core_<T>(log_sig, d_logsig, d_dsig_full.get(), batch_size, dimension, degree, method);
+	if (method == 0) {
+		CudaBuf<T> d_ls_full(batch_size * full_len * sizeof(T));
+		exp_stage_prepend_<T>(log_sig, d_ls_full.get(), batch_size, full_len, /*prepend_one=*/false);
+		CudaBuf<T> d_dlogsig_full(batch_size * full_len * sizeof(T));
+		logsig_to_sig_backprop_cuda_core_<T>(d_ls_full.get(), d_dlogsig_full.get(), d_dsig_full.get(), batch_size, dimension, degree, method);
+		exp_stage_strip_<T>(d_dlogsig_full.get(), d_logsig, batch_size, full_len);
+	} else {
+		logsig_to_sig_backprop_cuda_core_<T>(log_sig, d_logsig, d_dsig_full.get(), batch_size, dimension, degree, method);
+	}
 }
 
 // Original forward implementation, renamed to _core_.
