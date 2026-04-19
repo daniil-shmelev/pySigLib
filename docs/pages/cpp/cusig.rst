@@ -14,3 +14,4 @@ of the mathematical operations, for which we refer the user to the corresponding
    cusig/cu_sig_coef
    cusig/cu_log_sig
    cusig/cu_sig_kernel
+   cusig/cu_branched_sig
