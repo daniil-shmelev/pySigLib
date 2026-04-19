@@ -70,6 +70,23 @@ try:
 except ImportError:
     _cuda_plugin = None
 if _cuda_plugin is not None:
+    from pysiglib._version import __version__ as _pysiglib_version
+    try:
+        from importlib.metadata import version as _pkg_version, PackageNotFoundError
+        try:
+            _installed_plugin = _pkg_version("pysiglib-cuda")
+        except PackageNotFoundError:
+            _installed_plugin = _pysiglib_version  # editable install: trust
+    except ImportError:
+        _installed_plugin = _pysiglib_version
+    if _installed_plugin != _pysiglib_version:
+        raise ImportError(
+            "pysiglib-cuda " + _installed_plugin + " is installed but pysiglib " +
+            _pysiglib_version + " requires pysiglib-cuda==" + _pysiglib_version +
+            ". Reinstall the matching plugin (`pip install --force-reinstall "
+            "pysiglib[cuda]`) or uninstall pysiglib-cuda to disable the CUDA "
+            "backend."
+        )
     PYSIGLIB_CUDA_DIR = os.path.dirname(_cuda_plugin.__file__)
     try:
         CUSIG = _load_native_lib(PYSIGLIB_CUDA_DIR, 'cusig')

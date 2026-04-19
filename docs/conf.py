@@ -23,10 +23,11 @@ run_doxygen()
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
+from pysiglib._version import __version__ as release
+
 project = "pysiglib"
 copyright = "2026, Daniil Shmelev"
 author = "Daniil Shmelev"
-release = "3.0.0rc2"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

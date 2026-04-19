@@ -11,7 +11,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "pysiglib-cuda"
-version = "3.0.0rc2"
+dynamic = ["version", "dependencies"]
 description = "CUDA plugin for pysiglib. Ships cusig and pysiglib_jax_ffi_cuda."
 requires-python = ">=3.9"
 license = "Apache-2.0"
@@ -19,8 +19,8 @@ readme = "README.md"
 authors = [
     { name = "Daniil Shmelev", email = "daniil.shmelev23@imperial.ac.uk" },
 ]
-# Exact pin: cusig's ABI must match the base wheel's ctypes bindings.
-dependencies = ["pysiglib==3.0.0rc1"]
+# `dependencies` is dynamic - see [tool.scikit-build.metadata.dependencies] below.
+# The pin pysiglib==<version> is generated from pysiglib/_version.py at build time.
 
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -44,6 +44,22 @@ cmake.source-dir = "."
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["pysiglib_cuda"]
 wheel.py-api = "py3"
+# Required for the custom _pin_provider metadata provider below
+# (scikit-build-core gates non-built-in providers behind this flag).
+experimental = true
+
+# Single source of truth: the base pysiglib's _version.py. Wheel built from a
+# repo checkout (no sdist on PyPI - see docs/pages/installation.rst), so the
+# relative path is always resolvable.
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "../../pysiglib/_version.py"
+
+# Custom provider that reads the same _version.py and emits the
+# `pysiglib==<version>` ABI-lockstep pin. See _pin_provider.py.
+[tool.scikit-build.metadata.dependencies]
+provider = "_pin_provider"
+provider-path = "."
 
 [tool.scikit-build.cmake.define]
 PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
