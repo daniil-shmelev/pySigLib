@@ -134,6 +134,8 @@ class ScaledLinearKernel(StaticKernel):
     """
 
     def __init__(self, scale : float = 1.):
+        if scale < 0:
+            raise ValueError(f"ScaledLinearKernel: scale must be >= 0, got {scale}")
         self.linear_kernel = LinearKernel()
         self.scale = scale
         self._scale_sq = scale ** 2
@@ -153,6 +155,8 @@ class RBFKernel(StaticKernel):
     """
 
     def __init__(self, sigma : float):
+        if sigma <= 0:
+            raise ValueError(f"RBFKernel: sigma must be > 0, got {sigma}")
         self.sigma = sigma
         self._one_over_sigma = 1. / sigma
         self._scale = 2 * self._one_over_sigma
@@ -217,6 +221,10 @@ class PolynomialKernel(StaticKernel):
     """
 
     def __init__(self, degree : float = 3., gamma : float = 1., scale : float = 1.):
+        if degree < 0:
+            raise ValueError(f"PolynomialKernel: degree must be >= 0, got {degree}")
+        if scale < 0:
+            raise ValueError(f"PolynomialKernel: scale must be >= 0, got {scale}")
         self.degree = degree
         self.gamma = gamma
         self.scale = scale
@@ -280,6 +288,8 @@ class Matern12Kernel(StaticKernel):
     """
 
     def __init__(self, sigma : float):
+        if sigma <= 0:
+            raise ValueError(f"Matern12Kernel: sigma must be > 0, got {sigma}")
         self.sigma = sigma
         self._one_over_sigma = 1. / sigma
 
@@ -316,6 +326,8 @@ class Matern32Kernel(StaticKernel):
     """
 
     def __init__(self, sigma : float):
+        if sigma <= 0:
+            raise ValueError(f"Matern32Kernel: sigma must be > 0, got {sigma}")
         self.sigma = sigma
         self._sqrt3_over_sigma = math.sqrt(3.) / sigma
         self._3_over_sigma_sq = 3. / (sigma ** 2)
@@ -351,6 +363,8 @@ class Matern52Kernel(StaticKernel):
     """
 
     def __init__(self, sigma : float):
+        if sigma <= 0:
+            raise ValueError(f"Matern52Kernel: sigma must be > 0, got {sigma}")
         self.sigma = sigma
         self._sqrt5_over_sigma = math.sqrt(5.) / sigma
         self._5_over_3sigma_sq = 5. / (3. * sigma ** 2)
@@ -388,6 +402,10 @@ class RationalQuadraticKernel(StaticKernel):
     """
 
     def __init__(self, sigma : float, alpha : float = 1.):
+        if sigma <= 0:
+            raise ValueError(f"RationalQuadraticKernel: sigma must be > 0, got {sigma}")
+        if alpha <= 0:
+            raise ValueError(f"RationalQuadraticKernel: alpha must be > 0, got {alpha}")
         self.sigma = sigma
         self.alpha = alpha
         self._c = 2. * alpha * sigma ** 2

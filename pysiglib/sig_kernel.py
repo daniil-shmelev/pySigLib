@@ -240,6 +240,22 @@ def sig_kernel(
             stacklevel=2
         )
 
+    if path1 is path2 and not has_bad and not return_grid:
+        if isinstance(result.data, np.ndarray):
+            has_neg = (result.data < 0).any()
+        else:
+            has_neg = (result.data < 0).any().item()
+        if has_neg:
+            warnings.warn(
+                "sig_kernel produced negative K(X, X) values."
+                "This is typically caused by PDE-solver instability at large "
+                "dyadic_order or large path increments. Consider reducing "
+                "dyadic_order, scaling paths down, or using a bounded static "
+                "kernel (e.g., pysiglib.RBFKernel).",
+                RuntimeWarning,
+                stacklevel=2
+            )
+
     if normalize:
         k1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
         k2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)

@@ -129,6 +129,10 @@ def transform_path(
 
     check_n_jobs(n_jobs)
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
+    if time_aug and data.data_length < 2:
+        raise ValueError(
+            f"transform_path(time_aug=True) requires path length >= 2, got {data.data_length}. "
+        )
     result = PathOutputHandler(data.length, data.dimension, data)
 
     if data.batch_size == 0:

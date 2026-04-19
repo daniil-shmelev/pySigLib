@@ -13,6 +13,7 @@
 # limitations under the License.
 # =========================================================================
 
+import warnings
 from typing import Union
 
 import numpy as np
@@ -232,5 +233,19 @@ def sig(
             data.time_aug, data.lead_lag, data.end_time, horner, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
+
+    if isinstance(result.data, np.ndarray):
+        has_bad = np.isnan(result.data).any() or np.isinf(result.data).any()
+    else:
+        has_bad = torch.isnan(result.data).any().item() or torch.isinf(result.data).any().item()
+    if has_bad:
+        warnings.warn(
+            "sig produced NaN or Inf values. This is typically caused by paths "
+            "with large increments, leading to numerical overflow. Consider "
+            "normalizing your paths.",
+            RuntimeWarning,
+            stacklevel=2
+        )
+
     return result.data
 

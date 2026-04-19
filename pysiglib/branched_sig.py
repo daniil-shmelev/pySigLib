@@ -126,6 +126,26 @@ def branched_sig_length(dimension: int, degree: int, *, planar: bool = False, sc
     return out - (0 if scalar_term else 1)
 
 
+_CUDA_MAX_NUM_TREES = 1024  # CUDA kernel hardcoded thread-block size limit
+
+
+def _check_cuda_num_trees(dimension: int, degree: int, planar: bool, fn_name: str) -> None:
+    """Precheck the number of rooted trees against the CUDA kernel limit.
+
+    The branched_sig CUDA kernel launches one thread per tree within a single
+    block, capped at 1024. Above that, the kernel aborts with an opaque
+    ``Invalid argument (2)`` error. Surface a clear Python-level error instead.
+    """
+    num_trees = branched_sig_length(dimension, degree, planar=planar, scalar_term=False)
+    if num_trees > _CUDA_MAX_NUM_TREES:
+        raise RuntimeError(
+            f"{fn_name}: num_trees={num_trees} exceeds CUDA kernel limit of "
+            f"{_CUDA_MAX_NUM_TREES} for (dim={dimension}, degree={degree}"
+            + (f", planar={planar}" if planar else "")
+            + "). Use CPU or reduce degree."
+        )
+
+
 def _infer_branched_scalar_term(bsig, dimension: int, degree: int, planar: bool = False) -> bool:
     """Return True iff ``bsig``'s trailing dimension includes the leading scalar 1.
 
@@ -210,6 +230,7 @@ def branched_sig(
             dimension, data.data_length, degree, n_jobs,
             data.time_aug, data.lead_lag, data.end_time, planar, scalar_term)
     else:
+        _check_cuda_num_trees(aug_dimension, degree, planar, "branched_sig")
         err_code = CUSIG_BRANCHED_SIG_CUDA[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             dimension, data.data_length, degree,
@@ -272,6 +293,7 @@ def branched_sig_combine(
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, dimension, degree, n_jobs, planar, scalar_term)
     else:
+        _check_cuda_num_trees(dimension, degree, planar, "branched_sig_combine")
         err_code = CUSIG_BRANCHED_SIG_COMBINE_CUDA[data.dtype](
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, dimension, degree, planar, scalar_term)

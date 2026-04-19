@@ -25,7 +25,7 @@ from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CUSIG_BRANCHED_SIG_BACKPROP_CUDA,
                      CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA)
 from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler
-from .branched_sig import _inv_permute_bsig, _permute_bsig, branched_sig_length, _infer_branched_scalar_term
+from .branched_sig import _inv_permute_bsig, _permute_bsig, branched_sig_length, _infer_branched_scalar_term, _check_cuda_num_trees
 
 
 def branched_sig_backprop(
@@ -95,6 +95,7 @@ def branched_sig_backprop(
             path_data.batch_size, dimension, path_data.data_length, degree, n_jobs,
             path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term)
     else:
+        _check_cuda_num_trees(aug_dimension, degree, planar, "branched_sig_backprop")
         err_code = CUSIG_BRANCHED_SIG_BACKPROP_CUDA[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
@@ -164,6 +165,7 @@ def branched_sig_combine_backprop(
             result1.data_ptr, result2.data_ptr,
             data.batch_size, dimension, degree, n_jobs, planar, scalar_term)
     else:
+        _check_cuda_num_trees(dimension, degree, planar, "branched_sig_combine_backprop")
         err_code = CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA[data.dtype](
             data.sig_ptr[1], data.sig_ptr[2], data.sig_ptr[0],
             result1.data_ptr, result2.data_ptr,
