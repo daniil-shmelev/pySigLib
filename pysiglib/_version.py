@@ -19,4 +19,4 @@
 #   - plugins/cuda/pyproject.toml (plugin wheel metadata; same version for ABI lockstep)
 #   - docs/conf.py (Sphinx release tag)
 #   - plugins/cuda/pysiglib_cuda/__init__.py (runtime ABI guard)
-__version__ = "3.0.0rc2"
+__version__ = "3.0.0"
