@@ -827,11 +827,12 @@ void sig_to_log_sig_backprop_cuda_(
 		return;
 	}
 
-	// scalar_term=false for backprop. The Python wrapper passes:
-	//   sig: FULL length (always)
-	//   log_sig_derivs: sig-shaped stripped (method=0) or log-sig-shaped (method>0)
-	//   out (d_sig): FULL length (Python strips afterward)
 	const uint64_t full_len = host_sig_length(dimension, degree);
+
+	CudaBuf<T> d_sig_full(batch_size * full_len * sizeof(T));
+	stage_prepend_<T>(sig, d_sig_full.get(), batch_size, full_len);
+
+	CudaBuf<T> d_out_full(batch_size * full_len * sizeof(T));
 
 	if (method == 0) {
 		// log_sig_derivs is stripped; stage into a full-size buffer.
@@ -839,17 +840,19 @@ void sig_to_log_sig_backprop_cuda_(
 		// d(log_sig)/d... leading slot is 0 (log_sig[0] is constant).
 		CUDA_CHECK(cudaMemset(d_lsd_full.get(), 0, batch_size * full_len * sizeof(T)));
 		stage_prepend_<T>(log_sig_derivs, d_lsd_full.get(), batch_size, full_len);
-		sig_to_log_sig_backprop_cuda_core_<T>(sig, out, d_lsd_full.get(), batch_size, dimension, degree);
+		sig_to_log_sig_backprop_cuda_core_<T>(d_sig_full.get(), d_out_full.get(), d_lsd_full.get(), batch_size, dimension, degree);
 	}
 	else if (method == 1) {
-		sig_to_log_sig_backprop_cuda_m1_core_<T>(sig, out, log_sig_derivs, batch_size, dimension, degree);
+		sig_to_log_sig_backprop_cuda_m1_core_<T>(d_sig_full.get(), d_out_full.get(), log_sig_derivs, batch_size, dimension, degree);
 	}
 	else if (method == 2) {
-		sig_to_log_sig_backprop_cuda_m2_core_<T>(sig, out, log_sig_derivs, batch_size, dimension, degree);
+		sig_to_log_sig_backprop_cuda_m2_core_<T>(d_sig_full.get(), d_out_full.get(), log_sig_derivs, batch_size, dimension, degree);
 	}
 	else {
 		throw std::invalid_argument("sig_to_log_sig_backprop_cuda: method must be 0, 1, or 2");
 	}
+
+	stage_strip_<T>(d_out_full.get(), out, batch_size, full_len);
 }
 
 // =========================================================================
