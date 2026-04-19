@@ -550,12 +550,17 @@ void logsig_to_sig_cuda_(
 		return;
 	}
 
-	// scalar_term=false. Input is full-sized regardless of method (the Python
-	// wrapper always passes the sig-layout length for method==0 and the log-sig
-	// length for method==1/2). Only the output is stripped.
+
 	const uint64_t full_len = host_sig_length(dimension, degree);
 	CudaBuf<T> d_out_full(batch_size * full_len * sizeof(T));
-	logsig_to_sig_cuda_core_<T>(log_sig, d_out_full.get(), batch_size, dimension, degree, method);
+
+	if (method == 0) {
+		CudaBuf<T> d_ls_full(batch_size * full_len * sizeof(T));
+		exp_stage_prepend_<T>(log_sig, d_ls_full.get(), batch_size, full_len, /*prepend_one=*/false);
+		logsig_to_sig_cuda_core_<T>(d_ls_full.get(), d_out_full.get(), batch_size, dimension, degree, method);
+	} else {
+		logsig_to_sig_cuda_core_<T>(log_sig, d_out_full.get(), batch_size, dimension, degree, method);
+	}
 	exp_stage_strip_<T>(d_out_full.get(), out, batch_size, full_len);
 }
 
