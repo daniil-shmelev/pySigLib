@@ -151,17 +151,26 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int sig_combine_backprop_d(const double* sig_combined_derivs, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
-	// linear_sig: signature of a single linear segment from a displacement vector
+	/** @defgroup linear_sig_functions Linear sig functions
+	* @{
+	*/
 	[[nodiscard]] CPSIG_API int linear_sig_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
 	[[nodiscard]] CPSIG_API int linear_sig_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @} */
 
-	// sig_join: extend a signature by a displacement
+	/** @defgroup sig_join_functions Sig join functions
+	* @{
+	*/
 	[[nodiscard]] CPSIG_API int sig_join_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
 	[[nodiscard]] CPSIG_API int sig_join_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @} */
 
-	// sig_join_backprop
+	/** @defgroup sig_join_backprop_functions Sig join backprop functions
+	* @{
+	*/
 	[[nodiscard]] CPSIG_API int sig_join_backprop_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
 	[[nodiscard]] CPSIG_API int sig_join_backprop_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @} */
 
 	/** @defgroup sig_coef_functions Signature coefficient functions
 	* @{
@@ -394,13 +403,19 @@ extern "C" {
 		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
-	// log_sig_join: extend a log-signature by a displacement via BCH
+	/** @defgroup log_sig_join_functions Log sig join functions
+	* @{
+	*/
 	[[nodiscard]] CPSIG_API int log_sig_join_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	[[nodiscard]] CPSIG_API int log_sig_join_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	/** @} */
 
-	// log_sig_join_backprop
+	/** @defgroup log_sig_join_backprop_functions Log sig join backprop functions
+	* @{
+	*/
 	[[nodiscard]] CPSIG_API int log_sig_join_backprop_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	[[nodiscard]] CPSIG_API int log_sig_join_backprop_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	/** @} */
 
 	/** @defgroup log_sig_from_path_functions Log-signature from path functions
 	* @{

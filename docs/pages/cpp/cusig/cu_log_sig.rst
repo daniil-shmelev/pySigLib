@@ -31,6 +31,18 @@ log_sig_combine_backprop_cuda
 .. doxygengroup:: log_sig_combine_backprop_cuda_functions
    :content-only:
 
+log_sig_join_cuda
+------------------
+
+.. doxygengroup:: log_sig_join_cuda_functions
+   :content-only:
+
+log_sig_join_backprop_cuda
+---------------------------
+
+.. doxygengroup:: log_sig_join_backprop_cuda_functions
+   :content-only:
+
 log_sig_from_path_cuda
 -----------------------
 

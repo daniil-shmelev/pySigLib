@@ -30,6 +30,18 @@ log_sig_combine_backprop
 .. doxygengroup:: log_sig_combine_backprop_functions
    :content-only:
 
+log_sig_join
+-------------
+
+.. doxygengroup:: log_sig_join_functions
+   :content-only:
+
+log_sig_join_backprop
+----------------------
+
+.. doxygengroup:: log_sig_join_backprop_functions
+   :content-only:
+
 log_sig_from_path
 ------------------
 

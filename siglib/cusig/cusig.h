@@ -433,25 +433,40 @@ extern "C" {
 	[[nodiscard]] CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true) noexcept;
 	/** @} */
 
-	// linear_sig CUDA
+	/** @defgroup linear_sig_cuda_functions Linear sig CUDA functions
+	* @{
+	*/
 	[[nodiscard]] CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
 	[[nodiscard]] CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
+	/** @} */
 
-	// sig_join CUDA
+	/** @defgroup sig_join_cuda_functions Sig join CUDA functions
+	* @{
+	*/
 	[[nodiscard]] CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
 	[[nodiscard]] CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
+	/** @} */
 
-	// sig_join_backprop CUDA
+	/** @defgroup sig_join_backprop_cuda_functions Sig join backprop CUDA functions
+	* @{
+	*/
 	[[nodiscard]] CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
 	[[nodiscard]] CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
+	/** @} */
 
-	// log_sig_join CUDA
+	/** @defgroup log_sig_join_cuda_functions Log sig join CUDA functions
+	* @{
+	*/
 	[[nodiscard]] CUSIG_API int log_sig_join_cuda_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	[[nodiscard]] CUSIG_API int log_sig_join_cuda_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
 
-	// log_sig_join_backprop CUDA
+	/** @defgroup log_sig_join_backprop_cuda_functions Log sig join backprop CUDA functions
+	* @{
+	*/
 	[[nodiscard]] CUSIG_API int log_sig_join_backprop_cuda_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	[[nodiscard]] CUSIG_API int log_sig_join_backprop_cuda_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @} */
 
 	/** @brief Release all cached device allocations and the CUDA stream pool. Synchronizes the device first. Idempotent. */
 	CUSIG_API void cusig_shutdown() noexcept;
