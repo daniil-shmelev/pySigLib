@@ -18,11 +18,11 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (CPSIG_LOGSIG_TO_SIG,
                      CUSIG_LOGSIG_TO_SIG_CUDA)
-from .sig_length import sig_length, log_sig_length, aug_dim
+from .sig_length import sig_length, log_sig_length, aug_dim, _infer_scalar_term
 from .data_handlers import SigOutputHandler, SigInputHandler
 
 
@@ -30,10 +30,11 @@ def logsig_to_sig(
         log_sig : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         method : int = 1,
-        scalar_term = None,
+        scalar_term : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -57,9 +58,10 @@ def logsig_to_sig(
     :type lead_lag: bool
     :param method: Method to use (``0``, ``1``, or ``2``). Must match the method used to compute the log-signature.
     :type method: int
-    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
-        (the empty-word term). If False, this leading element is stripped from the output.
-        The default will change to False in pySigLib v4.0.
+    :param scalar_term: For methods ``1`` and ``2``, controls whether the output sig includes the
+        leading constant 1 at index 0. If True, included; if False (default), stripped. Ignored for
+        method ``0``: the output format is inferred from the input ``log_sig`` (which is sig-shaped
+        for method ``0``) and matches it.
     :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
@@ -82,8 +84,6 @@ def logsig_to_sig(
         sig_recovered = pysiglib.logsig_to_sig(log_sig, 5, degree, method=0)
         # sig_recovered \approx sig
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
@@ -96,7 +96,13 @@ def logsig_to_sig(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    input_len = sig_length(aug_dimension, degree, scalar_term=True) if method == 0 else log_sig_length(aug_dimension, degree)
+    # Method 0: log_sig is sig-shaped; auto-detect format and match output to it.
+    # Methods 1,2: log_sig is log-sig-shaped (no scalar_term concept); use user-specified output format.
+    if method == 0:
+        scalar_term = _infer_scalar_term(log_sig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
+        input_len = sig_length(aug_dimension, degree, scalar_term=scalar_term)
+    else:
+        input_len = log_sig_length(aug_dimension, degree)
     out_len = sig_length(aug_dimension, degree, scalar_term=scalar_term)
     data = SigInputHandler(log_sig, input_len, "log_sig")
     result = SigOutputHandler(data, out_len)

@@ -30,6 +30,7 @@ def sig_coef_backprop(
         words : Union[tuple[int, ...], list[tuple[int, ...]]],
         coefs : Union[np.ndarray, torch.tensor],
         derivs : Union[np.ndarray, torch.tensor],
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,

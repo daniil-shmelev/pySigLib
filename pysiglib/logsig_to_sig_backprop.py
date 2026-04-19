@@ -18,11 +18,11 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (CPSIG_LOGSIG_TO_SIG_BACKPROP,
                      CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA)
-from .sig_length import sig_length, log_sig_length, aug_dim
+from .sig_length import sig_length, log_sig_length, aug_dim, _infer_scalar_term
 from .data_handlers import SigOutputHandler, SigInputHandler
 
 
@@ -31,10 +31,11 @@ def logsig_to_sig_backprop(
         sig_derivs : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         method : int = 1,
-        scalar_term = None,
+        scalar_term : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -59,13 +60,16 @@ def logsig_to_sig_backprop(
     :type lead_lag: bool
     :param method: Method to use (``0``, ``1``, or ``2``). Must match the method used in the forward pass.
     :type method: int
+    :param scalar_term: For methods ``1`` and ``2``, whether ``sig_derivs`` includes the leading
+        constant 1 at index 0 and the returned gradient should too. Ignored for method ``0``:
+        the format is inferred from the input ``log_sig`` (which is sig-shaped for method ``0``)
+        and the returned gradient matches it.
+    :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel.
     :type n_jobs: int
     :return: Gradient dL/d(log_sig), same shape as ``log_sig``.
     :rtype: numpy.ndarray | torch.tensor
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
@@ -78,15 +82,19 @@ def logsig_to_sig_backprop(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    input_len = sig_length(aug_dimension, degree, scalar_term=True) if method == 0 else log_sig_length(aug_dimension, degree)
+    # Method 0: log_sig is sig-shaped, auto-detect; output gradient matches input log_sig format.
+    # Methods 1, 2: log_sig is log-sig-shaped (no scalar_term concept), scalar_term controls sig_derivs/output.
+    if method == 0:
+        scalar_term = _infer_scalar_term(log_sig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
+        input_len = sig_length(aug_dimension, degree, scalar_term=scalar_term)
+    else:
+        input_len = log_sig_length(aug_dimension, degree)
     sig_len = sig_length(aug_dimension, degree, scalar_term=scalar_term)
     data = SigInputHandler(log_sig, input_len, "log_sig")
     derivs_data = SigInputHandler(sig_derivs, sig_len, "sig_derivs")
     result = SigOutputHandler(data, input_len)
 
     if data.batch_size == 0:
-        if not scalar_term and method == 0:
-            return result.data[..., 1:]
         return result.data
 
     check_n_jobs(n_jobs)
@@ -101,6 +109,4 @@ def logsig_to_sig_backprop(
             data.batch_size, aug_dimension, degree, method, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
-    if not scalar_term and method == 0:
-        return result.data[..., 1:]
     return result.data

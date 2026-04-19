@@ -17,7 +17,7 @@ from typing import Union, List, Tuple
 import numpy as np
 import torch
 
-from .param_checks import check_pos, check_type, check_n_jobs, resolve_scalar_term
+from .param_checks import check_pos, check_type, check_n_jobs
 from .sig_length import sig_length, log_sig_length
 from .sig_join import sig_join
 from .sig import sig_combine, sig
@@ -177,9 +177,8 @@ class SigStream:
     :type dimension: int
     :param degree: Truncation level of the signature, :math:`N`.
     :type degree: int
-    :param scalar_term: If True (default), stored signatures include the leading constant
-        1 at index 0. If False, the leading element is stripped. The default will change
-        to False in pySigLib v4.0.
+    :param scalar_term: If True, stored signatures include the leading constant
+        1 at index 0. If False (default), the leading element is stripped.
     :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel in the internal ``sig``,
         ``sig_join`` and ``sig_combine`` calls. If ``n_jobs = 1`` the computation is
@@ -206,9 +205,9 @@ class SigStream:
     """
 
     def __init__(self, dimension: int, degree: int,
-                 scalar_term=None, n_jobs: int = 1,
+                 *,
+                 scalar_term: bool = False, n_jobs: int = 1,
                  _sig_join=None, _sig_combine=None, _sig=None):
-        scalar_term = resolve_scalar_term(scalar_term)
         check_n_jobs(n_jobs)
         self._dimension = dimension
         self._degree = degree
@@ -220,9 +219,9 @@ class SigStream:
         self._sig_fn = lambda path, deg: raw_sig(
             path, deg, scalar_term=scalar_term, n_jobs=n_jobs)
         self._sig_combine_fn = lambda s1, s2, dim, deg: raw_sig_combine(
-            s1, s2, dim, deg, scalar_term=scalar_term, n_jobs=n_jobs)
+            s1, s2, dim, deg, n_jobs=n_jobs)
         self._sig_join_fn = lambda s, disp, dim, deg, prepend=False: raw_sig_join(
-            s, disp, dim, deg, prepend=prepend, scalar_term=scalar_term, n_jobs=n_jobs)
+            s, disp, dim, deg, prepend=prepend, n_jobs=n_jobs)
         self._sigs = []      # cumulative forward sigs at each checkpoint
         self._inv_sigs = []  # cumulative inverse sigs at each checkpoint
         self._last_point = None
@@ -419,8 +418,9 @@ class LogSigStream:
         ls = stream.sig(10, 30)  # shape (8, log_sig_length)
     """
 
-    def __init__(self, dimension: int, degree: int, method: int = 2,
-                 n_jobs: int = 1,
+    def __init__(self, dimension: int, degree: int,
+                 *,
+                 method: int = 2, n_jobs: int = 1,
                  _log_sig_join=None, _log_sig_combine=None, _log_sig=None):
         if method not in (2, 3):
             raise ValueError(
@@ -711,9 +711,8 @@ class SigWindowStream(_WindowStream):
     :type window_size: int
     :param stride: Number of points between successive window starts. Default 1.
     :type stride: int
-    :param scalar_term: If True (default), each emitted window signature includes
-        the leading constant 1. If False, the leading element is stripped. The
-        default will change to False in pySigLib v4.0.
+    :param scalar_term: If True, each emitted window signature includes the leading
+        constant 1. If False (default), the leading element is stripped.
     :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel in the internal per-window
         ``sig`` calls. ``-1`` uses all available threads.
@@ -738,13 +737,13 @@ class SigWindowStream(_WindowStream):
         window_sigs = ws.sig()  # shape (num_windows, 8, sig_length)
     """
 
-    def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1,
-                 scalar_term=None, n_jobs: int = 1, _sig=None):
+    def __init__(self, dimension: int, degree: int, window_size: int,
+                 *,
+                 stride: int = 1, scalar_term: bool = False, n_jobs: int = 1, _sig=None):
         check_type(window_size, "window_size", int)
         check_type(stride, "stride", int)
         check_pos(window_size, "window_size")
         check_pos(stride, "stride")
-        scalar_term = resolve_scalar_term(scalar_term)
         check_n_jobs(n_jobs)
         raw_sig = _sig or sig
         sig_fn = lambda path, deg: raw_sig(path, deg, scalar_term=scalar_term, n_jobs=n_jobs)
@@ -792,8 +791,9 @@ class LogSigWindowStream(_WindowStream):
         window_logsigs = ws.sig()  # shape (num_windows, log_sig_length)
     """
 
-    def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1,
-                 method: int = 2, n_jobs: int = 1, _log_sig=None):
+    def __init__(self, dimension: int, degree: int, window_size: int,
+                 *,
+                 stride: int = 1, method: int = 2, n_jobs: int = 1, _log_sig=None):
         check_type(window_size, "window_size", int)
         check_type(stride, "stride", int)
         check_pos(window_size, "window_size")

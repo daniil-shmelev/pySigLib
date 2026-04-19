@@ -22,13 +22,13 @@ np.random.seed(42)
 torch.manual_seed(42)
 
 def test_sig_length():
-    assert pysiglib.sig_length(0, 0) == 1
-    assert pysiglib.sig_length(0, 1) == 1
-    assert pysiglib.sig_length(1, 0) == 1
-    assert pysiglib.sig_length(9, 9) == 435848050
-    assert pysiglib.sig_length(10, 10) == 11111111111
-    assert pysiglib.sig_length(11, 11) == 313842837672
-    assert pysiglib.sig_length(400, 5) == 10265664160401
+    assert pysiglib.sig_length(0, 0) == 0
+    assert pysiglib.sig_length(0, 1) == 0
+    assert pysiglib.sig_length(1, 0) == 0
+    assert pysiglib.sig_length(9, 9) == 435848049
+    assert pysiglib.sig_length(10, 10) == 11111111110
+    assert pysiglib.sig_length(11, 11) == 313842837671
+    assert pysiglib.sig_length(400, 5) == 10265664160400
 
 def test_log_sig_length():
     assert pysiglib.log_sig_length(2, 3) == 5

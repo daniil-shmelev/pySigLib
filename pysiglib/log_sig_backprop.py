@@ -18,12 +18,12 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_log_sig_method, check_n_jobs, resolve_scalar_term
+from .param_checks import check_type, check_non_neg, check_log_sig_method, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (CPSIG_SIG_TO_LOG_SIG_BACKPROP,
                      CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA,
                      CPSIG_LOG_SIG_FROM_PATH_BACKPROP, CUSIG_LOG_SIG_FROM_PATH_BACKPROP_CUDA)
-from .sig_length import sig_length, log_sig_length, aug_dim
+from .sig_length import sig_length, log_sig_length, aug_dim, _infer_scalar_term
 from .data_handlers import SigOutputHandler, SigInputHandler, PathInputHandler, PathOutputHandler
 
 
@@ -32,10 +32,10 @@ def sig_to_log_sig_backprop(
         log_sig_derivs : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         method : int = 1,
-        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -94,8 +94,7 @@ def sig_to_log_sig_backprop(
         )
         print(sig_derivs)
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
+    scalar_term = _infer_scalar_term(sig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
@@ -107,7 +106,7 @@ def sig_to_log_sig_backprop(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
 
-    sig_len = sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag, scalar_term=True)
+    sig_len = sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag, scalar_term=scalar_term)
     log_sig_len = log_sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag) if method else sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag, scalar_term=scalar_term)
     data = SigInputHandler(sig, sig_len, "sig")
     derivs_data = SigInputHandler(log_sig_derivs, log_sig_len, "log_sig_derivs")
@@ -118,8 +117,6 @@ def sig_to_log_sig_backprop(
     result = SigOutputHandler(data, sig_len)
 
     if data.batch_size == 0:
-        if not scalar_term:
-            return result.data[..., 1:]
         return result.data
 
     check_n_jobs(n_jobs)
@@ -134,8 +131,6 @@ def sig_to_log_sig_backprop(
             data.batch_size, aug_dimension, degree, method, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.sig_to_log_sig_backprop: " + err_msg(err_code))
-    if not scalar_term:
-        return result.data[..., 1:]
     return result.data
 
 
@@ -143,6 +138,7 @@ def _log_sig_from_path_backprop(
         grad_output : Union[np.ndarray, torch.tensor],
         path : Union[np.ndarray, torch.tensor],
         degree : int,
+        *,
         n_jobs : int = 1,
 ) -> Union[np.ndarray, torch.tensor]:
     """Backpropagates through the method=3 log-signature-from-path computation."""

@@ -149,22 +149,3 @@ def prepend_scalar(arr, value):
         return np.concatenate([fill, arr], axis=-1)
     fill = torch.full((*arr.shape[:-1], 1), value, dtype=arr.dtype, device=arr.device)
     return torch.cat([fill, arr], dim=-1)
-
-
-_WARNED_SCALAR_TERM = False
-
-
-def resolve_scalar_term(scalar_term):
-    """Resolve scalar_term: None (unset) emits FutureWarning once per process and defaults to True."""
-    global _WARNED_SCALAR_TERM
-    if scalar_term is None:
-        if not _WARNED_SCALAR_TERM:
-            warnings.warn(
-                "scalar_term will default to False in pySigLib v4.0. "
-                "Pass scalar_term=True to keep the current behavior, "
-                "or scalar_term=False to opt in to the new default.",
-                FutureWarning, stacklevel=3
-            )
-            _WARNED_SCALAR_TERM = True
-        return True
-    return scalar_term

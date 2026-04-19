@@ -30,6 +30,7 @@ def log_sig_combine(
         log_sig2: Union[np.ndarray, torch.tensor],
         dimension: int,
         degree: int,
+        *,
         time_aug: bool = False,
         lead_lag: bool = False,
         n_jobs: int = 1
@@ -103,6 +104,7 @@ def log_sig_combine_backprop(
         ls2: Union[np.ndarray, torch.tensor],
         dimension: int,
         degree: int,
+        *,
         time_aug: bool = False,
         lead_lag: bool = False,
         n_jobs: int = 1

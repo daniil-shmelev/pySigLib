@@ -218,20 +218,33 @@ def is_lyndon(
 @cache
 def word_to_idx(
         word : tuple[int, ...],
-        alphabet_size : int
+        alphabet_size : int,
+        *,
+        scalar_term : bool = False,
 ) -> int:
     """
-    Given a word :math:`(w_0, w_1, \\ldots, w_n)`, returns the corresponding flattened index
+    Given a word :math:`(w_0, w_1, \\ldots, w_n)`, returns its flat index into a
+    truncated signature.
+
+    With ``scalar_term=True`` the empty word :math:`()` sits at index 0 and a word
+    of length :math:`n+1` is at
 
     .. math::
 
-        \\sum_{i=0}^n (w_i + 1) d^i
+        \\sum_{i=0}^n (w_i + 1) d^i.
+
+    With ``scalar_term=False`` (default) there is no empty-word entry, so all indices
+    shift down by 1: the single-letter word ``(0,)`` is at index 0, and the empty word
+    is invalid.
 
     :param word: Word
     :type word: tuple[int, ...]
     :param alphabet_size: Size of the alphabet
     :type alphabet_size: int
-    :return: Flattened index corresponding to word
+    :param scalar_term: Whether the target signature includes the leading scalar 1.
+        Must match the format of the sig you intend to index. Default ``False``.
+    :type scalar_term: bool
+    :return: Flat index corresponding to ``word``
     :rtype: int
 
     Example:
@@ -244,19 +257,11 @@ def word_to_idx(
 
         length, dimension, degree = 100, 2, 3
         x = torch.rand(size=(length, dimension))
-        sig = pysiglib.sig(x, degree)
+        sig = pysiglib.sig(x, degree)  # scalar_term=False by default
 
-        # Get coefficient at word
         word = (0, 1)
-        coef_idx = pysiglib.extract_sig_coef(word, sig, dimension, degree)
-
-        # Convert word to index and get coefficient
         idx = pysiglib.word_to_idx(word, dimension)
-        coef_word = sig[idx]
-
-        # Both methods give the same coefficient
-        print("Idx: ", idx, " Coefficient: ", coef_idx)
-        print("Word: ", word, " Coefficient: ", coef_word)
+        print(sig[idx])  # coefficient at word (0, 1)
 
     """
     check_type(alphabet_size, "alphabet_size", int)
@@ -264,32 +269,41 @@ def word_to_idx(
     check_word(word, alphabet_size, "word")
 
     if not word:
+        if not scalar_term:
+            raise ValueError(
+                "The empty word has no index in a signature with scalar_term=False. "
+                "Pass scalar_term=True if your signature includes the leading scalar 1."
+            )
         return 0
 
     idx = 0
     for i in word:
         idx = idx * alphabet_size + (i+1)
-    return idx
+    return idx if scalar_term else idx - 1
 
 @cache
 def idx_to_word(
         idx : int,
-        alphabet_size : int
+        alphabet_size : int,
+        *,
+        scalar_term : bool = False,
 ) -> tuple[int, ...]:
     """
-    Given a flattened index
+    Inverse of :func:`word_to_idx`. Given a flat index into a truncated signature,
+    returns the corresponding word.
 
-    .. math::
+    With ``scalar_term=True``, index 0 maps to the empty word :math:`()`.
+    With ``scalar_term=False`` (default), index 0 maps to the single-letter word
+    ``(0,)`` and the empty word is unreachable.
 
-        \\sum_{i=0}^n (w_i + 1) d^i,
-
-    returns the corresponding word :math:`(w_0, w_1, \\ldots, w_n)`.
-
-    :param idx: Flattened index
+    :param idx: Flat index
     :type idx: int
     :param alphabet_size: Size of the alphabet
     :type alphabet_size: int
-    :return: Word corresponding to flattened index
+    :param scalar_term: Whether the source signature includes the leading scalar 1.
+        Must match the format of the sig the index was taken from. Default ``False``.
+    :type scalar_term: bool
+    :return: Word at ``idx``
     :rtype: tuple[int, ...]
 
     Example:
@@ -302,21 +316,14 @@ def idx_to_word(
 
         length, dimension, degree = 100, 2, 3
         x = torch.rand(size=(length, dimension))
-        sig = pysiglib.sig(x, degree)
+        sig = pysiglib.sig(x, degree)  # scalar_term=False by default
 
-        # Get coefficient at index
-        idx = 4
-        coef_idx = sig[idx]
-
-        # Convert index to word and get coefficient at word
-        word = pysiglib.idx_to_word(idx, dimension)
-        coef_word = pysiglib.extract_sig_coef(word, sig, dimension, degree)
-
-        # Both methods give the same coefficient
-        print("Idx: ", idx, " Coefficient: ", coef_idx)
-        print("Word: ", word, " Coefficient: ", coef_word)
+        word = pysiglib.idx_to_word(4, dimension)
+        print(word, sig[4])
 
     """
+    if not scalar_term:
+        idx = idx + 1
     word = []
 
     while idx:

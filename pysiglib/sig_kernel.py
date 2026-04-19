@@ -62,6 +62,7 @@ def sig_kernel(
         path1 : Union[np.ndarray, torch.tensor],
         path2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -182,8 +183,8 @@ def sig_kernel(
     dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
 
     if time_aug or lead_lag:
-        path1 = transform_path(path1, time_aug, lead_lag, end_time, n_jobs)
-        path2 = transform_path(path2, time_aug, lead_lag, end_time, n_jobs)
+        path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+        path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
     data = MultiplePathInputHandler([path1, path2], False, False, 0., ["path1", "path2"])
 
@@ -240,8 +241,8 @@ def sig_kernel(
         )
 
     if normalize:
-        k1 = sig_kernel(path1, path1, dyadic_order, static_kernel, n_jobs=n_jobs)
-        k2 = sig_kernel(path2, path2, dyadic_order, static_kernel, n_jobs=n_jobs)
+        k1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        k2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
         result.data = _safe_normalize(result.data, k1, k2, "sig_kernel(normalize=True)")
 
     return result.data
@@ -251,6 +252,7 @@ def sig_kernel_gram(
         path1 : Union[np.ndarray, torch.tensor],
         path2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -429,7 +431,7 @@ def sig_kernel_gram(
         ci = idx_i[start:end]
         cj = idx_j[start:end]
 
-        k = sig_kernel(src1[ci], src2[cj], dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
+        k = sig_kernel(src1[ci], src2[cj], dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=return_grid)
         res[ci, cj] = k
 
         if symmetric:
@@ -441,8 +443,8 @@ def sig_kernel_gram(
                 res[cj[off], ci[off]] = k_mirror
 
     if normalize:
-        d1 = sig_kernel(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs)
-        d2 = sig_kernel(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs) if not symmetric else d1
+        d1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+        d2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if not symmetric else d1
         res = _safe_normalize(res, d1.unsqueeze(1), d2.unsqueeze(0), "sig_kernel_gram(normalize=True)")
 
     if data.type_ == "numpy":

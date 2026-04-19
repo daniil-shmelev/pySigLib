@@ -56,6 +56,7 @@ def _recursive_to_canonical_perm(dimension, degree, planar):
 def trees_of_order(
         dimension: int,
         order: int,
+        *,
         tree_order: str = "canonical",
         planar: bool = False,
 ) -> tuple[tuple]:
@@ -120,6 +121,7 @@ def _trees_of_order_cached(dimension, order, tree_order, planar):
 def trees(
         dimension: int,
         degree: int,
+        *,
         tree_order: str = "canonical",
         planar: bool = False,
 ) -> tuple[tuple]:
@@ -191,8 +193,10 @@ def tree_to_idx(
         tree,
         dimension: int,
         degree: int,
+        *,
         tree_order: str = "canonical",
         planar: bool = False,
+        scalar_term: bool = False,
 ) -> int:
     """
     Given a decorated rooted tree, returns its flat index in the
@@ -200,11 +204,15 @@ def tree_to_idx(
 
     Trees use the kauri tuple convention:
 
-    - Empty tree: ``None`` -- index 0
+    - Empty tree: ``None`` -- index 0 when ``scalar_term=True``; invalid otherwise
     - Leaf: ``(label,)`` where ``label`` is in ``[0, dimension)``
     - Internal node: ``(child_1, child_2, ..., root_label)``
 
-    :param tree: Decorated rooted tree as a tuple (or None for empty).
+    With ``scalar_term=True`` the empty tree sits at index 0. With
+    ``scalar_term=False`` (default) there is no empty-tree entry, so all
+    indices shift down by 1 and ``None`` is invalid.
+
+    :param tree: Decorated rooted tree as a tuple (or None for empty when ``scalar_term=True``).
     :param dimension: Path dimension (alphabet size).
     :type dimension: int
     :param degree: Maximum number of nodes (same as ``degree`` in :func:`branched_sig`).
@@ -216,6 +224,10 @@ def tree_to_idx(
     :param planar: If True, use the planar (ordered) enumeration matching
         ``branched_sig(..., planar=True)``.
     :type planar: bool
+    :param scalar_term: Whether the target branched signature includes the leading
+        scalar 1 at index 0. Must match the format of the bsig you intend to
+        index. Default ``False``.
+    :type scalar_term: bool
     :return: Flat index in the branched signature vector.
     :rtype: int
 
@@ -229,10 +241,9 @@ def tree_to_idx(
 
         path = torch.rand(size=(100, 2))
         pysiglib.prepare_branched_sig(2, 3)
-        bsig = pysiglib.branched_sig(path, 3, tree_order="canonical")
+        bsig = pysiglib.branched_sig(path, 3, tree_order="canonical")  # scalar_term=False
 
-        # Get coefficient at a specific tree
-        tree = ((1,), 0)  # root 0 with one child labeled 1
+        tree = ((1,), 0)
         idx = pysiglib.tree_to_idx(tree, dimension=2, degree=3)
         print(f"Index: {idx}, Coefficient: {bsig[idx]}")
 
@@ -243,11 +254,16 @@ def tree_to_idx(
     check_type(planar, "planar", bool)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return _tree_to_idx_cached(tree, dimension, degree, tree_order, planar)
+    if tree is None and not scalar_term:
+        raise ValueError(
+            "The empty tree has no index in a branched signature with scalar_term=False. "
+            "Pass scalar_term=True if your bsig includes the leading scalar 1."
+        )
+    return _tree_to_idx_cached(tree, dimension, degree, tree_order, planar, scalar_term)
 
 
 @cache
-def _tree_to_idx_cached(tree, dimension, degree, tree_order, planar):
+def _tree_to_idx_cached(tree, dimension, degree, tree_order, planar, scalar_term):
     if tree is None:
         return 0
     if planar:
@@ -255,21 +271,29 @@ def _tree_to_idx_cached(tree, dimension, degree, tree_order, planar):
     else:
         canonical_idx = kauri.colored_tree_to_idx(kauri.Tree(tree), dimension, degree)
     if tree_order == "canonical":
-        return canonical_idx
-    perm = _canonical_to_recursive_perm(dimension, degree, planar)
-    return int(perm[canonical_idx - 1]) + 1
+        idx = canonical_idx
+    else:
+        perm = _canonical_to_recursive_perm(dimension, degree, planar)
+        idx = int(perm[canonical_idx - 1]) + 1
+    return idx if scalar_term else idx - 1
 
 
 def idx_to_tree(
         idx: int,
         dimension: int,
         degree: int,
+        *,
         tree_order: str = "canonical",
         planar: bool = False,
+        scalar_term: bool = False,
 ) -> tuple:
     """
-    Given a flat index in the branched-signature coefficient vector, returns
-    the corresponding decorated rooted tree as a tuple.
+    Inverse of :func:`tree_to_idx`. Given a flat index in the branched-signature
+    coefficient vector, returns the corresponding decorated rooted tree.
+
+    With ``scalar_term=True``, index 0 maps to the empty tree (``None``).
+    With ``scalar_term=False`` (default), all indices shift down by 1 (index 0
+    maps to the first non-empty tree) and the empty tree is unreachable.
 
     :param idx: Flat index in the branched signature vector.
     :type idx: int
@@ -284,7 +308,12 @@ def idx_to_tree(
     :param planar: If True, interpret ``idx`` in the planar (ordered)
         enumeration matching ``branched_sig(..., planar=True)``.
     :type planar: bool
-    :return: Decorated rooted tree (None for empty tree, tuple otherwise).
+    :param scalar_term: Whether the source branched signature includes the leading
+        scalar 1 at index 0. Must match the format of the bsig the index was taken
+        from. Default ``False``.
+    :type scalar_term: bool
+    :return: Decorated rooted tree (None for empty tree when ``scalar_term=True``,
+        tuple otherwise).
     :rtype: tuple or None
 
     Example:
@@ -295,7 +324,7 @@ def idx_to_tree(
         import pysiglib
 
         tree = pysiglib.idx_to_tree(3, dimension=2, degree=3)
-        print(tree)  # ((0,), 0)
+        print(tree)
 
     """
     check_type(idx, "idx", int)
@@ -306,11 +335,13 @@ def idx_to_tree(
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     _check_tree_order(tree_order)
-    return _idx_to_tree_cached(idx, dimension, degree, tree_order, planar)
+    return _idx_to_tree_cached(idx, dimension, degree, tree_order, planar, scalar_term)
 
 
 @cache
-def _idx_to_tree_cached(idx, dimension, degree, tree_order, planar):
+def _idx_to_tree_cached(idx, dimension, degree, tree_order, planar, scalar_term):
+    if not scalar_term:
+        idx = idx + 1
     if idx == 0:
         return None
     if tree_order == "recursive":

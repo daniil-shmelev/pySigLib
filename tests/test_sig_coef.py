@@ -27,7 +27,7 @@ def test_extract_sig_coef_all(device):
     dimension, degree = 3, 4
     x = torch.rand(size=(100, dimension), device=device)
     sig = pysiglib.sig(x, degree)
-    words = pysiglib.words(dimension, degree)
+    words = pysiglib.words(dimension, degree)[1:]  # exclude empty word
     coefs = pysiglib.extract_sig_coef(sig, words, dimension)
     assert_device(coefs, device)
     check_close(sig, coefs)
@@ -49,10 +49,9 @@ def get_true_sig_coefs(multi_indices, X, *args, **kwargs):
     sig = pysiglib.signature(X, *args, **kwargs)
     res = []
     for idx in multi_indices:
-        flat_idx = 0
-        for i in idx:
-            flat_idx *= dim
-            flat_idx += i + 1
+        # word_to_idx with scalar_term=False maps the word to its position in a
+        # scalar_term=False sig, which matches pysiglib.signature's default output.
+        flat_idx = pysiglib.word_to_idx(tuple(idx), dim)
         res.append(sig[..., flat_idx])
     return np.array(res).T
 
@@ -120,7 +119,7 @@ def test_sig_coef_full(device):
     coeff = pysiglib.sig_coef(X, multi_indices)
     assert_device(coeff, device)
     sig = pysiglib.signature(X, 5)
-    check_close(sig[1:], coeff)
+    check_close(sig, coeff)
 
 @pytest.mark.parametrize("device", DEVICES)
 def test_batch_sig_coef_full(device):
@@ -130,7 +129,7 @@ def test_batch_sig_coef_full(device):
     coeff = pysiglib.sig_coef(X, multi_indices)
     assert_device(coeff, device)
     sig = pysiglib.signature(X, 5)
-    check_close(sig[:, 1:], coeff)
+    check_close(sig, coeff)
 
 @pytest.mark.parametrize("device", DEVICES)
 def test_batch_sig_coef_full_time_aug(device):
@@ -140,7 +139,7 @@ def test_batch_sig_coef_full_time_aug(device):
     coeff = pysiglib.sig_coef(X, multi_indices, time_aug = True)
     assert_device(coeff, device)
     sig = pysiglib.signature(X, 5, time_aug = True)
-    check_close(sig[:, 1:], coeff)
+    check_close(sig, coeff)
 
 @pytest.mark.parametrize("device", DEVICES)
 def test_batch_sig_coef_full_lead_lag(device):
@@ -150,7 +149,7 @@ def test_batch_sig_coef_full_lead_lag(device):
     coeff = pysiglib.sig_coef(X, multi_indices, lead_lag = True)
     assert_device(coeff, device)
     sig = pysiglib.signature(X, 5, lead_lag = True)
-    check_close(sig[:, 1:], coeff)
+    check_close(sig, coeff)
 
 @pytest.mark.parametrize("device", DEVICES)
 def test_batch_sig_coef_full_time_aug_lead_lag(device):
@@ -160,4 +159,4 @@ def test_batch_sig_coef_full_time_aug_lead_lag(device):
     coeff = pysiglib.sig_coef(X, multi_indices, time_aug = True, lead_lag = True)
     assert_device(coeff, device)
     sig = pysiglib.signature(X, 5, time_aug = True, lead_lag = True)
-    check_close(sig[:, 1:], coeff)
+    check_close(sig, coeff)

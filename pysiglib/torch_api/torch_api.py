@@ -45,13 +45,13 @@ from ..sig_join_backprop import sig_join_backprop
 from ..log_sig_join import log_sig_join as log_sig_join_forward
 from ..log_sig_join_backprop import log_sig_join_backprop
 
-from ..param_checks import check_type, check_word_or_word_list, resolve_scalar_term, prepend_scalar
+from ..param_checks import check_type, check_word_or_word_list
 from ..sig_kernel import _safe_normalize
 
 class Sig(torch.autograd.Function):
     @staticmethod
     def forward(ctx, path, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs):
-        sig_ = sig_forward(path, degree, scalar_term=True, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, horner=horner, n_jobs=n_jobs)
+        sig_ = sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, horner=horner, n_jobs=n_jobs)
 
         ctx.save_for_backward(path, sig_)
         ctx.degree = degree
@@ -62,70 +62,60 @@ class Sig(torch.autograd.Function):
         ctx.horner = horner
         ctx.n_jobs = n_jobs
 
-        if not scalar_term:
-            return sig_[..., 1:]
         return sig_
 
     @staticmethod
     def backward(ctx, grad_output):
         path, sig_ = ctx.saved_tensors
-        if not ctx.scalar_term:
-            grad_output = prepend_scalar(grad_output, 0)
-        grad = sig_backprop(path, sig_, grad_output, ctx.degree, scalar_term=True, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time, n_jobs=ctx.n_jobs)
+        grad = sig_backprop(path, sig_, grad_output, ctx.degree, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time, n_jobs=ctx.n_jobs)
         return grad, None, None, None, None, None, None, None
 
 def sig(
         path : Union[np.ndarray, torch.tensor],
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
         horner: bool = True,
-        scalar_term = None,
+        scalar_term : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    scalar_term = resolve_scalar_term(scalar_term)
     return Sig.apply(path, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs)
 
 sig.__doc__ = sig_forward.__doc__
 
 class SigCombine(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, sig1, sig2, dimension, degree, time_aug, lead_lag, scalar_term, n_jobs):
-        sig_combined = sig_combine_forward(sig1, sig2, dimension, degree, scalar_term=True, time_aug=time_aug, lead_lag=lead_lag, n_jobs=n_jobs)
+    def forward(ctx, sig1, sig2, dimension, degree, time_aug, lead_lag, n_jobs):
+        sig_combined = sig_combine_forward(sig1, sig2, dimension, degree, time_aug=time_aug, lead_lag=lead_lag, n_jobs=n_jobs)
 
         ctx.save_for_backward(sig1, sig2)
         ctx.dimension = dimension
         ctx.degree = degree
-        ctx.scalar_term = scalar_term
         ctx.time_aug = time_aug
         ctx.lead_lag = lead_lag
         ctx.n_jobs = n_jobs
 
-        if not scalar_term:
-            return sig_combined[..., 1:]
         return sig_combined
 
     @staticmethod
     def backward(ctx, grad_output):
         sig1, sig2 = ctx.saved_tensors
-        if not ctx.scalar_term:
-            grad_output = prepend_scalar(grad_output, 0)
-        sig1_grad, sig2_grad = sig_combine_backprop(grad_output, sig1, sig2, ctx.dimension, ctx.degree, scalar_term=True, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, n_jobs=ctx.n_jobs)
-        return sig1_grad, sig2_grad, None, None, None, None, None, None
+        sig1_grad, sig2_grad = sig_combine_backprop(grad_output, sig1, sig2, ctx.dimension, ctx.degree, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, n_jobs=ctx.n_jobs)
+        return sig1_grad, sig2_grad, None, None, None, None, None
 
 def sig_combine(
         sig1 : Union[np.ndarray, torch.tensor],
         sig2 : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         time_aug: bool = False,
         lead_lag: bool = False,
-        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    scalar_term = resolve_scalar_term(scalar_term)
-    return SigCombine.apply(sig1, sig2, dimension, degree, time_aug, lead_lag, scalar_term, n_jobs)
+    return SigCombine.apply(sig1, sig2, dimension, degree, time_aug, lead_lag, n_jobs)
 
 
 sig_combine.__doc__ = sig_combine_forward.__doc__
@@ -168,6 +158,7 @@ class SigCoef(torch.autograd.Function):
 def sig_coef(
         path: Union[np.ndarray, torch.tensor],
         words: Union[tuple[int, ...], list[tuple[int, ...]]],
+        *,
         time_aug: bool = False,
         lead_lag: bool = False,
         end_time: float = 1.,
@@ -182,7 +173,7 @@ sig_coef.__doc__ = sig_coef_forward.__doc__
 class TransformPath(torch.autograd.Function):
     @staticmethod
     def forward(ctx, path, time_aug, lead_lag, end_time, n_jobs):
-        new_path = transform_path_forward(path, time_aug, lead_lag, end_time, n_jobs)
+        new_path = transform_path_forward(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
         ctx.time_aug = time_aug
         ctx.lead_lag = lead_lag
@@ -193,11 +184,12 @@ class TransformPath(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        new_derivs = transform_path_backprop(grad_output, ctx.time_aug, ctx.lead_lag, ctx.end_time, ctx.n_jobs)
+        new_derivs = transform_path_backprop(grad_output, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time, n_jobs=ctx.n_jobs)
         return new_derivs, None, None, None, None
 
 def transform_path(
     path : Union[np.ndarray, torch.tensor],
+    *,
     time_aug : bool = False,
     lead_lag : bool = False,
     end_time : float = 1.,
@@ -209,42 +201,36 @@ transform_path.__doc__ = transform_path_forward.__doc__
 
 class SigToLogSig(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, sig, dimension, degree, time_aug, lead_lag, method, scalar_term, n_jobs):
-        log_sig_ = sig_to_log_sig_forward(sig, dimension, degree, scalar_term=True, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)
+    def forward(ctx, sig, dimension, degree, time_aug, lead_lag, method, n_jobs):
+        log_sig_ = sig_to_log_sig_forward(sig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 
         ctx.save_for_backward(sig)
         ctx.dimension = dimension
         ctx.degree = degree
-        ctx.scalar_term = scalar_term
         ctx.time_aug = time_aug
         ctx.lead_lag = lead_lag
         ctx.method = method
         ctx.n_jobs = n_jobs
 
-        if not scalar_term and method == 0:
-            return log_sig_[..., 1:]
         return log_sig_
 
     @staticmethod
     def backward(ctx, grad_output):
         sig_ = ctx.saved_tensors[0]
-        if not ctx.scalar_term and ctx.method == 0:
-            grad_output = prepend_scalar(grad_output, 0)
-        grad = sig_to_log_sig_backprop(sig_, grad_output, ctx.dimension, ctx.degree, scalar_term=True, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, method=ctx.method, n_jobs=ctx.n_jobs)
-        return grad, None, None, None, None, None, None, None
+        grad = sig_to_log_sig_backprop(sig_, grad_output, ctx.dimension, ctx.degree, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, method=ctx.method, n_jobs=ctx.n_jobs)
+        return grad, None, None, None, None, None, None
 
 def sig_to_log_sig(
         sig : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         method : int = 1,
-        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    scalar_term = resolve_scalar_term(scalar_term)
-    return SigToLogSig.apply(sig, dimension, degree, time_aug, lead_lag, method, scalar_term, n_jobs)
+    return SigToLogSig.apply(sig, dimension, degree, time_aug, lead_lag, method, n_jobs)
 
 
 sig_to_log_sig.__doc__ = sig_to_log_sig_forward.__doc__
@@ -252,20 +238,20 @@ sig_to_log_sig.__doc__ = sig_to_log_sig_forward.__doc__
 def log_sig(
         path : Union[np.ndarray, torch.tensor],
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
         method : int = 1,
-        scalar_term = None,
+        scalar_term : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    scalar_term = resolve_scalar_term(scalar_term)
     if method == 3:
         return _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_jobs)
 
-    sig_ = sig(path, degree, scalar_term=True, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, horner=True, n_jobs=n_jobs)
+    sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, horner=True, n_jobs=n_jobs)
     dimension = path.shape[-1]
-    return sig_to_log_sig(sig_, dimension, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)
+    return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 
 log_sig.__doc__ = log_sig_forward.__doc__
 
@@ -275,7 +261,7 @@ class LogSigFromPath(torch.autograd.Function):
     def forward(ctx, path, degree, time_aug, lead_lag, end_time, n_jobs):
         # Apply transforms if needed
         if time_aug or lead_lag:
-            transformed = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
+            transformed = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         else:
             transformed = path
 
@@ -297,7 +283,7 @@ class LogSigFromPath(torch.autograd.Function):
 
         # If transforms were applied, backprop through them
         if ctx.time_aug or ctx.lead_lag:
-            d_path = transform_path_backprop(d_path, ctx.time_aug, ctx.lead_lag, ctx.end_time, ctx.n_jobs)
+            d_path = transform_path_backprop(d_path, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time, n_jobs=ctx.n_jobs)
 
         return d_path, None, None, None, None, None
 
@@ -311,7 +297,7 @@ def _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_job
 class SigKernel(torch.autograd.Function):
     @staticmethod
     def forward(ctx, path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid):
-        k_grid = sig_kernel_forward(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, True)
+        k_grid = sig_kernel_forward(path1, path2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=True)
 
         ctx.save_for_backward(k_grid, path1, path2)
         ctx.batch_shape = path1.shape[:-2]
@@ -347,9 +333,11 @@ class SigKernel(torch.autograd.Function):
         else:
             flat_path1, flat_path2, flat_k_grid, flat_grad = path1, path2, k_grid, grad_output
 
-        new_derivs = sig_kernel_backprop(flat_grad, flat_path1, flat_path2, ctx.dyadic_order, ctx.static_kernel,
-                                         ctx.time_aug, ctx.lead_lag, ctx.end_time,
-                                         left_deriv, right_deriv, flat_k_grid, ctx.n_jobs, ctx.return_grid)
+        new_derivs = sig_kernel_backprop(flat_grad, flat_path1, flat_path2, ctx.dyadic_order,
+                                         static_kernel=ctx.static_kernel,
+                                         time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
+                                         left_deriv=left_deriv, right_deriv=right_deriv, k_grid=flat_k_grid,
+                                         n_jobs=ctx.n_jobs, return_grid=ctx.return_grid)
 
         # Reshape gradients back to original batch shape
         d0 = new_derivs[0].reshape(path1.shape) if new_derivs[0] is not None else None
@@ -361,6 +349,7 @@ def sig_kernel(
         path1 : Union[np.ndarray, torch.tensor],
         path2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -383,7 +372,7 @@ sig_kernel.__doc__ = sig_kernel_forward.__doc__
 class SigKernelGram(torch.autograd.Function):
     @staticmethod
     def forward(ctx, path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid):
-        k_grid = sig_kernel_gram_forward(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid = True)
+        k_grid = sig_kernel_gram_forward(path1, path2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=True)
 
         ctx.save_for_backward(k_grid, path1, path2)
         ctx.symmetric = path1 is path2
@@ -410,9 +399,11 @@ class SigKernelGram(torch.autograd.Function):
         if ctx.symmetric:
             path2 = path1
 
-        new_derivs = sig_kernel_gram_backprop(grad_output, path1, path2, ctx.dyadic_order, ctx.static_kernel,
-                                         ctx.time_aug, ctx.lead_lag, ctx.end_time,
-                                         left_deriv, right_deriv, k_grid, ctx.n_jobs, ctx.return_grid, ctx.max_batch)
+        new_derivs = sig_kernel_gram_backprop(grad_output, path1, path2, ctx.dyadic_order,
+                                         static_kernel=ctx.static_kernel,
+                                         time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
+                                         left_deriv=left_deriv, right_deriv=right_deriv, k_grid=k_grid,
+                                         n_jobs=ctx.n_jobs, return_grid=ctx.return_grid, max_batch=ctx.max_batch)
 
         return new_derivs[0], new_derivs[1], None, None, None, None, None, None, None, None
 
@@ -420,6 +411,7 @@ def sig_kernel_gram(
         path1: Union[np.ndarray, torch.tensor],
         path2: Union[np.ndarray, torch.tensor],
         dyadic_order: Union[int, tuple],
+        *,
         static_kernel : Optional[StaticKernel] = None,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -444,6 +436,7 @@ def sig_score(
         sample : Union[np.ndarray, torch.tensor],
         y : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -462,8 +455,8 @@ def sig_score(
     if B < 2:
         raise ValueError("sig_score requires at least 2 sample paths (got {}).".format(B))
 
-    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
-    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
+    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
@@ -476,6 +469,7 @@ def expected_sig_score(
         sample1 : Union[np.ndarray, torch.tensor],
         sample2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -484,7 +478,7 @@ def expected_sig_score(
         n_jobs : int = 1,
         max_batch : int = -1
 ) -> Union[np.ndarray, torch.tensor]:
-    res = sig_score(sample1, sample2, dyadic_order, lam, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch)
+    res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
     res = torch.mean(res, 0, True)
     return res
 
@@ -494,6 +488,7 @@ def sig_mmd(
         sample1 : Union[np.ndarray, torch.tensor],
         sample2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -508,9 +503,9 @@ def sig_mmd(
     if n < 2:
         raise ValueError("sig_mmd requires at least 2 paths in sample2 (got {}).".format(n))
 
-    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
-    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
-    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
+    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * torch.mean(xy)
@@ -545,6 +540,7 @@ def log_sig_combine(
         log_sig2 : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         time_aug: bool = False,
         lead_lag: bool = False,
         n_jobs : int = 1
@@ -564,7 +560,7 @@ from ..branched_sig_backprop import branched_sig_backprop, branched_sig_combine_
 class BranchedSig(torch.autograd.Function):
     @staticmethod
     def forward(ctx, path, degree, time_aug, lead_lag, end_time, tree_order, planar, scalar_term, n_jobs):
-        bsig = branched_sig_forward(path, degree, scalar_term=True, tree_order=tree_order, n_jobs=n_jobs,
+        bsig = branched_sig_forward(path, degree, scalar_term=scalar_term, tree_order=tree_order, n_jobs=n_jobs,
                                      time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, planar=planar)
 
         ctx.save_for_backward(path, bsig)
@@ -577,32 +573,28 @@ class BranchedSig(torch.autograd.Function):
         ctx.n_jobs = n_jobs
         ctx.planar = planar
 
-        if not scalar_term:
-            return bsig[..., 1:]
         return bsig
 
     @staticmethod
     def backward(ctx, grad_output):
         path, bsig = ctx.saved_tensors
-        if not ctx.scalar_term:
-            grad_output = prepend_scalar(grad_output, 0)
         grad = branched_sig_backprop(path, bsig, grad_output, ctx.degree,
-                                     scalar_term=True, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
+                                     time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
                                      tree_order=ctx.tree_order, planar=ctx.planar, n_jobs=ctx.n_jobs)
         return grad, None, None, None, None, None, None, None, None
 
 def branched_sig(
         path: Union[np.ndarray, torch.Tensor],
         degree: int,
+        *,
         time_aug: bool = False,
         lead_lag: bool = False,
         end_time: float = 1.0,
         tree_order: str = "recursive",
         planar: bool = False,
-        scalar_term = None,
+        scalar_term : bool = False,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
-    scalar_term = resolve_scalar_term(scalar_term)
     return BranchedSig.apply(path, degree, time_aug, lead_lag, end_time, tree_order, planar, scalar_term, n_jobs)
 
 branched_sig.__doc__ = branched_sig_forward.__doc__
@@ -610,43 +602,37 @@ branched_sig.__doc__ = branched_sig_forward.__doc__
 
 class BranchedSigCombine(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, bsig1, bsig2, dimension, degree, tree_order, planar, scalar_term, n_jobs):
+    def forward(ctx, bsig1, bsig2, dimension, degree, tree_order, planar, n_jobs):
         combined = branched_sig_combine_forward(bsig1, bsig2, dimension, degree,
-                                                 scalar_term=True, tree_order=tree_order, planar=planar, n_jobs=n_jobs)
+                                                 tree_order=tree_order, planar=planar, n_jobs=n_jobs)
         ctx.save_for_backward(bsig1, bsig2)
         ctx.dimension = dimension
         ctx.degree = degree
-        ctx.scalar_term = scalar_term
         ctx.tree_order = tree_order
         ctx.n_jobs = n_jobs
         ctx.planar = planar
 
-        if not scalar_term:
-            return combined[..., 1:]
         return combined
 
     @staticmethod
     def backward(ctx, grad_output):
         bsig1, bsig2 = ctx.saved_tensors
-        if not ctx.scalar_term:
-            grad_output = prepend_scalar(grad_output, 0)
         d1, d2 = branched_sig_combine_backprop(
             grad_output, bsig1, bsig2, ctx.dimension, ctx.degree,
-            scalar_term=True, tree_order=ctx.tree_order, planar=ctx.planar, n_jobs=ctx.n_jobs)
-        return d1, d2, None, None, None, None, None, None
+            tree_order=ctx.tree_order, planar=ctx.planar, n_jobs=ctx.n_jobs)
+        return d1, d2, None, None, None, None, None
 
 def branched_sig_combine(
         bsig1: Union[np.ndarray, torch.Tensor],
         bsig2: Union[np.ndarray, torch.Tensor],
         dimension: int,
         degree: int,
+        *,
         tree_order: str = "recursive",
         planar: bool = False,
-        scalar_term = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
-    scalar_term = resolve_scalar_term(scalar_term)
-    return BranchedSigCombine.apply(bsig1, bsig2, dimension, degree, tree_order, planar, scalar_term, n_jobs)
+    return BranchedSigCombine.apply(bsig1, bsig2, dimension, degree, tree_order, planar, n_jobs)
 
 branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
 
@@ -654,7 +640,7 @@ branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
 class LogSigToSig(torch.autograd.Function):
     @staticmethod
     def forward(ctx, log_sig, dimension, degree, time_aug, lead_lag, method, scalar_term, n_jobs):
-        sig_ = logsig_to_sig_forward(log_sig, dimension, degree, scalar_term=True, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)
+        sig_ = logsig_to_sig_forward(log_sig, dimension, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 
         ctx.save_for_backward(log_sig)
         ctx.dimension = dimension
@@ -665,29 +651,27 @@ class LogSigToSig(torch.autograd.Function):
         ctx.method = method
         ctx.n_jobs = n_jobs
 
-        if not scalar_term:
-            return sig_[..., 1:]
         return sig_
 
     @staticmethod
     def backward(ctx, grad_output):
         log_sig_ = ctx.saved_tensors[0]
-        if not ctx.scalar_term:
-            grad_output = prepend_scalar(grad_output, 0)
-        grad = logsig_to_sig_backprop(log_sig_, grad_output, ctx.dimension, ctx.degree, scalar_term=True, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, method=ctx.method, n_jobs=ctx.n_jobs)
+        # scalar_term is only honored by logsig_to_sig_backprop for methods 1, 2.
+        # For method 0 it's auto-detected from log_sig input shape.
+        grad = logsig_to_sig_backprop(log_sig_, grad_output, ctx.dimension, ctx.degree, scalar_term=ctx.scalar_term, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, method=ctx.method, n_jobs=ctx.n_jobs)
         return grad, None, None, None, None, None, None, None
 
 def logsig_to_sig(
         log_sig : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         method : int = 1,
-        scalar_term = None,
+        scalar_term : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    scalar_term = resolve_scalar_term(scalar_term)
     return LogSigToSig.apply(log_sig, dimension, degree, time_aug, lead_lag, method, scalar_term, n_jobs)
 
 logsig_to_sig.__doc__ = logsig_to_sig_forward.__doc__
@@ -697,10 +681,10 @@ def linear_sig(
         displacement : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
-        scalar_term = None,
+        *,
+        scalar_term : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    scalar_term = resolve_scalar_term(scalar_term)
     # Delegate to sig() on a 2-point path [0, v] to reuse Sig's autograd.
     if isinstance(displacement, torch.Tensor):
         if displacement.shape[-1] != dimension:
@@ -721,39 +705,33 @@ linear_sig.__doc__ = linear_sig_forward.__doc__
 
 class SigJoin(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, sig, displacement, dimension, degree, prepend, scalar_term, n_jobs):
-        result = sig_join_forward(sig, displacement, dimension, degree, scalar_term=True, prepend=prepend, n_jobs=n_jobs)
+    def forward(ctx, sig, displacement, dimension, degree, prepend, n_jobs):
+        result = sig_join_forward(sig, displacement, dimension, degree, prepend=prepend, n_jobs=n_jobs)
 
         ctx.save_for_backward(sig, displacement)
         ctx.dimension = dimension
         ctx.degree = degree
-        ctx.scalar_term = scalar_term
         ctx.prepend = prepend
         ctx.n_jobs = n_jobs
 
-        if not scalar_term:
-            return result[..., 1:]
         return result
 
     @staticmethod
     def backward(ctx, grad_output):
         sig, displacement = ctx.saved_tensors
-        if not ctx.scalar_term:
-            grad_output = prepend_scalar(grad_output, 0)
-        d_sig, d_displacement = sig_join_backprop(grad_output, sig, displacement, ctx.dimension, ctx.degree, scalar_term=True, prepend=ctx.prepend, n_jobs=ctx.n_jobs)
-        return d_sig, d_displacement, None, None, None, None, None
+        d_sig, d_displacement = sig_join_backprop(grad_output, sig, displacement, ctx.dimension, ctx.degree, prepend=ctx.prepend, n_jobs=ctx.n_jobs)
+        return d_sig, d_displacement, None, None, None, None
 
 def sig_join(
         sig : Union[np.ndarray, torch.tensor],
         displacement : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         prepend : bool = False,
-        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    scalar_term = resolve_scalar_term(scalar_term)
-    return SigJoin.apply(sig, displacement, dimension, degree, int(prepend), scalar_term, n_jobs)
+    return SigJoin.apply(sig, displacement, dimension, degree, int(prepend), n_jobs)
 
 sig_join.__doc__ = sig_join_forward.__doc__
 
@@ -780,6 +758,7 @@ def log_sig_join(
         displacement : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     return LogSigJoin.apply(log_sig, displacement, dimension, degree, n_jobs)

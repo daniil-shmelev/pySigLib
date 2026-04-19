@@ -25,7 +25,7 @@ if __name__ == '__main__':
     myres = pysiglib.sig(X, 3)
 
     print(iisigres)
-    print(myres[1:])
+    print(myres)
 
     for i in range(5):
         print("#" * 30)
@@ -37,5 +37,5 @@ if __name__ == '__main__':
 
     for i in range(5):
         print(iisigres[i])
-        print(myres[i, 1:])
+        print(myres[i])
         print("#" * 30)

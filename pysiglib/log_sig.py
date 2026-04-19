@@ -19,12 +19,12 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_log_sig_method, check_n_jobs, resolve_scalar_term
+from .param_checks import check_type, check_non_neg, check_log_sig_method, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (CPSIG_SIG_TO_LOG_SIG,
                      CUSIG_SIG_TO_LOG_SIG_CUDA,
                      CPSIG_LOG_SIG_FROM_PATH, CUSIG_LOG_SIG_FROM_PATH_CUDA)
-from .sig_length import sig_length, log_sig_length, aug_dim
+from .sig_length import sig_length, log_sig_length, aug_dim, _infer_scalar_term
 from .sig import sig
 from .data_handlers import SigOutputHandler, SigInputHandler, PathInputHandler
 from .load_siglib import CPSIG, CUSIG, BUILT_WITH_CUDA
@@ -89,6 +89,7 @@ def prepare_log_sig(
         dimension : int,
         degree : int,
         method : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         use_disk : bool = False,
@@ -177,6 +178,7 @@ def prepare_log_sig(
             raise Exception("Error in pysiglib.prepare_log_sig (CUDA): " + err_msg(err_code))
 
 def clear_cache(
+        *,
         use_disk : bool = False,
         device : str = "both"
 ):
@@ -226,10 +228,10 @@ def sig_to_log_sig(
         sig : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         method : int = 1,
-        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -251,17 +253,14 @@ def sig_to_log_sig(
     :param method: Method to use for the log signature computation (`0`, `1` or `2`).
         Method `3` is not supported here; use ``pysiglib.log_sig`` with ``method=3`` instead.
     :type method: int
-    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
-        (the empty-word term). If False, this leading element is stripped from the output.
-        The default will change to False in pySigLib v4.0. Only affects method ``0`` (expanded)
-        output; methods ``1`` and ``2`` produce log-sig-shaped output with no scalar term.
-    :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :return: Log signature or a batch of log signatures.
+    :return: Log signature or a batch of log signatures. For method ``0`` (expanded), the output
+        matches the scalar-term format of the input ``sig``. Methods ``1`` and ``2`` produce
+        log-sig-shaped output (no scalar term).
     :rtype: numpy.ndarray | torch.tensor
 
     Example usage:
@@ -278,8 +277,6 @@ def sig_to_log_sig(
         X_sig = pysiglib.sig(X, 3, lead_lag=True)
         X_log_sig = pysiglib.sig_to_log_sig(X_sig, 5, 3, lead_lag=True, method=2)
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
@@ -292,6 +289,7 @@ def sig_to_log_sig(
         raise ValueError("method=3 is not supported in sig_to_log_sig. Use log_sig(path, degree, method=3) instead.")
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
+    scalar_term = _infer_scalar_term(sig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
 
     sig_len = sig_length(aug_dimension, degree, scalar_term=scalar_term)
     data = SigInputHandler(sig, sig_len, "sig")
@@ -317,11 +315,12 @@ def sig_to_log_sig(
 def log_sig(
         path : Union[np.ndarray, torch.tensor],
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
         method : int = 1,
-        scalar_term = None,
+        scalar_term : bool = False,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -348,10 +347,10 @@ def log_sig(
         directly from the path without ever computing the full signature. This uses less
         memory but is slower than methods `0`-`2` for typical dimensions and degrees.
     :type method: int
-    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
-        (the empty-word term). If False, this leading element is stripped from the output.
-        The default will change to False in pySigLib v4.0. Only affects method ``0`` (expanded)
-        output; methods ``1`` and ``2`` produce log-sig-shaped output with no scalar term.
+    :param scalar_term: If True, the output includes the leading constant 1 at index 0
+        (the empty-word term). If False (default), this leading element is stripped from the output.
+        Only affects method ``0`` (expanded) output; methods ``1`` and ``2`` produce
+        log-sig-shaped output with no scalar term.
     :type scalar_term: bool
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
@@ -374,11 +373,9 @@ def log_sig(
         X = torch.rand((32,100,5))
         X_log_sig = pysiglib.log_sig(X, 3, lead_lag=True, method=2)
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     if method == 3:
         if time_aug or lead_lag:
-            path = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
+            path = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         aug_dim = path.shape[-1]
         ls_len = log_sig_length(aug_dim, degree)
         data = PathInputHandler(path, False, False, 1.0, "path")
@@ -400,4 +397,4 @@ def log_sig(
     # Methods 0-2: compute sig then project to log sig.
     sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, horner=True, n_jobs=n_jobs)
     dimension = path.shape[-1]
-    return sig_to_log_sig(sig_, dimension, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)
+    return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)

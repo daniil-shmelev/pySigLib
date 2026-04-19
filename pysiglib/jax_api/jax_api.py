@@ -49,7 +49,7 @@ from ..sig_metrics import sig_score as sig_score_forward
 from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
 from ..words import word_to_idx
-from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order, check_n_jobs, resolve_scalar_term
+from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order, check_n_jobs
 from ..sig_length import sig_length as _sig_length, log_sig_length as _log_sig_length
 from ._ffi import (
     _augmented_dim,
@@ -95,6 +95,38 @@ def _prepend_scalar_one(arr):
 def _strip_scalar(arr):
     """Strip the leading element along the last axis."""
     return arr[..., 1:]
+
+
+def _infer_scalar_term_jax(arr, dimension: int, degree: int, time_aug: bool = False, lead_lag: bool = False) -> bool:
+    """Return True iff ``arr``'s trailing dimension includes the leading scalar 1.
+    JAX-side mirror of ``pysiglib.sig_length._infer_scalar_term``."""
+    full_len = _sig_length(_augmented_dim(dimension, time_aug, lead_lag), degree, scalar_term=True)
+    actual = arr.shape[-1]
+    if actual == full_len:
+        return True
+    if actual == full_len - 1:
+        return False
+    raise ValueError(
+        "input has incompatible length " + str(actual) + " for dimension=" + str(dimension) +
+        ", degree=" + str(degree) + " (expected " + str(full_len) + " or " + str(full_len - 1) + ")."
+    )
+
+
+def _infer_branched_scalar_term_jax(arr, dimension: int, degree: int, planar: bool = False) -> bool:
+    """Return True iff ``arr``'s trailing dimension includes the leading scalar 1.
+    JAX-side mirror of ``pysiglib.branched_sig._infer_branched_scalar_term``."""
+    from ..branched_sig import branched_sig_length
+    full_len = branched_sig_length(dimension, degree, planar=planar, scalar_term=True)
+    actual = arr.shape[-1]
+    if actual == full_len:
+        return True
+    if actual == full_len - 1:
+        return False
+    raise ValueError(
+        "bsig has incompatible length " + str(actual) + " for dimension=" + str(dimension) +
+        ", degree=" + str(degree) + ", planar=" + str(planar) +
+        " (expected " + str(full_len) + " or " + str(full_len - 1) + ")."
+    )
 
 
 def _flatten_leading(arr, feature_ndim=1):
@@ -144,15 +176,15 @@ _sig.defvjp(_sig_fwd, _sig_bwd)
 def sig(
     path,
     degree: int,
+    *,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     horner: bool = True,
-    scalar_term=None,
+    scalar_term: bool = False,
     n_jobs: int = 1,
 ):
     ensure_registered()
-    scalar_term = resolve_scalar_term(scalar_term)
 
     path = jnp.asarray(path)
     _validate_shape(path)
@@ -183,20 +215,24 @@ def _validate_sig_shape(arr, name="signature"):
         raise ValueError(f"{name} must have at least rank 1, got {arr.ndim}.")
 
 
-def _permute_bsig_jax(data, dimension: int, degree: int, planar: bool = False):
+def _permute_bsig_jax(data, dimension: int, degree: int, planar: bool = False, scalar_term: bool = True):
     if planar:
         perm = np.asarray(kauri.planar_canonical_to_recursive_permutation(dimension, degree), dtype=np.int32)
     else:
         perm = np.asarray(kauri.canonical_to_recursive_permutation(dimension, degree), dtype=np.int32)
-    return jnp.concatenate([data[..., :1], jnp.take(data[..., 1:], perm, axis=-1)], axis=-1)
+    if scalar_term:
+        return jnp.concatenate([data[..., :1], jnp.take(data[..., 1:], perm, axis=-1)], axis=-1)
+    return jnp.take(data, perm, axis=-1)
 
 
-def _inv_permute_bsig_jax(data, dimension: int, degree: int, planar: bool = False):
+def _inv_permute_bsig_jax(data, dimension: int, degree: int, planar: bool = False, scalar_term: bool = True):
     if planar:
         perm = np.asarray(kauri.planar_recursive_to_canonical_permutation(dimension, degree), dtype=np.int32)
     else:
         perm = np.asarray(kauri.recursive_to_canonical_permutation(dimension, degree), dtype=np.int32)
-    return jnp.concatenate([data[..., :1], jnp.take(data[..., 1:], perm, axis=-1)], axis=-1)
+    if scalar_term:
+        return jnp.concatenate([data[..., :1], jnp.take(data[..., 1:], perm, axis=-1)], axis=-1)
+    return jnp.take(data, perm, axis=-1)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4))
@@ -225,13 +261,12 @@ def sig_combine(
     sig2,
     dimension: int,
     degree: int,
+    *,
     time_aug: bool = False,
     lead_lag: bool = False,
-    scalar_term=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
-    scalar_term = resolve_scalar_term(scalar_term)
 
     sig1 = jnp.asarray(sig1)
     sig2 = jnp.asarray(sig2)
@@ -246,6 +281,7 @@ def sig_combine(
     check_type(lead_lag, "lead_lag", bool)
     check_n_jobs(n_jobs)
 
+    scalar_term = _infer_scalar_term_jax(sig1, dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
     if not scalar_term:
         sig1 = _prepend_scalar_one(sig1)
         sig2 = _prepend_scalar_one(sig2)
@@ -286,6 +322,7 @@ _transform_path.defvjp(_transform_path_fwd, _transform_path_bwd)
 
 def transform_path(
     path,
+    *,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
@@ -334,14 +371,13 @@ def sig_to_log_sig(
     sig,
     dimension: int,
     degree: int,
+    *,
     time_aug: bool = False,
     lead_lag: bool = False,
     method: int = 1,
-    scalar_term=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
-    scalar_term = resolve_scalar_term(scalar_term)
 
     sig = jnp.asarray(sig)
     _validate_sig_shape(sig, "sig")
@@ -354,6 +390,7 @@ def sig_to_log_sig(
             "Use method=1 or method=2 instead."
         )
 
+    scalar_term = _infer_scalar_term_jax(sig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
     if not scalar_term:
         sig = _prepend_scalar_one(sig)
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
@@ -393,14 +430,14 @@ def logsig_to_sig(
     log_sig,
     dimension: int,
     degree: int,
+    *,
     time_aug: bool = False,
     lead_lag: bool = False,
     method: int = 1,
-    scalar_term=None,
+    scalar_term: bool = False,
     n_jobs: int = 1,
 ):
     ensure_registered()
-    scalar_term = resolve_scalar_term(scalar_term)
 
     log_sig = jnp.asarray(log_sig)
     _validate_sig_shape(log_sig, "log_sig")
@@ -413,10 +450,12 @@ def logsig_to_sig(
     if method not in (0, 1, 2):
         raise ValueError("method must be 0, 1, or 2")
 
-    # For method=0 the input is sig-shaped (so scalar_term applies to input too);
-    # for methods 1,2 the input is log-sig-shaped (no scalar term).
-    if method == 0 and not scalar_term:
-        log_sig = _prepend_scalar_one(log_sig)
+    # Method 0: input is sig-shaped; auto-detect scalar_term from input and match output.
+    # Methods 1, 2: input is log-sig-shaped (no scalar_term concept); ``scalar_term`` kwarg controls output.
+    if method == 0:
+        scalar_term = _infer_scalar_term_jax(log_sig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
+        if not scalar_term:
+            log_sig = _prepend_scalar_one(log_sig)
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
     result = _logsig_to_sig(log_sig, aug_dim, degree, method, n_jobs)
     if not scalar_term:
@@ -453,34 +492,31 @@ _log_sig_from_path.defvjp(_log_sig_from_path_fwd, _log_sig_from_path_bwd)
 def log_sig(
     path,
     degree: int,
+    *,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     method: int = 1,
-    scalar_term=None,
+    scalar_term: bool = False,
     n_jobs: int = 1,
 ):
     ensure_registered()
-    scalar_term = resolve_scalar_term(scalar_term)
 
     path = jnp.asarray(path)
     _validate_shape(path)
 
     if method == 3:
         if time_aug or lead_lag:
-            path = transform_path(path, time_aug, lead_lag, end_time, n_jobs)
+            path = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         aug_dim = path.shape[-1]
         # method=3 output is log-sig-shaped; scalar_term has no effect.
         return _log_sig_from_path(path, aug_dim, degree, n_jobs)
 
     dimension = path.shape[-1]
     sig_ = sig(path, degree, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, scalar_term=True, n_jobs=n_jobs)
-    result = sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug,
-                            lead_lag=lead_lag, method=method, scalar_term=True, n_jobs=n_jobs)
-    if method == 0 and not scalar_term:
-        result = _strip_scalar(result)
-    return result
+               end_time=end_time, horner=True, scalar_term=scalar_term, n_jobs=n_jobs)
+    return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug,
+                          lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 
 
 log_sig.__doc__ = log_sig_forward.__doc__
@@ -514,6 +550,7 @@ def log_sig_combine(
     log_sig2,
     dimension: int,
     degree: int,
+    *,
     time_aug: bool = False,
     lead_lag: bool = False,
     n_jobs: int = 1,
@@ -560,7 +597,7 @@ def _sig_join_bwd_callback(co, s, d, dimension, degree, prepend, n_jobs):
     co_flat, leading = _flatten_leading(co)
     s_flat, _ = _flatten_leading(s)
     d_flat, _ = _flatten_leading(d)
-    g_s, g_d = sig_join_backprop(co_flat, s_flat, d_flat, dimension, degree, scalar_term=True, prepend=prepend, n_jobs=n_jobs)
+    g_s, g_d = sig_join_backprop(co_flat, s_flat, d_flat, dimension, degree, prepend=prepend, n_jobs=n_jobs)
     return _unflatten_leading(g_s, leading), _unflatten_leading(g_d, leading)
 
 
@@ -601,12 +638,11 @@ def sig_join(
     displacement,
     dimension: int,
     degree: int,
+    *,
     prepend: bool = False,
-    scalar_term=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
-    scalar_term = resolve_scalar_term(scalar_term)
 
     sig = jnp.asarray(sig)
     displacement = jnp.asarray(displacement)
@@ -618,6 +654,7 @@ def sig_join(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
+    scalar_term = _infer_scalar_term_jax(sig, dimension, degree)
     if not scalar_term:
         sig = _prepend_scalar_one(sig)
     result = _sig_join(sig, displacement, dimension, degree, prepend, n_jobs)
@@ -649,7 +686,7 @@ def _log_sig_join_bwd_callback(co, ls, d, dimension, degree, n_jobs):
     co_flat, leading = _flatten_leading(co)
     ls_flat, _ = _flatten_leading(ls)
     d_flat, _ = _flatten_leading(d)
-    g_ls, g_d = log_sig_join_backprop(co_flat, ls_flat, d_flat, dimension, degree, scalar_term=True, n_jobs=n_jobs)
+    g_ls, g_d = log_sig_join_backprop(co_flat, ls_flat, d_flat, dimension, degree, n_jobs=n_jobs)
     return _unflatten_leading(g_ls, leading), _unflatten_leading(g_d, leading)
 
 
@@ -690,6 +727,7 @@ def log_sig_join(
     displacement,
     dimension: int,
     degree: int,
+    *,
     n_jobs: int = 1,
 ):
     ensure_registered()
@@ -718,10 +756,10 @@ def linear_sig(
     displacement,
     dimension: int,
     degree: int,
-    scalar_term=None,
+    *,
+    scalar_term: bool = False,
     n_jobs: int = 1,
 ):
-    scalar_term = resolve_scalar_term(scalar_term)
     displacement = jnp.asarray(displacement)
     if displacement.shape[-1] != dimension:
         raise ValueError(
@@ -775,6 +813,7 @@ def sig_kernel(
     path1,
     path2,
     dyadic_order,
+    *,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -805,8 +844,8 @@ def sig_kernel(
         raise ValueError("normalize=True cannot be used with return_grid=True")
 
     if time_aug or lead_lag:
-        path1 = transform_path(path1, time_aug, lead_lag, end_time, n_jobs)
-        path2 = transform_path(path2, time_aug, lead_lag, end_time, n_jobs)
+        path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+        path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
     if path1.ndim == 2:
         path1 = path1[None, :, :]
@@ -831,8 +870,8 @@ def sig_kernel(
         result = k_grid[..., -1, -1]
 
     if normalize:
-        k1 = sig_kernel(path1, path1, dyadic_order, static_kernel, n_jobs=n_jobs)
-        k2 = sig_kernel(path2, path2, dyadic_order, static_kernel, n_jobs=n_jobs)
+        k1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        k2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
         result = result / jnp.sqrt(jnp.clip(k1 * k2, 1e-30))
 
     if squeeze:
@@ -851,6 +890,7 @@ def sig_kernel_gram(
     path1,
     path2,
     dyadic_order,
+    *,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -880,19 +920,19 @@ def sig_kernel_gram(
     batch2 = path2.shape[0]
 
     if time_aug or lead_lag:
-        path1 = transform_path(path1, time_aug, lead_lag, end_time, n_jobs)
-        path2 = transform_path(path2, time_aug, lead_lag, end_time, n_jobs)
+        path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+        path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
     def _row(p1_single):
         p1_batch = jnp.broadcast_to(p1_single[None], (batch2,) + p1_single.shape)
-        return sig_kernel(p1_batch, path2, dyadic_order, static_kernel,
+        return sig_kernel(p1_batch, path2, dyadic_order, static_kernel=static_kernel,
                           n_jobs=n_jobs, return_grid=return_grid)
 
     res = jax.lax.map(_row, path1)
 
     if normalize:
-        d1 = sig_kernel(path1, path1, dyadic_order, static_kernel, n_jobs=n_jobs)
-        d2 = sig_kernel(path2, path2, dyadic_order, static_kernel, n_jobs=n_jobs)
+        d1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        d2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
         res = res / jnp.sqrt(jnp.clip(d1[:, None] * d2[None, :], 1e-30))
 
     return res
@@ -909,6 +949,7 @@ def sig_score(
     sample,
     y,
     dyadic_order,
+    *,
     lam: float = 1.0,
     static_kernel=None,
     time_aug: bool = False,
@@ -928,11 +969,11 @@ def sig_score(
         raise ValueError(f"sig_score requires at least 2 sample paths (got {B}).")
 
     if time_aug or lead_lag:
-        sample = transform_path(sample, time_aug, lead_lag, end_time, n_jobs)
-        y = transform_path(y, time_aug, lead_lag, end_time, n_jobs)
+        sample = transform_path(sample, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+        y = transform_path(y, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
-    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel, n_jobs=n_jobs, max_batch=max_batch)
-    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
 
     xx_sum = (jnp.sum(xx) - jnp.trace(xx)) / (B * (B - 1.))
     xy_sum = jnp.sum(xy, axis=0) * (2. / B)
@@ -947,6 +988,7 @@ def expected_sig_score(
     sample1,
     sample2,
     dyadic_order,
+    *,
     lam: float = 1.0,
     static_kernel=None,
     time_aug: bool = False,
@@ -956,7 +998,7 @@ def expected_sig_score(
     max_batch: int = -1,
 ):
     """Compute expected signature kernel score using JAX."""
-    res = sig_score(sample1, sample2, dyadic_order, lam, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch)
+    res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
     return jnp.mean(res, axis=0, keepdims=True)
 
 
@@ -967,6 +1009,7 @@ def sig_mmd(
     sample1,
     sample2,
     dyadic_order,
+    *,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -986,12 +1029,12 @@ def sig_mmd(
         raise ValueError(f"sig_mmd requires at least 2 paths in sample2 (got {n}).")
 
     if time_aug or lead_lag:
-        sample1 = transform_path(sample1, time_aug, lead_lag, end_time, n_jobs)
-        sample2 = transform_path(sample2, time_aug, lead_lag, end_time, n_jobs)
+        sample1 = transform_path(sample1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+        sample2 = transform_path(sample2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
-    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel, n_jobs=n_jobs, max_batch=max_batch)
-    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel, n_jobs=n_jobs, max_batch=max_batch)
-    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
 
     xx_sum = (jnp.sum(xx) - jnp.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * jnp.mean(xy)
@@ -1010,6 +1053,7 @@ sig_mmd.__doc__ = sig_mmd_forward.__doc__
 def sig_coef(
     path,
     words,
+    *,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
@@ -1055,9 +1099,9 @@ def sig_coef(
     for w in words:
         if prefixes:
             for k in range(1, len(w) + 1):
-                idx.append(word_to_idx(w[:k], aug_dim))
+                idx.append(word_to_idx(w[:k], aug_dim, scalar_term=True))
         else:
-            idx.append(word_to_idx(w, aug_dim))
+            idx.append(word_to_idx(w, aug_dim, scalar_term=True))
     return sig_[..., jnp.array(idx)]
 
 
@@ -1091,16 +1135,16 @@ _branched_sig.defvjp(_branched_sig_fwd, _branched_sig_bwd)
 def branched_sig(
     path,
     degree: int,
+    *,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     tree_order: str = "recursive",
     planar: bool = False,
-    scalar_term=None,
+    scalar_term: bool = False,
     n_jobs: int = 1,
 ):
     ensure_registered()
-    scalar_term = resolve_scalar_term(scalar_term)
 
     path = jnp.asarray(path)
     _validate_shape(path)
@@ -1157,13 +1201,12 @@ def branched_sig_combine(
     bsig2,
     dimension: int,
     degree: int,
+    *,
     tree_order: str = "recursive",
     planar: bool = False,
-    scalar_term=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
-    scalar_term = resolve_scalar_term(scalar_term)
 
     bsig1 = jnp.asarray(bsig1)
     bsig2 = jnp.asarray(bsig2)
@@ -1179,6 +1222,7 @@ def branched_sig_combine(
     check_type(planar, "planar", bool)
     check_n_jobs(n_jobs)
 
+    scalar_term = _infer_branched_scalar_term_jax(bsig1, dimension, degree, planar=planar)
     if not scalar_term:
         bsig1 = _prepend_scalar_one(bsig1)
         bsig2 = _prepend_scalar_one(bsig2)

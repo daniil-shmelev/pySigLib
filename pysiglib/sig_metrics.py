@@ -10,6 +10,7 @@ def sig_score(
         sample : Union[np.ndarray, torch.tensor],
         y : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -119,8 +120,8 @@ def sig_score(
     if B < 2:
         raise ValueError("sig_score requires at least 2 sample paths (got {}).".format(B))
 
-    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
-    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
+    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
@@ -135,6 +136,7 @@ def expected_sig_score(
         sample1 : Union[np.ndarray, torch.tensor],
         sample2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -231,7 +233,7 @@ def expected_sig_score(
 
     """
 
-    res = sig_score(sample1, sample2, dyadic_order, lam, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch)
+    res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
 
     if isinstance(res, torch.Tensor):
         res = torch.mean(res, 0, True)
@@ -244,6 +246,7 @@ def sig_mmd(
         sample1 : Union[np.ndarray, torch.tensor],
         sample2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -351,9 +354,9 @@ def sig_mmd(
     if n < 2:
         raise ValueError("sig_mmd requires at least 2 paths in sample2 (got {}).".format(n))
 
-    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
-    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
-    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, False)
+    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * torch.mean(xy)

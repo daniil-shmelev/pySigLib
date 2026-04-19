@@ -78,8 +78,9 @@ class TestSigStream:
         stream.push_batch(path)
         all_sigs = stream.sig_all()
         assert all_sigs.shape[0] == 2
-        np.testing.assert_allclose(all_sigs[0][..., 0], 1.0)
-        np.testing.assert_allclose(all_sigs[0][..., 1:], 0.0, atol=1e-15)
+        # First entry corresponds to a zero-length path: identity sig is all zeros
+        # (scalar_term=False default; no leading 1 to check).
+        np.testing.assert_allclose(all_sigs[0], 0.0, atol=1e-15)
 
     def test_pop_front(self, dimension, degree, batch_shape):
         """After pop_front, earlier indices are invalid but later queries still work."""
@@ -218,7 +219,7 @@ class TestTorchTensors:
         stream.push_batch(path)
         result = stream.sig(0, 1)
         assert isinstance(result, torch.Tensor)
-        assert result.shape == (*batch_shape, pysiglib.sig_length(dim, deg, scalar_term=True))
+        assert result.shape == (*batch_shape, pysiglib.sig_length(dim, deg))
 
     def test_log_sig_stream_torch(self, batch_shape):
         """LogSigStream should work with torch tensors (forward-only)."""
@@ -323,7 +324,7 @@ class TestBatchedIndependence:
         batched = pysiglib.SigStream(3, 3)
         batched.push_batch(paths)
         batched_sig = batched.sig(0, 1)
-        assert batched_sig.shape == (4, pysiglib.sig_length(3, 3, scalar_term=True))
+        assert batched_sig.shape == (4, pysiglib.sig_length(3, 3))
         for k in range(4):
             single_sig = pysiglib.sig(paths[k], 3)
             np.testing.assert_allclose(batched_sig[k], single_sig, rtol=1e-5)
@@ -388,7 +389,7 @@ class TestSinglePathBackwardCompat:
     1-D outputs, not something accidentally promoted to 2-D."""
 
     def test_sig_stream_single_path_1d_outputs(self):
-        sig_len = pysiglib.sig_length(3, 3, scalar_term=True)
+        sig_len = pysiglib.sig_length(3, 3)
         stream = pysiglib.SigStream(3, 3)
         stream.push_batch(np.random.randn(10, 3))
         assert stream.sig(0, 1).shape == (sig_len,)

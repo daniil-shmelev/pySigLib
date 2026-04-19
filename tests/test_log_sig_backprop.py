@@ -34,14 +34,16 @@ def test_sig_to_log_sig_backprop_expanded_random(device, deg, dtype):
     if key_in not in FIXTURES:
         pytest.skip("sig_to_logsig fixture not available (signatory needed)")
 
-    X = torch.tensor(FIXTURES[key_in], dtype=dtype, device=device, requires_grad=True)
+    # Fixture's input is a sig with leading scalar; strip it so we work with the
+    # scalar_term=False format that matches the fixture's expected gradient shape.
+    X_full = torch.tensor(FIXTURES[key_in], dtype=dtype, device=device)
+    X = X_full[:, 1:].clone().detach().requires_grad_(True)
     ls = pysiglib.sig_to_log_sig(X, 1, deg, method=0)
     assert_device(ls, device)
     ls.backward(torch.ones_like(ls))
 
     expected = FIXTURES[key_exp]
-    # Fixture stores grad w.r.t. non-scalar part; pysiglib grad includes scalar term
-    check_close(expected, X.grad[:, 1:])
+    check_close(expected, X.grad)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -55,9 +57,7 @@ def test_log_signature_backprop_expanded_random(device, deg, dtype):
     derivs = torch.tensor(
         FIXTURES[f"logsig_bp_exp_derivs__d{deg}"][0], dtype=dtype, device=device
     )
-    full_derivs = torch.zeros_like(ls)
-    full_derivs[1:] = derivs
-    ls.backward(full_derivs)
+    ls.backward(derivs)
 
     expected = FIXTURES[f"logsig_bp_exp_expected__d{deg}"][0]
     check_close(expected, X.grad)
@@ -74,9 +74,7 @@ def test_batch_log_signature_backprop_expanded_random(device, deg, dtype):
     derivs = torch.tensor(
         FIXTURES[f"logsig_bp_exp_derivs__d{deg}"], dtype=dtype, device=device
     )
-    full_derivs = torch.zeros_like(ls)
-    full_derivs[:, 1:] = derivs
-    ls.backward(full_derivs)
+    ls.backward(derivs)
 
     expected = FIXTURES[f"logsig_bp_exp_expected__d{deg}"]
     check_close(expected, X.grad)
@@ -93,9 +91,7 @@ def test_batch_log_signature_backprop_expanded_time_aug_random(device, deg, dtyp
     derivs = torch.tensor(
         FIXTURES[f"logsig_bp_exp_ta_derivs__d{deg}"], dtype=dtype, device=device
     )
-    full_derivs = torch.zeros_like(ls)
-    full_derivs[:, 1:] = derivs
-    ls.backward(full_derivs)
+    ls.backward(derivs)
 
     expected = FIXTURES[f"logsig_bp_exp_ta_expected__d{deg}"]
     check_close(expected, X.grad)

@@ -33,7 +33,7 @@ from ..streams import (
 class SigStream(_SigStream):
     __doc__ = _SigStream.__doc__
 
-    def __init__(self, dimension: int, degree: int, scalar_term=None, n_jobs: int = 1):
+    def __init__(self, dimension: int, degree: int, *, scalar_term: bool = False, n_jobs: int = 1):
         super().__init__(dimension, degree, scalar_term=scalar_term, n_jobs=n_jobs,
                          _sig_join=sig_join, _sig_combine=sig_combine, _sig=sig)
 
@@ -41,7 +41,7 @@ class SigStream(_SigStream):
 class LogSigStream(_LogSigStream):
     __doc__ = _LogSigStream.__doc__
 
-    def __init__(self, dimension: int, degree: int, method: int = 2, n_jobs: int = 1):
+    def __init__(self, dimension: int, degree: int, *, method: int = 2, n_jobs: int = 1):
         super().__init__(dimension, degree, method=method, n_jobs=n_jobs,
                          _log_sig_join=log_sig_join, _log_sig_combine=log_sig_combine,
                          _log_sig=log_sig)
@@ -50,18 +50,20 @@ class LogSigStream(_LogSigStream):
 class SigWindowStream(_SigWindowStream):
     __doc__ = _SigWindowStream.__doc__
 
-    def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1,
-                 scalar_term=None, n_jobs: int = 1):
-        super().__init__(dimension, degree, window_size, stride,
+    def __init__(self, dimension: int, degree: int, window_size: int,
+                 *,
+                 stride: int = 1, scalar_term: bool = False, n_jobs: int = 1):
+        super().__init__(dimension, degree, window_size, stride=stride,
                          scalar_term=scalar_term, n_jobs=n_jobs, _sig=sig)
 
 
 class LogSigWindowStream(_LogSigWindowStream):
     __doc__ = _LogSigWindowStream.__doc__
 
-    def __init__(self, dimension: int, degree: int, window_size: int, stride: int = 1,
-                 method: int = 2, n_jobs: int = 1):
-        super().__init__(dimension, degree, window_size, stride,
+    def __init__(self, dimension: int, degree: int, window_size: int,
+                 *,
+                 stride: int = 1, method: int = 2, n_jobs: int = 1):
+        super().__init__(dimension, degree, window_size, stride=stride,
                          method=method, n_jobs=n_jobs, _log_sig=log_sig)
 
 signature = sig

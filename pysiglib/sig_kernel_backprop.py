@@ -61,6 +61,7 @@ def sig_kernel_backprop(
         path1 : Union[np.ndarray, torch.tensor],
         path2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -173,8 +174,8 @@ def sig_kernel_backprop(
     dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
 
     if time_aug or lead_lag:
-        path1 = transform_path(path1, time_aug, lead_lag, end_time, n_jobs)
-        path2 = transform_path(path2, time_aug, lead_lag, end_time, n_jobs)
+        path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+        path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
     data = MultiplePathInputHandler([path1, path2], False, False, end_time, ["path1", "path2"])
 
@@ -198,7 +199,7 @@ def sig_kernel_backprop(
     torch_path2 = torch.as_tensor(data.path[1])
 
     if k_grid is None:
-        k_grid = sig_kernel(torch.as_tensor(path1), torch.as_tensor(path2), dyadic_order, static_kernel, False, False, end_time, n_jobs, True)
+        k_grid = sig_kernel(torch.as_tensor(path1), torch.as_tensor(path2), dyadic_order, static_kernel=static_kernel, time_aug=False, lead_lag=False, end_time=end_time, n_jobs=n_jobs, return_grid=True)
 
     torch_path1 = _ensure_3d(torch_path1)
     torch_path2 = _ensure_3d(torch_path2)
@@ -220,8 +221,8 @@ def sig_kernel_backprop(
     rd = static_kernel.grad_y(ctx, gram_derivs) if right_deriv else None
 
     if lead_lag or time_aug:
-        ld = transform_path_backprop(ld, time_aug, lead_lag, end_time, n_jobs) if left_deriv else None
-        rd = transform_path_backprop(rd, time_aug, lead_lag, end_time, n_jobs) if right_deriv else None
+        ld = transform_path_backprop(ld, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if left_deriv else None
+        rd = transform_path_backprop(rd, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if right_deriv else None
 
     if data.type_ == "numpy":
         ld = ld.numpy() if left_deriv else None
@@ -235,6 +236,7 @@ def sig_kernel_gram_backprop(
         path1 : Union[np.ndarray, torch.tensor],
         path2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
+        *,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -416,13 +418,13 @@ def sig_kernel_gram_backprop(
         path2_ = src2[cj]
 
         if k_grid is None:
-            k = sig_kernel(path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, True)
+            k = sig_kernel(path1_, path2_, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=True)
         else:
             k = k_grid[ci, cj]
 
         derivs_ = derivs[ci, cj]
 
-        ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k, n_jobs, return_grid)
+        ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, left_deriv=left_deriv, right_deriv=right_deriv, k_grid=k, n_jobs=n_jobs, return_grid=return_grid)
 
         if left_deriv:
             ld.index_add_(0, ci, ld_.to(ld.dtype))
@@ -444,11 +446,11 @@ def sig_kernel_gram_backprop(
                 elif can_transpose_k:
                     k_t = k[off].transpose(-2, -1)
                 else:
-                    k_t = sig_kernel(path1_t, path2_t, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, True)
+                    k_t = sig_kernel(path1_t, path2_t, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=True)
 
                 derivs_t = derivs[cj_off, ci_off]
 
-                ld_t, rd_t = sig_kernel_backprop(derivs_t, path1_t, path2_t, dyadic_order, static_kernel, time_aug, lead_lag, end_time, left_deriv, right_deriv, k_t, n_jobs, return_grid)
+                ld_t, rd_t = sig_kernel_backprop(derivs_t, path1_t, path2_t, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, left_deriv=left_deriv, right_deriv=right_deriv, k_grid=k_t, n_jobs=n_jobs, return_grid=return_grid)
 
                 if left_deriv:
                     ld.index_add_(0, cj_off, ld_t.to(ld.dtype))

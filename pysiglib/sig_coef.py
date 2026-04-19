@@ -30,8 +30,10 @@ def extract_sig_coef(
         sig : Union[np.ndarray, torch.tensor],
         words: Union[tuple[int, ...], list[tuple[int, ...]]],
         dimension: int,
+        *,
         time_aug: bool = False,
-        lead_lag: bool = False
+        lead_lag: bool = False,
+        scalar_term: bool = False,
 ) -> Union[np.ndarray, torch.tensor]:
     """
     Extracts signature coefficients from a signature or batch of signatures.
@@ -46,6 +48,10 @@ def extract_sig_coef(
     :type time_aug: bool
     :param lead_lag: Whether the signatures were computed with ``lead_lag=True``.
     :type lead_lag: bool
+    :param scalar_term: Whether ``sig`` includes the leading scalar 1 at index 0.
+        Must match the format used to compute ``sig``. Default ``False`` (matches
+        the v3 default of :func:`pysiglib.sig`).
+    :type scalar_term: bool
     :return: Signature coefficients of shape ``(..., num_words)``, matching the leading
         batch dimensions of ``sig``.
     :rtype: numpy.ndarray | torch.tensor
@@ -94,13 +100,14 @@ def extract_sig_coef(
     sig_len = sig.shape[-1]
     SigInputHandler(sig, sig_len, "sig")  # validates shape/dtype; return unused
 
-    idx = [word_to_idx(w, aug_dimension) for w in words]
+    idx = [word_to_idx(w, aug_dimension, scalar_term=scalar_term) for w in words]
 
     return sig[..., idx]
 
 def sig_coef(
         path : Union[np.ndarray, torch.tensor],
         words : Union[tuple[int, ...], list[tuple[int, ...]]],
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,

@@ -18,14 +18,14 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CPSIG_BRANCHED_SIG_COMBINE_BACKPROP,
                      CUSIG_BRANCHED_SIG_BACKPROP_CUDA,
                      CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA)
 from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler
-from .branched_sig import _inv_permute_bsig, _permute_bsig, branched_sig_length
+from .branched_sig import _inv_permute_bsig, _permute_bsig, branched_sig_length, _infer_branched_scalar_term
 
 
 def branched_sig_backprop(
@@ -33,12 +33,12 @@ def branched_sig_backprop(
         bsig: Union[np.ndarray, torch.Tensor],
         bsig_derivs: Union[np.ndarray, torch.Tensor],
         degree: int,
+        *,
         time_aug: bool = False,
         lead_lag: bool = False,
         end_time: float = 1.0,
         tree_order: str = "recursive",
         planar: bool = False,
-        scalar_term = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -59,15 +59,9 @@ def branched_sig_backprop(
         ``"recursive"`` (default) uses the recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :param planar: If True, backpropagate through planar branched signature.
-    :param scalar_term: If True (default), ``bsig`` and ``bsig_derivs`` include the leading constant
-        at index 0. If False, the leading element is assumed stripped from both inputs.
-        The default will change to False in pySigLib v4.0.
-    :type scalar_term: bool
     :param n_jobs: Number of parallel threads for batch processing.
     :return: Path derivatives, same shape as ``path``.
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(degree, "degree", int)
@@ -82,9 +76,10 @@ def branched_sig_backprop(
     dimension = path_data.data_dimension
     aug_dimension = path_data.dimension
 
+    scalar_term = _infer_branched_scalar_term(bsig, aug_dimension, degree, planar=planar)
     if tree_order != "recursive":
-        bsig = _inv_permute_bsig(bsig, aug_dimension, degree, planar=planar)
-        bsig_derivs = _inv_permute_bsig(bsig_derivs, aug_dimension, degree, planar=planar)
+        bsig = _inv_permute_bsig(bsig, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
+        bsig_derivs = _inv_permute_bsig(bsig_derivs, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
 
     bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
     sig_data = MultipleSigInputHandler([bsig, bsig_derivs], bsig_len, ["bsig", "bsig_derivs"])
@@ -116,9 +111,9 @@ def branched_sig_combine_backprop(
         bsig2: Union[np.ndarray, torch.Tensor],
         dimension: int,
         degree: int,
+        *,
         tree_order: str = "recursive",
         planar: bool = False,
-        scalar_term = None,
         n_jobs: int = 1,
 ) -> tuple:
     """
@@ -137,16 +132,9 @@ def branched_sig_combine_backprop(
         ``"recursive"`` (default) uses the recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :param planar: If True, backpropagate through planar branched sig combine.
-    :param scalar_term: If True (default), ``derivs``, ``bsig1``, ``bsig2`` include the leading constant
-        at index 0, and the returned gradients include it as well. If False, the leading element is
-        assumed stripped from all inputs, and the returned gradients also omit it.
-        The default will change to False in pySigLib v4.0.
-    :type scalar_term: bool
     :param n_jobs: Number of parallel threads for batch processing.
-    :return: Tuple ``(dF/d(bsig1), dF/d(bsig2))``.
+    :return: Tuple ``(dF/d(bsig1), dF/d(bsig2))``, in the same scalar-term format as the inputs.
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(dimension, "dimension", int)
@@ -156,10 +144,11 @@ def branched_sig_combine_backprop(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
+    scalar_term = _infer_branched_scalar_term(bsig1, dimension, degree, planar=planar)
     if tree_order != "recursive":
-        derivs = _inv_permute_bsig(derivs, dimension, degree, planar=planar)
-        bsig1 = _inv_permute_bsig(bsig1, dimension, degree, planar=planar)
-        bsig2 = _inv_permute_bsig(bsig2, dimension, degree, planar=planar)
+        derivs = _inv_permute_bsig(derivs, dimension, degree, planar=planar, scalar_term=scalar_term)
+        bsig1 = _inv_permute_bsig(bsig1, dimension, degree, planar=planar, scalar_term=scalar_term)
+        bsig2 = _inv_permute_bsig(bsig2, dimension, degree, planar=planar, scalar_term=scalar_term)
 
     bsig_len = branched_sig_length(dimension, degree, planar=planar, scalar_term=scalar_term)
     data = MultipleSigInputHandler([derivs, bsig1, bsig2], bsig_len, ["derivs", "bsig1", "bsig2"])
@@ -182,6 +171,6 @@ def branched_sig_combine_backprop(
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine_backprop: " + err_msg(err_code))
     if tree_order != "recursive":
-        _permute_bsig(result1.data, dimension, degree, planar=planar)
-        _permute_bsig(result2.data, dimension, degree, planar=planar)
+        _permute_bsig(result1.data, dimension, degree, planar=planar, scalar_term=scalar_term)
+        _permute_bsig(result2.data, dimension, degree, planar=planar, scalar_term=scalar_term)
     return result1.data, result2.data

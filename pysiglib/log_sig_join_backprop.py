@@ -31,6 +31,7 @@ def log_sig_join_backprop(
         displacement : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         n_jobs : int = 1
 ):
     """

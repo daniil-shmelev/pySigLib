@@ -14,7 +14,7 @@
 # =========================================================================
 
 from .load_siglib import CPSIG
-from .param_checks import check_type, check_non_neg, check_pos, resolve_scalar_term
+from .param_checks import check_type, check_non_neg, check_pos
 
 
 def aug_dim(dimension: int, time_aug: bool, lead_lag: bool) -> int:
@@ -25,9 +25,10 @@ def aug_dim(dimension: int, time_aug: bool, lead_lag: bool) -> int:
 def sig_length(
         dimension : int,
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
-        scalar_term = None,
+        scalar_term : bool = False,
 ) -> int:
     """
     Returns the length of a truncated signature,
@@ -51,10 +52,9 @@ def sig_length(
         the signature. This flag is provided for convenience, and is equivalent
         to calling ``sig_length(2 * dimension, degree)``.
     :type lead_lag: bool
-    :param scalar_term: If True (default), the returned length includes the leading
-        constant-term entry at index 0. If False, the length is one less. Must match
-        the ``scalar_term`` value used with :func:`sig`. The default will change to
-        False in pySigLib v4.0.
+    :param scalar_term: If True, the returned length includes the leading
+        constant-term entry at index 0. If False (default), the length is one less. Must match
+        the ``scalar_term`` value used with :func:`sig`.
     :type scalar_term: bool
     :return: Length of a truncated signature
     :rtype: int
@@ -67,7 +67,7 @@ def sig_length(
         import pysiglib
 
         # Length of a truncated signature for a 3-dimensional path at degree 4
-        length = pysiglib.sig_length(3, 4)
+        length = pysiglib.sig_length(3, 4, scalar_term=True)
         print(length) # 121 (= 1 + 3 + 9 + 27 + 81)
 
     .. code-block:: python
@@ -76,12 +76,10 @@ def sig_length(
         import pysiglib
 
         # lead_lag doubles the dimension (6), time_aug adds one (7)
-        length = pysiglib.sig_length(3, 4, time_aug=True, lead_lag=True)
+        length = pysiglib.sig_length(3, 4, time_aug=True, lead_lag=True, scalar_term=True)
         print(length)  # 2801
 
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_non_neg(dimension, "dimension")
@@ -99,6 +97,7 @@ def sig_length(
 def log_sig_length(
         dimension : int,
         degree : int,
+        *,
         time_aug: bool = False,
         lead_lag: bool = False
 ) -> int:
@@ -161,3 +160,23 @@ def log_sig_length(
     if out == 0:
         raise ValueError("Integer overflow encountered in sig_length")
     return out
+
+
+def _infer_scalar_term(sig, dimension: int, degree: int, time_aug: bool = False, lead_lag: bool = False) -> bool:
+    """Return True iff ``sig``'s trailing dimension includes the leading scalar 1.
+
+    Raises ``ValueError`` if the shape matches neither the scalar_term=True nor
+    the scalar_term=False signature length for the given ``(dimension, degree,
+    time_aug, lead_lag)``. Used by consumer-side functions that accept sigs in
+    either format and match their output format to the input.
+    """
+    full_len = sig_length(dimension, degree, time_aug=time_aug, lead_lag=lead_lag, scalar_term=True)
+    actual = sig.shape[-1]
+    if actual == full_len:
+        return True
+    if actual == full_len - 1:
+        return False
+    raise ValueError(
+        "sig has incompatible length " + str(actual) + " for dimension=" + str(dimension) +
+        ", degree=" + str(degree) + " (expected " + str(full_len) + " or " + str(full_len - 1) + ")."
+    )

@@ -18,11 +18,11 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler
 from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP_CUDA, CUSIG_SIG_COMBINE_BACKPROP_CUDA
-from .sig_length import sig_length, aug_dim
+from .sig_length import sig_length, aug_dim, _infer_scalar_term
 
 def sig_combine_backprop(
         deriv : Union[np.ndarray, torch.tensor],
@@ -30,9 +30,9 @@ def sig_combine_backprop(
         sig2 : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
-        scalar_term = None,
         n_jobs : int = 1
 ):
     """
@@ -63,7 +63,7 @@ def sig_combine_backprop(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :return: Derivatives with respect to ``sig1`` and ``sig2``
+    :return: Derivatives with respect to ``sig1`` and ``sig2``, in the same scalar-term format as the inputs.
     :rtype: Tuple[numpy.ndarray | torch.tensor, numpy.ndarray | torch.tensor]
 
     Example:
@@ -89,8 +89,6 @@ def sig_combine_backprop(
         print(dsig1)
 
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
@@ -99,6 +97,7 @@ def sig_combine_backprop(
     check_type(lead_lag, "lead_lag", bool)
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
+    scalar_term = _infer_scalar_term(sig1, dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
     sig_len = sig_length(aug_dimension, degree, scalar_term=scalar_term)
 
     check_n_jobs(n_jobs)
@@ -129,10 +128,10 @@ def sig_backprop(
         sig : Union[np.ndarray, torch.tensor],
         sig_derivs : Union[np.ndarray, torch.tensor],
         degree : int,
+        *,
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
-        scalar_term = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -160,6 +159,10 @@ def sig_backprop(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
+    :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
+        If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
+        threads are used. For example if n_jobs = -2, all threads but one are used.
+    :type n_jobs: int
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.tensor
@@ -196,8 +199,6 @@ def sig_backprop(
         print(path_derivs)
 
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
     check_type(time_aug, "time_aug", bool)
@@ -205,6 +206,7 @@ def sig_backprop(
     check_type(end_time, "end_time", float)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
+    scalar_term = _infer_scalar_term(sig, path_data.data_dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
     sig_len = sig_length(path_data.dimension, degree, scalar_term=scalar_term)
     sig_data = MultipleSigInputHandler([sig, sig_derivs], sig_len, ["sig", "sig_derivs"])
 

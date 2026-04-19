@@ -132,8 +132,7 @@ def compute_kauri_to_pysiglib_permutation(d, N):
         path[2, i] = path[1, i] + np.sqrt(2) * (i + 1) + np.log(i + 2)
 
     # pysiglib coefficients (in pysiglib tree order)
-    pysig_bsig = np.array(pysiglib.branched_sig(path, N), dtype=np.float64)
-    pysig_coeffs = pysig_bsig[1:]
+    pysig_coeffs = np.array(pysiglib.branched_sig(path, N), dtype=np.float64)
 
     # kauri reference (in kauri tree order)
     kauri_arr = branched_sig_reference(path, d, N)
@@ -182,13 +181,13 @@ def reorder_kauri_to_pysiglib(kauri_arr, perm):
 ])
 def test_branched_sig_length(d, N, expected):
     pysiglib.prepare_branched_sig(d, N)
-    assert pysiglib.branched_sig_length(d, N) == expected
+    assert pysiglib.branched_sig_length(d, N, scalar_term=True) == expected
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
 def test_branched_sig_length_vs_kauri(d, N):
     trees = enumerate_decorated_trees(d, N)
-    expected = 1 + len(trees)
+    expected = len(trees)
     pysiglib.prepare_branched_sig(d, N)
     assert pysiglib.branched_sig_length(d, N) == expected
 
@@ -198,8 +197,7 @@ def test_branched_sig_trivial_path():
     pysiglib.prepare_branched_sig(d, N)
     path = np.array([[1.0, 2.0], [1.0, 2.0]])  # constant path
     bsig = pysiglib.branched_sig(path, N)
-    assert bsig[0] == pytest.approx(1.0)
-    assert np.allclose(bsig[1:], 0.0, atol=1e-14)
+    assert np.allclose(bsig, 0.0, atol=1e-14)
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
@@ -219,8 +217,7 @@ def test_branched_sig_single_segment(d, N):
     ref = np.array([ref_coeffs[t.sorted_list_repr()] for t in trees])
     ref_reordered = reorder_kauri_to_pysiglib(ref, perm)
 
-    assert bsig[0] == pytest.approx(1.0)
-    np.testing.assert_allclose(bsig[1:], ref_reordered, atol=1e-12)
+    np.testing.assert_allclose(bsig, ref_reordered, atol=1e-12)
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2), (2, 4)])
@@ -237,8 +234,7 @@ def test_branched_sig_vs_kauri(d, N):
     ref = branched_sig_reference(path, d, N)
     ref_reordered = reorder_kauri_to_pysiglib(ref, perm)
 
-    assert bsig[0] == pytest.approx(1.0)
-    np.testing.assert_allclose(bsig[1:], ref_reordered, atol=1e-10)
+    np.testing.assert_allclose(bsig, ref_reordered, atol=1e-10)
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
@@ -272,7 +268,6 @@ def test_branched_sig_dtypes(dtype):
     pysiglib.prepare_branched_sig(d, N)
     path = np.random.randn(5, d).astype(dtype)
     bsig = pysiglib.branched_sig(path, N)
-    assert bsig[0] == pytest.approx(1.0, abs=1e-5)
     assert len(bsig) == pysiglib.branched_sig_length(d, N)
 
 
@@ -285,8 +280,7 @@ def test_branched_sig_degree_1_matches_standard():
 
     bsig = pysiglib.branched_sig(path, 1)
     total_incr = path[-1] - path[0]
-    np.testing.assert_allclose(bsig[0], 1.0, atol=1e-14)
-    np.testing.assert_allclose(bsig[1:], total_incr, atol=1e-12)
+    np.testing.assert_allclose(bsig, total_incr, atol=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -400,8 +394,7 @@ def test_branched_sig_cuda_trivial():
     pysiglib.prepare_branched_sig(d, N)
     path = torch.tensor([[1.0, 2.0], [1.0, 2.0]], dtype=torch.float64).cuda()
     bsig = pysiglib.branched_sig(path, N)
-    assert float(bsig[0].cpu()) == pytest.approx(1.0)
-    assert torch.allclose(bsig[1:], torch.zeros(bsig.shape[0] - 1, device="cuda", dtype=torch.float64), atol=1e-14)
+    assert torch.allclose(bsig, torch.zeros(bsig.shape[0], device="cuda", dtype=torch.float64), atol=1e-14)
 
 
 @skip_no_cuda
@@ -700,8 +693,7 @@ def compute_kauri_to_pysiglib_planar_permutation(d, N):
         path[1, i] = np.pi * (i + 1) + np.e * (i + 1)**2
         path[2, i] = path[1, i] + np.sqrt(2) * (i + 1) + np.log(i + 2)
 
-    pysig_bsig = np.array(pysiglib.branched_sig(path, N, planar=True), dtype=np.float64)
-    pysig_coeffs = pysig_bsig[1:]
+    pysig_coeffs = np.array(pysiglib.branched_sig(path, N, planar=True), dtype=np.float64)
     kauri_arr = planar_branched_sig_reference(path, d, N)
 
     perm = np.zeros(num_trees, dtype=int)
@@ -747,16 +739,15 @@ def reorder_kauri_to_pysiglib_planar(kauri_arr, perm):
 ])
 def test_planar_branched_sig_length(d, N, expected):
     pysiglib.prepare_branched_sig(d, N, planar=True)
-    assert pysiglib.branched_sig_length(d, N, planar=True) == expected
+    assert pysiglib.branched_sig_length(d, N, planar=True, scalar_term=True) == expected
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
 def test_planar_branched_sig_length_vs_kauri(d, N):
-    # colored_planar_trees_up_to_order includes the empty tree (order 0),
-    # which corresponds to the scalar term - so the count equals pysiglib's length directly.
+    # colored_planar_trees_up_to_order includes the empty tree (order 0).
     expected = len(list(kauri.colored_planar_trees_up_to_order(N, d)))
     pysiglib.prepare_branched_sig(d, N, planar=True)
-    assert pysiglib.branched_sig_length(d, N, planar=True) == expected
+    assert pysiglib.branched_sig_length(d, N, planar=True, scalar_term=True) == expected
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 3), (2, 4)])
@@ -776,8 +767,7 @@ def test_planar_branched_sig_trivial_path():
     pysiglib.prepare_branched_sig(d, N, planar=True)
     path = np.array([[1.0, 2.0], [1.0, 2.0]])
     bsig = pysiglib.branched_sig(path, N, planar=True)
-    assert bsig[0] == pytest.approx(1.0)
-    assert np.allclose(bsig[1:], 0.0, atol=1e-14)
+    assert np.allclose(bsig, 0.0, atol=1e-14)
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
@@ -797,8 +787,7 @@ def test_planar_branched_sig_single_segment(d, N):
     ref = np.array([ref_coeffs[t.sorted_list_repr()] for t in trees])
     ref_reordered = reorder_kauri_to_pysiglib_planar(ref, perm)
 
-    assert bsig[0] == pytest.approx(1.0)
-    np.testing.assert_allclose(bsig[1:], ref_reordered, atol=1e-12)
+    np.testing.assert_allclose(bsig, ref_reordered, atol=1e-12)
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2), (2, 4)])
@@ -815,8 +804,7 @@ def test_planar_branched_sig_vs_kauri(d, N):
     ref = planar_branched_sig_reference(path, d, N)
     ref_reordered = reorder_kauri_to_pysiglib_planar(ref, perm)
 
-    assert bsig[0] == pytest.approx(1.0)
-    np.testing.assert_allclose(bsig[1:], ref_reordered, atol=1e-10)
+    np.testing.assert_allclose(bsig, ref_reordered, atol=1e-10)
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
@@ -850,7 +838,6 @@ def test_planar_branched_sig_dtypes(dtype):
     pysiglib.prepare_branched_sig(d, N, planar=True)
     path = np.random.randn(5, d).astype(dtype)
     bsig = pysiglib.branched_sig(path, N, planar=True)
-    assert bsig[0] == pytest.approx(1.0, abs=1e-5)
     assert len(bsig) == pysiglib.branched_sig_length(d, N, planar=True)
 
 
@@ -863,8 +850,7 @@ def test_planar_branched_sig_degree_1_matches_standard():
 
     bsig = pysiglib.branched_sig(path, 1, planar=True)
     total_incr = path[-1] - path[0]
-    np.testing.assert_allclose(bsig[0], 1.0, atol=1e-14)
-    np.testing.assert_allclose(bsig[1:], total_incr, atol=1e-12)
+    np.testing.assert_allclose(bsig, total_incr, atol=1e-12)
 
 
 def test_planar_branched_sig_degree_1_matches_nonplanar():
@@ -984,8 +970,7 @@ def test_planar_branched_sig_cuda_trivial():
     pysiglib.prepare_branched_sig(d, N, planar=True)
     path = torch.tensor([[1.0, 2.0], [1.0, 2.0]], dtype=torch.float64).cuda()
     bsig = pysiglib.branched_sig(path, N, planar=True)
-    assert float(bsig[0].cpu()) == pytest.approx(1.0)
-    assert torch.allclose(bsig[1:], torch.zeros(bsig.shape[0] - 1, device="cuda", dtype=torch.float64), atol=1e-14)
+    assert torch.allclose(bsig, torch.zeros(bsig.shape[0], device="cuda", dtype=torch.float64), atol=1e-14)
 
 
 @skip_no_cuda

@@ -40,4 +40,4 @@ if __name__ == '__main__':
     s = pysiglib.sig(X, degree)
     end = timeit.default_timer()
     print(end - start)
-    print(s[0][1:6])
+    print(s[0][:5])

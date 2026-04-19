@@ -15,7 +15,6 @@
 
 """Tests for the scalar_term flag."""
 
-import warnings
 import numpy as np
 import torch
 import pytest
@@ -64,14 +63,16 @@ class TestSig:
 
 
 class TestSigCombine:
-    def test_strip_output(self):
+    def test_output_matches_input(self):
         p1 = _path()[:8]
         p2 = _path()[7:]
-        s1 = pysiglib.sig(p1, DEGREE, scalar_term=True)
-        s2 = pysiglib.sig(p2, DEGREE, scalar_term=True)
-        combined_full = pysiglib.sig_combine(s1, s2, DIM, DEGREE, scalar_term=True)
-        combined_no = pysiglib.sig_combine(s1, s2, DIM, DEGREE, scalar_term=False)
-
+        s1_full = pysiglib.sig(p1, DEGREE, scalar_term=True)
+        s2_full = pysiglib.sig(p2, DEGREE, scalar_term=True)
+        s1_no = pysiglib.sig(p1, DEGREE, scalar_term=False)
+        s2_no = pysiglib.sig(p2, DEGREE, scalar_term=False)
+        combined_full = pysiglib.sig_combine(s1_full, s2_full, DIM, DEGREE)
+        combined_no = pysiglib.sig_combine(s1_no, s2_no, DIM, DEGREE)
+        assert combined_full.shape[-1] == combined_no.shape[-1] + 1
         np.testing.assert_allclose(combined_full[1:], combined_no, atol=1e-10)
 
 
@@ -127,33 +128,27 @@ class TestTorchAutograd:
     def test_sig_combine_grad(self):
         p1 = torch.from_numpy(_path()[:8]).requires_grad_(True)
         p2 = torch.from_numpy(_path()[7:]).requires_grad_(True)
-        s1 = pysiglib.torch_api.sig(p1, DEGREE, scalar_term=True)
-        s2 = pysiglib.torch_api.sig(p2, DEGREE, scalar_term=True)
-        combined = pysiglib.torch_api.sig_combine(s1, s2, DIM, DEGREE, scalar_term=False)
+        s1 = pysiglib.torch_api.sig(p1, DEGREE, scalar_term=False)
+        s2 = pysiglib.torch_api.sig(p2, DEGREE, scalar_term=False)
+        combined = pysiglib.torch_api.sig_combine(s1, s2, DIM, DEGREE)
         assert combined.shape[-1] == pysiglib.sig_length(DIM, DEGREE, scalar_term=False)
         loss = combined.sum()
         loss.backward()
         assert p1.grad is not None
 
 
-class TestFutureWarning:
-    def test_warning_emitted_when_unset(self):
-        # `resolve_scalar_term` only warns once per process; reset the flag
-        # so this test is order-independent within the suite.
-        pysiglib.param_checks._WARNED_SCALAR_TERM = False
+class TestExtractSigCoef:
+    def test_matches_across_scalar_term(self):
+        # extract_sig_coef must return identical coefficients whether the input
+        # sig was computed with scalar_term=True or False, as long as the caller
+        # tells extract_sig_coef the format of the input sig.
         path = _path()
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            pysiglib.sig(path, DEGREE)
-            assert any(issubclass(x.category, FutureWarning) for x in w)
-
-    def test_no_warning_when_explicit(self):
-        path = _path()
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            pysiglib.sig(path, DEGREE, scalar_term=True)
-            future_warnings = [x for x in w if issubclass(x.category, FutureWarning)]
-            assert len(future_warnings) == 0
+        s_full = pysiglib.sig(path, DEGREE, scalar_term=True)
+        s_no = pysiglib.sig(path, DEGREE, scalar_term=False)
+        words = [(0,), (1, 0), (2, 1, 0)]
+        c_full = pysiglib.extract_sig_coef(s_full, words, DIM, scalar_term=True)
+        c_no = pysiglib.extract_sig_coef(s_no, words, DIM, scalar_term=False)
+        np.testing.assert_allclose(c_full, c_no, atol=1e-12)
 
 
 class TestSigLength:
@@ -166,6 +161,6 @@ class TestSigLength:
 
 class TestBranchedSigLength:
     def test_scalar_term_default(self):
-        full = pysiglib.branched_sig_length(DIM, DEGREE)
+        full = pysiglib.branched_sig_length(DIM, DEGREE, scalar_term=True)
         no_scalar = pysiglib.branched_sig_length(DIM, DEGREE, scalar_term=False)
         assert full == no_scalar + 1

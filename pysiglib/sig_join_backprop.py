@@ -18,10 +18,10 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import CPSIG_SIG_JOIN_BACKPROP, CUSIG_SIG_JOIN_BACKPROP_CUDA
-from .sig_length import sig_length
+from .sig_length import sig_length, _infer_scalar_term
 from .data_handlers import SigInputHandler, SigOutputHandler
 
 
@@ -31,8 +31,8 @@ def sig_join_backprop(
         displacement : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         prepend : bool = False,
-        scalar_term = None,
         n_jobs : int = 1
 ):
     """
@@ -54,6 +54,9 @@ def sig_join_backprop(
     :type dimension: int
     :param degree: Truncation level of the signatures, :math:`N`
     :type degree: int
+    :param prepend: Must match the value used in the forward ``sig_join`` call. If True, the linear
+        segment was prepended to the front of the path rather than appended. Default is False.
+    :type prepend: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
@@ -83,14 +86,13 @@ def sig_join_backprop(
         print(d_sig.shape, d_displacement.shape)
 
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
+    scalar_term = _infer_scalar_term(sig, dimension, degree)
     sig_len = sig_length(dimension, degree, scalar_term=scalar_term)
 
     d_out_data = SigInputHandler(d_out, sig_len, "d_out")

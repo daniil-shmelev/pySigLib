@@ -26,7 +26,7 @@ DIM = 3
 
 def test_prepare_memory():
     X = np.random.uniform(size=(100, 5))
-    pysiglib.clear_cache(True)
+    pysiglib.clear_cache(use_disk=True)
     pysiglib.prepare_log_sig(5, 2, 1)
 
     with pytest.raises(Exception):
@@ -43,22 +43,22 @@ def test_prepare_memory():
 
 def test_prepare_disk():
     X = np.random.uniform(size=(100, 5))
-    pysiglib.clear_cache(True)
+    pysiglib.clear_cache(use_disk=True)
     pysiglib.prepare_log_sig(5, 2, 1, use_disk=True)
-    pysiglib.clear_cache(False)
+    pysiglib.clear_cache(use_disk=False)
 
     with pytest.raises(Exception):
         pysiglib.log_sig(X, 2, method=2)
 
-    pysiglib.clear_cache(True)
+    pysiglib.clear_cache(use_disk=True)
 
     with pytest.raises(Exception):
         pysiglib.log_sig(X, 2, method=1)
 
     pysiglib.prepare_log_sig(5, 2, 2, use_disk=True)
-    pysiglib.clear_cache(False)
+    pysiglib.clear_cache(use_disk=False)
     pysiglib.log_sig(X, 2, method=1)
-    pysiglib.clear_cache(True)
+    pysiglib.clear_cache(use_disk=True)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -70,7 +70,7 @@ def test_log_signature_expanded_random(device, deg, dtype):
     X_dev = torch.tensor(X, device=device)
     sig = pysiglib.log_sig(X_dev, deg, method=0)
     assert_device(sig, device)
-    check_close(expected, sig[1:])
+    check_close(expected, sig)
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
@@ -81,7 +81,7 @@ def test_batch_log_signature_expanded_random(device, deg, dtype):
     X_dev = torch.tensor(X, device=device)
     sig = pysiglib.log_sig(X_dev, deg, method=0)
     assert_device(sig, device)
-    check_close(expected, sig[:, 1:])
+    check_close(expected, sig)
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
@@ -92,7 +92,7 @@ def test_batch_log_signature_expanded_time_aug_random(device, deg, dtype):
     X_dev = torch.tensor(X, device=device)
     sig = pysiglib.log_sig(X_dev, deg, time_aug=True, method=0)
     assert_device(sig, device)
-    check_close(expected, sig[:, 1:])
+    check_close(expected, sig)
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 5))
@@ -103,7 +103,7 @@ def test_batch_log_signature_expanded_lead_lag_random(device, deg, dtype):
     X_dev = torch.tensor(X, device=device)
     sig = pysiglib.log_sig(X_dev, deg, lead_lag=True, method=0)
     assert_device(sig, device)
-    check_close(expected, sig[:, 1:])
+    check_close(expected, sig)
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))

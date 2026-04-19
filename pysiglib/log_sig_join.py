@@ -30,6 +30,7 @@ def log_sig_join(
         displacement : Union[np.ndarray, torch.tensor],
         dimension : int,
         degree : int,
+        *,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """

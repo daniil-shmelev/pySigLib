@@ -48,6 +48,32 @@ def test_idx_to_word():
         i = pysiglib.word_to_idx(w, dimension)
         assert idx == i
 
+
+def test_word_idx_round_trip_scalar_term_true():
+    dimension, degree = 3, 4
+    m = pysiglib.sig_length(dimension, degree, scalar_term=True)
+    for idx in range(m):
+        w = pysiglib.idx_to_word(idx, dimension, scalar_term=True)
+        assert pysiglib.word_to_idx(w, dimension, scalar_term=True) == idx
+
+
+def test_word_idx_shift_between_scalar_term_formats():
+    # For scalar_term=True, () is at 0 and non-empty words shift up by 1
+    # relative to scalar_term=False indices.
+    dimension = 4
+    for w in [(0,), (1,), (3,), (0, 1), (3, 2, 1), (0, 1, 2, 3)]:
+        idx_false = pysiglib.word_to_idx(w, dimension, scalar_term=False)
+        idx_true = pysiglib.word_to_idx(w, dimension, scalar_term=True)
+        assert idx_true == idx_false + 1
+
+
+def test_empty_word_requires_scalar_term():
+    assert pysiglib.word_to_idx((), 3, scalar_term=True) == 0
+    import pytest
+    with pytest.raises(ValueError):
+        pysiglib.word_to_idx((), 3, scalar_term=False)
+
+
 def test_is_lyndon():
     dimension, degree = 3, 4
     words = pysiglib.words(dimension, degree)

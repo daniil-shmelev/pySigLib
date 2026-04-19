@@ -43,4 +43,4 @@ if __name__ == '__main__':
     sig_combine = pysiglib.sig_combine(s, s, dim, degree)
     end = timeit.default_timer()
     print(end - start)
-    print(sig_combine[0][1:6])
+    print(sig_combine[0][:5])

@@ -27,6 +27,7 @@ from .data_handlers import PathInputHandler
 
 def transform_path(
     path : Union[np.ndarray, torch.tensor],
+    *,
     time_aug : bool = False,
     lead_lag : bool = False,
     end_time : float = 1.,

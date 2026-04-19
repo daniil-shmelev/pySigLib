@@ -18,7 +18,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from .param_checks import check_type, check_non_neg, check_n_jobs, resolve_scalar_term
+from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .sig_length import aug_dim
 from .dtypes import (CPSIG_BRANCHED_SIG, CPSIG_BRANCHED_SIG_COMBINE,
@@ -28,18 +28,27 @@ from .load_siglib import CPSIG
 import kauri
 
 
-def _permute_bsig(data, dimension, degree, planar=False):
-    """Permute branched sig from recursive order to canonical order (in-place)."""
+def _permute_bsig(data, dimension, degree, planar=False, scalar_term=True):
+    """Permute branched sig from recursive order to canonical order (in-place).
+
+    The permutation acts on the non-empty trees only; the leading scalar (if
+    present) is left in place.
+    """
     if planar:
         perm = kauri.planar_canonical_to_recursive_permutation(dimension, degree)
     else:
         perm = kauri.canonical_to_recursive_permutation(dimension, degree)
-    data[..., 1:] = data[..., 1:][..., perm]
+    start = 1 if scalar_term else 0
+    data[..., start:] = data[..., start:][..., perm]
     return data
 
 
-def _inv_permute_bsig(data, dimension, degree, planar=False):
-    """Permute branched sig from canonical order to recursive order. Returns a new array."""
+def _inv_permute_bsig(data, dimension, degree, planar=False, scalar_term=True):
+    """Permute branched sig from canonical order to recursive order. Returns a new array.
+
+    The permutation acts on the non-empty trees only; the leading scalar (if
+    present) is left in place.
+    """
     if planar:
         inv_perm = kauri.planar_recursive_to_canonical_permutation(dimension, degree)
     else:
@@ -48,14 +57,17 @@ def _inv_permute_bsig(data, dimension, degree, planar=False):
         out = np.empty_like(data)
     else:
         out = torch.empty_like(data)
-    out[..., :1] = data[..., :1]
-    out[..., 1:] = data[..., 1:][..., inv_perm]
+    start = 1 if scalar_term else 0
+    if scalar_term:
+        out[..., :1] = data[..., :1]
+    out[..., start:] = data[..., start:][..., inv_perm]
     return out
 
 
 def prepare_branched_sig(
         dimension: int,
         degree: int,
+        *,
         use_disk: bool = False,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -92,15 +104,15 @@ def prepare_branched_sig(
         raise Exception("Error in pysiglib.prepare_branched_sig: " + err_msg(err_code))
 
 
-def branched_sig_length(dimension: int, degree: int, planar: bool = False, scalar_term=None) -> int:
+def branched_sig_length(dimension: int, degree: int, *, planar: bool = False, scalar_term: bool = False) -> int:
     """
     Returns the length of a truncated branched signature.
 
     :param dimension: Dimension of the underlying path.
     :param degree: Maximum tree order (number of nodes).
     :param planar: If True, return the length for planar (ordered) branched signatures.
-    :param scalar_term: If True (default), includes the empty-tree scalar term at index 0
-        in the length. If False, the returned length is one less (matching ``branched_sig``
+    :param scalar_term: If True, includes the empty-tree scalar term at index 0 in the length.
+        If False (default), the returned length is one less (matching ``branched_sig``
         output with ``scalar_term=False``).
     :return: Length of the branched signature array.
     """
@@ -108,22 +120,44 @@ def branched_sig_length(dimension: int, degree: int, planar: bool = False, scala
     check_type(degree, "degree", int)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    scalar_term = resolve_scalar_term(scalar_term)
     out = CPSIG.branched_sig_length(dimension, degree, planar)
     if out == 0:
         raise ValueError("Invalid parameters or integer overflow in branched_sig_length")
     return out - (0 if scalar_term else 1)
 
 
+def _infer_branched_scalar_term(bsig, dimension: int, degree: int, planar: bool = False) -> bool:
+    """Return True iff ``bsig``'s trailing dimension includes the leading scalar 1.
+
+    Raises ``ValueError`` if the shape matches neither the scalar_term=True nor
+    the scalar_term=False branched-signature length for the given
+    ``(dimension, degree, planar)``. Used by consumer-side branched-sig
+    functions that accept bsigs in either format and match their output format
+    to the input.
+    """
+    full_len = branched_sig_length(dimension, degree, planar=planar, scalar_term=True)
+    actual = bsig.shape[-1]
+    if actual == full_len:
+        return True
+    if actual == full_len - 1:
+        return False
+    raise ValueError(
+        "bsig has incompatible length " + str(actual) + " for dimension=" + str(dimension) +
+        ", degree=" + str(degree) + ", planar=" + str(planar) +
+        " (expected " + str(full_len) + " or " + str(full_len - 1) + ")."
+    )
+
+
 def branched_sig(
         path: Union[np.ndarray, torch.Tensor],
         degree: int,
+        *,
         time_aug: bool = False,
         lead_lag: bool = False,
         end_time: float = 1.0,
         tree_order: str = "recursive",
         planar: bool = False,
-        scalar_term = None,
+        scalar_term : bool = False,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -145,15 +179,12 @@ def branched_sig(
         ``"recursive"`` (default) uses the recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :param planar: If True, compute the planar (ordered) branched signature.
-    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
-        (the empty-word term). If False, this leading element is stripped from the output.
-        The default will change to False in pySigLib v4.0.
+    :param scalar_term: If True, the output includes the leading constant 1 at index 0
+        (the empty-word term). If False (default), this leading element is stripped from the output.
     :type scalar_term: bool
     :param n_jobs: Number of parallel threads for batch processing.
     :return: Branched signature array of shape ``(bsig_len,)`` or ``(..., bsig_len)``.
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(degree, "degree", int)
@@ -186,7 +217,7 @@ def branched_sig(
     if err_code:
         raise Exception("Error in pysiglib.branched_sig: " + err_msg(err_code))
     if tree_order != "recursive":
-        _permute_bsig(result.data, aug_dimension, degree, planar=planar)
+        _permute_bsig(result.data, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
     return result.data
 
 
@@ -195,9 +226,9 @@ def branched_sig_combine(
         bsig2: Union[np.ndarray, torch.Tensor],
         dimension: int,
         degree: int,
+        *,
         tree_order: str = "recursive",
         planar: bool = False,
-        scalar_term = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -212,15 +243,9 @@ def branched_sig_combine(
         ``"recursive"`` (default) uses the recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :param planar: If True, combine planar (ordered) branched signatures.
-    :param scalar_term: If True (default), the output includes the leading constant 1 at index 0
-        (the empty-word term). If False, this leading element is stripped from the output.
-        The default will change to False in pySigLib v4.0.
-    :type scalar_term: bool
     :param n_jobs: Number of parallel threads for batch processing.
-    :return: Combined branched signature, in the same ordering as the inputs.
+    :return: Combined branched signature, in the same ordering and scalar-term format as the inputs.
     """
-    scalar_term = resolve_scalar_term(scalar_term)
-
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(dimension, "dimension", int)
@@ -230,9 +255,10 @@ def branched_sig_combine(
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
 
+    scalar_term = _infer_branched_scalar_term(bsig1, dimension, degree, planar=planar)
     if tree_order != "recursive":
-        bsig1 = _inv_permute_bsig(bsig1, dimension, degree, planar=planar)
-        bsig2 = _inv_permute_bsig(bsig2, dimension, degree, planar=planar)
+        bsig1 = _inv_permute_bsig(bsig1, dimension, degree, planar=planar, scalar_term=scalar_term)
+        bsig2 = _inv_permute_bsig(bsig2, dimension, degree, planar=planar, scalar_term=scalar_term)
 
     bsig_len = branched_sig_length(dimension, degree, planar=planar, scalar_term=scalar_term)
     data = MultipleSigInputHandler([bsig1, bsig2], bsig_len, ["bsig1", "bsig2"])
@@ -252,5 +278,5 @@ def branched_sig_combine(
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine: " + err_msg(err_code))
     if tree_order != "recursive":
-        _permute_bsig(result.data, dimension, degree, planar=planar)
+        _permute_bsig(result.data, dimension, degree, planar=planar, scalar_term=scalar_term)
     return result.data

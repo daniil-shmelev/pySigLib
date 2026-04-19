@@ -25,9 +25,8 @@ FIXTURES = load_fixtures("reference_data.npz")
 
 @pytest.mark.parametrize("device", DEVICES)
 def test_signature_trivial(device):
-    check_close(pysiglib.sig(torch.tensor([[0., 0.], [1., 1.]], device=device), 0), [1.])
-    check_close(pysiglib.sig(torch.tensor([[0., 0.], [1., 1.]], device=device), 1), [1., 1., 1.])
-    check_close(pysiglib.sig(torch.tensor([[0., 0.]], device=device), 1), [1., 0., 0.])
+    check_close(pysiglib.sig(torch.tensor([[0., 0.], [1., 1.]], device=device), 1), [1., 1.])
+    check_close(pysiglib.sig(torch.tensor([[0., 0.]], device=device), 1), [0., 0.])
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -39,7 +38,7 @@ def test_signature_random(device, deg, dtype):
     X_dev = torch.tensor(X, device=device)
     sig = pysiglib.sig(X_dev, deg)
     assert_device(sig, device)
-    check_close(expected, sig[1:])
+    check_close(expected, sig)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -52,8 +51,8 @@ def test_signature_random_batch(device, deg):
     sig_parallel = pysiglib.sig(X_dev, deg, n_jobs=-1)
     assert_device(sig_serial, device)
     assert_device(sig_parallel, device)
-    check_close(expected, sig_serial[:, 1:])
-    check_close(expected, sig_parallel[:, 1:])
+    check_close(expected, sig_serial)
+    check_close(expected, sig_parallel)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -87,7 +86,7 @@ def test_signature_time_aug(device, deg):
     X_dev = torch.tensor(X, device=device)
     sig = pysiglib.sig(X_dev, deg, time_aug=True)
     assert_device(sig, device)
-    check_close(expected, sig[1:])
+    check_close(expected, sig)
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
@@ -97,7 +96,7 @@ def test_signature_lead_lag(device, deg):
     X_dev = torch.tensor(X, device=device)
     sig = pysiglib.sig(X_dev, deg, lead_lag=True)
     assert_device(sig, device)
-    check_close(expected, sig[1:])
+    check_close(expected, sig)
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("deg", range(1, 6))
@@ -108,4 +107,4 @@ def test_signature_time_aug_lead_lag(device, deg, dtype):
     X_dev = torch.tensor(X, device=device)
     sig = pysiglib.sig(X_dev, deg, lead_lag=True, time_aug=True)
     assert_device(sig, device)
-    check_close(expected, sig[1:])
+    check_close(expected, sig)
