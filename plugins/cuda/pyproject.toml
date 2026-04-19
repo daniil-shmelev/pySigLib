@@ -11,7 +11,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "pysiglib-cuda"
-version = "3.0.0rc1"
+version = "3.0.0rc2"
 description = "CUDA plugin for pysiglib. Ships cusig and pysiglib_jax_ffi_cuda."
 requires-python = ">=3.9"
 license = "Apache-2.0"

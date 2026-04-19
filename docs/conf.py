@@ -5,9 +5,11 @@
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath('..'))
+
+sys.path.insert(0, os.path.abspath(".."))
 
 import subprocess
+
 
 def run_doxygen():
     """Run doxygen to generate XML before Sphinx builds."""
@@ -15,41 +17,42 @@ def run_doxygen():
         os.makedirs("_build/doxygen/xml")
     subprocess.call("doxygen Doxyfile", shell=True)
 
+
 run_doxygen()
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'pysiglib'
-copyright = '2026, Daniil Shmelev'
-author = 'Daniil Shmelev'
-release = '3.0.0rc1'
+project = "pysiglib"
+copyright = "2026, Daniil Shmelev"
+author = "Daniil Shmelev"
+release = "3.0.0rc2"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
-    'sphinx.ext.autodoc',
-    'sphinx.ext.viewcode',
-    'sphinx.ext.napoleon',
-    'sphinx_copybutton',
-    'sphinx_design',
-    'breathe',  # For C++
+    "sphinx.ext.autodoc",
+    "sphinx.ext.viewcode",
+    "sphinx.ext.napoleon",
+    "sphinx_copybutton",
+    "sphinx_design",
+    "breathe",  # For C++
 ]
 
 autodoc_typehints = "none"
 
-templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+templates_path = ["_templates"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 # -- Syntax highlighting ------------------------------------------------------
-pygments_style = 'friendly'
-pygments_dark_style = 'monokai'
+pygments_style = "friendly"
+pygments_dark_style = "monokai"
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'sphinx_book_theme'
+html_theme = "sphinx_book_theme"
 
 html_theme_options = {
     "logo": {
@@ -62,15 +65,16 @@ html_theme_options = {
     "show_toc_level": 2,
 }
 
-html_static_path = ['_static']
-html_css_files = ['custom.css']
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]
 html_logo = "_static/logo_light.png"
 html_favicon = "_static/favicon.png"
 add_module_names = False
 
 html_title = "Documentation"
 
-rst_epilog = """
+rst_epilog = (
+    """
 |
 
 Citation
@@ -87,11 +91,11 @@ If you found this library useful in your research, please consider citing the pa
    }
 
 .. |release| replace:: %s
-""" % release
+"""
+    % release
+)
 
 # -- C++ options -------------------------------------------------
 
-breathe_projects = {
-    "siglib": "_build/doxygen/xml"
-}
+breathe_projects = {"siglib": "_build/doxygen/xml"}
 breathe_default_project = "siglib"
