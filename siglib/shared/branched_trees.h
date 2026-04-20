@@ -167,9 +167,63 @@ inline void enumerate_all_decorated_trees(
 	order_index[max_nodes + 1] = trees.size();
 }
 
+// Count decorated rooted trees with up to max_nodes nodes and node labels in
+// {0,...,d-1}. Uses closed-form recurrences.
+//
+// Let t[n] = number of such trees with exactly n nodes.
+//   t[1] = d.
+//   Planar (ordered children): t[n+1] = d * P[n], P[0] = 1,
+//     P[n] = sum_{k=1..n} t[k] * P[n-k] (P[n] counts ordered child sequences).
+//   Non-planar (unordered children): t[n+1] = d * M[n], M[0] = 1,
+//     M[n] = (1/n) * sum_{m=1..n} b_m * M[n-m], b_m = sum_{k | m} k * t[k]
+//     (Otter's recurrence / Euler transform).
+//
+// Returns 1 + sum_{n=1..max_nodes} t[n] (the +1 is the empty "scalar" term).
 inline uint64_t compute_branched_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar = false) {
-	std::vector<DecoratedTreeInfo> trees;
-	std::vector<uint64_t> order_index;
-	enumerate_all_decorated_trees(dimension, max_nodes, trees, order_index, planar);
-	return 1 + trees.size();
+	if (dimension > 255)
+		throw std::invalid_argument("branched signature dimension must be <= 255");
+	if (dimension == 0 || max_nodes == 0)
+		return 1;
+
+	std::vector<uint64_t> trees_per_order(max_nodes + 1, 0);
+	trees_per_order[1] = dimension;
+	uint64_t total_trees = dimension;
+
+	if (planar) {
+		std::vector<uint64_t> ordered_partitions(max_nodes + 1, 0);
+		ordered_partitions[0] = 1;
+		for (uint64_t order = 1; order < max_nodes; ++order) {
+			uint64_t sum = 0;
+			for (uint64_t child_order = 1; child_order <= order; ++child_order)
+				sum += trees_per_order[child_order] * ordered_partitions[order - child_order];
+			ordered_partitions[order] = sum;
+			trees_per_order[order + 1] = dimension * ordered_partitions[order];
+			total_trees += trees_per_order[order + 1];
+		}
+	} else {
+		std::vector<uint64_t> multiset_partitions(max_nodes + 1, 0);
+		std::vector<uint64_t> divisor_weighted_sum(max_nodes + 1, 0);
+		multiset_partitions[0] = 1;
+		for (uint64_t order = 1; order < max_nodes; ++order) {
+			uint64_t weighted_sum = 0;
+			for (uint64_t divisor = 1; divisor * divisor <= order; ++divisor) {
+				if (order % divisor == 0) {
+					weighted_sum += divisor * trees_per_order[divisor];
+					const uint64_t complementary_divisor = order / divisor;
+					if (complementary_divisor != divisor)
+						weighted_sum += complementary_divisor * trees_per_order[complementary_divisor];
+				}
+			}
+			divisor_weighted_sum[order] = weighted_sum;
+
+			uint64_t sum = 0;
+			for (uint64_t term = 1; term <= order; ++term)
+				sum += divisor_weighted_sum[term] * multiset_partitions[order - term];
+			multiset_partitions[order] = sum / order;
+
+			trees_per_order[order + 1] = dimension * multiset_partitions[order];
+			total_trees += trees_per_order[order + 1];
+		}
+	}
+	return 1 + total_trees;
 }

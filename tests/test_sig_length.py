@@ -35,3 +35,34 @@ def test_log_sig_length():
     assert pysiglib.log_sig_length(9, 9) == 49212093
     assert pysiglib.log_sig_length(10, 10) == 1125217654
     assert pysiglib.log_sig_length(5, 12) == 26039187
+
+def test_branched_sig_length():
+    assert pysiglib.branched_sig_length(1, 1) == 1
+    assert pysiglib.branched_sig_length(2, 1) == 2
+    assert pysiglib.branched_sig_length(2, 2) == 6
+    assert pysiglib.branched_sig_length(2, 3) == 20
+    assert pysiglib.branched_sig_length(2, 4) == 72
+    assert pysiglib.branched_sig_length(3, 3) == 57
+    assert pysiglib.branched_sig_length(5, 5) == 19880
+
+def test_branched_sig_length_scalar_term():
+    assert pysiglib.branched_sig_length(0, 0, scalar_term=True) == 1
+    assert pysiglib.branched_sig_length(0, 1, scalar_term=True) == 1
+    assert pysiglib.branched_sig_length(1, 0, scalar_term=True) == 1
+    assert pysiglib.branched_sig_length(1, 1, scalar_term=True) == 2
+    assert pysiglib.branched_sig_length(2, 1, scalar_term=True) == 3
+    assert pysiglib.branched_sig_length(2, 2, scalar_term=True) == 7
+    assert pysiglib.branched_sig_length(2, 3, scalar_term=True) == 21
+    assert pysiglib.branched_sig_length(2, 4, scalar_term=True) == 73
+    assert pysiglib.branched_sig_length(3, 3, scalar_term=True) == 58
+    assert pysiglib.branched_sig_length(5, 5, scalar_term=True) == 19881
+
+def test_branched_sig_length_planar():
+    assert pysiglib.branched_sig_length(2, 3, planar=True) == 22
+    assert pysiglib.branched_sig_length(2, 4, planar=True) == 102
+    assert pysiglib.branched_sig_length(3, 3, planar=True) == 66
+
+def test_branched_sig_length_planar_scalar_term():
+    assert pysiglib.branched_sig_length(2, 3, planar=True, scalar_term=True) == 23
+    assert pysiglib.branched_sig_length(2, 4, planar=True, scalar_term=True) == 103
+    assert pysiglib.branched_sig_length(3, 3, planar=True, scalar_term=True) == 67

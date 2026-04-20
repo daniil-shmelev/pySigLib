@@ -1305,9 +1305,9 @@ public:
     TEST_CLASS(sigCombineDoubleTest)
     {
     public:
-        TEST_METHOD(PolyMultTestLinear)
+        TEST_METHOD(SigCombineTestLinear)
         {
-            // Test signatures of linear 2d paths (same as CPU PolyMultTestLinear)
+            // Test signatures of linear 2d paths (same as CPU SigCombineTestLinear)
             auto f = sig_combine_cuda_d;
             std::vector<double> poly = { 1., 1., 1., 1. / 2, 1. / 2, 1. / 2, 1. / 2 };
             std::vector<double> true_res = { 1., 2., 2., 2., 2., 2., 2. };
@@ -1315,9 +1315,9 @@ public:
             check_result_2_typed(f, poly, poly, true_res, (uint64_t)1, (uint64_t)2, (uint64_t)2, true);
         }
 
-        TEST_METHOD(PolyMultSigTest)
+        TEST_METHOD(SigCombineSigTest)
         {
-            // Same as CPU PolyMultSigTest: compute sigs of two sub-paths, combine,
+            // Same as CPU SigCombineSigTest: compute sigs of two sub-paths, combine,
             // and compare against sig of the concatenated path
             uint64_t dimension = 2, degree = 5;
             auto f = sig_combine_cuda_d;
@@ -1337,7 +1337,7 @@ public:
     TEST_CLASS(sigCombineFloatTest)
     {
     public:
-        TEST_METHOD(PolyMultTestLinear)
+        TEST_METHOD(SigCombineTestLinear)
         {
             auto f = sig_combine_cuda_f;
             std::vector<float> poly = { 1.f, 1.f, 1.f, 1.f / 2, 1.f / 2, 1.f / 2, 1.f / 2 };
@@ -1346,7 +1346,7 @@ public:
             check_result_2_typed(f, poly, poly, true_res, (uint64_t)1, (uint64_t)2, (uint64_t)2, true);
         }
 
-        TEST_METHOD(PolyMultSigTest)
+        TEST_METHOD(SigCombineSigTest)
         {
             uint64_t dimension = 2, degree = 5;
             auto f = sig_combine_cuda_f;
@@ -1365,9 +1365,9 @@ public:
     TEST_CLASS(batchSigCombineTest)
     {
     public:
-        TEST_METHOD(BatchPolyMultSigTest)
+        TEST_METHOD(BatchSigCombineSigTest)
         {
-            // Same as CPU BatchPolyMultSigTest
+            // Same as CPU BatchSigCombineSigTest
             uint64_t batch_size = 3, dimension = 2, degree = 2;
             auto f = sig_combine_cuda_d;
             std::vector<double> path1 = { 0., 0., 0.25, 0.25, 0.5, 0.5,
@@ -1387,7 +1387,7 @@ public:
             check_result_2_typed(f, poly1, poly2, true_sig, batch_size, dimension, (uint64_t)degree, true);
         }
 
-        TEST_METHOD(BatchPolyMultSigTestFloat)
+        TEST_METHOD(BatchSigCombineSigTestFloat)
         {
             uint64_t batch_size = 3, dimension = 2, degree = 2;
             auto f = sig_combine_cuda_f;
@@ -1408,9 +1408,9 @@ public:
             check_result_2_typed(f, poly1, poly2, true_sig, batch_size, dimension, (uint64_t)degree, true);
         }
 
-        TEST_METHOD(BatchPolyMultStressTest)
+        TEST_METHOD(BatchSigCombineStressTest)
         {
-            // Same as CPU BatchPolyMultStressTest: just check it doesn't crash/error
+            // Same as CPU BatchSigCombineStressTest: just check it doesn't crash/error
             uint64_t batch_size = 1000, dimension = 5, degree = 5;
             uint64_t total_len = batch_size * sig_length_(dimension, degree);
 
@@ -1428,7 +1428,7 @@ public:
             cudaFree(d_poly);
             cudaFree(d_out);
 
-            Assert::AreEqual(0, err, L"BatchPolyMultStressTest returned non-zero error code");
+            Assert::AreEqual(0, err, L"BatchSigCombineStressTest returned non-zero error code");
         }
     };
 

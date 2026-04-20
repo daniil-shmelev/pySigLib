@@ -207,7 +207,26 @@ public:
             Assert::AreEqual((uint64_t)0, log_sig_length(100, 100)); // overflow
         }
 
-        TEST_METHOD(PolyMultTestLinear)
+        TEST_METHOD(BranchedSigLengthTest)
+        {
+            Assert::AreEqual((uint64_t)1, branched_sig_length(0, 0));
+            Assert::AreEqual((uint64_t)1, branched_sig_length(0, 1));
+            Assert::AreEqual((uint64_t)1, branched_sig_length(1, 0));
+
+            Assert::AreEqual((uint64_t)2, branched_sig_length(1, 1));
+            Assert::AreEqual((uint64_t)3, branched_sig_length(2, 1));
+            Assert::AreEqual((uint64_t)7, branched_sig_length(2, 2));
+            Assert::AreEqual((uint64_t)21, branched_sig_length(2, 3));
+            Assert::AreEqual((uint64_t)73, branched_sig_length(2, 4));
+            Assert::AreEqual((uint64_t)58, branched_sig_length(3, 3));
+            Assert::AreEqual((uint64_t)19881, branched_sig_length(5, 5));
+
+            Assert::AreEqual((uint64_t)23, branched_sig_length(2, 3, true));
+            Assert::AreEqual((uint64_t)103, branched_sig_length(2, 4, true));
+            Assert::AreEqual((uint64_t)67, branched_sig_length(3, 3, true));
+        }
+
+        TEST_METHOD(SigCombineTestLinear)
         {
             // Test signatures of linear 2d paths
             auto f = sig_combine_d;
@@ -217,7 +236,7 @@ public:
             check_result_2(f, poly, poly, true_res, (uint64_t)1, 2, 2, true, 1);
         }
 
-        TEST_METHOD(PolyMultSigTest)
+        TEST_METHOD(SigCombineSigTest)
         {
             uint64_t dimension = 2, length = 4, degree = 5;
             auto f = sig_combine_d;
@@ -241,7 +260,7 @@ public:
             check_result_2(f, poly1, poly2, true_sig, (uint64_t)1, dimension, degree, true, 1);
         }
 
-        TEST_METHOD(BatchPolyMultSigTest)
+        TEST_METHOD(BatchSigCombineSigTest)
         {
             uint64_t batch_size = 3, dimension = 2, length = 4, degree = 2;
             auto f = sig_combine_d;
@@ -272,7 +291,7 @@ public:
             check_result_2(f, poly1, poly2, true_sig, batch_size, dimension, degree, true, -1);
         }
 
-        TEST_METHOD(BatchPolyMultStressTest)
+        TEST_METHOD(BatchSigCombineStressTest)
         {
             uint64_t batch_size = 1000, dimension = 5, degree = 5;
 

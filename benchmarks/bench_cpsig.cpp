@@ -469,6 +469,16 @@ BENCHMARK(BM_sig_kernel_backprop)->Unit(benchmark::kMicrosecond);
 // Branched sig / backprop / combine / combine_backprop
 // =========================================================================
 
+static void BM_branched_sig_length(benchmark::State& state) {
+    uint64_t blen = 0;
+    for (auto _ : state) {
+        blen ^= ::branched_sig_length(3, 8, false);
+        blen ^= ::branched_sig_length(3, 8, true);
+        benchmark::DoNotOptimize(blen);
+    }
+}
+BENCHMARK(BM_branched_sig_length)->Unit(benchmark::kMicrosecond);
+
 static void BM_branched_sig(benchmark::State& state) {
     check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
     const uint64_t blen = ::branched_sig_length(3, 4, false);
