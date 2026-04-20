@@ -8,6 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(".."))
 
+import importlib.util
 import subprocess
 
 
@@ -23,7 +24,15 @@ run_doxygen()
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-from pysiglib._version import __version__ as release
+# Load the version string directly from _version.py so we don't import the
+# pysiglib package here (which would require the CMake-built _config.py).
+_vspec = importlib.util.spec_from_file_location(
+    "_pysiglib_version",
+    os.path.join(os.path.dirname(__file__), "..", "pysiglib", "_version.py"),
+)
+_vmod = importlib.util.module_from_spec(_vspec)
+_vspec.loader.exec_module(_vmod)
+release = _vmod.__version__
 
 project = "pysiglib"
 copyright = "2026, Daniil Shmelev"
@@ -42,6 +51,10 @@ extensions = [
 ]
 
 autodoc_typehints = "none"
+
+# Read the Docs has no compiled cpsig.so or _config.py. Mock load_siglib so
+# autodoc can introspect the Python wrappers without trying to load native code.
+autodoc_mock_imports = ["pysiglib.load_siglib", "pysiglib._config"]
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
