@@ -15,6 +15,7 @@
 
 #include "CppUnitTest.h"
 #include "cusig.h"
+#include "cpsig.h"
 #include "cuda_runtime.h"
 #include <vector>
 #include <cmath>
@@ -2225,6 +2226,526 @@ public:
                     L": expected " + std::to_wstring(true_[i]) +
                     L" got " + std::to_wstring(out[i]);
                 Assert::IsTrue(std::abs(true_[i] - out[i]) < DOUBLE_EPSILON, msg.c_str());
+            }
+        }
+    };
+
+    TEST_CLASS(logSigCombineCudaTest) {
+    public:
+        TEST_METHOD(ChenIdentity) {
+            uint64_t dimension = 2, degree = 3;
+            (void)prepare_log_sig_cuda(dimension, degree, 2);
+
+            std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
+            std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
+            std::vector<double> path = { 0., 0., 1., 0.5, 0.4, 2., 6., 0.1, 2.3, 4.1 };
+
+            uint64_t slen = sig_length_(dimension, degree);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+
+            std::vector<double> sig1 = compute_sig_on_gpu(path1, dimension, (uint64_t)3, degree);
+            std::vector<double> sig2 = compute_sig_on_gpu(path2, dimension, (uint64_t)3, degree);
+            std::vector<double> sig_full = compute_sig_on_gpu(path, dimension, (uint64_t)5, degree);
+
+            double* d_sig = nullptr;
+            double* d_ls = nullptr;
+            cudaMalloc(&d_sig, sizeof(double) * slen);
+            cudaMalloc(&d_ls, sizeof(double) * ls_len);
+
+            cudaMemcpy(d_sig, sig1.data(), sizeof(double) * slen, cudaMemcpyHostToDevice);
+            int err = sig_to_log_sig_cuda_d(d_sig, d_ls, 1, dimension, degree, 2, true);
+            cudaDeviceSynchronize();
+            std::vector<double> ls1(ls_len);
+            cudaMemcpy(ls1.data(), d_ls, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"sig_to_log_sig_cuda_d failed for sig1");
+
+            cudaMemcpy(d_sig, sig2.data(), sizeof(double) * slen, cudaMemcpyHostToDevice);
+            err = sig_to_log_sig_cuda_d(d_sig, d_ls, 1, dimension, degree, 2, true);
+            cudaDeviceSynchronize();
+            std::vector<double> ls2(ls_len);
+            cudaMemcpy(ls2.data(), d_ls, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"sig_to_log_sig_cuda_d failed for sig2");
+
+            cudaMemcpy(d_sig, sig_full.data(), sizeof(double) * slen, cudaMemcpyHostToDevice);
+            err = sig_to_log_sig_cuda_d(d_sig, d_ls, 1, dimension, degree, 2, true);
+            cudaDeviceSynchronize();
+            std::vector<double> true_ls(ls_len);
+            cudaMemcpy(true_ls.data(), d_ls, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"sig_to_log_sig_cuda_d failed for full sig");
+
+            cudaFree(d_sig);
+            cudaFree(d_ls);
+
+            check_result_2_typed(log_sig_combine_cuda_d, ls1, ls2, true_ls, (uint64_t)1, dimension, (uint64_t)degree);
+        }
+
+        TEST_METHOD(BatchChenIdentity) {
+            uint64_t dimension = 2, degree = 3, batch_size = 2;
+            (void)prepare_log_sig_cuda(dimension, degree, 2);
+
+            std::vector<double> path1 = {
+                0., 0., 1., 0.5, 0.4, 2.,
+                0., 0., 0.25, 0.25, 0.5, 0.5 };
+            std::vector<double> path2 = {
+                0.4, 2., 6., 0.1, 2.3, 4.1,
+                0.5, 0.5, 1., 1., 0.75, 0.75 };
+            std::vector<double> path = {
+                0., 0., 1., 0.5, 0.4, 2., 6., 0.1, 2.3, 4.1,
+                0., 0., 0.25, 0.25, 0.5, 0.5, 1., 1., 0.75, 0.75 };
+
+            uint64_t slen = sig_length_(dimension, degree);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+            uint64_t total_slen = slen * batch_size;
+            uint64_t total_ls_len = ls_len * batch_size;
+
+            std::vector<double> sig1 = compute_batch_sig_on_gpu(path1, batch_size, dimension, (uint64_t)3, degree);
+            std::vector<double> sig2 = compute_batch_sig_on_gpu(path2, batch_size, dimension, (uint64_t)3, degree);
+            std::vector<double> sig_full = compute_batch_sig_on_gpu(path, batch_size, dimension, (uint64_t)5, degree);
+
+            double* d_sig = nullptr;
+            double* d_ls = nullptr;
+            cudaMalloc(&d_sig, sizeof(double) * total_slen);
+            cudaMalloc(&d_ls, sizeof(double) * total_ls_len);
+
+            cudaMemcpy(d_sig, sig1.data(), sizeof(double) * total_slen, cudaMemcpyHostToDevice);
+            int err = sig_to_log_sig_cuda_d(d_sig, d_ls, batch_size, dimension, degree, 2, true);
+            cudaDeviceSynchronize();
+            std::vector<double> ls1(total_ls_len);
+            cudaMemcpy(ls1.data(), d_ls, sizeof(double) * total_ls_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"sig_to_log_sig_cuda_d failed for batch sig1");
+
+            cudaMemcpy(d_sig, sig2.data(), sizeof(double) * total_slen, cudaMemcpyHostToDevice);
+            err = sig_to_log_sig_cuda_d(d_sig, d_ls, batch_size, dimension, degree, 2, true);
+            cudaDeviceSynchronize();
+            std::vector<double> ls2(total_ls_len);
+            cudaMemcpy(ls2.data(), d_ls, sizeof(double) * total_ls_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"sig_to_log_sig_cuda_d failed for batch sig2");
+
+            cudaMemcpy(d_sig, sig_full.data(), sizeof(double) * total_slen, cudaMemcpyHostToDevice);
+            err = sig_to_log_sig_cuda_d(d_sig, d_ls, batch_size, dimension, degree, 2, true);
+            cudaDeviceSynchronize();
+            std::vector<double> true_ls(total_ls_len);
+            cudaMemcpy(true_ls.data(), d_ls, sizeof(double) * total_ls_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"sig_to_log_sig_cuda_d failed for batch full sig");
+
+            cudaFree(d_sig);
+            cudaFree(d_ls);
+
+            check_result_2_typed(log_sig_combine_cuda_d, ls1, ls2, true_ls, batch_size, dimension, (uint64_t)degree);
+        }
+    };
+
+    TEST_CLASS(logSigCombineBackpropCudaTest) {
+    public:
+        TEST_METHOD(FiniteDifference) {
+            uint64_t dimension = 2, degree = 3;
+            (void)prepare_log_sig_cuda(dimension, degree, 2);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+
+            std::vector<double> ls1(ls_len);
+            std::vector<double> ls2(ls_len);
+            std::vector<double> upstream(ls_len);
+            for (uint64_t i = 0; i < ls_len; ++i) {
+                ls1[i] = 0.1 * (i + 1);
+                ls2[i] = 0.2 * (i + 1) - 0.5;
+                upstream[i] = 0.3 * (i + 1) - 1.;
+            }
+
+            double* d_upstream = nullptr;
+            double* d_ls1_gpu = nullptr;
+            double* d_ls2_gpu = nullptr;
+            double* d_grad1 = nullptr;
+            double* d_grad2 = nullptr;
+            cudaMalloc(&d_upstream, sizeof(double) * ls_len);
+            cudaMalloc(&d_ls1_gpu, sizeof(double) * ls_len);
+            cudaMalloc(&d_ls2_gpu, sizeof(double) * ls_len);
+            cudaMalloc(&d_grad1, sizeof(double) * ls_len);
+            cudaMalloc(&d_grad2, sizeof(double) * ls_len);
+
+            cudaMemcpy(d_upstream, upstream.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_ls1_gpu, ls1.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_ls2_gpu, ls2.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+
+            int err = log_sig_combine_backprop_cuda_d(d_upstream, d_grad1, d_grad2,
+                d_ls1_gpu, d_ls2_gpu, (uint64_t)1, dimension, degree);
+            cudaDeviceSynchronize();
+
+            std::vector<double> grad1(ls_len), grad2(ls_len);
+            cudaMemcpy(grad1.data(), d_grad1, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+            cudaMemcpy(grad2.data(), d_grad2, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+
+            cudaFree(d_upstream);
+            cudaFree(d_ls1_gpu);
+            cudaFree(d_ls2_gpu);
+            cudaFree(d_grad1);
+            cudaFree(d_grad2);
+
+            Assert::AreEqual(0, err, L"log_sig_combine_backprop_cuda_d failed");
+
+            double* d_a = nullptr;
+            double* d_b = nullptr;
+            double* d_fwd = nullptr;
+            cudaMalloc(&d_a, sizeof(double) * ls_len);
+            cudaMalloc(&d_b, sizeof(double) * ls_len);
+            cudaMalloc(&d_fwd, sizeof(double) * ls_len);
+
+            double eps = 1e-7;
+
+            cudaMemcpy(d_b, ls2.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+            for (uint64_t i = 0; i < 5 && i < ls_len; ++i) {
+                double orig = ls1[i];
+
+                ls1[i] = orig + eps;
+                cudaMemcpy(d_a, ls1.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+                (void)log_sig_combine_cuda_d(d_a, d_b, d_fwd, (uint64_t)1, dimension, degree);
+                cudaDeviceSynchronize();
+                std::vector<double> out_plus(ls_len);
+                cudaMemcpy(out_plus.data(), d_fwd, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+
+                ls1[i] = orig - eps;
+                cudaMemcpy(d_a, ls1.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+                (void)log_sig_combine_cuda_d(d_a, d_b, d_fwd, (uint64_t)1, dimension, degree);
+                cudaDeviceSynchronize();
+                std::vector<double> out_minus(ls_len);
+                cudaMemcpy(out_minus.data(), d_fwd, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+
+                ls1[i] = orig;
+
+                double numerical = 0.;
+                for (uint64_t j = 0; j < ls_len; ++j)
+                    numerical += upstream[j] * (out_plus[j] - out_minus[j]) / (2. * eps);
+                Assert::IsTrue(std::abs(numerical - grad1[i]) < 1e-4);
+            }
+
+            cudaMemcpy(d_a, ls1.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+            for (uint64_t i = 0; i < 5 && i < ls_len; ++i) {
+                double orig = ls2[i];
+
+                ls2[i] = orig + eps;
+                cudaMemcpy(d_b, ls2.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+                (void)log_sig_combine_cuda_d(d_a, d_b, d_fwd, (uint64_t)1, dimension, degree);
+                cudaDeviceSynchronize();
+                std::vector<double> out_plus(ls_len);
+                cudaMemcpy(out_plus.data(), d_fwd, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+
+                ls2[i] = orig - eps;
+                cudaMemcpy(d_b, ls2.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+                (void)log_sig_combine_cuda_d(d_a, d_b, d_fwd, (uint64_t)1, dimension, degree);
+                cudaDeviceSynchronize();
+                std::vector<double> out_minus(ls_len);
+                cudaMemcpy(out_minus.data(), d_fwd, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+
+                ls2[i] = orig;
+
+                double numerical = 0.;
+                for (uint64_t j = 0; j < ls_len; ++j)
+                    numerical += upstream[j] * (out_plus[j] - out_minus[j]) / (2. * eps);
+                Assert::IsTrue(std::abs(numerical - grad2[i]) < 1e-4);
+            }
+
+            cudaFree(d_a);
+            cudaFree(d_b);
+            cudaFree(d_fwd);
+        }
+
+        TEST_METHOD(ZeroDerivative) {
+            uint64_t dimension = 2, degree = 3;
+            (void)prepare_log_sig_cuda(dimension, degree, 2);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+
+            std::vector<double> ls1(ls_len);
+            std::vector<double> ls2(ls_len);
+            for (uint64_t i = 0; i < ls_len; ++i) {
+                ls1[i] = 0.1 * (i + 1);
+                ls2[i] = 0.2 * (i + 1) - 0.5;
+            }
+
+            std::vector<double> upstream(ls_len, 0.);
+
+            double* d_upstream = nullptr;
+            double* d_ls1_gpu = nullptr;
+            double* d_ls2_gpu = nullptr;
+            double* d_grad1 = nullptr;
+            double* d_grad2 = nullptr;
+            cudaMalloc(&d_upstream, sizeof(double) * ls_len);
+            cudaMalloc(&d_ls1_gpu, sizeof(double) * ls_len);
+            cudaMalloc(&d_ls2_gpu, sizeof(double) * ls_len);
+            cudaMalloc(&d_grad1, sizeof(double) * ls_len);
+            cudaMalloc(&d_grad2, sizeof(double) * ls_len);
+
+            cudaMemcpy(d_upstream, upstream.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_ls1_gpu, ls1.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_ls2_gpu, ls2.data(), sizeof(double) * ls_len, cudaMemcpyHostToDevice);
+
+            int err = log_sig_combine_backprop_cuda_d(d_upstream, d_grad1, d_grad2,
+                d_ls1_gpu, d_ls2_gpu, (uint64_t)1, dimension, degree);
+            cudaDeviceSynchronize();
+
+            std::vector<double> grad1(ls_len), grad2(ls_len);
+            cudaMemcpy(grad1.data(), d_grad1, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+            cudaMemcpy(grad2.data(), d_grad2, sizeof(double) * ls_len, cudaMemcpyDeviceToHost);
+
+            cudaFree(d_upstream);
+            cudaFree(d_ls1_gpu);
+            cudaFree(d_ls2_gpu);
+            cudaFree(d_grad1);
+            cudaFree(d_grad2);
+
+            Assert::AreEqual(0, err, L"log_sig_combine_backprop_cuda_d failed");
+
+            for (uint64_t i = 0; i < ls_len; ++i) {
+                Assert::IsTrue(std::abs(grad1[i]) < DOUBLE_EPSILON);
+                Assert::IsTrue(std::abs(grad2[i]) < DOUBLE_EPSILON);
+            }
+        }
+    };
+
+    TEST_CLASS(branchedSigCombineCudaTest) {
+    public:
+        TEST_METHOD(ChenIdentity) {
+            uint64_t dimension = 2, max_nodes = 3;
+            (void)prepare_branched_sig(dimension, max_nodes, false, false);
+            uint64_t bs_len = branched_sig_length(dimension, max_nodes);
+
+            std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
+            std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
+            std::vector<double> path = { 0., 0., 1., 0.5, 0.4, 2., 6., 0.1, 2.3, 4.1 };
+
+            double* d_path = nullptr;
+            double* d_bsig = nullptr;
+            cudaMalloc(&d_path, sizeof(double) * path.size());
+            cudaMalloc(&d_bsig, sizeof(double) * bs_len);
+
+            cudaMemcpy(d_path, path1.data(), sizeof(double) * path1.size(), cudaMemcpyHostToDevice);
+            int err = branched_sig_cuda_d(d_path, d_bsig, (uint64_t)1, dimension, (uint64_t)3, max_nodes);
+            cudaDeviceSynchronize();
+            std::vector<double> bsig1(bs_len);
+            cudaMemcpy(bsig1.data(), d_bsig, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"branched_sig_cuda_d failed for path1");
+
+            cudaMemcpy(d_path, path2.data(), sizeof(double) * path2.size(), cudaMemcpyHostToDevice);
+            err = branched_sig_cuda_d(d_path, d_bsig, (uint64_t)1, dimension, (uint64_t)3, max_nodes);
+            cudaDeviceSynchronize();
+            std::vector<double> bsig2(bs_len);
+            cudaMemcpy(bsig2.data(), d_bsig, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"branched_sig_cuda_d failed for path2");
+
+            cudaMemcpy(d_path, path.data(), sizeof(double) * path.size(), cudaMemcpyHostToDevice);
+            err = branched_sig_cuda_d(d_path, d_bsig, (uint64_t)1, dimension, (uint64_t)5, max_nodes);
+            cudaDeviceSynchronize();
+            std::vector<double> true_bsig(bs_len);
+            cudaMemcpy(true_bsig.data(), d_bsig, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"branched_sig_cuda_d failed for full path");
+
+            cudaFree(d_path);
+            cudaFree(d_bsig);
+
+            check_result_2_typed(branched_sig_combine_cuda_d, bsig1, bsig2, true_bsig,
+                (uint64_t)1, dimension, (uint64_t)max_nodes, false, true);
+        }
+    };
+
+    TEST_CLASS(branchedSigCombineBackpropCudaTest) {
+    public:
+        TEST_METHOD(FiniteDifference) {
+            uint64_t dimension = 2, max_nodes = 3;
+            (void)prepare_branched_sig(dimension, max_nodes, false, false);
+            uint64_t bs_len = branched_sig_length(dimension, max_nodes);
+
+            std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
+            std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
+
+            double* d_path = nullptr;
+            double* d_bsig_tmp = nullptr;
+            cudaMalloc(&d_path, sizeof(double) * 6);
+            cudaMalloc(&d_bsig_tmp, sizeof(double) * bs_len);
+
+            cudaMemcpy(d_path, path1.data(), sizeof(double) * 6, cudaMemcpyHostToDevice);
+            int err = branched_sig_cuda_d(d_path, d_bsig_tmp, (uint64_t)1, dimension, (uint64_t)3, max_nodes);
+            cudaDeviceSynchronize();
+            std::vector<double> bsig1(bs_len);
+            cudaMemcpy(bsig1.data(), d_bsig_tmp, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"branched_sig_cuda_d failed for path1");
+
+            cudaMemcpy(d_path, path2.data(), sizeof(double) * 6, cudaMemcpyHostToDevice);
+            err = branched_sig_cuda_d(d_path, d_bsig_tmp, (uint64_t)1, dimension, (uint64_t)3, max_nodes);
+            cudaDeviceSynchronize();
+            std::vector<double> bsig2(bs_len);
+            cudaMemcpy(bsig2.data(), d_bsig_tmp, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+            Assert::AreEqual(0, err, L"branched_sig_cuda_d failed for path2");
+
+            cudaFree(d_path);
+            cudaFree(d_bsig_tmp);
+
+            std::vector<double> derivs(bs_len);
+            for (uint64_t i = 0; i < bs_len; ++i)
+                derivs[i] = 0.3 * (i + 1) - 1.;
+
+            double* d_bsig1 = nullptr;
+            double* d_bsig2 = nullptr;
+            double* d_derivs = nullptr;
+            double* d_out1 = nullptr;
+            double* d_out2 = nullptr;
+            cudaMalloc(&d_bsig1, sizeof(double) * bs_len);
+            cudaMalloc(&d_bsig2, sizeof(double) * bs_len);
+            cudaMalloc(&d_derivs, sizeof(double) * bs_len);
+            cudaMalloc(&d_out1, sizeof(double) * bs_len);
+            cudaMalloc(&d_out2, sizeof(double) * bs_len);
+
+            cudaMemcpy(d_bsig1, bsig1.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_bsig2, bsig2.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_derivs, derivs.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+
+            err = branched_sig_combine_backprop_cuda_d(d_bsig1, d_bsig2, d_derivs,
+                d_out1, d_out2, (uint64_t)1, dimension, max_nodes, false, true);
+            cudaDeviceSynchronize();
+
+            std::vector<double> grad1(bs_len), grad2(bs_len);
+            cudaMemcpy(grad1.data(), d_out1, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+            cudaMemcpy(grad2.data(), d_out2, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+
+            cudaFree(d_bsig1);
+            cudaFree(d_bsig2);
+            cudaFree(d_derivs);
+            cudaFree(d_out1);
+            cudaFree(d_out2);
+
+            Assert::AreEqual(0, err, L"branched_sig_combine_backprop_cuda_d failed");
+
+            double* d_a = nullptr;
+            double* d_b = nullptr;
+            double* d_fwd = nullptr;
+            cudaMalloc(&d_a, sizeof(double) * bs_len);
+            cudaMalloc(&d_b, sizeof(double) * bs_len);
+            cudaMalloc(&d_fwd, sizeof(double) * bs_len);
+
+            double eps = 1e-7;
+
+            cudaMemcpy(d_b, bsig2.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+            for (uint64_t i = 0; i < 5 && i < bs_len; ++i) {
+                double orig = bsig1[i];
+
+                bsig1[i] = orig + eps;
+                cudaMemcpy(d_a, bsig1.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+                (void)branched_sig_combine_cuda_d(d_a, d_b, d_fwd,
+                    (uint64_t)1, dimension, max_nodes, false, true);
+                cudaDeviceSynchronize();
+                std::vector<double> out_plus(bs_len);
+                cudaMemcpy(out_plus.data(), d_fwd, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+
+                bsig1[i] = orig - eps;
+                cudaMemcpy(d_a, bsig1.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+                (void)branched_sig_combine_cuda_d(d_a, d_b, d_fwd,
+                    (uint64_t)1, dimension, max_nodes, false, true);
+                cudaDeviceSynchronize();
+                std::vector<double> out_minus(bs_len);
+                cudaMemcpy(out_minus.data(), d_fwd, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+
+                bsig1[i] = orig;
+
+                double numerical = 0.;
+                for (uint64_t j = 0; j < bs_len; ++j)
+                    numerical += derivs[j] * (out_plus[j] - out_minus[j]) / (2. * eps);
+                Assert::IsTrue(std::abs(numerical - grad1[i]) < 1e-4);
+            }
+
+            cudaMemcpy(d_a, bsig1.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+            for (uint64_t i = 0; i < 5 && i < bs_len; ++i) {
+                double orig = bsig2[i];
+
+                bsig2[i] = orig + eps;
+                cudaMemcpy(d_b, bsig2.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+                (void)branched_sig_combine_cuda_d(d_a, d_b, d_fwd,
+                    (uint64_t)1, dimension, max_nodes, false, true);
+                cudaDeviceSynchronize();
+                std::vector<double> out_plus(bs_len);
+                cudaMemcpy(out_plus.data(), d_fwd, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+
+                bsig2[i] = orig - eps;
+                cudaMemcpy(d_b, bsig2.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+                (void)branched_sig_combine_cuda_d(d_a, d_b, d_fwd,
+                    (uint64_t)1, dimension, max_nodes, false, true);
+                cudaDeviceSynchronize();
+                std::vector<double> out_minus(bs_len);
+                cudaMemcpy(out_minus.data(), d_fwd, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+
+                bsig2[i] = orig;
+
+                double numerical = 0.;
+                for (uint64_t j = 0; j < bs_len; ++j)
+                    numerical += derivs[j] * (out_plus[j] - out_minus[j]) / (2. * eps);
+                Assert::IsTrue(std::abs(numerical - grad2[i]) < 1e-4);
+            }
+
+            cudaFree(d_a);
+            cudaFree(d_b);
+            cudaFree(d_fwd);
+        }
+
+        TEST_METHOD(ZeroDerivative) {
+            uint64_t dimension = 2, max_nodes = 3;
+            (void)prepare_branched_sig(dimension, max_nodes, false, false);
+            uint64_t bs_len = branched_sig_length(dimension, max_nodes);
+
+            std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
+            std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
+
+            double* d_path = nullptr;
+            double* d_bsig_tmp = nullptr;
+            cudaMalloc(&d_path, sizeof(double) * 6);
+            cudaMalloc(&d_bsig_tmp, sizeof(double) * bs_len);
+
+            cudaMemcpy(d_path, path1.data(), sizeof(double) * 6, cudaMemcpyHostToDevice);
+            (void)branched_sig_cuda_d(d_path, d_bsig_tmp, (uint64_t)1, dimension, (uint64_t)3, max_nodes);
+            cudaDeviceSynchronize();
+            std::vector<double> bsig1(bs_len);
+            cudaMemcpy(bsig1.data(), d_bsig_tmp, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+
+            cudaMemcpy(d_path, path2.data(), sizeof(double) * 6, cudaMemcpyHostToDevice);
+            (void)branched_sig_cuda_d(d_path, d_bsig_tmp, (uint64_t)1, dimension, (uint64_t)3, max_nodes);
+            cudaDeviceSynchronize();
+            std::vector<double> bsig2(bs_len);
+            cudaMemcpy(bsig2.data(), d_bsig_tmp, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+
+            cudaFree(d_path);
+            cudaFree(d_bsig_tmp);
+
+            std::vector<double> derivs(bs_len, 0.);
+
+            double* d_bsig1 = nullptr;
+            double* d_bsig2 = nullptr;
+            double* d_derivs = nullptr;
+            double* d_out1 = nullptr;
+            double* d_out2 = nullptr;
+            cudaMalloc(&d_bsig1, sizeof(double) * bs_len);
+            cudaMalloc(&d_bsig2, sizeof(double) * bs_len);
+            cudaMalloc(&d_derivs, sizeof(double) * bs_len);
+            cudaMalloc(&d_out1, sizeof(double) * bs_len);
+            cudaMalloc(&d_out2, sizeof(double) * bs_len);
+
+            cudaMemcpy(d_bsig1, bsig1.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_bsig2, bsig2.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_derivs, derivs.data(), sizeof(double) * bs_len, cudaMemcpyHostToDevice);
+
+            int err = branched_sig_combine_backprop_cuda_d(d_bsig1, d_bsig2, d_derivs,
+                d_out1, d_out2, (uint64_t)1, dimension, max_nodes, false, true);
+            cudaDeviceSynchronize();
+
+            std::vector<double> out1(bs_len), out2(bs_len);
+            cudaMemcpy(out1.data(), d_out1, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+            cudaMemcpy(out2.data(), d_out2, sizeof(double) * bs_len, cudaMemcpyDeviceToHost);
+
+            cudaFree(d_bsig1);
+            cudaFree(d_bsig2);
+            cudaFree(d_derivs);
+            cudaFree(d_out1);
+            cudaFree(d_out2);
+
+            Assert::AreEqual(0, err, L"branched_sig_combine_backprop_cuda_d failed");
+
+            for (uint64_t i = 0; i < bs_len; ++i) {
+                Assert::IsTrue(std::abs(out1[i]) < DOUBLE_EPSILON);
+                Assert::IsTrue(std::abs(out2[i]) < DOUBLE_EPSILON);
             }
         }
     };

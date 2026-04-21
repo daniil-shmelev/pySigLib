@@ -2270,5 +2270,366 @@ public:
             check_result(logsig_to_sig_d, log_sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
     };
+
+    TEST_CLASS(logSigCombineTest) {
+    public:
+        TEST_METHOD(ChenIdentity) {
+            uint64_t dimension = 2, degree = 3;
+            (void)prepare_log_sig(dimension, degree, 2, false);
+
+            std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
+            std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
+            std::vector<double> path = { 0., 0., 1., 0.5, 0.4, 2., 6., 0.1, 2.3, 4.1 };
+
+            uint64_t s_len = sig_length(dimension, degree);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+
+            std::vector<double> sig1(s_len);
+            (void)signature_d(path1.data(), sig1.data(), (uint64_t)1, dimension, 3, degree);
+            std::vector<double> ls1(ls_len);
+            (void)sig_to_log_sig_d(sig1.data(), ls1.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
+
+            std::vector<double> sig2(s_len);
+            (void)signature_d(path2.data(), sig2.data(), (uint64_t)1, dimension, 3, degree);
+            std::vector<double> ls2(ls_len);
+            (void)sig_to_log_sig_d(sig2.data(), ls2.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
+
+            std::vector<double> sig_full(s_len);
+            (void)signature_d(path.data(), sig_full.data(), (uint64_t)1, dimension, 5, degree);
+            std::vector<double> true_ls(ls_len);
+            (void)sig_to_log_sig_d(sig_full.data(), true_ls.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
+
+            check_result_2(log_sig_combine_d, ls1, ls2, true_ls, (uint64_t)1, dimension, degree, 1);
+        }
+
+        TEST_METHOD(ChenIdentityHighDeg) {
+            uint64_t dimension = 3, degree = 5;
+            (void)prepare_log_sig(dimension, degree, 2, false);
+
+            std::vector<double> path1 = { 0., 0., 0., 1., 0.5, 0.3, 0.4, 2., 1.5 };
+            std::vector<double> path2 = { 0.4, 2., 1.5, 6., 0.1, 0.8, 2.3, 4.1, 3.2 };
+            std::vector<double> path = { 0., 0., 0., 1., 0.5, 0.3, 0.4, 2., 1.5, 6., 0.1, 0.8, 2.3, 4.1, 3.2 };
+
+            uint64_t s_len = sig_length(dimension, degree);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+
+            std::vector<double> sig1(s_len);
+            (void)signature_d(path1.data(), sig1.data(), (uint64_t)1, dimension, 3, degree);
+            std::vector<double> ls1(ls_len);
+            (void)sig_to_log_sig_d(sig1.data(), ls1.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
+
+            std::vector<double> sig2(s_len);
+            (void)signature_d(path2.data(), sig2.data(), (uint64_t)1, dimension, 3, degree);
+            std::vector<double> ls2(ls_len);
+            (void)sig_to_log_sig_d(sig2.data(), ls2.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
+
+            std::vector<double> sig_full(s_len);
+            (void)signature_d(path.data(), sig_full.data(), (uint64_t)1, dimension, 5, degree);
+            std::vector<double> true_ls(ls_len);
+            (void)sig_to_log_sig_d(sig_full.data(), true_ls.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
+
+            check_result_2(log_sig_combine_d, ls1, ls2, true_ls, (uint64_t)1, dimension, degree, 1);
+        }
+
+        TEST_METHOD(BatchChenIdentity) {
+            uint64_t dimension = 2, degree = 3, batch_size = 2;
+            (void)prepare_log_sig(dimension, degree, 2, false);
+
+            std::vector<double> path1 = {
+                0., 0., 1., 0.5, 0.4, 2.,
+                0., 0., 0.25, 0.25, 0.5, 0.5 };
+            std::vector<double> path2 = {
+                0.4, 2., 6., 0.1, 2.3, 4.1,
+                0.5, 0.5, 1., 1., 0.75, 0.75 };
+            std::vector<double> path = {
+                0., 0., 1., 0.5, 0.4, 2., 6., 0.1, 2.3, 4.1,
+                0., 0., 0.25, 0.25, 0.5, 0.5, 1., 1., 0.75, 0.75 };
+
+            uint64_t s_len = sig_length(dimension, degree);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+
+            std::vector<double> sig1(s_len * batch_size);
+            (void)signature_d(path1.data(), sig1.data(), batch_size, dimension, 3, degree);
+            std::vector<double> ls1(ls_len * batch_size);
+            (void)sig_to_log_sig_d(sig1.data(), ls1.data(), batch_size, dimension, degree, false, false, 2, true, 1);
+
+            std::vector<double> sig2(s_len * batch_size);
+            (void)signature_d(path2.data(), sig2.data(), batch_size, dimension, 3, degree);
+            std::vector<double> ls2(ls_len * batch_size);
+            (void)sig_to_log_sig_d(sig2.data(), ls2.data(), batch_size, dimension, degree, false, false, 2, true, 1);
+
+            std::vector<double> sig_full(s_len * batch_size);
+            (void)signature_d(path.data(), sig_full.data(), batch_size, dimension, 5, degree);
+            std::vector<double> true_ls(ls_len * batch_size);
+            (void)sig_to_log_sig_d(sig_full.data(), true_ls.data(), batch_size, dimension, degree, false, false, 2, true, 1);
+
+            check_result_2(log_sig_combine_d, ls1, ls2, true_ls, batch_size, dimension, degree, 1);
+        }
+
+        TEST_METHOD(IdentityElement) {
+            uint64_t dimension = 2, degree = 3;
+            (void)prepare_log_sig(dimension, degree, 2, false);
+
+            uint64_t s_len = sig_length(dimension, degree);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+
+            std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
+            std::vector<double> sig1(s_len);
+            (void)signature_d(path1.data(), sig1.data(), (uint64_t)1, dimension, 3, degree);
+            std::vector<double> ls1(ls_len);
+            (void)sig_to_log_sig_d(sig1.data(), ls1.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
+
+            std::vector<double> zero_ls(ls_len, 0.);
+
+            check_result_2(log_sig_combine_d, zero_ls, ls1, ls1, (uint64_t)1, dimension, degree, 1);
+            check_result_2(log_sig_combine_d, ls1, zero_ls, ls1, (uint64_t)1, dimension, degree, 1);
+        }
+    };
+
+    TEST_CLASS(logSigCombineBackpropTest) {
+    public:
+        TEST_METHOD(FiniteDifference) {
+            uint64_t dimension = 2, degree = 3;
+            (void)prepare_log_sig(dimension, degree, 2, false);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+
+            std::vector<double> ls1(ls_len);
+            std::vector<double> ls2(ls_len);
+            std::vector<double> d_out(ls_len);
+            for (uint64_t i = 0; i < ls_len; ++i) {
+                ls1[i] = 0.1 * (i + 1);
+                ls2[i] = 0.2 * (i + 1) - 0.5;
+                d_out[i] = 0.3 * (i + 1) - 1.;
+            }
+
+            std::vector<double> d_ls1(ls_len);
+            std::vector<double> d_ls2(ls_len);
+            (void)log_sig_combine_backprop_d(d_out.data(), d_ls1.data(), d_ls2.data(),
+                ls1.data(), ls2.data(), (uint64_t)1, dimension, degree, 1);
+
+            double eps = 1e-7;
+            for (uint64_t i = 0; i < 5 && i < ls_len; ++i) {
+                double orig = ls1[i];
+                ls1[i] = orig + eps;
+                std::vector<double> out_plus(ls_len);
+                (void)log_sig_combine_d(ls1.data(), ls2.data(), out_plus.data(), (uint64_t)1, dimension, degree, 1);
+                ls1[i] = orig - eps;
+                std::vector<double> out_minus(ls_len);
+                (void)log_sig_combine_d(ls1.data(), ls2.data(), out_minus.data(), (uint64_t)1, dimension, degree, 1);
+                ls1[i] = orig;
+
+                double numerical = 0.;
+                for (uint64_t j = 0; j < ls_len; ++j)
+                    numerical += d_out[j] * (out_plus[j] - out_minus[j]) / (2. * eps);
+                Assert::IsTrue(abs(numerical - d_ls1[i]) < 1e-4);
+            }
+
+            for (uint64_t i = 0; i < 5 && i < ls_len; ++i) {
+                double orig = ls2[i];
+                ls2[i] = orig + eps;
+                std::vector<double> out_plus(ls_len);
+                (void)log_sig_combine_d(ls1.data(), ls2.data(), out_plus.data(), (uint64_t)1, dimension, degree, 1);
+                ls2[i] = orig - eps;
+                std::vector<double> out_minus(ls_len);
+                (void)log_sig_combine_d(ls1.data(), ls2.data(), out_minus.data(), (uint64_t)1, dimension, degree, 1);
+                ls2[i] = orig;
+
+                double numerical = 0.;
+                for (uint64_t j = 0; j < ls_len; ++j)
+                    numerical += d_out[j] * (out_plus[j] - out_minus[j]) / (2. * eps);
+                Assert::IsTrue(abs(numerical - d_ls2[i]) < 1e-4);
+            }
+        }
+
+        TEST_METHOD(ZeroDerivative) {
+            uint64_t dimension = 2, degree = 3;
+            (void)prepare_log_sig(dimension, degree, 2, false);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+
+            std::vector<double> ls1(ls_len);
+            std::vector<double> ls2(ls_len);
+            for (uint64_t i = 0; i < ls_len; ++i) {
+                ls1[i] = 0.1 * (i + 1);
+                ls2[i] = 0.2 * (i + 1) - 0.5;
+            }
+
+            std::vector<double> d_out(ls_len, 0.);
+            std::vector<double> d_ls1(ls_len);
+            std::vector<double> d_ls2(ls_len);
+            (void)log_sig_combine_backprop_d(d_out.data(), d_ls1.data(), d_ls2.data(),
+                ls1.data(), ls2.data(), (uint64_t)1, dimension, degree, 1);
+
+            for (uint64_t i = 0; i < ls_len; ++i) {
+                Assert::IsTrue(abs(d_ls1[i]) < DOUBLE_EPSILON);
+                Assert::IsTrue(abs(d_ls2[i]) < DOUBLE_EPSILON);
+            }
+        }
+
+        TEST_METHOD(BatchFiniteDifference) {
+            uint64_t dimension = 2, degree = 3, batch_size = 2;
+            (void)prepare_log_sig(dimension, degree, 2, false);
+            uint64_t ls_len = log_sig_length(dimension, degree);
+
+            std::vector<double> ls1(ls_len * batch_size);
+            std::vector<double> ls2(ls_len * batch_size);
+            std::vector<double> d_out(ls_len * batch_size);
+            for (uint64_t i = 0; i < ls_len * batch_size; ++i) {
+                ls1[i] = 0.1 * (i + 1);
+                ls2[i] = 0.2 * (i + 1) - 0.5;
+                d_out[i] = 0.3 * (i + 1) - 1.;
+            }
+
+            std::vector<double> d_ls1_serial(ls_len * batch_size);
+            std::vector<double> d_ls2_serial(ls_len * batch_size);
+            (void)log_sig_combine_backprop_d(d_out.data(), d_ls1_serial.data(), d_ls2_serial.data(),
+                ls1.data(), ls2.data(), batch_size, dimension, degree, 1);
+
+            std::vector<double> d_ls1_parallel(ls_len * batch_size);
+            std::vector<double> d_ls2_parallel(ls_len * batch_size);
+            (void)log_sig_combine_backprop_d(d_out.data(), d_ls1_parallel.data(), d_ls2_parallel.data(),
+                ls1.data(), ls2.data(), batch_size, dimension, degree, -1);
+
+            for (uint64_t i = 0; i < ls_len * batch_size; ++i) {
+                Assert::IsTrue(abs(d_ls1_serial[i] - d_ls1_parallel[i]) < DOUBLE_EPSILON);
+                Assert::IsTrue(abs(d_ls2_serial[i] - d_ls2_parallel[i]) < DOUBLE_EPSILON);
+            }
+        }
+    };
+
+    TEST_CLASS(branchedSigCombineTest) {
+    public:
+        TEST_METHOD(ChenIdentity) {
+            uint64_t dimension = 2, max_nodes = 3;
+            (void)prepare_branched_sig(dimension, max_nodes, false, false);
+
+            std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
+            std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
+            std::vector<double> path = { 0., 0., 1., 0.5, 0.4, 2., 6., 0.1, 2.3, 4.1 };
+
+            uint64_t bs_len = branched_sig_length(dimension, max_nodes);
+
+            std::vector<double> bsig1(bs_len);
+            (void)branched_sig_d(path1.data(), bsig1.data(), (uint64_t)1, dimension, 3, max_nodes, 1);
+
+            std::vector<double> bsig2(bs_len);
+            (void)branched_sig_d(path2.data(), bsig2.data(), (uint64_t)1, dimension, 3, max_nodes, 1);
+
+            std::vector<double> true_bsig(bs_len);
+            (void)branched_sig_d(path.data(), true_bsig.data(), (uint64_t)1, dimension, 5, max_nodes, 1);
+
+            check_result_2(branched_sig_combine_d, bsig1, bsig2, true_bsig, (uint64_t)1, dimension, max_nodes, 1, false, true);
+        }
+
+        TEST_METHOD(BatchChenIdentity) {
+            uint64_t dimension = 2, max_nodes = 3, batch_size = 2;
+            (void)prepare_branched_sig(dimension, max_nodes, false, false);
+
+            std::vector<double> path1 = {
+                0., 0., 1., 0.5, 0.4, 2.,
+                0., 0., 0.25, 0.25, 0.5, 0.5 };
+            std::vector<double> path2 = {
+                0.4, 2., 6., 0.1, 2.3, 4.1,
+                0.5, 0.5, 1., 1., 0.75, 0.75 };
+            std::vector<double> path = {
+                0., 0., 1., 0.5, 0.4, 2., 6., 0.1, 2.3, 4.1,
+                0., 0., 0.25, 0.25, 0.5, 0.5, 1., 1., 0.75, 0.75 };
+
+            uint64_t bs_len = branched_sig_length(dimension, max_nodes);
+
+            std::vector<double> bsig1(bs_len * batch_size);
+            (void)branched_sig_d(path1.data(), bsig1.data(), batch_size, dimension, 3, max_nodes, 1);
+
+            std::vector<double> bsig2(bs_len * batch_size);
+            (void)branched_sig_d(path2.data(), bsig2.data(), batch_size, dimension, 3, max_nodes, 1);
+
+            std::vector<double> true_bsig(bs_len * batch_size);
+            (void)branched_sig_d(path.data(), true_bsig.data(), batch_size, dimension, 5, max_nodes, 1);
+
+            check_result_2(branched_sig_combine_d, bsig1, bsig2, true_bsig, batch_size, dimension, max_nodes, 1, false, true);
+        }
+    };
+
+    TEST_CLASS(branchedSigCombineBackpropTest) {
+    public:
+        TEST_METHOD(FiniteDifference) {
+            uint64_t dimension = 2, max_nodes = 3;
+            (void)prepare_branched_sig(dimension, max_nodes, false, false);
+            uint64_t bs_len = branched_sig_length(dimension, max_nodes);
+
+            std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
+            std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
+
+            std::vector<double> bsig1(bs_len);
+            (void)branched_sig_d(path1.data(), bsig1.data(), (uint64_t)1, dimension, 3, max_nodes, 1);
+            std::vector<double> bsig2(bs_len);
+            (void)branched_sig_d(path2.data(), bsig2.data(), (uint64_t)1, dimension, 3, max_nodes, 1);
+
+            std::vector<double> derivs(bs_len);
+            for (uint64_t i = 0; i < bs_len; ++i)
+                derivs[i] = 0.3 * (i + 1) - 1.;
+
+            std::vector<double> d_bsig1(bs_len);
+            std::vector<double> d_bsig2(bs_len);
+            (void)branched_sig_combine_backprop_d(bsig1.data(), bsig2.data(), derivs.data(),
+                d_bsig1.data(), d_bsig2.data(), (uint64_t)1, dimension, max_nodes, 1, false, true);
+
+            double eps = 1e-7;
+            for (uint64_t i = 0; i < 5 && i < bs_len; ++i) {
+                double orig = bsig1[i];
+                bsig1[i] = orig + eps;
+                std::vector<double> out_plus(bs_len);
+                (void)branched_sig_combine_d(bsig1.data(), bsig2.data(), out_plus.data(), (uint64_t)1, dimension, max_nodes, 1, false, true);
+                bsig1[i] = orig - eps;
+                std::vector<double> out_minus(bs_len);
+                (void)branched_sig_combine_d(bsig1.data(), bsig2.data(), out_minus.data(), (uint64_t)1, dimension, max_nodes, 1, false, true);
+                bsig1[i] = orig;
+
+                double numerical = 0.;
+                for (uint64_t j = 0; j < bs_len; ++j)
+                    numerical += derivs[j] * (out_plus[j] - out_minus[j]) / (2. * eps);
+                Assert::IsTrue(abs(numerical - d_bsig1[i]) < 1e-4);
+            }
+
+            for (uint64_t i = 0; i < 5 && i < bs_len; ++i) {
+                double orig = bsig2[i];
+                bsig2[i] = orig + eps;
+                std::vector<double> out_plus(bs_len);
+                (void)branched_sig_combine_d(bsig1.data(), bsig2.data(), out_plus.data(), (uint64_t)1, dimension, max_nodes, 1, false, true);
+                bsig2[i] = orig - eps;
+                std::vector<double> out_minus(bs_len);
+                (void)branched_sig_combine_d(bsig1.data(), bsig2.data(), out_minus.data(), (uint64_t)1, dimension, max_nodes, 1, false, true);
+                bsig2[i] = orig;
+
+                double numerical = 0.;
+                for (uint64_t j = 0; j < bs_len; ++j)
+                    numerical += derivs[j] * (out_plus[j] - out_minus[j]) / (2. * eps);
+                Assert::IsTrue(abs(numerical - d_bsig2[i]) < 1e-4);
+            }
+        }
+
+        TEST_METHOD(ZeroDerivative) {
+            uint64_t dimension = 2, max_nodes = 3;
+            (void)prepare_branched_sig(dimension, max_nodes, false, false);
+            uint64_t bs_len = branched_sig_length(dimension, max_nodes);
+
+            std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
+            std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
+            std::vector<double> bsig1(bs_len);
+            (void)branched_sig_d(path1.data(), bsig1.data(), (uint64_t)1, dimension, 3, max_nodes, 1);
+            std::vector<double> bsig2(bs_len);
+            (void)branched_sig_d(path2.data(), bsig2.data(), (uint64_t)1, dimension, 3, max_nodes, 1);
+
+            std::vector<double> derivs(bs_len, 0.);
+            std::vector<double> out1(bs_len);
+            std::vector<double> out2(bs_len);
+            (void)branched_sig_combine_backprop_d(bsig1.data(), bsig2.data(), derivs.data(),
+                out1.data(), out2.data(), (uint64_t)1, dimension, max_nodes, 1, false, true);
+
+            for (uint64_t i = 0; i < bs_len; ++i) {
+                Assert::IsTrue(abs(out1[i]) < DOUBLE_EPSILON);
+                Assert::IsTrue(abs(out2[i]) < DOUBLE_EPSILON);
+            }
+        }
+    };
 }
 //TODO: add tests for transform_path
