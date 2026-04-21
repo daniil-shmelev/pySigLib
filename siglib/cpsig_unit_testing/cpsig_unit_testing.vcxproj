@@ -35,6 +35,7 @@
     <ClInclude Include="..\cpsig\multithreading.h" />
     <ClInclude Include="..\cpsig\sparse.h" />
     <ClInclude Include="..\cpsig\words.h" />
+    <ClInclude Include="cp_test_helpers.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cpsig\cppch.cpp" />
@@ -52,7 +53,12 @@
     <ClCompile Include="..\cpsig\cp_utils.cpp" />
     <ClCompile Include="..\cpsig\log_sig_cache.cpp" />
     <ClCompile Include="..\cpsig\words.cpp" />
-    <ClCompile Include="cp_unit_tests.cpp" />
+    <ClCompile Include="cp_test_misc.cpp" />
+    <ClCompile Include="cp_test_signature.cpp" />
+    <ClCompile Include="cp_test_sig_coef.cpp" />
+    <ClCompile Include="cp_test_log_sig.cpp" />
+    <ClCompile Include="cp_test_sig_kernel.cpp" />
+    <ClCompile Include="cp_test_branched.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

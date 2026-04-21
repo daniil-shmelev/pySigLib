@@ -93,6 +93,9 @@
     <ClInclude Include="..\cpsig\words.h">
       <Filter>Header Files\cpsig</Filter>
     </ClInclude>
+    <ClInclude Include="cp_test_helpers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cpsig\cppch.cpp">
@@ -140,7 +143,22 @@
     <ClCompile Include="..\cpsig\words.cpp">
       <Filter>Source Files\cpsig</Filter>
     </ClCompile>
-    <ClCompile Include="cp_unit_tests.cpp">
+    <ClCompile Include="cp_test_misc.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_test_signature.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_test_sig_coef.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_test_log_sig.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_test_sig_kernel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cp_test_branched.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

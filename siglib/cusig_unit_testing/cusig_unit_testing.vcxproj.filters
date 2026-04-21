@@ -66,6 +66,9 @@
     <ClInclude Include="..\cusig\cu_utils.h">
       <Filter>Header Files\cusig</Filter>
     </ClInclude>
+    <ClInclude Include="cu_test_helpers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cusig\cupch.cpp">
@@ -74,7 +77,22 @@
     <ClCompile Include="..\cusig\cu_exp_host.cpp">
       <Filter>Source Files\cusig</Filter>
     </ClCompile>
-    <ClCompile Include="cu_unit_tests.cpp">
+    <ClCompile Include="cu_test_signature.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cu_test_sig_backprop.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cu_test_sig_kernel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cu_test_log_sig.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cu_test_sig_coef.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cu_test_branched.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

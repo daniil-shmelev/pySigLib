@@ -26,11 +26,17 @@
     <ClInclude Include="..\cusig\cu_sig_kernel.h" />
     <ClInclude Include="..\cusig\cu_signature.h" />
     <ClInclude Include="..\cusig\cu_utils.h" />
+    <ClInclude Include="cu_test_helpers.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\cusig\cupch.cpp" />
     <ClCompile Include="..\cusig\cu_exp_host.cpp" />
-    <ClCompile Include="cu_unit_tests.cpp" />
+    <ClCompile Include="cu_test_signature.cpp" />
+    <ClCompile Include="cu_test_sig_backprop.cpp" />
+    <ClCompile Include="cu_test_sig_kernel.cpp" />
+    <ClCompile Include="cu_test_log_sig.cpp" />
+    <ClCompile Include="cu_test_sig_coef.cpp" />
+    <ClCompile Include="cu_test_branched.cpp" />
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="..\cusig\cu_branched_signature.cu" />
