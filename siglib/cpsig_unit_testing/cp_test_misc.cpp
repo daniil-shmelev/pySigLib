@@ -351,6 +351,55 @@ public:
 #endif
     };
 
+    TEST_CLASS(transformPathForwardTest) {
+    public:
+
+        TEST_METHOD(TimeAugTest) {
+            auto f = transform_path_d;
+            uint64_t dimension = 2, length = 3;
+            std::vector<double> input = {0., 0., 1., 2., 3., 4.};
+            std::vector<double> true_ = {0., 0., 0., 1., 2., 0.5, 3., 4., 1.};
+            check_result(f, input, true_, (uint64_t)1, (uint64_t)2, (uint64_t)3, true, false, 1., 1);
+        }
+
+        TEST_METHOD(TimeAugCustomEndTime) {
+            auto f = transform_path_d;
+            uint64_t dimension = 2, length = 3;
+            std::vector<double> input = {0., 0., 1., 2., 3., 4.};
+            std::vector<double> true_ = {0., 0., 0., 1., 2., 1., 3., 4., 2.};
+            check_result(f, input, true_, (uint64_t)1, (uint64_t)2, (uint64_t)3, true, false, 2., 1);
+        }
+
+        TEST_METHOD(LeadLagTest) {
+            auto f = transform_path_d;
+            uint64_t dimension = 2, length = 3;
+            std::vector<double> input = {1., 2., 3., 4., 5., 6.};
+            std::vector<double> true_ = {1.,2.,1.,2., 1.,2.,3.,4., 3.,4.,3.,4., 3.,4.,5.,6., 5.,6.,5.,6.};
+            check_result(f, input, true_, (uint64_t)1, (uint64_t)2, (uint64_t)3, false, true, 1., 1);
+        }
+
+        TEST_METHOD(TimeAugLeadLagTest) {
+            auto f = transform_path_d;
+            uint64_t dimension = 2, length = 3;
+            std::vector<double> input = {1., 2., 3., 4., 5., 6.};
+            // lead_lag first (dim 2->4, len 3->5), then time_aug (dim 4->5, len 5)
+            std::vector<double> true_ = {1.,2.,1.,2.,0., 1.,2.,3.,4.,0.25,
+                3.,4.,3.,4.,0.5, 3.,4.,5.,6.,0.75, 5.,6.,5.,6.,1.};
+            check_result(f, input, true_, (uint64_t)1, (uint64_t)2, (uint64_t)3, true, true, 1., 1);
+        }
+
+        TEST_METHOD(BatchTimeAugTest) {
+            auto f = transform_path_d;
+            uint64_t batch_size = 2, dimension = 2, length = 3;
+            std::vector<double> input = {0., 0., 1., 2., 3., 4.,
+                                          5., 6., 7., 8., 9., 10.};
+            uint64_t out_size = batch_size * (dimension + 1) * length;
+            std::vector<double> true_(out_size);
+            f(input.data(), true_.data(), batch_size, dimension, length, true, false, 1., 1);
+            check_result(f, input, true_, batch_size, dimension, length, true, false, 1., -1);
+        }
+    };
+
     TEST_CLASS(transformPathBackprop) {
     public:
 
@@ -393,6 +442,18 @@ public:
             std::vector<double> derivs((2 * dimension + 1) * (2 * length - 1), 1.);
             std::vector<double> true_ = { 3., 3., 4., 4., 3., 3. };
             check_result(f, derivs, true_, (uint64_t)1, dimension, length, true, true, 1., 1);
+        }
+
+        TEST_METHOD(BatchLeadLagTest) {
+            auto f = transform_path_backprop_d;
+            uint64_t batch_size = 2, dimension = 2, length = 3;
+            std::vector<double> derivs(batch_size * 2 * dimension * (2 * length - 1));
+            for (uint64_t i = 0; i < derivs.size(); ++i)
+                derivs[i] = static_cast<double>(i);
+            uint64_t out_size = batch_size * dimension * length;
+            std::vector<double> true_(out_size);
+            f(derivs.data(), true_.data(), batch_size, dimension, length, false, true, 1., 1);
+            check_result(f, derivs, true_, batch_size, dimension, length, false, true, 1., -1);
         }
     };
 }

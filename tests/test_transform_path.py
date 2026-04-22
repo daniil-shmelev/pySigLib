@@ -101,3 +101,53 @@ def test_transform_path_backprop_lead_lag(device):
     X2[-1, :] = 3.
 
     check_close(X1, X2)
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_transform_path_time_aug_lead_lag(device):
+    X = np.random.uniform(size=(100, 5))
+    X1 = time_aug(lead_lag(X))
+    X_dev = torch.tensor(X, device=device)
+    X2 = pysiglib.transform_path(X_dev, time_aug=True, lead_lag=True)
+    assert_device(X2, device)
+    check_close(X1, X2)
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_transform_path_custom_end_time(device):
+    X = np.random.uniform(size=(100, 5))
+    X1 = time_aug(X, end_time=2.0)
+    X_dev = torch.tensor(X, device=device)
+    X2 = pysiglib.transform_path(X_dev, time_aug=True, end_time=2.0)
+    assert_device(X2, device)
+    check_close(X1, X2)
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_transform_path_backprop_time_aug(device):
+    X = torch.rand(size=(100, 5), dtype=torch.double, device=device)
+    X_ta = pysiglib.transform_path(X, time_aug=True)
+    deriv = torch.ones(X_ta.shape, dtype=torch.double, device=device)
+    grad = pysiglib.transform_path_backprop(deriv, time_aug=True)
+    assert_device(grad, device)
+    expected = torch.ones((100, 5), dtype=torch.double, device=device)
+    check_close(grad, expected)
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_batch_transform_path_backprop_lead_lag(device):
+    X = torch.rand(size=(10, 100, 5), dtype=torch.double, device=device)
+    X_ll = pysiglib.transform_path(X, lead_lag=True)
+    deriv = torch.ones(X_ll.shape, dtype=torch.double, device=device)
+    grad = pysiglib.transform_path_backprop(deriv, lead_lag=True)
+    assert_device(grad, device)
+    expected = torch.ones((10, 100, 5), dtype=torch.double, device=device) * 4.
+    expected[:, 0, :] = 3.
+    expected[:, -1, :] = 3.
+    check_close(grad, expected)
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_transform_path_backprop_custom_end_time(device):
+    X = torch.rand(size=(100, 5), dtype=torch.double, device=device)
+    X_ta = pysiglib.transform_path(X, time_aug=True, end_time=2.0)
+    deriv = torch.ones(X_ta.shape, dtype=torch.double, device=device)
+    grad = pysiglib.transform_path_backprop(deriv, time_aug=True, end_time=2.0)
+    assert_device(grad, device)
+    expected = torch.ones((100, 5), dtype=torch.double, device=device)
+    check_close(grad, expected)

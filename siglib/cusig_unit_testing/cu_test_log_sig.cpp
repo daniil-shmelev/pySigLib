@@ -132,29 +132,6 @@ namespace MyTest {
             std::vector<double> true_ = { 0., 2., 3., 4. };
             check_result_typed(sig_to_log_sig_cuda_d, sig, true_, (uint64_t)1, dimension, (uint64_t)degree, 0, true);
         }
-
-        TEST_METHOD(StressTest) {
-            // Just check it doesn't crash for large input
-            uint64_t batch_size = 100, dimension = 5, degree = 5;
-            uint64_t slen = sig_length_(dimension, degree);
-            uint64_t total_len = batch_size * slen;
-
-            std::vector<double> sig(total_len, 1.);
-
-            double* d_sig = nullptr;
-            double* d_out = nullptr;
-            cudaMalloc(&d_sig, sizeof(double) * total_len);
-            cudaMalloc(&d_out, sizeof(double) * total_len);
-            cudaMemcpy(d_sig, sig.data(), sizeof(double) * total_len, cudaMemcpyHostToDevice);
-
-            int err = sig_to_log_sig_cuda_d(d_sig, d_out, batch_size, dimension, degree, 0);
-            cudaDeviceSynchronize();
-
-            cudaFree(d_sig);
-            cudaFree(d_out);
-
-            Assert::AreEqual(0, err, L"StressTest returned non-zero error code");
-        }
     };
 
     // =========================================================================

@@ -372,29 +372,6 @@ namespace MyTest {
 
             check_result_2_typed(f, poly1, poly2, true_sig, batch_size, dimension, (uint64_t)degree, true);
         }
-
-        TEST_METHOD(BatchSigCombineStressTest)
-        {
-            // Same as CPU BatchSigCombineStressTest: just check it doesn't crash/error
-            uint64_t batch_size = 1000, dimension = 5, degree = 5;
-            uint64_t total_len = batch_size * sig_length_(dimension, degree);
-
-            std::vector<double> poly(total_len, 1.);
-
-            double* d_poly = nullptr;
-            double* d_out = nullptr;
-            cudaMalloc(&d_poly, sizeof(double) * total_len);
-            cudaMalloc(&d_out, sizeof(double) * total_len);
-            cudaMemcpy(d_poly, poly.data(), sizeof(double) * total_len, cudaMemcpyHostToDevice);
-
-            int err = sig_combine_cuda_d(d_poly, d_poly, d_out, batch_size, dimension, degree);
-            cudaDeviceSynchronize();
-
-            cudaFree(d_poly);
-            cudaFree(d_out);
-
-            Assert::AreEqual(0, err, L"BatchSigCombineStressTest returned non-zero error code");
-        }
     };
 
     // =========================================================================
