@@ -29,7 +29,7 @@ from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
 from ..log_sig_combine import log_sig_combine_backprop
 from ..logsig_to_sig import logsig_to_sig as logsig_to_sig_forward
 from ..logsig_to_sig_backprop import logsig_to_sig_backprop
-from ..sig_kernel import sig_kernel as sig_kernel_forward
+from ..sig_kernel import sig_kernel as sig_kernel_forward, _ensure_3d
 from ..sig_kernel_backprop import sig_kernel_backprop
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
 from ..sig_kernel_backprop import sig_kernel_gram_backprop
@@ -448,8 +448,9 @@ def sig_score(
     check_type(sample, "sample", torch.Tensor)
     check_type(y, "y", torch.Tensor)
 
-    if len(y.shape) == 2:
-        y = y.unsqueeze(0).contiguous().clone()
+    batch_shape_y = tuple(y.shape[:-2])
+    sample = _ensure_3d(sample)
+    y = _ensure_3d(y)
 
     B = sample.shape[0]
     if B < 2:
@@ -461,7 +462,10 @@ def sig_score(
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
 
-    return lam * xx_sum - xy_sum
+    res = lam * xx_sum - xy_sum
+    if batch_shape_y:
+        res = res.reshape(*batch_shape_y)
+    return res
 
 sig_score.__doc__ = sig_score_forward.__doc__
 
@@ -479,8 +483,7 @@ def expected_sig_score(
         max_batch : int = -1
 ) -> Union[np.ndarray, torch.tensor]:
     res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
-    res = torch.mean(res, 0, True)
-    return res
+    return res.mean().reshape(1)
 
 expected_sig_score.__doc__ = expected_sig_score_forward.__doc__
 
@@ -496,6 +499,9 @@ def sig_mmd(
         n_jobs : int = 1,
         max_batch : int = -1
 ) -> Union[np.ndarray, torch.tensor]:
+    sample1 = _ensure_3d(sample1)
+    sample2 = _ensure_3d(sample2)
+
     m = sample1.shape[0]
     n = sample2.shape[0]
     if m < 2:

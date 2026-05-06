@@ -385,6 +385,43 @@ class TestTorchAutograd:
         assert path1.grad is not None
         assert path1.grad.shape == path1.shape
 
+    @pytest.mark.parametrize("batch_shape_1", [(4,), (2, 3)])
+    @pytest.mark.parametrize("batch_shape_2", [(3,), (2, 2)])
+    def test_sig_kernel_gram_grad(self, batch_shape_1, batch_shape_2):
+        path1 = torch.from_numpy(_random_path(batch_shape_1, length=5, dim=2)).requires_grad_(True)
+        path2 = torch.from_numpy(_random_path(batch_shape_2, length=5, dim=2))
+        gram = pysiglib.torch_api.sig_kernel_gram(path1, path2, 0)
+        assert gram.shape == batch_shape_1 + batch_shape_2
+        gram.sum().backward()
+        assert path1.grad is not None
+        assert path1.grad.shape == path1.shape
+
+    @pytest.mark.parametrize("batch_shape", [(5,), (2, 5)])
+    def test_sig_score_grad(self, batch_shape):
+        sample = torch.from_numpy(_random_path(batch_shape, length=5, dim=2)).requires_grad_(True)
+        y = torch.from_numpy(_random_path((), length=5, dim=2))
+        score = pysiglib.torch_api.sig_score(sample, y, 0)
+        assert score.shape == (1,)
+        score.sum().backward()
+        assert sample.grad is not None
+        assert sample.grad.shape == sample.shape
+
+    @pytest.mark.parametrize("batch_shape", [(5,), (2, 5)])
+    def test_sig_mmd_grad(self, batch_shape):
+        sample1 = torch.from_numpy(_random_path(batch_shape, length=5, dim=2)).requires_grad_(True)
+        sample2 = torch.from_numpy(_random_path((6,), length=5, dim=2))
+        mmd = pysiglib.torch_api.sig_mmd(sample1, sample2, 0)
+        assert mmd.ndim == 0
+        mmd.backward()
+        assert sample1.grad is not None
+        assert sample1.grad.shape == sample1.shape
+
+    def test_expected_sig_score_shape(self):
+        s1 = torch.from_numpy(_random_path((2, 5), length=5, dim=2))
+        s2 = torch.from_numpy(_random_path((3, 4), length=5, dim=2))
+        score = pysiglib.torch_api.expected_sig_score(s1, s2, 0)
+        assert score.shape == (1,)
+
 
 # ---------------------------------------------------------------------------
 # Empty batch (batch dim = 0)
