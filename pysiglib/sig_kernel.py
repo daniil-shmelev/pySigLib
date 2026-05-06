@@ -25,9 +25,9 @@ from .error_codes import err_msg
 
 
 def _ensure_3d(t):
-    """Ensure a path tensor is exactly 3D (batch, length, dim) for torch.bmm."""
+    """Ensure a path tensor is exactly 3D (batch, length, dim)."""
     if t.ndim == 2:
-        return t.unsqueeze(0)
+        return t.reshape(1, t.shape[-2], t.shape[-1])
     if t.ndim > 3:
         return t.reshape(-1, t.shape[-2], t.shape[-1])
     return t
@@ -279,11 +279,11 @@ def sig_kernel_gram(
         normalize : bool = False
 ) -> Union[np.ndarray, torch.tensor]:
     """
-    Given batches of paths :math:`\\{x_i\\}_{i=1}^B` and :math:`\\{y_i\\}_{i=1}^B`, computes the gram matrix of signature kernels
+    Given batches of paths :math:`\\{x_i\\}_{i=1}^{B_1}` and :math:`\\{y_j\\}_{j=1}^{B_2}`, computes the gram matrix of signature kernels
 
     .. math::
 
-        G = (k_{x_i, y_j})_{i,j = 1}^B.
+        G = (k_{x_i, y_j})_{i = 1, j = 1}^{B_1, B_2}.
 
     The signature kernel of two :math:`d`-dimensional paths :math:`x,y`
     is defined as
@@ -304,11 +304,10 @@ def sig_kernel_gram(
     Optionally, a static kernel can be specified. For details, see the documentation on
     :doc:`static kernels </pages/signature_kernels/static_kernels>`.
 
-    :param path1: The first batch of paths, of shape ``(..., batch_size_1, length_1, dimension)``.
+    :param path1: A path or batch of paths, of shape ``(*batch_shape_1, length_1, dimension)``.
     :type path1: numpy.ndarray | torch.tensor
-    :param path2: The second batch of paths, of shape ``(..., batch_size_2, length_2, dimension)``.
-        Leading batch dimensions (everything before ``batch_size_2``) must match those of
-        ``path1``.
+    :param path2: A path or batch of paths, of shape ``(*batch_shape_2, length_2, dimension)``.
+        Independent of ``path1``'s batch shape.
     :type path2: numpy.ndarray | torch.tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
@@ -340,7 +339,9 @@ def sig_kernel_gram(
     :param normalize: If ``True``, normalizes the gram matrix so that :math:`K(x, x) = 1` by
         dividing each entry by :math:`\\sqrt{K(x_i, x_i) \\cdot K(y_j, y_j)}`. Cannot be used with ``return_grid=True``.
     :type normalize: bool
-    :return: Gram matrix of signature kernels
+    :return: Gram matrix of signature kernels, of shape ``(*batch_shape_1, *batch_shape_2)``
+        (or ``(*batch_shape_1, *batch_shape_2, dyadic_length_1, dyadic_length_2)`` if
+        ``return_grid=True``).
     :rtype: numpy.ndarray | torch.tensor
 
     .. note::
@@ -381,6 +382,18 @@ def sig_kernel_gram(
         )
         print(gram.shape)
 
+    .. code-block:: python
+
+        # Multi-dim batches: leading dims are flattened and the result has shape
+        # (*batch_shape_1, *batch_shape_2)
+        import torch
+        import pysiglib
+
+        path1 = torch.rand((4, 10, 100, 5))  # batch_shape_1 = (4, 10)
+        path2 = torch.rand((8, 100, 5))      # batch_shape_2 = (8,)
+        gram = pysiglib.sig_kernel_gram(path1, path2, dyadic_order=2)
+        print(gram.shape)  # gram has shape (4, 10, 8)
+
     """
     # We use sig_kernel for simplicity, rather than directly calling
     # the cpp function.
@@ -397,10 +410,13 @@ def sig_kernel_gram(
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
 
-    data = MultiplePathInputHandler([path1, path2], time_aug, lead_lag, end_time, ["path1", "path2"], False)
+    batch_shape_1 = tuple(path1.shape[:-2])
+    batch_shape_2 = batch_shape_1 if symmetric else tuple(path2.shape[:-2])
 
-    if len(path1.shape) != 3 or len(path2.shape) != 3:
-        raise ValueError("path1 and path2 must be 3D arrays.")
+    path1 = _ensure_3d(path1)
+    path2 = path1 if symmetric else _ensure_3d(path2)
+
+    data = MultiplePathInputHandler([path1, path2], time_aug, lead_lag, end_time, ["path1", "path2"], False)
 
     # Use torch for simplicity
     path1 = torch.as_tensor(data.path[0])
@@ -462,6 +478,11 @@ def sig_kernel_gram(
         d1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         d2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if not symmetric else d1
         res = _safe_normalize(res, d1.unsqueeze(1), d2.unsqueeze(0), "sig_kernel_gram(normalize=True)")
+
+    out_shape = batch_shape_1 + batch_shape_2
+    if return_grid:
+        out_shape = out_shape + (res.shape[-2], res.shape[-1])
+    res = res.reshape(out_shape) if out_shape else res.squeeze()
 
     if data.type_ == "numpy":
         return res.numpy()

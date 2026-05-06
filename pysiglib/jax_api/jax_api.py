@@ -45,6 +45,15 @@ from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
 from ..sig_coef import sig_coef as sig_coef_forward
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
+
+
+def _ensure_3d(t):
+    """Ensure an array is exactly 3D (batch, length, dim)."""
+    if t.ndim == 2:
+        return t.reshape(1, t.shape[-2], t.shape[-1])
+    if t.ndim > 3:
+        return t.reshape(-1, t.shape[-2], t.shape[-1])
+    return t
 from ..sig_metrics import sig_score as sig_score_forward
 from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
@@ -906,8 +915,10 @@ def sig_kernel_gram(
     path1 = jnp.asarray(path1)
     path2 = jnp.asarray(path2)
 
-    if path1.ndim != 3 or path2.ndim != 3:
-        raise ValueError("path1 and path2 must be 3D arrays (batch, length, dimension)")
+    if path1.ndim < 2 or path2.ndim < 2:
+        raise ValueError(
+            "path1 and path2 must have at least 2 dimensions (length, dimension)."
+        )
 
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
@@ -916,6 +927,12 @@ def sig_kernel_gram(
         raise ValueError("max_batch must be a positive integer or -1")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
+
+    batch_shape_1 = tuple(path1.shape[:-2])
+    batch_shape_2 = tuple(path2.shape[:-2])
+
+    path1 = _ensure_3d(path1)
+    path2 = _ensure_3d(path2)
 
     batch2 = path2.shape[0]
 
@@ -934,6 +951,11 @@ def sig_kernel_gram(
         d1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
         d2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
         res = res / jnp.sqrt(jnp.clip(d1[:, None] * d2[None, :], 1e-30))
+
+    out_shape = batch_shape_1 + batch_shape_2
+    if return_grid:
+        out_shape = out_shape + (res.shape[-2], res.shape[-1])
+    res = res.reshape(out_shape) if out_shape else res.squeeze()
 
     return res
 
@@ -961,8 +983,10 @@ def sig_score(
     """Compute signature kernel score using JAX."""
     sample = jnp.asarray(sample)
     y = jnp.asarray(y)
-    if y.ndim == 2:
-        y = y[None, :, :]
+
+    batch_shape_y = tuple(y.shape[:-2])
+    sample = _ensure_3d(sample)
+    y = _ensure_3d(y)
 
     B = sample.shape[0]
     if B < 2:
@@ -978,7 +1002,10 @@ def sig_score(
     xx_sum = (jnp.sum(xx) - jnp.trace(xx)) / (B * (B - 1.))
     xy_sum = jnp.sum(xy, axis=0) * (2. / B)
 
-    return lam * xx_sum - xy_sum
+    res = lam * xx_sum - xy_sum
+    if batch_shape_y:
+        res = res.reshape(*batch_shape_y)
+    return res
 
 
 sig_score.__doc__ = sig_score_forward.__doc__
@@ -999,7 +1026,7 @@ def expected_sig_score(
 ):
     """Compute expected signature kernel score using JAX."""
     res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
-    return jnp.mean(res, axis=0, keepdims=True)
+    return jnp.mean(res).reshape(1)
 
 
 expected_sig_score.__doc__ = expected_sig_score_forward.__doc__
@@ -1020,6 +1047,9 @@ def sig_mmd(
     """Compute signature kernel MMD using JAX."""
     sample1 = jnp.asarray(sample1)
     sample2 = jnp.asarray(sample2)
+
+    sample1 = _ensure_3d(sample1)
+    sample2 = _ensure_3d(sample2)
 
     m = sample1.shape[0]
     n = sample2.shape[0]
