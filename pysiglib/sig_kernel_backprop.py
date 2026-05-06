@@ -15,6 +15,7 @@
 
 from typing import Union, Tuple, Optional
 from ctypes import POINTER, cast
+from math import prod
 
 import numpy as np
 import torch
@@ -173,6 +174,30 @@ def sig_kernel_backprop(
 
     dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
 
+    if path1.ndim > 3 or path2.ndim > 3:
+        if tuple(path1.shape[:-2]) != tuple(path2.shape[:-2]):
+            raise ValueError(
+                "path1 and path2 must have matching leading batch dimensions; got "
+                f"{tuple(path1.shape[:-2])} and {tuple(path2.shape[:-2])}."
+            )
+        leading_shape = tuple(path1.shape[:-2])
+        lead_size = prod(leading_shape)
+        flat_derivs = derivs.reshape(lead_size, *derivs.shape[-2:]) if return_grid else derivs.reshape(lead_size)
+        flat_k_grid = None if k_grid is None else k_grid.reshape(lead_size, *k_grid.shape[-2:])
+
+        ld, rd = sig_kernel_backprop(
+            flat_derivs, _ensure_3d(path1), _ensure_3d(path2), dyadic_order,
+            static_kernel=static_kernel,
+            time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
+            left_deriv=left_deriv, right_deriv=right_deriv,
+            k_grid=flat_k_grid, n_jobs=n_jobs, return_grid=return_grid,
+        )
+        if ld is not None:
+            ld = ld.reshape(*leading_shape, *ld.shape[-2:])
+        if rd is not None:
+            rd = rd.reshape(*leading_shape, *rd.shape[-2:])
+        return ld, rd
+
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
@@ -257,17 +282,16 @@ def sig_kernel_gram_backprop(
     :math:`\\{\\partial F / y_{t_i}\\}_{i=0}^{L_2}`.
 
     :param derivs: Derivatives with respect to a gram matrix of signature kernels,
-        :math:`\\partial F / G`.
-        If ``return_grid=False``, this should have shape ``(..., batch_size_1, batch_size_2)``.
-        If ``return_grid=True``, this should have shape
-        ``(..., batch_size_1, batch_size_2, length_1, length_2)``, matching the output of
-        ``pysiglib.sig_kernel_gram(..., return_grid=True)``.
+        :math:`\\partial F / G`. Should have the same shape as the output of
+        ``pysiglib.sig_kernel_gram`` for the same inputs:
+        ``(*batch_shape_1, *batch_shape_2)`` if ``return_grid=False``, or
+        ``(*batch_shape_1, *batch_shape_2, dyadic_length_1, dyadic_length_2)`` if
+        ``return_grid=True``.
     :type derivs: numpy.ndarray | torch.tensor
-    :param path1: The first batch of paths, of shape ``(..., batch_size_1, length_1, dimension)``.
+    :param path1: A path or batch of paths, of shape ``(*batch_shape_1, length_1, dimension)``.
     :type path1: numpy.ndarray | torch.tensor
-    :param path2: The second batch of paths, of shape ``(..., batch_size_2, length_2, dimension)``.
-        Leading batch dimensions (everything before ``batch_size_2``) must match those of
-        ``path1``.
+    :param path2: A path or batch of paths, of shape ``(*batch_shape_2, length_2, dimension)``.
+        Independent of ``path1``'s batch shape.
     :type path2: numpy.ndarray | torch.tensor
     :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
     :type dyadic_order: int | tuple
@@ -303,9 +327,9 @@ def sig_kernel_gram_backprop(
     :type max_batch: int
     :return: Tuple of derivatives of :math:`F` with respect to one or both of the
         underlying paths. If ``left_deriv`` is ``True``, the first element of
-        this tuple is  :math:`\\{\\partial F / x_{t_i}\\}_{i=0}^{L_1}`, otherwise
-        it is ``None``. Similarly for ``right_deriv`` and
-        :math:`\\{\\partial F / y_{t_i}\\}_{i=0}^{L_2}`.
+        this tuple is  :math:`\\{\\partial F / x_{t_i}\\}_{i=0}^{L_1}` with shape
+        matching ``path1``, otherwise it is ``None``. Similarly for ``right_deriv``
+        and :math:`\\{\\partial F / y_{t_i}\\}_{i=0}^{L_2}` with shape matching ``path2``.
     :rtype: numpy.ndarray | torch.tensor | Tuple[numpy.ndarray | numpy.ndarray] | Tuple[torch.tensor | torch.tensor]
 
     .. note::
@@ -371,6 +395,19 @@ def sig_kernel_gram_backprop(
         raise ValueError("max_batch must be a positive integer or -1")
 
     symmetric = path1 is path2
+
+    batch_shape_1 = tuple(path1.shape[:-2])
+    batch_shape_2 = batch_shape_1 if symmetric else tuple(path2.shape[:-2])
+    n1, n2 = len(batch_shape_1), len(batch_shape_2)
+
+    path1 = _ensure_3d(path1)
+    path2 = path1 if symmetric else _ensure_3d(path2)
+
+    if n1 != 1 or n2 != 1:
+        flat_B1, flat_B2 = path1.shape[0], path2.shape[0]
+        derivs = derivs.reshape(flat_B1, flat_B2, *derivs.shape[n1 + n2:]) if return_grid else derivs.reshape(flat_B1, flat_B2)
+        if k_grid is not None:
+            k_grid = k_grid.reshape(flat_B1, flat_B2, *k_grid.shape[n1 + n2:])
 
     data = MultiplePathInputHandler([path1, path2], time_aug, lead_lag, end_time, ["path1", "path2"], False)
 
@@ -457,7 +494,12 @@ def sig_kernel_gram_backprop(
                 if right_deriv:
                     rd.index_add_(0, ci_off, rd_t.to(rd.dtype))
 
+    if ld is not None:
+        ld = ld.reshape(*batch_shape_1, *ld.shape[-2:])
+    if rd is not None:
+        rd = rd.reshape(*batch_shape_2, *rd.shape[-2:])
+
     if data.type_ == "numpy":
-        return ld.numpy(), rd.numpy()
+        return (ld.numpy() if ld is not None else None), (rd.numpy() if rd is not None else None)
     return ld, rd
 

@@ -4,7 +4,7 @@ import torch
 
 from .param_checks import check_type_multiple
 from .static_kernels import StaticKernel
-from .sig_kernel import sig_kernel_gram
+from .sig_kernel import sig_kernel_gram, _ensure_3d
 
 def sig_score(
         sample : Union[np.ndarray, torch.tensor],
@@ -37,10 +37,11 @@ def sig_score(
     :doc:`static kernels </pages/signature_kernels/static_kernels>`.
 
     :param sample: The batch of sample paths drawn from :math:`\\mu`, of shape
-        ``(..., batch_size_1, length_1, dimension)``.
+        ``(*batch_shape, length_1, dimension)``.
     :type sample: numpy.ndarray | torch.tensor
-    :param y: The path(s) y, of shape ``(..., length_2, dimension)``. Leading batch
-        dimensions must match those of ``sample``.
+    :param y: The path(s) :math:`y`, of shape ``(*batch_shape_y, length_2, dimension)``.
+        ``batch_shape_y`` may be empty (single ``y``) or arbitrary; the score is computed
+        independently for each ``y``. Independent of ``sample``'s batch shape.
     :type y: numpy.ndarray | torch.tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
@@ -70,7 +71,8 @@ def sig_score(
         due to insufficient memory, this parameter should be decreased.
         If set to -1, the entire batch is computed in parallel.
     :type max_batch: int
-    :return: Signature kernel score
+    :return: Signature kernel score, of shape ``batch_shape_y`` (or ``(1,)`` if ``y``
+        is a single 2D path).
     :rtype: numpy.ndarray | torch.tensor
 
     Example:
@@ -84,7 +86,7 @@ def sig_score(
         sample = torch.rand((20, 100, 5))
         y = torch.rand((100, 5))
         score = pysiglib.sig_score(sample, y, dyadic_order=2)
-        print(score)
+        print(score.shape)  # (1,)
 
     .. code-block:: python
 
@@ -105,6 +107,18 @@ def sig_score(
         )
         print(score)
 
+    .. code-block:: python
+
+        # Multi-dim sample batch and a batch of y paths
+        # one score is returned per y
+        import torch
+        import pysiglib
+
+        sample = torch.rand((4, 5, 100, 5))  # 4 * 5 = 20 sample paths total
+        y = torch.rand((3, 100, 5))          # batch of 3 target paths
+        score = pysiglib.sig_score(sample, y, dyadic_order=2)
+        print(score.shape)  # (3,)
+
     """
 
     check_type_multiple(sample, "sample", (np.ndarray, torch.Tensor))
@@ -113,8 +127,10 @@ def sig_score(
     is_numpy = isinstance(sample, np.ndarray)
     sample = torch.as_tensor(sample)
     y = torch.as_tensor(y)
-    if len(y.shape) == 2:
-        y = y.unsqueeze(0).contiguous().clone()
+
+    batch_shape_y = tuple(y.shape[:-2])
+    sample = _ensure_3d(sample)
+    y = _ensure_3d(y)
 
     B = sample.shape[0]
     if B < 2:
@@ -127,6 +143,8 @@ def sig_score(
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
 
     res = lam * xx_sum - xy_sum
+    if batch_shape_y:
+        res = res.reshape(*batch_shape_y)
 
     if is_numpy:
         return res.numpy()
@@ -163,11 +181,11 @@ def expected_sig_score(
     :doc:`static kernels </pages/signature_kernels/static_kernels>`.
 
     :param sample1: The batch of sample paths drawn from :math:`\\mu`, of shape
-        ``(..., batch_size_1, length_1, dimension)``.
+        ``(*batch_shape, length_1, dimension)``.
     :type sample1: numpy.ndarray | torch.tensor
     :param sample2: The batch of sample paths drawn from :math:`\\nu`, of shape
-        ``(..., batch_size_2, length_2, dimension)``. Leading batch dimensions must match
-        those of ``sample1``.
+        ``(*batch_shape, length_2, dimension)``. Independent of ``sample1``'s batch
+        shape.
     :type sample2: numpy.ndarray | torch.tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
@@ -197,7 +215,7 @@ def expected_sig_score(
         due to insufficient memory, this parameter should be decreased.
         If set to -1, the entire batch is computed in parallel.
     :type max_batch: int
-    :return: Expected signature kernel score
+    :return: Expected signature kernel score, of shape ``(1,)``.
     :rtype: numpy.ndarray | torch.tensor
 
     Example:
@@ -234,13 +252,7 @@ def expected_sig_score(
     """
 
     res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
-
-    if isinstance(res, torch.Tensor):
-        res = torch.mean(res, 0, True)
-    else:
-        res = np.mean(res, keepdims=True)
-
-    return res
+    return res.mean().reshape(1)
 
 def sig_mmd(
         sample1 : Union[np.ndarray, torch.tensor],
@@ -276,11 +288,13 @@ def sig_mmd(
     :doc:`static kernels </pages/signature_kernels/static_kernels>`.
 
     :param sample1: The batch of sample paths drawn from :math:`\\mu`, of shape
-        ``(..., batch_size_1, length_1, dimension)``.
+        ``(*batch_shape, length_1, dimension)``. All dimensions before ``length_1`` are
+        batch dimensions and are flattened to a single batch :math:`m` of paths.
     :type sample1: numpy.ndarray | torch.tensor
     :param sample2: The batch of sample paths drawn from :math:`\\nu`, of shape
-        ``(..., batch_size_2, length_2, dimension)``. Leading batch dimensions must match
-        those of ``sample1``.
+        ``(*batch_shape, length_2, dimension)``. All dimensions before ``length_2`` are
+        flattened to a single batch :math:`n` of paths. Independent of ``sample1``'s batch
+        shape.
     :type sample2: numpy.ndarray | torch.tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
@@ -346,6 +360,9 @@ def sig_mmd(
     is_numpy = isinstance(sample1, np.ndarray)
     sample1 = torch.as_tensor(sample1)
     sample2 = torch.as_tensor(sample2)
+
+    sample1 = _ensure_3d(sample1)
+    sample2 = _ensure_3d(sample2)
 
     m = sample1.shape[0]
     n = sample2.shape[0]
