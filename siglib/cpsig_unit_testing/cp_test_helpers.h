@@ -15,7 +15,7 @@
 
 #pragma once
 
-#include "CppUnitTest.h"
+#include <gtest/gtest.h>
 #include "cpsig.h"
 #include "cp_sig_combine.h"
 #include "cp_path.h"
@@ -32,8 +32,6 @@
 #define SINGLE_EPSILON 1e-4
 #define DOUBLE_EPSILON 1e-10
 #define EPSILON (std::is_same_v<T, float> ? SINGLE_EPSILON : DOUBLE_EPSILON)
-
-using namespace Microsoft::VisualStudio::CppUnitTestFramework;
 
 inline double dot_product(double* a, double* b, uint64_t n) {
     double res = 0;
@@ -102,9 +100,9 @@ void check_result(FN f, std::vector<T>& path, std::vector<T>& true_, Args... arg
     f(path.data(), out.data(), args...);
 
     for (uint64_t i = 0; i < true_.size(); ++i)
-        Assert::IsTrue(abs(true_[i] - out[i]) < EPSILON);
+        EXPECT_LT(abs(true_[i] - out[i]), EPSILON);
 
-    Assert::IsTrue(abs( - 1. - out[true_.size()]) < EPSILON);
+    EXPECT_LT(abs( - 1. - out[true_.size()]), EPSILON);
 }
 
 template<typename FN, std::floating_point T, typename... Args>
@@ -116,17 +114,17 @@ void check_result_2(FN f, std::vector<T>& path1, std::vector<T>& path2, std::vec
     f(path1.data(), path2.data(), out.data(), args...);
 
     for (uint64_t i = 0; i < true_.size(); ++i)
-        Assert::IsTrue(abs(true_[i] - out[i]) < EPSILON);
+        EXPECT_LT(abs(true_[i] - out[i]), EPSILON);
 
-    Assert::IsTrue(abs(-1. - out[true_.size()]) < EPSILON);
+    EXPECT_LT(abs(-1. - out[true_.size()]), EPSILON);
 }
 
 inline void check_result_words(std::vector<word> a, std::vector<word> b) {
-    Assert::AreEqual(a.size(), b.size());
+    ASSERT_EQ(a.size(), b.size());
     for (uint64_t i = 0; i < a.size(); ++i) {
-        Assert::AreEqual(a[i].size(), b[i].size());
+        ASSERT_EQ(a[i].size(), b[i].size());
         for (uint64_t j = 0; j < a[i].size(); ++j) {
-            Assert::AreEqual(a[i][j], b[i][j]);
+            ASSERT_EQ(a[i][j], b[i][j]);
         }
     }
 }

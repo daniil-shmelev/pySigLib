@@ -1,0 +1,44 @@
+if(NOT TARGET GTest::gtest_main)
+    include(FetchContent)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.16.0
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+endif()
+
+add_executable(cusig_tests
+    cu_test_signature.cpp
+    cu_test_sig_backprop.cpp
+    cu_test_sig_coef.cpp
+    cu_test_log_sig.cpp
+    cu_test_sig_kernel.cpp
+    cu_test_branched.cpp
+)
+
+target_include_directories(cusig_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../cusig"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../shared"
+)
+
+target_compile_features(cusig_tests PRIVATE cxx_std_20)
+target_link_libraries(cusig_tests PRIVATE
+    cusig
+    CUDA::cudart
+    Threads::Threads
+    GTest::gtest_main
+)
+
+add_custom_command(TARGET cusig_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:cusig>
+        $<TARGET_FILE_DIR:cusig_tests>
+)
+
+include(GoogleTest)
+gtest_discover_tests(cusig_tests
+    PROPERTIES LABELS cuda
+)

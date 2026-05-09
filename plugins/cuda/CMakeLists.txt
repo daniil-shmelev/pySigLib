@@ -22,6 +22,7 @@ find_package(CUDAToolkit REQUIRED)
 
 set(PYSIGLIB_CUDA_ARCH "native" CACHE STRING
     "CUDA architectures (native, all, all-major, or semicolon-separated list)")
+option(PYSIGLIB_TESTS "Build CUDA C++ unit tests (Google Test)" OFF)
 
 set(CUSIG_INSTALL_DESTINATION "pysiglib_cuda" CACHE INTERNAL "")
 
@@ -30,6 +31,14 @@ add_subdirectory(
     "${CMAKE_SOURCE_DIR}/../../siglib/cusig"
     "${CMAKE_BINARY_DIR}/cusig_build"
 )
+
+if(PYSIGLIB_TESTS)
+    enable_testing()
+    add_subdirectory(
+        "${CMAKE_SOURCE_DIR}/../../siglib/cusig_unit_testing"
+        "${CMAKE_BINARY_DIR}/cusig_unit_testing"
+    )
+endif()
 
 # ---------------------------------------------------------------------------
 # JAX FFI CUDA library. Built from the shared pysiglib_jax_ffi.cc source with

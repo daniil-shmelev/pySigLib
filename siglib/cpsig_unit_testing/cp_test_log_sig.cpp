@@ -15,11 +15,7 @@
 
 #include "cp_test_helpers.h"
 
-namespace cpSigTests {
-
-    TEST_CLASS(lyndonWordsTest) {
-    public:
-        TEST_METHOD(AllLyndonWordsTest1) {
+        TEST(lyndonWordsTest, AllLyndonWordsTest1) {
             uint64_t dimension = 2, degree = 3;
             std::vector<word> result = all_lyndon_words(dimension, degree);
             std::vector<word> true_ = {
@@ -30,7 +26,7 @@ namespace cpSigTests {
             check_result_words(result, true_);
         }
 
-        TEST_METHOD(AllLyndonWordsTest2) {
+        TEST(lyndonWordsTest, AllLyndonWordsTest2) {
             uint64_t dimension = 5, degree = 2;
             std::vector<word> result = all_lyndon_words(dimension, degree);
             std::vector<word> true_ = {
@@ -42,7 +38,7 @@ namespace cpSigTests {
             check_result_words(result, true_);
         }
 
-        TEST_METHOD(AllLyndonWordsTest3) {
+        TEST(lyndonWordsTest, AllLyndonWordsTest3) {
             uint64_t dimension = 3, degree = 4;
             std::vector<word> result = all_lyndon_words(dimension, degree);
             std::vector<word> true_ = { 
@@ -55,11 +51,8 @@ namespace cpSigTests {
             };
             check_result_words(result, true_);
         }
-    };
 
-    TEST_CLASS(lyndonMatrixTest) {
-    public:
-        TEST_METHOD(lyndonMatrixTest1) {
+        TEST(lyndonMatrixTest, lyndonMatrixTest1) {
             uint64_t dimension = 2, degree = 2;
             std::vector<word> lyndon_words = all_lyndon_words(dimension, degree);
             std::vector<uint64_t> lyndon_idx = all_lyndon_idx(dimension, degree);
@@ -68,9 +61,9 @@ namespace cpSigTests {
 
             SparseIntMatrix true_(out.n);
 
-            Assert::IsTrue(true_ == out);
+            EXPECT_TRUE(true_ == out);
         }
-        TEST_METHOD(lyndonMatrixTest2) {
+        TEST(lyndonMatrixTest, lyndonMatrixTest2) {
             uint64_t dimension = 3, degree = 4;
             std::vector<word> lyndon_words = all_lyndon_words(dimension, degree);
             std::vector<uint64_t> lyndon_idx = all_lyndon_idx(dimension, degree);
@@ -88,10 +81,10 @@ namespace cpSigTests {
             true_.insert_entry(27, 24, 1);
             true_.insert_entry(27, 26, -1);
 
-            Assert::IsTrue(true_ == out);
+            EXPECT_TRUE(true_ == out);
         }
 
-        TEST_METHOD(lyndonMatrixTest3) {
+        TEST(lyndonMatrixTest, lyndonMatrixTest3) {
             uint64_t dimension = 2, degree = 5;
             std::vector<word> lyndon_words = all_lyndon_words(dimension, degree);
             std::vector<uint64_t> lyndon_idx = all_lyndon_idx(dimension, degree);
@@ -102,14 +95,10 @@ namespace cpSigTests {
             true_.insert_entry(10, 9, -2);
             true_.insert_entry(12, 11, -3);
 
-            Assert::IsTrue(true_ == out);
+            EXPECT_TRUE(true_ == out);
         }
-    };
 
-    TEST_CLASS(logSignatureExpandedTest) {
-    public:
-
-        TEST_METHOD(LinearPathTest) {
+    TEST(logSignatureExpandedTest, LinearPathTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 3;
             uint64_t level_3_start = sig_length(dimension, 2);
@@ -124,7 +113,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(LinearPathTest2) {
+        TEST(logSignatureExpandedTest, LinearPathTest2) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 3;
             uint64_t level_3_start = sig_length(dimension, 2);
@@ -139,7 +128,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(ManualLogSigTest) {
+        TEST(logSignatureExpandedTest, ManualLogSigTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> true_ = { 0., 0., 1., 0., 1., -1., 0. };
@@ -147,7 +136,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(ManualLogSigTest2) {
+        TEST(logSignatureExpandedTest, ManualLogSigTest2) {
             auto f = sig_to_log_sig_f;
             uint64_t dimension = 3, degree = 3;
             std::vector<float> true_ = {
@@ -172,7 +161,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(BatchLogSigTest) {
+        TEST(logSignatureExpandedTest, BatchLogSigTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 2;
 
@@ -188,7 +177,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, 3, dimension, degree, false, false, 0, true, -1);
         }
 
-        TEST_METHOD(ManualTimeAugTest) {
+        TEST(logSignatureExpandedTest, ManualTimeAugTest) {
             auto f = sig_to_log_sig_f;
             uint64_t dimension = 1, degree = 3;
             std::vector<float> true_ = { 0.f, 9.f, 4.f, 0.f, -2.5f, 2.5f, 0.f, 0.f, -5.25f,
@@ -198,7 +187,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, true, false, 0, true, 1);
         }
 
-        TEST_METHOD(ManualLeadLagTest) {
+        TEST(logSignatureExpandedTest, ManualLeadLagTest) {
             auto f = sig_to_log_sig_f;
             uint64_t dimension = 1, degree = 3;
             std::vector<float> true_ = { 0., 9., 9., 0., -31.5, 31.5, 0., 0., 26.75, -53.5, 11.75, 26.75, -23.5, 11.75, 0. };
@@ -206,7 +195,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, true, 0, true, 1);
         }
 
-        TEST_METHOD(BigLeadLagTest) {
+        TEST(logSignatureExpandedTest, BigLeadLagTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 2, batch = 1;
             std::vector<double> out;
@@ -215,12 +204,8 @@ namespace cpSigTests {
             sig.resize(batch * sig_length(dimension * 2, degree));
             f(sig.data(), out.data(), batch, dimension, degree, false, true, 0, true, 1);
         }
-    };
 
-    TEST_CLASS(logSignatureExpandedBackpropTest) {
-    public:
-
-        TEST_METHOD(LinearPathTest) {
+        TEST(logSignatureExpandedBackpropTest, LinearPathTest) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> deriv = { 1., 1., 1., 1., 1., 1., 1. };
@@ -229,7 +214,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(ManualTest) {
+        TEST(logSignatureExpandedBackpropTest, ManualTest) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6. };
@@ -238,7 +223,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(ManualTest2) {
+        TEST(logSignatureExpandedBackpropTest, ManualTest2) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 3;
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
@@ -247,7 +232,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(ManualTestAsBatch) {
+        TEST(logSignatureExpandedBackpropTest, ManualTestAsBatch) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6. };
@@ -256,7 +241,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(ManualTest2AsBatch) {
+        TEST(logSignatureExpandedBackpropTest, ManualTest2AsBatch) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 3;
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14. };
@@ -265,7 +250,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(ManualBatchTest) {
+        TEST(logSignatureExpandedBackpropTest, ManualBatchTest) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 3, batch_size = 3;
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14., 1., 1., -2., 3., -4., 5., -6., 7., -8., 9., -10., 11., -12., 13., -14., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1. };
@@ -275,7 +260,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 0, true, -1);
         }
 
-        TEST_METHOD(ManualDim1Test) {
+        TEST(logSignatureExpandedBackpropTest, ManualDim1Test) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 1, degree = 8;
             std::vector<double> deriv = { 1., 1., 2., 3., 4., 5., 6., 7., 8. };
@@ -283,12 +268,8 @@ namespace cpSigTests {
             std::vector<double> sig = { 1., 1., 2., 3., 4., 5., 6., 7., 8. };
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
-    };
 
-    TEST_CLASS(logSignatureLyndonWordsTest) {
-    public:
-
-        TEST_METHOD(LinearPathTest) {
+        TEST(logSignatureLyndonWordsTest, LinearPathTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 3;
             uint64_t level_3_start = sig_length(dimension, 2);
@@ -304,7 +285,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
-        TEST_METHOD(LinearPathCacheTest) {
+        TEST(logSignatureLyndonWordsTest, LinearPathCacheTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 3;
             uint64_t level_3_start = sig_length(dimension, 2);
@@ -322,7 +303,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
-        TEST_METHOD(LinearPathTest2) {
+        TEST(logSignatureLyndonWordsTest, LinearPathTest2) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 3;
             uint64_t level_3_start = sig_length(dimension, 2);
@@ -338,7 +319,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
-        TEST_METHOD(ManualLogSigTest) {
+        TEST(logSignatureLyndonWordsTest, ManualLogSigTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> true_ = { 0., 1., 1. };
@@ -347,7 +328,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
-        TEST_METHOD(ManualLogSigTest2) {
+        TEST(logSignatureLyndonWordsTest, ManualLogSigTest2) {
             auto f = sig_to_log_sig_f;
             uint64_t dimension = 3, degree = 3;
             std::vector<float> true_ = {
@@ -369,7 +350,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
-        TEST_METHOD(BatchLogSigTest) {
+        TEST(logSignatureLyndonWordsTest, BatchLogSigTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> true_ = { 1., 1., 0.,
@@ -385,7 +366,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, 3, dimension, degree, false, false, 1, true, -1);
         }
 
-        TEST_METHOD(ManualTimeAugTest) {
+        TEST(logSignatureLyndonWordsTest, ManualTimeAugTest) {
             auto f = sig_to_log_sig_f;
             uint64_t dimension = 1, degree = 3;
             std::vector<float> true_ = { 9.f, 4.f, -2.5f, -5.25f, 5.5f };
@@ -395,7 +376,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, true, false, 1, true, 1);
         }
 
-        TEST_METHOD(ManualLeadLagTest) {
+        TEST(logSignatureLyndonWordsTest, ManualLeadLagTest) {
             auto f = sig_to_log_sig_f;
             uint64_t dimension = 1, degree = 3;
             std::vector<float> true_ = { 9.f, 9.f, -31.5f, 26.75f, 11.75f };
@@ -404,7 +385,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, true, 1, true, 1);
         }
 
-        TEST_METHOD(BigLeadLagTest) {
+        TEST(logSignatureLyndonWordsTest, BigLeadLagTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 2, batch = 1;
             std::vector<double> out;
@@ -414,12 +395,8 @@ namespace cpSigTests {
             (void)prepare_log_sig(dimension, degree, 1);
             f(sig.data(), out.data(), batch, dimension, degree, false, true, 1, true, 1);
         }
-    };
 
-    TEST_CLASS(logSignatureLyndonWordsBackpropTest) {
-    public:
-
-        TEST_METHOD(LinearPathTest) {
+        TEST(logSignatureLyndonWordsBackpropTest, LinearPathTest) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> deriv = { 1., 1., 1. };
@@ -429,7 +406,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
-        TEST_METHOD(ManualTest) {
+        TEST(logSignatureLyndonWordsBackpropTest, ManualTest) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> deriv = { 1., 2., 3. };
@@ -439,7 +416,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
-        TEST_METHOD(ManualTest2) {
+        TEST(logSignatureLyndonWordsBackpropTest, ManualTest2) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 3;
             std::vector<double> deriv = { 1., 2., 3., 4., 5. };
@@ -449,7 +426,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 1, true, 1);
         }
 
-        TEST_METHOD(ManualTestAsBatch) {
+        TEST(logSignatureLyndonWordsBackpropTest, ManualTestAsBatch) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> deriv = { 1., 2., 3. };
@@ -459,7 +436,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 1, true, 1);
         }
 
-        TEST_METHOD(ManualTest2AsBatch) {
+        TEST(logSignatureLyndonWordsBackpropTest, ManualTest2AsBatch) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 3;
             std::vector<double> deriv = { 1., 2., 3., 4., 5., 6. };
@@ -469,7 +446,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 1, true, 1);
         }
 
-        TEST_METHOD(ManualBatchTest) {
+        TEST(logSignatureLyndonWordsBackpropTest, ManualBatchTest) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 3, batch_size = 3;
             std::vector<double> deriv = { 1., 2., 3., 4., 5., 1., -2., 3., -4., 5., 1., 1., 1., 1., 1. };
@@ -479,12 +456,8 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 1, true, 1);
             check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 1, true, -1);
         }
-    };
 
-    TEST_CLASS(logSignatureLyndonBasisTest) {
-    public:
-
-        TEST_METHOD(LinearPathTest) {
+        TEST(logSignatureLyndonBasisTest, LinearPathTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 3;
             uint64_t level_3_start = sig_length(dimension, 2);
@@ -500,7 +473,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
 
-        TEST_METHOD(LinearPathCacheTest) {
+        TEST(logSignatureLyndonBasisTest, LinearPathCacheTest) {
             auto f = sig_to_log_sig_d;
             uint64_t dimension = 2, degree = 3;
             uint64_t level_3_start = sig_length(dimension, 2);
@@ -518,7 +491,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
 
-        TEST_METHOD(ManualLogSigTest2) {
+        TEST(logSignatureLyndonBasisTest, ManualLogSigTest2) {
             auto f = sig_to_log_sig_f;
             uint64_t dimension = 3, degree = 3;
             std::vector<float> true_ = { -5.f, -5.f, -6.f, 12.f, -10.f, -6.f, -27.f,
@@ -534,12 +507,8 @@ namespace cpSigTests {
             (void)prepare_log_sig(dimension, degree, 2);
             check_result(f, sig, true_, (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
-    };
 
-    TEST_CLASS(logSignatureLyndonBasisBackpropTest) {
-    public:
-
-        TEST_METHOD(LinearPathTest) {
+        TEST(logSignatureLyndonBasisBackpropTest, LinearPathTest) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> deriv = { 1., 1., 1. };
@@ -549,7 +518,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
 
-        TEST_METHOD(ManualTest) {
+        TEST(logSignatureLyndonBasisBackpropTest, ManualTest) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> deriv = { 1., 2., 3. };
@@ -559,7 +528,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
 
-        TEST_METHOD(ManualTest2) {
+        TEST(logSignatureLyndonBasisBackpropTest, ManualTest2) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 3;
             std::vector<double> deriv = { 1., 2., 3., 4., 5. };
@@ -569,7 +538,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), (uint64_t)1, dimension, degree, false, false, 2, true, 1);
         }
 
-        TEST_METHOD(ManualTestAsBatch) {
+        TEST(logSignatureLyndonBasisBackpropTest, ManualTestAsBatch) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 2;
             std::vector<double> deriv = { 1., 2., 3. };
@@ -579,7 +548,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 2, true, 1);
         }
 
-        TEST_METHOD(ManualTest2AsBatch) {
+        TEST(logSignatureLyndonBasisBackpropTest, ManualTest2AsBatch) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 3;
             std::vector<double> deriv = { 1., 2., 3., 4., 5., 6. };
@@ -589,7 +558,7 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), 1, dimension, degree, false, false, 2, true, 1);
         }
 
-        TEST_METHOD(ManualBatchTest) {
+        TEST(logSignatureLyndonBasisBackpropTest, ManualBatchTest) {
             auto f = sig_to_log_sig_backprop_d;
             uint64_t dimension = 2, degree = 3, batch_size = 3;
             std::vector<double> deriv = { 1., 2., 3., 4., 5., 1., -2., 3., -4., 5., 1., 1., 1., 1., 1. };
@@ -599,13 +568,9 @@ namespace cpSigTests {
             check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 2, true, 1);
             check_result(f, sig, true_, deriv.data(), batch_size, dimension, degree, false, false, 2, true, -1);
         }
-    };
-
-    TEST_CLASS(logsigToSigTest) {
-    public:
 
         // Round-trip: sig -> log_sig -> logsig_to_sig should recover original sig
-        TEST_METHOD(RoundTripDeg1) {
+        TEST(logsigToSigTest, RoundTripDeg1) {
             uint64_t dimension = 3, degree = 1;
             uint64_t s = sig_length(dimension, degree);
             // exp(x) = 1 + x for degree 1
@@ -614,7 +579,7 @@ namespace cpSigTests {
             check_result(logsig_to_sig_d, log_sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(RoundTripDeg2) {
+        TEST(logsigToSigTest, RoundTripDeg2) {
             uint64_t dimension = 2, degree = 2;
             // Use a known sig/log-sig pair
             std::vector<double> sig = { 1., 0., 1., 0., 1., -1., 0.5 };
@@ -624,7 +589,7 @@ namespace cpSigTests {
             check_result(logsig_to_sig_d, log_sig, sig, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(RoundTripDeg3) {
+        TEST(logsigToSigTest, RoundTripDeg3) {
             uint64_t dimension = 3, degree = 3;
             uint64_t s = sig_length(dimension, degree);
             // Create a random-ish signature via a known path
@@ -636,7 +601,7 @@ namespace cpSigTests {
             check_result(logsig_to_sig_d, log_sig, sig, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
-        TEST_METHOD(RoundTripFloat32) {
+        TEST(logsigToSigTest, RoundTripFloat32) {
             uint64_t dimension = 2, degree = 3;
             uint64_t s = sig_length(dimension, degree);
             std::vector<float> path = { 1.f, 2.f, 3.f, 4.f, 5.f, 6.f };
@@ -647,10 +612,10 @@ namespace cpSigTests {
             std::vector<float> recovered(s);
             (void)logsig_to_sig_f(log_sig.data(), recovered.data(), (uint64_t)1, dimension, degree, false, false, 0, 1);
             for (uint64_t i = 0; i < s; ++i)
-                Assert::IsTrue(abs(sig[i] - recovered[i]) < SINGLE_EPSILON);
+                EXPECT_TRUE(abs(sig[i] - recovered[i]) < SINGLE_EPSILON);
         }
 
-        TEST_METHOD(BatchRoundTrip) {
+        TEST(logsigToSigTest, BatchRoundTrip) {
             uint64_t dimension = 2, degree = 3, batch_size = 4;
             uint64_t s = sig_length(dimension, degree);
             std::vector<double> path = {
@@ -666,10 +631,10 @@ namespace cpSigTests {
             std::vector<double> recovered(s * batch_size);
             (void)logsig_to_sig_d(log_sig.data(), recovered.data(), batch_size, dimension, degree, false, false, 0, 1);
             for (uint64_t i = 0; i < s * batch_size; ++i)
-                Assert::IsTrue(abs(sig[i] - recovered[i]) < DOUBLE_EPSILON);
+                EXPECT_TRUE(abs(sig[i] - recovered[i]) < DOUBLE_EPSILON);
         }
 
-        TEST_METHOD(ZeroLogSigGivesIdentity) {
+        TEST(logsigToSigTest, ZeroLogSigGivesIdentity) {
             uint64_t dimension = 3, degree = 3;
             uint64_t s = sig_length(dimension, degree);
             std::vector<double> log_sig(s, 0.);
@@ -677,11 +642,8 @@ namespace cpSigTests {
             true_[0] = 1.; // identity signature
             check_result(logsig_to_sig_d, log_sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
-    };
 
-    TEST_CLASS(logSigCombineTest) {
-    public:
-        TEST_METHOD(ChenIdentity) {
+        TEST(logSigCombineTest, ChenIdentity) {
             uint64_t dimension = 2, degree = 3;
             (void)prepare_log_sig(dimension, degree, 2, false);
 
@@ -710,7 +672,7 @@ namespace cpSigTests {
             check_result_2(log_sig_combine_d, ls1, ls2, true_ls, (uint64_t)1, dimension, degree, 1);
         }
 
-        TEST_METHOD(ChenIdentityHighDeg) {
+        TEST(logSigCombineTest, ChenIdentityHighDeg) {
             uint64_t dimension = 3, degree = 5;
             (void)prepare_log_sig(dimension, degree, 2, false);
 
@@ -739,7 +701,7 @@ namespace cpSigTests {
             check_result_2(log_sig_combine_d, ls1, ls2, true_ls, (uint64_t)1, dimension, degree, 1);
         }
 
-        TEST_METHOD(BatchChenIdentity) {
+        TEST(logSigCombineTest, BatchChenIdentity) {
             uint64_t dimension = 2, degree = 3, batch_size = 2;
             (void)prepare_log_sig(dimension, degree, 2, false);
 
@@ -774,7 +736,7 @@ namespace cpSigTests {
             check_result_2(log_sig_combine_d, ls1, ls2, true_ls, batch_size, dimension, degree, 1);
         }
 
-        TEST_METHOD(IdentityElement) {
+        TEST(logSigCombineTest, IdentityElement) {
             uint64_t dimension = 2, degree = 3;
             (void)prepare_log_sig(dimension, degree, 2, false);
 
@@ -792,11 +754,8 @@ namespace cpSigTests {
             check_result_2(log_sig_combine_d, zero_ls, ls1, ls1, (uint64_t)1, dimension, degree, 1);
             check_result_2(log_sig_combine_d, ls1, zero_ls, ls1, (uint64_t)1, dimension, degree, 1);
         }
-    };
 
-    TEST_CLASS(logSigCombineBackpropTest) {
-    public:
-        TEST_METHOD(FiniteDifference) {
+        TEST(logSigCombineBackpropTest, FiniteDifference) {
             uint64_t dimension = 2, degree = 3;
             (void)prepare_log_sig(dimension, degree, 2, false);
             uint64_t ls_len = log_sig_length(dimension, degree);
@@ -829,7 +788,7 @@ namespace cpSigTests {
                 double numerical = 0.;
                 for (uint64_t j = 0; j < ls_len; ++j)
                     numerical += d_out[j] * (out_plus[j] - out_minus[j]) / (2. * eps);
-                Assert::IsTrue(abs(numerical - d_ls1[i]) < 1e-4);
+                EXPECT_TRUE(abs(numerical - d_ls1[i]) < 1e-4);
             }
 
             for (uint64_t i = 0; i < 5 && i < ls_len; ++i) {
@@ -845,11 +804,11 @@ namespace cpSigTests {
                 double numerical = 0.;
                 for (uint64_t j = 0; j < ls_len; ++j)
                     numerical += d_out[j] * (out_plus[j] - out_minus[j]) / (2. * eps);
-                Assert::IsTrue(abs(numerical - d_ls2[i]) < 1e-4);
+                EXPECT_TRUE(abs(numerical - d_ls2[i]) < 1e-4);
             }
         }
 
-        TEST_METHOD(ZeroDerivative) {
+        TEST(logSigCombineBackpropTest, ZeroDerivative) {
             uint64_t dimension = 2, degree = 3;
             (void)prepare_log_sig(dimension, degree, 2, false);
             uint64_t ls_len = log_sig_length(dimension, degree);
@@ -868,12 +827,12 @@ namespace cpSigTests {
                 ls1.data(), ls2.data(), (uint64_t)1, dimension, degree, 1);
 
             for (uint64_t i = 0; i < ls_len; ++i) {
-                Assert::IsTrue(abs(d_ls1[i]) < DOUBLE_EPSILON);
-                Assert::IsTrue(abs(d_ls2[i]) < DOUBLE_EPSILON);
+                EXPECT_TRUE(abs(d_ls1[i]) < DOUBLE_EPSILON);
+                EXPECT_TRUE(abs(d_ls2[i]) < DOUBLE_EPSILON);
             }
         }
 
-        TEST_METHOD(BatchFiniteDifference) {
+        TEST(logSigCombineBackpropTest, BatchFiniteDifference) {
             uint64_t dimension = 2, degree = 3, batch_size = 2;
             (void)prepare_log_sig(dimension, degree, 2, false);
             uint64_t ls_len = log_sig_length(dimension, degree);
@@ -898,10 +857,7 @@ namespace cpSigTests {
                 ls1.data(), ls2.data(), batch_size, dimension, degree, -1);
 
             for (uint64_t i = 0; i < ls_len * batch_size; ++i) {
-                Assert::IsTrue(abs(d_ls1_serial[i] - d_ls1_parallel[i]) < DOUBLE_EPSILON);
-                Assert::IsTrue(abs(d_ls2_serial[i] - d_ls2_parallel[i]) < DOUBLE_EPSILON);
+                EXPECT_TRUE(abs(d_ls1_serial[i] - d_ls1_parallel[i]) < DOUBLE_EPSILON);
+                EXPECT_TRUE(abs(d_ls2_serial[i] - d_ls2_parallel[i]) < DOUBLE_EPSILON);
             }
         }
-    };
-
-}

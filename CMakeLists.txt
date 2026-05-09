@@ -30,6 +30,7 @@ find_package(Python COMPONENTS Interpreter REQUIRED)
 option(PYSIGLIB_AVX  "Enable AVX/NEON vectorization"      ON)
 option(PYSIGLIB_JAX_FFI "Build JAX FFI support when headers are available" ON)
 option(PYSIGLIB_BENCHMARKS "Build CodSpeed / Google Benchmark harness" OFF)
+option(PYSIGLIB_TESTS "Build C++ unit tests (Google Test)" OFF)
 
 # Static CRT (/MT) on MSVC, to match the original B2 build.
 if(MSVC)
@@ -163,4 +164,9 @@ endif()
 
 if(PYSIGLIB_BENCHMARKS)
     add_subdirectory(benchmarks)
+endif()
+
+if(PYSIGLIB_TESTS)
+    enable_testing()
+    add_subdirectory(siglib/cpsig_unit_testing)
 endif()

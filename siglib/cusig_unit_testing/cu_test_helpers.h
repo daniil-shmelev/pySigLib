@@ -15,19 +15,18 @@
 
 #pragma once
 
-#include "CppUnitTest.h"
+#include <gtest/gtest.h>
 #include "cusig.h"
 #include "cuda_runtime.h"
 #include <vector>
 #include <cmath>
 #include <cstdint>
+#include <string>
 
 #define EPSILON 1e-10
 #define SINGLE_EPSILON 1e-4
 #define DOUBLE_EPSILON 1e-10
 #define TYPED_EPSILON(T) (std::is_same_v<T, float> ? SINGLE_EPSILON : DOUBLE_EPSILON)
-
-using namespace Microsoft::VisualStudio::CppUnitTestFramework;
 
 inline bool is_prime_(uint64_t n) {
     if (n < 2) return false;
@@ -145,9 +144,9 @@ void check_result(FN f, std::vector<T>& path, std::vector<double>& true_, Args..
     cudaFree(d_out);
 
     for (uint64_t i = 0; i < true_.size(); ++i)
-        Assert::IsTrue(abs(true_[i] - out[i]) < EPSILON);
+        EXPECT_TRUE(abs(true_[i] - out[i]) < EPSILON);
 
-    Assert::IsTrue(abs(-1. - out[true_.size()]) < EPSILON);
+    EXPECT_TRUE(abs(-1. - out[true_.size()]) < EPSILON);
 }
 
 template<typename FN, typename T, typename... Args>
@@ -175,9 +174,9 @@ void check_result_2(FN f, std::vector<T>& path1, std::vector<T>& path2, std::vec
     cudaFree(d_out);
 
     for (uint64_t i = 0; i < true_.size(); ++i)
-        Assert::IsTrue(abs(true_[i] - out[i]) < EPSILON);
+        EXPECT_TRUE(abs(true_[i] - out[i]) < EPSILON);
 
-    Assert::IsTrue(abs(-1. - out[true_.size()]) < EPSILON);
+    EXPECT_TRUE(abs(-1. - out[true_.size()]) < EPSILON);
 }
 
 template<typename FN, typename T, typename... Args>
@@ -210,9 +209,9 @@ void check_result_4(FN f, std::vector<T>& path, std::vector<double>& true_, std:
     cudaFree(d_k_grid);
 
     for (uint64_t i = 0; i < true_.size(); ++i)
-        Assert::IsTrue(abs(true_[i] - out[i]) < EPSILON);
+        EXPECT_TRUE(abs(true_[i] - out[i]) < EPSILON);
 
-    Assert::IsTrue(abs(-1. - out[true_.size()]) < EPSILON);
+    EXPECT_TRUE(abs(-1. - out[true_.size()]) < EPSILON);
 }
 
 template<typename FN, typename T, typename... Args>
@@ -281,17 +280,17 @@ void check_result_typed(FN f, std::vector<T>& path, std::vector<T>& true_, Args.
     if (d_path) cudaFree(d_path);
     cudaFree(d_out);
 
-    Assert::AreEqual(0, err, L"Signature function returned non-zero error code");
+    EXPECT_EQ(0, err) << "Signature function returned non-zero error code";
 
     const double eps = TYPED_EPSILON(T);
     for (uint64_t i = 0; i < true_.size(); ++i) {
-        std::wstring msg = L"Mismatch at index " + std::to_wstring(i) +
-            L": expected " + std::to_wstring(static_cast<double>(true_[i])) +
-            L" got " + std::to_wstring(static_cast<double>(out[i]));
-        Assert::IsTrue(std::abs(static_cast<double>(true_[i]) - static_cast<double>(out[i])) < eps, msg.c_str());
+        std::string msg = "Mismatch at index " + std::to_string(i) +
+            ": expected " + std::to_string(static_cast<double>(true_[i])) +
+            " got " + std::to_string(static_cast<double>(out[i]));
+        EXPECT_TRUE(std::abs(static_cast<double>(true_[i]) - static_cast<double>(out[i])) < eps) << msg;
     }
 
-    Assert::IsTrue(std::abs(-1. - static_cast<double>(out[true_.size()])) < eps, L"Sentinel value was overwritten");
+    EXPECT_TRUE(std::abs(-1. - static_cast<double>(out[true_.size()])) < eps) << "Sentinel value was overwritten";
 }
 
 template<typename FN, typename T, typename... Args>
@@ -326,17 +325,17 @@ void check_result_2_typed(FN f, std::vector<T>& input1, std::vector<T>& input2, 
     if (d_input2) cudaFree(d_input2);
     cudaFree(d_out);
 
-    Assert::AreEqual(0, err, L"sig_combine_cuda returned non-zero error code");
+    EXPECT_EQ(0, err) << "sig_combine_cuda returned non-zero error code";
 
     const double eps = TYPED_EPSILON(T);
     for (uint64_t i = 0; i < true_.size(); ++i) {
-        std::wstring msg = L"Mismatch at index " + std::to_wstring(i) +
-            L": expected " + std::to_wstring(static_cast<double>(true_[i])) +
-            L" got " + std::to_wstring(static_cast<double>(out[i]));
-        Assert::IsTrue(std::abs(static_cast<double>(true_[i]) - static_cast<double>(out[i])) < eps, msg.c_str());
+        std::string msg = "Mismatch at index " + std::to_string(i) +
+            ": expected " + std::to_string(static_cast<double>(true_[i])) +
+            " got " + std::to_string(static_cast<double>(out[i]));
+        EXPECT_TRUE(std::abs(static_cast<double>(true_[i]) - static_cast<double>(out[i])) < eps) << msg;
     }
 
-    Assert::IsTrue(std::abs(-1. - static_cast<double>(out[true_.size()])) < eps, L"Sentinel value was overwritten");
+    EXPECT_TRUE(std::abs(-1. - static_cast<double>(out[true_.size()])) < eps) << "Sentinel value was overwritten";
 }
 
 template<typename T>
@@ -361,7 +360,7 @@ std::vector<T> compute_sig_on_gpu(const std::vector<T>& path, uint64_t dimension
     cudaFree(d_path);
     cudaFree(d_out);
 
-    Assert::AreEqual(0, err, L"signature_cuda returned non-zero error code in helper");
+    EXPECT_EQ(0, err) << "signature_cuda returned non-zero error code in helper";
     return sig;
 }
 
@@ -406,17 +405,17 @@ void check_backprop_result(
     cudaFree(d_sig);
     cudaFree(d_sig_derivs);
 
-    Assert::AreEqual(0, err, L"sig_backprop returned non-zero error code");
+    EXPECT_EQ(0, err) << "sig_backprop returned non-zero error code";
 
     const double eps = TYPED_EPSILON(T);
     for (uint64_t i = 0; i < expected_out.size(); ++i) {
-        std::wstring msg = L"Backprop mismatch at index " + std::to_wstring(i) +
-            L": expected " + std::to_wstring(static_cast<double>(expected_out[i])) +
-            L" got " + std::to_wstring(static_cast<double>(out[i]));
-        Assert::IsTrue(std::abs(static_cast<double>(expected_out[i]) - static_cast<double>(out[i])) < eps, msg.c_str());
+        std::string msg = "Backprop mismatch at index " + std::to_string(i) +
+            ": expected " + std::to_string(static_cast<double>(expected_out[i])) +
+            " got " + std::to_string(static_cast<double>(out[i]));
+        EXPECT_TRUE(std::abs(static_cast<double>(expected_out[i]) - static_cast<double>(out[i])) < eps) << msg;
     }
 
-    Assert::IsTrue(std::abs(-1. - static_cast<double>(out[expected_out.size()])) < eps, L"Sentinel value was overwritten");
+    EXPECT_TRUE(std::abs(-1. - static_cast<double>(out[expected_out.size()])) < eps) << "Sentinel value was overwritten";
 }
 
 template<typename FN, typename T>
@@ -460,17 +459,17 @@ void check_batch_backprop_result(
     cudaFree(d_sig);
     cudaFree(d_sig_derivs);
 
-    Assert::AreEqual(0, err, L"sig_backprop returned non-zero error code");
+    EXPECT_EQ(0, err) << "sig_backprop returned non-zero error code";
 
     const double eps = TYPED_EPSILON(T);
     for (uint64_t i = 0; i < expected_out.size(); ++i) {
-        std::wstring msg = L"Batch backprop mismatch at index " + std::to_wstring(i) +
-            L": expected " + std::to_wstring(static_cast<double>(expected_out[i])) +
-            L" got " + std::to_wstring(static_cast<double>(out[i]));
-        Assert::IsTrue(std::abs(static_cast<double>(expected_out[i]) - static_cast<double>(out[i])) < eps, msg.c_str());
+        std::string msg = "Batch backprop mismatch at index " + std::to_string(i) +
+            ": expected " + std::to_string(static_cast<double>(expected_out[i])) +
+            " got " + std::to_string(static_cast<double>(out[i]));
+        EXPECT_TRUE(std::abs(static_cast<double>(expected_out[i]) - static_cast<double>(out[i])) < eps) << msg;
     }
 
-    Assert::IsTrue(std::abs(-1. - static_cast<double>(out[expected_out.size()])) < eps, L"Sentinel value was overwritten");
+    EXPECT_TRUE(std::abs(-1. - static_cast<double>(out[expected_out.size()])) < eps) << "Sentinel value was overwritten";
 }
 
 template<typename FN, typename T, typename... Args>
@@ -499,17 +498,17 @@ void check_result_backprop_typed(FN f, std::vector<T>& sig, std::vector<T>& true
     cudaFree(d_out);
     cudaFree(d_derivs);
 
-    Assert::AreEqual(0, err, L"Backprop function returned non-zero error code");
+    EXPECT_EQ(0, err) << "Backprop function returned non-zero error code";
 
     const double eps = TYPED_EPSILON(T);
     for (uint64_t i = 0; i < true_.size(); ++i) {
-        std::wstring msg = L"Mismatch at index " + std::to_wstring(i) +
-            L": expected " + std::to_wstring(static_cast<double>(true_[i])) +
-            L" got " + std::to_wstring(static_cast<double>(out[i]));
-        Assert::IsTrue(std::abs(static_cast<double>(true_[i]) - static_cast<double>(out[i])) < eps, msg.c_str());
+        std::string msg = "Mismatch at index " + std::to_string(i) +
+            ": expected " + std::to_string(static_cast<double>(true_[i])) +
+            " got " + std::to_string(static_cast<double>(out[i]));
+        EXPECT_TRUE(std::abs(static_cast<double>(true_[i]) - static_cast<double>(out[i])) < eps) << msg;
     }
 
-    Assert::IsTrue(std::abs(-1. - static_cast<double>(out[true_.size()])) < eps, L"Sentinel value was overwritten");
+    EXPECT_TRUE(std::abs(-1. - static_cast<double>(out[true_.size()])) < eps) << "Sentinel value was overwritten";
 }
 
 template<typename FN, typename T, typename... Args>
@@ -539,6 +538,6 @@ std::vector<T> compute_batch_sig_on_gpu(const std::vector<T>& path, uint64_t bat
     cudaFree(d_path);
     cudaFree(d_out);
 
-    Assert::AreEqual(0, err, L"signature_cuda returned non-zero error code in helper");
+    EXPECT_EQ(0, err) << "signature_cuda returned non-zero error code in helper";
     return sig;
 }

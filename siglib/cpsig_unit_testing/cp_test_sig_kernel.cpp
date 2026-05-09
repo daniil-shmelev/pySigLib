@@ -15,12 +15,7 @@
 
 #include "cp_test_helpers.h"
 
-namespace cpSigTests {
-
-    TEST_CLASS(sigKernelTest) {
-    public:
-
-        TEST_METHOD(Trivial) {
+        TEST(sigKernelTest, Trivial) {
             auto f = sig_kernel_d;
             uint64_t dimension = 1, length = 1;
             std::vector<double> path = { 0. };
@@ -29,7 +24,7 @@ namespace cpSigTests {
             check_result(f, gram, true_sig, (uint64_t)1, dimension, length, length, 0, 0, false, 1);
         }
 
-        TEST_METHOD(TrivialBatch) {
+        TEST(sigKernelTest, TrivialBatch) {
             auto f = sig_kernel_d;
             uint64_t dimension = 1, length = 1, batch_size = 5;
             std::vector<double> path = { 0. };
@@ -37,7 +32,7 @@ namespace cpSigTests {
             std::vector<double> gram = {};
             check_result(f, gram, true_sig, batch_size, dimension, length, length, 0, 0, 1, false);
         }
-        TEST_METHOD(LinearPathTest) {
+        TEST(sigKernelTest, LinearPathTest) {
             auto f = sig_kernel_d;
             uint64_t dimension = 2, length = 3;
             std::vector<double> path = { 0., 0., 0.5, 0.5, 1.,1. };
@@ -47,7 +42,7 @@ namespace cpSigTests {
             check_result(f, gram, true_sig, (uint64_t)1, dimension, length, length, 2, 2, false, 1);
         }
 
-        TEST_METHOD(ManualTest) {
+        TEST(sigKernelTest, ManualTest) {
             auto f = sig_kernel_d;
             uint64_t dimension = 3, length = 4;
             std::vector<double> path = { .9, .5, .8, .5, .3, .0, .0, .2, .6, .4, .0, .2 };
@@ -57,7 +52,7 @@ namespace cpSigTests {
             check_result(f, gram, true_sig, (uint64_t)1, dimension, length, length, 2, 2, false, 1);
         }
 
-        TEST_METHOD(NonSquare1) {
+        TEST(sigKernelTest, NonSquare1) {
             auto f = sig_kernel_d;
             uint64_t dimension = 1, length1 = 3, length2 = 2;
             std::vector<double> path1 = { 0., 1., 2. };
@@ -68,7 +63,7 @@ namespace cpSigTests {
             check_result(f, gram, true_sig, (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
         }
 
-        TEST_METHOD(NonSquare2) {
+        TEST(sigKernelTest, NonSquare2) {
             auto f = sig_kernel_d;
             uint64_t dimension = 1, length1 = 2, length2 = 3;
             std::vector<double> path2 = { 0., 1., 2. };
@@ -79,7 +74,7 @@ namespace cpSigTests {
             check_result(f, gram, true_sig, (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
         }
 
-        TEST_METHOD(FullGrid) {
+        TEST(sigKernelTest, FullGrid) {
             auto f = sig_kernel_d;
             uint64_t dimension = 1, length1 = 3, length2 = 2;
             std::vector<double> path1 = { 0., 1., 2. };
@@ -91,11 +86,8 @@ namespace cpSigTests {
             gram_(path1.data(), path2.data(), gram.data(), 1, dimension, length1, length2);
             check_result(f, gram, true_sig, (uint64_t)1, dimension, length1, length2, 0, 0, true, 1);
         }
-    };
 
-    TEST_CLASS(sigKernelBackpropTest) {
-    public:
-        TEST_METHOD(ManualTest1) {
+        TEST(sigKernelBackpropTest, ManualTest1) {
             auto f = sig_kernel_backprop_d;
             uint64_t dimension = 1, length1 = 2, length2 = 3;
             std::vector<double> path1 = { 0., 2. };
@@ -108,7 +100,7 @@ namespace cpSigTests {
             check_result(f, gram, true_, &deriv, k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
         }
 
-        TEST_METHOD(ManualTest1Extended) {
+        TEST(sigKernelBackpropTest, ManualTest1Extended) {
             auto f = sig_kernel_backprop_d;
             uint64_t dimension = 1, length1 = 34, length2 = 35;
             std::vector<double> path1(length1, 0.);
@@ -137,7 +129,7 @@ namespace cpSigTests {
             check_result(f, gram, true_, &deriv, k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
         }
 
-        TEST_METHOD(ManualTest1Rev) {
+        TEST(sigKernelBackpropTest, ManualTest1Rev) {
             auto f = sig_kernel_backprop_d;
             uint64_t dimension = 1, length2 = 2, length1 = 3;
             std::vector<double> path2 = { 0., 2. };
@@ -150,7 +142,7 @@ namespace cpSigTests {
             check_result(f, gram, true_, &deriv, k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
         }
 
-        TEST_METHOD(ManualTest2) {
+        TEST(sigKernelBackpropTest, ManualTest2) {
             auto f = sig_kernel_backprop_d;
             uint64_t dimension = 1, length1 = 3, length2 = 3;
             std::vector<double> path1 = { 0., 2., 3. };
@@ -163,7 +155,7 @@ namespace cpSigTests {
             check_result(f, gram, true_, &deriv, k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
         }
 
-        TEST_METHOD(ManualTest2Rev) {
+        TEST(sigKernelBackpropTest, ManualTest2Rev) {
             auto f = sig_kernel_backprop_d;
             uint64_t dimension = 1, length2 = 3, length1 = 3;
             std::vector<double> path2 = { 0., 2., 3. };
@@ -176,7 +168,7 @@ namespace cpSigTests {
             check_result(f, gram, true_, &deriv, k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
         }
 
-        TEST_METHOD(ManualTest3) {
+        TEST(sigKernelBackpropTest, ManualTest3) {
             auto f = sig_kernel_backprop_d;
             uint64_t dimension = 1, length1 = 2, length2 = 3;
             std::vector<double> path1 = { 0., 2. };
@@ -205,7 +197,7 @@ namespace cpSigTests {
             check_result(f, gram, true_, &deriv, k_grid.data(), (uint64_t)1, dimension, length1, length2, 1, 1, false, 1);
         }
 
-        TEST_METHOD(ManualTest3Rev) {
+        TEST(sigKernelBackpropTest, ManualTest3Rev) {
             auto f = sig_kernel_backprop_d;
             uint64_t dimension = 1, length2 = 2, length1 = 3;
             std::vector<double> path2 = { 0., 2. };
@@ -234,7 +226,7 @@ namespace cpSigTests {
             check_result(f, gram, true_, &deriv, k_grid.data(), (uint64_t)1, dimension, length1, length2, 1, 1, false, 1);
         }
 
-        TEST_METHOD(ManualTest4) {
+        TEST(sigKernelBackpropTest, ManualTest4) {
             auto f = sig_kernel_backprop_d;
             uint64_t dimension = 2, length1 = 3, length2 = 3;
             std::vector<double> path1 = { 0., 1., 2., 4., 5., 5. };
@@ -257,7 +249,7 @@ namespace cpSigTests {
             check_result(f, gram, true_, &deriv, k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
         }
 
-        TEST_METHOD(ManualTest4Rev) {
+        TEST(sigKernelBackpropTest, ManualTest4Rev) {
             auto f = sig_kernel_backprop_d;
             uint64_t dimension = 2, length2 = 3, length1 = 3;
             std::vector<double> path2 = { 0., 1., 2., 4., 5., 5. };
@@ -280,7 +272,7 @@ namespace cpSigTests {
             check_result(f, gram, true_, &deriv, k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, false, 1);
         }
 
-        TEST_METHOD(BatchManualTest1) {
+        TEST(sigKernelBackpropTest, BatchManualTest1) {
             auto f = sig_kernel_backprop_d;
             uint64_t batch_size = 2, dimension = 1, length1 = 2, length2 = 3;
             std::vector<double> path1 = { 0., 2., 0., 2. };
@@ -294,7 +286,7 @@ namespace cpSigTests {
             check_result(f, gram, true_, derivs.data(), k_grid.data(), batch_size, dimension, length1, length2, 0, 0, false, 1);
         }
 
-        TEST_METHOD(BatchManualTest2) {
+        TEST(sigKernelBackpropTest, BatchManualTest2) {
             auto f = sig_kernel_backprop_d;
             uint64_t batch_size = 2, dimension = 1, length1 = 3, length2 = 3;
             std::vector<double> path1 = { 0., 2., 3., 0., 2., 3. };
@@ -307,13 +299,10 @@ namespace cpSigTests {
             gram_(path1.data(), path2.data(), gram.data() + 4, 1, dimension, length1, length2);
             check_result(f, gram, true_, derivs.data(), k_grid.data(), batch_size, dimension, length1, length2, 0, 0, false, 1);
         }
-    };
 
-    TEST_CLASS(sigKernelBackpropGridTest) {
-    public:
         // When derivs_grid has 1.0 only at position [-1,-1] and 0.0 elsewhere,
         // the grid backprop should produce the same result as scalar backprop with deriv=1.0.
-        TEST_METHOD(ConsistencyWithScalar) {
+        TEST(sigKernelBackpropGridTest, ConsistencyWithScalar) {
             uint64_t dimension = 1, length1 = 2, length2 = 3;
             std::vector<double> path1 = { 0., 2. };
             std::vector<double> path2 = { 0., 1., 2. };
@@ -334,9 +323,9 @@ namespace cpSigTests {
             (void)sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), (uint64_t)1, dimension, length1, length2, 0, 0, true, 1);
 
             for (uint64_t i = 0; i < out_scalar.size(); ++i)
-                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
+                EXPECT_TRUE(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
         }
-        TEST_METHOD(BatchConsistencyWithScalar) {
+        TEST(sigKernelBackpropGridTest, BatchConsistencyWithScalar) {
             uint64_t batch_size = 2, dimension = 1, length1 = 2, length2 = 3;
             std::vector<double> path1 = { 0., 2., 0., 2. };
             std::vector<double> path2 = { 0., 1., 2., 0., 1., 2. };
@@ -360,9 +349,9 @@ namespace cpSigTests {
             (void)sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), batch_size, dimension, length1, length2, 0, 0, true, 1);
 
             for (uint64_t i = 0; i < out_size; ++i)
-                Assert::IsTrue(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
+                EXPECT_TRUE(abs(out_scalar[i] - out_grid[i]) < DOUBLE_EPSILON);
         }
-        TEST_METHOD(ManualTest) {
+        TEST(sigKernelBackpropGridTest, ManualTest) {
             uint64_t dimension = 2, length = 4;
             std::vector<double> path = { 0., 0., 1., .5, 4., 0., 0., 1. };
             std::vector<double> gram((length - 1) * (length - 1));
@@ -377,7 +366,5 @@ namespace cpSigTests {
             (void)sig_kernel_backprop_d(gram.data(), out_grid.data(), derivs_grid.data(), k_grid.data(), (uint64_t)1, dimension, length, length, 0, 0, true, 1);
 
             for (uint64_t i = 0; i < out_size; ++i)
-                Assert::IsTrue(abs(true_[i] - out_grid[i]) < DOUBLE_EPSILON);
+                EXPECT_TRUE(abs(true_[i] - out_grid[i]) < DOUBLE_EPSILON);
         }
-    };
-}
