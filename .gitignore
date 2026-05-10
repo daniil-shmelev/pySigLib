@@ -30,8 +30,11 @@
 *.dylib
 *.so
 *.jam
+*.vcxproj.user
 /.vs
 /tests/__pycache__
 /build
+/build_*/
+/out/
 __pycache__/
 *.py[cod]

@@ -39,5 +39,13 @@ jobs:
       - name: Install package
         run: python -m pip install .
 
-      - name: Run tests
+      - name: Run Python tests
         run: pytest
+
+      - name: Build C++ unit tests
+        run: |
+          cmake -B build_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_BENCHMARKS=OFF -DPYSIGLIB_JAX_FFI=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build_tests --target cpsig_tests --config Release -j4
+
+      - name: Run C++ unit tests
+        run: ctest --test-dir build_tests --output-on-failure -C Release

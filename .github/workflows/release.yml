@@ -45,6 +45,8 @@ on:
 env:
   # Shared CUDA arch list for Linux and Windows plugin builds.
   CUDA_ARCH: "50;60;70;75;80;86;89;90;100;120"
+  # Pre-built CUDA build image from build-cuda-images.yml.
+  MANYLINUX_CUDA_IMAGE: ghcr.io/daniil-shmelev/pysiglib-manylinux-cuda12:cuda-12.9.1
   # Pre-built CUDA test image from build-cuda-images.yml.
   TEST_CUDA_IMAGE: ghcr.io/daniil-shmelev/pysiglib-test-cuda12:cuda-12.9.1
 
@@ -224,6 +226,12 @@ jobs:
       - name: Run test suite
         working-directory: ${{ runner.temp }}
         run: pytest ${{ github.workspace }}/tests/ -v
+      - name: Run C++ CPU tests
+        if: matrix.python-version == '3.13'
+        run: |
+          cmake -S . -B build_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_BENCHMARKS=OFF -DPYSIGLIB_JAX_FFI=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build_cpp_tests --target cpsig_tests --config Release --parallel 4
+          ctest --test-dir build_cpp_tests --output-on-failure -C Release
   # ============================================================
   # Linux distro compatibility matrix. The main test-linux-cpu job above
   # only exercises ubuntu-latest; this one runs the *same* CPU wheel
@@ -352,6 +360,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Pull test image
         run: docker pull ${{ env.TEST_CUDA_IMAGE }}
+      - name: Pull CUDA build image
+        run: docker pull ${{ env.MANYLINUX_CUDA_IMAGE }}
       - name: Run pytest in ephemeral test container with --gpus all
         # PowerShell writes a bash script as LF-only BOM-less UTF-8 so the
         # Linux container can parse it. pytest-timeout guards against hung
@@ -381,6 +391,24 @@ jobs:
             -e EXPECTED_VERSION="$env:EXPECTED_VERSION" `
             ${{ env.TEST_CUDA_IMAGE }} `
             bash /workspace/run-cuda-tests.sh
+      - name: Run CUDA C++ tests in build container
+        run: |
+          $scriptBody = @'
+          set -e
+          cmake -S /workspace/plugins/cuda -B /workspace/build_cuda_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_CUDA_ARCH="${CUDA_ARCH}" -DCMAKE_BUILD_TYPE=Release
+          cmake --build /workspace/build_cuda_cpp_tests --target cusig_tests --config Release --parallel 4
+          ctest --test-dir /workspace/build_cuda_cpp_tests --output-on-failure -C Release -L cuda
+          '@
+          $ws = $env:GITHUB_WORKSPACE
+          $scriptPath = Join-Path $ws "run-cuda-cpp-tests.sh"
+          $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+          [System.IO.File]::WriteAllText($scriptPath, $scriptBody.Replace("`r`n", "`n"), $utf8NoBom)
+          docker run --rm --gpus all `
+            -v "${ws}:/workspace" `
+            -w /workspace `
+            -e CUDA_ARCH="$env:CUDA_ARCH" `
+            ${{ env.MANYLINUX_CUDA_IMAGE }} `
+            bash /workspace/run-cuda-cpp-tests.sh
 
   test-windows-cuda:
     name: Test Windows CUDA wheel
@@ -390,7 +418,7 @@ jobs:
       - gate-cuda-tests
     if: github.event_name == 'workflow_dispatch' && github.repository == 'daniil-shmelev/pysiglib' && github.event.inputs.run_gpu_tests == 'true'
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
@@ -407,6 +435,34 @@ jobs:
         with:
           name: wheels-windows-cuda
           path: dist
+      # The CUDA C++ tests build from source on this GPU runner, so make sure
+      # nvcc and the Visual Studio CUDA integration are available here too.
+      - name: Cache CUDA toolkit
+        id: cuda-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
+            C:\Program Files\Microsoft Visual Studio\2022\*\MSBuild\Microsoft\VC\v170\BuildCustomizations
+          key: cuda-win-selfhosted-${{ runner.name }}-12.9.1-nvcc-cudart-thrust-vsint-v1
+      - name: Install CUDA toolkit
+        if: steps.cuda-cache.outputs.cache-hit != 'true'
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: '12.9.1'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "thrust", "visual_studio_integration"]'
+      - name: Expose CUDA env on cache hit
+        if: steps.cuda-cache.outputs.cache-hit == 'true'
+        run: |
+          $root = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9"
+          "CUDA_PATH=$root"        | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CUDA_PATH_V12_9=$root"  | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CUDA_HOME=$root"        | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$root\bin"              | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          "$root\libnvvp"          | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Verify nvcc
+        run: nvcc --version
       # Ephemeral per-run venv isolates this job from leftover state on the
       # self-hosted runner (stale installs, pytest plugins, Python 3.12/3.13
       # site-packages drift). Prepending Scripts\ to GITHUB_PATH makes all
@@ -443,6 +499,13 @@ jobs:
       - name: Run full test suite
         working-directory: ${{ runner.temp }}
         run: python -m pytest ${{ github.workspace }}/tests/ -v --timeout=60
+      - name: Run CUDA C++ tests
+        run: |
+          $sourceDir = Join-Path $env:GITHUB_WORKSPACE "plugins/cuda"
+          $buildDir = Join-Path $env:GITHUB_WORKSPACE "build_cuda_cpp_tests"
+          cmake -S $sourceDir -B $buildDir -DPYSIGLIB_TESTS=ON "-DPYSIGLIB_CUDA_ARCH=$env:CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release
+          cmake --build $buildDir --target cusig_tests --config Release --parallel 4
+          ctest --test-dir $buildDir --output-on-failure -C Release -L cuda
       - name: Remove ephemeral venv
         if: always()
         run: |
@@ -482,6 +545,13 @@ jobs:
         shell: pwsh
         working-directory: ${{ runner.temp }}
         run: pytest ${{ github.workspace }}/tests/ -v
+      - name: Run C++ CPU tests
+        if: matrix.python-version == '3.13'
+        shell: pwsh
+        run: |
+          cmake -S . -B build_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_BENCHMARKS=OFF -DPYSIGLIB_JAX_FFI=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build_cpp_tests --target cpsig_tests --config Release --parallel 4
+          ctest --test-dir build_cpp_tests --output-on-failure -C Release
   test-macos:
     name: Test macOS wheel (py${{ matrix.python-version }})
     needs: build-macos
@@ -512,6 +582,12 @@ jobs:
       - name: Run CPU test suite
         working-directory: ${{ runner.temp }}
         run: pytest ${{ github.workspace }}/tests/ -v
+      - name: Run C++ CPU tests
+        if: matrix.python-version == '3.13'
+        run: |
+          cmake -S . -B build_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_BENCHMARKS=OFF -DPYSIGLIB_JAX_FFI=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build_cpp_tests --target cpsig_tests --config Release --parallel 4
+          ctest --test-dir build_cpp_tests --output-on-failure -C Release
   # ============================================================
   # Aggregate all built wheels into one downloadable artifact.
   # Gated on every test job so the `all-wheels` artifact is only produced

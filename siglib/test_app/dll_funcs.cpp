@@ -75,6 +75,7 @@ void load_cusig(const std::string& dir_path) {
     //////////////////////////////////////////////
     // Load cusig
     //////////////////////////////////////////////
+#if defined(_WIN32) && !defined __GNUC__
     std::string cusig_path = dir_path + "\\cusig.dll";
 
     std::cout << "Loading cusig from " << cusig_path << std::endl;
@@ -110,6 +111,19 @@ void load_cusig(const std::string& dir_path) {
     }
 
     std::cout << "cusig loaded\n" << std::endl;
+#else
+    std::string cusig_path = dir_path + "/libcusig.so";
+
+    std::cout << "Loading cusig from " << cusig_path << std::endl;
+
+    cusig = dlopen(cusig_path.c_str(), RTLD_LAZY | RTLD_DEEPBIND);
+    if (!cusig) {
+        fputs(dlerror(), stderr);
+        throw std::runtime_error("Failed to load cusig");
+    }
+
+    std::cout << "cusig loaded\n" << std::endl;
+#endif
 }
 
 void unload_cpsig() {
