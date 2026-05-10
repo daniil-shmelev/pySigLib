@@ -59,10 +59,10 @@ if(MSVC)
     # link.exe flags: /LTCG pairs with /GL, /OPT:REF drops unused code, /OPT:ICF
     # folds identical COMDATs, /DEBUG emits a PDB.
     target_link_options(cusig PRIVATE
-        /LTCG:incremental
-        /OPT:REF
-        /OPT:ICF
-        /DEBUG
+        "$<HOST_LINK:/LTCG:incremental>"
+        "$<HOST_LINK:/OPT:REF>"
+        "$<HOST_LINK:/OPT:ICF>"
+        "$<HOST_LINK:/DEBUG>"
     )
 endif()
 

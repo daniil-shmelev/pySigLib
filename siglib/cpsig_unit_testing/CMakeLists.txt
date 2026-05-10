@@ -1,12 +1,14 @@
-include(FetchContent)
-FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG v1.16.0
-)
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
+if(NOT TARGET GTest::gtest_main)
+    include(FetchContent)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.16.0
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+endif()
 
 add_executable(cpsig_tests
     cp_test_misc.cpp
@@ -49,5 +51,16 @@ add_custom_command(TARGET cpsig_tests POST_BUILD
         $<TARGET_FILE_DIR:cpsig_tests>
 )
 
+set(_pysiglib_test_cache_root "${CMAKE_CURRENT_BINARY_DIR}/pysiglib_test_cache")
+file(MAKE_DIRECTORY "${_pysiglib_test_cache_root}")
+set(_pysiglib_test_environment
+    "LOCALAPPDATA=${_pysiglib_test_cache_root}"
+    "HOME=${_pysiglib_test_cache_root}"
+)
+
 include(GoogleTest)
-gtest_discover_tests(cpsig_tests)
+gtest_discover_tests(cpsig_tests
+    DISCOVERY_MODE PRE_TEST
+    PROPERTIES
+        ENVIRONMENT "${_pysiglib_test_environment}"
+)

@@ -1,0 +1,393 @@
+{
+  "version": 4,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-msvc-base",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "PYSIGLIB_BENCHMARKS": "OFF",
+        "PYSIGLIB_JAX_FFI": "OFF"
+      }
+    },
+    {
+      "name": "windows-cpu",
+      "displayName": "Windows: CPU Tests",
+      "description": "Build cpsig and the CPU GoogleTest target.",
+      "inherits": "windows-msvc-base",
+      "cacheVariables": {
+        "PYSIGLIB_TESTS": "ON",
+        "PYSIGLIB_CUDA": "OFF",
+        "PYSIGLIB_TEST_APP": "OFF"
+      }
+    },
+    {
+      "name": "windows-cuda",
+      "displayName": "Windows: CPU + CUDA Tests",
+      "description": "Build cpsig, cusig, and both CPU/CUDA GoogleTest targets.",
+      "inherits": "windows-msvc-base",
+      "cacheVariables": {
+        "PYSIGLIB_TESTS": "ON",
+        "PYSIGLIB_CUDA": "ON",
+        "PYSIGLIB_CUDA_ARCH": "native",
+        "PYSIGLIB_TEST_APP": "OFF"
+      }
+    },
+    {
+      "name": "windows-cpp-solution",
+      "displayName": "Windows: Full C++ Solution",
+      "description": "Build the old solution-equivalent target set, including the manual test app.",
+      "inherits": "windows-cuda",
+      "cacheVariables": {
+        "PYSIGLIB_TEST_APP": "ON"
+      }
+    },
+    {
+      "name": "linux-make-base",
+      "hidden": true,
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "PYSIGLIB_BENCHMARKS": "OFF",
+        "PYSIGLIB_JAX_FFI": "OFF"
+      }
+    },
+    {
+      "name": "linux-cpu-debug",
+      "displayName": "Linux/WSL: CPU Tests Debug",
+      "description": "Build cpsig and the CPU GoogleTest target on Linux/WSL.",
+      "inherits": "linux-make-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PYSIGLIB_TESTS": "ON",
+        "PYSIGLIB_CUDA": "OFF",
+        "PYSIGLIB_TEST_APP": "OFF"
+      }
+    },
+    {
+      "name": "linux-cpu-release",
+      "displayName": "Linux/WSL: CPU Tests Release",
+      "description": "Build cpsig and the CPU GoogleTest target on Linux/WSL.",
+      "inherits": "linux-cpu-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-cuda-debug",
+      "displayName": "Linux/WSL: CPU + CUDA Tests Debug",
+      "description": "Build cpsig, cusig, and both CPU/CUDA GoogleTest targets on Linux/WSL.",
+      "inherits": "linux-make-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PYSIGLIB_TESTS": "ON",
+        "PYSIGLIB_CUDA": "ON",
+        "PYSIGLIB_CUDA_ARCH": "native",
+        "PYSIGLIB_TEST_APP": "OFF"
+      }
+    },
+    {
+      "name": "linux-cuda-release",
+      "displayName": "Linux/WSL: CPU + CUDA Tests Release",
+      "description": "Build cpsig, cusig, and both CPU/CUDA GoogleTest targets on Linux/WSL.",
+      "inherits": "linux-cuda-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-cpp-solution-debug",
+      "displayName": "Linux/WSL: Full C++ Solution Debug",
+      "description": "Build the solution-equivalent C++ target set on Linux/WSL, including the manual test app.",
+      "inherits": "linux-cuda-debug",
+      "cacheVariables": {
+        "PYSIGLIB_TEST_APP": "ON"
+      }
+    },
+    {
+      "name": "linux-cpp-solution-release",
+      "displayName": "Linux/WSL: Full C++ Solution Release",
+      "description": "Build the solution-equivalent C++ target set on Linux/WSL, including the manual test app.",
+      "inherits": "linux-cpp-solution-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-cpsig-debug",
+      "displayName": "Windows: cpsig Debug",
+      "configurePreset": "windows-cpu",
+      "configuration": "Debug",
+      "targets": [
+        "cpsig"
+      ]
+    },
+    {
+      "name": "windows-cpsig-release",
+      "displayName": "Windows: cpsig Release",
+      "configurePreset": "windows-cpu",
+      "configuration": "Release",
+      "targets": [
+        "cpsig"
+      ]
+    },
+    {
+      "name": "windows-cusig-debug",
+      "displayName": "Windows: cusig Debug",
+      "configurePreset": "windows-cuda",
+      "configuration": "Debug",
+      "jobs": 1,
+      "targets": [
+        "cusig"
+      ]
+    },
+    {
+      "name": "windows-cusig-release",
+      "displayName": "Windows: cusig Release",
+      "configurePreset": "windows-cuda",
+      "configuration": "Release",
+      "jobs": 1,
+      "targets": [
+        "cusig"
+      ]
+    },
+    {
+      "name": "windows-test-app-debug",
+      "displayName": "Windows: Test App Debug",
+      "configurePreset": "windows-cpp-solution",
+      "configuration": "Debug",
+      "jobs": 1,
+      "targets": [
+        "pysiglib_test_app"
+      ]
+    },
+    {
+      "name": "windows-test-app-release",
+      "displayName": "Windows: Test App Release",
+      "configurePreset": "windows-cpp-solution",
+      "configuration": "Release",
+      "jobs": 1,
+      "targets": [
+        "pysiglib_test_app"
+      ]
+    },
+    {
+      "name": "windows-cpu-debug",
+      "displayName": "Windows: CPU Tests Debug",
+      "configurePreset": "windows-cpu",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-cpu-release",
+      "displayName": "Windows: CPU Tests Release",
+      "configurePreset": "windows-cpu",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-cuda-debug",
+      "displayName": "Windows: CPU + CUDA Tests Debug",
+      "configurePreset": "windows-cuda",
+      "configuration": "Debug",
+      "jobs": 1
+    },
+    {
+      "name": "windows-cuda-release",
+      "displayName": "Windows: CPU + CUDA Tests Release",
+      "configurePreset": "windows-cuda",
+      "configuration": "Release",
+      "jobs": 1
+    },
+    {
+      "name": "windows-cpp-solution-debug",
+      "displayName": "Windows: Full C++ Solution Debug",
+      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and pysiglib_test_app.",
+      "configurePreset": "windows-cpp-solution",
+      "configuration": "Debug",
+      "jobs": 1,
+      "targets": [
+        "pysiglib_cpp_solution"
+      ]
+    },
+    {
+      "name": "windows-cpp-solution-release",
+      "displayName": "Windows: Full C++ Solution Release",
+      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and pysiglib_test_app.",
+      "configurePreset": "windows-cpp-solution",
+      "configuration": "Release",
+      "jobs": 1,
+      "targets": [
+        "pysiglib_cpp_solution"
+      ]
+    },
+    {
+      "name": "linux-cpu-debug",
+      "displayName": "Linux/WSL: CPU Tests Debug",
+      "configurePreset": "linux-cpu-debug"
+    },
+    {
+      "name": "linux-cpu-release",
+      "displayName": "Linux/WSL: CPU Tests Release",
+      "configurePreset": "linux-cpu-release"
+    },
+    {
+      "name": "linux-cpsig-debug",
+      "displayName": "Linux/WSL: cpsig Debug",
+      "configurePreset": "linux-cpu-debug",
+      "targets": [
+        "cpsig"
+      ]
+    },
+    {
+      "name": "linux-cpsig-release",
+      "displayName": "Linux/WSL: cpsig Release",
+      "configurePreset": "linux-cpu-release",
+      "targets": [
+        "cpsig"
+      ]
+    },
+    {
+      "name": "linux-cuda-debug",
+      "displayName": "Linux/WSL: CPU + CUDA Tests Debug",
+      "configurePreset": "linux-cuda-debug"
+    },
+    {
+      "name": "linux-cuda-release",
+      "displayName": "Linux/WSL: CPU + CUDA Tests Release",
+      "configurePreset": "linux-cuda-release"
+    },
+    {
+      "name": "linux-cusig-debug",
+      "displayName": "Linux/WSL: cusig Debug",
+      "configurePreset": "linux-cuda-debug",
+      "targets": [
+        "cusig"
+      ]
+    },
+    {
+      "name": "linux-cusig-release",
+      "displayName": "Linux/WSL: cusig Release",
+      "configurePreset": "linux-cuda-release",
+      "targets": [
+        "cusig"
+      ]
+    },
+    {
+      "name": "linux-test-app-debug",
+      "displayName": "Linux/WSL: Test App Debug",
+      "configurePreset": "linux-cpp-solution-debug",
+      "targets": [
+        "pysiglib_test_app"
+      ]
+    },
+    {
+      "name": "linux-test-app-release",
+      "displayName": "Linux/WSL: Test App Release",
+      "configurePreset": "linux-cpp-solution-release",
+      "targets": [
+        "pysiglib_test_app"
+      ]
+    },
+    {
+      "name": "linux-cpp-solution-debug",
+      "displayName": "Linux/WSL: Full C++ Solution Debug",
+      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and pysiglib_test_app.",
+      "configurePreset": "linux-cpp-solution-debug",
+      "targets": [
+        "pysiglib_cpp_solution"
+      ]
+    },
+    {
+      "name": "linux-cpp-solution-release",
+      "displayName": "Linux/WSL: Full C++ Solution Release",
+      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and pysiglib_test_app.",
+      "configurePreset": "linux-cpp-solution-release",
+      "targets": [
+        "pysiglib_cpp_solution"
+      ]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-cpu-debug",
+      "displayName": "Windows: CPU Tests Debug",
+      "configurePreset": "windows-cpu",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-cpu-release",
+      "displayName": "Windows: CPU Tests Release",
+      "configurePreset": "windows-cpu",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-cuda-debug",
+      "displayName": "Windows: CPU + CUDA Tests Debug",
+      "configurePreset": "windows-cuda",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-cuda-release",
+      "displayName": "Windows: CPU + CUDA Tests Release",
+      "configurePreset": "windows-cuda",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-cpu-debug",
+      "displayName": "Linux/WSL: CPU Tests Debug",
+      "configurePreset": "linux-cpu-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-cpu-release",
+      "displayName": "Linux/WSL: CPU Tests Release",
+      "configurePreset": "linux-cpu-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-cuda-debug",
+      "displayName": "Linux/WSL: CPU + CUDA Tests Debug",
+      "configurePreset": "linux-cuda-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-cuda-release",
+      "displayName": "Linux/WSL: CPU + CUDA Tests Release",
+      "configurePreset": "linux-cuda-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

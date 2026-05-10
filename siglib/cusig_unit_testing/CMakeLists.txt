@@ -38,7 +38,17 @@ add_custom_command(TARGET cusig_tests POST_BUILD
         $<TARGET_FILE_DIR:cusig_tests>
 )
 
+set(_pysiglib_test_cache_root "${CMAKE_CURRENT_BINARY_DIR}/pysiglib_test_cache")
+file(MAKE_DIRECTORY "${_pysiglib_test_cache_root}")
+set(_pysiglib_test_environment
+    "LOCALAPPDATA=${_pysiglib_test_cache_root}"
+    "HOME=${_pysiglib_test_cache_root}"
+)
+
 include(GoogleTest)
 gtest_discover_tests(cusig_tests
-    PROPERTIES LABELS cuda
+    DISCOVERY_MODE PRE_TEST
+    PROPERTIES
+        LABELS cuda
+        ENVIRONMENT "${_pysiglib_test_environment}"
 )
