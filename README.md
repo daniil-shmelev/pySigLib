@@ -10,8 +10,8 @@
 <h2 align='center'>A high-performance library for path signatures and rough path methods on CPU and GPU</h2>
 
 ![PyPI - Version](https://img.shields.io/pypi/v/pysiglib)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/pysiglib)
-![Python Versions](https://img.shields.io/pypi/pyversions/pysiglib)
+[![PyPI - Downloads](https://static.pepy.tech/badge/pysiglib/month)](https://pepy.tech/projects/pysiglib)
+![Python Versions](https://img.shields.io/badge/python-%3E%3D3.9-blue)
 ![CI - Test](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml/badge.svg)
 [![codecov](https://codecov.io/gh/daniil-shmelev/pySigLib/graph/badge.svg?token=8W0JXOSIC7)](https://codecov.io/gh/daniil-shmelev/pySigLib)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/daniil-shmelev/pySigLib)
