@@ -476,6 +476,36 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int sig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
+	/** @defgroup branched_sig_kernel_functions Branched signature kernel functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes the depth-recursive branched signature kernel from batch gram matrices.
+	*
+	* Computes the non-planar BCK branched signature kernel using the Chevyrev-Oberhauser recursion.
+	* The core consumes precomputed static-kernel increments rather than path coordinates.
+	*
+	* @param gram Pointer to batch gram matrix data (row-major), size = `batch_size * (length1 - 1) * (length2 - 1)`.
+	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * (return_grid ? (((length1 - 1) << dyadic_order_1) + 1) * (((length2 - 1) << dyadic_order_2) + 1) : 1)`.
+	* @param batch_size Batch size of the path pairs.
+	* @param dimension Dimension of the original paths. The kernel core uses `gram`, so this is retained for API parity.
+	* @param length1 Length of the first paths.
+	* @param length2 Length of the second paths.
+	* @param depth Truncation depth of the branched kernel recursion. If zero, the output is filled with ones.
+	* @param dyadic_order_1 Dyadic refinement for the first paths.
+	* @param dyadic_order_2 Dyadic refinement for the second paths.
+	* @param return_grid If true, returns the final-depth grid; otherwise returns the endpoint scalar per batch item.
+	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all
+	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
+	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int branched_sig_kernel_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @brief Double-precision variant of branched_sig_kernel_f. */
+	[[nodiscard]] CPSIG_API int branched_sig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @} */
+
 	/** @defgroup sig_kernel_backprop_functions Signature kernel backprop functions
 	* @{
 	*/
@@ -502,6 +532,38 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int sig_kernel_backprop_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @brief */
 	[[nodiscard]] CPSIG_API int sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @} */
+
+	/** @defgroup branched_sig_kernel_backprop_functions Branched signature kernel backprop functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates through branched_sig_kernel_f with respect to the gram matrix.
+	*
+	* Computes derivatives with respect to the precomputed static-kernel increments used by the branched
+	* signature kernel. Path-coordinate derivatives are handled by the Python static-kernel wrappers.
+	*
+	* @param gram Pointer to batch gram matrix data (row-major), size = `batch_size * (length1 - 1) * (length2 - 1)`.
+	* @param out Pointer to output buffer for dF/d(gram) (row-major, preallocated), size = `batch_size * (length1 - 1) * (length2 - 1)`.
+	* @param derivs Pointer to input derivatives. If `return_grid` is false, size = `batch_size`. If `return_grid` is true, size = `batch_size * (((length1 - 1) << dyadic_order_1) + 1) * (((length2 - 1) << dyadic_order_2) + 1)`.
+	* @param k_stack Optional pointer to precomputed forward grids K_0, ..., K_depth (row-major). May be null. If supplied, size = `batch_size * (depth + 1) * (((length1 - 1) << dyadic_order_1) + 1) * (((length2 - 1) << dyadic_order_2) + 1)`.
+	* @param batch_size Batch size of the path pairs.
+	* @param dimension Dimension of the original paths. The kernel core uses `gram`, so this is retained for API parity.
+	* @param length1 Length of the first paths.
+	* @param length2 Length of the second paths.
+	* @param depth Truncation depth of the branched kernel recursion. If zero, derivatives with respect to `gram` are zero.
+	* @param dyadic_order_1 Dyadic refinement for the first paths.
+	* @param dyadic_order_2 Dyadic refinement for the second paths.
+	* @param return_grid If true, `derivs` is expected to be grid-sized per batch item; otherwise it has one scalar per batch item.
+	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all
+	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
+	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int branched_sig_kernel_backprop_f(const float* gram, float* out, const float* derivs, const float* k_stack, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @brief Double-precision variant of branched_sig_kernel_backprop_f. */
+	[[nodiscard]] CPSIG_API int branched_sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_stack, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup branched_sig_functions Branched signature functions
