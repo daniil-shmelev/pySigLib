@@ -433,6 +433,16 @@ extern "C" {
 	[[nodiscard]] CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true) noexcept;
 	/** @} */
 
+	/** @defgroup branched_log_sig_cuda_functions Branched log signature CUDA functions
+	* @{
+	*/
+	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_cuda_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_cuda_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
+
+	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_backprop_cuda_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_backprop_cuda_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
+	/** @} */
+
 	/** @defgroup linear_sig_cuda_functions Linear sig CUDA functions
 	* @{
 	*/

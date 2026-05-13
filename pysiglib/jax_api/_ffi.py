@@ -150,6 +150,14 @@ _TARGETS = {
         "cpu": ("pysiglib_branched_sig_combine_backprop_cpu", "PySigLibBranchedSigCombineBackpropCpu"),
         "cuda": ("pysiglib_branched_sig_combine_backprop_cuda", "PySigLibBranchedSigCombineBackpropCuda"),
     },
+    "branched_sig_to_log_sig": {
+        "cpu": ("pysiglib_branched_sig_to_log_sig_cpu", "PySigLibBranchedSigToLogSigCpu"),
+        "cuda": ("pysiglib_branched_sig_to_log_sig_cuda", "PySigLibBranchedSigToLogSigCuda"),
+    },
+    "branched_sig_to_log_sig_backprop": {
+        "cpu": ("pysiglib_branched_sig_to_log_sig_backprop_cpu", "PySigLibBranchedSigToLogSigBackpropCpu"),
+        "cuda": ("pysiglib_branched_sig_to_log_sig_backprop_cuda", "PySigLibBranchedSigToLogSigBackpropCuda"),
+    },
 }
 
 
@@ -582,3 +590,23 @@ def branched_sig_combine_backprop_ffi_call(cotangent, bsig1, bsig2, dimension, m
     call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
                        n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
     return _make_ffi_call("branched_sig_combine_backprop", (cotangent, bsig1, bsig2), (grad_type, grad_type), call_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# branched_sig_to_log_sig
+# ---------------------------------------------------------------------------
+
+def branched_sig_to_log_sig_ffi_call(bsig, dimension, max_nodes, n_jobs, planar):
+    _normalize_dtype(bsig.dtype)
+    out_type = jax.ShapeDtypeStruct(bsig.shape, bsig.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
+                       n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
+    return _make_ffi_call("branched_sig_to_log_sig", (bsig,), out_type, call_kwargs)
+
+
+def branched_sig_to_log_sig_backprop_ffi_call(bsig, cotangent, dimension, max_nodes, n_jobs, planar):
+    _check_same_dtype(bsig, cotangent)
+    out_type = jax.ShapeDtypeStruct(bsig.shape, bsig.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
+                       n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
+    return _make_ffi_call("branched_sig_to_log_sig_backprop", (bsig, cotangent), out_type, call_kwargs)

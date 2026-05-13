@@ -247,6 +247,9 @@ struct CpuFns<float> {
     static constexpr auto bsig_combine = branched_sig_combine_f;
     static constexpr auto bsig_combine_backprop = branched_sig_combine_backprop_f;
 
+    static constexpr auto bsig_to_log_sig = branched_sig_to_log_sig_f;
+    static constexpr auto bsig_to_log_sig_backprop = branched_sig_to_log_sig_backprop_f;
+
     static constexpr auto log_sig_from_path = log_sig_from_path_f;
     static constexpr auto log_sig_from_path_backprop = log_sig_from_path_backprop_f;
 
@@ -281,6 +284,9 @@ struct CpuFns<double> {
 
     static constexpr auto bsig_combine = branched_sig_combine_d;
     static constexpr auto bsig_combine_backprop = branched_sig_combine_backprop_d;
+
+    static constexpr auto bsig_to_log_sig = branched_sig_to_log_sig_d;
+    static constexpr auto bsig_to_log_sig_backprop = branched_sig_to_log_sig_backprop_d;
 
     static constexpr auto log_sig_from_path = log_sig_from_path_d;
     static constexpr auto log_sig_from_path_backprop = log_sig_from_path_backprop_d;
@@ -327,6 +333,9 @@ struct CudaFns<float> {
     static constexpr auto bsig_combine = branched_sig_combine_cuda_f;
     static constexpr auto bsig_combine_backprop = branched_sig_combine_backprop_cuda_f;
 
+    static constexpr auto bsig_to_log_sig = branched_sig_to_log_sig_cuda_f;
+    static constexpr auto bsig_to_log_sig_backprop = branched_sig_to_log_sig_backprop_cuda_f;
+
     static constexpr auto log_sig_from_path = log_sig_from_path_cuda_f;
     static constexpr auto log_sig_from_path_backprop = log_sig_from_path_backprop_cuda_f;
 
@@ -361,6 +370,9 @@ struct CudaFns<double> {
 
     static constexpr auto bsig_combine = branched_sig_combine_cuda_d;
     static constexpr auto bsig_combine_backprop = branched_sig_combine_backprop_cuda_d;
+
+    static constexpr auto bsig_to_log_sig = branched_sig_to_log_sig_cuda_d;
+    static constexpr auto bsig_to_log_sig_backprop = branched_sig_to_log_sig_backprop_cuda_d;
 
     static constexpr auto log_sig_from_path = log_sig_from_path_cuda_d;
     static constexpr auto log_sig_from_path_backprop = log_sig_from_path_backprop_cuda_d;
@@ -2081,6 +2093,106 @@ ffi::Error BranchedSigCombineBackpropCuda(cudaStream_t stream, std::int64_t dime
 #endif
 
 // ---------------------------------------------------------------------------
+// branched_sig_to_log_sig
+// ---------------------------------------------------------------------------
+
+template <typename T>
+ffi::Error BranchedSigToLogSigCpuImpl(
+    std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
+    ffi::AnyBuffer& bsig, ffi::Result<ffi::AnyBuffer>& out
+) {
+    SigSpec spec;
+    if (auto msg = GetSigSpec(bsig, spec); !msg.empty()) return InvalidArgument(msg);
+
+    int err_code = CpuFns<T>::bsig_to_log_sig(BufferData<T>(bsig), BufferData<T>(out),
+        spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes),
+        static_cast<int>(n_jobs), planar, true);
+    if (err_code != 0) return NativeCallError("branched_sig_to_log_sig", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error BranchedSigToLogSigBackpropCpuImpl(
+    std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
+    ffi::AnyBuffer& bsig, ffi::AnyBuffer& cotangent, ffi::Result<ffi::AnyBuffer>& out
+) {
+    SigSpec spec;
+    if (auto msg = GetSigSpec(bsig, spec); !msg.empty()) return InvalidArgument(msg);
+
+    int err_code = CpuFns<T>::bsig_to_log_sig_backprop(BufferData<T>(bsig), BufferData<T>(cotangent),
+        BufferData<T>(out),
+        spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes),
+        static_cast<int>(n_jobs), planar, true);
+    if (err_code != 0) return NativeCallError("branched_sig_to_log_sig_backprop", err_code);
+    return ffi::Error::Success();
+}
+
+ffi::Error BranchedSigToLogSigCpu(std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
+    ffi::AnyBuffer bsig, ffi::Result<ffi::AnyBuffer> out) {
+    if (auto msg = ValidateFloatBuffer("bsig", bsig); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(bsig), [&]<typename T>() -> ffi::Error {
+        return BranchedSigToLogSigCpuImpl<T>(dimension, max_nodes, n_jobs, planar, bsig, out);
+    });
+}
+
+ffi::Error BranchedSigToLogSigBackpropCpu(std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
+    ffi::AnyBuffer bsig, ffi::AnyBuffer cotangent, ffi::Result<ffi::AnyBuffer> out) {
+    if (auto msg = ValidateSameFloatDtype("bsig", bsig, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(bsig), [&]<typename T>() -> ffi::Error {
+        return BranchedSigToLogSigBackpropCpuImpl<T>(dimension, max_nodes, n_jobs, planar, bsig, cotangent, out);
+    });
+}
+
+#ifdef PYSIGLIB_JAX_WITH_CUDA
+template <typename T>
+ffi::Error BranchedSigToLogSigCudaImpl(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t /*n_jobs*/, bool planar,
+    ffi::AnyBuffer& bsig, ffi::Result<ffi::AnyBuffer>& out) {
+    SigSpec spec;
+    if (auto msg = GetSigSpec(bsig, spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+    int err_code = CudaFns<T>::bsig_to_log_sig(BufferData<T>(bsig), BufferData<T>(out),
+        spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), planar, true);
+    if (err_code != 0) return NativeCallError("branched_sig_to_log_sig_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error BranchedSigToLogSigBackpropCudaImpl(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t /*n_jobs*/, bool planar,
+    ffi::AnyBuffer& bsig, ffi::AnyBuffer& cotangent, ffi::Result<ffi::AnyBuffer>& out) {
+    SigSpec spec;
+    if (auto msg = GetSigSpec(bsig, spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+    int err_code = CudaFns<T>::bsig_to_log_sig_backprop(BufferData<T>(bsig), BufferData<T>(cotangent),
+        BufferData<T>(out),
+        spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), planar, true);
+    if (err_code != 0) return NativeCallError("branched_sig_to_log_sig_backprop_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+ffi::Error BranchedSigToLogSigCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
+    ffi::AnyBuffer bsig, ffi::Result<ffi::AnyBuffer> out) {
+    if (auto msg = ValidateFloatBuffer("bsig", bsig); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(bsig), [&]<typename T>() -> ffi::Error {
+        return BranchedSigToLogSigCudaImpl<T>(stream, dimension, max_nodes, n_jobs, planar, bsig, out);
+    });
+}
+
+ffi::Error BranchedSigToLogSigBackpropCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t n_jobs, bool planar,
+    ffi::AnyBuffer bsig, ffi::AnyBuffer cotangent, ffi::Result<ffi::AnyBuffer> out) {
+    if (auto msg = ValidateSameFloatDtype("bsig", bsig, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(bsig), [&]<typename T>() -> ffi::Error {
+        return BranchedSigToLogSigBackpropCudaImpl<T>(stream, dimension, max_nodes, n_jobs, planar, bsig, cotangent, out);
+    });
+}
+#endif
+
+// ---------------------------------------------------------------------------
 // log_sig_from_path (method=3)
 // ---------------------------------------------------------------------------
 
@@ -2256,6 +2368,28 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCombineBackpropCuda, BranchedSi
         .Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+#endif
+
+// branched_sig_to_log_sig
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigToLogSigCpu, BranchedSigToLogSigCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigToLogSigBackpropCpu, BranchedSigToLogSigBackpropCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+#ifdef PYSIGLIB_JAX_WITH_CUDA
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigToLogSigCuda, BranchedSigToLogSigCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigToLogSigBackpropCuda, BranchedSigToLogSigBackpropCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("max_nodes").Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
 
 // log_sig_from_path (method=3)

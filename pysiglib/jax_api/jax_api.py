@@ -44,7 +44,6 @@ from ..branched_sig import branched_sig as branched_sig_forward
 from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
 from ..branched_log_sig import branched_sig_to_log_sig as branched_sig_to_log_sig_forward
 from ..branched_log_sig import branched_log_sig as branched_log_sig_forward
-from ..branched_log_sig_backprop import branched_sig_to_log_sig_backprop
 from ..sig_coef import sig_coef as sig_coef_forward
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
@@ -86,6 +85,8 @@ from ._ffi import (
     branched_sig_backprop_ffi_call,
     branched_sig_combine_ffi_call,
     branched_sig_combine_backprop_ffi_call,
+    branched_sig_to_log_sig_ffi_call,
+    branched_sig_to_log_sig_backprop_ffi_call,
 )
 
 
@@ -1279,54 +1280,22 @@ branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
 # branched_sig_to_log_sig
 # ---------------------------------------------------------------------------
 
-def _branched_sig_to_log_sig_callback(
-    bsig, dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs
-):
-    bsig = np.asarray(bsig)
-    flat, leading = _flatten_leading(bsig)
-    out = branched_sig_to_log_sig_forward(
-        flat, dimension, degree, time_aug=time_aug, lead_lag=lead_lag,
-        tree_order=tree_order, planar=planar, n_jobs=n_jobs)
-    return _unflatten_leading(out, leading)
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4))
+def _branched_sig_to_log_sig(bsig, dimension, degree, n_jobs, planar):
+    return branched_sig_to_log_sig_ffi_call(bsig, dimension, degree, n_jobs, planar)
 
 
-def _branched_sig_to_log_sig_bwd_callback(
-    cotangent, bsig, dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs
-):
-    cotangent = np.asarray(cotangent)
-    bsig = np.asarray(bsig)
-    co_flat, leading = _flatten_leading(cotangent)
-    bsig_flat, _ = _flatten_leading(bsig)
-    out = branched_sig_to_log_sig_backprop(
-        bsig_flat, co_flat, dimension, degree, time_aug=time_aug, lead_lag=lead_lag,
-        tree_order=tree_order, planar=planar, n_jobs=n_jobs)
-    return _unflatten_leading(out, leading)
-
-
-@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6, 7))
-def _branched_sig_to_log_sig(bsig, dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs):
-    out_type = jax.ShapeDtypeStruct(bsig.shape, bsig.dtype)
-    return jax.pure_callback(
-        lambda x: _branched_sig_to_log_sig_callback(
-            x, dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs),
-        out_type, bsig, vmap_method=_CALLBACK_VMAP_METHOD)
-
-
-def _branched_sig_to_log_sig_fwd(bsig, dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs):
-    result = _branched_sig_to_log_sig(
-        bsig, dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs)
+def _branched_sig_to_log_sig_fwd(bsig, dimension, degree, n_jobs, planar):
+    result = branched_sig_to_log_sig_ffi_call(bsig, dimension, degree, n_jobs, planar)
     return result, (bsig,)
 
 
 def _branched_sig_to_log_sig_bwd(
-    dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs, residual, cotangent
+    dimension, degree, n_jobs, planar, residual, cotangent
 ):
     bsig, = residual
-    out_type = jax.ShapeDtypeStruct(bsig.shape, bsig.dtype)
-    grad = jax.pure_callback(
-        lambda co, x: _branched_sig_to_log_sig_bwd_callback(
-            co, x, dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs),
-        out_type, cotangent, bsig, vmap_method=_CALLBACK_VMAP_METHOD)
+    grad = branched_sig_to_log_sig_backprop_ffi_call(
+        bsig, cotangent, dimension, degree, n_jobs, planar)
     return (grad,)
 
 
@@ -1344,6 +1313,8 @@ def branched_sig_to_log_sig(
     planar: bool = False,
     n_jobs: int = 1,
 ):
+    ensure_registered()
+
     bsig = jnp.asarray(bsig)
     _validate_sig_shape(bsig, "bsig")
 
@@ -1359,9 +1330,19 @@ def branched_sig_to_log_sig(
     check_n_jobs(n_jobs)
 
     aug_dimension = _augmented_dim(dimension, time_aug, lead_lag)
-    _infer_branched_scalar_term_jax(bsig, aug_dimension, degree, planar=planar)
-    return _branched_sig_to_log_sig(
-        bsig, dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs)
+    scalar_term = _infer_branched_scalar_term_jax(bsig, aug_dimension, degree, planar=planar)
+    if not scalar_term:
+        bsig = _prepend_scalar_one(bsig)
+
+    if tree_order != "recursive":
+        bsig = _inv_permute_bsig_jax(bsig, aug_dimension, degree, planar=planar)
+
+    result = _branched_sig_to_log_sig(bsig, aug_dimension, degree, n_jobs, planar)
+    if tree_order != "recursive":
+        result = _permute_bsig_jax(result, aug_dimension, degree, planar=planar)
+    if not scalar_term:
+        result = _strip_scalar(result)
+    return result
 
 
 branched_sig_to_log_sig.__doc__ = branched_sig_to_log_sig_forward.__doc__
