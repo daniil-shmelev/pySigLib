@@ -20,6 +20,16 @@ import torch
 import pytest
 import pysiglib
 
+REQUIRE_CUDA = os.environ.get("PYSIGLIB_REQUIRE_CUDA") == "1"
+CUDA_AVAILABLE = pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()
+
+if REQUIRE_CUDA and not CUDA_AVAILABLE:
+    raise pytest.UsageError(
+        "PYSIGLIB_REQUIRE_CUDA=1 but CUDA is unavailable or disabled. "
+        f"BUILT_WITH_CUDA={pysiglib.BUILT_WITH_CUDA}, "
+        f"torch.cuda.is_available()={torch.cuda.is_available()}"
+    )
+
 
 def check_close(a, b, atol=None, single_atol=None, double_atol=None):
     """Compare arrays/tensors element-wise within tolerance.
@@ -41,11 +51,11 @@ def check_close(a, b, atol=None, single_atol=None, double_atol=None):
 
 
 skip_no_cuda = pytest.mark.skipif(
-    not (pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()),
+    not CUDA_AVAILABLE,
     reason="CUDA not available or disabled"
 )
 
-DEVICES = ["cpu"] + (["cuda"] if pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available() else [])
+DEVICES = ["cpu"] + (["cuda"] if CUDA_AVAILABLE else [])
 
 
 def assert_device(tensor, device):
@@ -75,5 +85,7 @@ def _skip_on_cuda_oom():
         yield
     except RuntimeError as e:
         if "out of memory" in str(e).lower():
+            if REQUIRE_CUDA:
+                raise
             pytest.skip(f"Insufficient GPU memory: {e}")
         raise

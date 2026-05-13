@@ -17,6 +17,7 @@
 #include "cusig.h"
 #include "cu_macros.h"
 #include "cu_atomic.h"
+#include "cu_path_transforms.h"
 #include "../shared/branched_cache.h"
 
 #include <cstdint>
@@ -839,18 +840,6 @@ void branched_sig_cuda_core_(
 // =========================================================================
 
 template<typename T>
-void transform_path_(
-	const T* data_in,
-	T* data_out,
-	uint64_t batch_size,
-	uint64_t dimension,
-	uint64_t length,
-	bool time_aug,
-	bool lead_lag,
-	T end_time
-);
-
-template<typename T>
 void branched_sig_cuda_(
 	const T* path,
 	T* out,
@@ -881,7 +870,7 @@ void branched_sig_cuda_(
 		const uint64_t t_path_size = batch_size * t_length * t_dimension;
 		CudaBuf<T> d_transformed(t_path_size * sizeof(T));
 
-		transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
+		cu_transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
 		cudaDeviceSynchronize();
 
 		branched_sig_cuda_core_<T>(d_transformed.get(), core_out, batch_size, t_dimension, t_length, max_nodes, planar);
@@ -958,18 +947,6 @@ void branched_sig_backprop_cuda_core_(
 }
 
 template<typename T>
-void transform_path_backprop_(
-	const T* derivs,
-	T* data_out,
-	uint64_t batch_size,
-	uint64_t dimension,
-	uint64_t length,
-	bool time_aug,
-	bool lead_lag,
-	T end_time
-);
-
-template<typename T>
 void branched_sig_backprop_cuda_(
 	const T* path,
 	T* out,
@@ -1011,7 +988,7 @@ void branched_sig_backprop_cuda_(
 
 		try {
 			cudaMalloc(&d_transformed, t_path_size * sizeof(T));
-			transform_path_<T>(path, d_transformed, batch_size, dimension, length, time_aug, lead_lag, end_time);
+			cu_transform_path_<T>(path, d_transformed, batch_size, dimension, length, time_aug, lead_lag, end_time);
 
 			cudaMalloc(&d_transformed_derivs, t_path_size * sizeof(T));
 			branched_sig_backprop_cuda_core_<T>(d_transformed, d_transformed_derivs, core_derivs, core_bsig,
@@ -1020,7 +997,7 @@ void branched_sig_backprop_cuda_(
 			cudaFree(d_transformed);
 			d_transformed = nullptr;
 
-			transform_path_backprop_<T>(d_transformed_derivs, out, batch_size, dimension, length, time_aug, lead_lag, end_time);
+			cu_transform_path_backprop_<T>(d_transformed_derivs, out, batch_size, dimension, length, time_aug, lead_lag, end_time);
 			cudaFree(d_transformed_derivs);
 		} catch (...) {
 			if (d_transformed) cudaFree(d_transformed);
