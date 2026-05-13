@@ -20,6 +20,7 @@ from .jax_api import (
     sig_coef, sig_kernel, sig_kernel_gram,
     sig_score, expected_sig_score, sig_mmd,
     branched_sig, branched_sig_combine,
+    branched_sig_to_log_sig, branched_log_sig,
 )
 from .static_kernels_jax import (
     LinearKernel, ScaledLinearKernel, RBFKernel,
@@ -92,6 +93,7 @@ __all__ = [
     "sig_coef",
     "sig_score", "expected_sig_score", "sig_mmd",
     "branched_sig", "branched_sig_combine",
+    "branched_sig_to_log_sig", "branched_log_sig",
     "prepare_branched_sig", "branched_sig_length",
     "sig_length", "log_sig_length",
     "words_of_length", "words", "lyndon_words_of_length", "lyndon_words",

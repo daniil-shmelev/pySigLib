@@ -88,6 +88,7 @@ A high-performance library for path signatures and rough path methods on CPU and
    /pages/signature_coefficients
    /pages/log_signatures
    /pages/branched_signatures
+   /pages/branched_log_signatures
    /pages/signature_kernels
    /pages/streams
    /pages/backprop
