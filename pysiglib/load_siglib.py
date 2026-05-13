@@ -535,6 +535,17 @@ CPSIG.branched_sig_combine_f.restype = c_int
 CPSIG.branched_sig_combine_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
 CPSIG.branched_sig_combine_d.restype = c_int
 
+CPSIG.branched_sig_to_log_sig_f.argtypes = (POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
+CPSIG.branched_sig_to_log_sig_f.restype = c_int
+
+CPSIG.branched_sig_to_log_sig_d.argtypes = (POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
+CPSIG.branched_sig_to_log_sig_d.restype = c_int
+
+CPSIG.branched_sig_to_log_sig_backprop_f.argtypes = (POINTER(c_float), POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
+CPSIG.branched_sig_to_log_sig_backprop_f.restype = c_int
+
+CPSIG.branched_sig_to_log_sig_backprop_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
+CPSIG.branched_sig_to_log_sig_backprop_d.restype = c_int
 
 CPSIG.branched_sig_combine_backprop_f.argtypes = (POINTER(c_float), POINTER(c_float), POINTER(c_float), POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
 CPSIG.branched_sig_combine_backprop_f.restype = c_int

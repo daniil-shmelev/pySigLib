@@ -562,6 +562,9 @@ log_sig_combine.__doc__ = log_sig_combine_forward.__doc__
 
 from ..branched_sig import branched_sig as branched_sig_forward, prepare_branched_sig, branched_sig_length, branched_sig_combine as branched_sig_combine_forward
 from ..branched_sig_backprop import branched_sig_backprop, branched_sig_combine_backprop
+from ..branched_log_sig import branched_sig_to_log_sig as branched_sig_to_log_sig_forward
+from ..branched_log_sig import branched_log_sig as branched_log_sig_forward
+from ..branched_log_sig_backprop import branched_sig_to_log_sig_backprop
 
 class BranchedSig(torch.autograd.Function):
     @staticmethod
@@ -641,6 +644,74 @@ def branched_sig_combine(
     return BranchedSigCombine.apply(bsig1, bsig2, dimension, degree, tree_order, planar, n_jobs)
 
 branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
+
+
+class BranchedSigToLogSig(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, bsig, dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs):
+        blogsig = branched_sig_to_log_sig_forward(
+            bsig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag,
+            tree_order=tree_order, planar=planar, n_jobs=n_jobs)
+        ctx.save_for_backward(bsig)
+        ctx.dimension = dimension
+        ctx.degree = degree
+        ctx.time_aug = time_aug
+        ctx.lead_lag = lead_lag
+        ctx.tree_order = tree_order
+        ctx.planar = planar
+        ctx.n_jobs = n_jobs
+        return blogsig
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        bsig, = ctx.saved_tensors
+        grad = branched_sig_to_log_sig_backprop(
+            bsig, grad_output, ctx.dimension, ctx.degree,
+            time_aug=ctx.time_aug, lead_lag=ctx.lead_lag,
+            tree_order=ctx.tree_order, planar=ctx.planar, n_jobs=ctx.n_jobs)
+        return grad, None, None, None, None, None, None, None
+
+
+def branched_sig_to_log_sig(
+        bsig: Union[np.ndarray, torch.Tensor],
+        dimension: int,
+        degree: int,
+        *,
+        time_aug: bool = False,
+        lead_lag: bool = False,
+        tree_order: str = "recursive",
+        planar: bool = False,
+        n_jobs: int = 1,
+) -> Union[np.ndarray, torch.Tensor]:
+    return BranchedSigToLogSig.apply(
+        bsig, dimension, degree, time_aug, lead_lag, tree_order, planar, n_jobs)
+
+
+branched_sig_to_log_sig.__doc__ = branched_sig_to_log_sig_forward.__doc__
+
+
+def branched_log_sig(
+        path: Union[np.ndarray, torch.Tensor],
+        degree: int,
+        *,
+        time_aug: bool = False,
+        lead_lag: bool = False,
+        end_time: float = 1.0,
+        tree_order: str = "recursive",
+        planar: bool = False,
+        scalar_term: bool = False,
+        n_jobs: int = 1,
+) -> Union[np.ndarray, torch.Tensor]:
+    bsig = branched_sig(
+        path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
+        tree_order=tree_order, planar=planar, scalar_term=scalar_term, n_jobs=n_jobs)
+    dimension = path.shape[-1]
+    return branched_sig_to_log_sig(
+        bsig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag,
+        tree_order=tree_order, planar=planar, n_jobs=n_jobs)
+
+
+branched_log_sig.__doc__ = branched_log_sig_forward.__doc__
 
 
 class LogSigToSig(torch.autograd.Function):
