@@ -20,7 +20,7 @@ import torch
 
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_BRANCHED_SIG_TO_LOG_SIG
+from .dtypes import CPSIG_BRANCHED_SIG_TO_LOG_SIG, CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA
 from .data_handlers import MultipleSigInputHandler, SigOutputHandler
 from .sig_length import aug_dim
 from .branched_sig import (
@@ -104,24 +104,20 @@ def branched_sig_to_log_sig(
         bsig = _inv_permute_bsig(bsig, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
 
     bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
-    if isinstance(bsig, torch.Tensor) and bsig.device.type != "cpu":
-        out = branched_sig_to_log_sig(
-            bsig.cpu(), dimension, degree,
-            time_aug=time_aug, lead_lag=lead_lag,
-            tree_order="recursive", planar=planar, n_jobs=n_jobs).to(bsig.device)
-        if tree_order != "recursive":
-            _permute_bsig(out, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
-        return out
-
     data = MultipleSigInputHandler([bsig], bsig_len, ["bsig"])
     result = SigOutputHandler(data, bsig_len)
 
     if data.batch_size == 0:
         return result.data
 
-    err_code = CPSIG_BRANCHED_SIG_TO_LOG_SIG[data.dtype](
-        data.sig_ptr[0], result.data_ptr, data.batch_size,
-        aug_dimension, degree, n_jobs, planar, scalar_term)
+    if data.device == "cpu":
+        err_code = CPSIG_BRANCHED_SIG_TO_LOG_SIG[data.dtype](
+            data.sig_ptr[0], result.data_ptr, data.batch_size,
+            aug_dimension, degree, n_jobs, planar, scalar_term)
+    else:
+        err_code = CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA[data.dtype](
+            data.sig_ptr[0], result.data_ptr, data.batch_size,
+            aug_dimension, degree, planar, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_to_log_sig: " + err_msg(err_code))
 

@@ -24,6 +24,7 @@ import torch
 import pysiglib
 import pysiglib.torch_api as torch_api
 from conftest import check_close
+from conftest import skip_no_cuda
 from test_branched_sig import (
     compute_kauri_to_pysiglib_permutation,
     enumerate_decorated_trees,
@@ -204,6 +205,96 @@ def test_torch_branched_sig_to_log_sig_uses_path_dimension_with_augmentation():
     converted.sum().backward()
     assert bsig.grad is not None
     assert torch.all(torch.isfinite(bsig.grad))
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("scalar_term", [False, True])
+@pytest.mark.parametrize("planar", [False, True])
+def test_branched_sig_to_log_sig_cuda_matches_cpu(scalar_term, planar):
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N, planar=planar)
+    rng = np.random.default_rng(2468)
+    path = np.cumsum(rng.normal(scale=0.1, size=(8, d)), axis=0)
+
+    bsig_cpu = pysiglib.branched_sig(path, N, planar=planar, scalar_term=scalar_term)
+    expected = pysiglib.branched_sig_to_log_sig(bsig_cpu, d, N, planar=planar)
+
+    bsig_cuda = torch.tensor(bsig_cpu, dtype=torch.float64, device="cuda")
+    actual = pysiglib.branched_sig_to_log_sig(bsig_cuda, d, N, planar=planar)
+
+    check_close(expected, actual, double_atol=1e-12)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("scalar_term", [False, True])
+def test_branched_sig_to_log_sig_backprop_cuda_matches_cpu(scalar_term):
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N)
+    rng = np.random.default_rng(8642)
+    path = np.cumsum(rng.normal(scale=0.1, size=(6, d)), axis=0)
+
+    bsig_cpu = pysiglib.branched_sig(path, N, scalar_term=scalar_term)
+    derivs_cpu = rng.normal(size=bsig_cpu.shape)
+    expected = pysiglib.branched_sig_to_log_sig_backprop(bsig_cpu, derivs_cpu, d, N)
+
+    bsig_cuda = torch.tensor(bsig_cpu, dtype=torch.float64, device="cuda")
+    derivs_cuda = torch.tensor(derivs_cpu, dtype=torch.float64, device="cuda")
+    actual = pysiglib.branched_sig_to_log_sig_backprop(bsig_cuda, derivs_cuda, d, N)
+
+    check_close(expected, actual, double_atol=1e-10)
+
+
+@skip_no_cuda
+def test_torch_branched_sig_to_log_sig_cuda_backward_matches_cpu():
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N)
+    rng = np.random.default_rng(9753)
+    path_np = np.cumsum(rng.normal(scale=0.1, size=(5, d)), axis=0)
+    bsig_np = pysiglib.branched_sig(path_np, N, scalar_term=True)
+    weights_np = rng.normal(size=bsig_np.shape)
+
+    bsig = torch.tensor(bsig_np, dtype=torch.float64, device="cuda", requires_grad=True)
+    weights = torch.tensor(weights_np, dtype=torch.float64, device="cuda")
+    out = torch_api.branched_sig_to_log_sig(bsig, d, N)
+    (out * weights).sum().backward()
+
+    expected = pysiglib.branched_sig_to_log_sig_backprop(bsig_np, weights_np, d, N)
+    check_close(expected, bsig.grad, double_atol=1e-10)
+
+
+@skip_no_cuda
+def test_jax_branched_sig_to_log_sig_cuda_value_and_grad_matches_cpu():
+    pytest.importorskip("jax")
+    import jax
+
+    try:
+        gpu = jax.devices("gpu")[0]
+    except RuntimeError:
+        pytest.skip("JAX GPU backend unavailable")
+    except IndexError:
+        pytest.skip("JAX GPU device unavailable")
+
+    jax.config.update("jax_enable_x64", True)
+    import jax.numpy as jnp
+    import pysiglib.jax_api as jax_api
+
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N)
+    rng = np.random.default_rng(3579)
+    path_np = np.cumsum(rng.normal(scale=0.1, size=(6, d)), axis=0)
+    bsig_np = pysiglib.branched_sig(path_np, N, scalar_term=True)
+    weights_np = rng.normal(size=bsig_np.shape)
+    expected = pysiglib.branched_sig_to_log_sig(bsig_np, d, N)
+    expected_grad = pysiglib.branched_sig_to_log_sig_backprop(bsig_np, weights_np, d, N)
+
+    bsig = jax.device_put(jnp.asarray(bsig_np, dtype=jnp.float64), gpu)
+    weights = jax.device_put(jnp.asarray(weights_np, dtype=jnp.float64), gpu)
+
+    out = jax_api.branched_sig_to_log_sig(bsig, d, N)
+    grad = jax.grad(lambda x: jnp.sum(jax_api.branched_sig_to_log_sig(x, d, N) * weights))(bsig)
+
+    np.testing.assert_allclose(np.asarray(out), expected, atol=1e-10)
+    np.testing.assert_allclose(np.asarray(grad), expected_grad, atol=1e-10)
 
 
 def test_jax_branched_sig_to_log_sig_value_and_grad():

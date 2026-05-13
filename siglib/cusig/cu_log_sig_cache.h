@@ -812,6 +812,7 @@ void clear_cuda_bch_cache_();
 
 // Forward declaration - defined in cu_branched_signature.cu
 void clear_cuda_branched_sig_gpu_cache_();
+void clear_cuda_branched_log_sig_gpu_cache_();
 
 inline void clear_cache_cuda_(bool use_disk) {
 	{
@@ -820,6 +821,7 @@ inline void clear_cache_cuda_(bool use_disk) {
 	}
 	clear_cuda_bch_cache_();
 	clear_cuda_branched_sig_gpu_cache_();
+	clear_cuda_branched_log_sig_gpu_cache_();
 	free_cuda_log_sig_workspace_();
 	free_cuda_log_sig_backprop_workspace_();
 
