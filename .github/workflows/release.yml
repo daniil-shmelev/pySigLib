@@ -378,7 +378,7 @@ jobs:
           python3 -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: built wheel reports '+actual+', workflow input expected '+expected; print('Version verified:', actual)"
           nvidia-smi
           python3 -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
-          python3 -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
+          python3 -c "import pysiglib; assert pysiglib.load_siglib.BUILT_WITH_CUDA, 'pysiglib-cuda installed but CUDA backend disabled'; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
           pytest /workspace/tests/ -v --timeout=60
           '@
           $ws = $env:GITHUB_WORKSPACE
@@ -389,6 +389,7 @@ jobs:
             -v "${ws}:/workspace" `
             -w /tmp `
             -e EXPECTED_VERSION="$env:EXPECTED_VERSION" `
+            -e PYSIGLIB_REQUIRE_CUDA=1 `
             ${{ env.TEST_CUDA_IMAGE }} `
             bash /workspace/run-cuda-tests.sh
       - name: Run CUDA C++ tests in build container
@@ -495,9 +496,11 @@ jobs:
         run: |
           nvidia-smi
           python -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
-          python -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
+          python -c "import pysiglib; assert pysiglib.load_siglib.BUILT_WITH_CUDA, 'pysiglib-cuda installed but CUDA backend disabled'; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
       - name: Run full test suite
         working-directory: ${{ runner.temp }}
+        env:
+          PYSIGLIB_REQUIRE_CUDA: "1"
         run: python -m pytest ${{ github.workspace }}/tests/ -v --timeout=60
       - name: Run CUDA C++ tests
         run: |
@@ -884,7 +887,7 @@ jobs:
           python3 -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: '+actual+' vs '+expected; print('Version verified:', actual)"
           nvidia-smi
           python3 -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
-          python3 -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
+          python3 -c "import pysiglib; assert pysiglib.load_siglib.BUILT_WITH_CUDA, 'pysiglib-cuda installed but CUDA backend disabled'; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
           pytest /workspace/tests/ -v --timeout=60
           '@
           $ws = $env:GITHUB_WORKSPACE
@@ -895,6 +898,7 @@ jobs:
             -v "${ws}:/workspace" `
             -w /tmp `
             -e EXPECTED_VERSION="$env:EXPECTED_VERSION" `
+            -e PYSIGLIB_REQUIRE_CUDA=1 `
             ${{ env.TEST_CUDA_IMAGE }} `
             bash /workspace/run-cuda-testpypi-tests.sh
 
@@ -952,9 +956,11 @@ jobs:
         run: |
           nvidia-smi
           python -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
-          python -c "import pysiglib; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
+          python -c "import pysiglib; assert pysiglib.load_siglib.BUILT_WITH_CUDA, 'pysiglib-cuda installed but CUDA backend disabled'; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
       - name: Run full test suite
         working-directory: ${{ runner.temp }}
+        env:
+          PYSIGLIB_REQUIRE_CUDA: "1"
         run: python -m pytest ${{ github.workspace }}/tests/ -v --timeout=60
       - name: Remove ephemeral venv
         if: always()

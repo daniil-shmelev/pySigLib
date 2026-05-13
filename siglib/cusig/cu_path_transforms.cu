@@ -95,7 +95,7 @@ __global__ void transform_path_internal_(
 }
 
 template<typename T>
-void transform_path_(
+void cu_transform_path_(
 	const T* data_in,
 	T* data_out,
 	uint64_t batch_size_,
@@ -153,7 +153,7 @@ __global__ void transform_path_backprop_internal_(
 }
 
 template<typename T>
-void transform_path_backprop_(
+void cu_transform_path_backprop_(
 	const T* derivs,
 	T* data_out,
 	uint64_t batch_size_,
@@ -174,25 +174,30 @@ void transform_path_backprop_(
 	check_cuda_kernel_launch();
 }
 
+template void cu_transform_path_<float>(const float*, float*, uint64_t, uint64_t, uint64_t, bool, bool, float);
+template void cu_transform_path_<double>(const double*, double*, uint64_t, uint64_t, uint64_t, bool, bool, double);
+template void cu_transform_path_backprop_<float>(const float*, float*, uint64_t, uint64_t, uint64_t, bool, bool, float);
+template void cu_transform_path_backprop_<double>(const double*, double*, uint64_t, uint64_t, uint64_t, bool, bool, double);
+
 #include "cu_macros.h"
 
 extern "C" {
 
 
 	CUSIG_API int transform_path_cuda_f(const float* const data_in, float* const data_out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const float end_time) noexcept {
-		CUSIG_SAFE_CALL(transform_path_<float>(data_in, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(cu_transform_path_<float>(data_in, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int transform_path_cuda_d(const double* const data_in, double* const data_out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const double end_time) noexcept {
-		CUSIG_SAFE_CALL(transform_path_<double>(data_in, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(cu_transform_path_<double>(data_in, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
 	}
 
 
 	CUSIG_API int transform_path_backprop_cuda_f(const float* const derivs, float* const data_out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const float end_time) noexcept {
-		CUSIG_SAFE_CALL(transform_path_backprop_<float>(derivs, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(cu_transform_path_backprop_<float>(derivs, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
 	}
 
 	CUSIG_API int transform_path_backprop_cuda_d(const double* const derivs, double* const data_out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length, const bool time_aug, const bool lead_lag, const double end_time) noexcept {
-		CUSIG_SAFE_CALL(transform_path_backprop_<double>(derivs, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
+		CUSIG_SAFE_CALL(cu_transform_path_backprop_<double>(derivs, data_out, batch_size, dimension, length, time_aug, lead_lag, end_time));
 	}
 }

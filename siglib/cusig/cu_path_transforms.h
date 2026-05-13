@@ -16,3 +16,27 @@
 #pragma once
 #include "cupch.h"
 
+template<typename T>
+void cu_transform_path_(
+	const T* data_in,
+	T* data_out,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t length,
+	bool time_aug,
+	bool lead_lag,
+	T end_time
+);
+
+template<typename T>
+void cu_transform_path_backprop_(
+	const T* derivs,
+	T* data_out,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t length,
+	bool time_aug,
+	bool lead_lag,
+	T end_time
+);
+

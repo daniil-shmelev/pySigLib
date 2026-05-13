@@ -18,6 +18,7 @@
 #include "cu_signature.h"
 #include "cu_sig_combine.h"
 #include "cu_atomic.h"
+#include "cu_path_transforms.h"
 
 // linear_signature_device is defined in cu_sig_combine.h
 
@@ -905,19 +906,6 @@ void signature_cuda_core_(
 	check_cuda_kernel_launch();
 }
 
-// Forward-declare transform_path_ from cu_path_transforms.cu
-template<typename T>
-void transform_path_(
-	const T* data_in,
-	T* data_out,
-	uint64_t batch_size,
-	uint64_t dimension,
-	uint64_t length,
-	bool time_aug,
-	bool lead_lag,
-	T end_time
-);
-
 template<typename T>
 void signature_cuda_(
 	const T* path,          // GPU pointer
@@ -943,7 +931,7 @@ void signature_cuda_(
 		const uint64_t t_path_size = batch_size * t_length * t_dimension;
 		CudaBuf<T> d_transformed(t_path_size * sizeof(T));
 
-		transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
+		cu_transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
 		cudaDeviceSynchronize();
 
 		signature_cuda_core_<T>(d_transformed.get(), out, batch_size, t_dimension, t_length, degree, horner, scalar_term);
@@ -1041,19 +1029,6 @@ void sig_backprop_cuda_core_(
 	check_cuda_error();
 }
 
-// Forward-declare transform_path_backprop_ from cu_path_transforms.cu
-template<typename T>
-void transform_path_backprop_(
-	const T* derivs,
-	T* data_out,
-	uint64_t batch_size,
-	uint64_t dimension,
-	uint64_t length,
-	bool time_aug,
-	bool lead_lag,
-	T end_time
-);
-
 template<typename T>
 void sig_backprop_cuda_(
 	const T* path,
@@ -1078,7 +1053,7 @@ void sig_backprop_cuda_(
 		const uint64_t t_path_size = batch_size * t_length * t_dimension;
 		CudaBuf<T> d_transformed(t_path_size * sizeof(T));
 
-		transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
+		cu_transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
 
 		CudaBuf<T> d_transformed_derivs(t_path_size * sizeof(T));
 
@@ -1087,7 +1062,7 @@ void sig_backprop_cuda_(
 
 		d_transformed.reset();
 
-		transform_path_backprop_<T>(d_transformed_derivs.get(), out, batch_size, dimension, length, time_aug, lead_lag, end_time);
+		cu_transform_path_backprop_<T>(d_transformed_derivs.get(), out, batch_size, dimension, length, time_aug, lead_lag, end_time);
 	}
 	else {
 		sig_backprop_cuda_core_<T>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, scalar_term);
