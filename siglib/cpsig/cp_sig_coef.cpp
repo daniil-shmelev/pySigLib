@@ -250,7 +250,8 @@ void sig_coef_(
 		sig_coef_<T>(path_ptr, out_ptr, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time, prefixes);
 	};
 
-	multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, result_length, n_jobs);
+	multi_threaded_batch(sig_func, batch_size, n_jobs,
+		make_batch(path, flat_path_length), make_batch(out, result_length));
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -636,7 +637,8 @@ void sig_coef_backprop_(
 		sig_coef_backprop_<T>(path_ptr, out_ptr, coefs_ptr, derivs_ptr, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time);
 	};
 
-	multi_threaded_batch_3(sig_func, path, coefs, derivs, out, batch_size, flat_path_length, coefs_len, coefs_len, flat_path_length, n_jobs);
+	multi_threaded_batch(sig_func, batch_size, n_jobs,
+		make_batch(path, flat_path_length), make_batch(coefs, coefs_len), make_batch(derivs, coefs_len), make_batch(out, flat_path_length));
 }
 
 extern "C" {

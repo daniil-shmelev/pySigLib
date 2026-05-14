@@ -96,7 +96,8 @@ void batch_linear_sig_(
 		linear_sig_<T>(in_ptr, out_ptr, dimension, degree, scalar_term);
 	};
 
-	multi_threaded_batch(func, displacement, out, batch_size, dimension, stride, n_jobs);
+	multi_threaded_batch(func, batch_size, n_jobs,
+		make_batch(displacement, dimension), make_batch(out, stride));
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +139,8 @@ void sig_join_(
 				sig_combine_inplace_(out_ptr, lsig, degree, level_index);
 			}
 		};
-		multi_threaded_batch_2<const T, const T, T>(func, sig, displacement, out, batch_size, full_len, dimension, full_len, n_jobs);
+		multi_threaded_batch(func, batch_size, n_jobs,
+			make_batch(sig, full_len), make_batch(displacement, dimension), make_batch(out, full_len));
 	} else {
 		// Per-element copy: reconstruct full buffers, compute, strip
 		auto func = [&](const T* sig_ptr, const T* disp_ptr, T* out_ptr) {
@@ -155,7 +157,8 @@ void sig_join_(
 			}
 			std::memcpy(out_ptr, out_full.data() + 1, (full_len - 1) * sizeof(T));
 		};
-		multi_threaded_batch_2<const T, const T, T>(func, sig, displacement, out, batch_size, sig_stride, dimension, sig_stride, n_jobs);
+		multi_threaded_batch(func, batch_size, n_jobs,
+			make_batch(sig, sig_stride), make_batch(displacement, dimension), make_batch(out, sig_stride));
 	}
 }
 

@@ -417,7 +417,8 @@ void signature_(
 			}
 		};
 
-		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, full_len, n_jobs);
+		multi_threaded_batch(sig_func, batch_size, n_jobs,
+			make_batch(path, flat_path_length), make_batch(out, full_len));
 	} else {
 		// scalar_term=false: compute into a per-element temp buffer, then copy without index 0
 		auto sig_func = [&](const T* path_ptr, T* out_ptr) {
@@ -439,7 +440,8 @@ void signature_(
 			std::memcpy(out_ptr, buf.data() + 1, (full_len - 1) * sizeof(T));
 		};
 
-		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, stride, n_jobs);
+		multi_threaded_batch(sig_func, batch_size, n_jobs,
+			make_batch(path, flat_path_length), make_batch(out, stride));
 	}
 	return;
 }
@@ -506,19 +508,11 @@ void sig_backprop_(
 		sig_backprop_inplace_<T>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree, sig_len_);
 	};
 
-	multi_threaded_batch_3(
-		sig_backprop_func,
-		path,
-		sig_derivs_copy,
-		sig_copy,
-		out,
-		batch_size,
-		flat_path_length,
-		sig_len_,
-		sig_len_,
-		flat_path_length,
-		n_jobs
-	);
+	multi_threaded_batch(sig_backprop_func, batch_size, n_jobs,
+		make_batch(path, flat_path_length),
+		make_batch(sig_derivs_copy, sig_len_),
+		make_batch(sig_copy, sig_len_),
+		make_batch(out, flat_path_length));
 	return;
 }
 

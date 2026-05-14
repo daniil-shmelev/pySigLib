@@ -246,7 +246,8 @@ void sig_kernel_(
 		}
 	};
 
-	multi_threaded_batch(sig_kernel_func, gram, out, batch_size, gram_length, result_length, n_jobs);
+	multi_threaded_batch(sig_kernel_func, batch_size, n_jobs,
+		make_batch(gram, gram_length), make_batch(out, result_length));
 	return;
 }
 
@@ -395,6 +396,10 @@ void batch_sig_kernel_backprop_(
 		sig_kernel_backprop_(gram_ptr, out_ptr, deriv_ptr, k_grid_ptr, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid);
 	};
 
-	multi_threaded_batch_3(sig_kernel_backprop_func, gram, derivs, k_grid, out, batch_size, gram_length, derivs_stride, grid_length, gram_length, n_jobs);
+	multi_threaded_batch(sig_kernel_backprop_func, batch_size, n_jobs,
+		make_batch(gram, gram_length),
+		make_batch(derivs, derivs_stride),
+		make_batch(k_grid, grid_length),
+		make_batch(out, gram_length));
 	return;
 }

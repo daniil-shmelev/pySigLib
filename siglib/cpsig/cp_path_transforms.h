@@ -125,7 +125,8 @@ void batch_transform_path_(
 		transform_path_<T>(path_ptr, out_ptr, dimension, length, time_aug, lead_lag, end_time);
 	};
 
-	multi_threaded_batch(transform_func, data_in, data_out, batch_size, flat_path_length, result_length, n_jobs);
+	multi_threaded_batch(transform_func, batch_size, n_jobs,
+		make_batch(data_in, flat_path_length), make_batch(data_out, result_length));
 	return;
 }
 
@@ -217,6 +218,7 @@ void batch_transform_path_backprop_(
 		transform_path_backprop_(derivs_ptr, out_ptr, dimension, length, time_aug, lead_lag, end_time);
 	};
 
-	multi_threaded_batch(transform_func, derivs, data_out, batch_size, flat_path_length, result_length, n_jobs);
+	multi_threaded_batch(transform_func, batch_size, n_jobs,
+		make_batch(derivs, flat_path_length), make_batch(data_out, result_length));
 	return;
 }
