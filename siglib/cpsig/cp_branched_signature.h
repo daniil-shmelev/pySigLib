@@ -215,9 +215,8 @@ void branched_sig_combine_(
 			for (uint64_t b = 0; b < batch_size; ++b)
 				thread_func(bsig1 + b * total_len, bsig2 + b * total_len, out + b * total_len);
 		} else {
-			multi_threaded_batch_2(thread_func,
-				const_cast<T*>(bsig1), const_cast<T*>(bsig2), out,
-				batch_size, total_len, total_len, total_len, n_jobs);
+			multi_threaded_batch(thread_func, batch_size, n_jobs,
+				make_batch(bsig1, total_len), make_batch(bsig2, total_len), make_batch(out, total_len));
 		}
 	} else {
 		// Per-element copy: reconstruct full buffers, compute, strip
@@ -236,9 +235,8 @@ void branched_sig_combine_(
 			for (uint64_t b = 0; b < batch_size; ++b)
 				thread_func(bsig1 + b * stride, bsig2 + b * stride, out + b * stride);
 		} else {
-			multi_threaded_batch_2(thread_func,
-				const_cast<T*>(bsig1), const_cast<T*>(bsig2), out,
-				batch_size, stride, stride, stride, n_jobs);
+			multi_threaded_batch(thread_func, batch_size, n_jobs,
+				make_batch(bsig1, stride), make_batch(bsig2, stride), make_batch(out, stride));
 		}
 	}
 }

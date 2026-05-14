@@ -323,7 +323,8 @@ void batch_sig_combine_(
 		sig_combine_(sig1_ptr, sig2_ptr, out_ptr, dimension, degree, scalar_term);
 	};
 
-	multi_threaded_batch_2<const T, const T, T>(sig_combine_func, sig1, sig2, out, batch_size, stride, stride, stride, n_jobs);
+	multi_threaded_batch(sig_combine_func, batch_size, n_jobs,
+		make_batch(sig1, stride), make_batch(sig2, stride), make_batch(out, stride));
 	return;
 }
 
@@ -395,6 +396,11 @@ void batch_sig_combine_backprop_(
 		}
 	};
 
-	multi_threaded_batch_4<T>(sig_combine_backprop_func, sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2, batch_size, stride, stride, stride, stride, stride, n_jobs);
+	multi_threaded_batch(sig_combine_backprop_func, batch_size, n_jobs,
+		make_batch(sig_combined_deriv, stride),
+		make_batch(sig1_deriv, stride),
+		make_batch(sig2_deriv, stride),
+		make_batch(sig1, stride),
+		make_batch(sig2, stride));
 	return;
 }

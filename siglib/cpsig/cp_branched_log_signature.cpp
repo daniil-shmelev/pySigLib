@@ -359,67 +359,33 @@ void branched_sig_to_log_sig_(
 	uint64_t stride = scalar_term ? total_len : total_len - 1;
 
 	if (max_nodes == 2) {
-		auto work_range = [&](uint64_t start, uint64_t end) {
-			for (uint64_t b = start; b < end; ++b)
-				branched_sig_to_log_sig_degree2_one_(bsig + b * stride, out + b * stride, dimension, scalar_term);
+		auto batch_work = [&](const T* bsig_i, T* out_i) {
+			branched_sig_to_log_sig_degree2_one_(bsig_i, out_i, dimension, scalar_term);
 		};
 
 		uint64_t work_items = batch_size * dimension * dimension;
+		int effective_n_jobs = n_jobs;
 		if (n_jobs == 1 || work_items <= 1000000) {
-			work_range(0, batch_size);
-			return;
+			effective_n_jobs = 1;
 		}
-		if (n_jobs == 0)
-			throw std::invalid_argument("n_jobs cannot be 0");
-		unsigned int max_threads = n_jobs > 0
-			? static_cast<unsigned int>(n_jobs)
-			: get_max_threads() + 1 + n_jobs;
-		if (max_threads < 1)
-			throw std::invalid_argument("n_jobs too low");
-		if (n_jobs < 0 && dimension <= 2)
-			max_threads = std::min<unsigned int>(max_threads, 4);
-		else if (n_jobs < 0 && dimension <= 16 && sizeof(T) == sizeof(float))
-			max_threads = std::min<unsigned int>(max_threads, 16);
+		else if (n_jobs < 0 && (dimension <= 2 || (dimension <= 16 && sizeof(T) == sizeof(float)))) {
+			const int resolved_threads = static_cast<int>(get_max_threads()) + 1 + n_jobs;
+			if (resolved_threads < 1)
+				throw std::invalid_argument("n_jobs too low");
+			const unsigned int cap = dimension <= 2 ? 4U : 16U;
+			effective_n_jobs = static_cast<int>(std::min<unsigned int>(resolved_threads, cap));
+		}
 
-		uint64_t num_threads = std::min<uint64_t>(max_threads, batch_size);
-		uint64_t chunk = (batch_size + num_threads - 1) / num_threads;
-		std::vector<std::thread> workers;
-		for (uint64_t t = 0; t < num_threads; ++t) {
-			uint64_t start = t * chunk;
-			uint64_t end = std::min<uint64_t>(batch_size, start + chunk);
-			if (start >= end) break;
-			workers.emplace_back([&, start, end]() { work_range(start, end); });
-		}
-		for (auto& w : workers) w.join();
+		multi_threaded_batch(batch_work, batch_size, effective_n_jobs,
+			make_batch(bsig, stride), make_batch(out, stride));
 		return;
 	}
 
-	auto work = [&](uint64_t b) {
-		branched_sig_to_log_sig_one_(bsig + b * stride, out + b * stride, cache, scalar_term);
+	auto batch_work = [&](const T* bsig_i, T* out_i) {
+		branched_sig_to_log_sig_one_(bsig_i, out_i, cache, scalar_term);
 	};
-
-	if (n_jobs == 1 || batch_size == 1) {
-		for (uint64_t b = 0; b < batch_size; ++b)
-			work(b);
-	}
-	else {
-		if (n_jobs == 0)
-			throw std::invalid_argument("n_jobs cannot be 0");
-		const unsigned int max_threads = n_jobs > 0
-			? static_cast<unsigned int>(n_jobs)
-			: get_max_threads() + 1 + n_jobs;
-		if (max_threads < 1)
-			throw std::invalid_argument("n_jobs too low");
-
-		std::vector<std::thread> workers;
-		for (unsigned int t = 0; t < max_threads && t < batch_size; ++t) {
-			workers.emplace_back([&, t, max_threads]() {
-				for (uint64_t b = t; b < batch_size; b += max_threads)
-					work(b);
-			});
-		}
-		for (auto& w : workers) w.join();
-	}
+	multi_threaded_batch(batch_work, batch_size, n_jobs,
+		make_batch(bsig, stride), make_batch(out, stride));
 }
 
 
@@ -440,70 +406,33 @@ void branched_sig_to_log_sig_backprop_(
 	uint64_t stride = scalar_term ? total_len : total_len - 1;
 
 	if (max_nodes == 2) {
-		auto work_range = [&](uint64_t start, uint64_t end) {
-			for (uint64_t b = start; b < end; ++b) {
-				branched_sig_to_log_sig_degree2_backprop_one_(
-					bsig + b * stride, derivs + b * stride, out + b * stride, dimension, scalar_term);
-			}
+		auto batch_work = [&](const T* bsig_i, const T* derivs_i, T* out_i) {
+			branched_sig_to_log_sig_degree2_backprop_one_(bsig_i, derivs_i, out_i, dimension, scalar_term);
 		};
 
 		uint64_t work_items = batch_size * dimension * dimension;
+		int effective_n_jobs = n_jobs;
 		if (n_jobs == 1 || work_items <= 1000000) {
-			work_range(0, batch_size);
-			return;
+			effective_n_jobs = 1;
 		}
-		if (n_jobs == 0)
-			throw std::invalid_argument("n_jobs cannot be 0");
-		unsigned int max_threads = n_jobs > 0
-			? static_cast<unsigned int>(n_jobs)
-			: get_max_threads() + 1 + n_jobs;
-		if (max_threads < 1)
-			throw std::invalid_argument("n_jobs too low");
-		if (n_jobs < 0 && dimension <= 2)
-			max_threads = std::min<unsigned int>(max_threads, 4);
-		else if (n_jobs < 0 && dimension <= 16 && sizeof(T) == sizeof(float))
-			max_threads = std::min<unsigned int>(max_threads, 16);
+		else if (n_jobs < 0 && (dimension <= 2 || (dimension <= 16 && sizeof(T) == sizeof(float)))) {
+			const int resolved_threads = static_cast<int>(get_max_threads()) + 1 + n_jobs;
+			if (resolved_threads < 1)
+				throw std::invalid_argument("n_jobs too low");
+			const unsigned int cap = dimension <= 2 ? 4U : 16U;
+			effective_n_jobs = static_cast<int>(std::min<unsigned int>(resolved_threads, cap));
+		}
 
-		uint64_t num_threads = std::min<uint64_t>(max_threads, batch_size);
-		uint64_t chunk = (batch_size + num_threads - 1) / num_threads;
-		std::vector<std::thread> workers;
-		for (uint64_t t = 0; t < num_threads; ++t) {
-			uint64_t start = t * chunk;
-			uint64_t end = std::min<uint64_t>(batch_size, start + chunk);
-			if (start >= end) break;
-			workers.emplace_back([&, start, end]() { work_range(start, end); });
-		}
-		for (auto& w : workers) w.join();
+		multi_threaded_batch(batch_work, batch_size, effective_n_jobs,
+			make_batch(bsig, stride), make_batch(derivs, stride), make_batch(out, stride));
 		return;
 	}
 
-	auto work = [&](uint64_t b) {
-		branched_sig_to_log_sig_backprop_one_(
-			bsig + b * stride, derivs + b * stride, out + b * stride, cache, scalar_term);
+	auto batch_work = [&](const T* bsig_i, const T* derivs_i, T* out_i) {
+		branched_sig_to_log_sig_backprop_one_(bsig_i, derivs_i, out_i, cache, scalar_term);
 	};
-
-	if (n_jobs == 1 || batch_size == 1) {
-		for (uint64_t b = 0; b < batch_size; ++b)
-			work(b);
-	}
-	else {
-		if (n_jobs == 0)
-			throw std::invalid_argument("n_jobs cannot be 0");
-		const unsigned int max_threads = n_jobs > 0
-			? static_cast<unsigned int>(n_jobs)
-			: get_max_threads() + 1 + n_jobs;
-		if (max_threads < 1)
-			throw std::invalid_argument("n_jobs too low");
-
-		std::vector<std::thread> workers;
-		for (unsigned int t = 0; t < max_threads && t < batch_size; ++t) {
-			workers.emplace_back([&, t, max_threads]() {
-				for (uint64_t b = t; b < batch_size; b += max_threads)
-					work(b);
-			});
-		}
-		for (auto& w : workers) w.join();
-	}
+	multi_threaded_batch(batch_work, batch_size, n_jobs,
+		make_batch(bsig, stride), make_batch(derivs, stride), make_batch(out, stride));
 }
 
 

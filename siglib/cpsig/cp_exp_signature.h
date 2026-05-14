@@ -452,7 +452,8 @@ void logsig_to_sig_(
 		auto func = [&](const T* in_ptr, T* out_ptr) {
 			get_logsig_to_sig_<T>(in_ptr, out_ptr, aug_dimension, degree, method);
 		};
-		multi_threaded_batch(func, log_sig, out, batch_size, full_in_len, sig_len, n_jobs);
+		multi_threaded_batch(func, batch_size, n_jobs,
+			make_batch(log_sig, full_in_len), make_batch(out, sig_len));
 	} else {
 		auto func = [&](const T* in_ptr, T* out_ptr) {
 			// Prepare full input if method==0 (sig-shaped, prepend scalar)
@@ -469,7 +470,8 @@ void logsig_to_sig_(
 			get_logsig_to_sig_<T>(actual_in, out_full.data(), aug_dimension, degree, method);
 			std::memcpy(out_ptr, out_full.data() + 1, (sig_len - 1) * sizeof(T));
 		};
-		multi_threaded_batch(func, log_sig, out, batch_size, in_stride, out_stride, n_jobs);
+		multi_threaded_batch(func, batch_size, n_jobs,
+			make_batch(log_sig, in_stride), make_batch(out, out_stride));
 	}
 }
 
