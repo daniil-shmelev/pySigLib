@@ -33,8 +33,11 @@ pytestmark = pytest.mark.skipif(
 
 
 def _jax_devices():
-    devices = ["cpu"]
-    if pysiglib.BUILT_WITH_CUDA and any(d.platform in {"gpu", "cuda"} for d in jax.devices()):
+    platforms = {d.platform for d in jax.devices()}
+    devices = []
+    if "cpu" in platforms:
+        devices.append("cpu")
+    if pysiglib.BUILT_WITH_CUDA and platforms & {"gpu", "cuda"}:
         devices.append("cuda")
     return devices
 

@@ -946,6 +946,7 @@ ffi::Error SigCombineCuda(
     cudaStream_t stream,
     std::int64_t dimension,
     std::int64_t degree,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer sig1,
     ffi::AnyBuffer sig2,
     ffi::Result<ffi::AnyBuffer> out
@@ -960,6 +961,7 @@ ffi::Error SigCombineBackpropCuda(
     cudaStream_t stream,
     std::int64_t dimension,
     std::int64_t degree,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer cotangent,
     ffi::AnyBuffer sig1,
     ffi::AnyBuffer sig2,
@@ -1139,6 +1141,7 @@ ffi::Error TransformPathCuda(
     bool time_aug,
     bool lead_lag,
     double end_time,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer path,
     ffi::Result<ffi::AnyBuffer> out
 ) {
@@ -1155,6 +1158,7 @@ ffi::Error TransformPathBackpropCuda(
     bool time_aug,
     bool lead_lag,
     double end_time,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer cotangent,
     ffi::Result<ffi::AnyBuffer> out
 ) {
@@ -1171,7 +1175,7 @@ ffi::Error TransformPathBackpropCuda(
 
 // For sig_to_log_sig, we pass the augmented dimension directly from Python.
 // CPU C++ takes time_aug/lead_lag but we pass false/false with the pre-augmented dim.
-// CUDA C++ takes just dimension/degree/method.
+// CUDA C++ ignores n_jobs.
 
 template <typename T>
 ffi::Error SigToLogSigCpuImpl(
@@ -1291,6 +1295,7 @@ ffi::Error SigToLogSigBackpropCudaImpl(
 }
 
 ffi::Error SigToLogSigCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t degree, std::int64_t method,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer sig_buf, ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateFloatBuffer("sig", sig_buf); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(sig_buf), [&]<typename T>() -> ffi::Error {
@@ -1299,6 +1304,7 @@ ffi::Error SigToLogSigCuda(cudaStream_t stream, std::int64_t dimension, std::int
 }
 
 ffi::Error SigToLogSigBackpropCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t degree, std::int64_t method,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer sig_buf, ffi::AnyBuffer cotangent, ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateSameFloatDtype("sig", sig_buf, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(sig_buf), [&]<typename T>() -> ffi::Error {
@@ -1392,6 +1398,7 @@ ffi::Error LogSigCombineBackpropCudaImpl(cudaStream_t stream, std::int64_t dimen
 }
 
 ffi::Error LogSigCombineCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t degree,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer ls1, ffi::AnyBuffer ls2, ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateSameFloatDtype("ls1", ls1, "ls2", ls2); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(ls1), [&]<typename T>() -> ffi::Error {
@@ -1400,6 +1407,7 @@ ffi::Error LogSigCombineCuda(cudaStream_t stream, std::int64_t dimension, std::i
 }
 
 ffi::Error LogSigCombineBackpropCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t degree,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer cotangent, ffi::AnyBuffer ls1, ffi::AnyBuffer ls2,
     ffi::Result<ffi::AnyBuffer> grad1, ffi::Result<ffi::AnyBuffer> grad2) {
     if (auto msg = ValidateSameFloatDtype("ls1", ls1, "ls2", ls2); !msg.empty()) return InvalidArgument(msg);
@@ -1676,6 +1684,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension")
         .Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
@@ -1688,6 +1697,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension")
         .Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
@@ -1733,6 +1743,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("time_aug")
         .Attr<bool>("lead_lag")
         .Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
 );
@@ -1747,6 +1758,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("time_aug")
         .Attr<bool>("lead_lag")
         .Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
 );
@@ -1768,11 +1780,13 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigToLogSigBackpropCpu, SigToLogSigBackpro
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigToLogSigCuda, SigToLogSigCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree").Attr<std::int64_t>("method")
+        .Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigToLogSigBackpropCuda, SigToLogSigBackpropCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree").Attr<std::int64_t>("method")
+        .Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
 
@@ -1790,12 +1804,12 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigCombineBackpropCpu, LogSigCombineBac
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigCombineCuda, LogSigCombineCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
-        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigCombineBackpropCuda, LogSigCombineBackpropCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
-        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
@@ -2174,6 +2188,7 @@ ffi::Error LogSigFromPathBackpropCudaImpl(
 }
 
 ffi::Error LogSigFromPathCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t degree,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer path, ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateFloatBuffer("path", path); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
@@ -2182,6 +2197,7 @@ ffi::Error LogSigFromPathCuda(cudaStream_t stream, std::int64_t dimension, std::
 }
 
 ffi::Error LogSigFromPathBackpropCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t degree,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer cotangent, ffi::AnyBuffer path, ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateFloatBuffer("path", path); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
@@ -2255,12 +2271,12 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigFromPathBackpropCpu, LogSigFromPathB
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigFromPathCuda, LogSigFromPathCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
-        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigFromPathBackpropCuda, LogSigFromPathBackpropCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
-        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
 
@@ -2374,6 +2390,7 @@ ffi::Error LogSigToSigBackpropCudaImpl(
 }
 
 ffi::Error LogSigToSigCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t degree, std::int64_t method,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer log_sig, ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateFloatBuffer("log_sig", log_sig); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(log_sig), [&]<typename T>() -> ffi::Error {
@@ -2382,6 +2399,7 @@ ffi::Error LogSigToSigCuda(cudaStream_t stream, std::int64_t dimension, std::int
 }
 
 ffi::Error LogSigToSigBackpropCuda(cudaStream_t stream, std::int64_t dimension, std::int64_t degree, std::int64_t method,
+    std::int64_t /*n_jobs*/,
     ffi::AnyBuffer log_sig, ffi::AnyBuffer cotangent, ffi::Result<ffi::AnyBuffer> out) {
     if (auto msg = ValidateFloatBuffer("log_sig", log_sig); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(log_sig), [&]<typename T>() -> ffi::Error {
@@ -2406,10 +2424,12 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigToSigBackpropCpu, LogSigToSigBackpro
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigToSigCuda, LogSigToSigCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree").Attr<std::int64_t>("method")
+        .Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibLogSigToSigBackpropCuda, LogSigToSigBackpropCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree").Attr<std::int64_t>("method")
+        .Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
