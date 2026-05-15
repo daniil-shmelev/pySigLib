@@ -376,11 +376,13 @@ jobs:
           # kauri 2.1.1 is an sdist on PyPI (no wheel); the baked-in pip in
           # the test container is too old to build it, so upgrade first.
           python3 -m pip install --quiet --upgrade pip setuptools wheel
-          python3 -m pip install --quiet /workspace/dist/*.whl 'jax>=0.9.1; python_version >= "3.11"'
+          python3 -c "import sys; assert sys.version_info >= (3, 11), 'CUDA JAX tests require Python >=3.11'; print('python:', sys.version)"
+          python3 -m pip install --quiet /workspace/dist/*.whl 'jax[cuda12]>=0.9.1; python_version >= "3.11"'
           python3 -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: built wheel reports '+actual+', workflow input expected '+expected; print('Version verified:', actual)"
           nvidia-smi
           python3 -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
           python3 -c "import pysiglib; assert pysiglib.load_siglib.BUILT_WITH_CUDA, 'pysiglib-cuda installed but CUDA backend disabled'; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
+          python3 -c "import importlib.metadata as metadata, jax; devices=jax.devices(); print('jax:', metadata.version('jax')); print('jaxlib:', metadata.version('jaxlib')); print('jax backend:', jax.default_backend()); print('jax devices:', devices); assert any(device.platform in {'gpu', 'cuda'} for device in devices), 'JAX CUDA device unavailable'"
           pytest /workspace/tests/ -v --timeout=60
           '@
           $ws = $env:GITHUB_WORKSPACE
@@ -872,6 +874,7 @@ jobs:
           # kauri 2.1.1 is an sdist on PyPI (no wheel); the baked-in pip in
           # the test container is too old to build it, so upgrade first.
           python3 -m pip install --quiet --upgrade pip setuptools wheel
+          python3 -c "import sys; assert sys.version_info >= (3, 11), 'CUDA JAX tests require Python >=3.11'; print('python:', sys.version)"
           # Retry TestPyPI install to absorb propagation delay. Real PyPI
           # is used as a fallback index for torch/numpy/jax transitive deps.
           installed=0
@@ -886,11 +889,13 @@ jobs:
             sleep 15
           done
           [ "$installed" = 1 ] || { echo "TestPyPI install failed after 5 attempts"; exit 1; }
+          python3 -m pip install --quiet 'jax[cuda12]>=0.9.1; python_version >= "3.11"'
           cd /tmp
           python3 -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: '+actual+' vs '+expected; print('Version verified:', actual)"
           nvidia-smi
           python3 -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
           python3 -c "import pysiglib; assert pysiglib.load_siglib.BUILT_WITH_CUDA, 'pysiglib-cuda installed but CUDA backend disabled'; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
+          python3 -c "import importlib.metadata as metadata, jax; devices=jax.devices(); print('jax:', metadata.version('jax')); print('jaxlib:', metadata.version('jaxlib')); print('jax backend:', jax.default_backend()); print('jax devices:', devices); assert any(device.platform in {'gpu', 'cuda'} for device in devices), 'JAX CUDA device unavailable'"
           pytest /workspace/tests/ -v --timeout=60
           '@
           $ws = $env:GITHUB_WORKSPACE

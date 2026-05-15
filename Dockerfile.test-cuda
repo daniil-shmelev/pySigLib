@@ -1,7 +1,7 @@
 # Pre-built test image for pysiglib CUDA wheels. Based on nvidia/cuda's
 # runtime image (libcudart + driver glue only, no toolkit/nvcc) with Python,
 # pytest, pytest-timeout and torch pre-installed. Each test-linux-cuda run in
-# wheels.yml only has to `pip install <wheel>` — no apt-get, no ~2 GB torch
+# wheels.yml only has to `pip install <wheel>`, with no apt-get or ~2 GB torch
 # redownload per run.
 #
 # Build locally:
@@ -11,9 +11,11 @@
 # ghcr.io/<owner>/pysiglib-test-cuda12:cuda-<version>.
 
 ARG CUDA_VERSION=12.9.1
-FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04
+# Ubuntu 24.04 provides Python 3.12, which is required for current JAX CUDA wheels.
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 RUN apt-get update -qq && \
     apt-get install -y -qq --no-install-recommends \
@@ -23,10 +25,9 @@ RUN apt-get update -qq && \
         ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Pin nothing here — torch tracks whatever CUDA runtime the base image ships.
+# Pin nothing here. Torch tracks whatever CUDA runtime the base image ships.
 # Rebuild the image whenever you need to bump the torch version.
-# Ubuntu 22.04's system Python is not externally-managed (pre-PEP-668), so
-# system-wide pip installs work without --break-system-packages.
+# This is a disposable test image, so pip is allowed to install into system Python.
 RUN python3 -m pip install --no-cache-dir \
         numpy \
         pytest \
