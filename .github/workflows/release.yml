@@ -373,9 +373,6 @@ jobs:
         run: |
           $scriptBody = @'
           set -e
-          # kauri 2.1.1 is an sdist on PyPI (no wheel); the baked-in pip in
-          # the test container is too old to build it, so upgrade first.
-          python3 -m pip install --quiet --upgrade pip setuptools wheel
           python3 -c "import sys; assert sys.version_info >= (3, 11), 'CUDA JAX tests require Python >=3.11'; print('python:', sys.version)"
           python3 -m pip install --quiet /workspace/dist/*.whl 'jax[cuda12]>=0.9.1; python_version >= "3.11"'
           python3 -c "import os, pysiglib; expected=os.environ['EXPECTED_VERSION']; actual=pysiglib.__version__; assert actual==expected, 'Version mismatch: built wheel reports '+actual+', workflow input expected '+expected; print('Version verified:', actual)"
@@ -482,14 +479,34 @@ jobs:
           Write-Host "venv: $venv"
       - name: Install wheels + test deps
         run: |
-          # The Python-version marker cannot be quoted through the nested
-          # PowerShell, so gate jax in PowerShell and install without a marker.
-          python -m pip install --upgrade pip
-          python -m pip install torch --index-url $env:PYTORCH_CUDA_INDEX
-          Get-ChildItem dist\*.whl | ForEach-Object { python -m pip install $_.FullName }
-          python -m pip install pytest pytest-timeout
+          $ErrorActionPreference = "Stop"
+          function Invoke-Checked {
+            param([scriptblock]$Command)
+            & $Command
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          function Invoke-WithRetry {
+            param([scriptblock]$Command, [string]$Name)
+            for ($i = 1; $i -le 5; $i++) {
+              & $Command
+              if ($LASTEXITCODE -eq 0) { return }
+              if ($i -eq 5) { exit $LASTEXITCODE }
+              Write-Host "$Name failed (attempt $i), retrying in 15s..."
+              Start-Sleep -Seconds 15
+            }
+          }
+
+          Invoke-Checked { python -m pip install --upgrade pip }
+          Invoke-WithRetry { python -m pip install torch --index-url $env:PYTORCH_CUDA_INDEX } "CUDA torch install"
+          Invoke-Checked { python -c "import torch; assert torch.cuda.is_available(), 'torch CUDA unavailable after CUDA index install'; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0))" }
+          Get-ChildItem dist\*.whl | ForEach-Object {
+            $wheel = $_.FullName
+            Invoke-Checked { python -m pip install $wheel }
+          }
+          Invoke-Checked { python -m pip install pytest pytest-timeout }
           $needs_jax = & python -c "import sys; print('yes' if sys.version_info >= (3,11) else 'no')"
-          if ($needs_jax.Trim() -eq 'yes') { python -m pip install 'jax>=0.9.1' }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($needs_jax.Trim() -eq 'yes') { Invoke-Checked { python -m pip install 'jax>=0.9.1' } }
       - name: Verify installed version matches input
         working-directory: ${{ runner.temp }}
         env:
@@ -871,9 +888,6 @@ jobs:
         run: |
           $scriptBody = @'
           set -e
-          # kauri 2.1.1 is an sdist on PyPI (no wheel); the baked-in pip in
-          # the test container is too old to build it, so upgrade first.
-          python3 -m pip install --quiet --upgrade pip setuptools wheel
           python3 -c "import sys; assert sys.version_info >= (3, 11), 'CUDA JAX tests require Python >=3.11'; print('python:', sys.version)"
           # Retry TestPyPI install to absorb propagation delay. Real PyPI
           # is used as a fallback index for torch/numpy/jax transitive deps.
@@ -939,8 +953,26 @@ jobs:
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install torch --index-url $env:PYTORCH_CUDA_INDEX
+          $ErrorActionPreference = "Stop"
+          function Invoke-Checked {
+            param([scriptblock]$Command)
+            & $Command
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          function Invoke-WithRetry {
+            param([scriptblock]$Command, [string]$Name)
+            for ($i = 1; $i -le 5; $i++) {
+              & $Command
+              if ($LASTEXITCODE -eq 0) { return }
+              if ($i -eq 5) { exit $LASTEXITCODE }
+              Write-Host "$Name failed (attempt $i), retrying in 15s..."
+              Start-Sleep -Seconds 15
+            }
+          }
+
+          Invoke-Checked { python -m pip install --upgrade pip }
+          Invoke-WithRetry { python -m pip install torch --index-url $env:PYTORCH_CUDA_INDEX } "CUDA torch install"
+          Invoke-Checked { python -c "import torch; assert torch.cuda.is_available(), 'torch CUDA unavailable after CUDA index install'; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0))" }
           $installed = $false
           for ($i = 1; $i -le 5; $i++) {
             python -m pip install --index-url https://test.pypi.org/simple/ `
@@ -951,9 +983,10 @@ jobs:
             Start-Sleep -Seconds 15
           }
           if (-not $installed) { Write-Error "TestPyPI install failed after 5 attempts"; exit 1 }
-          python -m pip install pytest pytest-timeout
+          Invoke-Checked { python -m pip install pytest pytest-timeout }
           $needs_jax = & python -c "import sys; print('yes' if sys.version_info >= (3,11) else 'no')"
-          if ($needs_jax.Trim() -eq 'yes') { python -m pip install 'jax>=0.9.1' }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($needs_jax.Trim() -eq 'yes') { Invoke-Checked { python -m pip install 'jax>=0.9.1' } }
       - name: Verify installed version
         working-directory: ${{ runner.temp }}
         env:
