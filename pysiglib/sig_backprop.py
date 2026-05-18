@@ -44,7 +44,7 @@ def sig_combine_backprop(
 
     :param deriv: Derivative with respect to the combined signature,
         :math:`\\partial F / \\partial S(x_1 * x_2)`
-    :type sig_combine_deriv: numpy.ndarray | torch.tensor
+    :type deriv: numpy.ndarray | torch.tensor
     :param sig1: The first truncated signature
     :type sig1: numpy.ndarray | torch.tensor
     :param sig2: The second truncated signature. Must have the same degree and dimension as the first.

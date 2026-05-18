@@ -79,6 +79,7 @@ class StaticKernel(ABC):
         :type ctx: pysiglib.Context
         :param derivs: Derivatives with respect to the gram matrices outputted by ``__call__``, of
             shape ``(batch_size, length_1 - 1, length_2 - 1)``.
+        :type derivs: torch.Tensor
         :return: Derivatives with respect to the path :math:`x` of shape ``(batch_size, length_1, dimension)``.
         :rtype: torch.Tensor
         """
@@ -94,6 +95,7 @@ class StaticKernel(ABC):
         :type ctx: pysiglib.Context
         :param derivs: Derivatives with respect to the gram matrices outputted by ``__call__``, of
             shape ``(batch_size, length_1 - 1, length_2 - 1)``.
+        :type derivs: torch.Tensor
         :return: Derivatives with respect to the path :math:`y` of shape ``(batch_size, length_2, dimension)``.
         :rtype: torch.Tensor
         """

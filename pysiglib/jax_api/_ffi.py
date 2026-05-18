@@ -165,15 +165,15 @@ def _package_dirs():
     dirs = []
     pkg = sys.modules["pysiglib"]
 
-    for path in getattr(pkg, "__path__", ()):
-        if path not in dirs:
-            dirs.append(path)
-
     pkg_file = getattr(pkg, "__file__", None)
     if pkg_file is not None:
         pkg_dir = os.path.dirname(pkg_file)
         if pkg_dir not in dirs:
             dirs.append(pkg_dir)
+
+    for path in getattr(pkg, "__path__", ()):
+        if path not in dirs:
+            dirs.append(path)
 
     return dirs
 
@@ -554,22 +554,22 @@ def _branched_sig_shape(path_shape, dimension, max_nodes, time_aug, lead_lag, pl
     return (*path_shape[:-2], out_len)
 
 
-def branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
-    _normalize_dtype(path.dtype)
+def branched_sig_ffi_call(path, primitives, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
+    _check_same_dtype(path, primitives)
     dimension = path.shape[-1]
     out_type = jax.ShapeDtypeStruct(
         _branched_sig_shape(path.shape, dimension, max_nodes, time_aug, lead_lag, planar), path.dtype)
     call_kwargs = dict(max_nodes=np.int64(max_nodes), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
-    return _make_ffi_call("branched_sig", (path,), out_type, call_kwargs)
+    return _make_ffi_call("branched_sig", (path, primitives), out_type, call_kwargs)
 
 
-def branched_sig_backprop_ffi_call(path, bsig, cotangent, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
-    _check_same_dtype(path, bsig, cotangent)
+def branched_sig_backprop_ffi_call(path, bsig, cotangent, primitives, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
+    _check_same_dtype(path, bsig, cotangent, primitives)
     out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
     call_kwargs = dict(max_nodes=np.int64(max_nodes), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
-    return _make_ffi_call("branched_sig_backprop", (path, bsig, cotangent), out_type, call_kwargs)
+    return _make_ffi_call("branched_sig_backprop", (path, bsig, cotangent, primitives), out_type, call_kwargs)
 
 
 # ---------------------------------------------------------------------------

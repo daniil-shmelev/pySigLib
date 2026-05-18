@@ -136,6 +136,7 @@ def branched_log_sig(
         tree_order: str = "recursive",
         planar: bool = False,
         scalar_term: bool = False,
+        primitives = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -165,6 +166,32 @@ def branched_log_sig(
     :type planar: bool
     :param scalar_term: If True, include the leading scalar coefficient, which is zero.
     :type scalar_term: bool
+    :param primitives: Optional constant tensor-algebra primitive of level
+        :math:`\\geq 2` added to the local branched-signature primitive at every
+        path segment, before the branched log signature is taken. This is the
+        standard mechanism to lift a non-smooth (e.g. Ito) stochastic process:
+        the level-1 primitive is filled from each segment's path increment
+        :math:`\\Delta x`, the higher levels come from this constant, and the
+        local branched signature on each segment is
+
+        .. math::
+
+            \\exp_* \\left( \\sum_i \\Delta x_i\\, e_i + \\sum_{k=2}^{m} \\sum_{i_1, \\ldots, i_k} c^{(k)}_{i_1 \\ldots i_k}\\, e_{i_1 \\cdots i_k} \\right),
+
+        where :math:`e_w` is the chain (root-to-leaf path) tree with labels
+        :math:`w` and :math:`\\exp_*` is the Hopf-algebra exponential under the
+        Butcher product. ``primitives`` is a flat 1D array of length
+        :math:`d^2 + d^3 + \\cdots + d^m`, where :math:`d` is the underlying
+        path dimension and :math:`2 \\leq m \\leq N` is the highest primitive
+        level supplied (missing higher levels are zero). Levels are concatenated
+        in order, and within level :math:`k` the entry for chain
+        :math:`(i_1, \\ldots, i_k)` lives at flat index
+        :math:`i_1 d^{k-1} + i_2 d^{k-2} + \\cdots + i_k`. Passing ``None``
+        (default) or an empty array is equivalent to all-zero primitives. Indices
+        are over the original path channels; with ``time_aug=True``, the
+        appended time channel contributes no primitives. Cannot be combined with
+        ``lead_lag=True``.
+    :type primitives: numpy.ndarray | torch.tensor | None
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
@@ -184,10 +211,38 @@ def branched_log_sig(
         path = torch.rand((10, 100, 5))
         blogsig = pysiglib.branched_log_sig(path, 3)
         print(blogsig)
+
+    Ito-lifted branched log signature of a sampled Brownian path. For Brownian
+    motion with instantaneous covariance :math:`\\Sigma`, setting the level-2
+    primitive to :math:`c^{(2)}_{ij} = \\Sigma_{ij}\\,\\Delta t` per segment
+    gives the Ito correction.
+
+    .. code-block:: python
+
+        import numpy as np
+        import pysiglib
+
+        d, N, T = 2, 3, 1.0
+        n_steps = 100
+        dt = T / n_steps
+        rng = np.random.default_rng(42)
+
+        # 2D standard Brownian motion sample (Sigma = I)
+        path = np.zeros((n_steps + 1, d))
+        path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
+
+        # Ito level-2 primitive: dt * Sigma flattened (Sigma = I here).
+        primitives = (np.eye(d) * dt).flatten()
+
+        pysiglib.prepare_branched_sig(d, N)
+        ito_blogsig = pysiglib.branched_log_sig(
+            path, N, primitives=primitives, end_time=T)
+        print(ito_blogsig)
     """
     bsig = branched_sig(
         path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
-        tree_order=tree_order, planar=planar, scalar_term=scalar_term, n_jobs=n_jobs)
+        tree_order=tree_order, planar=planar, scalar_term=scalar_term,
+        primitives=primitives, n_jobs=n_jobs)
     dimension = path.shape[-1]
     return branched_sig_to_log_sig(
         bsig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag,

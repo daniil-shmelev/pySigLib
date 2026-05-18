@@ -213,6 +213,7 @@ def tree_to_idx(
     indices shift down by 1 and ``None`` is invalid.
 
     :param tree: Decorated rooted tree as a tuple (or None for empty when ``scalar_term=True``).
+    :type tree: tuple | None
     :param dimension: Path dimension (alphabet size).
     :type dimension: int
     :param degree: Maximum number of nodes (same as ``degree`` in :func:`branched_sig`).
