@@ -12,6 +12,23 @@ build-backend = "scikit_build_core.build"
 name = "pysiglib"
 dynamic = ["version", "optional-dependencies"]
 description = "Fast Signature Computations on CPU and GPU"
+keywords = [
+    "signatures",
+    "path signatures",
+    "log signatures",
+    "signature kernels",
+    "branched signatures",
+    "rough paths",
+    "iterated integrals",
+    "time series",
+    "machine learning",
+    "scientific computing",
+    "gpu",
+    "cuda",
+    "numpy",
+    "pytorch",
+    "jax",
+]
 requires-python = ">=3.9"
 license = "Apache-2.0"
 readme = "README.md"
