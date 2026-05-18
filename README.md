@@ -7,7 +7,7 @@
 </p>
 
 
-<h2 align='center'>A high-performance library for path signatures and rough path methods on CPU and GPU</h2>
+<h2 align='center'>Fast path signatures, log signatures, and signature kernels on CPU and GPU</h2>
 
 ![PyPI - Version](https://img.shields.io/pypi/v/pysiglib)
 [![PyPI - Downloads](https://static.pepy.tech/badge/pysiglib/month)](https://pepy.tech/projects/pysiglib)
@@ -18,9 +18,10 @@
 ![Read the Docs](https://img.shields.io/readthedocs/pySigLib)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-pySigLib computes path signatures and related rough path objects on CPU and
-GPU, with native PyTorch and JAX integrations so every operation is
-differentiable, jittable, and runs on the device your data already lives on.
+pySigLib is a Python library for fast computation of path signatures, log signatures, branched
+signatures, and signature kernels on CPU and GPU, with NumPy, PyTorch, and
+JAX support. Its PyTorch and JAX integrations keep these operations
+differentiable, jittable, and on the device your data already lives on.
 
 ## Features
 
