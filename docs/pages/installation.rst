@@ -1,6 +1,9 @@
 Installation
 ========================
 
+.. meta::
+   :description: Install pySigLib for fast path signatures, log signatures, and signature kernels on CPU and CUDA GPU.
+
 Install from PyPI
 ------------------------
 

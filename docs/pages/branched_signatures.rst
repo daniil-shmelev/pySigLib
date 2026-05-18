@@ -1,7 +1,10 @@
 Branched Signatures
 ========================
 
-This section covers computation and combination of branched signatures, together with
+.. meta::
+   :description: Compute and combine branched signatures with pySigLib, including tree enumeration and indexing utilities.
+
+This section covers branched signature computation in pySigLib, together with
 utilities for enumerating and indexing the underlying trees.
 
 .. toctree::

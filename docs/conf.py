@@ -86,6 +86,10 @@ html_favicon = "_static/favicon.png"
 add_module_names = False
 
 html_title = "Documentation"
+html_baseurl = os.environ.get(
+    "READTHEDOCS_CANONICAL_URL",
+    "https://pysiglib.readthedocs.io/en/stable/",
+)
 
 rst_epilog = (
     """

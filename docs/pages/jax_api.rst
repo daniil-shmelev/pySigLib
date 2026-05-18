@@ -1,6 +1,9 @@
 JAX API
 ========================
 
+.. meta::
+   :description: Use pySigLib path signatures, log signatures, and signature kernels with JAX jit, grad, and vmap.
+
 .. versionadded:: v3.0.0
 
 pySigLib provides a JAX API which exposes all the same functions, but makes them compatible with JAX transformations

@@ -1,8 +1,11 @@
 Log Signatures
 ========================
 
-This section covers log-signature computation, conversion to and from signatures, and
-combination via the Baker-Campbell-Hausdorff formula.
+.. meta::
+   :description: Compute log signatures with pySigLib, convert between signatures and log signatures, and combine log signatures.
+
+This section covers log-signature computation in pySigLib, conversion to and
+from signatures, and combination via the Baker-Campbell-Hausdorff formula.
 
 See :doc:`log_signatures/log_sig_methods` for a comparison of the available
 log-signature algorithms and guidance on choosing between them.

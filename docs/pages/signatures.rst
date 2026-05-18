@@ -1,8 +1,12 @@
 Signatures
 ========================
 
-This section covers functions for computing truncated signatures and for
-combining or extending them without recomputing from scratch.
+.. meta::
+   :description: Compute path signatures in Python with pySigLib, including truncated signatures and signature combination utilities.
+
+This section covers path signature computation in pySigLib, including truncated
+signatures and utilities for combining or extending them without recomputing
+from scratch.
 
 .. toctree::
    :titlesonly:

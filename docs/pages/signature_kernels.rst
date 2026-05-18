@@ -1,6 +1,10 @@
 Signature Kernels
 ========================
 
+.. meta::
+   :description: Use signature kernels in pySigLib for path comparison, time series kernels, Gram matrices, scoring rules, and MMD.
+
+
 This section covers the signature kernel and its Gram matrix, along with
 higher-level statistics built on top (scoring rules and MMD). It also covers
 the library of static kernels on :math:`\mathbb{R}^d` which can be supplied as

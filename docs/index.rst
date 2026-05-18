@@ -14,6 +14,9 @@ pySigLib |release|
 
    </div>
 
+.. meta::
+   :description: pySigLib documentation for fast path signatures, log signatures, and signature kernels on CPU and CUDA GPU.
+
 .. raw:: html
 
    <div style="text-align: center;">
@@ -23,7 +26,7 @@ pySigLib |release|
 
 .. rst-class:: landing-tagline
 
-A high-performance library for path signatures and rough path methods on CPU and GPU.
+Fast path signatures, log signatures, and signature kernels on CPU and CUDA GPU.
 
 .. grid:: 3
    :gutter: 3
@@ -32,7 +35,7 @@ A high-performance library for path signatures and rough path methods on CPU and
       :link: /pages/installation
       :link-type: doc
 
-      Get up and running with pySigLib on Windows, Linux, or macOS — with optional CUDA support.
+      Get up and running with pySigLib on Windows, Linux, or macOS, with optional CUDA support.
 
    .. grid-item-card:: :octicon:`book;1.5em` Conventions
       :link: /pages/conventions
@@ -44,7 +47,7 @@ A high-performance library for path signatures and rough path methods on CPU and
       :link: /pages/api_reference
       :link-type: doc
 
-      Signatures, log signatures, signature kernels, and more.
+      Path signatures, log signatures, signature kernels, and more.
 
 .. grid:: 3
    :gutter: 3
@@ -59,7 +62,7 @@ A high-performance library for path signatures and rough path methods on CPU and
       :link: /pages/jax_api
       :link-type: doc
 
-      Use pySigLib functions with JAX transformations — ``jit``, ``grad``, and ``vmap``.
+      Use pySigLib functions with JAX transformations: ``jit``, ``grad``, and ``vmap``.
 
    .. grid-item-card:: :octicon:`terminal;1.5em` C++ Library
       :link: /pages/cpp
