@@ -175,6 +175,65 @@ class PathInputHandler:
             dimension_ += 1
         return length_, dimension_
 
+class PrimitivesInputHandler:
+    """
+    Handle flat constant tensor primitive levels for branched signatures.
+    """
+    def __init__(self, primitives, path_data, degree):
+        self.primitives = None
+        self.length = 0
+        self.data_ptr = None
+
+        if primitives is None:
+            return
+
+        check_type_multiple(primitives, "primitives", (np.ndarray, torch.Tensor))
+        if isinstance(primitives, np.ndarray) != (path_data.type_ == "numpy"):
+            raise ValueError("primitives must have the same array type as path")
+
+        self.primitives = ensure_own_contiguous_storage(primitives)
+        check_dtype(self.primitives, "primitives")
+
+        if len(self.primitives.shape) != 1:
+            raise ValueError("primitives must be a 1D array")
+
+        if isinstance(self.primitives, np.ndarray):
+            self.dtype = str(self.primitives.dtype)
+            self.device = "cpu"
+            self.data_ptr = self.primitives.ctypes.data_as(POINTER(DTYPES[self.dtype]))
+        else:
+            self.dtype = str(self.primitives.dtype)[6:]
+            self.device = self.primitives.device.type
+            _check_cuda_available(self.device)
+            self.data_ptr = cast(self.primitives.data_ptr(), POINTER(DTYPES[self.dtype]))
+
+        if self.dtype != path_data.dtype:
+            raise ValueError("primitives and path must have the same dtype")
+        if self.device != path_data.device:
+            raise ValueError("primitives and path must be on the same device")
+
+        self.length = self.primitives.shape[0]
+        if self.length != 0 and path_data.lead_lag:
+            raise ValueError("primitives cannot be used with lead_lag=True")
+        _infer_primitive_degree(path_data.data_dimension, degree, self.length)
+
+def _infer_primitive_degree(dimension, degree, length):
+    if length == 0:
+        return 1
+    if degree < 2:
+        raise ValueError("primitives must be empty when degree < 2")
+
+    offset = 0
+    level_size = dimension
+    for level in range(2, degree + 1):
+        level_size *= dimension
+        offset += level_size
+        if offset == length:
+            return level
+        if offset > length:
+            break
+    raise ValueError("primitives length must be a prefix of tensor levels 2..degree")
+
 class MultiplePathInputHandler:
     """
     Handle multiple inputs which are (shaped like) paths or a batch of paths
