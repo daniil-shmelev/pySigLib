@@ -20,7 +20,7 @@ import itertools
 
 import kauri
 import kauri.bck
-import kauri.mkw
+import kauri.nck
 
 import pysiglib
 from conftest import DEVICES, check_close, skip_no_cuda
@@ -1044,7 +1044,7 @@ def test_branched_sig_backprop_cuda_primitives_matches_cpu(planar, time_aug):
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Helpers: kauri MKW-based reference implementation for planar branched sigs
+# Helpers: kauri NCK-based reference implementation for planar branched sigs
 # ---------------------------------------------------------------------------
 
 def enumerate_decorated_planar_trees(d, N):
@@ -1073,11 +1073,13 @@ def linear_planar_branched_sig_ref(z, trees):
 
 
 def planar_branched_sig_reference(path, d, N):
-    """Compute planar branched sig using kauri.mkw.map_product as ground truth.
+    """Compute planar branched sig using kauri.nck.map_product as ground truth.
 
-    kauri.mkw.map_product uses the NCK coproduct on PlanarTree objects, which
-    computes the correct convolution product for scalar-valued MKW characters
-    (shuffle coefficients cancel with the 1/k! factors).
+    pysiglib's planar Butcher product is the NCK (Foissy) convolution: sum over
+    all admissible cuts with the concatenation-extended forest character. This
+    matches kauri.nck.map_product exactly. kauri.mkw.map_product computes a
+    different convolution (left-admissible cuts with shuffle-extended forest)
+    and is not the right reference for pysiglib's planar branched signature.
     """
     trees = enumerate_decorated_planar_trees(d, N)
 
@@ -1095,7 +1097,7 @@ def planar_branched_sig_reference(path, d, N):
             return char_func
 
         Y = kauri.Map(make_char(coeffs))
-        X = kauri.mkw.map_product(X, Y)
+        X = kauri.nck.map_product(X, Y)
 
     return np.array([X(t) for t in trees])
 
@@ -1213,7 +1215,7 @@ def test_planar_branched_sig_single_segment(d, N):
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2), (2, 4)])
 def test_planar_branched_sig_vs_kauri(d, N):
-    """Primary correctness test: compare against kauri MKW map product."""
+    """Primary correctness test: compare against kauri NCK map product."""
     pysiglib.prepare_branched_sig(d, N, planar=True)
     perm = compute_kauri_to_pysiglib_planar_permutation(d, N)
 

@@ -112,8 +112,12 @@ inline bool chain_word_index_(
 
 // Enumerate all admissible cuts for a tree using memoized child cuts.
 // When planar=true, preserve child ordering (no sort) so distinct left-to-right
-// arrangements produce distinct canonical trees and forests.
-// Note: the planar coproduct stored here is the NCK (Foissy) one; its \Delta-dual convolution numerically equals the MKW convolution on scalar characters via shuffle/factorial cancellation.
+// arrangements produce distinct canonical trees and forests. The planar
+// coproduct stored here is the NCK (Foissy) one: all admissible cuts with the
+// concatenation product on forests. This is the convolution that satisfies
+// Chen's identity for branched path signatures under path concatenation, and
+// differs from the MKW (Loday-Ronco) coproduct (left-admissible cuts with
+// shuffle-extended forests) used in Munthe-Kaas-Wright B-series.
 inline void enumerate_admissible_cuts(
 	uint64_t tree_idx,
 	const std::vector<DecoratedTreeInfo>& trees,
