@@ -141,7 +141,7 @@ TEST(signatureDoubleTest, TrivialCases) {
     auto f = signature_d;
     std::vector<double> path;
     std::vector<double> true_sig;
-    EXPECT_EQ(2, f(path.data(), true_sig.data(), (uint64_t)1, 0, 0, 0, false, false, 1., true, true, 1));
+    EXPECT_EQ(2, f(path.data(), true_sig.data(), (uint64_t)1, 0, 0, 0, false, false, 1., true, true, 1, nullptr, 0));
 
     true_sig.push_back(1.);
     check_result(f, path, true_sig, (uint64_t)1, 1, 0, 0, false, false, 1., true, true, 1);
@@ -271,7 +271,7 @@ TEST(signatureDoubleTest, BigLeadLagTest) {
     path.resize(batch * length * dimension);
     std::vector<double> out;
     out.resize(batch * sig_length(dimension * 2, degree));
-    f(path.data(), out.data(), batch, dimension, length, degree, false, true, 1., true, true, 1);
+    f(path.data(), out.data(), batch, dimension, length, degree, false, true, 1., true, true, 1, nullptr, 0);
 }
 
 TEST(sigBackpropTest, LinearPathTest) {

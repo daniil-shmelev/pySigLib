@@ -363,20 +363,20 @@ def _make_ffi_call(op_name, inputs, out_type, call_kwargs):
 # sig
 # ---------------------------------------------------------------------------
 
-def sig_ffi_call(path, degree, time_aug, lead_lag, end_time, horner, n_jobs):
-    _normalize_dtype(path.dtype)
+def sig_ffi_call(path, primitives, degree, time_aug, lead_lag, end_time, horner, n_jobs):
+    _check_same_dtype(path, primitives)
     out_type = jax.ShapeDtypeStruct(_sig_shape(path.shape, degree, time_aug, lead_lag), path.dtype)
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), horner=np.bool_(horner), n_jobs=np.int64(n_jobs))
-    return _make_ffi_call("sig", (path,), out_type, call_kwargs)
+    return _make_ffi_call("sig", (path, primitives), out_type, call_kwargs)
 
 
-def sig_backprop_ffi_call(path, sig_, cotangent, degree, time_aug, lead_lag, end_time, n_jobs):
-    _check_same_dtype(path, sig_, cotangent)
+def sig_backprop_ffi_call(path, sig_, cotangent, primitives, degree, time_aug, lead_lag, end_time, n_jobs):
+    _check_same_dtype(path, sig_, cotangent, primitives)
     out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
-    return _make_ffi_call("sig_backprop", (path, sig_, cotangent), out_type, call_kwargs)
+    return _make_ffi_call("sig_backprop", (path, sig_, cotangent, primitives), out_type, call_kwargs)
 
 
 # ---------------------------------------------------------------------------

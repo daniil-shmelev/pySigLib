@@ -28,6 +28,7 @@
 #include <iostream>
 #include <span>
 #include <cmath>
+#include <type_traits>
 
 #define SINGLE_EPSILON 1e-4
 #define DOUBLE_EPSILON 1e-10
@@ -97,7 +98,12 @@ void check_result(FN f, std::vector<T>& path, std::vector<T>& true_, Args... arg
     out.resize(true_.size() + 1); //+1 at the end just to check we don't write more than expected
     out[true_.size()] = -1.;
 
-    f(path.data(), out.data(), args...);
+    if constexpr (std::is_invocable_v<FN, T*, T*, Args...>) {
+        f(path.data(), out.data(), args...);
+    }
+    else {
+        f(path.data(), out.data(), args..., static_cast<const T*>(nullptr), static_cast<uint64_t>(0));
+    }
 
     for (uint64_t i = 0; i < true_.size(); ++i)
         EXPECT_LT(abs(true_[i] - out[i]), EPSILON);

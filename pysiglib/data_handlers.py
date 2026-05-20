@@ -177,7 +177,7 @@ class PathInputHandler:
 
 class PrimitivesInputHandler:
     """
-    Handle flat constant tensor primitive levels for branched signatures.
+    Handle flat constant tensor primitive levels for signature APIs.
     """
     def __init__(self, primitives, path_data, degree):
         self.primitives = None

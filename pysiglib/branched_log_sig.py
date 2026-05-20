@@ -168,9 +168,8 @@ def branched_log_sig(
     :type scalar_term: bool
     :param primitives: Optional constant tensor-algebra primitive of level
         :math:`\\geq 2` added to the local branched-signature primitive at every
-        path segment, before the branched log signature is taken. This is the
-        standard mechanism to lift a non-smooth (e.g. Ito) stochastic process:
-        the level-1 primitive is filled from each segment's path increment
+        path segment, before the branched log signature is taken. The level-1
+        primitive is filled from each segment's path increment
         :math:`\\Delta x`, the higher levels come from this constant, and the
         local branched signature on each segment is
 

@@ -139,6 +139,47 @@ def test_jax_sig_grad_matches_pysiglib(device, jitted, dtype, case):
     check_close(grad_ref, grad, double_atol=1e-8)
 
 
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_jax_sig_primitives_matches_pysiglib(device, jitted, dtype):
+    x = np.array([[0.0], [3.0]], dtype=dtype)
+    primitives = np.array([2.0], dtype=dtype)
+    expected = pysiglib.sig(x, 4, scalar_term=True, primitives=primitives)
+
+    x_jax = _as_jax_array(x, device, dtype)
+    primitives_jax = _as_jax_array(primitives, device, dtype)
+
+    def fn(path, prim):
+        return jax_api.sig(path, 4, scalar_term=True, primitives=prim)
+
+    actual = jax.jit(fn)(x_jax, primitives_jax) if jitted else fn(x_jax, primitives_jax)
+    check_close(expected, actual, double_atol=1e-8)
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("jitted", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_jax_sig_primitives_grad_matches_pysiglib(device, jitted, dtype):
+    x = np.array([[0.1, -0.2], [0.4, 0.3], [0.0, 0.7]], dtype=dtype)
+    primitives = np.array([0.2, -0.1, 0.05, 0.3], dtype=dtype)
+    sig_ref = pysiglib.sig(x, 3, scalar_term=True, primitives=primitives)
+    weights = np.linspace(-0.5, 0.7, sig_ref.shape[-1]).astype(dtype)
+    grad_ref = pysiglib.sig_backprop(x, sig_ref, weights, 3, primitives=primitives)
+
+    x_jax = _as_jax_array(x, device, dtype)
+    primitives_jax = _as_jax_array(primitives, device, dtype)
+    weights_jax = _as_jax_array(weights, device, dtype)
+
+    def loss_fn(path):
+        sig = jax_api.sig(path, 3, scalar_term=True, primitives=primitives_jax)
+        return jnp.sum(sig * weights_jax)
+
+    grad_fn = jax.jit(jax.grad(loss_fn)) if jitted else jax.grad(loss_fn)
+    grad = grad_fn(x_jax)
+    check_close(grad_ref, grad, double_atol=1e-8)
+
+
 # =========================================================================
 # sig_combine - forward
 # =========================================================================

@@ -183,21 +183,21 @@ def _prepare_primitives_jax(primitives, path, degree: int, lead_lag: bool):
     return primitives
 
 
-@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
-def _sig(path, degree, time_aug, lead_lag, end_time, horner, n_jobs):
-    return sig_ffi_call(path, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))
+def _sig(path, primitives, degree, time_aug, lead_lag, end_time, horner, n_jobs):
+    return sig_ffi_call(path, primitives, degree, time_aug, lead_lag, end_time, horner, n_jobs)
 
 
-def _sig_fwd(path, degree, time_aug, lead_lag, end_time, horner, n_jobs):
-    sig_ = sig_ffi_call(path, degree, time_aug, lead_lag, end_time, horner, n_jobs)
-    return sig_, (path, sig_)
+def _sig_fwd(path, primitives, degree, time_aug, lead_lag, end_time, horner, n_jobs):
+    sig_ = sig_ffi_call(path, primitives, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+    return sig_, (path, sig_, primitives)
 
 
 def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, residual, cotangent):
     del horner
-    path, sig_ = residual
-    grad = sig_backprop_ffi_call(path, sig_, cotangent, degree, time_aug, lead_lag, end_time, n_jobs)
-    return (grad,)
+    path, sig_, primitives = residual
+    grad = sig_backprop_ffi_call(path, sig_, cotangent, primitives, degree, time_aug, lead_lag, end_time, n_jobs)
+    return (grad, jnp.zeros_like(primitives))
 
 
 _sig.defvjp(_sig_fwd, _sig_bwd)
@@ -212,6 +212,7 @@ def sig(
     end_time: float = 1.0,
     horner: bool = True,
     scalar_term: bool = False,
+    primitives=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
@@ -227,7 +228,8 @@ def sig(
     check_type(horner, "horner", bool)
     check_n_jobs(n_jobs)
 
-    result = _sig(path, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+    primitives = _prepare_primitives_jax(primitives, path, degree, lead_lag)
+    result = _sig(path, primitives, degree, time_aug, lead_lag, end_time, horner, n_jobs)
     if not scalar_term:
         result = _strip_scalar(result)
     return result
@@ -528,14 +530,18 @@ def log_sig(
     end_time: float = 1.0,
     method: int = 1,
     scalar_term: bool = False,
+    primitives=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
 
     path = jnp.asarray(path)
     _validate_shape(path)
+    primitives = _prepare_primitives_jax(primitives, path, degree, lead_lag)
 
     if method == 3:
+        if primitives.shape[0] != 0:
+            raise ValueError("primitives are not supported with log_sig method=3")
         if time_aug or lead_lag:
             path = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         aug_dim = path.shape[-1]
@@ -544,7 +550,7 @@ def log_sig(
 
     dimension = path.shape[-1]
     sig_ = sig(path, degree, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, scalar_term=scalar_term, n_jobs=n_jobs)
+               end_time=end_time, horner=True, scalar_term=scalar_term, primitives=primitives, n_jobs=n_jobs)
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug,
                           lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 

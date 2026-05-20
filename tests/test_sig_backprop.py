@@ -197,3 +197,57 @@ def test_batch_sig_backprop_time_aug_lead_lag_random(device, deg):
     grad_input1, = torch.autograd.grad(X_ll, X, sig_back1, False, True)
 
     check_close(grad_input1, sig_back2)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_sig_backprop_primitives_matches_finite_difference(device):
+    X = torch.tensor(
+        [[0.1, -0.2], [0.4, 0.3], [0.0, 0.7], [0.2, -0.1]],
+        dtype=torch.float64,
+        device=device,
+    )
+    primitives = torch.tensor([0.2, -0.1, 0.05, 0.3], dtype=torch.float64, device=device)
+    weights = torch.linspace(
+        -0.5, 0.7, pysiglib.sig_length(2, 3, scalar_term=True), dtype=torch.float64, device=device)
+
+    sig = pysiglib.sig(X, 3, scalar_term=True, primitives=primitives)
+    grad = pysiglib.sig_backprop(X, sig, weights, 3, primitives=primitives)
+
+    eps = 1e-6
+    X_plus = X.detach().clone()
+    X_minus = X.detach().clone()
+    X_plus[1, 0] += eps
+    X_minus[1, 0] -= eps
+    f_plus = torch.dot(
+        pysiglib.sig(X_plus, 3, scalar_term=True, primitives=primitives), weights)
+    f_minus = torch.dot(
+        pysiglib.sig(X_minus, 3, scalar_term=True, primitives=primitives), weights)
+    expected = (f_plus - f_minus) / (2 * eps)
+
+    assert_device(grad, device)
+    check_close(grad[1, 0], expected)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_torch_sig_primitives_autograd_matches_manual_backprop(device):
+    X = torch.tensor(
+        [[0.2, 0.1], [0.5, -0.2], [0.3, 0.4]],
+        dtype=torch.float64,
+        device=device,
+        requires_grad=True,
+    )
+    primitives = torch.tensor([0.1, 0.0, -0.2, 0.3], dtype=torch.float64, device=device)
+    weights = torch.linspace(
+        0.2, 1.1, pysiglib.sig_length(2, 3, scalar_term=True), dtype=torch.float64, device=device)
+
+    import pysiglib.torch_api as torch_api
+
+    sig = torch_api.sig(X, 3, scalar_term=True, primitives=primitives)
+    loss = torch.dot(sig, weights)
+    loss.backward()
+
+    expected_sig = pysiglib.sig(X.detach(), 3, scalar_term=True, primitives=primitives)
+    expected = pysiglib.sig_backprop(
+        X.detach(), expected_sig.detach(), weights, 3, primitives=primitives)
+
+    check_close(X.grad, expected)

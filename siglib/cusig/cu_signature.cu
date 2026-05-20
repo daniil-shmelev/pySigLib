@@ -834,6 +834,393 @@ void signature_per_word_core_(
 	check_cuda_error();
 }
 
+inline void validate_signature_primitives_args_cuda_(
+	const void* primitives,
+	uint64_t primitives_len,
+	uint64_t dimension,
+	uint64_t degree,
+	bool lead_lag
+) {
+	if (primitives == nullptr && primitives_len != 0)
+		throw std::invalid_argument("primitives pointer is null but primitives_len is nonzero");
+	if (lead_lag && primitives_len != 0)
+		throw std::invalid_argument("primitives cannot be used with lead_lag=true");
+	if (primitives_len == 0)
+		return;
+	if (degree < 2)
+		throw std::invalid_argument("primitives must be empty when degree < 2");
+
+	uint64_t offset = 0;
+	uint64_t level_size = dimension;
+	for (uint64_t level = 2; level <= degree; ++level) {
+		level_size *= dimension;
+		offset += level_size;
+		if (offset == primitives_len)
+			return;
+		if (offset > primitives_len)
+			break;
+	}
+	throw std::invalid_argument("primitives length must be a prefix of tensor levels 2..degree");
+}
+
+template<typename T>
+__device__ void build_primitive_block_(
+	const T* path,
+	uint64_t step,
+	T* primitive,
+	const T* primitives,
+	uint64_t primitives_len,
+	uint64_t data_dimension,
+	uint64_t dimension,
+	uint64_t degree,
+	const uint64_t* level_index
+) {
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+	const uint64_t sig_len = level_index[degree + 1];
+
+	for (uint64_t i = tid; i < sig_len; i += nthreads)
+		primitive[i] = T(0);
+	__syncthreads();
+
+	const T* prev = path + step * dimension;
+	const T* next = prev + dimension;
+	for (uint64_t d = tid; d < dimension; d += nthreads)
+		primitive[level_index[1] + d] = next[d] - prev[d];
+
+	uint64_t offset = 0;
+	uint64_t level_size = data_dimension;
+	for (uint64_t level = 2; level <= degree; ++level) {
+		level_size *= data_dimension;
+		if (offset + level_size > primitives_len)
+			break;
+
+		for (uint64_t word_idx = tid; word_idx < level_size; word_idx += nthreads) {
+			const T value = primitives[offset + word_idx];
+			if (value == T(0))
+				continue;
+
+			uint64_t tmp = word_idx;
+			uint64_t aug_word_idx = 0;
+			uint64_t pow = level_size / data_dimension;
+			for (uint64_t pos = 0; pos < level; ++pos) {
+				const uint64_t label = tmp / pow;
+				tmp -= label * pow;
+				if (pos + 1 < level)
+					pow /= data_dimension;
+				aug_word_idx = aug_word_idx * dimension + label;
+			}
+			primitive[level_index[level] + aug_word_idx] = value;
+		}
+		offset += level_size;
+	}
+	__syncthreads();
+}
+
+template<typename T>
+__device__ void tensor_exp_block_(
+	const T* primitive,
+	T* out,
+	T* power_prev,
+	T* power_curr,
+	uint64_t dimension,
+	uint64_t degree,
+	const uint64_t* level_index
+) {
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+	const uint64_t sig_len = level_index[degree + 1];
+
+	for (uint64_t i = tid; i < sig_len; i += nthreads) {
+		out[i] = T(0);
+		power_prev[i] = primitive[i];
+	}
+	if (tid == 0)
+		out[0] = T(1);
+	__syncthreads();
+
+	for (uint64_t i = level_index[1] + tid; i < sig_len; i += nthreads)
+		out[i] += primitive[i];
+	__syncthreads();
+
+	for (uint64_t n = 2; n <= degree; ++n) {
+		const T inv_n = T(1) / static_cast<T>(n);
+		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
+			const uint64_t target_size = level_index[target_level + 1] - level_index[target_level];
+			const uint64_t max_left = target_level - (n - 1);
+			for (uint64_t idx = tid; idx < target_size; idx += nthreads) {
+				T sum = T(0);
+				for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
+					const uint64_t right_level = target_level - left_level;
+					const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+					const uint64_t left_idx = idx / right_size;
+					const uint64_t right_idx = idx - left_idx * right_size;
+					sum += primitive[level_index[left_level] + left_idx]
+						* power_prev[level_index[right_level] + right_idx] * inv_n;
+				}
+				const uint64_t out_idx = level_index[target_level] + idx;
+				power_curr[out_idx] = sum;
+				out[out_idx] += sum;
+			}
+		}
+		__syncthreads();
+		T* tmp = power_prev;
+		power_prev = power_curr;
+		power_curr = tmp;
+		__syncthreads();
+	}
+}
+
+template<typename T>
+__device__ void sig_combine_block_(
+	T* sig1,
+	const T* sig2,
+	uint64_t degree,
+	const uint64_t* level_index
+) {
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+	if (tid == 0)
+		sig1[0] = T(1);
+	__syncthreads();
+
+	for (int64_t target_level = static_cast<int64_t>(degree); target_level > 0; --target_level) {
+		const uint64_t level = static_cast<uint64_t>(target_level);
+		const uint64_t level_start = level_index[level];
+		const uint64_t level_size = level_index[level + 1] - level_start;
+
+		for (uint64_t idx = tid; idx < level_size; idx += nthreads) {
+			T value = sig1[level_start + idx] + sig2[level_start + idx];
+			for (uint64_t left_level = level - 1, right_level = 1;
+				left_level > 0; --left_level, ++right_level) {
+				const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+				const uint64_t left_idx = idx / right_size;
+				const uint64_t right_idx = idx - left_idx * right_size;
+				value += sig1[level_index[left_level] + left_idx]
+					* sig2[level_index[right_level] + right_idx];
+			}
+			sig1[level_start + idx] = value;
+		}
+		__syncthreads();
+	}
+}
+
+template<typename T>
+__device__ void uncombine_sig_deriv_block_(
+	const T* sig1,
+	const T* sig2,
+	T* sig_concat_deriv,
+	T* sig2_deriv,
+	uint64_t degree,
+	const uint64_t* level_index,
+	uint64_t sig_len
+) {
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+
+	for (uint64_t i = tid; i < sig_len; i += nthreads)
+		sig2_deriv[i] = sig_concat_deriv[i];
+	__syncthreads();
+
+	for (uint64_t level = degree; level > 0; --level) {
+		for (uint64_t left_level = level - 1, right_level = 1;
+			left_level > 0; --left_level, ++right_level) {
+			const uint64_t target_start = level_index[level];
+			const uint64_t left_start = level_index[left_level];
+			const uint64_t right_start = level_index[right_level];
+			const uint64_t left_size = level_index[left_level + 1] - left_start;
+			const uint64_t right_size = level_index[right_level + 1] - right_start;
+
+			for (uint64_t right_idx = tid; right_idx < right_size; right_idx += nthreads) {
+				T accum = T(0);
+				for (uint64_t left_idx = 0; left_idx < left_size; ++left_idx) {
+					accum += sig_concat_deriv[target_start + left_idx * right_size + right_idx]
+						* sig1[left_start + left_idx];
+				}
+				sig2_deriv[right_start + right_idx] += accum;
+			}
+			__syncthreads();
+		}
+	}
+
+	for (uint64_t left_level = 1; left_level < degree; ++left_level) {
+		for (uint64_t level = left_level + 1, right_level = 1;
+			level <= degree; ++level, ++right_level) {
+			const uint64_t target_start = level_index[level];
+			const uint64_t left_start = level_index[left_level];
+			const uint64_t right_start = level_index[right_level];
+			const uint64_t left_size = level_index[left_level + 1] - left_start;
+			const uint64_t right_size = level_index[right_level + 1] - right_start;
+
+			for (uint64_t left_idx = tid; left_idx < left_size; left_idx += nthreads) {
+				T accum = T(0);
+				for (uint64_t right_idx = 0; right_idx < right_size; ++right_idx) {
+					accum += sig_concat_deriv[target_start + left_idx * right_size + right_idx]
+						* sig2[right_start + right_idx];
+				}
+				sig_concat_deriv[left_start + left_idx] += accum;
+			}
+			__syncthreads();
+		}
+	}
+}
+
+template<typename T>
+__device__ void tensor_exp_backprop_block_(
+	T* d_logsig,
+	const T* d_sig,
+	const T* log_sig,
+	T* p_all,
+	T* d_p,
+	T* d_p_next,
+	uint64_t dimension,
+	uint64_t degree,
+	const uint64_t* level_index,
+	uint64_t sig_len
+) {
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+
+	for (uint64_t i = tid; i < sig_len; i += nthreads)
+		d_logsig[i] = T(0);
+	__syncthreads();
+
+	if (degree <= 1) {
+		for (uint64_t i = level_index[1] + tid; i < level_index[degree + 1]; i += nthreads)
+			d_logsig[i] = d_sig[i];
+		__syncthreads();
+		return;
+	}
+
+	for (uint64_t i = tid; i < degree * sig_len; i += nthreads)
+		p_all[i] = T(0);
+	for (uint64_t i = tid; i < sig_len; i += nthreads)
+		p_all[i] = log_sig[i];
+	__syncthreads();
+
+	for (uint64_t n = 2; n <= degree; ++n) {
+		const T inv_n = T(1) / static_cast<T>(n);
+		T* p_curr = p_all + (n - 1) * sig_len;
+		const T* p_prev = p_all + (n - 2) * sig_len;
+
+		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
+			const uint64_t target_size = level_index[target_level + 1] - level_index[target_level];
+			const uint64_t max_left = target_level - (n - 1);
+			for (uint64_t idx = tid; idx < target_size; idx += nthreads) {
+				T sum = T(0);
+				for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
+					const uint64_t right_level = target_level - left_level;
+					const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+					const uint64_t left_idx = idx / right_size;
+					const uint64_t right_idx = idx - left_idx * right_size;
+					sum += log_sig[level_index[left_level] + left_idx]
+						* p_prev[level_index[right_level] + right_idx] * inv_n;
+				}
+				p_curr[level_index[target_level] + idx] = sum;
+			}
+		}
+		__syncthreads();
+	}
+
+	for (uint64_t i = level_index[1] + tid; i < level_index[degree + 1]; i += nthreads)
+		d_logsig[i] = d_sig[i];
+	for (uint64_t i = tid; i < sig_len; i += nthreads)
+		d_p[i] = T(0);
+	__syncthreads();
+
+	for (int64_t n_signed = static_cast<int64_t>(degree); n_signed >= 2; --n_signed) {
+		const uint64_t n = static_cast<uint64_t>(n_signed);
+		const T inv_n = T(1) / static_cast<T>(n);
+		const T* p_prev = p_all + (n - 2) * sig_len;
+
+		for (uint64_t i = tid; i < sig_len; i += nthreads)
+			d_p_next[i] = T(0);
+		__syncthreads();
+
+		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
+			const uint64_t target_size = level_index[target_level + 1] - level_index[target_level];
+			const uint64_t max_left = target_level - (n - 1);
+			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
+				const uint64_t right_level = target_level - left_level;
+				const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+
+				for (uint64_t idx = tid; idx < target_size; idx += nthreads) {
+					const uint64_t left_idx = idx / right_size;
+					const uint64_t right_idx = idx - left_idx * right_size;
+					const uint64_t target_idx = level_index[target_level] + idx;
+					const T upstream = (d_sig[target_idx] + d_p[target_idx]) * inv_n;
+					myAtomicAdd(d_logsig + level_index[left_level] + left_idx,
+						upstream * p_prev[level_index[right_level] + right_idx]);
+					myAtomicAdd(d_p_next + level_index[right_level] + right_idx,
+						upstream * log_sig[level_index[left_level] + left_idx]);
+				}
+				__syncthreads();
+			}
+		}
+
+		T* tmp = d_p;
+		d_p = d_p_next;
+		d_p_next = tmp;
+		__syncthreads();
+	}
+
+	for (uint64_t i = level_index[1] + tid; i < level_index[degree + 1]; i += nthreads)
+		d_logsig[i] += d_p[i];
+	__syncthreads();
+}
+
+template<typename T>
+__global__ void signature_primitives_ker(
+	const T* __restrict__ path,
+	T* __restrict__ out,
+	const T* __restrict__ primitives,
+	uint64_t primitives_len,
+	const uint64_t* __restrict__ level_index,
+	uint64_t data_dimension,
+	uint64_t dimension,
+	uint64_t length,
+	uint64_t degree,
+	uint64_t full_sig_len,
+	uint64_t sig_stride,
+	uint64_t path_flat_len,
+	T* __restrict__ workspace,
+	bool scalar_term
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+
+	const T* my_path = path + batch_idx * path_flat_len;
+	T* my_out = out + batch_idx * sig_stride;
+	T* acc = workspace + batch_idx * 5 * full_sig_len;
+	T* local = acc + full_sig_len;
+	T* primitive = local + full_sig_len;
+	T* power_prev = primitive + full_sig_len;
+	T* power_curr = power_prev + full_sig_len;
+
+	build_primitive_block_(
+		my_path, 0, primitive, primitives, primitives_len,
+		data_dimension, dimension, degree, level_index);
+	tensor_exp_block_(primitive, acc, power_prev, power_curr, dimension, degree, level_index);
+
+	for (uint64_t step = 1; step + 1 < length; ++step) {
+		build_primitive_block_(
+			my_path, step, primitive, primitives, primitives_len,
+			data_dimension, dimension, degree, level_index);
+		tensor_exp_block_(primitive, local, power_prev, power_curr, dimension, degree, level_index);
+		sig_combine_block_(acc, local, degree, level_index);
+	}
+
+	if (scalar_term) {
+		for (uint64_t i = tid; i < full_sig_len; i += nthreads)
+			my_out[i] = acc[i];
+	}
+	else {
+		for (uint64_t i = 1 + tid; i < full_sig_len; i += nthreads)
+			my_out[i - 1] = acc[i];
+	}
+}
+
 template<typename T>
 void signature_cuda_core_(
 	const T* path,          // GPU pointer, shape [batch_size, length, dimension] flattened
@@ -843,7 +1230,10 @@ void signature_cuda_core_(
 	uint64_t length,        // transformed length
 	uint64_t degree,
 	bool horner,
-	bool scalar_term = true
+	bool scalar_term,
+	uint64_t data_dimension,
+	const T* primitives,
+	uint64_t primitives_len
 ) {
 	const uint64_t full_sig_len = host_sig_length(dimension, degree);
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
@@ -870,6 +1260,24 @@ void signature_cuda_core_(
 			std::fill(ones.get(), ones.get() + batch_size, static_cast<T>(1));
 			cudaMemcpy(out, ones.get(), batch_size * sizeof(T), cudaMemcpyHostToDevice);
 		}
+		return;
+	}
+
+	if (primitives_len != 0) {
+		auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
+		host_populate_level_index(level_index_host.get(), dimension, degree + 2);
+		const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
+		CudaBuf<uint64_t> d_level_index(level_index_bytes);
+		CUDA_CHECK(cudaMemcpy(d_level_index.get(), level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
+		CudaBuf<T> d_workspace(batch_size * 5 * full_sig_len * sizeof(T));
+		const unsigned int threads_per_block = host_choose_threads_per_block(full_sig_len);
+		signature_primitives_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block>>>(
+			path, out, primitives, primitives_len, d_level_index.get(),
+			data_dimension, dimension, length, degree, full_sig_len, sig_stride,
+			path_flat_len, d_workspace.get(), scalar_term);
+		check_cuda_kernel_launch();
+		cudaDeviceSynchronize();
+		check_cuda_error();
 		return;
 	}
 
@@ -918,9 +1326,12 @@ void signature_cuda_(
 	bool lead_lag,
 	T end_time,
 	bool horner,
-	bool scalar_term = true
+	bool scalar_term = true,
+	const T* primitives = nullptr,
+	uint64_t primitives_len = 0
 ) {
 	if (dimension == 0) throw std::invalid_argument("signature_cuda received path of dimension 0");
+	validate_signature_primitives_args_cuda_(primitives, primitives_len, dimension, degree, lead_lag);
 
 	// Compute transformed dimensions
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
@@ -934,10 +1345,111 @@ void signature_cuda_(
 		cu_transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
 		cudaDeviceSynchronize();
 
-		signature_cuda_core_<T>(d_transformed.get(), out, batch_size, t_dimension, t_length, degree, horner, scalar_term);
+		signature_cuda_core_<T>(
+			d_transformed.get(), out, batch_size, t_dimension, t_length, degree,
+			horner, scalar_term, dimension, primitives, primitives_len);
 	}
 	else {
-		signature_cuda_core_<T>(path, out, batch_size, dimension, length, degree, horner, scalar_term);
+		signature_cuda_core_<T>(
+			path, out, batch_size, dimension, length, degree,
+			horner, scalar_term, dimension, primitives, primitives_len);
+	}
+}
+
+template<typename T>
+__global__ void sig_backprop_primitives_ker(
+	const T* __restrict__ path,
+	T* __restrict__ out,
+	const T* __restrict__ sig_derivs,
+	const T* __restrict__ sig,
+	const T* __restrict__ primitives,
+	uint64_t primitives_len,
+	const uint64_t* __restrict__ level_index,
+	uint64_t data_dimension,
+	uint64_t dimension,
+	uint64_t length,
+	uint64_t degree,
+	uint64_t full_sig_len,
+	uint64_t sig_stride,
+	uint64_t path_flat_len,
+	T* __restrict__ workspace,
+	bool scalar_term
+) {
+	const uint64_t batch_idx = blockIdx.x;
+	const int tid = threadIdx.x;
+	const int nthreads = blockDim.x;
+
+	const T* my_path = path + batch_idx * path_flat_len;
+	T* my_out = out + batch_idx * path_flat_len;
+	const T* my_sig = sig + batch_idx * sig_stride;
+	const T* my_derivs = sig_derivs + batch_idx * sig_stride;
+
+	const uint64_t arrays_per_batch = degree + 12;
+	T* base = workspace + batch_idx * arrays_per_batch * full_sig_len;
+	T* sig_work = base;
+	T* derivs_work = sig_work + full_sig_len;
+	T* local_derivs = derivs_work + full_sig_len;
+	T* primitive_derivs = local_derivs + full_sig_len;
+	T* primitive = primitive_derivs + full_sig_len;
+	T* inverse_primitive = primitive + full_sig_len;
+	T* local_sig = inverse_primitive + full_sig_len;
+	T* inverse_local_sig = local_sig + full_sig_len;
+	T* power_prev = inverse_local_sig + full_sig_len;
+	T* power_curr = power_prev + full_sig_len;
+	T* p_all = power_curr + full_sig_len;
+	T* d_p = p_all + degree * full_sig_len;
+	T* d_p_next = d_p + full_sig_len;
+
+	for (uint64_t i = tid; i < path_flat_len; i += nthreads)
+		my_out[i] = T(0);
+	__syncthreads();
+
+	if (scalar_term) {
+		for (uint64_t i = tid; i < full_sig_len; i += nthreads) {
+			sig_work[i] = my_sig[i];
+			derivs_work[i] = my_derivs[i];
+		}
+	}
+	else {
+		if (tid == 0) {
+			sig_work[0] = T(1);
+			derivs_work[0] = T(0);
+		}
+		for (uint64_t i = 1 + tid; i < full_sig_len; i += nthreads) {
+			sig_work[i] = my_sig[i - 1];
+			derivs_work[i] = my_derivs[i - 1];
+		}
+	}
+	__syncthreads();
+
+	for (int64_t seg = static_cast<int64_t>(length) - 2; seg >= 0; --seg) {
+		build_primitive_block_(
+			my_path, static_cast<uint64_t>(seg), primitive, primitives, primitives_len,
+			data_dimension, dimension, degree, level_index);
+		tensor_exp_block_(primitive, local_sig, power_prev, power_curr, dimension, degree, level_index);
+
+		if (tid == 0)
+			inverse_primitive[0] = T(0);
+		for (uint64_t i = 1 + tid; i < full_sig_len; i += nthreads)
+			inverse_primitive[i] = -primitive[i];
+		__syncthreads();
+
+		tensor_exp_block_(inverse_primitive, inverse_local_sig, power_prev, power_curr, dimension, degree, level_index);
+		sig_combine_block_(sig_work, inverse_local_sig, degree, level_index);
+
+		uncombine_sig_deriv_block_(
+			sig_work, local_sig, derivs_work, local_derivs,
+			degree, level_index, full_sig_len);
+		tensor_exp_backprop_block_(
+			primitive_derivs, local_derivs, primitive, p_all, d_p, d_p_next,
+			dimension, degree, level_index, full_sig_len);
+
+		for (uint64_t d = tid; d < dimension; d += nthreads) {
+			const T value = primitive_derivs[level_index[1] + d];
+			my_out[(static_cast<uint64_t>(seg) + 1) * dimension + d] += value;
+			my_out[static_cast<uint64_t>(seg) * dimension + d] -= value;
+		}
+		__syncthreads();
 	}
 }
 
@@ -951,7 +1463,10 @@ void sig_backprop_cuda_core_(
 	uint64_t dimension,
 	uint64_t length,
 	uint64_t degree,
-	bool scalar_term = true
+	bool scalar_term,
+	uint64_t data_dimension,
+	const T* primitives,
+	uint64_t primitives_len
 ) {
 	const uint64_t full_sig_len = host_sig_length(dimension, degree);
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
@@ -959,6 +1474,24 @@ void sig_backprop_cuda_core_(
 
 	if (length <= 1 || degree == 0) {
 		cudaMemset(out, 0, batch_size * path_flat_len * sizeof(T));
+		return;
+	}
+
+	if (primitives_len != 0) {
+		auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
+		host_populate_level_index(level_index_host.get(), dimension, degree + 2);
+		const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
+		CudaBuf<uint64_t> d_level_index(level_index_bytes);
+		CUDA_CHECK(cudaMemcpy(d_level_index.get(), level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
+		CudaBuf<T> d_workspace(batch_size * (degree + 12) * full_sig_len * sizeof(T));
+		const unsigned int threads_per_block = host_choose_threads_per_block(full_sig_len);
+		sig_backprop_primitives_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block>>>(
+			path, out, sig_derivs, sig, primitives, primitives_len, d_level_index.get(),
+			data_dimension, dimension, length, degree, full_sig_len, sig_stride,
+			path_flat_len, d_workspace.get(), scalar_term);
+		check_cuda_kernel_launch();
+		cudaDeviceSynchronize();
+		check_cuda_error();
 		return;
 	}
 
@@ -1042,9 +1575,12 @@ void sig_backprop_cuda_(
 	bool time_aug,
 	bool lead_lag,
 	T end_time,
-	bool scalar_term = true
+	bool scalar_term = true,
+	const T* primitives = nullptr,
+	uint64_t primitives_len = 0
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_backprop_cuda received path of dimension 0");
+	validate_signature_primitives_args_cuda_(primitives, primitives_len, dimension, degree, lead_lag);
 
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
@@ -1057,15 +1593,19 @@ void sig_backprop_cuda_(
 
 		CudaBuf<T> d_transformed_derivs(t_path_size * sizeof(T));
 
-		sig_backprop_cuda_core_<T>(d_transformed.get(), d_transformed_derivs.get(), sig_derivs, sig,
-			batch_size, t_dimension, t_length, degree, scalar_term);
+		sig_backprop_cuda_core_<T>(
+			d_transformed.get(), d_transformed_derivs.get(), sig_derivs, sig,
+			batch_size, t_dimension, t_length, degree, scalar_term,
+			dimension, primitives, primitives_len);
 
 		d_transformed.reset();
 
 		cu_transform_path_backprop_<T>(d_transformed_derivs.get(), out, batch_size, dimension, length, time_aug, lead_lag, end_time);
 	}
 	else {
-		sig_backprop_cuda_core_<T>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, scalar_term);
+		sig_backprop_cuda_core_<T>(
+			path, out, sig_derivs, sig, batch_size, dimension, length, degree,
+			scalar_term, dimension, primitives, primitives_len);
 	}
 }
 
@@ -1080,18 +1620,20 @@ extern "C" {
 		const float* path, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, float end_time,
-		bool horner, bool scalar_term
+		bool horner, bool scalar_term,
+		const float* primitives, uint64_t primitives_len
 	) noexcept {
-		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term));
+		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, primitives, primitives_len));
 	}
 
 	CUSIG_API int signature_cuda_d(
 		const double* path, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, double end_time,
-		bool horner, bool scalar_term
+		bool horner, bool scalar_term,
+		const double* primitives, uint64_t primitives_len
 	) noexcept {
-		CUSIG_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term));
+		CUSIG_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, primitives, primitives_len));
 	}
 
 	// =====================================================================
@@ -1103,18 +1645,20 @@ extern "C" {
 		const float* path, float* out,
 		const float* sig_derivs, const float* sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
-		bool time_aug, bool lead_lag, float end_time, bool scalar_term
+		bool time_aug, bool lead_lag, float end_time, bool scalar_term,
+		const float* primitives, uint64_t primitives_len
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term));
+		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, primitives, primitives_len));
 	}
 
 	CUSIG_API int sig_backprop_cuda_d(
 		const double* path, double* out,
 		const double* sig_derivs, const double* sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
-		bool time_aug, bool lead_lag, double end_time, bool scalar_term
+		bool time_aug, bool lead_lag, double end_time, bool scalar_term,
+		const double* primitives, uint64_t primitives_len
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term));
+		CUSIG_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, primitives, primitives_len));
 	}
 
 }

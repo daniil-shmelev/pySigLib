@@ -223,10 +223,10 @@ std::string GetPrimitivesLen(BufferT& primitives, std::uint64_t& len) {
 }
 
 template <typename T>
-using CpuSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, int) noexcept;
+using CpuSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, int, const T*, std::uint64_t) noexcept;
 
 template <typename T>
-using CpuSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int) noexcept;
+using CpuSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int, const T*, std::uint64_t) noexcept;
 
 template <typename T>
 struct CpuFns;
@@ -309,10 +309,10 @@ struct CpuFns<double> {
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
-using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool) noexcept;
+using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, const T*, std::uint64_t) noexcept;
 
 template <typename T>
-using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool) noexcept;
+using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t) noexcept;
 
 template <typename T>
 struct CudaFns;
@@ -416,12 +416,15 @@ ffi::Error SigCpuImpl(
     bool horner,
     std::int64_t n_jobs,
     PathBuffer& path,
+    PathBuffer& primitives,
     OutBuffer& out,
     const char* fn_name
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t primitives_len = 0;
+    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -433,6 +436,7 @@ ffi::Error SigCpuImpl(
     if (auto msg = CheckSigOutputShape(out, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto* path_ptr = BufferData<T>(path);
+    const auto* primitives_ptr = BufferData<T>(primitives);
     auto* out_ptr = BufferData<T>(out);
 
     int err_code = sig_fn(
@@ -447,7 +451,9 @@ ffi::Error SigCpuImpl(
         static_cast<T>(end_time),
         horner,
         true,
-        static_cast<int>(n_jobs)
+        static_cast<int>(n_jobs),
+        primitives_ptr,
+        primitives_len
     );
 
     if (err_code != 0) {
@@ -468,12 +474,15 @@ ffi::Error SigBackpropCpuImpl(
     PathBuffer& path,
     SigBuffer& sig,
     CotangentBuffer& cotangent,
+    PathBuffer& primitives,
     OutBuffer& out,
     const char* fn_name
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t primitives_len = 0;
+    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -489,6 +498,7 @@ ffi::Error SigBackpropCpuImpl(
     const auto* path_ptr = BufferData<T>(path);
     const auto* sig_ptr = BufferData<T>(sig);
     const auto* cotangent_ptr = BufferData<T>(cotangent);
+    const auto* primitives_ptr = BufferData<T>(primitives);
     auto* out_ptr = BufferData<T>(out);
 
     int err_code = sig_backprop_fn(
@@ -504,7 +514,9 @@ ffi::Error SigBackpropCpuImpl(
         lead_lag,
         static_cast<T>(end_time),
         true,
-        static_cast<int>(n_jobs)
+        static_cast<int>(n_jobs),
+        primitives_ptr,
+        primitives_len
     );
 
     if (err_code != 0) {
@@ -526,12 +538,15 @@ ffi::Error SigCudaImpl(
     bool horner,
     std::int64_t n_jobs,
     PathBuffer& path,
+    PathBuffer& primitives,
     OutBuffer& out,
     const char* fn_name
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t primitives_len = 0;
+    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -548,6 +563,7 @@ ffi::Error SigCudaImpl(
     }
 
     const auto* path_ptr = BufferData<T>(path);
+    const auto* primitives_ptr = BufferData<T>(primitives);
     auto* out_ptr = BufferData<T>(out);
 
     int err_code = sig_fn(
@@ -561,7 +577,9 @@ ffi::Error SigCudaImpl(
         lead_lag,
         static_cast<T>(end_time),
         horner,
-        true
+        true,
+        primitives_ptr,
+        primitives_len
     );
 
     if (err_code != 0) {
@@ -583,12 +601,15 @@ ffi::Error SigBackpropCudaImpl(
     PathBuffer& path,
     SigBuffer& sig,
     CotangentBuffer& cotangent,
+    PathBuffer& primitives,
     OutBuffer& out,
     const char* fn_name
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t primitives_len = 0;
+    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -609,6 +630,7 @@ ffi::Error SigBackpropCudaImpl(
     const auto* path_ptr = BufferData<T>(path);
     const auto* sig_ptr = BufferData<T>(sig);
     const auto* cotangent_ptr = BufferData<T>(cotangent);
+    const auto* primitives_ptr = BufferData<T>(primitives);
     auto* out_ptr = BufferData<T>(out);
 
     int err_code = sig_backprop_fn(
@@ -623,7 +645,9 @@ ffi::Error SigBackpropCudaImpl(
         time_aug,
         lead_lag,
         static_cast<T>(end_time),
-        true
+        true,
+        primitives_ptr,
+        primitives_len
     );
 
     if (err_code != 0) {
@@ -642,9 +666,13 @@ ffi::Error SigCpu(
     bool horner,
     std::int64_t n_jobs,
     ffi::AnyBuffer path,
+    ffi::AnyBuffer primitives,
     ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) {
+        return InvalidArgument(msg);
+    }
+    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) {
         return InvalidArgument(msg);
     }
 
@@ -658,6 +686,7 @@ ffi::Error SigCpu(
             horner,
             n_jobs,
             path,
+            primitives,
             out,
             CpuFns<T>::sig_name
         );
@@ -673,10 +702,12 @@ ffi::Error SigBackpropCpu(
     ffi::AnyBuffer path,
     ffi::AnyBuffer sig,
     ffi::AnyBuffer cotangent,
+    ffi::AnyBuffer primitives,
     ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateSameFloatDtype("path", path, "sig", sig); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
 
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
@@ -690,6 +721,7 @@ ffi::Error SigBackpropCpu(
             path,
             sig,
             cotangent,
+            primitives,
             out,
             CpuFns<T>::backprop_name
         );
@@ -706,9 +738,13 @@ ffi::Error SigCuda(
     bool horner,
     std::int64_t n_jobs,
     ffi::AnyBuffer path,
+    ffi::AnyBuffer primitives,
     ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) {
+        return InvalidArgument(msg);
+    }
+    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) {
         return InvalidArgument(msg);
     }
 
@@ -723,6 +759,7 @@ ffi::Error SigCuda(
             horner,
             n_jobs,
             path,
+            primitives,
             out,
             CudaFns<T>::sig_name
         );
@@ -739,10 +776,12 @@ ffi::Error SigBackpropCuda(
     ffi::AnyBuffer path,
     ffi::AnyBuffer sig,
     ffi::AnyBuffer cotangent,
+    ffi::AnyBuffer primitives,
     ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateSameFloatDtype("path", path, "sig", sig); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
 
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
@@ -757,6 +796,7 @@ ffi::Error SigBackpropCuda(
             path,
             sig,
             cotangent,
+            primitives,
             out,
             CudaFns<T>::backprop_name
         );
@@ -1621,6 +1661,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("horner")
         .Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>()
+        .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
 );
 
@@ -1633,6 +1674,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("lead_lag")
         .Attr<double>("end_time")
         .Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
@@ -1652,6 +1694,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("horner")
         .Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>()
+        .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
 );
 
@@ -1665,6 +1708,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("lead_lag")
         .Attr<double>("end_time")
         .Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()

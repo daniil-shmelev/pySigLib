@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 
 #define EPSILON 1e-10
 #define SINGLE_EPSILON 1e-4
@@ -272,7 +273,11 @@ void check_result_typed(FN f, std::vector<T>& path, std::vector<T>& true_, Args.
     if (path.size() > 0)
         cudaMemcpy(d_path, path.data(), sizeof(T) * path.size(), cudaMemcpyHostToDevice);
 
-    int err = f(d_path, d_out, args...);
+    int err;
+    if constexpr (std::is_invocable_v<FN, T*, T*, Args...>)
+        err = f(d_path, d_out, args...);
+    else
+        err = f(d_path, d_out, args..., nullptr, (uint64_t)0);
     cudaDeviceSynchronize();
 
     cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);
@@ -395,7 +400,11 @@ void check_backprop_result(
     cudaMemcpy(d_sig, sig.data(), sizeof(T) * sig.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(T) * sig_derivs.size(), cudaMemcpyHostToDevice);
 
-    int err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree, time_aug, lead_lag, end_time, true);
+    int err;
+    if constexpr (std::is_invocable_v<FN, T*, T*, T*, T*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, T, bool>)
+        err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree, time_aug, lead_lag, end_time, true);
+    else
+        err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree, time_aug, lead_lag, end_time, true, nullptr, (uint64_t)0);
     cudaDeviceSynchronize();
 
     cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);
@@ -449,7 +458,11 @@ void check_batch_backprop_result(
     cudaMemcpy(d_sig, sig.data(), sizeof(T) * sig.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(T) * sig_derivs.size(), cudaMemcpyHostToDevice);
 
-    int err = f(d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, true);
+    int err;
+    if constexpr (std::is_invocable_v<FN, T*, T*, T*, T*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, T, bool>)
+        err = f(d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, true);
+    else
+        err = f(d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, true, nullptr, (uint64_t)0);
     cudaDeviceSynchronize();
 
     cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);

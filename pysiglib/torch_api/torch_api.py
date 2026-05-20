@@ -48,12 +48,22 @@ from ..log_sig_join_backprop import log_sig_join_backprop
 from ..param_checks import check_type, check_word_or_word_list
 from ..sig_kernel import _safe_normalize
 
+def _has_non_empty_primitives(primitives):
+    if primitives is None:
+        return False
+    if isinstance(primitives, torch.Tensor):
+        return primitives.numel() != 0
+    return np.asarray(primitives).size != 0
+
+
 class Sig(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs):
-        sig_ = sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, horner=horner, n_jobs=n_jobs)
+    def forward(ctx, path, primitives, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs):
+        sig_ = sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
+                           end_time=end_time, horner=horner, primitives=primitives, n_jobs=n_jobs)
 
-        ctx.save_for_backward(path, sig_)
+        saved_primitives = path.new_empty((0,)) if primitives is None else primitives
+        ctx.save_for_backward(path, sig_, saved_primitives)
         ctx.degree = degree
         ctx.scalar_term = scalar_term
         ctx.time_aug = time_aug
@@ -66,9 +76,11 @@ class Sig(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        path, sig_ = ctx.saved_tensors
-        grad = sig_backprop(path, sig_, grad_output, ctx.degree, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time, n_jobs=ctx.n_jobs)
-        return grad, None, None, None, None, None, None, None
+        path, sig_, saved_primitives = ctx.saved_tensors
+        primitives = saved_primitives if saved_primitives.numel() != 0 else None
+        grad = sig_backprop(path, sig_, grad_output, ctx.degree, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag,
+                            end_time=ctx.end_time, primitives=primitives, n_jobs=ctx.n_jobs)
+        return grad, None, None, None, None, None, None, None, None
 
 def sig(
         path : Union[np.ndarray, torch.tensor],
@@ -79,9 +91,13 @@ def sig(
         end_time : float = 1.,
         horner: bool = True,
         scalar_term : bool = False,
+        primitives = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
-    return Sig.apply(path, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs)
+    if not isinstance(path, torch.Tensor):
+        return sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
+                           end_time=end_time, horner=horner, primitives=primitives, n_jobs=n_jobs)
+    return Sig.apply(path, primitives, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs)
 
 sig.__doc__ = sig_forward.__doc__
 
@@ -244,12 +260,18 @@ def log_sig(
         end_time : float = 1.,
         method : int = 1,
         scalar_term : bool = False,
+        primitives = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     if method == 3:
+        if not isinstance(path, torch.Tensor) or _has_non_empty_primitives(primitives):
+            return log_sig_forward(
+                path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
+                method=method, scalar_term=scalar_term, primitives=primitives, n_jobs=n_jobs)
         return _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_jobs)
 
-    sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, horner=True, n_jobs=n_jobs)
+    sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
+               end_time=end_time, horner=True, primitives=primitives, n_jobs=n_jobs)
     dimension = path.shape[-1]
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 
