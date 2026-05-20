@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 
 import kauri
+from kauri.bck import bck as kauri_bck
 import numpy as np
 import pytest
 import torch
@@ -58,17 +59,50 @@ def _branched_sig_map_reference(path, d, N):
 def _kauri_log_reference(path, d, N):
     trees = enumerate_decorated_trees(d, N)
     sig_map = _branched_sig_map_reference(path, d, N)
-    h = kauri.Map(lambda t: 0.0 if t.nodes() == 0 else sig_map(t))
-    acc = h
-    power = h
+
+    def is_empty_basis(x):
+        if isinstance(x, kauri.Tree):
+            return x.nodes() == 0
+        return all(t.nodes() == 0 for t in x.tree_list)
+
+    def coproduct_basis(x):
+        if isinstance(x, kauri.Tree):
+            return kauri_bck.coproduct_impl(x)
+        out = 1
+        for t in x.tree_list:
+            out = out * kauri_bck.coproduct_impl(t)
+        return out
+
+    def h(x):
+        return 0.0 if is_empty_basis(x) else sig_map(x)
+
+    def convolution(f, g):
+        memo = {}
+
+        def product(x):
+            if x in memo:
+                return memo[x]
+            out = 0.0
+            for coeff, left, right in coproduct_basis(x):
+                out += coeff * f(left) * g(right)
+            memo[x] = out
+            return out
+
+        return product
+
+    powers = [None, h]
 
     for k in range(2, N + 1):
-        power = power * h
-        coeff = -1.0 / k if k % 2 == 0 else 1.0 / k
-        prev = acc
-        acc = kauri.Map(lambda t, prev=prev, power=power, coeff=coeff: prev(t) + coeff * power(t))
+        powers.append(convolution(powers[-1], h))
 
-    return np.array([acc(t) for t in trees])
+    out = []
+    for t in trees:
+        value = 0.0
+        for k in range(1, N + 1):
+            coeff = -1.0 / k if k % 2 == 0 else 1.0 / k
+            value += coeff * powers[k](t)
+        out.append(value)
+    return np.array(out)
 
 
 def test_branched_sig_to_log_sig_stochastax_degree2_fixture():
@@ -86,6 +120,25 @@ def test_branched_sig_to_log_sig_stochastax_degree2_fixture():
     path = np.array(fixture["path"], dtype=np.float64)
     direct = pysiglib.branched_log_sig(path, N, scalar_term=True)
     np.testing.assert_allclose(direct, expected, atol=1e-14)
+
+
+def test_branched_sig_to_log_sig_single_segment_cherry_vanishes():
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N)
+
+    c = 0.7
+    path = np.array([[0.0, 0.0], [c, 0.0]], dtype=np.float64)
+    bsig = pysiglib.branched_sig(path, N, scalar_term=True)
+    out = pysiglib.branched_sig_to_log_sig(bsig, d, N)
+
+    cherry_idx = pysiglib.tree_to_idx(
+        ((0,), (0,), 0),
+        d,
+        N,
+        tree_order="recursive",
+        scalar_term=True,
+    )
+    np.testing.assert_allclose(out[cherry_idx], 0.0, atol=1e-14)
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
