@@ -42,6 +42,9 @@ from ..log_sig_join_backprop import log_sig_join_backprop
 from ..linear_sig import linear_sig as linear_sig_forward
 from ..branched_sig import branched_sig as branched_sig_forward
 from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
+from ..branched_log_sig import branched_sig_to_log_sig as branched_sig_to_log_sig_forward
+from ..branched_log_sig import branched_log_sig as branched_log_sig_forward
+from ..data_handlers import _infer_correction_degree
 from ..sig_coef import sig_coef as sig_coef_forward
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
@@ -83,6 +86,8 @@ from ._ffi import (
     branched_sig_backprop_ffi_call,
     branched_sig_combine_ffi_call,
     branched_sig_combine_backprop_ffi_call,
+    branched_sig_to_log_sig_ffi_call,
+    branched_sig_to_log_sig_backprop_ffi_call,
 )
 
 
@@ -162,21 +167,37 @@ def _validate_shape(path) -> None:
         raise ValueError("path must have at least one channel.")
 
 
-@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
-def _sig(path, degree, time_aug, lead_lag, end_time, horner, n_jobs):
-    return sig_ffi_call(path, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
+    if correction is None:
+        return jnp.ravel(path)[:0]
+
+    correction = jnp.asarray(correction)
+    if correction.ndim != 1:
+        raise ValueError("correction must be a 1D array")
+    if correction.dtype != path.dtype:
+        raise TypeError("correction and path must have the same dtype")
+    if correction.shape[0] != 0 and lead_lag:
+        raise ValueError("correction cannot be used with lead_lag=True")
+
+    _infer_correction_degree(path.shape[-1], degree, correction.shape[0])
+    return correction
 
 
-def _sig_fwd(path, degree, time_aug, lead_lag, end_time, horner, n_jobs):
-    sig_ = sig_ffi_call(path, degree, time_aug, lead_lag, end_time, horner, n_jobs)
-    return sig_, (path, sig_)
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))
+def _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs):
+    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+
+
+def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs):
+    sig_ = sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+    return sig_, (path, sig_, correction)
 
 
 def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, residual, cotangent):
     del horner
-    path, sig_ = residual
-    grad = sig_backprop_ffi_call(path, sig_, cotangent, degree, time_aug, lead_lag, end_time, n_jobs)
-    return (grad,)
+    path, sig_, correction = residual
+    grad = sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs)
+    return (grad, jnp.zeros_like(correction))
 
 
 _sig.defvjp(_sig_fwd, _sig_bwd)
@@ -191,6 +212,7 @@ def sig(
     end_time: float = 1.0,
     horner: bool = True,
     scalar_term: bool = False,
+    correction=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
@@ -206,7 +228,8 @@ def sig(
     check_type(horner, "horner", bool)
     check_n_jobs(n_jobs)
 
-    result = _sig(path, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+    correction = _prepare_correction_jax(correction, path, degree, lead_lag)
+    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
     if not scalar_term:
         result = _strip_scalar(result)
     return result
@@ -507,14 +530,18 @@ def log_sig(
     end_time: float = 1.0,
     method: int = 1,
     scalar_term: bool = False,
+    correction=None,
     n_jobs: int = 1,
 ):
     ensure_registered()
 
     path = jnp.asarray(path)
     _validate_shape(path)
+    correction = _prepare_correction_jax(correction, path, degree, lead_lag)
 
     if method == 3:
+        if correction.shape[0] != 0:
+            raise ValueError("correction is not supported with log_sig method=3")
         if time_aug or lead_lag:
             path = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         aug_dim = path.shape[-1]
@@ -523,7 +550,7 @@ def log_sig(
 
     dimension = path.shape[-1]
     sig_ = sig(path, degree, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, scalar_term=scalar_term, n_jobs=n_jobs)
+               end_time=end_time, horner=True, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs)
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug,
                           lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 
@@ -1096,12 +1123,19 @@ def sig_coef(
     coefficients. This is fully differentiable through JAX autodiff.
 
     :param path: Path or batch of paths, shape ``(length, dim)`` or ``(batch, length, dim)``.
+    :type path: jax.Array
     :param words: Word or list of words, e.g. ``(1, 2)`` or ``[(0,), (1, 0)]``.
+    :type words: tuple[int, ...] | list[tuple[int, ...]]
     :param time_aug: Whether to apply time augmentation.
+    :type time_aug: bool
     :param lead_lag: Whether to apply lead-lag transformation.
+    :type lead_lag: bool
     :param end_time: End time for time augmentation.
+    :type end_time: float
     :param prefixes: If True, also return coefficients at all prefixes of each word.
+    :type prefixes: bool
     :param n_jobs: Number of threads for CPU computation.
+    :type n_jobs: int
     :return: Signature coefficients at the requested words.
     """
     ensure_registered()
@@ -1138,25 +1172,21 @@ def sig_coef(
 sig_coef.__doc__ = sig_coef_forward.__doc__
 
 
-# ---------------------------------------------------------------------------
-# branched_sig
-# ---------------------------------------------------------------------------
-
-@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
-def _branched_sig(path, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
-    return branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar)
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))
+def _branched_sig(path, correction, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
+    return branched_sig_ffi_call(path, correction, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar)
 
 
-def _branched_sig_fwd(path, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
-    bsig = branched_sig_ffi_call(path, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar)
-    return bsig, (path, bsig)
+def _branched_sig_fwd(path, correction, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar):
+    bsig = branched_sig_ffi_call(path, correction, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar)
+    return bsig, (path, bsig, correction)
 
 
 def _branched_sig_bwd(max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, residual, cotangent):
-    path, bsig = residual
+    path, bsig, correction = residual
     grad = branched_sig_backprop_ffi_call(
-        path, bsig, cotangent, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar)
-    return (grad,)
+        path, bsig, cotangent, correction, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar)
+    return (grad, jnp.zeros_like(correction))
 
 
 _branched_sig.defvjp(_branched_sig_fwd, _branched_sig_bwd)
@@ -1172,10 +1202,9 @@ def branched_sig(
     tree_order: str = "recursive",
     planar: bool = False,
     scalar_term: bool = False,
+    correction = None,
     n_jobs: int = 1,
 ):
-    ensure_registered()
-
     path = jnp.asarray(path)
     _validate_shape(path)
 
@@ -1188,8 +1217,10 @@ def branched_sig(
     check_type(end_time, "end_time", float)
     check_type(planar, "planar", bool)
     check_n_jobs(n_jobs)
+    correction = _prepare_correction_jax(correction, path, degree, lead_lag)
+    ensure_registered()
 
-    result = _branched_sig(path, degree, time_aug, lead_lag, end_time, n_jobs, planar)
+    result = _branched_sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, planar)
     if tree_order != "recursive":
         aug_dim = _augmented_dim(path.shape[-1], time_aug, lead_lag)
         result = _permute_bsig_jax(result, aug_dim, degree, planar=planar)
@@ -1270,3 +1301,102 @@ def branched_sig_combine(
 
 
 branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
+
+
+# ---------------------------------------------------------------------------
+# branched_sig_to_log_sig
+# ---------------------------------------------------------------------------
+
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4))
+def _branched_sig_to_log_sig(bsig, dimension, degree, n_jobs, planar):
+    return branched_sig_to_log_sig_ffi_call(bsig, dimension, degree, n_jobs, planar)
+
+
+def _branched_sig_to_log_sig_fwd(bsig, dimension, degree, n_jobs, planar):
+    result = branched_sig_to_log_sig_ffi_call(bsig, dimension, degree, n_jobs, planar)
+    return result, (bsig,)
+
+
+def _branched_sig_to_log_sig_bwd(
+    dimension, degree, n_jobs, planar, residual, cotangent
+):
+    bsig, = residual
+    grad = branched_sig_to_log_sig_backprop_ffi_call(
+        bsig, cotangent, dimension, degree, n_jobs, planar)
+    return (grad,)
+
+
+_branched_sig_to_log_sig.defvjp(_branched_sig_to_log_sig_fwd, _branched_sig_to_log_sig_bwd)
+
+
+def branched_sig_to_log_sig(
+    bsig,
+    dimension: int,
+    degree: int,
+    *,
+    time_aug: bool = False,
+    lead_lag: bool = False,
+    tree_order: str = "recursive",
+    planar: bool = False,
+    n_jobs: int = 1,
+):
+    ensure_registered()
+
+    bsig = jnp.asarray(bsig)
+    _validate_sig_shape(bsig, "bsig")
+
+    if tree_order not in ("recursive", "canonical"):
+        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
+    check_type(dimension, "dimension", int)
+    check_non_neg(dimension, "dimension")
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
+    check_type(planar, "planar", bool)
+    check_n_jobs(n_jobs)
+
+    aug_dimension = _augmented_dim(dimension, time_aug, lead_lag)
+    scalar_term = _infer_branched_scalar_term_jax(bsig, aug_dimension, degree, planar=planar)
+    if not scalar_term:
+        bsig = _prepend_scalar_one(bsig)
+
+    if tree_order != "recursive":
+        bsig = _inv_permute_bsig_jax(bsig, aug_dimension, degree, planar=planar)
+
+    result = _branched_sig_to_log_sig(bsig, aug_dimension, degree, n_jobs, planar)
+    if tree_order != "recursive":
+        result = _permute_bsig_jax(result, aug_dimension, degree, planar=planar)
+    if not scalar_term:
+        result = _strip_scalar(result)
+    return result
+
+
+branched_sig_to_log_sig.__doc__ = branched_sig_to_log_sig_forward.__doc__
+
+
+def branched_log_sig(
+    path,
+    degree: int,
+    *,
+    time_aug: bool = False,
+    lead_lag: bool = False,
+    end_time: float = 1.0,
+    tree_order: str = "recursive",
+    planar: bool = False,
+    scalar_term: bool = False,
+    correction = None,
+    n_jobs: int = 1,
+):
+    path = jnp.asarray(path)
+    bsig = branched_sig(
+        path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
+        tree_order=tree_order, planar=planar, scalar_term=scalar_term,
+        correction=correction, n_jobs=n_jobs)
+    dimension = path.shape[-1]
+    return branched_sig_to_log_sig(
+        bsig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag,
+        tree_order=tree_order, planar=planar, n_jobs=n_jobs)
+
+
+branched_log_sig.__doc__ = branched_log_sig_forward.__doc__

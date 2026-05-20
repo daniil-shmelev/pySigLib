@@ -76,8 +76,51 @@ TEST(sigBackpropDoubleTest, Degree2Dim2) {
     check_backprop_result(f, path, sig, sig_derivs, expected_out, dimension, length, degree, false, false, 1.);
 }
 
+TEST(sigBackpropDoubleTest, CorrectionSingleSegment) {
+    auto f = sig_backprop_cuda_d;
+    uint64_t dimension = 1, length = 2, degree = 4;
+    std::vector<double> path = { 0., 3. };
+    std::vector<double> correction = { 2. };
+    std::vector<double> sig = { 1., 3., 6.5, 10.5, 14.375 };
+    std::vector<double> sig_derivs(sig.size(), 1.);
+    std::vector<double> expected_out = { -21., 21. };
+    std::vector<double> out(expected_out.size() + 1, 0.);
+    out[expected_out.size()] = -1.;
+
+    double* d_path;
+    double* d_out;
+    double* d_sig;
+    double* d_sig_derivs;
+    double* d_correction;
+    cudaMalloc(&d_path, sizeof(double) * path.size());
+    cudaMalloc(&d_out, sizeof(double) * out.size());
+    cudaMalloc(&d_sig, sizeof(double) * sig.size());
+    cudaMalloc(&d_sig_derivs, sizeof(double) * sig_derivs.size());
+    cudaMalloc(&d_correction, sizeof(double) * correction.size());
+    cudaMemcpy(d_path, path.data(), sizeof(double) * path.size(), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_out, out.data(), sizeof(double) * out.size(), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sig, sig.data(), sizeof(double) * sig.size(), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(double) * sig_derivs.size(), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_correction, correction.data(), sizeof(double) * correction.size(), cudaMemcpyHostToDevice);
+
+    int err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree,
+        false, false, 1., true, d_correction, correction.size());
+    cudaDeviceSynchronize();
+    cudaMemcpy(out.data(), d_out, sizeof(double) * out.size(), cudaMemcpyDeviceToHost);
+    cudaFree(d_path);
+    cudaFree(d_out);
+    cudaFree(d_sig);
+    cudaFree(d_sig_derivs);
+    cudaFree(d_correction);
+
+    EXPECT_EQ(0, err);
+    for (uint64_t i = 0; i < expected_out.size(); ++i)
+        EXPECT_TRUE(std::abs(expected_out[i] - out[i]) < DOUBLE_EPSILON);
+    EXPECT_TRUE(std::abs(-1. - out[expected_out.size()]) < DOUBLE_EPSILON);
+}
+
 TEST(sigBackpropDoubleTest, ErrorDimension0) {
-    int err = sig_backprop_cuda_d(nullptr, nullptr, nullptr, nullptr, (uint64_t)1, 0, 3, 2, false, false, 1.);
+    int err = sig_backprop_cuda_d(nullptr, nullptr, nullptr, nullptr, (uint64_t)1, 0, 3, 2, false, false, 1., true, nullptr, 0);
     EXPECT_NE(0, err);
 }
 

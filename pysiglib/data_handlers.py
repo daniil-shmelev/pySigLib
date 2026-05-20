@@ -175,6 +175,65 @@ class PathInputHandler:
             dimension_ += 1
         return length_, dimension_
 
+class CorrectionInputHandler:
+    """
+    Handle flat constant correction levels for signature APIs.
+    """
+    def __init__(self, correction, path_data, degree):
+        self.correction = None
+        self.length = 0
+        self.data_ptr = None
+
+        if correction is None:
+            return
+
+        check_type_multiple(correction, "correction", (np.ndarray, torch.Tensor))
+        if isinstance(correction, np.ndarray) != (path_data.type_ == "numpy"):
+            raise ValueError("correction must have the same array type as path")
+
+        self.correction = ensure_own_contiguous_storage(correction)
+        check_dtype(self.correction, "correction")
+
+        if len(self.correction.shape) != 1:
+            raise ValueError("correction must be a 1D array")
+
+        if isinstance(self.correction, np.ndarray):
+            self.dtype = str(self.correction.dtype)
+            self.device = "cpu"
+            self.data_ptr = self.correction.ctypes.data_as(POINTER(DTYPES[self.dtype]))
+        else:
+            self.dtype = str(self.correction.dtype)[6:]
+            self.device = self.correction.device.type
+            _check_cuda_available(self.device)
+            self.data_ptr = cast(self.correction.data_ptr(), POINTER(DTYPES[self.dtype]))
+
+        if self.dtype != path_data.dtype:
+            raise ValueError("correction and path must have the same dtype")
+        if self.device != path_data.device:
+            raise ValueError("correction and path must be on the same device")
+
+        self.length = self.correction.shape[0]
+        if self.length != 0 and path_data.lead_lag:
+            raise ValueError("correction cannot be used with lead_lag=True")
+        _infer_correction_degree(path_data.data_dimension, degree, self.length)
+
+def _infer_correction_degree(dimension, degree, length):
+    if length == 0:
+        return 1
+    if degree < 2:
+        raise ValueError("correction must be empty when degree < 2")
+
+    offset = 0
+    level_size = dimension
+    for level in range(2, degree + 1):
+        level_size *= dimension
+        offset += level_size
+        if offset == length:
+            return level
+        if offset > length:
+            break
+    raise ValueError("correction length must be a prefix of tensor levels 2..degree")
+
 class MultiplePathInputHandler:
     """
     Handle multiple inputs which are (shaped like) paths or a batch of paths

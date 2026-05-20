@@ -26,7 +26,7 @@ from .dtypes import (CPSIG_SIG_TO_LOG_SIG,
                      CPSIG_LOG_SIG_FROM_PATH, CUSIG_LOG_SIG_FROM_PATH_CUDA)
 from .sig_length import sig_length, log_sig_length, aug_dim, _infer_scalar_term
 from .sig import sig
-from .data_handlers import SigOutputHandler, SigInputHandler, PathInputHandler
+from .data_handlers import SigOutputHandler, SigInputHandler, PathInputHandler, CorrectionInputHandler
 from .load_siglib import CPSIG, CUSIG, BUILT_WITH_CUDA
 from .transform_path import transform_path
 
@@ -321,6 +321,7 @@ def log_sig(
         end_time : float = 1.,
         method : int = 1,
         scalar_term : bool = False,
+        correction = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -352,6 +353,12 @@ def log_sig(
         Only affects method ``0`` (expanded) output; methods ``1`` and ``2`` produce
         log-sig-shaped output with no scalar term.
     :type scalar_term: bool
+    :param correction: Optional constant correction of level
+        :math:`\\geq 2` added locally before exponentiating each path segment.
+        See :func:`sig` for the flat layout. For non-Lie correction such as
+        Ito level-2 diagonal terms, use ``method=0`` to retain the full tensor
+        logarithm. Cannot be combined with ``lead_lag=True``.
+    :type correction: numpy.ndarray | torch.tensor | None
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
@@ -372,8 +379,41 @@ def log_sig(
 
         X = torch.rand((32,100,5))
         X_log_sig = pysiglib.log_sig(X, 3, lead_lag=True, method=2)
+
+    Ito-lifted log signature of a sampled Brownian path. For Brownian
+    motion with instantaneous covariance :math:`\\Sigma`, setting the
+    level-2 correction to :math:`c^{(2)}_{ij} = \\Sigma_{ij}\\,\\Delta t`
+    per segment gives the Ito correction. The Ito level-2 term is not
+    Lie-valued (its symmetric part is not in the free Lie algebra), so
+    ``method=0`` is used to retain the full tensor logarithm.
+
+    .. code-block:: python
+
+        import numpy as np
+        import pysiglib
+
+        d, N, T = 2, 3, 1.0
+        n_steps = 100
+        dt = T / n_steps
+        rng = np.random.default_rng(42)
+
+        # 2D standard Brownian motion sample (Sigma = I)
+        path = np.zeros((n_steps + 1, d))
+        path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
+
+        # Ito level-2 correction: dt * Sigma flattened (Sigma = I here).
+        correction = (np.eye(d) * dt).flatten()
+
+        ito_log_sig = pysiglib.log_sig(
+            path, N, correction=correction, end_time=T, method=0)
+        print(ito_log_sig)
     """
     if method == 3:
+        if correction is not None:
+            correction_data = CorrectionInputHandler(
+                correction, PathInputHandler(path, time_aug, lead_lag, end_time, "path"), degree)
+            if correction_data.length != 0:
+                raise ValueError("correction is not supported with log_sig method=3")
         if time_aug or lead_lag:
             path = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         aug_dim = path.shape[-1]
@@ -395,6 +435,7 @@ def log_sig(
         return result.data
 
     # Methods 0-2: compute sig then project to log sig.
-    sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, horner=True, n_jobs=n_jobs)
+    sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
+               end_time=end_time, horner=True, correction=correction, n_jobs=n_jobs)
     dimension = path.shape[-1]
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)

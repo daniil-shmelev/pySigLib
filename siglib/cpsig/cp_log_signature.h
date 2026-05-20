@@ -76,7 +76,8 @@ void sig_to_log_sig_(
 		auto f = [&](const T* sig_ptr, T* out_ptr) {
 			get_log_sig_<T>(sig_ptr, out_ptr, aug_dimension, degree, method);
 		};
-		multi_threaded_batch(f, sig, out, batch_size, in_stride, out_stride, n_jobs);
+		multi_threaded_batch(f, batch_size, n_jobs,
+			make_batch(sig, in_stride), make_batch(out, out_stride));
 	} else {
 		auto f = [&](const T* sig_ptr, T* out_ptr) {
 			std::vector<T> sig_full(sig_len);
@@ -90,7 +91,8 @@ void sig_to_log_sig_(
 				get_log_sig_<T>(sig_full.data(), out_ptr, aug_dimension, degree, method);
 			}
 		};
-		multi_threaded_batch(f, sig, out, batch_size, in_stride, out_stride, n_jobs);
+		multi_threaded_batch(f, batch_size, n_jobs,
+			make_batch(sig, in_stride), make_batch(out, out_stride));
 	}
 	return;
 }
@@ -160,17 +162,10 @@ void sig_to_log_sig_backprop_(
 			get_sig_to_log_sig_backprop_<T>(sig_ptr, out_ptr, log_sig_derivs_ptr, aug_dimension, degree, method);
 		};
 
-		multi_threaded_batch_2(
-			log_sig_backprop_func,
-			sig,
-			log_sig_derivs_copy,
-			out,
-			batch_size,
-			sig_len_,
-			log_sig_len_,
-			sig_len_,
-			n_jobs
-		);
+		multi_threaded_batch(log_sig_backprop_func, batch_size, n_jobs,
+			make_batch(sig, sig_len_),
+			make_batch(log_sig_derivs_copy, log_sig_len_),
+			make_batch(out, sig_len_));
 	} else {
 		// Per-element: prepend scalars to sig input and (if method==0) to log_sig_derivs,
 		// compute on full buffers, strip output
@@ -205,17 +200,10 @@ void sig_to_log_sig_backprop_(
 			get_sig_to_log_sig_backprop_<T>(sig_ptr, out_ptr, log_sig_derivs_ptr, aug_dimension, degree, method);
 		};
 
-		multi_threaded_batch_2(
-			log_sig_backprop_func,
-			sig_full,
-			log_sig_derivs_copy,
-			out_full,
-			batch_size,
-			sig_len_,
-			log_sig_len_,
-			sig_len_,
-			n_jobs
-		);
+		multi_threaded_batch(log_sig_backprop_func, batch_size, n_jobs,
+			make_batch(sig_full, sig_len_),
+			make_batch(log_sig_derivs_copy, log_sig_len_),
+			make_batch(out_full, sig_len_));
 
 		// Strip output
 		for (uint64_t b = 0; b < batch_size; ++b) {
@@ -274,7 +262,8 @@ void log_sig_combine_(
 		tl_memo.resize(m2 * m);
 		bch_combine_impl_<T>(ls1, ls2, o, cache, tl_memo.data());
 	};
-	multi_threaded_batch_2<const T, const T, T>(func, log_sig1, log_sig2, out, batch_size, m, m, m, n_jobs);
+	multi_threaded_batch(func, batch_size, n_jobs,
+		make_batch(log_sig1, m), make_batch(log_sig2, m), make_batch(out, m));
 }
 
 // ========================================================================
@@ -347,7 +336,8 @@ void log_sig_join_(
 		tl_memo.resize(m2 * m);
 		log_sig_join_impl_<T>(ls, disp, o, cache, tl_memo.data());
 	};
-	multi_threaded_batch_2<const T, const T, T>(func, log_sig, displacement, out, batch_size, m, dimension, m, n_jobs);
+	multi_threaded_batch(func, batch_size, n_jobs,
+		make_batch(log_sig, m), make_batch(displacement, dimension), make_batch(out, m));
 }
 
 // ========================================================================
@@ -647,7 +637,8 @@ void batch_log_sig_from_path_(
 		tl_temp.resize(m);
 		log_sig_from_path_<T>(p, o, length, dimension, cache, tl_memo.data(), tl_seg.data(), tl_temp.data());
 	};
-	multi_threaded_batch<const T, T>(func, path, out, batch_size, path_stride, m, n_jobs);
+	multi_threaded_batch(func, batch_size, n_jobs,
+		make_batch(path, path_stride), make_batch(out, m));
 }
 
 // ========================================================================
@@ -778,7 +769,8 @@ void batch_log_sig_from_path_backprop_(
 		tl_ws.resize(ws_size);
 		log_sig_from_path_backprop_<T>(dout, dp, p, length, dimension, cache, tl_ws.data());
 	};
-	multi_threaded_batch_2<const T, T, const T>(func, d_out, d_path, path, batch_size, m, path_stride, path_stride, n_jobs);
+	multi_threaded_batch(func, batch_size, n_jobs,
+		make_batch(d_out, m), make_batch(d_path, path_stride), make_batch(path, path_stride));
 }
 
 
@@ -833,5 +825,6 @@ void log_sig_combine_backprop_(
 		tl_workspace.resize(2 * m2 * m);
 		bch_combine_backprop_impl_<T>(dout, dls1, dls2, l1, l2, cache, tl_workspace.data());
 	};
-	multi_threaded_batch_4<T>(func, d_out, d_ls1, d_ls2, ls1, ls2, batch_size, m, m, m, m, m, n_jobs);
+	multi_threaded_batch(func, batch_size, n_jobs,
+		make_batch(d_out, m), make_batch(d_ls1, m), make_batch(d_ls2, m), make_batch(ls1, m), make_batch(ls2, m));
 }

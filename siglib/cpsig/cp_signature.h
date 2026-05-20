@@ -18,12 +18,139 @@
 
 #include "multithreading.h"
 #include "cp_sig_combine.h"
+#include "cp_exp_signature.h"
 
 #include "cp_path.h"
 #include "macros.h"
 #ifdef VEC
 #include "cp_vector_funcs.h"
 #endif
+
+inline void validate_signature_correction_args_(
+	const void* correction,
+	uint64_t correction_len,
+	uint64_t dimension,
+	uint64_t degree,
+	bool lead_lag
+) {
+	if (correction == nullptr && correction_len != 0)
+		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
+	if (lead_lag && correction_len != 0)
+		throw std::invalid_argument("correction cannot be used with lead_lag=true");
+	if (correction_len == 0)
+		return;
+	if (degree < 2)
+		throw std::invalid_argument("correction must be empty when degree < 2");
+
+	uint64_t offset = 0;
+	uint64_t level_size = dimension;
+	for (uint64_t level = 2; level <= degree; ++level) {
+		level_size *= dimension;
+		offset += level_size;
+		if (offset == correction_len)
+			return;
+		if (offset > correction_len)
+			break;
+	}
+	throw std::invalid_argument("correction length must be a prefix of tensor levels 2..degree");
+}
+
+template<std::floating_point T>
+void build_signature_correction_base_(
+	T* out,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t data_dimension,
+	uint64_t dimension,
+	uint64_t degree,
+	const uint64_t* level_index
+) {
+	const uint64_t sig_len = ::sig_length(dimension, degree);
+	std::fill(out, out + sig_len, static_cast<T>(0));
+	if (correction == nullptr || correction_len == 0)
+		return;
+
+	uint64_t offset = 0;
+	uint64_t level_size = data_dimension;
+	for (uint64_t level = 2; level <= degree; ++level) {
+		level_size *= data_dimension;
+		if (offset + level_size > correction_len)
+			break;
+
+		for (uint64_t word_idx = 0; word_idx < level_size; ++word_idx) {
+			const T value = correction[offset + word_idx];
+			if (value == static_cast<T>(0))
+				continue;
+
+			uint64_t tmp = word_idx;
+			uint64_t aug_word_idx = 0;
+			uint64_t pow = level_size / data_dimension;
+			for (uint64_t pos = 0; pos < level; ++pos) {
+				const uint64_t label = tmp / pow;
+				tmp -= label * pow;
+				if (pos + 1 < level)
+					pow /= data_dimension;
+
+				aug_word_idx = aug_word_idx * dimension + label;
+			}
+
+			out[level_index[level] + aug_word_idx] += value;
+		}
+		offset += level_size;
+	}
+}
+
+// local_log_base has level 0 and level 1 zeroed by build_signature_correction_base_,
+// and levels 2+ are constant across segments. Memcpy once at setup, then only the
+// level-1 displacement entries change per segment.
+template<std::floating_point T>
+FORCE_INLINE void write_segment_displacement_(
+	const Point<T>& prev_pt,
+	const Point<T>& next_pt,
+	T* local_log,
+	uint64_t dimension
+) {
+	for (uint64_t i = 0; i < dimension; ++i)
+		local_log[i + 1] = next_pt[i] - prev_pt[i];
+}
+
+template<std::floating_point T>
+void signature_correction_inplace_(
+	const Path<T>& path,
+	T* out,
+	uint64_t degree,
+	const T* local_log_base,
+	uint64_t sig_len,
+	const uint64_t* level_index
+) {
+	const uint64_t dimension = path.dimension();
+
+	auto local_log_uptr = std::make_unique<T[]>(sig_len);
+	auto local_sig_uptr = std::make_unique<T[]>(sig_len);
+	T* local_log = local_log_uptr.get();
+	T* local_sig = local_sig_uptr.get();
+	std::memcpy(local_log, local_log_base, sig_len * sizeof(T));
+
+	Point<T> prev_pt(path.begin());
+	Point<T> next_pt(path.begin());
+	++next_pt;
+
+	write_segment_displacement_(prev_pt, next_pt, local_log, dimension);
+	tensor_exp_<T>(local_log, out, dimension, degree);
+
+	if (path.length() == 2)
+		return;
+
+	++prev_pt;
+	++next_pt;
+	Point<T> last_pt(path.end());
+
+	for (; next_pt != last_pt; ++prev_pt, ++next_pt) {
+		write_segment_displacement_(prev_pt, next_pt, local_log, dimension);
+		tensor_exp_<T>(local_log, local_sig, dimension, degree);
+		sig_combine_inplace_(out, local_sig, degree, level_index);
+	}
+}
 
 
 // Thin wrapper: computes displacement from two Points, delegates to shared core
@@ -366,11 +493,14 @@ void signature_(
 	T end_time = 1.,
 	bool horner = true,
 	bool scalar_term = true,
-	int n_jobs = 1
+	int n_jobs = 1,
+	const T* correction = nullptr,
+	uint64_t correction_len = 0
 )
 {
 	//Deal with trivial cases
 	if (dimension == 0) { throw std::invalid_argument("signature received path of dimension 0"); }
+	validate_signature_correction_args_(correction, correction_len, dimension, degree, lead_lag);
 
 	Path<T> dummy_path_obj(nullptr, dimension, length, time_aug, lead_lag, end_time); //Work with path_obj to capture time_aug, lead_lag transformations
 
@@ -398,6 +528,40 @@ void signature_(
 	//General case and degree = 1 case
 	const uint64_t flat_path_length = dimension * length;
 	const uint64_t aug_dim = dummy_path_obj.dimension();
+	const bool has_correction = correction_len != 0;
+
+	if (has_correction) {
+		auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
+		uint64_t* level_index = level_index_uptr.get();
+		populate_level_index(level_index, aug_dim, degree + 2);
+
+		auto local_log_base_uptr = std::make_unique<T[]>(full_len);
+		T* local_log_base = local_log_base_uptr.get();
+		build_signature_correction_base_(
+			local_log_base, correction, correction_len, dimension, aug_dim, degree, level_index);
+
+		if (scalar_term) {
+			auto sig_func = [&](const T* path_ptr, T* out_ptr) {
+				Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
+				signature_correction_inplace_(path_obj, out_ptr, degree, local_log_base, full_len, level_index);
+			};
+
+			multi_threaded_batch(sig_func, batch_size, n_jobs,
+				make_batch(path, flat_path_length), make_batch(out, full_len));
+		}
+		else {
+			auto sig_func = [&](const T* path_ptr, T* out_ptr) {
+				std::vector<T> buf(full_len);
+				Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
+				signature_correction_inplace_(path_obj, buf.data(), degree, local_log_base, full_len, level_index);
+				std::memcpy(out_ptr, buf.data() + 1, (full_len - 1) * sizeof(T));
+			};
+
+			multi_threaded_batch(sig_func, batch_size, n_jobs,
+				make_batch(path, flat_path_length), make_batch(out, stride));
+		}
+		return;
+	}
 
 	if (scalar_term) {
 		auto sig_func = [&](const T* path_ptr, T* out_ptr) {
@@ -417,7 +581,8 @@ void signature_(
 			}
 		};
 
-		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, full_len, n_jobs);
+		multi_threaded_batch(sig_func, batch_size, n_jobs,
+			make_batch(path, flat_path_length), make_batch(out, full_len));
 	} else {
 		// scalar_term=false: compute into a per-element temp buffer, then copy without index 0
 		auto sig_func = [&](const T* path_ptr, T* out_ptr) {
@@ -439,7 +604,8 @@ void signature_(
 			std::memcpy(out_ptr, buf.data() + 1, (full_len - 1) * sizeof(T));
 		};
 
-		multi_threaded_batch(sig_func, path, out, batch_size, flat_path_length, stride, n_jobs);
+		multi_threaded_batch(sig_func, batch_size, n_jobs,
+			make_batch(path, flat_path_length), make_batch(out, stride));
 	}
 	return;
 }
@@ -447,6 +613,18 @@ void signature_(
 //////////////////////////////////////////////////////////////////////////////////////////////
 // backpropagation
 //////////////////////////////////////////////////////////////////////////////////////////////
+
+template<std::floating_point T>
+void sig_backprop_correction_inplace_(
+	const Path<T>& path,
+	T* out,
+	T* sig_derivs,
+	T* sig,
+	uint64_t degree,
+	uint64_t sig_len,
+	const T* local_log_base,
+	const uint64_t* level_index
+);
 
 template<std::floating_point T>
 void sig_backprop_(
@@ -462,12 +640,15 @@ void sig_backprop_(
 	bool lead_lag = false,
 	T end_time = 1.,
 	bool scalar_term = true,
-	int n_jobs = 1
+	int n_jobs = 1,
+	const T* correction = nullptr,
+	uint64_t correction_len = 0
 )
 {
 	std::fill(out, out + length * dimension * batch_size, static_cast<T>(0.));
 	//Deal with trivial cases
 	if (dimension == 0) { throw std::invalid_argument("sig_backprop received path of dimension 0"); }
+	validate_signature_correction_args_(correction, correction_len, dimension, degree, lead_lag);
 
 	Path<T> dummy_path_obj(nullptr, dimension, length, time_aug, lead_lag, end_time); //Work with path_obj to capture time_aug, lead_lag transformations
 
@@ -501,25 +682,107 @@ void sig_backprop_(
 		}
 	}
 
+	const bool has_correction = correction_len != 0;
+	std::unique_ptr<uint64_t[]> level_index_uptr;
+	std::unique_ptr<T[]> local_log_base_uptr;
+	if (has_correction) {
+		level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
+		populate_level_index(level_index_uptr.get(), dummy_path_obj.dimension(), degree + 2);
+		local_log_base_uptr = std::make_unique<T[]>(sig_len_);
+		build_signature_correction_base_(
+			local_log_base_uptr.get(), correction, correction_len,
+			dimension, dummy_path_obj.dimension(), degree, level_index_uptr.get());
+	}
+
 	auto sig_backprop_func = [&](const T* path_ptr, T* sig_derivs_ptr, T* sig_ptr, T* out_ptr) {
 		Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
-		sig_backprop_inplace_<T>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree, sig_len_);
+		if (has_correction) {
+			sig_backprop_correction_inplace_<T>(
+				path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree, sig_len_,
+				local_log_base_uptr.get(), level_index_uptr.get());
+		}
+		else {
+			sig_backprop_inplace_<T>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree, sig_len_);
+		}
 	};
 
-	multi_threaded_batch_3(
-		sig_backprop_func,
-		path,
-		sig_derivs_copy,
-		sig_copy,
-		out,
-		batch_size,
-		flat_path_length,
-		sig_len_,
-		sig_len_,
-		flat_path_length,
-		n_jobs
-	);
+	multi_threaded_batch(sig_backprop_func, batch_size, n_jobs,
+		make_batch(path, flat_path_length),
+		make_batch(sig_derivs_copy, sig_len_),
+		make_batch(sig_copy, sig_len_),
+		make_batch(out, flat_path_length));
 	return;
+}
+
+template<std::floating_point T>
+void sig_backprop_correction_inplace_(
+	const Path<T>& path,
+	T* out,
+	T* sig_derivs,
+	T* sig,
+	uint64_t degree,
+	uint64_t sig_len,
+	const T* local_log_base,
+	const uint64_t* level_index
+) {
+	const uint64_t data_dimension = path.data_dimension();
+	const uint64_t dimension = path.dimension();
+	const uint64_t data_length = path.data_length();
+
+	auto local_derivs_uptr = std::make_unique<T[]>(sig_len);
+	T* local_derivs = local_derivs_uptr.get();
+
+	auto local_log_derivs_uptr = std::make_unique<T[]>(sig_len);
+	T* local_log_derivs = local_log_derivs_uptr.get();
+
+	auto local_log_uptr = std::make_unique<T[]>(sig_len);
+	T* local_log = local_log_uptr.get();
+
+	auto inverse_correction_uptr = std::make_unique<T[]>(sig_len);
+	T* inverse_correction = inverse_correction_uptr.get();
+
+	auto local_sig_uptr = std::make_unique<T[]>(sig_len);
+	T* local_sig = local_sig_uptr.get();
+
+	auto inverse_local_sig_uptr = std::make_unique<T[]>(sig_len);
+	T* inverse_local_sig = inverse_local_sig_uptr.get();
+	std::memcpy(local_log, local_log_base, sig_len * sizeof(T));
+
+	Point<T> prev_pt(path.end());
+	Point<T> next_pt(path.end());
+	--prev_pt;
+	--prev_pt;
+	--next_pt;
+
+	Point<T> first_pt(path.begin());
+	T* pos = out + (data_length - 1) * data_dimension;
+
+	while (next_pt != first_pt) {
+		write_segment_displacement_(prev_pt, next_pt, local_log, dimension);
+		tensor_exp_<T>(local_log, local_sig, dimension, degree);
+
+		inverse_correction[0] = static_cast<T>(0);
+		for (uint64_t i = 1; i < sig_len; ++i)
+			inverse_correction[i] = -local_log[i];
+		tensor_exp_<T>(inverse_correction, inverse_local_sig, dimension, degree);
+		sig_combine_inplace_(sig, inverse_local_sig, degree, level_index);
+
+		uncombine_sig_deriv(sig, local_sig, sig_derivs, local_derivs, dimension, degree, level_index);
+		tensor_exp_backprop_<T>(local_log_derivs, local_derivs, local_log, dimension, degree);
+
+		T* neg = pos - data_dimension;
+		T* s = local_log_derivs + 1;
+		for (uint64_t d = 0; d < data_dimension; ++d) {
+			pos[d] += s[d];
+			neg[d] -= s[d];
+		}
+
+		--next_pt;
+		if (next_pt != first_pt) {
+			--prev_pt;
+			pos -= data_dimension;
+		}
+	}
 }
 
 template<std::floating_point T>

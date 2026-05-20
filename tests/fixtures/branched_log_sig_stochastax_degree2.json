@@ -1,0 +1,26 @@
+{
+  "source": "Stochastax stochastax.hopf_algebras.hopf_algebras.HopfAlgebra.log",
+  "note": "Degree 2 fixture because Stochastax GL/MKW products currently implement only degree 2.",
+  "dimension": 2,
+  "degree": 2,
+  "path": [[0.0, 0.0], [0.3, -0.7], [1.1, 0.2]],
+  "recursive_trees": [null, [0], [1], [[0], 0], [[1], 0], [[0], 1], [[1], 1]],
+  "signature_scalar": [
+    1.0,
+    1.1,
+    0.19999999999999996,
+    0.605,
+    0.5249999999999999,
+    -0.30499999999999994,
+    0.020000000000000018
+  ],
+  "log_signature_scalar": [
+    0.0,
+    1.1,
+    0.19999999999999996,
+    0.0,
+    0.4149999999999999,
+    -0.4149999999999999,
+    0.0
+  ]
+}

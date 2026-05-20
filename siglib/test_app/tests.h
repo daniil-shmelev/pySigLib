@@ -271,3 +271,11 @@ void example_batch_branched_sig_d(
 	int n_jobs = -1,
 	int num_runs = 50
 );
+
+void example_batch_branched_log_sig_d(
+	uint64_t batch_size = 2,
+	uint64_t dimension = 3,
+	uint64_t length = 8,
+	uint64_t max_nodes = 4,
+	int n_jobs = 1
+);

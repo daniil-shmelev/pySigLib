@@ -1,6 +1,7 @@
 add_library(cpsig SHARED
     cp_bch.cpp
     cp_branched_cache.cpp
+    cp_branched_log_signature.cpp
     cp_branched_signature.cpp
     cp_log_signatures.cpp
     cp_path_transforms.cpp
@@ -16,7 +17,11 @@ add_library(cpsig SHARED
     words.cpp
 )
 
-target_compile_features(cpsig PRIVATE cxx_std_20)
+set_target_properties(cpsig PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
 target_include_directories(cpsig PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
 target_compile_definitions(cpsig PRIVATE CPSIG_EXPORTS)
 

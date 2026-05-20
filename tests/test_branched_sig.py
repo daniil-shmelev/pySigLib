@@ -20,7 +20,7 @@ import itertools
 
 import kauri
 import kauri.bck
-import kauri.mkw
+import kauri.nck
 
 import pysiglib
 from conftest import DEVICES, check_close, skip_no_cuda
@@ -114,6 +114,69 @@ def branched_sig_reference(path, d, N):
     return np.array([X(t) for t in trees])
 
 
+def _pure_branched_product(a, b, d, N, planar=False):
+    ga = a.copy()
+    gb = b.copy()
+    ga[0] = 1.0
+    gb[0] = 1.0
+    product = pysiglib.branched_sig_combine(ga, gb, d, N, planar=planar)
+    out = product.copy()
+    out[0] = 0.0
+    out[1:] -= a[1:] + b[1:]
+    return out
+
+
+def branched_hopf_exp_reference(local_log, d, N, planar=False):
+    out = np.zeros_like(local_log)
+    out[0] = 1.0
+    power = local_log.copy()
+    inv_factorial = 1.0
+
+    for k in range(1, N + 1):
+        inv_factorial /= k
+        out += inv_factorial * power
+        if k < N:
+            power = _pure_branched_product(power, local_log, d, N, planar=planar)
+
+    return out
+
+
+def ito_local_log_reference(increment, data_dim, N, dt, planar=False):
+    aug_dim = len(increment)
+    local_log = np.zeros(pysiglib.branched_sig_length(aug_dim, N, planar=planar, scalar_term=True))
+    local_log[1:1 + aug_dim] = increment
+    for d in range(data_dim):
+        idx = pysiglib.tree_to_idx(
+            ((d,), d),
+            aug_dim,
+            N,
+            tree_order="recursive",
+            planar=planar,
+            scalar_term=True,
+        )
+        local_log[idx] += dt
+    return local_log
+
+
+def ito_level2_correction(d, dt, dtype=np.float64):
+    correction = np.zeros(d * d, dtype=dtype)
+    for i in range(d):
+        correction[i * d + i] = dt
+    return correction
+
+
+def local_segment_dt(path, end_time=1.0):
+    length = path.shape[-2]
+    return end_time / (length - 1) if length > 1 else 0.0
+
+
+def torch_ito_level2_correction(d, dt, path):
+    correction = torch.zeros(d * d, dtype=path.dtype, device=path.device)
+    for i in range(d):
+        correction[i * d + i] = dt
+    return correction
+
+
 def compute_kauri_to_pysiglib_permutation(d, N):
     """Determine the permutation mapping kauri tree order to pysiglib tree order.
 
@@ -198,6 +261,264 @@ def test_branched_sig_trivial_path():
     path = np.array([[1.0, 2.0], [1.0, 2.0]])  # constant path
     bsig = pysiglib.branched_sig(path, N)
     assert np.allclose(bsig, 0.0, atol=1e-14)
+
+
+def test_branched_sig_empty_correction_matches_default():
+    d, N = 2, 4
+    pysiglib.prepare_branched_sig(d, N)
+    rng = np.random.default_rng(123)
+    path = np.cumsum(rng.normal(size=(6, d)) * 0.1, axis=0)
+
+    default = pysiglib.branched_sig(path, N)
+    explicit = pysiglib.branched_sig(path, N, correction=np.array([], dtype=path.dtype))
+
+    np.testing.assert_allclose(explicit, default, atol=0.0, rtol=0.0)
+
+
+def test_branched_sig_correction_validation_numpy():
+    d, N = 2, 3
+    path = np.zeros((3, d), dtype=np.float64)
+
+    with pytest.raises(ValueError, match="1D"):
+        pysiglib.branched_sig(path, N, correction=np.zeros((d, d), dtype=path.dtype))
+    with pytest.raises(ValueError, match="prefix"):
+        pysiglib.branched_sig(path, N, correction=np.zeros(d * d + 1, dtype=path.dtype))
+    with pytest.raises(ValueError, match="same dtype"):
+        pysiglib.branched_sig(path, N, correction=np.zeros(d * d, dtype=np.float32))
+
+
+def test_torch_branched_sig_correction_validation_dtype():
+    d, N = 2, 3
+    path = torch.zeros((3, d), dtype=torch.float64)
+    with pytest.raises(ValueError, match="same dtype"):
+        pysiglib.torch_api.branched_sig(path, N, correction=torch.zeros(d * d, dtype=torch.float32))
+
+
+def test_torch_branched_sig_correction_rejects_lead_lag():
+    d, N = 1, 2
+    path = torch.zeros((2, d), dtype=torch.float64)
+    correction = torch_ito_level2_correction(d, 0.5, path)
+    with pytest.raises(ValueError, match="lead_lag"):
+        pysiglib.torch_api.branched_sig(path, N, lead_lag=True, correction=correction)
+
+
+@skip_no_cuda
+def test_torch_branched_sig_correction_validation_device():
+    d, N = 2, 3
+    path = torch.zeros((3, d), dtype=torch.float64, device="cuda")
+    with pytest.raises(ValueError, match="same device"):
+        pysiglib.torch_api.branched_sig(path, N, correction=torch.zeros(d * d, dtype=torch.float64))
+
+
+def test_branched_sig_correction_degree2_single_segment():
+    d, N = 1, 2
+    pysiglib.prepare_branched_sig(d, N)
+    x = 0.7
+    end_time = 2.0
+    path = np.array([[0.0], [x]])
+
+    correction = ito_level2_correction(d, end_time)
+    bsig = pysiglib.branched_sig(path, N, correction=correction, end_time=end_time)
+
+    expected = np.array([x, 0.5 * x * x + end_time])
+    np.testing.assert_allclose(bsig, expected, atol=1e-14)
+
+
+def test_branched_sig_correction_zero_path_accumulates_constant():
+    d, N = 1, 2
+    pysiglib.prepare_branched_sig(d, N)
+    end_time = 3.5
+    path = np.zeros((8, d))
+
+    correction = ito_level2_correction(d, local_segment_dt(path, end_time))
+    bsig = pysiglib.branched_sig(path, N, correction=correction, end_time=end_time)
+
+    np.testing.assert_allclose(bsig, np.array([0.0, end_time]), atol=1e-14)
+
+
+def test_branched_sig_level2_correction_single_segment_hopf_exp_higher_degree():
+    d, N = 2, 4
+    pysiglib.prepare_branched_sig(d, N)
+    increment = np.array([0.25, -0.4])
+    path = np.vstack([np.zeros(d), increment])
+    end_time = 1.7
+
+    correction = ito_level2_correction(d, end_time)
+    bsig = pysiglib.branched_sig(path, N, correction=correction, end_time=end_time, scalar_term=True)
+    expected = ito_local_log_reference(increment, d, N, end_time)
+    expected = branched_hopf_exp_reference(expected, d, N)
+
+    np.testing.assert_allclose(bsig, expected, atol=1e-12)
+
+
+def test_branched_sig_level3_correction_single_segment():
+    d, N = 1, 4
+    pysiglib.prepare_branched_sig(d, N)
+    x = 0.25
+    c2 = 0.4
+    c3 = -0.15
+    path = np.array([[0.0], [x]])
+    correction = np.array([c2, c3], dtype=np.float64)
+
+    local_log = np.zeros(pysiglib.branched_sig_length(d, N, scalar_term=True))
+    local_log[1] = x
+    local_log[pysiglib.tree_to_idx(((0,), 0), d, N, tree_order="recursive", scalar_term=True)] = c2
+    local_log[pysiglib.tree_to_idx((((0,), 0), 0), d, N, tree_order="recursive", scalar_term=True)] = c3
+    expected = branched_hopf_exp_reference(local_log, d, N)
+
+    bsig = pysiglib.branched_sig(path, N, correction=correction, scalar_term=True)
+    np.testing.assert_allclose(bsig, expected, atol=1e-12)
+
+
+def test_planar_branched_sig_level2_correction_single_segment_hopf_exp():
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    increment = np.array([0.25, -0.4])
+    path = np.vstack([np.zeros(d), increment])
+    end_time = 1.7
+
+    correction = ito_level2_correction(d, end_time)
+    bsig = pysiglib.branched_sig(path, N, correction=correction, end_time=end_time, planar=True, scalar_term=True)
+    expected = ito_local_log_reference(increment, d, N, end_time, planar=True)
+    expected = branched_hopf_exp_reference(expected, d, N, planar=True)
+
+    np.testing.assert_allclose(bsig, expected, atol=1e-12)
+
+
+def test_branched_sig_correction_time_aug_original_channels_only():
+    data_dim, N = 1, 2
+    end_time = 2.0
+    pysiglib.prepare_branched_sig(data_dim, N, time_aug=True)
+    increment = 0.8
+    path = np.array([[0.0], [increment]])
+
+    correction = ito_level2_correction(data_dim, end_time)
+    bsig = pysiglib.branched_sig(path, N, time_aug=True, correction=correction, end_time=end_time, scalar_term=True)
+    expected = ito_local_log_reference(np.array([increment, end_time]), data_dim, N, end_time)
+    expected = branched_hopf_exp_reference(expected, 2, N)
+
+    np.testing.assert_allclose(bsig, expected, atol=1e-12)
+
+
+def test_branched_sig_correction_rejects_lead_lag():
+    d, N = 1, 2
+    pysiglib.prepare_branched_sig(2 * d, N)
+    x = 0.7
+    path = np.array([[0.0], [x]])
+    correction = ito_level2_correction(d, 0.5)
+
+    with pytest.raises(ValueError, match="lead_lag"):
+        pysiglib.branched_sig(path, N, correction=correction, lead_lag=True)
+
+    bsig = pysiglib.branched_sig(path, N, lead_lag=True)
+    explicit_empty = pysiglib.branched_sig(path, N, lead_lag=True, correction=np.array([], dtype=path.dtype))
+    np.testing.assert_allclose(explicit_empty, bsig, atol=0.0, rtol=0.0)
+
+
+def test_branched_sig_correction_rejects_lead_lag_in_related_apis():
+    d, N = 1, 2
+    pysiglib.prepare_branched_sig(2 * d, N)
+    path = np.array([[0.0], [0.7]])
+    correction = ito_level2_correction(d, 0.5)
+    bsig = pysiglib.branched_sig(path, N, lead_lag=True)
+    derivs = np.ones_like(bsig)
+
+    with pytest.raises(ValueError, match="lead_lag"):
+        pysiglib.branched_sig_backprop(path, bsig, derivs, N, lead_lag=True, correction=correction)
+    with pytest.raises(ValueError, match="lead_lag"):
+        pysiglib.branched_log_sig(path, N, lead_lag=True, correction=correction)
+
+
+def test_torch_branched_sig_correction_backward():
+    d, N = 1, 3
+    pysiglib.prepare_branched_sig(d, N)
+    path = torch.tensor([[0.0], [0.3], [0.1]], dtype=torch.float64, requires_grad=True)
+    correction = torch_ito_level2_correction(d, local_segment_dt(path), path)
+
+    out = pysiglib.torch_api.branched_sig(path, N, correction=correction).sum()
+    out.backward()
+
+    bsig = pysiglib.branched_sig(path.detach(), N, correction=correction.detach())
+    grad_manual = pysiglib.branched_sig_backprop(
+        path.detach(), bsig, torch.ones_like(bsig), N, correction=correction.detach())
+    check_close(path.grad, grad_manual, double_atol=1e-12)
+
+
+def test_torch_branched_sig_correction_backward_uses_forward_values():
+    d, N = 1, 3
+    pysiglib.prepare_branched_sig(d, N)
+    path = torch.tensor([[0.0], [0.3], [0.1]], dtype=torch.float64, requires_grad=True)
+    correction = torch_ito_level2_correction(d, local_segment_dt(path), path)
+    expected_correction = correction.detach().clone()
+
+    out = pysiglib.torch_api.branched_sig(path, N, correction=correction).sum()
+    bsig = pysiglib.branched_sig(path.detach(), N, correction=expected_correction)
+    grad_manual = pysiglib.branched_sig_backprop(
+        path.detach(), bsig, torch.ones_like(bsig), N, correction=expected_correction)
+
+    correction.add_(10.0)
+    out.backward()
+
+    check_close(path.grad, grad_manual, double_atol=1e-12)
+
+
+def test_jax_branched_sig_correction_if_available():
+    jax_api = pytest.importorskip("pysiglib.jax_api")
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+
+    d, N = 1, 3
+    pysiglib.prepare_branched_sig(d + 1, N)
+    path = np.array([[0.0], [0.3], [0.1]], dtype=np.float32)
+    correction = ito_level2_correction(d, local_segment_dt(path), dtype=path.dtype)
+    expected = pysiglib.branched_sig(path, N, time_aug=True, correction=correction)
+
+    actual = np.asarray(jax_api.branched_sig(jnp.asarray(path), N, time_aug=True, correction=jnp.asarray(correction)))
+    np.testing.assert_allclose(actual, expected, atol=1e-5)
+
+    weights = (np.arange(len(expected), dtype=np.float32) * 0.1) - 0.2
+    grad_expected = pysiglib.branched_sig_backprop(path, expected, weights, N, time_aug=True, correction=correction)
+
+    def loss(x):
+        return jnp.vdot(
+            jax_api.branched_sig(x, N, time_aug=True, correction=jnp.asarray(correction)),
+            jnp.asarray(weights))
+
+    grad_actual = np.asarray(jax.grad(loss)(jnp.asarray(path)))
+    np.testing.assert_allclose(grad_actual, grad_expected, atol=1e-5)
+
+
+def test_jax_branched_sig_correction_rejects_lead_lag_if_available():
+    jax_api = pytest.importorskip("pysiglib.jax_api")
+    jnp = pytest.importorskip("jax.numpy")
+
+    path = np.array([[0.0], [0.3]], dtype=np.float32)
+    correction = ito_level2_correction(1, 0.5, dtype=path.dtype)
+
+    with pytest.raises(ValueError, match="lead_lag"):
+        jax_api.branched_sig(jnp.asarray(path), 2, lead_lag=True, correction=jnp.asarray(correction))
+
+
+def test_branched_sig_correction_matches_stochastax_degree2_if_available():
+    control = pytest.importorskip("stochastax.control_lifts.branched_signature_ito")
+    hopf_algebras = pytest.importorskip("stochastax.hopf_algebras.hopf_algebras")
+    jnp = pytest.importorskip("jax.numpy")
+
+    d, N = 1, 2
+    pysiglib.prepare_branched_sig(d, N)
+    path = np.array([[0.0], [0.25], [-0.1], [0.4]], dtype=np.float64)
+    end_time = 1.25
+    dt = end_time / (len(path) - 1)
+    cov = np.full((len(path) - 1, d, d), dt, dtype=np.float64)
+
+    hopf = hopf_algebras.GLHopfAlgebra.build(d, N)
+    stoch_sig = control.compute_nonplanar_branched_signature(
+        jnp.asarray(path), N, hopf, mode="full", cov_increments=jnp.asarray(cov)
+    )
+
+    expected = np.asarray(stoch_sig.flatten())
+    actual = pysiglib.branched_sig(path, N, correction=ito_level2_correction(d, dt), end_time=end_time)
+    np.testing.assert_allclose(actual, expected, atol=1e-10)
 
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
@@ -438,6 +759,25 @@ def test_branched_sig_cuda_float32():
     check_close(cpu, cuda, single_atol=1e-5)
 
 
+@skip_no_cuda
+@pytest.mark.parametrize("planar", [False, True])
+@pytest.mark.parametrize("time_aug", [False, True])
+def test_branched_sig_cuda_correction_matches_cpu(planar, time_aug):
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N, time_aug=time_aug, planar=planar)
+    np.random.seed(305)
+    path = torch.tensor(np.cumsum(np.random.randn(7, d) * 0.1, axis=0), dtype=torch.float64)
+    correction = torch_ito_level2_correction(d, local_segment_dt(path), path)
+
+    cpu = pysiglib.branched_sig(
+        path, N, time_aug=time_aug, planar=planar, correction=correction)
+    cuda = pysiglib.branched_sig(
+        path.cuda(), N, time_aug=time_aug, planar=planar,
+        correction=correction.cuda())
+
+    check_close(cpu, cuda, double_atol=1e-12)
+
+
 # ---------------------------------------------------------------------------
 # Backpropagation tests
 # ---------------------------------------------------------------------------
@@ -495,6 +835,61 @@ def test_branched_sig_backprop_random_derivs(d, N):
             path_p = path.copy()
             path_p[i, j] += eps
             bsig_p = np.array(pysiglib.branched_sig(path_p, N))
+            grad_fd[i, j] = np.dot(derivs, bsig_p - np.array(bsig)) / eps
+
+    np.testing.assert_allclose(grad_bp, grad_fd, atol=1e-4)
+
+
+@pytest.mark.parametrize("time_aug", [False, True])
+def test_branched_sig_backprop_correction_finite_diff(time_aug):
+    d, N = 1, 3
+    end_time = 1.7
+    aug_dim = d + (1 if time_aug else 0)
+    pysiglib.prepare_branched_sig(aug_dim, N)
+    np.random.seed(4011)
+    path = np.cumsum(np.random.randn(4, d) * 0.1, axis=0)
+    correction = ito_level2_correction(d, local_segment_dt(path, end_time))
+
+    bsig = pysiglib.branched_sig(
+        path, N, time_aug=time_aug, end_time=end_time, correction=correction)
+    derivs = np.random.randn(len(bsig))
+    grad_bp = np.array(pysiglib.branched_sig_backprop(
+        path, bsig, derivs, N, time_aug=time_aug, end_time=end_time, correction=correction))
+
+    eps = 1e-7
+    grad_fd = np.zeros_like(path)
+    for i in range(path.shape[0]):
+        for j in range(path.shape[1]):
+            path_p = path.copy()
+            path_p[i, j] += eps
+            bsig_p = np.array(pysiglib.branched_sig(
+                path_p, N, time_aug=time_aug, end_time=end_time, correction=correction))
+            grad_fd[i, j] = np.dot(derivs, bsig_p - np.array(bsig)) / eps
+
+    np.testing.assert_allclose(grad_bp, grad_fd, atol=1e-4)
+
+
+def test_planar_branched_sig_backprop_correction_finite_diff():
+    d, N = 1, 3
+    end_time = 1.7
+    pysiglib.prepare_branched_sig(d, N, planar=True)
+    np.random.seed(4012)
+    path = np.cumsum(np.random.randn(4, d) * 0.1, axis=0)
+    correction = ito_level2_correction(d, local_segment_dt(path, end_time))
+
+    bsig = pysiglib.branched_sig(path, N, end_time=end_time, correction=correction, planar=True)
+    derivs = np.random.randn(len(bsig))
+    grad_bp = np.array(pysiglib.branched_sig_backprop(
+        path, bsig, derivs, N, end_time=end_time, correction=correction, planar=True))
+
+    eps = 1e-7
+    grad_fd = np.zeros_like(path)
+    for i in range(path.shape[0]):
+        for j in range(path.shape[1]):
+            path_p = path.copy()
+            path_p[i, j] += eps
+            bsig_p = np.array(pysiglib.branched_sig(
+                path_p, N, end_time=end_time, correction=correction, planar=True))
             grad_fd[i, j] = np.dot(derivs, bsig_p - np.array(bsig)) / eps
 
     np.testing.assert_allclose(grad_bp, grad_fd, atol=1e-4)
@@ -618,12 +1013,38 @@ def test_branched_sig_backprop_cuda_torch_api(d=2, N=3):
     check_close(cpu_grad, cuda_grad, double_atol=1e-10)
 
 
+@skip_no_cuda
+@pytest.mark.parametrize("planar", [False, True])
+@pytest.mark.parametrize("time_aug", [False, True])
+def test_branched_sig_backprop_cuda_correction_matches_cpu(planar, time_aug):
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N, time_aug=time_aug, planar=planar)
+    np.random.seed(503)
+    path = torch.tensor(np.cumsum(np.random.randn(6, d) * 0.1, axis=0), dtype=torch.float64)
+    correction = torch_ito_level2_correction(d, local_segment_dt(path), path)
+
+    bsig = pysiglib.branched_sig(
+        path, N, time_aug=time_aug, planar=planar, correction=correction)
+    derivs = torch.linspace(-0.3, 0.7, bsig.numel(), dtype=torch.float64).reshape_as(bsig)
+
+    cpu_grad = pysiglib.branched_sig_backprop(
+        path, bsig, derivs, N, time_aug=time_aug, planar=planar, correction=correction)
+    cuda_bsig = pysiglib.branched_sig(
+        path.cuda(), N, time_aug=time_aug, planar=planar,
+        correction=correction.cuda())
+    cuda_grad = pysiglib.branched_sig_backprop(
+        path.cuda(), cuda_bsig, derivs.cuda(), N,
+        time_aug=time_aug, planar=planar, correction=correction.cuda())
+
+    check_close(cpu_grad, cuda_grad, double_atol=1e-10)
+
+
 # ===========================================================================
 # Planar branched signature tests
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Helpers: kauri MKW-based reference implementation for planar branched sigs
+# Helpers: kauri NCK-based reference implementation for planar branched sigs
 # ---------------------------------------------------------------------------
 
 def enumerate_decorated_planar_trees(d, N):
@@ -652,11 +1073,13 @@ def linear_planar_branched_sig_ref(z, trees):
 
 
 def planar_branched_sig_reference(path, d, N):
-    """Compute planar branched sig using kauri.mkw.map_product as ground truth.
+    """Compute planar branched sig using kauri.nck.map_product as ground truth.
 
-    kauri.mkw.map_product uses the NCK coproduct on PlanarTree objects, which
-    computes the correct convolution product for scalar-valued MKW characters
-    (shuffle coefficients cancel with the 1/k! factors).
+    pysiglib's planar Butcher product is the NCK (Foissy) convolution: sum over
+    all admissible cuts with the concatenation-extended forest character. This
+    matches kauri.nck.map_product exactly. kauri.mkw.map_product computes a
+    different convolution (left-admissible cuts with shuffle-extended forest)
+    and is not the right reference for pysiglib's planar branched signature.
     """
     trees = enumerate_decorated_planar_trees(d, N)
 
@@ -674,7 +1097,7 @@ def planar_branched_sig_reference(path, d, N):
             return char_func
 
         Y = kauri.Map(make_char(coeffs))
-        X = kauri.mkw.map_product(X, Y)
+        X = kauri.nck.map_product(X, Y)
 
     return np.array([X(t) for t in trees])
 
@@ -792,7 +1215,7 @@ def test_planar_branched_sig_single_segment(d, N):
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2), (2, 4)])
 def test_planar_branched_sig_vs_kauri(d, N):
-    """Primary correctness test: compare against kauri MKW map product."""
+    """Primary correctness test: compare against kauri NCK map product."""
     pysiglib.prepare_branched_sig(d, N, planar=True)
     perm = compute_kauri_to_pysiglib_planar_permutation(d, N)
 

@@ -25,12 +25,12 @@ extern "C" {
 		SAFE_CALL(prepare_branched_sig_cache(dimension, max_nodes, use_disk, planar));
 	}
 
-	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_signature_<float>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term));
+	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len) noexcept {
+		SAFE_CALL(branched_signature_<float>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
 	}
 
-	CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_signature_<double>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term));
+	CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len) noexcept {
+		SAFE_CALL(branched_signature_<double>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
 	}
 
 	CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar, bool scalar_term) noexcept {
@@ -49,12 +49,12 @@ extern "C" {
 		SAFE_CALL(branched_sig_combine_backprop_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
 	}
 
-	CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_sig_backprop_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term));
+	CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len) noexcept {
+		SAFE_CALL(branched_sig_backprop_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
 	}
 
-	CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_sig_backprop_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term));
+	CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len) noexcept {
+		SAFE_CALL(branched_sig_backprop_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
 	}
 
 }

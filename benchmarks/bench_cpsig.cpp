@@ -94,6 +94,23 @@ static void BM_sig(benchmark::State& state) {
 }
 BENCHMARK(BM_sig)->Unit(benchmark::kMicrosecond);
 
+static void BM_sig_correction(benchmark::State& state) {
+    const uint64_t slen = ::sig_length(4, 5);
+    auto path = random_data(4 * 4 * 32, 1);
+    auto correction = random_data(4 * 4, 2);
+    std::vector<double> out(4 * slen);
+    check(::signature_d(
+        path.data(), out.data(), 4, 4, 32, 5, false, false, 1.,
+        true, true, 1, correction.data(), correction.size()), "signature_d");
+    for (auto _ : state) {
+        ::signature_d(
+            path.data(), out.data(), 4, 4, 32, 5, false, false, 1.,
+            true, true, 1, correction.data(), correction.size());
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_sig_correction)->Unit(benchmark::kMicrosecond);
+
 static void BM_sig_no_horner(benchmark::State& state) {
     const uint64_t slen = ::sig_length(4, 5);
     auto path = random_data(4 * 4 * 32);
@@ -117,6 +134,25 @@ static void BM_sig_backprop(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_sig_backprop)->Unit(benchmark::kMicrosecond);
+
+static void BM_sig_backprop_correction(benchmark::State& state) {
+    const uint64_t slen = ::sig_length(4, 5);
+    auto path = random_data(4 * 4 * 32, 1);
+    auto sig = random_data(4 * slen, 2);
+    auto sig_deriv = random_data(4 * slen, 3);
+    auto correction = random_data(4 * 4, 4);
+    std::vector<double> out(4 * 4 * 32);
+    check(::sig_backprop_d(
+        path.data(), out.data(), sig_deriv.data(), sig.data(), 4, 4, 32, 5,
+        false, false, 1., true, 1, correction.data(), correction.size()), "sig_backprop_d");
+    for (auto _ : state) {
+        ::sig_backprop_d(
+            path.data(), out.data(), sig_deriv.data(), sig.data(), 4, 4, 32, 5,
+            false, false, 1., true, 1, correction.data(), correction.size());
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_sig_backprop_correction)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Sig combine / backprop
@@ -491,6 +527,24 @@ static void BM_branched_sig(benchmark::State& state) {
 }
 BENCHMARK(BM_branched_sig)->Unit(benchmark::kMicrosecond);
 
+static void BM_branched_sig_correction(benchmark::State& state) {
+    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, false);
+    auto path = random_data(8 * 3 * 32, 1);
+    auto correction = random_data(3 * 3, 2);
+    std::vector<double> out(8 * blen);
+    check(::branched_sig_d(
+        path.data(), out.data(), 8, 3, 32, 4, 1, false, false, 1.,
+        false, true, correction.data(), correction.size()), "branched_sig_d");
+    for (auto _ : state) {
+        ::branched_sig_d(
+            path.data(), out.data(), 8, 3, 32, 4, 1, false, false, 1.,
+            false, true, correction.data(), correction.size());
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_correction)->Unit(benchmark::kMicrosecond);
+
 static void BM_branched_sig_planar(benchmark::State& state) {
     check(::prepare_branched_sig(3, 4, false, true), "prepare_branched_sig");
     const uint64_t blen = ::branched_sig_length(3, 4, true);
@@ -517,6 +571,59 @@ static void BM_branched_sig_backprop(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_branched_sig_backprop)->Unit(benchmark::kMicrosecond);
+
+static void BM_branched_sig_backprop_correction(benchmark::State& state) {
+    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, false);
+    auto path = random_data(8 * 3 * 32, 1);
+    auto bsig = random_data(8 * blen, 2);
+    auto bsig_derivs = random_data(8 * blen, 3);
+    auto correction = random_data(3 * 3, 4);
+    std::vector<double> out(8 * 3 * 32);
+    check(::branched_sig_backprop_d(
+        path.data(), out.data(), bsig_derivs.data(), bsig.data(),
+        8, 3, 32, 4, 1, false, false, 1., false, true,
+        correction.data(), correction.size()), "branched_sig_backprop_d");
+    for (auto _ : state) {
+        ::branched_sig_backprop_d(
+            path.data(), out.data(), bsig_derivs.data(), bsig.data(),
+            8, 3, 32, 4, 1, false, false, 1., false, true,
+            correction.data(), correction.size());
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_backprop_correction)->Unit(benchmark::kMicrosecond);
+
+static void BM_branched_sig_to_log_sig(benchmark::State& state) {
+    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, false);
+    auto bsig = random_data(64 * blen, 1);
+    std::vector<double> out(64 * blen);
+    check(::branched_sig_to_log_sig_d(
+        bsig.data(), out.data(), 64, 3, 4), "branched_sig_to_log_sig_d");
+    for (auto _ : state) {
+        ::branched_sig_to_log_sig_d(bsig.data(), out.data(), 64, 3, 4);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_to_log_sig)->Unit(benchmark::kMicrosecond);
+
+static void BM_branched_sig_to_log_sig_backprop(benchmark::State& state) {
+    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, false);
+    auto bsig = random_data(64 * blen, 1);
+    auto derivs = random_data(64 * blen, 2);
+    std::vector<double> out(64 * blen);
+    check(::branched_sig_to_log_sig_backprop_d(
+        bsig.data(), derivs.data(), out.data(), 64, 3, 4),
+        "branched_sig_to_log_sig_backprop_d");
+    for (auto _ : state) {
+        ::branched_sig_to_log_sig_backprop_d(
+            bsig.data(), derivs.data(), out.data(), 64, 3, 4);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_to_log_sig_backprop)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_combine(benchmark::State& state) {
     check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");

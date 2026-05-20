@@ -24,8 +24,9 @@ from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CPSIG_BRANCHED_SIG_COMBINE_BACKPROP,
                      CUSIG_BRANCHED_SIG_BACKPROP_CUDA,
                      CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA)
-from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler
-from .branched_sig import _inv_permute_bsig, _permute_bsig, branched_sig_length, _infer_branched_scalar_term, _check_cuda_num_trees
+from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
+from .branched_sig import (_inv_permute_bsig, _permute_bsig, branched_sig_length,
+                           _infer_branched_scalar_term, _check_cuda_num_trees)
 
 
 def branched_sig_backprop(
@@ -39,28 +40,76 @@ def branched_sig_backprop(
         end_time: float = 1.0,
         tree_order: str = "recursive",
         planar: bool = False,
+        correction = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Backpropagates through the branched signature computation.
 
-    Given the forward branched signature ``bsig = branched_sig(path, degree)``
-    and upstream derivatives ``bsig_derivs = dF/d(bsig)``, computes
-    ``dF/d(path)``.
+    Given the forward branched signature
+    ``bsig = branched_sig(path, degree, correction=correction)`` and upstream
+    derivatives ``bsig_derivs = dF/d(bsig)``, computes ``dF/d(path)``.
 
     :param path: Input path, shape ``(length, dimension)`` or ``(batch, length, dimension)``.
+    :type path: numpy.ndarray | torch.tensor
     :param bsig: Forward branched signature output.
+    :type bsig: numpy.ndarray | torch.tensor
     :param bsig_derivs: Upstream derivatives w.r.t. the branched signature.
+    :type bsig_derivs: numpy.ndarray | torch.tensor
     :param degree: Maximum tree order (must match forward call).
+    :type degree: int
     :param time_aug: Whether time augmentation was used in the forward pass.
+    :type time_aug: bool
     :param lead_lag: Whether lead-lag was used in the forward pass.
+    :type lead_lag: bool
     :param end_time: End time for time augmentation.
+    :type end_time: float
     :param tree_order: Tree ordering convention of ``bsig`` and ``bsig_derivs``.
         ``"recursive"`` (default) uses the recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
+    :type tree_order: str
     :param planar: If True, backpropagate through planar branched signature.
+    :type planar: bool
+    :param correction: The same constant correction supplied to
+        the forward call (see :func:`branched_sig` for layout and semantics).
+        Treated as a constant: no derivatives are returned with respect to
+        ``correction``. Cannot be combined with ``lead_lag=True``.
+    :type correction: numpy.ndarray | torch.tensor | None
     :param n_jobs: Number of parallel threads for batch processing.
+    :type n_jobs: int
     :return: Path derivatives, same shape as ``path``.
+
+    Example usage:
+    ----------------
+
+    Forward and backward pass through the Ito-lifted branched signature of
+    a sampled Brownian path. The same ``correction`` array must be passed to
+    both calls.
+
+    .. code-block:: python
+
+        import numpy as np
+        import pysiglib
+
+        d, N, T = 2, 3, 1.0
+        n_steps = 100
+        dt = T / n_steps
+        rng = np.random.default_rng(42)
+
+        # 2D standard Brownian motion sample (Sigma = I)
+        path = np.zeros((n_steps + 1, d))
+        path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
+
+        # Ito level-2 correction: dt * Sigma flattened (Sigma = I here).
+        correction = (np.eye(d) * dt).flatten()
+
+        pysiglib.prepare_branched_sig(d, N)
+        bsig = pysiglib.branched_sig(
+            path, N, correction=correction, end_time=T)
+        bsig_derivs = np.ones_like(bsig)
+        grad = pysiglib.branched_sig_backprop(
+            path, bsig, bsig_derivs, N, correction=correction, end_time=T)
+        print(grad.shape)
     """
     if tree_order not in ("recursive", "canonical"):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
@@ -73,6 +122,7 @@ def branched_sig_backprop(
     check_n_jobs(n_jobs)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
+    correction_data = CorrectionInputHandler(correction, path_data, degree)
     dimension = path_data.data_dimension
     aug_dimension = path_data.dimension
 
@@ -93,14 +143,16 @@ def branched_sig_backprop(
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, dimension, path_data.data_length, degree, n_jobs,
-            path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term)
+            path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term,
+            correction_data.data_ptr, correction_data.length)
     else:
         _check_cuda_num_trees(aug_dimension, degree, planar, "branched_sig_backprop")
         err_code = CUSIG_BRANCHED_SIG_BACKPROP_CUDA[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, dimension, path_data.data_length, degree,
-            path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term)
+            path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term,
+            correction_data.data_ptr, correction_data.length)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_backprop: " + err_msg(err_code))
     return result.data
@@ -125,15 +177,23 @@ def branched_sig_combine_backprop(
     ``(dF/d(bsig1), dF/d(bsig2))``.
 
     :param derivs: Upstream derivatives, same shape as combine output.
+    :type derivs: numpy.ndarray | torch.tensor
     :param bsig1: First branched signature input to the forward combine.
+    :type bsig1: numpy.ndarray | torch.tensor
     :param bsig2: Second branched signature input to the forward combine.
+    :type bsig2: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path.
+    :type dimension: int
     :param degree: Maximum tree order.
+    :type degree: int
     :param tree_order: Tree ordering convention of ``derivs``, ``bsig1``, ``bsig2`` and the returned gradients.
         ``"recursive"`` (default) uses the recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
+    :type tree_order: str
     :param planar: If True, backpropagate through planar branched sig combine.
+    :type planar: bool
     :param n_jobs: Number of parallel threads for batch processing.
+    :type n_jobs: int
     :return: Tuple ``(dF/d(bsig1), dF/d(bsig2))``, in the same scalar-term format as the inputs.
     """
     if tree_order not in ("recursive", "canonical"):

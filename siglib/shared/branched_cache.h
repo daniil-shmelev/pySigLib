@@ -38,6 +38,12 @@ struct BranchedSigCache {
 	std::vector<uint8_t> node_labels_data;
 	std::vector<uint64_t> node_labels_offsets;
 
+	// chain_indices[chain_index_offsets[n] + word_idx] is the flat signature
+	// index of the length-n chain whose labels are encoded by word_idx in
+	// base dimension, read from root to leaf.
+	std::vector<uint64_t> chain_index_offsets;
+	std::vector<uint64_t> chain_indices;
+
 	// Flattened Connes-Kreimer coproduct table (non-trivial cuts only).
 	// Tree i's terms: coproduct_data[coproduct_offsets[i] .. coproduct_offsets[i+1])
 	// Each term packed as: [num_forest_trees, trunk_flat_idx, forest_flat_idx_0, ...]
@@ -54,10 +60,64 @@ struct CutResult {
 
 using TreeIndexMap = std::unordered_map<CanonicalTree, uint64_t, CanonicalTreeHash>;
 
+inline uint64_t checked_mul_add_(uint64_t a, uint64_t b, uint64_t c, const char* msg) {
+	if (b != 0 && a > (UINT64_MAX - c) / b)
+		throw std::overflow_error(msg);
+	return a * b + c;
+}
+
+inline uint64_t validate_correction_len_(uint64_t data_dimension, uint64_t max_nodes, uint64_t correction_len) {
+	if (correction_len == 0)
+		return 1;
+	if (max_nodes < 2)
+		throw std::invalid_argument("correction must be empty when degree < 2");
+
+	uint64_t offset = 0;
+	uint64_t level_size = data_dimension;
+	for (uint64_t level = 2; level <= max_nodes; ++level) {
+		if (data_dimension != 0 && level_size > UINT64_MAX / data_dimension)
+			throw std::overflow_error("correction level size overflow");
+		level_size *= data_dimension;
+		if (offset > UINT64_MAX - level_size)
+			throw std::overflow_error("correction length overflow");
+		offset += level_size;
+		if (offset == correction_len)
+			return level;
+		if (offset > correction_len)
+			break;
+	}
+	throw std::invalid_argument("correction length must be a prefix of tensor levels 2..degree");
+}
+
+inline bool chain_word_index_(
+	uint64_t tree_idx,
+	const std::vector<DecoratedTreeInfo>& trees,
+	uint64_t dimension,
+	uint64_t& word_idx
+) {
+	const auto& tree = trees[tree_idx].canonical;
+	word_idx = tree.root_label;
+	uint64_t cur = tree_idx;
+	while (true) {
+		const auto& node = trees[cur].canonical;
+		if (node.child_ids.empty())
+			return true;
+		if (node.child_ids.size() != 1)
+			return false;
+		cur = node.child_ids[0];
+		word_idx = checked_mul_add_(word_idx, dimension,
+			trees[cur].canonical.root_label, "chain word index overflow");
+	}
+}
+
 // Enumerate all admissible cuts for a tree using memoized child cuts.
 // When planar=true, preserve child ordering (no sort) so distinct left-to-right
-// arrangements produce distinct canonical trees and forests.
-// Note: the planar coproduct stored here is the NCK (Foissy) one; its \Delta-dual convolution numerically equals the MKW convolution on scalar characters via shuffle/factorial cancellation.
+// arrangements produce distinct canonical trees and forests. The planar
+// coproduct stored here is the NCK (Foissy) one: all admissible cuts with the
+// concatenation product on forests. This is the convolution that satisfies
+// Chen's identity for branched path signatures under path concatenation, and
+// differs from the MKW (Loday-Ronco) coproduct (left-admissible cuts with
+// shuffle-extended forests) used in Munthe-Kaas-Wright B-series.
 inline void enumerate_admissible_cuts(
 	uint64_t tree_idx,
 	const std::vector<DecoratedTreeInfo>& trees,
@@ -184,6 +244,30 @@ inline BranchedSigCache build_branched_sig_cache(uint64_t dimension, uint64_t ma
 	for (uint64_t i = 0; i < num_trees; ++i) {
 		std::memcpy(cache.node_labels_data.data() + cache.node_labels_offsets[i],
 			trees[i].node_labels.data(), trees[i].node_labels.size());
+	}
+
+	cache.chain_index_offsets.assign(max_nodes + 2, 0);
+	uint64_t chain_size = 0;
+	uint64_t level_size = 1;
+	for (uint64_t level = 1; level <= max_nodes; ++level) {
+		cache.chain_index_offsets[level] = chain_size;
+		if (dimension != 0 && level_size > UINT64_MAX / dimension)
+			throw std::overflow_error("chain index size overflow");
+		level_size *= dimension;
+		if (chain_size > UINT64_MAX - level_size)
+			throw std::overflow_error("chain index size overflow");
+		chain_size += level_size;
+	}
+	cache.chain_index_offsets[max_nodes + 1] = chain_size;
+	cache.chain_indices.assign(chain_size, 0);
+	for (uint64_t order = 1; order <= max_nodes; ++order) {
+		uint64_t start = cache.order_index[order];
+		uint64_t end = cache.order_index[order + 1];
+		for (uint64_t i = start; i < end; ++i) {
+			uint64_t word_idx = 0;
+			if (chain_word_index_(i, trees, dimension, word_idx))
+				cache.chain_indices[cache.chain_index_offsets[order] + word_idx] = i + 1;
+		}
 	}
 
 	TreeIndexMap tree_map;

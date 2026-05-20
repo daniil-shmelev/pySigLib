@@ -20,7 +20,7 @@ import torch
 
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler
+from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler, CorrectionInputHandler
 from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP_CUDA, CUSIG_SIG_COMBINE_BACKPROP_CUDA
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
 
@@ -44,7 +44,7 @@ def sig_combine_backprop(
 
     :param deriv: Derivative with respect to the combined signature,
         :math:`\\partial F / \\partial S(x_1 * x_2)`
-    :type sig_combine_deriv: numpy.ndarray | torch.tensor
+    :type deriv: numpy.ndarray | torch.tensor
     :param sig1: The first truncated signature
     :type sig1: numpy.ndarray | torch.tensor
     :param sig2: The second truncated signature. Must have the same degree and dimension as the first.
@@ -132,6 +132,7 @@ def sig_backprop(
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
+        correction = None,
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.tensor]:
     """
@@ -159,6 +160,11 @@ def sig_backprop(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
+    :param correction: The same constant correction supplied to
+        the forward ``sig`` call. Treated as a constant: no derivatives are
+        returned with respect to ``correction``. Cannot be combined with
+        ``lead_lag=True``.
+    :type correction: numpy.ndarray | torch.tensor | None
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
@@ -206,6 +212,7 @@ def sig_backprop(
     check_type(end_time, "end_time", float)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
+    correction_data = CorrectionInputHandler(correction, path_data, degree)
     scalar_term = _infer_scalar_term(sig, path_data.data_dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
     sig_len = sig_length(path_data.dimension, degree, scalar_term=scalar_term)
     sig_data = MultipleSigInputHandler([sig, sig_derivs], sig_len, ["sig", "sig_derivs"])
@@ -229,13 +236,15 @@ def sig_backprop(
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, path_data.data_dimension, path_data.data_length,
-            degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term, n_jobs)
+            degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term, n_jobs,
+            correction_data.data_ptr, correction_data.length)
     else:
         err_code = CUSIG_SIG_BACKPROP_CUDA[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, path_data.data_dimension, path_data.data_length,
-            degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term)
+            degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term,
+            correction_data.data_ptr, correction_data.length)
     if err_code:
         raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
     return result.data

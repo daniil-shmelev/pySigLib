@@ -35,7 +35,7 @@ void example_batch_signature_d(
     uint64_t out_size = sig_length(dimension, degree) * batch_size;
     std::vector<double> out(out_size, 0.);
 
-    time_function(num_runs, signature_d, path.data(), out.data(), batch_size, dimension, length, degree, time_aug, lead_lag, 1., horner, n_jobs);
+    time_function(num_runs, signature_d, path.data(), out.data(), batch_size, dimension, length, degree, time_aug, lead_lag, 1., horner, true, n_jobs, nullptr, (uint64_t)0);
 
     std::cout << "done\n";
 }
@@ -65,7 +65,7 @@ void example_batch_signature_cuda_d(
 
     cudaMemcpy(d_path, path.data(), sizeof(double) * path_size, cudaMemcpyHostToDevice);
 
-    time_function(num_runs, signature_cuda_d, d_path, d_out, batch_size, dimension, length, degree, time_aug, lead_lag, 1., horner);
+    time_function(num_runs, signature_cuda_d, d_path, d_out, batch_size, dimension, length, degree, time_aug, lead_lag, 1., horner, true, nullptr, (uint64_t)0);
 
     cudaFree(d_path);
     cudaFree(d_out);
@@ -194,7 +194,7 @@ void example_batch_sig_backprop_d(
     uint64_t out_size = batch_size * dimension * length;
     std::vector<double> out(out_size, 0.);
 
-    time_function(num_runs, sig_backprop_d, path.data(), out.data(), sig_derivs.data(), sig.data(), batch_size, dimension, length, degree, time_aug, lead_lag, 1., n_jobs);
+    time_function(num_runs, sig_backprop_d, path.data(), out.data(), sig_derivs.data(), sig.data(), batch_size, dimension, length, degree, time_aug, lead_lag, 1., true, n_jobs, nullptr, (uint64_t)0);
 
     std::cout << "done\n";
 }
@@ -232,7 +232,7 @@ void example_batch_sig_backprop_cuda_d(
     cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(double) * batch_size * sig_len, cudaMemcpyHostToDevice);
     cudaMemcpy(d_sig, sig.data(), sizeof(double) * batch_size * sig_len, cudaMemcpyHostToDevice);
 
-    time_function(num_runs, sig_backprop_cuda_d, d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, 1.);
+    time_function(num_runs, sig_backprop_cuda_d, d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, 1., true, nullptr, (uint64_t)0);
 
     cudaFree(d_path);
     cudaFree(d_out);
@@ -821,7 +821,52 @@ void example_batch_branched_sig_d(
     std::vector<double> path = test_data<double>(batch_size * dimension * length);
     std::vector<double> out(out_size, 0.);
 
-    time_function(num_runs, branched_sig_d, path.data(), out.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1., false);
+    time_function(num_runs, branched_sig_d, path.data(), out.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1., false, true, nullptr, 0);
+
+    std::cout << "done\n";
+}
+
+void example_batch_branched_log_sig_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t max_nodes,
+    int n_jobs
+) {
+    print_header("Batch Branched Log Signature Double");
+
+    bool planar = false;
+    bool scalar_term = true;
+    prepare_branched_sig(dimension, max_nodes, false, planar);
+
+    uint64_t bsig_len = branched_sig_length(dimension, max_nodes, planar);
+    uint64_t total = batch_size * bsig_len;
+
+    std::vector<double> path = test_data<double>(batch_size * dimension * length);
+    std::vector<double> bsig(total, 0.);
+    std::vector<double> cpu_out(total, 0.);
+    std::vector<double> cuda_out(total, 0.);
+
+    branched_sig_d(path.data(), bsig.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1., planar, scalar_term, nullptr, 0);
+    branched_sig_to_log_sig_d(bsig.data(), cpu_out.data(), batch_size, dimension, max_nodes, n_jobs, planar, scalar_term);
+
+    double* d_bsig;
+    double* d_out;
+    cudaMalloc(&d_bsig, sizeof(double) * total);
+    cudaMalloc(&d_out, sizeof(double) * total);
+    cudaMemcpy(d_bsig, bsig.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+
+    branched_sig_to_log_sig_cuda_d(d_bsig, d_out, batch_size, dimension, max_nodes, planar, scalar_term);
+    cudaMemcpy(cuda_out.data(), d_out, sizeof(double) * total, cudaMemcpyDeviceToHost);
+
+    cudaFree(d_bsig);
+    cudaFree(d_out);
+
+    std::cout << "bsig length: " << bsig_len << "\n";
+    std::cout << "first CPU / CUDA entries:\n";
+    for (uint64_t i = 0; i < total && i < 8; ++i) {
+        std::cout << i << ": " << cpu_out[i] << " / " << cuda_out[i] << "\n";
+    }
 
     std::cout << "done\n";
 }
