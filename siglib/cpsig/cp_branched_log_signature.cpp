@@ -45,332 +45,548 @@ const BranchedLogForestCache& get_cached_branched_log_forest_cache(const Branche
 	auto [ins, _] = registry.try_emplace(key, std::move(fc));
 	return *(ins->second);
 }
-}  // namespace
 
-template<std::floating_point T>
-void branched_sig_to_log_sig_degree2_dim2_one_(
-	const T* bsig,
-	T* out,
-	bool scalar_term
-) {
-	const T* tail = scalar_term ? bsig + 1 : bsig;
-	T* out_tail = scalar_term ? out + 1 : out;
-	const T x0 = tail[0];
-	const T x1 = tail[1];
-	const T half = static_cast<T>(0.5);
-
-	if (scalar_term)
-		out[0] = static_cast<T>(0);
-	out_tail[0] = x0;
-	out_tail[1] = x1;
-	out_tail[2] = tail[2] - half * x0 * x0;
-	out_tail[3] = tail[3] - half * x0 * x1;
-	out_tail[4] = tail[4] - half * x1 * x0;
-	out_tail[5] = tail[5] - half * x1 * x1;
-}
-
-
-template<std::floating_point T>
-void branched_sig_to_log_sig_degree2_dim2_backprop_one_(
-	const T* bsig,
-	const T* derivs,
-	T* out,
-	bool scalar_term
-) {
-	const T* tail = scalar_term ? bsig + 1 : bsig;
-	const T* deriv_tail = scalar_term ? derivs + 1 : derivs;
-	T* out_tail = scalar_term ? out + 1 : out;
-	const T x0 = tail[0];
-	const T x1 = tail[1];
-	const T d00 = deriv_tail[2];
-	const T d01 = deriv_tail[3];
-	const T d10 = deriv_tail[4];
-	const T d11 = deriv_tail[5];
-	const T neg_half = static_cast<T>(-0.5);
-
-	if (scalar_term)
-		out[0] = static_cast<T>(0);
-	out_tail[0] = deriv_tail[0] - d00 * x0 + neg_half * (d01 + d10) * x1;
-	out_tail[1] = deriv_tail[1] + neg_half * (d01 + d10) * x0 - d11 * x1;
-	out_tail[2] = d00;
-	out_tail[3] = d01;
-	out_tail[4] = d10;
-	out_tail[5] = d11;
-}
-
-
-template<std::floating_point T>
-void branched_sig_to_log_sig_degree2_one_(
-	const T* bsig,
-	T* out,
-	uint64_t dimension,
-	bool scalar_term
-) {
-	if (dimension == 2) {
-		branched_sig_to_log_sig_degree2_dim2_one_(bsig, out, scalar_term);
-		return;
+template<std::floating_point T, bool ScalarTerm>
+FORCE_INLINE T sig_tree_value_(const T* bsig, uint64_t flat_idx) {
+	if constexpr (ScalarTerm) {
+		return bsig[flat_idx];
+	} else {
+		return bsig[flat_idx - 1];
 	}
-	const T* tail = scalar_term ? bsig + 1 : bsig;
-	T* out_tail = scalar_term ? out + 1 : out;
-	if (scalar_term)
-		out[0] = static_cast<T>(0);
+}
 
-	for (uint64_t i = 0; i < dimension; ++i)
-		out_tail[i] = tail[i];
 
-	const T* level1 = tail;
-	const T* level2 = tail + dimension;
-	T* out_level2 = out_tail + dimension;
-	const T half = static_cast<T>(0.5);
+template<bool ScalarTerm>
+FORCE_INLINE uint64_t log_output_idx_(uint64_t flat_idx) {
+	if constexpr (ScalarTerm) {
+		return flat_idx;
+	} else {
+		return flat_idx - 1;
+	}
+}
 
-	for (uint64_t root = 0; root < dimension; ++root) {
-		for (uint64_t child = 0; child < dimension; ++child) {
-			uint64_t idx = root * dimension + child;
-			out_level2[idx] = level2[idx] - half * level1[root] * level1[child];
+
+struct BranchedLogPolyTermBuild_ {
+	double coeff;
+	std::vector<uint64_t> factors;
+};
+
+
+struct BranchedLogConstTerm_ {
+	uint64_t out;
+	double coeff;
+};
+
+
+struct BranchedLogTerm1_ {
+	uint64_t out;
+	uint64_t f0;
+	double coeff;
+};
+
+
+struct BranchedLogTerm2_ {
+	uint64_t out;
+	uint64_t f0;
+	uint64_t f1;
+	double coeff;
+};
+
+
+struct BranchedLogTerm3_ {
+	uint64_t out;
+	uint64_t f0;
+	uint64_t f1;
+	uint64_t f2;
+	double coeff;
+};
+
+
+struct BranchedLogTerm4_ {
+	uint64_t out;
+	uint64_t f0;
+	uint64_t f1;
+	uint64_t f2;
+	uint64_t f3;
+	double coeff;
+};
+
+
+struct BranchedLogTermN_ {
+	uint64_t out;
+	uint64_t factor_start;
+	uint64_t factor_count;
+	double coeff;
+};
+
+
+struct BranchedLogPolyCache_ {
+	std::vector<BranchedLogConstTerm_> const_terms;
+	std::vector<BranchedLogTerm1_> terms1;
+	std::vector<BranchedLogTerm2_> terms2;
+	std::vector<BranchedLogTerm3_> terms3;
+	std::vector<BranchedLogTerm4_> terms4;
+	std::vector<BranchedLogTermN_> terms_n;
+	std::vector<uint64_t> factors;
+};
+
+
+using BranchedLogPolyBuild_ = std::vector<BranchedLogPolyTermBuild_>;
+using BranchedLogPolyMap_ = std::map<std::vector<uint64_t>, double>;
+
+
+void add_branched_log_poly_term_(
+	BranchedLogPolyMap_& terms,
+	double coeff,
+	std::vector<uint64_t> factors
+) {
+	if (coeff == 0.0)
+		return;
+	std::sort(factors.begin(), factors.end());
+	terms[std::move(factors)] += coeff;
+}
+
+
+BranchedLogPolyBuild_ flatten_branched_log_poly_(BranchedLogPolyMap_&& terms) {
+	BranchedLogPolyBuild_ out;
+	out.reserve(terms.size());
+	for (auto& [factors, coeff] : terms) {
+		if (coeff != 0.0)
+			out.push_back({ coeff, std::move(factors) });
+	}
+	return out;
+}
+
+
+void multiply_branched_log_poly_into_(
+	const BranchedLogPolyBuild_& lhs,
+	const BranchedLogPolyBuild_& rhs,
+	BranchedLogPolyMap_& out
+) {
+	for (const auto& lterm : lhs) {
+		for (const auto& rterm : rhs) {
+			std::vector<uint64_t> factors;
+			factors.reserve(lterm.factors.size() + rterm.factors.size());
+			factors.insert(factors.end(), lterm.factors.begin(), lterm.factors.end());
+			factors.insert(factors.end(), rterm.factors.begin(), rterm.factors.end());
+			add_branched_log_poly_term_(out, lterm.coeff * rterm.coeff, std::move(factors));
 		}
 	}
 }
 
 
-template<std::floating_point T>
-void branched_sig_to_log_sig_degree2_backprop_one_(
-	const T* bsig,
-	const T* derivs,
-	T* out,
-	uint64_t dimension,
-	bool scalar_term
-) {
-	if (dimension == 2) {
-		branched_sig_to_log_sig_degree2_dim2_backprop_one_(bsig, derivs, out, scalar_term);
-		return;
-	}
-	const T* tail = scalar_term ? bsig + 1 : bsig;
-	const T* deriv_tail = scalar_term ? derivs + 1 : derivs;
-	T* out_tail = scalar_term ? out + 1 : out;
-	if (scalar_term)
-		out[0] = static_cast<T>(0);
-
-	for (uint64_t i = 0; i < dimension; ++i)
-		out_tail[i] = deriv_tail[i];
-
-	const T* level1 = tail;
-	const T* deriv_level2 = deriv_tail + dimension;
-	T* out_level2 = out_tail + dimension;
-	const T neg_half = static_cast<T>(-0.5);
-
-	for (uint64_t root = 0; root < dimension; ++root) {
-		for (uint64_t child = 0; child < dimension; ++child) {
-			uint64_t idx = root * dimension + child;
-			T d = deriv_level2[idx];
-			out_level2[idx] = d;
-			out_tail[root] += neg_half * d * level1[child];
-			out_tail[child] += neg_half * d * level1[root];
-		}
-	}
-}
-
-
-template<std::floating_point T>
-void build_h_forest_(
-	const T* h,
-	std::vector<T>& h_forest,
+BranchedLogPolyCache_ build_branched_log_poly_cache_(
+	const BranchedSigCache& cache,
 	const BranchedLogForestCache& forest_cache
 ) {
-	std::fill(h_forest.begin(), h_forest.end(), static_cast<T>(0));
-	const uint64_t num_forests = h_forest.size();
+	const uint64_t total_len = cache.total_length;
+	const uint64_t num_forests = forest_cache.forest_offsets.size() - 1;
+
+	std::vector<BranchedLogPolyBuild_> h_poly(num_forests);
 	for (uint64_t forest_idx = 1; forest_idx < num_forests; ++forest_idx) {
-		T val = static_cast<T>(1);
 		const uint64_t start = forest_cache.forest_offsets[forest_idx];
 		const uint64_t end = forest_cache.forest_offsets[forest_idx + 1];
-		for (uint64_t pos = start; pos < end; ++pos)
-			val *= h[forest_cache.forest_trees[pos]];
-		h_forest[forest_idx] = val;
+		std::vector<uint64_t> factors(
+			forest_cache.forest_trees.begin() + start,
+			forest_cache.forest_trees.begin() + end);
+		std::sort(factors.begin(), factors.end());
+		h_poly[forest_idx].push_back({ 1.0, std::move(factors) });
+	}
+
+	std::vector<std::vector<BranchedLogPolyBuild_>> powers(
+		cache.max_nodes + 1,
+		std::vector<BranchedLogPolyBuild_>(num_forests));
+	if (cache.max_nodes >= 1)
+		powers[1] = h_poly;
+
+	for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
+		for (uint64_t forest_idx = 0; forest_idx < num_forests; ++forest_idx) {
+			BranchedLogPolyMap_ terms;
+			const uint64_t start = forest_cache.forest_coprod_offsets[forest_idx];
+			const uint64_t end = forest_cache.forest_coprod_offsets[forest_idx + 1];
+			for (uint64_t pos = start; pos < end; pos += 2) {
+				const uint64_t left = forest_cache.forest_coprod_data[pos];
+				const uint64_t right = forest_cache.forest_coprod_data[pos + 1];
+				multiply_branched_log_poly_into_(powers[k - 1][left], h_poly[right], terms);
+			}
+			powers[k][forest_idx] = flatten_branched_log_poly_(std::move(terms));
+		}
+	}
+
+	BranchedLogPolyCache_ out;
+	for (uint64_t flat_idx = 1; flat_idx < total_len; ++flat_idx) {
+		BranchedLogPolyMap_ terms;
+		const uint64_t forest_idx = forest_cache.single_tree_forest[flat_idx];
+		for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
+			const double coeff = (k % 2 == 0) ? -1.0 / static_cast<double>(k) : 1.0 / static_cast<double>(k);
+			for (const auto& term : powers[k][forest_idx])
+				add_branched_log_poly_term_(terms, coeff * term.coeff, term.factors);
+		}
+		const BranchedLogPolyBuild_ flat_terms = flatten_branched_log_poly_(std::move(terms));
+		for (const auto& term : flat_terms) {
+			switch (term.factors.size()) {
+			case 0:
+				out.const_terms.push_back({ flat_idx, term.coeff });
+				break;
+			case 1:
+				out.terms1.push_back({ flat_idx, term.factors[0], term.coeff });
+				break;
+			case 2:
+				out.terms2.push_back({ flat_idx, term.factors[0], term.factors[1], term.coeff });
+				break;
+			case 3:
+				out.terms3.push_back({ flat_idx, term.factors[0], term.factors[1], term.factors[2], term.coeff });
+				break;
+			case 4:
+				out.terms4.push_back({ flat_idx, term.factors[0], term.factors[1], term.factors[2], term.factors[3], term.coeff });
+				break;
+			default: {
+				const uint64_t factor_start = out.factors.size();
+				out.factors.insert(out.factors.end(), term.factors.begin(), term.factors.end());
+				out.terms_n.push_back({ flat_idx, factor_start, term.factors.size(), term.coeff });
+				break;
+			}
+			}
+		}
+	}
+	return out;
+}
+
+
+const BranchedLogPolyCache_& get_cached_branched_log_poly_cache_(
+	const BranchedSigCache& cache,
+	const BranchedLogForestCache& forest_cache
+) {
+	static std::unordered_map<
+		std::pair<uint64_t, uint64_t>,
+		std::unique_ptr<BranchedLogPolyCache_>,
+		PairHash
+	> registry;
+	static std::shared_mutex mu;
+
+	const std::pair<uint64_t, uint64_t> key{
+		cache.dimension,
+		cache.max_nodes | (static_cast<uint64_t>(cache.planar) << 63)
+	};
+	{
+		std::shared_lock rlock(mu);
+		auto it = registry.find(key);
+		if (it != registry.end())
+			return *(it->second);
+	}
+	auto pc = std::make_unique<BranchedLogPolyCache_>(
+		build_branched_log_poly_cache_(cache, forest_cache));
+	std::unique_lock wlock(mu);
+	auto [ins, _] = registry.try_emplace(key, std::move(pc));
+	return *(ins->second);
+}
+
+
+template<std::floating_point T, bool ScalarTerm>
+void branched_sig_to_log_sig_poly_range_(
+	const T* bsig,
+	T* out,
+	uint64_t start,
+	uint64_t end,
+	uint64_t stride,
+	const BranchedLogPolyCache_& poly_cache
+) {
+	if (start == end)
+		return;
+	if (stride == 0)
+		return;
+
+	const uint64_t row_count = end - start;
+	const T* bsig_start = bsig + start * stride;
+	T* out_start = out + start * stride;
+	std::memcpy(out_start, bsig_start, row_count * stride * sizeof(T));
+	if constexpr (ScalarTerm) {
+		for (uint64_t row = 0; row < row_count; ++row)
+			out_start[row * stride] = static_cast<T>(0);
+	}
+
+	for (const auto& term : poly_cache.const_terms) {
+		T* out_i = out_start;
+		const uint64_t out_idx = log_output_idx_<ScalarTerm>(term.out);
+		const T coeff = static_cast<T>(term.coeff);
+		for (uint64_t row = 0; row < row_count; ++row, out_i += stride)
+			out_i[out_idx] += coeff;
+	}
+	for (const auto& term : poly_cache.terms1) {
+		const T* bsig_i = bsig_start;
+		T* out_i = out_start;
+		const uint64_t out_idx = log_output_idx_<ScalarTerm>(term.out);
+		const T coeff = static_cast<T>(term.coeff);
+		for (uint64_t row = 0; row < row_count; ++row, bsig_i += stride, out_i += stride) {
+			out_i[out_idx] += coeff
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f0);
+		}
+	}
+	for (const auto& term : poly_cache.terms2) {
+		const T* bsig_i = bsig_start;
+		T* out_i = out_start;
+		const uint64_t out_idx = log_output_idx_<ScalarTerm>(term.out);
+		const T coeff = static_cast<T>(term.coeff);
+		uint64_t row = 0;
+		for (; row + 4 <= row_count; row += 4, bsig_i += 4 * stride, out_i += 4 * stride) {
+			out_i[out_idx] += coeff
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f0)
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f1);
+			out_i[stride + out_idx] += coeff
+				* sig_tree_value_<T, ScalarTerm>(bsig_i + stride, term.f0)
+				* sig_tree_value_<T, ScalarTerm>(bsig_i + stride, term.f1);
+			out_i[2 * stride + out_idx] += coeff
+				* sig_tree_value_<T, ScalarTerm>(bsig_i + 2 * stride, term.f0)
+				* sig_tree_value_<T, ScalarTerm>(bsig_i + 2 * stride, term.f1);
+			out_i[3 * stride + out_idx] += coeff
+				* sig_tree_value_<T, ScalarTerm>(bsig_i + 3 * stride, term.f0)
+				* sig_tree_value_<T, ScalarTerm>(bsig_i + 3 * stride, term.f1);
+		}
+		for (; row < row_count; ++row, bsig_i += stride, out_i += stride) {
+			out_i[out_idx] += coeff
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f0)
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f1);
+		}
+	}
+	for (const auto& term : poly_cache.terms3) {
+		const T* bsig_i = bsig_start;
+		T* out_i = out_start;
+		const uint64_t out_idx = log_output_idx_<ScalarTerm>(term.out);
+		const T coeff = static_cast<T>(term.coeff);
+		for (uint64_t row = 0; row < row_count; ++row, bsig_i += stride, out_i += stride) {
+			out_i[out_idx] += coeff
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f0)
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f1)
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f2);
+		}
+	}
+	for (const auto& term : poly_cache.terms4) {
+		const T* bsig_i = bsig_start;
+		T* out_i = out_start;
+		const uint64_t out_idx = log_output_idx_<ScalarTerm>(term.out);
+		const T coeff = static_cast<T>(term.coeff);
+		for (uint64_t row = 0; row < row_count; ++row, bsig_i += stride, out_i += stride) {
+			out_i[out_idx] += coeff
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f0)
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f1)
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f2)
+				* sig_tree_value_<T, ScalarTerm>(bsig_i, term.f3);
+		}
+	}
+	for (const auto& term : poly_cache.terms_n) {
+		const T* bsig_i = bsig_start;
+		T* out_i = out_start;
+		const uint64_t out_idx = log_output_idx_<ScalarTerm>(term.out);
+		const T coeff = static_cast<T>(term.coeff);
+		for (uint64_t row = 0; row < row_count; ++row, bsig_i += stride, out_i += stride) {
+			T val = coeff;
+			for (uint64_t pos = 0; pos < term.factor_count; ++pos)
+				val *= sig_tree_value_<T, ScalarTerm>(bsig_i, poly_cache.factors[term.factor_start + pos]);
+			out_i[out_idx] += val;
+		}
 	}
 }
 
 
-template<std::floating_point T>
-void build_forest_powers_(
-	const std::vector<T>& h_forest,
-	std::vector<T>& powers,
+template<std::floating_point T, bool ScalarTerm>
+void branched_sig_to_log_sig_backprop_poly_range_(
+	const T* bsig,
+	const T* derivs,
+	T* out,
+	uint64_t start,
+	uint64_t end,
+	uint64_t stride,
+	const BranchedLogPolyCache_& poly_cache
+) {
+	if (start == end)
+		return;
+	if (stride == 0)
+		return;
+
+	const uint64_t row_count = end - start;
+	const T* bsig_start = bsig + start * stride;
+	const T* derivs_start = derivs + start * stride;
+	T* out_start = out + start * stride;
+	std::memcpy(out_start, derivs_start, row_count * stride * sizeof(T));
+	if constexpr (ScalarTerm) {
+		for (uint64_t row = 0; row < row_count; ++row)
+			out_start[row * stride] = static_cast<T>(0);
+	}
+
+	for (const auto& term : poly_cache.terms1) {
+		const T* derivs_i = derivs_start;
+		T* out_i = out_start;
+		const uint64_t deriv_idx = log_output_idx_<ScalarTerm>(term.out);
+		const uint64_t out0 = log_output_idx_<ScalarTerm>(term.f0);
+		const T coeff = static_cast<T>(term.coeff);
+		for (uint64_t row = 0; row < row_count; ++row, derivs_i += stride, out_i += stride) {
+			const T d = coeff * derivs_i[deriv_idx];
+			out_i[out0] += d;
+		}
+	}
+	for (const auto& term : poly_cache.terms2) {
+		const T* bsig_i = bsig_start;
+		const T* derivs_i = derivs_start;
+		T* out_i = out_start;
+		const uint64_t deriv_idx = log_output_idx_<ScalarTerm>(term.out);
+		const uint64_t out0 = log_output_idx_<ScalarTerm>(term.f0);
+		const uint64_t out1 = log_output_idx_<ScalarTerm>(term.f1);
+		const T coeff = static_cast<T>(term.coeff);
+		uint64_t row = 0;
+		for (; row + 4 <= row_count; row += 4, bsig_i += 4 * stride, derivs_i += 4 * stride, out_i += 4 * stride) {
+			const T d0 = coeff * derivs_i[deriv_idx];
+			const T v00 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f0);
+			const T v01 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f1);
+			out_i[out0] += d0 * v01;
+			out_i[out1] += d0 * v00;
+
+			const T* bsig1 = bsig_i + stride;
+			const T d1 = coeff * derivs_i[stride + deriv_idx];
+			const T v10 = sig_tree_value_<T, ScalarTerm>(bsig1, term.f0);
+			const T v11 = sig_tree_value_<T, ScalarTerm>(bsig1, term.f1);
+			out_i[stride + out0] += d1 * v11;
+			out_i[stride + out1] += d1 * v10;
+
+			const T* bsig2 = bsig_i + 2 * stride;
+			const T d2 = coeff * derivs_i[2 * stride + deriv_idx];
+			const T v20 = sig_tree_value_<T, ScalarTerm>(bsig2, term.f0);
+			const T v21 = sig_tree_value_<T, ScalarTerm>(bsig2, term.f1);
+			out_i[2 * stride + out0] += d2 * v21;
+			out_i[2 * stride + out1] += d2 * v20;
+
+			const T* bsig3 = bsig_i + 3 * stride;
+			const T d3 = coeff * derivs_i[3 * stride + deriv_idx];
+			const T v30 = sig_tree_value_<T, ScalarTerm>(bsig3, term.f0);
+			const T v31 = sig_tree_value_<T, ScalarTerm>(bsig3, term.f1);
+			out_i[3 * stride + out0] += d3 * v31;
+			out_i[3 * stride + out1] += d3 * v30;
+		}
+		for (; row < row_count; ++row, bsig_i += stride, derivs_i += stride, out_i += stride) {
+			const T d = coeff * derivs_i[deriv_idx];
+			const T v0 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f0);
+			const T v1 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f1);
+			out_i[out0] += d * v1;
+			out_i[out1] += d * v0;
+		}
+	}
+	for (const auto& term : poly_cache.terms3) {
+		const T* bsig_i = bsig_start;
+		const T* derivs_i = derivs_start;
+		T* out_i = out_start;
+		const uint64_t deriv_idx = log_output_idx_<ScalarTerm>(term.out);
+		const uint64_t out0 = log_output_idx_<ScalarTerm>(term.f0);
+		const uint64_t out1 = log_output_idx_<ScalarTerm>(term.f1);
+		const uint64_t out2 = log_output_idx_<ScalarTerm>(term.f2);
+		const T coeff = static_cast<T>(term.coeff);
+		for (uint64_t row = 0; row < row_count; ++row, bsig_i += stride, derivs_i += stride, out_i += stride) {
+			const T d = coeff * derivs_i[deriv_idx];
+			const T v0 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f0);
+			const T v1 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f1);
+			const T v2 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f2);
+			out_i[out0] += d * v1 * v2;
+			out_i[out1] += d * v0 * v2;
+			out_i[out2] += d * v0 * v1;
+		}
+	}
+	for (const auto& term : poly_cache.terms4) {
+		const T* bsig_i = bsig_start;
+		const T* derivs_i = derivs_start;
+		T* out_i = out_start;
+		const uint64_t deriv_idx = log_output_idx_<ScalarTerm>(term.out);
+		const uint64_t out0 = log_output_idx_<ScalarTerm>(term.f0);
+		const uint64_t out1 = log_output_idx_<ScalarTerm>(term.f1);
+		const uint64_t out2 = log_output_idx_<ScalarTerm>(term.f2);
+		const uint64_t out3 = log_output_idx_<ScalarTerm>(term.f3);
+		const T coeff = static_cast<T>(term.coeff);
+		for (uint64_t row = 0; row < row_count; ++row, bsig_i += stride, derivs_i += stride, out_i += stride) {
+			const T d = coeff * derivs_i[deriv_idx];
+			const T v0 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f0);
+			const T v1 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f1);
+			const T v2 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f2);
+			const T v3 = sig_tree_value_<T, ScalarTerm>(bsig_i, term.f3);
+			out_i[out0] += d * v1 * v2 * v3;
+			out_i[out1] += d * v0 * v2 * v3;
+			out_i[out2] += d * v0 * v1 * v3;
+			out_i[out3] += d * v0 * v1 * v2;
+		}
+	}
+	for (const auto& term : poly_cache.terms_n) {
+		const T* bsig_i = bsig_start;
+		const T* derivs_i = derivs_start;
+		T* out_i = out_start;
+		const uint64_t deriv_idx = log_output_idx_<ScalarTerm>(term.out);
+		const T coeff = static_cast<T>(term.coeff);
+		for (uint64_t row = 0; row < row_count; ++row, bsig_i += stride, derivs_i += stride, out_i += stride) {
+			const T d = coeff * derivs_i[deriv_idx];
+			for (uint64_t pos = 0; pos < term.factor_count; ++pos) {
+				T partial = d;
+				for (uint64_t other = 0; other < term.factor_count; ++other) {
+					if (other != pos)
+						partial *= sig_tree_value_<T, ScalarTerm>(bsig_i, poly_cache.factors[term.factor_start + other]);
+				}
+				out_i[log_output_idx_<ScalarTerm>(poly_cache.factors[term.factor_start + pos])] += partial;
+			}
+		}
+	}
+}
+
+
+template<std::floating_point T, bool ScalarTerm>
+void branched_sig_to_log_sig_(
+	const T* bsig,
+	T* out,
+	uint64_t batch_size,
+	uint64_t dimension,
 	uint64_t max_nodes,
-	const BranchedLogForestCache& forest_cache
+	int n_jobs,
+	bool planar
 ) {
-	const uint64_t num_forests = h_forest.size();
-	std::memcpy(powers.data() + num_forests, h_forest.data(), num_forests * sizeof(T));
-
-	for (uint64_t k = 2; k <= max_nodes; ++k) {
-		const T* prev = powers.data() + (k - 1) * num_forests;
-		T* next = powers.data() + k * num_forests;
-		for (uint64_t forest_idx = 0; forest_idx < num_forests; ++forest_idx) {
-			T val = static_cast<T>(0);
-			const uint64_t start = forest_cache.forest_coprod_offsets[forest_idx];
-			const uint64_t end = forest_cache.forest_coprod_offsets[forest_idx + 1];
-			for (uint64_t pos = start; pos < end; pos += 2) {
-				const uint64_t left = forest_cache.forest_coprod_data[pos];
-				const uint64_t right = forest_cache.forest_coprod_data[pos + 1];
-				val += prev[left] * h_forest[right];
-			}
-			next[forest_idx] = val;
-		}
-	}
-}
-
-
-template<std::floating_point T>
-void branched_sig_to_log_sig_one_(
-	const T* bsig,
-	T* out,
-	const BranchedSigCache& cache,
-	const BranchedLogForestCache& forest_cache,
-	bool scalar_term
-) {
+	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
-	if (cache.max_nodes == 0) {
-		if (scalar_term)
-			out[0] = static_cast<T>(0);
+	uint64_t stride = ScalarTerm ? total_len : total_len - 1;
+
+	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
+	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache, forest_cache);
+	auto work_range = [&](uint64_t start, uint64_t end) {
+		branched_sig_to_log_sig_poly_range_<T, ScalarTerm>(
+			bsig, out, start, end, stride, poly_cache);
+	};
+	if (batch_size == 0 || n_jobs == 1 || batch_size == 1) {
+		work_range(0, batch_size);
 		return;
 	}
-	if (cache.max_nodes == 2) {
-		branched_sig_to_log_sig_degree2_one_(bsig, out, cache.dimension, scalar_term);
-		return;
-	}
-	std::vector<T> h(total_len, static_cast<T>(0));
-
-	const T* tail = scalar_term ? bsig + 1 : bsig;
-	std::memcpy(h.data() + 1, tail, (total_len - 1) * sizeof(T));
-
-	std::vector<T> full_out(total_len, static_cast<T>(0));
-	const uint64_t num_forests = forest_cache.forest_offsets.size() - 1;
-	std::vector<T> h_forest(num_forests, static_cast<T>(0));
-	std::vector<T> powers((cache.max_nodes + 1) * num_forests, static_cast<T>(0));
-
-	build_h_forest_(h.data(), h_forest, forest_cache);
-	build_forest_powers_(h_forest, powers, cache.max_nodes, forest_cache);
-
-	for (uint64_t k = 1; k <= cache.max_nodes; ++k) {
-		T coeff = (k % 2 == 0)
-			? static_cast<T>(-1.) / static_cast<T>(k)
-			: static_cast<T>(1.) / static_cast<T>(k);
-		const T* power_k = powers.data() + k * num_forests;
-		for (uint64_t i = 1; i < total_len; ++i) {
-			const uint64_t forest_idx = forest_cache.single_tree_forest[i];
-			full_out[i] += coeff * power_k[forest_idx];
-		}
-	}
-
-	full_out[0] = static_cast<T>(0);
-	if (scalar_term) {
-		std::memcpy(out, full_out.data(), total_len * sizeof(T));
-	} else {
-		std::memcpy(out, full_out.data() + 1, (total_len - 1) * sizeof(T));
-	}
+	spawn_batch_threads(batch_size, n_jobs, work_range);
 }
 
 
-template<std::floating_point T>
-void branched_sig_to_log_sig_backprop_one_(
+template<std::floating_point T, bool ScalarTerm>
+void branched_sig_to_log_sig_backprop_(
 	const T* bsig,
 	const T* derivs,
 	T* out,
-	const BranchedSigCache& cache,
-	const BranchedLogForestCache& forest_cache,
-	bool scalar_term
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t max_nodes,
+	int n_jobs,
+	bool planar
 ) {
+	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
-	if (cache.max_nodes == 0) {
-		if (scalar_term)
-			out[0] = static_cast<T>(0);
+	uint64_t stride = ScalarTerm ? total_len : total_len - 1;
+
+	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
+	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache, forest_cache);
+	auto work_range = [&](uint64_t start, uint64_t end) {
+		branched_sig_to_log_sig_backprop_poly_range_<T, ScalarTerm>(
+			bsig, derivs, out, start, end, stride, poly_cache);
+	};
+	if (batch_size == 0 || n_jobs == 1 || batch_size == 1) {
+		work_range(0, batch_size);
 		return;
 	}
-	if (cache.max_nodes == 2) {
-		branched_sig_to_log_sig_degree2_backprop_one_(bsig, derivs, out, cache.dimension, scalar_term);
-		return;
-	}
-	std::vector<T> h(total_len, static_cast<T>(0));
-	std::vector<T> d_h_tree(total_len, static_cast<T>(0));
-	std::vector<T> full_derivs(total_len, static_cast<T>(0));
-
-	const T* tail = scalar_term ? bsig + 1 : bsig;
-	std::memcpy(h.data() + 1, tail, (total_len - 1) * sizeof(T));
-
-	const uint64_t num_forests = forest_cache.forest_offsets.size() - 1;
-	std::vector<T> h_forest(num_forests, static_cast<T>(0));
-	std::vector<T> powers((cache.max_nodes + 1) * num_forests, static_cast<T>(0));
-	std::vector<T> d_h_forest(num_forests, static_cast<T>(0));
-	std::vector<T> d_powers((cache.max_nodes + 1) * num_forests, static_cast<T>(0));
-
-	build_h_forest_(h.data(), h_forest, forest_cache);
-	build_forest_powers_(h_forest, powers, cache.max_nodes, forest_cache);
-
-	if (scalar_term) {
-		std::memcpy(full_derivs.data(), derivs, total_len * sizeof(T));
-	} else {
-		std::memcpy(full_derivs.data() + 1, derivs, (total_len - 1) * sizeof(T));
-	}
-	full_derivs[0] = static_cast<T>(0);
-
-	for (uint64_t k = 1; k <= cache.max_nodes; ++k) {
-		T coeff;
-		if (k == 1) {
-			coeff = static_cast<T>(1);
-		} else {
-			coeff = (k % 2 == 0)
-				? static_cast<T>(-1.) / static_cast<T>(k)
-				: static_cast<T>(1.) / static_cast<T>(k);
-		}
-		T* d_power_k = d_powers.data() + k * num_forests;
-		for (uint64_t i = 1; i < total_len; ++i) {
-			const uint64_t forest_idx = forest_cache.single_tree_forest[i];
-			d_power_k[forest_idx] += coeff * full_derivs[i];
-		}
-	}
-
-	for (uint64_t k = cache.max_nodes; k >= 2; --k) {
-		const T* prev = powers.data() + (k - 1) * num_forests;
-		T* d_prev = d_powers.data() + (k - 1) * num_forests;
-		T* d_cur = d_powers.data() + k * num_forests;
-		for (uint64_t forest_idx = 0; forest_idx < num_forests; ++forest_idx) {
-			const T d = d_cur[forest_idx];
-			if (d == static_cast<T>(0))
-				continue;
-			const uint64_t start = forest_cache.forest_coprod_offsets[forest_idx];
-			const uint64_t end = forest_cache.forest_coprod_offsets[forest_idx + 1];
-			for (uint64_t pos = start; pos < end; pos += 2) {
-				const uint64_t left = forest_cache.forest_coprod_data[pos];
-				const uint64_t right = forest_cache.forest_coprod_data[pos + 1];
-				d_prev[left] += d * h_forest[right];
-				d_h_forest[right] += d * prev[left];
-			}
-		}
-	}
-	const T* d_power_1 = d_powers.data() + num_forests;
-	for (uint64_t forest_idx = 1; forest_idx < num_forests; ++forest_idx)
-		d_h_forest[forest_idx] += d_power_1[forest_idx];
-
-	for (uint64_t forest_idx = 1; forest_idx < num_forests; ++forest_idx) {
-		const T d = d_h_forest[forest_idx];
-		if (d == static_cast<T>(0))
-			continue;
-		const uint64_t start = forest_cache.forest_offsets[forest_idx];
-		const uint64_t end = forest_cache.forest_offsets[forest_idx + 1];
-		for (uint64_t pos = start; pos < end; ++pos) {
-			T partial = d;
-			for (uint64_t other = start; other < end; ++other) {
-				if (other != pos)
-					partial *= h[forest_cache.forest_trees[other]];
-			}
-			d_h_tree[forest_cache.forest_trees[pos]] += partial;
-		}
-	}
-	d_h_tree[0] = static_cast<T>(0);
-
-	if (scalar_term) {
-		std::memcpy(out, d_h_tree.data(), total_len * sizeof(T));
-	} else {
-		std::memcpy(out, d_h_tree.data() + 1, (total_len - 1) * sizeof(T));
-	}
+	spawn_batch_threads(batch_size, n_jobs, work_range);
 }
+}  // namespace
 
 
 template<std::floating_point T>
@@ -384,39 +600,11 @@ void branched_sig_to_log_sig_(
 	bool planar,
 	bool scalar_term
 ) {
-	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
-	uint64_t total_len = cache.total_length;
-	uint64_t stride = scalar_term ? total_len : total_len - 1;
-
-	if (max_nodes == 2) {
-		auto batch_work = [&](const T* bsig_i, T* out_i) {
-			branched_sig_to_log_sig_degree2_one_(bsig_i, out_i, dimension, scalar_term);
-		};
-
-		uint64_t work_items = batch_size * dimension * dimension;
-		int effective_n_jobs = n_jobs;
-		if (n_jobs == 1 || work_items <= 1000000) {
-			effective_n_jobs = 1;
-		}
-		else if (n_jobs < 0 && (dimension <= 2 || (dimension <= 16 && sizeof(T) == sizeof(float)))) {
-			const int resolved_threads = static_cast<int>(get_max_threads()) + 1 + n_jobs;
-			if (resolved_threads < 1)
-				throw std::invalid_argument("n_jobs too low");
-			const unsigned int cap = dimension <= 2 ? 4U : 16U;
-			effective_n_jobs = static_cast<int>(std::min<unsigned int>(resolved_threads, cap));
-		}
-
-		multi_threaded_batch(batch_work, batch_size, effective_n_jobs,
-			make_batch(bsig, stride), make_batch(out, stride));
-		return;
+	if (scalar_term) {
+		branched_sig_to_log_sig_<T, true>(bsig, out, batch_size, dimension, max_nodes, n_jobs, planar);
+	} else {
+		branched_sig_to_log_sig_<T, false>(bsig, out, batch_size, dimension, max_nodes, n_jobs, planar);
 	}
-
-	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
-	auto batch_work = [&](const T* bsig_i, T* out_i) {
-		branched_sig_to_log_sig_one_(bsig_i, out_i, cache, forest_cache, scalar_term);
-	};
-	multi_threaded_batch(batch_work, batch_size, n_jobs,
-		make_batch(bsig, stride), make_batch(out, stride));
 }
 
 
@@ -432,39 +620,11 @@ void branched_sig_to_log_sig_backprop_(
 	bool planar,
 	bool scalar_term
 ) {
-	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
-	uint64_t total_len = cache.total_length;
-	uint64_t stride = scalar_term ? total_len : total_len - 1;
-
-	if (max_nodes == 2) {
-		auto batch_work = [&](const T* bsig_i, const T* derivs_i, T* out_i) {
-			branched_sig_to_log_sig_degree2_backprop_one_(bsig_i, derivs_i, out_i, dimension, scalar_term);
-		};
-
-		uint64_t work_items = batch_size * dimension * dimension;
-		int effective_n_jobs = n_jobs;
-		if (n_jobs == 1 || work_items <= 1000000) {
-			effective_n_jobs = 1;
-		}
-		else if (n_jobs < 0 && (dimension <= 2 || (dimension <= 16 && sizeof(T) == sizeof(float)))) {
-			const int resolved_threads = static_cast<int>(get_max_threads()) + 1 + n_jobs;
-			if (resolved_threads < 1)
-				throw std::invalid_argument("n_jobs too low");
-			const unsigned int cap = dimension <= 2 ? 4U : 16U;
-			effective_n_jobs = static_cast<int>(std::min<unsigned int>(resolved_threads, cap));
-		}
-
-		multi_threaded_batch(batch_work, batch_size, effective_n_jobs,
-			make_batch(bsig, stride), make_batch(derivs, stride), make_batch(out, stride));
-		return;
+	if (scalar_term) {
+		branched_sig_to_log_sig_backprop_<T, true>(bsig, derivs, out, batch_size, dimension, max_nodes, n_jobs, planar);
+	} else {
+		branched_sig_to_log_sig_backprop_<T, false>(bsig, derivs, out, batch_size, dimension, max_nodes, n_jobs, planar);
 	}
-
-	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
-	auto batch_work = [&](const T* bsig_i, const T* derivs_i, T* out_i) {
-		branched_sig_to_log_sig_backprop_one_(bsig_i, derivs_i, out_i, cache, forest_cache, scalar_term);
-	};
-	multi_threaded_batch(batch_work, batch_size, n_jobs,
-		make_batch(bsig, stride), make_batch(derivs, stride), make_batch(out, stride));
 }
 
 
