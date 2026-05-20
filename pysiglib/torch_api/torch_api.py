@@ -62,7 +62,7 @@ class Sig(torch.autograd.Function):
         sig_ = sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
                            end_time=end_time, horner=horner, correction=correction, n_jobs=n_jobs)
 
-        saved_correction = path.new_empty((0,)) if correction is None else correction
+        saved_correction = path.new_empty((0,)) if correction is None else correction.detach().clone()
         ctx.save_for_backward(path, sig_, saved_correction)
         ctx.degree = degree
         ctx.scalar_term = scalar_term

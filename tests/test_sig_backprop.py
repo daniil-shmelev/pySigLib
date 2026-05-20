@@ -251,3 +251,27 @@ def test_torch_sig_correction_autograd_matches_manual_backprop(device):
         X.detach(), expected_sig.detach(), weights, 3, correction=correction)
 
     check_close(X.grad, expected)
+
+
+def test_torch_sig_correction_backward_uses_forward_values():
+    X = torch.tensor(
+        [[0.2, 0.1], [0.5, -0.2], [0.3, 0.4]],
+        dtype=torch.float64,
+        requires_grad=True,
+    )
+    correction = torch.tensor([0.1, 0.0, -0.2, 0.3], dtype=torch.float64)
+    expected_correction = correction.detach().clone()
+
+    import pysiglib.torch_api as torch_api
+
+    sig = torch_api.sig(X, 3, scalar_term=True, correction=correction)
+    loss = sig.sum()
+    expected_sig = pysiglib.sig(X.detach(), 3, scalar_term=True, correction=expected_correction)
+    expected = pysiglib.sig_backprop(
+        X.detach(), expected_sig.detach(), torch.ones_like(expected_sig), 3,
+        correction=expected_correction)
+
+    correction.add_(10.0)
+    loss.backward()
+
+    check_close(X.grad, expected)

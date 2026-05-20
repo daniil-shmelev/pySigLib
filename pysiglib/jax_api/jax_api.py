@@ -169,7 +169,7 @@ def _validate_shape(path) -> None:
 
 def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
     if correction is None:
-        return jnp.empty((0,), dtype=path.dtype)
+        return jnp.ravel(path)[:0]
 
     correction = jnp.asarray(correction)
     if correction.ndim != 1:
