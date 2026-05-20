@@ -17,93 +17,35 @@
 #include "cpsig.h"
 #include "cp_branched_log_signature.h"
 #include "cp_branched_cache.h"
+#include "../shared/branched_log_cache.h"
 #include "multithreading.h"
 #include "macros.h"
 
-template<std::floating_point T>
-void butcher_product_general_(
-	const T* X,
-	const T* Y,
-	T* out,
-	const BranchedSigCache& cache
-) {
-	out[0] = X[0] * Y[0];
-	uint64_t num_trees = cache.total_length - 1;
+namespace {
+const BranchedLogForestCache& get_cached_branched_log_forest_cache(const BranchedSigCache& cache) {
+	static std::unordered_map<
+		std::pair<uint64_t, uint64_t>,
+		std::unique_ptr<BranchedLogForestCache>,
+		PairHash
+	> registry;
+	static std::shared_mutex mu;
 
-	for (uint64_t tree_idx = 0; tree_idx < num_trees; ++tree_idx) {
-		uint64_t flat_idx = tree_idx + 1;
-		T val = X[flat_idx] * Y[0] + X[0] * Y[flat_idx];
-
-		uint64_t pos = cache.coproduct_offsets[tree_idx];
-		uint64_t pos_end = cache.coproduct_offsets[tree_idx + 1];
-
-		while (pos < pos_end) {
-			uint64_t num_forest = cache.coproduct_data[pos++];
-			uint64_t trunk_flat = cache.coproduct_data[pos++];
-			T term = Y[trunk_flat];
-
-			for (uint64_t j = 0; j < num_forest; ++j) {
-				term *= X[cache.coproduct_data[pos++]];
-			}
-
-			val += term;
-		}
-
-		out[flat_idx] = val;
+	const std::pair<uint64_t, uint64_t> key{
+		cache.dimension,
+		cache.max_nodes | (static_cast<uint64_t>(cache.planar) << 63)
+	};
+	{
+		std::shared_lock rlock(mu);
+		auto it = registry.find(key);
+		if (it != registry.end())
+			return *(it->second);
 	}
+	auto fc = std::make_unique<BranchedLogForestCache>(build_branched_log_forest_cache(cache));
+	std::unique_lock wlock(mu);
+	auto [ins, _] = registry.try_emplace(key, std::move(fc));
+	return *(ins->second);
 }
-
-
-template<std::floating_point T>
-void butcher_product_general_deriv_(
-	const T* X,
-	const T* Y,
-	const T* d_out,
-	T* d_X,
-	T* d_Y,
-	const BranchedSigCache& cache
-) {
-	d_X[0] += d_out[0] * Y[0];
-	d_Y[0] += d_out[0] * X[0];
-
-	uint64_t num_trees = cache.total_length - 1;
-	for (uint64_t tree_idx = 0; tree_idx < num_trees; ++tree_idx) {
-		uint64_t flat_idx = tree_idx + 1;
-		T d = d_out[flat_idx];
-		if (d == static_cast<T>(0)) continue;
-
-		d_X[flat_idx] += d * Y[0];
-		d_Y[0] += d * X[flat_idx];
-		d_X[0] += d * Y[flat_idx];
-		d_Y[flat_idx] += d * X[0];
-
-		uint64_t pos = cache.coproduct_offsets[tree_idx];
-		uint64_t pos_end = cache.coproduct_offsets[tree_idx + 1];
-
-		while (pos < pos_end) {
-			uint64_t num_forest = cache.coproduct_data[pos++];
-			uint64_t trunk_flat = cache.coproduct_data[pos++];
-			uint64_t forest_start = pos;
-			T forest_product = static_cast<T>(1);
-
-			for (uint64_t j = 0; j < num_forest; ++j) {
-				forest_product *= X[cache.coproduct_data[pos++]];
-			}
-
-			d_Y[trunk_flat] += d * forest_product;
-			for (uint64_t k = 0; k < num_forest; ++k) {
-				uint64_t fk_flat = cache.coproduct_data[forest_start + k];
-				T partial = d * Y[trunk_flat];
-				for (uint64_t j = 0; j < num_forest; ++j) {
-					if (j != k)
-						partial *= X[cache.coproduct_data[forest_start + j]];
-				}
-				d_X[fk_flat] += partial;
-			}
-		}
-	}
-}
-
+}  // namespace
 
 template<std::floating_point T>
 void branched_sig_to_log_sig_degree2_dim2_one_(
@@ -229,10 +171,58 @@ void branched_sig_to_log_sig_degree2_backprop_one_(
 
 
 template<std::floating_point T>
+void build_h_forest_(
+	const T* h,
+	std::vector<T>& h_forest,
+	const BranchedLogForestCache& forest_cache
+) {
+	std::fill(h_forest.begin(), h_forest.end(), static_cast<T>(0));
+	const uint64_t num_forests = h_forest.size();
+	for (uint64_t forest_idx = 1; forest_idx < num_forests; ++forest_idx) {
+		T val = static_cast<T>(1);
+		const uint64_t start = forest_cache.forest_offsets[forest_idx];
+		const uint64_t end = forest_cache.forest_offsets[forest_idx + 1];
+		for (uint64_t pos = start; pos < end; ++pos)
+			val *= h[forest_cache.forest_trees[pos]];
+		h_forest[forest_idx] = val;
+	}
+}
+
+
+template<std::floating_point T>
+void build_forest_powers_(
+	const std::vector<T>& h_forest,
+	std::vector<T>& powers,
+	uint64_t max_nodes,
+	const BranchedLogForestCache& forest_cache
+) {
+	const uint64_t num_forests = h_forest.size();
+	std::memcpy(powers.data() + num_forests, h_forest.data(), num_forests * sizeof(T));
+
+	for (uint64_t k = 2; k <= max_nodes; ++k) {
+		const T* prev = powers.data() + (k - 1) * num_forests;
+		T* next = powers.data() + k * num_forests;
+		for (uint64_t forest_idx = 0; forest_idx < num_forests; ++forest_idx) {
+			T val = static_cast<T>(0);
+			const uint64_t start = forest_cache.forest_coprod_offsets[forest_idx];
+			const uint64_t end = forest_cache.forest_coprod_offsets[forest_idx + 1];
+			for (uint64_t pos = start; pos < end; pos += 2) {
+				const uint64_t left = forest_cache.forest_coprod_data[pos];
+				const uint64_t right = forest_cache.forest_coprod_data[pos + 1];
+				val += prev[left] * h_forest[right];
+			}
+			next[forest_idx] = val;
+		}
+	}
+}
+
+
+template<std::floating_point T>
 void branched_sig_to_log_sig_one_(
 	const T* bsig,
 	T* out,
 	const BranchedSigCache& cache,
+	const BranchedLogForestCache& forest_cache,
 	bool scalar_term
 ) {
 	uint64_t total_len = cache.total_length;
@@ -246,24 +236,27 @@ void branched_sig_to_log_sig_one_(
 		return;
 	}
 	std::vector<T> h(total_len, static_cast<T>(0));
-	std::vector<T> power(total_len, static_cast<T>(0));
-	std::vector<T> next_power(total_len, static_cast<T>(0));
 
 	const T* tail = scalar_term ? bsig + 1 : bsig;
 	std::memcpy(h.data() + 1, tail, (total_len - 1) * sizeof(T));
-	std::memcpy(power.data(), h.data(), total_len * sizeof(T));
 
 	std::vector<T> full_out(total_len, static_cast<T>(0));
-	std::memcpy(full_out.data(), power.data(), total_len * sizeof(T));
+	const uint64_t num_forests = forest_cache.forest_offsets.size() - 1;
+	std::vector<T> h_forest(num_forests, static_cast<T>(0));
+	std::vector<T> powers((cache.max_nodes + 1) * num_forests, static_cast<T>(0));
 
-	for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
-		butcher_product_general_(power.data(), h.data(), next_power.data(), cache);
+	build_h_forest_(h.data(), h_forest, forest_cache);
+	build_forest_powers_(h_forest, powers, cache.max_nodes, forest_cache);
+
+	for (uint64_t k = 1; k <= cache.max_nodes; ++k) {
 		T coeff = (k % 2 == 0)
 			? static_cast<T>(-1.) / static_cast<T>(k)
 			: static_cast<T>(1.) / static_cast<T>(k);
-		for (uint64_t i = 1; i < total_len; ++i)
-			full_out[i] += coeff * next_power[i];
-		std::swap(power, next_power);
+		const T* power_k = powers.data() + k * num_forests;
+		for (uint64_t i = 1; i < total_len; ++i) {
+			const uint64_t forest_idx = forest_cache.single_tree_forest[i];
+			full_out[i] += coeff * power_k[forest_idx];
+		}
 	}
 
 	full_out[0] = static_cast<T>(0);
@@ -281,6 +274,7 @@ void branched_sig_to_log_sig_backprop_one_(
 	const T* derivs,
 	T* out,
 	const BranchedSigCache& cache,
+	const BranchedLogForestCache& forest_cache,
 	bool scalar_term
 ) {
 	uint64_t total_len = cache.total_length;
@@ -293,18 +287,21 @@ void branched_sig_to_log_sig_backprop_one_(
 		branched_sig_to_log_sig_degree2_backprop_one_(bsig, derivs, out, cache.dimension, scalar_term);
 		return;
 	}
-	std::vector<std::vector<T>> powers(cache.max_nodes + 1, std::vector<T>(total_len, static_cast<T>(0)));
-	std::vector<std::vector<T>> d_powers(cache.max_nodes + 1, std::vector<T>(total_len, static_cast<T>(0)));
 	std::vector<T> h(total_len, static_cast<T>(0));
-	std::vector<T> d_h(total_len, static_cast<T>(0));
+	std::vector<T> d_h_tree(total_len, static_cast<T>(0));
 	std::vector<T> full_derivs(total_len, static_cast<T>(0));
 
 	const T* tail = scalar_term ? bsig + 1 : bsig;
 	std::memcpy(h.data() + 1, tail, (total_len - 1) * sizeof(T));
-	std::memcpy(powers[1].data(), h.data(), total_len * sizeof(T));
 
-	for (uint64_t k = 2; k <= cache.max_nodes; ++k)
-		butcher_product_general_(powers[k - 1].data(), h.data(), powers[k].data(), cache);
+	const uint64_t num_forests = forest_cache.forest_offsets.size() - 1;
+	std::vector<T> h_forest(num_forests, static_cast<T>(0));
+	std::vector<T> powers((cache.max_nodes + 1) * num_forests, static_cast<T>(0));
+	std::vector<T> d_h_forest(num_forests, static_cast<T>(0));
+	std::vector<T> d_powers((cache.max_nodes + 1) * num_forests, static_cast<T>(0));
+
+	build_h_forest_(h.data(), h_forest, forest_cache);
+	build_forest_powers_(h_forest, powers, cache.max_nodes, forest_cache);
 
 	if (scalar_term) {
 		std::memcpy(full_derivs.data(), derivs, total_len * sizeof(T));
@@ -322,23 +319,56 @@ void branched_sig_to_log_sig_backprop_one_(
 				? static_cast<T>(-1.) / static_cast<T>(k)
 				: static_cast<T>(1.) / static_cast<T>(k);
 		}
-		for (uint64_t i = 1; i < total_len; ++i)
-			d_powers[k][i] += coeff * full_derivs[i];
+		T* d_power_k = d_powers.data() + k * num_forests;
+		for (uint64_t i = 1; i < total_len; ++i) {
+			const uint64_t forest_idx = forest_cache.single_tree_forest[i];
+			d_power_k[forest_idx] += coeff * full_derivs[i];
+		}
 	}
 
 	for (uint64_t k = cache.max_nodes; k >= 2; --k) {
-		butcher_product_general_deriv_(
-			powers[k - 1].data(), h.data(), d_powers[k].data(),
-			d_powers[k - 1].data(), d_h.data(), cache);
+		const T* prev = powers.data() + (k - 1) * num_forests;
+		T* d_prev = d_powers.data() + (k - 1) * num_forests;
+		T* d_cur = d_powers.data() + k * num_forests;
+		for (uint64_t forest_idx = 0; forest_idx < num_forests; ++forest_idx) {
+			const T d = d_cur[forest_idx];
+			if (d == static_cast<T>(0))
+				continue;
+			const uint64_t start = forest_cache.forest_coprod_offsets[forest_idx];
+			const uint64_t end = forest_cache.forest_coprod_offsets[forest_idx + 1];
+			for (uint64_t pos = start; pos < end; pos += 2) {
+				const uint64_t left = forest_cache.forest_coprod_data[pos];
+				const uint64_t right = forest_cache.forest_coprod_data[pos + 1];
+				d_prev[left] += d * h_forest[right];
+				d_h_forest[right] += d * prev[left];
+			}
+		}
 	}
-	for (uint64_t i = 1; i < total_len; ++i)
-		d_h[i] += d_powers[1][i];
-	d_h[0] = static_cast<T>(0);
+	const T* d_power_1 = d_powers.data() + num_forests;
+	for (uint64_t forest_idx = 1; forest_idx < num_forests; ++forest_idx)
+		d_h_forest[forest_idx] += d_power_1[forest_idx];
+
+	for (uint64_t forest_idx = 1; forest_idx < num_forests; ++forest_idx) {
+		const T d = d_h_forest[forest_idx];
+		if (d == static_cast<T>(0))
+			continue;
+		const uint64_t start = forest_cache.forest_offsets[forest_idx];
+		const uint64_t end = forest_cache.forest_offsets[forest_idx + 1];
+		for (uint64_t pos = start; pos < end; ++pos) {
+			T partial = d;
+			for (uint64_t other = start; other < end; ++other) {
+				if (other != pos)
+					partial *= h[forest_cache.forest_trees[other]];
+			}
+			d_h_tree[forest_cache.forest_trees[pos]] += partial;
+		}
+	}
+	d_h_tree[0] = static_cast<T>(0);
 
 	if (scalar_term) {
-		std::memcpy(out, d_h.data(), total_len * sizeof(T));
+		std::memcpy(out, d_h_tree.data(), total_len * sizeof(T));
 	} else {
-		std::memcpy(out, d_h.data() + 1, (total_len - 1) * sizeof(T));
+		std::memcpy(out, d_h_tree.data() + 1, (total_len - 1) * sizeof(T));
 	}
 }
 
@@ -381,8 +411,9 @@ void branched_sig_to_log_sig_(
 		return;
 	}
 
+	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
 	auto batch_work = [&](const T* bsig_i, T* out_i) {
-		branched_sig_to_log_sig_one_(bsig_i, out_i, cache, scalar_term);
+		branched_sig_to_log_sig_one_(bsig_i, out_i, cache, forest_cache, scalar_term);
 	};
 	multi_threaded_batch(batch_work, batch_size, n_jobs,
 		make_batch(bsig, stride), make_batch(out, stride));
@@ -428,8 +459,9 @@ void branched_sig_to_log_sig_backprop_(
 		return;
 	}
 
+	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
 	auto batch_work = [&](const T* bsig_i, const T* derivs_i, T* out_i) {
-		branched_sig_to_log_sig_backprop_one_(bsig_i, derivs_i, out_i, cache, scalar_term);
+		branched_sig_to_log_sig_backprop_one_(bsig_i, derivs_i, out_i, cache, forest_cache, scalar_term);
 	};
 	multi_threaded_batch(batch_work, batch_size, n_jobs,
 		make_batch(bsig, stride), make_batch(derivs, stride), make_batch(out, stride));
