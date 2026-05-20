@@ -211,11 +211,11 @@ inline std::uint64_t AugmentedDimension(std::uint64_t dimension, bool time_aug, 
 }
 
 template <typename BufferT>
-std::string GetPrimitivesLen(BufferT& primitives, std::uint64_t& len) {
-    const auto dims = BufferDims(primitives);
+std::string GetCorrectionLen(BufferT& correction, std::uint64_t& len) {
+    const auto dims = BufferDims(correction);
     if (dims.size() != 1) {
         std::ostringstream oss;
-        oss << "primitives must have rank 1, got rank " << dims.size();
+        oss << "correction must have rank 1, got rank " << dims.size();
         return oss.str();
     }
     len = static_cast<std::uint64_t>(dims[0]);
@@ -416,15 +416,15 @@ ffi::Error SigCpuImpl(
     bool horner,
     std::int64_t n_jobs,
     PathBuffer& path,
-    PathBuffer& primitives,
+    PathBuffer& correction,
     OutBuffer& out,
     const char* fn_name
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t primitives_len = 0;
-    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t correction_len = 0;
+    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -436,7 +436,7 @@ ffi::Error SigCpuImpl(
     if (auto msg = CheckSigOutputShape(out, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto* path_ptr = BufferData<T>(path);
-    const auto* primitives_ptr = BufferData<T>(primitives);
+    const auto* correction_ptr = BufferData<T>(correction);
     auto* out_ptr = BufferData<T>(out);
 
     int err_code = sig_fn(
@@ -452,8 +452,8 @@ ffi::Error SigCpuImpl(
         horner,
         true,
         static_cast<int>(n_jobs),
-        primitives_ptr,
-        primitives_len
+        correction_ptr,
+        correction_len
     );
 
     if (err_code != 0) {
@@ -474,15 +474,15 @@ ffi::Error SigBackpropCpuImpl(
     PathBuffer& path,
     SigBuffer& sig,
     CotangentBuffer& cotangent,
-    PathBuffer& primitives,
+    PathBuffer& correction,
     OutBuffer& out,
     const char* fn_name
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t primitives_len = 0;
-    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t correction_len = 0;
+    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -498,7 +498,7 @@ ffi::Error SigBackpropCpuImpl(
     const auto* path_ptr = BufferData<T>(path);
     const auto* sig_ptr = BufferData<T>(sig);
     const auto* cotangent_ptr = BufferData<T>(cotangent);
-    const auto* primitives_ptr = BufferData<T>(primitives);
+    const auto* correction_ptr = BufferData<T>(correction);
     auto* out_ptr = BufferData<T>(out);
 
     int err_code = sig_backprop_fn(
@@ -515,8 +515,8 @@ ffi::Error SigBackpropCpuImpl(
         static_cast<T>(end_time),
         true,
         static_cast<int>(n_jobs),
-        primitives_ptr,
-        primitives_len
+        correction_ptr,
+        correction_len
     );
 
     if (err_code != 0) {
@@ -538,15 +538,15 @@ ffi::Error SigCudaImpl(
     bool horner,
     std::int64_t n_jobs,
     PathBuffer& path,
-    PathBuffer& primitives,
+    PathBuffer& correction,
     OutBuffer& out,
     const char* fn_name
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t primitives_len = 0;
-    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t correction_len = 0;
+    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -563,7 +563,7 @@ ffi::Error SigCudaImpl(
     }
 
     const auto* path_ptr = BufferData<T>(path);
-    const auto* primitives_ptr = BufferData<T>(primitives);
+    const auto* correction_ptr = BufferData<T>(correction);
     auto* out_ptr = BufferData<T>(out);
 
     int err_code = sig_fn(
@@ -578,8 +578,8 @@ ffi::Error SigCudaImpl(
         static_cast<T>(end_time),
         horner,
         true,
-        primitives_ptr,
-        primitives_len
+        correction_ptr,
+        correction_len
     );
 
     if (err_code != 0) {
@@ -601,15 +601,15 @@ ffi::Error SigBackpropCudaImpl(
     PathBuffer& path,
     SigBuffer& sig,
     CotangentBuffer& cotangent,
-    PathBuffer& primitives,
+    PathBuffer& correction,
     OutBuffer& out,
     const char* fn_name
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t primitives_len = 0;
-    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t correction_len = 0;
+    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -630,7 +630,7 @@ ffi::Error SigBackpropCudaImpl(
     const auto* path_ptr = BufferData<T>(path);
     const auto* sig_ptr = BufferData<T>(sig);
     const auto* cotangent_ptr = BufferData<T>(cotangent);
-    const auto* primitives_ptr = BufferData<T>(primitives);
+    const auto* correction_ptr = BufferData<T>(correction);
     auto* out_ptr = BufferData<T>(out);
 
     int err_code = sig_backprop_fn(
@@ -646,8 +646,8 @@ ffi::Error SigBackpropCudaImpl(
         lead_lag,
         static_cast<T>(end_time),
         true,
-        primitives_ptr,
-        primitives_len
+        correction_ptr,
+        correction_len
     );
 
     if (err_code != 0) {
@@ -666,13 +666,13 @@ ffi::Error SigCpu(
     bool horner,
     std::int64_t n_jobs,
     ffi::AnyBuffer path,
-    ffi::AnyBuffer primitives,
+    ffi::AnyBuffer correction,
     ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) {
         return InvalidArgument(msg);
     }
-    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) {
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) {
         return InvalidArgument(msg);
     }
 
@@ -686,7 +686,7 @@ ffi::Error SigCpu(
             horner,
             n_jobs,
             path,
-            primitives,
+            correction,
             out,
             CpuFns<T>::sig_name
         );
@@ -702,12 +702,12 @@ ffi::Error SigBackpropCpu(
     ffi::AnyBuffer path,
     ffi::AnyBuffer sig,
     ffi::AnyBuffer cotangent,
-    ffi::AnyBuffer primitives,
+    ffi::AnyBuffer correction,
     ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateSameFloatDtype("path", path, "sig", sig); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
-    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
 
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
@@ -721,7 +721,7 @@ ffi::Error SigBackpropCpu(
             path,
             sig,
             cotangent,
-            primitives,
+            correction,
             out,
             CpuFns<T>::backprop_name
         );
@@ -738,13 +738,13 @@ ffi::Error SigCuda(
     bool horner,
     std::int64_t n_jobs,
     ffi::AnyBuffer path,
-    ffi::AnyBuffer primitives,
+    ffi::AnyBuffer correction,
     ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) {
         return InvalidArgument(msg);
     }
-    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) {
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) {
         return InvalidArgument(msg);
     }
 
@@ -759,7 +759,7 @@ ffi::Error SigCuda(
             horner,
             n_jobs,
             path,
-            primitives,
+            correction,
             out,
             CudaFns<T>::sig_name
         );
@@ -776,12 +776,12 @@ ffi::Error SigBackpropCuda(
     ffi::AnyBuffer path,
     ffi::AnyBuffer sig,
     ffi::AnyBuffer cotangent,
-    ffi::AnyBuffer primitives,
+    ffi::AnyBuffer correction,
     ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateSameFloatDtype("path", path, "sig", sig); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
-    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
 
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
@@ -796,7 +796,7 @@ ffi::Error SigBackpropCuda(
             path,
             sig,
             cotangent,
-            primitives,
+            correction,
             out,
             CudaFns<T>::backprop_name
         );
@@ -1921,15 +1921,15 @@ namespace {
 template <typename T>
 ffi::Error BranchedSigCpuImpl(
     std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
-    ffi::AnyBuffer& path, ffi::AnyBuffer& primitives, ffi::Result<ffi::AnyBuffer>& out
+    ffi::AnyBuffer& path, ffi::AnyBuffer& correction, ffi::Result<ffi::AnyBuffer>& out
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t primitives_len = 0;
-    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t correction_len = 0;
+    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto* path_ptr = BufferData<T>(path);
-    const auto* primitives_ptr = BufferData<T>(primitives);
+    const auto* correction_ptr = BufferData<T>(correction);
     auto* out_ptr = BufferData<T>(out);
 
     int err_code = CpuFns<T>::bsig(
@@ -1938,7 +1938,7 @@ ffi::Error BranchedSigCpuImpl(
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs),
         time_aug, lead_lag, static_cast<T>(end_time), planar, true,
-        primitives_ptr, primitives_len
+        correction_ptr, correction_len
     );
     if (err_code != 0) return NativeCallError("branched_sig", err_code);
     return ffi::Error::Success();
@@ -1948,17 +1948,17 @@ template <typename T>
 ffi::Error BranchedSigBackpropCpuImpl(
     std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer& path, ffi::AnyBuffer& bsig, ffi::AnyBuffer& cotangent,
-    ffi::AnyBuffer& primitives, ffi::Result<ffi::AnyBuffer>& out
+    ffi::AnyBuffer& correction, ffi::Result<ffi::AnyBuffer>& out
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t primitives_len = 0;
-    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t correction_len = 0;
+    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto* path_ptr = BufferData<T>(path);
     const auto* bsig_ptr = BufferData<T>(bsig);
     const auto* cot_ptr = BufferData<T>(cotangent);
-    const auto* primitives_ptr = BufferData<T>(primitives);
+    const auto* correction_ptr = BufferData<T>(correction);
     auto* out_ptr = BufferData<T>(out);
 
     int err_code = CpuFns<T>::bsig_backprop(
@@ -1967,7 +1967,7 @@ ffi::Error BranchedSigBackpropCpuImpl(
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs),
         time_aug, lead_lag, static_cast<T>(end_time), planar, true,
-        primitives_ptr, primitives_len
+        correction_ptr, correction_len
     );
     if (err_code != 0) return NativeCallError("branched_sig_backprop", err_code);
     return ffi::Error::Success();
@@ -1975,26 +1975,26 @@ ffi::Error BranchedSigBackpropCpuImpl(
 
 ffi::Error BranchedSigCpu(
     std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
-    ffi::AnyBuffer path, ffi::AnyBuffer primitives, ffi::Result<ffi::AnyBuffer> out
+    ffi::AnyBuffer path, ffi::AnyBuffer correction, ffi::Result<ffi::AnyBuffer> out
 ) {
-    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
-        return BranchedSigCpuImpl<T>(max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, primitives, out);
+        return BranchedSigCpuImpl<T>(max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, correction, out);
     });
 }
 
 ffi::Error BranchedSigBackpropCpu(
     std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer path, ffi::AnyBuffer bsig, ffi::AnyBuffer cotangent,
-    ffi::AnyBuffer primitives, ffi::Result<ffi::AnyBuffer> out
+    ffi::AnyBuffer correction, ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateSameFloatDtype("path", path, "bsig", bsig); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
-    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
-        return BranchedSigBackpropCpuImpl<T>(max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, bsig, cotangent, primitives, out);
+        return BranchedSigBackpropCpuImpl<T>(max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, bsig, cotangent, correction, out);
     });
 }
 
@@ -2002,12 +2002,12 @@ ffi::Error BranchedSigBackpropCpu(
 template <typename T>
 ffi::Error BranchedSigCudaImpl(
     cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t /*n_jobs*/, bool planar,
-    ffi::AnyBuffer& path, ffi::AnyBuffer& primitives, ffi::Result<ffi::AnyBuffer>& out
+    ffi::AnyBuffer& path, ffi::AnyBuffer& correction, ffi::Result<ffi::AnyBuffer>& out
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t primitives_len = 0;
-    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t correction_len = 0;
+    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
     auto sync = cudaStreamSynchronize(stream);
     if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
 
@@ -2015,7 +2015,7 @@ ffi::Error BranchedSigCudaImpl(
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time), planar, true,
-        BufferData<T>(primitives), primitives_len);
+        BufferData<T>(correction), correction_len);
     if (err_code != 0) return NativeCallError("branched_sig_cuda", err_code);
     return ffi::Error::Success();
 }
@@ -2024,12 +2024,12 @@ template <typename T>
 ffi::Error BranchedSigBackpropCudaImpl(
     cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t /*n_jobs*/, bool planar,
     ffi::AnyBuffer& path, ffi::AnyBuffer& bsig, ffi::AnyBuffer& cotangent,
-    ffi::AnyBuffer& primitives, ffi::Result<ffi::AnyBuffer>& out
+    ffi::AnyBuffer& correction, ffi::Result<ffi::AnyBuffer>& out
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t primitives_len = 0;
-    if (auto msg = GetPrimitivesLen(primitives, primitives_len); !msg.empty()) return InvalidArgument(msg);
+    std::uint64_t correction_len = 0;
+    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
     auto sync = cudaStreamSynchronize(stream);
     if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
 
@@ -2037,33 +2037,33 @@ ffi::Error BranchedSigBackpropCudaImpl(
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time), planar, true,
-        BufferData<T>(primitives), primitives_len);
+        BufferData<T>(correction), correction_len);
     if (err_code != 0) return NativeCallError("branched_sig_backprop_cuda", err_code);
     return ffi::Error::Success();
 }
 
 ffi::Error BranchedSigCuda(
     cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
-    ffi::AnyBuffer path, ffi::AnyBuffer primitives, ffi::Result<ffi::AnyBuffer> out
+    ffi::AnyBuffer path, ffi::AnyBuffer correction, ffi::Result<ffi::AnyBuffer> out
 ) {
-    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
-        return BranchedSigCudaImpl<T>(stream, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, primitives, out);
+        return BranchedSigCudaImpl<T>(stream, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, correction, out);
     });
 }
 
 ffi::Error BranchedSigBackpropCuda(
     cudaStream_t stream, std::int64_t max_nodes, bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer path, ffi::AnyBuffer bsig, ffi::AnyBuffer cotangent,
-    ffi::AnyBuffer primitives, ffi::Result<ffi::AnyBuffer> out
+    ffi::AnyBuffer correction, ffi::Result<ffi::AnyBuffer> out
 ) {
     if (auto msg = ValidateSameFloatDtype("path", path, "bsig", bsig); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
-    if (auto msg = ValidateSameFloatDtype("path", path, "primitives", primitives); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
-        return BranchedSigBackpropCudaImpl<T>(stream, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, bsig, cotangent, primitives, out);
+        return BranchedSigBackpropCudaImpl<T>(stream, max_nodes, time_aug, lead_lag, end_time, n_jobs, planar, path, bsig, cotangent, correction, out);
     });
 }
 #endif

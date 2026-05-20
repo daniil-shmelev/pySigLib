@@ -66,27 +66,27 @@ inline uint64_t checked_mul_add_(uint64_t a, uint64_t b, uint64_t c, const char*
 	return a * b + c;
 }
 
-inline uint64_t validate_primitives_len_(uint64_t data_dimension, uint64_t max_nodes, uint64_t primitives_len) {
-	if (primitives_len == 0)
+inline uint64_t validate_correction_len_(uint64_t data_dimension, uint64_t max_nodes, uint64_t correction_len) {
+	if (correction_len == 0)
 		return 1;
 	if (max_nodes < 2)
-		throw std::invalid_argument("primitives must be empty when degree < 2");
+		throw std::invalid_argument("correction must be empty when degree < 2");
 
 	uint64_t offset = 0;
 	uint64_t level_size = data_dimension;
 	for (uint64_t level = 2; level <= max_nodes; ++level) {
 		if (data_dimension != 0 && level_size > UINT64_MAX / data_dimension)
-			throw std::overflow_error("primitives level size overflow");
+			throw std::overflow_error("correction level size overflow");
 		level_size *= data_dimension;
 		if (offset > UINT64_MAX - level_size)
-			throw std::overflow_error("primitives length overflow");
+			throw std::overflow_error("correction length overflow");
 		offset += level_size;
-		if (offset == primitives_len)
+		if (offset == correction_len)
 			return level;
-		if (offset > primitives_len)
+		if (offset > correction_len)
 			break;
 	}
-	throw std::invalid_argument("primitives length must be a prefix of tensor levels 2..degree");
+	throw std::invalid_argument("correction length must be a prefix of tensor levels 2..degree");
 }
 
 inline bool chain_word_index_(

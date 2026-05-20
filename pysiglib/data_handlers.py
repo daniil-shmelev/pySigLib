@@ -175,53 +175,53 @@ class PathInputHandler:
             dimension_ += 1
         return length_, dimension_
 
-class PrimitivesInputHandler:
+class CorrectionInputHandler:
     """
-    Handle flat constant tensor primitive levels for signature APIs.
+    Handle flat constant correction levels for signature APIs.
     """
-    def __init__(self, primitives, path_data, degree):
-        self.primitives = None
+    def __init__(self, correction, path_data, degree):
+        self.correction = None
         self.length = 0
         self.data_ptr = None
 
-        if primitives is None:
+        if correction is None:
             return
 
-        check_type_multiple(primitives, "primitives", (np.ndarray, torch.Tensor))
-        if isinstance(primitives, np.ndarray) != (path_data.type_ == "numpy"):
-            raise ValueError("primitives must have the same array type as path")
+        check_type_multiple(correction, "correction", (np.ndarray, torch.Tensor))
+        if isinstance(correction, np.ndarray) != (path_data.type_ == "numpy"):
+            raise ValueError("correction must have the same array type as path")
 
-        self.primitives = ensure_own_contiguous_storage(primitives)
-        check_dtype(self.primitives, "primitives")
+        self.correction = ensure_own_contiguous_storage(correction)
+        check_dtype(self.correction, "correction")
 
-        if len(self.primitives.shape) != 1:
-            raise ValueError("primitives must be a 1D array")
+        if len(self.correction.shape) != 1:
+            raise ValueError("correction must be a 1D array")
 
-        if isinstance(self.primitives, np.ndarray):
-            self.dtype = str(self.primitives.dtype)
+        if isinstance(self.correction, np.ndarray):
+            self.dtype = str(self.correction.dtype)
             self.device = "cpu"
-            self.data_ptr = self.primitives.ctypes.data_as(POINTER(DTYPES[self.dtype]))
+            self.data_ptr = self.correction.ctypes.data_as(POINTER(DTYPES[self.dtype]))
         else:
-            self.dtype = str(self.primitives.dtype)[6:]
-            self.device = self.primitives.device.type
+            self.dtype = str(self.correction.dtype)[6:]
+            self.device = self.correction.device.type
             _check_cuda_available(self.device)
-            self.data_ptr = cast(self.primitives.data_ptr(), POINTER(DTYPES[self.dtype]))
+            self.data_ptr = cast(self.correction.data_ptr(), POINTER(DTYPES[self.dtype]))
 
         if self.dtype != path_data.dtype:
-            raise ValueError("primitives and path must have the same dtype")
+            raise ValueError("correction and path must have the same dtype")
         if self.device != path_data.device:
-            raise ValueError("primitives and path must be on the same device")
+            raise ValueError("correction and path must be on the same device")
 
-        self.length = self.primitives.shape[0]
+        self.length = self.correction.shape[0]
         if self.length != 0 and path_data.lead_lag:
-            raise ValueError("primitives cannot be used with lead_lag=True")
-        _infer_primitive_degree(path_data.data_dimension, degree, self.length)
+            raise ValueError("correction cannot be used with lead_lag=True")
+        _infer_correction_degree(path_data.data_dimension, degree, self.length)
 
-def _infer_primitive_degree(dimension, degree, length):
+def _infer_correction_degree(dimension, degree, length):
     if length == 0:
         return 1
     if degree < 2:
-        raise ValueError("primitives must be empty when degree < 2")
+        raise ValueError("correction must be empty when degree < 2")
 
     offset = 0
     level_size = dimension
@@ -232,7 +232,7 @@ def _infer_primitive_degree(dimension, degree, length):
             return level
         if offset > length:
             break
-    raise ValueError("primitives length must be a prefix of tensor levels 2..degree")
+    raise ValueError("correction length must be a prefix of tensor levels 2..degree")
 
 class MultiplePathInputHandler:
     """

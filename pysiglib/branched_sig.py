@@ -23,7 +23,7 @@ from .error_codes import err_msg
 from .sig_length import aug_dim
 from .dtypes import (CPSIG_BRANCHED_SIG, CPSIG_BRANCHED_SIG_COMBINE,
                      CUSIG_BRANCHED_SIG_CUDA, CUSIG_BRANCHED_SIG_COMBINE_CUDA)
-from .data_handlers import PathInputHandler, SigOutputHandler, MultipleSigInputHandler, PrimitivesInputHandler
+from .data_handlers import PathInputHandler, SigOutputHandler, MultipleSigInputHandler, CorrectionInputHandler
 from .load_siglib import CPSIG
 import kauri
 
@@ -188,7 +188,7 @@ def branched_sig(
         tree_order: str = "recursive",
         planar: bool = False,
         scalar_term : bool = False,
-        primitives = None,
+        correction = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -220,11 +220,12 @@ def branched_sig(
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
     :type scalar_term: bool
-    :param primitives: Optional constant tensor-algebra primitive of level
-        :math:`\\geq 2` added to the local branched-signature primitive at every
-        path segment. The level-1 primitive is filled from each segment's path
-        increment :math:`\\Delta x`, the higher levels come from this constant,
-        and the local branched signature on each segment is
+    :param correction: Optional constant correction of level
+        :math:`\\geq 2` added to the path increment at every path
+        segment. The level-1 part of the local lift is the segment's
+        path increment :math:`\\Delta x`, the higher levels come from
+        this constant, and the local branched signature on each
+        segment is
 
         .. math::
 
@@ -232,18 +233,18 @@ def branched_sig(
 
         where :math:`e_w` is the chain (root-to-leaf path) tree with labels
         :math:`w` and :math:`\\exp_*` is the Hopf-algebra exponential under the
-        Butcher product. ``primitives`` is a flat 1D array of length
+        Butcher product. ``correction`` is a flat 1D array of length
         :math:`d^2 + d^3 + \\cdots + d^m`, where :math:`d` is the underlying
-        path dimension and :math:`2 \\leq m \\leq N` is the highest primitive
-        level supplied (missing higher levels are zero). Levels are concatenated
+        path dimension and :math:`2 \\leq m \\leq N` is the highest
+        correction level supplied (missing higher levels are zero). Levels are concatenated
         in order, and within level :math:`k` the entry for chain
         :math:`(i_1, \\ldots, i_k)` lives at flat index
         :math:`i_1 d^{k-1} + i_2 d^{k-2} + \\cdots + i_k`. Passing ``None``
-        (default) or an empty array is equivalent to all-zero primitives. Indices
+        (default) or an empty array is equivalent to all-zero correction. Indices
         are over the original path channels; with ``time_aug=True``, the
-        appended time channel contributes no primitives. Cannot be combined with
+        appended time channel contributes no correction. Cannot be combined with
         ``lead_lag=True``.
-    :type primitives: numpy.ndarray | torch.tensor | None
+    :type correction: numpy.ndarray | torch.tensor | None
     :param n_jobs: Number of parallel threads for batch processing.
     :type n_jobs: int
     :return: Branched signature array of shape ``(bsig_len,)`` or ``(..., bsig_len)``.
@@ -253,7 +254,7 @@ def branched_sig(
 
     Ito-lifted branched signature of a sampled Brownian path. For Brownian
     motion with instantaneous covariance :math:`\\Sigma`, setting the level-2
-    primitive to :math:`c^{(2)}_{ij} = \\Sigma_{ij}\\,\\Delta t` per segment
+    correction to :math:`c^{(2)}_{ij} = \\Sigma_{ij}\\,\\Delta t` per segment
     gives the Ito correction.
 
     .. code-block:: python
@@ -270,13 +271,13 @@ def branched_sig(
         path = np.zeros((n_steps + 1, d))
         path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
 
-        # Ito level-2 primitive: dt * Sigma flattened. Here Sigma = I so the
+        # Ito level-2 correction: dt * Sigma flattened. Here Sigma = I so the
         # diagonal entries c^(2)_ii are dt and off-diagonals are zero.
-        primitives = (np.eye(d) * dt).flatten()
+        correction = (np.eye(d) * dt).flatten()
 
         pysiglib.prepare_branched_sig(d, N)
         ito_bsig = pysiglib.branched_sig(
-            path, N, primitives=primitives, end_time=T)
+            path, N, correction=correction, end_time=T)
         print(ito_bsig)
     """
     if tree_order not in ("recursive", "canonical"):
@@ -290,7 +291,7 @@ def branched_sig(
     check_n_jobs(n_jobs)
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
-    primitives_data = PrimitivesInputHandler(primitives, data, degree)
+    correction_data = CorrectionInputHandler(correction, data, degree)
     dimension = data.data_dimension
     aug_dimension = data.dimension
     bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
@@ -304,14 +305,14 @@ def branched_sig(
             data.data_ptr, result.data_ptr, data.batch_size,
             dimension, data.data_length, degree, n_jobs,
             data.time_aug, data.lead_lag, data.end_time, planar, scalar_term,
-            primitives_data.data_ptr, primitives_data.length)
+            correction_data.data_ptr, correction_data.length)
     else:
         _check_cuda_num_trees(aug_dimension, degree, planar, "branched_sig")
         err_code = CUSIG_BRANCHED_SIG_CUDA[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             dimension, data.data_length, degree,
             data.time_aug, data.lead_lag, data.end_time, planar, scalar_term,
-            primitives_data.data_ptr, primitives_data.length)
+            correction_data.data_ptr, correction_data.length)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig: " + err_msg(err_code))
     if tree_order != "recursive":

@@ -200,18 +200,18 @@ def test_batch_sig_backprop_time_aug_lead_lag_random(device, deg):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-def test_sig_backprop_primitives_matches_finite_difference(device):
+def test_sig_backprop_correction_matches_finite_difference(device):
     X = torch.tensor(
         [[0.1, -0.2], [0.4, 0.3], [0.0, 0.7], [0.2, -0.1]],
         dtype=torch.float64,
         device=device,
     )
-    primitives = torch.tensor([0.2, -0.1, 0.05, 0.3], dtype=torch.float64, device=device)
+    correction = torch.tensor([0.2, -0.1, 0.05, 0.3], dtype=torch.float64, device=device)
     weights = torch.linspace(
         -0.5, 0.7, pysiglib.sig_length(2, 3, scalar_term=True), dtype=torch.float64, device=device)
 
-    sig = pysiglib.sig(X, 3, scalar_term=True, primitives=primitives)
-    grad = pysiglib.sig_backprop(X, sig, weights, 3, primitives=primitives)
+    sig = pysiglib.sig(X, 3, scalar_term=True, correction=correction)
+    grad = pysiglib.sig_backprop(X, sig, weights, 3, correction=correction)
 
     eps = 1e-6
     X_plus = X.detach().clone()
@@ -219,9 +219,9 @@ def test_sig_backprop_primitives_matches_finite_difference(device):
     X_plus[1, 0] += eps
     X_minus[1, 0] -= eps
     f_plus = torch.dot(
-        pysiglib.sig(X_plus, 3, scalar_term=True, primitives=primitives), weights)
+        pysiglib.sig(X_plus, 3, scalar_term=True, correction=correction), weights)
     f_minus = torch.dot(
-        pysiglib.sig(X_minus, 3, scalar_term=True, primitives=primitives), weights)
+        pysiglib.sig(X_minus, 3, scalar_term=True, correction=correction), weights)
     expected = (f_plus - f_minus) / (2 * eps)
 
     assert_device(grad, device)
@@ -229,25 +229,25 @@ def test_sig_backprop_primitives_matches_finite_difference(device):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-def test_torch_sig_primitives_autograd_matches_manual_backprop(device):
+def test_torch_sig_correction_autograd_matches_manual_backprop(device):
     X = torch.tensor(
         [[0.2, 0.1], [0.5, -0.2], [0.3, 0.4]],
         dtype=torch.float64,
         device=device,
         requires_grad=True,
     )
-    primitives = torch.tensor([0.1, 0.0, -0.2, 0.3], dtype=torch.float64, device=device)
+    correction = torch.tensor([0.1, 0.0, -0.2, 0.3], dtype=torch.float64, device=device)
     weights = torch.linspace(
         0.2, 1.1, pysiglib.sig_length(2, 3, scalar_term=True), dtype=torch.float64, device=device)
 
     import pysiglib.torch_api as torch_api
 
-    sig = torch_api.sig(X, 3, scalar_term=True, primitives=primitives)
+    sig = torch_api.sig(X, 3, scalar_term=True, correction=correction)
     loss = torch.dot(sig, weights)
     loss.backward()
 
-    expected_sig = pysiglib.sig(X.detach(), 3, scalar_term=True, primitives=primitives)
+    expected_sig = pysiglib.sig(X.detach(), 3, scalar_term=True, correction=correction)
     expected = pysiglib.sig_backprop(
-        X.detach(), expected_sig.detach(), weights, 3, primitives=primitives)
+        X.detach(), expected_sig.detach(), weights, 3, correction=correction)
 
     check_close(X.grad, expected)

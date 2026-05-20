@@ -201,29 +201,29 @@ __device__ void branched_hopf_convolution_block_(
 }
 
 template<typename T>
-__device__ void add_primitives_block_(
+__device__ void add_correction_block_(
 	T* out,
 	int dim,
 	int data_dim,
-	const T* primitives,
-	uint64_t primitives_len,
+	const T* correction,
+	uint64_t correction_len,
 	const uint32_t* chain_index_offsets,
 	const uint32_t* chain_indices,
 	int max_nodes,
 	uint32_t tid
 ) {
-	if (primitives == nullptr || primitives_len == 0)
+	if (correction == nullptr || correction_len == 0)
 		return;
 
 	uint64_t offset = 0;
 	uint64_t level_size = static_cast<uint64_t>(data_dim);
 	for (int level = 2; level <= max_nodes; ++level) {
 		level_size *= static_cast<uint64_t>(data_dim);
-		if (offset + level_size > primitives_len)
+		if (offset + level_size > correction_len)
 			break;
 
 		for (uint64_t word = tid; word < level_size; word += blockDim.x) {
-			const T value = primitives[offset + word];
+			const T value = correction[offset + word];
 			if (value == T(0))
 				continue;
 
@@ -277,13 +277,13 @@ template<typename T>
 __device__ void local_branched_sig_block_(
 	const T* inc,
 	T* out,
-	T* primitive,
+	T* local_log,
 	T* power,
 	T* next_power,
 	int dim,
 	int data_dim,
-	const T* primitives,
-	uint64_t primitives_len,
+	const T* correction,
+	uint64_t correction_len,
 	uint32_t total_len,
 	const uint8_t* labels_data,
 	const uint32_t* labels_offsets,
@@ -296,30 +296,30 @@ __device__ void local_branched_sig_block_(
 	int max_nodes,
 	uint32_t tid
 ) {
-	if (primitives_len == 0) {
+	if (correction_len == 0) {
 		linear_branched_sig_block_(inc, out, dim, total_len, labels_data, labels_offsets, inv_factorial, tid);
 		return;
 	}
 
 	if (max_nodes <= 2) {
 		linear_branched_sig_block_(inc, out, dim, total_len, labels_data, labels_offsets, inv_factorial, tid);
-		add_primitives_block_(out, dim, data_dim, primitives, primitives_len,
+		add_correction_block_(out, dim, data_dim, correction, correction_len,
 			chain_index_offsets, chain_indices, max_nodes, tid);
 		return;
 	}
 
 	for (uint32_t i = tid; i < total_len; i += blockDim.x)
-		primitive[i] = T(0);
+		local_log[i] = T(0);
 	__syncthreads();
 	for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
-		primitive[s_order_idx[1] + d + 1] = inc[d];
+		local_log[s_order_idx[1] + d + 1] = inc[d];
 	__syncthreads();
-	add_primitives_block_(primitive, dim, data_dim, primitives, primitives_len,
+	add_correction_block_(local_log, dim, data_dim, correction, correction_len,
 		chain_index_offsets, chain_indices, max_nodes, tid);
 
 	for (uint32_t i = tid; i < total_len; i += blockDim.x) {
 		out[i] = T(0);
-		power[i] = primitive[i];
+		power[i] = local_log[i];
 	}
 	if (tid == 0) out[0] = T(1);
 	__syncthreads();
@@ -334,7 +334,7 @@ __device__ void local_branched_sig_block_(
 		__syncthreads();
 
 		if (k < max_nodes) {
-			branched_hopf_convolution_block_(cur_power, primitive, cur_next,
+			branched_hopf_convolution_block_(cur_power, local_log, cur_next,
 				total_len, s_coprod_data, s_coprod_off, tid);
 			T* tmp = cur_power;
 			cur_power = cur_next;
@@ -363,8 +363,8 @@ void branched_sig_ker(
 	const uint32_t* __restrict__ chain_indices,
 	int max_nodes,
 	uint32_t coprod_data_len,
-	const T* __restrict__ primitives,
-	uint64_t primitives_len
+	const T* __restrict__ correction,
+	uint64_t correction_len
 ) {
 	const uint32_t batch_idx = blockIdx.y;
 	const uint32_t tid = threadIdx.x;
@@ -372,11 +372,11 @@ void branched_sig_ker(
 
 	extern __shared__ char smem[];
 	T* temp = reinterpret_cast<T*>(smem);
-	T* primitive = temp + total_len;
-	const bool has_primitives = primitives_len != 0;
-	T* power = has_primitives ? primitive + total_len : primitive;
-	T* next_power = has_primitives ? power + total_len : power;
-	T* inc = has_primitives ? next_power + total_len : temp + total_len;
+	T* local_log = temp + total_len;
+	const bool has_correction = correction_len != 0;
+	T* power = has_correction ? local_log + total_len : local_log;
+	T* next_power = has_correction ? power + total_len : power;
+	T* inc = has_correction ? next_power + total_len : temp + total_len;
 	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(inc + dim);
 	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
 	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
@@ -400,8 +400,8 @@ void branched_sig_ker(
 		__syncthreads();
 
 		T* tgt = (seg == 0) ? X : temp;
-		local_branched_sig_block_(inc, tgt, primitive, power, next_power,
-			dim, data_dim, primitives, primitives_len, total_len,
+		local_branched_sig_block_(inc, tgt, local_log, power, next_power,
+			dim, data_dim, correction, correction_len, total_len,
 			labels_data, labels_offsets, inv_factorial,
 			s_coprod_data, s_coprod_off, s_order_idx,
 			chain_index_offsets, chain_indices, max_nodes, tid);
@@ -534,18 +534,18 @@ __device__ void linear_bsig_deriv_to_inc_block_(
 }
 
 template<typename T>
-__device__ void primitive_bsig_deriv_to_inc_block_(
+__device__ void local_log_bsig_deriv_to_inc_block_(
 	const T* local_derivs,
 	const T* inc,
 	T* inc_derivs,
-	T* primitive,
+	T* local_log,
 	T* powers,
 	T* power_derivs,
-	T* d_primitive,
+	T* d_correction,
 	int dim,
 	int data_dim,
-	const T* primitives,
-	uint64_t primitives_len,
+	const T* correction,
+	uint64_t correction_len,
 	uint32_t total_len,
 	const uint8_t* labels_data,
 	const uint32_t* labels_offsets,
@@ -565,24 +565,24 @@ __device__ void primitive_bsig_deriv_to_inc_block_(
 	}
 
 	for (uint32_t i = tid; i < total_len; i += blockDim.x) {
-		primitive[i] = T(0);
-		d_primitive[i] = T(0);
+		local_log[i] = T(0);
+		d_correction[i] = T(0);
 	}
 	for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes) * total_len; i += blockDim.x)
 		power_derivs[i] = T(0);
 	__syncthreads();
 
 	for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
-		primitive[s_order_idx[1] + d + 1] = inc[d];
+		local_log[s_order_idx[1] + d + 1] = inc[d];
 	__syncthreads();
-	add_primitives_block_(primitive, dim, data_dim, primitives, primitives_len,
+	add_correction_block_(local_log, dim, data_dim, correction, correction_len,
 		chain_index_offsets, chain_indices, max_nodes, tid);
 
 	for (uint32_t i = tid; i < total_len; i += blockDim.x)
-		powers[i] = primitive[i];
+		powers[i] = local_log[i];
 	__syncthreads();
 	for (int k = 2; k <= max_nodes; ++k) {
-		branched_hopf_convolution_block_(powers + static_cast<uint32_t>(k - 2) * total_len, primitive,
+		branched_hopf_convolution_block_(powers + static_cast<uint32_t>(k - 2) * total_len, local_log,
 			powers + static_cast<uint32_t>(k - 1) * total_len, total_len, s_coprod_data, s_coprod_off, tid);
 	}
 
@@ -596,18 +596,18 @@ __device__ void primitive_bsig_deriv_to_inc_block_(
 	}
 
 	for (int k = max_nodes; k > 1; --k) {
-		branched_hopf_convolution_deriv_block_(powers + static_cast<uint32_t>(k - 2) * total_len, primitive,
+		branched_hopf_convolution_deriv_block_(powers + static_cast<uint32_t>(k - 2) * total_len, local_log,
 			power_derivs + static_cast<uint32_t>(k - 1) * total_len,
 			power_derivs + static_cast<uint32_t>(k - 2) * total_len,
-			d_primitive, total_len, s_coprod_data, s_coprod_off, tid);
+			d_correction, total_len, s_coprod_data, s_coprod_off, tid);
 	}
 
 	for (uint32_t i = tid; i < total_len; i += blockDim.x)
-		d_primitive[i] += power_derivs[i];
+		d_correction[i] += power_derivs[i];
 	__syncthreads();
 
 	for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
-		inc_derivs[d] = d_primitive[s_order_idx[1] + d + 1];
+		inc_derivs[d] = d_correction[s_order_idx[1] + d + 1];
 	__syncthreads();
 }
 
@@ -633,8 +633,8 @@ void branched_sig_backprop_ker(
 	const uint32_t* __restrict__ chain_indices,
 	int max_nodes,
 	uint32_t coprod_data_len,
-	const T* __restrict__ primitives,
-	uint64_t primitives_len
+	const T* __restrict__ correction,
+	uint64_t correction_len
 ) {
 	const uint32_t batch_idx = blockIdx.y;
 	const uint32_t tid = threadIdx.x;
@@ -647,13 +647,13 @@ void branched_sig_backprop_ker(
 	T* local_derivs = temp_Y + total_len;
 	T* inc = local_derivs + total_len;
 	T* inc_derivs = inc + dim;
-	T* primitive = inc_derivs + dim;
-	const bool has_primitives = primitives_len != 0;
-	T* powers = has_primitives ? primitive + total_len : primitive;
-	T* power_derivs = has_primitives ? powers + static_cast<uint32_t>(max_nodes) * total_len : powers;
-	T* d_primitive = has_primitives ? power_derivs + static_cast<uint32_t>(max_nodes) * total_len : power_derivs;
-	T* primitive_end = has_primitives ? d_primitive + total_len : inc_derivs + dim;
-	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(primitive_end);
+	T* local_log = inc_derivs + dim;
+	const bool has_correction = correction_len != 0;
+	T* powers = has_correction ? local_log + total_len : local_log;
+	T* power_derivs = has_correction ? powers + static_cast<uint32_t>(max_nodes) * total_len : powers;
+	T* d_correction = has_correction ? power_derivs + static_cast<uint32_t>(max_nodes) * total_len : power_derivs;
+	T* local_log_end = has_correction ? d_correction + total_len : inc_derivs + dim;
+	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(local_log_end);
 	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
 	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
 
@@ -683,8 +683,8 @@ void branched_sig_backprop_ker(
 			inc[d] = bp[(seg + 1) * dim + d] - bp[seg * dim + d];
 		__syncthreads();
 
-		local_branched_sig_block_(inc, temp_Y, primitive, powers, power_derivs,
-			dim, data_dim, primitives, primitives_len, total_len,
+		local_branched_sig_block_(inc, temp_Y, local_log, powers, power_derivs,
+			dim, data_dim, correction, correction_len, total_len,
 			labels_data, labels_offsets, inv_factorial,
 			s_coprod_data, s_coprod_off, s_order_idx,
 			chain_index_offsets, chain_indices, max_nodes, tid);
@@ -762,13 +762,13 @@ void branched_sig_backprop_ker(
 			__syncthreads();
 		}
 
-		if (!has_primitives) {
+		if (!has_correction) {
 			linear_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs, dim,
 				total_len, labels_data, labels_offsets, inv_factorial, tid);
 		} else {
-			primitive_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs,
-				primitive, powers, power_derivs, d_primitive,
-				dim, data_dim, primitives, primitives_len, total_len,
+			local_log_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs,
+				local_log, powers, power_derivs, d_correction,
+				dim, data_dim, correction, correction_len, total_len,
 				labels_data, labels_offsets, inv_factorial,
 				s_coprod_data, s_coprod_off, s_order_idx,
 				chain_index_offsets, chain_indices, max_nodes, tid);
@@ -1130,14 +1130,14 @@ void branched_sig_cuda_core_(
 	uint64_t max_nodes,
 	bool planar = false,
 	uint64_t data_dimension = 0,
-	const T* primitives = nullptr,
-	uint64_t primitives_len = 0
+	const T* correction = nullptr,
+	uint64_t correction_len = 0
 ) {
 	if (data_dimension == 0) data_dimension = dimension;
-	validate_primitives_len_(data_dimension, max_nodes, primitives_len);
-	if (primitives == nullptr && primitives_len != 0)
-		throw std::invalid_argument("primitives pointer is null but primitives_len is nonzero");
-	const bool has_primitives = primitives_len != 0;
+	validate_correction_len_(data_dimension, max_nodes, correction_len);
+	if (correction == nullptr && correction_len != 0)
+		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
+	const bool has_correction = correction_len != 0;
 	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 
 	// Single-point paths have no increments => identity branched sig
@@ -1161,10 +1161,10 @@ void branched_sig_cuda_core_(
 	if (block > 1024)
 		throw std::invalid_argument("CUDA branched sig: num_trees > 1024 not supported");
 
-	// Shared memory: temp plus primitive work arrays when needed, then inc and tables
+	// Shared memory: temp plus local_log work arrays when needed, then inc and tables
 	//              + coprod_data[coprod_data_len]*4 + coprod_offsets[num_trees+1]*4
 	//              + order_index[max_nodes+2]*4
-	const uint64_t t_arrays = has_primitives ? (4 * gc.total_length + dimension) : (gc.total_length + dimension);
+	const uint64_t t_arrays = has_correction ? (4 * gc.total_length + dimension) : (gc.total_length + dimension);
 	size_t smem = t_arrays * sizeof(T)
 		+ gc.coprod_data_len * sizeof(uint32_t)
 		+ (gc.num_trees + 1) * sizeof(uint32_t)
@@ -1186,7 +1186,7 @@ void branched_sig_cuda_core_(
 		d_inv_fact,
 		gc.d_coprod_data32, gc.d_coprod_offsets32,
 		gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
-		gc.coprod_data_len, primitives, primitives_len
+		gc.coprod_data_len, correction, correction_len
 	);
 	cudaDeviceSynchronize();
 	check_cuda_error();
@@ -1209,14 +1209,14 @@ void branched_sig_cuda_(
 	T end_time,
 	bool planar = false,
 	bool scalar_term = true,
-	const T* primitives = nullptr,
-	uint64_t primitives_len = 0
+	const T* correction = nullptr,
+	uint64_t correction_len = 0
 ) {
-	validate_primitives_len_(dimension, max_nodes, primitives_len);
-	if (primitives == nullptr && primitives_len != 0)
-		throw std::invalid_argument("primitives pointer is null but primitives_len is nonzero");
-	if (lead_lag && primitives_len != 0)
-		throw std::invalid_argument("primitives cannot be used with lead_lag=true");
+	validate_correction_len_(dimension, max_nodes, correction_len);
+	if (correction == nullptr && correction_len != 0)
+		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
+	if (lead_lag && correction_len != 0)
+		throw std::invalid_argument("correction cannot be used with lead_lag=true");
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
 
@@ -1238,11 +1238,11 @@ void branched_sig_cuda_(
 		cudaDeviceSynchronize();
 
 		branched_sig_cuda_core_<T>(d_transformed.get(), core_out, batch_size, t_dimension, t_length,
-			max_nodes, planar, dimension, primitives, primitives_len);
+			max_nodes, planar, dimension, correction, correction_len);
 	}
 	else {
 		branched_sig_cuda_core_<T>(path, core_out, batch_size, dimension, length,
-			max_nodes, planar, dimension, primitives, primitives_len);
+			max_nodes, planar, dimension, correction, correction_len);
 	}
 
 	if (!scalar_term) {
@@ -1266,14 +1266,14 @@ void branched_sig_backprop_cuda_core_(
 	uint64_t max_nodes,
 	bool planar = false,
 	uint64_t data_dimension = 0,
-	const T* primitives = nullptr,
-	uint64_t primitives_len = 0
+	const T* correction = nullptr,
+	uint64_t correction_len = 0
 ) {
 	if (data_dimension == 0) data_dimension = dimension;
-	validate_primitives_len_(data_dimension, max_nodes, primitives_len);
-	if (primitives == nullptr && primitives_len != 0)
-		throw std::invalid_argument("primitives pointer is null but primitives_len is nonzero");
-	const bool has_primitives = primitives_len != 0;
+	validate_correction_len_(data_dimension, max_nodes, correction_len);
+	if (correction == nullptr && correction_len != 0)
+		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
+	const bool has_correction = correction_len != 0;
 	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 
 	// Single-point paths have no increments => zero path gradients
@@ -1292,7 +1292,7 @@ void branched_sig_backprop_cuda_core_(
 	if (block > 1024)
 		throw std::invalid_argument("CUDA branched sig backprop: num_trees > 1024 not supported");
 
-	const uint64_t t_arrays = has_primitives
+	const uint64_t t_arrays = has_correction
 		? ((6 + 2 * static_cast<uint64_t>(gc.max_nodes)) * gc.total_length + 2 * dimension)
 		: (4 * gc.total_length + 2 * dimension);
 	size_t smem = t_arrays * sizeof(T)
@@ -1316,7 +1316,7 @@ void branched_sig_backprop_cuda_core_(
 		d_inv_fact,
 		gc.d_coprod_data32, gc.d_coprod_offsets32,
 		gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
-		gc.coprod_data_len, primitives, primitives_len
+		gc.coprod_data_len, correction, correction_len
 	);
 	cudaDeviceSynchronize();
 	check_cuda_error();
@@ -1337,14 +1337,14 @@ void branched_sig_backprop_cuda_(
 	T end_time,
 	bool planar = false,
 	bool scalar_term = true,
-	const T* primitives = nullptr,
-	uint64_t primitives_len = 0
+	const T* correction = nullptr,
+	uint64_t correction_len = 0
 ) {
-	validate_primitives_len_(dimension, max_nodes, primitives_len);
-	if (primitives == nullptr && primitives_len != 0)
-		throw std::invalid_argument("primitives pointer is null but primitives_len is nonzero");
-	if (lead_lag && primitives_len != 0)
-		throw std::invalid_argument("primitives cannot be used with lead_lag=true");
+	validate_correction_len_(dimension, max_nodes, correction_len);
+	if (correction == nullptr && correction_len != 0)
+		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
+	if (lead_lag && correction_len != 0)
+		throw std::invalid_argument("correction cannot be used with lead_lag=true");
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
 
@@ -1375,7 +1375,7 @@ void branched_sig_backprop_cuda_(
 
 			cudaMalloc(&d_transformed_derivs, t_path_size * sizeof(T));
 			branched_sig_backprop_cuda_core_<T>(d_transformed, d_transformed_derivs, core_derivs, core_bsig,
-				batch_size, t_dimension, t_length, max_nodes, planar, dimension, primitives, primitives_len);
+				batch_size, t_dimension, t_length, max_nodes, planar, dimension, correction, correction_len);
 
 			cudaFree(d_transformed);
 			d_transformed = nullptr;
@@ -1390,7 +1390,7 @@ void branched_sig_backprop_cuda_(
 	}
 	else {
 		branched_sig_backprop_cuda_core_<T>(path, out, core_derivs, core_bsig,
-			batch_size, dimension, length, max_nodes, planar, dimension, primitives, primitives_len);
+			batch_size, dimension, length, max_nodes, planar, dimension, correction, correction_len);
 	}
 }
 
@@ -1401,12 +1401,12 @@ void branched_sig_backprop_cuda_(
 extern "C" {
 
 
-	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* primitives, uint64_t primitives_len) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_cuda_<float>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, primitives, primitives_len));
+	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_cuda_<float>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
 	}
 
-	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* primitives, uint64_t primitives_len) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, primitives, primitives_len));
+	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
 	}
 
 	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar, bool scalar_term) noexcept {
@@ -1424,12 +1424,12 @@ extern "C" {
 	}
 
 
-	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* primitives, uint64_t primitives_len) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, primitives, primitives_len));
+	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
 	}
 
-	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* primitives, uint64_t primitives_len) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, primitives, primitives_len));
+	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
 	}
 
 }

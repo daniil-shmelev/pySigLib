@@ -24,7 +24,7 @@ from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CPSIG_BRANCHED_SIG_COMBINE_BACKPROP,
                      CUSIG_BRANCHED_SIG_BACKPROP_CUDA,
                      CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA)
-from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler, PrimitivesInputHandler
+from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
 from .branched_sig import (_inv_permute_bsig, _permute_bsig, branched_sig_length,
                            _infer_branched_scalar_term, _check_cuda_num_trees)
 
@@ -40,14 +40,14 @@ def branched_sig_backprop(
         end_time: float = 1.0,
         tree_order: str = "recursive",
         planar: bool = False,
-        primitives = None,
+        correction = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Backpropagates through the branched signature computation.
 
     Given the forward branched signature
-    ``bsig = branched_sig(path, degree, primitives=primitives)`` and upstream
+    ``bsig = branched_sig(path, degree, correction=correction)`` and upstream
     derivatives ``bsig_derivs = dF/d(bsig)``, computes ``dF/d(path)``.
 
     :param path: Input path, shape ``(length, dimension)`` or ``(batch, length, dimension)``.
@@ -70,11 +70,11 @@ def branched_sig_backprop(
     :type tree_order: str
     :param planar: If True, backpropagate through planar branched signature.
     :type planar: bool
-    :param primitives: The same constant tensor-algebra primitive supplied to
+    :param correction: The same constant correction supplied to
         the forward call (see :func:`branched_sig` for layout and semantics).
         Treated as a constant: no derivatives are returned with respect to
-        ``primitives``. Cannot be combined with ``lead_lag=True``.
-    :type primitives: numpy.ndarray | torch.tensor | None
+        ``correction``. Cannot be combined with ``lead_lag=True``.
+    :type correction: numpy.ndarray | torch.tensor | None
     :param n_jobs: Number of parallel threads for batch processing.
     :type n_jobs: int
     :return: Path derivatives, same shape as ``path``.
@@ -83,7 +83,7 @@ def branched_sig_backprop(
     ----------------
 
     Forward and backward pass through the Ito-lifted branched signature of
-    a sampled Brownian path. The same ``primitives`` array must be passed to
+    a sampled Brownian path. The same ``correction`` array must be passed to
     both calls.
 
     .. code-block:: python
@@ -100,15 +100,15 @@ def branched_sig_backprop(
         path = np.zeros((n_steps + 1, d))
         path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
 
-        # Ito level-2 primitive: dt * Sigma flattened (Sigma = I here).
-        primitives = (np.eye(d) * dt).flatten()
+        # Ito level-2 correction: dt * Sigma flattened (Sigma = I here).
+        correction = (np.eye(d) * dt).flatten()
 
         pysiglib.prepare_branched_sig(d, N)
         bsig = pysiglib.branched_sig(
-            path, N, primitives=primitives, end_time=T)
+            path, N, correction=correction, end_time=T)
         bsig_derivs = np.ones_like(bsig)
         grad = pysiglib.branched_sig_backprop(
-            path, bsig, bsig_derivs, N, primitives=primitives, end_time=T)
+            path, bsig, bsig_derivs, N, correction=correction, end_time=T)
         print(grad.shape)
     """
     if tree_order not in ("recursive", "canonical"):
@@ -122,7 +122,7 @@ def branched_sig_backprop(
     check_n_jobs(n_jobs)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
-    primitives_data = PrimitivesInputHandler(primitives, path_data, degree)
+    correction_data = CorrectionInputHandler(correction, path_data, degree)
     dimension = path_data.data_dimension
     aug_dimension = path_data.dimension
 
@@ -144,7 +144,7 @@ def branched_sig_backprop(
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, dimension, path_data.data_length, degree, n_jobs,
             path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term,
-            primitives_data.data_ptr, primitives_data.length)
+            correction_data.data_ptr, correction_data.length)
     else:
         _check_cuda_num_trees(aug_dimension, degree, planar, "branched_sig_backprop")
         err_code = CUSIG_BRANCHED_SIG_BACKPROP_CUDA[path_data.dtype](
@@ -152,7 +152,7 @@ def branched_sig_backprop(
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, dimension, path_data.data_length, degree,
             path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term,
-            primitives_data.data_ptr, primitives_data.length)
+            correction_data.data_ptr, correction_data.length)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_backprop: " + err_msg(err_code))
     return result.data

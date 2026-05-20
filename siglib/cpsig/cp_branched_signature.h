@@ -131,26 +131,26 @@ void branched_hopf_convolution_deriv_(
 }
 
 template<std::floating_point T>
-void build_primitive_base_(
+void build_correction_base_(
 	T* out,
-	const T* primitives,
-	uint64_t primitives_len,
+	const T* correction,
+	uint64_t correction_len,
 	uint64_t data_dimension,
 	const BranchedSigCache& cache
 ) {
 	std::memset(out, 0, cache.total_length * sizeof(T));
-	if (primitives == nullptr || primitives_len == 0)
+	if (correction == nullptr || correction_len == 0)
 		return;
 
 	uint64_t offset = 0;
 	uint64_t level_size = data_dimension;
 	for (uint64_t level = 2; level <= cache.max_nodes; ++level) {
 		level_size *= data_dimension;
-		if (offset + level_size > primitives_len)
+		if (offset + level_size > correction_len)
 			break;
 
 		for (uint64_t word_idx = 0; word_idx < level_size; ++word_idx) {
-			const T value = primitives[offset + word_idx];
+			const T value = correction[offset + word_idx];
 			if (value == static_cast<T>(0))
 				continue;
 
@@ -175,13 +175,13 @@ void build_primitive_base_(
 }
 
 template<std::floating_point T>
-void branched_primitive_(
+void branched_correction_(
 	const T* increment,
 	T* out,
-	const T* primitive_base,
+	const T* local_log_base,
 	const BranchedSigCache& cache
 ) {
-	std::memcpy(out, primitive_base, cache.total_length * sizeof(T));
+	std::memcpy(out, local_log_base, cache.total_length * sizeof(T));
 
 	if (cache.max_nodes >= 1) {
 		for (uint64_t d = 0; d < cache.dimension; ++d) {
@@ -192,7 +192,7 @@ void branched_primitive_(
 
 template<std::floating_point T>
 void branched_hopf_exp_(
-	const T* primitive,
+	const T* local_log,
 	T* out,
 	T* power,
 	T* next_power,
@@ -202,7 +202,7 @@ void branched_hopf_exp_(
 	std::memset(out, 0, total_len * sizeof(T));
 	out[0] = static_cast<T>(1);
 
-	std::memcpy(power, primitive, total_len * sizeof(T));
+	std::memcpy(power, local_log, total_len * sizeof(T));
 	T inv_factorial = static_cast<T>(1);
 
 	for (uint64_t k = 1; k <= cache.max_nodes; ++k) {
@@ -212,31 +212,31 @@ void branched_hopf_exp_(
 		}
 
 		if (k < cache.max_nodes) {
-			branched_hopf_convolution_(power, primitive, next_power, cache);
+			branched_hopf_convolution_(power, local_log, next_power, cache);
 			std::swap(power, next_power);
 		}
 	}
 }
 
 template<std::floating_point T>
-void local_primitive_branched_sig_(
+void local_correction_branched_sig_(
 	const T* increment,
 	T* out,
-	T* primitive,
+	T* local_log,
 	T* power,
 	T* next_power,
-	const T* primitive_base,
+	const T* local_log_base,
 	const BranchedSigCache& cache
 ) {
 	if (cache.max_nodes <= 2) {
 		linear_branched_sig_(increment, out, cache);
 		for (uint64_t i = 1; i < cache.total_length; ++i)
-			out[i] += primitive_base[i];
+			out[i] += local_log_base[i];
 		return;
 	}
 
-	branched_primitive_(increment, primitive, primitive_base, cache);
-	branched_hopf_exp_(primitive, out, power, next_power, cache);
+	branched_correction_(increment, local_log, local_log_base, cache);
+	branched_hopf_exp_(local_log, out, power, next_power, cache);
 }
 
 // Processes trees from highest order down to order 1 so that forest
@@ -282,11 +282,11 @@ void branched_signature_with_buffers_(
 	T* out,
 	T* increment,
 	T* temp,
-	T* primitive,
+	T* local_log,
 	T* power,
 	T* next_power,
-	const T* primitive_base,
-	bool has_primitives,
+	const T* local_log_base,
+	bool has_correction,
 	const BranchedSigCache& cache
 ) {
 	uint64_t total_len = cache.total_length;
@@ -304,11 +304,11 @@ void branched_signature_with_buffers_(
 	for (uint64_t d = 0; d < dim; ++d) {
 		increment[d] = p1[d] - p0[d];
 	}
-	if (!has_primitives) {
+	if (!has_correction) {
 		linear_branched_sig_(increment, out, cache);
 	} else {
-		local_primitive_branched_sig_(increment, out, primitive, power, next_power,
-			primitive_base, cache);
+		local_correction_branched_sig_(increment, out, local_log, power, next_power,
+			local_log_base, cache);
 	}
 
 	for (uint64_t seg = 1; seg < len - 1; ++seg) {
@@ -319,11 +319,11 @@ void branched_signature_with_buffers_(
 			increment[d] = seg_end[d] - seg_start[d];
 		}
 
-		if (!has_primitives) {
+		if (!has_correction) {
 			linear_branched_sig_(increment, temp, cache);
 		} else {
-			local_primitive_branched_sig_(increment, temp, primitive, power, next_power,
-				primitive_base, cache);
+			local_correction_branched_sig_(increment, temp, local_log, power, next_power,
+				local_log_base, cache);
 		}
 		butcher_product_inplace_(out, temp, cache);
 	}
@@ -344,38 +344,38 @@ void branched_signature_(
 	T end_time = static_cast<T>(1.),
 	bool planar = false,
 	bool scalar_term = true,
-	const T* primitives = nullptr,
-	uint64_t primitives_len = 0
+	const T* correction = nullptr,
+	uint64_t correction_len = 0
 ) {
-	validate_primitives_len_(dimension, max_nodes, primitives_len);
-	if (primitives == nullptr && primitives_len != 0)
-		throw std::invalid_argument("primitives pointer is null but primitives_len is nonzero");
-	if (lead_lag && primitives_len != 0)
-		throw std::invalid_argument("primitives cannot be used with lead_lag=true");
-	const bool has_primitives = primitives_len != 0;
+	validate_correction_len_(dimension, max_nodes, correction_len);
+	if (correction == nullptr && correction_len != 0)
+		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
+	if (lead_lag && correction_len != 0)
+		throw std::invalid_argument("correction cannot be used with lead_lag=true");
+	const bool has_correction = correction_len != 0;
 	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 	uint64_t flat_path_length = length * dimension;
 	uint64_t out_stride = scalar_term ? total_len : total_len - 1;
 
-	std::vector<T> primitive_base;
-	if (has_primitives) {
-		primitive_base.resize(total_len);
-		build_primitive_base_(primitive_base.data(), primitives, primitives_len,
+	std::vector<T> local_log_base;
+	if (has_correction) {
+		local_log_base.resize(total_len);
+		build_correction_base_(local_log_base.data(), correction, correction_len,
 			dimension, cache);
 	}
 
 	auto compute_one = [&](const T* path_ptr, T* out_ptr, T* increment, T* temp,
-		T* primitive, T* power, T* next_power) {
+		T* local_log, T* power, T* next_power) {
 		Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
 		if (scalar_term) {
 			branched_signature_with_buffers_(path_obj, out_ptr, increment, temp,
-				primitive, power, next_power, primitive_base.data(), has_primitives, cache);
+				local_log, power, next_power, local_log_base.data(), has_correction, cache);
 		} else {
 			std::vector<T> buf(total_len);
 			branched_signature_with_buffers_(path_obj, buf.data(), increment, temp,
-				primitive, power, next_power, primitive_base.data(), has_primitives, cache);
+				local_log, power, next_power, local_log_base.data(), has_correction, cache);
 			std::memcpy(out_ptr, buf.data() + 1, (total_len - 1) * sizeof(T));
 		}
 	};
@@ -383,11 +383,11 @@ void branched_signature_(
 	if (n_jobs == 1 || batch_size == 1) {
 		auto increment = std::make_unique<T[]>(aug_dim);
 		auto temp = std::make_unique<T[]>(total_len);
-		std::unique_ptr<T[]> primitive;
+		std::unique_ptr<T[]> local_log;
 		std::unique_ptr<T[]> power;
 		std::unique_ptr<T[]> next_power;
-		if (has_primitives) {
-			primitive = std::make_unique<T[]>(total_len);
+		if (has_correction) {
+			local_log = std::make_unique<T[]>(total_len);
 			power = std::make_unique<T[]>(total_len);
 			next_power = std::make_unique<T[]>(total_len);
 		}
@@ -395,7 +395,7 @@ void branched_signature_(
 		T* out_ptr = out;
 		for (uint64_t b = 0; b < batch_size; ++b) {
 			compute_one(path_ptr, out_ptr, increment.get(), temp.get(),
-				primitive.get(), power.get(), next_power.get());
+				local_log.get(), power.get(), next_power.get());
 			path_ptr += flat_path_length;
 			out_ptr += out_stride;
 		}
@@ -414,17 +414,17 @@ void branched_signature_(
 			workers.emplace_back([&, t, max_threads]() {
 				auto increment = std::make_unique<T[]>(aug_dim);
 				auto temp = std::make_unique<T[]>(total_len);
-				std::unique_ptr<T[]> primitive;
+				std::unique_ptr<T[]> local_log;
 				std::unique_ptr<T[]> power;
 				std::unique_ptr<T[]> next_power;
-				if (has_primitives) {
-					primitive = std::make_unique<T[]>(total_len);
+				if (has_correction) {
+					local_log = std::make_unique<T[]>(total_len);
 					power = std::make_unique<T[]>(total_len);
 					next_power = std::make_unique<T[]>(total_len);
 				}
 				for (uint64_t b = t; b < batch_size; b += max_threads) {
 					compute_one(path + b * flat_path_length, out + b * out_stride,
-						increment.get(), temp.get(), primitive.get(), power.get(), next_power.get());
+						increment.get(), temp.get(), local_log.get(), power.get(), next_power.get());
 				}
 			});
 		}
@@ -688,15 +688,15 @@ void linear_bsig_deriv_to_increment_deriv_(
 }
 
 template<std::floating_point T>
-void primitive_bsig_deriv_to_increment_deriv_(
+void local_log_bsig_deriv_to_increment_deriv_(
 	const T* dF_dY,
 	const T* increment,
 	T* inc_derivs,
-	T* primitive,
+	T* local_log,
 	T* powers,
 	T* power_derivs,
-	T* d_primitive,
-	const T* primitive_base,
+	T* d_correction,
+	const T* local_log_base,
 	const BranchedSigCache& cache
 ) {
 	if (cache.max_nodes <= 2) {
@@ -706,12 +706,12 @@ void primitive_bsig_deriv_to_increment_deriv_(
 
 	uint64_t total_len = cache.total_length;
 	std::memset(power_derivs, 0, cache.max_nodes * total_len * sizeof(T));
-	std::memset(d_primitive, 0, total_len * sizeof(T));
+	std::memset(d_correction, 0, total_len * sizeof(T));
 
-	branched_primitive_(increment, primitive, primitive_base, cache);
-	std::memcpy(powers, primitive, total_len * sizeof(T));
+	branched_correction_(increment, local_log, local_log_base, cache);
+	std::memcpy(powers, local_log, total_len * sizeof(T));
 	for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
-		branched_hopf_convolution_(powers + (k - 2) * total_len, primitive,
+		branched_hopf_convolution_(powers + (k - 2) * total_len, local_log,
 			powers + (k - 1) * total_len, cache);
 	}
 
@@ -725,18 +725,18 @@ void primitive_bsig_deriv_to_increment_deriv_(
 	}
 
 	for (uint64_t k = cache.max_nodes; k > 1; --k) {
-		branched_hopf_convolution_deriv_(powers + (k - 2) * total_len, primitive,
+		branched_hopf_convolution_deriv_(powers + (k - 2) * total_len, local_log,
 			power_derivs + (k - 1) * total_len,
-			power_derivs + (k - 2) * total_len, d_primitive, cache);
+			power_derivs + (k - 2) * total_len, d_correction, cache);
 	}
 
 	for (uint64_t i = 0; i < total_len; ++i) {
-		d_primitive[i] += power_derivs[i];
+		d_correction[i] += power_derivs[i];
 	}
 
 	std::memset(inc_derivs, 0, cache.dimension * sizeof(T));
 	for (uint64_t d = 0; d < cache.dimension; ++d) {
-		inc_derivs[d] = d_primitive[cache.order_index[1] + d + 1];
+		inc_derivs[d] = d_correction[cache.order_index[1] + d + 1];
 	}
 }
 
@@ -752,14 +752,14 @@ void branched_sig_backprop_inplace_(
 	T* temp_Y,
 	T* local_derivs,
 	T* inc_derivs,
-	T* primitive,
+	T* local_log,
 	T* power,
 	T* next_power,
 	T* powers,
 	T* power_derivs,
-	T* d_primitive,
-	const T* primitive_base,
-	bool has_primitives,
+	T* d_correction,
+	const T* local_log_base,
+	bool has_correction,
 	const BranchedSigCache& cache
 ) {
 	uint64_t total_len = cache.total_length;
@@ -778,11 +778,11 @@ void branched_sig_backprop_inplace_(
 			for (uint64_t d = 0; d < dim; ++d)
 				increment[d] = p1[d] - p0[d];
 
-			if (!has_primitives) {
+			if (!has_correction) {
 				linear_branched_sig_(increment, temp_Y, cache);
 			} else {
-				local_primitive_branched_sig_(increment, temp_Y, primitive, power, next_power,
-					primitive_base, cache);
+				local_correction_branched_sig_(increment, temp_Y, local_log, power, next_power,
+					local_log_base, cache);
 			}
 
 			if (seg > 0)
@@ -793,11 +793,11 @@ void branched_sig_backprop_inplace_(
 			else
 				std::memcpy(local_derivs, bsig_derivs, total_len * sizeof(T));
 
-			if (!has_primitives) {
+			if (!has_correction) {
 				linear_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs, dim, cache);
 			} else {
-				primitive_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs,
-					primitive, powers, power_derivs, d_primitive, primitive_base, cache);
+				local_log_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs,
+					local_log, powers, power_derivs, d_correction, local_log_base, cache);
 			}
 
 			T* pos = out + (seg + 1) * data_dim;
@@ -820,11 +820,11 @@ void branched_sig_backprop_inplace_(
 			for (uint64_t d = 0; d < dim; ++d)
 				increment[d] = p1[d] - p0[d];
 
-			if (!has_primitives) {
+			if (!has_correction) {
 				linear_branched_sig_(increment, temp_Y, cache);
 			} else {
-				local_primitive_branched_sig_(increment, temp_Y, primitive, power, next_power,
-					primitive_base, cache);
+				local_correction_branched_sig_(increment, temp_Y, local_log, power, next_power,
+					local_log_base, cache);
 			}
 
 			if (seg > 0)
@@ -835,11 +835,11 @@ void branched_sig_backprop_inplace_(
 			else
 				std::memcpy(local_derivs, bsig_derivs, total_len * sizeof(T));
 
-			if (!has_primitives) {
+			if (!has_correction) {
 				linear_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs, dim, cache);
 			} else {
-				primitive_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs,
-					primitive, powers, power_derivs, d_primitive, primitive_base, cache);
+				local_log_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs,
+					local_log, powers, power_derivs, d_correction, local_log_base, cache);
 			}
 
 			T* s = parity ? inc_derivs + data_dim : inc_derivs;
@@ -873,30 +873,30 @@ void branched_sig_backprop_(
 	T end_time = static_cast<T>(1.),
 	bool planar = false,
 	bool scalar_term = true,
-	const T* primitives = nullptr,
-	uint64_t primitives_len = 0
+	const T* correction = nullptr,
+	uint64_t correction_len = 0
 ) {
-	validate_primitives_len_(dimension, max_nodes, primitives_len);
-	if (primitives == nullptr && primitives_len != 0)
-		throw std::invalid_argument("primitives pointer is null but primitives_len is nonzero");
-	if (lead_lag && primitives_len != 0)
-		throw std::invalid_argument("primitives cannot be used with lead_lag=true");
-	const bool has_primitives = primitives_len != 0;
+	validate_correction_len_(dimension, max_nodes, correction_len);
+	if (correction == nullptr && correction_len != 0)
+		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
+	if (lead_lag && correction_len != 0)
+		throw std::invalid_argument("correction cannot be used with lead_lag=true");
+	const bool has_correction = correction_len != 0;
 	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 	uint64_t flat_path_length = length * dimension;
 	uint64_t in_stride = scalar_term ? total_len : total_len - 1;
 
-	std::vector<T> primitive_base;
-	if (has_primitives) {
-		primitive_base.resize(total_len);
-		build_primitive_base_(primitive_base.data(), primitives, primitives_len,
+	std::vector<T> local_log_base;
+	if (has_correction) {
+		local_log_base.resize(total_len);
+		build_correction_base_(local_log_base.data(), correction, correction_len,
 			dimension, cache);
 	}
 
 	auto work = [&](uint64_t b, T* increment, T* temp_Y, T* local_derivs, T* inc_derivs,
-		T* primitive, T* power, T* next_power, T* powers, T* power_derivs, T* d_primitive) {
+		T* local_log, T* power, T* next_power, T* powers, T* power_derivs, T* d_correction) {
 		Path<T> path_obj(path + b * flat_path_length, dimension, length, time_aug, lead_lag, end_time);
 
 		auto bsig_copy = std::make_unique<T[]>(total_len);
@@ -918,8 +918,8 @@ void branched_sig_backprop_(
 		branched_sig_backprop_inplace_(
 			path_obj, out_ptr, derivs_copy.get(), bsig_copy.get(),
 			increment, temp_Y, local_derivs, inc_derivs,
-			primitive, power, next_power, powers, power_derivs, d_primitive,
-			primitive_base.data(), has_primitives, cache);
+			local_log, power, next_power, powers, power_derivs, d_correction,
+			local_log_base.data(), has_correction, cache);
 	};
 
 	if (n_jobs == 1 || batch_size == 1) {
@@ -927,23 +927,23 @@ void branched_sig_backprop_(
 		auto temp_Y = std::make_unique<T[]>(total_len);
 		auto local_derivs = std::make_unique<T[]>(total_len);
 		auto inc_derivs = std::make_unique<T[]>(aug_dim);
-		std::unique_ptr<T[]> primitive;
+		std::unique_ptr<T[]> local_log;
 		std::unique_ptr<T[]> power;
 		std::unique_ptr<T[]> next_power;
 		std::unique_ptr<T[]> powers;
 		std::unique_ptr<T[]> power_derivs;
-		std::unique_ptr<T[]> d_primitive;
-		if (has_primitives) {
-			primitive = std::make_unique<T[]>(total_len);
+		std::unique_ptr<T[]> d_correction;
+		if (has_correction) {
+			local_log = std::make_unique<T[]>(total_len);
 			power = std::make_unique<T[]>(total_len);
 			next_power = std::make_unique<T[]>(total_len);
 			powers = std::make_unique<T[]>(max_nodes * total_len);
 			power_derivs = std::make_unique<T[]>(max_nodes * total_len);
-			d_primitive = std::make_unique<T[]>(total_len);
+			d_correction = std::make_unique<T[]>(total_len);
 		}
 		for (uint64_t b = 0; b < batch_size; ++b)
 			work(b, increment.get(), temp_Y.get(), local_derivs.get(), inc_derivs.get(),
-				primitive.get(), power.get(), next_power.get(), powers.get(), power_derivs.get(), d_primitive.get());
+				local_log.get(), power.get(), next_power.get(), powers.get(), power_derivs.get(), d_correction.get());
 	}
 	else {
 		if (n_jobs == 0)
@@ -961,23 +961,23 @@ void branched_sig_backprop_(
 				auto temp_Y = std::make_unique<T[]>(total_len);
 				auto local_derivs = std::make_unique<T[]>(total_len);
 				auto inc_derivs = std::make_unique<T[]>(aug_dim);
-				std::unique_ptr<T[]> primitive;
+				std::unique_ptr<T[]> local_log;
 				std::unique_ptr<T[]> power;
 				std::unique_ptr<T[]> next_power;
 				std::unique_ptr<T[]> powers;
 				std::unique_ptr<T[]> power_derivs;
-				std::unique_ptr<T[]> d_primitive;
-				if (has_primitives) {
-					primitive = std::make_unique<T[]>(total_len);
+				std::unique_ptr<T[]> d_correction;
+				if (has_correction) {
+					local_log = std::make_unique<T[]>(total_len);
 					power = std::make_unique<T[]>(total_len);
 					next_power = std::make_unique<T[]>(total_len);
 					powers = std::make_unique<T[]>(max_nodes * total_len);
 					power_derivs = std::make_unique<T[]>(max_nodes * total_len);
-					d_primitive = std::make_unique<T[]>(total_len);
+					d_correction = std::make_unique<T[]>(total_len);
 				}
 				for (uint64_t b = t; b < batch_size; b += max_threads)
 					work(b, increment.get(), temp_Y.get(), local_derivs.get(), inc_derivs.get(),
-						primitive.get(), power.get(), next_power.get(), powers.get(), power_derivs.get(), d_primitive.get());
+						local_log.get(), power.get(), next_power.get(), powers.get(), power_derivs.get(), d_correction.get());
 			});
 		}
 		for (auto& w : workers) w.join();
