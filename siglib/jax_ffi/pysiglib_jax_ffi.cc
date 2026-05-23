@@ -213,13 +213,21 @@ inline std::uint64_t AugmentedDimension(std::uint64_t dimension, bool time_aug, 
 template <typename BufferT>
 std::string GetCorrectionLen(BufferT& correction, std::uint64_t& len) {
     const auto dims = BufferDims(correction);
-    if (dims.size() != 1) {
+    if (dims.size() == 1) {
+        len = static_cast<std::uint64_t>(dims[0]);
+        return {};
+    }
+    for (const auto dim : dims) {
+        if (dim == 0) {
+            len = 0;
+            return {};
+        }
+    }
+    {
         std::ostringstream oss;
         oss << "correction must have rank 1, got rank " << dims.size();
         return oss.str();
     }
-    len = static_cast<std::uint64_t>(dims[0]);
-    return {};
 }
 
 template <typename T>
