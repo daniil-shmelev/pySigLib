@@ -178,10 +178,12 @@ template<std::floating_point T>
 void branched_correction_(
 	const T* increment,
 	T* out,
-	const T* local_log_base,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t data_dimension,
 	const BranchedSigCache& cache
 ) {
-	std::memcpy(out, local_log_base, cache.total_length * sizeof(T));
+	build_correction_base_(out, correction, correction_len, data_dimension, cache);
 
 	if (cache.max_nodes >= 1) {
 		for (uint64_t d = 0; d < cache.dimension; ++d) {
@@ -225,17 +227,20 @@ void local_correction_branched_sig_(
 	T* local_log,
 	T* power,
 	T* next_power,
-	const T* local_log_base,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t data_dimension,
 	const BranchedSigCache& cache
 ) {
 	if (cache.max_nodes <= 2) {
 		linear_branched_sig_(increment, out, cache);
+		build_correction_base_(local_log, correction, correction_len, data_dimension, cache);
 		for (uint64_t i = 1; i < cache.total_length; ++i)
-			out[i] += local_log_base[i];
+			out[i] += local_log[i];
 		return;
 	}
 
-	branched_correction_(increment, local_log, local_log_base, cache);
+	branched_correction_(increment, local_log, correction, correction_len, data_dimension, cache);
 	branched_hopf_exp_(local_log, out, power, next_power, cache);
 }
 
@@ -285,12 +290,15 @@ void branched_signature_with_buffers_(
 	T* local_log,
 	T* power,
 	T* next_power,
-	const T* local_log_base,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t correction_segment_stride,
 	bool has_correction,
 	const BranchedSigCache& cache
 ) {
 	uint64_t total_len = cache.total_length;
 	uint64_t dim = path.dimension();
+	uint64_t data_dim = path.data_dimension();
 	uint64_t len = path.length();
 
 	if (len <= 1) {
@@ -308,7 +316,7 @@ void branched_signature_with_buffers_(
 		linear_branched_sig_(increment, out, cache);
 	} else {
 		local_correction_branched_sig_(increment, out, local_log, power, next_power,
-			local_log_base, cache);
+			correction, correction_len, data_dim, cache);
 	}
 
 	for (uint64_t seg = 1; seg < len - 1; ++seg) {
@@ -322,8 +330,9 @@ void branched_signature_with_buffers_(
 		if (!has_correction) {
 			linear_branched_sig_(increment, temp, cache);
 		} else {
+			const T* seg_correction = correction + seg * correction_segment_stride;
 			local_correction_branched_sig_(increment, temp, local_log, power, next_power,
-				local_log_base, cache);
+				seg_correction, correction_len, data_dim, cache);
 		}
 		butcher_product_inplace_(out, temp, cache);
 	}
@@ -345,7 +354,9 @@ void branched_signature_(
 	bool planar = false,
 	bool scalar_term = true,
 	const T* correction = nullptr,
-	uint64_t correction_len = 0
+	uint64_t correction_len = 0,
+	uint64_t correction_batch_stride = 0,
+	uint64_t correction_segment_stride = 0
 ) {
 	validate_correction_len_(dimension, max_nodes, correction_len);
 	if (correction == nullptr && correction_len != 0)
@@ -353,29 +364,26 @@ void branched_signature_(
 	if (lead_lag && correction_len != 0)
 		throw std::invalid_argument("correction cannot be used with lead_lag=true");
 	const bool has_correction = correction_len != 0;
+	if (has_correction && correction_segment_stride == 0)
+		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 	uint64_t flat_path_length = length * dimension;
 	uint64_t out_stride = scalar_term ? total_len : total_len - 1;
 
-	std::vector<T> local_log_base;
-	if (has_correction) {
-		local_log_base.resize(total_len);
-		build_correction_base_(local_log_base.data(), correction, correction_len,
-			dimension, cache);
-	}
-
 	auto compute_one = [&](const T* path_ptr, T* out_ptr, T* increment, T* temp,
-		T* local_log, T* power, T* next_power) {
+		T* local_log, T* power, T* next_power, const T* correction_ptr) {
 		Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
 		if (scalar_term) {
 			branched_signature_with_buffers_(path_obj, out_ptr, increment, temp,
-				local_log, power, next_power, local_log_base.data(), has_correction, cache);
+				local_log, power, next_power, correction_ptr, correction_len,
+				correction_segment_stride, has_correction, cache);
 		} else {
 			std::vector<T> buf(total_len);
 			branched_signature_with_buffers_(path_obj, buf.data(), increment, temp,
-				local_log, power, next_power, local_log_base.data(), has_correction, cache);
+				local_log, power, next_power, correction_ptr, correction_len,
+				correction_segment_stride, has_correction, cache);
 			std::memcpy(out_ptr, buf.data() + 1, (total_len - 1) * sizeof(T));
 		}
 	};
@@ -394,8 +402,9 @@ void branched_signature_(
 		const T* path_ptr = path;
 		T* out_ptr = out;
 		for (uint64_t b = 0; b < batch_size; ++b) {
+			const T* correction_ptr = has_correction ? correction + b * correction_batch_stride : nullptr;
 			compute_one(path_ptr, out_ptr, increment.get(), temp.get(),
-				local_log.get(), power.get(), next_power.get());
+				local_log.get(), power.get(), next_power.get(), correction_ptr);
 			path_ptr += flat_path_length;
 			out_ptr += out_stride;
 		}
@@ -423,8 +432,10 @@ void branched_signature_(
 					next_power = std::make_unique<T[]>(total_len);
 				}
 				for (uint64_t b = t; b < batch_size; b += max_threads) {
+					const T* correction_ptr = has_correction ? correction + b * correction_batch_stride : nullptr;
 					compute_one(path + b * flat_path_length, out + b * out_stride,
-						increment.get(), temp.get(), local_log.get(), power.get(), next_power.get());
+						increment.get(), temp.get(), local_log.get(), power.get(), next_power.get(),
+						correction_ptr);
 				}
 			});
 		}
@@ -696,7 +707,9 @@ void local_log_bsig_deriv_to_increment_deriv_(
 	T* powers,
 	T* power_derivs,
 	T* d_correction,
-	const T* local_log_base,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t data_dimension,
 	const BranchedSigCache& cache
 ) {
 	if (cache.max_nodes <= 2) {
@@ -708,7 +721,7 @@ void local_log_bsig_deriv_to_increment_deriv_(
 	std::memset(power_derivs, 0, cache.max_nodes * total_len * sizeof(T));
 	std::memset(d_correction, 0, total_len * sizeof(T));
 
-	branched_correction_(increment, local_log, local_log_base, cache);
+	branched_correction_(increment, local_log, correction, correction_len, data_dimension, cache);
 	std::memcpy(powers, local_log, total_len * sizeof(T));
 	for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
 		branched_hopf_convolution_(powers + (k - 2) * total_len, local_log,
@@ -758,7 +771,9 @@ void branched_sig_backprop_inplace_(
 	T* powers,
 	T* power_derivs,
 	T* d_correction,
-	const T* local_log_base,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t correction_segment_stride,
 	bool has_correction,
 	const BranchedSigCache& cache
 ) {
@@ -781,8 +796,9 @@ void branched_sig_backprop_inplace_(
 			if (!has_correction) {
 				linear_branched_sig_(increment, temp_Y, cache);
 			} else {
+				const T* seg_correction = correction + static_cast<uint64_t>(seg) * correction_segment_stride;
 				local_correction_branched_sig_(increment, temp_Y, local_log, power, next_power,
-					local_log_base, cache);
+					seg_correction, correction_len, data_dim, cache);
 			}
 
 			if (seg > 0)
@@ -796,8 +812,10 @@ void branched_sig_backprop_inplace_(
 			if (!has_correction) {
 				linear_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs, dim, cache);
 			} else {
+				const T* seg_correction = correction + static_cast<uint64_t>(seg) * correction_segment_stride;
 				local_log_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs,
-					local_log, powers, power_derivs, d_correction, local_log_base, cache);
+					local_log, powers, power_derivs, d_correction, seg_correction,
+					correction_len, data_dim, cache);
 			}
 
 			T* pos = out + (seg + 1) * data_dim;
@@ -823,8 +841,9 @@ void branched_sig_backprop_inplace_(
 			if (!has_correction) {
 				linear_branched_sig_(increment, temp_Y, cache);
 			} else {
+				const T* seg_correction = correction + static_cast<uint64_t>(seg) * correction_segment_stride;
 				local_correction_branched_sig_(increment, temp_Y, local_log, power, next_power,
-					local_log_base, cache);
+					seg_correction, correction_len, data_dim, cache);
 			}
 
 			if (seg > 0)
@@ -838,8 +857,10 @@ void branched_sig_backprop_inplace_(
 			if (!has_correction) {
 				linear_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs, dim, cache);
 			} else {
+				const T* seg_correction = correction + static_cast<uint64_t>(seg) * correction_segment_stride;
 				local_log_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs,
-					local_log, powers, power_derivs, d_correction, local_log_base, cache);
+					local_log, powers, power_derivs, d_correction, seg_correction,
+					correction_len, data_dim, cache);
 			}
 
 			T* s = parity ? inc_derivs + data_dim : inc_derivs;
@@ -874,7 +895,9 @@ void branched_sig_backprop_(
 	bool planar = false,
 	bool scalar_term = true,
 	const T* correction = nullptr,
-	uint64_t correction_len = 0
+	uint64_t correction_len = 0,
+	uint64_t correction_batch_stride = 0,
+	uint64_t correction_segment_stride = 0
 ) {
 	validate_correction_len_(dimension, max_nodes, correction_len);
 	if (correction == nullptr && correction_len != 0)
@@ -882,18 +905,13 @@ void branched_sig_backprop_(
 	if (lead_lag && correction_len != 0)
 		throw std::invalid_argument("correction cannot be used with lead_lag=true");
 	const bool has_correction = correction_len != 0;
+	if (has_correction && correction_segment_stride == 0)
+		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 	uint64_t flat_path_length = length * dimension;
 	uint64_t in_stride = scalar_term ? total_len : total_len - 1;
-
-	std::vector<T> local_log_base;
-	if (has_correction) {
-		local_log_base.resize(total_len);
-		build_correction_base_(local_log_base.data(), correction, correction_len,
-			dimension, cache);
-	}
 
 	auto work = [&](uint64_t b, T* increment, T* temp_Y, T* local_derivs, T* inc_derivs,
 		T* local_log, T* power, T* next_power, T* powers, T* power_derivs, T* d_correction) {
@@ -919,7 +937,8 @@ void branched_sig_backprop_(
 			path_obj, out_ptr, derivs_copy.get(), bsig_copy.get(),
 			increment, temp_Y, local_derivs, inc_derivs,
 			local_log, power, next_power, powers, power_derivs, d_correction,
-			local_log_base.data(), has_correction, cache);
+			has_correction ? correction + b * correction_batch_stride : nullptr,
+			correction_len, correction_segment_stride, has_correction, cache);
 	};
 
 	if (n_jobs == 1 || batch_size == 1) {

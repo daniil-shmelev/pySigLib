@@ -177,12 +177,14 @@ class PathInputHandler:
 
 class CorrectionInputHandler:
     """
-    Handle flat constant correction levels for signature APIs.
+    Handle per-segment correction levels for signature APIs.
     """
     def __init__(self, correction, path_data, degree):
         self.correction = None
         self.length = 0
         self.data_ptr = None
+        self.batch_stride = 0
+        self.segment_stride = 0
 
         if correction is None:
             return
@@ -193,9 +195,6 @@ class CorrectionInputHandler:
 
         self.correction = ensure_own_contiguous_storage(correction)
         check_dtype(self.correction, "correction")
-
-        if len(self.correction.shape) != 1:
-            raise ValueError("correction must be a 1D array")
 
         if isinstance(self.correction, np.ndarray):
             self.dtype = str(self.correction.dtype)
@@ -212,9 +211,26 @@ class CorrectionInputHandler:
         if self.device != path_data.device:
             raise ValueError("correction and path must be on the same device")
 
-        self.length = self.correction.shape[0]
-        if self.length != 0 and path_data.lead_lag:
+        if (self.correction.size if isinstance(self.correction, np.ndarray) else self.correction.numel()) == 0:
+            return
+
+        if path_data.lead_lag:
             raise ValueError("correction cannot be used with lead_lag=True")
+
+        if len(self.correction.shape) == 0:
+            raise ValueError(
+                "correction shape must be path.shape[:-2] + (path.shape[-2] - 1, L)"
+            )
+        expected_shape = (*path_data.batch_shape, max(path_data.data_length - 1, 0), self.correction.shape[-1])
+        if tuple(self.correction.shape) != expected_shape:
+            raise ValueError(
+                "correction shape must be " + str(expected_shape) +
+                " for path shape " + str(tuple(path_data.path.shape))
+            )
+        self.length = self.correction.shape[-1]
+        self.batch_stride = max(path_data.data_length - 1, 0) * self.length
+        self.segment_stride = self.length
+
         _infer_correction_degree(path_data.data_dimension, degree, self.length)
 
 def _infer_correction_degree(dimension, degree, length):

@@ -254,9 +254,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0) noexcept;
+	[[nodiscard]] CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @brief */
-	[[nodiscard]] CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0) noexcept;
+	[[nodiscard]] CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_functions Signature backprop functions
@@ -282,9 +282,9 @@ extern "C" {
 	*				if n_jobs = -2, all threads but one are used (default = 1).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0) noexcept;
+	[[nodiscard]] CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @brief */
-	[[nodiscard]] CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0) noexcept;
+	[[nodiscard]] CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
 	/**
@@ -511,8 +511,8 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk = false, bool planar = false) noexcept;
 	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
 
-	[[nodiscard]] CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0) noexcept;
-	[[nodiscard]] CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 
 	[[nodiscard]] CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	[[nodiscard]] CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
@@ -540,8 +540,7 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 
-	[[nodiscard]] CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0) noexcept;
-	[[nodiscard]] CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 }
-

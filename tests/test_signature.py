@@ -126,7 +126,7 @@ def test_signature_empty_correction_match_default(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_signature_level2_correction_single_segment(device):
     X = torch.tensor([[0.0], [3.0]], dtype=torch.float64, device=device)
-    correction = torch.tensor([2.0], dtype=torch.float64, device=device)
+    correction = torch.tensor([[2.0]], dtype=torch.float64, device=device)
 
     actual = pysiglib.sig(X, 4, scalar_term=True, correction=correction)
     expected = np.array([1.0, 3.0, 6.5, 10.5, 14.375])
@@ -138,7 +138,7 @@ def test_signature_level2_correction_single_segment(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_signature_level2_correction_propagate_across_segments(device):
     X = torch.zeros((3, 1), dtype=torch.float64, device=device)
-    correction = torch.tensor([2.0], dtype=torch.float64, device=device)
+    correction = torch.tensor([[2.0], [2.0]], dtype=torch.float64, device=device)
 
     actual = pysiglib.sig(X, 3, scalar_term=True, correction=correction)
     expected = np.array([1.0, 0.0, 4.0, 0.0])
@@ -150,7 +150,7 @@ def test_signature_level2_correction_propagate_across_segments(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_signature_correction_time_aug_zero_time_entries(device):
     X = torch.zeros((2, 1), dtype=torch.float64, device=device)
-    correction = torch.tensor([2.0], dtype=torch.float64, device=device)
+    correction = torch.tensor([[2.0]], dtype=torch.float64, device=device)
 
     actual = pysiglib.sig(X, 2, time_aug=True, scalar_term=True, correction=correction)
     expected = np.array([1.0, 0.0, 1.0, 2.0, 0.0, 0.0, 0.5])
@@ -162,14 +162,14 @@ def test_signature_correction_time_aug_zero_time_entries(device):
 def test_signature_correction_validation_numpy():
     X = np.zeros((2, 2), dtype=np.float64)
 
-    with pytest.raises(ValueError, match="1D"):
-        pysiglib.sig(X, 2, correction=np.zeros((2, 2), dtype=np.float64))
+    with pytest.raises(ValueError, match="correction shape"):
+        pysiglib.sig(X, 2, correction=np.zeros((4,), dtype=np.float64))
 
     with pytest.raises(ValueError, match="same dtype"):
-        pysiglib.sig(X, 2, correction=np.zeros((4,), dtype=np.float32))
+        pysiglib.sig(X, 2, correction=np.zeros((1, 4), dtype=np.float32))
 
     with pytest.raises(ValueError, match="prefix"):
-        pysiglib.sig(X, 3, correction=np.zeros((5,), dtype=np.float64))
+        pysiglib.sig(X, 3, correction=np.zeros((1, 5), dtype=np.float64))
 
     with pytest.raises(ValueError, match="lead_lag"):
-        pysiglib.sig(X, 2, lead_lag=True, correction=np.zeros((4,), dtype=np.float64))
+        pysiglib.sig(X, 2, lead_lag=True, correction=np.zeros((1, 4), dtype=np.float64))

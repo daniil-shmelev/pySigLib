@@ -168,20 +168,36 @@ def _validate_shape(path) -> None:
 
 
 def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
+    """Validate ``correction`` against ``path`` and return a jax array.
+
+    Non-empty correction must have shape
+    ``path.shape[:-2] + (path.shape[-2] - 1, L)``.
+    """
     if correction is None:
         return jnp.empty((0,), dtype=path.dtype)
 
     correction = jnp.asarray(correction)
-    if correction.ndim != 1:
-        raise ValueError("correction must be a 1D array")
     if correction.dtype != path.dtype:
         raise TypeError("correction and path must have the same dtype")
-    if correction.shape[0] != 0 and lead_lag:
+
+    if correction.size == 0:
+        return jnp.empty((0,), dtype=path.dtype)
+
+    if lead_lag:
         raise ValueError("correction cannot be used with lead_lag=True")
 
-    _infer_correction_degree(path.shape[-1], degree, correction.shape[0])
-    return correction
+    if correction.ndim == 0:
+        raise ValueError("correction shape must be path.shape[:-2] + (path.shape[-2] - 1, L)")
 
+    expected_shape = path.shape[:-2] + (max(path.shape[-2] - 1, 0), correction.shape[-1])
+    if correction.shape != expected_shape:
+        raise ValueError(
+            "correction shape must be " + str(expected_shape) +
+            " for path shape " + str(path.shape)
+        )
+
+    _infer_correction_degree(path.shape[-1], degree, correction.shape[-1])
+    return correction
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))
 def _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs):

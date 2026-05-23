@@ -353,9 +353,9 @@ def log_sig(
         Only affects method ``0`` (expanded) output; methods ``1`` and ``2`` produce
         log-sig-shaped output with no scalar term.
     :type scalar_term: bool
-    :param correction: Optional constant correction of level
+    :param correction: Optional per-segment correction of level
         :math:`\\geq 2` added locally before exponentiating each path segment.
-        See :func:`sig` for the flat layout. For non-Lie correction such as
+        See :func:`sig` for the row layout. For non-Lie correction such as
         Ito level-2 diagonal terms, use ``method=0`` to retain the full tensor
         logarithm. Cannot be combined with ``lead_lag=True``.
     :type correction: numpy.ndarray | torch.tensor | None
@@ -401,8 +401,8 @@ def log_sig(
         path = np.zeros((n_steps + 1, d))
         path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
 
-        # Ito level-2 correction: dt * Sigma flattened (Sigma = I here).
-        correction = (np.eye(d) * dt).flatten()
+        # Ito level-2 correction: one dt * Sigma row per path segment.
+        correction = np.broadcast_to((np.eye(d) * dt).reshape(1, -1), (n_steps, d * d))
 
         ito_log_sig = pysiglib.log_sig(
             path, N, correction=correction, end_time=T, method=0)

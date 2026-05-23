@@ -364,7 +364,9 @@ void branched_sig_ker(
 	int max_nodes,
 	uint32_t coprod_data_len,
 	const T* __restrict__ correction,
-	uint64_t correction_len
+	uint64_t correction_len,
+	uint64_t correction_batch_stride,
+	uint64_t correction_segment_stride
 ) {
 	const uint32_t batch_idx = blockIdx.y;
 	const uint32_t tid = threadIdx.x;
@@ -392,6 +394,9 @@ void branched_sig_ker(
 
 	const T* bp = path + static_cast<uint64_t>(batch_idx) * path_stride;
 	T* X = out + static_cast<uint64_t>(batch_idx) * total_len;
+	const T* batch_correction = has_correction
+		? correction + static_cast<uint64_t>(batch_idx) * correction_batch_stride
+		: nullptr;
 
 	for (int seg = 0; seg < steps; ++seg) {
 		// --- Cooperative increment load ---
@@ -400,8 +405,11 @@ void branched_sig_ker(
 		__syncthreads();
 
 		T* tgt = (seg == 0) ? X : temp;
+		const T* seg_correction = has_correction
+			? batch_correction + static_cast<uint64_t>(seg) * correction_segment_stride
+			: nullptr;
 		local_branched_sig_block_(inc, tgt, local_log, power, next_power,
-			dim, data_dim, correction, correction_len, total_len,
+			dim, data_dim, seg_correction, correction_len, total_len,
 			labels_data, labels_offsets, inv_factorial,
 			s_coprod_data, s_coprod_off, s_order_idx,
 			chain_index_offsets, chain_indices, max_nodes, tid);
@@ -634,7 +642,9 @@ void branched_sig_backprop_ker(
 	int max_nodes,
 	uint32_t coprod_data_len,
 	const T* __restrict__ correction,
-	uint64_t correction_len
+	uint64_t correction_len,
+	uint64_t correction_batch_stride,
+	uint64_t correction_segment_stride
 ) {
 	const uint32_t batch_idx = blockIdx.y;
 	const uint32_t tid = threadIdx.x;
@@ -673,6 +683,9 @@ void branched_sig_backprop_ker(
 	// Initialize path_derivs to zero
 	const T* bp = path + static_cast<uint64_t>(batch_idx) * path_stride;
 	T* pd = path_derivs + static_cast<uint64_t>(batch_idx) * path_stride;
+	const T* batch_correction = has_correction
+		? correction + static_cast<uint64_t>(batch_idx) * correction_batch_stride
+		: nullptr;
 	for (uint32_t i = tid; i < static_cast<uint32_t>(path_stride); i += blockDim.x)
 		pd[i] = T(0);
 	__syncthreads();
@@ -683,8 +696,11 @@ void branched_sig_backprop_ker(
 			inc[d] = bp[(seg + 1) * dim + d] - bp[seg * dim + d];
 		__syncthreads();
 
+		const T* seg_correction = has_correction
+			? batch_correction + static_cast<uint64_t>(seg) * correction_segment_stride
+			: nullptr;
 		local_branched_sig_block_(inc, temp_Y, local_log, powers, power_derivs,
-			dim, data_dim, correction, correction_len, total_len,
+			dim, data_dim, seg_correction, correction_len, total_len,
 			labels_data, labels_offsets, inv_factorial,
 			s_coprod_data, s_coprod_off, s_order_idx,
 			chain_index_offsets, chain_indices, max_nodes, tid);
@@ -768,7 +784,7 @@ void branched_sig_backprop_ker(
 		} else {
 			local_log_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs,
 				local_log, powers, power_derivs, d_correction,
-				dim, data_dim, correction, correction_len, total_len,
+				dim, data_dim, seg_correction, correction_len, total_len,
 				labels_data, labels_offsets, inv_factorial,
 				s_coprod_data, s_coprod_off, s_order_idx,
 				chain_index_offsets, chain_indices, max_nodes, tid);
@@ -1131,13 +1147,17 @@ void branched_sig_cuda_core_(
 	bool planar = false,
 	uint64_t data_dimension = 0,
 	const T* correction = nullptr,
-	uint64_t correction_len = 0
+	uint64_t correction_len = 0,
+	uint64_t correction_batch_stride = 0,
+	uint64_t correction_segment_stride = 0
 ) {
 	if (data_dimension == 0) data_dimension = dimension;
 	validate_correction_len_(data_dimension, max_nodes, correction_len);
 	if (correction == nullptr && correction_len != 0)
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	const bool has_correction = correction_len != 0;
+	if (has_correction && correction_segment_stride == 0)
+		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 
 	// Single-point paths have no increments => identity branched sig
@@ -1186,7 +1206,8 @@ void branched_sig_cuda_core_(
 		d_inv_fact,
 		gc.d_coprod_data32, gc.d_coprod_offsets32,
 		gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
-		gc.coprod_data_len, correction, correction_len
+		gc.coprod_data_len, correction, correction_len,
+		correction_batch_stride, correction_segment_stride
 	);
 	cudaDeviceSynchronize();
 	check_cuda_error();
@@ -1210,13 +1231,17 @@ void branched_sig_cuda_(
 	bool planar = false,
 	bool scalar_term = true,
 	const T* correction = nullptr,
-	uint64_t correction_len = 0
+	uint64_t correction_len = 0,
+	uint64_t correction_batch_stride = 0,
+	uint64_t correction_segment_stride = 0
 ) {
 	validate_correction_len_(dimension, max_nodes, correction_len);
 	if (correction == nullptr && correction_len != 0)
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	if (lead_lag && correction_len != 0)
 		throw std::invalid_argument("correction cannot be used with lead_lag=true");
+	if (correction_len != 0 && correction_segment_stride == 0)
+		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
 
@@ -1238,11 +1263,13 @@ void branched_sig_cuda_(
 		cudaDeviceSynchronize();
 
 		branched_sig_cuda_core_<T>(d_transformed.get(), core_out, batch_size, t_dimension, t_length,
-			max_nodes, planar, dimension, correction, correction_len);
+			max_nodes, planar, dimension, correction, correction_len,
+			correction_batch_stride, correction_segment_stride);
 	}
 	else {
 		branched_sig_cuda_core_<T>(path, core_out, batch_size, dimension, length,
-			max_nodes, planar, dimension, correction, correction_len);
+			max_nodes, planar, dimension, correction, correction_len,
+			correction_batch_stride, correction_segment_stride);
 	}
 
 	if (!scalar_term) {
@@ -1267,13 +1294,17 @@ void branched_sig_backprop_cuda_core_(
 	bool planar = false,
 	uint64_t data_dimension = 0,
 	const T* correction = nullptr,
-	uint64_t correction_len = 0
+	uint64_t correction_len = 0,
+	uint64_t correction_batch_stride = 0,
+	uint64_t correction_segment_stride = 0
 ) {
 	if (data_dimension == 0) data_dimension = dimension;
 	validate_correction_len_(data_dimension, max_nodes, correction_len);
 	if (correction == nullptr && correction_len != 0)
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	const bool has_correction = correction_len != 0;
+	if (has_correction && correction_segment_stride == 0)
+		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 
 	// Single-point paths have no increments => zero path gradients
@@ -1316,7 +1347,8 @@ void branched_sig_backprop_cuda_core_(
 		d_inv_fact,
 		gc.d_coprod_data32, gc.d_coprod_offsets32,
 		gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
-		gc.coprod_data_len, correction, correction_len
+		gc.coprod_data_len, correction, correction_len,
+		correction_batch_stride, correction_segment_stride
 	);
 	cudaDeviceSynchronize();
 	check_cuda_error();
@@ -1338,13 +1370,17 @@ void branched_sig_backprop_cuda_(
 	bool planar = false,
 	bool scalar_term = true,
 	const T* correction = nullptr,
-	uint64_t correction_len = 0
+	uint64_t correction_len = 0,
+	uint64_t correction_batch_stride = 0,
+	uint64_t correction_segment_stride = 0
 ) {
 	validate_correction_len_(dimension, max_nodes, correction_len);
 	if (correction == nullptr && correction_len != 0)
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	if (lead_lag && correction_len != 0)
 		throw std::invalid_argument("correction cannot be used with lead_lag=true");
+	if (correction_len != 0 && correction_segment_stride == 0)
+		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
 
@@ -1375,7 +1411,8 @@ void branched_sig_backprop_cuda_(
 
 			cudaMalloc(&d_transformed_derivs, t_path_size * sizeof(T));
 			branched_sig_backprop_cuda_core_<T>(d_transformed, d_transformed_derivs, core_derivs, core_bsig,
-				batch_size, t_dimension, t_length, max_nodes, planar, dimension, correction, correction_len);
+				batch_size, t_dimension, t_length, max_nodes, planar, dimension, correction, correction_len,
+				correction_batch_stride, correction_segment_stride);
 
 			cudaFree(d_transformed);
 			d_transformed = nullptr;
@@ -1390,7 +1427,8 @@ void branched_sig_backprop_cuda_(
 	}
 	else {
 		branched_sig_backprop_cuda_core_<T>(path, out, core_derivs, core_bsig,
-			batch_size, dimension, length, max_nodes, planar, dimension, correction, correction_len);
+			batch_size, dimension, length, max_nodes, planar, dimension, correction, correction_len,
+			correction_batch_stride, correction_segment_stride);
 	}
 }
 
@@ -1401,12 +1439,12 @@ void branched_sig_backprop_cuda_(
 extern "C" {
 
 
-	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_cuda_<float>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
+	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_cuda_<float>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
-	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
+	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar, bool scalar_term) noexcept {
@@ -1424,12 +1462,12 @@ extern "C" {
 	}
 
 
-	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
+	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
-	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len));
+	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
+		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 }

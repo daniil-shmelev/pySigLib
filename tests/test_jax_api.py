@@ -144,7 +144,7 @@ def test_jax_sig_grad_matches_pysiglib(device, jitted, dtype, case):
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_jax_sig_correction_matches_pysiglib(device, jitted, dtype):
     x = np.array([[0.0], [3.0]], dtype=dtype)
-    correction = np.array([2.0], dtype=dtype)
+    correction = np.array([[2.0]], dtype=dtype)
     expected = pysiglib.sig(x, 4, scalar_term=True, correction=correction)
 
     x_jax = _as_jax_array(x, device, dtype)
@@ -162,7 +162,7 @@ def test_jax_sig_correction_matches_pysiglib(device, jitted, dtype):
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_jax_sig_correction_grad_matches_pysiglib(device, jitted, dtype):
     x = np.array([[0.1, -0.2], [0.4, 0.3], [0.0, 0.7]], dtype=dtype)
-    correction = np.array([0.2, -0.1, 0.05, 0.3], dtype=dtype)
+    correction = np.array([[0.2, -0.1, 0.05, 0.3]] * (x.shape[0] - 1), dtype=dtype)
     sig_ref = pysiglib.sig(x, 3, scalar_term=True, correction=correction)
     weights = np.linspace(-0.5, 0.7, sig_ref.shape[-1]).astype(dtype)
     grad_ref = pysiglib.sig_backprop(x, sig_ref, weights, 3, correction=correction)
@@ -178,6 +178,14 @@ def test_jax_sig_correction_grad_matches_pysiglib(device, jitted, dtype):
     grad_fn = jax.jit(jax.grad(loss_fn)) if jitted else jax.grad(loss_fn)
     grad = grad_fn(x_jax)
     check_close(grad_ref, grad, double_atol=1e-8)
+
+
+def test_jax_sig_rejects_rank1_correction():
+    path = jnp.zeros((2, 2), dtype=jnp.float64)
+    correction = jnp.zeros((4,), dtype=jnp.float64)
+
+    with pytest.raises(ValueError, match="correction shape"):
+        jax_api.sig(path, 2, correction=correction)
 
 
 # =========================================================================

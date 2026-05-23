@@ -70,7 +70,7 @@ def branched_sig_backprop(
     :type tree_order: str
     :param planar: If True, backpropagate through planar branched signature.
     :type planar: bool
-    :param correction: The same constant correction supplied to
+    :param correction: The same per-segment correction supplied to
         the forward call (see :func:`branched_sig` for layout and semantics).
         Treated as a constant: no derivatives are returned with respect to
         ``correction``. Cannot be combined with ``lead_lag=True``.
@@ -100,8 +100,9 @@ def branched_sig_backprop(
         path = np.zeros((n_steps + 1, d))
         path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
 
-        # Ito level-2 correction: dt * Sigma flattened (Sigma = I here).
-        correction = (np.eye(d) * dt).flatten()
+        # Ito level-2 correction: one dt * Sigma row per path segment.
+        correction = np.broadcast_to(
+            (np.eye(d) * dt).reshape(1, -1), (n_steps, d * d)).copy()
 
         pysiglib.prepare_branched_sig(d, N)
         bsig = pysiglib.branched_sig(
@@ -144,7 +145,8 @@ def branched_sig_backprop(
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, dimension, path_data.data_length, degree, n_jobs,
             path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term,
-            correction_data.data_ptr, correction_data.length)
+            correction_data.data_ptr, correction_data.length,
+            correction_data.batch_stride, correction_data.segment_stride)
     else:
         _check_cuda_num_trees(aug_dimension, degree, planar, "branched_sig_backprop")
         err_code = CUSIG_BRANCHED_SIG_BACKPROP_CUDA[path_data.dtype](
@@ -152,7 +154,8 @@ def branched_sig_backprop(
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, dimension, path_data.data_length, degree,
             path_data.time_aug, path_data.lead_lag, path_data.end_time, planar, scalar_term,
-            correction_data.data_ptr, correction_data.length)
+            correction_data.data_ptr, correction_data.length,
+            correction_data.batch_stride, correction_data.segment_stride)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_backprop: " + err_msg(err_code))
     return result.data
