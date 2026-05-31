@@ -821,7 +821,7 @@ void example_batch_branched_sig_d(
     std::vector<double> path = test_data<double>(batch_size * dimension * length);
     std::vector<double> out(out_size, 0.);
 
-    time_function(num_runs, branched_sig_d, path.data(), out.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1., false, true, nullptr, 0);
+    time_function(num_runs, branched_sig_d, path.data(), out.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1., false, true, nullptr, 0, 0, 0);
 
     std::cout << "done\n";
 }

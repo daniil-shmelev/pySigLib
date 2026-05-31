@@ -126,7 +126,7 @@ def test_signature_empty_correction_match_default(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_signature_level2_correction_single_segment(device):
     X = torch.tensor([[0.0], [3.0]], dtype=torch.float64, device=device)
-    correction = torch.tensor([[2.0]], dtype=torch.float64, device=device)
+    correction = torch.tensor([2.0], dtype=torch.float64, device=device)
 
     actual = pysiglib.sig(X, 4, scalar_term=True, correction=correction)
     expected = np.array([1.0, 3.0, 6.5, 10.5, 14.375])
@@ -138,13 +138,42 @@ def test_signature_level2_correction_single_segment(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_signature_level2_correction_propagate_across_segments(device):
     X = torch.zeros((3, 1), dtype=torch.float64, device=device)
-    correction = torch.tensor([[2.0], [2.0]], dtype=torch.float64, device=device)
+    correction = torch.tensor([2.0], dtype=torch.float64, device=device)
 
     actual = pysiglib.sig(X, 3, scalar_term=True, correction=correction)
     expected = np.array([1.0, 0.0, 4.0, 0.0])
 
     assert_device(actual, device)
     check_close(expected, actual)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_signature_correction_layouts_match_full_batch(device):
+    X = torch.tensor(
+        [
+            [[0.0, 0.0], [0.2, -0.1], [0.5, 0.3]],
+            [[0.1, 0.2], [0.4, 0.0], [0.6, -0.2]],
+        ],
+        dtype=torch.float64,
+        device=device,
+    )
+    constant = torch.tensor([0.2, -0.1, 0.05, 0.3], dtype=X.dtype, device=device)
+    constant_full = constant.reshape(1, 1, -1).expand(X.shape[0], X.shape[1] - 1, -1).clone()
+    shared = torch.tensor(
+        [[0.2, -0.1, 0.05, 0.3], [0.4, 0.0, -0.2, 0.1]],
+        dtype=X.dtype,
+        device=device,
+    )
+    shared_full = shared.reshape(1, X.shape[1] - 1, -1).expand(X.shape[0], -1, -1).clone()
+
+    check_close(
+        pysiglib.sig(X, 3, scalar_term=True, correction=constant),
+        pysiglib.sig(X, 3, scalar_term=True, correction=constant_full),
+    )
+    check_close(
+        pysiglib.sig(X, 3, scalar_term=True, correction=shared),
+        pysiglib.sig(X, 3, scalar_term=True, correction=shared_full),
+    )
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -163,7 +192,7 @@ def test_signature_correction_validation_numpy():
     X = np.zeros((2, 2), dtype=np.float64)
 
     with pytest.raises(ValueError, match="correction shape"):
-        pysiglib.sig(X, 2, correction=np.zeros((4,), dtype=np.float64))
+        pysiglib.sig(X, 2, correction=np.array(1.0, dtype=np.float64))
 
     with pytest.raises(ValueError, match="same dtype"):
         pysiglib.sig(X, 2, correction=np.zeros((1, 4), dtype=np.float32))

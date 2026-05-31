@@ -180,9 +180,19 @@ def test_jax_sig_correction_grad_matches_pysiglib(device, jitted, dtype):
     check_close(grad_ref, grad, double_atol=1e-8)
 
 
-def test_jax_sig_rejects_rank1_correction():
+def test_jax_sig_accepts_rank1_correction():
+    path = np.array([[0.0], [3.0]], dtype=np.float64)
+    correction = np.array([2.0], dtype=np.float64)
+
+    expected = pysiglib.sig(path, 4, scalar_term=True, correction=correction)
+    actual = jax_api.sig(jnp.asarray(path), 4, scalar_term=True, correction=jnp.asarray(correction))
+
+    check_close(expected, actual, double_atol=1e-8)
+
+
+def test_jax_sig_rejects_bad_correction_shape():
     path = jnp.zeros((2, 2), dtype=jnp.float64)
-    correction = jnp.zeros((4,), dtype=jnp.float64)
+    correction = jnp.zeros((1, 1, 4), dtype=jnp.float64)
 
     with pytest.raises(ValueError, match="correction shape"):
         jax_api.sig(path, 2, correction=correction)

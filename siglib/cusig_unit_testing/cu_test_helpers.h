@@ -276,8 +276,10 @@ void check_result_typed(FN f, std::vector<T>& path, std::vector<T>& true_, Args.
     int err;
     if constexpr (std::is_invocable_v<FN, T*, T*, Args...>)
         err = f(d_path, d_out, args...);
-    else
+    else if constexpr (std::is_invocable_v<FN, T*, T*, Args..., const T*, uint64_t>)
         err = f(d_path, d_out, args..., nullptr, (uint64_t)0);
+    else
+        err = f(d_path, d_out, args..., nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0);
     cudaDeviceSynchronize();
 
     cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);
@@ -403,8 +405,10 @@ void check_backprop_result(
     int err;
     if constexpr (std::is_invocable_v<FN, T*, T*, T*, T*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, T, bool>)
         err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree, time_aug, lead_lag, end_time, true);
-    else
+    else if constexpr (std::is_invocable_v<FN, T*, T*, T*, T*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, T, bool, const T*, uint64_t>)
         err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree, time_aug, lead_lag, end_time, true, nullptr, (uint64_t)0);
+    else
+        err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree, time_aug, lead_lag, end_time, true, nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0);
     cudaDeviceSynchronize();
 
     cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);
@@ -461,8 +465,10 @@ void check_batch_backprop_result(
     int err;
     if constexpr (std::is_invocable_v<FN, T*, T*, T*, T*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, T, bool>)
         err = f(d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, true);
-    else
+    else if constexpr (std::is_invocable_v<FN, T*, T*, T*, T*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, T, bool, const T*, uint64_t>)
         err = f(d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, true, nullptr, (uint64_t)0);
+    else
+        err = f(d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, true, nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0);
     cudaDeviceSynchronize();
 
     cudaMemcpy(out.data(), d_out, sizeof(T) * out.size(), cudaMemcpyDeviceToHost);

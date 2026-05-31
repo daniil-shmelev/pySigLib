@@ -160,8 +160,8 @@ def sig_backprop(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
-    :param correction: The same per-segment correction supplied to
-        the forward ``sig`` call. Treated as a constant: no derivatives are
+    :param correction: The same correction supplied to the forward ``sig`` call.
+        Treated as a constant: no derivatives are
         returned with respect to ``correction``. Cannot be combined with
         ``lead_lag=True``.
     :type correction: numpy.ndarray | torch.tensor | None

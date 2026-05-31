@@ -355,7 +355,8 @@ def log_sig(
     :type scalar_term: bool
     :param correction: Optional per-segment correction of level
         :math:`\\geq 2` added locally before exponentiating each path segment.
-        See :func:`sig` for the row layout. For non-Lie correction such as
+        See :func:`sig` for the accepted constant, shared per-segment, and
+        batch-specific layouts. For non-Lie correction such as
         Ito level-2 diagonal terms, use ``method=0`` to retain the full tensor
         logarithm. Cannot be combined with ``lead_lag=True``.
     :type correction: numpy.ndarray | torch.tensor | None

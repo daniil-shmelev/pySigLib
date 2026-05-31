@@ -70,8 +70,8 @@ def branched_sig_backprop(
     :type tree_order: str
     :param planar: If True, backpropagate through planar branched signature.
     :type planar: bool
-    :param correction: The same per-segment correction supplied to
-        the forward call (see :func:`branched_sig` for layout and semantics).
+    :param correction: The same correction supplied to the forward call
+        (see :func:`branched_sig` for layout and semantics).
         Treated as a constant: no derivatives are returned with respect to
         ``correction``. Cannot be combined with ``lead_lag=True``.
     :type correction: numpy.ndarray | torch.tensor | None

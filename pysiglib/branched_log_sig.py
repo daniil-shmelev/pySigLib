@@ -179,12 +179,16 @@ def branched_log_sig(
 
         where :math:`e_w` is the chain (root-to-leaf path) tree with labels
         :math:`w` and :math:`\\exp_*` is the Hopf-algebra exponential under the
-        Butcher product. ``correction`` must have shape
-        ``path.shape[:-2] + (path.shape[-2] - 1, L)``, with one row per
-        path segment. ``L = d^2 + d^3 + ... + d^m``, where :math:`d` is the
-        underlying path dimension and :math:`2 \\leq m \\leq N` is the highest
-        correction level supplied (missing higher levels are zero). Levels are
-        concatenated in order, and within level :math:`k` the entry for chain
+        Butcher product. A non-empty ``correction`` may have shape ``(C,)``
+        for one constant correction shared by every segment and batch item,
+        ``(path.shape[-2] - 1, C)`` for one correction row per segment shared
+        by the batch, or ``path.shape[:-2] + (path.shape[-2] - 1, C)`` for
+        batch-specific segment corrections. Here ``C`` is the correction
+        width, with ``C = d^2 + d^3 + ... + d^m``, where :math:`d` is the
+        underlying path dimension and
+        :math:`2 \\leq m \\leq N` is the highest correction level supplied
+        (missing higher levels are zero). Levels are concatenated in order,
+        and within level :math:`k` the entry for chain
         :math:`(i_1, \\ldots, i_k)` lives at flat index
         :math:`i_1 d^{k-1} + i_2 d^{k-2} + \\cdots + i_k`. Passing ``None``
         (default) or an empty array is equivalent to all-zero correction. Indices

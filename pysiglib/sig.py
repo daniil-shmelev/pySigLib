@@ -177,11 +177,15 @@ def sig(
             \\exp \\left( \\sum_i \\Delta x_i\\, e_i + \\sum_{k=2}^{m} \\sum_{i_1, \\ldots, i_k} c^{(k)}_{i_1 \\ldots i_k}\\, e_{i_1} \\otimes \\cdots \\otimes e_{i_k} \\right),
 
         where :math:`(e_{i_1} \\otimes \\cdots \\otimes e_{i_k})` is the
-        tensor basis. ``correction`` must have shape
-        ``path.shape[:-2] + (path.shape[-2] - 1, L)``, where
-        :math:`L = d^2 + d^3 + \\cdots + d^m` and :math:`d` is the original
-        path dimension and :math:`2 \\leq m \\leq N` is the highest
-        correction level supplied (missing higher levels are zero). Levels are
+        tensor basis. A non-empty ``correction`` may have shape ``(C,)``
+        for one constant correction shared by every segment and batch item,
+        ``(path.shape[-2] - 1, C)`` for one correction row per segment shared
+        by the batch, or ``path.shape[:-2] + (path.shape[-2] - 1, C)`` for
+        batch-specific segment corrections. Here ``C`` is the correction
+        width, with :math:`C = d^2 + d^3 + \\cdots + d^m`, where
+        :math:`d` is the original
+        path dimension and :math:`2 \\leq m \\leq N` is the highest correction
+        level supplied (missing higher levels are zero). Levels are
         concatenated in each row, and within level :math:`k` the entry for
         index tuple :math:`(i_1, \\ldots, i_k)` lives at flat index
         :math:`i_1 d^{k-1} + i_2 d^{k-2} + \\cdots + i_k`. Passing ``None``

@@ -216,7 +216,7 @@ struct CorrectionSpec {
     std::uint64_t segment_stride = 0;
 };
 
-// Correction is either empty or exactly path.shape[:-2] + (path.shape[-2] - 1, L).
+// Correction is empty, constant, shared per-segment, or batch-specific per-segment.
 template <typename PathBufferT, typename CorrectionBufferT>
 std::string GetCorrectionSpec(
     PathBufferT& path,
@@ -233,18 +233,35 @@ std::string GetCorrectionSpec(
         }
     }
 
-    if (corr_dims.size() != path_dims.size()) {
-        std::ostringstream oss;
-        oss << "correction must have shape path.shape[:-2] + "
-               "(path.shape[-2] - 1, L), got rank " << corr_dims.size()
-            << " for path rank " << path_dims.size();
-        return oss.str();
-    }
-
     const std::uint64_t path_segments =
         path_dims[path_dims.size() - 2] > 0
             ? static_cast<std::uint64_t>(path_dims[path_dims.size() - 2] - 1)
             : 0;
+
+    if (corr_dims.size() == 1) {
+        spec.len = static_cast<std::uint64_t>(corr_dims[0]);
+        spec.batch_stride = 0;
+        spec.segment_stride = 0;
+        return {};
+    }
+
+    if (corr_dims.size() == 2 &&
+        static_cast<std::uint64_t>(corr_dims[0]) == path_segments) {
+        const auto correction_width = static_cast<std::uint64_t>(corr_dims[1]);
+        spec.len = correction_width;
+        spec.batch_stride = 0;
+        spec.segment_stride = correction_width;
+        return {};
+    }
+
+    if (corr_dims.size() != path_dims.size()) {
+        std::ostringstream oss;
+        oss << "correction must have shape (C,), (path.shape[-2] - 1, C), or "
+               "path.shape[:-2] + (path.shape[-2] - 1, C), got rank "
+            << corr_dims.size() << " for path rank " << path_dims.size();
+        return oss.str();
+    }
+
     if (static_cast<std::uint64_t>(corr_dims[corr_dims.size() - 2]) != path_segments) {
         std::ostringstream oss;
         oss << "correction segment dim " << corr_dims[corr_dims.size() - 2]
@@ -261,10 +278,11 @@ std::string GetCorrectionSpec(
         }
     }
 
-    const auto L = static_cast<std::uint64_t>(corr_dims[corr_dims.size() - 1]);
-    spec.len = L;
-    spec.batch_stride = path_segments * L;
-    spec.segment_stride = L;
+    const auto correction_width =
+        static_cast<std::uint64_t>(corr_dims[corr_dims.size() - 1]);
+    spec.len = correction_width;
+    spec.batch_stride = path_segments * correction_width;
+    spec.segment_stride = correction_width;
     return {};
 }
 

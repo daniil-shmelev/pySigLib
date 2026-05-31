@@ -364,8 +364,6 @@ void branched_signature_(
 	if (lead_lag && correction_len != 0)
 		throw std::invalid_argument("correction cannot be used with lead_lag=true");
 	const bool has_correction = correction_len != 0;
-	if (has_correction && correction_segment_stride == 0)
-		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
@@ -905,8 +903,6 @@ void branched_sig_backprop_(
 	if (lead_lag && correction_len != 0)
 		throw std::invalid_argument("correction cannot be used with lead_lag=true");
 	const bool has_correction = correction_len != 0;
-	if (has_correction && correction_segment_stride == 0)
-		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	uint64_t aug_dim = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const auto& cache = get_branched_sig_cache(aug_dim, max_nodes, planar);
 	uint64_t total_len = cache.total_length;

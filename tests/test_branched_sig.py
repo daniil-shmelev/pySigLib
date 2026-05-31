@@ -287,11 +287,43 @@ def test_branched_sig_correction_validation_numpy():
     path = np.zeros((3, d), dtype=np.float64)
 
     with pytest.raises(ValueError, match="correction shape"):
-        pysiglib.branched_sig(path, N, correction=np.zeros(d * d, dtype=path.dtype))
+        pysiglib.branched_sig(path, N, correction=np.array(1.0, dtype=path.dtype))
     with pytest.raises(ValueError, match="prefix"):
         pysiglib.branched_sig(path, N, correction=np.zeros((path.shape[-2] - 1, d * d + 1), dtype=path.dtype))
     with pytest.raises(ValueError, match="same dtype"):
         pysiglib.branched_sig(path, N, correction=np.zeros((path.shape[-2] - 1, d * d), dtype=np.float32))
+
+
+def test_branched_sig_correction_layouts_match_full_batch():
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N)
+    path = np.array(
+        [
+            [[0.0, 0.0], [0.2, -0.1], [0.5, 0.3]],
+            [[0.1, 0.2], [0.4, 0.0], [0.6, -0.2]],
+        ],
+        dtype=np.float64,
+    )
+    constant = np.array([0.2, -0.1, 0.05, 0.3], dtype=path.dtype)
+    constant_full = np.broadcast_to(
+        constant.reshape(1, 1, -1), (*path.shape[:-2], path.shape[-2] - 1, constant.shape[-1])).copy()
+    shared = np.array(
+        [[0.2, -0.1, 0.05, 0.3], [0.4, 0.0, -0.2, 0.1]],
+        dtype=path.dtype,
+    )
+    shared_full = np.broadcast_to(
+        shared.reshape(1, path.shape[-2] - 1, -1), (*path.shape[:-2], path.shape[-2] - 1, shared.shape[-1])).copy()
+
+    np.testing.assert_allclose(
+        pysiglib.branched_sig(path, N, correction=constant),
+        pysiglib.branched_sig(path, N, correction=constant_full),
+        atol=1e-14,
+    )
+    np.testing.assert_allclose(
+        pysiglib.branched_sig(path, N, correction=shared),
+        pysiglib.branched_sig(path, N, correction=shared_full),
+        atol=1e-14,
+    )
 
 
 def test_torch_branched_sig_correction_validation_dtype():
@@ -876,6 +908,44 @@ def test_branched_sig_backprop_correction_finite_diff(time_aug):
             grad_fd[i, j] = np.dot(derivs, bsig_p - np.array(bsig)) / eps
 
     np.testing.assert_allclose(grad_bp, grad_fd, atol=1e-4)
+
+
+def test_branched_sig_backprop_correction_layouts_match_full_batch():
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N)
+    path = np.array(
+        [
+            [[0.0, 0.0], [0.2, -0.1], [0.5, 0.3]],
+            [[0.1, 0.2], [0.4, 0.0], [0.6, -0.2]],
+        ],
+        dtype=np.float64,
+    )
+    constant = np.array([0.2, -0.1, 0.05, 0.3], dtype=path.dtype)
+    constant_full = np.broadcast_to(
+        constant.reshape(1, 1, -1), (*path.shape[:-2], path.shape[-2] - 1, constant.shape[-1])).copy()
+    shared = np.array(
+        [[0.2, -0.1, 0.05, 0.3], [0.4, 0.0, -0.2, 0.1]],
+        dtype=path.dtype,
+    )
+    shared_full = np.broadcast_to(
+        shared.reshape(1, path.shape[-2] - 1, -1), (*path.shape[:-2], path.shape[-2] - 1, shared.shape[-1])).copy()
+    derivs = np.ones_like(pysiglib.branched_sig(path, N, correction=constant_full))
+
+    bsig_constant = pysiglib.branched_sig(path, N, correction=constant)
+    bsig_constant_full = pysiglib.branched_sig(path, N, correction=constant_full)
+    np.testing.assert_allclose(
+        pysiglib.branched_sig_backprop(path, bsig_constant, derivs, N, correction=constant),
+        pysiglib.branched_sig_backprop(path, bsig_constant_full, derivs, N, correction=constant_full),
+        atol=1e-14,
+    )
+
+    bsig_shared = pysiglib.branched_sig(path, N, correction=shared)
+    bsig_shared_full = pysiglib.branched_sig(path, N, correction=shared_full)
+    np.testing.assert_allclose(
+        pysiglib.branched_sig_backprop(path, bsig_shared, derivs, N, correction=shared),
+        pysiglib.branched_sig_backprop(path, bsig_shared_full, derivs, N, correction=shared_full),
+        atol=1e-14,
+    )
 
 
 def test_planar_branched_sig_backprop_correction_finite_diff():

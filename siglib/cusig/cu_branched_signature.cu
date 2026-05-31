@@ -1156,8 +1156,6 @@ void branched_sig_cuda_core_(
 	if (correction == nullptr && correction_len != 0)
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	const bool has_correction = correction_len != 0;
-	if (has_correction && correction_segment_stride == 0)
-		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 
 	// Single-point paths have no increments => identity branched sig
@@ -1240,8 +1238,6 @@ void branched_sig_cuda_(
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	if (lead_lag && correction_len != 0)
 		throw std::invalid_argument("correction cannot be used with lead_lag=true");
-	if (correction_len != 0 && correction_segment_stride == 0)
-		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
 
@@ -1303,8 +1299,6 @@ void branched_sig_backprop_cuda_core_(
 	if (correction == nullptr && correction_len != 0)
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	const bool has_correction = correction_len != 0;
-	if (has_correction && correction_segment_stride == 0)
-		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
 
 	// Single-point paths have no increments => zero path gradients
@@ -1379,8 +1373,6 @@ void branched_sig_backprop_cuda_(
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	if (lead_lag && correction_len != 0)
 		throw std::invalid_argument("correction cannot be used with lead_lag=true");
-	if (correction_len != 0 && correction_segment_stride == 0)
-		throw std::invalid_argument("correction_segment_stride cannot be 0 when correction is non-empty");
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
 

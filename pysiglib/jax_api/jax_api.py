@@ -170,8 +170,8 @@ def _validate_shape(path) -> None:
 def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
     """Validate ``correction`` against ``path`` and return a jax array.
 
-    Non-empty correction must have shape
-    ``path.shape[:-2] + (path.shape[-2] - 1, L)``.
+    Non-empty correction must have shape ``(C,)``, ``(path.shape[-2] - 1, C)``,
+    or ``path.shape[:-2] + (path.shape[-2] - 1, C)``.
     """
     if correction is None:
         return jnp.empty((0,), dtype=path.dtype)
@@ -187,16 +187,26 @@ def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
         raise ValueError("correction cannot be used with lead_lag=True")
 
     if correction.ndim == 0:
-        raise ValueError("correction shape must be path.shape[:-2] + (path.shape[-2] - 1, L)")
-
-    expected_shape = path.shape[:-2] + (max(path.shape[-2] - 1, 0), correction.shape[-1])
-    if correction.shape != expected_shape:
         raise ValueError(
-            "correction shape must be " + str(expected_shape) +
-            " for path shape " + str(path.shape)
+            "correction shape must be (C,), (path.shape[-2] - 1, C), or "
+            "path.shape[:-2] + (path.shape[-2] - 1, C)"
         )
 
-    _infer_correction_degree(path.shape[-1], degree, correction.shape[-1])
+    segments = max(path.shape[-2] - 1, 0)
+    if correction.ndim == 1:
+        length = correction.shape[0]
+    elif correction.ndim == 2 and correction.shape[0] == segments:
+        length = correction.shape[1]
+    else:
+        expected_shape = path.shape[:-2] + (segments, correction.shape[-1])
+        if correction.shape != expected_shape:
+            raise ValueError(
+                "correction shape must be (C,), (path.shape[-2] - 1, C), or " +
+                str(expected_shape) + " for path shape " + str(path.shape)
+            )
+        length = correction.shape[-1]
+
+    _infer_correction_degree(path.shape[-1], degree, length)
     return correction
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))
