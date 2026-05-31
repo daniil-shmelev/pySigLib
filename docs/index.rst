@@ -87,6 +87,7 @@ Fast path signatures, log signatures, and signature kernels on CPU and CUDA GPU.
 
    /pages/path_transformations
    /pages/words
+   /pages/trees
    /pages/signatures
    /pages/signature_coefficients
    /pages/log_signatures
