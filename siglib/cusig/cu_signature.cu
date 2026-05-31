@@ -868,7 +868,7 @@ __device__ void build_correction_block_(
 	const T* path,
 	uint64_t step,
 	T* local_log,
-	const T* correction,
+	const T* correction_segment,
 	uint64_t correction_len,
 	uint64_t data_dimension,
 	uint64_t dimension,
@@ -888,6 +888,11 @@ __device__ void build_correction_block_(
 	for (uint64_t d = tid; d < dimension; d += nthreads)
 		local_log[level_index[1] + d] = next[d] - prev[d];
 
+	if (correction_segment == nullptr || correction_len == 0) {
+		__syncthreads();
+		return;
+	}
+
 	uint64_t offset = 0;
 	uint64_t level_size = data_dimension;
 	for (uint64_t level = 2; level <= degree; ++level) {
@@ -896,7 +901,7 @@ __device__ void build_correction_block_(
 			break;
 
 		for (uint64_t word_idx = tid; word_idx < level_size; word_idx += nthreads) {
-			const T value = correction[offset + word_idx];
+			const T value = correction_segment[offset + word_idx];
 			if (value == T(0))
 				continue;
 
@@ -1175,6 +1180,8 @@ __global__ void signature_correction_ker(
 	T* __restrict__ out,
 	const T* __restrict__ correction,
 	uint64_t correction_len,
+	uint64_t correction_batch_stride,
+	uint64_t correction_segment_stride,
 	const uint64_t* __restrict__ level_index,
 	uint64_t data_dimension,
 	uint64_t dimension,
@@ -1191,6 +1198,7 @@ __global__ void signature_correction_ker(
 	const int nthreads = blockDim.x;
 
 	const T* my_path = path + batch_idx * path_flat_len;
+	const T* my_correction = correction + batch_idx * correction_batch_stride;
 	T* my_out = out + batch_idx * sig_stride;
 	T* acc = workspace + batch_idx * 5 * full_sig_len;
 	T* local = acc + full_sig_len;
@@ -1199,13 +1207,14 @@ __global__ void signature_correction_ker(
 	T* power_curr = power_prev + full_sig_len;
 
 	build_correction_block_(
-		my_path, 0, local_log, correction, correction_len,
+		my_path, 0, local_log, my_correction, correction_len,
 		data_dimension, dimension, degree, level_index);
 	tensor_exp_block_(local_log, acc, power_prev, power_curr, dimension, degree, level_index);
 
 	for (uint64_t step = 1; step + 1 < length; ++step) {
+		const T* seg_corr = my_correction + step * correction_segment_stride;
 		build_correction_block_(
-			my_path, step, local_log, correction, correction_len,
+			my_path, step, local_log, seg_corr, correction_len,
 			data_dimension, dimension, degree, level_index);
 		tensor_exp_block_(local_log, local, power_prev, power_curr, dimension, degree, level_index);
 		sig_combine_block_(acc, local, degree, level_index);
@@ -1233,7 +1242,9 @@ void signature_cuda_core_(
 	bool scalar_term,
 	uint64_t data_dimension,
 	const T* correction,
-	uint64_t correction_len
+	uint64_t correction_len,
+	uint64_t correction_batch_stride,
+	uint64_t correction_segment_stride
 ) {
 	const uint64_t full_sig_len = host_sig_length(dimension, degree);
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
@@ -1272,7 +1283,9 @@ void signature_cuda_core_(
 		CudaBuf<T> d_workspace(batch_size * 5 * full_sig_len * sizeof(T));
 		const unsigned int threads_per_block = host_choose_threads_per_block(full_sig_len);
 		signature_correction_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block>>>(
-			path, out, correction, correction_len, d_level_index.get(),
+			path, out, correction, correction_len,
+			correction_batch_stride, correction_segment_stride,
+			d_level_index.get(),
 			data_dimension, dimension, length, degree, full_sig_len, sig_stride,
 			path_flat_len, d_workspace.get(), scalar_term);
 		check_cuda_kernel_launch();
@@ -1328,7 +1341,9 @@ void signature_cuda_(
 	bool horner,
 	bool scalar_term = true,
 	const T* correction = nullptr,
-	uint64_t correction_len = 0
+	uint64_t correction_len = 0,
+	uint64_t correction_batch_stride = 0,
+	uint64_t correction_segment_stride = 0
 ) {
 	if (dimension == 0) throw std::invalid_argument("signature_cuda received path of dimension 0");
 	validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
@@ -1347,12 +1362,14 @@ void signature_cuda_(
 
 		signature_cuda_core_<T>(
 			d_transformed.get(), out, batch_size, t_dimension, t_length, degree,
-			horner, scalar_term, dimension, correction, correction_len);
+			horner, scalar_term, dimension, correction, correction_len,
+			correction_batch_stride, correction_segment_stride);
 	}
 	else {
 		signature_cuda_core_<T>(
 			path, out, batch_size, dimension, length, degree,
-			horner, scalar_term, dimension, correction, correction_len);
+			horner, scalar_term, dimension, correction, correction_len,
+			correction_batch_stride, correction_segment_stride);
 	}
 }
 
@@ -1364,6 +1381,8 @@ __global__ void sig_backprop_correction_ker(
 	const T* __restrict__ sig,
 	const T* __restrict__ correction,
 	uint64_t correction_len,
+	uint64_t correction_batch_stride,
+	uint64_t correction_segment_stride,
 	const uint64_t* __restrict__ level_index,
 	uint64_t data_dimension,
 	uint64_t dimension,
@@ -1380,6 +1399,7 @@ __global__ void sig_backprop_correction_ker(
 	const int nthreads = blockDim.x;
 
 	const T* my_path = path + batch_idx * path_flat_len;
+	const T* my_correction = correction + batch_idx * correction_batch_stride;
 	T* my_out = out + batch_idx * path_flat_len;
 	const T* my_sig = sig + batch_idx * sig_stride;
 	const T* my_derivs = sig_derivs + batch_idx * sig_stride;
@@ -1423,8 +1443,9 @@ __global__ void sig_backprop_correction_ker(
 	__syncthreads();
 
 	for (int64_t seg = static_cast<int64_t>(length) - 2; seg >= 0; --seg) {
+		const T* seg_corr = my_correction + static_cast<uint64_t>(seg) * correction_segment_stride;
 		build_correction_block_(
-			my_path, static_cast<uint64_t>(seg), local_log, correction, correction_len,
+			my_path, static_cast<uint64_t>(seg), local_log, seg_corr, correction_len,
 			data_dimension, dimension, degree, level_index);
 		tensor_exp_block_(local_log, local_sig, power_prev, power_curr, dimension, degree, level_index);
 
@@ -1466,7 +1487,9 @@ void sig_backprop_cuda_core_(
 	bool scalar_term,
 	uint64_t data_dimension,
 	const T* correction,
-	uint64_t correction_len
+	uint64_t correction_len,
+	uint64_t correction_batch_stride,
+	uint64_t correction_segment_stride
 ) {
 	const uint64_t full_sig_len = host_sig_length(dimension, degree);
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
@@ -1486,7 +1509,9 @@ void sig_backprop_cuda_core_(
 		CudaBuf<T> d_workspace(batch_size * (degree + 12) * full_sig_len * sizeof(T));
 		const unsigned int threads_per_block = host_choose_threads_per_block(full_sig_len);
 		sig_backprop_correction_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block>>>(
-			path, out, sig_derivs, sig, correction, correction_len, d_level_index.get(),
+			path, out, sig_derivs, sig, correction, correction_len,
+			correction_batch_stride, correction_segment_stride,
+			d_level_index.get(),
 			data_dimension, dimension, length, degree, full_sig_len, sig_stride,
 			path_flat_len, d_workspace.get(), scalar_term);
 		check_cuda_kernel_launch();
@@ -1577,7 +1602,9 @@ void sig_backprop_cuda_(
 	T end_time,
 	bool scalar_term = true,
 	const T* correction = nullptr,
-	uint64_t correction_len = 0
+	uint64_t correction_len = 0,
+	uint64_t correction_batch_stride = 0,
+	uint64_t correction_segment_stride = 0
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_backprop_cuda received path of dimension 0");
 	validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
@@ -1596,7 +1623,8 @@ void sig_backprop_cuda_(
 		sig_backprop_cuda_core_<T>(
 			d_transformed.get(), d_transformed_derivs.get(), sig_derivs, sig,
 			batch_size, t_dimension, t_length, degree, scalar_term,
-			dimension, correction, correction_len);
+			dimension, correction, correction_len,
+			correction_batch_stride, correction_segment_stride);
 
 		d_transformed.reset();
 
@@ -1605,7 +1633,8 @@ void sig_backprop_cuda_(
 	else {
 		sig_backprop_cuda_core_<T>(
 			path, out, sig_derivs, sig, batch_size, dimension, length, degree,
-			scalar_term, dimension, correction, correction_len);
+			scalar_term, dimension, correction, correction_len,
+			correction_batch_stride, correction_segment_stride);
 	}
 }
 
@@ -1621,9 +1650,10 @@ extern "C" {
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, float end_time,
 		bool horner, bool scalar_term,
-		const float* correction, uint64_t correction_len
+		const float* correction, uint64_t correction_len,
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride
 	) noexcept {
-		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len));
+		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int signature_cuda_d(
@@ -1631,9 +1661,10 @@ extern "C" {
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, double end_time,
 		bool horner, bool scalar_term,
-		const double* correction, uint64_t correction_len
+		const double* correction, uint64_t correction_len,
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride
 	) noexcept {
-		CUSIG_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len));
+		CUSIG_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	// =====================================================================
@@ -1646,9 +1677,10 @@ extern "C" {
 		const float* sig_derivs, const float* sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, float end_time, bool scalar_term,
-		const float* correction, uint64_t correction_len
+		const float* correction, uint64_t correction_len,
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len));
+		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int sig_backprop_cuda_d(
@@ -1656,9 +1688,10 @@ extern "C" {
 		const double* sig_derivs, const double* sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, double end_time, bool scalar_term,
-		const double* correction, uint64_t correction_len
+		const double* correction, uint64_t correction_len,
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len));
+		CUSIG_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 }

@@ -55,19 +55,24 @@ inline void validate_signature_correction_args_(
 	throw std::invalid_argument("correction length must be a prefix of tensor levels 2..degree");
 }
 
+// Build local_log for one segment: zero levels 0..degree, then scatter the
+// per-segment correction values (in data-dimension layout) into the augmented
+// layout at levels 2..degree. Level 1 is left zero; the caller writes the
+// path displacement there. The same function serves the constant-correction
+// case (caller passes the same `correction_segment` pointer every step).
 template<std::floating_point T>
-void build_signature_correction_base_(
-	T* out,
-	const T* correction,
+FORCE_INLINE void apply_segment_correction_(
+	T* local_log,
+	const T* correction_segment,
 	uint64_t correction_len,
 	uint64_t data_dimension,
 	uint64_t dimension,
 	uint64_t degree,
 	const uint64_t* level_index
 ) {
-	const uint64_t sig_len = ::sig_length(dimension, degree);
-	std::fill(out, out + sig_len, static_cast<T>(0));
-	if (correction == nullptr || correction_len == 0)
+	const uint64_t sig_len = level_index[degree + 1];
+	std::fill(local_log, local_log + sig_len, static_cast<T>(0));
+	if (correction_segment == nullptr || correction_len == 0)
 		return;
 
 	uint64_t offset = 0;
@@ -78,7 +83,7 @@ void build_signature_correction_base_(
 			break;
 
 		for (uint64_t word_idx = 0; word_idx < level_size; ++word_idx) {
-			const T value = correction[offset + word_idx];
+			const T value = correction_segment[offset + word_idx];
 			if (value == static_cast<T>(0))
 				continue;
 
@@ -94,15 +99,12 @@ void build_signature_correction_base_(
 				aug_word_idx = aug_word_idx * dimension + label;
 			}
 
-			out[level_index[level] + aug_word_idx] += value;
+			local_log[level_index[level] + aug_word_idx] += value;
 		}
 		offset += level_size;
 	}
 }
 
-// local_log_base has level 0 and level 1 zeroed by build_signature_correction_base_,
-// and levels 2+ are constant across segments. Memcpy once at setup, then only the
-// level-1 displacement entries change per segment.
 template<std::floating_point T>
 FORCE_INLINE void write_segment_displacement_(
 	const Point<T>& prev_pt,
@@ -119,22 +121,25 @@ void signature_correction_inplace_(
 	const Path<T>& path,
 	T* out,
 	uint64_t degree,
-	const T* local_log_base,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t segment_stride,
 	uint64_t sig_len,
 	const uint64_t* level_index
 ) {
+	const uint64_t data_dimension = path.data_dimension();
 	const uint64_t dimension = path.dimension();
 
 	auto local_log_uptr = std::make_unique<T[]>(sig_len);
 	auto local_sig_uptr = std::make_unique<T[]>(sig_len);
 	T* local_log = local_log_uptr.get();
 	T* local_sig = local_sig_uptr.get();
-	std::memcpy(local_log, local_log_base, sig_len * sizeof(T));
 
 	Point<T> prev_pt(path.begin());
 	Point<T> next_pt(path.begin());
 	++next_pt;
 
+	apply_segment_correction_(local_log, correction, correction_len, data_dimension, dimension, degree, level_index);
 	write_segment_displacement_(prev_pt, next_pt, local_log, dimension);
 	tensor_exp_<T>(local_log, out, dimension, degree);
 
@@ -144,8 +149,11 @@ void signature_correction_inplace_(
 	++prev_pt;
 	++next_pt;
 	Point<T> last_pt(path.end());
+	uint64_t step = 1;
 
-	for (; next_pt != last_pt; ++prev_pt, ++next_pt) {
+	for (; next_pt != last_pt; ++prev_pt, ++next_pt, ++step) {
+		const T* seg_corr = correction == nullptr ? nullptr : correction + step * segment_stride;
+		apply_segment_correction_(local_log, seg_corr, correction_len, data_dimension, dimension, degree, level_index);
 		write_segment_displacement_(prev_pt, next_pt, local_log, dimension);
 		tensor_exp_<T>(local_log, local_sig, dimension, degree);
 		sig_combine_inplace_(out, local_sig, degree, level_index);
@@ -495,7 +503,9 @@ void signature_(
 	bool scalar_term = true,
 	int n_jobs = 1,
 	const T* correction = nullptr,
-	uint64_t correction_len = 0
+	uint64_t correction_len = 0,
+	uint64_t correction_batch_stride = 0,
+	uint64_t correction_segment_stride = 0
 )
 {
 	//Deal with trivial cases
@@ -535,30 +545,33 @@ void signature_(
 		uint64_t* level_index = level_index_uptr.get();
 		populate_level_index(level_index, aug_dim, degree + 2);
 
-		auto local_log_base_uptr = std::make_unique<T[]>(full_len);
-		T* local_log_base = local_log_base_uptr.get();
-		build_signature_correction_base_(
-			local_log_base, correction, correction_len, dimension, aug_dim, degree, level_index);
-
 		if (scalar_term) {
-			auto sig_func = [&](const T* path_ptr, T* out_ptr) {
+			auto sig_func = [&](const T* path_ptr, const T* corr_ptr, T* out_ptr) {
 				Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
-				signature_correction_inplace_(path_obj, out_ptr, degree, local_log_base, full_len, level_index);
+				signature_correction_inplace_(
+					path_obj, out_ptr, degree, corr_ptr, correction_len,
+					correction_segment_stride, full_len, level_index);
 			};
 
 			multi_threaded_batch(sig_func, batch_size, n_jobs,
-				make_batch(path, flat_path_length), make_batch(out, full_len));
+				make_batch(path, flat_path_length),
+				make_batch(correction, correction_batch_stride),
+				make_batch(out, full_len));
 		}
 		else {
-			auto sig_func = [&](const T* path_ptr, T* out_ptr) {
+			auto sig_func = [&](const T* path_ptr, const T* corr_ptr, T* out_ptr) {
 				std::vector<T> buf(full_len);
 				Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
-				signature_correction_inplace_(path_obj, buf.data(), degree, local_log_base, full_len, level_index);
+				signature_correction_inplace_(
+					path_obj, buf.data(), degree, corr_ptr, correction_len,
+					correction_segment_stride, full_len, level_index);
 				std::memcpy(out_ptr, buf.data() + 1, (full_len - 1) * sizeof(T));
 			};
 
 			multi_threaded_batch(sig_func, batch_size, n_jobs,
-				make_batch(path, flat_path_length), make_batch(out, stride));
+				make_batch(path, flat_path_length),
+				make_batch(correction, correction_batch_stride),
+				make_batch(out, stride));
 		}
 		return;
 	}
@@ -622,7 +635,9 @@ void sig_backprop_correction_inplace_(
 	T* sig,
 	uint64_t degree,
 	uint64_t sig_len,
-	const T* local_log_base,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t segment_stride,
 	const uint64_t* level_index
 );
 
@@ -642,7 +657,9 @@ void sig_backprop_(
 	bool scalar_term = true,
 	int n_jobs = 1,
 	const T* correction = nullptr,
-	uint64_t correction_len = 0
+	uint64_t correction_len = 0,
+	uint64_t correction_batch_stride = 0,
+	uint64_t correction_segment_stride = 0
 )
 {
 	std::fill(out, out + length * dimension * batch_size, static_cast<T>(0.));
@@ -684,33 +701,39 @@ void sig_backprop_(
 
 	const bool has_correction = correction_len != 0;
 	std::unique_ptr<uint64_t[]> level_index_uptr;
-	std::unique_ptr<T[]> local_log_base_uptr;
 	if (has_correction) {
 		level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
 		populate_level_index(level_index_uptr.get(), dummy_path_obj.dimension(), degree + 2);
-		local_log_base_uptr = std::make_unique<T[]>(sig_len_);
-		build_signature_correction_base_(
-			local_log_base_uptr.get(), correction, correction_len,
-			dimension, dummy_path_obj.dimension(), degree, level_index_uptr.get());
 	}
 
-	auto sig_backprop_func = [&](const T* path_ptr, T* sig_derivs_ptr, T* sig_ptr, T* out_ptr) {
-		Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
-		if (has_correction) {
+	if (has_correction) {
+		auto sig_backprop_func = [&](const T* path_ptr, const T* corr_ptr, T* sig_derivs_ptr, T* sig_ptr, T* out_ptr) {
+			Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
 			sig_backprop_correction_inplace_<T>(
 				path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree, sig_len_,
-				local_log_base_uptr.get(), level_index_uptr.get());
-		}
-		else {
-			sig_backprop_inplace_<T>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree, sig_len_);
-		}
-	};
+				corr_ptr, correction_len, correction_segment_stride,
+				level_index_uptr.get());
+		};
 
-	multi_threaded_batch(sig_backprop_func, batch_size, n_jobs,
-		make_batch(path, flat_path_length),
-		make_batch(sig_derivs_copy, sig_len_),
-		make_batch(sig_copy, sig_len_),
-		make_batch(out, flat_path_length));
+		multi_threaded_batch(sig_backprop_func, batch_size, n_jobs,
+			make_batch(path, flat_path_length),
+			make_batch(correction, correction_batch_stride),
+			make_batch(sig_derivs_copy, sig_len_),
+			make_batch(sig_copy, sig_len_),
+			make_batch(out, flat_path_length));
+	}
+	else {
+		auto sig_backprop_func = [&](const T* path_ptr, T* sig_derivs_ptr, T* sig_ptr, T* out_ptr) {
+			Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
+			sig_backprop_inplace_<T>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree, sig_len_);
+		};
+
+		multi_threaded_batch(sig_backprop_func, batch_size, n_jobs,
+			make_batch(path, flat_path_length),
+			make_batch(sig_derivs_copy, sig_len_),
+			make_batch(sig_copy, sig_len_),
+			make_batch(out, flat_path_length));
+	}
 	return;
 }
 
@@ -722,12 +745,15 @@ void sig_backprop_correction_inplace_(
 	T* sig,
 	uint64_t degree,
 	uint64_t sig_len,
-	const T* local_log_base,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t segment_stride,
 	const uint64_t* level_index
 ) {
 	const uint64_t data_dimension = path.data_dimension();
 	const uint64_t dimension = path.dimension();
 	const uint64_t data_length = path.data_length();
+	const uint64_t length = path.length();
 
 	auto local_derivs_uptr = std::make_unique<T[]>(sig_len);
 	T* local_derivs = local_derivs_uptr.get();
@@ -746,7 +772,6 @@ void sig_backprop_correction_inplace_(
 
 	auto inverse_local_sig_uptr = std::make_unique<T[]>(sig_len);
 	T* inverse_local_sig = inverse_local_sig_uptr.get();
-	std::memcpy(local_log, local_log_base, sig_len * sizeof(T));
 
 	Point<T> prev_pt(path.end());
 	Point<T> next_pt(path.end());
@@ -756,8 +781,11 @@ void sig_backprop_correction_inplace_(
 
 	Point<T> first_pt(path.begin());
 	T* pos = out + (data_length - 1) * data_dimension;
+	uint64_t step = length - 2;
 
 	while (next_pt != first_pt) {
+		const T* seg_corr = correction == nullptr ? nullptr : correction + step * segment_stride;
+		apply_segment_correction_(local_log, seg_corr, correction_len, data_dimension, dimension, degree, level_index);
 		write_segment_displacement_(prev_pt, next_pt, local_log, dimension);
 		tensor_exp_<T>(local_log, local_sig, dimension, degree);
 
@@ -781,6 +809,7 @@ void sig_backprop_correction_inplace_(
 		if (next_pt != first_pt) {
 			--prev_pt;
 			pos -= data_dimension;
+			--step;
 		}
 	}
 }

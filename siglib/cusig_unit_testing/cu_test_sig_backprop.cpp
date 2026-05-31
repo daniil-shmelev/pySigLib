@@ -104,7 +104,7 @@ TEST(sigBackpropDoubleTest, CorrectionSingleSegment) {
     cudaMemcpy(d_correction, correction.data(), sizeof(double) * correction.size(), cudaMemcpyHostToDevice);
 
     int err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree,
-        false, false, 1., true, d_correction, correction.size());
+        false, false, 1., true, d_correction, correction.size(), 0, 0);
     cudaDeviceSynchronize();
     cudaMemcpy(out.data(), d_out, sizeof(double) * out.size(), cudaMemcpyDeviceToHost);
     cudaFree(d_path);
@@ -120,7 +120,7 @@ TEST(sigBackpropDoubleTest, CorrectionSingleSegment) {
 }
 
 TEST(sigBackpropDoubleTest, ErrorDimension0) {
-    int err = sig_backprop_cuda_d(nullptr, nullptr, nullptr, nullptr, (uint64_t)1, 0, 3, 2, false, false, 1., true, nullptr, 0);
+    int err = sig_backprop_cuda_d(nullptr, nullptr, nullptr, nullptr, (uint64_t)1, 0, 3, 2, false, false, 1., true, nullptr, 0, 0, 0);
     EXPECT_NE(0, err);
 }
 

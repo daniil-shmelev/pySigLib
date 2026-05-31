@@ -166,11 +166,11 @@ def branched_log_sig(
     :type planar: bool
     :param scalar_term: If True, include the leading scalar coefficient, which is zero.
     :type scalar_term: bool
-    :param correction: Optional constant correction of level
-        :math:`\\geq 2` added to the path increment at every path
+    :param correction: Optional per-segment correction of level
+        :math:`\\geq 2` added to the path increment on each path
         segment, before the branched log signature is taken. The
         level-1 part of the local lift is the segment's path increment
-        :math:`\\Delta x`, the higher levels come from this constant,
+        :math:`\\Delta x`, the higher levels come from the matching correction row,
         and the local branched signature on each segment is
 
         .. math::
@@ -179,11 +179,16 @@ def branched_log_sig(
 
         where :math:`e_w` is the chain (root-to-leaf path) tree with labels
         :math:`w` and :math:`\\exp_*` is the Hopf-algebra exponential under the
-        Butcher product. ``correction`` is a flat 1D array of length
-        :math:`d^2 + d^3 + \\cdots + d^m`, where :math:`d` is the underlying
-        path dimension and :math:`2 \\leq m \\leq N` is the highest
-        correction level supplied (missing higher levels are zero). Levels are concatenated
-        in order, and within level :math:`k` the entry for chain
+        Butcher product. A non-empty ``correction`` may have shape ``(C,)``
+        for one constant correction shared by every segment and batch item,
+        ``(path.shape[-2] - 1, C)`` for one correction row per segment shared
+        by the batch, or ``path.shape[:-2] + (path.shape[-2] - 1, C)`` for
+        batch-specific segment corrections. Here ``C`` is the correction
+        width, with ``C = d^2 + d^3 + ... + d^m``, where :math:`d` is the
+        underlying path dimension and
+        :math:`2 \\leq m \\leq N` is the highest correction level supplied
+        (missing higher levels are zero). Levels are concatenated in order,
+        and within level :math:`k` the entry for chain
         :math:`(i_1, \\ldots, i_k)` lives at flat index
         :math:`i_1 d^{k-1} + i_2 d^{k-2} + \\cdots + i_k`. Passing ``None``
         (default) or an empty array is equivalent to all-zero correction. Indices
@@ -230,8 +235,9 @@ def branched_log_sig(
         path = np.zeros((n_steps + 1, d))
         path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
 
-        # Ito level-2 correction: dt * Sigma flattened (Sigma = I here).
-        correction = (np.eye(d) * dt).flatten()
+        # Ito level-2 correction: one dt * Sigma row per path segment.
+        correction = np.broadcast_to(
+            (np.eye(d) * dt).reshape(1, -1), (n_steps, d * d)).copy()
 
         pysiglib.prepare_branched_sig(d, N)
         ito_blogsig = pysiglib.branched_log_sig(

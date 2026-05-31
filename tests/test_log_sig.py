@@ -169,7 +169,7 @@ def test_batch_log_signature_lyndon_basis_random(device, deg, dtype, method):
 @pytest.mark.parametrize("device", DEVICES)
 def test_log_signature_method0_correction_matches_sig_to_log_sig(device):
     X = torch.tensor([[0.0], [3.0]], dtype=torch.float64, device=device)
-    correction = torch.tensor([2.0], dtype=torch.float64, device=device)
+    correction = torch.tensor([[2.0]], dtype=torch.float64, device=device)
 
     sig = pysiglib.sig(X, 4, scalar_term=True, correction=correction)
     expected = pysiglib.sig_to_log_sig(sig, 1, 4, method=0)
@@ -181,7 +181,7 @@ def test_log_signature_method0_correction_matches_sig_to_log_sig(device):
 
 def test_log_signature_method3_rejects_correction():
     X = torch.tensor([[0.0], [1.0]], dtype=torch.float64)
-    correction = torch.tensor([1.0], dtype=torch.float64)
+    correction = torch.tensor([[1.0]], dtype=torch.float64)
 
     with pytest.raises(ValueError, match="method=3"):
         pysiglib.log_sig(X, 2, method=3, correction=correction)

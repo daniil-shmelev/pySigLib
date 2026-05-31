@@ -206,7 +206,11 @@ def test_sig_backprop_correction_matches_finite_difference(device):
         dtype=torch.float64,
         device=device,
     )
-    correction = torch.tensor([0.2, -0.1, 0.05, 0.3], dtype=torch.float64, device=device)
+    correction = torch.tensor(
+        [[0.2, -0.1, 0.05, 0.3]] * (X.shape[0] - 1),
+        dtype=torch.float64,
+        device=device,
+    )
     weights = torch.linspace(
         -0.5, 0.7, pysiglib.sig_length(2, 3, scalar_term=True), dtype=torch.float64, device=device)
 
@@ -229,6 +233,41 @@ def test_sig_backprop_correction_matches_finite_difference(device):
 
 
 @pytest.mark.parametrize("device", DEVICES)
+def test_sig_backprop_correction_layouts_match_full_batch(device):
+    X = torch.tensor(
+        [
+            [[0.0, 0.0], [0.2, -0.1], [0.5, 0.3]],
+            [[0.1, 0.2], [0.4, 0.0], [0.6, -0.2]],
+        ],
+        dtype=torch.float64,
+        device=device,
+    )
+    constant = torch.tensor([0.2, -0.1, 0.05, 0.3], dtype=X.dtype, device=device)
+    constant_full = constant.reshape(1, 1, -1).expand(X.shape[0], X.shape[1] - 1, -1).clone()
+    shared = torch.tensor(
+        [[0.2, -0.1, 0.05, 0.3], [0.4, 0.0, -0.2, 0.1]],
+        dtype=X.dtype,
+        device=device,
+    )
+    shared_full = shared.reshape(1, X.shape[1] - 1, -1).expand(X.shape[0], -1, -1).clone()
+    weights = torch.ones((X.shape[0], pysiglib.sig_length(2, 3, scalar_term=True)), dtype=X.dtype, device=device)
+
+    sig_constant = pysiglib.sig(X, 3, scalar_term=True, correction=constant)
+    sig_constant_full = pysiglib.sig(X, 3, scalar_term=True, correction=constant_full)
+    check_close(
+        pysiglib.sig_backprop(X, sig_constant, weights, 3, correction=constant),
+        pysiglib.sig_backprop(X, sig_constant_full, weights, 3, correction=constant_full),
+    )
+
+    sig_shared = pysiglib.sig(X, 3, scalar_term=True, correction=shared)
+    sig_shared_full = pysiglib.sig(X, 3, scalar_term=True, correction=shared_full)
+    check_close(
+        pysiglib.sig_backprop(X, sig_shared, weights, 3, correction=shared),
+        pysiglib.sig_backprop(X, sig_shared_full, weights, 3, correction=shared_full),
+    )
+
+
+@pytest.mark.parametrize("device", DEVICES)
 def test_torch_sig_correction_autograd_matches_manual_backprop(device):
     X = torch.tensor(
         [[0.2, 0.1], [0.5, -0.2], [0.3, 0.4]],
@@ -236,7 +275,11 @@ def test_torch_sig_correction_autograd_matches_manual_backprop(device):
         device=device,
         requires_grad=True,
     )
-    correction = torch.tensor([0.1, 0.0, -0.2, 0.3], dtype=torch.float64, device=device)
+    correction = torch.tensor(
+        [[0.1, 0.0, -0.2, 0.3]] * (X.shape[0] - 1),
+        dtype=torch.float64,
+        device=device,
+    )
     weights = torch.linspace(
         0.2, 1.1, pysiglib.sig_length(2, 3, scalar_term=True), dtype=torch.float64, device=device)
 
@@ -259,7 +302,7 @@ def test_torch_sig_correction_backward_uses_forward_values():
         dtype=torch.float64,
         requires_grad=True,
     )
-    correction = torch.tensor([0.1, 0.0, -0.2, 0.3], dtype=torch.float64)
+    correction = torch.tensor([[0.1, 0.0, -0.2, 0.3]] * (X.shape[0] - 1), dtype=torch.float64)
     expected_correction = correction.detach().clone()
 
     import pysiglib.torch_api as torch_api

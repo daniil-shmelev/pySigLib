@@ -160,8 +160,8 @@ def sig_backprop(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
-    :param correction: The same constant correction supplied to
-        the forward ``sig`` call. Treated as a constant: no derivatives are
+    :param correction: The same correction supplied to the forward ``sig`` call.
+        Treated as a constant: no derivatives are
         returned with respect to ``correction``. Cannot be combined with
         ``lead_lag=True``.
     :type correction: numpy.ndarray | torch.tensor | None
@@ -237,14 +237,16 @@ def sig_backprop(
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, path_data.data_dimension, path_data.data_length,
             degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term, n_jobs,
-            correction_data.data_ptr, correction_data.length)
+            correction_data.data_ptr, correction_data.length,
+            correction_data.batch_stride, correction_data.segment_stride)
     else:
         err_code = CUSIG_SIG_BACKPROP_CUDA[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, path_data.data_dimension, path_data.data_length,
             degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term,
-            correction_data.data_ptr, correction_data.length)
+            correction_data.data_ptr, correction_data.length,
+            correction_data.batch_stride, correction_data.segment_stride)
     if err_code:
         raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
     return result.data

@@ -165,11 +165,11 @@ def sig(
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
     :type scalar_term: bool
-    :param correction: Optional constant correction of level
-        :math:`\\geq 2` added to the path increment at every path
-        segment before exponentiation. The level-1 part of the local
+    :param correction: Optional per-segment correction of level
+        :math:`\\geq 2` added to each path increment before exponentiation.
+        The level-1 part of the local
         lift is the segment's path increment :math:`\\Delta x`, the
-        higher levels come from this constant, and the local signature
+        higher levels come from the corresponding correction row, and the local signature
         on each segment is
 
         .. math::
@@ -177,11 +177,16 @@ def sig(
             \\exp \\left( \\sum_i \\Delta x_i\\, e_i + \\sum_{k=2}^{m} \\sum_{i_1, \\ldots, i_k} c^{(k)}_{i_1 \\ldots i_k}\\, e_{i_1} \\otimes \\cdots \\otimes e_{i_k} \\right),
 
         where :math:`(e_{i_1} \\otimes \\cdots \\otimes e_{i_k})` is the
-        tensor basis. ``correction`` is a flat 1D array of length
-        :math:`d^2 + d^3 + \\cdots + d^m`, where :math:`d` is the original
-        path dimension and :math:`2 \\leq m \\leq N` is the highest
-        correction level supplied (missing higher levels are zero). Levels are
-        concatenated in order, and within level :math:`k` the entry for
+        tensor basis. A non-empty ``correction`` may have shape ``(C,)``
+        for one constant correction shared by every segment and batch item,
+        ``(path.shape[-2] - 1, C)`` for one correction row per segment shared
+        by the batch, or ``path.shape[:-2] + (path.shape[-2] - 1, C)`` for
+        batch-specific segment corrections. Here ``C`` is the correction
+        width, with :math:`C = d^2 + d^3 + \\cdots + d^m`, where
+        :math:`d` is the original
+        path dimension and :math:`2 \\leq m \\leq N` is the highest correction
+        level supplied (missing higher levels are zero). Levels are
+        concatenated in each row, and within level :math:`k` the entry for
         index tuple :math:`(i_1, \\ldots, i_k)` lives at flat index
         :math:`i_1 d^{k-1} + i_2 d^{k-2} + \\cdots + i_k`. Passing ``None``
         or an empty array is equivalent to all-zero correction. With
@@ -248,9 +253,8 @@ def sig(
         path = np.zeros((n_steps + 1, d))
         path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
 
-        # Ito level-2 correction: dt * Sigma flattened. Here Sigma = I so the
-        # diagonal entries c^(2)_ii are dt and off-diagonals are zero.
-        correction = (np.eye(d) * dt).flatten()
+        # Ito level-2 correction: one dt * Sigma row per path segment.
+        correction = np.broadcast_to((np.eye(d) * dt).reshape(1, -1), (n_steps, d * d))
 
         ito_sig = pysiglib.sig(path, N, correction=correction, end_time=T)
         print(ito_sig)
@@ -277,13 +281,15 @@ def sig(
             data.data_ptr, result.data_ptr, data.batch_size,
             data.data_dimension, data.data_length, degree,
             data.time_aug, data.lead_lag, data.end_time, horner, scalar_term, n_jobs,
-            correction_data.data_ptr, correction_data.length)
+            correction_data.data_ptr, correction_data.length,
+            correction_data.batch_stride, correction_data.segment_stride)
     else:
         err_code = CUSIG_SIGNATURE_CUDA[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             data.data_dimension, data.data_length, degree,
             data.time_aug, data.lead_lag, data.end_time, horner, scalar_term,
-            correction_data.data_ptr, correction_data.length)
+            correction_data.data_ptr, correction_data.length,
+            correction_data.batch_stride, correction_data.segment_stride)
     if err_code:
         raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
 
@@ -301,4 +307,3 @@ def sig(
         )
 
     return result.data
-

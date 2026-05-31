@@ -210,31 +210,87 @@ inline std::uint64_t AugmentedDimension(std::uint64_t dimension, bool time_aug, 
     return (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 }
 
-template <typename BufferT>
-std::string GetCorrectionLen(BufferT& correction, std::uint64_t& len) {
-    const auto dims = BufferDims(correction);
-    if (dims.size() == 1) {
-        len = static_cast<std::uint64_t>(dims[0]);
-        return {};
-    }
-    for (const auto dim : dims) {
+struct CorrectionSpec {
+    std::uint64_t len = 0;
+    std::uint64_t batch_stride = 0;
+    std::uint64_t segment_stride = 0;
+};
+
+// Correction is empty, constant, shared per-segment, or batch-specific per-segment.
+template <typename PathBufferT, typename CorrectionBufferT>
+std::string GetCorrectionSpec(
+    PathBufferT& path,
+    CorrectionBufferT& correction,
+    CorrectionSpec& spec
+) {
+    const auto path_dims = BufferDims(path);
+    const auto corr_dims = BufferDims(correction);
+
+    for (const auto dim : corr_dims) {
         if (dim == 0) {
-            len = 0;
+            spec = {};
             return {};
         }
     }
-    {
+
+    const std::uint64_t path_segments =
+        path_dims[path_dims.size() - 2] > 0
+            ? static_cast<std::uint64_t>(path_dims[path_dims.size() - 2] - 1)
+            : 0;
+
+    if (corr_dims.size() == 1) {
+        spec.len = static_cast<std::uint64_t>(corr_dims[0]);
+        spec.batch_stride = 0;
+        spec.segment_stride = 0;
+        return {};
+    }
+
+    if (corr_dims.size() == 2 &&
+        static_cast<std::uint64_t>(corr_dims[0]) == path_segments) {
+        const auto correction_width = static_cast<std::uint64_t>(corr_dims[1]);
+        spec.len = correction_width;
+        spec.batch_stride = 0;
+        spec.segment_stride = correction_width;
+        return {};
+    }
+
+    if (corr_dims.size() != path_dims.size()) {
         std::ostringstream oss;
-        oss << "correction must have rank 1, got rank " << dims.size();
+        oss << "correction must have shape (C,), (path.shape[-2] - 1, C), or "
+               "path.shape[:-2] + (path.shape[-2] - 1, C), got rank "
+            << corr_dims.size() << " for path rank " << path_dims.size();
         return oss.str();
     }
+
+    if (static_cast<std::uint64_t>(corr_dims[corr_dims.size() - 2]) != path_segments) {
+        std::ostringstream oss;
+        oss << "correction segment dim " << corr_dims[corr_dims.size() - 2]
+            << " does not match path segments " << path_segments;
+        return oss.str();
+    }
+
+    for (size_t i = 0; i < path_dims.size() - 2; ++i) {
+        if (corr_dims[i] != path_dims[i]) {
+            std::ostringstream oss;
+            oss << "correction batch dim " << i << " is " << corr_dims[i]
+                << " but path batch dim is " << path_dims[i];
+            return oss.str();
+        }
+    }
+
+    const auto correction_width =
+        static_cast<std::uint64_t>(corr_dims[corr_dims.size() - 1]);
+    spec.len = correction_width;
+    spec.batch_stride = path_segments * correction_width;
+    spec.segment_stride = correction_width;
+    return {};
 }
 
 template <typename T>
-using CpuSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, int, const T*, std::uint64_t) noexcept;
+using CpuSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, int, const T*, std::uint64_t, std::uint64_t, std::uint64_t) noexcept;
 
 template <typename T>
-using CpuSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int, const T*, std::uint64_t) noexcept;
+using CpuSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int, const T*, std::uint64_t, std::uint64_t, std::uint64_t) noexcept;
 
 template <typename T>
 struct CpuFns;
@@ -317,10 +373,10 @@ struct CpuFns<double> {
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
-using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, const T*, std::uint64_t) noexcept;
+using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t) noexcept;
 
 template <typename T>
-using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t) noexcept;
+using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t) noexcept;
 
 template <typename T>
 struct CudaFns;
@@ -431,8 +487,9 @@ ffi::Error SigCpuImpl(
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t correction_len = 0;
-    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty())
+        return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -461,7 +518,9 @@ ffi::Error SigCpuImpl(
         true,
         static_cast<int>(n_jobs),
         correction_ptr,
-        correction_len
+        corr_spec.len,
+        corr_spec.batch_stride,
+        corr_spec.segment_stride
     );
 
     if (err_code != 0) {
@@ -489,8 +548,9 @@ ffi::Error SigBackpropCpuImpl(
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t correction_len = 0;
-    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty())
+        return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -524,7 +584,9 @@ ffi::Error SigBackpropCpuImpl(
         true,
         static_cast<int>(n_jobs),
         correction_ptr,
-        correction_len
+        corr_spec.len,
+        corr_spec.batch_stride,
+        corr_spec.segment_stride
     );
 
     if (err_code != 0) {
@@ -553,8 +615,9 @@ ffi::Error SigCudaImpl(
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t correction_len = 0;
-    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty())
+        return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -587,7 +650,9 @@ ffi::Error SigCudaImpl(
         horner,
         true,
         correction_ptr,
-        correction_len
+        corr_spec.len,
+        corr_spec.batch_stride,
+        corr_spec.segment_stride
     );
 
     if (err_code != 0) {
@@ -616,8 +681,9 @@ ffi::Error SigBackpropCudaImpl(
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateArgs(degree, n_jobs, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t correction_len = 0;
-    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty())
+        return InvalidArgument(msg);
 
     const auto sig_len = sig_length(
         AugmentedDimension(spec.dimension, time_aug, lead_lag),
@@ -655,7 +721,9 @@ ffi::Error SigBackpropCudaImpl(
         static_cast<T>(end_time),
         true,
         correction_ptr,
-        correction_len
+        corr_spec.len,
+        corr_spec.batch_stride,
+        corr_spec.segment_stride
     );
 
     if (err_code != 0) {
@@ -1933,8 +2001,8 @@ ffi::Error BranchedSigCpuImpl(
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t correction_len = 0;
-    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty()) return InvalidArgument(msg);
 
     const auto* path_ptr = BufferData<T>(path);
     const auto* correction_ptr = BufferData<T>(correction);
@@ -1946,7 +2014,7 @@ ffi::Error BranchedSigCpuImpl(
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs),
         time_aug, lead_lag, static_cast<T>(end_time), planar, true,
-        correction_ptr, correction_len
+        correction_ptr, corr_spec.len, corr_spec.batch_stride, corr_spec.segment_stride
     );
     if (err_code != 0) return NativeCallError("branched_sig", err_code);
     return ffi::Error::Success();
@@ -1960,8 +2028,8 @@ ffi::Error BranchedSigBackpropCpuImpl(
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t correction_len = 0;
-    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty()) return InvalidArgument(msg);
 
     const auto* path_ptr = BufferData<T>(path);
     const auto* bsig_ptr = BufferData<T>(bsig);
@@ -1975,7 +2043,7 @@ ffi::Error BranchedSigBackpropCpuImpl(
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), static_cast<int>(n_jobs),
         time_aug, lead_lag, static_cast<T>(end_time), planar, true,
-        correction_ptr, correction_len
+        correction_ptr, corr_spec.len, corr_spec.batch_stride, corr_spec.segment_stride
     );
     if (err_code != 0) return NativeCallError("branched_sig_backprop", err_code);
     return ffi::Error::Success();
@@ -2014,8 +2082,8 @@ ffi::Error BranchedSigCudaImpl(
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t correction_len = 0;
-    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty()) return InvalidArgument(msg);
     auto sync = cudaStreamSynchronize(stream);
     if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
 
@@ -2023,7 +2091,7 @@ ffi::Error BranchedSigCudaImpl(
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time), planar, true,
-        BufferData<T>(correction), correction_len);
+        BufferData<T>(correction), corr_spec.len, corr_spec.batch_stride, corr_spec.segment_stride);
     if (err_code != 0) return NativeCallError("branched_sig_cuda", err_code);
     return ffi::Error::Success();
 }
@@ -2036,8 +2104,8 @@ ffi::Error BranchedSigBackpropCudaImpl(
 ) {
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
-    std::uint64_t correction_len = 0;
-    if (auto msg = GetCorrectionLen(correction, correction_len); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty()) return InvalidArgument(msg);
     auto sync = cudaStreamSynchronize(stream);
     if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
 
@@ -2045,7 +2113,7 @@ ffi::Error BranchedSigBackpropCudaImpl(
         spec.is_batch ? spec.batch_size : 1,
         spec.dimension, spec.length,
         static_cast<std::uint64_t>(max_nodes), time_aug, lead_lag, static_cast<T>(end_time), planar, true,
-        BufferData<T>(correction), correction_len);
+        BufferData<T>(correction), corr_spec.len, corr_spec.batch_stride, corr_spec.segment_stride);
     if (err_code != 0) return NativeCallError("branched_sig_backprop_cuda", err_code);
     return ffi::Error::Success();
 }
