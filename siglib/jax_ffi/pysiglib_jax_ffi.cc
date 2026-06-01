@@ -316,6 +316,8 @@ struct CpuFns<float> {
 
     static constexpr auto sig_kernel = sig_kernel_f;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_f;
+    static constexpr auto branched_sig_kernel = branched_sig_kernel_f;
+    static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_f;
 
     static constexpr auto bsig = branched_sig_f;
     static constexpr auto bsig_backprop = branched_sig_backprop_f;
@@ -354,6 +356,8 @@ struct CpuFns<double> {
 
     static constexpr auto sig_kernel = sig_kernel_d;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_d;
+    static constexpr auto branched_sig_kernel = branched_sig_kernel_d;
+    static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_d;
 
     static constexpr auto bsig = branched_sig_d;
     static constexpr auto bsig_backprop = branched_sig_backprop_d;
@@ -402,6 +406,8 @@ struct CudaFns<float> {
 
     static constexpr auto sig_kernel = sig_kernel_cuda_f;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_cuda_f;
+    static constexpr auto branched_sig_kernel = branched_sig_kernel_cuda_f;
+    static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_cuda_f;
 
     static constexpr auto bsig = branched_sig_cuda_f;
     static constexpr auto bsig_backprop = branched_sig_backprop_cuda_f;
@@ -440,6 +446,8 @@ struct CudaFns<double> {
 
     static constexpr auto sig_kernel = sig_kernel_cuda_d;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_cuda_d;
+    static constexpr auto branched_sig_kernel = branched_sig_kernel_cuda_d;
+    static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_cuda_d;
 
     static constexpr auto bsig = branched_sig_cuda_d;
     static constexpr auto bsig_backprop = branched_sig_backprop_cuda_d;
@@ -1591,6 +1599,15 @@ std::string GetGramSpec(BufferT& buf, GramSpec& spec) {
     return {};
 }
 
+template <typename BufferT>
+std::uint64_t BufferElementCount(BufferT& buf) {
+    std::uint64_t count = 1;
+    for (const auto dim : BufferDims(buf)) {
+        count *= static_cast<std::uint64_t>(dim);
+    }
+    return count;
+}
+
 template <typename T>
 ffi::Error SigKernelPdeCpuImpl(
     std::int64_t dimension, std::int64_t dyadic_order_1, std::int64_t dyadic_order_2,
@@ -1636,6 +1653,55 @@ ffi::Error SigKernelPdeBackpropCpuImpl(
     return ffi::Error::Success();
 }
 
+template <typename T>
+ffi::Error BranchedSigKernelPdeCpuImpl(
+    std::int64_t dimension, std::int64_t depth,
+    std::int64_t dyadic_order_1, std::int64_t dyadic_order_2,
+    bool return_grid, std::int64_t n_jobs,
+    ffi::AnyBuffer& gram, ffi::Result<ffi::AnyBuffer>& out
+) {
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+
+    auto length1 = spec.length1 + 1;
+    auto length2 = spec.length2 + 1;
+
+    int err_code = CpuFns<T>::branched_sig_kernel(BufferData<T>(gram), BufferData<T>(out),
+        spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), length1, length2,
+        static_cast<std::uint64_t>(depth),
+        static_cast<std::uint64_t>(dyadic_order_1), static_cast<std::uint64_t>(dyadic_order_2),
+        return_grid, static_cast<int>(n_jobs));
+    if (err_code != 0) return NativeCallError("branched_sig_kernel", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error BranchedSigKernelPdeBackpropCpuImpl(
+    std::int64_t dimension, std::int64_t depth,
+    std::int64_t dyadic_order_1, std::int64_t dyadic_order_2,
+    bool return_grid, std::int64_t n_jobs,
+    ffi::AnyBuffer& gram, ffi::AnyBuffer& derivs, ffi::AnyBuffer& k_stack,
+    ffi::Result<ffi::AnyBuffer>& out
+) {
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+
+    auto length1 = spec.length1 + 1;
+    auto length2 = spec.length2 + 1;
+    const T* stack_ptr = BufferElementCount(k_stack) == 0 ? nullptr : BufferData<T>(k_stack);
+
+    int err_code = CpuFns<T>::branched_sig_kernel_backprop(BufferData<T>(gram), BufferData<T>(out),
+        BufferData<T>(derivs), stack_ptr,
+        spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), length1, length2,
+        static_cast<std::uint64_t>(depth),
+        static_cast<std::uint64_t>(dyadic_order_1), static_cast<std::uint64_t>(dyadic_order_2),
+        return_grid, static_cast<int>(n_jobs));
+    if (err_code != 0) return NativeCallError("branched_sig_kernel_backprop", err_code);
+    return ffi::Error::Success();
+}
+
 ffi::Error SigKernelPdeCpu(
     std::int64_t dimension, std::int64_t dyadic_order_1, std::int64_t dyadic_order_2,
     bool return_grid, std::int64_t n_jobs,
@@ -1656,6 +1722,35 @@ ffi::Error SigKernelPdeBackpropCpu(
     if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
         return SigKernelPdeBackpropCpuImpl<T>(dimension, dyadic_order_1, dyadic_order_2, return_grid, n_jobs, gram, derivs, k_grid, out);
+    });
+}
+
+ffi::Error BranchedSigKernelPdeCpu(
+    std::int64_t dimension, std::int64_t depth,
+    std::int64_t dyadic_order_1, std::int64_t dyadic_order_2,
+    bool return_grid, std::int64_t n_jobs,
+    ffi::AnyBuffer gram, ffi::Result<ffi::AnyBuffer> out
+) {
+    if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        return BranchedSigKernelPdeCpuImpl<T>(
+            dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs, gram, out);
+    });
+}
+
+ffi::Error BranchedSigKernelPdeBackpropCpu(
+    std::int64_t dimension, std::int64_t depth,
+    std::int64_t dyadic_order_1, std::int64_t dyadic_order_2,
+    bool return_grid, std::int64_t n_jobs,
+    ffi::AnyBuffer gram, ffi::AnyBuffer derivs, ffi::AnyBuffer k_stack,
+    ffi::Result<ffi::AnyBuffer> out
+) {
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "derivs", derivs); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "k_stack", k_stack); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        return BranchedSigKernelPdeBackpropCpuImpl<T>(
+            dimension, depth, dyadic_order_1, dyadic_order_2,
+            return_grid, n_jobs, gram, derivs, k_stack, out);
     });
 }
 
@@ -1702,6 +1797,51 @@ ffi::Error SigKernelPdeBackpropCudaImpl(
     return ffi::Error::Success();
 }
 
+template <typename T>
+ffi::Error BranchedSigKernelPdeCudaImpl(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t depth,
+    std::int64_t dyadic_order_1, std::int64_t dyadic_order_2, bool return_grid,
+    ffi::AnyBuffer& gram, ffi::Result<ffi::AnyBuffer>& out
+) {
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+    auto length1 = spec.length1 + 1;
+    auto length2 = spec.length2 + 1;
+    int err_code = CudaFns<T>::branched_sig_kernel(BufferData<T>(gram), BufferData<T>(out),
+        spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), length1, length2,
+        static_cast<std::uint64_t>(depth),
+        static_cast<std::uint64_t>(dyadic_order_1), static_cast<std::uint64_t>(dyadic_order_2), return_grid);
+    if (err_code != 0) return NativeCallError("branched_sig_kernel_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error BranchedSigKernelPdeBackpropCudaImpl(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t depth,
+    std::int64_t dyadic_order_1, std::int64_t dyadic_order_2, bool return_grid,
+    ffi::AnyBuffer& gram, ffi::AnyBuffer& derivs, ffi::AnyBuffer& k_stack,
+    ffi::Result<ffi::AnyBuffer>& out
+) {
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+    auto length1 = spec.length1 + 1;
+    auto length2 = spec.length2 + 1;
+    const T* stack_ptr = BufferElementCount(k_stack) == 0 ? nullptr : BufferData<T>(k_stack);
+    int err_code = CudaFns<T>::branched_sig_kernel_backprop(BufferData<T>(gram), BufferData<T>(out),
+        BufferData<T>(derivs), stack_ptr,
+        spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), length1, length2,
+        static_cast<std::uint64_t>(depth),
+        static_cast<std::uint64_t>(dyadic_order_1), static_cast<std::uint64_t>(dyadic_order_2), return_grid);
+    if (err_code != 0) return NativeCallError("branched_sig_kernel_backprop_cuda", err_code);
+    return ffi::Error::Success();
+}
+
 ffi::Error SigKernelPdeCuda(cudaStream_t stream, std::int64_t dimension,
     std::int64_t dyadic_order_1, std::int64_t dyadic_order_2, bool return_grid,
     std::int64_t /*n_jobs*/,
@@ -1720,6 +1860,31 @@ ffi::Error SigKernelPdeBackpropCuda(cudaStream_t stream, std::int64_t dimension,
     if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
         return SigKernelPdeBackpropCudaImpl<T>(stream, dimension, dyadic_order_1, dyadic_order_2, return_grid, gram, derivs, k_grid, out);
+    });
+}
+
+ffi::Error BranchedSigKernelPdeCuda(cudaStream_t stream, std::int64_t dimension,
+    std::int64_t depth, std::int64_t dyadic_order_1, std::int64_t dyadic_order_2,
+    bool return_grid, std::int64_t /*n_jobs*/,
+    ffi::AnyBuffer gram, ffi::Result<ffi::AnyBuffer> out) {
+    if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        return BranchedSigKernelPdeCudaImpl<T>(
+            stream, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, gram, out);
+    });
+}
+
+ffi::Error BranchedSigKernelPdeBackpropCuda(cudaStream_t stream, std::int64_t dimension,
+    std::int64_t depth, std::int64_t dyadic_order_1, std::int64_t dyadic_order_2,
+    bool return_grid, std::int64_t /*n_jobs*/,
+    ffi::AnyBuffer gram, ffi::AnyBuffer derivs, ffi::AnyBuffer k_stack,
+    ffi::Result<ffi::AnyBuffer> out) {
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "derivs", derivs); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "k_stack", k_stack); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        return BranchedSigKernelPdeBackpropCudaImpl<T>(
+            stream, dimension, depth, dyadic_order_1, dyadic_order_2,
+            return_grid, gram, derivs, k_stack, out);
     });
 }
 #endif
@@ -1972,6 +2137,18 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPdeBackpropCpu, SigKernelPdeBackp
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigKernelPdeCpu, BranchedSigKernelPdeCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("depth")
+        .Attr<std::int64_t>("dyadic_order_1").Attr<std::int64_t>("dyadic_order_2")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigKernelPdeBackpropCpu, BranchedSigKernelPdeBackpropCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("depth")
+        .Attr<std::int64_t>("dyadic_order_1").Attr<std::int64_t>("dyadic_order_2")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPdeCuda, SigKernelPdeCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
@@ -1983,6 +2160,20 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPdeCuda, SigKernelPdeCuda,
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPdeBackpropCuda, SigKernelPdeBackpropCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension")
+        .Attr<std::int64_t>("dyadic_order_1").Attr<std::int64_t>("dyadic_order_2")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigKernelPdeCuda, BranchedSigKernelPdeCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("depth")
+        .Attr<std::int64_t>("dyadic_order_1").Attr<std::int64_t>("dyadic_order_2")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigKernelPdeBackpropCuda, BranchedSigKernelPdeBackpropCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("depth")
         .Attr<std::int64_t>("dyadic_order_1").Attr<std::int64_t>("dyadic_order_2")
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());

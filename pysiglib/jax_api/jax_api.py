@@ -80,6 +80,8 @@ from ._ffi import (
     log_sig_combine_backprop_ffi_call,
     sig_kernel_pde_ffi_call,
     sig_kernel_pde_backprop_ffi_call,
+    branched_sig_kernel_pde_ffi_call,
+    branched_sig_kernel_pde_backprop_ffi_call,
     logsig_to_sig_ffi_call,
     logsig_to_sig_backprop_ffi_call,
     log_sig_from_path_ffi_call,
@@ -1019,29 +1021,35 @@ sig_kernel_gram.__doc__ = sig_kernel_gram_forward.__doc__
 
 
 # ---------------------------------------------------------------------------
-# branched_sig_kernel
+# branched_sig_kernel PDE solver (FFI)
 # ---------------------------------------------------------------------------
 
-def _branched_sig_kernel_grid_from_gram(gram, depth: int, dyadic_order_1: int, dyadic_order_2: int):
-    factor1 = 1 << dyadic_order_1
-    factor2 = 1 << dyadic_order_2
-    refined = jnp.repeat(jnp.repeat(gram, factor1, axis=-2), factor2, axis=-1)
-    dl1 = refined.shape[-2] + 1
-    dl2 = refined.shape[-1] + 1
-    prev = jnp.ones(gram.shape[:-2] + (dl1, dl2), dtype=gram.dtype)
-    scale = jnp.asarray(0.25 / (1 << (dyadic_order_1 + dyadic_order_2)), dtype=gram.dtype)
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
+def _branched_sig_kernel_pde(gram, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
+    return branched_sig_kernel_pde_ffi_call(
+        gram, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
 
-    for _ in range(depth):
-        cell = scale * refined * (
-            prev[..., :-1, :-1] + prev[..., 1:, :-1] +
-            prev[..., :-1, 1:] + prev[..., 1:, 1:]
-        )
-        accum = jnp.cumsum(jnp.cumsum(cell, axis=-2), axis=-1)
-        inner = jnp.exp(accum)
-        top = jnp.ones(gram.shape[:-2] + (1, dl2), dtype=gram.dtype)
-        left = jnp.ones(gram.shape[:-2] + (dl1 - 1, 1), dtype=gram.dtype)
-        prev = jnp.concatenate([top, jnp.concatenate([left, inner], axis=-1)], axis=-2)
-    return prev
+
+def _branched_sig_kernel_pde_fwd(gram, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
+    result = branched_sig_kernel_pde_ffi_call(
+        gram, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
+    return result, gram
+
+
+def _branched_sig_kernel_pde_bwd(dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs, gram, cotangent):
+    empty_stack = jnp.empty((0,), dtype=gram.dtype)
+    grad_gram = branched_sig_kernel_pde_backprop_ffi_call(
+        gram, cotangent, empty_stack, dimension, depth,
+        dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
+    return (grad_gram,)
+
+
+_branched_sig_kernel_pde.defvjp(_branched_sig_kernel_pde_fwd, _branched_sig_kernel_pde_bwd)
+
+
+# ---------------------------------------------------------------------------
+# branched_sig_kernel
+# ---------------------------------------------------------------------------
 
 
 def branched_sig_kernel(
@@ -1058,6 +1066,8 @@ def branched_sig_kernel(
     return_grid: bool = False,
     normalize: bool = False,
 ):
+    ensure_registered()
+
     path1 = jnp.asarray(path1)
     path2 = jnp.asarray(path2)
 
@@ -1091,9 +1101,9 @@ def branched_sig_kernel(
     else:
         gram = static_kernel(path1, path2)
 
+    dimension = path1.shape[-1]
     do1, do2 = parse_dyadic_order(dyadic_order)
-    grid = _branched_sig_kernel_grid_from_gram(gram, depth, do1, do2)
-    result = grid if return_grid else grid[..., -1, -1]
+    result = _branched_sig_kernel_pde(gram, dimension, depth, do1, do2, return_grid, n_jobs)
 
     if normalize:
         k1 = branched_sig_kernel(path1, path1, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
