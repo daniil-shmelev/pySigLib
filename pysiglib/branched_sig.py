@@ -35,7 +35,7 @@ def _permute_bsig(data, dimension, degree, planar=False, scalar_term=True):
     present) is left in place.
     """
     if planar:
-        perm = kauri.planar_canonical_to_recursive_permutation(dimension, degree)
+        return data
     else:
         perm = kauri.canonical_to_recursive_permutation(dimension, degree)
     start = 1 if scalar_term else 0
@@ -50,7 +50,7 @@ def _inv_permute_bsig(data, dimension, degree, planar=False, scalar_term=True):
     present) is left in place.
     """
     if planar:
-        inv_perm = kauri.planar_recursive_to_canonical_permutation(dimension, degree)
+        return data
     else:
         inv_perm = kauri.recursive_to_canonical_permutation(dimension, degree)
     if isinstance(data, np.ndarray):

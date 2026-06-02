@@ -37,16 +37,30 @@ def _check_tree_order(tree_order):
         raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
 
 
-def _canonical_to_recursive_perm(dimension, degree, planar):
-    if planar:
-        return kauri.planar_canonical_to_recursive_permutation(dimension, degree)
-    return kauri.canonical_to_recursive_permutation(dimension, degree)
+@cache
+def _planar_forest_basis_cached(dimension, degree):
+    return tuple(
+        _ordered_forest_to_tuple(forest)
+        for forest in kauri.colored_ordered_forests(dimension, degree)
+    )
 
 
-def _recursive_to_canonical_perm(dimension, degree, planar):
-    if planar:
-        return kauri.planar_recursive_to_canonical_permutation(dimension, degree)
-    return kauri.recursive_to_canonical_permutation(dimension, degree)
+def _is_planar_forest_tuple(obj):
+    return isinstance(obj, tuple) and len(obj) > 0 and not isinstance(obj[-1], int)
+
+
+def _ordered_forest_to_tuple(forest):
+    if forest.nodes() == 0:
+        return None
+    return tuple(tree.sorted_list_repr() for tree in forest.tree_list)
+
+
+def _tuple_to_ordered_forest(tree):
+    if tree is None:
+        return kauri.EMPTY_ORDERED_FOREST
+    if _is_planar_forest_tuple(tree):
+        return kauri.OrderedForest(tuple(kauri.PlanarTree(t) for t in tree))
+    return kauri.PlanarTree(tree).as_ordered_forest()
 
 
 # ---------------------------------------------------------------------------
@@ -105,9 +119,12 @@ def trees_of_order(
 def _trees_of_order_cached(dimension, order, tree_order, planar):
     if order == 0:
         return (None,)
+    if planar:
+        return tuple(
+            _ordered_forest_to_tuple(forest)
+            for forest in kauri.colored_ordered_forests_of_order(order, dimension)
+        )
     if tree_order == "canonical":
-        if planar:
-            return tuple(t.sorted_list_repr() for t in kauri.colored_planar_trees_of_order(order, dimension))
         return tuple(t.sorted_list_repr() for t in kauri.colored_trees_of_order(order, dimension))
     # Recursive ordering: compute all trees up to `order` in recursive order,
     # then slice off the last stratum (trees of exactly `order` nodes).
@@ -167,19 +184,15 @@ def trees(
 
 @cache
 def _trees_cached(dimension, degree, tree_order, planar):
+    if planar:
+        return _planar_forest_basis_cached(dimension, degree)
     if tree_order == "canonical":
-        if planar:
-            canonical = tuple(
-                t.sorted_list_repr() for t in kauri.colored_planar_trees_up_to_order(degree, dimension)
-            )
-        else:
-            canonical = tuple(t.sorted_list_repr() for t in kauri.colored_trees(dimension, degree))
-        return canonical
+        return tuple(t.sorted_list_repr() for t in kauri.colored_trees(dimension, degree))
     # Recursive: start from canonical and permute the non-empty trees.
     canonical = _trees_cached(dimension, degree, "canonical", planar)
     if len(canonical) <= 1:
         return canonical
-    perm = _canonical_to_recursive_perm(dimension, degree, planar)
+    perm = kauri.canonical_to_recursive_permutation(dimension, degree)
     # perm[i] = recursive position of the canonical non-empty tree at index i.
     # Build recursive-ordered list: recursive[0] = None; recursive[perm[i] + 1] = canonical[i + 1].
     n_non_empty = len(canonical) - 1
@@ -204,15 +217,19 @@ def tree_to_idx(
 
     Trees use the kauri tuple convention:
 
-    - Empty tree: ``None`` -- index 0 when ``scalar_term=True``; invalid otherwise
+    - Empty tree: ``None`` - index 0 when ``scalar_term=True``; invalid otherwise
     - Leaf: ``(label,)`` where ``label`` is in ``[0, dimension)``
     - Internal node: ``(child_1, child_2, ..., root_label)``
+    - Planar forest: ``(tree_1, tree_2, ...)`` when ``planar=True``
 
     With ``scalar_term=True`` the empty tree sits at index 0. With
     ``scalar_term=False`` (default) there is no empty-tree entry, so all
     indices shift down by 1 and ``None`` is invalid.
 
-    :param tree: Decorated rooted tree as a tuple (or None for empty when ``scalar_term=True``).
+    In the planar case, the branched-signature basis is indexed by ordered
+    forests. Passing a single tree is accepted as the one-tree forest.
+
+    :param tree: Decorated rooted tree, ordered forest, or None for empty when ``scalar_term=True``.
     :type tree: tuple | None
     :param dimension: Path dimension (alphabet size).
     :type dimension: int
@@ -268,13 +285,15 @@ def _tree_to_idx_cached(tree, dimension, degree, tree_order, planar, scalar_term
     if tree is None:
         return 0
     if planar:
-        canonical_idx = kauri.colored_planar_tree_to_idx(kauri.PlanarTree(tree), dimension, degree)
-    else:
-        canonical_idx = kauri.colored_tree_to_idx(kauri.Tree(tree), dimension, degree)
+        idx = kauri.colored_ordered_forest_to_idx(
+            _tuple_to_ordered_forest(tree), dimension, degree,
+        )
+        return idx if scalar_term else idx - 1
+    canonical_idx = kauri.colored_tree_to_idx(kauri.Tree(tree), dimension, degree)
     if tree_order == "canonical":
         idx = canonical_idx
     else:
-        perm = _canonical_to_recursive_perm(dimension, degree, planar)
+        perm = kauri.canonical_to_recursive_permutation(dimension, degree)
         idx = int(perm[canonical_idx - 1]) + 1
     return idx if scalar_term else idx - 1
 
@@ -290,7 +309,8 @@ def idx_to_tree(
 ) -> tuple:
     """
     Inverse of :func:`tree_to_idx`. Given a flat index in the branched-signature
-    coefficient vector, returns the corresponding decorated rooted tree.
+    coefficient vector, returns the corresponding decorated rooted tree or
+    ordered forest.
 
     With ``scalar_term=True``, index 0 maps to the empty tree (``None``).
     With ``scalar_term=False`` (default), all indices shift down by 1 (index 0
@@ -313,8 +333,12 @@ def idx_to_tree(
         scalar 1 at index 0. Must match the format of the bsig the index was taken
         from. Default ``False``.
     :type scalar_term: bool
-    :return: Decorated rooted tree (None for empty tree when ``scalar_term=True``,
-        tuple otherwise).
+    In the planar case, the returned tuple can be an ordered forest, represented
+    as ``(tree_1, tree_2, ...)``. One-tree forests are returned as the tree
+    itself for compatibility.
+
+    :return: Decorated rooted tree, ordered forest, or None for empty tree when
+        ``scalar_term=True``.
     :rtype: tuple or None
 
     Example:
@@ -345,13 +369,14 @@ def _idx_to_tree_cached(idx, dimension, degree, tree_order, planar, scalar_term)
         idx = idx + 1
     if idx == 0:
         return None
+    if planar:
+        forest = kauri.idx_to_colored_ordered_forest(idx, dimension, degree)
+        out = _ordered_forest_to_tuple(forest)
+        return out[0] if len(out) == 1 else out
     if tree_order == "recursive":
-        inv_perm = _recursive_to_canonical_perm(dimension, degree, planar)
+        inv_perm = kauri.recursive_to_canonical_permutation(dimension, degree)
         canonical_idx = int(inv_perm[idx - 1]) + 1
     else:
         canonical_idx = idx
-    if planar:
-        kt = kauri.idx_to_colored_planar_tree(canonical_idx, dimension, degree)
-    else:
-        kt = kauri.idx_to_colored_tree(canonical_idx, dimension, degree)
+    kt = kauri.idx_to_colored_tree(canonical_idx, dimension, degree)
     return kt.sorted_list_repr()

@@ -52,6 +52,45 @@ inline BranchedLogForestCache build_branched_log_forest_cache(const BranchedSigC
 	using ForestMap = std::unordered_map<std::vector<uint64_t>, uint64_t, BranchedLogForestHash>;
 
 	BranchedLogForestCache out;
+	if (cache.planar) {
+		out.forest_offsets.resize(cache.total_length + 1, 0);
+		for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+			out.forest_offsets[flat] = out.forest_trees.size();
+			out.forest_trees.push_back(flat);
+		}
+		out.forest_offsets[cache.total_length] = out.forest_trees.size();
+
+		out.single_tree_forest.resize(cache.total_length, 0);
+		for (uint64_t flat = 1; flat < cache.total_length; ++flat)
+			out.single_tree_forest[flat] = flat;
+
+		out.forest_coprod_offsets.resize(cache.total_length + 1, 0);
+		for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+			out.forest_coprod_offsets[flat] = out.forest_coprod_data.size();
+			out.forest_coprod_data.push_back(flat);
+			out.forest_coprod_data.push_back(0);
+			out.forest_coprod_data.push_back(0);
+			out.forest_coprod_data.push_back(flat);
+
+			const uint64_t basis_idx = flat - 1;
+			uint64_t pos = cache.coproduct_offsets[basis_idx];
+			const uint64_t pos_end = cache.coproduct_offsets[basis_idx + 1];
+			while (pos < pos_end) {
+				const uint64_t num_forest = cache.coproduct_data[pos++];
+				const uint64_t right_flat = cache.coproduct_data[pos++];
+				uint64_t left_flat = 0;
+				if (num_forest == 1)
+					left_flat = cache.coproduct_data[pos++];
+				else if (num_forest != 0)
+					throw std::runtime_error("Invalid MKW coproduct term");
+				out.forest_coprod_data.push_back(left_flat);
+				out.forest_coprod_data.push_back(right_flat);
+			}
+		}
+		out.forest_coprod_offsets[cache.total_length] = out.forest_coprod_data.size();
+		return out;
+	}
+
 	std::vector<std::vector<uint64_t>> forests;
 	ForestMap forest_index;
 

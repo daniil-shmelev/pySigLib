@@ -139,7 +139,7 @@ class TestCoefficientExtraction:
         # scalar_term=False default: lengths and indices shift down by 1 vs the
         # scalar_term=True convention.
         assert len(bsig_nonplanar) == 20
-        assert len(bsig_planar) == 22
+        assert len(bsig_planar) == pysiglib.branched_sig_length(dim, deg, planar=True)
         assert idx_nonplanar == 6
         assert idx_planar != idx_nonplanar
         assert pysiglib.idx_to_tree(idx_planar, dim, deg, planar=True) == tree

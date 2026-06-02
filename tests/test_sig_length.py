@@ -58,11 +58,11 @@ def test_branched_sig_length_scalar_term():
     assert pysiglib.branched_sig_length(5, 5, scalar_term=True) == 19881
 
 def test_branched_sig_length_planar():
-    assert pysiglib.branched_sig_length(2, 3, planar=True) == 22
-    assert pysiglib.branched_sig_length(2, 4, planar=True) == 102
-    assert pysiglib.branched_sig_length(3, 3, planar=True) == 66
+    assert pysiglib.branched_sig_length(2, 3, planar=True) == 50
+    assert pysiglib.branched_sig_length(2, 4, planar=True) == 274
+    assert pysiglib.branched_sig_length(3, 3, planar=True) == 156
 
 def test_branched_sig_length_planar_scalar_term():
-    assert pysiglib.branched_sig_length(2, 3, planar=True, scalar_term=True) == 23
-    assert pysiglib.branched_sig_length(2, 4, planar=True, scalar_term=True) == 103
-    assert pysiglib.branched_sig_length(3, 3, planar=True, scalar_term=True) == 67
+    assert pysiglib.branched_sig_length(2, 3, planar=True, scalar_term=True) == 51
+    assert pysiglib.branched_sig_length(2, 4, planar=True, scalar_term=True) == 275
+    assert pysiglib.branched_sig_length(3, 3, planar=True, scalar_term=True) == 157

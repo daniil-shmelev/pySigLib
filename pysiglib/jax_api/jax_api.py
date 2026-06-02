@@ -275,7 +275,7 @@ def _validate_sig_shape(arr, name="signature"):
 
 def _permute_bsig_jax(data, dimension: int, degree: int, planar: bool = False, scalar_term: bool = True):
     if planar:
-        perm = np.asarray(kauri.planar_canonical_to_recursive_permutation(dimension, degree), dtype=np.int32)
+        return data
     else:
         perm = np.asarray(kauri.canonical_to_recursive_permutation(dimension, degree), dtype=np.int32)
     if scalar_term:
@@ -285,7 +285,7 @@ def _permute_bsig_jax(data, dimension: int, degree: int, planar: bool = False, s
 
 def _inv_permute_bsig_jax(data, dimension: int, degree: int, planar: bool = False, scalar_term: bool = True):
     if planar:
-        perm = np.asarray(kauri.planar_recursive_to_canonical_permutation(dimension, degree), dtype=np.int32)
+        return data
     else:
         perm = np.asarray(kauri.recursive_to_canonical_permutation(dimension, degree), dtype=np.int32)
     if scalar_term:

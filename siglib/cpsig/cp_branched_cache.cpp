@@ -47,7 +47,7 @@ BranchedSigCacheRegistry& branched_sig_cache_registry() {
 // Disk cache serialization
 // ---------------------------------------------------------------------------
 
-static constexpr const char* branched_cache_version = "v2";
+static constexpr const char* branched_cache_version = "v3";
 
 static std::filesystem::path branched_cache_file_path(uint64_t dimension, uint64_t max_nodes, bool planar) {
 	const char* prefix = planar ? "planar_branched_" : "branched_";

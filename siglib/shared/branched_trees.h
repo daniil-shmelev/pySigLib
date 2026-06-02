@@ -192,14 +192,19 @@ inline uint64_t compute_branched_sig_length(uint64_t dimension, uint64_t max_nod
 	if (planar) {
 		std::vector<uint64_t> ordered_partitions(max_nodes + 1, 0);
 		ordered_partitions[0] = 1;
-		for (uint64_t order = 1; order < max_nodes; ++order) {
+		uint64_t total_forests = 0;
+		for (uint64_t order = 1; order <= max_nodes; ++order) {
 			uint64_t sum = 0;
 			for (uint64_t child_order = 1; child_order <= order; ++child_order)
 				sum += trees_per_order[child_order] * ordered_partitions[order - child_order];
 			ordered_partitions[order] = sum;
-			trees_per_order[order + 1] = dimension * ordered_partitions[order];
-			total_trees += trees_per_order[order + 1];
+			total_forests += sum;
+			if (order < max_nodes) {
+				trees_per_order[order + 1] = dimension * ordered_partitions[order];
+				total_trees += trees_per_order[order + 1];
+			}
 		}
+		return 1 + total_forests;
 	} else {
 		std::vector<uint64_t> multiset_partitions(max_nodes + 1, 0);
 		std::vector<uint64_t> divisor_weighted_sum(max_nodes + 1, 0);

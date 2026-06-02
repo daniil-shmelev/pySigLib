@@ -56,9 +56,9 @@ TEST(PolyTest, BranchedSigLengthTest) {
     EXPECT_EQ((uint64_t)58, branched_sig_length(3, 3));
     EXPECT_EQ((uint64_t)19881, branched_sig_length(5, 5));
 
-    EXPECT_EQ((uint64_t)23, branched_sig_length(2, 3, true));
-    EXPECT_EQ((uint64_t)103, branched_sig_length(2, 4, true));
-    EXPECT_EQ((uint64_t)67, branched_sig_length(3, 3, true));
+    EXPECT_EQ((uint64_t)51, branched_sig_length(2, 3, true));
+    EXPECT_EQ((uint64_t)275, branched_sig_length(2, 4, true));
+    EXPECT_EQ((uint64_t)157, branched_sig_length(3, 3, true));
 }
 
 TEST(PolyTest, SigCombineTestLinear) {
