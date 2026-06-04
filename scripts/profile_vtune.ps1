@@ -12,6 +12,9 @@ param(
     [string[]]$Knob = @(),
     [string]$ReportType = "hotspots",
     [string]$GroupBy = "function",
+    [string]$LineGroupBy = "source-function,source-line",
+    [string]$AssemblyObject,
+    [string]$AssemblyGroupBy = "address",
     [ValidateSet("text", "csv")]
     [string]$ReportFormat = "text",
     [int]$ReportWidth = 160,
@@ -45,6 +48,10 @@ Important options:
   -ResultDir <dir>                  Exact VTune result directory.
   -Knob @("name=value")             Extra VTune collection knobs.
   -GroupBy function                 Report grouping.
+  -LineGroupBy source-function,source-line
+                                    Extra line-level report grouping. Use "" to disable.
+  -AssemblyObject function=name     Generate assembly view for a VTune source object.
+  -AssemblyGroupBy address          Assembly report grouping.
   -BuildIfMissing                   Build the test app before profiling if needed.
   -NoReport                         Skip text or CSV report generation.
   -DryRun                           Print commands without running VTune.
@@ -402,12 +409,28 @@ $collectArgs += @("--", $testAppFull)
 $collectArgs += $targetArgs
 
 $reportPaths = @()
+$primaryReportPath = $null
+$lineReportPath = $null
+$assemblyReportPath = $null
+$summaryPath = $null
 if (-not $NoReport) {
     $reportExtension = if ($ReportFormat -eq "csv") { "csv" } else { "txt" }
     $safeGroupBy = $GroupBy -replace '[^\w.-]', '_'
-    $reportPath = Join-Path $resultDirFull ("$ReportType-by-$safeGroupBy.$reportExtension")
+    $primaryReportPath = Join-Path $resultDirFull ("$ReportType-by-$safeGroupBy.$reportExtension")
+    $reportPaths += $primaryReportPath
+    if ($LineGroupBy) {
+        $safeLineGroupBy = $LineGroupBy -replace '[^\w.-]', '_'
+        if ($safeLineGroupBy -ne $safeGroupBy) {
+            $lineReportPath = Join-Path $resultDirFull ("$ReportType-by-$safeLineGroupBy.$reportExtension")
+            $reportPaths += $lineReportPath
+        }
+    }
+    if ($AssemblyObject) {
+        $safeAssemblyObject = $AssemblyObject -replace '[^\w.-]', '_'
+        $assemblyReportPath = Join-Path $resultDirFull ("$ReportType-assembly-$safeAssemblyObject.$reportExtension")
+        $reportPaths += $assemblyReportPath
+    }
     $summaryPath = Join-Path $resultDirFull ("summary.$reportExtension")
-    $reportPaths += $reportPath
     $reportPaths += $summaryPath
 }
 
@@ -456,7 +479,7 @@ try {
                 "-report", $ReportType,
                 "-result-dir", $resultDirFull,
                 "-group-by", $GroupBy,
-                "-report-output", $reportPaths[0]
+                "-report-output", $primaryReportPath
             )
             if ($ReportFormat -ne "text") {
                 $reportArgs += @("-format", $ReportFormat)
@@ -467,6 +490,9 @@ try {
             foreach ($dir in $sourceSearchDirsFull) {
                 $reportArgs += @("-source-search-dir", $dir)
             }
+            foreach ($dir in $searchDirsFull) {
+                $reportArgs += @("-search-dir", $dir)
+            }
 
             if ($ShowCommand) {
                 Write-Host "Report command:"
@@ -474,10 +500,65 @@ try {
             }
             Invoke-ExternalCommand -Command $vtuneExe -Arguments $reportArgs -FailureMessage "VTune report failed"
 
+            if ($lineReportPath) {
+                $lineReportArgs = @(
+                    "-report", $ReportType,
+                    "-result-dir", $resultDirFull,
+                    "-group-by", $LineGroupBy,
+                    "-report-output", $lineReportPath
+                )
+                if ($ReportFormat -ne "text") {
+                    $lineReportArgs += @("-format", $ReportFormat)
+                }
+                if (($ReportFormat -eq "text") -and ($ReportWidth -gt 0)) {
+                    $lineReportArgs += @("-report-width", $ReportWidth)
+                }
+                foreach ($dir in $sourceSearchDirsFull) {
+                    $lineReportArgs += @("-source-search-dir", $dir)
+                }
+                foreach ($dir in $searchDirsFull) {
+                    $lineReportArgs += @("-search-dir", $dir)
+                }
+
+                if ($ShowCommand) {
+                    Write-Host "Line report command:"
+                    Write-Host (Format-CommandLine -Command $vtuneExe -Arguments $lineReportArgs)
+                }
+                Invoke-ExternalCommand -Command $vtuneExe -Arguments $lineReportArgs -FailureMessage "VTune line report failed"
+            }
+
+            if ($assemblyReportPath) {
+                $assemblyReportArgs = @(
+                    "-report", $ReportType,
+                    "-result-dir", $resultDirFull,
+                    "-source-object", $AssemblyObject,
+                    "-group-by", $AssemblyGroupBy,
+                    "-report-output", $assemblyReportPath
+                )
+                if ($ReportFormat -ne "text") {
+                    $assemblyReportArgs += @("-format", $ReportFormat)
+                }
+                if (($ReportFormat -eq "text") -and ($ReportWidth -gt 0)) {
+                    $assemblyReportArgs += @("-report-width", $ReportWidth)
+                }
+                foreach ($dir in $sourceSearchDirsFull) {
+                    $assemblyReportArgs += @("-source-search-dir", $dir)
+                }
+                foreach ($dir in $searchDirsFull) {
+                    $assemblyReportArgs += @("-search-dir", $dir)
+                }
+
+                if ($ShowCommand) {
+                    Write-Host "Assembly report command:"
+                    Write-Host (Format-CommandLine -Command $vtuneExe -Arguments $assemblyReportArgs)
+                }
+                Invoke-ExternalCommand -Command $vtuneExe -Arguments $assemblyReportArgs -FailureMessage "VTune assembly report failed"
+            }
+
             $summaryArgs = @(
                 "-report", "summary",
                 "-result-dir", $resultDirFull,
-                "-report-output", $reportPaths[1]
+                "-report-output", $summaryPath
             )
             if ($ReportFormat -ne "text") {
                 $summaryArgs += @("-format", $ReportFormat)

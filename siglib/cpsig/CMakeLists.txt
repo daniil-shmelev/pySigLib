@@ -27,6 +27,11 @@ target_compile_definitions(cpsig PRIVATE CPSIG_EXPORTS)
 
 target_link_libraries(cpsig PRIVATE Threads::Threads)
 
+if(MSVC)
+    target_compile_options(cpsig PRIVATE /Zi)
+    target_link_options(cpsig PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+endif()
+
 # ---- Vectorization ----------------------------------------------------------
 # Under cibuildwheel, force a portable AVX2 baseline so wheels don't embed
 # AVX-512 (built on a CPU that has it) and then SIGILL on end-user CPUs that
