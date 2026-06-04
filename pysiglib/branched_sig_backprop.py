@@ -26,7 +26,7 @@ from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA)
 from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
 from .branched_sig import (_inv_permute_bsig, _permute_bsig, branched_sig_length,
-                           _infer_branched_scalar_term, _check_cuda_num_trees)
+                           _infer_branched_scalar_term, _check_cuda_num_basis)
 
 
 def branched_sig_backprop(
@@ -56,7 +56,7 @@ def branched_sig_backprop(
     :type bsig: numpy.ndarray | torch.tensor
     :param bsig_derivs: Upstream derivatives w.r.t. the branched signature.
     :type bsig_derivs: numpy.ndarray | torch.tensor
-    :param degree: Maximum tree order (must match forward call).
+    :param degree: Maximum order (must match forward call).
     :type degree: int
     :param time_aug: Whether time augmentation was used in the forward pass.
     :type time_aug: bool
@@ -148,7 +148,7 @@ def branched_sig_backprop(
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride)
     else:
-        _check_cuda_num_trees(aug_dimension, degree, planar, "branched_sig_backprop")
+        _check_cuda_num_basis(aug_dimension, degree, planar, "branched_sig_backprop")
         err_code = CUSIG_BRANCHED_SIG_BACKPROP_CUDA[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
@@ -187,7 +187,7 @@ def branched_sig_combine_backprop(
     :type bsig2: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path.
     :type dimension: int
-    :param degree: Maximum tree order.
+    :param degree: Maximum order.
     :type degree: int
     :param tree_order: Tree ordering convention of ``derivs``, ``bsig1``, ``bsig2`` and the returned gradients.
         ``"recursive"`` (default) uses the recursive construction order.
@@ -228,7 +228,7 @@ def branched_sig_combine_backprop(
             result1.data_ptr, result2.data_ptr,
             data.batch_size, dimension, degree, n_jobs, planar, scalar_term)
     else:
-        _check_cuda_num_trees(dimension, degree, planar, "branched_sig_combine_backprop")
+        _check_cuda_num_basis(dimension, degree, planar, "branched_sig_combine_backprop")
         err_code = CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA[data.dtype](
             data.sig_ptr[1], data.sig_ptr[2], data.sig_ptr[0],
             result1.data_ptr, result2.data_ptr,

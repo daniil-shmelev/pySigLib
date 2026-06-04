@@ -16,6 +16,10 @@
 #include "dll_funcs.h"
 #include "utils.h"
 
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+
 
 void example_batch_signature_d(
     uint64_t batch_size,
@@ -811,17 +815,98 @@ void example_batch_branched_sig_d(
     uint64_t length,
     uint64_t max_nodes,
     int n_jobs,
-    int num_runs
+    int num_runs,
+    bool planar
 ) {
     print_header("Batch Branched Signature Double");
 
-    prepare_branched_sig(dimension, max_nodes, false, false);
-    uint64_t out_size = branched_sig_length(dimension, max_nodes, false) * batch_size;
+    prepare_branched_sig(dimension, max_nodes, false, planar);
+    uint64_t out_len = branched_sig_length(dimension, max_nodes, planar);
+    uint64_t out_size = out_len * batch_size;
 
     std::vector<double> path = test_data<double>(batch_size * dimension * length);
     std::vector<double> out(out_size, 0.);
 
-    time_function(num_runs, branched_sig_d, path.data(), out.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1., false, true, nullptr, 0, 0, 0);
+    std::cout << "planar: " << planar << "\n";
+    std::cout << "batch_size: " << batch_size << "\n";
+    std::cout << "dimension: " << dimension << "\n";
+    std::cout << "length: " << length << "\n";
+    std::cout << "max_nodes: " << max_nodes << "\n";
+    std::cout << "n_jobs: " << n_jobs << "\n";
+    std::cout << "num_runs: " << num_runs << "\n";
+    std::cout << "output length: " << out_len << "\n";
+
+    time_function(num_runs, branched_sig_d, path.data(), out.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1., planar, true, nullptr, 0, 0, 0);
+
+    std::cout << "done\n";
+}
+
+void example_batch_branched_sig_cuda_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t max_nodes,
+    int num_runs,
+    bool planar
+) {
+    print_header("Batch Branched Signature CUDA Double");
+
+    prepare_branched_sig(dimension, max_nodes, false, planar);
+    uint64_t out_len = branched_sig_length(dimension, max_nodes, planar);
+    uint64_t path_size = batch_size * dimension * length;
+    uint64_t out_size = out_len * batch_size;
+
+    std::vector<double> path = test_data<double>(path_size);
+
+    double* d_path;
+    double* d_out;
+    cudaMalloc(&d_path, sizeof(double) * path_size);
+    cudaMalloc(&d_out, sizeof(double) * out_size);
+
+    cudaMemcpy(d_path, path.data(), sizeof(double) * path_size, cudaMemcpyHostToDevice);
+
+    const uint64_t check_batch = 2;
+    const uint64_t check_length = 5;
+    const uint64_t check_path_size = check_batch * dimension * check_length;
+    const uint64_t check_out_size = check_batch * out_len;
+    std::vector<double> check_path = test_data<double>(check_path_size);
+    std::vector<double> cpu_check(check_out_size, 0.);
+    std::vector<double> cuda_check(check_out_size, 0.);
+    int cpu_check_err = branched_sig_d(check_path.data(), cpu_check.data(), check_batch, dimension, check_length,
+        max_nodes, 1, false, false, 1., planar, true, nullptr, 0, 0, 0);
+
+    double* d_check_path;
+    double* d_check_out;
+    cudaMalloc(&d_check_path, sizeof(double) * check_path_size);
+    cudaMalloc(&d_check_out, sizeof(double) * check_out_size);
+    cudaMemcpy(d_check_path, check_path.data(), sizeof(double) * check_path_size, cudaMemcpyHostToDevice);
+    int check_err = branched_sig_cuda_d(d_check_path, d_check_out, check_batch, dimension,
+        check_length, max_nodes, false, false, 1., planar, true, nullptr, 0, 0, 0);
+    cudaMemcpy(cuda_check.data(), d_check_out, sizeof(double) * check_out_size, cudaMemcpyDeviceToHost);
+    cudaFree(d_check_path);
+    cudaFree(d_check_out);
+
+    double max_diff = 0.;
+    double max_ref = 0.;
+    for (uint64_t i = 0; i < check_out_size; ++i) {
+        max_diff = (std::max)(max_diff, std::abs(cpu_check[i] - cuda_check[i]));
+        max_ref = (std::max)(max_ref, std::abs(cpu_check[i]));
+    }
+    if (cpu_check_err != 0 || check_err != 0 || max_diff > 1e-9 * (std::max)(1., max_ref))
+        throw std::runtime_error("branched_sig_cuda_d correctness check failed");
+
+    std::cout << "planar: " << planar << "\n";
+    std::cout << "batch_size: " << batch_size << "\n";
+    std::cout << "dimension: " << dimension << "\n";
+    std::cout << "length: " << length << "\n";
+    std::cout << "max_nodes: " << max_nodes << "\n";
+    std::cout << "num_runs: " << num_runs << "\n";
+    std::cout << "output length: " << out_len << "\n";
+
+    time_function(num_runs, branched_sig_cuda_d, d_path, d_out, batch_size, dimension, length, max_nodes, false, false, 1., planar, true, nullptr, 0, 0, 0);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
 
     std::cout << "done\n";
 }

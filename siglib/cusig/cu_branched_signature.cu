@@ -366,7 +366,8 @@ void branched_sig_ker(
 	const T* __restrict__ correction,
 	uint64_t correction_len,
 	uint64_t correction_batch_stride,
-	uint64_t correction_segment_stride
+	uint64_t correction_segment_stride,
+	bool planar_fast_path
 ) {
 	const uint32_t batch_idx = blockIdx.y;
 	const uint32_t tid = threadIdx.x;
@@ -374,11 +375,14 @@ void branched_sig_ker(
 
 	extern __shared__ char smem[];
 	T* temp = reinterpret_cast<T*>(smem);
-	T* local_log = temp + total_len;
 	const bool has_correction = correction_len != 0;
-	T* power = has_correction ? local_log + total_len : local_log;
-	T* next_power = has_correction ? power + total_len : power;
-	T* inc = has_correction ? next_power + total_len : temp + total_len;
+	const bool use_shared_state = planar_fast_path && !has_correction;
+	T* local_log = has_correction ? temp + total_len : temp;
+	T* power = has_correction ? local_log + total_len : temp;
+	T* next_power = has_correction ? power + total_len : temp;
+	T* state = use_shared_state ? temp + total_len : nullptr;
+	T* next_state = use_shared_state ? state + total_len : nullptr;
+	T* inc = has_correction ? next_power + total_len : (use_shared_state ? next_state + total_len : temp + total_len);
 	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(inc + dim);
 	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
 	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
@@ -404,18 +408,26 @@ void branched_sig_ker(
 			inc[d] = bp[(seg + 1) * dim + d] - bp[seg * dim + d];
 		__syncthreads();
 
-		T* tgt = (seg == 0) ? X : temp;
 		const T* seg_correction = has_correction
 			? batch_correction + static_cast<uint64_t>(seg) * correction_segment_stride
 			: nullptr;
+		T* tgt = use_shared_state && seg == 0 ? state : ((seg == 0) ? X : temp);
 		local_branched_sig_block_(inc, tgt, local_log, power, next_power,
 			dim, data_dim, seg_correction, correction_len, total_len,
 			labels_data, labels_offsets, inv_factorial,
 			s_coprod_data, s_coprod_off, s_order_idx,
 			chain_index_offsets, chain_indices, max_nodes, tid);
 
-		// --- Butcher product (seg > 0 only) ---
-		if (seg > 0) {
+		if (use_shared_state) {
+			if (seg > 0) {
+				branched_hopf_convolution_block_(state, temp, next_state,
+					total_len, s_coprod_data, s_coprod_off, tid);
+				T* tmp = state;
+				state = next_state;
+				next_state = tmp;
+			}
+		}
+		else if (seg > 0) {
 			for (int order = max_nodes; order >= 1; --order) {
 				uint32_t ostart = s_order_idx[order];
 				uint32_t oend = s_order_idx[order + 1];
@@ -438,6 +450,11 @@ void branched_sig_ker(
 				__syncthreads();
 			}
 		}
+	}
+
+	if (use_shared_state) {
+		for (uint32_t i = tid; i < total_len; i += blockDim.x)
+			X[i] = state[i];
 	}
 }
 
@@ -1174,15 +1191,15 @@ void branched_sig_cuda_core_(
 	const int steps = static_cast<int>(length - 1);
 	const uint64_t path_stride = length * dimension;
 
+	const bool use_shared_state = !has_correction && planar;
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
 	if (block < 32) block = 32;
 	if (block > 1024)
 		throw std::invalid_argument("CUDA branched sig: num_trees > 1024 not supported");
 
-	// Shared memory: temp plus local_log work arrays when needed, then inc and tables
-	//              + coprod_data[coprod_data_len]*4 + coprod_offsets[num_trees+1]*4
-	//              + order_index[max_nodes+2]*4
-	const uint64_t t_arrays = has_correction ? (4 * gc.total_length + dimension) : (gc.total_length + dimension);
+	const uint64_t t_arrays = has_correction
+		? (4 * gc.total_length + dimension)
+		: ((use_shared_state ? 3 * gc.total_length : gc.total_length) + dimension);
 	size_t smem = t_arrays * sizeof(T)
 		+ gc.coprod_data_len * sizeof(uint32_t)
 		+ (gc.num_trees + 1) * sizeof(uint32_t)
@@ -1205,7 +1222,7 @@ void branched_sig_cuda_core_(
 		gc.d_coprod_data32, gc.d_coprod_offsets32,
 		gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
 		gc.coprod_data_len, correction, correction_len,
-		correction_batch_stride, correction_segment_stride
+		correction_batch_stride, correction_segment_stride, use_shared_state
 	);
 	cudaDeviceSynchronize();
 	check_cuda_error();

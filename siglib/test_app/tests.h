@@ -269,7 +269,17 @@ void example_batch_branched_sig_d(
 	uint64_t length = 100,
 	uint64_t max_nodes = 4,
 	int n_jobs = -1,
-	int num_runs = 50
+	int num_runs = 50,
+	bool planar = false
+);
+
+void example_batch_branched_sig_cuda_d(
+	uint64_t batch_size = 100,
+	uint64_t dimension = 3,
+	uint64_t length = 100,
+	uint64_t max_nodes = 4,
+	int num_runs = 50,
+	bool planar = false
 );
 
 void example_batch_branched_log_sig_d(

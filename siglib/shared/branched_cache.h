@@ -25,17 +25,17 @@ struct BranchedSigCache {
 	uint64_t dimension = 0;
 	uint64_t max_nodes = 0;
 	bool planar = false;
-	uint64_t total_length = 0;  // 1 + num_trees (includes empty tree at index 0)
+	uint64_t total_length = 0;  // 1 + basis size (includes empty element at index 0)
 
-	// order_index[n] = index in the trees vector where order-n trees start.
-	// Flat sig index = tree_vector_index + 1 (offset by 1 for empty tree at index 0).
+	// order_index[n] = index where order-n basis elements start.
+	// Flat sig index = basis index + 1 (offset by 1 for the empty element).
 	std::vector<uint64_t> order_index;
 
-	// Per-tree data (indexed 0..num_trees-1, flat sig index = tree_index + 1)
-	std::vector<double> inv_tree_factorial;  // 1.0 / gamma(tau), precomputed for hot-path multiply
+	// Per-basis data (indexed 0..basis_size-1, flat sig index = basis_index + 1)
+	std::vector<double> inv_tree_factorial;  // inverse tree or forest factorial
 
 	// Flattened node labels in CSR format for cache-friendly access.
-	// Tree i's labels: node_labels_data[node_labels_offsets[i] .. node_labels_offsets[i+1])
+	// Basis element i's labels: node_labels_data[node_labels_offsets[i] .. node_labels_offsets[i+1])
 	std::vector<uint8_t> node_labels_data;
 	std::vector<uint64_t> node_labels_offsets;
 	std::vector<uint64_t> basis_forest_data;

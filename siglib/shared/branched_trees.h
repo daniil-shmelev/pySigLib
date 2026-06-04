@@ -22,7 +22,7 @@
 struct CanonicalTree {
 	uint64_t num_nodes = 0;
 	uint8_t root_label = 0;
-	std::vector<uint64_t> child_ids; // indices into the global decorated tree list, sorted
+	std::vector<uint64_t> child_ids; // sorted for BCK, ordered for MKW
 
 	bool operator<(const CanonicalTree& other) const {
 		if (num_nodes != other.num_nodes) return num_nodes < other.num_nodes;
@@ -167,8 +167,8 @@ inline void enumerate_all_decorated_trees(
 	order_index[max_nodes + 1] = trees.size();
 }
 
-// Count decorated rooted trees with up to max_nodes nodes and node labels in
-// {0,...,d-1}. Uses closed-form recurrences.
+// Count decorated branched-signature basis elements with up to max_nodes nodes
+// and node labels in {0,...,d-1}. Uses closed-form recurrences.
 //
 // Let t[n] = number of such trees with exactly n nodes.
 //   t[1] = d.
@@ -178,7 +178,9 @@ inline void enumerate_all_decorated_trees(
 //     M[n] = (1/n) * sum_{m=1..n} b_m * M[n-m], b_m = sum_{k | m} k * t[k]
 //     (Otter's recurrence / Euler transform).
 //
-// Returns 1 + sum_{n=1..max_nodes} t[n] (the +1 is the empty "scalar" term).
+// For planar=false, returns 1 + the number of non-planar trees. For
+// planar=true, returns 1 + the number of ordered forests of planar trees. The
+// +1 is the empty scalar term.
 inline uint64_t compute_branched_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar = false) {
 	if (dimension > 255)
 		throw std::invalid_argument("branched signature dimension must be <= 255");

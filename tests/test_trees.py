@@ -46,6 +46,28 @@ class TestRoundTrip:
             assert pysiglib.idx_to_tree(idx, dim, deg, scalar_term=True) == tree
 
 
+class TestPlanarOrderedForestBasis:
+    def test_planar_trees_returns_ordered_forests(self):
+        basis = pysiglib.trees(2, 2, planar=True)
+        assert ((0,),) in basis
+        assert (0,) not in basis
+        assert ((0,), (1,)) in basis
+        assert ((1,), (0,)) in basis
+
+    def test_planar_idx_to_tree_returns_ordered_forest(self):
+        assert pysiglib.idx_to_tree(0, 2, 2, planar=True) == ((0,),)
+
+        forest = ((0,), (1,))
+        idx = pysiglib.tree_to_idx(forest, 2, 2, planar=True)
+        assert pysiglib.idx_to_tree(idx, 2, 2, planar=True) == forest
+
+    def test_planar_tree_to_idx_accepts_single_tree_shorthand(self):
+        assert (
+            pysiglib.tree_to_idx((0,), 2, 2, planar=True)
+            == pysiglib.tree_to_idx(((0,),), 2, 2, planar=True)
+        )
+
+
 class TestLengthMatch:
     @pytest.mark.parametrize("dim, deg", PARAMS)
     def test_trees_length_matches_branched_sig_length(self, dim, deg):
@@ -133,8 +155,9 @@ class TestCoefficientExtraction:
         bsig_planar = pysiglib.branched_sig(path, deg, planar=True, tree_order="canonical")
 
         tree = (((0,), 0), 0)
+        forest = (tree,)
         idx_nonplanar = pysiglib.tree_to_idx(tree, dim, deg, planar=False)
-        idx_planar = pysiglib.tree_to_idx(tree, dim, deg, planar=True)
+        idx_planar = pysiglib.tree_to_idx(forest, dim, deg, planar=True)
 
         # scalar_term=False default: lengths and indices shift down by 1 vs the
         # scalar_term=True convention.
@@ -142,7 +165,7 @@ class TestCoefficientExtraction:
         assert len(bsig_planar) == pysiglib.branched_sig_length(dim, deg, planar=True)
         assert idx_nonplanar == 6
         assert idx_planar != idx_nonplanar
-        assert pysiglib.idx_to_tree(idx_planar, dim, deg, planar=True) == tree
+        assert pysiglib.idx_to_tree(idx_planar, dim, deg, planar=True) == forest
         assert pysiglib.idx_to_tree(idx_nonplanar, dim, deg, planar=False) == tree
         assert bsig_planar[idx_planar] == pytest.approx(bsig_nonplanar[idx_nonplanar])
         assert bsig_planar[idx_nonplanar] != pytest.approx(bsig_nonplanar[idx_nonplanar])

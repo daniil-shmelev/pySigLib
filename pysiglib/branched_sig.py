@@ -31,8 +31,8 @@ import kauri
 def _permute_bsig(data, dimension, degree, planar=False, scalar_term=True):
     """Permute branched sig from recursive order to canonical order (in-place).
 
-    The permutation acts on the non-empty trees only; the leading scalar (if
-    present) is left in place.
+    The permutation acts on non-empty basis elements only; the leading scalar
+    (if present) is left in place.
     """
     if planar:
         return data
@@ -46,8 +46,8 @@ def _permute_bsig(data, dimension, degree, planar=False, scalar_term=True):
 def _inv_permute_bsig(data, dimension, degree, planar=False, scalar_term=True):
     """Permute branched sig from canonical order to recursive order. Returns a new array.
 
-    The permutation acts on the non-empty trees only; the leading scalar (if
-    present) is left in place.
+    The permutation acts on non-empty basis elements only; the leading scalar
+    (if present) is left in place.
     """
     if planar:
         return data
@@ -74,16 +74,20 @@ def prepare_branched_sig(
         planar: bool = False
 ):
     """
-    Precomputes the tree enumeration and Connes-Kreimer coproduct tables
+    Precomputes the basis enumeration and coproduct tables
     needed for branched signature computation. Must be called before
     ``branched_sig()`` for a given ``(dimension, degree)`` pair.
+
+    With ``planar=False`` this prepares the BCK basis of non-planar rooted
+    trees. With ``planar=True`` this prepares the MKW basis of ordered forests
+    of planar rooted trees.
 
     If ``time_aug`` or ``lead_lag`` are set, the cache is prepared for
     the augmented dimension automatically.
 
     :param dimension: Dimension of the underlying path.
     :type dimension: int
-    :param degree: Maximum tree order (number of nodes).
+    :param degree: Maximum order (number of nodes).
     :type degree: int
     :param use_disk: If True, cache the precomputed tables to disk for
         faster loading in future sessions. Uses the same cache directory
@@ -114,9 +118,13 @@ def branched_sig_length(dimension: int, degree: int, *, planar: bool = False, sc
     """
     Returns the length of a truncated branched signature.
 
+    With ``planar=False`` this counts non-planar rooted trees up to ``degree``.
+    With ``planar=True`` this counts ordered forests of planar rooted trees up
+    to total degree.
+
     :param dimension: Dimension of the underlying path.
     :type dimension: int
-    :param degree: Maximum tree order (number of nodes).
+    :param degree: Maximum order (number of nodes).
     :type degree: int
     :param planar: If True, return the length for planar (ordered) branched signatures.
     :type planar: bool
@@ -136,21 +144,21 @@ def branched_sig_length(dimension: int, degree: int, *, planar: bool = False, sc
     return out - (0 if scalar_term else 1)
 
 
-_CUDA_MAX_NUM_TREES = 1024  # CUDA kernel hardcoded thread-block size limit
+_CUDA_MAX_NUM_BASIS = 1024  # CUDA kernel hardcoded thread-block size limit
 
 
-def _check_cuda_num_trees(dimension: int, degree: int, planar: bool, fn_name: str) -> None:
-    """Precheck the number of rooted trees against the CUDA kernel limit.
+def _check_cuda_num_basis(dimension: int, degree: int, planar: bool, fn_name: str) -> None:
+    """Precheck the number of basis elements against the CUDA kernel limit.
 
-    The branched_sig CUDA kernel launches one thread per tree within a single
+    The branched_sig CUDA kernel launches one thread per basis element within a single
     block, capped at 1024. Above that, the kernel aborts with an opaque
     ``Invalid argument (2)`` error. Surface a clear Python-level error instead.
     """
-    num_trees = branched_sig_length(dimension, degree, planar=planar, scalar_term=False)
-    if num_trees > _CUDA_MAX_NUM_TREES:
+    num_basis = branched_sig_length(dimension, degree, planar=planar, scalar_term=False)
+    if num_basis > _CUDA_MAX_NUM_BASIS:
         raise RuntimeError(
-            f"{fn_name}: num_trees={num_trees} exceeds CUDA kernel limit of "
-            f"{_CUDA_MAX_NUM_TREES} for (dim={dimension}, degree={degree}"
+            f"{fn_name}: num_basis={num_basis} exceeds CUDA kernel limit of "
+            f"{_CUDA_MAX_NUM_BASIS} for (dim={dimension}, degree={degree}"
             + (f", planar={planar}" if planar else "")
             + "). Use CPU or reduce degree."
         )
@@ -196,6 +204,8 @@ def branched_sig(
 
     The branched signature extends the standard path signature to iterated
     integrals indexed by decorated rooted trees, following Gubinelli (2010).
+    For ``planar=True``, the output is instead indexed by the MKW ordered
+    forest basis.
 
     Must call ``prepare_branched_sig(dimension, degree, planar=planar)``
     before first use, where ``dimension`` is the augmented dimension
@@ -203,7 +213,7 @@ def branched_sig(
 
     :param path: Path of shape ``(length, dimension)`` or ``(..., length, dimension)``.
     :type path: numpy.ndarray | torch.tensor
-    :param degree: Maximum tree order (number of nodes).
+    :param degree: Maximum order (number of nodes).
     :type degree: int
     :param time_aug: If True, prepend a time channel to the path.
     :type time_aug: bool
@@ -215,7 +225,7 @@ def branched_sig(
         ``"recursive"`` (default) uses the recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :type tree_order: str
-    :param planar: If True, compute the planar (ordered) branched signature.
+    :param planar: If True, compute the planar MKW branched signature.
     :type planar: bool
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
@@ -313,7 +323,7 @@ def branched_sig(
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride)
     else:
-        _check_cuda_num_trees(aug_dimension, degree, planar, "branched_sig")
+        _check_cuda_num_basis(aug_dimension, degree, planar, "branched_sig")
         err_code = CUSIG_BRANCHED_SIG_CUDA[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             dimension, data.data_length, degree,
@@ -338,7 +348,7 @@ def branched_sig_combine(
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
-    Combines two truncated branched signatures via the Butcher product
+    Combines two truncated branched signatures via the Hopf product
     (the analogue of Chen's identity for branched rough paths).
 
     :param bsig1: First branched signature, in the ordering specified by ``tree_order``.
@@ -347,13 +357,13 @@ def branched_sig_combine(
     :type bsig2: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path.
     :type dimension: int
-    :param degree: Maximum tree order (number of nodes).
+    :param degree: Maximum order (number of nodes).
     :type degree: int
     :param tree_order: Tree ordering convention for inputs and output.
         ``"recursive"`` (default) uses the recursive construction order.
         ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
     :type tree_order: str
-    :param planar: If True, combine planar (ordered) branched signatures.
+    :param planar: If True, combine planar MKW branched signatures.
     :type planar: bool
     :param n_jobs: Number of parallel threads for batch processing.
     :type n_jobs: int
@@ -385,7 +395,7 @@ def branched_sig_combine(
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, dimension, degree, n_jobs, planar, scalar_term)
     else:
-        _check_cuda_num_trees(dimension, degree, planar, "branched_sig_combine")
+        _check_cuda_num_basis(dimension, degree, planar, "branched_sig_combine")
         err_code = CUSIG_BRANCHED_SIG_COMBINE_CUDA[data.dtype](
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, dimension, degree, planar, scalar_term)
