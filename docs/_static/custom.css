@@ -91,6 +91,36 @@ table.docutils th {
     background-color: var(--pst-color-surface);
     font-weight: 600;
 }
+.branched-size-tables table.docutils {
+    font-size: 0.84rem;
+    margin: 0.25em 0 0.75em 0;
+}
+.branched-size-tables table.docutils td,
+.branched-size-tables table.docutils th {
+    padding: 0.2em 0.35em;
+    white-space: nowrap;
+    text-align: right;
+}
+.branched-size-tables table.docutils td:first-child,
+.branched-size-tables table.docutils th:first-child {
+    text-align: left;
+}
+.branched-size-tables table.docutils caption {
+    caption-side: top;
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding-bottom: 0.2em;
+    position: relative;
+    text-align: center;
+}
+.branched-size-tables table.docutils caption .caption-text {
+    display: block;
+    text-align: center;
+}
+.branched-size-tables table.docutils caption .headerlink {
+    position: absolute;
+    right: 0;
+}
 
 /* -- Landing page hero ------------------------------------------------------ */
 .bd-article-container > section:first-child img {
