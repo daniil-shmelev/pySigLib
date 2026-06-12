@@ -958,25 +958,6 @@ def test_jax_branched_sig_planar_matches_pysiglib(device, jitted):
 
 @pytest.mark.parametrize("device", _jax_devices())
 @pytest.mark.parametrize("jitted", [False, True])
-def test_jax_branched_sig_canonical_matches_pysiglib(device, jitted):
-    rng = np.random.default_rng(4343)
-    x = rng.uniform(size=(7, 2)).astype(np.float64)
-    deg = 3
-
-    pysiglib.prepare_branched_sig(2, deg)
-    expected = pysiglib.branched_sig(x, deg, tree_order="canonical")
-
-    x_jax = _as_jax_array(x, device, np.float64)
-
-    def fn(path):
-        return jax_api.branched_sig(path, deg, tree_order="canonical")
-
-    actual = jax.jit(fn)(x_jax) if jitted else fn(x_jax)
-    check_close(expected, actual, double_atol=1e-8)
-
-
-@pytest.mark.parametrize("device", _jax_devices())
-@pytest.mark.parametrize("jitted", [False, True])
 def test_jax_branched_sig_planar_grad_matches_pysiglib(device, jitted):
     rng = np.random.default_rng(4344)
     x = rng.uniform(size=(7, 2)).astype(np.float64)
@@ -1131,32 +1112,6 @@ def test_jax_branched_sig_combine_planar_matches_pysiglib(device, jitted):
 
     def fn(s1, s2):
         return jax_api.branched_sig_combine(s1, s2, dim, deg, planar=True)
-
-    actual = jax.jit(fn)(bsig1_jax, bsig2_jax) if jitted else fn(bsig1_jax, bsig2_jax)
-    check_close(expected, actual, double_atol=1e-8)
-
-
-@pytest.mark.parametrize("device", _jax_devices())
-@pytest.mark.parametrize("jitted", [False, True])
-def test_jax_branched_sig_combine_canonical_matches_pysiglib(device, jitted):
-    rng = np.random.default_rng(4545)
-    dim, deg = 2, 3
-
-    pysiglib.prepare_branched_sig(dim, deg)
-
-    x1 = rng.uniform(size=(8, dim)).astype(np.float64)
-    x2 = rng.uniform(size=(7, dim)).astype(np.float64)
-
-    bsig1 = pysiglib.branched_sig(x1, deg, tree_order="canonical")
-    bsig2 = pysiglib.branched_sig(x2, deg, tree_order="canonical")
-    expected = pysiglib.branched_sig_combine(
-        bsig1, bsig2, dim, deg, tree_order="canonical")
-
-    bsig1_jax = _as_jax_array(bsig1, device, np.float64)
-    bsig2_jax = _as_jax_array(bsig2, device, np.float64)
-
-    def fn(s1, s2):
-        return jax_api.branched_sig_combine(s1, s2, dim, deg, tree_order="canonical")
 
     actual = jax.jit(fn)(bsig1_jax, bsig2_jax) if jitted else fn(bsig1_jax, bsig2_jax)
     check_close(expected, actual, double_atol=1e-8)

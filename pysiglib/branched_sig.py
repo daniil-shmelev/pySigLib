@@ -25,43 +25,6 @@ from .dtypes import (CPSIG_BRANCHED_SIG, CPSIG_BRANCHED_SIG_COMBINE,
                      CUSIG_BRANCHED_SIG_CUDA, CUSIG_BRANCHED_SIG_COMBINE_CUDA)
 from .data_handlers import PathInputHandler, SigOutputHandler, MultipleSigInputHandler, CorrectionInputHandler
 from .load_siglib import CPSIG
-import kauri
-
-
-def _permute_bsig(data, dimension, degree, planar=False, scalar_term=True):
-    """Permute branched sig from recursive order to canonical order (in-place).
-
-    The permutation acts on non-empty basis elements only; the leading scalar
-    (if present) is left in place.
-    """
-    if planar:
-        return data
-    else:
-        perm = kauri.canonical_to_recursive_permutation(dimension, degree)
-    start = 1 if scalar_term else 0
-    data[..., start:] = data[..., start:][..., perm]
-    return data
-
-
-def _inv_permute_bsig(data, dimension, degree, planar=False, scalar_term=True):
-    """Permute branched sig from canonical order to recursive order. Returns a new array.
-
-    The permutation acts on non-empty basis elements only; the leading scalar
-    (if present) is left in place.
-    """
-    if planar:
-        return data
-    else:
-        inv_perm = kauri.recursive_to_canonical_permutation(dimension, degree)
-    if isinstance(data, np.ndarray):
-        out = np.empty_like(data)
-    else:
-        out = torch.empty_like(data)
-    start = 1 if scalar_term else 0
-    if scalar_term:
-        out[..., :1] = data[..., :1]
-    out[..., start:] = data[..., start:][..., inv_perm]
-    return out
 
 
 def prepare_branched_sig(
@@ -193,7 +156,6 @@ def branched_sig(
         time_aug: bool = False,
         lead_lag: bool = False,
         end_time: float = 1.0,
-        tree_order: str = "recursive",
         planar: bool = False,
         scalar_term : bool = False,
         correction = None,
@@ -221,10 +183,6 @@ def branched_sig(
     :type lead_lag: bool
     :param end_time: End time for the time augmentation channel.
     :type end_time: float
-    :param tree_order: Tree ordering convention for the output coefficients.
-        ``"recursive"`` (default) uses the recursive construction order.
-        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
-    :type tree_order: str
     :param planar: If True, compute the planar MKW branched signature.
     :type planar: bool
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
@@ -295,8 +253,6 @@ def branched_sig(
             path, N, correction=correction, end_time=T)
         print(ito_bsig)
     """
-    if tree_order not in ("recursive", "canonical"):
-        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(degree, "degree", int)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
@@ -332,8 +288,6 @@ def branched_sig(
             correction_data.batch_stride, correction_data.segment_stride)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig: " + err_msg(err_code))
-    if tree_order != "recursive":
-        _permute_bsig(result.data, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
     return result.data
 
 
@@ -343,7 +297,6 @@ def branched_sig_combine(
         dimension: int,
         degree: int,
         *,
-        tree_order: str = "recursive",
         planar: bool = False,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
@@ -351,26 +304,20 @@ def branched_sig_combine(
     Combines two truncated branched signatures via the Hopf product
     (the analogue of Chen's identity for branched rough paths).
 
-    :param bsig1: First branched signature, in the ordering specified by ``tree_order``.
+    :param bsig1: First branched signature.
     :type bsig1: numpy.ndarray | torch.tensor
-    :param bsig2: Second branched signature, in the ordering specified by ``tree_order``.
+    :param bsig2: Second branched signature.
     :type bsig2: numpy.ndarray | torch.tensor
     :param dimension: Dimension of the underlying path.
     :type dimension: int
     :param degree: Maximum order (number of nodes).
     :type degree: int
-    :param tree_order: Tree ordering convention for inputs and output.
-        ``"recursive"`` (default) uses the recursive construction order.
-        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
-    :type tree_order: str
     :param planar: If True, combine planar MKW branched signatures.
     :type planar: bool
     :param n_jobs: Number of parallel threads for batch processing.
     :type n_jobs: int
     :return: Combined branched signature, in the same ordering and scalar-term format as the inputs.
     """
-    if tree_order not in ("recursive", "canonical"):
-        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_type(planar, "planar", bool)
@@ -379,10 +326,6 @@ def branched_sig_combine(
     check_n_jobs(n_jobs)
 
     scalar_term = _infer_branched_scalar_term(bsig1, dimension, degree, planar=planar)
-    if tree_order != "recursive":
-        bsig1 = _inv_permute_bsig(bsig1, dimension, degree, planar=planar, scalar_term=scalar_term)
-        bsig2 = _inv_permute_bsig(bsig2, dimension, degree, planar=planar, scalar_term=scalar_term)
-
     bsig_len = branched_sig_length(dimension, degree, planar=planar, scalar_term=scalar_term)
     data = MultipleSigInputHandler([bsig1, bsig2], bsig_len, ["bsig1", "bsig2"])
     result = SigOutputHandler(data, bsig_len)
@@ -401,6 +344,4 @@ def branched_sig_combine(
             data.batch_size, dimension, degree, planar, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine: " + err_msg(err_code))
-    if tree_order != "recursive":
-        _permute_bsig(result.data, dimension, degree, planar=planar, scalar_term=scalar_term)
     return result.data

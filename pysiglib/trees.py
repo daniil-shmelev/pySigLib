@@ -19,7 +19,7 @@ Decorated basis enumeration and indexing for branched signatures.
 Non-planar BCK signatures are indexed by decorated rooted trees. Planar MKW
 signatures are indexed by ordered forests of decorated planar rooted trees.
 
-Trees use the kauri tuple convention::
+Trees use the native pySigLib tuple convention::
 
     Empty tree:   None
     Leaf:         (label,)
@@ -27,44 +27,104 @@ Trees use the kauri tuple convention::
 
 where children are sorted in the non-planar case and ``label`` is an int in
 ``[0, dimension)``. Ordered forests are represented as ``(tree1, tree2, ...)``.
+The order is the implementation order used by the native CPU and CUDA caches.
 """
 
 from functools import cache
 
-import kauri
-
 from .param_checks import check_type, check_non_neg
 
 
-def _check_tree_order(tree_order):
-    if tree_order not in ("recursive", "canonical"):
-        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
-
-
-@cache
-def _planar_forest_basis_cached(dimension, degree):
-    return tuple(
-        _ordered_forest_to_tuple(forest)
-        for forest in kauri.colored_ordered_forests(dimension, degree)
-    )
+def _tree_node_count(tree):
+    return 1 + sum(_tree_node_count(child) for child in tree[:-1])
 
 
 def _is_planar_forest_tuple(obj):
     return isinstance(obj, tuple) and len(obj) > 0 and not isinstance(obj[-1], int)
 
 
-def _ordered_forest_to_tuple(forest):
-    if forest.nodes() == 0:
-        return None
-    return tuple(tree.sorted_list_repr() for tree in forest.tree_list)
-
-
-def _tuple_to_ordered_forest(tree):
+def _as_planar_forest_tuple(tree):
     if tree is None:
-        return kauri.EMPTY_ORDERED_FOREST
+        return None
     if _is_planar_forest_tuple(tree):
-        return kauri.OrderedForest(tuple(kauri.PlanarTree(t) for t in tree))
-    return kauri.PlanarTree(tree).as_ordered_forest()
+        return tree
+    return (tree,)
+
+
+def _child_sequences(target_nodes, trees, planar):
+    out = []
+    current = []
+
+    def enumerate_(remaining, min_idx):
+        if remaining == 0:
+            out.append(tuple(current))
+            return
+        start = 0 if planar else min_idx
+        for idx in range(start, len(trees)):
+            nodes = _tree_node_count(trees[idx])
+            if nodes > remaining:
+                break
+            current.append(idx)
+            enumerate_(remaining - nodes, idx)
+            current.pop()
+
+    enumerate_(target_nodes, 0)
+    return tuple(out)
+
+
+@cache
+def _native_tree_basis_cached(dimension, degree, planar):
+    trees = []
+    for order in range(1, degree + 1):
+        if order == 1:
+            for label in range(dimension):
+                trees.append((label,))
+            continue
+
+        current_trees = tuple(trees)
+        for children in _child_sequences(order - 1, current_trees, planar):
+            if not children:
+                continue
+            for label in range(dimension):
+                trees.append(tuple(current_trees[idx] for idx in children) + (label,))
+    return tuple(trees)
+
+
+@cache
+def _native_forest_basis_cached(dimension, degree):
+    trees = _native_tree_basis_cached(dimension, degree, True)
+    forests = []
+    current = []
+
+    def enumerate_(remaining):
+        if remaining == 0:
+            forests.append(tuple(current))
+            return
+        for tree in trees:
+            nodes = _tree_node_count(tree)
+            if nodes > remaining:
+                break
+            current.append(tree)
+            enumerate_(remaining - nodes)
+            current.pop()
+
+    for order in range(1, degree + 1):
+        enumerate_(order)
+    return tuple(forests)
+
+
+@cache
+def _basis_cached(dimension, degree, planar):
+    if planar:
+        non_empty = _native_forest_basis_cached(dimension, degree)
+    else:
+        non_empty = _native_tree_basis_cached(dimension, degree, False)
+    return (None,) + non_empty
+
+
+@cache
+def _basis_index_cached(dimension, degree, planar):
+    return {basis_element: idx for idx, basis_element in enumerate(_basis_cached(dimension, degree, planar))}
 
 
 # ---------------------------------------------------------------------------
@@ -75,30 +135,23 @@ def trees_of_order(
         dimension: int,
         order: int,
         *,
-        tree_order: str = "canonical",
         planar: bool = False,
 ) -> tuple[tuple]:
     """
-    Returns all basis elements with exactly ``order`` nodes, in the specified
-    ordering.
+    Returns all basis elements with exactly ``order`` nodes.
 
     For ``planar=False`` these are non-planar decorated rooted trees. For
     ``planar=True`` these are ordered forests of decorated planar rooted trees,
-    with ``order`` equal to the total number of nodes in the forest.
+    with ``order`` equal to the total number of nodes in the forest. The order
+    matches the native pySigLib coefficient layout.
 
     :param dimension: Path dimension (alphabet size).
     :type dimension: int
     :param order: Exact number of nodes.
     :type order: int
-    :param tree_order: Tree ordering convention. ``"canonical"`` (default) uses
-        the shape-first order matching :func:`tree_to_idx` and
-        ``branched_sig(..., tree_order="canonical")``. ``"recursive"`` uses the
-        recursive bottom-up construction order matching
-        ``branched_sig(..., tree_order="recursive")`` (the default).
-    :type tree_order: str
     :param planar: If True, enumerate ordered forests of planar rooted trees.
     :type planar: bool
-    :return: Tuple of basis elements as tuples in kauri convention.
+    :return: Tuple of basis elements as tuples in native pySigLib convention.
     :rtype: tuple[tuple]
 
     Example:
@@ -113,60 +166,39 @@ def trees_of_order(
         print(t) # ((0,), (1,))
 
     """
-    _check_tree_order(tree_order)
     check_type(dimension, "dimension", int)
     check_type(order, "order", int)
     check_type(planar, "planar", bool)
     check_non_neg(dimension, "dimension")
     check_non_neg(order, "order")
-    return _trees_of_order_cached(dimension, order, tree_order, planar)
-
-
-@cache
-def _trees_of_order_cached(dimension, order, tree_order, planar):
     if order == 0:
         return (None,)
-    if planar:
-        return tuple(
-            _ordered_forest_to_tuple(forest)
-            for forest in kauri.colored_ordered_forests_of_order(order, dimension)
-        )
-    if tree_order == "canonical":
-        return tuple(t.sorted_list_repr() for t in kauri.colored_trees_of_order(order, dimension))
-    # Recursive ordering: compute all trees up to `order` in recursive order,
-    # then slice off the last stratum (trees of exactly `order` nodes).
-    from .branched_sig import branched_sig_length
-    all_trees = _trees_cached(dimension, order, "recursive", planar)
-    lower = branched_sig_length(dimension, order - 1, scalar_term=True, planar=planar)
-    upper = branched_sig_length(dimension, order, scalar_term=True, planar=planar)
-    return all_trees[lower:upper]
+    return tuple(
+        basis_element
+        for basis_element in _basis_cached(dimension, order, planar)[1:]
+        if _basis_element_order(basis_element, planar) == order
+    )
 
 
 def trees(
         dimension: int,
         degree: int,
         *,
-        tree_order: str = "canonical",
         planar: bool = False,
 ) -> tuple[tuple]:
     """
-    Returns all basis elements up to a given degree (max nodes),
-    starting with the empty tree (``None``), in the specified ordering.
+    Returns all basis elements up to a given degree, starting with the empty
+    tree (``None``).
 
     For ``planar=False`` these are non-planar decorated rooted trees. For
     ``planar=True`` these are ordered forests of decorated planar rooted trees,
-    with degree equal to the maximum total number of nodes in the forest.
+    with degree equal to the maximum total number of nodes in the forest. The
+    order matches the native pySigLib coefficient layout.
 
     :param dimension: Path dimension (alphabet size).
     :type dimension: int
     :param degree: Maximum number of nodes per tree or forest.
     :type degree: int
-    :param tree_order: Tree ordering convention. ``"canonical"`` (default) uses
-        the shape-first order matching :func:`tree_to_idx` and
-        ``branched_sig(..., tree_order="canonical")``. ``"recursive"`` uses the
-        recursive bottom-up construction order matching
-        ``branched_sig(..., tree_order="recursive")`` (the default).
-    :type tree_order: str
     :param planar: If True, enumerate ordered forests of planar rooted trees.
     :type planar: bool
     :return: All basis elements up to the given degree.
@@ -183,33 +215,18 @@ def trees(
         print(t) # (None, (0,), (1,), ((0,), 0), ((1,), 0), ((0,), 1), ((1,), 1))
 
     """
-    _check_tree_order(tree_order)
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_type(planar, "planar", bool)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    return _trees_cached(dimension, degree, tree_order, planar)
+    return _basis_cached(dimension, degree, planar)
 
 
-@cache
-def _trees_cached(dimension, degree, tree_order, planar):
+def _basis_element_order(basis_element, planar):
     if planar:
-        return _planar_forest_basis_cached(dimension, degree)
-    if tree_order == "canonical":
-        return tuple(t.sorted_list_repr() for t in kauri.colored_trees(dimension, degree))
-    # Recursive: start from canonical and permute the non-empty basis elements.
-    canonical = _trees_cached(dimension, degree, "canonical", planar)
-    if len(canonical) <= 1:
-        return canonical
-    perm = kauri.canonical_to_recursive_permutation(dimension, degree)
-    # perm[i] = recursive position of the canonical non-empty basis element at index i.
-    # Build recursive-ordered list: recursive[0] = None; recursive[perm[i] + 1] = canonical[i + 1].
-    n_non_empty = len(canonical) - 1
-    recursive = [None] * (n_non_empty + 1)
-    for i in range(n_non_empty):
-        recursive[perm[i] + 1] = canonical[i + 1]
-    return tuple(recursive)
+        return sum(_tree_node_count(tree) for tree in basis_element)
+    return _tree_node_count(basis_element)
 
 
 def tree_to_idx(
@@ -217,15 +234,14 @@ def tree_to_idx(
         dimension: int,
         degree: int,
         *,
-        tree_order: str = "canonical",
         planar: bool = False,
         scalar_term: bool = False,
 ) -> int:
     """
-    Given a basis element, returns its flat index in the
-    branched-signature coefficient vector.
+    Given a basis element, returns its flat index in the branched-signature
+    coefficient vector.
 
-    Trees use the kauri tuple convention:
+    Trees use the native pySigLib tuple convention:
 
     - Empty tree: ``None`` - index 0 when ``scalar_term=True``; invalid otherwise
     - Leaf: ``(label,)`` where ``label`` is in ``[0, dimension)``
@@ -246,11 +262,7 @@ def tree_to_idx(
     :type dimension: int
     :param degree: Maximum number of nodes (same as ``degree`` in :func:`branched_sig`).
     :type degree: int
-    :param tree_order: Tree ordering convention. ``"canonical"`` (default)
-        matches ``branched_sig(..., tree_order="canonical")``. ``"recursive"``
-        matches ``branched_sig(..., tree_order="recursive")`` (the default).
-    :type tree_order: str
-    :param planar: If True, use the planar (ordered) enumeration matching
+    :param planar: If True, use the planar ordered-forest enumeration matching
         ``branched_sig(..., planar=True)``.
     :type planar: bool
     :param scalar_term: Whether the target branched signature includes the leading
@@ -270,14 +282,13 @@ def tree_to_idx(
 
         path = torch.rand(size=(100, 2))
         pysiglib.prepare_branched_sig(2, 3)
-        bsig = pysiglib.branched_sig(path, 3, tree_order="canonical")  # scalar_term=False
+        bsig = pysiglib.branched_sig(path, 3)  # scalar_term=False
 
         tree = ((1,), 0)
         idx = pysiglib.tree_to_idx(tree, dimension=2, degree=3)
         print(f"Index: {idx}, Coefficient: {bsig[idx]}")
 
     """
-    _check_tree_order(tree_order)
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_type(planar, "planar", bool)
@@ -288,25 +299,11 @@ def tree_to_idx(
             "The empty tree has no index in a branched signature with scalar_term=False. "
             "Pass scalar_term=True if your bsig includes the leading scalar 1."
         )
-    return _tree_to_idx_cached(tree, dimension, degree, tree_order, planar, scalar_term)
-
-
-@cache
-def _tree_to_idx_cached(tree, dimension, degree, tree_order, planar, scalar_term):
-    if tree is None:
-        return 0
-    if planar:
-        idx = kauri.colored_ordered_forest_to_idx(
-            _tuple_to_ordered_forest(tree), dimension, degree,
-        )
-        return idx if scalar_term else idx - 1
-    canonical_idx = kauri.colored_tree_to_idx(kauri.Tree(tree), dimension, degree)
-    if tree_order == "canonical":
-        idx = canonical_idx
-    else:
-        perm = kauri.canonical_to_recursive_permutation(dimension, degree)
-        idx = int(perm[canonical_idx - 1]) + 1
-    return idx if scalar_term else idx - 1
+    basis_element = _as_planar_forest_tuple(tree) if planar else tree
+    index = _basis_index_cached(dimension, degree, planar).get(basis_element)
+    if index is None:
+        raise ValueError("tree is not in the requested branched signature basis")
+    return index if scalar_term else index - 1
 
 
 def idx_to_tree(
@@ -314,7 +311,6 @@ def idx_to_tree(
         dimension: int,
         degree: int,
         *,
-        tree_order: str = "canonical",
         planar: bool = False,
         scalar_term: bool = False,
 ) -> tuple:
@@ -332,11 +328,7 @@ def idx_to_tree(
     :type dimension: int
     :param degree: Maximum number of nodes (same as ``degree`` in :func:`branched_sig`).
     :type degree: int
-    :param tree_order: Tree ordering convention. ``"canonical"`` (default)
-        matches ``branched_sig(..., tree_order="canonical")``. ``"recursive"``
-        matches ``branched_sig(..., tree_order="recursive")`` (the default).
-    :type tree_order: str
-    :param planar: If True, interpret ``idx`` in the planar (ordered)
+    :param planar: If True, interpret ``idx`` in the planar ordered-forest
         enumeration matching ``branched_sig(..., planar=True)``.
     :type planar: bool
     :param scalar_term: Whether the source branched signature includes the leading
@@ -368,23 +360,9 @@ def idx_to_tree(
     check_non_neg(idx, "idx")
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
-    _check_tree_order(tree_order)
-    return _idx_to_tree_cached(idx, dimension, degree, tree_order, planar, scalar_term)
-
-
-@cache
-def _idx_to_tree_cached(idx, dimension, degree, tree_order, planar, scalar_term):
     if not scalar_term:
         idx = idx + 1
-    if idx == 0:
-        return None
-    if planar:
-        forest = kauri.idx_to_colored_ordered_forest(idx, dimension, degree)
-        return _ordered_forest_to_tuple(forest)
-    if tree_order == "recursive":
-        inv_perm = kauri.recursive_to_canonical_permutation(dimension, degree)
-        canonical_idx = int(inv_perm[idx - 1]) + 1
-    else:
-        canonical_idx = idx
-    kt = kauri.idx_to_colored_tree(canonical_idx, dimension, degree)
-    return kt.sorted_list_repr()
+    basis = _basis_cached(dimension, degree, planar)
+    if idx >= len(basis):
+        raise ValueError("idx is out of range for the requested branched signature basis")
+    return basis[idx]

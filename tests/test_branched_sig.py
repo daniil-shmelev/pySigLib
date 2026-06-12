@@ -150,7 +150,6 @@ def ito_local_log_reference(increment, data_dim, N, dt, planar=False):
             ((d,), d),
             aug_dim,
             N,
-            tree_order="recursive",
             planar=planar,
             scalar_term=True,
         )
@@ -401,8 +400,8 @@ def test_branched_sig_level3_correction_single_segment():
 
     local_log = np.zeros(pysiglib.branched_sig_length(d, N, scalar_term=True))
     local_log[1] = x
-    local_log[pysiglib.tree_to_idx(((0,), 0), d, N, tree_order="recursive", scalar_term=True)] = c2
-    local_log[pysiglib.tree_to_idx((((0,), 0), 0), d, N, tree_order="recursive", scalar_term=True)] = c3
+    local_log[pysiglib.tree_to_idx(((0,), 0), d, N, scalar_term=True)] = c2
+    local_log[pysiglib.tree_to_idx((((0,), 0), 0), d, N, scalar_term=True)] = c3
     expected = branched_hopf_exp_reference(local_log, d, N)
 
     bsig = pysiglib.branched_sig(path, N, correction=correction, scalar_term=True)

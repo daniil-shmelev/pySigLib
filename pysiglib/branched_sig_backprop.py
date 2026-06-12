@@ -25,8 +25,8 @@ from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CUSIG_BRANCHED_SIG_BACKPROP_CUDA,
                      CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA)
 from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
-from .branched_sig import (_inv_permute_bsig, _permute_bsig, branched_sig_length,
-                           _infer_branched_scalar_term, _check_cuda_num_basis)
+from .branched_sig import (branched_sig_length, _infer_branched_scalar_term,
+                           _check_cuda_num_basis)
 
 
 def branched_sig_backprop(
@@ -38,7 +38,6 @@ def branched_sig_backprop(
         time_aug: bool = False,
         lead_lag: bool = False,
         end_time: float = 1.0,
-        tree_order: str = "recursive",
         planar: bool = False,
         correction = None,
         n_jobs: int = 1,
@@ -64,10 +63,6 @@ def branched_sig_backprop(
     :type lead_lag: bool
     :param end_time: End time for time augmentation.
     :type end_time: float
-    :param tree_order: Tree ordering convention of ``bsig`` and ``bsig_derivs``.
-        ``"recursive"`` (default) uses the recursive construction order.
-        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
-    :type tree_order: str
     :param planar: If True, backpropagate through planar branched signature.
     :type planar: bool
     :param correction: The same correction supplied to the forward call
@@ -112,8 +107,6 @@ def branched_sig_backprop(
             path, bsig, bsig_derivs, N, correction=correction, end_time=T)
         print(grad.shape)
     """
-    if tree_order not in ("recursive", "canonical"):
-        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(degree, "degree", int)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
@@ -128,10 +121,6 @@ def branched_sig_backprop(
     aug_dimension = path_data.dimension
 
     scalar_term = _infer_branched_scalar_term(bsig, aug_dimension, degree, planar=planar)
-    if tree_order != "recursive":
-        bsig = _inv_permute_bsig(bsig, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
-        bsig_derivs = _inv_permute_bsig(bsig_derivs, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
-
     bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
     sig_data = MultipleSigInputHandler([bsig, bsig_derivs], bsig_len, ["bsig", "bsig_derivs"])
     result = PathOutputHandler(path_data.data_length, path_data.data_dimension, path_data)
@@ -168,7 +157,6 @@ def branched_sig_combine_backprop(
         dimension: int,
         degree: int,
         *,
-        tree_order: str = "recursive",
         planar: bool = False,
         n_jobs: int = 1,
 ) -> tuple:
@@ -189,18 +177,12 @@ def branched_sig_combine_backprop(
     :type dimension: int
     :param degree: Maximum order.
     :type degree: int
-    :param tree_order: Tree ordering convention of ``derivs``, ``bsig1``, ``bsig2`` and the returned gradients.
-        ``"recursive"`` (default) uses the recursive construction order.
-        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
-    :type tree_order: str
     :param planar: If True, backpropagate through planar branched sig combine.
     :type planar: bool
     :param n_jobs: Number of parallel threads for batch processing.
     :type n_jobs: int
     :return: Tuple ``(dF/d(bsig1), dF/d(bsig2))``, in the same scalar-term format as the inputs.
     """
-    if tree_order not in ("recursive", "canonical"):
-        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_type(planar, "planar", bool)
@@ -209,11 +191,6 @@ def branched_sig_combine_backprop(
     check_n_jobs(n_jobs)
 
     scalar_term = _infer_branched_scalar_term(bsig1, dimension, degree, planar=planar)
-    if tree_order != "recursive":
-        derivs = _inv_permute_bsig(derivs, dimension, degree, planar=planar, scalar_term=scalar_term)
-        bsig1 = _inv_permute_bsig(bsig1, dimension, degree, planar=planar, scalar_term=scalar_term)
-        bsig2 = _inv_permute_bsig(bsig2, dimension, degree, planar=planar, scalar_term=scalar_term)
-
     bsig_len = branched_sig_length(dimension, degree, planar=planar, scalar_term=scalar_term)
     data = MultipleSigInputHandler([derivs, bsig1, bsig2], bsig_len, ["derivs", "bsig1", "bsig2"])
     result1 = SigOutputHandler(data, bsig_len)
@@ -235,7 +212,4 @@ def branched_sig_combine_backprop(
             data.batch_size, dimension, degree, planar, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_combine_backprop: " + err_msg(err_code))
-    if tree_order != "recursive":
-        _permute_bsig(result1.data, dimension, degree, planar=planar, scalar_term=scalar_term)
-        _permute_bsig(result2.data, dimension, degree, planar=planar, scalar_term=scalar_term)
     return result1.data, result2.data
