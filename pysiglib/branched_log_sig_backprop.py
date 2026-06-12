@@ -28,8 +28,6 @@ from .data_handlers import MultipleSigInputHandler, SigOutputHandler
 from .sig_length import aug_dim
 from .branched_sig import (
     _infer_branched_scalar_term,
-    _inv_permute_bsig,
-    _permute_bsig,
     branched_sig_length,
 )
 
@@ -42,7 +40,6 @@ def branched_sig_to_log_sig_backprop(
         *,
         time_aug: bool = False,
         lead_lag: bool = False,
-        tree_order: str = "recursive",
         planar: bool = False,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
@@ -69,10 +66,6 @@ def branched_sig_to_log_sig_backprop(
     :type time_aug: bool
     :param lead_lag: Whether the branched signature(s) were computed with ``lead_lag=True``.
     :type lead_lag: bool
-    :param tree_order: Tree ordering convention for ``bsig`` and ``blogsig_derivs``.
-        ``"recursive"`` (default) uses the recursive construction order.
-        ``"canonical"`` uses the shape-first order matching :func:`tree_to_idx`.
-    :type tree_order: str
     :param planar: If True, use planar branched signatures.
     :type planar: bool
     :param n_jobs: Number of threads to run in parallel.
@@ -101,8 +94,6 @@ def branched_sig_to_log_sig_backprop(
         )
         print(bsig_derivs)
     """
-    if tree_order not in ("recursive", "canonical"):
-        raise ValueError(f"tree_order must be 'recursive' or 'canonical', got {tree_order!r}")
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
     check_type(time_aug, "time_aug", bool)
@@ -114,11 +105,6 @@ def branched_sig_to_log_sig_backprop(
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
     scalar_term = _infer_branched_scalar_term(bsig, aug_dimension, degree, planar=planar)
-    if tree_order != "recursive":
-        bsig = _inv_permute_bsig(bsig, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
-        blogsig_derivs = _inv_permute_bsig(
-            blogsig_derivs, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
-
     bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
     data = MultipleSigInputHandler([bsig, blogsig_derivs], bsig_len, ["bsig", "blogsig_derivs"])
     result = SigOutputHandler(data, bsig_len)
@@ -137,6 +123,4 @@ def branched_sig_to_log_sig_backprop(
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_to_log_sig_backprop: " + err_msg(err_code))
 
-    if tree_order != "recursive":
-        _permute_bsig(result.data, aug_dimension, degree, planar=planar, scalar_term=scalar_term)
     return result.data

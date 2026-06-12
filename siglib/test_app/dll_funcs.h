@@ -155,12 +155,14 @@ extern log_sig_combine_backprop_cuda_d_fn log_sig_combine_backprop_cuda_d;
 using prepare_branched_sig_fn = int(CDECL_*)(uint64_t, uint64_t, bool, bool);
 using branched_sig_length_fn = uint64_t(CDECL_*)(uint64_t, uint64_t, bool);
 using branched_sig_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, int, bool, bool, double, bool, bool, const double*, uint64_t, uint64_t, uint64_t);
+using branched_sig_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, bool, const double*, uint64_t, uint64_t, uint64_t);
 using branched_sig_to_log_sig_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, int, bool, bool);
 using branched_sig_to_log_sig_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, bool, bool);
 
 extern prepare_branched_sig_fn prepare_branched_sig;
 extern branched_sig_length_fn branched_sig_length;
 extern branched_sig_d_fn branched_sig_d;
+extern branched_sig_cuda_d_fn branched_sig_cuda_d;
 extern branched_sig_to_log_sig_d_fn branched_sig_to_log_sig_d;
 extern branched_sig_to_log_sig_cuda_d_fn branched_sig_to_log_sig_cuda_d;
 

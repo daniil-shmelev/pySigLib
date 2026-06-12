@@ -20,7 +20,7 @@ import itertools
 
 import kauri
 import kauri.bck
-import kauri.nck
+import kauri.mkw
 
 import pysiglib
 from conftest import DEVICES, check_close, skip_no_cuda
@@ -150,7 +150,6 @@ def ito_local_log_reference(increment, data_dim, N, dt, planar=False):
             ((d,), d),
             aug_dim,
             N,
-            tree_order="recursive",
             planar=planar,
             scalar_term=True,
         )
@@ -401,8 +400,8 @@ def test_branched_sig_level3_correction_single_segment():
 
     local_log = np.zeros(pysiglib.branched_sig_length(d, N, scalar_term=True))
     local_log[1] = x
-    local_log[pysiglib.tree_to_idx(((0,), 0), d, N, tree_order="recursive", scalar_term=True)] = c2
-    local_log[pysiglib.tree_to_idx((((0,), 0), 0), d, N, tree_order="recursive", scalar_term=True)] = c3
+    local_log[pysiglib.tree_to_idx(((0,), 0), d, N, scalar_term=True)] = c2
+    local_log[pysiglib.tree_to_idx((((0,), 0), 0), d, N, scalar_term=True)] = c3
     expected = branched_hopf_exp_reference(local_log, d, N)
 
     bsig = pysiglib.branched_sig(path, N, correction=correction, scalar_term=True)
@@ -1123,24 +1122,24 @@ def test_branched_sig_backprop_cuda_correction_matches_cpu(planar, time_aug):
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Helpers: kauri NCK-based reference implementation for planar branched sigs
+# Helpers: kauri MKW-based reference implementation for planar branched sigs
 # ---------------------------------------------------------------------------
 
-def enumerate_decorated_planar_trees(d, N):
-    """Enumerate all decorated planar trees up to order N with d labels."""
-    all_trees = []
-    for order in range(1, N + 1):
-        for t in kauri.colored_planar_trees_of_order(order, d):
-            all_trees.append(t)
-    return all_trees
+def _decorated_planar_trees_from_basis(basis):
+    trees = []
+    seen = set()
+    for forest in basis:
+        for tree in forest.tree_list:
+            key = tree.sorted_list_repr()
+            if key not in seen:
+                seen.add(key)
+                trees.append(tree)
+    return trees
 
 
-def linear_planar_branched_sig_ref(z, trees):
-    """Reference linear planar branched sig: X(tau) = prod z[dec(v)] / gamma(tau)."""
+def _planar_tree_linear_coeffs(z, trees):
     coeffs = {}
     for t in trees:
-        # PlanarTree.sorted_list_repr() returns self.list_repr (ordered, not sorted)
-        # so _extract_decs works identically: slr[-1] is root color, slr[:-1] are children
         decs = []
         _extract_decs(t.sorted_list_repr(), decs)
         gamma = t.factorial()
@@ -1151,22 +1150,25 @@ def linear_planar_branched_sig_ref(z, trees):
     return coeffs
 
 
-def planar_branched_sig_reference(path, d, N):
-    """Compute planar branched sig using kauri.nck.map_product as ground truth.
+def linear_planar_branched_sig_ref(z, basis):
+    """Reference linear planar branched sig on the MKW ordered-forest basis."""
+    trees = _decorated_planar_trees_from_basis(basis)
+    coeffs = _planar_tree_linear_coeffs(z, trees)
+    char = kauri.mkw.mkw.mkw_base_char_func(
+        lambda t: 1.0 if t.nodes() == 0 else coeffs.get(t.sorted_list_repr(), 0.0))
+    return {forest: char(forest) for forest in basis}
 
-    pysiglib's planar Butcher product is the NCK (Foissy) convolution: sum over
-    all admissible cuts with the concatenation-extended forest character. This
-    matches kauri.nck.map_product exactly. kauri.mkw.map_product computes a
-    different convolution (left-admissible cuts with shuffle-extended forest)
-    and is not the right reference for pysiglib's planar branched signature.
-    """
-    trees = enumerate_decorated_planar_trees(d, N)
+
+def planar_branched_sig_reference(path, d, N):
+    """Compute planar branched sig using kauri.mkw.map_product as ground truth."""
+    basis = tuple(kauri.colored_ordered_forests(d, N)[1:])
+    trees = _decorated_planar_trees_from_basis(basis)
 
     X = kauri.Map(lambda t: 1.0 if t.nodes() == 0 else 0.0)
 
     for n in range(len(path) - 1):
         z = path[n + 1] - path[n]
-        coeffs = linear_planar_branched_sig_ref(z, trees)
+        coeffs = _planar_tree_linear_coeffs(z, trees)
 
         def make_char(c):
             def char_func(t):
@@ -1176,19 +1178,19 @@ def planar_branched_sig_reference(path, d, N):
             return char_func
 
         Y = kauri.Map(make_char(coeffs))
-        X = kauri.nck.map_product(X, Y)
+        X = kauri.mkw.map_product(X, Y)
 
-    return np.array([X(t) for t in trees])
+    return np.array([X(forest) for forest in basis])
 
 
 def compute_kauri_to_pysiglib_planar_permutation(d, N):
-    """Find permutation mapping kauri planar tree order to pysiglib planar tree order.
+    """Find permutation mapping kauri planar forest order to pysiglib planar forest order.
 
     Uses a multi-segment path with irrational increments to break all symmetries.
     """
     pysiglib.prepare_branched_sig(d, N, planar=True)
-    trees = enumerate_decorated_planar_trees(d, N)
-    num_trees = len(trees)
+    basis = tuple(kauri.colored_ordered_forests(d, N)[1:])
+    num_trees = len(basis)
 
     path = np.zeros((3, d))
     for i in range(d):
@@ -1231,13 +1233,13 @@ def reorder_kauri_to_pysiglib_planar(kauri_arr, perm):
 
 @pytest.mark.parametrize("d,N,expected", [
     (1, 1, 2),    # 1 + 1
-    (1, 2, 3),    # 2 + 1
-    (1, 3, 5),    # 3 + 2  (same as non-planar for d=1)
+    (1, 2, 4),    # empty + one-node tree + two order-2 forests
+    (1, 3, 9),
     (2, 1, 3),    # 1 + 2
-    (2, 2, 7),    # 3 + 4  (same as non-planar: single child => no ordering difference)
-    (2, 3, 23),   # 7 + 16 (non-planar: 21; +2 from (*_0,*_1) vs (*_1,*_0) orderings)
+    (2, 2, 11),
+    (2, 3, 51),
     (3, 1, 4),    # 1 + 3
-    (3, 2, 13),   # 4 + 9
+    (3, 2, 22),
 ])
 def test_planar_branched_sig_length(d, N, expected):
     pysiglib.prepare_branched_sig(d, N, planar=True)
@@ -1246,8 +1248,7 @@ def test_planar_branched_sig_length(d, N, expected):
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
 def test_planar_branched_sig_length_vs_kauri(d, N):
-    # colored_planar_trees_up_to_order includes the empty tree (order 0).
-    expected = len(list(kauri.colored_planar_trees_up_to_order(N, d)))
+    expected = len(kauri.colored_ordered_forests(d, N))
     pysiglib.prepare_branched_sig(d, N, planar=True)
     assert pysiglib.branched_sig_length(d, N, planar=True, scalar_term=True) == expected
 
@@ -1284,9 +1285,9 @@ def test_planar_branched_sig_single_segment(d, N):
 
     bsig = pysiglib.branched_sig(path, N, planar=True)
 
-    trees = enumerate_decorated_planar_trees(d, N)
-    ref_coeffs = linear_planar_branched_sig_ref(z, trees)
-    ref = np.array([ref_coeffs[t.sorted_list_repr()] for t in trees])
+    basis = tuple(kauri.colored_ordered_forests(d, N)[1:])
+    ref_coeffs = linear_planar_branched_sig_ref(z, basis)
+    ref = np.array([ref_coeffs[forest] for forest in basis])
     ref_reordered = reorder_kauri_to_pysiglib_planar(ref, perm)
 
     np.testing.assert_allclose(bsig, ref_reordered, atol=1e-12)
@@ -1294,7 +1295,7 @@ def test_planar_branched_sig_single_segment(d, N):
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2), (2, 4)])
 def test_planar_branched_sig_vs_kauri(d, N):
-    """Primary correctness test: compare against kauri NCK map product."""
+    """Primary correctness test: compare against kauri MKW map product."""
     pysiglib.prepare_branched_sig(d, N, planar=True)
     perm = compute_kauri_to_pysiglib_planar_permutation(d, N)
 

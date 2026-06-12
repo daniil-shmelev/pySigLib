@@ -15,6 +15,7 @@
 
 import numpy as np
 import torch
+import kauri
 
 import pysiglib
 
@@ -57,12 +58,26 @@ def test_branched_sig_length_scalar_term():
     assert pysiglib.branched_sig_length(3, 3, scalar_term=True) == 58
     assert pysiglib.branched_sig_length(5, 5, scalar_term=True) == 19881
 
+def test_branched_sig_length_matches_bck_tree_basis():
+    for dim, deg in [(1, 3), (2, 3), (3, 2)]:
+        expected = len(kauri.colored_trees(dim, deg))
+        assert pysiglib.branched_sig_length(dim, deg, scalar_term=True) == expected
+        assert pysiglib.branched_sig_length(dim, deg) == expected - 1
+
 def test_branched_sig_length_planar():
-    assert pysiglib.branched_sig_length(2, 3, planar=True) == 22
-    assert pysiglib.branched_sig_length(2, 4, planar=True) == 102
-    assert pysiglib.branched_sig_length(3, 3, planar=True) == 66
+    assert pysiglib.branched_sig_length(2, 3, planar=True) == 50
+    assert pysiglib.branched_sig_length(2, 4, planar=True) == 274
+    assert pysiglib.branched_sig_length(3, 3, planar=True) == 156
 
 def test_branched_sig_length_planar_scalar_term():
-    assert pysiglib.branched_sig_length(2, 3, planar=True, scalar_term=True) == 23
-    assert pysiglib.branched_sig_length(2, 4, planar=True, scalar_term=True) == 103
-    assert pysiglib.branched_sig_length(3, 3, planar=True, scalar_term=True) == 67
+    assert pysiglib.branched_sig_length(2, 3, planar=True, scalar_term=True) == 51
+    assert pysiglib.branched_sig_length(2, 4, planar=True, scalar_term=True) == 275
+    assert pysiglib.branched_sig_length(3, 3, planar=True, scalar_term=True) == 157
+
+def test_planar_branched_sig_length_matches_mkw_ordered_forest_basis():
+    for dim, deg in [(1, 3), (2, 3), (3, 2)]:
+        expected = len(kauri.colored_ordered_forests(dim, deg))
+        assert pysiglib.branched_sig_length(dim, deg, planar=True, scalar_term=True) == expected
+        assert pysiglib.branched_sig_length(dim, deg, planar=True) == expected - 1
+
+    assert len(kauri.colored_ordered_forests(2, 3)) > len(kauri.colored_trees(2, 3))

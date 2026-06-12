@@ -18,6 +18,10 @@ param(
     [int]$LaunchSkip = 0,
     [int]$LaunchCount = 1,
     [string[]]$NcuArgs = @(),
+    [switch]$Assembly,
+    [ValidateSet("sass", "ptx", "cuda,sass")]
+    [string]$AssemblySource = "sass",
+    [string[]]$NcuSourceFolders = @(),
     [string]$NsysTrace = "cuda,nvtx",
     [string]$NsysSample = "none",
     [string]$NsysCpuContextSwitch = "none",
@@ -52,6 +56,9 @@ Important options:
   -LaunchSkip 0                     Matching kernel launches to skip.
   -LaunchCount 1                    Matching kernel launches to profile.
   -NcuSet full                      Optional Nsight Compute metric set.
+  -Assembly                         Write Nsight Compute source or assembly text output.
+  -AssemblySource sass              Source view for -Assembly: sass, ptx, or cuda,sass.
+  -NcuSourceFolders <dirs>          Source folders to import when -Assembly is set.
   -NsysTrace cuda,nvtx              Nsight Systems trace list.
   -ResultRoot <dir>                 Parent directory, default out\cuda-profile.
   -Stats                            Print Nsight Systems stats tables.
@@ -322,6 +329,19 @@ function Invoke-ExternalCommand {
     }
 }
 
+function Resolve-ExistingPathList {
+    param([string[]]$Paths)
+
+    $resolved = @()
+    foreach ($path in $Paths) {
+        $fullPath = ConvertTo-FullPath -Path $path -BasePath $repoRoot
+        if (Test-Path -LiteralPath $fullPath) {
+            $resolved += (Resolve-Path -LiteralPath $fullPath).ProviderPath
+        }
+    }
+    return @($resolved | Select-Object -Unique)
+}
+
 function Invoke-TestAppBuild {
     param([bool]$ShouldRun)
 
@@ -354,6 +374,9 @@ if ($LaunchSkip -lt 0) {
 }
 if ($LaunchCount -lt 0) {
     throw "-LaunchCount must be non-negative."
+}
+if ($Assembly -and $Tool -ne "ncu") {
+    throw "-Assembly is only supported with -Tool ncu."
 }
 
 $testAppRequired = (-not $DryRun) -and (-not $BuildIfMissing)
@@ -390,6 +413,8 @@ $resultParent = Split-Path -Parent $resultBaseFull
 
 $profilerExe = Resolve-NvidiaProfiler -RequestedTool $Tool -RequestedPath $ProfilerPath -Required (-not $DryRun)
 $targetArgs = @($dllDirFull) + $AppArgs
+$assemblyOutputPath = $null
+$assemblyArgs = @()
 
 if ($Tool -eq "ncu") {
     $profilerArgs = @("--force-overwrite")
@@ -418,10 +443,32 @@ if ($Tool -eq "ncu") {
     if ($LaunchCount -gt 0) {
         $profilerArgs += @("--launch-count", [string]$LaunchCount)
     }
+    if ($Assembly) {
+        if ($NcuSourceFolders.Count -eq 0) {
+            $NcuSourceFolders = @("siglib", "plugins\cuda")
+        }
+        $ncuSourceFoldersFull = Resolve-ExistingPathList -Paths $NcuSourceFolders
+        $profilerArgs += @("--import-source", "yes")
+        if ($ncuSourceFoldersFull.Count -gt 0) {
+            $profilerArgs += @("--source-folders", ($ncuSourceFoldersFull -join ","))
+        }
+    }
     $profilerArgs += $NcuArgs
     $profilerArgs += @($testAppFull)
     $profilerArgs += $targetArgs
     $expectedFiles = @("$resultBaseFull.ncu-rep")
+    if ($Assembly) {
+        $safeAssemblySource = $AssemblySource -replace '[^\w.-]', '_'
+        $assemblyOutputPath = "$resultBaseFull.source-$safeAssemblySource.txt"
+        $expectedFiles += $assemblyOutputPath
+        $assemblyArgs = @(
+            "--config-file", "off",
+            "--import", "$resultBaseFull.ncu-rep",
+            "--page", "source",
+            "--print-source", $AssemblySource,
+            "--log-file", $assemblyOutputPath
+        )
+    }
 }
 else {
     $statsValue = if ($Stats) { "true" } else { "false" }
@@ -467,6 +514,10 @@ foreach ($path in $expectedFiles) {
 if ($DryRun -or $ShowCommand) {
     Write-Host "Profiler command:"
     Write-Host (Format-CommandLine -Command $profilerExe -Arguments $profilerArgs)
+    if ($Assembly) {
+        Write-Host "Assembly command:"
+        Write-Host (Format-CommandLine -Command $profilerExe -Arguments $assemblyArgs)
+    }
 }
 
 if ($DryRun) {
@@ -484,6 +535,9 @@ try {
     Push-Location $workingDirectoryFull
     try {
         Invoke-ExternalCommand -Command $profilerExe -Arguments $profilerArgs -FailureMessage "$Tool failed"
+        if ($Assembly) {
+            Invoke-ExternalCommand -Command $profilerExe -Arguments $assemblyArgs -FailureMessage "$Tool assembly report failed"
+        }
         Write-Host "CUDA profile complete."
     }
     finally {

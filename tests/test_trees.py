@@ -46,6 +46,28 @@ class TestRoundTrip:
             assert pysiglib.idx_to_tree(idx, dim, deg, scalar_term=True) == tree
 
 
+class TestPlanarOrderedForestBasis:
+    def test_planar_trees_returns_ordered_forests(self):
+        basis = pysiglib.trees(2, 2, planar=True)
+        assert ((0,),) in basis
+        assert (0,) not in basis
+        assert ((0,), (1,)) in basis
+        assert ((1,), (0,)) in basis
+
+    def test_planar_idx_to_tree_returns_ordered_forest(self):
+        assert pysiglib.idx_to_tree(0, 2, 2, planar=True) == ((0,),)
+
+        forest = ((0,), (1,))
+        idx = pysiglib.tree_to_idx(forest, 2, 2, planar=True)
+        assert pysiglib.idx_to_tree(idx, 2, 2, planar=True) == forest
+
+    def test_planar_tree_to_idx_accepts_single_tree_shorthand(self):
+        assert (
+            pysiglib.tree_to_idx((0,), 2, 2, planar=True)
+            == pysiglib.tree_to_idx(((0,),), 2, 2, planar=True)
+        )
+
+
 class TestLengthMatch:
     @pytest.mark.parametrize("dim, deg", PARAMS)
     def test_trees_length_matches_branched_sig_length(self, dim, deg):
@@ -74,18 +96,17 @@ class TestEmptyTree:
 
 class TestScalarTermFlag:
     @pytest.mark.parametrize("dim, deg", [(2, 3), (3, 2)])
-    @pytest.mark.parametrize("tree_order", ["canonical", "recursive"])
-    def test_index_shift_between_scalar_term_formats(self, dim, deg, tree_order):
+    def test_index_shift_between_scalar_term_formats(self, dim, deg):
         # For scalar_term=True, None is at 0 and non-empty trees shift up by 1
         # relative to scalar_term=False indices.
         pysiglib.prepare_branched_sig(dim, deg)
-        non_empty = [t for t in pysiglib.trees(dim, deg, tree_order=tree_order) if t is not None]
+        non_empty = [t for t in pysiglib.trees(dim, deg) if t is not None]
         for t in non_empty:
-            idx_false = pysiglib.tree_to_idx(t, dim, deg, tree_order=tree_order, scalar_term=False)
-            idx_true = pysiglib.tree_to_idx(t, dim, deg, tree_order=tree_order, scalar_term=True)
+            idx_false = pysiglib.tree_to_idx(t, dim, deg, scalar_term=False)
+            idx_true = pysiglib.tree_to_idx(t, dim, deg, scalar_term=True)
             assert idx_true == idx_false + 1
-            assert pysiglib.idx_to_tree(idx_false, dim, deg, tree_order=tree_order, scalar_term=False) == t
-            assert pysiglib.idx_to_tree(idx_true, dim, deg, tree_order=tree_order, scalar_term=True) == t
+            assert pysiglib.idx_to_tree(idx_false, dim, deg, scalar_term=False) == t
+            assert pysiglib.idx_to_tree(idx_true, dim, deg, scalar_term=True) == t
 
     def test_empty_tree_requires_scalar_term(self):
         assert pysiglib.tree_to_idx(None, 2, 3, scalar_term=True) == 0
@@ -122,27 +143,27 @@ class TestCoefficientExtraction:
             idx = pysiglib.tree_to_idx((label,), dim, deg)
             np.testing.assert_allclose(bsig[idx], sig[label], atol=1e-10)
 
-    def test_planar_canonical_index_matches_planar_output(self):
+    def test_planar_index_matches_planar_output(self):
         dim, deg = 2, 3
         rng = np.random.default_rng(7)
         path = rng.standard_normal((8, dim)).astype(np.float64)
 
         pysiglib.prepare_branched_sig(dim, deg, planar=False)
-        bsig_nonplanar = pysiglib.branched_sig(path, deg, planar=False, tree_order="canonical")
+        bsig_nonplanar = pysiglib.branched_sig(path, deg, planar=False)
         pysiglib.prepare_branched_sig(dim, deg, planar=True)
-        bsig_planar = pysiglib.branched_sig(path, deg, planar=True, tree_order="canonical")
+        bsig_planar = pysiglib.branched_sig(path, deg, planar=True)
 
         tree = (((0,), 0), 0)
+        forest = (tree,)
         idx_nonplanar = pysiglib.tree_to_idx(tree, dim, deg, planar=False)
-        idx_planar = pysiglib.tree_to_idx(tree, dim, deg, planar=True)
+        idx_planar = pysiglib.tree_to_idx(forest, dim, deg, planar=True)
 
         # scalar_term=False default: lengths and indices shift down by 1 vs the
         # scalar_term=True convention.
         assert len(bsig_nonplanar) == 20
-        assert len(bsig_planar) == 22
-        assert idx_nonplanar == 6
+        assert len(bsig_planar) == pysiglib.branched_sig_length(dim, deg, planar=True)
         assert idx_planar != idx_nonplanar
-        assert pysiglib.idx_to_tree(idx_planar, dim, deg, planar=True) == tree
+        assert pysiglib.idx_to_tree(idx_planar, dim, deg, planar=True) == forest
         assert pysiglib.idx_to_tree(idx_nonplanar, dim, deg, planar=False) == tree
         assert bsig_planar[idx_planar] == pytest.approx(bsig_nonplanar[idx_nonplanar])
         assert bsig_planar[idx_nonplanar] != pytest.approx(bsig_nonplanar[idx_nonplanar])
@@ -154,85 +175,33 @@ class TestValidation:
         with pytest.raises(ValueError):
             pysiglib.idx_to_tree(bsig_len, 2, 3)
 
-    def test_invalid_tree_order(self):
-        with pytest.raises(ValueError, match="tree_order must be"):
-            pysiglib.tree_to_idx((0,), 2, 3, tree_order="weird")
-        with pytest.raises(ValueError, match="tree_order must be"):
-            pysiglib.idx_to_tree(0, 2, 3, tree_order="weird")
-        with pytest.raises(ValueError, match="tree_order must be"):
-            pysiglib.trees(2, 3, tree_order="weird")
-        with pytest.raises(ValueError, match="tree_order must be"):
-            pysiglib.trees_of_order(2, 1, tree_order="weird")
-
-
-# ---------------------------------------------------------------------------
-# Recursive tree order
-# ---------------------------------------------------------------------------
-
-TREE_ORDER_PARAMS = [
-    (dim, deg, tree_order, planar)
-    for dim, deg in PARAMS
-    for tree_order in ("canonical", "recursive")
-    for planar in (False, True)
-]
-
-
-class TestRecursiveTreeOrder:
-    @pytest.mark.parametrize("dim, deg, tree_order, planar", TREE_ORDER_PARAMS)
-    def test_idx_to_tree_to_idx_roundtrip(self, dim, deg, tree_order, planar):
+class TestImplementationOrder:
+    @pytest.mark.parametrize("dim, deg", PARAMS)
+    @pytest.mark.parametrize("planar", [False, True])
+    def test_idx_to_tree_to_idx_roundtrip(self, dim, deg, planar):
         bsig_len = pysiglib.branched_sig_length(dim, deg, planar=planar)
         for i in range(bsig_len):
-            tree = pysiglib.idx_to_tree(i, dim, deg, tree_order=tree_order, planar=planar)
-            assert pysiglib.tree_to_idx(tree, dim, deg, tree_order=tree_order, planar=planar) == i
+            tree = pysiglib.idx_to_tree(i, dim, deg, planar=planar)
+            assert pysiglib.tree_to_idx(tree, dim, deg, planar=planar) == i
 
-    @pytest.mark.parametrize("dim, deg, tree_order, planar", TREE_ORDER_PARAMS)
-    def test_trees_enumeration_matches_tree_to_idx(self, dim, deg, tree_order, planar):
+    @pytest.mark.parametrize("dim, deg", PARAMS)
+    @pytest.mark.parametrize("planar", [False, True])
+    def test_trees_enumeration_matches_tree_to_idx(self, dim, deg, planar):
         # ``trees(...)`` always includes the empty tree at index 0, matching the
         # scalar_term=True indexing convention.
-        all_trees = pysiglib.trees(dim, deg, tree_order=tree_order, planar=planar)
+        all_trees = pysiglib.trees(dim, deg, planar=planar)
         assert len(all_trees) == pysiglib.branched_sig_length(dim, deg, planar=planar, scalar_term=True)
         assert all_trees[0] is None
         for i, tree in enumerate(all_trees):
-            assert pysiglib.tree_to_idx(tree, dim, deg, tree_order=tree_order, planar=planar, scalar_term=True) == i
+            assert pysiglib.tree_to_idx(tree, dim, deg, planar=planar, scalar_term=True) == i
 
-    @pytest.mark.parametrize("dim, deg, tree_order, planar", TREE_ORDER_PARAMS)
-    def test_trees_of_order_consistency_with_trees(self, dim, deg, tree_order, planar):
+    @pytest.mark.parametrize("dim, deg", PARAMS)
+    @pytest.mark.parametrize("planar", [False, True])
+    def test_trees_of_order_consistency_with_trees(self, dim, deg, planar):
         """Concatenating trees_of_order per stratum reproduces trees()."""
         reconstructed = []
         for order in range(deg + 1):
             reconstructed.extend(
-                pysiglib.trees_of_order(dim, order, tree_order=tree_order, planar=planar)
+                pysiglib.trees_of_order(dim, order, planar=planar)
             )
-        assert tuple(reconstructed) == pysiglib.trees(
-            dim, deg, tree_order=tree_order, planar=planar
-        )
-
-    @pytest.mark.parametrize("dim, deg", [(2, 3), (3, 3)])
-    @pytest.mark.parametrize("planar", [False, True])
-    def test_recursive_index_matches_branched_sig_output(self, dim, deg, planar):
-        """tree_to_idx(..., tree_order="recursive") must match recursive bsig output."""
-        rng = np.random.default_rng(123)
-        path = rng.standard_normal((15, dim)).astype(np.float64)
-        pysiglib.prepare_branched_sig(dim, deg, planar=planar)
-
-        bsig_rec = pysiglib.branched_sig(path, deg, tree_order="recursive", planar=planar)
-        bsig_can = pysiglib.branched_sig(path, deg, tree_order="canonical", planar=planar)
-
-        # bsig outputs are scalar_term=False (default), so use the matching index convention.
-        # Skip the empty tree (None) since it has no entry in scalar_term=False bsigs.
-        for tree in pysiglib.trees(dim, deg, tree_order="canonical", planar=planar):
-            if tree is None:
-                continue
-            i_rec = pysiglib.tree_to_idx(tree, dim, deg, tree_order="recursive", planar=planar)
-            i_can = pysiglib.tree_to_idx(tree, dim, deg, tree_order="canonical", planar=planar)
-            np.testing.assert_allclose(bsig_rec[i_rec], bsig_can[i_can], atol=1e-10)
-
-    @pytest.mark.parametrize("dim, deg", PARAMS)
-    @pytest.mark.parametrize("planar", [False, True])
-    def test_recursive_is_permutation_of_canonical(self, dim, deg, planar):
-        """The recursive tree list is a permutation of the canonical list."""
-        canonical = pysiglib.trees(dim, deg, tree_order="canonical", planar=planar)
-        recursive = pysiglib.trees(dim, deg, tree_order="recursive", planar=planar)
-        assert set(canonical) == set(recursive)
-        assert recursive[0] is None  # empty tree anchors both orderings
-        assert canonical[0] is None
+        assert tuple(reconstructed) == pysiglib.trees(dim, deg, planar=planar)

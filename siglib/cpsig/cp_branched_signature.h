@@ -252,24 +252,58 @@ void butcher_product_inplace_(
 	const T* Y,
 	const BranchedSigCache& cache
 ) {
+	const uint64_t* order_index = cache.order_index.data();
+	const uint64_t* coproduct_offsets = cache.coproduct_offsets.data();
+	const uint64_t* coproduct_data = cache.coproduct_data.data();
+
+	if (cache.planar) {
+		for (int64_t order = static_cast<int64_t>(cache.max_nodes); order >= 1; --order) {
+			uint64_t start = order_index[order];
+			uint64_t end = order_index[order + 1];
+
+			for (uint64_t tree_idx = start; tree_idx < end; ++tree_idx) {
+				uint64_t flat_idx = tree_idx + 1;
+				T new_val = X[flat_idx] + Y[flat_idx];
+
+				uint64_t pos = coproduct_offsets[tree_idx];
+				uint64_t pos_end = coproduct_offsets[tree_idx + 1];
+
+				while (pos < pos_end) {
+					uint64_t has_forest = coproduct_data[pos++];
+					uint64_t trunk_flat = coproduct_data[pos++];
+					T term = Y[trunk_flat];
+
+					if (has_forest) {
+						term *= X[coproduct_data[pos++]];
+					}
+
+					new_val += term;
+				}
+
+				X[flat_idx] = new_val;
+			}
+		}
+		return;
+	}
+
 	for (int64_t order = static_cast<int64_t>(cache.max_nodes); order >= 1; --order) {
-		uint64_t start = cache.order_index[order];
-		uint64_t end = cache.order_index[order + 1];
+		uint64_t start = order_index[order];
+		uint64_t end = order_index[order + 1];
 
 		for (uint64_t tree_idx = start; tree_idx < end; ++tree_idx) {
 			uint64_t flat_idx = tree_idx + 1;
 			T new_val = X[flat_idx] + Y[flat_idx];
 
-			uint64_t pos = cache.coproduct_offsets[tree_idx];
-			uint64_t pos_end = cache.coproduct_offsets[tree_idx + 1];
+			uint64_t pos = coproduct_offsets[tree_idx];
+			uint64_t pos_end = coproduct_offsets[tree_idx + 1];
 
 			while (pos < pos_end) {
-				uint64_t num_forest = cache.coproduct_data[pos++];
-				uint64_t trunk_flat = cache.coproduct_data[pos++];
+				uint64_t num_forest = coproduct_data[pos++];
+				uint64_t trunk_flat = coproduct_data[pos++];
 				T term = Y[trunk_flat];
 
 				for (uint64_t j = 0; j < num_forest; ++j) {
-					term *= X[cache.coproduct_data[pos++]];
+					term *= X[coproduct_data[pos++]];
 				}
 
 				new_val += term;

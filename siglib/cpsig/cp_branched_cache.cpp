@@ -47,7 +47,7 @@ BranchedSigCacheRegistry& branched_sig_cache_registry() {
 // Disk cache serialization
 // ---------------------------------------------------------------------------
 
-static constexpr const char* branched_cache_version = "v2";
+static constexpr const char* branched_cache_version = "v3";
 
 static std::filesystem::path branched_cache_file_path(uint64_t dimension, uint64_t max_nodes, bool planar) {
 	const char* prefix = planar ? "planar_branched_" : "branched_";
@@ -109,7 +109,7 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool pla
 
 	deserialize_vector(in, tmp.order_index);
 
-	// inv_tree_factorial: bounded by total_length - 1 (num_trees).
+	// inv_tree_factorial: bounded by total_length - 1 (basis size).
 	uint64_t n;
 	in.read(reinterpret_cast<char*>(&n), sizeof(n));
 	if (!in || n > MAX_CACHE_VECTOR_SIZE || n + 1 > tmp.total_length)

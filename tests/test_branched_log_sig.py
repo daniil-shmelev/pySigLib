@@ -135,7 +135,6 @@ def test_branched_sig_to_log_sig_single_segment_cherry_vanishes():
         ((0,), (0,), 0),
         d,
         N,
-        tree_order="recursive",
         scalar_term=True,
     )
     np.testing.assert_allclose(out[cherry_idx], 0.0, atol=1e-14)
