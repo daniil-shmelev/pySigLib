@@ -501,6 +501,39 @@ static void BM_sig_kernel_backprop(benchmark::State& state) {
 }
 BENCHMARK(BM_sig_kernel_backprop)->Unit(benchmark::kMicrosecond);
 
+static void BM_branched_sig_kernel(benchmark::State& state) {
+    auto gram = random_data(16 * 31 * 31, 1);
+    for (auto& x : gram) x *= 0.01;
+    std::vector<double> out(16);
+    check(::branched_sig_kernel_d(
+        gram.data(), out.data(), 16, 3, 32, 32, 3, 0, 0, false),
+        "branched_sig_kernel_d");
+    for (auto _ : state) {
+        ::branched_sig_kernel_d(
+            gram.data(), out.data(), 16, 3, 32, 32, 3, 0, 0, false);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_kernel)->Unit(benchmark::kMicrosecond);
+
+static void BM_branched_sig_kernel_backprop(benchmark::State& state) {
+    auto gram = random_data(16 * 31 * 31, 1);
+    for (auto& x : gram) x *= 0.01;
+    auto deriv = random_data(16, 2);
+    std::vector<double> out(16 * 31 * 31);
+    check(::branched_sig_kernel_backprop_d(
+        gram.data(), out.data(), deriv.data(), nullptr,
+        16, 3, 32, 32, 3, 0, 0, false),
+        "branched_sig_kernel_backprop_d");
+    for (auto _ : state) {
+        ::branched_sig_kernel_backprop_d(
+            gram.data(), out.data(), deriv.data(), nullptr,
+            16, 3, 32, 32, 3, 0, 0, false);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_kernel_backprop)->Unit(benchmark::kMicrosecond);
+
 // =========================================================================
 // Branched sig / backprop / combine / combine_backprop
 // =========================================================================

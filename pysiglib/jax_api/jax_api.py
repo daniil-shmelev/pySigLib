@@ -47,6 +47,8 @@ from ..data_handlers import _infer_correction_degree
 from ..sig_coef import sig_coef as sig_coef_forward
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
+from ..branched_sig_kernel import branched_sig_kernel as branched_sig_kernel_forward
+from ..branched_sig_kernel import branched_sig_kernel_gram as branched_sig_kernel_gram_forward
 
 
 def _ensure_3d(t):
@@ -77,6 +79,8 @@ from ._ffi import (
     log_sig_combine_backprop_ffi_call,
     sig_kernel_pde_ffi_call,
     sig_kernel_pde_backprop_ffi_call,
+    branched_sig_kernel_pde_ffi_call,
+    branched_sig_kernel_pde_backprop_ffi_call,
     logsig_to_sig_ffi_call,
     logsig_to_sig_backprop_ffi_call,
     log_sig_from_path_ffi_call,
@@ -993,6 +997,169 @@ def sig_kernel_gram(
 
 
 sig_kernel_gram.__doc__ = sig_kernel_gram_forward.__doc__
+
+
+# ---------------------------------------------------------------------------
+# branched_sig_kernel PDE solver (FFI)
+# ---------------------------------------------------------------------------
+
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
+def _branched_sig_kernel_pde(gram, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
+    return branched_sig_kernel_pde_ffi_call(
+        gram, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
+
+
+def _branched_sig_kernel_pde_fwd(gram, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
+    result = branched_sig_kernel_pde_ffi_call(
+        gram, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
+    return result, gram
+
+
+def _branched_sig_kernel_pde_bwd(dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs, gram, cotangent):
+    empty_stack = jnp.empty((0,), dtype=gram.dtype)
+    grad_gram = branched_sig_kernel_pde_backprop_ffi_call(
+        gram, cotangent, empty_stack, dimension, depth,
+        dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
+    return (grad_gram,)
+
+
+_branched_sig_kernel_pde.defvjp(_branched_sig_kernel_pde_fwd, _branched_sig_kernel_pde_bwd)
+
+
+# ---------------------------------------------------------------------------
+# branched_sig_kernel
+# ---------------------------------------------------------------------------
+
+
+def branched_sig_kernel(
+    path1,
+    path2,
+    depth: int,
+    dyadic_order,
+    *,
+    static_kernel=None,
+    time_aug: bool = False,
+    lead_lag: bool = False,
+    end_time: float = 1.0,
+    n_jobs: int = 1,
+    return_grid: bool = False,
+    normalize: bool = False,
+):
+    ensure_registered()
+
+    path1 = jnp.asarray(path1)
+    path2 = jnp.asarray(path2)
+
+    if path1.ndim < 2 or path2.ndim < 2:
+        raise ValueError("path1 and path2 must have at least rank 2.")
+    if path1.ndim != path2.ndim:
+        raise ValueError("path1 and path2 must have the same ndim.")
+
+    check_type(depth, "depth", int)
+    check_non_neg(depth, "depth")
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
+    check_n_jobs(n_jobs)
+    if normalize and return_grid:
+        raise ValueError("normalize=True cannot be used with return_grid=True")
+
+    if time_aug or lead_lag:
+        path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+        path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+
+    if path1.ndim == 2:
+        path1 = path1[None, :, :]
+        path2 = path2[None, :, :]
+        squeeze = True
+    else:
+        squeeze = False
+
+    if static_kernel is None:
+        from .static_kernels_jax import LinearKernel as _DefaultKernel
+        gram = _DefaultKernel()(path1, path2)
+    else:
+        gram = static_kernel(path1, path2)
+
+    dimension = path1.shape[-1]
+    do1, do2 = parse_dyadic_order(dyadic_order)
+    result = _branched_sig_kernel_pde(gram, dimension, depth, do1, do2, return_grid, n_jobs)
+
+    if normalize:
+        k1 = branched_sig_kernel(path1, path1, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        k2 = branched_sig_kernel(path2, path2, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        result = result / jnp.sqrt(jnp.clip(k1 * k2, 1e-30))
+
+    if squeeze:
+        result = result.squeeze(0)
+    return result
+
+
+branched_sig_kernel.__doc__ = branched_sig_kernel_forward.__doc__
+
+
+def branched_sig_kernel_gram(
+    path1,
+    path2,
+    depth: int,
+    dyadic_order,
+    *,
+    static_kernel=None,
+    time_aug: bool = False,
+    lead_lag: bool = False,
+    end_time: float = 1.0,
+    n_jobs: int = 1,
+    max_batch: int = -1,
+    return_grid: bool = False,
+    normalize: bool = False,
+):
+    path1 = jnp.asarray(path1)
+    path2 = jnp.asarray(path2)
+
+    if path1.ndim < 2 or path2.ndim < 2:
+        raise ValueError("path1 and path2 must have at least 2 dimensions.")
+
+    check_type(depth, "depth", int)
+    check_non_neg(depth, "depth")
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
+    check_type(max_batch, "max_batch", int)
+    if max_batch == 0 or max_batch < -1:
+        raise ValueError("max_batch must be a positive integer or -1")
+    if normalize and return_grid:
+        raise ValueError("normalize=True cannot be used with return_grid=True")
+
+    batch_shape_1 = tuple(path1.shape[:-2])
+    batch_shape_2 = tuple(path2.shape[:-2])
+
+    path1 = _ensure_3d(path1)
+    path2 = _ensure_3d(path2)
+    batch2 = path2.shape[0]
+
+    if time_aug or lead_lag:
+        path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+        path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+
+    def _row(p1_single):
+        p1_batch = jnp.broadcast_to(p1_single[None], (batch2,) + p1_single.shape)
+        return branched_sig_kernel(
+            p1_batch, path2, depth, dyadic_order, static_kernel=static_kernel,
+            n_jobs=n_jobs, return_grid=return_grid)
+
+    res = jax.lax.map(_row, path1)
+
+    if normalize:
+        d1 = branched_sig_kernel(path1, path1, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        d2 = branched_sig_kernel(path2, path2, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        res = res / jnp.sqrt(jnp.clip(d1[:, None] * d2[None, :], 1e-30))
+
+    out_shape = batch_shape_1 + batch_shape_2
+    if return_grid:
+        out_shape = out_shape + (res.shape[-2], res.shape[-1])
+    res = res.reshape(out_shape) if out_shape else res.squeeze()
+    return res
+
+
+branched_sig_kernel_gram.__doc__ = branched_sig_kernel_gram_forward.__doc__
 
 
 # ---------------------------------------------------------------------------

@@ -118,6 +118,14 @@ _TARGETS = {
         "cpu": ("pysiglib_sig_kernel_pde_backprop_cpu", "PySigLibSigKernelPdeBackpropCpu"),
         "cuda": ("pysiglib_sig_kernel_pde_backprop_cuda", "PySigLibSigKernelPdeBackpropCuda"),
     },
+    "branched_sig_kernel_pde": {
+        "cpu": ("pysiglib_branched_sig_kernel_pde_cpu", "PySigLibBranchedSigKernelPdeCpu"),
+        "cuda": ("pysiglib_branched_sig_kernel_pde_cuda", "PySigLibBranchedSigKernelPdeCuda"),
+    },
+    "branched_sig_kernel_pde_backprop": {
+        "cpu": ("pysiglib_branched_sig_kernel_pde_backprop_cpu", "PySigLibBranchedSigKernelPdeBackpropCpu"),
+        "cuda": ("pysiglib_branched_sig_kernel_pde_backprop_cuda", "PySigLibBranchedSigKernelPdeBackpropCuda"),
+    },
     "logsig_to_sig": {
         "cpu": ("pysiglib_logsig_to_sig_cpu", "PySigLibLogSigToSigCpu"),
         "cuda": ("pysiglib_logsig_to_sig_cuda", "PySigLibLogSigToSigCuda"),
@@ -498,6 +506,33 @@ def sig_kernel_pde_backprop_ffi_call(gram, derivs, k_grid, dimension, dyadic_ord
                        dyadic_order_2=np.int64(dyadic_order_2),
                        return_grid=np.bool_(return_grid), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("sig_kernel_pde_backprop", (gram, derivs, k_grid), out_type, call_kwargs)
+
+
+def branched_sig_kernel_pde_ffi_call(gram, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
+    _normalize_dtype(gram.dtype)
+    if return_grid:
+        L1m1, L2m1 = gram.shape[-2], gram.shape[-1]
+        gl1 = (L1m1 << dyadic_order_1) + 1
+        gl2 = (L2m1 << dyadic_order_2) + 1
+        out_shape = (*gram.shape[:-2], gl1, gl2)
+    else:
+        out_shape = gram.shape[:-2]
+    out_type = jax.ShapeDtypeStruct(out_shape, gram.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), depth=np.int64(depth),
+                       dyadic_order_1=np.int64(dyadic_order_1),
+                       dyadic_order_2=np.int64(dyadic_order_2),
+                       return_grid=np.bool_(return_grid), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("branched_sig_kernel_pde", (gram,), out_type, call_kwargs)
+
+
+def branched_sig_kernel_pde_backprop_ffi_call(gram, derivs, k_stack, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
+    _check_same_dtype(gram, derivs, k_stack)
+    out_type = jax.ShapeDtypeStruct(gram.shape, gram.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), depth=np.int64(depth),
+                       dyadic_order_1=np.int64(dyadic_order_1),
+                       dyadic_order_2=np.int64(dyadic_order_2),
+                       return_grid=np.bool_(return_grid), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("branched_sig_kernel_pde_backprop", (gram, derivs, k_stack), out_type, call_kwargs)
 
 
 # ---------------------------------------------------------------------------
