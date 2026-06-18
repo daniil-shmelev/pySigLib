@@ -1,0 +1,3 @@
+[submodule "bindings/julia/SigLib.jl"]
+	path = bindings/julia/SigLib.jl
+	url = https://github.com/luke-a-thompson/SigLib.jl
