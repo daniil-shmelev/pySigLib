@@ -16,9 +16,7 @@
 #pragma once
 #include "cppch.h"
 #include "log_sig_cache.h"
-#include "cp_bch.h"
-#include "cp_branched_cache.h"
-#include "cp_volterra_signature.h"
+#include "macros.h"
 
 const char* version = "v1";
 const char* cache_folder_name = "pysiglib_cache";
@@ -32,15 +30,16 @@ BasisCacheRegistry& basis_cache_registry() {
 	static BasisCacheRegistry r;
 	return r;
 }
+}  // anonymous namespace
+
+static std::filesystem::path cache_dir;
+static std::shared_mutex cache_dir_mu;
+
 void clear_basis_cache() {
 	auto& reg = basis_cache_registry();
 	std::unique_lock lk(reg.mu);
 	reg.map.clear();
 }
-}  // anonymous namespace
-
-static std::filesystem::path cache_dir;
-static std::shared_mutex cache_dir_mu;
 
 std::filesystem::path get_cache_dir() {
 	{
@@ -95,6 +94,11 @@ void set_cache_dir_(const char* dir) {
 	}
 	std::unique_lock lk(cache_dir_mu);
 	cache_dir = dir_path;
+}
+
+void clear_cache_dir_() {
+	std::unique_lock lk(cache_dir_mu);
+	cache_dir.clear();
 }
 
 void set_default_cache_dir() {
@@ -222,38 +226,10 @@ const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int metho
 	return *(p.first->second);
 }
 
-void clear_cache_(bool use_disk) {
-	auto dir = get_cache_dir();
-
-	clear_basis_cache();
-	clear_bch_cache();
-	clear_branched_sig_cache();
-	clear_prepared_volterra_sig_cache();
-
-	if (use_disk)
-		std::filesystem::remove_all(dir / cache_folder_name);
-}
-
 extern "C" {
-
-	CPSIG_API int set_cache_dir(const char* dir) noexcept {
-		SAFE_CALL(set_cache_dir_(dir));
-	}
 
 	CPSIG_API int prepare_log_sig(uint64_t dimension, uint64_t degree, int method, bool use_disk) noexcept {
 		SAFE_CALL(set_basis_cache(dimension, degree, method, use_disk));
-	}
-
-	CPSIG_API int clear_cache(bool use_disk) noexcept {
-		SAFE_CALL(clear_cache_(use_disk));
-	}
-
-	CPSIG_API void cpsig_shutdown() noexcept {
-		try { clear_basis_cache();                                       } catch (...) {}
-		try { clear_bch_cache();                                         } catch (...) {}
-		try { clear_branched_sig_cache();                                } catch (...) {}
-		try { clear_prepared_volterra_sig_cache();                       } catch (...) {}
-		try { std::unique_lock lk(cache_dir_mu);   cache_dir.clear();    } catch (...) {}
 	}
 
 }

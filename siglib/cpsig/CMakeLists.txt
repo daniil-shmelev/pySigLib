@@ -1,4 +1,5 @@
 add_library(cpsig SHARED
+    cp_cache.cpp
     cp_bch.cpp
     cp_branched_cache.cpp
     cp_branched_log_signature.cpp

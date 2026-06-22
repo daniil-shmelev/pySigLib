@@ -6,6 +6,7 @@ API Reference
 
    /pages/path_transformations
    /pages/words
+   /pages/cache_management
    /pages/signatures
    /pages/signature_coefficients
    /pages/log_signatures

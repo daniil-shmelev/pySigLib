@@ -35,6 +35,7 @@ std::filesystem::path get_cache_dir();
 
 void set_default_cache_dir();
 void set_cache_dir_(const char* dir);
+void clear_cache_dir_();
 
 void serialize_vector(std::ostream& out, const std::vector<uint64_t>& v);
 void deserialize_vector(std::istream& in, std::vector<uint64_t>& out);
