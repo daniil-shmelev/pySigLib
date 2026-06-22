@@ -259,6 +259,57 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
+	/** @defgroup volterra_sig_functions Volterra signature functions
+	* @{
+	*/
+
+	/**
+	* @brief Prepares and caches the data needed for repeated Volterra signature computations, returning a handle.
+	* @param lambda_diag Pointer to the diagonal entries of the state matrix Lambda, size = `state_dimension`.
+	* @param A Pointer to the projection tensors (row-major), size = `num_components * target_dimension * dimension`.
+	* @param b Pointer to the readout weights (row-major), size = `num_components * state_dimension`.
+	* @param dimension Dimension of the path.
+	* @param num_components Number of kernel components.
+	* @param target_dimension Target (projected) dimension of the Volterra signature.
+	* @param state_dimension State dimension of the diagonal Lambda realization.
+	* @param degree Truncation degree of the signature.
+	* @param dt Uniform time step between consecutive path samples. Must be positive.
+	* @param readout_lag Non-negative readout lag applied after the final path sample.
+	* @param quad_order Quadrature order used by the exact evaluation scheme. Must be positive.
+	* @param handle Pointer to a `uint64_t` receiving the prepared kernel handle, for use with `volterra_sig_f` and `free_volterra_sig_f`.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int prepare_volterra_sig_f(const float* lambda_diag, const float* A, const float* b, uint64_t dimension, uint64_t num_components, uint64_t target_dimension, uint64_t state_dimension, uint64_t degree, float dt, float readout_lag, uint64_t quad_order, uint64_t* handle) noexcept;
+	/** @brief */
+	[[nodiscard]] CPSIG_API int prepare_volterra_sig_d(const double* lambda_diag, const double* A, const double* b, uint64_t dimension, uint64_t num_components, uint64_t target_dimension, uint64_t state_dimension, uint64_t degree, double dt, double readout_lag, uint64_t quad_order, uint64_t* handle) noexcept;
+
+	/**
+	* @brief Releases the data prepared by `prepare_volterra_sig_f`.
+	* @param handle Handle returned by `prepare_volterra_sig_f`.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int free_volterra_sig_f(uint64_t handle) noexcept;
+	/** @brief */
+	[[nodiscard]] CPSIG_API int free_volterra_sig_d(uint64_t handle) noexcept;
+
+	/**
+	* @brief Computes the truncated Volterra signatures of a batch of paths using a prepared kernel.
+	* @param path Pointer to path batch data (row-major), size = `batch_size * length * dimension`.
+	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * (scalar_term ? sig_length(target_dimension, degree) : sig_length(target_dimension, degree) - 1)`, where `target_dimension` and `degree` are the values passed to `prepare_volterra_sig_f`.
+	* @param handle Handle returned by `prepare_volterra_sig_f`.
+	* @param batch_size Batch size of the paths.
+	* @param dimension Dimension of the path. Must match the dimension passed to `prepare_volterra_sig_f`.
+	* @param length Length of the path.
+	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all
+	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
+	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int volterra_sig_f(const float* path, float* out, uint64_t handle, uint64_t batch_size, uint64_t dimension, uint64_t length, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @brief */
+	[[nodiscard]] CPSIG_API int volterra_sig_d(const double* path, double* out, uint64_t handle, uint64_t batch_size, uint64_t dimension, uint64_t length, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @} */
+
 	/** @defgroup sig_backprop_functions Signature backprop functions
 	* @{
 	*/

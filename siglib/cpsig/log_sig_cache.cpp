@@ -18,6 +18,7 @@
 #include "log_sig_cache.h"
 #include "cp_bch.h"
 #include "cp_branched_cache.h"
+#include "cp_volterra_signature.h"
 
 const char* version = "v1";
 const char* cache_folder_name = "pysiglib_cache";
@@ -227,6 +228,7 @@ void clear_cache_(bool use_disk) {
 	clear_basis_cache();
 	clear_bch_cache();
 	clear_branched_sig_cache();
+	clear_prepared_volterra_sig_cache();
 
 	if (use_disk)
 		std::filesystem::remove_all(dir / cache_folder_name);
@@ -250,6 +252,7 @@ extern "C" {
 		try { clear_basis_cache();                                       } catch (...) {}
 		try { clear_bch_cache();                                         } catch (...) {}
 		try { clear_branched_sig_cache();                                } catch (...) {}
+		try { clear_prepared_volterra_sig_cache();                       } catch (...) {}
 		try { std::unique_lock lk(cache_dir_mu);   cache_dir.clear();    } catch (...) {}
 	}
 

@@ -77,6 +77,104 @@ void example_batch_signature_cuda_d(
     std::cout << "done\n";
 }
 
+
+void example_volterra_sig_d(
+    int n_jobs,
+    int num_runs
+) {
+    print_header("Volterra Signature Double");
+
+    const uint64_t batch_size = 1;
+    const uint64_t dimension = 3;
+    const uint64_t length = 4;
+    const uint64_t num_components = 2;
+    const uint64_t target_dimension = 2;
+    const uint64_t state_dimension = 2;
+    const uint64_t degree = 3;
+    const double dt = 0.2;
+    const double readout_lag = 0.1;
+    const bool scalar_term = true;
+    const uint64_t quad_order = 32;
+
+    std::vector<double> path = {
+        0.0, 0.0, 0.0,
+        0.2, -0.1, 0.4,
+        0.5, 0.3, -0.2,
+        0.9, 0.1, 0.6
+    };
+    std::vector<double> lambda_diag = { 0.25, 1.1 };
+    std::vector<double> A = {
+        1.0, 0.2, -0.1,
+        0.0, 0.5, 0.3,
+        -0.4, 0.1, 0.6,
+        0.7, -0.2, 0.0
+    };
+    std::vector<double> b = {
+        0.8, -0.1,
+        0.3, 0.4
+    };
+
+    const uint64_t out_size = sig_length(target_dimension, degree) * batch_size;
+    std::vector<double> out(out_size, 0.);
+    uint64_t handle = 0;
+
+    int err = prepare_volterra_sig_d(
+        lambda_diag.data(),
+        A.data(),
+        b.data(),
+        dimension,
+        num_components,
+        target_dimension,
+        state_dimension,
+        degree,
+        dt,
+        readout_lag,
+        quad_order,
+        &handle
+    );
+    if (err)
+        throw std::runtime_error("prepare_volterra_sig_d failed");
+
+    err = volterra_sig_d(
+        path.data(),
+        out.data(),
+        handle,
+        batch_size,
+        dimension,
+        length,
+        scalar_term,
+        n_jobs
+    );
+    if (err)
+        throw std::runtime_error("volterra_sig_d failed");
+
+    std::cout << "output length: " << out_size << "\n";
+    std::cout << "output:";
+    for (double value : out)
+        std::cout << " " << value;
+    std::cout << "\n";
+
+    time_function(
+        num_runs,
+        volterra_sig_d,
+        path.data(),
+        out.data(),
+        handle,
+        batch_size,
+        dimension,
+        length,
+        scalar_term,
+        n_jobs
+    );
+
+    err = free_volterra_sig_d(handle);
+    if (err)
+        throw std::runtime_error("free_volterra_sig_d failed");
+
+    std::cout << "done\n";
+}
+
+
 void example_batch_signature_kernel_f(
     uint64_t batch_size,
     uint64_t dimension,

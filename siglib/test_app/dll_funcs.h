@@ -50,6 +50,13 @@ using signature_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, 
 
 using signature_f_fn = int(CDECL_*)(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, bool, int, const float*, uint64_t, uint64_t, uint64_t);
 
+using prepare_volterra_sig_d_fn = int(CDECL_*)(const double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, double, double, uint64_t, uint64_t*);
+using prepare_volterra_sig_f_fn = int(CDECL_*)(const float*, const float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, float, float, uint64_t, uint64_t*);
+using free_volterra_sig_d_fn = int(CDECL_*)(uint64_t);
+using free_volterra_sig_f_fn = int(CDECL_*)(uint64_t);
+using volterra_sig_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, int);
+using volterra_sig_f_fn = int(CDECL_*)(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, int);
+
 using sig_kernel_f_fn = int(CDECL_*)(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool, int);
 
 using sig_kernel_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool, int);
@@ -100,6 +107,12 @@ extern sig_length_fn sig_length;
 extern log_sig_length_fn log_sig_length;
 extern signature_d_fn signature_d;
 extern signature_f_fn signature_f;
+extern prepare_volterra_sig_d_fn prepare_volterra_sig_d;
+extern prepare_volterra_sig_f_fn prepare_volterra_sig_f;
+extern free_volterra_sig_d_fn free_volterra_sig_d;
+extern free_volterra_sig_f_fn free_volterra_sig_f;
+extern volterra_sig_d_fn volterra_sig_d;
+extern volterra_sig_f_fn volterra_sig_f;
 extern sig_kernel_f_fn sig_kernel_f;
 extern sig_kernel_d_fn sig_kernel_d;
 extern sig_combine_cuda_d_fn sig_combine_cuda_d;

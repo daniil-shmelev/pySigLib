@@ -397,6 +397,36 @@ CPSIG.signature_f.restype = c_int
 CPSIG.signature_d.argtypes = (POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, c_double, c_bool, c_bool, c_int, POINTER(c_double), c_uint64, c_uint64, c_uint64)
 CPSIG.signature_d.restype = c_int
 
+######################################################
+# prepare_volterra_sig
+######################################################
+
+CPSIG.prepare_volterra_sig_f.argtypes = (POINTER(c_float), POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_float, c_float, c_uint64, POINTER(c_uint64))
+CPSIG.prepare_volterra_sig_f.restype = c_int
+
+CPSIG.prepare_volterra_sig_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_double, c_double, c_uint64, POINTER(c_uint64))
+CPSIG.prepare_volterra_sig_d.restype = c_int
+
+######################################################
+# free_volterra_sig
+######################################################
+
+CPSIG.free_volterra_sig_f.argtypes = (c_uint64,)
+CPSIG.free_volterra_sig_f.restype = c_int
+
+CPSIG.free_volterra_sig_d.argtypes = (c_uint64,)
+CPSIG.free_volterra_sig_d.restype = c_int
+
+######################################################
+# volterra_sig
+######################################################
+
+CPSIG.volterra_sig_f.argtypes = (POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_int)
+CPSIG.volterra_sig_f.restype = c_int
+
+CPSIG.volterra_sig_d.argtypes = (POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_int)
+CPSIG.volterra_sig_d.restype = c_int
+
 if BUILT_WITH_CUDA:
     ######################################################
     # signature_cuda

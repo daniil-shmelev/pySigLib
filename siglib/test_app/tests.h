@@ -38,6 +38,11 @@ void example_batch_signature_cuda_d(
 	int num_runs = 50
 );
 
+void example_volterra_sig_d(
+	int n_jobs = 1,
+	int num_runs = 1
+);
+
 void example_batch_signature_kernel_f(
 	uint64_t batch_size = 100,
 	uint64_t dimension = 5,

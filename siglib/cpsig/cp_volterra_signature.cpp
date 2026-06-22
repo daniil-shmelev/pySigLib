@@ -1,0 +1,860 @@
+/* Copyright 2026 Daniil Shmelev
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * ========================================================================= */
+
+#include "cppch.h"
+#include "cpsig.h"
+#include "cp_utils.h"
+#include "cp_volterra_signature.h"
+#include "macros.h"
+#include "multithreading.h"
+
+#include <atomic>
+#include <complex>
+#include <mutex>
+#include <type_traits>
+#include <unordered_map>
+
+namespace {
+
+template<std::floating_point T>
+T phi1_neg(T x) {
+	const T ax = std::abs(x);
+	if (ax < static_cast<T>(1e-5)) {
+		const T x2 = x * x;
+		const T x3 = x2 * x;
+		const T x4 = x3 * x;
+		return static_cast<T>(1) - x / static_cast<T>(2) + x2 / static_cast<T>(6)
+			- x3 / static_cast<T>(24) + x4 / static_cast<T>(120);
+	}
+	return (static_cast<T>(1) - std::exp(-x)) / x;
+}
+
+template<std::floating_point T>
+struct DiagFsskCoefficients {
+	std::vector<T> E;
+	std::vector<T> psi;
+	std::vector<T> phi;
+	std::vector<uint64_t> mi_level_index;
+	std::vector<uint64_t> minus_index;
+};
+
+template<std::floating_point T>
+struct VolterraKernelCache {
+	std::vector<T> A;
+	std::vector<T> readout_weights;
+	DiagFsskCoefficients<T> coef;
+	// Derived layout, depends only on target_dimension/degree, built once at prepare time.
+	std::vector<uint64_t> level_index;
+	std::vector<uint64_t> mi_off;
+	std::vector<uint64_t> mi_ts;
+	uint64_t dimension = 0;
+	uint64_t num_components = 0;
+	uint64_t target_dimension = 0;
+	uint64_t state_dimension = 0;
+	uint64_t degree = 0;
+	uint64_t sig_len = 0;
+	uint64_t state_len = 0;
+	uint64_t f_len = 0;
+	uint64_t mi_total = 0;
+};
+
+// Per-thread scratch reused across every path in a batch chunk.
+template<std::floating_point T>
+struct VolterraWorkspace {
+	explicit VolterraWorkspace(const VolterraKernelCache<T>& prepared)
+		: state(prepared.num_components * prepared.state_dimension * prepared.state_len),
+		next_state(prepared.num_components * prepared.state_dimension * prepared.state_len),
+		y(prepared.num_components * prepared.target_dimension),
+		dx(prepared.dimension),
+		F(prepared.state_dimension * prepared.f_len),
+		G(prepared.num_components * prepared.state_dimension * prepared.state_dimension * prepared.f_len),
+		B(prepared.state_dimension * prepared.f_len),
+		shuffle_tensors(prepared.mi_total)
+	{}
+
+	std::vector<T> state;
+	std::vector<T> next_state;
+	std::vector<T> y;
+	std::vector<T> dx;
+	std::vector<T> F;
+	std::vector<T> G;
+	std::vector<T> B;
+	std::vector<T> shuffle_tensors;
+};
+
+uint64_t checked_product(uint64_t a, uint64_t b, const char* name) {
+	if (a != 0 && b > UINT64_MAX / a)
+		throw std::overflow_error(std::string(name) + " overflow");
+	return a * b;
+}
+
+uint64_t checked_sum(uint64_t a, uint64_t b, const char* name) {
+	if (a > UINT64_MAX - b)
+		throw std::overflow_error(std::string(name) + " overflow");
+	return a + b;
+}
+
+uint64_t populate_multiindex_tensor_layout(
+	uint64_t* mi_off,
+	uint64_t* mi_ts,
+	const uint64_t* mi_level_index,
+	uint64_t target_dimension,
+	uint64_t n_levels
+) {
+	uint64_t off = 0;
+	uint64_t ts = 1;
+	for (uint64_t L = 0; L < n_levels; ++L) {
+		const uint64_t start = mi_level_index[L];
+		const uint64_t end = mi_level_index[L + 1];
+		if (end < start)
+			throw std::invalid_argument("volterra_sig invalid multi-index layout");
+		const uint64_t mi_count = end - start;
+		mi_off[L] = off;
+		mi_ts[L] = ts;
+		const uint64_t level_size = checked_product(mi_count, ts, "volterra_sig shuffle workspace");
+		off = checked_sum(off, level_size, "volterra_sig shuffle workspace");
+		if (L + 1 < n_levels)
+			ts = checked_product(ts, target_dimension, "volterra_sig shuffle workspace");
+	}
+	return off;
+}
+
+void append_multiindices_for_level(
+	uint64_t q,
+	uint64_t pos,
+	uint64_t remaining,
+	std::vector<uint64_t>& current,
+	std::vector<uint64_t>& multiindices
+) {
+	if (pos + 1 == q) {
+		current[pos] = remaining;
+		multiindices.insert(multiindices.end(), current.begin(), current.end());
+		return;
+	}
+
+	for (uint64_t value = remaining;; --value) {
+		current[pos] = value;
+		append_multiindices_for_level(q, pos + 1, remaining - value, current, multiindices);
+		if (value == 0)
+			break;
+	}
+}
+
+bool multiindex_matches_minus(
+	const std::vector<uint64_t>& multiindices,
+	uint64_t q,
+	uint64_t candidate,
+	uint64_t idx,
+	uint64_t p
+) {
+	const uint64_t* lhs = multiindices.data() + candidate * q;
+	const uint64_t* rhs = multiindices.data() + idx * q;
+	for (uint64_t i = 0; i < q; ++i) {
+		const uint64_t target = rhs[i] - (i == p ? 1 : 0);
+		if (lhs[i] != target)
+			return false;
+	}
+	return true;
+}
+
+void populate_multiindex_layout(
+	uint64_t q,
+	uint64_t max_degree,
+	std::vector<uint64_t>& level_index,
+	std::vector<uint64_t>& multiindices,
+	std::vector<uint64_t>& minus_index
+) {
+	level_index.resize(max_degree + 2);
+	std::vector<uint64_t> current(q, 0);
+
+	for (uint64_t level = 0; level <= max_degree; ++level) {
+		level_index[level] = multiindices.size() / q;
+		append_multiindices_for_level(q, 0, level, current, multiindices);
+	}
+	level_index[max_degree + 1] = multiindices.size() / q;
+
+	const uint64_t total = level_index[max_degree + 1];
+	minus_index.assign(total * q, UINT64_MAX);
+	for (uint64_t level = 1; level <= max_degree; ++level) {
+		const uint64_t start = level_index[level];
+		const uint64_t end = level_index[level + 1];
+		const uint64_t prev_start = level_index[level - 1];
+		const uint64_t prev_end = level_index[level];
+		for (uint64_t idx = start; idx < end; ++idx) {
+			const uint64_t* mi = multiindices.data() + idx * q;
+			for (uint64_t p = 0; p < q; ++p) {
+				if (mi[p] == 0)
+					continue;
+				for (uint64_t candidate = prev_start; candidate < prev_end; ++candidate) {
+					if (multiindex_matches_minus(multiindices, q, candidate, idx, p)) {
+						minus_index[idx * q + p] = candidate;
+						break;
+					}
+				}
+			}
+		}
+	}
+}
+
+template<std::floating_point T>
+std::complex<T> multiindex_gamma(
+	const uint64_t* multiindex,
+	uint64_t num_components,
+	const std::vector<std::complex<T>>& beta
+) {
+	std::complex<T> acc(static_cast<T>(1), static_cast<T>(0));
+	for (uint64_t p = 0; p < num_components; ++p) {
+		for (uint64_t i = 0; i < multiindex[p]; ++i)
+			acc *= beta[p];
+	}
+	return acc;
+}
+
+template<std::floating_point T>
+DiagFsskCoefficients<T> build_diag_fssk_coefficients(
+	const T* lambda_diag,
+	const T* b,
+	uint64_t num_components,
+	uint64_t state_dimension,
+	uint64_t degree,
+	T dt,
+	uint64_t quad_order
+) {
+	DiagFsskCoefficients<T> coef;
+	coef.E.resize(state_dimension);
+	for (uint64_t r = 0; r < state_dimension; ++r)
+		coef.E[r] = std::exp(-lambda_diag[r] * dt);
+
+	if (degree == 0)
+		return coef;
+
+	std::vector<uint64_t> multiindices;
+	populate_multiindex_layout(
+		num_components, degree - 1, coef.mi_level_index, multiindices, coef.minus_index);
+	const uint64_t mi_len_f = coef.mi_level_index[degree];
+	const uint64_t mi_len_g = degree >= 2 ? coef.mi_level_index[degree - 1] : 0;
+	coef.psi.assign(mi_len_f * state_dimension, static_cast<T>(0));
+	coef.phi.assign(num_components * mi_len_g * state_dimension * state_dimension, static_cast<T>(0));
+
+	for (uint64_t r = 0; r < state_dimension; ++r)
+		coef.psi[r] = phi1_neg(lambda_diag[r] * dt);
+
+	const T pi = std::acos(static_cast<T>(-1));
+	using C = std::complex<T>;
+
+	for (uint64_t j = 1; j <= quad_order; ++j) {
+		const T theta = (static_cast<T>(2 * j - 1) * pi) / static_cast<T>(2 * quad_order);
+		const C zeta = static_cast<T>(2 * quad_order)
+			* C(static_cast<T>(0.1309) - static_cast<T>(0.1194) * theta * theta,
+				static_cast<T>(0.25) * theta);
+		const C slope(static_cast<T>(0.25), static_cast<T>(0.2388) * theta);
+		const C ez = std::exp(zeta);
+		const C omega = ez * slope;
+		const C tilde_omega = ez * slope / zeta;
+
+		std::vector<C> inv(state_dimension);
+		for (uint64_t r = 0; r < state_dimension; ++r)
+			inv[r] = static_cast<T>(1) / (zeta + dt * lambda_diag[r]);
+
+		std::vector<C> beta(num_components, C(static_cast<T>(0), static_cast<T>(0)));
+		std::vector<C> u(num_components * state_dimension);
+		for (uint64_t p = 0; p < num_components; ++p) {
+			for (uint64_t r = 0; r < state_dimension; ++r) {
+				const C val = b[p * state_dimension + r] * inv[r];
+				u[p * state_dimension + r] = val;
+				beta[p] += val;
+			}
+		}
+
+		// psi covers word lengths 1..degree-1, phi covers 0..degree-2. Walk the
+		// union once so multiindex_gamma is evaluated a single time per index.
+		for (uint64_t word_len = 0; word_len <= degree - 1; ++word_len) {
+			const uint64_t start = coef.mi_level_index[word_len];
+			const uint64_t end = coef.mi_level_index[word_len + 1];
+			const bool do_psi = word_len >= 1;
+			const bool do_phi = word_len + 2 <= degree;
+			for (uint64_t idx = start; idx < end; ++idx) {
+				const C gamma = multiindex_gamma<T>(
+					multiindices.data() + idx * num_components,
+					num_components,
+					beta);
+				if (do_psi) {
+					for (uint64_t r = 0; r < state_dimension; ++r) {
+						coef.psi[idx * state_dimension + r] +=
+							static_cast<T>(2) * std::real(tilde_omega * gamma * inv[r]);
+					}
+				}
+				if (do_phi) {
+					for (uint64_t p = 0; p < num_components; ++p) {
+						T* phi_ptr = coef.phi.data()
+							+ ((p * mi_len_g + idx) * state_dimension * state_dimension);
+						for (uint64_t r0 = 0; r0 < state_dimension; ++r0) {
+							for (uint64_t r1 = 0; r1 < state_dimension; ++r1) {
+								phi_ptr[r0 * state_dimension + r1] += static_cast<T>(2)
+									* std::real(omega * gamma * u[p * state_dimension + r0] * inv[r1]);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return coef;
+}
+
+template<std::floating_point T>
+VolterraKernelCache<T> make_prepared_volterra_sig(
+	const T* lambda_diag,
+	const T* A,
+	const T* b,
+	uint64_t dimension,
+	uint64_t num_components,
+	uint64_t target_dimension,
+	uint64_t state_dimension,
+	uint64_t degree,
+	T dt,
+	T readout_lag,
+	uint64_t quad_order
+) {
+	if (dimension == 0)
+		throw std::invalid_argument("prepare_volterra_sig received path dimension 0");
+	if (num_components == 0)
+		throw std::invalid_argument("prepare_volterra_sig received num_components 0");
+	if (target_dimension == 0)
+		throw std::invalid_argument("prepare_volterra_sig received target_dimension 0");
+	if (state_dimension == 0)
+		throw std::invalid_argument("prepare_volterra_sig received state_dimension 0");
+	if (!(dt > static_cast<T>(0)))
+		throw std::invalid_argument("prepare_volterra_sig requires dt > 0");
+	if (readout_lag < static_cast<T>(0))
+		throw std::invalid_argument("prepare_volterra_sig requires readout_lag >= 0");
+	if (quad_order == 0)
+		throw std::invalid_argument("prepare_volterra_sig requires quad_order > 0");
+
+	const uint64_t A_len = num_components * target_dimension * dimension;
+	const uint64_t b_len = num_components * state_dimension;
+
+	VolterraKernelCache<T> prepared;
+	prepared.A.assign(A, A + A_len);
+	prepared.readout_weights.resize(b_len);
+	for (uint64_t p = 0; p < num_components; ++p) {
+		for (uint64_t r = 0; r < state_dimension; ++r) {
+			prepared.readout_weights[p * state_dimension + r] =
+				std::exp(-lambda_diag[r] * readout_lag) * b[p * state_dimension + r];
+		}
+	}
+	prepared.dimension = dimension;
+	prepared.num_components = num_components;
+	prepared.target_dimension = target_dimension;
+	prepared.state_dimension = state_dimension;
+	prepared.degree = degree;
+	prepared.coef = build_diag_fssk_coefficients<T>(
+		lambda_diag,
+		b,
+		num_components,
+		state_dimension,
+		degree,
+		dt,
+		quad_order);
+
+	prepared.sig_len = ::sig_length(target_dimension, degree);
+	if (prepared.sig_len == 0)
+		throw std::overflow_error("prepare_volterra_sig length overflow");
+	prepared.state_len = prepared.sig_len - 1;
+	prepared.f_len = degree == 0 ? 1 : ::sig_length(target_dimension, degree - 1);
+	if (prepared.f_len == 0)
+		throw std::overflow_error("prepare_volterra_sig workspace length overflow");
+
+	const uint64_t level_count = degree + 2;
+	prepared.level_index.resize(level_count);
+	populate_level_index(prepared.level_index.data(), target_dimension, level_count);
+
+	const uint64_t n_levels = degree;
+	prepared.mi_off.assign(n_levels, 0);
+	prepared.mi_ts.assign(n_levels, 0);
+	prepared.mi_total = populate_multiindex_tensor_layout(
+		prepared.mi_off.data(),
+		prepared.mi_ts.data(),
+		prepared.coef.mi_level_index.data(),
+		target_dimension,
+		n_levels);
+	return prepared;
+}
+
+// Builds normalized shuffle tensors by multi-index. Each tensor equals the sum
+// of y_{p1} (x) ... (x) y_{pL} over all words with the same letter counts.
+template<std::floating_point T>
+void build_shuffle_tensors(
+	const T* y,
+	T* shuffle_tensors,
+	uint64_t num_components,
+	uint64_t target_dimension,
+	uint64_t degree,
+	const uint64_t* mi_level_index,
+	const uint64_t* minus_index,
+	const uint64_t* mi_off,
+	const uint64_t* mi_ts
+) {
+	shuffle_tensors[0] = static_cast<T>(1);
+	for (uint64_t word_len = 1; word_len <= degree - 1; ++word_len) {
+		const uint64_t ts = mi_ts[word_len];
+		const uint64_t ts_prev = mi_ts[word_len - 1];
+		const uint64_t start = mi_level_index[word_len];
+		const uint64_t end = mi_level_index[word_len + 1];
+		const uint64_t prev_start = mi_level_index[word_len - 1];
+		for (uint64_t idx = start; idx < end; ++idx) {
+			T* dst = shuffle_tensors + mi_off[word_len] + (idx - start) * ts;
+			std::fill(dst, dst + ts, static_cast<T>(0));
+			for (uint64_t p = 0; p < num_components; ++p) {
+				const uint64_t prev = minus_index[idx * num_components + p];
+				if (prev == UINT64_MAX)
+					continue;
+				const T* src = shuffle_tensors + mi_off[word_len - 1] + (prev - prev_start) * ts_prev;
+				const T* yv = y + p * target_dimension;
+				for (uint64_t a = 0; a < target_dimension; ++a) {
+					const T ya = yv[a];
+					T* dst_a = dst + a * ts_prev;
+					for (uint64_t c = 0; c < ts_prev; ++c)
+						dst_a[c] += ya * src[c];
+				}
+			}
+		}
+	}
+}
+
+template<std::floating_point T>
+void eval_fg(
+	const VolterraKernelCache<T>& prepared,
+	const T* y,
+	T* F,
+	T* G,
+	T* shuffle_tensors
+) {
+	const auto& coef = prepared.coef;
+	const uint64_t num_components = prepared.num_components;
+	const uint64_t target_dimension = prepared.target_dimension;
+	const uint64_t state_dimension = prepared.state_dimension;
+	const uint64_t degree = prepared.degree;
+	const uint64_t* level_index = prepared.level_index.data();
+	const uint64_t* mi_off = prepared.mi_off.data();
+	const uint64_t* mi_ts = prepared.mi_ts.data();
+	const uint64_t f_len = prepared.f_len;
+
+	std::fill(F, F + state_dimension * f_len, static_cast<T>(0));
+	std::fill(G, G + num_components * state_dimension * state_dimension * f_len, static_cast<T>(0));
+
+	build_shuffle_tensors<T>(
+		y, shuffle_tensors, num_components, target_dimension, degree,
+		coef.mi_level_index.data(), coef.minus_index.data(), mi_off, mi_ts);
+
+	for (uint64_t word_len = 0; word_len <= degree - 1; ++word_len) {
+		const uint64_t mi_start = coef.mi_level_index[word_len];
+		const uint64_t mi_end = coef.mi_level_index[word_len + 1];
+		const uint64_t out_start = level_index[word_len];
+		const uint64_t ts = mi_ts[word_len];
+		const T* level_tensors = shuffle_tensors + mi_off[word_len];
+		for (uint64_t mi_idx = mi_start; mi_idx < mi_end; ++mi_idx) {
+			const T* tensor = level_tensors + (mi_idx - mi_start) * ts;
+			for (uint64_t r = 0; r < state_dimension; ++r) {
+				T* dst = F + r * f_len + out_start;
+				const T c = coef.psi[mi_idx * state_dimension + r];
+				for (uint64_t i = 0; i < ts; ++i)
+					dst[i] += c * tensor[i];
+			}
+		}
+	}
+
+	if (degree <= 1)
+		return;
+
+	const uint64_t mi_len_g = coef.mi_level_index[degree - 1];
+	for (uint64_t word_len = 0; word_len <= degree - 2; ++word_len) {
+		const uint64_t mi_start = coef.mi_level_index[word_len];
+		const uint64_t mi_end = coef.mi_level_index[word_len + 1];
+		const uint64_t out_start = level_index[word_len];
+		const uint64_t ts = mi_ts[word_len];
+		const T* level_tensors = shuffle_tensors + mi_off[word_len];
+		for (uint64_t mi_idx = mi_start; mi_idx < mi_end; ++mi_idx) {
+			const T* tensor = level_tensors + (mi_idx - mi_start) * ts;
+			for (uint64_t p = 0; p < num_components; ++p) {
+				const T* phi_ptr = coef.phi.data()
+					+ ((p * mi_len_g + mi_idx) * state_dimension * state_dimension);
+				for (uint64_t r0 = 0; r0 < state_dimension; ++r0) {
+					for (uint64_t r1 = 0; r1 < state_dimension; ++r1) {
+						T* dst = G + (((p * state_dimension + r0) * state_dimension + r1) * f_len) + out_start;
+						const T c = phi_ptr[r0 * state_dimension + r1];
+						for (uint64_t i = 0; i < ts; ++i)
+							dst[i] += c * tensor[i];
+					}
+				}
+			}
+		}
+	}
+}
+
+template<std::floating_point T>
+void compute_projected_increment(
+	const T* path,
+	const VolterraKernelCache<T>& prepared,
+	T* y,
+	T* dx,
+	uint64_t step
+) {
+	const uint64_t dimension = prepared.dimension;
+	const uint64_t num_components = prepared.num_components;
+	const uint64_t target_dimension = prepared.target_dimension;
+
+	const T* x0 = path + step * dimension;
+	const T* x1 = x0 + dimension;
+	for (uint64_t j = 0; j < dimension; ++j)
+		dx[j] = x1[j] - x0[j];
+	for (uint64_t p = 0; p < num_components; ++p) {
+		for (uint64_t i = 0; i < target_dimension; ++i) {
+			T acc = static_cast<T>(0);
+			const T* A_row = prepared.A.data() + (p * target_dimension + i) * dimension;
+			for (uint64_t j = 0; j < dimension; ++j)
+				acc += A_row[j] * dx[j];
+			y[p * target_dimension + i] = acc;
+		}
+	}
+}
+
+template<std::floating_point T>
+void update_state(
+	const VolterraKernelCache<T>& prepared,
+	const T* y,
+	T* state,
+	T* next_state,
+	T* F,
+	T* G,
+	T* B,
+	T* shuffle_tensors
+) {
+	const auto& coef = prepared.coef;
+	const uint64_t num_components = prepared.num_components;
+	const uint64_t target_dimension = prepared.target_dimension;
+	const uint64_t state_dimension = prepared.state_dimension;
+	const uint64_t degree = prepared.degree;
+	const uint64_t* level_index = prepared.level_index.data();
+	const uint64_t f_len = prepared.f_len;
+	const uint64_t state_len = prepared.state_len;
+
+	eval_fg<T>(prepared, y, F, G, shuffle_tensors);
+
+	std::fill(next_state, next_state + num_components * state_dimension * state_len, static_cast<T>(0));
+	for (uint64_t p = 0; p < num_components; ++p) {
+		for (uint64_t r = 0; r < state_dimension; ++r) {
+			const T scale = coef.E[r];
+			const T* src = state + (p * state_dimension + r) * state_len;
+			T* dst = next_state + (p * state_dimension + r) * state_len;
+			for (uint64_t i = 0; i < state_len; ++i)
+				dst[i] = src[i] * scale;
+		}
+	}
+
+	std::memcpy(B, F, state_dimension * f_len * sizeof(T));
+
+	for (uint64_t p = 0; p < num_components; ++p) {
+		for (uint64_t left_level = 1; left_level <= degree - 1; ++left_level) {
+			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
+			const uint64_t left_state_start = level_index[left_level] - 1;
+			for (uint64_t right_level = 0; right_level <= degree - 1 - left_level; ++right_level) {
+				const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+				const uint64_t right_start = level_index[right_level];
+				const uint64_t out_level = left_level + right_level;
+				const uint64_t out_start = level_index[out_level];
+
+				for (uint64_t r0 = 0; r0 < state_dimension; ++r0) {
+					const T* z = state + (p * state_dimension + r0) * state_len + left_state_start;
+					for (uint64_t r1 = 0; r1 < state_dimension; ++r1) {
+						const T* g = G + (((p * state_dimension + r0) * state_dimension + r1) * f_len) + right_start;
+						T* dst = B + r1 * f_len + out_start;
+						for (uint64_t i = 0; i < left_size; ++i) {
+							const T z_val = z[i];
+							T* dst_row = dst + i * right_size;
+							for (uint64_t j = 0; j < right_size; ++j)
+								dst_row[j] += z_val * g[j];
+						}
+					}
+				}
+			}
+		}
+	}
+
+	for (uint64_t p = 0; p < num_components; ++p) {
+		for (uint64_t b_level = 0; b_level <= degree - 1; ++b_level) {
+			const uint64_t b_size = level_index[b_level + 1] - level_index[b_level];
+			const uint64_t b_start = level_index[b_level];
+			const uint64_t out_level = b_level + 1;
+			const uint64_t out_start = level_index[out_level] - 1;
+			for (uint64_t r = 0; r < state_dimension; ++r) {
+				const T* b_ptr = B + r * f_len + b_start;
+				T* dst = next_state + (p * state_dimension + r) * state_len + out_start;
+				const T* y_ptr = y + p * target_dimension;
+				for (uint64_t i = 0; i < b_size; ++i) {
+					const T b_val = b_ptr[i];
+					for (uint64_t d = 0; d < target_dimension; ++d)
+						dst[i * target_dimension + d] += b_val * y_ptr[d];
+				}
+			}
+		}
+	}
+}
+
+template<std::floating_point T>
+void readout_state(
+	const T* state,
+	const VolterraKernelCache<T>& prepared,
+	T* out,
+	bool scalar_term
+) {
+	const uint64_t num_components = prepared.num_components;
+	const uint64_t state_dimension = prepared.state_dimension;
+	const uint64_t degree = prepared.degree;
+	const uint64_t* level_index = prepared.level_index.data();
+	const uint64_t sig_len = prepared.sig_len;
+	const uint64_t state_len = prepared.state_len;
+	const uint64_t out_len = scalar_term ? sig_len : sig_len - 1;
+
+	std::fill(out, out + out_len, static_cast<T>(0));
+	if (scalar_term)
+		out[0] = static_cast<T>(1);
+
+	for (uint64_t level = 1; level <= degree; ++level) {
+		const uint64_t level_size = level_index[level + 1] - level_index[level];
+		const uint64_t state_start = level_index[level] - 1;
+		const uint64_t out_start = scalar_term ? level_index[level] : level_index[level] - 1;
+		T* dst = out + out_start;
+		for (uint64_t p = 0; p < num_components; ++p) {
+			for (uint64_t r = 0; r < state_dimension; ++r) {
+				const T weight = prepared.readout_weights[p * state_dimension + r];
+				const T* src = state + (p * state_dimension + r) * state_len + state_start;
+				for (uint64_t i = 0; i < level_size; ++i)
+					dst[i] += weight * src[i];
+			}
+		}
+	}
+}
+
+template<std::floating_point T>
+void volterra_sig_single(
+	const T* path,
+	const VolterraKernelCache<T>& prepared,
+	T* out,
+	VolterraWorkspace<T>& ws,
+	uint64_t length,
+	bool scalar_term
+) {
+	T* cur = ws.state.data();
+	T* nxt = ws.next_state.data();
+	std::fill(ws.state.begin(), ws.state.end(), static_cast<T>(0));
+	for (uint64_t step = 0; step + 1 < length; ++step) {
+		compute_projected_increment<T>(
+			path, prepared, ws.y.data(), ws.dx.data(), step);
+		update_state<T>(
+			prepared, ws.y.data(), cur, nxt,
+			ws.F.data(), ws.G.data(), ws.B.data(), ws.shuffle_tensors.data());
+		std::swap(cur, nxt);
+	}
+
+	readout_state<T>(cur, prepared, out, scalar_term);
+}
+
+std::mutex prepared_volterra_sig_mu;
+std::atomic<uint64_t> next_prepared_volterra_sig_handle{ 1 };
+std::unordered_map<uint64_t, VolterraKernelCache<float>> prepared_volterra_sig_f;
+std::unordered_map<uint64_t, VolterraKernelCache<double>> prepared_volterra_sig_d;
+
+template<std::floating_point T>
+std::unordered_map<uint64_t, VolterraKernelCache<T>>& prepared_volterra_sig_map() {
+	if constexpr (std::is_same_v<T, float>)
+		return prepared_volterra_sig_f;
+	else
+		return prepared_volterra_sig_d;
+}
+
+template<std::floating_point T>
+uint64_t store_prepared_volterra_sig(VolterraKernelCache<T>&& prepared) {
+	const uint64_t handle = next_prepared_volterra_sig_handle.fetch_add(1);
+	if (handle == 0)
+		throw std::overflow_error("prepare_volterra_sig handle overflow");
+	std::lock_guard lock(prepared_volterra_sig_mu);
+	prepared_volterra_sig_map<T>().emplace(handle, std::move(prepared));
+	return handle;
+}
+
+template<std::floating_point T>
+const VolterraKernelCache<T>& get_prepared_volterra_sig(uint64_t handle) {
+	std::lock_guard lock(prepared_volterra_sig_mu);
+	auto& map = prepared_volterra_sig_map<T>();
+	const auto it = map.find(handle);
+	if (it == map.end())
+		throw std::invalid_argument("volterra_sig received an invalid prepared handle");
+	return it->second;
+}
+
+template<std::floating_point T>
+void free_prepared_volterra_sig(uint64_t handle) {
+	if (handle == 0)
+		return;
+	std::lock_guard lock(prepared_volterra_sig_mu);
+	prepared_volterra_sig_map<T>().erase(handle);
+}
+
+} // namespace
+
+void clear_prepared_volterra_sig_cache() {
+	std::lock_guard lock(prepared_volterra_sig_mu);
+	prepared_volterra_sig_f.clear();
+	prepared_volterra_sig_d.clear();
+}
+
+template<std::floating_point T>
+void volterra_sig_(
+	const T* path,
+	const VolterraKernelCache<T>& prepared,
+	T* out,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t length,
+	bool scalar_term,
+	int n_jobs
+) {
+	if (dimension != prepared.dimension)
+		throw std::invalid_argument("volterra_sig path dimension does not match prepared kernel dimension");
+
+	const uint64_t sig_len = prepared.sig_len;
+	const uint64_t out_stride = scalar_term ? sig_len : sig_len - 1;
+
+	if (length <= 1) {
+		T* const out_end = out + out_stride * batch_size;
+		std::fill(out, out_end, static_cast<T>(0));
+		if (scalar_term) {
+			for (T* out_ptr = out; out_ptr < out_end; out_ptr += out_stride)
+				out_ptr[0] = static_cast<T>(1);
+		}
+		return;
+	}
+	if (prepared.degree == 0) {
+		if (scalar_term)
+			std::fill(out, out + batch_size, static_cast<T>(1));
+		return;
+	}
+
+	// One workspace per thread, reused across every path in the chunk.
+	auto run_range = [&](uint64_t start, uint64_t end) {
+		VolterraWorkspace<T> ws(prepared);
+		for (uint64_t i = start; i < end; ++i) {
+			volterra_sig_single<T>(
+				path + i * length * prepared.dimension,
+				prepared,
+				out + i * out_stride,
+				ws,
+				length,
+				scalar_term);
+		}
+	};
+
+	if (batch_size == 0)
+		return;
+	if (n_jobs == 1 || batch_size == 1)
+		run_range(0, batch_size);
+	else
+		spawn_batch_threads(batch_size, n_jobs, run_range);
+}
+
+extern "C" {
+
+	CPSIG_API int prepare_volterra_sig_f(
+		const float* lambda_diag,
+		const float* A,
+		const float* b,
+		uint64_t dimension,
+		uint64_t num_components,
+		uint64_t target_dimension,
+		uint64_t state_dimension,
+		uint64_t degree,
+		float dt,
+		float readout_lag,
+		uint64_t quad_order,
+		uint64_t* handle
+	) noexcept {
+		SAFE_CALL({
+			*handle = store_prepared_volterra_sig<float>(make_prepared_volterra_sig<float>(
+				lambda_diag, A, b, dimension, num_components, target_dimension,
+				state_dimension, degree, dt, readout_lag, quad_order));
+		});
+	}
+
+	CPSIG_API int prepare_volterra_sig_d(
+		const double* lambda_diag,
+		const double* A,
+		const double* b,
+		uint64_t dimension,
+		uint64_t num_components,
+		uint64_t target_dimension,
+		uint64_t state_dimension,
+		uint64_t degree,
+		double dt,
+		double readout_lag,
+		uint64_t quad_order,
+		uint64_t* handle
+	) noexcept {
+		SAFE_CALL({
+			*handle = store_prepared_volterra_sig<double>(make_prepared_volterra_sig<double>(
+				lambda_diag, A, b, dimension, num_components, target_dimension,
+				state_dimension, degree, dt, readout_lag, quad_order));
+		});
+	}
+
+	CPSIG_API int free_volterra_sig_f(uint64_t handle) noexcept {
+		SAFE_CALL(free_prepared_volterra_sig<float>(handle));
+	}
+
+	CPSIG_API int free_volterra_sig_d(uint64_t handle) noexcept {
+		SAFE_CALL(free_prepared_volterra_sig<double>(handle));
+	}
+
+	CPSIG_API int volterra_sig_f(
+		const float* path,
+		float* out,
+		uint64_t handle,
+		uint64_t batch_size,
+		uint64_t dimension,
+		uint64_t length,
+		bool scalar_term,
+		int n_jobs
+	) noexcept {
+		SAFE_CALL(volterra_sig_<float>(
+			path, get_prepared_volterra_sig<float>(handle), out, batch_size,
+			dimension, length, scalar_term, n_jobs));
+	}
+
+	CPSIG_API int volterra_sig_d(
+		const double* path,
+		double* out,
+		uint64_t handle,
+		uint64_t batch_size,
+		uint64_t dimension,
+		uint64_t length,
+		bool scalar_term,
+		int n_jobs
+	) noexcept {
+		SAFE_CALL(volterra_sig_<double>(
+			path, get_prepared_volterra_sig<double>(handle), out, batch_size,
+			dimension, length, scalar_term, n_jobs));
+	}
+}
