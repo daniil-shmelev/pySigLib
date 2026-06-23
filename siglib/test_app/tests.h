@@ -39,8 +39,15 @@ void example_batch_signature_cuda_d(
 );
 
 void example_volterra_sig_d(
+	uint64_t batch_size = 262144,
+	uint64_t dimension = 3,
+	uint64_t length = 8,
+	uint64_t num_components = 2,
+	uint64_t target_dimension = 2,
+	uint64_t state_dimension = 2,
+	uint64_t degree = 1,
 	int n_jobs = 1,
-	int num_runs = 1
+	int num_runs = 50
 );
 
 void example_batch_signature_kernel_f(

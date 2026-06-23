@@ -79,40 +79,42 @@ void example_batch_signature_cuda_d(
 
 
 void example_volterra_sig_d(
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t length,
+    uint64_t num_components,
+    uint64_t target_dimension,
+    uint64_t state_dimension,
+    uint64_t degree,
     int n_jobs,
     int num_runs
 ) {
     print_header("Volterra Signature Double");
+    std::cout << "batch=" << batch_size << " dim=" << dimension << " len=" << length
+        << " num_components=" << num_components << " target_dim=" << target_dimension
+        << " state_dim=" << state_dimension << " degree=" << degree
+        << " n_jobs=" << n_jobs << "\n";
 
-    const uint64_t batch_size = 1;
-    const uint64_t dimension = 3;
-    const uint64_t length = 4;
-    const uint64_t num_components = 2;
-    const uint64_t target_dimension = 2;
-    const uint64_t state_dimension = 2;
-    const uint64_t degree = 3;
-    const double dt = 0.2;
-    const double readout_lag = 0.1;
+    const double dt = 0.05;
+    const double readout_lag = 0.01;
     const bool scalar_term = true;
     const uint64_t quad_order = 32;
 
-    std::vector<double> path = {
-        0.0, 0.0, 0.0,
-        0.2, -0.1, 0.4,
-        0.5, 0.3, -0.2,
-        0.9, 0.1, 0.6
-    };
-    std::vector<double> lambda_diag = { 0.25, 1.1 };
-    std::vector<double> A = {
-        1.0, 0.2, -0.1,
-        0.0, 0.5, 0.3,
-        -0.4, 0.1, 0.6,
-        0.7, -0.2, 0.0
-    };
-    std::vector<double> b = {
-        0.8, -0.1,
-        0.3, 0.4
-    };
+    std::vector<double> path(batch_size * dimension * length, 0.);
+    for (uint64_t i = 0; i < path.size(); ++i)
+        path[i] = 0.01 * std::sin(static_cast<double>(i + 1));
+
+    std::vector<double> lambda_diag(state_dimension, 0.);
+    for (uint64_t i = 0; i < lambda_diag.size(); ++i)
+        lambda_diag[i] = 0.25 + 0.1 * static_cast<double>(i);
+
+    std::vector<double> A(num_components * target_dimension * dimension, 0.);
+    for (uint64_t i = 0; i < A.size(); ++i)
+        A[i] = 0.1 * std::cos(static_cast<double>(i + 1));
+
+    std::vector<double> b(num_components * state_dimension, 0.);
+    for (uint64_t i = 0; i < b.size(); ++i)
+        b[i] = 0.2 * std::sin(static_cast<double>(i + 1));
 
     const uint64_t out_size = sig_length(target_dimension, degree) * batch_size;
     std::vector<double> out(out_size, 0.);
@@ -149,10 +151,6 @@ void example_volterra_sig_d(
         throw std::runtime_error("volterra_sig_d failed");
 
     std::cout << "output length: " << out_size << "\n";
-    std::cout << "output:";
-    for (double value : out)
-        std::cout << " " << value;
-    std::cout << "\n";
 
     time_function(
         num_runs,

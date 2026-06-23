@@ -70,28 +70,68 @@ struct VolterraKernelCache {
 	uint64_t mi_total = 0;
 };
 
-// Per-thread scratch reused across every path in a batch chunk.
+// Internal batch-tiling width. Paths are processed in tiles of this many lanes
+// so the per-step setup is amortized and the arithmetic vectorizes over the
+// (always full and uniform) lane dimension. This is a tiling factor, not a
+// kernel-parameter specialization: the same value is used for every input.
+constexpr uint64_t VOLTERRA_LANES = 8;
+
+// Per-thread scratch, sized for one full tile of VOLTERRA_LANES paths. The same
+// workspace also serves the < VOLTERRA_LANES batch remainder, which runs at lane
+// width 1 and so touches only the leading slice of each buffer.
 template<std::floating_point T>
 struct VolterraWorkspace {
 	explicit VolterraWorkspace(const VolterraKernelCache<T>& prepared)
-		: state(prepared.num_components * prepared.state_dimension * prepared.state_len),
-		next_state(prepared.num_components * prepared.state_dimension * prepared.state_len),
-		y(prepared.num_components * prepared.target_dimension),
-		dx(prepared.dimension),
-		F(prepared.state_dimension * prepared.f_len),
-		G(prepared.num_components * prepared.state_dimension * prepared.state_dimension * prepared.f_len),
-		B(prepared.state_dimension * prepared.f_len),
-		shuffle_tensors(prepared.mi_total)
-	{}
+		: state_size(prepared.num_components * prepared.state_dimension * prepared.state_len * VOLTERRA_LANES),
+		y_size(prepared.num_components * prepared.target_dimension * VOLTERRA_LANES),
+		dx_size(prepared.dimension * VOLTERRA_LANES),
+		f_size((prepared.num_components == 1 ? 0 : prepared.state_dimension * prepared.f_len) * VOLTERRA_LANES),
+		g_size((prepared.num_components == 1
+			? 0
+			: prepared.num_components * prepared.state_dimension * prepared.state_dimension * prepared.f_len) * VOLTERRA_LANES),
+		b_size(prepared.state_dimension * prepared.f_len * VOLTERRA_LANES),
+		shuffle_size(prepared.mi_total * VOLTERRA_LANES),
+		out_size(prepared.sig_len * VOLTERRA_LANES),
+		buffer(2 * state_size + y_size + dx_size + f_size + g_size + b_size + shuffle_size + out_size)
+	{
+		T* ptr = buffer.data();
+		state = ptr;
+		ptr += state_size;
+		next_state = ptr;
+		ptr += state_size;
+		y = ptr;
+		ptr += y_size;
+		dx = ptr;
+		ptr += dx_size;
+		F = ptr;
+		ptr += f_size;
+		G = ptr;
+		ptr += g_size;
+		B = ptr;
+		ptr += b_size;
+		shuffle_tensors = ptr;
+		ptr += shuffle_size;
+		tile_out = ptr;
+	}
 
-	std::vector<T> state;
-	std::vector<T> next_state;
-	std::vector<T> y;
-	std::vector<T> dx;
-	std::vector<T> F;
-	std::vector<T> G;
-	std::vector<T> B;
-	std::vector<T> shuffle_tensors;
+	uint64_t state_size;
+	uint64_t y_size;
+	uint64_t dx_size;
+	uint64_t f_size;
+	uint64_t g_size;
+	uint64_t b_size;
+	uint64_t shuffle_size;
+	uint64_t out_size;
+	std::vector<T> buffer;
+	T* state;
+	T* next_state;
+	T* y;
+	T* dx;
+	T* F;
+	T* G;
+	T* B;
+	T* shuffle_tensors;
+	T* tile_out;
 };
 
 uint64_t checked_product(uint64_t a, uint64_t b, const char* name) {
@@ -394,9 +434,52 @@ VolterraKernelCache<T> make_prepared_volterra_sig(
 	return prepared;
 }
 
-// Builds normalized shuffle tensors by multi-index. Each tensor equals the sum
-// of y_{p1} (x) ... (x) y_{pL} over all words with the same letter counts.
-template<std::floating_point T>
+// ---------------------------------------------------------------------------
+// Compute path, templated on the lane width L. Every per-path buffer carries a
+// trailing lane dimension of width L (lane index innermost and contiguous), so
+// each arithmetic loop vectorizes over the lane dimension and the per-step
+// scalar setup is amortized over L paths. Each lane is an independent path, so
+// the math is the single-path recursion applied lanewise. Instantiated at
+// L == VOLTERRA_LANES for full tiles and at L == 1 for the batch remainder.
+// ---------------------------------------------------------------------------
+
+template<std::floating_point T, uint64_t L>
+void compute_projected_increment(
+	const T* path,
+	uint64_t length,
+	const VolterraKernelCache<T>& prepared,
+	T* y,
+	T* dx,
+	uint64_t step
+) {
+	const uint64_t dimension = prepared.dimension;
+	const uint64_t num_components = prepared.num_components;
+	const uint64_t target_dimension = prepared.target_dimension;
+	const uint64_t path_stride = length * dimension;
+
+	for (uint64_t j = 0; j < dimension; ++j) {
+		for (uint64_t b = 0; b < L; ++b) {
+			const T* xb = path + b * path_stride + step * dimension;
+			dx[j * L + b] = xb[dimension + j] - xb[j];
+		}
+	}
+	for (uint64_t p = 0; p < num_components; ++p) {
+		for (uint64_t i = 0; i < target_dimension; ++i) {
+			T* RESTRICT yo = y + (p * target_dimension + i) * L;
+			for (uint64_t b = 0; b < L; ++b)
+				yo[b] = static_cast<T>(0);
+			const T* A_row = prepared.A.data() + (p * target_dimension + i) * dimension;
+			for (uint64_t j = 0; j < dimension; ++j) {
+				const T a = A_row[j];
+				const T* RESTRICT dxj = dx + j * L;
+				for (uint64_t b = 0; b < L; ++b)
+					yo[b] += a * dxj[b];
+			}
+		}
+	}
+}
+
+template<std::floating_point T, uint64_t L>
 void build_shuffle_tensors(
 	const T* y,
 	T* shuffle_tensors,
@@ -408,7 +491,8 @@ void build_shuffle_tensors(
 	const uint64_t* mi_off,
 	const uint64_t* mi_ts
 ) {
-	shuffle_tensors[0] = static_cast<T>(1);
+	for (uint64_t b = 0; b < L; ++b)
+		shuffle_tensors[b] = static_cast<T>(1);
 	for (uint64_t word_len = 1; word_len <= degree - 1; ++word_len) {
 		const uint64_t ts = mi_ts[word_len];
 		const uint64_t ts_prev = mi_ts[word_len - 1];
@@ -416,26 +500,30 @@ void build_shuffle_tensors(
 		const uint64_t end = mi_level_index[word_len + 1];
 		const uint64_t prev_start = mi_level_index[word_len - 1];
 		for (uint64_t idx = start; idx < end; ++idx) {
-			T* dst = shuffle_tensors + mi_off[word_len] + (idx - start) * ts;
-			std::fill(dst, dst + ts, static_cast<T>(0));
+			T* dst = shuffle_tensors + (mi_off[word_len] + (idx - start) * ts) * L;
+			std::fill(dst, dst + ts * L, static_cast<T>(0));
 			for (uint64_t p = 0; p < num_components; ++p) {
 				const uint64_t prev = minus_index[idx * num_components + p];
 				if (prev == UINT64_MAX)
 					continue;
-				const T* src = shuffle_tensors + mi_off[word_len - 1] + (prev - prev_start) * ts_prev;
-				const T* yv = y + p * target_dimension;
+				const T* RESTRICT src = shuffle_tensors + (mi_off[word_len - 1] + (prev - prev_start) * ts_prev) * L;
+				const T* yv = y + (p * target_dimension) * L;
 				for (uint64_t a = 0; a < target_dimension; ++a) {
-					const T ya = yv[a];
-					T* dst_a = dst + a * ts_prev;
-					for (uint64_t c = 0; c < ts_prev; ++c)
-						dst_a[c] += ya * src[c];
+					const T* RESTRICT ya = yv + a * L;
+					T* dst_a = dst + a * ts_prev * L;
+					for (uint64_t c = 0; c < ts_prev; ++c) {
+						const T* RESTRICT src_c = src + c * L;
+						T* RESTRICT dst_c = dst_a + c * L;
+						for (uint64_t b = 0; b < L; ++b)
+							dst_c[b] += ya[b] * src_c[b];
+					}
 				}
 			}
 		}
 	}
 }
 
-template<std::floating_point T>
+template<std::floating_point T, uint64_t L>
 void eval_fg(
 	const VolterraKernelCache<T>& prepared,
 	const T* y,
@@ -453,10 +541,9 @@ void eval_fg(
 	const uint64_t* mi_ts = prepared.mi_ts.data();
 	const uint64_t f_len = prepared.f_len;
 
-	std::fill(F, F + state_dimension * f_len, static_cast<T>(0));
-	std::fill(G, G + num_components * state_dimension * state_dimension * f_len, static_cast<T>(0));
+	std::fill(F, F + state_dimension * f_len * L, static_cast<T>(0));
 
-	build_shuffle_tensors<T>(
+	build_shuffle_tensors<T, L>(
 		y, shuffle_tensors, num_components, target_dimension, degree,
 		coef.mi_level_index.data(), coef.minus_index.data(), mi_off, mi_ts);
 
@@ -465,13 +552,13 @@ void eval_fg(
 		const uint64_t mi_end = coef.mi_level_index[word_len + 1];
 		const uint64_t out_start = level_index[word_len];
 		const uint64_t ts = mi_ts[word_len];
-		const T* level_tensors = shuffle_tensors + mi_off[word_len];
+		const T* level_tensors = shuffle_tensors + mi_off[word_len] * L;
 		for (uint64_t mi_idx = mi_start; mi_idx < mi_end; ++mi_idx) {
-			const T* tensor = level_tensors + (mi_idx - mi_start) * ts;
+			const T* tensor = level_tensors + (mi_idx - mi_start) * ts * L;
 			for (uint64_t r = 0; r < state_dimension; ++r) {
-				T* dst = F + r * f_len + out_start;
+				T* RESTRICT dst = F + (r * f_len + out_start) * L;
 				const T c = coef.psi[mi_idx * state_dimension + r];
-				for (uint64_t i = 0; i < ts; ++i)
+				for (uint64_t i = 0; i < ts * L; ++i)
 					dst[i] += c * tensor[i];
 			}
 		}
@@ -480,23 +567,25 @@ void eval_fg(
 	if (degree <= 1)
 		return;
 
+	std::fill(G, G + num_components * state_dimension * state_dimension * f_len * L, static_cast<T>(0));
+
 	const uint64_t mi_len_g = coef.mi_level_index[degree - 1];
 	for (uint64_t word_len = 0; word_len <= degree - 2; ++word_len) {
 		const uint64_t mi_start = coef.mi_level_index[word_len];
 		const uint64_t mi_end = coef.mi_level_index[word_len + 1];
 		const uint64_t out_start = level_index[word_len];
 		const uint64_t ts = mi_ts[word_len];
-		const T* level_tensors = shuffle_tensors + mi_off[word_len];
+		const T* level_tensors = shuffle_tensors + mi_off[word_len] * L;
 		for (uint64_t mi_idx = mi_start; mi_idx < mi_end; ++mi_idx) {
-			const T* tensor = level_tensors + (mi_idx - mi_start) * ts;
+			const T* tensor = level_tensors + (mi_idx - mi_start) * ts * L;
 			for (uint64_t p = 0; p < num_components; ++p) {
 				const T* phi_ptr = coef.phi.data()
 					+ ((p * mi_len_g + mi_idx) * state_dimension * state_dimension);
 				for (uint64_t r0 = 0; r0 < state_dimension; ++r0) {
 					for (uint64_t r1 = 0; r1 < state_dimension; ++r1) {
-						T* dst = G + (((p * state_dimension + r0) * state_dimension + r1) * f_len) + out_start;
+						T* RESTRICT dst = G + (((p * state_dimension + r0) * state_dimension + r1) * f_len + out_start) * L;
 						const T c = phi_ptr[r0 * state_dimension + r1];
-						for (uint64_t i = 0; i < ts; ++i)
+						for (uint64_t i = 0; i < ts * L; ++i)
 							dst[i] += c * tensor[i];
 					}
 				}
@@ -505,34 +594,124 @@ void eval_fg(
 	}
 }
 
-template<std::floating_point T>
-void compute_projected_increment(
-	const T* path,
-	const VolterraKernelCache<T>& prepared,
-	T* y,
-	T* dx,
-	uint64_t step
+template<std::floating_point T, uint64_t L>
+void build_scalar_tensor_powers(
+	const T* y,
+	T* tensors,
+	const uint64_t* level_index,
+	uint64_t target_dimension,
+	uint64_t degree
 ) {
-	const uint64_t dimension = prepared.dimension;
-	const uint64_t num_components = prepared.num_components;
-	const uint64_t target_dimension = prepared.target_dimension;
-
-	const T* x0 = path + step * dimension;
-	const T* x1 = x0 + dimension;
-	for (uint64_t j = 0; j < dimension; ++j)
-		dx[j] = x1[j] - x0[j];
-	for (uint64_t p = 0; p < num_components; ++p) {
-		for (uint64_t i = 0; i < target_dimension; ++i) {
-			T acc = static_cast<T>(0);
-			const T* A_row = prepared.A.data() + (p * target_dimension + i) * dimension;
-			for (uint64_t j = 0; j < dimension; ++j)
-				acc += A_row[j] * dx[j];
-			y[p * target_dimension + i] = acc;
+	for (uint64_t b = 0; b < L; ++b)
+		tensors[b] = static_cast<T>(1);
+	for (uint64_t level = 1; level <= degree - 1; ++level) {
+		const uint64_t prev_start = level_index[level - 1];
+		const uint64_t prev_size = level_index[level] - prev_start;
+		T* dst = tensors + level_index[level] * L;
+		const T* src = tensors + prev_start * L;
+		for (uint64_t i = 0; i < prev_size; ++i) {
+			const T* RESTRICT src_i = src + i * L;
+			T* dst_row = dst + i * target_dimension * L;
+			for (uint64_t d = 0; d < target_dimension; ++d) {
+				const T* RESTRICT y_d = y + d * L;
+				T* RESTRICT dst_d = dst_row + d * L;
+				for (uint64_t b = 0; b < L; ++b)
+					dst_d[b] = src_i[b] * y_d[b];
+			}
 		}
 	}
 }
 
-template<std::floating_point T>
+template<std::floating_point T, uint64_t L>
+void update_state_scalar(
+	const VolterraKernelCache<T>& prepared,
+	const T* y,
+	T* state,
+	T* next_state,
+	T* B,
+	T* tensor_powers
+) {
+	const auto& coef = prepared.coef;
+	const uint64_t target_dimension = prepared.target_dimension;
+	const uint64_t state_dimension = prepared.state_dimension;
+	const uint64_t degree = prepared.degree;
+	const uint64_t* level_index = prepared.level_index.data();
+	const uint64_t f_len = prepared.f_len;
+	const uint64_t state_len = prepared.state_len;
+
+	build_scalar_tensor_powers<T, L>(y, tensor_powers, level_index, target_dimension, degree);
+
+	for (uint64_t r = 0; r < state_dimension; ++r) {
+		const T scale = coef.E[r];
+		const T* RESTRICT src = state + r * state_len * L;
+		T* RESTRICT dst = next_state + r * state_len * L;
+		for (uint64_t i = 0; i < state_len * L; ++i)
+			dst[i] = src[i] * scale;
+	}
+
+	for (uint64_t r = 0; r < state_dimension; ++r) {
+		T* b_ptr = B + r * f_len * L;
+		for (uint64_t level = 0; level <= degree - 1; ++level) {
+			const uint64_t level_start = level_index[level];
+			const uint64_t level_size = level_index[level + 1] - level_start;
+			const T* RESTRICT tensor = tensor_powers + level_start * L;
+			const T c = coef.psi[level * state_dimension + r];
+			T* RESTRICT bdst = b_ptr + level_start * L;
+			for (uint64_t i = 0; i < level_size * L; ++i)
+				bdst[i] = c * tensor[i];
+		}
+	}
+
+	for (uint64_t left_level = 1; left_level <= degree - 1; ++left_level) {
+		const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
+		const uint64_t left_state_start = level_index[left_level] - 1;
+		for (uint64_t right_level = 0; right_level <= degree - 1 - left_level; ++right_level) {
+			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+			const uint64_t right_start = level_index[right_level];
+			const uint64_t out_start = level_index[left_level + right_level];
+			const T* right_tensor = tensor_powers + right_start * L;
+			for (uint64_t r0 = 0; r0 < state_dimension; ++r0) {
+				const T* z = state + (r0 * state_len + left_state_start) * L;
+				for (uint64_t r1 = 0; r1 < state_dimension; ++r1) {
+					const T g = coef.phi[(right_level * state_dimension + r0) * state_dimension + r1];
+					T* dst = B + (r1 * f_len + out_start) * L;
+					for (uint64_t i = 0; i < left_size; ++i) {
+						const T* RESTRICT z_i = z + i * L;
+						T* dst_row = dst + i * right_size * L;
+						for (uint64_t j = 0; j < right_size; ++j) {
+							const T* RESTRICT rt_j = right_tensor + j * L;
+							T* RESTRICT dst_j = dst_row + j * L;
+							for (uint64_t b = 0; b < L; ++b)
+								dst_j[b] += (z_i[b] * g) * rt_j[b];
+						}
+					}
+				}
+			}
+		}
+	}
+
+	for (uint64_t b_level = 0; b_level <= degree - 1; ++b_level) {
+		const uint64_t b_size = level_index[b_level + 1] - level_index[b_level];
+		const uint64_t b_start = level_index[b_level];
+		const uint64_t out_start = level_index[b_level + 1] - 1;
+		for (uint64_t r = 0; r < state_dimension; ++r) {
+			const T* b_ptr = B + (r * f_len + b_start) * L;
+			T* dst = next_state + (r * state_len + out_start) * L;
+			for (uint64_t i = 0; i < b_size; ++i) {
+				const T* RESTRICT b_i = b_ptr + i * L;
+				T* dst_row = dst + i * target_dimension * L;
+				for (uint64_t d = 0; d < target_dimension; ++d) {
+					const T* RESTRICT y_d = y + d * L;
+					T* RESTRICT dst_d = dst_row + d * L;
+					for (uint64_t b = 0; b < L; ++b)
+						dst_d[b] += b_i[b] * y_d[b];
+				}
+			}
+		}
+	}
+}
+
+template<std::floating_point T, uint64_t L>
 void update_state(
 	const VolterraKernelCache<T>& prepared,
 	const T* y,
@@ -552,20 +731,24 @@ void update_state(
 	const uint64_t f_len = prepared.f_len;
 	const uint64_t state_len = prepared.state_len;
 
-	eval_fg<T>(prepared, y, F, G, shuffle_tensors);
+	if (num_components == 1) {
+		update_state_scalar<T, L>(prepared, y, state, next_state, B, shuffle_tensors);
+		return;
+	}
 
-	std::fill(next_state, next_state + num_components * state_dimension * state_len, static_cast<T>(0));
+	eval_fg<T, L>(prepared, y, F, G, shuffle_tensors);
+
 	for (uint64_t p = 0; p < num_components; ++p) {
 		for (uint64_t r = 0; r < state_dimension; ++r) {
 			const T scale = coef.E[r];
-			const T* src = state + (p * state_dimension + r) * state_len;
-			T* dst = next_state + (p * state_dimension + r) * state_len;
-			for (uint64_t i = 0; i < state_len; ++i)
+			const T* RESTRICT src = state + (p * state_dimension + r) * state_len * L;
+			T* RESTRICT dst = next_state + (p * state_dimension + r) * state_len * L;
+			for (uint64_t i = 0; i < state_len * L; ++i)
 				dst[i] = src[i] * scale;
 		}
 	}
 
-	std::memcpy(B, F, state_dimension * f_len * sizeof(T));
+	std::memcpy(B, F, state_dimension * f_len * L * sizeof(T));
 
 	for (uint64_t p = 0; p < num_components; ++p) {
 		for (uint64_t left_level = 1; left_level <= degree - 1; ++left_level) {
@@ -578,15 +761,19 @@ void update_state(
 				const uint64_t out_start = level_index[out_level];
 
 				for (uint64_t r0 = 0; r0 < state_dimension; ++r0) {
-					const T* z = state + (p * state_dimension + r0) * state_len + left_state_start;
+					const T* z = state + ((p * state_dimension + r0) * state_len + left_state_start) * L;
 					for (uint64_t r1 = 0; r1 < state_dimension; ++r1) {
-						const T* g = G + (((p * state_dimension + r0) * state_dimension + r1) * f_len) + right_start;
-						T* dst = B + r1 * f_len + out_start;
+						const T* g = G + (((p * state_dimension + r0) * state_dimension + r1) * f_len + right_start) * L;
+						T* dst = B + (r1 * f_len + out_start) * L;
 						for (uint64_t i = 0; i < left_size; ++i) {
-							const T z_val = z[i];
-							T* dst_row = dst + i * right_size;
-							for (uint64_t j = 0; j < right_size; ++j)
-								dst_row[j] += z_val * g[j];
+							const T* RESTRICT z_i = z + i * L;
+							T* dst_row = dst + i * right_size * L;
+							for (uint64_t j = 0; j < right_size; ++j) {
+								const T* RESTRICT g_j = g + j * L;
+								T* RESTRICT dst_j = dst_row + j * L;
+								for (uint64_t b = 0; b < L; ++b)
+									dst_j[b] += z_i[b] * g_j[b];
+							}
 						}
 					}
 				}
@@ -601,24 +788,29 @@ void update_state(
 			const uint64_t out_level = b_level + 1;
 			const uint64_t out_start = level_index[out_level] - 1;
 			for (uint64_t r = 0; r < state_dimension; ++r) {
-				const T* b_ptr = B + r * f_len + b_start;
-				T* dst = next_state + (p * state_dimension + r) * state_len + out_start;
-				const T* y_ptr = y + p * target_dimension;
+				const T* b_ptr = B + (r * f_len + b_start) * L;
+				T* dst = next_state + ((p * state_dimension + r) * state_len + out_start) * L;
+				const T* y_ptr = y + (p * target_dimension) * L;
 				for (uint64_t i = 0; i < b_size; ++i) {
-					const T b_val = b_ptr[i];
-					for (uint64_t d = 0; d < target_dimension; ++d)
-						dst[i * target_dimension + d] += b_val * y_ptr[d];
+					const T* RESTRICT b_i = b_ptr + i * L;
+					T* dst_row = dst + i * target_dimension * L;
+					for (uint64_t d = 0; d < target_dimension; ++d) {
+						const T* RESTRICT y_d = y_ptr + d * L;
+						T* RESTRICT dst_d = dst_row + d * L;
+						for (uint64_t b = 0; b < L; ++b)
+							dst_d[b] += b_i[b] * y_d[b];
+					}
 				}
 			}
 		}
 	}
 }
 
-template<std::floating_point T>
+template<std::floating_point T, uint64_t L>
 void readout_state(
 	const T* state,
 	const VolterraKernelCache<T>& prepared,
-	T* out,
+	T* tile_out,
 	bool scalar_term
 ) {
 	const uint64_t num_components = prepared.num_components;
@@ -629,48 +821,55 @@ void readout_state(
 	const uint64_t state_len = prepared.state_len;
 	const uint64_t out_len = scalar_term ? sig_len : sig_len - 1;
 
-	std::fill(out, out + out_len, static_cast<T>(0));
+	std::fill(tile_out, tile_out + out_len * L, static_cast<T>(0));
 	if (scalar_term)
-		out[0] = static_cast<T>(1);
+		for (uint64_t b = 0; b < L; ++b)
+			tile_out[b] = static_cast<T>(1);
 
 	for (uint64_t level = 1; level <= degree; ++level) {
 		const uint64_t level_size = level_index[level + 1] - level_index[level];
 		const uint64_t state_start = level_index[level] - 1;
 		const uint64_t out_start = scalar_term ? level_index[level] : level_index[level] - 1;
-		T* dst = out + out_start;
+		T* dst = tile_out + out_start * L;
 		for (uint64_t p = 0; p < num_components; ++p) {
 			for (uint64_t r = 0; r < state_dimension; ++r) {
 				const T weight = prepared.readout_weights[p * state_dimension + r];
-				const T* src = state + (p * state_dimension + r) * state_len + state_start;
-				for (uint64_t i = 0; i < level_size; ++i)
+				const T* RESTRICT src = state + ((p * state_dimension + r) * state_len + state_start) * L;
+				for (uint64_t i = 0; i < level_size * L; ++i)
 					dst[i] += weight * src[i];
 			}
 		}
 	}
 }
 
-template<std::floating_point T>
-void volterra_sig_single(
+template<std::floating_point T, uint64_t L>
+void volterra_sig_run(
 	const T* path,
 	const VolterraKernelCache<T>& prepared,
 	T* out,
+	uint64_t out_stride,
 	VolterraWorkspace<T>& ws,
 	uint64_t length,
 	bool scalar_term
 ) {
-	T* cur = ws.state.data();
-	T* nxt = ws.next_state.data();
-	std::fill(ws.state.begin(), ws.state.end(), static_cast<T>(0));
+	T* cur = ws.state;
+	T* nxt = ws.next_state;
+	std::fill(ws.state, ws.state + ws.state_size, static_cast<T>(0));
 	for (uint64_t step = 0; step + 1 < length; ++step) {
-		compute_projected_increment<T>(
-			path, prepared, ws.y.data(), ws.dx.data(), step);
-		update_state<T>(
-			prepared, ws.y.data(), cur, nxt,
-			ws.F.data(), ws.G.data(), ws.B.data(), ws.shuffle_tensors.data());
+		compute_projected_increment<T, L>(path, length, prepared, ws.y, ws.dx, step);
+		update_state<T, L>(prepared, ws.y, cur, nxt, ws.F, ws.G, ws.B, ws.shuffle_tensors);
 		std::swap(cur, nxt);
 	}
 
-	readout_state<T>(cur, prepared, out, scalar_term);
+	readout_state<T, L>(cur, prepared, ws.tile_out, scalar_term);
+
+	const uint64_t out_len = scalar_term ? prepared.sig_len : prepared.sig_len - 1;
+	for (uint64_t b = 0; b < L; ++b) {
+		T* RESTRICT dst = out + b * out_stride;
+		const T* RESTRICT src = ws.tile_out + b;
+		for (uint64_t pos = 0; pos < out_len; ++pos)
+			dst[pos] = src[pos * L];
+	}
 }
 
 std::mutex prepared_volterra_sig_mu;
@@ -754,17 +953,22 @@ void volterra_sig_(
 		return;
 	}
 
-	// One workspace per thread, reused across every path in the chunk.
+	// One tile-sized workspace per thread, reused across every path in the
+	// chunk. Full tiles of VOLTERRA_LANES paths take the batch-vectorized path;
+	// the leftover (< VOLTERRA_LANES) paths run the same code at lane width 1.
+	const uint64_t path_stride = length * prepared.dimension;
 	auto run_range = [&](uint64_t start, uint64_t end) {
 		VolterraWorkspace<T> ws(prepared);
-		for (uint64_t i = start; i < end; ++i) {
-			volterra_sig_single<T>(
-				path + i * length * prepared.dimension,
-				prepared,
-				out + i * out_stride,
-				ws,
-				length,
-				scalar_term);
+		uint64_t i = start;
+		for (; i + VOLTERRA_LANES <= end; i += VOLTERRA_LANES) {
+			volterra_sig_run<T, VOLTERRA_LANES>(
+				path + i * path_stride, prepared, out + i * out_stride,
+				out_stride, ws, length, scalar_term);
+		}
+		for (; i < end; ++i) {
+			volterra_sig_run<T, 1>(
+				path + i * path_stride, prepared, out + i * out_stride,
+				out_stride, ws, length, scalar_term);
 		}
 	};
 

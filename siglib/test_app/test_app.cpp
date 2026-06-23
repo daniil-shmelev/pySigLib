@@ -79,7 +79,12 @@ int main(int argc, char* argv[])
     //example_batch_log_sig_combine_backprop_cuda_d(13000, 5, 5, 20);
     //example_batch_branched_log_sig_d(2, 3, 8, 4, 1);
     //example_batch_branched_sig_cuda_d(64, 5, 16000, 3, 10, true);
-    example_volterra_sig_d();
+    // Volterra sweep: (batch, dim, len, num_components, target_dim, state_dim, degree, n_jobs, num_runs)
+    example_volterra_sig_d(262144, 3, 8, 2, 2, 2, 1, 1, 50);  // A: low degree (overhead/memory bound)
+    example_volterra_sig_d(20000,  3, 8, 2, 3, 2, 3, 1, 50);  // B: moderate degree
+    example_volterra_sig_d(4000,   3, 8, 2, 2, 2, 5, 1, 50);  // C: high degree, small dim
+    example_volterra_sig_d(8000,   3, 8, 1, 3, 3, 4, 1, 50);  // D: scalar path (num_components=1)
+    example_volterra_sig_d(30000,  3, 8, 3, 4, 2, 2, 1, 50);  // E: wide, many components
     //example_batch_branched_sig_d(1, 3, 1000, 4, 1, 50);
     //example_batch_branched_sig_d(100, 3, 100, 4, -1, 50);
 

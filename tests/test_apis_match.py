@@ -21,6 +21,12 @@ import pysiglib.torch_api as torch_api
 
 # Backprop functions are intentionally not exposed in the derivable APIs.
 EXCLUDED_SUFFIXES = ("_backprop",)
+EXCLUDED_NAMES = {
+    "VolterraFSSK",
+    "VolterraKernel",
+    "prepare_volterra_sig",
+    "volterra_sig",
+}
 
 
 def get_public_members(module):
@@ -30,6 +36,7 @@ def get_public_members(module):
         for name, obj in inspect.getmembers(module)
         if (
             not name.startswith("_")
+            and name not in EXCLUDED_NAMES
             and not name.endswith(EXCLUDED_SUFFIXES)
             and (inspect.isfunction(obj) or inspect.isclass(obj))
         )
