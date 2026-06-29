@@ -18,3 +18,4 @@
 #include "cppch.h"
 
 void clear_prepared_volterra_sig_cache();
+void clear_prepared_volterra_sig_general_cache();

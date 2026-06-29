@@ -20,6 +20,15 @@ import torch
 import pysiglib
 from conftest import load_fixtures
 
+try:
+    import scipy  # noqa: F401
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+
+requires_scipy = pytest.mark.skipif(
+    not SCIPY_AVAILABLE, reason="scipy is required for the fractional kernel BL2 fit")
+
 
 FIXTURES = load_fixtures("volterra_signature_tensordev.npz")
 
@@ -249,6 +258,173 @@ def test_volterra_sig_matches_tensordev_matrix_kernel():
     np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
 
 
+@requires_scipy
+def test_volterra_fractional_kernel_bl2_matches_tensordev_nodes():
+    from pysiglib._rough_kernel import bl2_quadrature_rule
+
+    beta = float(FIXTURES["fractional_beta"])
+    R = int(FIXTURES["fractional_R"])
+    T = float(FIXTURES["fractional_T"])
+    nodes, weights = bl2_quadrature_rule(beta, R, T)
+
+    np.testing.assert_allclose(nodes, FIXTURES["fractional_nodes"], rtol=0, atol=0)
+    np.testing.assert_allclose(weights, FIXTURES["fractional_weights"], rtol=0, atol=0)
+
+
+@requires_scipy
+def test_volterra_sig_matches_tensordev_fractional_kernel():
+    path = np.array(FIXTURES["fractional_path"], copy=True)
+    degree = int(FIXTURES["fractional_degree"])
+    dt = float(FIXTURES["fractional_dt"])
+    readout_lag = float(FIXTURES["fractional_tau_dt"])
+    beta = float(FIXTURES["fractional_beta"])
+    R = int(FIXTURES["fractional_R"])
+    T = float(FIXTURES["fractional_T"])
+    quad_order = int(FIXTURES["fractional_quad_order"])
+    A = np.array(FIXTURES["fractional_A"], copy=True)
+    expected = FIXTURES["fractional_expected"]
+
+    kernel = pysiglib.VolterraFractionalKernel(
+        A, beta=beta, R=R, T=T, quad_order=quad_order)
+    kernel.prepare(degree, dt=dt, readout_lag=readout_lag, dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(
+            path, degree, kernel, dt=dt, readout_lag=readout_lag, scalar_term=True)
+        stripped = pysiglib.volterra_sig(
+            path, degree, kernel, dt=dt, readout_lag=readout_lag, scalar_term=False)
+    finally:
+        kernel.clear_cache()
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+    np.testing.assert_allclose(stripped, expected[..., 1:], rtol=1e-10, atol=1e-11)
+
+
+def test_volterra_fractional_kernel_rejects_bad_parameters():
+    A = _identity_A(2)
+    with pytest.raises(ValueError, match="beta"):
+        pysiglib.VolterraFractionalKernel(A, beta=0.4, R=4)
+    with pytest.raises(ValueError, match="beta"):
+        pysiglib.VolterraFractionalKernel(A, beta=1.0, R=4)
+    with pytest.raises(ValueError, match="R"):
+        pysiglib.VolterraFractionalKernel(A, beta=0.7, R=0)
+    with pytest.raises(ValueError, match="T"):
+        pysiglib.VolterraFractionalKernel(A, beta=0.7, R=4, T=0.)
+
+
+def _prony_fixture_kwargs():
+    return dict(
+        A=np.array(FIXTURES["prony_A"], copy=True),
+        real_rates=np.array(FIXTURES["prony_real_rates"], copy=True),
+        real_sizes=np.array(FIXTURES["prony_real_sizes"], copy=True),
+        osc_decays=np.array(FIXTURES["prony_osc_decays"], copy=True),
+        osc_freqs=np.array(FIXTURES["prony_osc_freqs"], copy=True),
+        osc_sizes=np.array(FIXTURES["prony_osc_sizes"], copy=True),
+        quad_order=int(FIXTURES["prony_quad_order"]),
+    )
+
+
+def test_volterra_sig_matches_tensordev_from_prony():
+    degree = int(FIXTURES["prony_degree"])
+    dt = float(FIXTURES["prony_dt"])
+    lag = float(FIXTURES["prony_tau_dt"])
+    path = np.array(FIXTURES["prony_path"], copy=True)
+    expected = FIXTURES["prony_expected"]
+    kernel = pysiglib.VolterraFSSK.from_prony(
+        alpha=np.array(FIXTURES["prony_alpha"], copy=True),
+        beta=np.array(FIXTURES["prony_beta"], copy=True),
+        delta=np.array(FIXTURES["prony_delta"], copy=True),
+        **_prony_fixture_kwargs(),
+    )
+    kernel.prepare(degree, dt=dt, readout_lag=lag, dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(
+            path, degree, kernel, dt=dt, readout_lag=lag, scalar_term=True)
+    finally:
+        kernel.clear_cache()
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+
+
+def test_volterra_sig_matches_tensordev_from_jordan():
+    degree = int(FIXTURES["prony_degree"])
+    dt = float(FIXTURES["prony_dt"])
+    lag = float(FIXTURES["prony_tau_dt"])
+    path = np.array(FIXTURES["prony_path"], copy=True)
+    expected = FIXTURES["prony_expected"]
+    kwargs = _prony_fixture_kwargs()
+    A = kwargs.pop("A")
+    kernel = pysiglib.VolterraFSSK.from_jordan(
+        A=A, b=np.array(FIXTURES["prony_b"], copy=True), **kwargs)
+    kernel.prepare(degree, dt=dt, readout_lag=lag, dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(
+            path, degree, kernel, dt=dt, readout_lag=lag, scalar_term=True)
+    finally:
+        kernel.clear_cache()
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+
+
+def test_volterra_from_jordan_real_only_uses_real_path():
+    # Real poles only (no oscillatory) -> a real-spectrum realization.
+    kernel = pysiglib.VolterraFSSK.from_jordan(
+        A=_identity_A(2), b=np.array([[1.0, 0.5]]),
+        real_rates=[0.3, 1.2], real_sizes=[1, 1])
+    path = np.array([[0., 0.], [0.2, -0.1], [0.4, 0.3]], dtype=np.float64)
+    kernel.prepare(2, dt=0.2, dtype=path.dtype)
+    try:
+        out = np.asarray(pysiglib.volterra_sig(path, 2, kernel, dt=0.2, scalar_term=True))
+    finally:
+        kernel.clear_cache()
+    assert np.isfinite(out).all()
+
+
+def test_volterra_sig_matches_tensordev_jordan_block():
+    # A genuine size-2 Jordan block (repeated pole, defective Lambda): handled by
+    # the general matrix recursion.
+    degree = int(FIXTURES["jordan_degree"])
+    dt = float(FIXTURES["jordan_dt"])
+    lag = float(FIXTURES["jordan_tau_dt"])
+    path = np.array(FIXTURES["jordan_path"], copy=True)
+    expected = FIXTURES["jordan_expected"]
+    kernel = pysiglib.VolterraFSSK.from_jordan(
+        A=np.array(FIXTURES["jordan_A"], copy=True),
+        b=np.array(FIXTURES["jordan_b"], copy=True),
+        real_rates=np.array(FIXTURES["jordan_real_rates"], copy=True),
+        real_sizes=np.array(FIXTURES["jordan_real_sizes"], copy=True),
+        quad_order=int(FIXTURES["jordan_quad_order"]),
+    )
+    kernel.prepare(degree, dt=dt, readout_lag=lag, dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(
+            path, degree, kernel, dt=dt, readout_lag=lag, scalar_term=True)
+        stripped = pysiglib.volterra_sig(
+            path, degree, kernel, dt=dt, readout_lag=lag, scalar_term=False)
+    finally:
+        kernel.clear_cache()
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+    np.testing.assert_allclose(stripped, expected[..., 1:], rtol=1e-10, atol=1e-11)
+
+
+def test_volterra_sig_jordan_block_batch_matches_per_path():
+    kernel = pysiglib.VolterraFSSK.from_jordan(
+        A=_identity_A(3), b=np.array([[0.7, 0.2, -0.1]]),
+        real_rates=[0.6], real_sizes=[3])
+    path = np.ascontiguousarray(
+        np.random.default_rng(5).standard_normal((9, 7, 3)) * 0.01)
+    kernel.prepare(3, dt=0.1, dtype=path.dtype)
+    try:
+        batched = np.asarray(pysiglib.volterra_sig(path, 3, kernel, dt=0.1, scalar_term=True))
+        ref = np.stack([
+            np.asarray(pysiglib.volterra_sig(
+                np.ascontiguousarray(path[i:i + 1]), 3, kernel, dt=0.1, scalar_term=True))[0]
+            for i in range(path.shape[0])])
+        multi = np.asarray(pysiglib.volterra_sig(path, 3, kernel, dt=0.1, scalar_term=True, n_jobs=-1))
+    finally:
+        kernel.clear_cache()
+    assert np.isfinite(batched).all()
+    np.testing.assert_allclose(batched, ref, rtol=1e-12, atol=1e-13)
+    np.testing.assert_array_equal(multi, batched)
+
+
 def test_volterra_sig_rejects_unknown_scheme():
     path = np.array([[0., 0.], [1., 1.]], dtype=np.float64)
     kernel = pysiglib.VolterraFSSK(Lambda=[0.1], A=_identity_A(2), b=[1.0])
@@ -265,17 +441,84 @@ def test_volterra_sig_requires_prepared_kernel():
         pysiglib.volterra_sig(path, 1, kernel, dt=1.)
 
 
-def test_volterra_sig_exact_rejects_non_diagonal_Lambda():
-    path = np.array([[0., 0.], [1., 1.]], dtype=np.float64)
-    Lambda = np.array([[0.1, 0.2], [0., 0.3]], dtype=np.float64)
-    kernel = pysiglib.VolterraFSSK(
-        Lambda=Lambda,
-        A=_identity_A(2),
-        b=[1.0, 0.5],
-    )
+def test_volterra_sig_exact_dense_real_Lambda_matches_diagonalization():
+    # A dense Lambda with a real spectrum reduces to an equivalent diagonal
+    # realization; the signature must match that built directly from the
+    # eigenvalue diagonal and the transformed b.
+    rng = np.random.default_rng(7)
+    R, m, d, degree = 3, 2, 3, 3
+    S = rng.standard_normal((R, R))
+    mu = np.array([0.3, 0.8, 1.5])
+    Lambda = S @ np.diag(mu) @ np.linalg.inv(S)
+    A = rng.standard_normal((2, m, d)) * 0.1
+    b = rng.standard_normal((2, R)) * 0.2
+    path = np.ascontiguousarray(rng.standard_normal((6, 10, d)) * 0.01)
 
-    with pytest.raises(ValueError, match="diagonal kernel.Lambda"):
-        kernel.prepare(1, dt=1., dtype=path.dtype)
+    dense = pysiglib.VolterraFSSK(Lambda=Lambda, A=A, b=b, quad_order=32)
+    dense.prepare(degree, dt=0.1, dtype=path.dtype)
+
+    eigvals, V = np.linalg.eig(Lambda)
+    w = np.ones(R) @ V
+    b_eff = (w[None, :] * np.linalg.solve(V, b.T).T).real
+    diag = pysiglib.VolterraFSSK(
+        Lambda=eigvals.real, A=A, b=np.ascontiguousarray(b_eff), quad_order=32)
+    diag.prepare(degree, dt=0.1, dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(path, degree, dense, dt=0.1, scalar_term=True)
+        expected = pysiglib.volterra_sig(path, degree, diag, dt=0.1, scalar_term=True)
+    finally:
+        dense.clear_cache()
+        diag.clear_cache()
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+
+
+def test_volterra_sig_matches_tensordev_oscillatory_kernel():
+    # Dense Lambda with a complex (oscillatory) spectrum: eigenvalues a +- i w.
+    path = np.array(FIXTURES["osc_path"], copy=True)
+    degree = int(FIXTURES["osc_degree"])
+    dt = float(FIXTURES["osc_dt"])
+    readout_lag = float(FIXTURES["osc_tau_dt"])
+    quad_order = int(FIXTURES["osc_quad_order"])
+    Lambda = np.array(FIXTURES["osc_Lambda"], copy=True)
+    b = np.array(FIXTURES["osc_b"], copy=True)
+    A = np.array(FIXTURES["osc_A"], copy=True)
+    expected = FIXTURES["osc_expected"]
+    kernel = pysiglib.VolterraFSSK(Lambda=Lambda, A=A, b=b, quad_order=quad_order)
+
+    kernel.prepare(degree, dt=dt, readout_lag=readout_lag, dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(
+            path, degree, kernel, dt=dt, readout_lag=readout_lag, scalar_term=True)
+        stripped = pysiglib.volterra_sig(
+            path, degree, kernel, dt=dt, readout_lag=readout_lag, scalar_term=False)
+    finally:
+        kernel.clear_cache()
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+    np.testing.assert_allclose(stripped, expected[..., 1:], rtol=1e-10, atol=1e-11)
+
+
+def test_volterra_sig_oscillatory_batch_matches_per_path():
+    rng = np.random.default_rng(3)
+    Lambda = np.array([[0.7, 1.6], [-1.6, 0.7]], dtype=np.float64)
+    A = rng.standard_normal((2, 2, 3)) * 0.1
+    b = rng.standard_normal((2, 2)) * 0.2
+    path = np.ascontiguousarray(rng.standard_normal((10, 8, 3)) * 0.01)
+    kernel = pysiglib.VolterraFSSK(Lambda=Lambda, A=A, b=b, quad_order=32)
+    kernel.prepare(3, dt=0.1, dtype=path.dtype)
+    try:
+        batched = np.asarray(pysiglib.volterra_sig(path, 3, kernel, dt=0.1, scalar_term=True))
+        ref = np.stack([
+            np.asarray(pysiglib.volterra_sig(
+                np.ascontiguousarray(path[i:i + 1]), 3, kernel, dt=0.1, scalar_term=True))[0]
+            for i in range(path.shape[0])])
+        multi = np.asarray(pysiglib.volterra_sig(path, 3, kernel, dt=0.1, scalar_term=True, n_jobs=-1))
+    finally:
+        kernel.clear_cache()
+    assert np.isfinite(batched).all()
+    np.testing.assert_allclose(batched, ref, rtol=1e-12, atol=1e-13)
+    np.testing.assert_array_equal(multi, batched)
 
 
 def test_volterra_sig_requires_dt():

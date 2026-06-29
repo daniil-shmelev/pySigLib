@@ -29,6 +29,7 @@ void clear_memory_caches() {
 	clear_bch_cache();
 	clear_branched_sig_cache();
 	clear_prepared_volterra_sig_cache();
+	clear_prepared_volterra_sig_general_cache();
 }
 
 void clear_cache_(bool use_disk) {

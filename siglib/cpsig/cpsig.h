@@ -308,6 +308,25 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int volterra_sig_f(const float* path, float* out, uint64_t handle, uint64_t batch_size, uint64_t dimension, uint64_t length, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @brief */
 	[[nodiscard]] CPSIG_API int volterra_sig_d(const double* path, double* out, uint64_t handle, uint64_t batch_size, uint64_t dimension, uint64_t length, bool scalar_term = true, int n_jobs = 1) noexcept;
+
+	/**
+	* @brief General finite state-space Volterra kernels for an arbitrary real state matrix
+	*        Lambda (dense, oscillatory, or a defective Jordan block). The per-step propagator
+	*        E = exp(-Lambda dt) (R x R), the packed coefficients psi/phi, and the readout
+	*        weights are precomputed by the caller and passed in; A and the output are real.
+	*        Used by pySigLib when kernel.Lambda is not diagonal.
+	*/
+	[[nodiscard]] CPSIG_API int prepare_volterra_sig_general_f(const float* E, const float* psi, const float* phi, const float* readout_weights, const float* A, uint64_t dimension, uint64_t num_components, uint64_t target_dimension, uint64_t state_dimension, uint64_t degree, uint64_t* handle) noexcept;
+	/** @brief */
+	[[nodiscard]] CPSIG_API int prepare_volterra_sig_general_d(const double* E, const double* psi, const double* phi, const double* readout_weights, const double* A, uint64_t dimension, uint64_t num_components, uint64_t target_dimension, uint64_t state_dimension, uint64_t degree, uint64_t* handle) noexcept;
+	/** @brief */
+	[[nodiscard]] CPSIG_API int free_volterra_sig_general_f(uint64_t handle) noexcept;
+	/** @brief */
+	[[nodiscard]] CPSIG_API int free_volterra_sig_general_d(uint64_t handle) noexcept;
+	/** @brief */
+	[[nodiscard]] CPSIG_API int volterra_sig_general_f(const float* path, float* out, uint64_t handle, uint64_t batch_size, uint64_t dimension, uint64_t length, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @brief */
+	[[nodiscard]] CPSIG_API int volterra_sig_general_d(const double* path, double* out, uint64_t handle, uint64_t batch_size, uint64_t dimension, uint64_t length, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_functions Signature backprop functions

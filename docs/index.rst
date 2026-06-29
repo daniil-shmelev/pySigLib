@@ -94,6 +94,7 @@ Fast path signatures, log signatures, and signature kernels on CPU and CUDA GPU.
    /pages/log_signatures
    /pages/branched_signatures
    /pages/branched_log_signatures
+   /pages/volterra_signatures
    /pages/signature_kernels
    /pages/streams
    /pages/backprop

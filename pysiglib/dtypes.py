@@ -61,6 +61,21 @@ CPSIG_FREE_VOLTERRA_SIG = {
     "float64": CPSIG.free_volterra_sig_d
 }
 
+CPSIG_PREPARE_VOLTERRA_SIG_GENERAL = {
+    "float32": CPSIG.prepare_volterra_sig_general_f,
+    "float64": CPSIG.prepare_volterra_sig_general_d
+}
+
+CPSIG_VOLTERRA_SIG_GENERAL = {
+    "float32": CPSIG.volterra_sig_general_f,
+    "float64": CPSIG.volterra_sig_general_d
+}
+
+CPSIG_FREE_VOLTERRA_SIG_GENERAL = {
+    "float32": CPSIG.free_volterra_sig_general_f,
+    "float64": CPSIG.free_volterra_sig_general_d
+}
+
 CUSIG_TRANSFORM_PATH_CUDA = None
 CUSIG_TRANSFORM_PATH_BACKPROP_CUDA = None
 CUSIG_SIG_KERNEL_CUDA = None

@@ -27,7 +27,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import tensordev
-from tensordev.sss import StateSpaceSignature
+from tensordev import FSSK
+from tensordev.sss import StateSpaceSignature, fssk_vsig
+from tensordev.sss.rough_approx import _bl2_quadrature_rule, fractional_fssk
 
 
 FIXTURE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +45,14 @@ def _reference(path, degree, lambda_diag, A, b, dt, quad_order, tau_dt=0.):
         quad_order=quad_order,
     )
     levels = kernel.vsig(jnp.asarray(path), dt=dt, tau_dt=tau_dt)
+    return np.asarray(tensordev.tensor_to_flat(levels))
+
+
+def _fractional_reference(path, degree, beta, R, A, dt, T, quad_order, tau_dt=0.):
+    kernel = fractional_fssk(
+        beta=beta, R=R, A=jnp.asarray(A), T=T, coef_quad_order=quad_order)
+    levels = fssk_vsig(
+        jnp.asarray(path), kernel=kernel, dt=dt, trunc=degree, tau_dt=tau_dt)
     return np.asarray(tensordev.tensor_to_flat(levels))
 
 
@@ -99,8 +109,200 @@ matrix_expected = _reference(
     tau_dt=float(matrix_tau_dt),
 )
 
+fractional_path = np.array(
+    [
+        [0., 0.1, -0.2],
+        [0.4, -0.1, 0.0],
+        [0.5, 0.2, 0.3],
+        [0.2, 0.5, 0.1],
+        [0.3, -0.2, 0.4],
+    ],
+    dtype=np.float64,
+)
+fractional_degree = np.array(3, dtype=np.int64)
+fractional_dt = np.array(0.1, dtype=np.float64)
+fractional_tau_dt = np.array(0.05, dtype=np.float64)
+fractional_beta = np.array(0.7, dtype=np.float64)
+fractional_R = np.array(4, dtype=np.int64)
+fractional_T = np.array(1.0, dtype=np.float64)
+fractional_quad_order = np.array(32, dtype=np.int64)
+fractional_A = np.array(
+    [[[1.0, 0.2, -0.1], [0.0, 0.5, 0.3]]],
+    dtype=np.float64,
+)
+fractional_nodes, fractional_weights = _bl2_quadrature_rule(
+    beta=float(fractional_beta), R=int(fractional_R), T=float(fractional_T))
+fractional_expected = _fractional_reference(
+    fractional_path,
+    int(fractional_degree),
+    float(fractional_beta),
+    int(fractional_R),
+    fractional_A,
+    float(fractional_dt),
+    float(fractional_T),
+    int(fractional_quad_order),
+    tau_dt=float(fractional_tau_dt),
+)
+
+# Oscillatory (complex-spectrum) dense Lambda: real 2x2 block [[a, w], [-w, a]]
+# has eigenvalues a +- i w, exercising the complex state recursion.
+osc_path = np.array(
+    [
+        [0., 0.1, -0.2],
+        [0.4, -0.1, 0.0],
+        [0.5, 0.2, 0.3],
+        [0.2, 0.5, 0.1],
+    ],
+    dtype=np.float64,
+)
+osc_degree = np.array(3, dtype=np.int64)
+osc_dt = np.array(0.1, dtype=np.float64)
+osc_tau_dt = np.array(0.05, dtype=np.float64)
+osc_quad_order = np.array(32, dtype=np.int64)
+osc_Lambda = np.array([[0.6, 1.3], [-1.3, 0.6]], dtype=np.float64)
+osc_b = np.array([[0.8, -0.1], [0.3, 0.4]], dtype=np.float64)
+osc_A = np.array(
+    [
+        [[1.0, 0.2, -0.1], [0.0, 0.5, 0.3]],
+        [[-0.4, 0.1, 0.6], [0.7, -0.2, 0.0]],
+    ],
+    dtype=np.float64,
+)
+osc_kernel = StateSpaceSignature.from_matrix(
+    Lambda=jnp.asarray(osc_Lambda),
+    A=jnp.asarray(osc_A),
+    b=jnp.asarray(osc_b),
+    trunc=int(osc_degree),
+    quad_order=int(osc_quad_order),
+)
+osc_expected = np.asarray(tensordev.tensor_to_flat(
+    osc_kernel.vsig(jnp.asarray(osc_path), dt=float(osc_dt), tau_dt=float(osc_tau_dt))))
+
+# Prony / Jordan kernel: real poles (size 1) + an oscillatory pair (size 1),
+# state vectors built from Prony coefficients.
+prony_path = np.array(
+    [
+        [0., 0.1, -0.2],
+        [0.4, -0.1, 0.0],
+        [0.5, 0.2, 0.3],
+        [0.2, 0.5, 0.1],
+    ],
+    dtype=np.float64,
+)
+prony_degree = np.array(3, dtype=np.int64)
+prony_dt = np.array(0.1, dtype=np.float64)
+prony_tau_dt = np.array(0.05, dtype=np.float64)
+prony_quad_order = np.array(32, dtype=np.int64)
+prony_real_rates = np.array([0.4, 0.9], dtype=np.float64)
+prony_real_sizes = np.array([1, 1], dtype=np.int64)
+prony_osc_decays = np.array([0.6], dtype=np.float64)
+prony_osc_freqs = np.array([1.3], dtype=np.float64)
+prony_osc_sizes = np.array([1], dtype=np.int64)
+prony_alpha = np.array([[0.7, -0.3], [0.2, 0.5]], dtype=np.float64)
+prony_beta = np.array([[0.4], [-0.2]], dtype=np.float64)
+prony_delta = np.array([[0.1], [0.3]], dtype=np.float64)
+prony_A = np.array(
+    [
+        [[1.0, 0.2, -0.1], [0.0, 0.5, 0.3]],
+        [[-0.4, 0.1, 0.6], [0.7, -0.2, 0.0]],
+    ],
+    dtype=np.float64,
+)
+prony_kernel = FSSK.from_prony(
+    A=jnp.asarray(prony_A),
+    real_rates=jnp.asarray(prony_real_rates), real_sizes=tuple(int(s) for s in prony_real_sizes),
+    osc_decays=jnp.asarray(prony_osc_decays), osc_freqs=jnp.asarray(prony_osc_freqs),
+    osc_sizes=tuple(int(s) for s in prony_osc_sizes),
+    alpha=jnp.asarray(prony_alpha), beta=jnp.asarray(prony_beta), delta=jnp.asarray(prony_delta),
+    quad_order=int(prony_quad_order))
+prony_b = np.asarray(prony_kernel.b)
+prony_expected = np.asarray(tensordev.tensor_to_flat(
+    fssk_vsig(jnp.asarray(prony_path), kernel=prony_kernel, dt=float(prony_dt),
+              trunc=int(prony_degree), tau_dt=float(prony_tau_dt))))
+
+# Defective (size>1) Jordan block: a repeated pole producing t^k e^(-lambda t)
+# kernel terms, which need the general matrix recursion.
+jordan_path = np.array(
+    [
+        [0., 0.1, -0.2],
+        [0.4, -0.1, 0.0],
+        [0.5, 0.2, 0.3],
+        [0.2, 0.5, 0.1],
+    ],
+    dtype=np.float64,
+)
+jordan_degree = np.array(3, dtype=np.int64)
+jordan_dt = np.array(0.1, dtype=np.float64)
+jordan_tau_dt = np.array(0.05, dtype=np.float64)
+jordan_quad_order = np.array(32, dtype=np.int64)
+jordan_real_rates = np.array([0.5], dtype=np.float64)
+jordan_real_sizes = np.array([2], dtype=np.int64)
+jordan_b = np.array([[0.8, 0.3], [-0.2, 0.5]], dtype=np.float64)
+jordan_A = np.array(
+    [
+        [[1.0, 0.2, -0.1], [0.0, 0.5, 0.3]],
+        [[-0.4, 0.1, 0.6], [0.7, -0.2, 0.0]],
+    ],
+    dtype=np.float64,
+)
+jordan_kernel = FSSK.from_jordan(
+    A=jnp.asarray(jordan_A), b=jnp.asarray(jordan_b),
+    real_rates=jnp.asarray(jordan_real_rates),
+    real_sizes=tuple(int(s) for s in jordan_real_sizes),
+    quad_order=int(jordan_quad_order))
+jordan_expected = np.asarray(tensordev.tensor_to_flat(
+    fssk_vsig(jnp.asarray(jordan_path), kernel=jordan_kernel, dt=float(jordan_dt),
+              trunc=int(jordan_degree), tau_dt=float(jordan_tau_dt))))
+
 np.savez_compressed(
     OUT_PATH,
+    jordan_path=jordan_path,
+    jordan_degree=jordan_degree,
+    jordan_dt=jordan_dt,
+    jordan_tau_dt=jordan_tau_dt,
+    jordan_quad_order=jordan_quad_order,
+    jordan_real_rates=jordan_real_rates,
+    jordan_real_sizes=jordan_real_sizes,
+    jordan_b=jordan_b,
+    jordan_A=jordan_A,
+    jordan_expected=jordan_expected,
+    prony_path=prony_path,
+    prony_degree=prony_degree,
+    prony_dt=prony_dt,
+    prony_tau_dt=prony_tau_dt,
+    prony_quad_order=prony_quad_order,
+    prony_real_rates=prony_real_rates,
+    prony_real_sizes=prony_real_sizes,
+    prony_osc_decays=prony_osc_decays,
+    prony_osc_freqs=prony_osc_freqs,
+    prony_osc_sizes=prony_osc_sizes,
+    prony_alpha=prony_alpha,
+    prony_beta=prony_beta,
+    prony_delta=prony_delta,
+    prony_A=prony_A,
+    prony_b=prony_b,
+    prony_expected=prony_expected,
+    osc_path=osc_path,
+    osc_degree=osc_degree,
+    osc_dt=osc_dt,
+    osc_tau_dt=osc_tau_dt,
+    osc_quad_order=osc_quad_order,
+    osc_Lambda=osc_Lambda,
+    osc_b=osc_b,
+    osc_A=osc_A,
+    osc_expected=osc_expected,
+    fractional_path=fractional_path,
+    fractional_degree=fractional_degree,
+    fractional_dt=fractional_dt,
+    fractional_tau_dt=fractional_tau_dt,
+    fractional_beta=fractional_beta,
+    fractional_R=fractional_R,
+    fractional_T=fractional_T,
+    fractional_quad_order=fractional_quad_order,
+    fractional_A=fractional_A,
+    fractional_nodes=fractional_nodes,
+    fractional_weights=fractional_weights,
+    fractional_expected=fractional_expected,
     scalar_path=scalar_path,
     scalar_degree=scalar_degree,
     scalar_dt=scalar_dt,
