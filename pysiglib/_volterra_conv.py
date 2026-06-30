@@ -21,37 +21,70 @@ so this module precomputes the ``O(S)`` distinct lag coefficients rather than
 the ``O(S^2)`` triples. The native recursion (cp_volterra_conv.cpp) consumes
 them indexed by lag.
 
-This increment covers the scalar (``q == 1``) kernels: the scalar fractional
-kernel (closed-form incomplete-beta coefficients) and the Gamma kernel
-(Gauss-Legendre quadrature). ``scipy`` is required and imported lazily.
+Covers the fractional kernel (closed-form incomplete-beta coefficients, scalar
+or multivariate ``q >= 1``) and the scalar Gamma kernel (Gauss-Legendre
+quadrature, ``q == 1``). For ``q > 1`` the coefficients are packed in the native
+multi-index order so the native shuffle-tensor evaluation can consume them.
+``scipy`` is required and imported lazily.
 """
 
 import numpy as np
 
 
-def fractional_lag_coefficients(beta, *, dt, degree, S, dtype):
-    r"""Lag coefficients for the scalar fractional kernel ``t^(beta-1)/Gamma(beta)``.
+def _enumerate_multiindices(q, max_degree):
+    """Multi-indices of ``q`` components by total degree 0..max_degree, in the
+    same order as the native ``populate_multiindex_layout`` (compositions with
+    the first parts taken in descending order)."""
+    out = []
 
-    Returns ``alpha_lag`` of shape ``(S + 1, degree)`` (lag 0 is unused/zero).
-    ``alpha_lag[lag, n-1]`` is the normalized coefficient ``beta_n`` of the
-    degree-``n`` term for a source interval ``lag`` steps before the readout.
+    def rec(pos, remaining, current):
+        if pos + 1 == q:
+            current[pos] = remaining
+            out.append(tuple(current))
+            return
+        for value in range(remaining, -1, -1):
+            current[pos] = value
+            rec(pos + 1, remaining - value, current)
+
+    for level in range(max_degree + 1):
+        rec(0, level, [0] * q)
+    return np.asarray(out, dtype=np.int64).reshape(len(out), q)
+
+
+def fractional_lag_coefficients(beta, *, dt, degree, S, dtype):
+    r"""Lag coefficients for the fractional kernel ``k_p(u) = u^(beta_p-1)/Gamma(beta_p)``.
+
+    ``beta`` is a scalar or a length-``q`` vector of fractional exponents.
+    Returns ``(alpha_lag, M)`` where ``alpha_lag`` has shape ``(S + 1, q, M)``
+    (lag 0 unused/zero), ``M`` is the number of multi-indices of degree
+    ``<= degree-1``, packed in the native multi-index order. The ``1/ell!``
+    normalization is supplied by the native shuffle tensors, so it is not
+    applied here.
     """
     from scipy.special import betainc, gammaln
 
-    beta = float(beta)
-    M = degree
-    lag = np.arange(1, S + 1, dtype=np.float64)        # (S,)
-    h = float(dt)
-    tau_s = lag * h                                     # (S,)
-    z = np.clip(h / tau_s, 0.0, 1.0)                    # (S,)
+    beta = np.atleast_1d(np.asarray(beta, dtype=np.float64))   # (q,)
+    q = beta.shape[0]
+    ell = _enumerate_multiindices(q, degree - 1)               # (M, q)
+    M = ell.shape[0]
+    deg = ell.sum(axis=1).astype(np.float64)                   # (M,)
+    prefix = ell.astype(np.float64) @ beta                     # (M,)  ell . beta
 
-    out = np.zeros((S + 1, M), dtype=np.float64)
-    for e in range(M):                                  # e = prefix degree |ell|
-        total = (e + 1.0) * beta                        # ell.beta + beta_1
-        a = e * beta + 1.0
-        log_scale = total * np.log(tau_s) - (e + 1.0) * np.log(h) - gammaln(total + 1.0)
-        out[1:, e] = np.exp(log_scale) * betainc(a, beta, z)
-    return np.ascontiguousarray(out.astype(dtype))
+    h = float(dt)
+    lag = np.arange(1, S + 1, dtype=np.float64)                # (S,)
+    tau_s = lag * h                                            # (S,)
+    z = np.clip(h / tau_s, 0.0, 1.0)                           # (S,)
+    log_tau_s = np.log(tau_s)[:, None]                         # (S, 1)
+
+    a = prefix + 1.0                                           # (M,) p-independent
+    out = np.zeros((S + 1, q, M), dtype=np.float64)
+    for p in range(q):
+        total = prefix + beta[p]                               # (M,)
+        log_scale = (total[None, :] * log_tau_s
+                     - (deg[None, :] + 1.0) * np.log(h)
+                     - gammaln(total + 1.0)[None, :])          # (S, M)
+        out[1:, p, :] = np.exp(log_scale) * betainc(a[None, :], beta[p], z[:, None])
+    return np.ascontiguousarray(out.astype(dtype)), M
 
 
 def gamma_lag_coefficients(beta, scale, rate, quad_order, *, dt, degree, S, dtype):
@@ -94,16 +127,21 @@ def gamma_lag_coefficients(beta, scale, rate, quad_order, *, dt, degree, S, dtyp
 
 
 def convolution_lag_coefficients(kind, params, *, dt, degree, S, dtype):
-    """Dispatch lag-coefficient builder by kernel kind. Returns ``(alpha_lag, M)``."""
+    """Dispatch lag-coefficient builder by kernel kind. Returns ``(alpha_lag, M)``.
+
+    ``alpha_lag`` is packed as ``(S + 1, q, M)`` in the native multi-index order;
+    for ``q == 1`` (Gamma, scalar fractional) the leading ``q`` axis is 1 and the
+    flat layout matches the scalar lag-coefficient array consumed by the Horner
+    path.
+    """
     if degree <= 0:
-        return np.zeros((S + 1, 0), dtype=dtype), 0
+        return np.zeros((S + 1, 1, 0), dtype=dtype), 0
     if kind == "fractional":
-        alpha = fractional_lag_coefficients(
+        return fractional_lag_coefficients(
             params["beta"], dt=dt, degree=degree, S=S, dtype=dtype)
-    elif kind == "gamma":
+    if kind == "gamma":
         alpha = gamma_lag_coefficients(
             params["beta"], params["scale"], params["rate"], params["quad_order"],
             dt=dt, degree=degree, S=S, dtype=dtype)
-    else:
-        raise ValueError("unknown convolution kernel kind: " + str(kind))
-    return alpha, degree
+        return alpha, degree
+    raise ValueError("unknown convolution kernel kind: " + str(kind))

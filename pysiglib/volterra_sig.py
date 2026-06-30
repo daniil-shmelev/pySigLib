@@ -574,10 +574,7 @@ class VolterraFractionalKernel(VolterraKernel):
 
 
 def _conv_projection(A, dtype):
-    """Validate ``A`` and pack it into a contiguous ``(q, m, d)`` array.
-
-    Enforces ``q == 1`` (the scalar case implemented by the convolution scheme).
-    """
+    """Validate ``A`` and pack it into a contiguous ``(q, m, d)`` array."""
     A_rank = _rank(A)
     if A_rank not in (2, 3):
         raise ValueError("kernel.A must have rank 2 or 3, got rank " + str(A_rank))
@@ -587,10 +584,6 @@ def _conv_projection(A, dtype):
     if not _is_finite(A):
         raise ValueError("kernel.A must contain only finite values")
     q, m, d = A.shape
-    if q != 1:
-        raise NotImplementedError(
-            "the general convolution scheme currently supports q=1 kernels "
-            "(a single kernel component); multivariate q>1 is not yet implemented")
     return np.ascontiguousarray(A), q, m, d
 
 
@@ -609,8 +602,6 @@ class VolterraConvolutionKernel(VolterraKernel):
     computed by the quadratic Volterra-Chen recursion (the general convolution
     scheme) rather than the exact FSSK state recursion. Such kernels always use
     the convolution scheme and require ``readout_lag=0``.
-
-    This release implements the scalar (``q=1``) case.
     """
 
     def _conv_realization(self, dtype):
@@ -630,26 +621,35 @@ class VolterraConvFractionalKernel(VolterraConvolutionKernel):
 
         K(t,s) = k(t-s)\\, A, \\qquad k(u) = \\frac{u^{\\beta - 1}}{\\Gamma(\\beta)},
 
-    with ``beta > 0``. Unlike :class:`VolterraFractionalKernel`, which
-    approximates ``k`` by a sum of exponentials and uses the exact FSSK scheme,
-    this evaluates the interval coefficients of ``k`` exactly (closed-form
-    regularized incomplete beta) and uses the quadratic convolution recursion.
+    where each scalar kernel may have its own exponent ``beta_p > 0``. Unlike
+    :class:`VolterraFractionalKernel`, which approximates ``k`` by a sum of
+    exponentials and uses the exact FSSK scheme, this evaluates the interval
+    coefficients exactly (closed-form regularized incomplete beta) and uses the
+    quadratic convolution recursion.
 
-    ``A`` has shape ``(m, d)`` (or ``(1, m, d)``).
+    ``A`` has shape ``(q, m, d)`` (or ``(m, d)`` for a single component ``q=1``).
+    ``beta`` is a scalar (single component) or a length-``q`` sequence of
+    positive exponents, one per kernel component.
     """
 
-    def __init__(self, A, *, beta: float):
+    def __init__(self, A, *, beta):
         super().__init__()
-        check_type(beta, "beta", float)
-        if beta <= 0:
-            raise ValueError("beta must be positive")
+        beta_arr = np.atleast_1d(np.asarray(beta, dtype=np.float64))
+        if beta_arr.ndim != 1:
+            raise ValueError("beta must be a scalar or a 1-D sequence")
+        if np.any(beta_arr <= 0):
+            raise ValueError("beta entries must be positive")
         self.A = A
-        self.beta = beta
+        self.beta = beta_arr
 
     def _conv_realization(self, dtype):
         A, q, m, d = _conv_projection(self.A, dtype)
+        if self.beta.shape[0] != q:
+            raise ValueError(
+                "beta must have one entry per kernel component: expected "
+                + str(q) + ", got " + str(self.beta.shape[0]))
         return {"A": A, "q": q, "m": m, "d": d, "kind": "fractional",
-                "params": {"beta": float(self.beta)}}
+                "params": {"beta": self.beta}}
 
 
 class VolterraConvGammaKernel(VolterraConvolutionKernel):
@@ -694,6 +694,8 @@ class VolterraConvGammaKernel(VolterraConvolutionKernel):
 
     def _conv_realization(self, dtype):
         A, q, m, d = _conv_projection(self.A, dtype)
+        if q != 1:
+            raise ValueError("the Gamma kernel is scalar; kernel.A must have q=1")
         return {"A": A, "q": q, "m": m, "d": d, "kind": "gamma",
                 "params": {"beta": float(self.beta), "scale": float(self.scale),
                            "rate": float(self.rate), "quad_order": int(self.quad_order)}}

@@ -267,8 +267,12 @@ def test_volterra_fractional_kernel_bl2_matches_tensordev_nodes():
     T = float(FIXTURES["fractional_T"])
     nodes, weights = bl2_quadrature_rule(beta, R, T)
 
-    np.testing.assert_allclose(nodes, FIXTURES["fractional_nodes"], rtol=0, atol=0)
-    np.testing.assert_allclose(weights, FIXTURES["fractional_weights"], rtol=0, atol=0)
+    # The BL2 rule is an iterative scipy.optimize result, so it is not bit-exact
+    # across platforms/BLAS; a tight relative tolerance confirms the port without
+    # demanding non-portable bit equality (the end-to-end signature test below
+    # guards the downstream accuracy to 1e-10).
+    np.testing.assert_allclose(nodes, FIXTURES["fractional_nodes"], rtol=1e-6, atol=1e-9)
+    np.testing.assert_allclose(weights, FIXTURES["fractional_weights"], rtol=1e-6, atol=1e-9)
 
 
 @requires_scipy
@@ -551,6 +555,53 @@ def test_volterra_conv_fractional_matches_tensordev():
 
 
 @requires_scipy
+def test_volterra_conv_fractional_multivariate_matches_tensordev():
+    path = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_frac2_A"], copy=True)
+    beta = np.array(FIXTURES["conv_frac2_beta"], copy=True)
+    expected = FIXTURES["conv_frac2_expected"]
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+
+    kernel.prepare(degree, dt=dt, dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scalar_term=True)
+        stripped = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scalar_term=False)
+    finally:
+        kernel.clear_cache()
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+    np.testing.assert_allclose(stripped, expected[..., 1:], rtol=1e-10, atol=1e-11)
+
+
+@requires_scipy
+def test_volterra_conv_multivariate_batch_matches_per_path():
+    base = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_frac2_A"], copy=True)
+    beta = np.array(FIXTURES["conv_frac2_beta"], copy=True)
+    path = np.stack([base, base * 0.5, base + 0.2])
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+
+    kernel.prepare(degree, dt=dt, dtype=path.dtype)
+    try:
+        batched = np.asarray(pysiglib.volterra_sig(path, degree, kernel, dt=dt, scalar_term=True))
+        ref = np.stack([
+            np.asarray(pysiglib.volterra_sig(
+                np.ascontiguousarray(path[i]), degree, kernel, dt=dt, scalar_term=True))
+            for i in range(path.shape[0])])
+        multi = np.asarray(pysiglib.volterra_sig(path, degree, kernel, dt=dt, scalar_term=True, n_jobs=-1))
+    finally:
+        kernel.clear_cache()
+
+    assert np.isfinite(batched).all()
+    np.testing.assert_allclose(batched, ref, rtol=1e-12, atol=1e-13)
+    np.testing.assert_array_equal(multi, batched)
+
+
+@requires_scipy
 def test_volterra_conv_gamma_matches_tensordev():
     path = np.array(FIXTURES["conv_path"], copy=True)
     degree = int(FIXTURES["conv_degree"])
@@ -620,10 +671,17 @@ def test_volterra_conv_torch_cpu_output():
     np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-10, atol=1e-11)
 
 
-def test_volterra_conv_rejects_multivariate():
+def test_volterra_conv_gamma_rejects_multivariate():
     A = np.zeros((2, 2, 2), dtype=np.float64)
-    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=0.7)
-    with pytest.raises(NotImplementedError):
+    kernel = pysiglib.VolterraConvGammaKernel(A, beta=0.8)
+    with pytest.raises(ValueError):
+        kernel.prepare(2, dt=0.1)
+
+
+def test_volterra_conv_fractional_rejects_beta_length_mismatch():
+    A = np.zeros((2, 2, 2), dtype=np.float64)        # q = 2
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=[0.6, 0.7, 0.8])  # 3 != 2
+    with pytest.raises(ValueError):
         kernel.prepare(2, dt=0.1)
 
 

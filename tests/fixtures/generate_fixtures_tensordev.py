@@ -59,7 +59,7 @@ def _fractional_reference(path, degree, beta, R, A, dt, T, quad_order, tau_dt=0.
 
 
 def _conv_fractional_reference(path, degree, beta, A, dt):
-    kernel = FractionalKernel(beta=jnp.asarray([beta]), A=jnp.asarray(A))
+    kernel = FractionalKernel(beta=jnp.atleast_1d(jnp.asarray(beta)), A=jnp.asarray(A))
     levels = conv_vsig(jnp.asarray(path), kernel=kernel, trunc=degree, dt=dt,
                        scheme="quadratic", order=0)
     return np.asarray(tensordev.tensor_to_flat(levels))
@@ -295,6 +295,19 @@ conv_frac_beta = np.array(0.7, dtype=np.float64)
 conv_frac_expected = _conv_fractional_reference(
     conv_path, int(conv_degree), float(conv_frac_beta), conv_A, float(conv_dt))
 
+# Multivariate (q=2) fractional convolution kernel: two components with
+# distinct fractional exponents, exercising the shuffle-algebra evalVtE.
+conv_frac2_beta = np.array([0.6, 0.9], dtype=np.float64)
+conv_frac2_A = np.array(
+    [
+        [[1.0, 0.2, -0.1], [0.0, 0.5, 0.3]],
+        [[-0.4, 0.1, 0.6], [0.7, -0.2, 0.0]],
+    ],
+    dtype=np.float64,
+)
+conv_frac2_expected = _conv_fractional_reference(
+    conv_path, int(conv_degree), conv_frac2_beta, conv_frac2_A, float(conv_dt))
+
 conv_gamma_beta = np.array(0.8, dtype=np.float64)
 conv_gamma_scale = np.array(1.3, dtype=np.float64)
 conv_gamma_rate = np.array(0.5, dtype=np.float64)
@@ -311,6 +324,9 @@ np.savez_compressed(
     conv_A=conv_A,
     conv_frac_beta=conv_frac_beta,
     conv_frac_expected=conv_frac_expected,
+    conv_frac2_beta=conv_frac2_beta,
+    conv_frac2_A=conv_frac2_A,
+    conv_frac2_expected=conv_frac2_expected,
     conv_gamma_beta=conv_gamma_beta,
     conv_gamma_scale=conv_gamma_scale,
     conv_gamma_rate=conv_gamma_rate,
