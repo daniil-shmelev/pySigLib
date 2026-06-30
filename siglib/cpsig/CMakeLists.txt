@@ -11,6 +11,7 @@ add_library(cpsig SHARED
     cp_signature.cpp
     cp_volterra_signature.cpp
     cp_volterra_signature_general.cpp
+    cp_volterra_conv.cpp
     cp_utils.cpp
     cp_sig_combine.cpp
     cp_sig_join.cpp

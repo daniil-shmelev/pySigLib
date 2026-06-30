@@ -449,6 +449,16 @@ CPSIG.volterra_sig_general_f.restype = c_int
 CPSIG.volterra_sig_general_d.argtypes = (POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_int)
 CPSIG.volterra_sig_general_d.restype = c_int
 
+######################################################
+# general convolution scheme volterra_sig
+######################################################
+
+CPSIG.volterra_conv_sig_f.argtypes = (POINTER(c_float), POINTER(c_float), POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_int)
+CPSIG.volterra_conv_sig_f.restype = c_int
+
+CPSIG.volterra_conv_sig_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_int)
+CPSIG.volterra_conv_sig_d.restype = c_int
+
 if BUILT_WITH_CUDA:
     ######################################################
     # signature_cuda

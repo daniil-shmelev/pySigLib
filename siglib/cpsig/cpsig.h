@@ -327,6 +327,20 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int volterra_sig_general_f(const float* path, float* out, uint64_t handle, uint64_t batch_size, uint64_t dimension, uint64_t length, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @brief */
 	[[nodiscard]] CPSIG_API int volterra_sig_general_d(const double* path, double* out, uint64_t handle, uint64_t batch_size, uint64_t dimension, uint64_t length, bool scalar_term = true, int n_jobs = 1) noexcept;
+
+	/**
+	* @brief General convolution scheme (tensordev "quadratic", order 0). Computes the truncated
+	*        Volterra signature of a batch of paths for a general convolution kernel via the
+	*        quadratic Volterra-Chen recursion. The projection A and the per-lag interval
+	*        coefficients alpha_lag (precomputed by the caller, shape (length, q, num_multiindex))
+	*        are passed in; this is stateless (no prepared handle). Scalar (q == 1) case only.
+	* @param alpha_lag Normalized interval coefficients indexed by lag, shape (length, q, num_multiindex).
+	* @param num_multiindex Number of packed multi-indices (= degree for q == 1).
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int volterra_conv_sig_f(const float* path, float* out, const float* A, const float* alpha_lag, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t num_components, uint64_t target_dimension, uint64_t degree, uint64_t num_multiindex, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @brief */
+	[[nodiscard]] CPSIG_API int volterra_conv_sig_d(const double* path, double* out, const double* A, const double* alpha_lag, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t num_components, uint64_t target_dimension, uint64_t degree, uint64_t num_multiindex, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_functions Signature backprop functions

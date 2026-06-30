@@ -25,6 +25,7 @@ from .dtypes import (
     CPSIG_FREE_VOLTERRA_SIG_GENERAL,
     CPSIG_PREPARE_VOLTERRA_SIG,
     CPSIG_PREPARE_VOLTERRA_SIG_GENERAL,
+    CPSIG_VOLTERRA_CONV_SIG,
     CPSIG_VOLTERRA_SIG,
     CPSIG_VOLTERRA_SIG_GENERAL,
     DTYPES,
@@ -88,6 +89,21 @@ def _resolve_prepare_dtype(dtype, kernel):
     raise ValueError("dtype must be float32 or float64")
 
 
+def _resolve_volterra_scheme(kernel, scheme, readout_lag):
+    """Return the effective evaluation scheme for a kernel.
+
+    Convolution kernels always use the general convolution scheme (and require
+    ``readout_lag == 0``); every other kernel uses the exact FSSK scheme.
+    """
+    if isinstance(kernel, VolterraConvolutionKernel):
+        if readout_lag != 0:
+            raise ValueError("the convolution scheme requires readout_lag=0")
+        return "convolution"
+    if scheme != "exact":
+        raise ValueError("scheme must be 'exact'")
+    return scheme
+
+
 class VolterraKernel:
     """Base class for Volterra kernels."""
 
@@ -130,8 +146,7 @@ class VolterraKernel:
         check_type(dt, "dt", float)
         check_type(readout_lag, "readout_lag", float)
         check_type(scheme, "scheme", str)
-        if scheme != "exact":
-            raise ValueError("scheme must be 'exact'")
+        scheme = _resolve_volterra_scheme(self, scheme, readout_lag)
         if dt <= 0:
             raise ValueError("dt must be positive")
         if readout_lag < 0:
@@ -163,6 +178,9 @@ class VolterraKernel:
         if data.data_dimension != prepared["dimension"]:
             raise ValueError("path.shape[-1] must match the prepared Volterra signature path dimension")
 
+        if prepared.get("convolution"):
+            return self._volterra_conv_sig(data, prepared, scalar_term, n_jobs)
+
         sig_len = sig_length(prepared["target_dimension"], prepared["degree"], scalar_term=scalar_term)
         result = SigOutputHandler(data, sig_len)
         if prepared["degree"] == 0:
@@ -176,6 +194,44 @@ class VolterraKernel:
         err_code = sig_map[data.dtype](
             data.data_ptr, result.data_ptr, prepared["handle"],
             data.batch_size, data.data_dimension, data.data_length,
+            scalar_term, n_jobs)
+        if err_code:
+            raise Exception("Error in pysiglib.volterra_sig: " + err_msg(err_code))
+        return result.data
+
+    def _volterra_conv_sig(self, data, prepared, scalar_term, n_jobs):
+        from ._volterra_conv import convolution_lag_coefficients
+
+        degree = prepared["degree"]
+        sig_len = sig_length(prepared["target_dimension"], degree, scalar_term=scalar_term)
+        result = SigOutputHandler(data, sig_len)
+        if degree == 0:
+            if scalar_term:
+                result.data[...] = 1
+            return result.data
+        if data.batch_size == 0:
+            return result.data
+
+        # Lag coefficients depend only on (kind, params, dt, degree, dtype, S);
+        # everything but S is fixed for this prepared entry, so cache by S to
+        # avoid rebuilding the scipy coefficients on every call.
+        S = data.data_length - 1
+        cache = prepared.setdefault("_alpha_cache", {})
+        cached = cache.get(S)
+        if cached is None:
+            np_dtype = np.float32 if prepared["dtype"] == "float32" else np.float64
+            cached = convolution_lag_coefficients(
+                prepared["conv_kind"], prepared["conv_params"],
+                dt=prepared["dt"], degree=degree, S=S, dtype=np_dtype)
+            cache[S] = cached
+        alpha_lag, M = cached
+        A = prepared["A"]
+
+        err_code = CPSIG_VOLTERRA_CONV_SIG[data.dtype](
+            data.data_ptr, result.data_ptr,
+            _numpy_ptr(A, data.dtype), _numpy_ptr(alpha_lag, data.dtype),
+            data.batch_size, data.data_dimension, data.data_length,
+            prepared["num_components"], prepared["target_dimension"], degree, M,
             scalar_term, n_jobs)
         if err_code:
             raise Exception("Error in pysiglib.volterra_sig: " + err_msg(err_code))
@@ -517,6 +573,132 @@ class VolterraFractionalKernel(VolterraKernel):
         }
 
 
+def _conv_projection(A, dtype):
+    """Validate ``A`` and pack it into a contiguous ``(q, m, d)`` array.
+
+    Enforces ``q == 1`` (the scalar case implemented by the convolution scheme).
+    """
+    A_rank = _rank(A)
+    if A_rank not in (2, 3):
+        raise ValueError("kernel.A must have rank 2 or 3, got rank " + str(A_rank))
+    A = _numpy_array(A, "kernel.A", dtype, A_rank)
+    if A.ndim == 2:
+        A = A.reshape(1, *A.shape)
+    if not _is_finite(A):
+        raise ValueError("kernel.A must contain only finite values")
+    q, m, d = A.shape
+    if q != 1:
+        raise NotImplementedError(
+            "the general convolution scheme currently supports q=1 kernels "
+            "(a single kernel component); multivariate q>1 is not yet implemented")
+    return np.ascontiguousarray(A), q, m, d
+
+
+class VolterraConvolutionKernel(VolterraKernel):
+    r"""
+    Base class for general-convolution-scheme Volterra kernels.
+
+    These kernels represent
+
+    .. math::
+
+        K(t,s) = \\sum_p k_p(t-s)\\, A_p,
+
+    where the scalar parts :math:`k_p` are general convolution kernels that are
+    not finite state-space (no exponential-sum form). The truncated signature is
+    computed by the quadratic Volterra-Chen recursion (the general convolution
+    scheme) rather than the exact FSSK state recursion. Such kernels always use
+    the convolution scheme and require ``readout_lag=0``.
+
+    This release implements the scalar (``q=1``) case.
+    """
+
+    def _conv_realization(self, dtype):
+        raise NotImplementedError
+
+    def _dtype_source_arrays(self):
+        return (self.A,)
+
+
+class VolterraConvFractionalKernel(VolterraConvolutionKernel):
+    r"""
+    Fractional kernel for the general convolution scheme.
+
+    The represented kernel is
+
+    .. math::
+
+        K(t,s) = k(t-s)\\, A, \\qquad k(u) = \\frac{u^{\\beta - 1}}{\\Gamma(\\beta)},
+
+    with ``beta > 0``. Unlike :class:`VolterraFractionalKernel`, which
+    approximates ``k`` by a sum of exponentials and uses the exact FSSK scheme,
+    this evaluates the interval coefficients of ``k`` exactly (closed-form
+    regularized incomplete beta) and uses the quadratic convolution recursion.
+
+    ``A`` has shape ``(m, d)`` (or ``(1, m, d)``).
+    """
+
+    def __init__(self, A, *, beta: float):
+        super().__init__()
+        check_type(beta, "beta", float)
+        if beta <= 0:
+            raise ValueError("beta must be positive")
+        self.A = A
+        self.beta = beta
+
+    def _conv_realization(self, dtype):
+        A, q, m, d = _conv_projection(self.A, dtype)
+        return {"A": A, "q": q, "m": m, "d": d, "kind": "fractional",
+                "params": {"beta": float(self.beta)}}
+
+
+class VolterraConvGammaKernel(VolterraConvolutionKernel):
+    r"""
+    Gamma kernel for the general convolution scheme.
+
+    The represented kernel is
+
+    .. math::
+
+        K(t,s) = k(t-s)\\, A, \\qquad
+        k(u) = \\mathrm{scale}\\, e^{-\\mathrm{rate}\\, u}
+               \\frac{u^{\\beta - 1}}{\\Gamma(\\beta)},
+
+    with ``beta > 0``, ``scale > 0`` and ``rate >= 0``. The interval
+    coefficients are built by Gauss-Legendre quadrature and the signature is
+    evaluated by the quadratic convolution recursion.
+
+    ``A`` has shape ``(m, d)`` (or ``(1, m, d)``).
+    """
+
+    def __init__(self, A, *, beta: float, scale: float = 1.0, rate: float = 0.0,
+                 quad_order: int = 32):
+        super().__init__()
+        check_type(beta, "beta", float)
+        check_type(scale, "scale", float)
+        check_type(rate, "rate", float)
+        check_type(quad_order, "quad_order", int)
+        if beta <= 0:
+            raise ValueError("beta must be positive")
+        if scale <= 0:
+            raise ValueError("scale must be positive")
+        if rate < 0:
+            raise ValueError("rate must be non-negative")
+        if quad_order <= 0:
+            raise ValueError("quad_order must be positive")
+        self.A = A
+        self.beta = beta
+        self.scale = scale
+        self.rate = rate
+        self.quad_order = quad_order
+
+    def _conv_realization(self, dtype):
+        A, q, m, d = _conv_projection(self.A, dtype)
+        return {"A": A, "q": q, "m": m, "d": d, "kind": "gamma",
+                "params": {"beta": float(self.beta), "scale": float(self.scale),
+                           "rate": float(self.rate), "quad_order": int(self.quad_order)}}
+
+
 def _prepare_volterra_sig_impl(
         degree: int,
         kernel: VolterraKernel,
@@ -527,19 +709,37 @@ def _prepare_volterra_sig_impl(
         dtype=None,
 ) -> dict:
     """
-    Prepares CPU data for repeated exact Volterra signature computations.
+    Prepares CPU data for repeated Volterra signature computations.
 
     :param degree: Truncation level.
     :param kernel: Volterra kernel object.
     :param dt: Uniform time step between consecutive path samples.
     :param readout_lag: Non-negative readout lag after the final path sample.
         The kernel must have been prepared with the same value.
-    :param scheme: Evaluation scheme. Currently only ``"exact"`` is supported.
+    :param scheme: Evaluation scheme for FSSK kernels (only ``"exact"``).
+        Convolution kernels (:class:`VolterraConvolutionKernel`) ignore this and
+        always use the general convolution scheme.
     :param dtype: Floating dtype for the prepared native data. If omitted, this
         is inferred from the kernel arrays, defaulting to ``float64``.
     :return: Prepared Volterra signature cache entry.
     """
     np_dtype, dtype_name = _resolve_prepare_dtype(dtype, kernel)
+    if isinstance(kernel, VolterraConvolutionKernel):
+        spec = kernel._conv_realization(np_dtype)
+        return {
+            "convolution": True,
+            "handle": 0,
+            "dtype": dtype_name,
+            "degree": degree,
+            "dt": dt,
+            "readout_lag": readout_lag,
+            "dimension": spec["d"],
+            "num_components": spec["q"],
+            "target_dimension": spec["m"],
+            "A": spec["A"],
+            "conv_kind": spec["kind"],
+            "conv_params": spec["params"],
+        }
     realization = kernel._prepare_exact_numpy(np_dtype)
     mode = realization["mode"]
     A = realization["A"]
@@ -611,7 +811,7 @@ def prepare_volterra_sig(
         dtype=None,
 ) -> None:
     """
-    Prepares CPU data for repeated exact Volterra signature computations.
+    Prepares CPU data for repeated Volterra signature computations.
 
     This is equivalent to
     ``kernel.prepare(degree, dt=dt, readout_lag=readout_lag, scheme=scheme, dtype=dtype)``.
@@ -639,7 +839,9 @@ def volterra_sig(
     :param kernel: Volterra kernel object.
     :param dt: Uniform time step between consecutive path samples.
     :param readout_lag: Non-negative readout lag after the final path sample.
-    :param scheme: Evaluation scheme. Currently only ``"exact"`` is supported.
+    :param scheme: Evaluation scheme for FSSK kernels (only ``"exact"``).
+        Convolution kernels (:class:`VolterraConvolutionKernel`) ignore this and
+        always use the general convolution scheme.
     :param scalar_term: If True, include the leading scalar term.
     :param n_jobs: Number of CPU threads.
     :return: Volterra signature array.
@@ -652,8 +854,7 @@ def volterra_sig(
     check_type(scheme, "scheme", str)
     check_type(scalar_term, "scalar_term", bool)
     check_n_jobs(n_jobs)
-    if scheme != "exact":
-        raise ValueError("scheme must be 'exact'")
+    scheme = _resolve_volterra_scheme(kernel, scheme, readout_lag)
     if readout_lag < 0:
         raise ValueError("readout_lag must be non-negative")
     if dt <= 0:

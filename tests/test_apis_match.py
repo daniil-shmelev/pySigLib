@@ -22,6 +22,9 @@ import pysiglib.torch_api as torch_api
 # Backprop functions are intentionally not exposed in the derivable APIs.
 EXCLUDED_SUFFIXES = ("_backprop",)
 EXCLUDED_NAMES = {
+    "VolterraConvFractionalKernel",
+    "VolterraConvGammaKernel",
+    "VolterraConvolutionKernel",
     "VolterraFractionalKernel",
     "VolterraFSSK",
     "VolterraKernel",

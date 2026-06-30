@@ -527,3 +527,108 @@ def test_volterra_sig_requires_dt():
 
     with pytest.raises(TypeError):
         pysiglib.volterra_sig(path, 1, kernel)
+
+
+@requires_scipy
+def test_volterra_conv_fractional_matches_tensordev():
+    path = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_A"], copy=True)
+    beta = float(FIXTURES["conv_frac_beta"])
+    expected = FIXTURES["conv_frac_expected"]
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+
+    kernel.prepare(degree, dt=dt, dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scalar_term=True)
+        stripped = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scalar_term=False)
+    finally:
+        kernel.clear_cache()
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+    np.testing.assert_allclose(stripped, expected[..., 1:], rtol=1e-10, atol=1e-11)
+
+
+@requires_scipy
+def test_volterra_conv_gamma_matches_tensordev():
+    path = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_A"], copy=True)
+    expected = FIXTURES["conv_gamma_expected"]
+    kernel = pysiglib.VolterraConvGammaKernel(
+        A,
+        beta=float(FIXTURES["conv_gamma_beta"]),
+        scale=float(FIXTURES["conv_gamma_scale"]),
+        rate=float(FIXTURES["conv_gamma_rate"]),
+        quad_order=int(FIXTURES["conv_gamma_quad_order"]),
+    )
+
+    kernel.prepare(degree, dt=dt, dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scalar_term=True)
+    finally:
+        kernel.clear_cache()
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+
+
+@requires_scipy
+def test_volterra_conv_batch_matches_per_path():
+    base = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_A"], copy=True)
+    beta = float(FIXTURES["conv_frac_beta"])
+    path = np.stack([base, base * 0.5, base + 0.2])
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+
+    kernel.prepare(degree, dt=dt, dtype=path.dtype)
+    try:
+        batched = np.asarray(pysiglib.volterra_sig(path, degree, kernel, dt=dt, scalar_term=True))
+        ref = np.stack([
+            np.asarray(pysiglib.volterra_sig(
+                np.ascontiguousarray(path[i]), degree, kernel, dt=dt, scalar_term=True))
+            for i in range(path.shape[0])])
+        multi = np.asarray(pysiglib.volterra_sig(path, degree, kernel, dt=dt, scalar_term=True, n_jobs=-1))
+    finally:
+        kernel.clear_cache()
+
+    assert np.isfinite(batched).all()
+    np.testing.assert_allclose(batched, ref, rtol=1e-12, atol=1e-13)
+    np.testing.assert_array_equal(multi, batched)
+
+
+@requires_scipy
+def test_volterra_conv_torch_cpu_output():
+    path = torch.tensor(FIXTURES["conv_path"], dtype=torch.float64)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_A"], copy=True)
+    beta = float(FIXTURES["conv_frac_beta"])
+    expected = FIXTURES["conv_frac_expected"]
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+
+    kernel.prepare(degree, dt=dt, dtype=torch.float64)
+    try:
+        actual = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scalar_term=True)
+    finally:
+        kernel.clear_cache()
+
+    assert isinstance(actual, torch.Tensor)
+    np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-10, atol=1e-11)
+
+
+def test_volterra_conv_rejects_multivariate():
+    A = np.zeros((2, 2, 2), dtype=np.float64)
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=0.7)
+    with pytest.raises(NotImplementedError):
+        kernel.prepare(2, dt=0.1)
+
+
+def test_volterra_conv_rejects_readout_lag():
+    A = _identity_A(2)
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=0.7)
+    with pytest.raises(ValueError):
+        kernel.prepare(2, dt=0.1, readout_lag=0.05)

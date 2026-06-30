@@ -76,6 +76,11 @@ CPSIG_FREE_VOLTERRA_SIG_GENERAL = {
     "float64": CPSIG.free_volterra_sig_general_d
 }
 
+CPSIG_VOLTERRA_CONV_SIG = {
+    "float32": CPSIG.volterra_conv_sig_f,
+    "float64": CPSIG.volterra_conv_sig_d
+}
+
 CUSIG_TRANSFORM_PATH_CUDA = None
 CUSIG_TRANSFORM_PATH_BACKPROP_CUDA = None
 CUSIG_SIG_KERNEL_CUDA = None

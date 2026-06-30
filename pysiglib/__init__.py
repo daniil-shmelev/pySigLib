@@ -19,6 +19,9 @@ from .trees import trees, trees_of_order, tree_to_idx, idx_to_tree
 from .sig_length import sig_length, log_sig_length
 from .sig import sig_combine, sig
 from .volterra_sig import (
+    VolterraConvFractionalKernel,
+    VolterraConvGammaKernel,
+    VolterraConvolutionKernel,
     VolterraFractionalKernel,
     VolterraFSSK,
     VolterraKernel,

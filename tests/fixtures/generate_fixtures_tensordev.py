@@ -30,6 +30,8 @@ import tensordev
 from tensordev import FSSK
 from tensordev.sss import StateSpaceSignature, fssk_vsig
 from tensordev.sss.rough_approx import _bl2_quadrature_rule, fractional_fssk
+from tensordev.volterra import vsig as conv_vsig
+from tensordev.volterra.kernel import FractionalKernel, GammaKernel
 
 
 FIXTURE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +55,22 @@ def _fractional_reference(path, degree, beta, R, A, dt, T, quad_order, tau_dt=0.
         beta=beta, R=R, A=jnp.asarray(A), T=T, coef_quad_order=quad_order)
     levels = fssk_vsig(
         jnp.asarray(path), kernel=kernel, dt=dt, trunc=degree, tau_dt=tau_dt)
+    return np.asarray(tensordev.tensor_to_flat(levels))
+
+
+def _conv_fractional_reference(path, degree, beta, A, dt):
+    kernel = FractionalKernel(beta=jnp.asarray([beta]), A=jnp.asarray(A))
+    levels = conv_vsig(jnp.asarray(path), kernel=kernel, trunc=degree, dt=dt,
+                       scheme="quadratic", order=0)
+    return np.asarray(tensordev.tensor_to_flat(levels))
+
+
+def _conv_gamma_reference(path, degree, beta, scale, rate, quad_order, A, dt):
+    kernel = GammaKernel(beta=jnp.asarray(beta), A=jnp.asarray(A),
+                         scale=jnp.asarray(scale), rate=jnp.asarray(rate),
+                         quad_order=int(quad_order))
+    levels = conv_vsig(jnp.asarray(path), kernel=kernel, trunc=degree, dt=dt,
+                       scheme="quadratic", order=0)
     return np.asarray(tensordev.tensor_to_flat(levels))
 
 
@@ -254,8 +272,50 @@ jordan_expected = np.asarray(tensordev.tensor_to_flat(
     fssk_vsig(jnp.asarray(jordan_path), kernel=jordan_kernel, dt=float(jordan_dt),
               trunc=int(jordan_degree), tau_dt=float(jordan_tau_dt))))
 
+# General convolution scheme (tensordev "quadratic", order 0), q == 1.
+conv_path = np.array(
+    [
+        [0., 0.1, -0.2],
+        [0.4, -0.1, 0.0],
+        [0.5, 0.2, 0.3],
+        [0.2, 0.5, 0.1],
+        [0.3, -0.2, 0.4],
+        [0.1, 0.0, -0.1],
+    ],
+    dtype=np.float64,
+)
+conv_degree = np.array(3, dtype=np.int64)
+conv_dt = np.array(0.1, dtype=np.float64)
+conv_A = np.array(
+    [[[1.0, 0.2, -0.1], [0.0, 0.5, 0.3]]],
+    dtype=np.float64,
+)
+
+conv_frac_beta = np.array(0.7, dtype=np.float64)
+conv_frac_expected = _conv_fractional_reference(
+    conv_path, int(conv_degree), float(conv_frac_beta), conv_A, float(conv_dt))
+
+conv_gamma_beta = np.array(0.8, dtype=np.float64)
+conv_gamma_scale = np.array(1.3, dtype=np.float64)
+conv_gamma_rate = np.array(0.5, dtype=np.float64)
+conv_gamma_quad_order = np.array(48, dtype=np.int64)
+conv_gamma_expected = _conv_gamma_reference(
+    conv_path, int(conv_degree), float(conv_gamma_beta), float(conv_gamma_scale),
+    float(conv_gamma_rate), int(conv_gamma_quad_order), conv_A, float(conv_dt))
+
 np.savez_compressed(
     OUT_PATH,
+    conv_path=conv_path,
+    conv_degree=conv_degree,
+    conv_dt=conv_dt,
+    conv_A=conv_A,
+    conv_frac_beta=conv_frac_beta,
+    conv_frac_expected=conv_frac_expected,
+    conv_gamma_beta=conv_gamma_beta,
+    conv_gamma_scale=conv_gamma_scale,
+    conv_gamma_rate=conv_gamma_rate,
+    conv_gamma_quad_order=conv_gamma_quad_order,
+    conv_gamma_expected=conv_gamma_expected,
     jordan_path=jordan_path,
     jordan_degree=jordan_degree,
     jordan_dt=jordan_dt,
