@@ -690,3 +690,144 @@ def test_volterra_conv_rejects_readout_lag():
     kernel = pysiglib.VolterraConvFractionalKernel(A, beta=0.7)
     with pytest.raises(ValueError):
         kernel.prepare(2, dt=0.1, readout_lag=0.05)
+
+
+@requires_scipy
+def test_volterra_conv_fft_fractional_matches_tensordev():
+    path = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_A"], copy=True)
+    beta = float(FIXTURES["conv_frac_beta"])
+    expected = FIXTURES["conv_frac_expected"]
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+
+    kernel.prepare(degree, dt=dt, scheme="fft", dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scheme="fft", scalar_term=True)
+        stripped = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scheme="fft", scalar_term=False)
+    finally:
+        kernel.clear_cache()
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+    np.testing.assert_allclose(stripped, expected[..., 1:], rtol=1e-10, atol=1e-11)
+
+
+@requires_scipy
+def test_volterra_conv_fft_multivariate_matches_tensordev():
+    path = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_frac2_A"], copy=True)
+    beta = np.array(FIXTURES["conv_frac2_beta"], copy=True)
+    expected = FIXTURES["conv_frac2_expected"]
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+
+    kernel.prepare(degree, dt=dt, scheme="fft", dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scheme="fft", scalar_term=True)
+    finally:
+        kernel.clear_cache()
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+
+
+@requires_scipy
+def test_volterra_conv_fft_gamma_matches_tensordev():
+    path = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_A"], copy=True)
+    expected = FIXTURES["conv_gamma_expected"]
+    kernel = pysiglib.VolterraConvGammaKernel(
+        A,
+        beta=float(FIXTURES["conv_gamma_beta"]),
+        scale=float(FIXTURES["conv_gamma_scale"]),
+        rate=float(FIXTURES["conv_gamma_rate"]),
+        quad_order=int(FIXTURES["conv_gamma_quad_order"]),
+    )
+
+    kernel.prepare(degree, dt=dt, scheme="fft", dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scheme="fft", scalar_term=True)
+    finally:
+        kernel.clear_cache()
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-11)
+
+
+@requires_scipy
+@pytest.mark.parametrize("beta", [0.7, [0.6, 0.9]])
+def test_volterra_conv_fft_matches_quadratic(beta):
+    # The FFT scheme must reproduce the quadratic recursion exactly; use a
+    # longer random path (S = 48) to exercise the FFT convolution.
+    rng = np.random.default_rng(7)
+    q = 1 if np.isscalar(beta) else len(beta)
+    A = rng.standard_normal((q, 2, 3))
+    path = np.cumsum(rng.standard_normal((48, 3)), axis=0) * 0.2
+    degree, dt = 4, 0.05
+
+    quad = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+    fft = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+    quad.prepare(degree, dt=dt, scheme="quadratic")
+    fft.prepare(degree, dt=dt, scheme="fft")
+    try:
+        a = np.asarray(pysiglib.volterra_sig(path, degree, quad, dt=dt, scheme="quadratic", scalar_term=True))
+        b = np.asarray(pysiglib.volterra_sig(path, degree, fft, dt=dt, scheme="fft", scalar_term=True))
+    finally:
+        quad.clear_cache()
+        fft.clear_cache()
+
+    assert np.isfinite(b).all()
+    np.testing.assert_allclose(b, a, rtol=1e-9, atol=1e-11)
+
+
+@requires_scipy
+def test_volterra_conv_fft_batch_matches_per_path():
+    base = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_frac2_A"], copy=True)
+    beta = np.array(FIXTURES["conv_frac2_beta"], copy=True)
+    path = np.stack([base, base * 0.5, base + 0.2])
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+
+    kernel.prepare(degree, dt=dt, scheme="fft", dtype=path.dtype)
+    try:
+        batched = np.asarray(pysiglib.volterra_sig(path, degree, kernel, dt=dt, scheme="fft", scalar_term=True))
+        ref = np.stack([
+            np.asarray(pysiglib.volterra_sig(
+                np.ascontiguousarray(path[i]), degree, kernel, dt=dt, scheme="fft", scalar_term=True))
+            for i in range(path.shape[0])])
+    finally:
+        kernel.clear_cache()
+
+    assert np.isfinite(batched).all()
+    np.testing.assert_allclose(batched, ref, rtol=1e-12, atol=1e-13)
+
+
+@requires_scipy
+def test_volterra_conv_fft_torch_cpu_output():
+    path = torch.tensor(FIXTURES["conv_path"], dtype=torch.float64)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    A = np.array(FIXTURES["conv_A"], copy=True)
+    beta = float(FIXTURES["conv_frac_beta"])
+    expected = FIXTURES["conv_frac_expected"]
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+
+    kernel.prepare(degree, dt=dt, scheme="fft", dtype=torch.float64)
+    try:
+        actual = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scheme="fft", scalar_term=True)
+    finally:
+        kernel.clear_cache()
+
+    assert isinstance(actual, torch.Tensor)
+    np.testing.assert_allclose(actual.numpy(), expected, rtol=1e-10, atol=1e-11)
+
+
+def test_volterra_conv_rejects_unknown_scheme():
+    A = _identity_A(2)
+    kernel = pysiglib.VolterraConvFractionalKernel(A, beta=0.7)
+    with pytest.raises(ValueError):
+        kernel.prepare(2, dt=0.1, scheme="nonsense")

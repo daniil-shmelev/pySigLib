@@ -92,13 +92,21 @@ def _resolve_prepare_dtype(dtype, kernel):
 def _resolve_volterra_scheme(kernel, scheme, readout_lag):
     """Return the effective evaluation scheme for a kernel.
 
-    Convolution kernels always use the general convolution scheme (and require
-    ``readout_lag == 0``); every other kernel uses the exact FSSK scheme.
+    Convolution kernels use the general convolution scheme (and require
+    ``readout_lag == 0``): the default ``O(S^2)`` quadratic recursion
+    (``"convolution"``/``"quadratic"``) or the ``O(S log S)`` FFT scheme
+    (``"fft"``), which gives the identical result. Every other kernel uses the
+    exact FSSK scheme (``"exact"``).
     """
     if isinstance(kernel, VolterraConvolutionKernel):
         if readout_lag != 0:
             raise ValueError("the convolution scheme requires readout_lag=0")
-        return "convolution"
+        if scheme in ("exact", "convolution", "quadratic"):
+            return "convolution"
+        if scheme == "fft":
+            return "convolution_fft"
+        raise ValueError(
+            "convolution kernels support scheme 'convolution'/'quadratic' or 'fft'")
     if scheme != "exact":
         raise ValueError("scheme must be 'exact'")
     return scheme
@@ -179,6 +187,8 @@ class VolterraKernel:
             raise ValueError("path.shape[-1] must match the prepared Volterra signature path dimension")
 
         if prepared.get("convolution"):
+            if prepared.get("conv_fft"):
+                return self._volterra_conv_fft_sig(data, prepared, scalar_term, n_jobs)
             return self._volterra_conv_sig(data, prepared, scalar_term, n_jobs)
 
         sig_len = sig_length(prepared["target_dimension"], prepared["degree"], scalar_term=scalar_term)
@@ -199,42 +209,96 @@ class VolterraKernel:
             raise Exception("Error in pysiglib.volterra_sig: " + err_msg(err_code))
         return result.data
 
-    def _volterra_conv_sig(self, data, prepared, scalar_term, n_jobs):
+    @staticmethod
+    def _conv_alpha_lag(prepared, S):
+        """Lag coefficients for the convolution scheme, cached by ``S``.
+
+        They depend only on ``(kind, params, dt, degree, dtype, S)``; everything
+        but ``S`` is fixed for this prepared entry, so cache by ``S`` to avoid
+        rebuilding the scipy coefficients on every call. Returns ``(alpha_lag, M)``.
+        """
         from ._volterra_conv import convolution_lag_coefficients
 
-        degree = prepared["degree"]
-        sig_len = sig_length(prepared["target_dimension"], degree, scalar_term=scalar_term)
-        result = SigOutputHandler(data, sig_len)
-        if degree == 0:
-            if scalar_term:
-                result.data[...] = 1
-            return result.data
-        if data.batch_size == 0:
-            return result.data
-
-        # Lag coefficients depend only on (kind, params, dt, degree, dtype, S);
-        # everything but S is fixed for this prepared entry, so cache by S to
-        # avoid rebuilding the scipy coefficients on every call.
-        S = data.data_length - 1
         cache = prepared.setdefault("_alpha_cache", {})
         cached = cache.get(S)
         if cached is None:
             np_dtype = np.float32 if prepared["dtype"] == "float32" else np.float64
             cached = convolution_lag_coefficients(
                 prepared["conv_kind"], prepared["conv_params"],
-                dt=prepared["dt"], degree=degree, S=S, dtype=np_dtype)
+                dt=prepared["dt"], degree=prepared["degree"], S=S, dtype=np_dtype)
             cache[S] = cached
-        alpha_lag, M = cached
-        A = prepared["A"]
+        return cached
 
+    @staticmethod
+    def _conv_sig_output(data, prepared, scalar_term):
+        """Allocate the signature output and short-circuit the trivial cases.
+
+        Returns ``(result, early)``: when ``early`` is not ``None`` it is the
+        finished output for the degree-0 / empty-batch cases; otherwise the
+        caller fills ``result.data``.
+        """
+        sig_len = sig_length(prepared["target_dimension"], prepared["degree"], scalar_term=scalar_term)
+        result = SigOutputHandler(data, sig_len)
+        if prepared["degree"] == 0:
+            if scalar_term:
+                result.data[...] = 1
+            return result, result.data
+        if data.batch_size == 0:
+            return result, result.data
+        return result, None
+
+    def _volterra_conv_sig(self, data, prepared, scalar_term, n_jobs):
+        result, early = self._conv_sig_output(data, prepared, scalar_term)
+        if early is not None:
+            return early
+
+        alpha_lag, M = self._conv_alpha_lag(prepared, data.data_length - 1)
         err_code = CPSIG_VOLTERRA_CONV_SIG[data.dtype](
             data.data_ptr, result.data_ptr,
-            _numpy_ptr(A, data.dtype), _numpy_ptr(alpha_lag, data.dtype),
+            _numpy_ptr(prepared["A"], data.dtype), _numpy_ptr(alpha_lag, data.dtype),
             data.batch_size, data.data_dimension, data.data_length,
-            prepared["num_components"], prepared["target_dimension"], degree, M,
+            prepared["num_components"], prepared["target_dimension"], prepared["degree"], M,
             scalar_term, n_jobs)
         if err_code:
             raise Exception("Error in pysiglib.volterra_sig: " + err_msg(err_code))
+        return result.data
+
+    def _volterra_conv_fft_sig(self, data, prepared, scalar_term, n_jobs):
+        from ._volterra_fft import volterra_fft_terminal, fft_nfft
+
+        result, early = self._conv_sig_output(data, prepared, scalar_term)
+        if early is not None:
+            return early
+
+        S = data.data_length - 1
+        np_dtype = np.float32 if prepared["dtype"] == "float32" else np.float64
+        q = prepared["num_components"]
+
+        # The frequency-domain lag weights are path-independent, so cache the
+        # rfft (and its length) by S alongside the lag coefficients.
+        wcache = prepared.setdefault("_fft_cache", {})
+        cached = wcache.get(S)
+        if cached is None:
+            alpha_lag, _M = self._conv_alpha_lag(prepared, S)
+            nfft = fft_nfft(S)
+            W = np.fft.rfft(np.asarray(alpha_lag, np_dtype).reshape(S + 1, q, -1), n=nfft, axis=0)
+            cached = (W, nfft)
+            wcache[S] = cached
+        W, nfft = cached
+
+        path = np.asarray(data.path).reshape(
+            data.batch_size, data.data_length, data.data_dimension)
+        dX = np.diff(path, axis=1)
+        flat = volterra_fft_terminal(
+            dX, prepared["A"], W, degree=prepared["degree"], q=q,
+            m=prepared["target_dimension"], scalar_term=scalar_term,
+            dtype=np_dtype, nfft=nfft)
+
+        out = flat.reshape(result.data.shape)
+        if data.type_ == "numpy":
+            result.data[...] = out
+        else:
+            result.data.copy_(torch.from_numpy(np.ascontiguousarray(out)))
         return result.data
 
     def _prepare_exact_numpy(self, dtype):
@@ -718,18 +782,22 @@ def _prepare_volterra_sig_impl(
     :param dt: Uniform time step between consecutive path samples.
     :param readout_lag: Non-negative readout lag after the final path sample.
         The kernel must have been prepared with the same value.
-    :param scheme: Evaluation scheme for FSSK kernels (only ``"exact"``).
-        Convolution kernels (:class:`VolterraConvolutionKernel`) ignore this and
-        always use the general convolution scheme.
+    :param scheme: Evaluation scheme. FSSK kernels use ``"exact"`` (default).
+        Convolution kernels (:class:`VolterraConvolutionKernel`) use the
+        ``O(S^2)`` quadratic recursion (``"convolution"``/``"quadratic"``,
+        default) or the ``O(S log S)`` ``"fft"`` scheme, which gives the
+        identical result and is faster for long paths.
     :param dtype: Floating dtype for the prepared native data. If omitted, this
         is inferred from the kernel arrays, defaulting to ``float64``.
     :return: Prepared Volterra signature cache entry.
     """
     np_dtype, dtype_name = _resolve_prepare_dtype(dtype, kernel)
+    scheme = _resolve_volterra_scheme(kernel, scheme, readout_lag)
     if isinstance(kernel, VolterraConvolutionKernel):
         spec = kernel._conv_realization(np_dtype)
         return {
             "convolution": True,
+            "conv_fft": scheme == "convolution_fft",
             "handle": 0,
             "dtype": dtype_name,
             "degree": degree,
@@ -841,9 +909,11 @@ def volterra_sig(
     :param kernel: Volterra kernel object.
     :param dt: Uniform time step between consecutive path samples.
     :param readout_lag: Non-negative readout lag after the final path sample.
-    :param scheme: Evaluation scheme for FSSK kernels (only ``"exact"``).
-        Convolution kernels (:class:`VolterraConvolutionKernel`) ignore this and
-        always use the general convolution scheme.
+    :param scheme: Evaluation scheme. FSSK kernels use ``"exact"`` (default).
+        Convolution kernels (:class:`VolterraConvolutionKernel`) use the
+        ``O(S^2)`` quadratic recursion (``"convolution"``/``"quadratic"``,
+        default) or the ``O(S log S)`` ``"fft"`` scheme, which gives the
+        identical result and is faster for long paths.
     :param scalar_term: If True, include the leading scalar term.
     :param n_jobs: Number of CPU threads.
     :return: Volterra signature array.
