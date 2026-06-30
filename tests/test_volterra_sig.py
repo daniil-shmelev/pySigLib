@@ -831,3 +831,102 @@ def test_volterra_conv_rejects_unknown_scheme():
     kernel = pysiglib.VolterraConvFractionalKernel(A, beta=0.7)
     with pytest.raises(ValueError):
         kernel.prepare(2, dt=0.1, scheme="nonsense")
+
+
+def _run_conv_order(A, beta, order, dyadic_order, fixture_key, rtol, *, kind="fractional", **kw):
+    path = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    expected = FIXTURES[fixture_key]
+    if kind == "fractional":
+        kernel = pysiglib.VolterraConvFractionalKernel(A, beta=beta)
+    else:
+        kernel = pysiglib.VolterraConvGammaKernel(A, beta=beta, **kw)
+    kernel.prepare(degree, dt=dt, order=order, dyadic_order=dyadic_order, dtype=path.dtype)
+    try:
+        actual = pysiglib.volterra_sig(
+            path, degree, kernel, dt=dt, order=order, dyadic_order=dyadic_order, scalar_term=True)
+    finally:
+        kernel.clear_cache()
+    np.testing.assert_allclose(actual, expected, rtol=rtol, atol=rtol)
+
+
+@requires_scipy
+def test_volterra_conv_order1_matches_tensordev():
+    _run_conv_order(np.array(FIXTURES["conv_A"], copy=True), float(FIXTURES["conv_frac_beta"]),
+                    1, 0, "conv_frac_o1", 1e-9)
+
+
+@requires_scipy
+def test_volterra_conv_order2_matches_tensordev():
+    _run_conv_order(np.array(FIXTURES["conv_A"], copy=True), float(FIXTURES["conv_frac_beta"]),
+                    2, 0, "conv_frac_o2", 1e-8)
+
+
+@requires_scipy
+def test_volterra_conv_dyadic_matches_tensordev():
+    _run_conv_order(np.array(FIXTURES["conv_A"], copy=True), float(FIXTURES["conv_frac_beta"]),
+                    0, 2, "conv_frac_d2", 1e-9)
+
+
+@requires_scipy
+def test_volterra_conv_multivariate_order2_matches_tensordev():
+    _run_conv_order(np.array(FIXTURES["conv_frac2_A"], copy=True),
+                    np.array(FIXTURES["conv_frac2_beta"], copy=True), 2, 0, "conv_frac2_o2", 1e-8)
+
+
+@requires_scipy
+def test_volterra_conv_order_dyadic_combo_matches_tensordev():
+    _run_conv_order(np.array(FIXTURES["conv_frac2_A"], copy=True),
+                    np.array(FIXTURES["conv_frac2_beta"], copy=True), 1, 1, "conv_frac2_o1_d1", 1e-9)
+
+
+@requires_scipy
+def test_volterra_conv_gamma_order2_matches_tensordev():
+    # order-2 + Gauss-Legendre + ill-conditioned basis interpolation: match
+    # relatively (tensordev's own fft/quadratic schemes differ similarly here).
+    _run_conv_order(np.array(FIXTURES["conv_A"], copy=True), float(FIXTURES["conv_gamma_beta"]),
+                    2, 0, "conv_gamma_o2", 1e-6, kind="gamma",
+                    scale=float(FIXTURES["conv_gamma_scale"]),
+                    rate=float(FIXTURES["conv_gamma_rate"]),
+                    quad_order=int(FIXTURES["conv_gamma_quad_order"]))
+
+
+@requires_scipy
+def test_volterra_conv_dyadic_matches_refined_quadratic():
+    # Dyadic refinement (FFT path) must equal the quadratic recursion run on a
+    # manually 2x linear-interpolation-refined path with halved dt.
+    rng = np.random.default_rng(11)
+    A = rng.standard_normal((1, 2, 3))
+    path = np.cumsum(rng.standard_normal((20, 3)), axis=0) * 0.2
+    degree, dt = 3, 0.05
+    seg = path[1:] - path[:-1]
+    refined = np.vstack([
+        (path[:-1, None, :] + np.array([0.0, 0.5])[None, :, None] * seg[:, None, :]).reshape(-1, 3),
+        path[-1:]])
+
+    quad = pysiglib.VolterraConvFractionalKernel(A, beta=0.7)
+    dyad = pysiglib.VolterraConvFractionalKernel(A, beta=0.7)
+    quad.prepare(degree, dt=dt / 2, scheme="quadratic")
+    dyad.prepare(degree, dt=dt, dyadic_order=1)
+    try:
+        a = np.asarray(pysiglib.volterra_sig(refined, degree, quad, dt=dt / 2, scheme="quadratic", scalar_term=True))
+        b = np.asarray(pysiglib.volterra_sig(path, degree, dyad, dt=dt, dyadic_order=1, scalar_term=True))
+    finally:
+        quad.clear_cache()
+        dyad.clear_cache()
+    np.testing.assert_allclose(b, a, rtol=1e-9, atol=1e-11)
+
+
+def test_volterra_conv_rejects_bad_order():
+    kernel = pysiglib.VolterraConvFractionalKernel(_identity_A(2), beta=0.7)
+    with pytest.raises(ValueError):
+        kernel.prepare(2, dt=0.1, order=3)
+
+
+def test_volterra_order_dyadic_rejected_for_fssk():
+    kernel = pysiglib.VolterraFSSK(Lambda=[0.1], A=_identity_A(2), b=[1.0])
+    with pytest.raises(ValueError):
+        kernel.prepare(2, dt=0.1, order=1)
+    with pytest.raises(ValueError):
+        kernel.prepare(2, dt=0.1, dyadic_order=1)

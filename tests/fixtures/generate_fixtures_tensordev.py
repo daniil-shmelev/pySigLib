@@ -58,19 +58,22 @@ def _fractional_reference(path, degree, beta, R, A, dt, T, quad_order, tau_dt=0.
     return np.asarray(tensordev.tensor_to_flat(levels))
 
 
-def _conv_fractional_reference(path, degree, beta, A, dt):
+def _conv_fractional_reference(path, degree, beta, A, dt, order=0, dyadic_order=0):
     kernel = FractionalKernel(beta=jnp.atleast_1d(jnp.asarray(beta)), A=jnp.asarray(A))
+    scheme = "quadratic" if (order == 0 and dyadic_order == 0) else "fft"
     levels = conv_vsig(jnp.asarray(path), kernel=kernel, trunc=degree, dt=dt,
-                       scheme="quadratic", order=0)
+                       scheme=scheme, order=order, dyadic_order=dyadic_order)
     return np.asarray(tensordev.tensor_to_flat(levels))
 
 
-def _conv_gamma_reference(path, degree, beta, scale, rate, quad_order, A, dt):
+def _conv_gamma_reference(path, degree, beta, scale, rate, quad_order, A, dt,
+                          order=0, dyadic_order=0):
     kernel = GammaKernel(beta=jnp.asarray(beta), A=jnp.asarray(A),
                          scale=jnp.asarray(scale), rate=jnp.asarray(rate),
                          quad_order=int(quad_order))
+    scheme = "quadratic" if (order == 0 and dyadic_order == 0) else "fft"
     levels = conv_vsig(jnp.asarray(path), kernel=kernel, trunc=degree, dt=dt,
-                       scheme="quadratic", order=0)
+                       scheme=scheme, order=order, dyadic_order=dyadic_order)
     return np.asarray(tensordev.tensor_to_flat(levels))
 
 
@@ -308,6 +311,18 @@ conv_frac2_A = np.array(
 conv_frac2_expected = _conv_fractional_reference(
     conv_path, int(conv_degree), conv_frac2_beta, conv_frac2_A, float(conv_dt))
 
+# Higher-order quadrature (order 1/2) and dyadic refinement (FFT scheme).
+conv_frac_o1 = _conv_fractional_reference(
+    conv_path, int(conv_degree), float(conv_frac_beta), conv_A, float(conv_dt), order=1)
+conv_frac_o2 = _conv_fractional_reference(
+    conv_path, int(conv_degree), float(conv_frac_beta), conv_A, float(conv_dt), order=2)
+conv_frac_d2 = _conv_fractional_reference(
+    conv_path, int(conv_degree), float(conv_frac_beta), conv_A, float(conv_dt), dyadic_order=2)
+conv_frac2_o2 = _conv_fractional_reference(
+    conv_path, int(conv_degree), conv_frac2_beta, conv_frac2_A, float(conv_dt), order=2)
+conv_frac2_o1_d1 = _conv_fractional_reference(
+    conv_path, int(conv_degree), conv_frac2_beta, conv_frac2_A, float(conv_dt), order=1, dyadic_order=1)
+
 conv_gamma_beta = np.array(0.8, dtype=np.float64)
 conv_gamma_scale = np.array(1.3, dtype=np.float64)
 conv_gamma_rate = np.array(0.5, dtype=np.float64)
@@ -315,6 +330,9 @@ conv_gamma_quad_order = np.array(48, dtype=np.int64)
 conv_gamma_expected = _conv_gamma_reference(
     conv_path, int(conv_degree), float(conv_gamma_beta), float(conv_gamma_scale),
     float(conv_gamma_rate), int(conv_gamma_quad_order), conv_A, float(conv_dt))
+conv_gamma_o2 = _conv_gamma_reference(
+    conv_path, int(conv_degree), float(conv_gamma_beta), float(conv_gamma_scale),
+    float(conv_gamma_rate), int(conv_gamma_quad_order), conv_A, float(conv_dt), order=2)
 
 np.savez_compressed(
     OUT_PATH,
@@ -327,6 +345,12 @@ np.savez_compressed(
     conv_frac2_beta=conv_frac2_beta,
     conv_frac2_A=conv_frac2_A,
     conv_frac2_expected=conv_frac2_expected,
+    conv_frac_o1=conv_frac_o1,
+    conv_frac_o2=conv_frac_o2,
+    conv_frac_d2=conv_frac_d2,
+    conv_frac2_o2=conv_frac2_o2,
+    conv_frac2_o1_d1=conv_frac2_o1_d1,
+    conv_gamma_o2=conv_gamma_o2,
     conv_gamma_beta=conv_gamma_beta,
     conv_gamma_scale=conv_gamma_scale,
     conv_gamma_rate=conv_gamma_rate,

@@ -112,6 +112,22 @@ def _resolve_volterra_scheme(kernel, scheme, readout_lag):
     return scheme
 
 
+def _check_order_dyadic(kernel, order, dyadic_order):
+    """Validate the higher-order / dyadic-refinement parameters.
+
+    Both are convolution-scheme features (the basis-expansion quadrature and
+    grid refinement), so they must be 0 for FSSK kernels.
+    """
+    check_type(order, "order", int)
+    check_type(dyadic_order, "dyadic_order", int)
+    if order not in (0, 1, 2):
+        raise ValueError("order must be 0, 1, or 2")
+    if dyadic_order < 0:
+        raise ValueError("dyadic_order must be non-negative")
+    if not isinstance(kernel, VolterraConvolutionKernel) and (order != 0 or dyadic_order != 0):
+        raise ValueError("order and dyadic_order are only supported by convolution kernels")
+
+
 class VolterraKernel:
     """Base class for Volterra kernels."""
 
@@ -126,8 +142,10 @@ class VolterraKernel:
             readout_lag: float = 0.,
             scheme: str = "exact",
             dtype=None,
+            order: int = 0,
+            dyadic_order: int = 0,
     ):
-        key = self._prepared_key(degree, dt, readout_lag, scheme, dtype)
+        key = self._prepared_key(degree, dt, readout_lag, scheme, dtype, order, dyadic_order)
         cache = self._prepared_volterra_sig
         if key in cache:
             return None
@@ -139,6 +157,8 @@ class VolterraKernel:
             readout_lag=readout_lag,
             scheme=scheme,
             dtype=dtype,
+            order=order,
+            dyadic_order=dyadic_order,
         )
         return None
 
@@ -148,27 +168,29 @@ class VolterraKernel:
             self._free_prepared_entry(entry)
         cache.clear()
 
-    def _prepared_key(self, degree, dt, readout_lag, scheme, dtype):
+    def _prepared_key(self, degree, dt, readout_lag, scheme, dtype, order, dyadic_order):
         check_type(degree, "degree", int)
         check_non_neg(degree, "degree")
         check_type(dt, "dt", float)
         check_type(readout_lag, "readout_lag", float)
         check_type(scheme, "scheme", str)
         scheme = _resolve_volterra_scheme(self, scheme, readout_lag)
+        _check_order_dyadic(self, order, dyadic_order)
         if dt <= 0:
             raise ValueError("dt must be positive")
         if readout_lag < 0:
             raise ValueError("readout_lag must be non-negative")
         _, dtype_name = _resolve_prepare_dtype(dtype, self)
-        return degree, dt, readout_lag, scheme, dtype_name
+        return degree, dt, readout_lag, scheme, dtype_name, order, dyadic_order
 
-    def _get_prepared(self, degree, dt, readout_lag, scheme, dtype_name):
+    def _get_prepared(self, degree, dt, readout_lag, scheme, dtype_name, order, dyadic_order):
         cache = self._prepared_volterra_sig
-        prepared = cache.get((degree, dt, readout_lag, scheme, dtype_name))
+        key = (degree, dt, readout_lag, scheme, dtype_name, order, dyadic_order)
+        prepared = cache.get(key)
         if prepared is not None:
             return prepared
         for cache_key in cache:
-            if cache_key[:4] == (degree, dt, readout_lag, scheme):
+            if cache_key[:4] == (degree, dt, readout_lag, scheme) and cache_key[5:] == (order, dyadic_order):
                 raise ValueError("path dtype must match the prepared Volterra signature dtype")
         return None
 
@@ -264,35 +286,48 @@ class VolterraKernel:
         return result.data
 
     def _volterra_conv_fft_sig(self, data, prepared, scalar_term, n_jobs):
-        from ._volterra_fft import volterra_fft_terminal, fft_nfft
+        from ._volterra_fft import volterra_fft_terminal, volterra_fft_basis, build_fft_tables
 
         result, early = self._conv_sig_output(data, prepared, scalar_term)
         if early is not None:
             return early
 
-        S = data.data_length - 1
         np_dtype = np.float32 if prepared["dtype"] == "float32" else np.float64
         q = prepared["num_components"]
+        m = prepared["target_dimension"]
+        degree = prepared["degree"]
+        order = prepared["order"]
+        factor = 1 << prepared["dyadic_order"]
+        S = (data.data_length - 1) * factor
+        dt_eff = prepared["dt"] / factor
 
-        # The frequency-domain lag weights are path-independent, so cache the
-        # rfft (and its length) by S alongside the lag coefficients.
-        wcache = prepared.setdefault("_fft_cache", {})
-        cached = wcache.get(S)
-        if cached is None:
-            alpha_lag, _M = self._conv_alpha_lag(prepared, S)
-            nfft = fft_nfft(S)
-            W = np.fft.rfft(np.asarray(alpha_lag, np_dtype).reshape(S + 1, q, -1), n=nfft, axis=0)
-            cached = (W, nfft)
-            wcache[S] = cached
-        W, nfft = cached
-
+        # Increments on the (dyadically refined) grid: split each increment into
+        # ``factor`` equal sub-increments (linear-interpolation refinement).
         path = np.asarray(data.path).reshape(
             data.batch_size, data.data_length, data.data_dimension)
         dX = np.diff(path, axis=1)
-        flat = volterra_fft_terminal(
-            dX, prepared["A"], W, degree=prepared["degree"], q=q,
-            m=prepared["target_dimension"], scalar_term=scalar_term,
-            dtype=np_dtype, nfft=nfft)
+        if factor > 1:
+            dX = np.repeat(dX / factor, factor, axis=1)
+
+        # The frequency-domain weight tables are path-independent (depend only on
+        # the refined grid), so cache them by the refined step count S.
+        tcache = prepared.setdefault("_fft_cache", {})
+        tables = tcache.get(S)
+        if tables is None:
+            tables = build_fft_tables(
+                prepared["conv_kind"], prepared["conv_params"],
+                dt=dt_eff, degree=degree, S=S, q=q, order=order, dtype=np_dtype)
+            tcache[S] = tables
+
+        if tables["kind"] == "order0":
+            flat = volterra_fft_terminal(
+                dX, prepared["A"], tables["W"], degree=degree, q=q, m=m,
+                scalar_term=scalar_term, dtype=np_dtype, nfft=tables["nfft"])
+        else:
+            flat = volterra_fft_basis(
+                dX, prepared["A"], tables["Wt"], tables["Wo"], degree=degree, q=q, m=m,
+                thetas=tables["thetas"], interp_inv=tables["interp_inv"],
+                scalar_term=scalar_term, dtype=np_dtype, nfft=tables["nfft"])
 
         out = flat.reshape(result.data.shape)
         if data.type_ == "numpy":
@@ -773,6 +808,8 @@ def _prepare_volterra_sig_impl(
         readout_lag: float,
         scheme: str = "exact",
         dtype=None,
+        order: int = 0,
+        dyadic_order: int = 0,
 ) -> dict:
     """
     Prepares CPU data for repeated Volterra signature computations.
@@ -795,9 +832,14 @@ def _prepare_volterra_sig_impl(
     scheme = _resolve_volterra_scheme(kernel, scheme, readout_lag)
     if isinstance(kernel, VolterraConvolutionKernel):
         spec = kernel._conv_realization(np_dtype)
+        # order>=1 (basis expansion) and dyadic_order>=1 (grid refinement) are
+        # only implemented in the Python FFT path, so they force it.
+        use_fft = scheme == "convolution_fft" or order >= 1 or dyadic_order >= 1
         return {
             "convolution": True,
-            "conv_fft": scheme == "convolution_fft",
+            "conv_fft": use_fft,
+            "order": order,
+            "dyadic_order": dyadic_order,
             "handle": 0,
             "dtype": dtype_name,
             "degree": degree,
@@ -879,15 +921,18 @@ def prepare_volterra_sig(
         readout_lag: float = 0.,
         scheme: str = "exact",
         dtype=None,
+        order: int = 0,
+        dyadic_order: int = 0,
 ) -> None:
     """
     Prepares CPU data for repeated Volterra signature computations.
 
-    This is equivalent to
-    ``kernel.prepare(degree, dt=dt, readout_lag=readout_lag, scheme=scheme, dtype=dtype)``.
+    This is equivalent to ``kernel.prepare(degree, dt=dt, readout_lag=readout_lag,
+    scheme=scheme, dtype=dtype, order=order, dyadic_order=dyadic_order)``.
     """
     check_type(kernel, "kernel", VolterraKernel)
-    return kernel.prepare(degree, dt=dt, readout_lag=readout_lag, scheme=scheme, dtype=dtype)
+    return kernel.prepare(degree, dt=dt, readout_lag=readout_lag, scheme=scheme,
+                          dtype=dtype, order=order, dyadic_order=dyadic_order)
 
 
 def volterra_sig(
@@ -900,6 +945,8 @@ def volterra_sig(
         scheme: str = "exact",
         scalar_term: bool = False,
         n_jobs: int = 1,
+        order: int = 0,
+        dyadic_order: int = 0,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated Volterra signature.
@@ -916,6 +963,12 @@ def volterra_sig(
         identical result and is faster for long paths.
     :param scalar_term: If True, include the leading scalar term.
     :param n_jobs: Number of CPU threads.
+    :param order: Quadrature order for convolution kernels: ``0`` (left-point,
+        default), ``1`` or ``2`` (basis-expansion, higher accuracy for rough
+        kernels). ``order >= 1`` uses the FFT path.
+    :param dyadic_order: Split each increment into ``2**dyadic_order`` equal
+        sub-increments before evaluating (grid refinement, convolution kernels
+        only). Uses the FFT path when non-zero.
     :return: Volterra signature array.
     """
     check_type(degree, "degree", int)
@@ -927,6 +980,7 @@ def volterra_sig(
     check_type(scalar_term, "scalar_term", bool)
     check_n_jobs(n_jobs)
     scheme = _resolve_volterra_scheme(kernel, scheme, readout_lag)
+    _check_order_dyadic(kernel, order, dyadic_order)
     if readout_lag < 0:
         raise ValueError("readout_lag must be non-negative")
     if dt <= 0:
@@ -936,7 +990,7 @@ def volterra_sig(
     if data.device != "cpu":
         raise RuntimeError("volterra_sig currently supports CPU inputs only")
 
-    prepared = kernel._get_prepared(degree, dt, readout_lag, scheme, data.dtype)
+    prepared = kernel._get_prepared(degree, dt, readout_lag, scheme, data.dtype, order, dyadic_order)
     if prepared is not None:
         return kernel._volterra_sig(
             data,
@@ -946,5 +1000,5 @@ def volterra_sig(
         )
 
     raise RuntimeError(
-        "Volterra kernel has not been prepared for this degree, dt, readout_lag, scheme, and dtype; "
-        "call kernel.prepare(degree, dt=dt, readout_lag=readout_lag, scheme=scheme, dtype=path.dtype) first")
+        "Volterra kernel has not been prepared for this degree, dt, readout_lag, scheme, dtype, "
+        "order, and dyadic_order; call kernel.prepare(...) with matching arguments first")
