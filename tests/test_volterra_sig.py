@@ -918,6 +918,68 @@ def test_volterra_conv_dyadic_matches_refined_quadratic():
     np.testing.assert_allclose(b, a, rtol=1e-9, atol=1e-11)
 
 
+def test_volterra_conv_auto_heuristic_boundaries():
+    from pysiglib.volterra_sig import _auto_prefers_fft
+
+    # Single short path -> quadratic; single long path -> fft.
+    assert not _auto_prefers_fft(50, 1, 1)
+    assert _auto_prefers_fft(2000, 1, 1)
+    # Large batch of short paths stays quadratic even with many threads.
+    assert not _auto_prefers_fft(50, 1000, -1)
+
+
+@requires_scipy
+def test_volterra_conv_auto_routes_and_matches(monkeypatch):
+    import importlib
+    vs_mod = importlib.import_module("pysiglib.volterra_sig")
+
+    calls = []
+    orig_quad = vs_mod.VolterraKernel._volterra_conv_sig
+    orig_fft = vs_mod.VolterraKernel._volterra_conv_fft_sig
+    monkeypatch.setattr(vs_mod.VolterraKernel, "_volterra_conv_sig",
+                        lambda self, *a, **k: calls.append("quad") or orig_quad(self, *a, **k))
+    monkeypatch.setattr(vs_mod.VolterraKernel, "_volterra_conv_fft_sig",
+                        lambda self, *a, **k: calls.append("fft") or orig_fft(self, *a, **k))
+
+    rng = np.random.default_rng(13)
+    A = rng.standard_normal((1, 2, 3))
+    short = np.cumsum(rng.standard_normal((30, 3)), axis=0) * 0.2
+    long_ = np.cumsum(rng.standard_normal((800, 3)), axis=0) * 0.2
+    degree, dt = 3, 0.05
+
+    auto = pysiglib.VolterraConvFractionalKernel(A, beta=0.7)
+    ref = pysiglib.VolterraConvFractionalKernel(A, beta=0.7)
+    auto.prepare(degree, dt=dt, scheme="auto")
+    ref.prepare(degree, dt=dt, scheme="quadratic")
+    try:
+        a_short = np.asarray(pysiglib.volterra_sig(short, degree, auto, dt=dt, scheme="auto", scalar_term=True))
+        a_long = np.asarray(pysiglib.volterra_sig(long_, degree, auto, dt=dt, scheme="auto", scalar_term=True))
+        r_short = np.asarray(pysiglib.volterra_sig(short, degree, ref, dt=dt, scheme="quadratic", scalar_term=True))
+        r_long = np.asarray(pysiglib.volterra_sig(long_, degree, ref, dt=dt, scheme="quadratic", scalar_term=True))
+    finally:
+        auto.clear_cache()
+        ref.clear_cache()
+
+    assert calls == ["quad", "fft", "quad", "quad"]
+    np.testing.assert_allclose(a_short, r_short, rtol=1e-9, atol=1e-11)
+    np.testing.assert_allclose(a_long, r_long, rtol=1e-9, atol=1e-11)
+
+
+@requires_scipy
+def test_volterra_conv_auto_with_order_uses_fft():
+    path = np.array(FIXTURES["conv_path"], copy=True)
+    degree = int(FIXTURES["conv_degree"])
+    dt = float(FIXTURES["conv_dt"])
+    kernel = pysiglib.VolterraConvFractionalKernel(
+        np.array(FIXTURES["conv_A"], copy=True), beta=float(FIXTURES["conv_frac_beta"]))
+    kernel.prepare(degree, dt=dt, scheme="auto", order=1)
+    try:
+        actual = pysiglib.volterra_sig(path, degree, kernel, dt=dt, scheme="auto", order=1, scalar_term=True)
+    finally:
+        kernel.clear_cache()
+    np.testing.assert_allclose(actual, FIXTURES["conv_frac_o1"], rtol=1e-9, atol=1e-9)
+
+
 def test_volterra_conv_rejects_bad_order():
     kernel = pysiglib.VolterraConvFractionalKernel(_identity_A(2), beta=0.7)
     with pytest.raises(ValueError):

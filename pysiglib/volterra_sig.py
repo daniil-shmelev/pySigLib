@@ -13,6 +13,8 @@
 # limitations under the License.
 # =========================================================================
 
+import math
+import os
 from ctypes import POINTER, byref, c_uint64
 from typing import Union
 
@@ -94,9 +96,10 @@ def _resolve_volterra_scheme(kernel, scheme, readout_lag):
 
     Convolution kernels use the general convolution scheme (and require
     ``readout_lag == 0``): the default ``O(S^2)`` quadratic recursion
-    (``"convolution"``/``"quadratic"``) or the ``O(S log S)`` FFT scheme
-    (``"fft"``), which gives the identical result. Every other kernel uses the
-    exact FSSK scheme (``"exact"``).
+    (``"convolution"``/``"quadratic"``), the ``O(S log S)`` FFT scheme
+    (``"fft"``), which gives the identical result, or ``"auto"``, which picks
+    between the two per call from the path length, batch size, and ``n_jobs``.
+    Every other kernel uses the exact FSSK scheme (``"exact"``).
     """
     if isinstance(kernel, VolterraConvolutionKernel):
         if readout_lag != 0:
@@ -105,11 +108,35 @@ def _resolve_volterra_scheme(kernel, scheme, readout_lag):
             return "convolution"
         if scheme == "fft":
             return "convolution_fft"
+        if scheme == "auto":
+            return "convolution_auto"
         raise ValueError(
-            "convolution kernels support scheme 'convolution'/'quadratic' or 'fft'")
+            "convolution kernels support scheme 'convolution'/'quadratic', 'fft', or 'auto'")
     if scheme != "exact":
         raise ValueError("scheme must be 'exact'")
     return scheme
+
+
+def _effective_jobs(n_jobs):
+    """Thread count for a given ``n_jobs``, mirroring the native semantics
+    (``-1`` = all cores, below ``-1`` = ``cores + 1 + n_jobs``)."""
+    if n_jobs >= 1:
+        return n_jobs
+    cores = os.cpu_count() or 1
+    return max(1, cores + 1 + n_jobs)
+
+
+def _auto_prefers_fft(S, batch_size, n_jobs):
+    """Pick the FFT scheme when its cost model beats the quadratic recursion.
+
+    Calibrated on benchmarks: the native quadratic path costs roughly
+    ``B * S^2 / P`` (C++, threaded over the batch, ``P`` effective threads),
+    the numpy FFT path roughly ``kappa * B * S * log2(S)`` (single-threaded)
+    with ``kappa ~ 20``. A misprediction costs a constant factor, never
+    correctness - both schemes give the same result.
+    """
+    P = min(_effective_jobs(n_jobs), max(batch_size, 1))
+    return S > 20.0 * P * math.log2(max(S, 2))
 
 
 def _check_order_dyadic(kernel, order, dyadic_order):
@@ -209,7 +236,11 @@ class VolterraKernel:
             raise ValueError("path.shape[-1] must match the prepared Volterra signature path dimension")
 
         if prepared.get("convolution"):
-            if prepared.get("conv_fft"):
+            conv_scheme = prepared["conv_scheme"]
+            if conv_scheme == "auto":
+                conv_scheme = "fft" if _auto_prefers_fft(
+                    data.data_length - 1, data.batch_size, n_jobs) else "quadratic"
+            if conv_scheme == "fft":
                 return self._volterra_conv_fft_sig(data, prepared, scalar_term, n_jobs)
             return self._volterra_conv_sig(data, prepared, scalar_term, n_jobs)
 
@@ -823,7 +854,8 @@ def _prepare_volterra_sig_impl(
         Convolution kernels (:class:`VolterraConvolutionKernel`) use the
         ``O(S^2)`` quadratic recursion (``"convolution"``/``"quadratic"``,
         default) or the ``O(S log S)`` ``"fft"`` scheme, which gives the
-        identical result and is faster for long paths.
+        identical result and is faster for long paths. ``"auto"`` picks between
+        the two per call from the path length, batch size, and ``n_jobs``.
     :param dtype: Floating dtype for the prepared native data. If omitted, this
         is inferred from the kernel arrays, defaulting to ``float64``.
     :return: Prepared Volterra signature cache entry.
@@ -833,11 +865,18 @@ def _prepare_volterra_sig_impl(
     if isinstance(kernel, VolterraConvolutionKernel):
         spec = kernel._conv_realization(np_dtype)
         # order>=1 (basis expansion) and dyadic_order>=1 (grid refinement) are
-        # only implemented in the Python FFT path, so they force it.
-        use_fft = scheme == "convolution_fft" or order >= 1 or dyadic_order >= 1
+        # only implemented in the Python FFT path, so they force it. "auto"
+        # defers the quadratic-vs-fft choice to call time, when the path length
+        # and batch size are known.
+        if order >= 1 or dyadic_order >= 1 or scheme == "convolution_fft":
+            conv_scheme = "fft"
+        elif scheme == "convolution_auto":
+            conv_scheme = "auto"
+        else:
+            conv_scheme = "quadratic"
         return {
             "convolution": True,
-            "conv_fft": use_fft,
+            "conv_scheme": conv_scheme,
             "order": order,
             "dyadic_order": dyadic_order,
             "handle": 0,
@@ -960,7 +999,8 @@ def volterra_sig(
         Convolution kernels (:class:`VolterraConvolutionKernel`) use the
         ``O(S^2)`` quadratic recursion (``"convolution"``/``"quadratic"``,
         default) or the ``O(S log S)`` ``"fft"`` scheme, which gives the
-        identical result and is faster for long paths.
+        identical result and is faster for long paths. ``"auto"`` picks between
+        the two per call from the path length, batch size, and ``n_jobs``.
     :param scalar_term: If True, include the leading scalar term.
     :param n_jobs: Number of CPU threads.
     :param order: Quadrature order for convolution kernels: ``0`` (left-point,
