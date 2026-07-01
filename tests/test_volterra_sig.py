@@ -934,11 +934,11 @@ def test_volterra_conv_auto_routes_and_matches(monkeypatch):
     vs_mod = importlib.import_module("pysiglib.volterra_sig")
 
     calls = []
-    orig_quad = vs_mod.VolterraKernel._volterra_conv_sig
-    orig_fft = vs_mod.VolterraKernel._volterra_conv_fft_sig
-    monkeypatch.setattr(vs_mod.VolterraKernel, "_volterra_conv_sig",
+    orig_quad = vs_mod.VolterraConvolutionKernel._volterra_conv_sig
+    orig_fft = vs_mod.VolterraConvolutionKernel._volterra_conv_fft_sig
+    monkeypatch.setattr(vs_mod.VolterraConvolutionKernel, "_volterra_conv_sig",
                         lambda self, *a, **k: calls.append("quad") or orig_quad(self, *a, **k))
-    monkeypatch.setattr(vs_mod.VolterraKernel, "_volterra_conv_fft_sig",
+    monkeypatch.setattr(vs_mod.VolterraConvolutionKernel, "_volterra_conv_fft_sig",
                         lambda self, *a, **k: calls.append("fft") or orig_fft(self, *a, **k))
 
     rng = np.random.default_rng(13)

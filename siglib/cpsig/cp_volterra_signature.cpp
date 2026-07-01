@@ -690,53 +690,12 @@ void volterra_sig_run(
 	}
 }
 
-std::mutex prepared_volterra_sig_mu;
-std::atomic<uint64_t> next_prepared_volterra_sig_handle{ 1 };
-std::unordered_map<uint64_t, VolterraKernelCache<float>> prepared_volterra_sig_f;
-std::unordered_map<uint64_t, VolterraKernelCache<double>> prepared_volterra_sig_d;
-
-template<std::floating_point T>
-std::unordered_map<uint64_t, VolterraKernelCache<T>>& prepared_volterra_sig_map() {
-	if constexpr (std::is_same_v<T, float>)
-		return prepared_volterra_sig_f;
-	else
-		return prepared_volterra_sig_d;
-}
-
-template<std::floating_point T>
-uint64_t store_prepared_volterra_sig(VolterraKernelCache<T>&& prepared) {
-	const uint64_t handle = next_prepared_volterra_sig_handle.fetch_add(1);
-	if (handle == 0)
-		throw std::overflow_error("prepare_volterra_sig handle overflow");
-	std::lock_guard lock(prepared_volterra_sig_mu);
-	prepared_volterra_sig_map<T>().emplace(handle, std::move(prepared));
-	return handle;
-}
-
-template<std::floating_point T>
-const VolterraKernelCache<T>& get_prepared_volterra_sig(uint64_t handle) {
-	std::lock_guard lock(prepared_volterra_sig_mu);
-	auto& map = prepared_volterra_sig_map<T>();
-	const auto it = map.find(handle);
-	if (it == map.end())
-		throw std::invalid_argument("volterra_sig received an invalid prepared handle");
-	return it->second;
-}
-
-template<std::floating_point T>
-void free_prepared_volterra_sig(uint64_t handle) {
-	if (handle == 0)
-		return;
-	std::lock_guard lock(prepared_volterra_sig_mu);
-	prepared_volterra_sig_map<T>().erase(handle);
-}
+HandleStore<VolterraKernelCache> prepared_volterra_sig_store;
 
 } // namespace
 
 void clear_prepared_volterra_sig_cache() {
-	std::lock_guard lock(prepared_volterra_sig_mu);
-	prepared_volterra_sig_f.clear();
-	prepared_volterra_sig_d.clear();
+	prepared_volterra_sig_store.clear();
 }
 
 template<std::floating_point T>
@@ -815,7 +774,7 @@ extern "C" {
 		uint64_t* handle
 	) noexcept {
 		SAFE_CALL({
-			*handle = store_prepared_volterra_sig<float>(make_prepared_volterra_sig<float>(
+			*handle = prepared_volterra_sig_store.store<float>(make_prepared_volterra_sig<float>(
 				lambda_diag, A, b, dimension, num_components, target_dimension,
 				state_dimension, degree, dt, readout_lag, quad_order));
 		});
@@ -836,18 +795,18 @@ extern "C" {
 		uint64_t* handle
 	) noexcept {
 		SAFE_CALL({
-			*handle = store_prepared_volterra_sig<double>(make_prepared_volterra_sig<double>(
+			*handle = prepared_volterra_sig_store.store<double>(make_prepared_volterra_sig<double>(
 				lambda_diag, A, b, dimension, num_components, target_dimension,
 				state_dimension, degree, dt, readout_lag, quad_order));
 		});
 	}
 
 	CPSIG_API int free_volterra_sig_f(uint64_t handle) noexcept {
-		SAFE_CALL(free_prepared_volterra_sig<float>(handle));
+		SAFE_CALL(prepared_volterra_sig_store.free<float>(handle));
 	}
 
 	CPSIG_API int free_volterra_sig_d(uint64_t handle) noexcept {
-		SAFE_CALL(free_prepared_volterra_sig<double>(handle));
+		SAFE_CALL(prepared_volterra_sig_store.free<double>(handle));
 	}
 
 	CPSIG_API int volterra_sig_f(
@@ -861,7 +820,7 @@ extern "C" {
 		int n_jobs
 	) noexcept {
 		SAFE_CALL(volterra_sig_<float>(
-			path, get_prepared_volterra_sig<float>(handle), out, batch_size,
+			path, prepared_volterra_sig_store.get<float>(handle), out, batch_size,
 			dimension, length, scalar_term, n_jobs));
 	}
 
@@ -876,7 +835,7 @@ extern "C" {
 		int n_jobs
 	) noexcept {
 		SAFE_CALL(volterra_sig_<double>(
-			path, get_prepared_volterra_sig<double>(handle), out, batch_size,
+			path, prepared_volterra_sig_store.get<double>(handle), out, batch_size,
 			dimension, length, scalar_term, n_jobs));
 	}
 }

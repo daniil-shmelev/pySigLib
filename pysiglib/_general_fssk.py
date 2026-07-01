@@ -34,25 +34,7 @@ and complex solves) and is imported lazily by the caller.
 import numpy as np
 from scipy.linalg import expm
 
-
-def _enumerate_multiindices(q, max_degree):
-    """Multi-indices of ``q`` components by total degree 0..max_degree, in the
-    same order as the native ``populate_multiindex_layout`` (compositions with
-    the last part holding the remainder)."""
-    out = []
-
-    def rec(pos, remaining, current):
-        if pos + 1 == q:
-            current[pos] = remaining
-            out.append(tuple(current))
-            return
-        for value in range(remaining, -1, -1):
-            current[pos] = value
-            rec(pos + 1, remaining - value, current)
-
-    for level in range(max_degree + 1):
-        rec(0, level, [0] * q)
-    return np.asarray(out, dtype=np.int64)
+from ._volterra_conv import _enumerate_multiindices
 
 
 def general_coefficients(Lambda, b, *, dt, readout_lag, quad_order, degree, dtype):
@@ -112,15 +94,10 @@ def general_coefficients(Lambda, b, *, dt, readout_lag, quad_order, degree, dtyp
         uv = np.linalg.solve(z * I + dt * Lambda, b.T)            # (R, q)
         beta = rv @ b.T                                           # (q,)
         g_all = np.prod(beta[None, :] ** ell, axis=1)             # (M,)
-        for mi in range(M):
-            g = g_all[mi]
-            if mi >= 1:
-                psi[mi] += 2.0 * np.real(tilde_omega[mm] * g * rv)
-            if mi < Mphi:
-                # phi[p, mi, r0, r1] += 2 Re(omega g u[:,p] (x) r)
-                contrib = 2.0 * np.real(
-                    omega[mm] * g * (uv.T[:, :, None] * rv[None, None, :]))
-                phi[:, mi] += contrib
+        psi[1:] += 2.0 * np.real(np.outer(tilde_omega[mm] * g_all[1:], rv))
+        # phi[p, mi, r0, r1] += 2 Re(omega g u[:,p] (x) r)
+        outer = uv.T[:, None, :, None] * rv[None, None, None, :]  # (q, 1, R, R)
+        phi += 2.0 * np.real((omega[mm] * g_all[:Mphi])[None, :, None, None] * outer)
 
     return dict(
         E=np.ascontiguousarray(E.astype(real_dtype)),

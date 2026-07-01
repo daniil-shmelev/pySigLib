@@ -32,9 +32,16 @@ import numpy as np
 
 
 def _enumerate_multiindices(q, max_degree):
-    """Multi-indices of ``q`` components by total degree 0..max_degree, in the
-    same order as the native ``populate_multiindex_layout`` (compositions with
-    the first parts taken in descending order)."""
+    """Multi-indices of ``q`` components by total degree 0..max_degree, as an
+    ``(M, q)`` int array.
+
+    This is the single Python mirror of the native ordering contract: graded by
+    total degree, and within each degree the compositions are enumerated with
+    the first parts taken in descending order, exactly as the native
+    ``populate_multiindex_layout`` (cp_volterra_common.h) packs them. Every
+    packed coefficient array that crosses the Python/native boundary uses this
+    order, so all Python-side enumeration must go through this function.
+    """
     out = []
 
     def rec(pos, remaining, current):

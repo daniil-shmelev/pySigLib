@@ -91,30 +91,59 @@ def _resolve_prepare_dtype(dtype, kernel):
     raise ValueError("dtype must be float32 or float64")
 
 
-def _resolve_volterra_scheme(kernel, scheme, readout_lag):
-    """Return the effective evaluation scheme for a kernel.
+def _resolve_volterra_scheme(kernel, scheme, readout_lag, order, dyadic_order):
+    """Return the canonical evaluation scheme for a kernel:
+    ``"exact"`` (FSSK kernels), or ``"quadratic"`` / ``"fft"`` / ``"auto"``
+    (convolution kernels).
 
-    Convolution kernels use the general convolution scheme (and require
-    ``readout_lag == 0``): the default ``O(S^2)`` quadratic recursion
-    (``"convolution"``/``"quadratic"``), the ``O(S log S)`` FFT scheme
-    (``"fft"``), which gives the identical result, or ``"auto"``, which picks
-    between the two per call from the path length, batch size, and ``n_jobs``.
-    Every other kernel uses the exact FSSK scheme (``"exact"``).
+    Convolution kernels require ``readout_lag == 0`` and accept the ``O(S^2)``
+    quadratic recursion (``"convolution"``/``"quadratic"``, also the default
+    ``"exact"``), the ``O(S log S)`` FFT scheme (``"fft"``), which gives the
+    identical result, or ``"auto"``, which picks between the two per call from
+    the path length, batch size, and ``n_jobs``. ``order >= 1`` and
+    ``dyadic_order >= 1`` are implemented only in the FFT path, so they resolve
+    to ``"fft"`` regardless of the requested scheme.
     """
     if isinstance(kernel, VolterraConvolutionKernel):
         if readout_lag != 0:
             raise ValueError("the convolution scheme requires readout_lag=0")
+        if order >= 1 or dyadic_order >= 1:
+            if scheme not in ("exact", "convolution", "quadratic", "fft", "auto"):
+                raise ValueError(
+                    "convolution kernels support scheme 'convolution'/'quadratic', 'fft', or 'auto'")
+            return "fft"
         if scheme in ("exact", "convolution", "quadratic"):
-            return "convolution"
-        if scheme == "fft":
-            return "convolution_fft"
-        if scheme == "auto":
-            return "convolution_auto"
+            return "quadratic"
+        if scheme in ("fft", "auto"):
+            return scheme
         raise ValueError(
             "convolution kernels support scheme 'convolution'/'quadratic', 'fft', or 'auto'")
     if scheme != "exact":
         raise ValueError("scheme must be 'exact'")
+    if order != 0 or dyadic_order != 0:
+        raise ValueError("order and dyadic_order are only supported by convolution kernels")
     return scheme
+
+
+def _validate_volterra_args(kernel, degree, dt, readout_lag, scheme, order, dyadic_order):
+    """Validate the shared ``prepare``/``volterra_sig`` arguments and return the
+    resolved scheme. Called from both entry points so they cannot drift."""
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_type(dt, "dt", float)
+    check_type(readout_lag, "readout_lag", float)
+    check_type(scheme, "scheme", str)
+    check_type(order, "order", int)
+    check_type(dyadic_order, "dyadic_order", int)
+    if order not in (0, 1, 2):
+        raise ValueError("order must be 0, 1, or 2")
+    if dyadic_order < 0:
+        raise ValueError("dyadic_order must be non-negative")
+    if dt <= 0:
+        raise ValueError("dt must be positive")
+    if readout_lag < 0:
+        raise ValueError("readout_lag must be non-negative")
+    return _resolve_volterra_scheme(kernel, scheme, readout_lag, order, dyadic_order)
 
 
 def _effective_jobs(n_jobs):
@@ -139,20 +168,22 @@ def _auto_prefers_fft(S, batch_size, n_jobs):
     return S > 20.0 * P * math.log2(max(S, 2))
 
 
-def _check_order_dyadic(kernel, order, dyadic_order):
-    """Validate the higher-order / dyadic-refinement parameters.
+def _sig_output(data, prepared, scalar_term):
+    """Allocate the signature output and short-circuit the trivial cases.
 
-    Both are convolution-scheme features (the basis-expansion quadrature and
-    grid refinement), so they must be 0 for FSSK kernels.
+    Returns ``(result, early)``: when ``early`` is not ``None`` it is the
+    finished output for the degree-0 / empty-batch cases; otherwise the
+    caller fills ``result.data``.
     """
-    check_type(order, "order", int)
-    check_type(dyadic_order, "dyadic_order", int)
-    if order not in (0, 1, 2):
-        raise ValueError("order must be 0, 1, or 2")
-    if dyadic_order < 0:
-        raise ValueError("dyadic_order must be non-negative")
-    if not isinstance(kernel, VolterraConvolutionKernel) and (order != 0 or dyadic_order != 0):
-        raise ValueError("order and dyadic_order are only supported by convolution kernels")
+    sig_len = sig_length(prepared["target_dimension"], prepared["degree"], scalar_term=scalar_term)
+    result = SigOutputHandler(data, sig_len)
+    if prepared["degree"] == 0:
+        if scalar_term:
+            result.data[...] = 1
+        return result, result.data
+    if data.batch_size == 0:
+        return result, result.data
+    return result, None
 
 
 class VolterraKernel:
@@ -172,53 +203,33 @@ class VolterraKernel:
             order: int = 0,
             dyadic_order: int = 0,
     ):
-        key = self._prepared_key(degree, dt, readout_lag, scheme, dtype, order, dyadic_order)
+        resolved = _validate_volterra_args(self, degree, dt, readout_lag, scheme, order, dyadic_order)
+        np_dtype, dtype_name = _resolve_prepare_dtype(dtype, self)
+        key = (degree, dt, readout_lag, resolved, dtype_name, order, dyadic_order)
         cache = self._prepared_volterra_sig
         if key in cache:
             return None
 
-        cache[key] = _prepare_volterra_sig_impl(
-            degree,
-            self,
-            dt=dt,
-            readout_lag=readout_lag,
-            scheme=scheme,
-            dtype=dtype,
-            order=order,
-            dyadic_order=dyadic_order,
-        )
+        cache[key] = self._prepare_entry(
+            degree, dt, readout_lag, resolved, np_dtype, dtype_name, order, dyadic_order)
         return None
 
     def clear_cache(self):
+        """Free the native prepared handles and the per-path-length coefficient
+        caches held by this kernel's prepared entries."""
         cache = self._prepared_volterra_sig
         for entry in cache.values():
             self._free_prepared_entry(entry)
         cache.clear()
 
-    def _prepared_key(self, degree, dt, readout_lag, scheme, dtype, order, dyadic_order):
-        check_type(degree, "degree", int)
-        check_non_neg(degree, "degree")
-        check_type(dt, "dt", float)
-        check_type(readout_lag, "readout_lag", float)
-        check_type(scheme, "scheme", str)
-        scheme = _resolve_volterra_scheme(self, scheme, readout_lag)
-        _check_order_dyadic(self, order, dyadic_order)
-        if dt <= 0:
-            raise ValueError("dt must be positive")
-        if readout_lag < 0:
-            raise ValueError("readout_lag must be non-negative")
-        _, dtype_name = _resolve_prepare_dtype(dtype, self)
-        return degree, dt, readout_lag, scheme, dtype_name, order, dyadic_order
-
     def _get_prepared(self, degree, dt, readout_lag, scheme, dtype_name, order, dyadic_order):
         cache = self._prepared_volterra_sig
-        key = (degree, dt, readout_lag, scheme, dtype_name, order, dyadic_order)
-        prepared = cache.get(key)
+        prepared = cache.get((degree, dt, readout_lag, scheme, dtype_name, order, dyadic_order))
         if prepared is not None:
             return prepared
-        for cache_key in cache:
-            if cache_key[:4] == (degree, dt, readout_lag, scheme) and cache_key[5:] == (order, dyadic_order):
-                raise ValueError("path dtype must match the prepared Volterra signature dtype")
+        other = "float64" if dtype_name == "float32" else "float32"
+        if (degree, dt, readout_lag, scheme, other, order, dyadic_order) in cache:
+            raise ValueError("path dtype must match the prepared Volterra signature dtype")
         return None
 
     def _free_prepared_entry(self, entry):
@@ -235,23 +246,18 @@ class VolterraKernel:
         if data.data_dimension != prepared["dimension"]:
             raise ValueError("path.shape[-1] must match the prepared Volterra signature path dimension")
 
-        if prepared.get("convolution"):
-            conv_scheme = prepared["conv_scheme"]
-            if conv_scheme == "auto":
-                conv_scheme = "fft" if _auto_prefers_fft(
+        scheme = prepared["scheme"]
+        if scheme != "exact":
+            if scheme == "auto":
+                scheme = "fft" if _auto_prefers_fft(
                     data.data_length - 1, data.batch_size, n_jobs) else "quadratic"
-            if conv_scheme == "fft":
+            if scheme == "fft":
                 return self._volterra_conv_fft_sig(data, prepared, scalar_term, n_jobs)
             return self._volterra_conv_sig(data, prepared, scalar_term, n_jobs)
 
-        sig_len = sig_length(prepared["target_dimension"], prepared["degree"], scalar_term=scalar_term)
-        result = SigOutputHandler(data, sig_len)
-        if prepared["degree"] == 0:
-            if scalar_term:
-                result.data[...] = 1
-            return result.data
-        if data.batch_size == 0:
-            return result.data
+        result, early = _sig_output(data, prepared, scalar_term)
+        if early is not None:
+            return early
 
         sig_map = CPSIG_VOLTERRA_SIG_GENERAL if prepared.get("general") else CPSIG_VOLTERRA_SIG
         err_code = sig_map[data.dtype](
@@ -262,110 +268,61 @@ class VolterraKernel:
             raise Exception("Error in pysiglib.volterra_sig: " + err_msg(err_code))
         return result.data
 
-    @staticmethod
-    def _conv_alpha_lag(prepared, S):
-        """Lag coefficients for the convolution scheme, cached by ``S``.
+    def _prepare_entry(self, degree, dt, readout_lag, scheme, np_dtype, dtype_name,
+                       order, dyadic_order):
+        """Build the prepared cache entry (exact FSSK scheme). Convolution
+        kernels override this with the convolution-scheme entry builder."""
+        realization = self._prepare_exact_numpy(np_dtype)
+        mode = realization["mode"]
+        A = realization["A"]
+        b = realization["b"]
 
-        They depend only on ``(kind, params, dt, degree, dtype, S)``; everything
-        but ``S`` is fixed for this prepared entry, so cache by ``S`` to avoid
-        rebuilding the scipy coefficients on every call. Returns ``(alpha_lag, M)``.
-        """
-        from ._volterra_conv import convolution_lag_coefficients
-
-        cache = prepared.setdefault("_alpha_cache", {})
-        cached = cache.get(S)
-        if cached is None:
-            np_dtype = np.float32 if prepared["dtype"] == "float32" else np.float64
-            cached = convolution_lag_coefficients(
-                prepared["conv_kind"], prepared["conv_params"],
-                dt=prepared["dt"], degree=prepared["degree"], S=S, dtype=np_dtype)
-            cache[S] = cached
-        return cached
-
-    @staticmethod
-    def _conv_sig_output(data, prepared, scalar_term):
-        """Allocate the signature output and short-circuit the trivial cases.
-
-        Returns ``(result, early)``: when ``early`` is not ``None`` it is the
-        finished output for the degree-0 / empty-batch cases; otherwise the
-        caller fills ``result.data``.
-        """
-        sig_len = sig_length(prepared["target_dimension"], prepared["degree"], scalar_term=scalar_term)
-        result = SigOutputHandler(data, sig_len)
-        if prepared["degree"] == 0:
-            if scalar_term:
-                result.data[...] = 1
-            return result, result.data
-        if data.batch_size == 0:
-            return result, result.data
-        return result, None
-
-    def _volterra_conv_sig(self, data, prepared, scalar_term, n_jobs):
-        result, early = self._conv_sig_output(data, prepared, scalar_term)
-        if early is not None:
-            return early
-
-        alpha_lag, M = self._conv_alpha_lag(prepared, data.data_length - 1)
-        err_code = CPSIG_VOLTERRA_CONV_SIG[data.dtype](
-            data.data_ptr, result.data_ptr,
-            _numpy_ptr(prepared["A"], data.dtype), _numpy_ptr(alpha_lag, data.dtype),
-            data.batch_size, data.data_dimension, data.data_length,
-            prepared["num_components"], prepared["target_dimension"], prepared["degree"], M,
-            scalar_term, n_jobs)
+        handle = c_uint64(0)
+        if mode == "general":
+            from ._general_fssk import general_coefficients
+            coef = general_coefficients(
+                realization["Lambda"], b, dt=dt, readout_lag=readout_lag,
+                quad_order=self.quad_order, degree=degree, dtype=np_dtype)
+            err_code = CPSIG_PREPARE_VOLTERRA_SIG_GENERAL[dtype_name](
+                _numpy_ptr(coef["E"], dtype_name),
+                _numpy_ptr(coef["psi"], dtype_name),
+                _numpy_ptr(coef["phi"], dtype_name),
+                _numpy_ptr(coef["readout_weights"], dtype_name),
+                _numpy_ptr(A, dtype_name),
+                realization["dimension"],
+                realization["num_components"],
+                realization["target_dimension"],
+                realization["state_dimension"],
+                degree,
+                byref(handle),
+            )
+        else:
+            err_code = CPSIG_PREPARE_VOLTERRA_SIG[dtype_name](
+                _numpy_ptr(realization["lambda_diag"], dtype_name),
+                _numpy_ptr(A, dtype_name),
+                _numpy_ptr(b, dtype_name),
+                realization["dimension"],
+                realization["num_components"],
+                realization["target_dimension"],
+                realization["state_dimension"],
+                degree,
+                dt,
+                readout_lag,
+                self.quad_order,
+                byref(handle),
+            )
         if err_code:
-            raise Exception("Error in pysiglib.volterra_sig: " + err_msg(err_code))
-        return result.data
+            raise Exception("Error in pysiglib.prepare_volterra_sig: " + err_msg(err_code))
 
-    def _volterra_conv_fft_sig(self, data, prepared, scalar_term, n_jobs):
-        from ._volterra_fft import volterra_fft_terminal, volterra_fft_basis, build_fft_tables
-
-        result, early = self._conv_sig_output(data, prepared, scalar_term)
-        if early is not None:
-            return early
-
-        np_dtype = np.float32 if prepared["dtype"] == "float32" else np.float64
-        q = prepared["num_components"]
-        m = prepared["target_dimension"]
-        degree = prepared["degree"]
-        order = prepared["order"]
-        factor = 1 << prepared["dyadic_order"]
-        S = (data.data_length - 1) * factor
-        dt_eff = prepared["dt"] / factor
-
-        # Increments on the (dyadically refined) grid: split each increment into
-        # ``factor`` equal sub-increments (linear-interpolation refinement).
-        path = np.asarray(data.path).reshape(
-            data.batch_size, data.data_length, data.data_dimension)
-        dX = np.diff(path, axis=1)
-        if factor > 1:
-            dX = np.repeat(dX / factor, factor, axis=1)
-
-        # The frequency-domain weight tables are path-independent (depend only on
-        # the refined grid), so cache them by the refined step count S.
-        tcache = prepared.setdefault("_fft_cache", {})
-        tables = tcache.get(S)
-        if tables is None:
-            tables = build_fft_tables(
-                prepared["conv_kind"], prepared["conv_params"],
-                dt=dt_eff, degree=degree, S=S, q=q, order=order, dtype=np_dtype)
-            tcache[S] = tables
-
-        if tables["kind"] == "order0":
-            flat = volterra_fft_terminal(
-                dX, prepared["A"], tables["W"], degree=degree, q=q, m=m,
-                scalar_term=scalar_term, dtype=np_dtype, nfft=tables["nfft"])
-        else:
-            flat = volterra_fft_basis(
-                dX, prepared["A"], tables["Wt"], tables["Wo"], degree=degree, q=q, m=m,
-                thetas=tables["thetas"], interp_inv=tables["interp_inv"],
-                scalar_term=scalar_term, dtype=np_dtype, nfft=tables["nfft"])
-
-        out = flat.reshape(result.data.shape)
-        if data.type_ == "numpy":
-            result.data[...] = out
-        else:
-            result.data.copy_(torch.from_numpy(np.ascontiguousarray(out)))
-        return result.data
+        return {
+            "scheme": "exact",
+            "handle": handle.value,
+            "dtype": dtype_name,
+            "degree": degree,
+            "dimension": realization["dimension"],
+            "target_dimension": realization["target_dimension"],
+            "general": mode == "general",
+        }
 
     def _prepare_exact_numpy(self, dtype):
         raise NotImplementedError
@@ -511,10 +468,6 @@ class VolterraFSSK(VolterraKernel):
         self.quad_order = quad_order
 
     @classmethod
-    def diagonal(cls, Lambda, A, b, *, quad_order: int = 32):
-        return cls(Lambda, A, b, quad_order=quad_order)
-
-    @classmethod
     def from_jordan(cls, *, A, b, real_rates=(), real_sizes=(), osc_decays=(),
                     osc_freqs=(), osc_sizes=(), quad_order: int = 32):
         """
@@ -645,6 +598,12 @@ class VolterraFractionalKernel(VolterraKernel):
     ``R`` is the number of exponentials and equals the state dimension. ``T`` is
     the approximation horizon over which the exponential fit is optimized.
 
+    See also :class:`VolterraConvFractionalKernel`, which evaluates the same
+    fractional kernel by the general convolution scheme instead: exact kernel
+    coefficients (no exponential-sum approximation), any ``beta > 0``, and
+    multivariate ``q > 1``, at ``O(S^2)`` / ``O(S log S)`` cost in the path
+    length rather than ``O(S)``.
+
     This requires ``scipy`` for the node optimization (an optional dependency,
     imported only when the kernel is prepared).
     """
@@ -703,8 +662,8 @@ class VolterraFractionalKernel(VolterraKernel):
         }
 
 
-def _conv_projection(A, dtype):
-    """Validate ``A`` and pack it into a contiguous ``(q, m, d)`` array."""
+def _validate_A(A, dtype):
+    """Validate ``kernel.A`` and pack it into a contiguous ``(q, m, d)`` array."""
     A_rank = _rank(A)
     if A_rank not in (2, 3):
         raise ValueError("kernel.A must have rank 2 or 3, got rank " + str(A_rank))
@@ -729,13 +688,122 @@ class VolterraConvolutionKernel(VolterraKernel):
 
     where the scalar parts :math:`k_p` are general convolution kernels that are
     not finite state-space (no exponential-sum form). The truncated signature is
-    computed by the quadratic Volterra-Chen recursion (the general convolution
-    scheme) rather than the exact FSSK state recursion. Such kernels always use
-    the convolution scheme and require ``readout_lag=0``.
+    computed by the general convolution scheme rather than the exact FSSK state
+    recursion: the ``O(S^2)`` quadratic Volterra-Chen recursion (default), the
+    ``O(S log S)`` FFT scheme (``scheme="fft"``, identical result), or a per-call
+    choice between the two (``scheme="auto"``). These kernels require
+    ``readout_lag=0``.
     """
 
     def _conv_realization(self, dtype):
         raise NotImplementedError
+
+    def _prepare_entry(self, degree, dt, readout_lag, scheme, np_dtype, dtype_name,
+                       order, dyadic_order):
+        spec = self._conv_realization(np_dtype)
+        return {
+            "scheme": scheme,
+            "order": order,
+            "dyadic_order": dyadic_order,
+            "handle": 0,
+            "dtype": dtype_name,
+            "np_dtype": np_dtype,
+            "degree": degree,
+            "dt": dt,
+            "dimension": spec["d"],
+            "num_components": spec["q"],
+            "target_dimension": spec["m"],
+            "A": spec["A"],
+            "conv_kind": spec["kind"],
+            "conv_params": spec["params"],
+        }
+
+    @staticmethod
+    def _conv_alpha_lag(prepared, S):
+        """Lag coefficients for the quadratic recursion, cached by ``S``.
+
+        They depend only on ``(kind, params, dt, degree, dtype, S)``; everything
+        but ``S`` is fixed for this prepared entry, so cache by ``S`` to avoid
+        rebuilding the scipy coefficients on every call. Returns ``(alpha_lag, M)``.
+        """
+        from ._volterra_conv import convolution_lag_coefficients
+
+        cache = prepared.setdefault("_alpha_cache", {})
+        cached = cache.get(S)
+        if cached is None:
+            cached = convolution_lag_coefficients(
+                prepared["conv_kind"], prepared["conv_params"],
+                dt=prepared["dt"], degree=prepared["degree"], S=S,
+                dtype=prepared["np_dtype"])
+            cache[S] = cached
+        return cached
+
+    def _volterra_conv_sig(self, data, prepared, scalar_term, n_jobs):
+        result, early = _sig_output(data, prepared, scalar_term)
+        if early is not None:
+            return early
+
+        alpha_lag, M = self._conv_alpha_lag(prepared, data.data_length - 1)
+        err_code = CPSIG_VOLTERRA_CONV_SIG[data.dtype](
+            data.data_ptr, result.data_ptr,
+            _numpy_ptr(prepared["A"], data.dtype), _numpy_ptr(alpha_lag, data.dtype),
+            data.batch_size, data.data_dimension, data.data_length,
+            prepared["num_components"], prepared["target_dimension"], prepared["degree"], M,
+            scalar_term, n_jobs)
+        if err_code:
+            raise Exception("Error in pysiglib.volterra_sig: " + err_msg(err_code))
+        return result.data
+
+    def _volterra_conv_fft_sig(self, data, prepared, scalar_term, n_jobs):
+        from ._volterra_fft import volterra_fft_terminal, volterra_fft_basis, build_fft_tables
+
+        result, early = _sig_output(data, prepared, scalar_term)
+        if early is not None:
+            return early
+
+        np_dtype = prepared["np_dtype"]
+        q = prepared["num_components"]
+        m = prepared["target_dimension"]
+        degree = prepared["degree"]
+        factor = 1 << prepared["dyadic_order"]
+        S = (data.data_length - 1) * factor
+
+        # Increments on the (dyadically refined) grid: split each increment into
+        # ``factor`` equal sub-increments (linear-interpolation refinement).
+        path = np.asarray(data.path).reshape(
+            data.batch_size, data.data_length, data.data_dimension)
+        dX = np.diff(path, axis=1)
+        if factor > 1:
+            dX = np.repeat(dX, factor, axis=1)
+            dX /= factor
+
+        # The frequency-domain weight tables are path-independent (depend only on
+        # the refined grid), so cache them by the refined step count S.
+        tcache = prepared.setdefault("_fft_cache", {})
+        tables = tcache.get(S)
+        if tables is None:
+            tables = build_fft_tables(
+                prepared["conv_kind"], prepared["conv_params"],
+                dt=prepared["dt"] / factor, degree=degree, S=S, q=q,
+                order=prepared["order"], dtype=np_dtype)
+            tcache[S] = tables
+
+        if tables["kind"] == "order0":
+            flat = volterra_fft_terminal(
+                dX, prepared["A"], tables["W"], degree=degree, q=q, m=m,
+                scalar_term=scalar_term, dtype=np_dtype, nfft=tables["nfft"])
+        else:
+            flat = volterra_fft_basis(
+                dX, prepared["A"], tables["Wt"], tables["Wo"], degree=degree, q=q, m=m,
+                thetas=tables["thetas"], interp_inv=tables["interp_inv"],
+                scalar_term=scalar_term, dtype=np_dtype, nfft=tables["nfft"])
+
+        out = flat.reshape(result.data.shape)
+        if data.type_ == "numpy":
+            result.data[...] = out
+        else:
+            result.data.copy_(torch.from_numpy(np.ascontiguousarray(out)))
+        return result.data
 
     def _dtype_source_arrays(self):
         return (self.A,)
@@ -773,7 +841,7 @@ class VolterraConvFractionalKernel(VolterraConvolutionKernel):
         self.beta = beta_arr
 
     def _conv_realization(self, dtype):
-        A, q, m, d = _conv_projection(self.A, dtype)
+        A, q, m, d = _validate_A(self.A, dtype)
         if self.beta.shape[0] != q:
             raise ValueError(
                 "beta must have one entry per kernel component: expected "
@@ -823,133 +891,12 @@ class VolterraConvGammaKernel(VolterraConvolutionKernel):
         self.quad_order = quad_order
 
     def _conv_realization(self, dtype):
-        A, q, m, d = _conv_projection(self.A, dtype)
+        A, q, m, d = _validate_A(self.A, dtype)
         if q != 1:
             raise ValueError("the Gamma kernel is scalar; kernel.A must have q=1")
         return {"A": A, "q": q, "m": m, "d": d, "kind": "gamma",
                 "params": {"beta": float(self.beta), "scale": float(self.scale),
                            "rate": float(self.rate), "quad_order": int(self.quad_order)}}
-
-
-def _prepare_volterra_sig_impl(
-        degree: int,
-        kernel: VolterraKernel,
-        *,
-        dt: float,
-        readout_lag: float,
-        scheme: str = "exact",
-        dtype=None,
-        order: int = 0,
-        dyadic_order: int = 0,
-) -> dict:
-    """
-    Prepares CPU data for repeated Volterra signature computations.
-
-    :param degree: Truncation level.
-    :param kernel: Volterra kernel object.
-    :param dt: Uniform time step between consecutive path samples.
-    :param readout_lag: Non-negative readout lag after the final path sample.
-        The kernel must have been prepared with the same value.
-    :param scheme: Evaluation scheme. FSSK kernels use ``"exact"`` (default).
-        Convolution kernels (:class:`VolterraConvolutionKernel`) use the
-        ``O(S^2)`` quadratic recursion (``"convolution"``/``"quadratic"``,
-        default) or the ``O(S log S)`` ``"fft"`` scheme, which gives the
-        identical result and is faster for long paths. ``"auto"`` picks between
-        the two per call from the path length, batch size, and ``n_jobs``.
-    :param dtype: Floating dtype for the prepared native data. If omitted, this
-        is inferred from the kernel arrays, defaulting to ``float64``.
-    :return: Prepared Volterra signature cache entry.
-    """
-    np_dtype, dtype_name = _resolve_prepare_dtype(dtype, kernel)
-    scheme = _resolve_volterra_scheme(kernel, scheme, readout_lag)
-    if isinstance(kernel, VolterraConvolutionKernel):
-        spec = kernel._conv_realization(np_dtype)
-        # order>=1 (basis expansion) and dyadic_order>=1 (grid refinement) are
-        # only implemented in the Python FFT path, so they force it. "auto"
-        # defers the quadratic-vs-fft choice to call time, when the path length
-        # and batch size are known.
-        if order >= 1 or dyadic_order >= 1 or scheme == "convolution_fft":
-            conv_scheme = "fft"
-        elif scheme == "convolution_auto":
-            conv_scheme = "auto"
-        else:
-            conv_scheme = "quadratic"
-        return {
-            "convolution": True,
-            "conv_scheme": conv_scheme,
-            "order": order,
-            "dyadic_order": dyadic_order,
-            "handle": 0,
-            "dtype": dtype_name,
-            "degree": degree,
-            "dt": dt,
-            "readout_lag": readout_lag,
-            "dimension": spec["d"],
-            "num_components": spec["q"],
-            "target_dimension": spec["m"],
-            "A": spec["A"],
-            "conv_kind": spec["kind"],
-            "conv_params": spec["params"],
-        }
-    realization = kernel._prepare_exact_numpy(np_dtype)
-    mode = realization["mode"]
-    A = realization["A"]
-    b = realization["b"]
-    num_components = realization["num_components"]
-    target_dimension = realization["target_dimension"]
-    state_dimension = realization["state_dimension"]
-    dimension = realization["dimension"]
-
-    handle = c_uint64(0)
-    if mode == "general":
-        from ._general_fssk import general_coefficients
-        coef = general_coefficients(
-            realization["Lambda"], b, dt=dt, readout_lag=readout_lag,
-            quad_order=kernel.quad_order, degree=degree, dtype=np_dtype)
-        err_code = CPSIG_PREPARE_VOLTERRA_SIG_GENERAL[dtype_name](
-            _numpy_ptr(coef["E"], dtype_name),
-            _numpy_ptr(coef["psi"], dtype_name),
-            _numpy_ptr(coef["phi"], dtype_name),
-            _numpy_ptr(coef["readout_weights"], dtype_name),
-            _numpy_ptr(A, dtype_name),
-            dimension,
-            num_components,
-            target_dimension,
-            state_dimension,
-            degree,
-            byref(handle),
-        )
-    else:
-        err_code = CPSIG_PREPARE_VOLTERRA_SIG[dtype_name](
-            _numpy_ptr(realization["lambda_diag"], dtype_name),
-            _numpy_ptr(A, dtype_name),
-            _numpy_ptr(b, dtype_name),
-            dimension,
-            num_components,
-            target_dimension,
-            state_dimension,
-            degree,
-            dt,
-            readout_lag,
-            kernel.quad_order,
-            byref(handle),
-        )
-    if err_code:
-        raise Exception("Error in pysiglib.prepare_volterra_sig: " + err_msg(err_code))
-
-    return {
-        "handle": handle.value,
-        "dtype": dtype_name,
-        "degree": degree,
-        "dt": dt,
-        "readout_lag": readout_lag,
-        "dimension": dimension,
-        "num_components": num_components,
-        "target_dimension": target_dimension,
-        "state_dimension": state_dimension,
-        "quad_order": kernel.quad_order,
-        "general": mode == "general",
-    }
 
 
 def prepare_volterra_sig(
@@ -1011,20 +958,10 @@ def volterra_sig(
         only). Uses the FFT path when non-zero.
     :return: Volterra signature array.
     """
-    check_type(degree, "degree", int)
-    check_non_neg(degree, "degree")
     check_type(kernel, "kernel", VolterraKernel)
-    check_type(dt, "dt", float)
-    check_type(readout_lag, "readout_lag", float)
-    check_type(scheme, "scheme", str)
     check_type(scalar_term, "scalar_term", bool)
     check_n_jobs(n_jobs)
-    scheme = _resolve_volterra_scheme(kernel, scheme, readout_lag)
-    _check_order_dyadic(kernel, order, dyadic_order)
-    if readout_lag < 0:
-        raise ValueError("readout_lag must be non-negative")
-    if dt <= 0:
-        raise ValueError("dt must be positive")
+    scheme = _validate_volterra_args(kernel, degree, dt, readout_lag, scheme, order, dyadic_order)
 
     data = PathInputHandler(path, False, False, 1., "path")
     if data.device != "cpu":

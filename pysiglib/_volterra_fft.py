@@ -57,13 +57,7 @@ def basis_rhos(order, betas):
     cand = [0.0] + betas + [1.0]
     if order == 2:
         cand += [b + 1.0 for b in betas] + [2.0]
-    seen, uniq = set(), []
-    for v in cand:
-        if v not in seen:
-            seen.add(v)
-            uniq.append(v)
-    uniq.sort()
-    return uniq
+    return sorted(set(cand))
 
 
 def cheb_lobatto(n):
@@ -148,11 +142,14 @@ def volterra_fft_terminal(dX, A, W, *, degree, q, m, scalar_term, dtype, nfft):
     y, level, T, np_dtype = _fft_inputs(dX, A, degree, q, m, dtype)
     B, S = y.shape[0], y.shape[1]
     out_len = S + 1
+    cplx = np.complex64 if np_dtype == np.float32 else np.complex128
 
     hist = [np.ones((B, out_len, 1), dtype=np_dtype)]          # level 0
     for L in range(1, degree + 1):
         mL, mL1 = m ** L, m ** (L - 1)
-        acc = np.zeros((B, out_len, mL), dtype=np_dtype)
+        # Accumulate in the frequency domain (irfft is linear), so each level
+        # costs one inverse transform instead of one per (r, ell', p) term.
+        freq = np.zeros((B, nfft // 2 + 1, mL), dtype=cplx)
         for r in range(1, L + 1):
             h_hn = hist[L - r][:, :S, :]                       # (B, S, m^{L-r})
             for idx in level[r - 1]:                           # |ell'| = r-1
@@ -160,9 +157,8 @@ def volterra_fft_terminal(dX, A, W, *, degree, q, m, scalar_term, dtype, nfft):
                 base = (h_hn[:, :, :, None] * T[i][:, :, None, :]).reshape(B, S, mL1)
                 for p in range(q):
                     src = (base[:, :, :, None] * y[:, :, p, :][:, :, None, :]).reshape(B, S, mL)
-                    SRC = np.fft.rfft(src, n=nfft, axis=1)
-                    acc += np.fft.irfft(SRC * W[:, p, i][None, :, None], n=nfft, axis=1)[:, :out_len]
-        hist.append(acc)
+                    freq += np.fft.rfft(src, n=nfft, axis=1) * W[:, p, i][None, :, None]
+        hist.append(np.fft.irfft(freq, n=nfft, axis=1)[:, :out_len])
 
     flat = np.concatenate([hist[L][:, S, :] for L in range(degree + 1)], axis=1)
     return flat if scalar_term else flat[:, 1:]
@@ -187,44 +183,46 @@ def volterra_fft_basis(dX, A, Wt, Wo, *, degree, q, m, thetas, interp_inv,
     y, level, T, np_dtype = _fft_inputs(dX, A, degree, q, m, dtype)
     nb, S = y.shape[0], y.shape[1]
     B = len(thetas)
+    cplx = np.complex64 if np_dtype == np.float32 else np.complex128
+    tables = Wt + [Wo]
 
-    def eval_multi(L, Wtabs, out_len, comp):
-        """Readout level L at every weight table in ``Wtabs`` in one pass.
+    def eval_level(L, comp):
+        """Readout level L at every weight table (B thetas + terminal) in one pass.
 
         The source ``comp[b] (x) T_ell' (x) y_p`` (and its forward rfft) is
         independent of the weight table, so it is built once and reused across
-        all tables; only the frequency multiply + irfft differ per table.
+        all tables. Each table accumulates in the frequency domain (irfft is
+        linear), so a level costs one inverse transform per table instead of
+        one per (r, ell', p) term.
         """
-        accs = [np.zeros((nb, out_len, m ** L), dtype=np_dtype) for _ in Wtabs]
         mL, mL1 = m ** L, m ** (L - 1)
+        freqs = [np.zeros((nb, nfft // 2 + 1, mL), dtype=cplx) for _ in tables]
         for n in range(1, L + 1):
             for idx in level[n - 1]:                           # |ell'| = n-1
                 i = int(idx)
                 Ti = T[i]
-                for p in range(q):
-                    yp = y[:, :, p, :]
-                    for b in range(B):
-                        base = (comp[b][L - n][:, :, :, None] * Ti[:, :, None, :]).reshape(nb, S, mL1)
-                        src = (base[:, :, :, None] * yp[:, :, None, :]).reshape(nb, S, mL)
+                for b in range(B):
+                    base = (comp[b][L - n][:, :, :, None] * Ti[:, :, None, :]).reshape(nb, S, mL1)
+                    for p in range(q):
+                        src = (base[:, :, :, None] * y[:, :, p, :][:, :, None, :]).reshape(nb, S, mL)
                         SRC = np.fft.rfft(src, n=nfft, axis=1)
-                        for acc, Wtab in zip(accs, Wtabs):
-                            acc += np.fft.irfft(SRC * Wtab[b][:, p, i][None, :, None], n=nfft, axis=1)[:, :out_len]
-        return accs
+                        for freq, Wtab in zip(freqs, tables):
+                            freq += SRC * Wtab[b][:, p, i][None, :, None]
+        return [np.fft.irfft(freq, n=nfft, axis=1)[:, :S + 1] for freq in freqs]
 
-    # Level histories per basis component: evaluate at the B interpolation
-    # points (out_len S) and solve the interpolation system.
+    # Per level: evaluate at the B interpolation points and the terminal
+    # (theta=0) table together, solve the interpolation system for the basis
+    # coefficients, and read the terminal signature at sample S.
     comp = [[np.ones((nb, S, 1), dtype=np_dtype) if b == 0
              else np.zeros((nb, S, 1), dtype=np_dtype)] for b in range(B)]
+    terminal = [np.ones((nb, 1), dtype=np_dtype)]
     for L in range(1, degree + 1):
-        evals = np.stack(eval_multi(L, Wt, S, comp), axis=0)   # (B, nb, S, m^L)
+        accs = eval_level(L, comp)
+        evals = np.stack([a[:, :S] for a in accs[:B]], axis=0)  # (B, nb, S, m^L)
         coeffs = np.einsum("ba,a...->b...", interp_inv, evals)
         for b in range(B):
             comp[b].append(coeffs[b])
-
-    # Terminal readout at theta=0, out_len S+1.
-    terminal = [np.ones((nb, 1), dtype=np_dtype)]
-    for L in range(1, degree + 1):
-        terminal.append(eval_multi(L, [Wo], S + 1, comp)[0][:, S, :])
+        terminal.append(accs[B][:, S, :])
     flat = np.concatenate(terminal, axis=1)
     return flat if scalar_term else flat[:, 1:]
 

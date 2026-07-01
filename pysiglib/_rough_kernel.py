@@ -159,31 +159,30 @@ def _optimize_error_l2(*, H, R, T, tol=1e-8, bound=None, init_nodes):
     nodes = np.fmin(np.fmax(nodes, lower_bound), bound)
 
     bounds = ((np.log(lower_bound), np.log(bound)),) * R
-    original_error, original_weights = _error_l2_optimal_weights(
-        H=H, T=T, nodes=nodes, output="error")
+    original_error, original_weights = _error_l2_optimal_weights(H=H, T=T, nodes=nodes)
     original_nodes = nodes.copy()
 
     def func(x):
-        err, grad, _ = _error_l2_optimal_weights(H=H, T=T, nodes=np.exp(x), output="gradient")
+        err, grad, _ = _error_l2_optimal_weights(H=H, T=T, nodes=np.exp(x), with_gradient=True)
         return err, np.exp(x) * grad
 
     res = minimize(func, np.log(nodes), tol=tol ** 2, bounds=bounds, jac=True)
 
     nodes = np.exp(res.x)
-    err, weights = _error_l2_optimal_weights(H=H, T=T, nodes=nodes, output="error")
+    err, weights = _error_l2_optimal_weights(H=H, T=T, nodes=nodes)
 
     if err > 2.0 * np.fmax(original_error, 1e-9):
-        return (
-            np.array([np.sqrt(np.fmax(original_error, 0.0))]),
-            original_nodes,
-            original_weights,
-        )
+        return float(np.sqrt(np.fmax(original_error, 0.0))), original_nodes, original_weights
 
-    return np.array([np.sqrt(np.fmax(err, 0.0))]), nodes, weights
+    return float(np.sqrt(np.fmax(err, 0.0))), nodes, weights
 
 
-def _error_l2_optimal_weights(*, H, T, nodes, output="error"):
-    """L2 error and optimal weights for fixed nodes (positive-Hurst scalar T)."""
+def _error_l2_optimal_weights(*, H, T, nodes, with_gradient=False):
+    """L2 error and optimal weights for fixed nodes (positive-Hurst scalar T).
+
+    Returns ``(err, opt_weights)``, or ``(err, grad, opt_weights)`` when
+    ``with_gradient`` is set.
+    """
     H = float(H)
     T = float(T)
     nodes = np.asarray(nodes, dtype=np.float64)
@@ -205,7 +204,7 @@ def _error_l2_optimal_weights(*, H, T, nodes, output="error"):
         err = c - 0.25 * b * v
         opt_weight = np.array([-0.5 * v])
 
-        if output in {"error", "err"}:
+        if not with_gradient:
             return err, opt_weight
 
         A_grad = (-1.0 + (1.0 + 2.0 * nT) * exp_node_matrix) / (4.0 * node ** 2)
@@ -215,11 +214,7 @@ def _error_l2_optimal_weights(*, H, T, nodes, output="error"):
             / node ** (H + 1.5)
         )
         grad = 0.5 * (A_grad * v - b_grad) * v
-
-        if output in {"gradient", "grad"}:
-            return err, grad, opt_weight
-
-        raise NotImplementedError("Unsupported output=" + repr(output) + ".")
+        return err, grad, opt_weight
 
     nodes = _regularize_nodes(nodes)
 
@@ -246,7 +241,7 @@ def _error_l2_optimal_weights(*, H, T, nodes, output="error"):
     err = 0.25 * v @ A @ v - 0.5 * np.dot(b, v) + c
     opt_weights = -0.5 * v
 
-    if output in {"error", "err"}:
+    if not with_gradient:
         return err, opt_weights
 
     exp_node_vec = _exp_underflow(nT)
@@ -257,11 +252,7 @@ def _error_l2_optimal_weights(*, H, T, nodes, output="error"):
         / nodes ** (H + 1.5)
     )
     grad = 0.5 * v * (A_grad @ v) - 0.5 * b_grad * v
-
-    if output in {"gradient", "grad"}:
-        return err, grad, opt_weights
-
-    raise NotImplementedError("Unsupported output=" + repr(output) + ".")
+    return err, grad, opt_weights
 
 
 def _regularize_nodes(nodes):
@@ -284,16 +275,8 @@ def _regularize_nodes(nodes):
 
 def _exp_underflow(x):
     """Compute exp(-x) with large-x underflow protection."""
-    if isinstance(x, np.ndarray):
-        if x.dtype == int:
-            x = x.astype(float)
-        eps = np.finfo(x.dtype).tiny
-    else:
-        if isinstance(x, int):
-            x = float(x)
-        eps = np.finfo(x.__class__).tiny
-
-    log_eps = -np.log(eps) / 2.0
+    x = np.asarray(x, dtype=np.float64)
+    log_eps = -np.log(np.finfo(np.float64).tiny) / 2.0
     result = np.exp(-np.fmin(x, log_eps))
     return np.where(x > log_eps, 0.0, result)
 

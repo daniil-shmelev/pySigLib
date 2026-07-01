@@ -333,9 +333,9 @@ extern "C" {
 	*        Volterra signature of a batch of paths for a general convolution kernel via the
 	*        quadratic Volterra-Chen recursion. The projection A and the per-lag interval
 	*        coefficients alpha_lag (precomputed by the caller, shape (length, q, num_multiindex))
-	*        are passed in; this is stateless (no prepared handle). Scalar (q == 1) case only.
+	*        are passed in; this is stateless (no prepared handle).
 	* @param alpha_lag Normalized interval coefficients indexed by lag, shape (length, q, num_multiindex).
-	* @param num_multiindex Number of packed multi-indices (= degree for q == 1).
+	* @param num_multiindex Number of packed multi-indices (= degree for q == 1, else the packed layout size).
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int volterra_conv_sig_f(const float* path, float* out, const float* A, const float* alpha_lag, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t num_components, uint64_t target_dimension, uint64_t degree, uint64_t num_multiindex, bool scalar_term = true, int n_jobs = 1) noexcept;

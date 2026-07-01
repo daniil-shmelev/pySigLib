@@ -22,16 +22,74 @@
 // by the general path).
 
 #include <algorithm>
+#include <atomic>
 #include <complex>
 #include <concepts>
 #include <cstdint>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #include "macros.h"
 
 namespace volterra_detail {
+
+// Registry of prepared kernel caches keyed by an opaque handle, one map per
+// dtype. get() returns a reference that outlives the lock; entries are only
+// removed by free()/clear(), which callers must not race with running
+// computations (the Python layer guarantees this).
+template<template<class> class CacheT>
+struct HandleStore {
+	std::mutex mu;
+	std::atomic<uint64_t> next_handle{ 1 };
+	std::unordered_map<uint64_t, CacheT<float>> map_f;
+	std::unordered_map<uint64_t, CacheT<double>> map_d;
+
+	template<std::floating_point T>
+	std::unordered_map<uint64_t, CacheT<T>>& map() {
+		if constexpr (std::is_same_v<T, float>)
+			return map_f;
+		else
+			return map_d;
+	}
+
+	template<std::floating_point T>
+	uint64_t store(CacheT<T>&& prepared) {
+		const uint64_t handle = next_handle.fetch_add(1);
+		if (handle == 0)
+			throw std::overflow_error("prepare_volterra_sig handle overflow");
+		std::lock_guard lock(mu);
+		map<T>().emplace(handle, std::move(prepared));
+		return handle;
+	}
+
+	template<std::floating_point T>
+	const CacheT<T>& get(uint64_t handle) {
+		std::lock_guard lock(mu);
+		auto& m = map<T>();
+		const auto it = m.find(handle);
+		if (it == m.end())
+			throw std::invalid_argument("volterra_sig received an invalid prepared handle");
+		return it->second;
+	}
+
+	template<std::floating_point T>
+	void free(uint64_t handle) {
+		if (handle == 0)
+			return;
+		std::lock_guard lock(mu);
+		map<T>().erase(handle);
+	}
+
+	void clear() {
+		std::lock_guard lock(mu);
+		map_f.clear();
+		map_d.clear();
+	}
+};
 
 template<std::floating_point T>
 T phi1_neg(T x) {
