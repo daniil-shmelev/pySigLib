@@ -46,7 +46,6 @@ void tensor_exp_with_level_index_(
 	const uint64_t copy_end = level_index[copy_degree + 1];
 	powers.assign(length, static_cast<T>(0));
 	next.assign(length, static_cast<T>(0));
-	std::fill(out + first, out + length, static_cast<T>(0));
 	std::copy(log_sig + first, log_sig + copy_end, powers.begin() + first);
 	std::copy(powers.begin() + first, powers.end(), out + first);
 
@@ -109,13 +108,45 @@ void tensor_exp_(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	auto level_index = std::make_unique<uint64_t[]>(degree + 2);
-	populate_level_index(level_index.get(), dimension, degree + 2);
+	const uint64_t sig_len = ::sig_length(dimension, degree);
+	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
+	uint64_t* level_index = level_index_uptr.get();
+	populate_level_index(level_index, dimension, degree + 2);
+
 	out[0] = static_cast<T>(1);
-	std::vector<T> powers;
-	std::vector<T> next;
-	tensor_exp_with_level_index_(log_sig, out, degree, degree,
-		level_index.get(), powers, next);
+	if (degree == 0) return;
+	std::memcpy(out + level_index[1], log_sig + level_index[1],
+		(level_index[degree + 1] - level_index[1]) * sizeof(T));
+	if (degree <= 1) return;
+
+	auto buff1_uptr = std::make_unique<T[]>(sig_len);
+	auto buff2_uptr = std::make_unique<T[]>(sig_len);
+	T* power_previous = buff1_uptr.get();
+	T* power_current = buff2_uptr.get();
+	std::memcpy(power_previous, log_sig, sig_len * sizeof(T));
+
+	for (uint64_t power = 2; power <= degree; ++power) {
+		const T inv_power = static_cast<T>(1) / static_cast<T>(power);
+		for (uint64_t target_level = power; target_level <= degree; ++target_level) {
+			std::fill(power_current + level_index[target_level],
+				power_current + level_index[target_level + 1], static_cast<T>(0));
+			const uint64_t max_left = target_level - (power - 1);
+			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
+				const uint64_t right_level = target_level - left_level;
+				T* result = power_current + level_index[target_level];
+				const T* left_end = log_sig + level_index[left_level + 1];
+				const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+				const T* right = power_previous + level_index[right_level];
+				for (const T* left = log_sig + level_index[left_level]; left < left_end; ++left) {
+					vec_mult_add(result, right, *left * inv_power, right_size);
+					result += right_size;
+				}
+			}
+			for (uint64_t i = level_index[target_level]; i < level_index[target_level + 1]; ++i)
+				out[i] += power_current[i];
+		}
+		std::swap(power_previous, power_current);
+	}
 }
 
 template<std::floating_point T>
