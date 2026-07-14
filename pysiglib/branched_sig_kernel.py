@@ -189,6 +189,16 @@ def branched_sig_kernel_gram(
     :type depth: int
     :param dyadic_order: Dyadic refinement order, or a pair of orders.
     :type dyadic_order: int | tuple
+    :param static_kernel: Static kernel. If ``None``, the linear kernel is used.
+    :type static_kernel: None | pysiglib.StaticKernel
+    :param time_aug: Whether to time augment the paths.
+    :type time_aug: bool
+    :param lead_lag: Whether to apply the lead-lag transformation.
+    :type lead_lag: bool
+    :param end_time: End time for time augmentation.
+    :type end_time: float
+    :param n_jobs: Number of CPU worker threads.
+    :type n_jobs: int
     :param max_batch: Maximum side length of pair chunks. ``-1`` uses all pairs.
     :type max_batch: int
     :param return_grid: If ``True``, returns final-depth grids per pair.

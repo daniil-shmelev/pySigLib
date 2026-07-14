@@ -101,9 +101,23 @@ def branched_sig_kernel_backprop(
     :type depth: int
     :param dyadic_order: Dyadic refinement order, or a pair of orders.
     :type dyadic_order: int | tuple
+    :param static_kernel: Static kernel. If ``None``, the linear kernel is used.
+    :type static_kernel: None | pysiglib.StaticKernel
+    :param time_aug: Whether the forward pass time augmented the paths.
+    :type time_aug: bool
+    :param lead_lag: Whether the forward pass applied the lead-lag transformation.
+    :type lead_lag: bool
+    :param end_time: End time used for time augmentation.
+    :type end_time: float
+    :param left_deriv: Whether to return derivatives with respect to ``path1``.
+    :type left_deriv: bool
+    :param right_deriv: Whether to return derivatives with respect to ``path2``.
+    :type right_deriv: bool
     :param k_stack: Optional internal all-depth grid stack. If omitted, it is
         reconstructed from the static-kernel increments.
     :type k_stack: None | numpy.ndarray | torch.Tensor
+    :param n_jobs: Number of CPU worker threads.
+    :type n_jobs: int
     :param return_grid: If ``True``, ``derivs`` is interpreted as final-grid derivatives.
     :type return_grid: bool
     :return: Derivatives with respect to one or both paths.
@@ -229,6 +243,41 @@ def branched_sig_kernel_gram_backprop(
 ) -> Union[np.ndarray, torch.Tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.Tensor, torch.Tensor]]:
     """
     Backpropagates through :func:`pysiglib.branched_sig_kernel_gram`.
+
+    :param derivs: Derivatives with respect to the Gram matrix, or its
+        final-depth grids when ``return_grid=True``.
+    :type derivs: numpy.ndarray | torch.Tensor
+    :param path1: First path batch, shape ``(*batch_shape_1, length_1, dimension)``.
+    :type path1: numpy.ndarray | torch.Tensor
+    :param path2: Second path batch, shape ``(*batch_shape_2, length_2, dimension)``.
+    :type path2: numpy.ndarray | torch.Tensor
+    :param depth: Forest depth truncation used in the forward pass.
+    :type depth: int
+    :param dyadic_order: Dyadic refinement order, or a pair of orders.
+    :type dyadic_order: int | tuple
+    :param static_kernel: Static kernel. If ``None``, the linear kernel is used.
+    :type static_kernel: None | pysiglib.StaticKernel
+    :param time_aug: Whether the forward pass time augmented the paths.
+    :type time_aug: bool
+    :param lead_lag: Whether the forward pass applied the lead-lag transformation.
+    :type lead_lag: bool
+    :param end_time: End time used for time augmentation.
+    :type end_time: float
+    :param left_deriv: Whether to return derivatives with respect to ``path1``.
+    :type left_deriv: bool
+    :param right_deriv: Whether to return derivatives with respect to ``path2``.
+    :type right_deriv: bool
+    :param k_stack: Optional internal all-depth grid stack for every path pair.
+    :type k_stack: None | numpy.ndarray | torch.Tensor
+    :param n_jobs: Number of CPU worker threads.
+    :type n_jobs: int
+    :param return_grid: If ``True``, ``derivs`` contains final-grid derivatives.
+    :type return_grid: bool
+    :param max_batch: Maximum side length of pair chunks. ``-1`` uses all pairs.
+    :type max_batch: int
+    :return: Derivatives with respect to ``path1`` and ``path2``. A disabled
+        derivative is returned as ``None``.
+    :rtype: tuple
     """
     check_type(depth, "depth", int)
     check_non_neg(depth, "depth")
