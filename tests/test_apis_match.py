@@ -14,6 +14,7 @@
 # =========================================================================
 
 import inspect
+import re
 import pytest
 
 import pysiglib as base_api
@@ -54,6 +55,11 @@ def _params_fingerprint(obj):
 
 BASE_API_MEMBERS = get_public_members(base_api)
 TORCH_API_MEMBERS = get_public_members(torch_api)
+BASE_API_FUNCTIONS = {
+    name: obj
+    for name, obj in inspect.getmembers(base_api, inspect.isfunction)
+    if not name.startswith("_")
+}
 
 try:
     import pysiglib.jax_api as jax_api
@@ -109,6 +115,22 @@ def test_jax_api_has_no_backprop_functions():
 # ---------------------------------------------------------------------------
 # Signature + docstring parity
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", sorted(BASE_API_FUNCTIONS))
+def test_public_function_docstrings_document_all_parameters(name):
+    obj = BASE_API_FUNCTIONS[name]
+    parameters = set(inspect.signature(obj).parameters)
+    documented = set(re.findall(
+        r"^\s*:param\s+([A-Za-z_][A-Za-z0-9_]*):",
+        inspect.getdoc(obj) or "",
+        re.MULTILINE,
+    ))
+    assert documented == parameters, (
+        f"Docstring parameters differ for '{name}':\n"
+        f"Missing: {sorted(parameters - documented)}\n"
+        f"Extra: {sorted(documented - parameters)}"
+    )
+
 
 @pytest.mark.parametrize("name", sorted(BASE_API_MEMBERS.keys()))
 def test_signature_and_docstring_match_torch(name):

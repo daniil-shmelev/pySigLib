@@ -566,6 +566,77 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int branched_sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_stack, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
+	/** @defgroup sig_kernel_log_pde_functions Log-PDE signature kernel functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes paired log-PDE signature kernels directly from paths.
+	*
+	* Each path is split into tensor-log blocks before dyadic refinement of the
+	* Goursat grid. Both paths must have at least two points. Each log step must be
+	* positive and divide its path's interval count.
+	*
+	* @param path_x Pointer to first path batch (row-major), size = `batch_size * length_x * dimension`.
+	* @param path_y Pointer to second path batch (row-major), size = `batch_size * length_y * dimension`.
+	* @param out Pointer to the preallocated output. Define `blocks_x = (length_x - 1) / log_step_x`,
+	*             `blocks_y = (length_y - 1) / log_step_y`,
+	*             `nodes_x = (blocks_x << dyadic_order_x) + 1`, and
+	*             `nodes_y = (blocks_y << dyadic_order_y) + 1`. Its size is
+	*             `batch_size * (return_grid ? nodes_x * nodes_y : 1)`.
+	* @param batch_size Number of paired paths.
+	* @param dimension Common path dimension.
+	* @param length_x Number of points in each first path.
+	* @param length_y Number of points in each second path.
+	* @param log_step_x Number of first-path intervals per tensor-log block.
+	* @param log_step_y Number of second-path intervals per tensor-log block.
+	* @param degree_x Tensor-log truncation degree for the first path.
+	* @param degree_y Tensor-log truncation degree for the second path.
+	* @param dyadic_order_x Dyadic refinement order for first-path blocks.
+	* @param dyadic_order_y Dyadic refinement order for second-path blocks.
+	* @param return_grid Whether to return the full Goursat grid instead of its terminal value.
+	* @param n_jobs Number of CPU threads. Use 1 for serial execution or -1 for all available threads.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int sig_kernel_log_pde_f(const float* path_x, const float* path_y, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length_x, uint64_t length_y, uint64_t log_step_x, uint64_t log_step_y, uint64_t degree_x, uint64_t degree_y, uint64_t dyadic_order_x, uint64_t dyadic_order_y, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @copydoc sig_kernel_log_pde_f */
+	[[nodiscard]] CPSIG_API int sig_kernel_log_pde_d(const double* path_x, const double* path_y, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length_x, uint64_t length_y, uint64_t log_step_x, uint64_t log_step_y, uint64_t degree_x, uint64_t degree_y, uint64_t dyadic_order_x, uint64_t dyadic_order_y, bool return_grid = false, int n_jobs = 1) noexcept;
+
+	/**
+	* @brief Backpropagates through paired log-PDE signature kernels.
+	*
+	* Computes vector-Jacobian products for both input path batches. The path,
+	* block, degree, and refinement arguments must match the forward call.
+	*
+	* @param path_x Pointer to first path batch (row-major), size = `batch_size * length_x * dimension`.
+	* @param path_y Pointer to second path batch (row-major), size = `batch_size * length_y * dimension`.
+	* @param d_path_x Pointer to the preallocated first-path derivative output, size = `batch_size * length_x * dimension`.
+	* @param d_path_y Pointer to the preallocated second-path derivative output, size = `batch_size * length_y * dimension`.
+	* @param derivs Pointer to output derivatives. Its size is `batch_size` when
+	*               `return_grid` is false and `batch_size * nodes_x * nodes_y`
+	*               otherwise, with `nodes_x` and `nodes_y` defined as in the forward call.
+	* @param k_grid Optional pointer to the full forward scalar grids, size =
+	*               `batch_size * nodes_x * nodes_y`. Pass `nullptr` to reconstruct
+	*               the scalar states during backpropagation.
+	* @param batch_size Number of paired paths.
+	* @param dimension Common path dimension.
+	* @param length_x Number of points in each first path.
+	* @param length_y Number of points in each second path.
+	* @param log_step_x Number of first-path intervals per tensor-log block.
+	* @param log_step_y Number of second-path intervals per tensor-log block.
+	* @param degree_x Tensor-log truncation degree for the first path.
+	* @param degree_y Tensor-log truncation degree for the second path.
+	* @param dyadic_order_x Dyadic refinement order for first-path blocks.
+	* @param dyadic_order_y Dyadic refinement order for second-path blocks.
+	* @param return_grid Whether `derivs` contains sensitivities for the full Goursat grid.
+	* @param n_jobs Number of CPU threads. Use 1 for serial execution or -1 for all available threads.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int sig_kernel_log_pde_backprop_f(const float* path_x, const float* path_y, float* d_path_x, float* d_path_y, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length_x, uint64_t length_y, uint64_t log_step_x, uint64_t log_step_y, uint64_t degree_x, uint64_t degree_y, uint64_t dyadic_order_x, uint64_t dyadic_order_y, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @copydoc sig_kernel_log_pde_backprop_f */
+	[[nodiscard]] CPSIG_API int sig_kernel_log_pde_backprop_d(const double* path_x, const double* path_y, double* d_path_x, double* d_path_y, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length_x, uint64_t length_y, uint64_t log_step_x, uint64_t log_step_y, uint64_t degree_x, uint64_t degree_y, uint64_t dyadic_order_x, uint64_t dyadic_order_y, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @} */
+
 	/** @defgroup branched_sig_functions Branched signature functions
 	* @{
 	*/

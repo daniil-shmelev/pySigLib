@@ -126,6 +126,12 @@ _TARGETS = {
         "cpu": ("pysiglib_branched_sig_kernel_pde_backprop_cpu", "PySigLibBranchedSigKernelPdeBackpropCpu"),
         "cuda": ("pysiglib_branched_sig_kernel_pde_backprop_cuda", "PySigLibBranchedSigKernelPdeBackpropCuda"),
     },
+    "sig_kernel_log_pde": {
+        "cpu": ("pysiglib_sig_kernel_log_pde_cpu", "PySigLibSigKernelLogPdeCpu"),
+    },
+    "sig_kernel_log_pde_backprop": {
+        "cpu": ("pysiglib_sig_kernel_log_pde_backprop_cpu", "PySigLibSigKernelLogPdeBackpropCpu"),
+    },
     "logsig_to_sig": {
         "cpu": ("pysiglib_logsig_to_sig_cpu", "PySigLibLogSigToSigCpu"),
         "cuda": ("pysiglib_logsig_to_sig_cuda", "PySigLibLogSigToSigCuda"),
@@ -337,6 +343,8 @@ def ensure_registered() -> None:
                 "    pip install --no-cache-dir --force-reinstall 'pysiglib-cuda'"
             )
         for op_targets in _TARGETS.values():
+            if "cuda" not in op_targets:
+                continue
             target_name, symbol_name = op_targets["cuda"]
             _jax_ffi.register_ffi_target(
                 target_name,
@@ -357,7 +365,7 @@ def _sig_shape(path_shape, degree: int, time_aug: bool, lead_lag: bool) -> tuple
 
 def _make_ffi_call(op_name, inputs, out_type, call_kwargs):
     cpu_call = _jax_ffi.ffi_call(_target_name(op_name, "cpu"), out_type, vmap_method="broadcast_all")
-    if BUILT_WITH_CUDA:
+    if BUILT_WITH_CUDA and "cuda" in _TARGETS[op_name]:
         cuda_call = _jax_ffi.ffi_call(_target_name(op_name, "cuda"), out_type, vmap_method="broadcast_all")
         return jax.lax.platform_dependent(
             *inputs,
@@ -533,6 +541,48 @@ def branched_sig_kernel_pde_backprop_ffi_call(gram, derivs, k_stack, dimension, 
                        dyadic_order_2=np.int64(dyadic_order_2),
                        return_grid=np.bool_(return_grid), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("branched_sig_kernel_pde_backprop", (gram, derivs, k_stack), out_type, call_kwargs)
+
+
+def sig_kernel_log_pde_ffi_call(
+        path_x, path_y, dimension, log_step_x, log_step_y, degree_x, degree_y,
+        dyadic_order_x, dyadic_order_y, return_grid, n_jobs):
+    _check_same_dtype(path_x, path_y)
+    steps_x = (path_x.shape[-2] - 1) // log_step_x
+    steps_y = (path_y.shape[-2] - 1) // log_step_y
+    if return_grid:
+        out_shape = (*path_x.shape[:-2],
+                     (steps_x << dyadic_order_x) + 1,
+                     (steps_y << dyadic_order_y) + 1)
+    else:
+        out_shape = path_x.shape[:-2]
+    out_type = jax.ShapeDtypeStruct(out_shape, path_x.dtype)
+    call_kwargs = dict(
+        dimension=np.int64(dimension),
+        log_step_x=np.int64(log_step_x), log_step_y=np.int64(log_step_y),
+        degree_x=np.int64(degree_x), degree_y=np.int64(degree_y),
+        dyadic_order_x=np.int64(dyadic_order_x), dyadic_order_y=np.int64(dyadic_order_y),
+        return_grid=np.bool_(return_grid), n_jobs=np.int64(n_jobs),
+    )
+    return _make_ffi_call("sig_kernel_log_pde", (path_x, path_y), out_type, call_kwargs)
+
+
+def sig_kernel_log_pde_backprop_ffi_call(
+        path_x, path_y, derivs, dimension, log_step_x, log_step_y, degree_x, degree_y,
+        dyadic_order_x, dyadic_order_y, return_grid, n_jobs):
+    _check_same_dtype(path_x, path_y, derivs)
+    type_x = jax.ShapeDtypeStruct(path_x.shape, path_x.dtype)
+    type_y = jax.ShapeDtypeStruct(path_y.shape, path_y.dtype)
+    call_kwargs = dict(
+        dimension=np.int64(dimension),
+        log_step_x=np.int64(log_step_x), log_step_y=np.int64(log_step_y),
+        degree_x=np.int64(degree_x), degree_y=np.int64(degree_y),
+        dyadic_order_x=np.int64(dyadic_order_x), dyadic_order_y=np.int64(dyadic_order_y),
+        return_grid=np.bool_(return_grid), n_jobs=np.int64(n_jobs),
+    )
+    return _make_ffi_call(
+        "sig_kernel_log_pde_backprop", (path_x, path_y, derivs),
+        (type_x, type_y), call_kwargs,
+    )
 
 
 # ---------------------------------------------------------------------------

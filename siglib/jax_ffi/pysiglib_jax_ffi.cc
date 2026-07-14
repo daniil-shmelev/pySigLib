@@ -318,6 +318,8 @@ struct CpuFns<float> {
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_f;
     static constexpr auto branched_sig_kernel = branched_sig_kernel_f;
     static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_f;
+    static constexpr auto sig_kernel_log_pde = sig_kernel_log_pde_f;
+    static constexpr auto sig_kernel_log_pde_backprop = sig_kernel_log_pde_backprop_f;
 
     static constexpr auto bsig = branched_sig_f;
     static constexpr auto bsig_backprop = branched_sig_backprop_f;
@@ -358,6 +360,8 @@ struct CpuFns<double> {
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_d;
     static constexpr auto branched_sig_kernel = branched_sig_kernel_d;
     static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_d;
+    static constexpr auto sig_kernel_log_pde = sig_kernel_log_pde_d;
+    static constexpr auto sig_kernel_log_pde_backprop = sig_kernel_log_pde_backprop_d;
 
     static constexpr auto bsig = branched_sig_d;
     static constexpr auto bsig_backprop = branched_sig_backprop_d;
@@ -1754,6 +1758,96 @@ ffi::Error BranchedSigKernelPdeBackpropCpu(
     });
 }
 
+template <typename T>
+ffi::Error SigKernelLogPdeCpuImpl(
+	std::int64_t dimension, std::int64_t log_step_x, std::int64_t log_step_y,
+	std::int64_t degree_x, std::int64_t degree_y,
+	std::int64_t dyadic_order_x, std::int64_t dyadic_order_y,
+	bool return_grid, std::int64_t n_jobs,
+	ffi::AnyBuffer& path_x, ffi::AnyBuffer& path_y, ffi::Result<ffi::AnyBuffer>& out
+) {
+	PathSpec spec_x;
+	PathSpec spec_y;
+	if (auto msg = GetPathSpec(path_x, spec_x); !msg.empty()) return InvalidArgument(msg);
+	if (auto msg = GetPathSpec(path_y, spec_y); !msg.empty()) return InvalidArgument(msg);
+	if (degree_x < 1 || degree_y < 1) return InvalidArgument("log-PDE degrees must be positive");
+	if (spec_x.batch_size != spec_y.batch_size) return InvalidArgument("log-PDE batch sizes must match");
+	const auto dim = static_cast<std::uint64_t>(dimension);
+	if (spec_x.dimension != dim || spec_y.dimension != dim)
+		return InvalidArgument("log-PDE path dimension does not match dimension");
+
+	int err_code = CpuFns<T>::sig_kernel_log_pde(
+		BufferData<T>(path_x), BufferData<T>(path_y), BufferData<T>(out),
+		spec_x.batch_size, dim, spec_x.length, spec_y.length,
+		static_cast<std::uint64_t>(log_step_x), static_cast<std::uint64_t>(log_step_y),
+		static_cast<std::uint64_t>(degree_x), static_cast<std::uint64_t>(degree_y),
+        static_cast<std::uint64_t>(dyadic_order_x), static_cast<std::uint64_t>(dyadic_order_y),
+        return_grid, static_cast<int>(n_jobs));
+    if (err_code != 0) return NativeCallError("sig_kernel_log_pde", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error SigKernelLogPdeBackpropCpuImpl(
+	std::int64_t dimension, std::int64_t log_step_x, std::int64_t log_step_y,
+	std::int64_t degree_x, std::int64_t degree_y,
+	std::int64_t dyadic_order_x, std::int64_t dyadic_order_y,
+	bool return_grid, std::int64_t n_jobs,
+	ffi::AnyBuffer& path_x, ffi::AnyBuffer& path_y, ffi::AnyBuffer& derivs,
+	ffi::Result<ffi::AnyBuffer>& d_path_x, ffi::Result<ffi::AnyBuffer>& d_path_y
+) {
+	PathSpec spec_x;
+	PathSpec spec_y;
+	if (auto msg = GetPathSpec(path_x, spec_x); !msg.empty()) return InvalidArgument(msg);
+	if (auto msg = GetPathSpec(path_y, spec_y); !msg.empty()) return InvalidArgument(msg);
+	int err_code = CpuFns<T>::sig_kernel_log_pde_backprop(
+		BufferData<T>(path_x), BufferData<T>(path_y),
+		BufferData<T>(d_path_x), BufferData<T>(d_path_y), BufferData<T>(derivs),
+		nullptr,
+		spec_x.batch_size, static_cast<std::uint64_t>(dimension), spec_x.length, spec_y.length,
+		static_cast<std::uint64_t>(log_step_x), static_cast<std::uint64_t>(log_step_y),
+		static_cast<std::uint64_t>(degree_x), static_cast<std::uint64_t>(degree_y),
+        static_cast<std::uint64_t>(dyadic_order_x), static_cast<std::uint64_t>(dyadic_order_y),
+        return_grid, static_cast<int>(n_jobs));
+    if (err_code != 0) return NativeCallError("sig_kernel_log_pde_backprop", err_code);
+    return ffi::Error::Success();
+}
+
+ffi::Error SigKernelLogPdeCpu(
+	std::int64_t dimension, std::int64_t log_step_x, std::int64_t log_step_y,
+	std::int64_t degree_x, std::int64_t degree_y,
+	std::int64_t dyadic_order_x, std::int64_t dyadic_order_y,
+	bool return_grid, std::int64_t n_jobs,
+	ffi::AnyBuffer path_x, ffi::AnyBuffer path_y, ffi::Result<ffi::AnyBuffer> out
+) {
+	if (auto msg = ValidateSameFloatDtype("path_x", path_x, "path_y", path_y); !msg.empty())
+		return InvalidArgument(msg);
+	return DispatchFloatDtype(BufferElementType(path_x), [&]<typename T>() -> ffi::Error {
+		return SigKernelLogPdeCpuImpl<T>(dimension, log_step_x, log_step_y,
+			degree_x, degree_y, dyadic_order_x, dyadic_order_y,
+			return_grid, n_jobs, path_x, path_y, out);
+	});
+}
+
+ffi::Error SigKernelLogPdeBackpropCpu(
+	std::int64_t dimension, std::int64_t log_step_x, std::int64_t log_step_y,
+	std::int64_t degree_x, std::int64_t degree_y,
+	std::int64_t dyadic_order_x, std::int64_t dyadic_order_y,
+	bool return_grid, std::int64_t n_jobs,
+	ffi::AnyBuffer path_x, ffi::AnyBuffer path_y, ffi::AnyBuffer derivs,
+	ffi::Result<ffi::AnyBuffer> d_path_x, ffi::Result<ffi::AnyBuffer> d_path_y
+) {
+	if (auto msg = ValidateSameFloatDtype("path_x", path_x, "path_y", path_y); !msg.empty())
+		return InvalidArgument(msg);
+	if (auto msg = ValidateSameFloatDtype("path_x", path_x, "derivs", derivs); !msg.empty())
+		return InvalidArgument(msg);
+	return DispatchFloatDtype(BufferElementType(path_x), [&]<typename T>() -> ffi::Error {
+		return SigKernelLogPdeBackpropCpuImpl<T>(dimension, log_step_x, log_step_y,
+			degree_x, degree_y, dyadic_order_x, dyadic_order_y, return_grid, n_jobs,
+			path_x, path_y, derivs, d_path_x, d_path_y);
+	});
+}
+
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
 ffi::Error SigKernelPdeCudaImpl(
@@ -2148,6 +2242,23 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigKernelPdeBackpropCpu, BranchedS
         .Attr<std::int64_t>("dyadic_order_1").Attr<std::int64_t>("dyadic_order_2")
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelLogPdeCpu, SigKernelLogPdeCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension")
+        .Attr<std::int64_t>("log_step_x").Attr<std::int64_t>("log_step_y")
+        .Attr<std::int64_t>("degree_x").Attr<std::int64_t>("degree_y")
+        .Attr<std::int64_t>("dyadic_order_x").Attr<std::int64_t>("dyadic_order_y")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelLogPdeBackpropCpu, SigKernelLogPdeBackpropCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension")
+        .Attr<std::int64_t>("log_step_x").Attr<std::int64_t>("log_step_y")
+        .Attr<std::int64_t>("degree_x").Attr<std::int64_t>("degree_y")
+        .Attr<std::int64_t>("dyadic_order_x").Attr<std::int64_t>("dyadic_order_y")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
+        .Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPdeCuda, SigKernelPdeCuda,

@@ -62,7 +62,10 @@ from ..sig_metrics import sig_score as sig_score_forward
 from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
 from ..words import word_to_idx
-from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order, check_n_jobs
+from ..param_checks import (
+    check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order,
+    parse_log_pde_parameters, check_n_jobs,
+)
 from ..sig_length import sig_length as _sig_length, log_sig_length as _log_sig_length
 from ._ffi import (
     _augmented_dim,
@@ -81,6 +84,8 @@ from ._ffi import (
     sig_kernel_pde_backprop_ffi_call,
     branched_sig_kernel_pde_ffi_call,
     branched_sig_kernel_pde_backprop_ffi_call,
+    sig_kernel_log_pde_ffi_call,
+    sig_kernel_log_pde_backprop_ffi_call,
     logsig_to_sig_ffi_call,
     logsig_to_sig_backprop_ffi_call,
     log_sig_from_path_ffi_call,
@@ -850,6 +855,43 @@ def _sig_kernel_pde_bwd(dimension, dyadic_order_1, dyadic_order_2, return_grid, 
 _sig_kernel_pde.defvjp(_sig_kernel_pde_fwd, _sig_kernel_pde_bwd)
 
 
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7, 8, 9, 10))
+def _sig_kernel_log_pde(
+        path_x, path_y, dimension, log_step_x, log_step_y, degree_x, degree_y,
+        dyadic_order_x, dyadic_order_y, return_grid, n_jobs):
+    return sig_kernel_log_pde_ffi_call(
+        path_x, path_y, dimension, log_step_x, log_step_y, degree_x, degree_y,
+        dyadic_order_x, dyadic_order_y, return_grid, n_jobs,
+    )
+
+
+def _sig_kernel_log_pde_fwd(
+        path_x, path_y, dimension, log_step_x, log_step_y, degree_x, degree_y,
+        dyadic_order_x, dyadic_order_y, return_grid, n_jobs):
+    result = sig_kernel_log_pde_ffi_call(
+        path_x, path_y, dimension, log_step_x, log_step_y, degree_x, degree_y,
+        dyadic_order_x, dyadic_order_y, return_grid, n_jobs,
+    )
+    return result, (path_x, path_y)
+
+
+def _sig_kernel_log_pde_bwd(
+        dimension, log_step_x, log_step_y, degree_x, degree_y,
+        dyadic_order_x, dyadic_order_y,
+        return_grid, n_jobs, residual, cotangent):
+    path_x, path_y = residual
+    return sig_kernel_log_pde_backprop_ffi_call(
+        path_x, path_y, cotangent, dimension, log_step_x, log_step_y,
+        degree_x, degree_y,
+        dyadic_order_x, dyadic_order_y, return_grid, n_jobs,
+    )
+
+
+_sig_kernel_log_pde.defvjp(
+    _sig_kernel_log_pde_fwd, _sig_kernel_log_pde_bwd
+)
+
+
 # ---------------------------------------------------------------------------
 # sig_kernel (public API composing static kernel + PDE solve)
 # ---------------------------------------------------------------------------
@@ -859,6 +901,9 @@ def sig_kernel(
     path2,
     dyadic_order,
     *,
+    method: str = "pde",
+    log_degree=None,
+    log_steps=None,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -888,6 +933,12 @@ def sig_kernel(
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
 
+    log_degrees, log_step_sizes = parse_log_pde_parameters(
+        method, log_degree, log_steps
+    )
+    if method == "log_pde" and lead_lag:
+        log_step_sizes = tuple(2 * step for step in log_step_sizes)
+
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
@@ -898,6 +949,49 @@ def sig_kernel(
         squeeze = True
     else:
         squeeze = False
+
+    if method == "log_pde":
+        from .static_kernels_jax import LinearKernel
+        if static_kernel is not None and not isinstance(static_kernel, LinearKernel):
+            raise ValueError("method='log_pde' supports only the linear static kernel")
+        if tuple(path1.shape[:-2]) != tuple(path2.shape[:-2]):
+            raise ValueError("path1 and path2 must have matching batch shapes")
+        batch_shape = tuple(path1.shape[:-2])
+        flat_path1 = path1.reshape(-1, path1.shape[-2], path1.shape[-1])
+        flat_path2 = path2.reshape(-1, path2.shape[-2], path2.shape[-1])
+        intervals_x = flat_path1.shape[-2] - 1
+        intervals_y = flat_path2.shape[-2] - 1
+        if intervals_x <= 0 or intervals_y <= 0:
+            raise ValueError("method='log_pde' requires paths with at least two points")
+        if intervals_x % log_step_sizes[0] or intervals_y % log_step_sizes[1]:
+            raise ValueError("log_steps must divide the number of path intervals")
+        do1, do2 = parse_dyadic_order(dyadic_order)
+        result = _sig_kernel_log_pde(
+            flat_path1, flat_path2, path1.shape[-1],
+            log_step_sizes[0], log_step_sizes[1], log_degrees[0], log_degrees[1],
+            do1, do2, return_grid, n_jobs,
+        )
+        if return_grid:
+            result = result.reshape(
+                *batch_shape, result.shape[-2], result.shape[-1]
+            )
+        else:
+            result = result.reshape(batch_shape)
+        if normalize:
+            k1 = sig_kernel(
+                path1, path1, (do1, do1), method=method,
+                log_degree=log_degrees[0], log_steps=log_step_sizes[0],
+                n_jobs=n_jobs,
+            )
+            k2 = sig_kernel(
+                path2, path2, (do2, do2), method=method,
+                log_degree=log_degrees[1], log_steps=log_step_sizes[1],
+                n_jobs=n_jobs,
+            )
+            result = result / jnp.sqrt(jnp.clip(k1 * k2, 1e-30))
+        if squeeze:
+            result = result.squeeze(0)
+        return result
 
     if static_kernel is None:
         from .static_kernels_jax import LinearKernel as _DefaultKernel
@@ -936,6 +1030,9 @@ def sig_kernel_gram(
     path2,
     dyadic_order,
     *,
+    method: str = "pde",
+    log_degree=None,
+    log_steps=None,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -963,6 +1060,11 @@ def sig_kernel_gram(
         raise ValueError("max_batch must be a positive integer or -1")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
+    log_degrees, log_step_sizes = parse_log_pde_parameters(
+        method, log_degree, log_steps
+    )
+    if method == "log_pde" and lead_lag:
+        log_step_sizes = tuple(2 * step for step in log_step_sizes)
 
     batch_shape_1 = tuple(path1.shape[:-2])
     batch_shape_2 = tuple(path2.shape[:-2])
@@ -971,6 +1073,7 @@ def sig_kernel_gram(
     path2 = _ensure_3d(path2)
 
     batch2 = path2.shape[0]
+    do1, do2 = parse_dyadic_order(dyadic_order)
 
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
@@ -978,14 +1081,30 @@ def sig_kernel_gram(
 
     def _row(p1_single):
         p1_batch = jnp.broadcast_to(p1_single[None], (batch2,) + p1_single.shape)
-        return sig_kernel(p1_batch, path2, dyadic_order, static_kernel=static_kernel,
-                          n_jobs=n_jobs, return_grid=return_grid)
+        return sig_kernel(
+            p1_batch, path2, dyadic_order, method=method,
+            log_degree=log_degrees, log_steps=log_step_sizes,
+            static_kernel=static_kernel, n_jobs=n_jobs,
+            return_grid=return_grid,
+        )
 
     res = jax.lax.map(_row, path1)
 
     if normalize:
-        d1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
-        d2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        degree1 = log_degrees[0] if log_degrees is not None else None
+        degree2 = log_degrees[1] if log_degrees is not None else None
+        steps1 = log_step_sizes[0] if log_step_sizes is not None else None
+        steps2 = log_step_sizes[1] if log_step_sizes is not None else None
+        d1 = sig_kernel(
+            path1, path1, (do1, do1), method=method,
+            log_degree=degree1, log_steps=steps1,
+            static_kernel=static_kernel, n_jobs=n_jobs,
+        )
+        d2 = sig_kernel(
+            path2, path2, (do2, do2), method=method,
+            log_degree=degree2, log_steps=steps2,
+            static_kernel=static_kernel, n_jobs=n_jobs,
+        )
         res = res / jnp.sqrt(jnp.clip(d1[:, None] * d2[None, :], 1e-30))
 
     out_shape = batch_shape_1 + batch_shape_2
@@ -1172,6 +1291,9 @@ def sig_score(
     dyadic_order,
     *,
     lam: float = 1.0,
+    method: str = "pde",
+    log_degree=None,
+    log_steps=None,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -1191,12 +1313,29 @@ def sig_score(
     if B < 2:
         raise ValueError(f"sig_score requires at least 2 sample paths (got {B}).")
 
+    do1, do2 = parse_dyadic_order(dyadic_order)
+    log_degrees, log_step_sizes = parse_log_pde_parameters(
+        method, log_degree, log_steps
+    )
+    if method == "log_pde" and lead_lag:
+        log_step_sizes = tuple(2 * step for step in log_step_sizes)
+    left_degree = log_degrees[0] if log_degrees is not None else None
+    left_steps = log_step_sizes[0] if log_step_sizes is not None else None
+
     if time_aug or lead_lag:
         sample = transform_path(sample, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         y = transform_path(y, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
-    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
-    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    xx = sig_kernel_gram(
+        sample, sample, (do1, do1), method=method,
+        log_degree=left_degree, log_steps=left_steps,
+        static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch,
+    )
+    xy = sig_kernel_gram(
+        sample, y, (do1, do2), method=method,
+        log_degree=log_degrees, log_steps=log_step_sizes,
+        static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch,
+    )
 
     xx_sum = (jnp.sum(xx) - jnp.trace(xx)) / (B * (B - 1.))
     xy_sum = jnp.sum(xy, axis=0) * (2. / B)
@@ -1216,6 +1355,9 @@ def expected_sig_score(
     dyadic_order,
     *,
     lam: float = 1.0,
+    method: str = "pde",
+    log_degree=None,
+    log_steps=None,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -1224,7 +1366,12 @@ def expected_sig_score(
     max_batch: int = -1,
 ):
     """Compute expected signature kernel score using JAX."""
-    res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
+    res = sig_score(
+        sample1, sample2, dyadic_order, lam=lam, method=method,
+        log_degree=log_degree, log_steps=log_steps,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch,
+    )
     return jnp.mean(res).reshape(1)
 
 
@@ -1236,6 +1383,9 @@ def sig_mmd(
     sample2,
     dyadic_order,
     *,
+    method: str = "pde",
+    log_degree=None,
+    log_steps=None,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -1257,13 +1407,36 @@ def sig_mmd(
     if n < 2:
         raise ValueError(f"sig_mmd requires at least 2 paths in sample2 (got {n}).")
 
+    do1, do2 = parse_dyadic_order(dyadic_order)
+    log_degrees, log_step_sizes = parse_log_pde_parameters(
+        method, log_degree, log_steps
+    )
+    if method == "log_pde" and lead_lag:
+        log_step_sizes = tuple(2 * step for step in log_step_sizes)
+    left_degree = log_degrees[0] if log_degrees is not None else None
+    right_degree = log_degrees[1] if log_degrees is not None else None
+    left_steps = log_step_sizes[0] if log_step_sizes is not None else None
+    right_steps = log_step_sizes[1] if log_step_sizes is not None else None
+
     if time_aug or lead_lag:
         sample1 = transform_path(sample1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         sample2 = transform_path(sample2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
-    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
-    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
-    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    xx = sig_kernel_gram(
+        sample1, sample1, (do1, do1), method=method,
+        log_degree=left_degree, log_steps=left_steps,
+        static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch,
+    )
+    xy = sig_kernel_gram(
+        sample1, sample2, (do1, do2), method=method,
+        log_degree=log_degrees, log_steps=log_step_sizes,
+        static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch,
+    )
+    yy = sig_kernel_gram(
+        sample2, sample2, (do2, do2), method=method,
+        log_degree=right_degree, log_steps=right_steps,
+        static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch,
+    )
 
     xx_sum = (jnp.sum(xx) - jnp.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * jnp.mean(xy)

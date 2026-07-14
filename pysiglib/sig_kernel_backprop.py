@@ -23,10 +23,18 @@ import torch
 from .transform_path import transform_path
 from .transform_path_backprop import transform_path_backprop
 from .sig_kernel import sig_kernel, _ensure_3d
-from .param_checks import check_type, parse_dyadic_order, check_n_jobs
+from .param_checks import (
+    check_type, parse_dyadic_order, parse_log_pde_parameters, check_n_jobs,
+)
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIG_KERNEL_BACKPROP, DTYPES, CUSIG_SIG_KERNEL_BACKPROP_CUDA
-from .data_handlers import MultiplePathInputHandler, ScalarInputHandler, GridOutputHandler, PathInputHandler
+from .dtypes import (
+    CPSIG_SIG_KERNEL_BACKPROP, CPSIG_SIG_KERNEL_LOG_PDE_BACKPROP,
+    DTYPES, CUSIG_SIG_KERNEL_BACKPROP_CUDA,
+)
+from .data_handlers import (
+    MultiplePathInputHandler, ScalarInputHandler, GridOutputHandler,
+    PathInputHandler, PathOutputHandler,
+)
 from .static_kernels import StaticKernel, LinearKernel, Context
 
 def gram_deriv(
@@ -63,6 +71,9 @@ def sig_kernel_backprop(
         path2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
         *,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -96,6 +107,19 @@ def sig_kernel_backprop(
     :type path2: numpy.ndarray | torch.tensor
     :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
     :type dyadic_order: int | tuple
+    :param method: Forward PDE method. Use ``"pde"`` for the standard Goursat
+        solver or ``"log_pde"`` for the higher-order log-PDE method. The log-PDE
+        method is currently CPU-only and supports only the linear static kernel.
+    :type method: str
+    :param log_degree: Tensor-log truncation degree. Required for
+        ``method="log_pde"``. An integer applies to both paths; a pair applies
+        separately to the first and second paths.
+    :type log_degree: int | tuple | None
+    :param log_steps: Number of original path intervals per tensor-log block for
+        ``method="log_pde"``. Required for that method. Each value must divide
+        its path's interval count. An integer applies to both paths; a pair applies
+        separately. With ``lead_lag=True``, values still count original intervals.
+    :type log_steps: int | tuple | None
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -113,7 +137,9 @@ def sig_kernel_backprop(
         At least one of ``left_deriv`` and ``right_deriv`` must be ``True``. If both are
         ``True``, returns both derivatives as a tuple.
     :type right_deriv: bool
-    :param k_grid: Signature kernel PDE grid. If ``None``, the grid will be recomputed.
+    :param k_grid: Full forward grid. If ``None``, the grid is recomputed. For
+        ``method="log_pde"``, a supplied grid checkpoints the scalar kernel state;
+        the auxiliary tensor states required by backpropagation are still recomputed.
     :type k_grid: numpy.ndarray | torch.tensor
     :param n_jobs: (Only applicable to CPU computation) Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
@@ -173,6 +199,9 @@ def sig_kernel_backprop(
         return None, None
 
     dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
+    log_degrees, log_step_sizes = parse_log_pde_parameters(method, log_degree, log_steps)
+    if method == "log_pde" and lead_lag:
+        log_step_sizes = tuple(2 * step for step in log_step_sizes)
 
     if path1.ndim > 3 or path2.ndim > 3:
         if tuple(path1.shape[:-2]) != tuple(path2.shape[:-2]):
@@ -187,6 +216,7 @@ def sig_kernel_backprop(
 
         ld, rd = sig_kernel_backprop(
             flat_derivs, _ensure_3d(path1), _ensure_3d(path2), dyadic_order,
+            method=method, log_degree=log_degree, log_steps=log_steps,
             static_kernel=static_kernel,
             time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
             left_deriv=left_deriv, right_deriv=right_deriv,
@@ -205,7 +235,6 @@ def sig_kernel_backprop(
     data = MultiplePathInputHandler([path1, path2], False, False, end_time, ["path1", "path2"])
 
     if data.batch_size == 0:
-        from .data_handlers import PathOutputHandler
         ld = PathOutputHandler(data.data[0].data_length, data.data[0].data_dimension, data.data[0]).data
         rd = PathOutputHandler(data.data[1].data_length, data.data[1].data_dimension, data.data[1]).data
         return (ld if left_deriv else None), (rd if right_deriv else None)
@@ -219,6 +248,74 @@ def sig_kernel_backprop(
         raise ValueError("derivs, path1 and path2 must all be numpy arrays or all torch tensors on the same device")
     if not return_grid and data.batch_size != derivs_data.batch_size:
         raise ValueError("batch size for derivs does not match batch size of paths")
+
+    if method == "log_pde":
+        if static_kernel is not None and not isinstance(static_kernel, LinearKernel):
+            raise ValueError("method='log_pde' supports only the linear static kernel")
+        if data.device != "cpu":
+            raise ValueError("method='log_pde' is currently CPU-only")
+        steps = []
+        for length, log_step in zip(data.length, log_step_sizes):
+            intervals = length - 1
+            if intervals <= 0:
+                raise ValueError("method='log_pde' requires paths with at least two points")
+            if intervals % log_step:
+                raise ValueError(
+                    f"log_steps={log_step} must divide the number of path intervals {intervals}"
+                )
+            steps.append(intervals // log_step)
+        grid_shape = data.batch_shape + (
+            (steps[0] << dyadic_order_1) + 1,
+            (steps[1] << dyadic_order_2) + 1,
+        )
+        expected_shape = grid_shape if return_grid else data.batch_shape
+        if tuple(derivs.shape) != expected_shape:
+            raise ValueError("derivs has the wrong shape for the log-PDE output")
+
+        k_grid_data = None
+        if k_grid is not None:
+            k_grid_data = PathInputHandler(k_grid, False, False, 0., "k_grid")
+            if tuple(k_grid_data.path.shape) != grid_shape:
+                raise ValueError(
+                    f"k_grid has shape {tuple(k_grid_data.path.shape)}, expected {grid_shape}"
+                )
+            if not (
+                k_grid_data.type_ == data.type_ and
+                k_grid_data.device == data.device and
+                k_grid_data.dtype == data.dtype
+            ):
+                raise ValueError(
+                    "k_grid, path1 and path2 must have the same array type, device and dtype"
+                )
+
+        ld_result = PathOutputHandler(
+            data.data[0].data_length, data.data[0].data_dimension, data.data[0]
+        )
+        rd_result = PathOutputHandler(
+            data.data[1].data_length, data.data[1].data_dimension, data.data[1]
+        )
+        err_code = CPSIG_SIG_KERNEL_LOG_PDE_BACKPROP[data.dtype](
+            data.data[0].data_ptr, data.data[1].data_ptr,
+            ld_result.data_ptr, rd_result.data_ptr,
+            derivs_data.data_ptr,
+            None if k_grid_data is None else k_grid_data.data_ptr,
+            data.batch_size, data.dimension,
+            data.length[0], data.length[1], log_step_sizes[0], log_step_sizes[1],
+            log_degrees[0], log_degrees[1], dyadic_order_1, dyadic_order_2,
+            return_grid, n_jobs,
+        )
+        if err_code:
+            raise Exception("Error in log-PDE signature kernel backprop: " + err_msg(err_code))
+        ld = ld_result.data
+        rd = rd_result.data
+        if lead_lag or time_aug:
+            ld = transform_path_backprop(
+                ld, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs
+            )
+            rd = transform_path_backprop(
+                rd, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs
+            )
+        return (ld if left_deriv else None), (rd if right_deriv else None)
 
     torch_path1 = torch.as_tensor(data.path[0])  # Avoids data copy
     torch_path2 = torch.as_tensor(data.path[1])
@@ -262,6 +359,9 @@ def sig_kernel_gram_backprop(
         path2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
         *,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -295,6 +395,19 @@ def sig_kernel_gram_backprop(
     :type path2: numpy.ndarray | torch.tensor
     :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
     :type dyadic_order: int | tuple
+    :param method: Forward PDE method. Use ``"pde"`` for the standard Goursat
+        solver or ``"log_pde"`` for the higher-order log-PDE method. The log-PDE
+        method is currently CPU-only and supports only the linear static kernel.
+    :type method: str
+    :param log_degree: Tensor-log truncation degree. Required for
+        ``method="log_pde"``. An integer applies to both paths; a pair applies
+        separately to the first and second paths.
+    :type log_degree: int | tuple | None
+    :param log_steps: Number of original path intervals per tensor-log block for
+        ``method="log_pde"``. Required for that method. Each value must divide
+        its path's interval count. An integer applies to both paths; a pair applies
+        separately. With ``lead_lag=True``, values still count original intervals.
+    :type log_steps: int | tuple | None
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -312,7 +425,9 @@ def sig_kernel_gram_backprop(
         At least one of ``left_deriv`` and ``right_deriv`` must be ``True``. If both are
         ``True``, returns both derivatives as a tuple.
     :type right_deriv: bool
-    :param k_grid: Signature kernel PDE grid. If ``None``, the grid will be recomputed.
+    :param k_grid: Full forward Gram grids. If ``None``, the grids are recomputed.
+        For ``method="log_pde"``, supplied grids checkpoint the scalar kernel states;
+        the auxiliary tensor states required by backpropagation are still recomputed.
     :type k_grid: numpy.ndarray | torch.tensor
     :param n_jobs: (Only applicable to CPU computation) Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
@@ -394,7 +509,17 @@ def sig_kernel_gram_backprop(
     if max_batch == 0 or max_batch < -1:
         raise ValueError("max_batch must be a positive integer or -1")
 
+    log_degrees, log_step_sizes = parse_log_pde_parameters(method, log_degree, log_steps)
+    if method == "log_pde" and static_kernel is not None and not isinstance(static_kernel, LinearKernel):
+        raise ValueError("method='log_pde' supports only the linear static kernel")
+
+    do1, do2 = parse_dyadic_order(dyadic_order)
     symmetric = path1 is path2
+    if method == "log_pde" and (
+        do1 != do2 or
+        log_degrees[0] != log_degrees[1] or log_step_sizes[0] != log_step_sizes[1]
+    ):
+        symmetric = False
 
     batch_shape_1 = tuple(path1.shape[:-2])
     batch_shape_2 = batch_shape_1 if symmetric else tuple(path2.shape[:-2])
@@ -443,7 +568,6 @@ def sig_kernel_gram_backprop(
     chunk_size = max_batch * max_batch
 
     # Check if k_grid can be transposed for symmetric off-diagonal pairs
-    do1, do2 = parse_dyadic_order(dyadic_order)
     can_transpose_k = (do1 == do2)
 
     for start in range(0, n_pairs, chunk_size):
@@ -454,14 +578,22 @@ def sig_kernel_gram_backprop(
         path1_ = path1[ci]
         path2_ = src2[cj]
 
-        if k_grid is None:
+        if k_grid is None and method == "pde":
             k = sig_kernel(path1_, path2_, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=True)
+        elif k_grid is None:
+            k = None
         else:
             k = k_grid[ci, cj]
 
         derivs_ = derivs[ci, cj]
 
-        ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, left_deriv=left_deriv, right_deriv=right_deriv, k_grid=k, n_jobs=n_jobs, return_grid=return_grid)
+        ld_, rd_ = sig_kernel_backprop(
+            derivs_, path1_, path2_, dyadic_order,
+            method=method, log_degree=log_degree, log_steps=log_steps,
+            static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+            end_time=end_time, left_deriv=left_deriv, right_deriv=right_deriv,
+            k_grid=k, n_jobs=n_jobs, return_grid=return_grid,
+        )
 
         if left_deriv:
             ld.index_add_(0, ci, ld_.to(ld.dtype))
@@ -480,14 +612,22 @@ def sig_kernel_gram_backprop(
 
                 if k_grid is not None:
                     k_t = k_grid[cj_off, ci_off]
-                elif can_transpose_k:
+                elif can_transpose_k and k is not None:
                     k_t = k[off].transpose(-2, -1)
-                else:
+                elif method == "pde":
                     k_t = sig_kernel(path1_t, path2_t, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=True)
+                else:
+                    k_t = None
 
                 derivs_t = derivs[cj_off, ci_off]
 
-                ld_t, rd_t = sig_kernel_backprop(derivs_t, path1_t, path2_t, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, left_deriv=left_deriv, right_deriv=right_deriv, k_grid=k_t, n_jobs=n_jobs, return_grid=return_grid)
+                ld_t, rd_t = sig_kernel_backprop(
+                    derivs_t, path1_t, path2_t, dyadic_order,
+                    method=method, log_degree=log_degree, log_steps=log_steps,
+                    static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+                    end_time=end_time, left_deriv=left_deriv, right_deriv=right_deriv,
+                    k_grid=k_t, n_jobs=n_jobs, return_grid=return_grid,
+                )
 
                 if left_deriv:
                     ld.index_add_(0, cj_off, ld_t.to(ld.dtype))

@@ -534,6 +534,62 @@ static void BM_branched_sig_kernel_backprop(benchmark::State& state) {
 }
 BENCHMARK(BM_branched_sig_kernel_backprop)->Unit(benchmark::kMicrosecond);
 
+static void BM_sig_kernel_log_pde(benchmark::State& state) {
+    auto path_x = random_data(64 * 129 * 3, 1);
+    auto path_y = random_data(64 * 129 * 3, 2);
+    for (auto& value : path_x) value *= 0.01;
+    for (auto& value : path_y) value *= 0.01;
+    std::vector<double> out(64);
+    for (auto _ : state) {
+        ::sig_kernel_log_pde_d(
+            path_x.data(), path_y.data(), out.data(),
+            64, 3, 129, 129, 8, 8, 3, 3, 0, 0, false, 1);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_sig_kernel_log_pde)->Unit(benchmark::kMicrosecond);
+
+static void BM_sig_kernel_log_pde_backprop(benchmark::State& state) {
+    auto path_x = random_data(32 * 129 * 3, 1);
+    auto path_y = random_data(32 * 129 * 3, 2);
+    for (auto& value : path_x) value *= 0.01;
+    for (auto& value : path_y) value *= 0.01;
+    auto derivs = random_data(32, 3);
+    std::vector<double> d_path_x(path_x.size());
+    std::vector<double> d_path_y(path_y.size());
+    for (auto _ : state) {
+        ::sig_kernel_log_pde_backprop_d(
+            path_x.data(), path_y.data(), d_path_x.data(), d_path_y.data(), derivs.data(),
+            nullptr, 32, 3, 129, 129, 8, 8, 3, 3, 0, 0, false);
+        benchmark::DoNotOptimize(d_path_x.data());
+        benchmark::DoNotOptimize(d_path_y.data());
+    }
+}
+BENCHMARK(BM_sig_kernel_log_pde_backprop)->Unit(benchmark::kMicrosecond);
+
+static void BM_sig_kernel_log_pde_backprop_k_grid(benchmark::State& state) {
+    auto path_x = random_data(32 * 129 * 3, 1);
+    auto path_y = random_data(32 * 129 * 3, 2);
+    for (auto& value : path_x) value *= 0.01;
+    for (auto& value : path_y) value *= 0.01;
+    auto derivs = random_data(32, 3);
+    std::vector<double> k_grid(32 * 17 * 17);
+    std::vector<double> d_path_x(path_x.size());
+    std::vector<double> d_path_y(path_y.size());
+    check(::sig_kernel_log_pde_d(
+        path_x.data(), path_y.data(), k_grid.data(),
+        32, 3, 129, 129, 8, 8, 3, 3, 0, 0, true, 1),
+        "sig_kernel_log_pde_d");
+    for (auto _ : state) {
+        ::sig_kernel_log_pde_backprop_d(
+            path_x.data(), path_y.data(), d_path_x.data(), d_path_y.data(), derivs.data(),
+            k_grid.data(), 32, 3, 129, 129, 8, 8, 3, 3, 0, 0, false);
+        benchmark::DoNotOptimize(d_path_x.data());
+        benchmark::DoNotOptimize(d_path_y.data());
+    }
+}
+BENCHMARK(BM_sig_kernel_log_pde_backprop_k_grid)->Unit(benchmark::kMicrosecond);
+
 // =========================================================================
 // Branched sig / backprop / combine / combine_backprop
 // =========================================================================

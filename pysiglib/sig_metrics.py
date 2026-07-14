@@ -2,7 +2,9 @@ from typing import Union, Optional
 import numpy as np
 import torch
 
-from .param_checks import check_type_multiple
+from .param_checks import (
+    check_type_multiple, parse_dyadic_order, parse_log_pde_parameters,
+)
 from .static_kernels import StaticKernel
 from .sig_kernel import sig_kernel_gram, _ensure_3d
 
@@ -12,6 +14,9 @@ def sig_score(
         dyadic_order : Union[int, tuple],
         *,
         lam : float = 1.,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -50,6 +55,20 @@ def sig_score(
     :type dyadic_order: int | tuple
     :param lam: The parameter :math:`\\lambda` of the generalised signature kernel score (default = 1.0).
     :type lam: float
+    :param method: PDE method. Use ``"pde"`` for the standard Goursat solver or
+        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method is
+        currently CPU-only and supports only the linear static kernel.
+    :type method: str
+    :param log_degree: Tensor-log truncation degree. Required for
+        ``method="log_pde"``. An integer applies to both path collections; a pair
+        applies separately to the first and second collections.
+    :type log_degree: int | tuple | None
+    :param log_steps: Number of original path intervals per tensor-log block for
+        ``method="log_pde"``. Required for that method. Each value must divide
+        its path's interval count. An integer applies to both path collections; a
+        pair applies separately. With ``lead_lag=True``, values still count original
+        intervals.
+    :type log_steps: int | tuple | None
     :param static_kernel: Static kernel passed to the signature kernel computation. If ``None`` (default), the
         linear kernel will be used. For details, see the documentation on
         :doc:`static kernels </pages/signature_kernels/static_kernels>`.
@@ -136,8 +155,25 @@ def sig_score(
     if B < 2:
         raise ValueError("sig_score requires at least 2 sample paths (got {}).".format(B))
 
-    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    do1, do2 = parse_dyadic_order(dyadic_order)
+    log_degrees, log_step_sizes = parse_log_pde_parameters(
+        method, log_degree, log_steps
+    )
+    left_degree = log_degrees[0] if log_degrees is not None else None
+    left_steps = log_step_sizes[0] if log_step_sizes is not None else None
+
+    xx = sig_kernel_gram(
+        sample, sample, (do1, do1), method=method,
+        log_degree=left_degree, log_steps=left_steps,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False,
+    )
+    xy = sig_kernel_gram(
+        sample, y, (do1, do2), method=method,
+        log_degree=log_degrees, log_steps=log_step_sizes,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False,
+    )
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
@@ -156,6 +192,9 @@ def expected_sig_score(
         dyadic_order : Union[int, tuple],
         *,
         lam : float = 1.,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -194,6 +233,20 @@ def expected_sig_score(
     :type dyadic_order: int | tuple
     :param lam: The parameter :math:`\\lambda` of the generalised signature kernel score (default = 1.0).
     :type lam: float
+    :param method: PDE method. Use ``"pde"`` for the standard Goursat solver or
+        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method is
+        currently CPU-only and supports only the linear static kernel.
+    :type method: str
+    :param log_degree: Tensor-log truncation degree. Required for
+        ``method="log_pde"``. An integer applies to both path collections; a pair
+        applies separately to the first and second collections.
+    :type log_degree: int | tuple | None
+    :param log_steps: Number of original path intervals per tensor-log block for
+        ``method="log_pde"``. Required for that method. Each value must divide
+        its path's interval count. An integer applies to both path collections; a
+        pair applies separately. With ``lead_lag=True``, values still count original
+        intervals.
+    :type log_steps: int | tuple | None
     :param static_kernel: Static kernel passed to the signature kernel computation. If ``None`` (default), the
         linear kernel will be used. For details, see the documentation on
         :doc:`static kernels </pages/signature_kernels/static_kernels>`.
@@ -251,7 +304,12 @@ def expected_sig_score(
 
     """
 
-    res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
+    res = sig_score(
+        sample1, sample2, dyadic_order, lam=lam, method=method,
+        log_degree=log_degree, log_steps=log_steps,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch,
+    )
     return res.mean().reshape(1)
 
 def sig_mmd(
@@ -259,6 +317,9 @@ def sig_mmd(
         sample2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
         *,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -301,6 +362,20 @@ def sig_mmd(
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
     :type dyadic_order: int | tuple
+    :param method: PDE method. Use ``"pde"`` for the standard Goursat solver or
+        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method is
+        currently CPU-only and supports only the linear static kernel.
+    :type method: str
+    :param log_degree: Tensor-log truncation degree. Required for
+        ``method="log_pde"``. An integer applies to both path collections; a pair
+        applies separately to the first and second collections.
+    :type log_degree: int | tuple | None
+    :param log_steps: Number of original path intervals per tensor-log block for
+        ``method="log_pde"``. Required for that method. Each value must divide
+        its path's interval count. An integer applies to both path collections; a
+        pair applies separately. With ``lead_lag=True``, values still count original
+        intervals.
+    :type log_steps: int | tuple | None
     :param static_kernel: Static kernel passed to the signature kernel computation. If ``None`` (default), the
         linear kernel will be used. For details, see the documentation on
         :doc:`static kernels </pages/signature_kernels/static_kernels>`.
@@ -371,9 +446,33 @@ def sig_mmd(
     if n < 2:
         raise ValueError("sig_mmd requires at least 2 paths in sample2 (got {}).".format(n))
 
-    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    do1, do2 = parse_dyadic_order(dyadic_order)
+    log_degrees, log_step_sizes = parse_log_pde_parameters(
+        method, log_degree, log_steps
+    )
+    left_degree = log_degrees[0] if log_degrees is not None else None
+    right_degree = log_degrees[1] if log_degrees is not None else None
+    left_steps = log_step_sizes[0] if log_step_sizes is not None else None
+    right_steps = log_step_sizes[1] if log_step_sizes is not None else None
+
+    xx = sig_kernel_gram(
+        sample1, sample1, (do1, do1), method=method,
+        log_degree=left_degree, log_steps=left_steps,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False,
+    )
+    xy = sig_kernel_gram(
+        sample1, sample2, (do1, do2), method=method,
+        log_degree=log_degrees, log_steps=log_step_sizes,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False,
+    )
+    yy = sig_kernel_gram(
+        sample2, sample2, (do2, do2), method=method,
+        log_degree=right_degree, log_steps=right_steps,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False,
+    )
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * torch.mean(xy)

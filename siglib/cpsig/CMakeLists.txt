@@ -5,6 +5,7 @@ add_library(cpsig SHARED
     cp_branched_signature.cpp
     cp_branched_sig_kernel.cpp
     cp_log_signatures.cpp
+    cp_sig_kernel_log_pde.cpp
     cp_path_transforms.cpp
     cp_sig_coef.cpp
     cp_sig_kernel.cpp

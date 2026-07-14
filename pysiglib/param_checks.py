@@ -103,6 +103,29 @@ def parse_dyadic_order(dyadic_order):
         raise ValueError("dyadic_order must be a non-negative integer or tuple of non-negative integers")
     return do1, do2
 
+def parse_log_pde_parameters(method, log_degree, log_steps):
+    if method not in ("pde", "log_pde"):
+        raise ValueError("method must be 'pde' or 'log_pde'")
+    if method == "pde":
+        if log_degree is not None or log_steps is not None:
+            raise ValueError("log_degree and log_steps require method='log_pde'")
+        return None, None
+    if log_degree is None or log_steps is None:
+        raise ValueError("method='log_pde' requires log_degree and log_steps")
+
+    def parse(value, name):
+        if isinstance(value, int):
+            pair = (value, value)
+        elif isinstance(value, tuple) and len(value) == 2 and all(isinstance(x, int) for x in value):
+            pair = value
+        else:
+            raise TypeError(name + " must be an int or a pair of ints")
+        if pair[0] < 1 or pair[1] < 1:
+            raise ValueError(name + " values must be positive")
+        return pair
+
+    return parse(log_degree, "log_degree"), parse(log_steps, "log_steps")
+
 def dyadic_grid_length(path_length, dyadic_order):
     return ((path_length - 1) << dyadic_order) + 1
 

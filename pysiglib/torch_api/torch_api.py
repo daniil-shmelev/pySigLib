@@ -24,14 +24,16 @@ from ..sig_backprop import sig_backprop, sig_combine_backprop
 from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
 from ..log_sig import log_sig as log_sig_forward
 from ..log_sig_backprop import sig_to_log_sig_backprop, _log_sig_from_path_backprop
-from ..static_kernels import StaticKernel
+from ..static_kernels import StaticKernel, LinearKernel
 from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
 from ..log_sig_combine import log_sig_combine_backprop
 from ..logsig_to_sig import logsig_to_sig as logsig_to_sig_forward
 from ..logsig_to_sig_backprop import logsig_to_sig_backprop
-from ..sig_kernel import sig_kernel as sig_kernel_forward, _ensure_3d
+from ..sig_kernel import (
+    sig_kernel as sig_kernel_forward, sig_kernel_gram as sig_kernel_gram_forward,
+    _ensure_3d, _safe_normalize,
+)
 from ..sig_kernel_backprop import sig_kernel_backprop
-from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
 from ..sig_kernel_backprop import sig_kernel_gram_backprop
 from ..branched_sig_kernel import branched_sig_kernel as branched_sig_kernel_forward
 from ..branched_sig_kernel import branched_sig_kernel_gram as branched_sig_kernel_gram_forward
@@ -49,8 +51,10 @@ from ..sig_join_backprop import sig_join_backprop
 from ..log_sig_join import log_sig_join as log_sig_join_forward
 from ..log_sig_join_backprop import log_sig_join_backprop
 
-from ..param_checks import check_type, check_word_or_word_list
-from ..sig_kernel import _safe_normalize
+from ..param_checks import (
+    check_type, check_word_or_word_list, parse_dyadic_order,
+    parse_log_pde_parameters,
+)
 
 def _has_non_empty_correction(correction):
     if correction is None:
@@ -237,6 +241,7 @@ class SigToLogSig(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         sig_ = ctx.saved_tensors[0]
+        grad_output = grad_output.clone(memory_format=torch.contiguous_format)
         grad = sig_to_log_sig_backprop(sig_, grad_output, ctx.dimension, ctx.degree, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, method=ctx.method, n_jobs=ctx.n_jobs)
         return grad, None, None, None, None, None, None
 
@@ -371,11 +376,60 @@ class SigKernel(torch.autograd.Function):
 
         return d0, d1, None, None, None, None, None, None, None
 
+
+class LogPde(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, path1, path2, dyadic_order, log_degrees, log_step_sizes,
+                time_aug, lead_lag, end_time, n_jobs, return_grid):
+        out = sig_kernel_forward(
+            path1, path2, dyadic_order, method="log_pde",
+            log_degree=log_degrees, log_steps=log_step_sizes,
+            time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
+            n_jobs=n_jobs, return_grid=return_grid,
+        )
+        ctx.save_for_backward(path1, path2)
+        ctx.dyadic_order = dyadic_order
+        ctx.log_degrees = log_degrees
+        ctx.log_step_sizes = log_step_sizes
+        ctx.time_aug = time_aug
+        ctx.lead_lag = lead_lag
+        ctx.end_time = end_time
+        ctx.return_grid = return_grid
+        ctx.n_jobs = n_jobs
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        path1, path2 = ctx.saved_tensors
+        d_path1, d_path2 = sig_kernel_backprop(
+            grad_output, path1, path2, ctx.dyadic_order,
+            method="log_pde", log_degree=ctx.log_degrees,
+            log_steps=ctx.log_step_sizes, time_aug=ctx.time_aug,
+            lead_lag=ctx.lead_lag, end_time=ctx.end_time,
+            left_deriv=ctx.needs_input_grad[0], right_deriv=ctx.needs_input_grad[1],
+            n_jobs=ctx.n_jobs, return_grid=ctx.return_grid,
+        )
+        return d_path1, d_path2, None, None, None, None, None, None, None, None
+
+
+def _log_pde_sig_kernel_torch(
+        path1, path2, dyadic_order, log_degrees, log_step_sizes,
+        time_aug, lead_lag, end_time, n_jobs, return_grid):
+    if path1.device.type != "cpu" or path2.device.type != "cpu":
+        raise ValueError("method='log_pde' is currently CPU-only")
+    return LogPde.apply(
+        path1, path2, dyadic_order, log_degrees, log_step_sizes,
+        time_aug, lead_lag, end_time, n_jobs, return_grid,
+    )
+
 def sig_kernel(
         path1 : Union[np.ndarray, torch.tensor],
         path2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
         *,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -386,10 +440,32 @@ def sig_kernel(
 ) -> Union[np.ndarray, torch.tensor]:
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
-    k = SigKernel.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
+    log_degrees, log_step_sizes = parse_log_pde_parameters(method, log_degree, log_steps)
+    if method == "log_pde":
+        if static_kernel is not None and not isinstance(static_kernel, LinearKernel):
+            raise ValueError("method='log_pde' supports only the linear static kernel")
+        k = _log_pde_sig_kernel_torch(
+            path1, path2, dyadic_order, log_degrees, log_step_sizes,
+            time_aug, lead_lag, end_time, n_jobs, return_grid,
+        )
+    else:
+        k = SigKernel.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
     if normalize:
-        k1 = SigKernel.apply(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
-        k2 = SigKernel.apply(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        if method == "log_pde":
+            do1, do2 = parse_dyadic_order(dyadic_order)
+            k1 = _log_pde_sig_kernel_torch(
+                path1, path1, (do1, do1),
+                (log_degrees[0], log_degrees[0]), (log_step_sizes[0], log_step_sizes[0]),
+                time_aug, lead_lag, end_time, n_jobs, False,
+            )
+            k2 = _log_pde_sig_kernel_torch(
+                path2, path2, (do2, do2),
+                (log_degrees[1], log_degrees[1]), (log_step_sizes[1], log_step_sizes[1]),
+                time_aug, lead_lag, end_time, n_jobs, False,
+            )
+        else:
+            k1 = SigKernel.apply(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+            k2 = SigKernel.apply(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
         k = _safe_normalize(k, k1, k2, "sig_kernel(normalize=True)")
     return k
 
@@ -433,11 +509,88 @@ class SigKernelGram(torch.autograd.Function):
 
         return new_derivs[0], new_derivs[1], None, None, None, None, None, None, None, None
 
+
+def _log_pde_sig_kernel_gram_torch(
+        path1, path2, dyadic_order, log_degrees, log_step_sizes,
+        time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid, normalize):
+    do1, do2 = parse_dyadic_order(dyadic_order)
+    symmetric = path1 is path2 and do1 == do2 \
+        and log_degrees[0] == log_degrees[1] \
+        and log_step_sizes[0] == log_step_sizes[1]
+    batch_shape_1 = tuple(path1.shape[:-2])
+    batch_shape_2 = tuple(path2.shape[:-2])
+    path1 = _ensure_3d(path1)
+    path2 = path1 if symmetric else _ensure_3d(path2)
+    if path1.device.type != "cpu" or path2.device.type != "cpu":
+        raise ValueError("method='log_pde' is currently CPU-only")
+
+    batch1, batch2 = path1.shape[0], path2.shape[0]
+    if max_batch == -1:
+        max_batch = max(batch1, batch2)
+    if max_batch <= 0:
+        raise ValueError("max_batch must be a positive integer or -1")
+    effective_log_step_sizes = (
+        tuple(2 * step for step in log_step_sizes) if lead_lag else log_step_sizes
+    )
+    intervals1 = (2 * path1.shape[-2] - 2) if lead_lag else path1.shape[-2] - 1
+    intervals2 = (2 * path2.shape[-2] - 2) if lead_lag else path2.shape[-2] - 1
+    if intervals1 % effective_log_step_sizes[0] or intervals2 % effective_log_step_sizes[1]:
+        raise ValueError("log_steps must divide the number of path intervals")
+    grid1 = ((intervals1 // effective_log_step_sizes[0]) << do1) + 1
+    grid2 = ((intervals2 // effective_log_step_sizes[1]) << do2) + 1
+    if return_grid and grid1 != grid2:
+        symmetric = False
+
+    if symmetric:
+        idx_i, idx_j = torch.triu_indices(batch1, batch1, device=path1.device)
+    else:
+        idx_i = torch.arange(batch1, device=path1.device).repeat_interleave(batch2)
+        idx_j = torch.arange(batch2, device=path2.device).repeat(batch1)
+    out_shape = (batch1, batch2, grid1, grid2) if return_grid else (batch1, batch2)
+    out = torch.empty(out_shape, dtype=path1.dtype, device=path1.device)
+    chunk_size = max_batch * max_batch
+    for start in range(0, idx_i.shape[0], chunk_size):
+        end = min(start + chunk_size, idx_i.shape[0])
+        ci, cj = idx_i[start:end], idx_j[start:end]
+        values = _log_pde_sig_kernel_torch(
+            path1[ci], path2[cj], (do1, do2), log_degrees, log_step_sizes,
+            time_aug, lead_lag, end_time, n_jobs, return_grid,
+        )
+        out[ci, cj] = values
+        if symmetric:
+            off = ci != cj
+            mirrored = values[off].transpose(-2, -1) if return_grid else values[off]
+            out[cj[off], ci[off]] = mirrored
+
+    if normalize:
+        diag1 = _log_pde_sig_kernel_torch(
+            path1, path1, (do1, do1),
+            (log_degrees[0], log_degrees[0]),
+            (log_step_sizes[0], log_step_sizes[0]),
+            time_aug, lead_lag, end_time, n_jobs, False,
+        )
+        diag2 = diag1 if symmetric else _log_pde_sig_kernel_torch(
+            path2, path2, (do2, do2),
+            (log_degrees[1], log_degrees[1]),
+            (log_step_sizes[1], log_step_sizes[1]),
+            time_aug, lead_lag, end_time, n_jobs, False,
+        )
+        out = _safe_normalize(out, diag1.unsqueeze(1), diag2.unsqueeze(0),
+                              "sig_kernel_gram(normalize=True)")
+
+    result_shape = batch_shape_1 + batch_shape_2
+    if return_grid:
+        result_shape += (grid1, grid2)
+    return out.reshape(result_shape) if result_shape else out.squeeze()
+
 def sig_kernel_gram(
         path1: Union[np.ndarray, torch.tensor],
         path2: Union[np.ndarray, torch.tensor],
         dyadic_order: Union[int, tuple],
         *,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -449,6 +602,14 @@ def sig_kernel_gram(
 ) -> Union[np.ndarray, torch.tensor]:
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
+    log_degrees, log_step_sizes = parse_log_pde_parameters(method, log_degree, log_steps)
+    if method == "log_pde":
+        if static_kernel is not None and not isinstance(static_kernel, LinearKernel):
+            raise ValueError("method='log_pde' supports only the linear static kernel")
+        return _log_pde_sig_kernel_gram_torch(
+            path1, path2, dyadic_order, log_degrees, log_step_sizes,
+            time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid, normalize,
+        )
     gram = SigKernelGram.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid)
     if normalize:
         d1 = SigKernel.apply(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
@@ -600,6 +761,9 @@ def sig_score(
         dyadic_order : Union[int, tuple],
         *,
         lam : float = 1.,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -618,8 +782,25 @@ def sig_score(
     if B < 2:
         raise ValueError("sig_score requires at least 2 sample paths (got {}).".format(B))
 
-    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    do1, do2 = parse_dyadic_order(dyadic_order)
+    log_degrees, log_step_sizes = parse_log_pde_parameters(
+        method, log_degree, log_steps
+    )
+    left_degree = log_degrees[0] if log_degrees is not None else None
+    left_steps = log_step_sizes[0] if log_step_sizes is not None else None
+
+    xx = sig_kernel_gram(
+        sample, sample, (do1, do1), method=method,
+        log_degree=left_degree, log_steps=left_steps,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False,
+    )
+    xy = sig_kernel_gram(
+        sample, y, (do1, do2), method=method,
+        log_degree=log_degrees, log_steps=log_step_sizes,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False,
+    )
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
@@ -637,6 +818,9 @@ def expected_sig_score(
         dyadic_order : Union[int, tuple],
         *,
         lam : float = 1.,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -644,7 +828,12 @@ def expected_sig_score(
         n_jobs : int = 1,
         max_batch : int = -1
 ) -> Union[np.ndarray, torch.tensor]:
-    res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
+    res = sig_score(
+        sample1, sample2, dyadic_order, lam=lam, method=method,
+        log_degree=log_degree, log_steps=log_steps,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch,
+    )
     return res.mean().reshape(1)
 
 expected_sig_score.__doc__ = expected_sig_score_forward.__doc__
@@ -654,6 +843,9 @@ def sig_mmd(
         sample2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
         *,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -671,9 +863,33 @@ def sig_mmd(
     if n < 2:
         raise ValueError("sig_mmd requires at least 2 paths in sample2 (got {}).".format(n))
 
-    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    do1, do2 = parse_dyadic_order(dyadic_order)
+    log_degrees, log_step_sizes = parse_log_pde_parameters(
+        method, log_degree, log_steps
+    )
+    left_degree = log_degrees[0] if log_degrees is not None else None
+    right_degree = log_degrees[1] if log_degrees is not None else None
+    left_steps = log_step_sizes[0] if log_step_sizes is not None else None
+    right_steps = log_step_sizes[1] if log_step_sizes is not None else None
+
+    xx = sig_kernel_gram(
+        sample1, sample1, (do1, do1), method=method,
+        log_degree=left_degree, log_steps=left_steps,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False,
+    )
+    xy = sig_kernel_gram(
+        sample1, sample2, (do1, do2), method=method,
+        log_degree=log_degrees, log_steps=log_step_sizes,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False,
+    )
+    yy = sig_kernel_gram(
+        sample2, sample2, (do2, do2), method=method,
+        log_degree=right_degree, log_steps=right_steps,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False,
+    )
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * torch.mean(xy)

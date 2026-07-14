@@ -20,8 +20,17 @@ import numpy as np
 import torch
 
 from .transform_path import transform_path
-from .param_checks import check_type, parse_dyadic_order, dyadic_grid_length, check_n_jobs
+from .param_checks import (
+    check_type, parse_dyadic_order, parse_log_pde_parameters,
+    dyadic_grid_length, check_n_jobs,
+)
 from .error_codes import err_msg
+from .dtypes import (
+    CPSIG_SIG_KERNEL, CPSIG_SIG_KERNEL_LOG_PDE,
+    DTYPES, CUSIG_SIG_KERNEL_CUDA,
+)
+from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOutputHandler
+from .static_kernels import StaticKernel, LinearKernel, Context
 
 
 def _ensure_3d(t):
@@ -54,15 +63,164 @@ def _safe_normalize(result, k1, k2, func_name, stacklevel=2):
         warnings.warn(func_name + ": " + _NORMALIZE_WARNING, RuntimeWarning, stacklevel=stacklevel + 1)
     safe = torch.sqrt(torch.clamp(denom, min=1e-30))
     return torch.where(bad, float('nan'), result / safe)
-from .dtypes import CPSIG_SIG_KERNEL, DTYPES, CUSIG_SIG_KERNEL_CUDA
-from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOutputHandler
-from .static_kernels import StaticKernel, LinearKernel, Context
+
+
+def _sig_kernel_log_pde(
+        data, path1, path2, dyadic_order_1, dyadic_order_2,
+        log_degrees, log_step_sizes, static_kernel, n_jobs,
+        return_grid, normalize):
+    if static_kernel is not None and not isinstance(static_kernel, LinearKernel):
+        raise ValueError("method='log_pde' supports only the linear static kernel")
+    if data.device != "cpu":
+        raise ValueError("method='log_pde' is currently CPU-only")
+
+    steps = []
+    for length, log_step in zip(data.length, log_step_sizes):
+        intervals = length - 1
+        if intervals <= 0:
+            raise ValueError("method='log_pde' requires paths with at least two points")
+        if intervals % log_step:
+            raise ValueError(
+                f"log_steps={log_step} must divide the number of path intervals {intervals}"
+            )
+        steps.append(intervals // log_step)
+
+    if return_grid:
+        result = GridOutputHandler(
+            (steps[0] << dyadic_order_1) + 1,
+            (steps[1] << dyadic_order_2) + 1,
+            data,
+        )
+    else:
+        result = ScalarOutputHandler(data)
+    err_code = CPSIG_SIG_KERNEL_LOG_PDE[data.dtype](
+        data.data[0].data_ptr, data.data[1].data_ptr, result.data_ptr,
+        data.batch_size, data.dimension, data.length[0], data.length[1],
+        log_step_sizes[0], log_step_sizes[1], log_degrees[0], log_degrees[1],
+        dyadic_order_1, dyadic_order_2, return_grid, n_jobs,
+    )
+    if err_code:
+        raise Exception("Error in log-PDE signature kernel: " + err_msg(err_code))
+
+    if isinstance(result.data, np.ndarray):
+        has_bad = np.isnan(result.data).any() or np.isinf(result.data).any()
+    else:
+        has_bad = torch.isnan(result.data).any().item() or torch.isinf(result.data).any().item()
+    if has_bad:
+        warnings.warn(
+            "sig_kernel produced NaN or Inf values in the log-PDE solver.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+    if normalize:
+        k1 = sig_kernel(
+            path1, path1, (dyadic_order_1, dyadic_order_1), method="log_pde",
+            log_degree=(log_degrees[0], log_degrees[0]),
+            log_steps=(log_step_sizes[0], log_step_sizes[0]), n_jobs=n_jobs,
+        )
+        k2 = sig_kernel(
+            path2, path2, (dyadic_order_2, dyadic_order_2), method="log_pde",
+            log_degree=(log_degrees[1], log_degrees[1]),
+            log_steps=(log_step_sizes[1], log_step_sizes[1]), n_jobs=n_jobs,
+        )
+        result.data = _safe_normalize(
+            result.data, k1, k2, "sig_kernel(normalize=True)", stacklevel=3
+        )
+    return result.data
+
+
+def _sig_kernel_pde(
+        data, path1, path2, dyadic_order, dyadic_order_1, dyadic_order_2,
+        static_kernel, n_jobs, return_grid, normalize):
+    if return_grid:
+        result = GridOutputHandler(
+            dyadic_grid_length(data.length[0], dyadic_order_1),
+            dyadic_grid_length(data.length[1], dyadic_order_2),
+            data,
+        )
+    else:
+        result = ScalarOutputHandler(data)
+
+    if data.batch_size == 0:
+        return result.data
+
+    torch_path1 = _ensure_3d(torch.as_tensor(data.path[0]))
+    torch_path2 = _ensure_3d(torch.as_tensor(data.path[1]))
+
+    if static_kernel is None:
+        static_kernel = LinearKernel()
+    elif not isinstance(static_kernel, StaticKernel):
+        raise ValueError("kernel must be a child class of pysiglib.StaticKernel")
+
+    gram = static_kernel(Context(), torch_path1, torch_path2)
+    gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
+
+    if data.device == "cpu":
+        err_code = CPSIG_SIG_KERNEL[data.dtype](
+            gram_ptr, result.data_ptr, data.batch_size, data.dimension,
+            data.length[0], data.length[1],
+            dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
+    else:
+        err_code = CUSIG_SIG_KERNEL_CUDA[data.dtype](
+            gram_ptr, result.data_ptr, data.batch_size, data.dimension,
+            data.length[0], data.length[1],
+            dyadic_order_1, dyadic_order_2, return_grid)
+    if err_code:
+        raise Exception("Error in pysiglib.sig_kernel: " + err_msg(err_code))
+
+    if isinstance(result.data, np.ndarray):
+        has_bad = np.isnan(result.data).any() or np.isinf(result.data).any()
+    else:
+        has_bad = torch.isnan(result.data).any().item() or torch.isinf(result.data).any().item()
+
+    if has_bad:
+        warnings.warn(
+            "sig_kernel produced NaN or Inf values. This is typically caused by "
+            "paths with large increments, leading to numerical overflow in the "
+            "PDE solver. Consider normalizing your paths or using a static kernel "
+            "(e.g., pysiglib.RBFKernel) to bound the inner products.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+    if path1 is path2 and not has_bad and not return_grid:
+        if isinstance(result.data, np.ndarray):
+            has_neg = (result.data < 0).any()
+        else:
+            has_neg = (result.data < 0).any().item()
+        if has_neg:
+            warnings.warn(
+                "sig_kernel produced negative K(X, X) values."
+                "This is typically caused by PDE-solver instability at large "
+                "dyadic_order or large path increments. Consider reducing "
+                "dyadic_order, scaling paths down, or using a bounded static "
+                "kernel (e.g., pysiglib.RBFKernel).",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
+    if normalize:
+        k1 = sig_kernel(
+            path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs
+        )
+        k2 = sig_kernel(
+            path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs
+        )
+        result.data = _safe_normalize(
+            result.data, k1, k2, "sig_kernel(normalize=True)", stacklevel=3
+        )
+
+    return result.data
 
 def sig_kernel(
         path1 : Union[np.ndarray, torch.tensor],
         path2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
         *,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -99,11 +257,25 @@ def sig_kernel(
         ``(..., length_2, dimension)``. Leading batch dimensions must match those of
         ``path1``.
     :type path2: numpy.ndarray | torch.tensor
-    :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
-        paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
-        :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
-        and the second path by :math:`2^{\\lambda_2}`.
+    :param dyadic_order: Non-negative dyadic refinement order. An integer applies to
+        both paths; a pair applies separately to the first and second paths. The
+        refinement acts on path intervals for ``method="pde"`` and on tensor-log
+        blocks for ``method="log_pde"``.
     :type dyadic_order: int | tuple
+    :param method: PDE method. Use ``"pde"`` for the standard
+        Goursat solver or ``"log_pde"`` for the higher-order log-PDE method.
+        The log-PDE method is currently CPU-only and supports only the linear
+        static kernel.
+    :type method: str
+    :param log_degree: Tensor-log truncation degree. Required for
+        ``method="log_pde"``. An integer applies to both paths; a pair applies
+        separately to the first and second paths.
+    :type log_degree: int | tuple | None
+    :param log_steps: Number of original path intervals per tensor-log block for
+        ``method="log_pde"``. Required for that method. Each value must divide
+        its path's interval count. An integer applies to both paths; a pair applies
+        separately. With ``lead_lag=True``, values still count original intervals.
+    :type log_steps: int | tuple | None
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -120,7 +292,9 @@ def sig_kernel(
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param return_grid: If ``True``, returns the entire PDE grid.
+    :param return_grid: If ``True``, returns the entire Goursat grid. For
+        ``method="log_pde"``, the grid axes correspond to tensor-log blocks with
+        dyadic refinement rather than the original path points.
     :type return_grid: bool
     :param normalize: If ``True``, normalizes the signature kernel so that :math:`k(x, x) = 1`
         by dividing by :math:`\\sqrt{k(x, x) \\cdot k(y, y)}`. Cannot be used with ``return_grid=True``.
@@ -181,6 +355,9 @@ def sig_kernel(
         raise ValueError("normalize=True cannot be used with return_grid=True")
 
     dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
+    log_degrees, log_step_sizes = parse_log_pde_parameters(method, log_degree, log_steps)
+    if method == "log_pde" and lead_lag:
+        log_step_sizes = tuple(2 * step for step in log_step_sizes)
 
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
@@ -188,80 +365,16 @@ def sig_kernel(
 
     data = MultiplePathInputHandler([path1, path2], False, False, 0., ["path1", "path2"])
 
-
-    if not return_grid:
-        result = ScalarOutputHandler(data)
-    else:
-        dyadic_len_1 = dyadic_grid_length(data.length[0], dyadic_order_1)
-        dyadic_len_2 = dyadic_grid_length(data.length[1], dyadic_order_2)
-        result = GridOutputHandler(dyadic_len_1, dyadic_len_2, data)
-
-    if data.batch_size == 0:
-        return result.data
-
-    torch_path1 = _ensure_3d(torch.as_tensor(data.path[0]))
-    torch_path2 = _ensure_3d(torch.as_tensor(data.path[1]))
-
-    ctx = Context()
-
-    if static_kernel is None:
-        static_kernel = LinearKernel()
-    elif not isinstance(static_kernel, StaticKernel):
-        raise ValueError("kernel must be a child class of pysiglib.StaticKernel")
-
-    gram = static_kernel(ctx, torch_path1, torch_path2)
-    gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
-
-    if data.device == "cpu":
-        err_code = CPSIG_SIG_KERNEL[data.dtype](
-            gram_ptr, result.data_ptr, data.batch_size, data.dimension,
-            data.length[0], data.length[1],
-            dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
-    else:
-        err_code = CUSIG_SIG_KERNEL_CUDA[data.dtype](
-            gram_ptr, result.data_ptr, data.batch_size, data.dimension,
-            data.length[0], data.length[1],
-            dyadic_order_1, dyadic_order_2, return_grid)
-    if err_code:
-        raise Exception("Error in pysiglib.sig_kernel: " + err_msg(err_code))
-
-    if isinstance(result.data, np.ndarray):
-        has_bad = np.isnan(result.data).any() or np.isinf(result.data).any()
-    else:
-        has_bad = torch.isnan(result.data).any().item() or torch.isinf(result.data).any().item()
-
-    if has_bad:
-        warnings.warn(
-            "sig_kernel produced NaN or Inf values. This is typically caused by "
-            "paths with large increments, leading to numerical overflow in the "
-            "PDE solver. Consider normalizing your paths or using a static kernel "
-            "(e.g., pysiglib.RBFKernel) to bound the inner products.",
-            RuntimeWarning,
-            stacklevel=2
+    if method == "log_pde":
+        return _sig_kernel_log_pde(
+            data, path1, path2, dyadic_order_1, dyadic_order_2,
+            log_degrees, log_step_sizes, static_kernel, n_jobs,
+            return_grid, normalize,
         )
-
-    if path1 is path2 and not has_bad and not return_grid:
-        if isinstance(result.data, np.ndarray):
-            has_neg = (result.data < 0).any()
-        else:
-            has_neg = (result.data < 0).any().item()
-        if has_neg:
-            warnings.warn(
-                "sig_kernel produced negative K(X, X) values."
-                "This is typically caused by PDE-solver instability at large "
-                "dyadic_order or large path increments. Consider reducing "
-                "dyadic_order, scaling paths down, or using a bounded static "
-                "kernel (e.g., pysiglib.RBFKernel).",
-                RuntimeWarning,
-                stacklevel=2
-            )
-
-    if normalize:
-        k1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
-        k2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
-        result.data = _safe_normalize(result.data, k1, k2, "sig_kernel(normalize=True)")
-
-    return result.data
+    return _sig_kernel_pde(
+        data, path1, path2, dyadic_order, dyadic_order_1, dyadic_order_2,
+        static_kernel, n_jobs, return_grid, normalize,
+    )
 
 
 def sig_kernel_gram(
@@ -269,6 +382,9 @@ def sig_kernel_gram(
         path2 : Union[np.ndarray, torch.tensor],
         dyadic_order : Union[int, tuple],
         *,
+        method : str = "pde",
+        log_degree : Union[int, tuple, None] = None,
+        log_steps : Union[int, tuple, None] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -309,11 +425,24 @@ def sig_kernel_gram(
     :param path2: A path or batch of paths, of shape ``(*batch_shape_2, length_2, dimension)``.
         Independent of ``path1``'s batch shape.
     :type path2: numpy.ndarray | torch.tensor
-    :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
-        paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
-        :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
-        and the second path by :math:`2^{\\lambda_2}`.
+    :param dyadic_order: Non-negative dyadic refinement order. An integer applies to
+        both paths; a pair applies separately to the first and second paths. The
+        refinement acts on path intervals for ``method="pde"`` and on tensor-log
+        blocks for ``method="log_pde"``.
     :type dyadic_order: int | tuple
+    :param method: PDE method. Use ``"pde"`` for the standard Goursat solver or
+        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method is
+        currently CPU-only and supports only the linear static kernel.
+    :type method: str
+    :param log_degree: Tensor-log truncation degree. Required for
+        ``method="log_pde"``. An integer applies to both paths; a pair applies
+        separately to the first and second paths.
+    :type log_degree: int | tuple | None
+    :param log_steps: Number of original path intervals per tensor-log block for
+        ``method="log_pde"``. Required for that method. Each value must divide
+        its path's interval count. An integer applies to both paths; a pair applies
+        separately. With ``lead_lag=True``, values still count original intervals.
+    :type log_steps: int | tuple | None
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -334,13 +463,15 @@ def sig_kernel_gram(
         due to insufficient memory, this parameter should be decreased.
         If set to -1, the entire batch is computed in parallel.
     :type max_batch: int
-    :param return_grid: If ``True``, returns the entire PDE grid.
+    :param return_grid: If ``True``, returns the entire Goursat grid. For
+        ``method="log_pde"``, the grid axes correspond to tensor-log blocks with
+        dyadic refinement rather than the original path points.
     :type return_grid: bool
     :param normalize: If ``True``, normalizes the gram matrix so that :math:`K(x, x) = 1` by
         dividing each entry by :math:`\\sqrt{K(x_i, x_i) \\cdot K(y_j, y_j)}`. Cannot be used with ``return_grid=True``.
     :type normalize: bool
     :return: Gram matrix of signature kernels, of shape ``(*batch_shape_1, *batch_shape_2)``
-        (or ``(*batch_shape_1, *batch_shape_2, dyadic_length_1, dyadic_length_2)`` if
+        (or ``(*batch_shape_1, *batch_shape_2, grid_length_1, grid_length_2)`` if
         ``return_grid=True``).
     :rtype: numpy.ndarray | torch.tensor
 
@@ -409,6 +540,13 @@ def sig_kernel_gram(
         raise ValueError("max_batch must be a positive integer or -1")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
+    log_degrees, log_step_sizes = parse_log_pde_parameters(method, log_degree, log_steps)
+    if method == "log_pde" and static_kernel is not None and not isinstance(static_kernel, LinearKernel):
+        raise ValueError("method='log_pde' supports only the linear static kernel")
+    effective_log_step_sizes = (
+        tuple(2 * step for step in log_step_sizes)
+        if method == "log_pde" and lead_lag else log_step_sizes
+    )
 
     batch_shape_1 = tuple(path1.shape[:-2])
     batch_shape_2 = batch_shape_1 if symmetric else tuple(path2.shape[:-2])
@@ -435,8 +573,22 @@ def sig_kernel_gram(
     do1, do2 = parse_dyadic_order(dyadic_order)
 
     if return_grid:
-        gl1 = dyadic_grid_length(data.length[0], do1)
-        gl2 = dyadic_grid_length(data.length[1], do2)
+        if method == "log_pde":
+            intervals1 = data.length[0] - 1
+            intervals2 = data.length[1] - 1
+            if intervals1 % effective_log_step_sizes[0] or intervals2 % effective_log_step_sizes[1]:
+                raise ValueError("log_steps must divide the number of path intervals")
+            gl1 = ((intervals1 // effective_log_step_sizes[0]) << do1) + 1
+            gl2 = ((intervals2 // effective_log_step_sizes[1]) << do2) + 1
+        else:
+            gl1 = dyadic_grid_length(data.length[0], do1)
+            gl2 = dyadic_grid_length(data.length[1], do2)
+
+    if method == "log_pde" and (
+        do1 != do2 or
+        log_degrees[0] != log_degrees[1] or log_step_sizes[0] != log_step_sizes[1]
+    ):
+        symmetric = False
 
     if symmetric:
         # Symmetric case: only compute upper triangle pairs, mirror to lower.
@@ -463,7 +615,12 @@ def sig_kernel_gram(
         ci = idx_i[start:end]
         cj = idx_j[start:end]
 
-        k = sig_kernel(src1[ci], src2[cj], dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=return_grid)
+        k = sig_kernel(
+            src1[ci], src2[cj], dyadic_order, method=method,
+            log_degree=log_degree, log_steps=log_steps,
+            static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+            end_time=end_time, n_jobs=n_jobs, return_grid=return_grid,
+        )
         res[ci, cj] = k
 
         if symmetric:
@@ -475,8 +632,24 @@ def sig_kernel_gram(
                 res[cj[off], ci[off]] = k_mirror
 
     if normalize:
-        d1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
-        d2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if not symmetric else d1
+        if method == "log_pde":
+            d1 = sig_kernel(
+                path1, path1, (do1, do1), method=method,
+                log_degree=(log_degrees[0], log_degrees[0]),
+                log_steps=(log_step_sizes[0], log_step_sizes[0]),
+                time_aug=time_aug, lead_lag=lead_lag,
+                end_time=end_time, n_jobs=n_jobs,
+            )
+            d2 = sig_kernel(
+                path2, path2, (do2, do2), method=method,
+                log_degree=(log_degrees[1], log_degrees[1]),
+                log_steps=(log_step_sizes[1], log_step_sizes[1]),
+                time_aug=time_aug, lead_lag=lead_lag,
+                end_time=end_time, n_jobs=n_jobs,
+            )
+        else:
+            d1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+            d2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if not symmetric else d1
         res = _safe_normalize(res, d1.unsqueeze(1), d2.unsqueeze(0), "sig_kernel_gram(normalize=True)")
 
     out_shape = batch_shape_1 + batch_shape_2

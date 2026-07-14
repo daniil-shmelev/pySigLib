@@ -318,6 +318,16 @@ CPSIG_BRANCHED_SIG_KERNEL_BACKPROP = {
     "float64": CPSIG.branched_sig_kernel_backprop_d
 }
 
+CPSIG_SIG_KERNEL_LOG_PDE = {
+    "float32": CPSIG.sig_kernel_log_pde_f,
+    "float64": CPSIG.sig_kernel_log_pde_d
+}
+
+CPSIG_SIG_KERNEL_LOG_PDE_BACKPROP = {
+    "float32": CPSIG.sig_kernel_log_pde_backprop_f,
+    "float64": CPSIG.sig_kernel_log_pde_backprop_d
+}
+
 CPSIG_BRANCHED_SIG = {
     "float32": CPSIG.branched_sig_f,
     "float64": CPSIG.branched_sig_d

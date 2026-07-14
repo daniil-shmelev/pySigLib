@@ -23,6 +23,122 @@
 #endif
 
 template<std::floating_point T>
+FORCE_INLINE void tensor_product_add_(
+	const T* RESTRICT a,
+	uint64_t a_degree,
+	const T* RESTRICT b,
+	uint64_t b_degree,
+	T* RESTRICT out,
+	uint64_t out_degree,
+	const uint64_t* level_index,
+	uint64_t min_out_level = 2,
+	uint64_t min_b_level = 1,
+	T scale = static_cast<T>(1)
+) {
+	for (uint64_t level = min_out_level; level <= out_degree; ++level) {
+		const uint64_t first = level > b_degree ? level - b_degree : 1;
+		const uint64_t last = level > min_b_level
+			? std::min(a_degree, level - min_b_level) : 0;
+		for (uint64_t left = first; left <= last; ++left) {
+			const uint64_t right = level - left;
+			const uint64_t left_size = level_index[left + 1] - level_index[left];
+			const uint64_t right_size = level_index[right + 1] - level_index[right];
+			T* dst = out + level_index[level];
+			const T* ap = a + level_index[left];
+			const T* bp = b + level_index[right];
+			for (uint64_t i = 0; i < left_size; ++i) {
+#ifdef VEC
+				vec_mult_add(dst, bp, ap[i] * scale, right_size);
+				dst += right_size;
+#else
+				const T av = ap[i] * scale;
+				for (uint64_t j = 0; j < right_size; ++j)
+					*(dst++) += av * bp[j];
+#endif
+			}
+		}
+	}
+}
+
+template<std::floating_point T>
+FORCE_INLINE void tensor_product_backprop_(
+	const T* a,
+	uint64_t a_degree,
+	const T* b,
+	uint64_t b_degree,
+	const T* d_out,
+	uint64_t out_degree,
+	T* d_a,
+	T* d_b,
+	const uint64_t* level_index,
+	uint64_t min_out_level = 2,
+	uint64_t min_b_level = 1,
+	T scale = static_cast<T>(1)
+) {
+	for (uint64_t level = min_out_level; level <= out_degree; ++level) {
+		const uint64_t first = level > b_degree ? level - b_degree : 1;
+		const uint64_t last = level > min_b_level
+			? std::min(a_degree, level - min_b_level) : 0;
+		for (uint64_t left = first; left <= last; ++left) {
+			const uint64_t right = level - left;
+			const uint64_t left_size = level_index[left + 1] - level_index[left];
+			const uint64_t right_size = level_index[right + 1] - level_index[right];
+			const T* grad = d_out + level_index[level];
+			const T* ap = a + level_index[left];
+			const T* bp = b + level_index[right];
+			T* dap = d_a + level_index[left];
+			T* dbp = d_b + level_index[right];
+			for (uint64_t i = 0; i < left_size; ++i) {
+#ifdef VEC
+				dap[i] += dot_product(grad + i * right_size, bp, right_size) * scale;
+				vec_mult_add(dbp, grad + i * right_size, ap[i] * scale, right_size);
+#else
+				T da = static_cast<T>(0);
+				for (uint64_t j = 0; j < right_size; ++j) {
+					const T dg = grad[i * right_size + j] * scale;
+					da += dg * bp[j];
+					dbp[j] += dg * ap[i];
+				}
+				dap[i] += da;
+#endif
+			}
+		}
+	}
+}
+
+template<std::floating_point T>
+FORCE_INLINE void sig_combine_with_level_index_(
+	const T* RESTRICT sig1,
+	const T* RESTRICT sig2,
+	T* RESTRICT out,
+	uint64_t degree,
+	const uint64_t* level_index,
+	bool scalar_term = true
+) {
+	if (scalar_term) out[0] = static_cast<T>(1);
+	for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i)
+		out[i] = sig1[i] + sig2[i];
+	tensor_product_add_(sig1, degree, sig2, degree, out, degree, level_index);
+}
+
+template<std::floating_point T>
+FORCE_INLINE void sig_combine_backprop_with_level_index_(
+	const T* sig1,
+	const T* sig2,
+	const T* d_out,
+	T* d_sig1,
+	T* d_sig2,
+	uint64_t degree,
+	const uint64_t* level_index
+) {
+	const uint64_t length = level_index[degree + 1];
+	if (d_sig1 != d_out) std::copy(d_out, d_out + length, d_sig1);
+	std::copy(d_out, d_out + length, d_sig2);
+	tensor_product_backprop_(sig1, degree, sig2, degree, d_out, degree,
+		d_sig1, d_sig2, level_index);
+}
+
+template<std::floating_point T>
 FORCE_INLINE void sig_combine_inplace_(
 	T* sig1,
 	const T* sig2,
@@ -136,7 +252,7 @@ FORCE_INLINE void uncombine_sig_deriv(
 	const T* __restrict sig2,
 	T* __restrict sig_concat_deriv,
 	T* __restrict sig2_deriv,
-	uint64_t dimension,
+	uint64_t,
 	uint64_t degree,
 	const uint64_t* level_index
 ) {
@@ -146,47 +262,8 @@ FORCE_INLINE void uncombine_sig_deriv(
 	//This function computes dF/d(sig1) and dF/d(sig2) and writes these
 	//into sig_concat_deriv and sig2_deriv respectively
 
-	const uint64_t sig_len_ = sig_length(dimension, degree);
-	std::memcpy(sig2_deriv, sig_concat_deriv, sig_len_ * sizeof(T));
-
-	for (uint64_t level = degree; level > 0; --level) {
-		for (uint64_t left_level = level - 1, right_level = 1; left_level > 0; --left_level, ++right_level) {
-			T* result_ptr = sig_concat_deriv + level_index[level];
-			T* const right_base = sig2_deriv + level_index[right_level];
-			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
-			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
-			const T* const left_base = sig1 + level_index[left_level];
-
-			for (uint64_t i = 0; i < left_size; ++i) {
-				const T scalar = left_base[i];
-				for (uint64_t k = 0; k < right_size; ++k) {
-					right_base[k] += result_ptr[k] * scalar;
-				}
-				result_ptr += right_size;
-			}
-		}
-	}
-
-
-	for (uint64_t left_level = 1; left_level < degree; ++left_level) {
-		for (uint64_t level = left_level + 1, right_level = 1; level <= degree; ++level, ++right_level) {
-			T* result_ptr = sig_concat_deriv + level_index[level];
-			T* const left_base = sig_concat_deriv + level_index[left_level];
-			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
-			const T* const right_base = sig2 + level_index[right_level];
-			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
-
-			for (uint64_t i = 0; i < left_size; ++i) {
-				T accum = 0;
-				for (uint64_t k = 0; k < right_size; ++k) {
-					accum += result_ptr[k] * right_base[k];
-				}
-				left_base[i] += accum;
-				result_ptr += right_size;
-			}
-		}
-	}
-
+	sig_combine_backprop_with_level_index_(sig1, sig2, sig_concat_deriv,
+		sig_concat_deriv, sig2_deriv, degree, level_index);
 }
 
 template<std::floating_point T>

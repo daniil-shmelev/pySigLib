@@ -16,20 +16,91 @@
 #pragma once
 #include "cppch.h"
 
+#include "cp_sig_combine.h"
 #include "multithreading.h"
 #include "words.h"
 #include "log_sig_cache.h"
-#ifdef VEC
-#include "cp_vector_funcs.h"
-#endif
 
 // ---------------------------------------------------------------------------
-// tensor_exp_: truncated tensor exponential via power series
+// Truncated tensor exponential via power series
 //
 //   exp(x) = 1 + P_1 + P_2 + ... + P_N
 //   P_1 = x, P_n = x \otimes P_{n-1} / n
 //   P_n has min level n -> level-skipping reduces work for large n.
 // ---------------------------------------------------------------------------
+
+template<std::floating_point T>
+void tensor_exp_with_level_index_(
+	const T* log_sig,
+	T* out,
+	uint64_t log_degree,
+	uint64_t out_degree,
+	const uint64_t* level_index,
+	std::vector<T>& powers,
+	std::vector<T>& next
+) {
+	if (out_degree == 0) return;
+	const uint64_t length = level_index[out_degree + 1];
+	const uint64_t first = level_index[1];
+	const uint64_t copy_degree = std::min(log_degree, out_degree);
+	const uint64_t copy_end = level_index[copy_degree + 1];
+	powers.assign(length, static_cast<T>(0));
+	next.assign(length, static_cast<T>(0));
+	std::fill(out + first, out + length, static_cast<T>(0));
+	std::copy(log_sig + first, log_sig + copy_end, powers.begin() + first);
+	std::copy(powers.begin() + first, powers.end(), out + first);
+
+	for (uint64_t power = 2; power <= out_degree; ++power) {
+		std::fill(next.begin() + level_index[power], next.end(), static_cast<T>(0));
+		const T inv_power = static_cast<T>(1) / static_cast<T>(power);
+		tensor_product_add_(log_sig, log_degree, powers.data(), out_degree,
+			next.data(), out_degree, level_index, power, power - 1, inv_power);
+		for (uint64_t i = level_index[power]; i < length; ++i) out[i] += next[i];
+		powers.swap(next);
+	}
+}
+
+template<std::floating_point T>
+void tensor_exp_backprop_with_level_index_(
+	T* d_logsig,
+	const T* d_sig,
+	const T* log_sig,
+	uint64_t log_degree,
+	uint64_t out_degree,
+	const uint64_t* level_index,
+	std::vector<T>& powers,
+	std::vector<T>& d_powers
+) {
+	if (out_degree == 0) return;
+	const uint64_t length = level_index[out_degree + 1];
+	const uint64_t first = level_index[1];
+	const uint64_t copy_degree = std::min(log_degree, out_degree);
+	const uint64_t copy_end = level_index[copy_degree + 1];
+	powers.assign(out_degree * length, static_cast<T>(0));
+	d_powers.assign(out_degree * length, static_cast<T>(0));
+	std::copy(log_sig + first, log_sig + copy_end, powers.begin() + first);
+	for (uint64_t power = 0; power < out_degree; ++power)
+		std::copy(d_sig + first, d_sig + length,
+			d_powers.begin() + power * length + first);
+
+	for (uint64_t power = 2; power <= out_degree; ++power) {
+		const T inv_power = static_cast<T>(1) / static_cast<T>(power);
+		tensor_product_add_(log_sig, log_degree,
+			powers.data() + (power - 2) * length, out_degree,
+			powers.data() + (power - 1) * length, out_degree,
+			level_index, power, power - 1, inv_power);
+	}
+
+	for (uint64_t power = out_degree; power >= 2; --power) {
+		const T inv_power = static_cast<T>(1) / static_cast<T>(power);
+		tensor_product_backprop_(log_sig, log_degree,
+			powers.data() + (power - 2) * length, out_degree,
+			d_powers.data() + (power - 1) * length, out_degree,
+			d_logsig, d_powers.data() + (power - 2) * length,
+			level_index, power, power - 1, inv_power);
+	}
+	for (uint64_t i = first; i < copy_end; ++i) d_logsig[i] += d_powers[i];
+}
 
 template<std::floating_point T>
 void tensor_exp_(
@@ -38,72 +109,14 @@ void tensor_exp_(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const uint64_t sig_len = ::sig_length(dimension, degree);
-
-	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
-	uint64_t* level_index = level_index_uptr.get();
-	populate_level_index(level_index, dimension, degree + 2);
-
-	out[0] = static_cast<T>(1.);
-	if (degree == 0) return;
-	std::memcpy(out + level_index[1], log_sig + level_index[1],
-		(level_index[degree + 1] - level_index[1]) * sizeof(T));
-
-	if (degree <= 1) return;
-
-	auto buff1_uptr = std::make_unique<T[]>(sig_len);
-	auto buff2_uptr = std::make_unique<T[]>(sig_len);
-	T* P_prev = buff1_uptr.get();
-	T* P_curr = buff2_uptr.get();
-
-	std::memcpy(P_prev, log_sig, sig_len * sizeof(T));
-
-	for (uint64_t n = 2; n <= degree; ++n) {
-		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
-
-		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
-			std::fill(P_curr + level_index[target_level],
-				P_curr + level_index[target_level + 1], static_cast<T>(0.));
-
-			// l1 ranges from 1 to target_level-(n-1), so l2 >= n-1 (P_prev's support)
-			const uint64_t max_left = target_level - (n - 1);
-
-			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
-				uint64_t right_level = target_level - left_level;
-
-				T* res_ptr = P_curr + level_index[target_level];
-				const T* const left_ptr_end = log_sig + level_index[left_level + 1];
-#ifdef VEC
-				const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
-				const T* right_start = P_prev + level_index[right_level];
-				for (const T* left_ptr = log_sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
-					vec_mult_add(res_ptr, right_start, *left_ptr * inv_n, right_level_size);
-					res_ptr += right_level_size;
-				}
-#else
-				const T* const right_ptr_end = P_prev + level_index[right_level + 1];
-				for (const T* left_ptr = log_sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
-					T val = *left_ptr * inv_n;
-					for (const T* right_ptr = P_prev + level_index[right_level]; right_ptr < right_ptr_end; ++right_ptr) {
-						*(res_ptr++) += val * *right_ptr;
-					}
-				}
-#endif
-			}
-
-			// Fuse accumulation into per-level loop (keeps data in cache)
-			for (uint64_t i = level_index[target_level]; i < level_index[target_level + 1]; ++i)
-				out[i] += P_curr[i];
-		}
-
-		std::swap(P_prev, P_curr);
-	}
+	auto level_index = std::make_unique<uint64_t[]>(degree + 2);
+	populate_level_index(level_index.get(), dimension, degree + 2);
+	out[0] = static_cast<T>(1);
+	std::vector<T> powers;
+	std::vector<T> next;
+	tensor_exp_with_level_index_(log_sig, out, degree, degree,
+		level_index.get(), powers, next);
 }
-
-// ---------------------------------------------------------------------------
-// tensor_exp_backprop_: backward pass through tensor_exp_
-// Recomputes P_1..P_N, then backprops from n=degree to 2.
-// ---------------------------------------------------------------------------
 
 template<std::floating_point T>
 void tensor_exp_backprop_(
@@ -113,128 +126,13 @@ void tensor_exp_backprop_(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const uint64_t sig_len = ::sig_length(dimension, degree);
-
-	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
-	uint64_t* level_index = level_index_uptr.get();
-	populate_level_index(level_index, dimension, degree + 2);
-
-	std::fill(d_logsig, d_logsig + sig_len, static_cast<T>(0.));
-
-	if (degree <= 1) {
-		for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i)
-			d_logsig[i] = d_sig[i];
-		return;
-	}
-
-	// Recompute and store P_1..P_N (full sig_len per P for simple indexing)
-	auto P_all_uptr = std::make_unique<T[]>(sig_len * degree);
-	T* P_all = P_all_uptr.get();
-	std::fill(P_all + sig_len, P_all + sig_len * degree, static_cast<T>(0.));
-
-	std::memcpy(P_all, log_sig, sig_len * sizeof(T));
-
-	for (uint64_t n = 2; n <= degree; ++n) {
-		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
-		T* P_curr = P_all + (n - 1) * sig_len;
-		const T* P_prev = P_all + (n - 2) * sig_len;
-
-		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
-			// l1 ranges from 1 to target_level-(n-1), so l2 >= n-1 (P_prev's support)
-			const uint64_t max_left = target_level - (n - 1);
-			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
-				uint64_t right_level = target_level - left_level;
-				T* res_ptr = P_curr + level_index[target_level];
-				const T* const left_end = log_sig + level_index[left_level + 1];
-#ifdef VEC
-				const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
-				const T* right_start = P_prev + level_index[right_level];
-				for (const T* lp = log_sig + level_index[left_level]; lp < left_end; ++lp) {
-					vec_mult_add(res_ptr, right_start, *lp * inv_n, right_level_size);
-					res_ptr += right_level_size;
-				}
-#else
-				const T* const right_end = P_prev + level_index[right_level + 1];
-				for (const T* lp = log_sig + level_index[left_level]; lp < left_end; ++lp) {
-					T val = *lp * inv_n;
-					for (const T* rp = P_prev + level_index[right_level]; rp < right_end; ++rp)
-						*(res_ptr++) += val * *rp;
-				}
-#endif
-			}
-		}
-	}
-
-	for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i)
-		d_logsig[i] = d_sig[i];
-
-	auto dP1_uptr = std::make_unique<T[]>(sig_len);
-	auto dP2_uptr = std::make_unique<T[]>(sig_len);
-	T* dP = dP1_uptr.get();
-	T* dP_next = dP2_uptr.get();
-	std::fill(dP, dP + sig_len, static_cast<T>(0.));
-
-#ifdef VEC
-	// Scratch buffer for precomputed upstream values
-	const uint64_t max_right_size = level_index[degree] - level_index[degree - 1];
-	auto upstream_uptr = std::make_unique<T[]>(max_right_size);
-	T* upstream_buf = upstream_uptr.get();
-#endif
-
-	for (int64_t n = static_cast<int64_t>(degree); n >= 2; --n) {
-		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
-		const T* P_prev = P_all + (n - 2) * sig_len;
-
-		std::fill(dP_next, dP_next + sig_len, static_cast<T>(0.));
-
-		for (uint64_t target_level = static_cast<uint64_t>(n); target_level <= degree; ++target_level) {
-			const uint64_t max_left = target_level - (n - 1);
-			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
-				uint64_t right_level = target_level - left_level;
-
-				const T* grad_ptr = d_sig + level_index[target_level];
-				const T* dP_ptr_base = dP + level_index[target_level];
-				T* d_left = d_logsig + level_index[left_level];
-				const T* lp_start = log_sig + level_index[left_level];
-				const T* const lp_end = log_sig + level_index[left_level + 1];
-				T* d_right = dP_next + level_index[right_level];
-				const T* rp_start = P_prev + level_index[right_level];
-				const T* const rp_end = P_prev + level_index[right_level + 1];
-
-#ifdef VEC
-				const uint64_t right_size = rp_end - rp_start;
-				const T* gp = grad_ptr;
-				const T* dp = dP_ptr_base;
-				for (const T* lp = lp_start; lp < lp_end; ++lp) {
-					vec_add_scaled(upstream_buf, gp, dp, inv_n, right_size);
-					gp += right_size;
-					dp += right_size;
-					*(d_left++) += dot_product(upstream_buf, rp_start, right_size);
-					vec_mult_add(d_right, upstream_buf, *lp, right_size);
-				}
-#else
-				const T* gp = grad_ptr;
-				const T* dp = dP_ptr_base;
-				for (const T* lp = lp_start; lp < lp_end; ++lp) {
-					T d_left_acc = static_cast<T>(0.);
-					T* drp = d_right;
-					for (const T* rp = rp_start; rp < rp_end; ++rp) {
-						T upstream = (*(gp++) + *(dp++)) * inv_n;
-						d_left_acc += upstream * *rp;
-						*(drp++) += upstream * *lp;
-					}
-					*(d_left++) += d_left_acc;
-				}
-#endif
-			}
-		}
-
-		std::swap(dP, dP_next);
-	}
-
-	// dP holds chain gradient from P_2..P_N flowing back to P_1 = x
-	for (uint64_t i = level_index[1]; i < level_index[degree + 1]; ++i)
-		d_logsig[i] += dP[i];
+	auto level_index = std::make_unique<uint64_t[]>(degree + 2);
+	populate_level_index(level_index.get(), dimension, degree + 2);
+	std::fill(d_logsig, d_logsig + level_index[degree + 1], static_cast<T>(0));
+	std::vector<T> powers;
+	std::vector<T> d_powers;
+	tensor_exp_backprop_with_level_index_(d_logsig, d_sig, log_sig, degree, degree,
+		level_index.get(), powers, d_powers);
 }
 
 // ---------------------------------------------------------------------------
