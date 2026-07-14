@@ -21,10 +21,8 @@
 #include "words.h"
 #include "log_sig_cache.h"
 
-#include "macros.h"
-#ifdef VEC
 #include "cp_vector_funcs.h"
-#endif
+#include "macros.h"
 
 // ========================================================================
 // tensor_log_: compute the tensor logarithm in-place
@@ -72,19 +70,12 @@ void tensor_log_(
 
 				T* res_ptr = buff2 + level_index[target_level];
 				T* const left_ptr_end = sig + level_index[left_level + 1];
-#ifdef VEC
 				const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
 				const T* right_start = buff1 + level_index[right_level];
 				for (T* left_ptr = sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
 					vec_mult_add(res_ptr, right_start, *left_ptr, right_level_size);
 					res_ptr += right_level_size;
 				}
-#else
-				T* const right_ptr_end = buff1 + level_index[right_level + 1];
-				for (T* left_ptr = sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr)
-					for (T* right_ptr = buff1 + level_index[right_level]; right_ptr < right_ptr_end; ++right_ptr)
-						*(res_ptr++) += *left_ptr * *right_ptr;
-#endif
 			}
 		}
 

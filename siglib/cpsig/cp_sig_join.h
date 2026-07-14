@@ -16,6 +16,7 @@
 #pragma once
 #include "cppch.h"
 #include "cp_sig_combine.h"
+#include "cp_vector_funcs.h"
 
 // ---------------------------------------------------------------------------
 // linear_sig_: signature of a single linear segment from a displacement vector
@@ -39,17 +40,9 @@ FORCE_INLINE void linear_sig_with_level_index_(
 		T one_over_level = static_cast<T>(1.) / level;
 		T* result_ptr = out + level_index[level];
 		const T* const left_end = out + level_index[level];
-#ifdef VEC
 		for (const T* left_ptr = out + level_index[level - 1]; left_ptr != left_end; ++left_ptr, result_ptr += dimension) {
 			vec_mult_assign(result_ptr, out + 1, (*left_ptr) * one_over_level, dimension);
 		}
-#else
-		for (const T* left_ptr = out + level_index[level - 1]; left_ptr != left_end; ++left_ptr) {
-			T val = (*left_ptr) * one_over_level;
-			for (uint64_t d = 0; d < dimension; ++d)
-				*(result_ptr++) = val * out[1 + d];
-		}
-#endif
 	}
 }
 

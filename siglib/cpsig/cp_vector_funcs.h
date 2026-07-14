@@ -417,6 +417,8 @@ FORCE_INLINE void vec4_bracket_grad(
 
 #else
 
+#include <arm_neon.h>
+
 FORCE_INLINE void vec_mult_add(float* out, const float* other, float scalar, uint64_t size)
 {
 	if (size > 4 && size < 8) {
@@ -721,5 +723,146 @@ FORCE_INLINE void vec4_bracket_grad(
 }
 
 #endif
+
+#else
+
+template<typename T>
+FORCE_INLINE void vec_mult_add(T* out, const T* other, T scalar, uint64_t size) {
+	for (uint64_t i = 0; i < size; ++i) out[i] += other[i] * scalar;
+}
+
+template<typename T>
+FORCE_INLINE void vec_mult_assign(T* out, const T* other, T scalar, uint64_t size) {
+	for (uint64_t i = 0; i < size; ++i) out[i] = other[i] * scalar;
+}
+
+template<typename T>
+FORCE_INLINE T dot_product(const T* a, const T* b, size_t size) {
+	T out = static_cast<T>(0);
+	for (size_t i = 0; i < size; ++i) out += a[i] * b[i];
+	return out;
+}
+
+template<typename T>
+FORCE_INLINE void vec_add_scaled(T* out, const T* a, const T* b, T scalar, uint64_t size) {
+	for (uint64_t i = 0; i < size; ++i) out[i] = (a[i] + b[i]) * scalar;
+}
+
+template<typename T, typename IndexFn>
+FORCE_INLINE void vec_kernel_diag_step(
+	T* RESTRICT next,
+	const T* RESTRICT prev,
+	const T* RESTRICT prev_m1,
+	const T* RESTRICT prev_prev_m1,
+	const T* RESTRICT gram_a,
+	const T* RESTRICT gram_b,
+	IndexFn idx,
+	uint64_t count
+) {
+	for (uint64_t k = 0; k < count; ++k) {
+		const uint64_t gi = idx(k);
+		next[k] = (prev[k] + prev_m1[k]) * gram_a[gi] - prev_prev_m1[k] * gram_b[gi];
+	}
+}
+
+FORCE_INLINE void vec4_add(
+	double* RESTRICT out,
+	const double* RESTRICT a,
+	const double* RESTRICT b,
+	uint64_t count
+) {
+	for (uint64_t i = 0; i < count * 4; ++i) out[i] = a[i] + b[i];
+}
+
+FORCE_INLINE void vec4_add_inplace(
+	double* RESTRICT a,
+	const double* RESTRICT b,
+	uint64_t count
+) {
+	for (uint64_t i = 0; i < count * 4; ++i) a[i] += b[i];
+}
+
+FORCE_INLINE void vec4_fmadd(
+	double* RESTRICT out,
+	const double* RESTRICT a,
+	double scalar,
+	uint64_t count
+) {
+	for (uint64_t i = 0; i < count * 4; ++i) out[i] += a[i] * scalar;
+}
+
+FORCE_INLINE void vec4_scale(
+	double* RESTRICT out,
+	const double* RESTRICT a,
+	double scalar,
+	uint64_t count
+) {
+	for (uint64_t i = 0; i < count * 4; ++i) out[i] = a[i] * scalar;
+}
+
+FORCE_INLINE void vec4_commutator_accum(
+	double* RESTRICT result,
+	const double* RESTRICT v1,
+	const double* RESTRICT v2,
+	const uint32_t* ki,
+	const uint32_t* kj,
+	const double* kval,
+	uint32_t start,
+	uint32_t end
+) {
+	for (uint64_t lane = 0; lane < 4; ++lane) {
+		double sum = 0.0;
+		for (uint32_t idx = start; idx < end; ++idx) {
+			const uint32_t i = ki[idx];
+			const uint32_t j = kj[idx];
+			sum += kval[idx] * (v1[i * 4 + lane] * v2[j * 4 + lane]
+				- v1[j * 4 + lane] * v2[i * 4 + lane]);
+		}
+		result[lane] = sum;
+	}
+}
+
+FORCE_INLINE void vec4_bracket_scatter(
+	double* RESTRICT result,
+	const double* RESTRICT v1,
+	const double* RESTRICT v2,
+	uint32_t i,
+	uint32_t j,
+	const uint32_t* ij_k,
+	const double* ij_c,
+	uint32_t start,
+	uint32_t end
+) {
+	for (uint64_t lane = 0; lane < 4; ++lane) {
+		const double product = v1[i * 4 + lane] * v2[j * 4 + lane]
+			- v1[j * 4 + lane] * v2[i * 4 + lane];
+		for (uint32_t idx = start; idx < end; ++idx)
+			result[ij_k[idx] * 4 + lane] += ij_c[idx] * product;
+	}
+}
+
+FORCE_INLINE void vec4_bracket_grad(
+	double* RESTRICT dm_lf,
+	double* RESTRICT dm_rf,
+	const double* RESTRICT dm_w,
+	const double* RESTRICT v1,
+	const double* RESTRICT v2,
+	uint32_t i,
+	uint32_t j,
+	const uint32_t* ij_k,
+	const double* ij_c,
+	uint32_t start,
+	uint32_t end
+) {
+	for (uint64_t lane = 0; lane < 4; ++lane) {
+		double sum = 0.0;
+		for (uint32_t idx = start; idx < end; ++idx)
+			sum += ij_c[idx] * dm_w[ij_k[idx] * 4 + lane];
+		dm_lf[i * 4 + lane] += sum * v2[j * 4 + lane];
+		dm_lf[j * 4 + lane] -= sum * v2[i * 4 + lane];
+		dm_rf[j * 4 + lane] += sum * v1[i * 4 + lane];
+		dm_rf[i * 4 + lane] -= sum * v1[j * 4 + lane];
+	}
+}
 
 #endif

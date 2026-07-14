@@ -19,10 +19,8 @@
 #include "multithreading.h"
 
 #include "cp_path.h"
-#include "macros.h"
-#ifdef VEC
 #include "cp_vector_funcs.h"
-#endif
+#include "macros.h"
 
 inline void validate_sig_kernel_dims_(
 	uint64_t length1, uint64_t length2,
@@ -146,29 +144,17 @@ void get_sig_kernel_diag_internal_(
 		const uint64_t startj = long_len > p ? 1 : p - long_len + 1;
 		const uint64_t endj = short_len > p ? p : short_len;
 
-		uint64_t j = startj;
-#ifdef VEC
-		{
-			const uint64_t span = endj - startj;
-			const uint64_t i0 = p - startj;
-			auto idx = [&](uint64_t k) FORCE_INLINE_LAMBDA {
-				return diag_gram_idx<order>(i0 - k, startj + k, dyadic_order_1, dyadic_order_2, gram_stride);
-			};
-			vec_kernel_diag_step(
-				next_diag + startj,
-				prev_diag + startj,
-				prev_diag + startj - 1,
-				prev_prev_diag + startj - 1,
-				gram_a, gram_b, idx, span);
-			j = endj;
-		}
-#endif
-		for (; j < endj; ++j) {
-			const uint64_t i = p - j;
-			const uint64_t gi = diag_gram_idx<order>(i, j, dyadic_order_1, dyadic_order_2, gram_stride);
-			*(next_diag + j) = (*(prev_diag + j) + *(prev_diag + j - 1)) * gram_a[gi]
-				- *(prev_prev_diag + j - 1) * gram_b[gi];
-		}
+		const uint64_t span = endj - startj;
+		const uint64_t i0 = p - startj;
+		auto idx = [&](uint64_t k) FORCE_INLINE_LAMBDA {
+			return diag_gram_idx<order>(i0 - k, startj + k, dyadic_order_1, dyadic_order_2, gram_stride);
+		};
+		vec_kernel_diag_step(
+			next_diag + startj,
+			prev_diag + startj,
+			prev_diag + startj - 1,
+			prev_prev_diag + startj - 1,
+			gram_a, gram_b, idx, span);
 
 		T* temp = prev_prev_diag;
 		prev_prev_diag = prev_diag;

@@ -476,8 +476,6 @@ void log_sig_from_path_(
 }
 
 
-// Shared across AVX2 and NEON - no platform-specific intrinsics needed.
-#ifdef VEC
 inline void log_sig_from_path_x4_(
 	const double* paths[4], double* outs[4],
 	uint64_t length, uint64_t dimension,
@@ -600,7 +598,6 @@ inline void log_sig_from_path_backprop_x4_(
 		}
 	}
 }
-#endif // VEC
 
 template<std::floating_point T>
 void batch_log_sig_from_path_(

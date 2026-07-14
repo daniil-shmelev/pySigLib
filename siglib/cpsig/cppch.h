@@ -45,11 +45,3 @@
 #include <fstream>
 #include <filesystem>
 #include <cmath>
-
-#ifdef VEC
-#ifndef __APPLE__
-#include <immintrin.h>
-#else
-#include <arm_neon.h>
-#endif
-#endif

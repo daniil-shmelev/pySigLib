@@ -13,7 +13,140 @@
  * limitations under the License.
  * ========================================================================= */
 
+#include <array>
+
 #include "cp_test_helpers.h"
+#include "cp_vector_funcs.h"
+
+template<typename T>
+void check_basic_vector_funcs() {
+    constexpr uint64_t size = 9;
+    std::array<T, size> a;
+    std::array<T, size> b;
+    std::array<T, size> out;
+    for (uint64_t i = 0; i < size; ++i) {
+        a[i] = static_cast<T>(i + 1);
+        b[i] = static_cast<T>(2 * static_cast<int64_t>(i) - 3);
+    }
+
+    vec_mult_assign(out.data(), a.data(), static_cast<T>(1.5), size);
+    for (uint64_t i = 0; i < size; ++i)
+        EXPECT_NEAR(out[i], a[i] * static_cast<T>(1.5), static_cast<T>(1e-5));
+
+    vec_mult_add(out.data(), b.data(), static_cast<T>(-0.25), size);
+    for (uint64_t i = 0; i < size; ++i)
+        EXPECT_NEAR(out[i], a[i] * static_cast<T>(1.5) - b[i] * static_cast<T>(0.25),
+            static_cast<T>(1e-5));
+
+    T expected_dot = static_cast<T>(0);
+    for (uint64_t i = 0; i < size; ++i) expected_dot += a[i] * b[i];
+    EXPECT_NEAR(dot_product(a.data(), b.data(), size), expected_dot, static_cast<T>(1e-4));
+
+    vec_add_scaled(out.data(), a.data(), b.data(), static_cast<T>(0.5), size);
+    for (uint64_t i = 0; i < size; ++i)
+        EXPECT_NEAR(out[i], (a[i] + b[i]) * static_cast<T>(0.5), static_cast<T>(1e-5));
+
+    std::array<T, size> prev;
+    std::array<T, size> prev_m1;
+    std::array<T, size> prev_prev_m1;
+    std::array<T, size> gram_a;
+    std::array<T, size> gram_b;
+    for (uint64_t i = 0; i < size; ++i) {
+        prev[i] = static_cast<T>(i + 1);
+        prev_m1[i] = static_cast<T>(2 * i + 1);
+        prev_prev_m1[i] = static_cast<T>(3 * static_cast<int64_t>(i) - 2);
+        gram_a[i] = static_cast<T>(0.1 * (i + 1));
+        gram_b[i] = static_cast<T>(0.05 * (i + 2));
+    }
+    auto idx = [](uint64_t i) { return size - i - 1; };
+    vec_kernel_diag_step(out.data(), prev.data(), prev_m1.data(), prev_prev_m1.data(),
+        gram_a.data(), gram_b.data(), idx, size);
+    for (uint64_t i = 0; i < size; ++i) {
+        const uint64_t gi = idx(i);
+        const T expected = (prev[i] + prev_m1[i]) * gram_a[gi]
+            - prev_prev_m1[i] * gram_b[gi];
+        EXPECT_NEAR(out[i], expected, static_cast<T>(1e-4));
+    }
+}
+
+TEST(VectorFuncsTest, BasicOperations) {
+    check_basic_vector_funcs<float>();
+    check_basic_vector_funcs<double>();
+}
+
+TEST(VectorFuncsTest, FourLaneOperations) {
+    constexpr uint64_t count = 3;
+    constexpr uint64_t lanes = 4;
+    std::array<double, count * lanes> a;
+    std::array<double, count * lanes> b;
+    std::array<double, count * lanes> out;
+    for (uint64_t i = 0; i < count * lanes; ++i) {
+        a[i] = static_cast<double>(i + 1);
+        b[i] = static_cast<double>(2 * static_cast<int64_t>(i) - 5);
+    }
+
+    vec4_add(out.data(), a.data(), b.data(), count);
+    for (uint64_t i = 0; i < count * lanes; ++i) EXPECT_DOUBLE_EQ(out[i], a[i] + b[i]);
+
+    vec4_add_inplace(out.data(), a.data(), count);
+    for (uint64_t i = 0; i < count * lanes; ++i) EXPECT_DOUBLE_EQ(out[i], 2 * a[i] + b[i]);
+
+    vec4_fmadd(out.data(), b.data(), 0.5, count);
+    for (uint64_t i = 0; i < count * lanes; ++i)
+        EXPECT_DOUBLE_EQ(out[i], 2 * a[i] + 1.5 * b[i]);
+
+    vec4_scale(out.data(), a.data(), -2.0, count);
+    for (uint64_t i = 0; i < count * lanes; ++i) EXPECT_DOUBLE_EQ(out[i], -2 * a[i]);
+}
+
+TEST(VectorFuncsTest, FourLaneBrackets) {
+    constexpr uint64_t count = 3;
+    constexpr uint64_t lanes = 4;
+    std::array<double, count * lanes> v1;
+    std::array<double, count * lanes> v2;
+    for (uint64_t i = 0; i < count * lanes; ++i) {
+        v1[i] = static_cast<double>(i + 1);
+        v2[i] = static_cast<double>(i * i + 2);
+    }
+
+    const std::array<uint32_t, 2> ki = { 0, 1 };
+    const std::array<uint32_t, 2> kj = { 1, 2 };
+    const std::array<double, 2> kval = { 0.5, -2.0 };
+    std::array<double, lanes> commutator;
+    vec4_commutator_accum(commutator.data(), v1.data(), v2.data(),
+        ki.data(), kj.data(), kval.data(), 0, 2);
+    for (uint64_t lane = 0; lane < lanes; ++lane) {
+        double expected = 0.0;
+        for (uint64_t idx = 0; idx < ki.size(); ++idx) {
+            expected += kval[idx] * (v1[ki[idx] * lanes + lane] * v2[kj[idx] * lanes + lane]
+                - v1[kj[idx] * lanes + lane] * v2[ki[idx] * lanes + lane]);
+        }
+        EXPECT_DOUBLE_EQ(commutator[lane], expected);
+    }
+
+    const std::array<uint32_t, 2> ij_k = { 1, 2 };
+    const std::array<double, 2> ij_c = { 2.0, -0.5 };
+    std::array<double, count * lanes> scattered = {};
+    vec4_bracket_scatter(scattered.data(), v1.data(), v2.data(), 0, 1,
+        ij_k.data(), ij_c.data(), 0, 2);
+    for (uint64_t lane = 0; lane < lanes; ++lane) {
+        const double product = v1[lane] * v2[lanes + lane] - v1[lanes + lane] * v2[lane];
+        EXPECT_DOUBLE_EQ(scattered[lanes + lane], 2.0 * product);
+        EXPECT_DOUBLE_EQ(scattered[2 * lanes + lane], -0.5 * product);
+    }
+
+    std::array<double, count * lanes> dm_lf = {};
+    std::array<double, count * lanes> dm_rf = {};
+    vec4_bracket_grad(dm_lf.data(), dm_rf.data(), v2.data(), v1.data(), v2.data(),
+        0, 1, ij_k.data(), ij_c.data(), 0, 2);
+    for (uint64_t lane = 0; lane < lanes; ++lane) {
+        const double sum = 2.0 * v2[lanes + lane] - 0.5 * v2[2 * lanes + lane];
+        EXPECT_DOUBLE_EQ(dm_lf[lane], sum * v2[lanes + lane]);
+        EXPECT_DOUBLE_EQ(dm_lf[lanes + lane], -sum * v2[lane]);
+        EXPECT_DOUBLE_EQ(dm_rf[lanes + lane], sum * v1[lane]);
+        EXPECT_DOUBLE_EQ(dm_rf[lane], -sum * v1[lanes + lane]);
+    }
+}
 
 TEST(SparseMatrixTest, BasicTest1) {
     // Note the diagonal of 1s is assumed in both the matrix and the inverse

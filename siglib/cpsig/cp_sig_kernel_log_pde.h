@@ -24,9 +24,7 @@
 
 #include "cp_exp_signature.h"
 #include "cp_tensor_log.h"
-#ifdef VEC
 #include "cp_vector_funcs.h"
-#endif
 #include "macros.h"
 #include "multithreading.h"
 
@@ -219,17 +217,6 @@ void tensor_adjoint_right_backward(
 }
 
 template<std::floating_point T>
-T dot(const T* a, const T* b, uint64_t length) {
-#ifdef VEC
-	return dot_product(a, b, length);
-#else
-	T out = static_cast<T>(0);
-	for (uint64_t i = 0; i < length; ++i) out += a[i] * b[i];
-	return out;
-#endif
-}
-
-template<std::floating_point T>
 struct CellScratch {
 	T gamma;
 	T u_base;
@@ -332,7 +319,7 @@ void f_increment_backward(
 ) {
 	const uint64_t drive_degree = std::min(layout.degree_x, layout.degree_f);
 	const uint64_t drive_length = layout.length(drive_degree);
-	d_u += dot(dx, d_out, drive_length);
+	d_u += dot_product(dx, d_out, drive_length);
 	for (uint64_t i = 0; i < drive_length; ++i) d_dx[i] += u * d_out[i];
 	tensor_product_backprop_(f, layout.degree_f, dx, drive_degree,
 		d_out, layout.degree_f, d_f, d_dx, layout.offset.data());
@@ -355,7 +342,7 @@ void g_increment_backward(
 ) {
 	const uint64_t drive_degree = std::min(layout.degree_y, layout.degree_g);
 	const uint64_t drive_length = layout.length(drive_degree);
-	d_u += dot(dy, d_out, drive_length);
+	d_u += dot_product(dy, d_out, drive_length);
 	for (uint64_t i = 0; i < drive_length; ++i) d_dy[i] += u * d_out[i];
 	tensor_product_backprop_(g, layout.degree_g, dy, drive_degree,
 		d_out, layout.degree_g, d_g, d_dy, layout.offset.data());
@@ -366,7 +353,8 @@ void g_increment_backward(
 template<std::floating_point T>
 T forcing(const Layout& layout, T u, const T* f, const T* g,
 	T gamma, const T* dx_adj_dy, const T* dy_adj_dx) {
-	return u * gamma + dot(f, dx_adj_dy, layout.f_len) + dot(g, dy_adj_dx, layout.g_len);
+	return u * gamma + dot_product(f, dx_adj_dy, layout.f_len)
+		+ dot_product(g, dy_adj_dx, layout.g_len);
 }
 
 template<std::floating_point T>
@@ -411,7 +399,7 @@ void cell_forward(
 	CellScratch<T>& scratch
 ) {
 	if (layout.degree_x == 1 && layout.degree_y == 1) {
-		scratch.gamma = dot(dx, dy, layout.x_len);
+		scratch.gamma = dot_product(dx, dy, layout.x_len);
 		scratch.u_base = north[0] + west[0] - nw[0];
 		scratch.u_provisional = static_cast<T>(0);
 		if (known_u != nullptr) {
@@ -442,7 +430,7 @@ void cell_forward(
 	tensor_adjoint_right_add(layout, dy, layout.degree_y, dx, layout.degree_x,
 		scratch.dy_adj_dx.data(), layout.degree_g);
 	const uint64_t common_degree = std::min(layout.degree_x, layout.degree_y);
-	scratch.gamma = dot(dx, dy, layout.length(common_degree));
+	scratch.gamma = dot_product(dx, dy, layout.length(common_degree));
 
 	f_increment(layout, dx, north[0], f_n, g_n, scratch.df0.data());
 	g_increment(layout, dy, west[0], f_w, g_w, scratch.dg0.data());

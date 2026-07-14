@@ -18,11 +18,9 @@
 #include "cp_sig_combine.h"
 #include "cp_tensor_log.h"
 #include "cp_bch_data.h"
+#include "cp_vector_funcs.h"
 #include "words.h"
 #include "macros.h"
-#ifdef VEC
-#include "cp_vector_funcs.h"
-#endif
 
 // Sparse vector: list of (index, coefficient) pairs
 using SparseVec = std::vector<std::pair<uint64_t, int>>;
@@ -661,8 +659,7 @@ void bch_combine_linear_impl_(
 	}
 }
 
-// 4-wide BCH combination (works on both AVX2 and NEON).
-#ifdef VEC
+// 4-wide BCH combination.
 inline void bch_combine_impl_x4_(
 	const double* RESTRICT ls1, const double* RESTRICT ls2, double* RESTRICT out,
 	const BchCache& cache, double* memo
@@ -807,7 +804,6 @@ inline void bch_combine_backprop_impl_x4_(
 	vec4_add_inplace(d_ls1, d_memo, m);
 	vec4_add_inplace(d_ls2, d_memo + m * 4, m);
 }
-#endif // VEC
 
 // ========================================================================
 // bch_combine_backprop_impl_: backward pass through BCH

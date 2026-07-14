@@ -16,11 +16,6 @@
 #pragma once
 #include <iostream>
 
-//#ifndef __APPLE__
-//	#define VEC
-//#endif
-
-
 #ifdef _MSC_VER
     #define FORCE_INLINE __forceinline
     #define FORCE_INLINE_LAMBDA [[msvc::forceinline]]

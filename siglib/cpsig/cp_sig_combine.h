@@ -16,11 +16,9 @@
 #pragma once
 #include "cppch.h"
 #include "cp_utils.h"
+#include "cp_vector_funcs.h"
 #include "multithreading.h"
 #include "macros.h"
-#ifdef VEC
-#include "cp_vector_funcs.h"
-#endif
 
 template<std::floating_point T>
 FORCE_INLINE void tensor_product_add_(
@@ -47,14 +45,8 @@ FORCE_INLINE void tensor_product_add_(
 			const T* ap = a + level_index[left];
 			const T* bp = b + level_index[right];
 			for (uint64_t i = 0; i < left_size; ++i) {
-#ifdef VEC
 				vec_mult_add(dst, bp, ap[i] * scale, right_size);
 				dst += right_size;
-#else
-				const T av = ap[i] * scale;
-				for (uint64_t j = 0; j < right_size; ++j)
-					*(dst++) += av * bp[j];
-#endif
 			}
 		}
 	}
@@ -89,18 +81,8 @@ FORCE_INLINE void tensor_product_backprop_(
 			T* dap = d_a + level_index[left];
 			T* dbp = d_b + level_index[right];
 			for (uint64_t i = 0; i < left_size; ++i) {
-#ifdef VEC
 				dap[i] += dot_product(grad + i * right_size, bp, right_size) * scale;
 				vec_mult_add(dbp, grad + i * right_size, ap[i] * scale, right_size);
-#else
-				T da = static_cast<T>(0);
-				for (uint64_t j = 0; j < right_size; ++j) {
-					const T dg = grad[i * right_size + j] * scale;
-					da += dg * bp[j];
-					dbp[j] += dg * ap[i];
-				}
-				dap[i] += da;
-#endif
 			}
 		}
 	}
@@ -155,36 +137,19 @@ FORCE_INLINE void sig_combine_inplace_(
 
 			T* result_ptr = sig1 + level_index[target_level];
 			const T* const left_ptr_upper_bound = sig1 + level_index[left_level + 1];
-#ifdef VEC
 			const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
 			const T* right_start = sig2 + level_index[right_level];
 			for (T* left_ptr = sig1 + level_index[left_level]; left_ptr != left_ptr_upper_bound; ++left_ptr) {
 				vec_mult_add(result_ptr, right_start, *left_ptr, right_level_size);
 				result_ptr += right_level_size;
 			}
-#else
-			for (T* left_ptr = sig1 + level_index[left_level]; left_ptr != left_ptr_upper_bound; ++left_ptr) {
-				const T* const right_ptr_upper_bound = sig2 + level_index[right_level + 1];
-				for (const T* right_ptr = sig2 + level_index[right_level]; right_ptr != right_ptr_upper_bound; ++right_ptr) {
-					*(result_ptr++) += (*left_ptr) * (*right_ptr);
-				}
-			}
-#endif
 		}
 
 		//left_level = 0
-#ifdef VEC
 		{
 			const uint64_t level_size = level_index[target_level + 1] - level_index[target_level];
 			vec_mult_add(sig1 + level_index[target_level], sig2 + level_index[target_level], static_cast<T>(1.), level_size);
 		}
-#else
-		T* result_ptr = sig1 + level_index[target_level];
-		const T* const right_ptr_upper_bound = sig2 + level_index[target_level + 1];
-		for (const T* right_ptr = sig2 + level_index[target_level]; right_ptr != right_ptr_upper_bound; ++right_ptr) {
-			*(result_ptr++) += *right_ptr;
-		}
-#endif
 	}
 
 }
