@@ -412,6 +412,8 @@ struct CudaFns<float> {
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_cuda_f;
     static constexpr auto branched_sig_kernel = branched_sig_kernel_cuda_f;
     static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_cuda_f;
+    static constexpr auto sig_kernel_log_pde = sig_kernel_log_pde_cuda_f;
+    static constexpr auto sig_kernel_log_pde_backprop = sig_kernel_log_pde_backprop_cuda_f;
 
     static constexpr auto bsig = branched_sig_cuda_f;
     static constexpr auto bsig_backprop = branched_sig_backprop_cuda_f;
@@ -452,6 +454,8 @@ struct CudaFns<double> {
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_cuda_d;
     static constexpr auto branched_sig_kernel = branched_sig_kernel_cuda_d;
     static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_cuda_d;
+    static constexpr auto sig_kernel_log_pde = sig_kernel_log_pde_cuda_d;
+    static constexpr auto sig_kernel_log_pde_backprop = sig_kernel_log_pde_backprop_cuda_d;
 
     static constexpr auto bsig = branched_sig_cuda_d;
     static constexpr auto bsig_backprop = branched_sig_backprop_cuda_d;
@@ -1981,6 +1985,103 @@ ffi::Error BranchedSigKernelPdeBackpropCuda(cudaStream_t stream, std::int64_t di
             return_grid, gram, derivs, k_stack, out);
     });
 }
+
+template <typename T>
+ffi::Error SigKernelLogPdeCudaImpl(
+    cudaStream_t stream,
+    std::int64_t dimension, std::int64_t log_step_x, std::int64_t log_step_y,
+    std::int64_t degree_x, std::int64_t degree_y,
+    std::int64_t dyadic_order_x, std::int64_t dyadic_order_y,
+    bool return_grid,
+    ffi::AnyBuffer& path_x, ffi::AnyBuffer& path_y,
+    ffi::Result<ffi::AnyBuffer>& out
+) {
+    PathSpec spec_x;
+    PathSpec spec_y;
+    if (auto msg = GetPathSpec(path_x, spec_x); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = GetPathSpec(path_y, spec_y); !msg.empty()) return InvalidArgument(msg);
+    if (degree_x < 1 || degree_y < 1) return InvalidArgument("log-PDE degrees must be positive");
+    if (spec_x.batch_size != spec_y.batch_size) return InvalidArgument("log-PDE batch sizes must match");
+    const auto dim = static_cast<std::uint64_t>(dimension);
+    if (spec_x.dimension != dim || spec_y.dimension != dim)
+        return InvalidArgument("log-PDE path dimension does not match dimension");
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+    int err_code = CudaFns<T>::sig_kernel_log_pde(
+        BufferData<T>(path_x), BufferData<T>(path_y), BufferData<T>(out),
+        spec_x.batch_size, dim, spec_x.length, spec_y.length,
+        static_cast<std::uint64_t>(log_step_x), static_cast<std::uint64_t>(log_step_y),
+        static_cast<std::uint64_t>(degree_x), static_cast<std::uint64_t>(degree_y),
+        static_cast<std::uint64_t>(dyadic_order_x), static_cast<std::uint64_t>(dyadic_order_y),
+        return_grid);
+    if (err_code != 0) return NativeCallError("sig_kernel_log_pde_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error SigKernelLogPdeBackpropCudaImpl(
+    cudaStream_t stream,
+    std::int64_t dimension, std::int64_t log_step_x, std::int64_t log_step_y,
+    std::int64_t degree_x, std::int64_t degree_y,
+    std::int64_t dyadic_order_x, std::int64_t dyadic_order_y,
+    bool return_grid,
+    ffi::AnyBuffer& path_x, ffi::AnyBuffer& path_y, ffi::AnyBuffer& derivs,
+    ffi::Result<ffi::AnyBuffer>& d_path_x, ffi::Result<ffi::AnyBuffer>& d_path_y
+) {
+    PathSpec spec_x;
+    PathSpec spec_y;
+    if (auto msg = GetPathSpec(path_x, spec_x); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = GetPathSpec(path_y, spec_y); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+    int err_code = CudaFns<T>::sig_kernel_log_pde_backprop(
+        BufferData<T>(path_x), BufferData<T>(path_y),
+        BufferData<T>(d_path_x), BufferData<T>(d_path_y), BufferData<T>(derivs), nullptr,
+        spec_x.batch_size, static_cast<std::uint64_t>(dimension), spec_x.length, spec_y.length,
+        static_cast<std::uint64_t>(log_step_x), static_cast<std::uint64_t>(log_step_y),
+        static_cast<std::uint64_t>(degree_x), static_cast<std::uint64_t>(degree_y),
+        static_cast<std::uint64_t>(dyadic_order_x), static_cast<std::uint64_t>(dyadic_order_y),
+        return_grid);
+    if (err_code != 0) return NativeCallError("sig_kernel_log_pde_backprop_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+ffi::Error SigKernelLogPdeCuda(
+    cudaStream_t stream,
+    std::int64_t dimension, std::int64_t log_step_x, std::int64_t log_step_y,
+    std::int64_t degree_x, std::int64_t degree_y,
+    std::int64_t dyadic_order_x, std::int64_t dyadic_order_y,
+    bool return_grid, std::int64_t /*n_jobs*/,
+    ffi::AnyBuffer path_x, ffi::AnyBuffer path_y, ffi::Result<ffi::AnyBuffer> out
+) {
+    if (auto msg = ValidateSameFloatDtype("path_x", path_x, "path_y", path_y); !msg.empty())
+        return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(path_x), [&]<typename T>() -> ffi::Error {
+        return SigKernelLogPdeCudaImpl<T>(stream, dimension, log_step_x, log_step_y,
+            degree_x, degree_y, dyadic_order_x, dyadic_order_y,
+            return_grid, path_x, path_y, out);
+    });
+}
+
+ffi::Error SigKernelLogPdeBackpropCuda(
+    cudaStream_t stream,
+    std::int64_t dimension, std::int64_t log_step_x, std::int64_t log_step_y,
+    std::int64_t degree_x, std::int64_t degree_y,
+    std::int64_t dyadic_order_x, std::int64_t dyadic_order_y,
+    bool return_grid, std::int64_t /*n_jobs*/,
+    ffi::AnyBuffer path_x, ffi::AnyBuffer path_y, ffi::AnyBuffer derivs,
+    ffi::Result<ffi::AnyBuffer> d_path_x, ffi::Result<ffi::AnyBuffer> d_path_y
+) {
+    if (auto msg = ValidateSameFloatDtype("path_x", path_x, "path_y", path_y); !msg.empty())
+        return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path_x", path_x, "derivs", derivs); !msg.empty())
+        return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(path_x), [&]<typename T>() -> ffi::Error {
+        return SigKernelLogPdeBackpropCudaImpl<T>(stream, dimension, log_step_x, log_step_y,
+            degree_x, degree_y, dyadic_order_x, dyadic_order_y, return_grid,
+            path_x, path_y, derivs, d_path_x, d_path_y);
+    });
+}
 #endif
 
 }  // namespace
@@ -2288,6 +2389,25 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigKernelPdeBackpropCuda, Branched
         .Attr<std::int64_t>("dyadic_order_1").Attr<std::int64_t>("dyadic_order_2")
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelLogPdeCuda, SigKernelLogPdeCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension")
+        .Attr<std::int64_t>("log_step_x").Attr<std::int64_t>("log_step_y")
+        .Attr<std::int64_t>("degree_x").Attr<std::int64_t>("degree_y")
+        .Attr<std::int64_t>("dyadic_order_x").Attr<std::int64_t>("dyadic_order_y")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelLogPdeBackpropCuda, SigKernelLogPdeBackpropCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension")
+        .Attr<std::int64_t>("log_step_x").Attr<std::int64_t>("log_step_y")
+        .Attr<std::int64_t>("degree_x").Attr<std::int64_t>("degree_y")
+        .Attr<std::int64_t>("dyadic_order_x").Attr<std::int64_t>("dyadic_order_y")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
+        .Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
 
 namespace {

@@ -15,6 +15,154 @@
 
 #include "cu_test_helpers.h"
 
+TEST(sigKernelLogPdeCudaTest, ForwardReferenceGrid) {
+    const uint64_t dimension = 2;
+    const uint64_t length_x = 5;
+    const uint64_t length_y = 7;
+    std::vector<double> path_x = {
+        0.0, 0.0, 0.1, 0.2, 0.3, 0.1, 0.2, -0.1, 0.4, 0.0
+    };
+    std::vector<double> path_y = {
+        0.0, 0.0, -0.1, 0.2, 0.1, 0.3, 0.2, 0.1,
+        0.0, -0.1, 0.3, 0.0, 0.2, 0.2
+    };
+    std::vector<double> expected = {
+        1.0, 1.0, 1.0,
+        1.0, 1.0365700172524006, 1.040772345560078,
+        1.0, 1.0737800099166548, 1.0823609296996786,
+        1.0, 1.0792209359400757, 1.0824348112577176,
+        1.0, 1.0846752878260841, 1.0825079628081127
+    };
+
+    double* d_path_x = nullptr;
+    double* d_path_y = nullptr;
+    double* d_out = nullptr;
+    ASSERT_EQ(cudaSuccess, cudaMalloc(&d_path_x, path_x.size() * sizeof(double)));
+    ASSERT_EQ(cudaSuccess, cudaMalloc(&d_path_y, path_y.size() * sizeof(double)));
+    ASSERT_EQ(cudaSuccess, cudaMalloc(&d_out, expected.size() * sizeof(double)));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        d_path_x, path_x.data(), path_x.size() * sizeof(double), cudaMemcpyHostToDevice));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        d_path_y, path_y.data(), path_y.size() * sizeof(double), cudaMemcpyHostToDevice));
+
+    EXPECT_EQ(0, sig_kernel_log_pde_cuda_d(
+        d_path_x, d_path_y, d_out, 1, dimension, length_x, length_y,
+        2, 3, 3, 2, 1, 0, true));
+    std::vector<double> actual(expected.size());
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        actual.data(), d_out, actual.size() * sizeof(double), cudaMemcpyDeviceToHost));
+
+    cudaFree(d_path_x);
+    cudaFree(d_path_y);
+    cudaFree(d_out);
+    for (uint64_t i = 0; i < expected.size(); ++i)
+        EXPECT_NEAR(actual[i], expected[i], DOUBLE_EPSILON);
+}
+
+TEST(sigKernelLogPdeCudaTest, BackwardDirectionalDerivativeWithGrid) {
+    const uint64_t dimension = 2;
+    const uint64_t length_x = 5;
+    const uint64_t length_y = 7;
+    std::vector<double> path_x = {
+        0.0, 0.0, 0.1, 0.2, 0.3, 0.1, 0.2, -0.1, 0.4, 0.0
+    };
+    std::vector<double> path_y = {
+        0.0, 0.0, -0.1, 0.2, 0.1, 0.3, 0.2, 0.1,
+        0.0, -0.1, 0.3, 0.0, 0.2, 0.2
+    };
+    std::vector<double> direction_x(path_x.size());
+    std::vector<double> direction_y(path_y.size());
+    for (uint64_t i = 0; i < direction_x.size(); ++i)
+        direction_x[i] = static_cast<double>(i + 1) * 0.01;
+    for (uint64_t i = 0; i < direction_y.size(); ++i)
+        direction_y[i] = -static_cast<double>(i + 1) * 0.007;
+    const uint64_t grid_length = 15;
+    std::vector<double> derivs(grid_length);
+    for (uint64_t i = 0; i < derivs.size(); ++i)
+        derivs[i] = static_cast<double>(i + 1) * 0.02;
+
+    double* d_path_x = nullptr;
+    double* d_path_y = nullptr;
+    double* d_grid = nullptr;
+    double* d_derivs = nullptr;
+    double* d_grad_x = nullptr;
+    double* d_grad_y = nullptr;
+    ASSERT_EQ(cudaSuccess, cudaMalloc(&d_path_x, path_x.size() * sizeof(double)));
+    ASSERT_EQ(cudaSuccess, cudaMalloc(&d_path_y, path_y.size() * sizeof(double)));
+    ASSERT_EQ(cudaSuccess, cudaMalloc(&d_grid, grid_length * sizeof(double)));
+    ASSERT_EQ(cudaSuccess, cudaMalloc(&d_derivs, grid_length * sizeof(double)));
+    ASSERT_EQ(cudaSuccess, cudaMalloc(&d_grad_x, path_x.size() * sizeof(double)));
+    ASSERT_EQ(cudaSuccess, cudaMalloc(&d_grad_y, path_y.size() * sizeof(double)));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        d_path_x, path_x.data(), path_x.size() * sizeof(double), cudaMemcpyHostToDevice));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        d_path_y, path_y.data(), path_y.size() * sizeof(double), cudaMemcpyHostToDevice));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        d_derivs, derivs.data(), derivs.size() * sizeof(double), cudaMemcpyHostToDevice));
+
+    ASSERT_EQ(0, sig_kernel_log_pde_cuda_d(
+        d_path_x, d_path_y, d_grid, 1, dimension, length_x, length_y,
+        2, 3, 3, 2, 1, 0, true));
+    ASSERT_EQ(0, sig_kernel_log_pde_backprop_cuda_d(
+        d_path_x, d_path_y, d_grad_x, d_grad_y, d_derivs, d_grid,
+        1, dimension, length_x, length_y, 2, 3, 3, 2, 1, 0, true));
+
+    std::vector<double> grad_x(path_x.size());
+    std::vector<double> grad_y(path_y.size());
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        grad_x.data(), d_grad_x, grad_x.size() * sizeof(double), cudaMemcpyDeviceToHost));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        grad_y.data(), d_grad_y, grad_y.size() * sizeof(double), cudaMemcpyDeviceToHost));
+    double predicted = 0.0;
+    for (uint64_t i = 0; i < grad_x.size(); ++i) predicted += grad_x[i] * direction_x[i];
+    for (uint64_t i = 0; i < grad_y.size(); ++i) predicted += grad_y[i] * direction_y[i];
+
+    constexpr double epsilon = 1e-6;
+    std::vector<double> plus_x(path_x.size());
+    std::vector<double> minus_x(path_x.size());
+    std::vector<double> plus_y(path_y.size());
+    std::vector<double> minus_y(path_y.size());
+    for (uint64_t i = 0; i < path_x.size(); ++i) {
+        plus_x[i] = path_x[i] + epsilon * direction_x[i];
+        minus_x[i] = path_x[i] - epsilon * direction_x[i];
+    }
+    for (uint64_t i = 0; i < path_y.size(); ++i) {
+        plus_y[i] = path_y[i] + epsilon * direction_y[i];
+        minus_y[i] = path_y[i] - epsilon * direction_y[i];
+    }
+    std::vector<double> plus_grid(grid_length);
+    std::vector<double> minus_grid(grid_length);
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        d_path_x, plus_x.data(), plus_x.size() * sizeof(double), cudaMemcpyHostToDevice));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        d_path_y, plus_y.data(), plus_y.size() * sizeof(double), cudaMemcpyHostToDevice));
+    ASSERT_EQ(0, sig_kernel_log_pde_cuda_d(
+        d_path_x, d_path_y, d_grid, 1, dimension, length_x, length_y,
+        2, 3, 3, 2, 1, 0, true));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        plus_grid.data(), d_grid, grid_length * sizeof(double), cudaMemcpyDeviceToHost));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        d_path_x, minus_x.data(), minus_x.size() * sizeof(double), cudaMemcpyHostToDevice));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        d_path_y, minus_y.data(), minus_y.size() * sizeof(double), cudaMemcpyHostToDevice));
+    ASSERT_EQ(0, sig_kernel_log_pde_cuda_d(
+        d_path_x, d_path_y, d_grid, 1, dimension, length_x, length_y,
+        2, 3, 3, 2, 1, 0, true));
+    ASSERT_EQ(cudaSuccess, cudaMemcpy(
+        minus_grid.data(), d_grid, grid_length * sizeof(double), cudaMemcpyDeviceToHost));
+
+    cudaFree(d_path_x);
+    cudaFree(d_path_y);
+    cudaFree(d_grid);
+    cudaFree(d_derivs);
+    cudaFree(d_grad_x);
+    cudaFree(d_grad_y);
+    double observed = 0.0;
+    for (uint64_t i = 0; i < grid_length; ++i)
+        observed += derivs[i] * (plus_grid[i] - minus_grid[i]) / (2.0 * epsilon);
+    EXPECT_NEAR(predicted, observed, 2e-8);
+}
+
 TEST(sigKernelTest, Trivial) {
     auto f = sig_kernel_cuda_d;
     uint64_t dimension = 1, length = 1, batch_size = 1;

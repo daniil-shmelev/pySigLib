@@ -79,6 +79,8 @@ using sig_kernel_backprop_d_fn = int(CDECL_*)(const double*, double*, const doub
 
 using sig_kernel_log_pde_d_fn = int(CDECL_*)(const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool, int);
 using sig_kernel_log_pde_backprop_d_fn = int(CDECL_*)(const double*, const double*, double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool, int);
+using sig_kernel_log_pde_cuda_d_fn = int(CDECL_*)(const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool);
+using sig_kernel_log_pde_backprop_cuda_d_fn = int(CDECL_*)(const double*, const double*, double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool);
 
 using sig_kernel_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool);
 
@@ -126,6 +128,8 @@ extern sig_coef_backprop_cuda_d_fn sig_coef_backprop_cuda_d;
 extern sig_kernel_backprop_d_fn sig_kernel_backprop_d;
 extern sig_kernel_log_pde_d_fn sig_kernel_log_pde_d;
 extern sig_kernel_log_pde_backprop_d_fn sig_kernel_log_pde_backprop_d;
+extern sig_kernel_log_pde_cuda_d_fn sig_kernel_log_pde_cuda_d;
+extern sig_kernel_log_pde_backprop_cuda_d_fn sig_kernel_log_pde_backprop_cuda_d;
 
 extern sig_kernel_backprop_cuda_d_fn sig_kernel_backprop_cuda_d;
 

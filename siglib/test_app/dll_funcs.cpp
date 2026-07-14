@@ -183,6 +183,8 @@ sig_coef_backprop_cuda_d_fn sig_coef_backprop_cuda_d = nullptr;
 sig_kernel_backprop_d_fn sig_kernel_backprop_d = nullptr;
 sig_kernel_log_pde_d_fn sig_kernel_log_pde_d = nullptr;
 sig_kernel_log_pde_backprop_d_fn sig_kernel_log_pde_backprop_d = nullptr;
+sig_kernel_log_pde_cuda_d_fn sig_kernel_log_pde_cuda_d = nullptr;
+sig_kernel_log_pde_backprop_cuda_d_fn sig_kernel_log_pde_backprop_cuda_d = nullptr;
 
 sig_kernel_backprop_cuda_d_fn sig_kernel_backprop_cuda_d = nullptr;
 
@@ -251,6 +253,8 @@ void get_cusig_fn_ptrs()
 {
     GET_FN(sig_kernel_cuda_d, cusig);
     GET_FN(sig_kernel_backprop_cuda_d, cusig);
+    GET_FN(sig_kernel_log_pde_cuda_d, cusig);
+    GET_FN(sig_kernel_log_pde_backprop_cuda_d, cusig);
     GET_FN(signature_cuda_f, cusig);
     GET_FN(signature_cuda_d, cusig);
     GET_FN(sig_backprop_cuda_d, cusig);

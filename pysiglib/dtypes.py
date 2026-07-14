@@ -52,6 +52,8 @@ CUSIG_SIG_KERNEL_CUDA = None
 CUSIG_SIG_KERNEL_BACKPROP_CUDA = None
 CUSIG_BRANCHED_SIG_KERNEL_CUDA = None
 CUSIG_BRANCHED_SIG_KERNEL_BACKPROP_CUDA = None
+CUSIG_SIG_KERNEL_LOG_PDE_CUDA = None
+CUSIG_SIG_KERNEL_LOG_PDE_BACKPROP_CUDA = None
 CUSIG_SIGNATURE_CUDA = None
 CUSIG_SIG_BACKPROP_CUDA = None
 CUSIG_SIG_COMBINE_CUDA = None
@@ -106,6 +108,16 @@ if BUILT_WITH_CUDA:
     CUSIG_BRANCHED_SIG_KERNEL_BACKPROP_CUDA = {
         "float32": CUSIG.branched_sig_kernel_backprop_cuda_f,
         "float64": CUSIG.branched_sig_kernel_backprop_cuda_d
+    }
+
+    CUSIG_SIG_KERNEL_LOG_PDE_CUDA = {
+        "float32": CUSIG.sig_kernel_log_pde_cuda_f,
+        "float64": CUSIG.sig_kernel_log_pde_cuda_d
+    }
+
+    CUSIG_SIG_KERNEL_LOG_PDE_BACKPROP_CUDA = {
+        "float32": CUSIG.sig_kernel_log_pde_backprop_cuda_f,
+        "float64": CUSIG.sig_kernel_log_pde_backprop_cuda_d
     }
 
     CUSIG_SIGNATURE_CUDA = {

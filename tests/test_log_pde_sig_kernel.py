@@ -565,3 +565,176 @@ def test_log_pde_k_grid_validation():
             derivs, path, path, 0, k_grid=np.ones((2, 3, 3), dtype=np.float32),
             **kwargs,
         )
+
+
+_CUDA_AVAILABLE = pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()
+
+
+@pytest.mark.skipif(not _CUDA_AVAILABLE, reason="CUDA is not available")
+@pytest.mark.parametrize(
+    "dtype,batch_shape,lengths,dimension,degrees,log_steps,dyadic,return_grid,checkpoint,time_aug,lead_lag",
+    [
+        (np.float32, (), (3, 5), 1, (1, 1), (1, 2), (0, 0), False, False, False, False),
+        (np.float64, (1,), (7, 9), 2, (2, 3), (3, 2), (1, 0), True, True, False, False),
+        (np.float32, (3,), (9, 13), 3, (3, 2), (4, 3), (0, 1), False, True, False, False),
+        (np.float64, (2, 2), (9, 7), 2, (4, 3), (4, 2), (1, 1), False, False, False, False),
+        (np.float64, (2,), (5, 7), 2, (2, 2), (2, 3), (0, 0), True, True, True, True),
+    ],
+)
+def test_log_pde_cuda_standard_matches_cpu(
+        dtype, batch_shape, lengths, dimension, degrees, log_steps, dyadic,
+        return_grid, checkpoint, time_aug, lead_lag):
+    rng = np.random.default_rng(70)
+    path1 = np.ascontiguousarray(np.cumsum(
+        rng.normal(scale=0.03, size=batch_shape + (lengths[0], dimension)), axis=-2
+    ).astype(dtype))
+    path2 = np.ascontiguousarray(np.cumsum(
+        rng.normal(scale=0.03, size=batch_shape + (lengths[1], dimension)), axis=-2
+    ).astype(dtype))
+    kwargs = dict(
+        method="log_pde", log_degree=degrees, log_steps=log_steps,
+        time_aug=time_aug, lead_lag=lead_lag,
+    )
+
+    expected = pysiglib.sig_kernel(
+        path1, path2, dyadic, return_grid=return_grid, **kwargs
+    )
+    path1_cuda = torch.as_tensor(path1, device="cuda")
+    path2_cuda = torch.as_tensor(path2, device="cuda")
+    actual = pysiglib.sig_kernel(
+        path1_cuda, path2_cuda, dyadic, return_grid=return_grid, **kwargs
+    )
+
+    derivs = np.asarray(rng.normal(size=expected.shape), dtype=dtype)
+    cpu_grid = None
+    cuda_grid = None
+    if checkpoint:
+        cpu_grid = pysiglib.sig_kernel(
+            path1, path2, dyadic, return_grid=True, **kwargs
+        )
+        cuda_grid = actual if return_grid else pysiglib.sig_kernel(
+            path1_cuda, path2_cuda, dyadic, return_grid=True, **kwargs
+        )
+    expected_grad = pysiglib.sig_kernel_backprop(
+        derivs, path1, path2, dyadic, right_deriv=True,
+        k_grid=cpu_grid, return_grid=return_grid, **kwargs,
+    )
+    actual_grad = pysiglib.sig_kernel_backprop(
+        torch.as_tensor(derivs, device="cuda"), path1_cuda, path2_cuda,
+        dyadic, right_deriv=True, k_grid=cuda_grid,
+        return_grid=return_grid, **kwargs,
+    )
+
+    tolerance = 5e-4 if dtype == np.float32 else 2e-10
+    np.testing.assert_allclose(
+        actual.cpu().numpy(), expected, rtol=tolerance, atol=tolerance
+    )
+    np.testing.assert_allclose(
+        actual_grad[0].cpu().numpy(), expected_grad[0],
+        rtol=tolerance, atol=tolerance,
+    )
+    np.testing.assert_allclose(
+        actual_grad[1].cpu().numpy(), expected_grad[1],
+        rtol=tolerance, atol=tolerance,
+    )
+
+
+@pytest.mark.skipif(not _CUDA_AVAILABLE, reason="CUDA is not available")
+def test_log_pde_cuda_empty_batch():
+    path1 = torch.empty((0, 5, 2), dtype=torch.float64, device="cuda")
+    path2 = torch.empty((0, 7, 2), dtype=torch.float64, device="cuda")
+    kwargs = dict(method="log_pde", log_degree=(2, 3), log_steps=(2, 3))
+    value = pysiglib.sig_kernel(path1, path2, 0, **kwargs)
+    grad1, grad2 = pysiglib.sig_kernel_backprop(
+        torch.empty(0, dtype=torch.float64, device="cuda"),
+        path1, path2, 0, right_deriv=True, **kwargs,
+    )
+    assert value.shape == (0,)
+    assert grad1.shape == path1.shape
+    assert grad2.shape == path2.shape
+
+
+@pytest.mark.skipif(not _CUDA_AVAILABLE, reason="CUDA is not available")
+def test_log_pde_torch_cuda_autograd_and_gram_match_cpu():
+    torch_api = pytest.importorskip("pysiglib.torch_api")
+    path1 = _random_paths(80, 3, 7)
+    path2 = _random_paths(81, 2, 9)
+    kwargs = dict(
+        method="log_pde", log_degree=(3, 2), log_steps=(3, 4),
+    )
+
+    expected_gram = pysiglib.sig_kernel_gram(
+        path1, path2, (1, 0), max_batch=2, **kwargs
+    )
+    weights = np.random.default_rng(82).normal(size=expected_gram.shape)
+    expected_grad = pysiglib.sig_kernel_gram_backprop(
+        weights, path1, path2, (1, 0), right_deriv=True,
+        max_batch=2, **kwargs,
+    )
+
+    path1_cuda = torch.as_tensor(path1, device="cuda").requires_grad_()
+    path2_cuda = torch.as_tensor(path2, device="cuda").requires_grad_()
+    actual_gram = torch_api.sig_kernel_gram(
+        path1_cuda, path2_cuda, (1, 0), max_batch=2, **kwargs
+    )
+    (actual_gram * torch.as_tensor(weights, device="cuda")).sum().backward()
+
+    np.testing.assert_allclose(actual_gram.detach().cpu().numpy(), expected_gram, atol=2e-10)
+    np.testing.assert_allclose(path1_cuda.grad.cpu().numpy(), expected_grad[0], atol=2e-10)
+    np.testing.assert_allclose(path2_cuda.grad.cpu().numpy(), expected_grad[1], atol=2e-10)
+    expected_mmd = pysiglib.sig_mmd(
+        path1, path2, (1, 0), max_batch=2, **kwargs
+    )
+    actual_mmd = torch_api.sig_mmd(
+        path1_cuda.detach(), path2_cuda.detach(), (1, 0), max_batch=2, **kwargs
+    )
+    np.testing.assert_allclose(actual_mmd.cpu().numpy(), expected_mmd, atol=2e-10)
+
+
+def test_log_pde_torch_saved_grid_detects_inplace_mutation():
+    torch_api = pytest.importorskip("pysiglib.torch_api")
+    path1 = torch.as_tensor(_random_paths(83, 1, 7)).requires_grad_()
+    path2 = torch.as_tensor(_random_paths(84, 1, 7)).requires_grad_()
+    value = torch_api.sig_kernel(
+        path1, path2, 0, method="log_pde", log_degree=3,
+        log_steps=3, return_grid=True,
+    )
+    value.add_(1)
+    with pytest.raises(RuntimeError, match="modified by an inplace operation"):
+        value.sum().backward()
+
+
+@pytest.mark.skipif(not _CUDA_AVAILABLE, reason="CUDA is not available")
+def test_log_pde_jax_cuda_jit_and_grad_match_cpu():
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+    jax_api = pytest.importorskip("pysiglib.jax_api")
+    devices = [device for device in jax.devices() if device.platform in {"gpu", "cuda"}]
+    if not devices:
+        pytest.skip("JAX has no CUDA device")
+    jax.config.update("jax_enable_x64", True)
+
+    path1 = _random_paths(85, 2, 7)
+    path2 = _random_paths(86, 2, 9)
+    kwargs = dict(
+        method="log_pde", log_degree=(3, 2), log_steps=(3, 2),
+        return_grid=True,
+    )
+    expected = pysiglib.sig_kernel(path1, path2, (1, 0), **kwargs)
+    weights = np.random.default_rng(87).normal(size=expected.shape)
+    expected_grad = pysiglib.sig_kernel_backprop(
+        weights, path1, path2, (1, 0), right_deriv=True, **kwargs
+    )
+
+    device = devices[0]
+    path1_cuda = jax.device_put(path1, device=device)
+    path2_cuda = jax.device_put(path2, device=device)
+    weights_cuda = jax.device_put(weights, device=device)
+    kernel = jax.jit(lambda x, y: jax_api.sig_kernel(x, y, (1, 0), **kwargs))
+    objective = lambda x, y: jnp.sum(kernel(x, y) * weights_cuda)
+    actual = kernel(path1_cuda, path2_cuda)
+    actual_grad = jax.jit(jax.grad(objective, argnums=(0, 1)))(path1_cuda, path2_cuda)
+
+    np.testing.assert_allclose(np.asarray(actual), expected, atol=2e-10)
+    np.testing.assert_allclose(np.asarray(actual_grad[0]), expected_grad[0], atol=2e-10)
+    np.testing.assert_allclose(np.asarray(actual_grad[1]), expected_grad[1], atol=2e-10)

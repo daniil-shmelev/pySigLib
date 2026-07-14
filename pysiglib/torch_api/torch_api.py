@@ -387,7 +387,10 @@ class LogPde(torch.autograd.Function):
             time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
             n_jobs=n_jobs, return_grid=return_grid,
         )
-        ctx.save_for_backward(path1, path2)
+        if return_grid:
+            ctx.save_for_backward(path1, path2, out)
+        else:
+            ctx.save_for_backward(path1, path2)
         ctx.dyadic_order = dyadic_order
         ctx.log_degrees = log_degrees
         ctx.log_step_sizes = log_step_sizes
@@ -400,14 +403,18 @@ class LogPde(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        path1, path2 = ctx.saved_tensors
+        if ctx.return_grid:
+            path1, path2, k_grid = ctx.saved_tensors
+        else:
+            path1, path2 = ctx.saved_tensors
+            k_grid = None
         d_path1, d_path2 = sig_kernel_backprop(
             grad_output, path1, path2, ctx.dyadic_order,
             method="log_pde", log_degree=ctx.log_degrees,
             log_steps=ctx.log_step_sizes, time_aug=ctx.time_aug,
             lead_lag=ctx.lead_lag, end_time=ctx.end_time,
             left_deriv=ctx.needs_input_grad[0], right_deriv=ctx.needs_input_grad[1],
-            n_jobs=ctx.n_jobs, return_grid=ctx.return_grid,
+            k_grid=k_grid, n_jobs=ctx.n_jobs, return_grid=ctx.return_grid,
         )
         return d_path1, d_path2, None, None, None, None, None, None, None, None
 
@@ -415,8 +422,6 @@ class LogPde(torch.autograd.Function):
 def _log_pde_sig_kernel_torch(
         path1, path2, dyadic_order, log_degrees, log_step_sizes,
         time_aug, lead_lag, end_time, n_jobs, return_grid):
-    if path1.device.type != "cpu" or path2.device.type != "cpu":
-        raise ValueError("method='log_pde' is currently CPU-only")
     return LogPde.apply(
         path1, path2, dyadic_order, log_degrees, log_step_sizes,
         time_aug, lead_lag, end_time, n_jobs, return_grid,
@@ -521,9 +526,6 @@ def _log_pde_sig_kernel_gram_torch(
     batch_shape_2 = tuple(path2.shape[:-2])
     path1 = _ensure_3d(path1)
     path2 = path1 if symmetric else _ensure_3d(path2)
-    if path1.device.type != "cpu" or path2.device.type != "cpu":
-        raise ValueError("method='log_pde' is currently CPU-only")
-
     batch1, batch2 = path1.shape[0], path2.shape[0]
     if max_batch == -1:
         max_batch = max(batch1, batch2)

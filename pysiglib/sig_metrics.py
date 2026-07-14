@@ -56,8 +56,8 @@ def sig_score(
     :param lam: The parameter :math:`\\lambda` of the generalised signature kernel score (default = 1.0).
     :type lam: float
     :param method: PDE method. Use ``"pde"`` for the standard Goursat solver or
-        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method is
-        currently CPU-only and supports only the linear static kernel.
+        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method
+        supports only the linear static kernel.
     :type method: str
     :param log_degree: Tensor-log truncation degree. Required for
         ``method="log_pde"``. An integer applies to both path collections; a pair
@@ -234,8 +234,8 @@ def expected_sig_score(
     :param lam: The parameter :math:`\\lambda` of the generalised signature kernel score (default = 1.0).
     :type lam: float
     :param method: PDE method. Use ``"pde"`` for the standard Goursat solver or
-        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method is
-        currently CPU-only and supports only the linear static kernel.
+        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method
+        supports only the linear static kernel.
     :type method: str
     :param log_degree: Tensor-log truncation degree. Required for
         ``method="log_pde"``. An integer applies to both path collections; a pair
@@ -363,8 +363,8 @@ def sig_mmd(
         and the second path by :math:`2^{\\lambda_2}`.
     :type dyadic_order: int | tuple
     :param method: PDE method. Use ``"pde"`` for the standard Goursat solver or
-        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method is
-        currently CPU-only and supports only the linear static kernel.
+        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method
+        supports only the linear static kernel.
     :type method: str
     :param log_degree: Tensor-log truncation degree. Required for
         ``method="log_pde"``. An integer applies to both path collections; a pair

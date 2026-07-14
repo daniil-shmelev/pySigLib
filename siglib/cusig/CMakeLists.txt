@@ -15,6 +15,7 @@ add_library(cusig SHARED
     cu_path_transforms.cu
     cu_sig_coef.cu
     cu_sig_kernel.cu
+    cu_sig_kernel_log_pde.cu
     cu_signature.cu
     cu_sig_combine.cu
     cusig_lifecycle.cu

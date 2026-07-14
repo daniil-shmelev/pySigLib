@@ -27,7 +27,7 @@ from .param_checks import (
 from .error_codes import err_msg
 from .dtypes import (
     CPSIG_SIG_KERNEL, CPSIG_SIG_KERNEL_LOG_PDE,
-    DTYPES, CUSIG_SIG_KERNEL_CUDA,
+    DTYPES, CUSIG_SIG_KERNEL_CUDA, CUSIG_SIG_KERNEL_LOG_PDE_CUDA,
 )
 from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOutputHandler
 from .static_kernels import StaticKernel, LinearKernel, Context
@@ -71,9 +71,6 @@ def _sig_kernel_log_pde(
         return_grid, normalize):
     if static_kernel is not None and not isinstance(static_kernel, LinearKernel):
         raise ValueError("method='log_pde' supports only the linear static kernel")
-    if data.device != "cpu":
-        raise ValueError("method='log_pde' is currently CPU-only")
-
     steps = []
     for length, log_step in zip(data.length, log_step_sizes):
         intervals = length - 1
@@ -93,12 +90,16 @@ def _sig_kernel_log_pde(
         )
     else:
         result = ScalarOutputHandler(data)
-    err_code = CPSIG_SIG_KERNEL_LOG_PDE[data.dtype](
+    args = (
         data.data[0].data_ptr, data.data[1].data_ptr, result.data_ptr,
         data.batch_size, data.dimension, data.length[0], data.length[1],
         log_step_sizes[0], log_step_sizes[1], log_degrees[0], log_degrees[1],
-        dyadic_order_1, dyadic_order_2, return_grid, n_jobs,
+        dyadic_order_1, dyadic_order_2, return_grid,
     )
+    if data.device == "cpu":
+        err_code = CPSIG_SIG_KERNEL_LOG_PDE[data.dtype](*args, n_jobs)
+    else:
+        err_code = CUSIG_SIG_KERNEL_LOG_PDE_CUDA[data.dtype](*args)
     if err_code:
         raise Exception("Error in log-PDE signature kernel: " + err_msg(err_code))
 
@@ -264,8 +265,7 @@ def sig_kernel(
     :type dyadic_order: int | tuple
     :param method: PDE method. Use ``"pde"`` for the standard
         Goursat solver or ``"log_pde"`` for the higher-order log-PDE method.
-        The log-PDE method is currently CPU-only and supports only the linear
-        static kernel.
+        The log-PDE method supports only the linear static kernel.
     :type method: str
     :param log_degree: Tensor-log truncation degree. Required for
         ``method="log_pde"``. An integer applies to both paths; a pair applies
@@ -431,8 +431,8 @@ def sig_kernel_gram(
         blocks for ``method="log_pde"``.
     :type dyadic_order: int | tuple
     :param method: PDE method. Use ``"pde"`` for the standard Goursat solver or
-        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method is
-        currently CPU-only and supports only the linear static kernel.
+        ``"log_pde"`` for the higher-order log-PDE method. The log-PDE method
+        supports only the linear static kernel.
     :type method: str
     :param log_degree: Tensor-log truncation degree. Required for
         ``method="log_pde"``. An integer applies to both paths; a pair applies

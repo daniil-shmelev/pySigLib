@@ -128,9 +128,11 @@ _TARGETS = {
     },
     "sig_kernel_log_pde": {
         "cpu": ("pysiglib_sig_kernel_log_pde_cpu", "PySigLibSigKernelLogPdeCpu"),
+        "cuda": ("pysiglib_sig_kernel_log_pde_cuda", "PySigLibSigKernelLogPdeCuda"),
     },
     "sig_kernel_log_pde_backprop": {
         "cpu": ("pysiglib_sig_kernel_log_pde_backprop_cpu", "PySigLibSigKernelLogPdeBackpropCpu"),
+        "cuda": ("pysiglib_sig_kernel_log_pde_backprop_cuda", "PySigLibSigKernelLogPdeBackpropCuda"),
     },
     "logsig_to_sig": {
         "cpu": ("pysiglib_logsig_to_sig_cpu", "PySigLibLogSigToSigCpu"),

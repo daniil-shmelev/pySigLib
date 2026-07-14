@@ -189,6 +189,65 @@ extern "C" {
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_backprop_cuda_d(const double* gram, double* out, const double* derivs, const double* k_stack, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
 
+	/** @defgroup sig_kernel_log_pde_cuda_functions Log-PDE signature kernel CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes higher-order log-PDE signature kernels for paired batches of paths.
+	*
+	* @param path_x First path batch on device, size = `batch_size * length_x * dimension`.
+	* @param path_y Second path batch on device, size = `batch_size * length_y * dimension`.
+	* @param out Output on device. Its per-batch size is one unless `return_grid` is true.
+	* @param batch_size Number of paired paths.
+	* @param dimension Path dimension.
+	* @param length_x Number of points in each first path.
+	* @param length_y Number of points in each second path.
+	* @param log_step_x Number of first-path intervals in each tensor-log block.
+	* @param log_step_y Number of second-path intervals in each tensor-log block.
+	* @param degree_x Tensor-log truncation degree for the first paths.
+	* @param degree_y Tensor-log truncation degree for the second paths.
+	* @param dyadic_order_x Dyadic refinement applied to first-path tensor-log blocks.
+	* @param dyadic_order_y Dyadic refinement applied to second-path tensor-log blocks.
+	* @param return_grid Whether to return every refined Goursat grid value.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int sig_kernel_log_pde_cuda_f(const float* path_x, const float* path_y, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length_x, uint64_t length_y, uint64_t log_step_x, uint64_t log_step_y, uint64_t degree_x, uint64_t degree_y, uint64_t dyadic_order_x, uint64_t dyadic_order_y, bool return_grid = false) noexcept;
+	/** @brief Double-precision overload of sig_kernel_log_pde_cuda_f. */
+	[[nodiscard]] CUSIG_API int sig_kernel_log_pde_cuda_d(const double* path_x, const double* path_y, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length_x, uint64_t length_y, uint64_t log_step_x, uint64_t log_step_y, uint64_t degree_x, uint64_t degree_y, uint64_t dyadic_order_x, uint64_t dyadic_order_y, bool return_grid = false) noexcept;
+	/** @} */
+
+	/** @defgroup sig_kernel_log_pde_backprop_cuda_functions Log-PDE signature kernel CUDA backpropagation functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates a log-PDE signature kernel result to paired path batches.
+	*
+	* @param path_x First path batch on device, size = `batch_size * length_x * dimension`.
+	* @param path_y Second path batch on device, size = `batch_size * length_y * dimension`.
+	* @param d_path_x First-path derivatives on device, with the same size as `path_x`.
+	* @param d_path_y Second-path derivatives on device, with the same size as `path_y`.
+	* @param derivs Output derivatives on device. Its per-batch size is one unless `return_grid` is true.
+	* @param k_grid Optional full forward grid checkpoint on device. Pass null to recompute scalar states.
+	* @param batch_size Number of paired paths.
+	* @param dimension Path dimension.
+	* @param length_x Number of points in each first path.
+	* @param length_y Number of points in each second path.
+	* @param log_step_x Number of first-path intervals in each tensor-log block.
+	* @param log_step_y Number of second-path intervals in each tensor-log block.
+	* @param degree_x Tensor-log truncation degree for the first paths.
+	* @param degree_y Tensor-log truncation degree for the second paths.
+	* @param dyadic_order_x Dyadic refinement applied to first-path tensor-log blocks.
+	* @param dyadic_order_y Dyadic refinement applied to second-path tensor-log blocks.
+	* @param return_grid Whether `derivs` contains derivatives for the full grid.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int sig_kernel_log_pde_backprop_cuda_f(const float* path_x, const float* path_y, float* d_path_x, float* d_path_y, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length_x, uint64_t length_y, uint64_t log_step_x, uint64_t log_step_y, uint64_t degree_x, uint64_t degree_y, uint64_t dyadic_order_x, uint64_t dyadic_order_y, bool return_grid = false) noexcept;
+	/** @brief Double-precision overload of sig_kernel_log_pde_backprop_cuda_f. */
+	[[nodiscard]] CUSIG_API int sig_kernel_log_pde_backprop_cuda_d(const double* path_x, const double* path_y, double* d_path_x, double* d_path_y, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length_x, uint64_t length_y, uint64_t log_step_x, uint64_t log_step_y, uint64_t degree_x, uint64_t degree_y, uint64_t dyadic_order_x, uint64_t dyadic_order_y, bool return_grid = false) noexcept;
+	/** @} */
+
 	/** @defgroup signature_cuda_functions Signature CUDA functions
 	* @{
 	*/

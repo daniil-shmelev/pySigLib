@@ -30,6 +30,7 @@ from .error_codes import err_msg
 from .dtypes import (
     CPSIG_SIG_KERNEL_BACKPROP, CPSIG_SIG_KERNEL_LOG_PDE_BACKPROP,
     DTYPES, CUSIG_SIG_KERNEL_BACKPROP_CUDA,
+    CUSIG_SIG_KERNEL_LOG_PDE_BACKPROP_CUDA,
 )
 from .data_handlers import (
     MultiplePathInputHandler, ScalarInputHandler, GridOutputHandler,
@@ -109,7 +110,7 @@ def sig_kernel_backprop(
     :type dyadic_order: int | tuple
     :param method: Forward PDE method. Use ``"pde"`` for the standard Goursat
         solver or ``"log_pde"`` for the higher-order log-PDE method. The log-PDE
-        method is currently CPU-only and supports only the linear static kernel.
+        method supports only the linear static kernel.
     :type method: str
     :param log_degree: Tensor-log truncation degree. Required for
         ``method="log_pde"``. An integer applies to both paths; a pair applies
@@ -252,8 +253,6 @@ def sig_kernel_backprop(
     if method == "log_pde":
         if static_kernel is not None and not isinstance(static_kernel, LinearKernel):
             raise ValueError("method='log_pde' supports only the linear static kernel")
-        if data.device != "cpu":
-            raise ValueError("method='log_pde' is currently CPU-only")
         steps = []
         for length, log_step in zip(data.length, log_step_sizes):
             intervals = length - 1
@@ -294,7 +293,7 @@ def sig_kernel_backprop(
         rd_result = PathOutputHandler(
             data.data[1].data_length, data.data[1].data_dimension, data.data[1]
         )
-        err_code = CPSIG_SIG_KERNEL_LOG_PDE_BACKPROP[data.dtype](
+        args = (
             data.data[0].data_ptr, data.data[1].data_ptr,
             ld_result.data_ptr, rd_result.data_ptr,
             derivs_data.data_ptr,
@@ -302,8 +301,12 @@ def sig_kernel_backprop(
             data.batch_size, data.dimension,
             data.length[0], data.length[1], log_step_sizes[0], log_step_sizes[1],
             log_degrees[0], log_degrees[1], dyadic_order_1, dyadic_order_2,
-            return_grid, n_jobs,
+            return_grid,
         )
+        if data.device == "cpu":
+            err_code = CPSIG_SIG_KERNEL_LOG_PDE_BACKPROP[data.dtype](*args, n_jobs)
+        else:
+            err_code = CUSIG_SIG_KERNEL_LOG_PDE_BACKPROP_CUDA[data.dtype](*args)
         if err_code:
             raise Exception("Error in log-PDE signature kernel backprop: " + err_msg(err_code))
         ld = ld_result.data
@@ -397,7 +400,7 @@ def sig_kernel_gram_backprop(
     :type dyadic_order: int | tuple
     :param method: Forward PDE method. Use ``"pde"`` for the standard Goursat
         solver or ``"log_pde"`` for the higher-order log-PDE method. The log-PDE
-        method is currently CPU-only and supports only the linear static kernel.
+        method supports only the linear static kernel.
     :type method: str
     :param log_degree: Tensor-log truncation degree. Required for
         ``method="log_pde"``. An integer applies to both paths; a pair applies
