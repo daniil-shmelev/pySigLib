@@ -26,13 +26,13 @@ from .dtypes import CPSIG_TRANSFORM_PATH_BACKPROP, CUSIG_TRANSFORM_PATH_BACKPROP
 from .data_handlers import PathInputHandler
 
 def transform_path_backprop(
-    derivs : Union[np.ndarray, torch.tensor],
+    derivs : Union[np.ndarray, torch.Tensor],
     *,
     time_aug : bool = False,
     lead_lag : bool = False,
     end_time : float = 1.,
     n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     This function is required to backpropagate through ``pysiglib.transform_path``.
     Given the derivatives of a scalar function :math:`F` with respect to the

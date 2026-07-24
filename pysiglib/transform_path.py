@@ -26,13 +26,13 @@ from .dtypes import CPSIG_TRANSFORM_PATH, CUSIG_TRANSFORM_PATH_CUDA
 from .data_handlers import PathInputHandler
 
 def transform_path(
-    path : Union[np.ndarray, torch.tensor],
+    path : Union[np.ndarray, torch.Tensor],
     *,
     time_aug : bool = False,
     lead_lag : bool = False,
     end_time : float = 1.,
     n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     This function applies time-augmentation and/or the lead-lag transformation to a path. Given a
     :math:`d`-dimensional path :math:`(X_{t_i})_{i=1}^L`, the time-augmented path is formed by adding time as the

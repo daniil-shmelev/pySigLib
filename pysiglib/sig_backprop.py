@@ -25,9 +25,9 @@ from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BA
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
 
 def sig_combine_backprop(
-        deriv : Union[np.ndarray, torch.tensor],
-        sig1 : Union[np.ndarray, torch.tensor],
-        sig2 : Union[np.ndarray, torch.tensor],
+        deriv : Union[np.ndarray, torch.Tensor],
+        sig1 : Union[np.ndarray, torch.Tensor],
+        sig2 : Union[np.ndarray, torch.Tensor],
         dimension : int,
         degree : int,
         *,
@@ -124,9 +124,9 @@ def sig_combine_backprop(
     return sig1_deriv.data, sig2_deriv.data
 
 def sig_backprop(
-        path : Union[np.ndarray, torch.tensor],
-        sig : Union[np.ndarray, torch.tensor],
-        sig_derivs : Union[np.ndarray, torch.tensor],
+        path : Union[np.ndarray, torch.Tensor],
+        sig : Union[np.ndarray, torch.Tensor],
+        sig_derivs : Union[np.ndarray, torch.Tensor],
         degree : int,
         *,
         time_aug : bool = False,
@@ -134,7 +134,7 @@ def sig_backprop(
         end_time : float = 1.,
         correction = None,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     This function is required to backpropagate through the signature computation.
     Given the derivatives of a scalar function :math:`F` with respect to the

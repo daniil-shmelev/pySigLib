@@ -7,8 +7,8 @@ from .static_kernels import StaticKernel
 from .sig_kernel import sig_kernel_gram, _ensure_3d
 
 def sig_score(
-        sample : Union[np.ndarray, torch.tensor],
-        y : Union[np.ndarray, torch.tensor],
+        sample : Union[np.ndarray, torch.Tensor],
+        y : Union[np.ndarray, torch.Tensor],
         dyadic_order : Union[int, tuple],
         *,
         lam : float = 1.,
@@ -18,7 +18,7 @@ def sig_score(
         end_time : float = 1.,
         n_jobs : int = 1,
         max_batch : int = -1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the (generalised) signature kernel score
 
@@ -151,8 +151,8 @@ def sig_score(
     return res
 
 def expected_sig_score(
-        sample1 : Union[np.ndarray, torch.tensor],
-        sample2 : Union[np.ndarray, torch.tensor],
+        sample1 : Union[np.ndarray, torch.Tensor],
+        sample2 : Union[np.ndarray, torch.Tensor],
         dyadic_order : Union[int, tuple],
         *,
         lam : float = 1.,
@@ -162,7 +162,7 @@ def expected_sig_score(
         end_time : float = 1.,
         n_jobs : int = 1,
         max_batch : int = -1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the expected (generalised) signature kernel score
 
@@ -255,8 +255,8 @@ def expected_sig_score(
     return res.mean().reshape(1)
 
 def sig_mmd(
-        sample1 : Union[np.ndarray, torch.tensor],
-        sample2 : Union[np.ndarray, torch.tensor],
+        sample1 : Union[np.ndarray, torch.Tensor],
+        sample2 : Union[np.ndarray, torch.Tensor],
         dyadic_order : Union[int, tuple],
         *,
         static_kernel : Optional[StaticKernel] = None,
@@ -265,7 +265,7 @@ def sig_mmd(
         end_time : float = 1.,
         n_jobs : int = 1,
         max_batch : int = -1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the squared maximum mean discrepancy (MMD)
 

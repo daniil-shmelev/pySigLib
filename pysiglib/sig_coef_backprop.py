@@ -26,16 +26,16 @@ from .data_handlers import PathInputHandler, MultipleSigInputHandler, PathOutput
 
 
 def sig_coef_backprop(
-        path : Union[np.ndarray, torch.tensor],
+        path : Union[np.ndarray, torch.Tensor],
         words : Union[tuple[int, ...], list[tuple[int, ...]]],
-        coefs : Union[np.ndarray, torch.tensor],
-        derivs : Union[np.ndarray, torch.tensor],
+        coefs : Union[np.ndarray, torch.Tensor],
+        derivs : Union[np.ndarray, torch.Tensor],
         *,
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     This function is required to backpropagate through signature coefficient computation.
     Given the derivatives of a scalar function :math:`F` with respect to the
@@ -46,17 +46,17 @@ def sig_coef_backprop(
     with respect to this extended array.
 
     :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
+    :type path: numpy.ndarray | torch.Tensor
     :param words: Multi-indices :math:`I` indexing the signature coefficients, given as a list
         of lists of integers in :math:`[0, d-1]`, where :math:`d` is the dimension of the path(s).
     :type words: tuple[int, ...] | list[tuple[int, ...]]
     :param coefs: Signature coefficients of the path or batch of paths, generated using
         ``pysiglib.sig_coef`` using ``prefixes=True``.
-    :type coefs: numpy.ndarray | torch.tensor
+    :type coefs: numpy.ndarray | torch.Tensor
     :param derivs: Derivatives of the scalar function :math:`F` with respect to the signature coefficients,
         :math:`\\partial F / \\partial S(x)^I`. This must be an array of the same shape as the
         provided coefficients. **On CPU, this buffer is modified in-place.**
-    :type derivs: numpy.ndarray | torch.tensor
+    :type derivs: numpy.ndarray | torch.Tensor
     :param time_aug: Whether the signature coefficients were computed with ``time_aug=True``.
     :type time_aug: bool
     :param lead_lag: Whether the signature coefficients were computed with ``lead_lag=True``.
@@ -69,7 +69,7 @@ def sig_coef_backprop(
     :type n_jobs: int
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------

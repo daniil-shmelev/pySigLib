@@ -26,15 +26,15 @@ from .sig_length import sig_length, aug_dim, _infer_scalar_term
 from .data_handlers import PathInputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
 
 def sig_combine(
-        sig1 : Union[np.ndarray, torch.tensor],
-        sig2 : Union[np.ndarray, torch.tensor],
+        sig1 : Union[np.ndarray, torch.Tensor],
+        sig2 : Union[np.ndarray, torch.Tensor],
         dimension : int,
         degree : int,
         *,
         time_aug : bool = False,
         lead_lag : bool = False,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Combines two truncated signatures of the same degree and dimension into one signature. In particular, let :math:`x_1, x_2`
     be two paths such that the first point of :math:`x_2` is the last point of :math:`x_1`. Let :math:`S(x_1), S(x_2)`
@@ -124,7 +124,7 @@ def sig_combine(
     return result.data
 
 def sig(
-        path : Union[np.ndarray, torch.tensor],
+        path : Union[np.ndarray, torch.Tensor],
         degree : int,
         *,
         time_aug : bool = False,
@@ -134,7 +134,7 @@ def sig(
         scalar_term : bool = False,
         correction = None,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated signature of single path or a batch of paths. For
     a single path :math:`x`, the signature is given by

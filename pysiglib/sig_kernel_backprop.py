@@ -32,13 +32,13 @@ from .static_kernels import StaticKernel, LinearKernel, Context
 def gram_deriv(
         derivs_data,
         data,
-        gram : Union[np.ndarray, torch.tensor],
-        k_grid_data : Union[np.ndarray, torch.tensor],
+        gram : Union[np.ndarray, torch.Tensor],
+        k_grid_data : Union[np.ndarray, torch.Tensor],
         dyadic_order_1,
         dyadic_order_2,
         return_grid : bool = False,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
 
     result = GridOutputHandler(data.length[0] - 1, data.length[1] - 1, derivs_data) #Derivatives with respect to gram matrix
     gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
@@ -58,9 +58,9 @@ def gram_deriv(
     return torch.as_tensor(result.data)
 
 def sig_kernel_backprop(
-        derivs : Union[np.ndarray, torch.tensor],
-        path1 : Union[np.ndarray, torch.tensor],
-        path2 : Union[np.ndarray, torch.tensor],
+        derivs : Union[np.ndarray, torch.Tensor],
+        path1 : Union[np.ndarray, torch.Tensor],
+        path2 : Union[np.ndarray, torch.Tensor],
         dyadic_order : Union[int, tuple],
         *,
         static_kernel : Optional[StaticKernel] = None,
@@ -69,10 +69,10 @@ def sig_kernel_backprop(
         end_time : float = 1.,
         left_deriv : bool = True,
         right_deriv : bool = False,
-        k_grid : Union[np.ndarray, torch.tensor] = None,
+        k_grid : Union[np.ndarray, torch.Tensor] = None,
         n_jobs : int = 1,
         return_grid: bool = False
-) -> Union[np.ndarray, torch.tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.tensor, torch.tensor]]:
+) -> Union[np.ndarray, torch.Tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.Tensor, torch.Tensor]]:
     """
     This function is required to backpropagate through ``pysiglib.sig_kernel``.
     Given the derivatives of a scalar function :math:`F` with respect to a
@@ -86,14 +86,14 @@ def sig_kernel_backprop(
         If ``return_grid=False``, this should be of shape ``(...)`` matching the leading
         batch dimensions of the paths. If ``return_grid=True``, this should have the same
         shape as the PDE grid returned by ``pysiglib.sig_kernel(..., return_grid=True)``.
-    :type derivs: numpy.ndarray | torch.tensor
+    :type derivs: numpy.ndarray | torch.Tensor
     :param path1: The first underlying path or batch of paths, of shape
         ``(..., length_1, dimension)``.
-    :type path1: numpy.ndarray | torch.tensor
+    :type path1: numpy.ndarray | torch.Tensor
     :param path2: The second underlying path or batch of paths, of shape
         ``(..., length_2, dimension)``. Leading batch dimensions must match those of
         ``path1``.
-    :type path2: numpy.ndarray | torch.tensor
+    :type path2: numpy.ndarray | torch.Tensor
     :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
     :type dyadic_order: int | tuple
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
@@ -114,7 +114,7 @@ def sig_kernel_backprop(
         ``True``, returns both derivatives as a tuple.
     :type right_deriv: bool
     :param k_grid: Signature kernel PDE grid. If ``None``, the grid will be recomputed.
-    :type k_grid: numpy.ndarray | torch.tensor
+    :type k_grid: numpy.ndarray | torch.Tensor
     :param n_jobs: (Only applicable to CPU computation) Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
@@ -127,7 +127,7 @@ def sig_kernel_backprop(
         this tuple is  :math:`\\{\\partial F / x_{t_i}\\}_{i=0}^{L_1}`, otherwise
         it is ``None``. Similarly for ``right_deriv`` and
         :math:`\\{\\partial F / y_{t_i}\\}_{i=0}^{L_2}`.
-    :rtype: numpy.ndarray | torch.tensor | Tuple[numpy.ndarray | numpy.ndarray] | Tuple[torch.tensor | torch.tensor]
+    :rtype: numpy.ndarray | torch.Tensor | Tuple[numpy.ndarray | numpy.ndarray] | Tuple[torch.Tensor | torch.Tensor]
 
     Example:
     ---------
@@ -257,9 +257,9 @@ def sig_kernel_backprop(
 
 
 def sig_kernel_gram_backprop(
-        derivs : Union[np.ndarray, torch.tensor],
-        path1 : Union[np.ndarray, torch.tensor],
-        path2 : Union[np.ndarray, torch.tensor],
+        derivs : Union[np.ndarray, torch.Tensor],
+        path1 : Union[np.ndarray, torch.Tensor],
+        path2 : Union[np.ndarray, torch.Tensor],
         dyadic_order : Union[int, tuple],
         *,
         static_kernel : Optional[StaticKernel] = None,
@@ -268,7 +268,7 @@ def sig_kernel_gram_backprop(
         end_time : float = 1.,
         left_deriv : bool = True,
         right_deriv : bool = False,
-        k_grid : Union[np.ndarray, torch.tensor] = None,
+        k_grid : Union[np.ndarray, torch.Tensor] = None,
         n_jobs : int = 1,
         return_grid : bool = False,
         max_batch : int = -1

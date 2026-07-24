@@ -27,19 +27,19 @@ from .words import word_to_idx
 from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler
 
 def extract_sig_coef(
-        sig : Union[np.ndarray, torch.tensor],
+        sig : Union[np.ndarray, torch.Tensor],
         words: Union[tuple[int, ...], list[tuple[int, ...]]],
         dimension: int,
         *,
         time_aug: bool = False,
         lead_lag: bool = False,
         scalar_term: bool = False,
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Extracts signature coefficients from a signature or batch of signatures.
 
     :param sig: The signature or batch of signatures, of shape ``(..., sig_length)``.
-    :type sig: numpy.ndarray | torch.tensor
+    :type sig: numpy.ndarray | torch.Tensor
     :param words: Word or list of words at which to extract coefficients.
     :type words: tuple[int, ...] | list[tuple[int, ...]]]
     :param dimension: Dimension of the underlying path(s).
@@ -54,7 +54,7 @@ def extract_sig_coef(
     :type scalar_term: bool
     :return: Signature coefficients of shape ``(..., num_words)``, matching the leading
         batch dimensions of ``sig``.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------
@@ -105,7 +105,7 @@ def extract_sig_coef(
     return sig[..., idx]
 
 def sig_coef(
-        path : Union[np.ndarray, torch.tensor],
+        path : Union[np.ndarray, torch.Tensor],
         words : Union[tuple[int, ...], list[tuple[int, ...]]],
         *,
         time_aug : bool = False,
@@ -113,7 +113,7 @@ def sig_coef(
         end_time : float = 1.,
         prefixes : bool = False,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes specific signature coefficients for a single path or a batch of paths. For
     a single path :math:`x`, the signature coefficient at a multi-index
@@ -124,7 +124,7 @@ def sig_coef(
         S(x)^I_{[s,t]} := \\int_{s < t_1 < \\cdots < t_k < t} dx^{i_1}_{t_1} \\otimes dx^{i_2}_{t_2} \\otimes \\cdots \\otimes dx^{i_k}_{t_k}.
 
     :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
+    :type path: numpy.ndarray | torch.Tensor
     :param words: Multi-indices :math:`I` at which to evaluate signature coefficients, given as a list
         of lists of integers in :math:`[0, d-1]`, where :math:`d` is the dimension of the path(s). For example,
         for a 2-dimensional path, one could pass ``[(0,), (1,0), (0,1,1)]`` to compute the coefficients at
@@ -149,7 +149,7 @@ def sig_coef(
     :type n_jobs: int
     :return: Signature coefficients of shape ``(..., num_words)``, matching the leading
         batch dimensions of ``path``.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     .. note::
 

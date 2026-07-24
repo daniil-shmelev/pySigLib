@@ -28,8 +28,8 @@ from .data_handlers import SigOutputHandler, SigInputHandler, PathInputHandler, 
 
 
 def sig_to_log_sig_backprop(
-        sig : Union[np.ndarray, torch.tensor],
-        log_sig_derivs : Union[np.ndarray, torch.tensor],
+        sig : Union[np.ndarray, torch.Tensor],
+        log_sig_derivs : Union[np.ndarray, torch.Tensor],
         dimension : int,
         degree : int,
         *,
@@ -37,7 +37,7 @@ def sig_to_log_sig_backprop(
         lead_lag : bool = False,
         method : int = 1,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Backpropagates through the ``pysiglib.sig_to_log_sig`` function.
     Given the derivatives of a scalar function :math:`F` with respect to the
@@ -135,12 +135,12 @@ def sig_to_log_sig_backprop(
 
 
 def _log_sig_from_path_backprop(
-        grad_output : Union[np.ndarray, torch.tensor],
-        path : Union[np.ndarray, torch.tensor],
+        grad_output : Union[np.ndarray, torch.Tensor],
+        path : Union[np.ndarray, torch.Tensor],
         degree : int,
         *,
         n_jobs : int = 1,
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """Backpropagates through the method=3 log-signature-from-path computation."""
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
