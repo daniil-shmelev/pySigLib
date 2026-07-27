@@ -63,6 +63,9 @@ using sig_coef_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint
 
 using sig_coef_backprop_d_fn = int(CDECL_*)(const double*, double*, double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, int);
 
+using branched_sig_coef_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, int, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
+using branched_sig_coef_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, int, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
+
 using sig_coef_cuda_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool);
 
 using sig_coef_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t);
@@ -115,6 +118,8 @@ extern signature_cuda_d_fn signature_cuda_d;
 extern sig_coef_d_fn sig_coef_d;
 
 extern sig_coef_backprop_d_fn sig_coef_backprop_d;
+extern branched_sig_coef_d_fn branched_sig_coef_d;
+extern branched_sig_coef_backprop_d_fn branched_sig_coef_backprop_d;
 
 extern sig_coef_cuda_d_fn sig_coef_cuda_d;
 

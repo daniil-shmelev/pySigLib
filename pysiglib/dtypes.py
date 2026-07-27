@@ -323,6 +323,16 @@ CPSIG_BRANCHED_SIG = {
     "float64": CPSIG.branched_sig_d
 }
 
+CPSIG_BRANCHED_SIG_COEF = {
+    "float32": CPSIG.branched_sig_coef_f,
+    "float64": CPSIG.branched_sig_coef_d
+}
+
+CPSIG_BRANCHED_SIG_COEF_BACKPROP = {
+    "float32": CPSIG.branched_sig_coef_backprop_f,
+    "float64": CPSIG.branched_sig_coef_backprop_d
+}
+
 CPSIG_BRANCHED_SIG_COMBINE = {
     "float32": CPSIG.branched_sig_combine_f,
     "float64": CPSIG.branched_sig_combine_d

@@ -14,4 +14,5 @@ This section covers branched signature computation in pySigLib.
    /pages/branched_signatures/branched_sig_length
    /pages/branched_signatures/prepare_branched_sig
    /pages/branched_signatures/branched_sig
+   /pages/branched_signatures/branched_sig_coef
    /pages/branched_signatures/branched_sig_combine

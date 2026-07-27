@@ -576,6 +576,68 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	[[nodiscard]] CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 
+	/**
+	* @brief Computes selected branched-signature coefficients for float paths.
+	*
+	* The sparse computation keeps the union of the coproduct dependency closures
+	* of the requested basis elements. Call prepare_branched_sig for the augmented
+	* dimension, degree, and planar convention before this function.
+	*
+	* @param path Pointer to row-major path data, size = `batch_size * length * dimension`.
+	* @param out Pointer to the preallocated coefficient output, size = `batch_size * num_indices`.
+	* @param tree_indices Flat basis indices including the scalar term at index 0, size = `num_indices`.
+	* @param num_indices Number of requested basis elements. Must be positive.
+	* @param batch_size Number of paths.
+	* @param dimension Dimension of the unaugmented path.
+	* @param length Number of points in each path.
+	* @param max_nodes Maximum number of nodes in the prepared branched basis.
+	* @param n_jobs Number of CPU threads. Use 1 for serial execution or -1 for all available threads.
+	* @param time_aug Whether to add time augmentation.
+	* @param lead_lag Whether to apply the lead-lag transform.
+	* @param end_time End time for time augmentation.
+	* @param planar Whether tree indices use the planar MKW ordered-forest basis.
+	* @param correction Optional segment correction data, with the layout used by branched_sig_f.
+	* @param correction_len Width of one correction row.
+	* @param correction_batch_stride Correction stride between batch items, in elements.
+	* @param correction_segment_stride Correction stride between path segments, in elements.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int branched_sig_coef_f(const float* path, float* out, const uint64_t* tree_indices, uint64_t num_indices, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	/** @copydoc branched_sig_coef_f */
+	[[nodiscard]] CPSIG_API int branched_sig_coef_d(const double* path, double* out, const uint64_t* tree_indices, uint64_t num_indices, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+
+	/**
+	* @brief Backpropagates through selected float branched-signature coefficients.
+	*
+	* Reverse mode rebuilds the sparse coproduct closure, seeds cotangents at the
+	* requested coefficients, and replays segment products backward. Correction
+	* data is treated as constant.
+	*
+	* @param path Pointer to row-major path data, size = `batch_size * length * dimension`.
+	* @param out Pointer to the preallocated path derivative output, size = `batch_size * length * dimension`.
+	* @param coefs Forward coefficient values from branched_sig_coef_f, size = `batch_size * num_indices`.
+	* @param derivs Coefficient cotangents, size = `batch_size * num_indices`.
+	* @param tree_indices Flat basis indices passed to the forward call, size = `num_indices`.
+	* @param num_indices Number of requested basis elements. Must be positive.
+	* @param batch_size Number of paths.
+	* @param dimension Dimension of the unaugmented path.
+	* @param length Number of points in each path.
+	* @param max_nodes Maximum number of nodes in the prepared branched basis.
+	* @param n_jobs Number of CPU threads. Use 1 for serial execution or -1 for all available threads.
+	* @param time_aug Whether time augmentation was used in the forward call.
+	* @param lead_lag Whether lead-lag was used in the forward call.
+	* @param end_time End time used for time augmentation.
+	* @param planar Whether tree indices use the planar MKW ordered-forest basis.
+	* @param correction Optional correction data from the forward call.
+	* @param correction_len Width of one correction row.
+	* @param correction_batch_stride Correction stride between batch items, in elements.
+	* @param correction_segment_stride Correction stride between path segments, in elements.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int branched_sig_coef_backprop_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* tree_indices, uint64_t num_indices, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	/** @copydoc branched_sig_coef_backprop_f */
+	[[nodiscard]] CPSIG_API int branched_sig_coef_backprop_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* tree_indices, uint64_t num_indices, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+
 	[[nodiscard]] CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	[[nodiscard]] CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 

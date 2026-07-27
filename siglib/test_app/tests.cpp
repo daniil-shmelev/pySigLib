@@ -596,6 +596,87 @@ void example_batch_sig_coef_backprop(
     time_function(num_runs, sig_coef_backprop_d, path.data(), out.data(), coefs.data(), derivs.data(), multi_idx.data(), degrees.size(), degrees.data(), batch_size, dimension, length, time_aug, lead_lag, end_time, n_jobs);
 }
 
+void example_batch_branched_sig_coef(
+    uint64_t num_idx,
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    uint64_t length,
+    int n_jobs,
+    int num_runs,
+    bool planar
+) {
+    print_header("Batch Branched Sig Coef");
+    if (num_idx == 0)
+        throw std::invalid_argument("num_idx must be positive");
+    if (prepare_branched_sig(dimension, degree, false, planar) != 0)
+        throw std::runtime_error("prepare_branched_sig failed");
+
+    const uint64_t full_length = branched_sig_length(dimension, degree, planar);
+    std::vector<uint64_t> tree_indices(num_idx);
+    for (uint64_t i = 0; i < num_idx; ++i)
+        tree_indices[i] = 1 + i * (full_length - 1) / num_idx;
+    std::vector<double> path = test_data<double>(batch_size * dimension * length);
+    std::vector<double> out(batch_size * num_idx);
+
+    std::cout << "planar: " << planar << "\n";
+    std::cout << "num_idx: " << num_idx << "\n";
+    std::cout << "batch_size: " << batch_size << "\n";
+    std::cout << "dimension: " << dimension << "\n";
+    std::cout << "length: " << length << "\n";
+    std::cout << "degree: " << degree << "\n";
+    std::cout << "n_jobs: " << n_jobs << "\n";
+    std::cout << "num_runs: " << num_runs << "\n";
+
+    time_function(num_runs, branched_sig_coef_d, path.data(), out.data(),
+        tree_indices.data(), num_idx, batch_size, dimension, length, degree, n_jobs,
+        false, false, 1., planar, nullptr, 0, 0, 0);
+}
+
+void example_batch_branched_sig_coef_backprop(
+    uint64_t num_idx,
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    uint64_t length,
+    int n_jobs,
+    int num_runs,
+    bool planar
+) {
+    print_header("Batch Branched Sig Coef Backprop");
+    if (num_idx == 0)
+        throw std::invalid_argument("num_idx must be positive");
+    if (prepare_branched_sig(dimension, degree, false, planar) != 0)
+        throw std::runtime_error("prepare_branched_sig failed");
+
+    const uint64_t full_length = branched_sig_length(dimension, degree, planar);
+    std::vector<uint64_t> tree_indices(num_idx);
+    for (uint64_t i = 0; i < num_idx; ++i)
+        tree_indices[i] = 1 + i * (full_length - 1) / num_idx;
+    const uint64_t path_size = batch_size * dimension * length;
+    std::vector<double> path = test_data<double>(path_size);
+    std::vector<double> out(path_size);
+    std::vector<double> coefs(batch_size * num_idx);
+    std::vector<double> derivs(batch_size * num_idx, 1.);
+    if (branched_sig_coef_d(path.data(), coefs.data(), tree_indices.data(), num_idx,
+        batch_size, dimension, length, degree, n_jobs, false, false, 1., planar,
+        nullptr, 0, 0, 0) != 0)
+        throw std::runtime_error("branched_sig_coef_d failed");
+
+    std::cout << "planar: " << planar << "\n";
+    std::cout << "num_idx: " << num_idx << "\n";
+    std::cout << "batch_size: " << batch_size << "\n";
+    std::cout << "dimension: " << dimension << "\n";
+    std::cout << "length: " << length << "\n";
+    std::cout << "degree: " << degree << "\n";
+    std::cout << "n_jobs: " << n_jobs << "\n";
+    std::cout << "num_runs: " << num_runs << "\n";
+
+    time_function(num_runs, branched_sig_coef_backprop_d, path.data(), out.data(),
+        coefs.data(), derivs.data(), tree_indices.data(), num_idx, batch_size,
+        dimension, length, degree, n_jobs, false, false, 1., planar, nullptr, 0, 0, 0);
+}
+
 void example_batch_sig_coef_cuda_d(
     uint64_t num_idx,
     uint64_t batch_size,

@@ -41,6 +41,8 @@ from ..log_sig_join_backprop import log_sig_join_backprop
 from ..linear_sig import linear_sig as linear_sig_forward
 from ..branched_sig import branched_sig as branched_sig_forward
 from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
+from ..branched_sig_coef import _branched_coef_indices
+from ..branched_sig_coef import branched_sig_coef as branched_sig_coef_forward
 from ..branched_log_sig import branched_sig_to_log_sig as branched_sig_to_log_sig_forward
 from ..branched_log_sig import branched_log_sig as branched_log_sig_forward
 from ..data_handlers import _infer_correction_degree
@@ -1342,6 +1344,48 @@ def sig_coef(
 
 
 sig_coef.__doc__ = sig_coef_forward.__doc__
+
+
+def branched_sig_coef(
+    path,
+    trees,
+    *,
+    time_aug: bool = False,
+    lead_lag: bool = False,
+    end_time: float = 1.0,
+    planar: bool = False,
+    correction=None,
+    n_jobs: int = 1,
+):
+    """Compute selected branched-signature coefficients using JAX."""
+    ensure_registered()
+    path = jnp.asarray(path)
+    _validate_shape(path)
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
+    check_type(end_time, "end_time", float)
+    check_type(planar, "planar", bool)
+    check_n_jobs(n_jobs)
+    if lead_lag and path.shape[-2] == 0:
+        raise ValueError("lead_lag requires a path with at least one point")
+
+    augmented_dimension = _augmented_dim(path.shape[-1], time_aug, lead_lag)
+    _, degree, indices = _branched_coef_indices(trees, augmented_dimension, planar)
+    full_bsig = branched_sig(
+        path,
+        degree,
+        time_aug=time_aug,
+        lead_lag=lead_lag,
+        end_time=end_time,
+        planar=planar,
+        scalar_term=True,
+        correction=correction,
+        n_jobs=n_jobs,
+    )
+    return full_bsig[..., jnp.asarray(indices)]
+
+
+branched_sig_coef.__doc__ = branched_sig_coef_forward.__doc__
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))

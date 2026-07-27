@@ -567,6 +567,18 @@ CPSIG.branched_sig_f.restype = c_int
 CPSIG.branched_sig_d.argtypes = (POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool, c_double, c_bool, c_bool, POINTER(c_double), c_uint64, c_uint64, c_uint64)
 CPSIG.branched_sig_d.restype = c_int
 
+CPSIG.branched_sig_coef_f.argtypes = (POINTER(c_float), POINTER(c_float), POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool, c_float, c_bool, POINTER(c_float), c_uint64, c_uint64, c_uint64)
+CPSIG.branched_sig_coef_f.restype = c_int
+
+CPSIG.branched_sig_coef_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool, c_double, c_bool, POINTER(c_double), c_uint64, c_uint64, c_uint64)
+CPSIG.branched_sig_coef_d.restype = c_int
+
+CPSIG.branched_sig_coef_backprop_f.argtypes = (POINTER(c_float), POINTER(c_float), POINTER(c_float), POINTER(c_float), POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool, c_float, c_bool, POINTER(c_float), c_uint64, c_uint64, c_uint64)
+CPSIG.branched_sig_coef_backprop_f.restype = c_int
+
+CPSIG.branched_sig_coef_backprop_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_double), POINTER(c_double), POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool, c_double, c_bool, POINTER(c_double), c_uint64, c_uint64, c_uint64)
+CPSIG.branched_sig_coef_backprop_d.restype = c_int
+
 
 CPSIG.branched_sig_combine_f.argtypes = (POINTER(c_float), POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
 CPSIG.branched_sig_combine_f.restype = c_int

@@ -724,9 +724,57 @@ log_sig_combine.__doc__ = log_sig_combine_forward.__doc__
 
 from ..branched_sig import branched_sig as branched_sig_forward, prepare_branched_sig, branched_sig_length, branched_sig_combine as branched_sig_combine_forward
 from ..branched_sig_backprop import branched_sig_backprop, branched_sig_combine_backprop
+from ..branched_sig_coef import branched_sig_coef as branched_sig_coef_forward
+from ..branched_sig_coef_backprop import branched_sig_coef_backprop
 from ..branched_log_sig import branched_sig_to_log_sig as branched_sig_to_log_sig_forward
 from ..branched_log_sig import branched_log_sig as branched_log_sig_forward
 from ..branched_log_sig_backprop import branched_sig_to_log_sig_backprop
+
+class BranchedSigCoef(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, path, correction, basis_elements, time_aug, lead_lag, end_time, planar, n_jobs):
+        coefs = branched_sig_coef_forward(
+            path, basis_elements, time_aug=time_aug, lead_lag=lead_lag,
+            end_time=end_time, planar=planar, correction=correction, n_jobs=n_jobs)
+        saved_correction = correction.detach().clone() if correction is not None else path.new_empty((0,))
+        ctx.save_for_backward(path, coefs, saved_correction)
+        ctx.basis_elements = basis_elements
+        ctx.time_aug = time_aug
+        ctx.lead_lag = lead_lag
+        ctx.end_time = end_time
+        ctx.planar = planar
+        ctx.n_jobs = n_jobs
+        return coefs
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        path, coefs, correction = ctx.saved_tensors
+        grad = branched_sig_coef_backprop(
+            path, ctx.basis_elements, coefs, grad_output,
+            time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
+            planar=ctx.planar, correction=correction, n_jobs=ctx.n_jobs)
+        return grad, None, None, None, None, None, None, None
+
+def branched_sig_coef(
+        path: Union[np.ndarray, torch.Tensor],
+        trees,
+        *,
+        time_aug: bool = False,
+        lead_lag: bool = False,
+        end_time: float = 1.0,
+        planar: bool = False,
+        correction=None,
+        n_jobs: int = 1,
+) -> Union[np.ndarray, torch.Tensor]:
+    if isinstance(path, np.ndarray):
+        return branched_sig_coef_forward(
+            path, trees, time_aug=time_aug, lead_lag=lead_lag,
+            end_time=end_time, planar=planar, correction=correction, n_jobs=n_jobs)
+    check_type(path, "path", torch.Tensor)
+    return BranchedSigCoef.apply(
+        path, correction, trees, time_aug, lead_lag, end_time, planar, n_jobs)
+
+branched_sig_coef.__doc__ = branched_sig_coef_forward.__doc__
 
 class BranchedSig(torch.autograd.Function):
     @staticmethod
