@@ -26,13 +26,13 @@ from .data_handlers import SigInputHandler, SigOutputHandler
 
 
 def log_sig_join(
-        log_sig : Union[np.ndarray, torch.tensor],
-        displacement : Union[np.ndarray, torch.tensor],
+        log_sig : Union[np.ndarray, torch.Tensor],
+        displacement : Union[np.ndarray, torch.Tensor],
         dimension : int,
         degree : int,
         *,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Extends a truncated log-signature by a single displacement vector using the
     Baker-Campbell-Hausdorff (BCH) formula. This is the log-signature analogue of

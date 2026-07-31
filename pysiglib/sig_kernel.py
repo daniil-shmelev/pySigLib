@@ -59,8 +59,8 @@ from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOu
 from .static_kernels import StaticKernel, LinearKernel, Context
 
 def sig_kernel(
-        path1 : Union[np.ndarray, torch.tensor],
-        path2 : Union[np.ndarray, torch.tensor],
+        path1 : Union[np.ndarray, torch.Tensor],
+        path2 : Union[np.ndarray, torch.Tensor],
         dyadic_order : Union[int, tuple],
         *,
         static_kernel : Optional[StaticKernel] = None,
@@ -70,7 +70,7 @@ def sig_kernel(
         n_jobs : int = 1,
         return_grid: bool = False,
         normalize : bool = False
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes a single signature kernel or a batch of signature kernels.
     The signature kernel of two :math:`d`-dimensional paths :math:`x,y`
@@ -265,8 +265,8 @@ def sig_kernel(
 
 
 def sig_kernel_gram(
-        path1 : Union[np.ndarray, torch.tensor],
-        path2 : Union[np.ndarray, torch.tensor],
+        path1 : Union[np.ndarray, torch.Tensor],
+        path2 : Union[np.ndarray, torch.Tensor],
         dyadic_order : Union[int, tuple],
         *,
         static_kernel : Optional[StaticKernel] = None,
@@ -277,7 +277,7 @@ def sig_kernel_gram(
         max_batch : int = -1,
         return_grid : bool = False,
         normalize : bool = False
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Given batches of paths :math:`\\{x_i\\}_{i=1}^{B_1}` and :math:`\\{y_j\\}_{j=1}^{B_2}`, computes the gram matrix of signature kernels
 

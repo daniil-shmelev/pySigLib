@@ -27,8 +27,8 @@ from .data_handlers import SigOutputHandler, SigInputHandler
 
 
 def logsig_to_sig_backprop(
-        log_sig : Union[np.ndarray, torch.tensor],
-        sig_derivs : Union[np.ndarray, torch.tensor],
+        log_sig : Union[np.ndarray, torch.Tensor],
+        sig_derivs : Union[np.ndarray, torch.Tensor],
         dimension : int,
         degree : int,
         *,
@@ -37,7 +37,7 @@ def logsig_to_sig_backprop(
         method : int = 1,
         scalar_term : bool = False,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Backpropagation through :func:`pysiglib.logsig_to_sig`.
 

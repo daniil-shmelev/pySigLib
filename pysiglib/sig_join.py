@@ -26,14 +26,14 @@ from .data_handlers import SigInputHandler, SigOutputHandler
 
 
 def sig_join(
-        sig : Union[np.ndarray, torch.tensor],
-        displacement : Union[np.ndarray, torch.tensor],
+        sig : Union[np.ndarray, torch.Tensor],
+        displacement : Union[np.ndarray, torch.Tensor],
         dimension : int,
         degree : int,
         *,
         prepend : bool = False,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Extends a truncated signature by a single displacement vector. This is equivalent to
     computing ``sig_combine(sig, linear_sig(displacement))``, but is more efficient as it

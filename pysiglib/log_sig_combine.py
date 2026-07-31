@@ -26,15 +26,15 @@ from .data_handlers import MultipleSigInputHandler, SigOutputHandler
 
 
 def log_sig_combine(
-        log_sig1: Union[np.ndarray, torch.tensor],
-        log_sig2: Union[np.ndarray, torch.tensor],
+        log_sig1: Union[np.ndarray, torch.Tensor],
+        log_sig2: Union[np.ndarray, torch.Tensor],
         dimension: int,
         degree: int,
         *,
         time_aug: bool = False,
         lead_lag: bool = False,
         n_jobs: int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Combines two truncated log-signatures (Lyndon basis) of the same degree and dimension
     using the Baker-Campbell-Hausdorff (BCH) formula. In particular, let :math:`x_1, x_2`
@@ -99,9 +99,9 @@ def log_sig_combine(
 
 
 def log_sig_combine_backprop(
-        deriv: Union[np.ndarray, torch.tensor],
-        ls1: Union[np.ndarray, torch.tensor],
-        ls2: Union[np.ndarray, torch.tensor],
+        deriv: Union[np.ndarray, torch.Tensor],
+        ls1: Union[np.ndarray, torch.Tensor],
+        ls2: Union[np.ndarray, torch.Tensor],
         dimension: int,
         degree: int,
         *,

@@ -26,9 +26,9 @@ from .data_handlers import SigInputHandler, SigOutputHandler
 
 
 def sig_join_backprop(
-        d_out : Union[np.ndarray, torch.tensor],
-        sig : Union[np.ndarray, torch.tensor],
-        displacement : Union[np.ndarray, torch.tensor],
+        d_out : Union[np.ndarray, torch.Tensor],
+        sig : Union[np.ndarray, torch.Tensor],
+        displacement : Union[np.ndarray, torch.Tensor],
         dimension : int,
         degree : int,
         *,

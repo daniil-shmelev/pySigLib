@@ -225,7 +225,7 @@ def clear_cache(
             raise Exception("Error in pysiglib.clear_cache (CUDA): " + err_msg(err_code))
 
 def sig_to_log_sig(
-        sig : Union[np.ndarray, torch.tensor],
+        sig : Union[np.ndarray, torch.Tensor],
         dimension : int,
         degree : int,
         *,
@@ -233,7 +233,7 @@ def sig_to_log_sig(
         lead_lag : bool = False,
         method : int = 1,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the log signature from the signature, using the specified method. For details,
     see the page :doc:`Computing Log Signatures </pages/log_signatures/log_sig_methods>`.
@@ -313,7 +313,7 @@ def sig_to_log_sig(
     return result.data
 
 def log_sig(
-        path : Union[np.ndarray, torch.tensor],
+        path : Union[np.ndarray, torch.Tensor],
         degree : int,
         *,
         time_aug : bool = False,
@@ -323,7 +323,7 @@ def log_sig(
         scalar_term : bool = False,
         correction = None,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the log signature using the specified method. For details,
     see the page :doc:`Computing Log Signatures </pages/log_signatures/log_sig_methods>`.

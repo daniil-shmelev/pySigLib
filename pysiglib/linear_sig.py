@@ -26,13 +26,13 @@ from .data_handlers import SigInputHandler, SigOutputHandler
 
 
 def linear_sig(
-        displacement : Union[np.ndarray, torch.tensor],
+        displacement : Union[np.ndarray, torch.Tensor],
         dimension : int,
         degree : int,
         *,
         scalar_term : bool = False,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated signature of a single linear segment defined by a displacement vector.
     Given a displacement vector :math:`v \\in \\mathbb{R}^d`, this computes the signature of the

@@ -27,7 +27,7 @@ from .data_handlers import SigOutputHandler, SigInputHandler
 
 
 def logsig_to_sig(
-        log_sig : Union[np.ndarray, torch.tensor],
+        log_sig : Union[np.ndarray, torch.Tensor],
         dimension : int,
         degree : int,
         *,
@@ -36,7 +36,7 @@ def logsig_to_sig(
         method : int = 1,
         scalar_term : bool = False,
         n_jobs : int = 1
-) -> Union[np.ndarray, torch.tensor]:
+) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the signature from the log-signature via the truncated tensor exponential.
     This is the inverse of :func:`pysiglib.sig_to_log_sig`.
