@@ -231,8 +231,7 @@ void sig_join_backprop_(
 	}
 	d_lsig[0] = static_cast<T>(0);
 
-	linear_sig_deriv_to_increment_deriv(lsig, d_lsig, dimension, degree, level_index);
-	std::memcpy(d_displacement, d_lsig + 1, dimension * sizeof(T));
+	linear_sig_deriv_to_increment_deriv(lsig, d_lsig, d_displacement, dimension, degree, level_index);
 }
 
 template<std::floating_point T>

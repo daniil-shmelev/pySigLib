@@ -15,6 +15,7 @@
 
 #pragma once
 #include "cppch.h"
+#include <array>
 
 #include "multithreading.h"
 #include "cp_sig_combine.h"
@@ -25,6 +26,190 @@
 #ifdef VEC
 #include "cp_vector_funcs.h"
 #endif
+
+template<std::floating_point T, uint64_t lanes>
+void sig_backprop_batch_simd_(
+	const T* path,
+	T* out,
+	const T* sig_derivs,
+	const T* sig,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t length,
+	uint64_t degree,
+	bool scalar_term,
+	int n_jobs
+) {
+	const uint64_t flat_path_length = dimension * length;
+	const uint64_t sig_len = ::sig_length(dimension, degree);
+	const uint64_t in_stride = scalar_term ? sig_len : sig_len - 1;
+	const uint64_t group_count = (batch_size + lanes - 1) / lanes;
+
+	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
+	uint64_t* const level_index = level_index_uptr.get();
+	populate_level_index(level_index, dimension, degree + 2);
+
+	auto group_func = [&](const T* path_group, T* out_group, const T* deriv_group, const T* sig_group) {
+		const uint64_t group_start = static_cast<uint64_t>(path_group - path) / flat_path_length;
+		const uint64_t valid_lanes = std::min(lanes, batch_size - group_start);
+		const uint64_t state_size = sig_len * lanes;
+
+		std::vector<T> prefix(state_size, static_cast<T>(0.));
+		std::vector<T> prefix_deriv(state_size, static_cast<T>(0.));
+		std::vector<T> increment_sig_deriv(state_size, static_cast<T>(0.));
+		std::vector<T> increment_sig(state_size, static_cast<T>(0.));
+		std::vector<T> increments(dimension * lanes, static_cast<T>(0.));
+		std::vector<T> increment_deriv(dimension * lanes, static_cast<T>(0.));
+
+		for (uint64_t lane = 0; lane < lanes; ++lane) {
+			prefix[lane] = static_cast<T>(1.);
+			increment_sig[lane] = static_cast<T>(1.);
+		}
+		for (uint64_t lane = 0; lane < valid_lanes; ++lane) {
+			const T* const lane_sig = sig_group + lane * in_stride;
+			const T* const lane_deriv = deriv_group + lane * in_stride;
+			prefix_deriv[lane] = scalar_term ? lane_deriv[0] : static_cast<T>(0.);
+			for (uint64_t word = 1; word < sig_len; ++word) {
+				const uint64_t input_word = scalar_term ? word : word - 1;
+				prefix[word * lanes + lane] = lane_sig[input_word];
+				prefix_deriv[word * lanes + lane] = lane_deriv[input_word];
+			}
+		}
+
+		for (uint64_t time = length - 1; time > 0; --time) {
+			for (uint64_t d = 0; d < dimension; ++d) {
+				T* const increment = increments.data() + d * lanes;
+				T* const level_one = increment_sig.data() + (1 + d) * lanes;
+				for (uint64_t lane = 0; lane < valid_lanes; ++lane) {
+					const T* const lane_path = path_group + lane * flat_path_length;
+					increment[lane] = lane_path[(time - 1) * dimension + d] - lane_path[time * dimension + d];
+					level_one[lane] = -increment[lane];
+				}
+			}
+
+			for (uint64_t level = 2; level <= degree; ++level) {
+				const T one_over_level = static_cast<T>(1.) / static_cast<T>(level);
+				const uint64_t previous_size = level_index[level] - level_index[level - 1];
+				for (uint64_t j = 0; j < previous_size; ++j) {
+					const T* const previous = increment_sig.data() + (level_index[level - 1] + j) * lanes;
+					for (uint64_t d = 0; d < dimension; ++d) {
+						T* const result = increment_sig.data() + (level_index[level] + j * dimension + d) * lanes;
+						const T* const increment = increments.data() + d * lanes;
+						for (uint64_t lane = 0; lane < lanes; ++lane)
+							result[lane] = -previous[lane] * increment[lane] * one_over_level;
+					}
+				}
+			}
+
+			for (int64_t target_level = static_cast<int64_t>(degree); target_level > 0; --target_level) {
+				for (int64_t left_level = target_level - 1, right_level = 1;
+					left_level > 0; --left_level, ++right_level) {
+					const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
+					const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+					uint64_t result_word = level_index[target_level];
+					for (uint64_t left_word = 0; left_word < left_size; ++left_word) {
+						const T* const left = prefix.data() + (level_index[left_level] + left_word) * lanes;
+						for (uint64_t right_word = 0; right_word < right_size; ++right_word, ++result_word) {
+							T* const result = prefix.data() + result_word * lanes;
+							const T* const right = increment_sig.data() + (level_index[right_level] + right_word) * lanes;
+							if (right_level % 2) {
+								for (uint64_t lane = 0; lane < lanes; ++lane)
+									result[lane] -= left[lane] * right[lane];
+							}
+							else {
+								for (uint64_t lane = 0; lane < lanes; ++lane)
+									result[lane] += left[lane] * right[lane];
+							}
+						}
+					}
+				}
+
+				const uint64_t target_size = level_index[target_level + 1] - level_index[target_level];
+				for (uint64_t word = 0; word < target_size; ++word) {
+					T* const result = prefix.data() + (level_index[target_level] + word) * lanes;
+					const T* const right = increment_sig.data() + (level_index[target_level] + word) * lanes;
+					if (target_level % 2) {
+						for (uint64_t lane = 0; lane < lanes; ++lane)
+							result[lane] -= right[lane];
+					}
+					else {
+						for (uint64_t lane = 0; lane < lanes; ++lane)
+							result[lane] += right[lane];
+					}
+				}
+			}
+
+			std::copy(prefix_deriv.begin(), prefix_deriv.end(), increment_sig_deriv.begin());
+			for (uint64_t level = 2; level <= degree; ++level) {
+				for (uint64_t left_level = level - 1, right_level = 1;
+					left_level > 0; --left_level, ++right_level) {
+					const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
+					const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
+					uint64_t result_word = level_index[level];
+					for (uint64_t left_word = 0; left_word < left_size; ++left_word) {
+						const T* const left = prefix.data() + (level_index[left_level] + left_word) * lanes;
+						T* const left_deriv = prefix_deriv.data() + (level_index[left_level] + left_word) * lanes;
+						std::array<T, lanes> left_accum{};
+						for (uint64_t right_word = 0; right_word < right_size; ++right_word, ++result_word) {
+							const T* const result_deriv = prefix_deriv.data() + result_word * lanes;
+							T* const right_deriv = increment_sig_deriv.data() + (level_index[right_level] + right_word) * lanes;
+							const T* const right = increment_sig.data() + (level_index[right_level] + right_word) * lanes;
+							for (uint64_t lane = 0; lane < lanes; ++lane) {
+								right_deriv[lane] += result_deriv[lane] * left[lane];
+								left_accum[lane] += result_deriv[lane] * right[lane];
+							}
+						}
+						for (uint64_t lane = 0; lane < lanes; ++lane)
+							left_deriv[lane] += left_accum[lane];
+					}
+				}
+			}
+
+			std::fill(increment_deriv.begin(), increment_deriv.end(), static_cast<T>(0.));
+			for (uint64_t level = degree; level > 1; --level) {
+				const T one_over_level = static_cast<T>(1.) / static_cast<T>(level);
+				const uint64_t previous_size = level_index[level] - level_index[level - 1];
+				for (uint64_t j = 0; j < previous_size; ++j) {
+					T* const previous_deriv = increment_sig_deriv.data() + (level_index[level - 1] + j) * lanes;
+					const T* const previous = increment_sig.data() + (level_index[level - 1] + j) * lanes;
+					std::array<T, lanes> previous_accum{};
+					for (uint64_t d = 0; d < dimension; ++d) {
+						const T* const level_deriv = increment_sig_deriv.data() + (level_index[level] + j * dimension + d) * lanes;
+						const T* const increment = increments.data() + d * lanes;
+						T* const displacement_deriv = increment_deriv.data() + d * lanes;
+						for (uint64_t lane = 0; lane < lanes; ++lane) {
+							previous_accum[lane] -= level_deriv[lane] * increment[lane] * one_over_level;
+							displacement_deriv[lane] += level_deriv[lane] * previous[lane] * one_over_level;
+						}
+					}
+					for (uint64_t lane = 0; lane < lanes; ++lane)
+						previous_deriv[lane] += previous_accum[lane];
+				}
+			}
+			for (uint64_t d = 0; d < dimension; ++d) {
+				T* const displacement_deriv = increment_deriv.data() + d * lanes;
+				const T* const level_one_deriv = increment_sig_deriv.data() + (1 + d) * lanes;
+				for (uint64_t lane = 0; lane < lanes; ++lane)
+					displacement_deriv[lane] += level_one_deriv[lane];
+			}
+
+			for (uint64_t lane = 0; lane < valid_lanes; ++lane) {
+				T* const lane_out = out_group + lane * flat_path_length;
+				for (uint64_t d = 0; d < dimension; ++d) {
+					const T value = increment_deriv[d * lanes + lane];
+					lane_out[time * dimension + d] += value;
+					lane_out[(time - 1) * dimension + d] -= value;
+				}
+			}
+		}
+	};
+
+	multi_threaded_batch(group_func, group_count, n_jobs,
+		make_batch(path, flat_path_length * lanes),
+		make_batch(out, flat_path_length * lanes),
+		make_batch(sig_derivs, in_stride * lanes),
+		make_batch(sig, in_stride * lanes));
+}
 
 inline void validate_signature_correction_args_(
 	const void* correction,
@@ -679,6 +864,18 @@ void sig_backprop_(
 		return;
 	}
 
+#ifdef VEC
+	if (!time_aug && !lead_lag && correction_len == 0 && degree > 1) {
+		constexpr uint64_t simd_lanes = 32 / sizeof(T);
+		if (sig_len_ <= 128 && batch_size >= simd_lanes) {
+			sig_backprop_batch_simd_<T, simd_lanes>(
+				path, out, sig_derivs, sig, batch_size, dimension, length,
+				degree, scalar_term, n_jobs);
+			return;
+		}
+	}
+#endif
+
 	//General case -- inner function always works on full-size buffers
 	auto sig_derivs_copy_uptr = std::make_unique<T[]>(sig_len_ * batch_size);
 	T* sig_derivs_copy = sig_derivs_copy_uptr.get();
@@ -863,15 +1060,17 @@ void sig_backprop_inplace_(
 			for (uint64_t i = 0; i < dimension; ++i)
 				increments[i] = prev_pt[i] - next_pt[i];
 
-			linear_signature_(prev_pt, next_pt, linear_signature, dimension, degree, level_index);
+			linear_signature_(prev_pt, next_pt, linear_signature, dimension, degree - 1, level_index);
 			signature_horner_step_(sig, increments, dimension, degree, level_index, horner_step);
-			uncombine_sig_deriv(sig, linear_signature, sig_derivs, local_derivs, dimension, degree, level_index);
-			linear_sig_deriv_to_increment_deriv(linear_signature, local_derivs, dimension, degree, level_index);
+			uncombine_sig_deriv(sig, linear_signature, sig_derivs, local_derivs, dimension, degree, level_index, false);
+			linear_sig_deriv_to_increment_deriv(
+				linear_signature, local_derivs, increments, dimension, degree,
+				level_index, sig_derivs + level_index[degree]);
 
 
 			//TODO: can we exploit the structure and avoid computing derivatives which are a priori zero?
 
-			T* s = parity ? local_derivs + 1 + data_dimension : local_derivs + 1;
+			T* s = parity ? increments + data_dimension : increments;
 			for (uint64_t d = 0; d < data_dimension; ++d) {
 				pos[d] += s[d];
 				neg[d] -= s[d];
@@ -895,13 +1094,15 @@ void sig_backprop_inplace_(
 			for (uint64_t i = 0; i < dimension; ++i)
 				increments[i] = prev_pt[i] - next_pt[i];
 
-			linear_signature_(prev_pt, next_pt, linear_signature, dimension, degree, level_index);
+			linear_signature_(prev_pt, next_pt, linear_signature, dimension, degree - 1, level_index);
 			signature_horner_step_(sig, increments, dimension, degree, level_index, horner_step);
-			uncombine_sig_deriv(sig, linear_signature, sig_derivs, local_derivs, dimension, degree, level_index);
-			linear_sig_deriv_to_increment_deriv(linear_signature, local_derivs, dimension, degree, level_index);
+			uncombine_sig_deriv(sig, linear_signature, sig_derivs, local_derivs, dimension, degree, level_index, false);
+			linear_sig_deriv_to_increment_deriv(
+				linear_signature, local_derivs, increments, dimension, degree,
+				level_index, sig_derivs + level_index[degree]);
 
 			T* neg = pos - data_dimension;
-			T* s = local_derivs + 1;
+			T* s = increments;
 			for (uint64_t d = 0; d < data_dimension; ++d) {
 				pos[d] += s[d];
 				neg[d] -= s[d];
