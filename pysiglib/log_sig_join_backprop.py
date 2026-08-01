@@ -51,12 +51,12 @@ def log_sig_join_backprop(
 
     :param d_out: Derivative with respect to the output of log_sig_join,
         :math:`\\partial F / \\partial L(x * v)`, of shape ``(..., log_sig_length)``.
-    :type d_out: numpy.ndarray | torch.tensor
+    :type d_out: numpy.ndarray | torch.Tensor
     :param log_sig: The original truncated log-signature, :math:`L(x)`,
         of shape ``(..., log_sig_length)``.
-    :type log_sig: numpy.ndarray | torch.tensor
+    :type log_sig: numpy.ndarray | torch.Tensor
     :param displacement: The displacement vector, :math:`v`, of shape ``(..., dimension)``.
-    :type displacement: numpy.ndarray | torch.tensor
+    :type displacement: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
     :param degree: Truncation level of the log-signatures, :math:`N`
@@ -66,7 +66,7 @@ def log_sig_join_backprop(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: Derivatives with respect to ``log_sig`` and ``displacement``
-    :rtype: Tuple[numpy.ndarray | torch.tensor, numpy.ndarray | torch.tensor]
+    :rtype: Tuple[numpy.ndarray | torch.Tensor, numpy.ndarray | torch.Tensor]
 
     Example:
     ---------

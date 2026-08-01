@@ -38,11 +38,11 @@ def sig_score(
 
     :param sample: The batch of sample paths drawn from :math:`\\mu`, of shape
         ``(*batch_shape, length_1, dimension)``.
-    :type sample: numpy.ndarray | torch.tensor
+    :type sample: numpy.ndarray | torch.Tensor
     :param y: The path(s) :math:`y`, of shape ``(*batch_shape_y, length_2, dimension)``.
         ``batch_shape_y`` may be empty (single ``y``) or arbitrary; the score is computed
         independently for each ``y``. Independent of ``sample``'s batch shape.
-    :type y: numpy.ndarray | torch.tensor
+    :type y: numpy.ndarray | torch.Tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
@@ -73,7 +73,7 @@ def sig_score(
     :type max_batch: int
     :return: Signature kernel score, of shape ``batch_shape_y`` (or ``(1,)`` if ``y``
         is a single 2D path).
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------
@@ -182,11 +182,11 @@ def expected_sig_score(
 
     :param sample1: The batch of sample paths drawn from :math:`\\mu`, of shape
         ``(*batch_shape, length_1, dimension)``.
-    :type sample1: numpy.ndarray | torch.tensor
+    :type sample1: numpy.ndarray | torch.Tensor
     :param sample2: The batch of sample paths drawn from :math:`\\nu`, of shape
         ``(*batch_shape, length_2, dimension)``. Independent of ``sample1``'s batch
         shape.
-    :type sample2: numpy.ndarray | torch.tensor
+    :type sample2: numpy.ndarray | torch.Tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
@@ -216,7 +216,7 @@ def expected_sig_score(
         If set to -1, the entire batch is computed in parallel.
     :type max_batch: int
     :return: Expected signature kernel score, of shape ``(1,)``.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------
@@ -290,12 +290,12 @@ def sig_mmd(
     :param sample1: The batch of sample paths drawn from :math:`\\mu`, of shape
         ``(*batch_shape, length_1, dimension)``. All dimensions before ``length_1`` are
         batch dimensions and are flattened to a single batch :math:`m` of paths.
-    :type sample1: numpy.ndarray | torch.tensor
+    :type sample1: numpy.ndarray | torch.Tensor
     :param sample2: The batch of sample paths drawn from :math:`\\nu`, of shape
         ``(*batch_shape, length_2, dimension)``. All dimensions before ``length_2`` are
         flattened to a single batch :math:`n` of paths. Independent of ``sample1``'s batch
         shape.
-    :type sample2: numpy.ndarray | torch.tensor
+    :type sample2: numpy.ndarray | torch.Tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
@@ -323,7 +323,7 @@ def sig_mmd(
         If set to -1, the entire batch is computed in parallel.
     :type max_batch: int
     :return: Signature MMD
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------

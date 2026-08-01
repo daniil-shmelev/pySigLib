@@ -47,9 +47,9 @@ def logsig_to_sig_backprop(
     Supports all methods (``0``, ``1``, ``2``).
 
     :param log_sig: The log-signature used in the forward pass.
-    :type log_sig: numpy.ndarray | torch.tensor
+    :type log_sig: numpy.ndarray | torch.Tensor
     :param sig_derivs: Upstream derivatives dL/d(sig), same shape as the signature output.
-    :type sig_derivs: numpy.ndarray | torch.tensor
+    :type sig_derivs: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
     :param degree: Truncation degree.
@@ -68,7 +68,7 @@ def logsig_to_sig_backprop(
     :param n_jobs: Number of threads to run in parallel.
     :type n_jobs: int
     :return: Gradient dL/d(log_sig), same shape as ``log_sig``.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
     """
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")

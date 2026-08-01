@@ -50,11 +50,11 @@ def branched_sig_backprop(
     derivatives ``bsig_derivs = dF/d(bsig)``, computes ``dF/d(path)``.
 
     :param path: Input path, shape ``(length, dimension)`` or ``(batch, length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
+    :type path: numpy.ndarray | torch.Tensor
     :param bsig: Forward branched signature output.
-    :type bsig: numpy.ndarray | torch.tensor
+    :type bsig: numpy.ndarray | torch.Tensor
     :param bsig_derivs: Upstream derivatives w.r.t. the branched signature.
-    :type bsig_derivs: numpy.ndarray | torch.tensor
+    :type bsig_derivs: numpy.ndarray | torch.Tensor
     :param degree: Maximum order (must match forward call).
     :type degree: int
     :param time_aug: Whether time augmentation was used in the forward pass.
@@ -69,7 +69,7 @@ def branched_sig_backprop(
         (see :func:`branched_sig` for layout and semantics).
         Treated as a constant: no derivatives are returned with respect to
         ``correction``. Cannot be combined with ``lead_lag=True``.
-    :type correction: numpy.ndarray | torch.tensor | None
+    :type correction: numpy.ndarray | torch.Tensor | None
     :param n_jobs: Number of parallel threads for batch processing.
     :type n_jobs: int
     :return: Path derivatives, same shape as ``path``.
@@ -168,11 +168,11 @@ def branched_sig_combine_backprop(
     ``(dF/d(bsig1), dF/d(bsig2))``.
 
     :param derivs: Upstream derivatives, same shape as combine output.
-    :type derivs: numpy.ndarray | torch.tensor
+    :type derivs: numpy.ndarray | torch.Tensor
     :param bsig1: First branched signature input to the forward combine.
-    :type bsig1: numpy.ndarray | torch.tensor
+    :type bsig1: numpy.ndarray | torch.Tensor
     :param bsig2: Second branched signature input to the forward combine.
-    :type bsig2: numpy.ndarray | torch.tensor
+    :type bsig2: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying path.
     :type dimension: int
     :param degree: Maximum order.

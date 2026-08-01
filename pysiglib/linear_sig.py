@@ -45,7 +45,7 @@ def linear_sig(
     :param displacement: The displacement vector or batch of displacement vectors.
         For a single displacement, this must be of shape ``(dimension,)``.
         For a batch, this must be of shape ``(batch_size, dimension)``.
-    :type displacement: numpy.ndarray | torch.tensor
+    :type displacement: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
     :param degree: Truncation level of the signature, :math:`N`.
@@ -58,7 +58,7 @@ def linear_sig(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: Truncated signature of the linear segment, or a batch of truncated signatures.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------

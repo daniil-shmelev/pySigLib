@@ -78,7 +78,7 @@ def transform_path(
     after the lead-lag transformation.
 
     :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
+    :type path: numpy.ndarray | torch.Tensor
     :param time_aug: If ``True``, applies time-augmentation by adding a linear channel to the path
         spanning :math:`[0, t_L]`. :math:`t_L` is given by the parameter ``end_time`` and defaults to 1.
     :type time_aug: bool
@@ -91,7 +91,7 @@ def transform_path(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: Transformed paths.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     .. note::
 

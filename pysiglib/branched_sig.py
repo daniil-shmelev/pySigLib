@@ -174,7 +174,7 @@ def branched_sig(
     (accounting for ``time_aug`` and ``lead_lag``).
 
     :param path: Path of shape ``(length, dimension)`` or ``(..., length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
+    :type path: numpy.ndarray | torch.Tensor
     :param degree: Maximum order (number of nodes).
     :type degree: int
     :param time_aug: If True, prepend a time channel to the path.
@@ -217,7 +217,7 @@ def branched_sig(
         are over the original path channels; with ``time_aug=True``, the
         appended time channel contributes no correction. Cannot be combined with
         ``lead_lag=True``.
-    :type correction: numpy.ndarray | torch.tensor | None
+    :type correction: numpy.ndarray | torch.Tensor | None
     :param n_jobs: Number of parallel threads for batch processing.
     :type n_jobs: int
     :return: Branched signature array of shape ``(bsig_len,)`` or ``(..., bsig_len)``.
@@ -305,9 +305,9 @@ def branched_sig_combine(
     (the analogue of Chen's identity for branched rough paths).
 
     :param bsig1: First branched signature.
-    :type bsig1: numpy.ndarray | torch.tensor
+    :type bsig1: numpy.ndarray | torch.Tensor
     :param bsig2: Second branched signature.
-    :type bsig2: numpy.ndarray | torch.tensor
+    :type bsig2: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying path.
     :type dimension: int
     :param degree: Maximum order (number of nodes).

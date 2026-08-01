@@ -48,10 +48,10 @@ def log_sig_combine(
         L(x_1 * x_2) = \\text{BCH}(L(x_1), L(x_2)).
 
     :param log_sig1: The first truncated log-signature (Lyndon basis, method=2 or method=3)
-    :type log_sig1: numpy.ndarray | torch.tensor
+    :type log_sig1: numpy.ndarray | torch.Tensor
     :param log_sig2: The second truncated log-signature (Lyndon basis, method=2 or method=3).
         Must have the same degree and dimension as the first.
-    :type log_sig2: numpy.ndarray | torch.tensor
+    :type log_sig2: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
     :param degree: Truncation level of the log-signatures, :math:`N`
@@ -66,7 +66,7 @@ def log_sig_combine(
         is run serially. If set to -1, all available threads are used.
     :type n_jobs: int
     :return: Combined log-signature (Lyndon basis)
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
     """
     check_type(dimension, "dimension", int)
     check_non_neg(dimension, "dimension")
@@ -115,11 +115,11 @@ def log_sig_combine_backprop(
     computes the derivatives with respect to the two input log-signatures.
 
     :param deriv: Derivative with respect to the combined log-signature
-    :type deriv: numpy.ndarray | torch.tensor
+    :type deriv: numpy.ndarray | torch.Tensor
     :param ls1: The first truncated log-signature (Lyndon basis, method=2 or method=3)
-    :type ls1: numpy.ndarray | torch.tensor
+    :type ls1: numpy.ndarray | torch.Tensor
     :param ls2: The second truncated log-signature (Lyndon basis, method=2 or method=3)
-    :type ls2: numpy.ndarray | torch.tensor
+    :type ls2: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying space
     :type dimension: int
     :param degree: Truncation level of the log-signatures
@@ -131,7 +131,7 @@ def log_sig_combine_backprop(
     :param n_jobs: Number of threads (CPU only)
     :type n_jobs: int
     :return: Derivatives with respect to ``ls1`` and ``ls2``
-    :rtype: Tuple[numpy.ndarray | torch.tensor, numpy.ndarray | torch.tensor]
+    :rtype: Tuple[numpy.ndarray | torch.Tensor, numpy.ndarray | torch.Tensor]
     """
 
     check_type(dimension, "dimension", int)

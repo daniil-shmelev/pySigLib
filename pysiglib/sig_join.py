@@ -48,9 +48,9 @@ def sig_join(
     where :math:`S(v)` is the signature of the linear path defined by :math:`v`.
 
     :param sig: The existing truncated signature, of shape ``(sig_length,)`` or ``(batch_size, sig_length)``.
-    :type sig: numpy.ndarray | torch.tensor
+    :type sig: numpy.ndarray | torch.Tensor
     :param displacement: The displacement vector, of shape ``(dimension,)`` or ``(batch_size, dimension)``.
-    :type displacement: numpy.ndarray | torch.tensor
+    :type displacement: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
     :param degree: Truncation level of the signature, :math:`N`.
@@ -64,7 +64,7 @@ def sig_join(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: Extended signature, :math:`S(x * v)`.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example usage::
 

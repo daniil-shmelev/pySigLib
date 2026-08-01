@@ -238,10 +238,10 @@ def sig_to_log_sig(
     Computes the log signature from the signature, using the specified method. For details,
     see the page :doc:`Computing Log Signatures </pages/log_signatures/log_sig_methods>`.
 
-    :param sig: The signature or batch of signatures, given as a `numpy.ndarray` or `torch.tensor`.
+    :param sig: The signature or batch of signatures, given as a `numpy.ndarray` or `torch.Tensor`.
         For a single signature, this must be of shape ``sig_length``. For a batch of paths, this must
         be of shape ``(batch_size, sig_length)``.
-    :type sig: numpy.ndarray | torch.tensor
+    :type sig: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
     :param degree: Truncation degree of the (log) signature(s).
@@ -261,7 +261,7 @@ def sig_to_log_sig(
     :return: Log signature or a batch of log signatures. For method ``0`` (expanded), the output
         matches the scalar-term format of the input ``sig``. Methods ``1`` and ``2`` produce
         log-sig-shaped output (no scalar term).
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example usage:
     ----------------
@@ -328,10 +328,10 @@ def log_sig(
     Computes the log signature using the specified method. For details,
     see the page :doc:`Computing Log Signatures </pages/log_signatures/log_sig_methods>`.
 
-    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
+    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.Tensor`.
         For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
         be of shape ``(batch_size, length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
+    :type path: numpy.ndarray | torch.Tensor
     :param degree: Truncation degree of the (log) signature(s).
     :type degree: int
     :param time_aug: If set to True, will compute the log signature of the time-augmented path, :math:`\\hat{x}_t := (t, x_t)`,
@@ -359,14 +359,14 @@ def log_sig(
         batch-specific layouts. For non-Lie correction such as
         Ito level-2 diagonal terms, use ``method=0`` to retain the full tensor
         logarithm. Cannot be combined with ``lead_lag=True``.
-    :type correction: numpy.ndarray | torch.tensor | None
+    :type correction: numpy.ndarray | torch.Tensor | None
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: Log signature or a batch of log signatures.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example usage:
     ----------------

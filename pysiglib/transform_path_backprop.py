@@ -43,7 +43,7 @@ def transform_path_backprop(
 
     :param derivs: The derivatives with respect to the result of ``pysiglib.transform_path``,
         :math:`\\{\\partial F / \\partial \\tilde{x}_{t_i}\\}_{i=0}^\\tilde{L}`.
-    :type derivs: numpy.ndarray | torch.tensor
+    :type derivs: numpy.ndarray | torch.Tensor
     :param time_aug: If ``True``, assumes the derivatives are with respect to a time
         augmented path.
     :type time_aug: bool
@@ -58,7 +58,7 @@ def transform_path_backprop(
     :type n_jobs: int
     :return: Derivatives with respect to the original path,
         :math:`\\{\\partial F / x_{t_i}\\}_{i=0}^L`.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------

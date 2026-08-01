@@ -54,10 +54,10 @@ def log_sig_join(
         internally.
 
     :param log_sig: The existing truncated log-signature, of shape ``(..., log_sig_length)``.
-    :type log_sig: numpy.ndarray | torch.tensor
+    :type log_sig: numpy.ndarray | torch.Tensor
     :param displacement: The displacement vector, of shape ``(..., dimension)``.
         Leading batch dimensions must match those of ``log_sig``.
-    :type displacement: numpy.ndarray | torch.tensor
+    :type displacement: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
     :param degree: Truncation level of the log-signature, :math:`N`.
@@ -67,7 +67,7 @@ def log_sig_join(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: Extended log-signature, :math:`L(x * v)`.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------

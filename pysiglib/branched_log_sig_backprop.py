@@ -50,14 +50,14 @@ def branched_sig_to_log_sig_backprop(
     to the branched signature.
 
     :param bsig: The branched signature or batch of branched signatures used in the forward pass,
-        given as a `numpy.ndarray` or `torch.tensor`. For a single branched signature, this must be
+        given as a `numpy.ndarray` or `torch.Tensor`. For a single branched signature, this must be
         of shape ``branched_sig_length``. For a batch of paths, this must be of shape
         ``(batch_size, branched_sig_length)``. The leading scalar term may be present or omitted.
-    :type bsig: numpy.ndarray | torch.tensor
+    :type bsig: numpy.ndarray | torch.Tensor
     :param blogsig_derivs: Derivatives of the scalar function :math:`F` with respect to the
         branched log signature(s). This must be an array of the same shape as the branched log
         signature(s).
-    :type blogsig_derivs: numpy.ndarray | torch.tensor
+    :type blogsig_derivs: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
     :param degree: Truncation degree of the branched signature(s).
@@ -75,7 +75,7 @@ def branched_sig_to_log_sig_backprop(
     :type n_jobs: int
     :return: Derivatives of the scalar function :math:`F` with respect to the branched
         signature(s). This is an array of the same shape as ``bsig``.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------

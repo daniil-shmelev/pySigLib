@@ -272,7 +272,7 @@ def sig_kernel_gram_backprop(
         n_jobs : int = 1,
         return_grid : bool = False,
         max_batch : int = -1
-) -> Union[np.ndarray, torch.tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.tensor, torch.tensor]]:
+) -> Union[np.ndarray, torch.Tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.Tensor, torch.Tensor]]:
     """
     This function is required to backpropagate through ``pysiglib.sig_kernel_gram``.
     Given the derivatives of a scalar function :math:`F` with respect to a
@@ -287,12 +287,12 @@ def sig_kernel_gram_backprop(
         ``(*batch_shape_1, *batch_shape_2)`` if ``return_grid=False``, or
         ``(*batch_shape_1, *batch_shape_2, dyadic_length_1, dyadic_length_2)`` if
         ``return_grid=True``.
-    :type derivs: numpy.ndarray | torch.tensor
+    :type derivs: numpy.ndarray | torch.Tensor
     :param path1: A path or batch of paths, of shape ``(*batch_shape_1, length_1, dimension)``.
-    :type path1: numpy.ndarray | torch.tensor
+    :type path1: numpy.ndarray | torch.Tensor
     :param path2: A path or batch of paths, of shape ``(*batch_shape_2, length_2, dimension)``.
         Independent of ``path1``'s batch shape.
-    :type path2: numpy.ndarray | torch.tensor
+    :type path2: numpy.ndarray | torch.Tensor
     :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
     :type dyadic_order: int | tuple
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
@@ -313,7 +313,7 @@ def sig_kernel_gram_backprop(
         ``True``, returns both derivatives as a tuple.
     :type right_deriv: bool
     :param k_grid: Signature kernel PDE grid. If ``None``, the grid will be recomputed.
-    :type k_grid: numpy.ndarray | torch.tensor
+    :type k_grid: numpy.ndarray | torch.Tensor
     :param n_jobs: (Only applicable to CPU computation) Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
@@ -330,7 +330,7 @@ def sig_kernel_gram_backprop(
         this tuple is  :math:`\\{\\partial F / x_{t_i}\\}_{i=0}^{L_1}` with shape
         matching ``path1``, otherwise it is ``None``. Similarly for ``right_deriv``
         and :math:`\\{\\partial F / y_{t_i}\\}_{i=0}^{L_2}` with shape matching ``path2``.
-    :rtype: numpy.ndarray | torch.tensor | Tuple[numpy.ndarray | numpy.ndarray] | Tuple[torch.tensor | torch.tensor]
+    :rtype: numpy.ndarray | torch.Tensor | Tuple[numpy.ndarray | numpy.ndarray] | Tuple[torch.Tensor | torch.Tensor]
 
     .. note::
 

@@ -45,11 +45,11 @@ def sig_join_backprop(
 
     :param d_out: Derivative with respect to the output of sig_join,
         :math:`\\partial F / \\partial S(x * v)`
-    :type d_out: numpy.ndarray | torch.tensor
+    :type d_out: numpy.ndarray | torch.Tensor
     :param sig: The original truncated signature, :math:`S(x)`
-    :type sig: numpy.ndarray | torch.tensor
+    :type sig: numpy.ndarray | torch.Tensor
     :param displacement: The displacement vector, :math:`v`
-    :type displacement: numpy.ndarray | torch.tensor
+    :type displacement: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
     :param degree: Truncation level of the signatures, :math:`N`
@@ -62,7 +62,7 @@ def sig_join_backprop(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: Derivatives with respect to ``sig`` and ``displacement``
-    :rtype: Tuple[numpy.ndarray | torch.tensor, numpy.ndarray | torch.tensor]
+    :rtype: Tuple[numpy.ndarray | torch.Tensor, numpy.ndarray | torch.Tensor]
 
     Example:
     ---------

@@ -45,14 +45,14 @@ def sig_to_log_sig_backprop(
     derivatives of :math:`F` with respect to the signature,
     :math:`\\partial F / \\partial S(x)`.
 
-    :param sig: The signature or batch of signatures, given as a `numpy.ndarray` or `torch.tensor`.
+    :param sig: The signature or batch of signatures, given as a `numpy.ndarray` or `torch.Tensor`.
         For a single signature, this must be of shape ``sig_length``. For a batch of paths, this must
         be of shape ``(batch_size, sig_length)``.
-    :type sig: numpy.ndarray | torch.tensor
+    :type sig: numpy.ndarray | torch.Tensor
     :param log_sig_derivs: Derivatives of the scalar function :math:`F` with respect to the log signature(s),
         :math:`\\partial F / \\partial S(x)`. This must be an array of the same shape as the
         log signature(s).
-    :type log_sig_derivs: numpy.ndarray | torch.tensor
+    :type log_sig_derivs: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
     :param degree: Truncation degree of the (log) signature(s).
@@ -71,7 +71,7 @@ def sig_to_log_sig_backprop(
     :return: Derivatives of the scalar function :math:`F` with respect to the signature(s),
         :math:`\\partial F / \\partial S(x)`.
         This is an array of the same shape as the provided signature(s).
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------

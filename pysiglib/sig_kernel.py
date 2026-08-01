@@ -94,11 +94,11 @@ def sig_kernel(
 
     :param path1: The first underlying path or batch of paths, of shape
         ``(..., length_1, dimension)``.
-    :type path1: numpy.ndarray | torch.tensor
+    :type path1: numpy.ndarray | torch.Tensor
     :param path2: The second underlying path or batch of paths, of shape
         ``(..., length_2, dimension)``. Leading batch dimensions must match those of
         ``path1``.
-    :type path2: numpy.ndarray | torch.tensor
+    :type path2: numpy.ndarray | torch.Tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
@@ -126,7 +126,7 @@ def sig_kernel(
         by dividing by :math:`\\sqrt{k(x, x) \\cdot k(y, y)}`. Cannot be used with ``return_grid=True``.
     :type normalize: bool
     :return: Single signature kernel or batch of signature kernels
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     ---------
@@ -305,10 +305,10 @@ def sig_kernel_gram(
     :doc:`static kernels </pages/signature_kernels/static_kernels>`.
 
     :param path1: A path or batch of paths, of shape ``(*batch_shape_1, length_1, dimension)``.
-    :type path1: numpy.ndarray | torch.tensor
+    :type path1: numpy.ndarray | torch.Tensor
     :param path2: A path or batch of paths, of shape ``(*batch_shape_2, length_2, dimension)``.
         Independent of ``path1``'s batch shape.
-    :type path2: numpy.ndarray | torch.tensor
+    :type path2: numpy.ndarray | torch.Tensor
     :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
@@ -342,7 +342,7 @@ def sig_kernel_gram(
     :return: Gram matrix of signature kernels, of shape ``(*batch_shape_1, *batch_shape_2)``
         (or ``(*batch_shape_1, *batch_shape_2, dyadic_length_1, dyadic_length_2)`` if
         ``return_grid=True``).
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     .. note::
 

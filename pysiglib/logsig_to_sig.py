@@ -44,10 +44,10 @@ def logsig_to_sig(
     Supports all methods (``0``, ``1``, ``2``). For methods ``1`` and ``2``,
     ``prepare_log_sig(dimension, degree, method=2)`` must be called first.
 
-    :param log_sig: The log-signature or batch of log-signatures, given as a `numpy.ndarray` or `torch.tensor`.
+    :param log_sig: The log-signature or batch of log-signatures, given as a `numpy.ndarray` or `torch.Tensor`.
         For a single log-signature, this must be of shape ``(sig_length,)``. For a batch, this must be
         of shape ``(batch_size, sig_length)``.
-    :type log_sig: numpy.ndarray | torch.tensor
+    :type log_sig: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
     :param degree: Truncation degree of the (log) signature(s).
@@ -69,7 +69,7 @@ def logsig_to_sig(
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: Signature or a batch of signatures.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example usage::
 

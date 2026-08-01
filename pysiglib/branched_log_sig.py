@@ -44,10 +44,10 @@ def branched_sig_to_log_sig(
     Computes the branched log signature from the branched signature.
 
     :param bsig: The branched signature or batch of branched signatures, given as a `numpy.ndarray`
-        or `torch.tensor`. For a single branched signature, this must be of shape
+        or `torch.Tensor`. For a single branched signature, this must be of shape
         ``branched_sig_length``. For a batch of paths, this must be of shape
         ``(batch_size, branched_sig_length)``. The leading scalar term may be present or omitted.
-    :type bsig: numpy.ndarray | torch.tensor
+    :type bsig: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying path(s).
     :type dimension: int
     :param degree: Truncation degree of the branched signature(s).
@@ -65,7 +65,7 @@ def branched_sig_to_log_sig(
     :type n_jobs: int
     :return: The branched log signature or batch of branched log signatures, in the same
         scalar-term format as ``bsig``.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example usage:
     ----------------
@@ -127,10 +127,10 @@ def branched_log_sig(
     """
     Computes the branched log signature of a path.
 
-    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
+    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.Tensor`.
         For a single path, this must be of shape ``(length, dimension)``. For a batch of paths,
         this must be of shape ``(batch_size, length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
+    :type path: numpy.ndarray | torch.Tensor
     :param degree: Truncation degree of the branched (log) signature(s).
     :type degree: int
     :param time_aug: If set to True, will compute the branched log signature of the
@@ -176,14 +176,14 @@ def branched_log_sig(
         are over the original path channels; with ``time_aug=True``, the
         appended time channel contributes no correction. Cannot be combined with
         ``lead_lag=True``.
-    :type correction: numpy.ndarray | torch.tensor | None
+    :type correction: numpy.ndarray | torch.Tensor | None
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: The branched log signature or batch of branched log signatures.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example usage:
     ----------------

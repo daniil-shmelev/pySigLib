@@ -48,9 +48,9 @@ def sig_combine(
     where :math:`x_1 * x_2` is the concatenation of the two paths :math:`x_1, x_2`.
 
     :param sig1: The first truncated signature
-    :type sig1: numpy.ndarray | torch.tensor
+    :type sig1: numpy.ndarray | torch.Tensor
     :param sig2: The second truncated signature. Must have the same degree and dimension as the first.
-    :type sig2: numpy.ndarray | torch.tensor
+    :type sig2: numpy.ndarray | torch.Tensor
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
     :param degree: Truncation level of the signatures, :math:`N`
@@ -66,7 +66,7 @@ def sig_combine(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: Combined signature, :math:`S(x_1 * x_2)`, in the same scalar-term format as the inputs.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example usage::
 
@@ -146,10 +146,10 @@ def sig(
 
         S(x)^{(k)}_{[s,t]} := \\int_{s < t_1 < \\cdots < t_k < t} dx_{t_1} \\otimes dx_{t_2} \\otimes \\cdots \\otimes dx_{t_k} \\in \\left(\\mathbb{R}^d\\right)^{\\otimes k}.
 
-    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.tensor`.
+    :param path: The underlying path or batch of paths, given as a `numpy.ndarray` or `torch.Tensor`.
         For a single path, this must be of shape ``(length, dimension)``. For a batch of paths, this must
         be of shape ``(batch_size, length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
+    :type path: numpy.ndarray | torch.Tensor
     :param degree: The truncation level of the signature, :math:`N`.
     :type degree: int
     :param time_aug: If set to True, will compute the signature of the time-augmented path, :math:`\\hat{x}_t := (t, x_t)`,
@@ -192,13 +192,13 @@ def sig(
         or an empty array is equivalent to all-zero correction. With
         ``time_aug=True``, the appended time channel contributes no
         correction entries. Cannot be combined with ``lead_lag=True``.
-    :type correction: numpy.ndarray | torch.tensor | None
+    :type correction: numpy.ndarray | torch.Tensor | None
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :return: Truncated signature, or a batch of truncated signatures.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     .. note::
 
