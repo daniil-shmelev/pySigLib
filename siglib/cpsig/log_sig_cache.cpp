@@ -122,11 +122,9 @@ void set_default_cache_dir() {
 #endif
 
 	std::filesystem::path dir_path = dir;
-	if (std::filesystem::exists(dir_path)) {
-		std::filesystem::path pysiglib_cache_path = dir_path / cache_folder_name;
-		if (!std::filesystem::exists(pysiglib_cache_path)) {
-			std::filesystem::create_directories(pysiglib_cache_path);
-		}
+	std::filesystem::path pysiglib_cache_path = dir_path / cache_folder_name;
+	if (!std::filesystem::exists(pysiglib_cache_path)) {
+		std::filesystem::create_directories(pysiglib_cache_path);
 	}
 
 	// Only install if still unset: don't clobber an explicit set_cache_dir_().
