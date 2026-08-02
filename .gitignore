@@ -23,7 +23,8 @@
 /b2-5.3.2.zip
 *.pclprof
 /docs/_build
-/docs/_templates
+/docs/_templates/*
+!/docs/_templates/layout.html
 /pysiglib/_config.py
 /_build_log.txt
 *.dll

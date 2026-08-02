@@ -70,8 +70,8 @@ html_theme = "sphinx_book_theme"
 
 html_theme_options = {
     "logo": {
-        "image_light": "_static/logo_light.png",
-        "image_dark": "_static/logo_dark.png",
+        "image_light": "_static/logo_light.svg",
+        "image_dark": "_static/logo_dark.svg",
     },
     "repository_url": "https://github.com/daniil-shmelev/pySigLib",
     "use_repository_button": True,
@@ -81,8 +81,8 @@ html_theme_options = {
 
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
-html_logo = "_static/logo_light.png"
-html_favicon = "_static/favicon.png"
+html_logo = "_static/logo_light.svg"
+html_favicon = ""
 add_module_names = False
 
 html_title = "Documentation"

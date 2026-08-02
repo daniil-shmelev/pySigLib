@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source srcset="https://raw.githubusercontent.com/daniil-shmelev/pySigLib/master/docs/_static/logo_dark.png" media="(prefers-color-scheme: dark)">
-    <source srcset="https://raw.githubusercontent.com/daniil-shmelev/pySigLib/master/docs/_static/logo_light.png" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/daniil-shmelev/pySigLib/master/docs/_static/logo_light.png" width="350" alt="Logo">
+    <source srcset="https://raw.githubusercontent.com/daniil-shmelev/pySigLib/master/docs/_static/logo_dark.svg" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/daniil-shmelev/pySigLib/master/docs/_static/logo_light.svg" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/daniil-shmelev/pySigLib/master/docs/_static/logo_light.svg" width="350" alt="pySigLib logo">
   </picture>
 </p>
 

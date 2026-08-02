@@ -20,8 +20,8 @@ pySigLib |release|
 .. raw:: html
 
    <div style="text-align: center;">
-     <img src="_static/logo_light.png" width="400" class="only-light" style="pointer-events: none;" />
-     <img src="_static/logo_dark.png" width="400" class="only-dark" style="pointer-events: none;" />
+     <img src="_static/logo_light.svg" width="400" class="only-light" style="pointer-events: none;" alt="pySigLib logo" />
+     <img src="_static/logo_dark.svg" width="400" class="only-dark" style="pointer-events: none;" alt="pySigLib logo" />
    </div>
 
 .. rst-class:: landing-tagline
