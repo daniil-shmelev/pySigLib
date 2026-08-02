@@ -2,12 +2,14 @@
   <picture>
     <source srcset="https://raw.githubusercontent.com/daniil-shmelev/pySigLib/master/docs/_static/logo_dark.svg" media="(prefers-color-scheme: dark)">
     <source srcset="https://raw.githubusercontent.com/daniil-shmelev/pySigLib/master/docs/_static/logo_light.svg" media="(prefers-color-scheme: light)">
-    <img src="https://raw.githubusercontent.com/daniil-shmelev/pySigLib/master/docs/_static/logo_light.svg" width="350" alt="pySigLib logo">
+    <img src="https://raw.githubusercontent.com/daniil-shmelev/pySigLib/master/docs/_static/logo_light.svg" width="450" alt="pySigLib logo">
   </picture>
 </p>
 
 
 <h2 align='center'>Fast path signatures, log signatures, and signature kernels on CPU and GPU</h2>
+
+<div align="center">
 
 ![PyPI - Version](https://img.shields.io/pypi/v/pysiglib)
 [![PyPI - Downloads](https://static.pepy.tech/badge/pysiglib/month)](https://pepy.tech/projects/pysiglib)
@@ -15,8 +17,10 @@
 ![CI - Test](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml/badge.svg)
 [![codecov](https://codecov.io/gh/daniil-shmelev/pySigLib/graph/badge.svg?token=8W0JXOSIC7)](https://codecov.io/gh/daniil-shmelev/pySigLib)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/daniil-shmelev/pySigLib)
-![Read the Docs](https://img.shields.io/readthedocs/pySigLib)
+![Read the Docs](https://img.shields.io/readthedocs/pysiglib)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
+</div>
 
 pySigLib is a Python library for fast computation of path signatures, log signatures, branched
 signatures, and signature kernels on CPU and GPU, with NumPy, PyTorch, and

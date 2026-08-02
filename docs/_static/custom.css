@@ -50,6 +50,18 @@ code.literal {
 
 /* -- Sidebar / navigation --------------------------------------------------- */
 
+/* Preserve the original logo canvas spacing in the documentation. */
+.logo__image.only-light,
+.docs-hero-logo.only-light {
+    aspect-ratio: 2158 / 729;
+    object-fit: contain;
+}
+.logo__image.only-dark,
+.docs-hero-logo.only-dark {
+    aspect-ratio: 2172 / 724;
+    object-fit: contain;
+}
+
 /* Make toctree captions stand out */
 .bd-sidebar-primary .caption-text {
     font-weight: 700;

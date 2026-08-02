@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Copyright 2026 Daniil Shmelev -->
-<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="2172" height="724" viewBox="0 0 2172 724">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="2172" height="524" viewBox="0 100 2172 524">
   <defs>
     <linearGradient id="white" gradientUnits="userSpaceOnUse" x1="140" y1="535" x2="2055" y2="220">
       <stop offset="0" stop-color="#f3f5ff"/>
