@@ -127,7 +127,7 @@ jobs:
   # ============================================================
   build-windows-cuda:
     name: Build Windows CUDA plugin wheel (pysiglib-cuda)
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
       # Cache CUDA + the VS BuildCustomizations dir where visual_studio_integration
