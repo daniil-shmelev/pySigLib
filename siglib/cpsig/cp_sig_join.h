@@ -266,24 +266,6 @@ void batch_sig_join_backprop_(
 		}
 	};
 
-	if (n_jobs == 0) throw std::invalid_argument("n_jobs cannot be 0");
-	const int max_threads = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
-	const uint64_t num_threads = std::min(static_cast<uint64_t>(std::max(max_threads, 1)), batch_size);
-
-	if (num_threads > 1) {
-		std::vector<std::thread> workers;
-		const uint64_t chunk = batch_size / num_threads;
-		const uint64_t remainder = batch_size % num_threads;
-		uint64_t start = 0;
-		for (uint64_t t = 0; t < num_threads; ++t) {
-			uint64_t end = start + chunk + (t < remainder ? 1 : 0);
-			workers.emplace_back(func, start, end);
-			start = end;
-		}
-		for (auto& w : workers) w.join();
-	}
-	else {
-		func(0, batch_size);
-	}
+	spawn_batch_threads(batch_size, n_jobs, func);
 }
 

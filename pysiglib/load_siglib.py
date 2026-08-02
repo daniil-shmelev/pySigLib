@@ -60,6 +60,11 @@ def _load_native_lib(directory, base_name):
 
 
 DIR_ = os.path.dirname(sys.modules['pysiglib'].__file__)
+TBB = None
+if SYSTEM == 'Windows':
+    tbb_path = os.path.join(DIR_, 'tbb12.dll')
+    if os.path.isfile(tbb_path):
+        TBB = ctypes.CDLL(tbb_path, winmode=0)
 CPSIG = _load_native_lib(DIR_, 'cpsig')
 
 CUSIG = None

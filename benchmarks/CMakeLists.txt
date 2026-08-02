@@ -21,3 +21,11 @@ target_include_directories(bench_cpsig PRIVATE
     "${CMAKE_SOURCE_DIR}/siglib/shared"
 )
 target_compile_features(bench_cpsig PRIVATE cxx_std_20)
+
+if(WIN32)
+    add_custom_command(TARGET bench_cpsig POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:tbb>
+            $<TARGET_FILE_DIR:bench_cpsig>
+    )
+endif()

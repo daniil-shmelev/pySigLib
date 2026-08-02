@@ -442,36 +442,25 @@ void branched_signature_(
 		}
 	}
 	else {
-		if (n_jobs == 0)
-			throw std::invalid_argument("n_jobs cannot be 0");
-		const unsigned int max_threads = n_jobs > 0
-			? static_cast<unsigned int>(n_jobs)
-			: get_max_threads() + 1 + n_jobs;
-		if (max_threads < 1)
-			throw std::invalid_argument("n_jobs too low");
-
-		std::vector<std::thread> workers;
-		for (unsigned int t = 0; t < max_threads && t < batch_size; ++t) {
-			workers.emplace_back([&, t, max_threads]() {
-				auto increment = std::make_unique<T[]>(aug_dim);
-				auto temp = std::make_unique<T[]>(total_len);
-				std::unique_ptr<T[]> local_log;
-				std::unique_ptr<T[]> power;
-				std::unique_ptr<T[]> next_power;
-				if (has_correction) {
-					local_log = std::make_unique<T[]>(total_len);
-					power = std::make_unique<T[]>(total_len);
-					next_power = std::make_unique<T[]>(total_len);
-				}
-				for (uint64_t b = t; b < batch_size; b += max_threads) {
-					const T* correction_ptr = has_correction ? correction + b * correction_batch_stride : nullptr;
-					compute_one(path + b * flat_path_length, out + b * out_stride,
-						increment.get(), temp.get(), local_log.get(), power.get(), next_power.get(),
-						correction_ptr);
-				}
-			});
-		}
-		for (auto& w : workers) w.join();
+		auto work_range = [&](uint64_t start, uint64_t end) {
+			auto increment = std::make_unique<T[]>(aug_dim);
+			auto temp = std::make_unique<T[]>(total_len);
+			std::unique_ptr<T[]> local_log;
+			std::unique_ptr<T[]> power;
+			std::unique_ptr<T[]> next_power;
+			if (has_correction) {
+				local_log = std::make_unique<T[]>(total_len);
+				power = std::make_unique<T[]>(total_len);
+				next_power = std::make_unique<T[]>(total_len);
+			}
+			for (uint64_t b = start; b < end; ++b) {
+				const T* correction_ptr = has_correction ? correction + b * correction_batch_stride : nullptr;
+				compute_one(path + b * flat_path_length, out + b * out_stride,
+					increment.get(), temp.get(), local_log.get(), power.get(), next_power.get(),
+					correction_ptr);
+			}
+		};
+		spawn_batch_threads(batch_size, n_jobs, work_range);
 	}
 }
 
@@ -575,22 +564,11 @@ void branched_sig_combine_backprop_(
 			work(b);
 	}
 	else {
-		if (n_jobs == 0)
-			throw std::invalid_argument("n_jobs cannot be 0");
-		const unsigned int max_threads = n_jobs > 0
-			? static_cast<unsigned int>(n_jobs)
-			: get_max_threads() + 1 + n_jobs;
-		if (max_threads < 1)
-			throw std::invalid_argument("n_jobs too low");
-
-		std::vector<std::thread> workers;
-		for (unsigned int t = 0; t < max_threads && t < batch_size; ++t) {
-			workers.emplace_back([&, t, max_threads]() {
-				for (uint64_t b = t; b < batch_size; b += max_threads)
-					work(b);
-			});
-		}
-		for (auto& w : workers) w.join();
+		auto work_range = [&](uint64_t start, uint64_t end) {
+			for (uint64_t b = start; b < end; ++b)
+				work(b);
+		};
+		spawn_batch_threads(batch_size, n_jobs, work_range);
 	}
 }
 
@@ -995,40 +973,29 @@ void branched_sig_backprop_(
 				local_log.get(), power.get(), next_power.get(), powers.get(), power_derivs.get(), d_correction.get());
 	}
 	else {
-		if (n_jobs == 0)
-			throw std::invalid_argument("n_jobs cannot be 0");
-		const unsigned int max_threads = n_jobs > 0
-			? static_cast<unsigned int>(n_jobs)
-			: get_max_threads() + 1 + n_jobs;
-		if (max_threads < 1)
-			throw std::invalid_argument("n_jobs too low");
-
-		std::vector<std::thread> workers;
-		for (unsigned int t = 0; t < max_threads && t < batch_size; ++t) {
-			workers.emplace_back([&, t, max_threads]() {
-				auto increment = std::make_unique<T[]>(aug_dim);
-				auto temp_Y = std::make_unique<T[]>(total_len);
-				auto local_derivs = std::make_unique<T[]>(total_len);
-				auto inc_derivs = std::make_unique<T[]>(aug_dim);
-				std::unique_ptr<T[]> local_log;
-				std::unique_ptr<T[]> power;
-				std::unique_ptr<T[]> next_power;
-				std::unique_ptr<T[]> powers;
-				std::unique_ptr<T[]> power_derivs;
-				std::unique_ptr<T[]> d_correction;
-				if (has_correction) {
-					local_log = std::make_unique<T[]>(total_len);
-					power = std::make_unique<T[]>(total_len);
-					next_power = std::make_unique<T[]>(total_len);
-					powers = std::make_unique<T[]>(max_nodes * total_len);
-					power_derivs = std::make_unique<T[]>(max_nodes * total_len);
-					d_correction = std::make_unique<T[]>(total_len);
-				}
-				for (uint64_t b = t; b < batch_size; b += max_threads)
-					work(b, increment.get(), temp_Y.get(), local_derivs.get(), inc_derivs.get(),
-						local_log.get(), power.get(), next_power.get(), powers.get(), power_derivs.get(), d_correction.get());
-			});
-		}
-		for (auto& w : workers) w.join();
+		auto work_range = [&](uint64_t start, uint64_t end) {
+			auto increment = std::make_unique<T[]>(aug_dim);
+			auto temp_Y = std::make_unique<T[]>(total_len);
+			auto local_derivs = std::make_unique<T[]>(total_len);
+			auto inc_derivs = std::make_unique<T[]>(aug_dim);
+			std::unique_ptr<T[]> local_log;
+			std::unique_ptr<T[]> power;
+			std::unique_ptr<T[]> next_power;
+			std::unique_ptr<T[]> powers;
+			std::unique_ptr<T[]> power_derivs;
+			std::unique_ptr<T[]> d_correction;
+			if (has_correction) {
+				local_log = std::make_unique<T[]>(total_len);
+				power = std::make_unique<T[]>(total_len);
+				next_power = std::make_unique<T[]>(total_len);
+				powers = std::make_unique<T[]>(max_nodes * total_len);
+				power_derivs = std::make_unique<T[]>(max_nodes * total_len);
+				d_correction = std::make_unique<T[]>(total_len);
+			}
+			for (uint64_t b = start; b < end; ++b)
+				work(b, increment.get(), temp_Y.get(), local_derivs.get(), inc_derivs.get(),
+					local_log.get(), power.get(), next_power.get(), powers.get(), power_derivs.get(), d_correction.get());
+		};
+		spawn_batch_threads(batch_size, n_jobs, work_range);
 	}
 }
