@@ -18,6 +18,7 @@
 #include "cu_macros.h"
 #include "cu_atomic.h"
 #include "cu_path_transforms.h"
+#include "cu_utils.h"
 #include "../shared/branched_cache.h"
 
 #include <cstdint>
@@ -1117,6 +1118,8 @@ void branched_sig_combine_cuda_core_(
 		+ (gc.max_nodes + 2) * sizeof(uint32_t);
 	dim3 grid(1, static_cast<unsigned int>(batch_size));
 
+	configure_dynamic_smem(
+		branched_sig_combine_ker<T>, smem, "CUDA branched sig combine");
 	branched_sig_combine_ker<T><<<grid, block, smem>>>(
 		bsig1, bsig2, out, gc.total_length,
 		gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
@@ -1141,6 +1144,9 @@ void branched_sig_combine_backprop_cuda_core_(
 		+ (gc.max_nodes + 2) * sizeof(uint32_t);
 	dim3 grid(1, static_cast<unsigned int>(batch_size));
 
+	configure_dynamic_smem(
+		branched_sig_combine_backprop_ker<T>, smem,
+		"CUDA branched sig combine backprop");
 	branched_sig_combine_backprop_ker<T><<<grid, block, smem>>>(
 		bsig1, bsig2, derivs, out1, out2, gc.total_length,
 		gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
@@ -1214,6 +1220,8 @@ void branched_sig_cuda_core_(
 	else
 		d_inv_fact = reinterpret_cast<const T*>(gc.d_inv_factorial_f64);
 
+	configure_dynamic_smem(
+		branched_sig_ker<T>, smem, "CUDA branched sig");
 	branched_sig_ker<T><<<grid, block, smem>>>(
 		path, out, static_cast<int>(dimension), static_cast<int>(data_dimension), steps,
 		gc.total_length, path_stride,
@@ -1350,6 +1358,8 @@ void branched_sig_backprop_cuda_core_(
 	else
 		d_inv_fact = reinterpret_cast<const T*>(gc.d_inv_factorial_f64);
 
+	configure_dynamic_smem(
+		branched_sig_backprop_ker<T>, smem, "CUDA branched sig backprop");
 	branched_sig_backprop_ker<T><<<grid, block, smem>>>(
 		path, out, bsig, bsig_derivs,
 		static_cast<int>(dimension), static_cast<int>(data_dimension), steps,

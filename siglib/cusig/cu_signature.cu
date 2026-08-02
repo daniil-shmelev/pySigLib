@@ -129,6 +129,7 @@ __global__ void signature_per_word_ker(
 	T* __restrict__ out,
 	const int dim,
 	const int steps,
+	const int chunk_size,
 	const uint64_t sig_size,
 	const uint64_t level_offset,
 	const uint64_t level_size,
@@ -159,8 +160,9 @@ __global__ void signature_per_word_ker(
 
 	const T* batch_path = path + batch_idx * path_stride;
 
-	for (int chunk_start = 0; chunk_start < steps; chunk_start += SIG_CHUNK) {
-		const int chunk_end = (chunk_start + SIG_CHUNK < steps) ? chunk_start + SIG_CHUNK : steps;
+	for (int chunk_start = 0; chunk_start < steps; chunk_start += chunk_size) {
+		const int chunk_end = (chunk_start + chunk_size < steps)
+			? chunk_start + chunk_size : steps;
 		const int chunk_len = chunk_end - chunk_start;
 
 		// Cooperatively load increments for this chunk (compute on the fly)
@@ -215,6 +217,7 @@ __global__ void signature_per_word_generic_ker(
 	T* __restrict__ out,
 	const int dim,
 	const int steps,
+	const int chunk_size,
 	const int degree,
 	const uint64_t sig_size,
 	const uint64_t level_offset,
@@ -244,8 +247,9 @@ __global__ void signature_per_word_generic_ker(
 
 	const T* batch_path = path + batch_idx * path_stride;
 
-	for (int chunk_start = 0; chunk_start < steps; chunk_start += SIG_CHUNK) {
-		const int chunk_end = (chunk_start + SIG_CHUNK < steps) ? chunk_start + SIG_CHUNK : steps;
+	for (int chunk_start = 0; chunk_start < steps; chunk_start += chunk_size) {
+		const int chunk_end = (chunk_start + chunk_size < steps)
+			? chunk_start + chunk_size : steps;
 		const int chunk_len = chunk_end - chunk_start;
 
 		__syncthreads();
@@ -294,6 +298,7 @@ void sig_backprop_per_word_generic_ker(
 	T* __restrict__ inc_grads,
 	const int dim,
 	const int steps,
+	const int chunk_size,
 	const int degree,
 	const uint64_t sig_size,
 	const uint64_t level_offset,
@@ -308,7 +313,7 @@ void sig_backprop_per_word_generic_ker(
 	extern __shared__ char smem[];
 	T* shared_inc = reinterpret_cast<T*>(smem);
 	const unsigned num_warps = blockDim.x >> 5;
-	T* shared_letter_grads = shared_inc + BWD_CHUNK * dim;
+	T* shared_letter_grads = shared_inc + chunk_size * dim;
 
 	for (int i = threadIdx.x; i < dim * (int)num_warps; i += blockDim.x)
 		shared_letter_grads[i] = T(0);
@@ -353,8 +358,9 @@ void sig_backprop_per_word_generic_ker(
 
 	const unsigned warp_id = threadIdx.x >> 5;
 	const unsigned lane = threadIdx.x & 31;
-	for (int chunk_end = steps; chunk_end > 0; chunk_end -= BWD_CHUNK) {
-		const int chunk_start = (chunk_end - BWD_CHUNK > 0) ? chunk_end - BWD_CHUNK : 0;
+	for (int chunk_end = steps; chunk_end > 0; chunk_end -= chunk_size) {
+		const int chunk_start = (chunk_end - chunk_size > 0)
+			? chunk_end - chunk_size : 0;
 		const int chunk_len = chunk_end - chunk_start;
 
 		__syncthreads();
@@ -479,6 +485,7 @@ void sig_backprop_per_word_ker(
 	T* __restrict__ inc_grads,            // [batch, steps, dim] (output, accumulated via atomicAdd)
 	const int dim,
 	const int steps,
+	const int chunk_size,
 	const uint64_t sig_size,
 	const uint64_t level_offset,
 	const uint64_t level_size,
@@ -492,9 +499,9 @@ void sig_backprop_per_word_ker(
 	const bool active = word_idx < level_size;
 
 	extern __shared__ char smem[];
-	T* shared_inc = reinterpret_cast<T*>(smem);           // [BWD_CHUNK * dim]
+	T* shared_inc = reinterpret_cast<T*>(smem);
 	const unsigned num_warps = blockDim.x >> 5;
-	T* shared_letter_grads = shared_inc + BWD_CHUNK * dim; // [dim * num_warps]
+	T* shared_letter_grads = shared_inc + chunk_size * dim;
 
 	// Zero the reduction workspace
 	for (int i = threadIdx.x; i < dim * (int)num_warps; i += blockDim.x)
@@ -543,8 +550,9 @@ void sig_backprop_per_word_ker(
 
 	const unsigned warp_id = threadIdx.x >> 5;
 
-	for (int chunk_end = steps; chunk_end > 0; chunk_end -= BWD_CHUNK) {
-		const int chunk_start = (chunk_end - BWD_CHUNK > 0) ? chunk_end - BWD_CHUNK : 0;
+	for (int chunk_end = steps; chunk_end > 0; chunk_end -= chunk_size) {
+		const int chunk_start = (chunk_end - chunk_size > 0)
+			? chunk_end - chunk_size : 0;
 		const int chunk_len = chunk_end - chunk_start;
 
 		// Load all increments for this chunk into shared memory
@@ -1672,9 +1680,23 @@ void signature_per_word_core_(
 	auto li = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(li.get(), dimension, degree + 2);
 
-	// Dynamic shared memory: only allocate what's needed for the actual path length
-	const int actual_chunk = (steps < SIG_CHUNK) ? steps : SIG_CHUNK;
-	size_t smem = actual_chunk * dimension * sizeof(T);
+	const int requested_chunk = (steps < SIG_CHUNK) ? steps : SIG_CHUNK;
+	const size_t bytes_per_step = dimension * sizeof(T);
+	const size_t requested_smem = requested_chunk * bytes_per_step;
+	CudaSharedMemoryLimits smem_limits = {
+		CUDA_BASE_DYNAMIC_SMEM, CUDA_BASE_DYNAMIC_SMEM
+	};
+	if (requested_smem > CUDA_BASE_DYNAMIC_SMEM)
+		smem_limits = cuda_shared_memory_limits();
+	const size_t max_chunk = smem_limits.optin_bytes / bytes_per_step;
+	if (max_chunk == 0) {
+		throw std::invalid_argument(
+			"CUDA signature requires more shared memory than this device supports "
+			"for one path increment");
+	}
+	const int chunk_size = static_cast<int>(std::min<size_t>(
+		static_cast<size_t>(requested_chunk), max_chunk));
+	const size_t smem = chunk_size * bytes_per_step;
 
 	// For small total output sizes, skip streams and launch sequentially
 	// on the default stream - avoids event create/destroy and stream sync overhead.
@@ -1696,8 +1718,12 @@ void signature_per_word_core_(
 			? s_per_word_streams[k - 1] : nullptr;
 
 		#define LAUNCH_DEGREE(D) \
-			case D: signature_per_word_ker<T, D><<<grid, block, smem, stream>>>( \
-				path, out, dim, steps, sig_stride, level_offset, level_size, path_stride, scalar_term); break;
+			case D: \
+				configure_dynamic_smem( \
+					signature_per_word_ker<T, D>, smem, "CUDA signature", smem_limits); \
+				signature_per_word_ker<T, D><<<grid, block, smem, stream>>>( \
+					path, out, dim, steps, chunk_size, sig_stride, level_offset, \
+					level_size, path_stride, scalar_term); break;
 
 		switch (k) {
 			LAUNCH_DEGREE(1)
@@ -1713,8 +1739,11 @@ void signature_per_word_core_(
 			LAUNCH_DEGREE(11)
 			LAUNCH_DEGREE(12)
 			default:
+				configure_dynamic_smem(
+					signature_per_word_generic_ker<T>, smem,
+					"CUDA signature", smem_limits);
 				signature_per_word_generic_ker<T><<<grid, block, smem, stream>>>(
-					path, out, dim, steps, static_cast<int>(k),
+					path, out, dim, steps, chunk_size, static_cast<int>(k),
 					sig_stride, level_offset, level_size, path_stride, scalar_term);
 				break;
 		}
@@ -2229,6 +2258,8 @@ void signature_cuda_core_(
 	T* d_linear_sig = reinterpret_cast<T*>(d_alloc.get() + aligned_li_bytes);
 	CUDA_CHECK(cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
 
+	configure_dynamic_smem(
+		signature_naive_ker<T>, smem_size, "CUDA signature Chen fallback");
 	signature_naive_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 		path, out, d_level_index,
 		dimension, length, degree, sig_stride, path_flat_len,
@@ -2567,7 +2598,7 @@ void sig_backprop_cuda_stream_(
 	const bool use_dense_chen = degree >= 2
 		&& dense_state_size >= 256 * dense_contraction_count
 		&& batch_size >= 32
-		&& dimension * sizeof(T) + dense_static_shared_bytes <= 48 * 1024
+		&& dimension * sizeof(T) + dense_static_shared_bytes <= CUDA_BASE_DYNAMIC_SMEM
 		&& full_sig_len <= INT_MAX && batch_size <= INT_MAX
 		&& dense_workspace_bytes <= dense_reusable_bytes
 		&& dense_reusable_bytes - dense_workspace_bytes >= dense_reserve_bytes;
@@ -2595,7 +2626,7 @@ void sig_backprop_cuda_stream_(
 		&& dimension <= 32 && steps >= 512 && batch_size <= 65535
 		&& context_size > 3 * dimension
 		&& full_sig_len <= INT_MAX
-		&& scan_shared_bytes <= 48 * 1024
+		&& scan_shared_bytes <= CUDA_BASE_DYNAMIC_SMEM
 		&& scan_workspace_bytes <= dense_reusable_bytes
 		&& dense_reusable_bytes - scan_workspace_bytes >= dense_reserve_bytes;
 	if (use_level_scan) {
@@ -2725,7 +2756,7 @@ void sig_backprop_cuda_stream_(
 		&& batch_size <= 65535 && groups_per_block != 0
 		&& dim <= 32 && 32 % dim == 0
 		&& grouped_work_per_thread <= 16
-		&& grouped_shared_bytes <= 48 * 1024
+		&& grouped_shared_bytes <= CUDA_BASE_DYNAMIC_SMEM
 		&& grouped_allocation_bytes <= dense_reusable_bytes
 		&& dense_reusable_bytes - grouped_allocation_bytes >= dense_reserve_bytes
 		&& context_elements <= UINT32_MAX
@@ -2833,10 +2864,30 @@ void sig_backprop_cuda_stream_(
 
 	auto level_index = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(level_index.get(), dimension, degree + 2);
-	const unsigned int block = 128;
+	unsigned int block = 128;
+	const int requested_chunk = (steps < BWD_CHUNK) ? steps : BWD_CHUNK;
+	const size_t bytes_per_vector = dimension * sizeof(T);
+	const size_t requested_smem =
+		(requested_chunk + block / 32) * bytes_per_vector;
+	CudaSharedMemoryLimits smem_limits = {
+		CUDA_BASE_DYNAMIC_SMEM, CUDA_BASE_DYNAMIC_SMEM
+	};
+	if (requested_smem > CUDA_BASE_DYNAMIC_SMEM)
+		smem_limits = cuda_shared_memory_limits();
+	size_t max_vectors = smem_limits.optin_bytes / bytes_per_vector;
+	while (block > 32 && max_vectors <= block / 32)
+		block /= 2;
 	const unsigned int num_warps = block / 32;
+	if (max_vectors <= num_warps) {
+		CUDA_CHECK(cudaFreeAsync(d_inc_grads, stream));
+		throw std::invalid_argument(
+			"CUDA signature backprop requires more shared memory than this device "
+			"supports for one path increment");
+	}
+	const int chunk_size = static_cast<int>(std::min<size_t>(
+		static_cast<size_t>(requested_chunk), max_vectors - num_warps));
 	const size_t smem_size =
-		(BWD_CHUNK * dimension + dimension * num_warps) * sizeof(T);
+		(chunk_size + num_warps) * bytes_per_vector;
 
 	for (uint64_t k = 1; k <= degree; ++k) {
 		const uint64_t level_size = host_power(dimension, k);
@@ -2848,17 +2899,26 @@ void sig_backprop_cuda_stream_(
 		const dim3 grid(grid_x, static_cast<unsigned int>(batch_size), 1);
 
 		#define LAUNCH_BWD(D) \
-			case D: sig_backprop_per_word_ker<T, D><<<grid, block, smem_size, stream>>>( \
-				path, sig, sig_derivs, d_inc_grads, dim, steps, sig_stride, \
-				level_offset, level_size, length * dimension, scalar_term); break;
+			case D: \
+				configure_dynamic_smem( \
+					sig_backprop_per_word_ker<T, D>, smem_size, \
+					"CUDA signature backprop", smem_limits); \
+				sig_backprop_per_word_ker<T, D><<<grid, block, smem_size, stream>>>( \
+					path, sig, sig_derivs, d_inc_grads, dim, steps, chunk_size, \
+					sig_stride, level_offset, level_size, length * dimension, \
+					scalar_term); break;
 
 		switch (k) {
 			LAUNCH_BWD(1)  LAUNCH_BWD(2)  LAUNCH_BWD(3)  LAUNCH_BWD(4)
 			LAUNCH_BWD(5)  LAUNCH_BWD(6)  LAUNCH_BWD(7)  LAUNCH_BWD(8)
 			LAUNCH_BWD(9)  LAUNCH_BWD(10) LAUNCH_BWD(11) LAUNCH_BWD(12)
 			default:
+				configure_dynamic_smem(
+					sig_backprop_per_word_generic_ker<T>, smem_size,
+					"CUDA signature backprop", smem_limits);
 				sig_backprop_per_word_generic_ker<T><<<grid, block, smem_size, stream>>>(
-					path, sig, sig_derivs, d_inc_grads, dim, steps, static_cast<int>(k),
+					path, sig, sig_derivs, d_inc_grads, dim, steps, chunk_size,
+					static_cast<int>(k),
 					sig_stride, level_offset, level_size, length * dimension, scalar_term);
 				break;
 		}

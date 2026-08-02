@@ -127,6 +127,8 @@ void sig_combine_cuda_core_(
 	// Shared memory: level_index (computed inside kernel, no device malloc needed)
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
+	configure_dynamic_smem(
+		sig_combine_kernel<T>, smem_size, "CUDA sig combine");
 	sig_combine_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 		sig1, sig2, out, dimension, degree, scalar_term
 	);
@@ -279,6 +281,9 @@ void sig_combine_backprop_cuda_core_(
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
+	configure_dynamic_smem(
+		sig_combine_backprop_kernel<T>, smem_size,
+		"CUDA sig combine backprop");
 	sig_combine_backprop_kernel<T><<<grid, threads_per_block, smem_size>>>(
 		sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2,
 		dimension, degree, sig_stride, scalar_term
@@ -364,6 +369,8 @@ void linear_sig_cuda_(
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem = li_bytes;
 
+	configure_dynamic_smem(
+		linear_sig_kernel<T>, smem, "CUDA linear signature");
 	linear_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem>>>(
 		displacement, out, d_li.get(), dimension, degree, sig_stride, scalar_term
 	);
@@ -476,6 +483,8 @@ void sig_join_cuda_(
 	unsigned int threads = host_choose_threads_per_block(max_level_size);
 	size_t smem = li_bytes;
 
+	configure_dynamic_smem(
+		sig_join_kernel<T>, smem, "CUDA sig join");
 	sig_join_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem>>>(
 		sig, displacement, out,
 		static_cast<T*>(g_sig_join_lsig_buf),
