@@ -197,6 +197,8 @@ void sig_to_log_sig_cuda_core_(
 	// Shared memory: level_index only
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
+	configure_dynamic_smem(
+		sig_to_log_sig_kernel<T>, smem_size, "CUDA sig to log sig");
 	sig_to_log_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 		sig, out,
 		static_cast<T*>(g_workspace.d_buff1),
@@ -362,6 +364,8 @@ void sig_to_log_sig_cuda_m1_core_(
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
+	configure_dynamic_smem(
+		sig_to_log_sig_m1_kernel<T>, smem_size, "CUDA sig to log sig method 1");
 	sig_to_log_sig_m1_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
 		sig, out,
 		static_cast<T*>(g_workspace.d_temp),
@@ -400,6 +404,8 @@ void sig_to_log_sig_cuda_m2_core_(
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
+	configure_dynamic_smem(
+		sig_to_log_sig_m2_kernel<T>, smem_size, "CUDA sig to log sig method 2");
 	sig_to_log_sig_m2_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
 		sig, out,
 		static_cast<T*>(g_workspace.d_temp),
@@ -562,6 +568,9 @@ void sig_to_log_sig_backprop_cuda_core_(
 	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
 	size_t smem_size = (degree + 2) * sizeof(uint64_t) + threads_per_block * sizeof(T);
 
+	configure_dynamic_smem(
+		sig_to_log_sig_backprop_kernel<T>, smem_size,
+		"CUDA sig to log sig backprop");
 	sig_to_log_sig_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
 		sig, out, static_cast<T*>(g_bp_workspace.d_derivs),
 		static_cast<T*>(g_bp_workspace.d_buf),
@@ -664,6 +673,9 @@ void sig_to_log_sig_backprop_cuda_m1_core_(
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t) + cache.threads_per_block * sizeof(T);
 
+	configure_dynamic_smem(
+		sig_to_log_sig_backprop_m1_kernel<T>, smem_size,
+		"CUDA sig to log sig method 1 backprop");
 	sig_to_log_sig_backprop_m1_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
 		sig, out, log_sig_derivs, static_cast<T*>(g_bp_workspace.d_derivs),
 		static_cast<T*>(g_bp_workspace.d_buf),
@@ -781,6 +793,9 @@ void sig_to_log_sig_backprop_cuda_m2_core_(
 
 	size_t smem_size = (degree + 2) * sizeof(uint64_t) + cache.threads_per_block * sizeof(T);
 
+	configure_dynamic_smem(
+		sig_to_log_sig_backprop_m2_kernel<T>, smem_size,
+		"CUDA sig to log sig method 2 backprop");
 	sig_to_log_sig_backprop_m2_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
 		sig, out, log_sig_derivs, static_cast<T*>(g_bp_workspace.d_derivs),
 		static_cast<T*>(g_bp_workspace.d_buf),

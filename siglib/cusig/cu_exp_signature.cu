@@ -648,6 +648,8 @@ void logsig_to_sig_cuda_core_(
 	if (method == 0) {
 		g_exp_workspace.ensure_forward(sizeof(T) * batch_size * 2 * sig_len);
 
+		configure_dynamic_smem(
+			logsig_to_sig_kernel<T>, smem_size, "CUDA log sig to sig");
 		logsig_to_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
 			log_sig, out,
 			static_cast<T*>(g_exp_workspace.d_buff),
@@ -662,6 +664,9 @@ void logsig_to_sig_cuda_core_(
 		g_exp_workspace.ensure_forward(sizeof(T) * batch_size * 2 * sig_len);
 		g_exp_workspace.ensure_expanded(sizeof(T) * batch_size * sig_len);
 
+		configure_dynamic_smem(
+			logsig_to_sig_m12_kernel<T>, smem_size,
+			"CUDA log sig to sig projected");
 		logsig_to_sig_m12_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
 			log_sig, out,
 			static_cast<T*>(g_exp_workspace.d_expanded),
@@ -727,6 +732,9 @@ void logsig_to_sig_backprop_cuda_core_(
 			sizeof(T) * batch_size * 2 * sig_len         // dP + dP_next
 		);
 
+		configure_dynamic_smem(
+			logsig_to_sig_backprop_kernel<T>, smem_size,
+			"CUDA log sig to sig backprop");
 		logsig_to_sig_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
 			d_logsig, d_sig, log_sig,
 			static_cast<T*>(g_exp_workspace.d_intermediates),
@@ -747,6 +755,9 @@ void logsig_to_sig_backprop_cuda_core_(
 
 		g_exp_workspace.ensure_d_expanded(sizeof(T) * batch_size * sig_len);
 
+		configure_dynamic_smem(
+			logsig_to_sig_m12_backprop_kernel<T>, smem_size,
+			"CUDA log sig to sig projected backprop");
 		logsig_to_sig_m12_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem_size>>>(
 			d_logsig, d_sig, log_sig,
 			static_cast<T*>(g_exp_workspace.d_expand_mat),

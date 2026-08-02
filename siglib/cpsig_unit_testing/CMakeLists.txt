@@ -50,6 +50,13 @@ add_custom_command(TARGET cpsig_tests POST_BUILD
         $<TARGET_FILE:cpsig>
         $<TARGET_FILE_DIR:cpsig_tests>
 )
+if(WIN32)
+    add_custom_command(TARGET cpsig_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:tbb>
+            $<TARGET_FILE_DIR:cpsig_tests>
+    )
+endif()
 
 set(_pysiglib_test_cache_root "${CMAKE_CURRENT_BINARY_DIR}/pysiglib_test_cache")
 file(MAKE_DIRECTORY "${_pysiglib_test_cache_root}")

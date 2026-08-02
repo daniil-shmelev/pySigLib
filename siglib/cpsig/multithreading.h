@@ -16,11 +16,30 @@
 #pragma once
 #include "cppch.h"
 #include <exception>
+#include <memory>
+
+#include <oneapi/tbb/blocked_range.h>
+#include <oneapi/tbb/parallel_for.h>
+#include <oneapi/tbb/task_arena.h>
 
 
 inline unsigned int get_max_threads() {
 	static const unsigned int max_threads = std::thread::hardware_concurrency();
 	return max_threads;
+}
+
+struct tbb_arena_cache {
+	std::unique_ptr<oneapi::tbb::task_arena> arena;
+	int threads = 0;
+};
+
+inline oneapi::tbb::task_arena& get_tbb_arena(int threads) {
+	thread_local tbb_arena_cache cache;
+	if (cache.threads != threads || !cache.arena) {
+		cache.arena = std::make_unique<oneapi::tbb::task_arena>(threads);
+		cache.threads = threads;
+	}
+	return *cache.arena;
 }
 
 // Partitions [0, batch_size) into contiguous chunks and spawns up to `n_jobs`
@@ -32,11 +51,10 @@ inline void spawn_batch_threads(uint64_t batch_size, int n_jobs, Worker worker) 
 	const int max_threads = n_jobs > 0 ? n_jobs : get_max_threads() + 1 + n_jobs;
 	if (max_threads < 1)
 		throw std::invalid_argument("received negative n_jobs which is less than max_threads + 1; n_jobs too low");
+	if (batch_size == 0)
+		return;
 
 	const uint64_t num_threads = std::min(static_cast<uint64_t>(max_threads), batch_size);
-	std::vector<std::thread> workers;
-	workers.reserve(num_threads);
-
 	std::mutex err_mu;
 	std::exception_ptr first_err;
 
@@ -52,21 +70,16 @@ inline void spawn_batch_threads(uint64_t batch_size, int n_jobs, Worker worker) 
 
 	const uint64_t chunk = batch_size / num_threads;
 	const uint64_t remainder = batch_size % num_threads;
-	uint64_t start = 0;
-	try {
-		for (uint64_t t = 0; t < num_threads; ++t) {
-			uint64_t end = start + chunk + (t < remainder ? 1 : 0);
-			workers.emplace_back(wrapped_worker, start, end);
-			start = end;
-		}
-	}
-	catch (...) {
-		for (auto& w : workers) if (w.joinable()) w.join();
-		throw;
-	}
-
-	for (auto& w : workers)
-		w.join();
+	get_tbb_arena(static_cast<int>(num_threads)).execute([&] {
+		oneapi::tbb::parallel_for(oneapi::tbb::blocked_range<uint64_t>(0, num_threads, 1),
+			[&](const oneapi::tbb::blocked_range<uint64_t>& range) {
+				for (uint64_t t = range.begin(); t != range.end(); ++t) {
+					const uint64_t start = t * chunk + std::min(t, remainder);
+					const uint64_t end = start + chunk + (t < remainder ? 1 : 0);
+					wrapped_worker(start, end);
+				}
+			});
+	});
 
 	if (first_err)
 		std::rethrow_exception(first_err);

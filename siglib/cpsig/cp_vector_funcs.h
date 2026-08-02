@@ -211,10 +211,21 @@ FORCE_INLINE void vec_mult_assign(double* out, const double* other, double scala
 }
 
 FORCE_INLINE float dot_product(const float* a, const float* b, size_t N) {
-	__m256 sum = _mm256_setzero_ps();
+	__m256 sum0 = _mm256_setzero_ps();
+	__m256 sum1 = _mm256_setzero_ps();
+	__m256 sum2 = _mm256_setzero_ps();
+	__m256 sum3 = _mm256_setzero_ps();
 
 	size_t k = 0;
-	size_t limit = N & ~7UL;
+	size_t limit = N & ~31UL;
+	for (; k < limit; k += 32) {
+		sum0 = _mm256_fmadd_ps(_mm256_loadu_ps(&a[k]), _mm256_loadu_ps(&b[k]), sum0);
+		sum1 = _mm256_fmadd_ps(_mm256_loadu_ps(&a[k + 8]), _mm256_loadu_ps(&b[k + 8]), sum1);
+		sum2 = _mm256_fmadd_ps(_mm256_loadu_ps(&a[k + 16]), _mm256_loadu_ps(&b[k + 16]), sum2);
+		sum3 = _mm256_fmadd_ps(_mm256_loadu_ps(&a[k + 24]), _mm256_loadu_ps(&b[k + 24]), sum3);
+	}
+	__m256 sum = _mm256_add_ps(_mm256_add_ps(sum0, sum1), _mm256_add_ps(sum2, sum3));
+	limit = N & ~7UL;
 	for (; k < limit; k += 8) {
 		__m256 va = _mm256_loadu_ps(&a[k]);
 		__m256 vb = _mm256_loadu_ps(&b[k]);
@@ -236,10 +247,21 @@ FORCE_INLINE float dot_product(const float* a, const float* b, size_t N) {
 }
 
 FORCE_INLINE double dot_product(const double* a, const double* b, size_t N) {
-	__m256d sum = _mm256_setzero_pd();
+	__m256d sum0 = _mm256_setzero_pd();
+	__m256d sum1 = _mm256_setzero_pd();
+	__m256d sum2 = _mm256_setzero_pd();
+	__m256d sum3 = _mm256_setzero_pd();
 
 	size_t k = 0;
-	size_t limit = N & ~3UL;
+	size_t limit = N & ~15UL;
+	for (; k < limit; k += 16) {
+		sum0 = _mm256_fmadd_pd(_mm256_loadu_pd(&a[k]), _mm256_loadu_pd(&b[k]), sum0);
+		sum1 = _mm256_fmadd_pd(_mm256_loadu_pd(&a[k + 4]), _mm256_loadu_pd(&b[k + 4]), sum1);
+		sum2 = _mm256_fmadd_pd(_mm256_loadu_pd(&a[k + 8]), _mm256_loadu_pd(&b[k + 8]), sum2);
+		sum3 = _mm256_fmadd_pd(_mm256_loadu_pd(&a[k + 12]), _mm256_loadu_pd(&b[k + 12]), sum3);
+	}
+	__m256d sum = _mm256_add_pd(_mm256_add_pd(sum0, sum1), _mm256_add_pd(sum2, sum3));
+	limit = N & ~3UL;
 	for (; k < limit; k += 4) {
 		__m256d va = _mm256_loadu_pd(&a[k]);
 		__m256d vb = _mm256_loadu_pd(&b[k]);
@@ -255,6 +277,56 @@ FORCE_INLINE double dot_product(const double* a, const double* b, size_t N) {
 	}
 
 	return out;
+}
+
+FORCE_INLINE float dot_product_mult_add(
+	const float* a, const float* b, float* out, float scalar, size_t N
+) {
+	__m256 sum = _mm256_setzero_ps();
+	const __m256 scalar_v = _mm256_set1_ps(scalar);
+	size_t k = 0;
+	for (; k + 8 <= N; k += 8) {
+		const __m256 va = _mm256_loadu_ps(&a[k]);
+		const __m256 vb = _mm256_loadu_ps(&b[k]);
+		sum = _mm256_fmadd_ps(va, vb, sum);
+		_mm256_storeu_ps(
+			&out[k], _mm256_fmadd_ps(vb, scalar_v, _mm256_loadu_ps(&out[k])));
+	}
+
+	__m128 sum128 = _mm_add_ps(
+		_mm256_castps256_ps128(sum), _mm256_extractf128_ps(sum, 1));
+	sum128 = _mm_hadd_ps(sum128, sum128);
+	sum128 = _mm_hadd_ps(sum128, sum128);
+	float result = _mm_cvtss_f32(sum128);
+	for (; k < N; ++k) {
+		result += a[k] * b[k];
+		out[k] += b[k] * scalar;
+	}
+	return result;
+}
+
+FORCE_INLINE double dot_product_mult_add(
+	const double* a, const double* b, double* out, double scalar, size_t N
+) {
+	__m256d sum = _mm256_setzero_pd();
+	const __m256d scalar_v = _mm256_set1_pd(scalar);
+	size_t k = 0;
+	for (; k + 4 <= N; k += 4) {
+		const __m256d va = _mm256_loadu_pd(&a[k]);
+		const __m256d vb = _mm256_loadu_pd(&b[k]);
+		sum = _mm256_fmadd_pd(va, vb, sum);
+		_mm256_storeu_pd(
+			&out[k], _mm256_fmadd_pd(vb, scalar_v, _mm256_loadu_pd(&out[k])));
+	}
+
+	double values[4];
+	_mm256_storeu_pd(values, sum);
+	double result = values[0] + values[1] + values[2] + values[3];
+	for (; k < N; ++k) {
+		result += a[k] * b[k];
+		out[k] += b[k] * scalar;
+	}
+	return result;
 }
 
 FORCE_INLINE void vec_add_scaled(float* out, const float* a, const float* b, float scalar, uint64_t size) {
@@ -537,6 +609,46 @@ FORCE_INLINE double dot_product(const double* a, const double* b, size_t N) {
 	return out;
 }
 
+FORCE_INLINE float dot_product_mult_add(
+	const float* a, const float* b, float* out, float scalar, size_t N
+) {
+	float32x4_t sum = vdupq_n_f32(0.0f);
+	const float32x4_t scalar_v = vdupq_n_f32(scalar);
+	size_t k = 0;
+	for (; k + 4 <= N; k += 4) {
+		const float32x4_t va = vld1q_f32(&a[k]);
+		const float32x4_t vb = vld1q_f32(&b[k]);
+		sum = vfmaq_f32(sum, va, vb);
+		vst1q_f32(&out[k], vfmaq_f32(vld1q_f32(&out[k]), vb, scalar_v));
+	}
+	float result = vaddvq_f32(sum);
+	for (; k < N; ++k) {
+		result += a[k] * b[k];
+		out[k] += b[k] * scalar;
+	}
+	return result;
+}
+
+FORCE_INLINE double dot_product_mult_add(
+	const double* a, const double* b, double* out, double scalar, size_t N
+) {
+	float64x2_t sum = vdupq_n_f64(0.0);
+	const float64x2_t scalar_v = vdupq_n_f64(scalar);
+	size_t k = 0;
+	for (; k + 2 <= N; k += 2) {
+		const float64x2_t va = vld1q_f64(&a[k]);
+		const float64x2_t vb = vld1q_f64(&b[k]);
+		sum = vfmaq_f64(sum, va, vb);
+		vst1q_f64(&out[k], vfmaq_f64(vld1q_f64(&out[k]), vb, scalar_v));
+	}
+	double result = vgetq_lane_f64(sum, 0) + vgetq_lane_f64(sum, 1);
+	for (; k < N; ++k) {
+		result += a[k] * b[k];
+		out[k] += b[k] * scalar;
+	}
+	return result;
+}
+
 FORCE_INLINE void vec_add_scaled(float* out, const float* a, const float* b, float scalar, uint64_t size) {
 	float32x4_t sv = vdupq_n_f32(scalar);
 	uint64_t k = 0;
@@ -721,5 +833,35 @@ FORCE_INLINE void vec4_bracket_grad(
 }
 
 #endif
+
+#endif
+
+#ifndef VEC
+
+template<std::floating_point T>
+FORCE_INLINE void vec_mult_add(T* out, const T* other, T scalar, uint64_t size) {
+	for (uint64_t k = 0; k < size; ++k)
+		out[k] += other[k] * scalar;
+}
+
+template<std::floating_point T>
+FORCE_INLINE T dot_product(const T* a, const T* b, size_t size) {
+	T result = static_cast<T>(0.);
+	for (size_t k = 0; k < size; ++k)
+		result += a[k] * b[k];
+	return result;
+}
+
+template<std::floating_point T>
+FORCE_INLINE T dot_product_mult_add(
+	const T* a, const T* b, T* out, T scalar, size_t size
+) {
+	T result = static_cast<T>(0.);
+	for (size_t k = 0; k < size; ++k) {
+		result += a[k] * b[k];
+		out[k] += b[k] * scalar;
+	}
+	return result;
+}
 
 #endif

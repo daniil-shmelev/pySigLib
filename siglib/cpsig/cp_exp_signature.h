@@ -506,11 +506,6 @@ void logsig_to_sig_backprop_(
 	// d_logsig (output grad) is logsig-shaped (method>0) or sig-shaped (method==0)
 	const uint64_t dout_stride = (method == 0 && !scalar_term) ? (sig_len - 1) : full_in_len;
 
-	if (n_jobs == 0) throw std::invalid_argument("n_jobs cannot be 0");
-	const int max_threads = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
-	if (max_threads < 1) throw std::invalid_argument("n_jobs too low");
-	const uint64_t num_threads = std::min(static_cast<uint64_t>(max_threads), batch_size);
-
 	if (scalar_term) {
 		auto batch_func = [&](uint64_t start, uint64_t end) {
 			for (uint64_t i = start; i < end; ++i) {
@@ -520,20 +515,7 @@ void logsig_to_sig_backprop_(
 			}
 		};
 
-		if (num_threads > 1) {
-			std::vector<std::thread> workers;
-			const uint64_t chunk = batch_size / num_threads;
-			const uint64_t remainder = batch_size % num_threads;
-			uint64_t start = 0;
-			for (uint64_t t = 0; t < num_threads; ++t) {
-				uint64_t end = start + chunk + (t < remainder ? 1 : 0);
-				workers.emplace_back(batch_func, start, end);
-				start = end;
-			}
-			for (auto& w : workers) w.join();
-		} else {
-			batch_func(0, batch_size);
-		}
+		spawn_batch_threads(batch_size, n_jobs, batch_func);
 	} else {
 		auto batch_func = [&](uint64_t start, uint64_t end) {
 			for (uint64_t i = start; i < end; ++i) {
@@ -570,19 +552,6 @@ void logsig_to_sig_backprop_(
 			}
 		};
 
-		if (num_threads > 1) {
-			std::vector<std::thread> workers;
-			const uint64_t chunk = batch_size / num_threads;
-			const uint64_t remainder = batch_size % num_threads;
-			uint64_t start = 0;
-			for (uint64_t t = 0; t < num_threads; ++t) {
-				uint64_t end = start + chunk + (t < remainder ? 1 : 0);
-				workers.emplace_back(batch_func, start, end);
-				start = end;
-			}
-			for (auto& w : workers) w.join();
-		} else {
-			batch_func(0, batch_size);
-		}
+		spawn_batch_threads(batch_size, n_jobs, batch_func);
 	}
 }

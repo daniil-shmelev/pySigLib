@@ -17,6 +17,7 @@
 #include "cusig.h"
 #include "cu_log_sig_combine.h"
 #include "cu_macros.h"
+#include "cu_utils.h"
 
 // Type-erased via void* because the hosting functions are templated over
 // float/double - both share one buffer, sized to the larger allocation.
@@ -246,7 +247,7 @@ void log_sig_combine_cuda_(
 
 	// Decide whether shared memory kernel fits (2 vectors of size m)
 	size_t shared_size = 2 * m * sizeof(T);
-	bool use_shmem = (shared_size <= 48 * 1024);
+	bool use_shmem = (shared_size <= CUDA_BASE_DYNAMIC_SMEM);
 
 	for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
 		uint64_t current_batch = std::min(chunk_size, batch_size - offset);
@@ -590,7 +591,7 @@ void log_sig_combine_backprop_cuda_(
 	if (threads < 32) threads = 32;
 
 	size_t shared_size = 2 * m * sizeof(T);
-	bool use_shmem = (shared_size <= 48 * 1024);
+	bool use_shmem = (shared_size <= CUDA_BASE_DYNAMIC_SMEM);
 
 	for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
 		uint64_t current_batch = std::min(chunk_size, batch_size - offset);
@@ -856,7 +857,7 @@ void log_sig_from_path_cuda_(
 	if (threads < 32) threads = 32;
 
 	size_t shared_size = 2 * m * sizeof(T);
-	bool use_shmem = (shared_size <= 48 * 1024);
+	bool use_shmem = (shared_size <= CUDA_BASE_DYNAMIC_SMEM);
 	uint64_t path_stride = length * dimension;
 
 	for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
@@ -1117,6 +1118,11 @@ void log_sig_from_path_backprop_cuda_(
 		return;
 	}
 
+	const size_t shared_size = 2 * m * sizeof(T);
+	configure_dynamic_smem(
+		batch_log_sig_from_path_backprop_kernel_<T>, shared_size,
+		"CUDA log sig from path backprop");
+
 	// Workspace per batch: curr[m] + prev[m] + memo[m2*m] + d_memo[m2*m] + d_acc[m]
 	uint64_t ws_per_batch = 3 * m + 2 * m2 * m;
 	size_t free_mem, total_mem;
@@ -1134,9 +1140,6 @@ void log_sig_from_path_backprop_cuda_(
 	threads = ((threads + 31) / 32) * 32;
 	if (threads < 32) threads = 32;
 
-	size_t shared_size = 2 * m * sizeof(T);
-	if (shared_size > 48 * 1024)
-		throw std::runtime_error("log_sig_from_path_backprop_cuda: m too large for shared memory");
 	uint64_t path_stride = length * dimension;
 
 	for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {

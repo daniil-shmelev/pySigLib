@@ -18,6 +18,7 @@
 #include "cu_atomic.h"
 #include "cu_log_sig_cache.h"
 #include "cu_macros.h"
+#include "cu_utils.h"
 #include "../shared/branched_cache.h"
 #include "../shared/branched_log_cache.h"
 
@@ -83,26 +84,6 @@ template<typename T>
 static void upload_branched_log(T*& d_ptr, const T* h_data, size_t count) {
 	CUDA_CHECK(cudaMalloc(&d_ptr, count * sizeof(T)));
 	CUDA_CHECK(cudaMemcpy(d_ptr, h_data, count * sizeof(T), cudaMemcpyHostToDevice));
-}
-
-template<typename Kernel>
-static void configure_dynamic_smem(Kernel kernel, size_t smem, const char* op_name) {
-	int device = 0;
-	int max_default = 0;
-	int max_optin = 0;
-	CUDA_CHECK(cudaGetDevice(&device));
-	CUDA_CHECK(cudaDeviceGetAttribute(&max_default, cudaDevAttrMaxSharedMemoryPerBlock, device));
-	CUDA_CHECK(cudaDeviceGetAttribute(&max_optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
-	if (max_optin == 0) max_optin = max_default;
-
-	if (smem > static_cast<size_t>(max_optin)) {
-		throw std::invalid_argument(
-			std::string(op_name) + " requires more dynamic shared memory than this CUDA device supports");
-	}
-	if (smem > static_cast<size_t>(max_default)) {
-		CUDA_CHECK(cudaFuncSetAttribute(
-			kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(smem)));
-	}
 }
 
 static const BranchedLogSigCacheGPU& get_or_upload_branched_log_gpu_cache(

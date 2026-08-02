@@ -16,6 +16,56 @@
 #pragma once
 #include "cupch.h"
 
+constexpr size_t CUDA_BASE_DYNAMIC_SMEM = 48 * 1024;
+
+struct CudaSharedMemoryLimits {
+	size_t default_bytes;
+	size_t optin_bytes;
+};
+
+inline CudaSharedMemoryLimits cuda_shared_memory_limits() {
+	int device = 0;
+	int default_bytes = 0;
+	int optin_bytes = 0;
+	CUDA_CHECK(cudaGetDevice(&device));
+	CUDA_CHECK(cudaDeviceGetAttribute(
+		&default_bytes, cudaDevAttrMaxSharedMemoryPerBlock, device));
+	CUDA_CHECK(cudaDeviceGetAttribute(
+		&optin_bytes, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
+	if (optin_bytes == 0)
+		optin_bytes = default_bytes;
+	return {
+		static_cast<size_t>(default_bytes),
+		static_cast<size_t>(optin_bytes)
+	};
+}
+
+template<typename Kernel>
+inline void configure_dynamic_smem(
+	Kernel kernel,
+	size_t smem,
+	const char* op_name,
+	const CudaSharedMemoryLimits& limits
+) {
+	if (smem > limits.optin_bytes) {
+		throw std::invalid_argument(
+			std::string(op_name) +
+			" requires more dynamic shared memory than this CUDA device supports");
+	}
+	if (smem > limits.default_bytes) {
+		CUDA_CHECK(cudaFuncSetAttribute(
+			kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+			static_cast<int>(smem)));
+	}
+}
+
+template<typename Kernel>
+inline void configure_dynamic_smem(Kernel kernel, size_t smem, const char* op_name) {
+	if (smem <= CUDA_BASE_DYNAMIC_SMEM)
+		return;
+	configure_dynamic_smem(kernel, smem, op_name, cuda_shared_memory_limits());
+}
+
 // =========================================================================
 // Shared host-side helpers for signature length and level index computation
 // =========================================================================

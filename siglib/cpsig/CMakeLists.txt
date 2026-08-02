@@ -18,15 +18,50 @@ add_library(cpsig SHARED
     words.cpp
 )
 
+include(FetchContent)
+
+set(TBB_TEST OFF CACHE BOOL "" FORCE)
+set(TBB_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(TBB_STRICT OFF CACHE BOOL "" FORCE)
+set(TBBMALLOC_BUILD OFF CACHE BOOL "" FORCE)
+set(TBBMALLOC_PROXY_BUILD OFF CACHE BOOL "" FORCE)
+set(TBB_INSTALL OFF CACHE BOOL "" FORCE)
+set(_pysiglib_build_shared_libs "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS ON)
+FetchContent_Declare(
+    oneTBB
+    GIT_REPOSITORY https://github.com/uxlfoundation/oneTBB.git
+    GIT_TAG 2fea40755cccad7eb8b0ee0c07ed0c4e75bf562c
+)
+FetchContent_MakeAvailable(oneTBB)
+set(BUILD_SHARED_LIBS "${_pysiglib_build_shared_libs}")
+unset(_pysiglib_build_shared_libs)
+
 set_target_properties(cpsig PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
 )
+if(APPLE)
+    set_target_properties(cpsig PROPERTIES INSTALL_RPATH "@loader_path")
+elseif(UNIX)
+    set_target_properties(cpsig PROPERTIES INSTALL_RPATH "$ORIGIN")
+endif()
 target_include_directories(cpsig PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
 target_compile_definitions(cpsig PRIVATE CPSIG_EXPORTS)
 
-target_link_libraries(cpsig PRIVATE Threads::Threads)
+target_link_libraries(cpsig
+    PRIVATE Threads::Threads
+    PUBLIC TBB::tbb
+)
+
+if(WIN32)
+    add_custom_command(TARGET cpsig POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:tbb>
+            $<TARGET_FILE_DIR:cpsig>
+    )
+endif()
 
 if(MSVC)
     target_compile_options(cpsig PRIVATE /Zi)
@@ -69,8 +104,15 @@ endif()
 # needs cpsig at link time but must not ship it in its own wheel) add cpsig
 # via add_subdirectory() without pulling the library into their install set.
 if(NOT CPSIG_SKIP_INSTALL)
-    install(TARGETS cpsig
+    install(TARGETS cpsig tbb
         LIBRARY DESTINATION pysiglib
         RUNTIME DESTINATION pysiglib   # .dll on Windows
+    )
+    install(FILES "${onetbb_SOURCE_DIR}/LICENSE.txt"
+        DESTINATION pysiglib/licenses
+        RENAME oneTBB-LICENSE.txt
+    )
+    install(FILES "${onetbb_SOURCE_DIR}/third-party-programs.txt"
+        DESTINATION pysiglib/licenses
     )
 endif()

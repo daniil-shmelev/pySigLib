@@ -18,9 +18,7 @@
 #include "cp_utils.h"
 #include "multithreading.h"
 #include "macros.h"
-#ifdef VEC
 #include "cp_vector_funcs.h"
-#endif
 
 template<std::floating_point T>
 FORCE_INLINE void sig_combine_inplace_(
@@ -138,7 +136,8 @@ FORCE_INLINE void uncombine_sig_deriv(
 	T* __restrict sig2_deriv,
 	uint64_t dimension,
 	uint64_t degree,
-	const uint64_t* level_index
+	const uint64_t* level_index,
+	bool copy_top_level = true
 ) {
 	//sig1, sig2 are two signatures, and sig_concat is
 	//the signature of the concatenated paths, sig1 * sig2.
@@ -146,22 +145,19 @@ FORCE_INLINE void uncombine_sig_deriv(
 	//This function computes dF/d(sig1) and dF/d(sig2) and writes these
 	//into sig_concat_deriv and sig2_deriv respectively
 
-	const uint64_t sig_len_ = sig_length(dimension, degree);
+	const uint64_t sig_len_ = sig_length(dimension, copy_top_level ? degree : degree - 1);
 	std::memcpy(sig2_deriv, sig_concat_deriv, sig_len_ * sizeof(T));
 
 	for (uint64_t level = degree; level > 0; --level) {
 		for (uint64_t left_level = level - 1, right_level = 1; left_level > 0; --left_level, ++right_level) {
 			T* result_ptr = sig_concat_deriv + level_index[level];
-			T* const right_base = sig2_deriv + level_index[right_level];
+			T* const right_deriv = sig2_deriv + level_index[right_level];
 			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
 			const uint64_t left_size = level_index[left_level + 1] - level_index[left_level];
 			const T* const left_base = sig1 + level_index[left_level];
 
 			for (uint64_t i = 0; i < left_size; ++i) {
-				const T scalar = left_base[i];
-				for (uint64_t k = 0; k < right_size; ++k) {
-					right_base[k] += result_ptr[k] * scalar;
-				}
+				vec_mult_add(right_deriv, result_ptr, left_base[i], right_size);
 				result_ptr += right_size;
 			}
 		}
@@ -177,11 +173,7 @@ FORCE_INLINE void uncombine_sig_deriv(
 			const uint64_t right_size = level_index[right_level + 1] - level_index[right_level];
 
 			for (uint64_t i = 0; i < left_size; ++i) {
-				T accum = 0;
-				for (uint64_t k = 0; k < right_size; ++k) {
-					accum += result_ptr[k] * right_base[k];
-				}
-				left_base[i] += accum;
+				left_base[i] += dot_product(result_ptr, right_base, right_size);
 				result_ptr += right_size;
 			}
 		}
@@ -245,29 +237,36 @@ FORCE_INLINE void uncombine_sig_deriv_zero(
 
 template<std::floating_point T>
 FORCE_INLINE void linear_sig_deriv_to_increment_deriv(
-	const T* sig,
-	T* sig_deriv,
+	const T* __restrict sig,
+	T* __restrict sig_deriv,
+	T* __restrict increment_deriv,
 	uint64_t dimension,
 	uint64_t degree,
-	const uint64_t* level_index
+	const uint64_t* level_index,
+	const T* top_level_deriv = nullptr
 ) {
 	//Given sig is the signature of a line segment [a,b] and sig_deriv
 	//is the derivative dF/d(sig), then this function computes dF/d(b-a)
-	// and writes it into sig_deriv[1:1+dimension].
+	// and writes it into increment_deriv.
 
+	std::fill(increment_deriv, increment_deriv + dimension, static_cast<T>(0.));
 	for (uint64_t level = degree; level > 1; --level) {
 		const T one_over_level = static_cast<T>(1. / level);
 		const uint64_t level_size = level_index[level] - level_index[level - 1];
 		for (uint64_t j = 0; j < level_size; ++j) {
-			const uint64_t offs1 = level_index[level] + dimension * j - 1;
+			const T* const level_deriv = top_level_deriv != nullptr && level == degree
+				? top_level_deriv + dimension * j
+				: sig_deriv + level_index[level] + dimension * j;
 			const uint64_t offs2 = level_index[level - 1] + j;
-			for (uint64_t dd = 1; dd <= dimension; ++dd) {
-				const T ii = sig_deriv[offs1 + dd] * one_over_level;
-				sig_deriv[offs2] += sig[dd] * ii;
-				sig_deriv[dd] += sig[offs2] * ii;
-			}
+			sig_deriv[offs2] += dot_product_mult_add(
+				sig + 1, level_deriv, increment_deriv,
+				sig[offs2] * one_over_level, dimension) * one_over_level;
 		}
 	}
+	const T* const level_one_deriv = top_level_deriv != nullptr && degree == 1
+		? top_level_deriv
+		: sig_deriv + 1;
+	vec_mult_add(increment_deriv, level_one_deriv, static_cast<T>(1.), dimension);
 }
 
 template<std::floating_point T>
