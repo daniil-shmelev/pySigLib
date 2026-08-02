@@ -7,7 +7,7 @@
 </p>
 
 
-<h2 align='center'>Fast path signatures, log signatures, and signature kernels on CPU and GPU</h2>
+<h2 align='center'>The high-performance toolkit for rough path computation</h2>
 
 <div align="center">
 
@@ -15,8 +15,6 @@
 [![PyPI - Downloads](https://static.pepy.tech/badge/pysiglib/month)](https://pepy.tech/projects/pysiglib)
 ![Python Versions](https://img.shields.io/badge/python-%3E%3D3.9-blue)
 ![CI - Test](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml/badge.svg)
-[![codecov](https://codecov.io/gh/daniil-shmelev/pySigLib/graph/badge.svg?token=8W0JXOSIC7)](https://codecov.io/gh/daniil-shmelev/pySigLib)
-[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/daniil-shmelev/pySigLib)
 ![Read the Docs](https://img.shields.io/readthedocs/pysiglib)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 

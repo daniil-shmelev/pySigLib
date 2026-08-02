@@ -26,7 +26,7 @@ pySigLib |release|
 
 .. rst-class:: landing-tagline
 
-Fast path signatures, log signatures, and signature kernels on CPU and CUDA GPU.
+The high-performance toolkit for rough path computation.
 
 .. grid:: 3
    :gutter: 3
