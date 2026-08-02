@@ -216,4 +216,20 @@ hr {
     .sd-row {
         flex-direction: column;
     }
+    .bd-article .sd-row[class*="sd-row-cols"] > .sd-col {
+        flex: 0 0 100%;
+        width: 100%;
+        max-width: 100%;
+    }
+    .prev-next-area {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    .prev-next-area a.left-prev,
+    .prev-next-area a.right-next {
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+    }
 }
