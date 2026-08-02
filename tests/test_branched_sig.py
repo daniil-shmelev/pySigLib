@@ -501,9 +501,9 @@ def test_torch_branched_sig_correction_backward_uses_forward_values():
 
 
 def test_jax_branched_sig_correction_if_available():
-    jax_api = pytest.importorskip("pysiglib.jax_api")
     jax = pytest.importorskip("jax")
     jnp = pytest.importorskip("jax.numpy")
+    jax_api = pytest.importorskip("pysiglib.jax_api")
 
     d, N = 1, 3
     pysiglib.prepare_branched_sig(d + 1, N)
@@ -527,8 +527,8 @@ def test_jax_branched_sig_correction_if_available():
 
 
 def test_jax_branched_sig_correction_rejects_lead_lag_if_available():
-    jax_api = pytest.importorskip("pysiglib.jax_api")
     jnp = pytest.importorskip("jax.numpy")
+    jax_api = pytest.importorskip("pysiglib.jax_api")
 
     path = np.array([[0.0], [0.3]], dtype=np.float32)
     correction = per_segment_correction(path, ito_level2_correction(1, 0.5, dtype=path.dtype))

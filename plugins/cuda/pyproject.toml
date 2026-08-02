@@ -71,6 +71,5 @@ build-verbosity = 1
 
 [tool.cibuildwheel.linux]
 manylinux-x86_64-image = "manylinux_2_28"
-# Exclude system-CUDA libs AND libcpsig (base wheel ships it) and
-# libpysiglib_jax_ffi_cuda itself (bundled by this wheel).
-repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*' --exclude 'libcpsig.so*' --exclude 'libpysiglib_jax_ffi_cuda.so*'"
+# Exclude system-CUDA libs, base-wheel libs, and the bundled CUDA FFI library.
+repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*' --exclude 'libcpsig.so*' --exclude 'libtbb.so*' --exclude 'libpysiglib_jax_ffi_cuda.so*'"
