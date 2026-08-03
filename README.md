@@ -6,62 +6,43 @@
   </picture>
 </p>
 
+<h2 align="center">The high-performance toolkit for rough path computation</h2>
 
-<h2 align='center'>The high-performance toolkit for rough path computation</h2>
+<p align="center">
+  <a href="https://pysiglib.readthedocs.io">Documentation</a> |
+  <a href="https://pysiglib.readthedocs.io/en/stable/pages/installation.html">Installation</a> |
+  <a href="https://pysiglib.readthedocs.io/en/stable/pages/api_reference.html">API reference</a> |
+  <a href="https://arxiv.org/abs/2509.10613">Paper</a>
+</p>
 
 <div align="center">
 
-![PyPI - Version](https://img.shields.io/pypi/v/pysiglib)
+[![PyPI - Version](https://img.shields.io/pypi/v/pysiglib)](https://pypi.org/project/pysiglib/)
 [![PyPI - Downloads](https://static.pepy.tech/badge/pysiglib/month)](https://pepy.tech/projects/pysiglib)
-![Python Versions](https://img.shields.io/badge/python-%3E%3D3.9-blue)
-![CI - Test](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml/badge.svg)
-![Read the Docs](https://img.shields.io/readthedocs/pysiglib)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python Versions](https://img.shields.io/badge/python-%3E%3D3.9-blue)](https://pypi.org/project/pysiglib/)
+[![CI - Test](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml/badge.svg)](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml)
+[![Read the Docs](https://img.shields.io/readthedocs/pysiglib)](https://pysiglib.readthedocs.io)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 </div>
 
-pySigLib is a Python library for fast computation of path signatures, log signatures, branched
-signatures, and signature kernels on CPU and GPU, with NumPy, PyTorch, and
-JAX support. Its PyTorch and JAX integrations keep these operations
-differentiable, jittable, and on the device your data already lives on.
-
-## Features
-
-<div align="center">
-<table>
-  <tr>
-    <td align="center" width="220"><a href="https://pysiglib.readthedocs.io/en/stable/pages/signatures.html"><b>Signatures</b></a></td>
-    <td align="center" width="220"><a href="https://pysiglib.readthedocs.io/en/stable/pages/log_signatures.html"><b>Log&#8209;signatures</b></a></td>
-    <td align="center" width="220"><a href="https://pysiglib.readthedocs.io/en/stable/pages/signature_kernels.html"><b>Signature&nbsp;kernels</b></a></td>
-  </tr>
-  <tr>
-    <td align="center" width="220"><a href="https://pysiglib.readthedocs.io/en/stable/pages/branched_signatures.html"><b>Branched&nbsp;signatures</b></a></td>
-    <td align="center" width="220"><a href="https://pysiglib.readthedocs.io/en/stable/pages/streams.html"><b>Signature&nbsp;streams</b></a></td>
-    <td align="center" width="220"><a href="https://pysiglib.readthedocs.io/en/stable/pages/signature_coefficients.html"><b>Signature&nbsp;coefficients</b></a></td>
-  </tr>
-</table>
-</div>
-
-Every operation is available from **NumPy**, **PyTorch** (with full autograd),
-and **JAX** (with `jit`, `vmap`, and `grad`), running on CPU via a
-multi-threaded C++ backend or on GPU via CUDA. Additional utilities cover
-[path transforms](https://pysiglib.readthedocs.io/en/stable/pages/path_transformations.html)
-(time augmentation, lead-lag) and
-[words / Lyndon words](https://pysiglib.readthedocs.io/en/stable/pages/words.html).
+pySigLib brings path signatures, log-signatures, branched signatures, and
+signature kernels into one accelerated toolkit. It provides NumPy,
+PyTorch, and JAX support, with automatic differentiation for PyTorch and
+JAX and multithreaded C++ or native CUDA execution.
 
 ## Installation
 
-```
-pip install pysiglib              # CPU only
-pip install pysiglib[cuda]        # with CUDA GPU support
+```bash
+pip install pysiglib
+
+# Add CUDA support
+pip install "pysiglib[cuda]"
 ```
 
-The JAX integration is built into the wheel - install JAX separately
-(`pip install jax`) if you want to use it.
-
-For detailed and up-to-date installation instructions, including how to build
-from source, see the
-[installation guide](https://pysiglib.readthedocs.io/en/stable/pages/installation.html).
+The JAX integration is included in the wheel. Install JAX separately with
+`pip install jax` if you want to use it. For source builds and platform-specific
+guidance, see the [installation guide](https://pysiglib.readthedocs.io/en/stable/pages/installation.html).
 
 ## Quick start
 
@@ -69,89 +50,72 @@ from source, see the
 import numpy as np
 import pysiglib
 
-path = np.random.randn(32, 1000, 10)  # (batch, length, dimension)
-sig  = pysiglib.sig(path, degree=5)
+path = np.random.default_rng().normal(size=(32, 1000, 10))
+signature = pysiglib.sig(path, degree=5)
 ```
 
-## Documentation
+Paths have shape `(path length, dimension)` or
+`(batch size, path length, dimension)`. Computation runs on the device where
+the input already lives.
 
-Full documentation is available at [https://pysiglib.readthedocs.io](https://pysiglib.readthedocs.io)
+## Why pySigLib?
 
-## Examples
+- A unified toolkit for rough path computations - signatures, log-signatures, branched signatures, and signature kernels.
+- Accelerated CPU and CUDA implementations for large workloads.
+- Native NumPy, PyTorch, and JAX support without moving data between frameworks.
+- Automatic differentiation with PyTorch and JAX, including `jit` and `vmap` support in JAX.
+- Online signature streams with efficient interval queries for real-time and sliding-window features.
 
-Throughout the examples below, paths are arrays of shape
-`(path length, dimension)` or `(batch size, path length, dimension)`. Inputs can
-be NumPy arrays, PyTorch tensors, or JAX arrays; the computation runs on
-whichever device the input lives on.
+## Capabilities
 
-### Signatures
+<table width="100%">
+  <tr>
+    <td width="33%" valign="top">
+      <strong><a href="https://pysiglib.readthedocs.io/en/stable/pages/signatures.html">Signatures</a></strong><br>
+      <sub>Truncated signatures and individual coefficients.</sub>
+    </td>
+    <td width="33%" valign="top">
+      <strong><a href="https://pysiglib.readthedocs.io/en/stable/pages/log_signatures.html">Log-signatures</a></strong><br>
+      <sub>Truncated log signatures in full or compact Lyndon coordinates.</sub>
+    </td>
+    <td width="33%" valign="top">
+      <strong><a href="https://pysiglib.readthedocs.io/en/stable/pages/signature_kernels.html">Signature kernels</a></strong><br>
+      <sub>Kernels and metrics for sequential data.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top">
+      <strong><a href="https://pysiglib.readthedocs.io/en/stable/pages/branched_signatures.html">Branched signatures</a></strong><br>
+      <sub>Branched signatures, branched log signatures and branched signature kernels.</sub>
+    </td>
+    <td width="33%" valign="top">
+      <strong><a href="https://pysiglib.readthedocs.io/en/stable/pages/streams.html">Signature streams</a></strong><br>
+      <sub>Online updates and constant-time interval queries.</sub>
+    </td>
+    <td width="33%" valign="top">
+      <strong><a href="https://pysiglib.readthedocs.io/en/stable/pages/backprop.html">Backpropagation</a></strong><br>
+      <sub>Manual and automatic backpropagation with PyTorch and JAX support.</sub>
+    </td>
+  </tr>
+</table>
 
-```python
-import numpy as np
-import pysiglib
-
-X = np.random.uniform(size=(32, 1000, 10))
-s = pysiglib.sig(X, degree=5)
-```
-
-### Signature coefficients
-
-```python
-path  = np.random.uniform(size=(32, 1000, 5))
-words = [(0,), (1, 0), (1, 2, 4)]
-coefs = pysiglib.sig_coef(path, words)
-```
-
-### Log-signatures
-
-```python
-pysiglib.prepare_log_sig(dimension=10, degree=5, method=1)
-
-X  = np.random.uniform(size=(32, 1000, 10))
-ls = pysiglib.log_sig(X, degree=5, method=1)
-```
-
-### Branched signatures
-
-```python
-pysiglib.prepare_branched_sig(dimension=5, degree=4)
-
-X    = np.random.randn(32, 1000, 5)
-bsig = pysiglib.branched_sig(X, degree=4)
-```
-
-### Signature kernels
-
-```python
-X = np.random.uniform(size=(32, 1000, 10))
-Y = np.random.uniform(size=(32, 1000, 10))
-k = pysiglib.sig_kernel(X, Y, dyadic_order=1)
-
-# Different dyadic refinement per input when the paths have very different lengths:
-X = np.random.uniform(size=(32,  100, 10))
-Y = np.random.uniform(size=(32, 5000, 10))
-k = pysiglib.sig_kernel(X, Y, dyadic_order=(3, 0))
-```
+## Framework integrations
 
 ### PyTorch autograd
 
-Every forward op has a backward implementation, so signatures compose cleanly
-with the rest of your PyTorch model.
+Signatures compose directly with the rest of a PyTorch model:
 
 ```python
 import torch
 from pysiglib.torch_api import sig
 
-X = torch.randn(32, 1000, 10, requires_grad=True, device="cuda")
-s = sig(X, degree=5)
-loss = s.sum()
-loss.backward()  # X.grad populated
+path = torch.randn(32, 1000, 10, device="cuda", requires_grad=True)
+sig(path, degree=5).sum().backward()
 ```
 
-### JAX
+### JAX transforms
 
-The JAX API integrates via the XLA FFI, so every op works under `jit`, `vmap`,
-and `grad`.
+The JAX API supports `jit`, `vmap`, and `grad`:
 
 ```python
 import jax
@@ -162,31 +126,19 @@ from pysiglib.jax_api import sig
 def signature_norm(path):
     return jnp.sum(sig(path, degree=5) ** 2)
 
-X    = jnp.array(np.random.randn(32, 1000, 10))
-grad = jax.grad(signature_norm)(X)
+path = jax.random.normal(jax.random.key(0), (1000, 10))
+gradient = jax.grad(signature_norm)(path)
 ```
 
-### Online signature streams
-
-Incrementally update a signature as new points arrive, and query any interval
-in O(1) via Chen's identity - useful for real-time data or sliding-window
-features.
-
-```python
-stream = pysiglib.SigStream(dimension=10, degree=5)
-for point in incoming_points:
-    stream.push(point)
-
-full     = stream.sig_all()      # signature of the entire path so far
-interval = stream.sig(100, 200)  # signature on [t=100, t=200]
-```
+See the [documentation](https://pysiglib.readthedocs.io) for complete examples and the full API reference.
 
 ## Citation
 
-If you found this library useful in your research, please consider citing the paper:
-```bibtex    
+If the library supports your research, please consider citing the paper:
+
+```bibtex
 @article{shmelev2025pysiglib,
-  title={pySigLib-Fast Signature-Based Computations on CPU and GPU},
+  title={pySigLib -- Fast Signature-Based Computations on CPU and GPU},
   author={Shmelev, Daniil and Salvi, Cristopher},
   journal={arXiv preprint arXiv:2509.10613},
   year={2025}
@@ -195,9 +147,10 @@ If you found this library useful in your research, please consider citing the pa
 
 ## Contributing
 
-Contributions are welcome! Please open an issue first to discuss what you'd like to change, then submit a pull request.
+Contributions are welcome. Please open an issue first to discuss a change,
+then submit a pull request.
 
 ## Sponsors
 
 If you'd like to support development, please consider
-[sponsoring](https://github.com/sponsors/daniil-shmelev) the project.
+[sponsoring the project](https://github.com/sponsors/daniil-shmelev).
