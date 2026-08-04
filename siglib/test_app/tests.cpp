@@ -601,11 +601,26 @@ static std::vector<uint64_t> branched_sig_coef_tree_data_(
     uint64_t dimension,
     uint64_t degree
 ) {
+    if (dimension == 0)
+        throw std::invalid_argument("dimension must be positive");
+    uint64_t max_unique = 1;
+    for (uint64_t node = 0; node < degree; ++node) {
+        if (max_unique > UINT64_MAX / dimension) {
+            max_unique = UINT64_MAX;
+            break;
+        }
+        max_unique *= dimension;
+    }
+    if (num_idx > max_unique)
+        throw std::invalid_argument("num_idx exceeds the number of unique chain trees");
+
     std::vector<uint64_t> tree_data{ num_idx };
     for (uint64_t i = 0; i < num_idx; ++i) {
+        uint64_t word = i;
         tree_data.push_back(degree == 0 ? 0 : 1);
         for (uint64_t node = 0; node < degree; ++node) {
-            tree_data.push_back((i + node) % dimension);
+            tree_data.push_back(word % dimension);
+            word /= dimension;
             tree_data.push_back(node + 1 < degree ? 1 : 0);
         }
     }

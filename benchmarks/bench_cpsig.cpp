@@ -51,9 +51,11 @@ static std::vector<uint64_t> branched_coef_tree_data() {
     constexpr uint64_t degree = 4;
     std::vector<uint64_t> tree_data{num_trees};
     for (uint64_t tree = 0; tree < num_trees; ++tree) {
+        uint64_t word = tree;
         tree_data.push_back(1);
         for (uint64_t node = 0; node < degree; ++node) {
-            tree_data.push_back((tree + node) % dimension);
+            tree_data.push_back(word % dimension);
+            word /= dimension;
             tree_data.push_back(node + 1 < degree ? 1 : 0);
         }
     }

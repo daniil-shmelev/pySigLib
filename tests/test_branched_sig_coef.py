@@ -425,6 +425,26 @@ def test_branched_sig_prepare_rejects_invalid_device(prepare, args):
         prepare(*args, device="tpu")
 
 
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2, reason="requires two CUDA devices")
+def test_branched_sig_dense_cuda_cache_is_per_device():
+    pysiglib.clear_cache()
+    dimension, degree = 2, 3
+    path = np.random.default_rng(102).normal(size=(5, dimension))
+    pysiglib.prepare_branched_sig(dimension, degree, device="cpu")
+    expected = pysiglib.branched_sig(path, degree)
+
+    for device_index in range(2):
+        with torch.cuda.device(device_index):
+            pysiglib.prepare_branched_sig(
+                dimension, degree, device="cuda")
+            cuda_path = torch.tensor(
+                path, dtype=torch.float64, device=f"cuda:{device_index}")
+            actual = pysiglib.branched_sig(cuda_path, degree)
+            np.testing.assert_allclose(
+                actual.cpu().numpy(), expected, rtol=1e-12, atol=1e-12)
+
+
 def test_branched_sig_coef_requires_preparation():
     pysiglib.clear_cache()
     dimension, degree = 2, 2

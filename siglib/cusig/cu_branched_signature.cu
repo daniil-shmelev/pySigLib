@@ -66,18 +66,37 @@ struct BranchedSigCacheGPU {
 	}
 };
 
-// Reuse CuPairHash from cu_log_sig_cache.h. The planar flag is packed into bit
-// 63 of max_nodes (combinatorially bounded, so the top bit is unused).
-#include "cu_log_sig_cache.h"
+struct BranchedSigCacheKey {
+	int device = 0;
+	uint64_t dimension = 0;
+	uint64_t max_nodes = 0;
+	bool planar = false;
 
-static inline std::pair<uint64_t, uint64_t> make_cu_branched_key(uint64_t dimension, uint64_t max_nodes, bool planar) {
-	return { dimension, max_nodes | (static_cast<uint64_t>(planar) << 63) };
-}
+	bool operator==(const BranchedSigCacheKey& other) const noexcept {
+		return device == other.device
+			&& dimension == other.dimension
+			&& max_nodes == other.max_nodes
+			&& planar == other.planar;
+	}
+};
+
+struct BranchedSigCacheKeyHash {
+	size_t operator()(const BranchedSigCacheKey& key) const noexcept {
+		size_t h = std::hash<int>{}(key.device);
+		auto combine = [&h](uint64_t value) {
+			h ^= std::hash<uint64_t>{}(value) + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+		};
+		combine(key.dimension);
+		combine(key.max_nodes);
+		combine(static_cast<uint64_t>(key.planar));
+		return h;
+	}
+};
 
 static std::unordered_map<
-	std::pair<uint64_t, uint64_t>,
+	BranchedSigCacheKey,
 	std::unique_ptr<BranchedSigCacheGPU>,
-	CuPairHash
+	BranchedSigCacheKeyHash
 > s_gpu_cache_map;
 static std::mutex s_gpu_cache_map_mu;
 
@@ -182,7 +201,11 @@ static void upload(T*& d_ptr, const T* h_data, size_t count) {
 }
 
 static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, uint64_t max_nodes, bool planar = false) {
-	const auto key = make_cu_branched_key(dimension, max_nodes, planar);
+	BranchedSigCacheKey key;
+	CUDA_CHECK(cudaGetDevice(&key.device));
+	key.dimension = dimension;
+	key.max_nodes = max_nodes;
+	key.planar = planar;
 	{
 		std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
 		auto it = s_gpu_cache_map.find(key);
