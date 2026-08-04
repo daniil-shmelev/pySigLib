@@ -36,7 +36,7 @@ from ..trees import trees, trees_of_order, tree_to_idx, idx_to_tree
 from ..sig_coef import extract_sig_coef
 from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache
 from ..branched_sig import prepare_branched_sig, branched_sig_length
-from ..branched_sig_coef import prepare_branched_sig_coef
+from ..branched_sig_coef import extract_branched_sig_coef, prepare_branched_sig_coef
 from ..load_siglib import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
 
 # ``Context`` / ``StaticKernel`` are shared with the base API - users writing
@@ -102,7 +102,8 @@ __all__ = [
     "words_of_length", "words", "lyndon_words_of_length", "lyndon_words",
     "is_lyndon", "word_to_idx", "idx_to_word",
     "trees", "trees_of_order", "tree_to_idx", "idx_to_tree",
-    "extract_sig_coef", "set_cache_dir", "prepare_log_sig", "clear_cache",
+    "extract_sig_coef", "extract_branched_sig_coef",
+    "set_cache_dir", "prepare_log_sig", "clear_cache",
     "Context", "StaticKernel",
     "LinearKernel", "ScaledLinearKernel", "RBFKernel",
     "PolynomialKernel", "Matern12Kernel", "Matern32Kernel", "Matern52Kernel",

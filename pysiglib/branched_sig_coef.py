@@ -19,13 +19,13 @@ from typing import Union
 import numpy as np
 import torch
 
-from .data_handlers import CorrectionInputHandler, PathInputHandler, SigOutputHandler
+from .data_handlers import CorrectionInputHandler, PathInputHandler, SigInputHandler, SigOutputHandler
 from .dtypes import CPSIG_BRANCHED_SIG_COEF, CUSIG_BRANCHED_SIG_COEF_CUDA
 from .error_codes import err_msg
 from .load_siglib import BUILT_WITH_CUDA, CPSIG, CUSIG
 from .param_checks import check_n_jobs, check_non_neg, check_type
 from .sig_length import aug_dim
-from .trees import _as_planar_forest_tuple
+from .trees import _as_planar_forest_tuple, tree_to_idx
 
 
 def _encode_branched_tree(tree, dimension, planar):
@@ -76,6 +76,89 @@ def _branched_coef_data(basis_elements, dimension, planar):
         raise ValueError("trees contains an invalid decorated tree or ordered forest") from exc
 
     return basis_elements, max(orders), tree_data
+
+
+def extract_branched_sig_coef(
+        bsig: Union[np.ndarray, torch.Tensor],
+        trees,
+        dimension: int,
+        *,
+        time_aug: bool = False,
+        lead_lag: bool = False,
+        planar: bool = False,
+        scalar_term: bool = False,
+) -> Union[np.ndarray, torch.Tensor]:
+    """
+    Extracts coefficients from a branched signature or batch of branched
+    signatures.
+
+    :param bsig: Branched signature or batch of branched signatures, with shape
+        ``(..., branched_sig_length)``.
+    :type bsig: numpy.ndarray | torch.Tensor
+    :param trees: A decorated rooted tree, or a list of decorated rooted trees.
+        With ``planar=True``, each requested basis element is an ordered forest;
+        a bare planar tree is accepted as shorthand for a one-tree forest. See
+        :func:`tree_to_idx` for the tuple convention.
+    :type trees: tuple | None | list[tuple | None]
+    :param dimension: Dimension of the underlying path.
+    :type dimension: int
+    :param time_aug: Whether the branched signatures were computed with
+        ``time_aug=True``.
+    :type time_aug: bool
+    :param lead_lag: Whether the branched signatures were computed with
+        ``lead_lag=True``.
+    :type lead_lag: bool
+    :param planar: Whether the branched signatures use the planar MKW
+        ordered-forest basis.
+    :type planar: bool
+    :param scalar_term: Whether ``bsig`` includes the leading scalar term.
+        This must match the format used to compute ``bsig``.
+    :type scalar_term: bool
+    :return: Branched-signature coefficients with shape ``(..., num_trees)``.
+    :rtype: numpy.ndarray | torch.Tensor
+
+    Example:
+    --------
+
+    .. code-block:: python
+
+        import numpy as np
+        import pysiglib
+
+        path = np.random.default_rng(0).normal(size=(100, 2))
+        pysiglib.prepare_branched_sig(2, 3)
+        bsig = pysiglib.branched_sig(path, 3)
+        requested = [(0,), ((0,), 1), ((0,), (1,), 0)]
+        coefs = pysiglib.extract_branched_sig_coef(
+            bsig, requested, dimension=2
+        )
+
+    """
+    check_type(dimension, "dimension", int)
+    check_non_neg(dimension, "dimension")
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
+    check_type(planar, "planar", bool)
+    check_type(scalar_term, "scalar_term", bool)
+
+    augmented_dimension = aug_dim(dimension, time_aug, lead_lag)
+    basis_elements, degree, _ = _branched_coef_data(
+        trees, augmented_dimension, planar)
+
+    sig_length = bsig.shape[-1]
+    SigInputHandler(bsig, sig_length, "bsig")
+
+    indices = [
+        tree_to_idx(
+            basis_element,
+            augmented_dimension,
+            degree,
+            planar=planar,
+            scalar_term=scalar_term,
+        )
+        for basis_element in basis_elements
+    ]
+    return bsig[..., indices]
 
 
 def prepare_branched_sig_coef(

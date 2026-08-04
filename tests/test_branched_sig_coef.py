@@ -18,7 +18,93 @@ import pytest
 import torch
 
 import pysiglib
-from conftest import skip_no_cuda
+from conftest import DEVICES, assert_device, skip_no_cuda
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("planar", [False, True])
+@pytest.mark.parametrize("scalar_term", [False, True])
+def test_extract_branched_sig_coef_all(device, planar, scalar_term):
+    dimension, degree = 2, 3
+    pysiglib.prepare_branched_sig(
+        dimension, degree, planar=planar, device=device)
+    path = torch.rand((2, 5, dimension), dtype=torch.float64, device=device)
+    bsig = pysiglib.branched_sig(
+        path, degree, planar=planar, scalar_term=scalar_term)
+    basis = pysiglib.trees(dimension, degree, planar=planar)
+    requested = list(basis if scalar_term else basis[1:])
+
+    actual = pysiglib.extract_branched_sig_coef(
+        bsig,
+        requested,
+        dimension,
+        planar=planar,
+        scalar_term=scalar_term,
+    )
+
+    assert_device(actual, device)
+    torch.testing.assert_close(actual, bsig, rtol=0, atol=0)
+
+
+def test_extract_branched_sig_coef_from_higher_degree():
+    dimension, degree = 2, 4
+    pysiglib.prepare_branched_sig(dimension, degree, device="cpu")
+    path = np.random.default_rng(100).normal(size=(3, 6, dimension))
+    bsig = pysiglib.branched_sig(path, degree)
+    basis = pysiglib.trees(dimension, degree)
+    requested = [basis[1], basis[4], basis[1]]
+    indices = [
+        pysiglib.tree_to_idx(tree, dimension, degree)
+        for tree in requested
+    ]
+
+    actual = pysiglib.extract_branched_sig_coef(
+        bsig, requested, dimension)
+
+    np.testing.assert_array_equal(actual, bsig[..., indices])
+
+
+def test_extract_branched_sig_coef_augmentation():
+    dimension, degree = 2, 3
+    augmented_dimension = 2 * dimension + 1
+    pysiglib.prepare_branched_sig(
+        dimension, degree, time_aug=True, lead_lag=True, device="cpu")
+    path = np.random.default_rng(101).normal(size=(2, 5, dimension))
+    bsig = pysiglib.branched_sig(
+        path,
+        degree,
+        time_aug=True,
+        lead_lag=True,
+        scalar_term=True,
+    )
+    basis = pysiglib.trees(augmented_dimension, degree)
+    requested = [None, basis[1], basis[augmented_dimension + 2], basis[-1]]
+    indices = [
+        pysiglib.tree_to_idx(
+            tree, augmented_dimension, degree, scalar_term=True)
+        for tree in requested
+    ]
+
+    actual = pysiglib.extract_branched_sig_coef(
+        bsig,
+        requested,
+        dimension,
+        time_aug=True,
+        lead_lag=True,
+        scalar_term=True,
+    )
+
+    np.testing.assert_array_equal(actual, bsig[..., indices])
+
+
+def test_extract_branched_sig_coef_validation():
+    bsig = np.ones(10)
+    with pytest.raises(ValueError, match="non-empty list"):
+        pysiglib.extract_branched_sig_coef(bsig, [], 2)
+    with pytest.raises(ValueError, match="invalid decorated tree"):
+        pysiglib.extract_branched_sig_coef(bsig, (2,), 2)
+    with pytest.raises(ValueError, match="empty tree has no index"):
+        pysiglib.extract_branched_sig_coef(bsig, None, 2)
 
 
 @pytest.mark.parametrize("planar", [False, True])
