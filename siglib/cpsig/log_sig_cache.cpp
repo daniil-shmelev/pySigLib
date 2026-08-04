@@ -16,6 +16,7 @@
 #pragma once
 #include "cppch.h"
 #include "log_sig_cache.h"
+#include "log_sig_method.h"
 #include "cp_bch.h"
 #include "cp_branched_cache.h"
 
@@ -139,8 +140,8 @@ void set_default_cache_dir() {
 #endif
 }
 
-void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_disk) {
-	if (method < 1)
+void set_basis_cache(uint64_t dimension, uint64_t degree, LogSigMethod method, bool use_disk) {
+	if (method == LogSigMethod::Expanded)
 		return;
 
 	auto dir = get_cache_dir();
@@ -171,7 +172,7 @@ void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_d
 	std::vector<word> lyndon_words = all_lyndon_words(dimension, degree);
 	std::vector<uint64_t> lyndon_idx = all_lyndon_idx(dimension, degree);
 	SparseIntMatrix p, p_inv, p_inv_t;
-	if (method == 2) {
+	if (method == LogSigMethod::LyndonBasis) {
 		lyndon_proj_matrix(p, lyndon_words, lyndon_idx, dimension, degree);
 		p.inverse(p_inv);
 		p_inv.transpose(p_inv_t);
@@ -192,7 +193,7 @@ void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_d
 	reg.map.insert_or_assign(key, std::move(basis_obj));
 }
 
-const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int method) {
+const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, LogSigMethod method) {
 
 	std::pair<uint64_t, uint64_t> key(dimension, degree);
 	auto& reg = basis_cache_registry();
@@ -237,7 +238,11 @@ extern "C" {
 	}
 
 	CPSIG_API int prepare_log_sig(uint64_t dimension, uint64_t degree, int method, bool use_disk) noexcept {
-		SAFE_CALL(set_basis_cache(dimension, degree, method, use_disk));
+		SAFE_CALL({
+			LogSigMethod parsed = parse_log_sig_method(method);
+			if (parsed == LogSigMethod::LyndonWords || parsed == LogSigMethod::LyndonBasis)
+				set_basis_cache(dimension, degree, parsed, use_disk);
+		});
 	}
 
 	CPSIG_API int clear_cache(bool use_disk) noexcept {

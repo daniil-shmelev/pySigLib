@@ -142,7 +142,7 @@ void log_sig_lyndon_words(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const BasisCache& cache_ = get_basis_cache(dimension, degree, 1);
+	const BasisCache& cache_ = get_basis_cache(dimension, degree, LogSigMethod::LyndonWords);
 
 	auto log_sig_uptr = std::make_unique<T[]>(::sig_length(dimension, degree));
 	T* log_sig = log_sig_uptr.get();
@@ -164,7 +164,7 @@ void log_sig_lyndon_basis(
 	uint64_t degree
 ) {
 	log_sig_lyndon_words(sig, out, dimension, degree);
-	const BasisCache& cache_ = get_basis_cache(dimension, degree, 2);
+	const BasisCache& cache_ = get_basis_cache(dimension, degree, LogSigMethod::LyndonBasis);
 	cache_.inv_proj_mat.mul_vec_inplace_lower(out);
 }
 
@@ -242,7 +242,7 @@ void tensor_log_backprop_lyndon_words(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const BasisCache& cache_ = get_basis_cache(dimension, degree, 1);
+	const BasisCache& cache_ = get_basis_cache(dimension, degree, LogSigMethod::LyndonWords);
 
 	uint64_t sig_len_ = ::sig_length(dimension, degree);
 	auto log_sig_derivs_copy_uptr = std::make_unique<T[]>(sig_len_);
@@ -265,7 +265,7 @@ void tensor_log_backprop_lyndon_basis(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const BasisCache& cache_ = get_basis_cache(dimension, degree, 2);
+	const BasisCache& cache_ = get_basis_cache(dimension, degree, LogSigMethod::LyndonBasis);
 
 	cache_.inv_proj_mat_transpose.mul_vec_inplace_upper(log_sig_derivs);
 

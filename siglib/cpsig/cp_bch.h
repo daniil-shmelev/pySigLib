@@ -136,7 +136,7 @@ inline std::vector<double> compute_bch_coefficients(uint64_t degree) {
 	std::vector<double> bch_coefs(lslen, 0.0);
 
 	// Use log_sig_lyndon_basis: first get Lyndon word indices, then project
-	set_basis_cache(dim2, degree, 2, false);
+	set_basis_cache(dim2, degree, LogSigMethod::LyndonBasis, false);
 	log_sig_lyndon_basis<double>(result.data(), bch_coefs.data(), dim2, degree);
 
 	return bch_coefs;
@@ -258,7 +258,7 @@ inline void build_commutator_table(BchCache& cache) {
 
 	// Get the Lyndon word tensor indices and P^{-1} matrix from BasisCache
 	// (set_basis_cache has already been called before build_commutator_table)
-	const BasisCache& bc = get_basis_cache(dim, deg, 2);
+	const BasisCache& bc = get_basis_cache(dim, deg, LogSigMethod::LyndonBasis);
 	uint64_t n_lyndon = bc.lyndon_idx.size(); // = m
 
 	// Initialize commutator table
@@ -459,7 +459,7 @@ inline void set_bch_cache(uint64_t dimension, uint64_t degree) {
 	}
 
 	// Ensure the d-letter basis cache is set (needed for commutator table)
-	set_basis_cache(dimension, degree, 2, false);
+	set_basis_cache(dimension, degree, LogSigMethod::LyndonBasis, false);
 
 	auto cache = std::make_unique<BchCache>();
 	cache->dimension = dimension;
@@ -476,7 +476,7 @@ inline void set_bch_cache(uint64_t dimension, uint64_t degree) {
 	else {
 		// Fallback for degree > 12: compute at runtime
 		// This requires a 2-letter basis cache for the Lyndon projection
-		set_basis_cache(2, degree, 2, false);
+		set_basis_cache(2, degree, LogSigMethod::LyndonBasis, false);
 		cache->bch_coefficients = compute_bch_coefficients(degree);
 		compute_factorization_indices(2, degree, cache->bch_left_factor, cache->bch_right_factor);
 	}

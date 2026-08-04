@@ -17,6 +17,7 @@
 #include "cusig.h"
 #include "cu_log_sig_cache.h"
 #include "cu_log_sig_combine.h"
+#include "log_sig_method.h"
 
 // =========================================================================
 // SAFE_CALL macro
@@ -33,7 +34,11 @@ extern "C" {
 	CUSIG_API int prepare_log_sig_cuda(
 		uint64_t dimension, uint64_t degree, int method, bool use_disk
 	) noexcept {
-		CUSIG_SAFE_CALL(prepare_log_sig_cuda_(dimension, degree, method, use_disk));
+		CUSIG_SAFE_CALL({
+			LogSigMethod parsed = parse_log_sig_method(method);
+			if (parsed == LogSigMethod::LyndonWords || parsed == LogSigMethod::LyndonBasis)
+				prepare_log_sig_cuda_(dimension, degree, parsed, use_disk);
+		});
 	}
 
 	CUSIG_API int clear_cache_cuda(bool use_disk) noexcept {

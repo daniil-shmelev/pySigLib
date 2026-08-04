@@ -19,9 +19,10 @@
 #include "words.h"
 #include "sparse.h"
 #include "disk_cache.h"
+#include "log_sig_method.h"
 
 struct BasisCache {
-	int method = 0;
+	LogSigMethod method = LogSigMethod::Expanded;
 	std::vector<uint64_t> lyndon_idx;
 	SparseIntMatrix inv_proj_mat;
 	SparseIntMatrix inv_proj_mat_transpose;
@@ -29,7 +30,7 @@ struct BasisCache {
 	BasisCache() = default;
 
 	BasisCache(
-		int method_,
+		LogSigMethod method_,
 		std::vector<uint64_t>&& lyndon_idx_,
 		SparseIntMatrix&& inv_proj_mat_,
 		SparseIntMatrix&& inv_proj_mat_transpose_
@@ -40,14 +41,17 @@ struct BasisCache {
 	}
 
 	void serialize(std::ostream& out) const {
-		out.write(reinterpret_cast<const char*>(&method), sizeof(method));
+		const int stored_method = log_sig_method_value(method);
+		out.write(reinterpret_cast<const char*>(&stored_method), sizeof(stored_method));
 		serialize_vector(out, lyndon_idx);
 		inv_proj_mat.serialize(out);
 		inv_proj_mat_transpose.serialize(out);
 	}
 
 	void deserialize(std::istream& in) {
-		in.read(reinterpret_cast<char*>(&method), sizeof(method));
+		int stored_method;
+		in.read(reinterpret_cast<char*>(&stored_method), sizeof(stored_method));
+		method = parse_log_sig_conversion_method(stored_method);
 		deserialize_vector(in, lyndon_idx);
 		SparseIntMatrix::deserialize(in, inv_proj_mat);
 		SparseIntMatrix::deserialize(in, inv_proj_mat_transpose);
@@ -104,6 +108,6 @@ private:
 	std::filesystem::path file_path;
 };
 
-void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_disk = false);
-const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int method);
+void set_basis_cache(uint64_t dimension, uint64_t degree, LogSigMethod method, bool use_disk = false);
+const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, LogSigMethod method);
 void clear_cache_(bool use_disk);

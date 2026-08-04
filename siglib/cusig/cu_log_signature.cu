@@ -19,6 +19,7 @@
 #include "cu_log_signature.h"
 #include "cu_log_sig_backprop.h"
 #include "cu_log_sig_cache.h"
+#include "log_sig_method.h"
 
 // =========================================================================
 // Scratch buffer workspace - cached across calls to avoid per-call
@@ -390,7 +391,7 @@ void sig_to_log_sig_cuda_m2_core_(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const auto& cache = get_cuda_log_sig_cache(dimension, degree, 2);
+	const auto& cache = get_cuda_log_sig_cache(dimension, degree, LogSigMethod::LyndonBasis);
 	const uint64_t sig_len = cache.sig_len;
 	const uint64_t buff1_len = cache.buff1_len;
 	const uint64_t log_sig_len = cache.log_sig_len;
@@ -778,7 +779,7 @@ void sig_to_log_sig_backprop_cuda_m2_core_(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const auto& cache = get_cuda_log_sig_cache(dimension, degree, 2);
+	const auto& cache = get_cuda_log_sig_cache(dimension, degree, LogSigMethod::LyndonBasis);
 	const uint64_t sig_len = cache.sig_len;
 	const uint64_t buff1_len = cache.buff1_len;
 	const uint64_t log_sig_len = cache.log_sig_len;
@@ -819,7 +820,7 @@ void sig_to_log_sig_backprop_cuda_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
-	int method,
+	LogSigMethod method,
 	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_to_log_sig_backprop_cuda received dimension 0");
@@ -827,13 +828,13 @@ void sig_to_log_sig_backprop_cuda_(
 
 	if (scalar_term) {
 		// Hot path: unchanged.
-		if (method == 0) {
+		if (method == LogSigMethod::Expanded) {
 			sig_to_log_sig_backprop_cuda_core_<T>(sig, out, log_sig_derivs, batch_size, dimension, degree);
 		}
-		else if (method == 1) {
+		else if (method == LogSigMethod::LyndonWords) {
 			sig_to_log_sig_backprop_cuda_m1_core_<T>(sig, out, log_sig_derivs, batch_size, dimension, degree);
 		}
-		else if (method == 2) {
+		else if (method == LogSigMethod::LyndonBasis) {
 			sig_to_log_sig_backprop_cuda_m2_core_<T>(sig, out, log_sig_derivs, batch_size, dimension, degree);
 		}
 		else {
@@ -849,7 +850,7 @@ void sig_to_log_sig_backprop_cuda_(
 
 	CudaBuf<T> d_out_full(batch_size * full_len * sizeof(T));
 
-	if (method == 0) {
+	if (method == LogSigMethod::Expanded) {
 		// log_sig_derivs is stripped; stage into a full-size buffer.
 		CudaBuf<T> d_lsd_full(batch_size * full_len * sizeof(T));
 		// d(log_sig)/d... leading slot is 0 (log_sig[0] is constant).
@@ -857,10 +858,10 @@ void sig_to_log_sig_backprop_cuda_(
 		stage_prepend_<T>(log_sig_derivs, d_lsd_full.get(), batch_size, full_len);
 		sig_to_log_sig_backprop_cuda_core_<T>(d_sig_full.get(), d_out_full.get(), d_lsd_full.get(), batch_size, dimension, degree);
 	}
-	else if (method == 1) {
+	else if (method == LogSigMethod::LyndonWords) {
 		sig_to_log_sig_backprop_cuda_m1_core_<T>(d_sig_full.get(), d_out_full.get(), log_sig_derivs, batch_size, dimension, degree);
 	}
-	else if (method == 2) {
+	else if (method == LogSigMethod::LyndonBasis) {
 		sig_to_log_sig_backprop_cuda_m2_core_<T>(d_sig_full.get(), d_out_full.get(), log_sig_derivs, batch_size, dimension, degree);
 	}
 	else {
@@ -881,7 +882,7 @@ void sig_to_log_sig_cuda_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t degree,
-	int method,
+	LogSigMethod method,
 	bool scalar_term = true
 ) {
 	if (dimension == 0) throw std::invalid_argument("sig_to_log_sig_cuda received dimension 0");
@@ -889,13 +890,13 @@ void sig_to_log_sig_cuda_(
 
 	if (scalar_term) {
 		// Hot path: unchanged.
-		if (method == 0) {
+		if (method == LogSigMethod::Expanded) {
 			sig_to_log_sig_cuda_core_<T>(sig, out, batch_size, dimension, degree);
 		}
-		else if (method == 1) {
+		else if (method == LogSigMethod::LyndonWords) {
 			sig_to_log_sig_cuda_m1_core_<T>(sig, out, batch_size, dimension, degree);
 		}
-		else if (method == 2) {
+		else if (method == LogSigMethod::LyndonBasis) {
 			sig_to_log_sig_cuda_m2_core_<T>(sig, out, batch_size, dimension, degree);
 		}
 		else {
@@ -909,17 +910,17 @@ void sig_to_log_sig_cuda_(
 	CudaBuf<T> d_sig_full(batch_size * full_len * sizeof(T));
 	stage_prepend_<T>(sig, d_sig_full.get(), batch_size, full_len);
 
-	if (method == 0) {
+	if (method == LogSigMethod::Expanded) {
 		// Output is sig-shaped. Stage through a full-sized output buffer.
 		CudaBuf<T> d_out_full(batch_size * full_len * sizeof(T));
 		sig_to_log_sig_cuda_core_<T>(d_sig_full.get(), d_out_full.get(), batch_size, dimension, degree);
 		stage_strip_<T>(d_out_full.get(), out, batch_size, full_len);
 	}
-	else if (method == 1) {
+	else if (method == LogSigMethod::LyndonWords) {
 		// Output is log-sig-shaped (no scalar concept); write directly.
 		sig_to_log_sig_cuda_m1_core_<T>(d_sig_full.get(), out, batch_size, dimension, degree);
 	}
-	else if (method == 2) {
+	else if (method == LogSigMethod::LyndonBasis) {
 		sig_to_log_sig_cuda_m2_core_<T>(d_sig_full.get(), out, batch_size, dimension, degree);
 	}
 	else {
@@ -944,14 +945,14 @@ extern "C" {
 		const float* sig, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<float>(sig, out, batch_size, dimension, degree, method, scalar_term));
+		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<float>(sig, out, batch_size, dimension, degree, parse_log_sig_conversion_method(method), scalar_term));
 	}
 
 	CUSIG_API int sig_to_log_sig_cuda_d(
 		const double* sig, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<double>(sig, out, batch_size, dimension, degree, method, scalar_term));
+		CUSIG_SAFE_CALL(sig_to_log_sig_cuda_<double>(sig, out, batch_size, dimension, degree, parse_log_sig_conversion_method(method), scalar_term));
 	}
 
 
@@ -959,13 +960,13 @@ extern "C" {
 		const float* sig, float* out, const float* log_sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<float>(sig, out, log_sig_derivs, batch_size, dimension, degree, method, scalar_term));
+		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<float>(sig, out, log_sig_derivs, batch_size, dimension, degree, parse_log_sig_conversion_method(method), scalar_term));
 	}
 
 	CUSIG_API int sig_to_log_sig_backprop_cuda_d(
 		const double* sig, double* out, const double* log_sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<double>(sig, out, log_sig_derivs, batch_size, dimension, degree, method, scalar_term));
+		CUSIG_SAFE_CALL(sig_to_log_sig_backprop_cuda_<double>(sig, out, log_sig_derivs, batch_size, dimension, degree, parse_log_sig_conversion_method(method), scalar_term));
 	}
 }

@@ -15,6 +15,7 @@
 
 #pragma once
 #include <cstdint>
+#include "log_sig_method.h"
 
 // Host-side functions for logsig_to_sig methods 1/2.
 // Compiled by MSVC C++20, callable from CUDA host code.
@@ -22,13 +23,13 @@
 void build_expansion_matrix_f(
 	float* h_expand,
 	uint64_t sig_len, uint64_t m,
-	uint64_t dimension, uint64_t degree, int method
+	uint64_t dimension, uint64_t degree, LogSigMethod method
 );
 
 void build_expansion_matrix_d(
 	double* h_expand,
 	uint64_t sig_len, uint64_t m,
-	uint64_t dimension, uint64_t degree, int method
+	uint64_t dimension, uint64_t degree, LogSigMethod method
 );
 
 uint64_t get_lyndon_count(uint64_t dimension, uint64_t degree);
