@@ -154,7 +154,7 @@ struct CUDALogSigCache {
 	uint64_t sig_len = 0;
 	uint64_t buff1_len = 0;
 	unsigned int threads_per_block = 32;
-	int method = 0;
+	LogSigMethod method = LogSigMethod::Expanded;
 
 	int* d_sparse_vals = nullptr;
 	uint64_t* d_sparse_cols = nullptr;
@@ -175,7 +175,7 @@ struct CUDALogSigCache {
 		sig_len(std::exchange(other.sig_len, 0)),
 		buff1_len(std::exchange(other.buff1_len, 0)),
 		threads_per_block(other.threads_per_block),
-		method(std::exchange(other.method, 0)),
+		method(std::exchange(other.method, LogSigMethod::Expanded)),
 		d_sparse_vals(std::exchange(other.d_sparse_vals, nullptr)),
 		d_sparse_cols(std::exchange(other.d_sparse_cols, nullptr)),
 		d_sparse_row_ptr(std::exchange(other.d_sparse_row_ptr, nullptr)),
@@ -314,9 +314,9 @@ inline void upload_log_sig_basis_(
 			level_index[degree + 1] - level_index[degree];
 		device_cache.threads_per_block =
 			host_choose_threads_per_block(max_level_size);
-		device_cache.method = 1;
+		device_cache.method = LogSigMethod::LyndonWords;
 	}
-	if (host_cache.method >= 2 && device_cache.method < 2) {
+	if (host_cache.method >= LogSigMethod::LyndonBasis && device_cache.method < LogSigMethod::LyndonBasis) {
 		upload_csr_to_gpu_(
 			host_cache.inv_proj_mat,
 			device_cache.d_sparse_vals,
@@ -327,17 +327,17 @@ inline void upload_log_sig_basis_(
 			device_cache.d_sparse_vals_t,
 			device_cache.d_sparse_cols_t,
 			device_cache.d_sparse_row_ptr_t);
-		device_cache.method = 2;
+		device_cache.method = LogSigMethod::LyndonBasis;
 	}
 }
 
 inline void prepare_log_sig_cuda_(
 	uint64_t dimension,
 	uint64_t degree,
-	int method,
+	LogSigMethod method,
 	bool use_disk
 ) {
-	const int basis_method = (std::min)(method, 2);
+	const LogSigMethod basis_method = (std::min)(method, LogSigMethod::LyndonBasis);
 	const auto key = make_cuda_log_sig_cache_key_(dimension, degree);
 	{
 		std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
@@ -361,13 +361,13 @@ inline void prepare_log_sig_cuda_(
 inline const CUDALogSigCache& get_cuda_log_sig_cache(
 	uint64_t dimension,
 	uint64_t degree,
-	int method = 1
+	LogSigMethod method = LogSigMethod::LyndonWords
 ) {
 	const auto key = make_cuda_log_sig_cache_key_(dimension, degree);
 	std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
 	const auto found = get_cuda_log_sig_cache_map_().find(key);
 	if (found == get_cuda_log_sig_cache_map_().end()
-		|| found->second.method < (std::min)(method, 2)) {
+		|| found->second.method < (std::min)(method, LogSigMethod::LyndonBasis)) {
 		throw cache_not_found_error(
 			"CUDA log sig cache not found - call prepare_log_sig with device='cuda' first");
 	}

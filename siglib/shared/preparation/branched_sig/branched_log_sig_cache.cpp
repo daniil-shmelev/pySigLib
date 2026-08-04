@@ -102,7 +102,7 @@ void build_mkw_projection_(
 		});
 	projection.inverse(basis.inv_proj_mat);
 	basis.inv_proj_mat.transpose(basis.inv_proj_mat_transpose);
-	basis.method = 2;
+	basis.method = LogSigMethod::LyndonBasis;
 }
 
 
@@ -125,12 +125,12 @@ std::vector<uint64_t> build_mkw_lyndon_indices_(
 
 BasisCache build_branched_log_basis_cache_(
 	const BranchedSigCache& cache,
-	int method
+	LogSigMethod method
 ) {
 	if (!cache.planar)
 		throw std::invalid_argument("compressed branched log signatures require planar=True");
 
-	if (method == 2) {
+	if (method == LogSigMethod::LyndonBasis) {
 		MkwWordData_ word_data = build_mkw_word_data_(cache);
 		BasisCache result(
 			method,
@@ -151,7 +151,7 @@ BasisCache build_branched_log_basis_cache_(
 
 BasisCache load_or_build_branched_log_basis_cache_(
 	const BranchedSigCache& cache,
-	int method,
+	LogSigMethod method,
 	const std::filesystem::path& cache_directory,
 	bool use_disk
 ) {
@@ -405,10 +405,10 @@ void BranchedLogSigCache::upgrade(
 	if (method_ < 0)
 		horner_plan_ = build_branched_log_horner_plan(branched_cache);
 	if (method >= 1) {
-		const int basis_method = (std::min)(method, 2);
+		const LogSigMethod basis_method = parse_log_sig_conversion_method((std::min)(method, 2));
 		if (!basis_cache_ || !basis_cache_->supports(basis_method)) {
-			if (basis_cache_ && basis_cache_->method == 1
-				&& basis_method == 2) {
+			if (basis_cache_ && basis_cache_->method == LogSigMethod::LyndonWords
+				&& basis_method == LogSigMethod::LyndonBasis) {
 				BasisCache loaded;
 				if (use_disk && !cache_directory.empty()
 					&& read_log_sig_basis_cache(
@@ -417,7 +417,7 @@ void BranchedLogSigCache::upgrade(
 						branched_cache.max_nodes,
 						loaded,
 						mkw_basis_cache_prefix_)
-					&& loaded.supports(2)) {
+					&& loaded.supports(LogSigMethod::LyndonBasis)) {
 					basis_cache_ = std::move(loaded);
 				}
 				else {
@@ -460,7 +460,7 @@ const BranchedLogHornerPlan& BranchedLogSigCache::horner_plan() const noexcept {
 
 
 const BasisCache& BranchedLogSigCache::basis_cache(int method) const {
-	if (!basis_cache_ || basis_cache_->method < method)
+	if (!basis_cache_ || !basis_cache_->supports(parse_log_sig_conversion_method(method)))
 		throw cache_not_found_error(
 			"MKW branched log basis cache not found - call prepare_branched_log_sig first");
 	return *basis_cache_;

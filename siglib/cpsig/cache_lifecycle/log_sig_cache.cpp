@@ -116,8 +116,8 @@ void set_default_cache_dir() {
 #endif
 }
 
-void prepare_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_disk) {
-	if (method < 1)
+void prepare_basis_cache(uint64_t dimension, uint64_t degree, LogSigMethod method, bool use_disk) {
+	if (method == LogSigMethod::Expanded)
 		return;
 	const std::pair<uint64_t, uint64_t> key(dimension, degree);
 	auto& reg = log_sig_cache_registry();
@@ -145,7 +145,7 @@ void prepare_basis_cache(uint64_t dimension, uint64_t degree, int method, bool u
 const LogSigCache& get_log_sig_cache(
 	uint64_t dimension,
 	uint64_t degree,
-	int method
+	LogSigMethod method
 ) {
 	const std::pair<uint64_t, uint64_t> key(dimension, degree);
 	auto& reg = log_sig_cache_registry();
@@ -160,7 +160,7 @@ const LogSigCache& get_log_sig_cache(
 	const auto cache_directory = get_cache_dir() / cache_folder_name;
 	if (!read_log_sig_basis_cache(
 		cache_directory, dimension, degree, disk_basis)
-		|| !disk_basis.supports((std::min)(method, 2)))
+		|| !disk_basis.supports((std::min)(method, LogSigMethod::LyndonBasis)))
 		throw cache_not_found_error("Could not find basis cache");
 	auto cache = std::make_unique<LogSigCache>(
 		dimension, degree, disk_basis.method, cache_directory, true);
@@ -172,13 +172,13 @@ const LogSigCache& get_log_sig_cache(
 LogSigCache& get_log_sig_cache_mutable(
 	uint64_t dimension,
 	uint64_t degree,
-	int method
+	LogSigMethod method
 ) {
 	const std::pair<uint64_t, uint64_t> key(dimension, degree);
 	auto& reg = log_sig_cache_registry();
 	std::shared_lock lock(reg.mu);
 	const auto found = reg.map.find(key);
-	const int basis_method = (std::min)(method, 2);
+	const LogSigMethod basis_method = (std::min)(method, LogSigMethod::LyndonBasis);
 	if (found == reg.map.end()
 		|| !found->second->supports(basis_method))
 		throw cache_not_found_error("Could not find basis cache");
@@ -188,7 +188,7 @@ LogSigCache& get_log_sig_cache_mutable(
 const BasisCache& get_basis_cache(
 	uint64_t dimension,
 	uint64_t degree,
-	int method
+	LogSigMethod method
 ) {
 	return get_log_sig_cache(dimension, degree, method).basis(method);
 }
@@ -219,9 +219,10 @@ extern "C" {
 
 	CPSIG_API int prepare_log_sig(uint64_t dimension, uint64_t degree, int method, bool use_disk) noexcept {
 		SAFE_CALL(
-			if (method != 3)
-				prepare_basis_cache(dimension, degree, method, use_disk);
-			if (method == 3)
+			const LogSigMethod parsed = parse_log_sig_method(method);
+			if (parsed != LogSigMethod::DirectBCH)
+				prepare_basis_cache(dimension, degree, parsed, use_disk);
+			if (parsed == LogSigMethod::DirectBCH)
 				prepare_bch_cache(dimension, degree, use_disk)
 		);
 	}

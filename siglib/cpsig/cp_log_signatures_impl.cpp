@@ -28,21 +28,21 @@ HWY_BEFORE_NAMESPACE();
 namespace cpsig {
 namespace HWY_NAMESPACE {
 
-template void sig_to_log_sig_<float>(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+template void sig_to_log_sig_<float>(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
-template void sig_to_log_sig_<double>(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+template void sig_to_log_sig_<double>(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
-template void sig_to_log_sig_backprop_<float>(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+template void sig_to_log_sig_backprop_<float>(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
-template void sig_to_log_sig_backprop_<double>(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+template void sig_to_log_sig_backprop_<double>(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
-template void logsig_to_sig_<float>(const float* log_sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+template void logsig_to_sig_<float>(const float* log_sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
-template void logsig_to_sig_<double>(const double* log_sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+template void logsig_to_sig_<double>(const double* log_sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
-template void logsig_to_sig_backprop_<float>(const float* log_sig, float* out, const float* sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+template void logsig_to_sig_backprop_<float>(const float* log_sig, float* out, const float* sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
-template void logsig_to_sig_backprop_<double>(const double* log_sig, double* out, const double* sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+template void logsig_to_sig_backprop_<double>(const double* log_sig, double* out, const double* sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
 }
 }

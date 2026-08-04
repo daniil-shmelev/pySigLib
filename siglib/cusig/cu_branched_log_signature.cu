@@ -171,7 +171,7 @@ void prepare_cuda_mkw_basis_cache_(
 	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
 	auto [found, inserted] = get_cuda_branched_log_sig_cache_map_().try_emplace(key);
 	if (found->second.basis) {
-		if (host.method >= 2 && found->second.basis->method < 2)
+		if (host.method >= LogSigMethod::LyndonBasis && found->second.basis->method < 2)
 			upload_mkw_projection_(*found->second.basis, host);
 		return;
 	}
@@ -188,7 +188,7 @@ void prepare_cuda_mkw_basis_cache_(
 			gpu->d_lyndon_idx, indices.data(), indices.size());
 	}
 	gpu->method = 1;
-	if (host.method >= 2)
+	if (host.method >= LogSigMethod::LyndonBasis)
 		upload_mkw_projection_(*gpu, host);
 	found->second.basis = std::move(gpu);
 }

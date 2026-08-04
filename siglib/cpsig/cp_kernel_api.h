@@ -82,16 +82,16 @@ template<std::floating_point T>
 void branched_sig_backprop_(const T* path, T* out, const T* bsig_derivs, const T* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, T end_time, bool planar, bool scalar_term, const T* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride);
 
 template<std::floating_point T>
-void sig_to_log_sig_(const T* sig, T* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+void sig_to_log_sig_(const T* sig, T* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
 template<std::floating_point T>
-void sig_to_log_sig_backprop_(const T* sig, T* out, const T* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+void sig_to_log_sig_backprop_(const T* sig, T* out, const T* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
 template<std::floating_point T>
-void logsig_to_sig_(const T* log_sig, T* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+void logsig_to_sig_(const T* log_sig, T* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
 template<std::floating_point T>
-void logsig_to_sig_backprop_(const T* log_sig, T* out, const T* sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term, int n_jobs);
+void logsig_to_sig_backprop_(const T* log_sig, T* out, const T* sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, LogSigMethod method, bool scalar_term, int n_jobs);
 
 template<std::floating_point T>
 void batch_transform_path_(const T* data_in, T* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, int n_jobs);

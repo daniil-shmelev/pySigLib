@@ -25,18 +25,18 @@ struct BchCache;
 void prepare_basis_cache(
 	uint64_t dimension,
 	uint64_t degree,
-	int method,
+	LogSigMethod method,
 	bool use_disk = false);
 const BasisCache& get_basis_cache(
 	uint64_t dimension,
 	uint64_t degree,
-	int method);
+	LogSigMethod method);
 const LogSigCache& get_log_sig_cache(
 	uint64_t dimension,
 	uint64_t degree,
-	int method);
+	LogSigMethod method);
 LogSigCache& get_log_sig_cache_mutable(
 	uint64_t dimension,
 	uint64_t degree,
-	int method);
+	LogSigMethod method);
 void clear_cache_(bool use_disk);
