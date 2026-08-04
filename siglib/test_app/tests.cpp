@@ -596,6 +596,22 @@ void example_batch_sig_coef_backprop(
     time_function(num_runs, sig_coef_backprop_d, path.data(), out.data(), coefs.data(), derivs.data(), multi_idx.data(), degrees.size(), degrees.data(), batch_size, dimension, length, time_aug, lead_lag, end_time, n_jobs);
 }
 
+static std::vector<uint64_t> branched_sig_coef_tree_data_(
+    uint64_t num_idx,
+    uint64_t dimension,
+    uint64_t degree
+) {
+    std::vector<uint64_t> tree_data{ num_idx };
+    for (uint64_t i = 0; i < num_idx; ++i) {
+        tree_data.push_back(degree == 0 ? 0 : 1);
+        for (uint64_t node = 0; node < degree; ++node) {
+            tree_data.push_back((i + node) % dimension);
+            tree_data.push_back(node + 1 < degree ? 1 : 0);
+        }
+    }
+    return tree_data;
+}
+
 void example_batch_branched_sig_coef(
     uint64_t num_idx,
     uint64_t batch_size,
@@ -609,13 +625,10 @@ void example_batch_branched_sig_coef(
     print_header("Batch Branched Sig Coef");
     if (num_idx == 0)
         throw std::invalid_argument("num_idx must be positive");
-    if (prepare_branched_sig(dimension, degree, false, planar) != 0)
-        throw std::runtime_error("prepare_branched_sig failed");
-
-    const uint64_t full_length = branched_sig_length(dimension, degree, planar);
-    std::vector<uint64_t> tree_indices(num_idx);
-    for (uint64_t i = 0; i < num_idx; ++i)
-        tree_indices[i] = 1 + i * (full_length - 1) / num_idx;
+    const auto tree_data = branched_sig_coef_tree_data_(num_idx, dimension, degree);
+    if (prepare_branched_sig_coef(
+        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar) != 0)
+        throw std::runtime_error("prepare_branched_sig_coef failed");
     std::vector<double> path = test_data<double>(batch_size * dimension * length);
     std::vector<double> out(batch_size * num_idx);
 
@@ -629,7 +642,7 @@ void example_batch_branched_sig_coef(
     std::cout << "num_runs: " << num_runs << "\n";
 
     time_function(num_runs, branched_sig_coef_d, path.data(), out.data(),
-        tree_indices.data(), num_idx, batch_size, dimension, length, degree, n_jobs,
+        tree_data.data(), tree_data.size(), batch_size, dimension, length, degree, n_jobs,
         false, false, 1., planar, nullptr, 0, 0, 0);
 }
 
@@ -646,19 +659,16 @@ void example_batch_branched_sig_coef_backprop(
     print_header("Batch Branched Sig Coef Backprop");
     if (num_idx == 0)
         throw std::invalid_argument("num_idx must be positive");
-    if (prepare_branched_sig(dimension, degree, false, planar) != 0)
-        throw std::runtime_error("prepare_branched_sig failed");
-
-    const uint64_t full_length = branched_sig_length(dimension, degree, planar);
-    std::vector<uint64_t> tree_indices(num_idx);
-    for (uint64_t i = 0; i < num_idx; ++i)
-        tree_indices[i] = 1 + i * (full_length - 1) / num_idx;
+    const auto tree_data = branched_sig_coef_tree_data_(num_idx, dimension, degree);
+    if (prepare_branched_sig_coef(
+        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar) != 0)
+        throw std::runtime_error("prepare_branched_sig_coef failed");
     const uint64_t path_size = batch_size * dimension * length;
     std::vector<double> path = test_data<double>(path_size);
     std::vector<double> out(path_size);
     std::vector<double> coefs(batch_size * num_idx);
     std::vector<double> derivs(batch_size * num_idx, 1.);
-    if (branched_sig_coef_d(path.data(), coefs.data(), tree_indices.data(), num_idx,
+    if (branched_sig_coef_d(path.data(), coefs.data(), tree_data.data(), tree_data.size(),
         batch_size, dimension, length, degree, n_jobs, false, false, 1., planar,
         nullptr, 0, 0, 0) != 0)
         throw std::runtime_error("branched_sig_coef_d failed");
@@ -673,8 +683,102 @@ void example_batch_branched_sig_coef_backprop(
     std::cout << "num_runs: " << num_runs << "\n";
 
     time_function(num_runs, branched_sig_coef_backprop_d, path.data(), out.data(),
-        coefs.data(), derivs.data(), tree_indices.data(), num_idx, batch_size,
+        coefs.data(), derivs.data(), tree_data.data(), tree_data.size(), batch_size,
         dimension, length, degree, n_jobs, false, false, 1., planar, nullptr, 0, 0, 0);
+}
+
+void example_batch_branched_sig_coef_cuda(
+    uint64_t num_idx,
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    uint64_t length,
+    int num_runs,
+    bool planar
+) {
+    print_header("Batch Branched Sig Coef CUDA");
+    if (num_idx == 0)
+        throw std::invalid_argument("num_idx must be positive");
+    const auto tree_data = branched_sig_coef_tree_data_(num_idx, dimension, degree);
+    if (prepare_branched_sig_coef_cuda(
+        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar) != 0)
+        throw std::runtime_error("prepare_branched_sig_coef_cuda failed");
+    std::vector<double> path = test_data<double>(batch_size * dimension * length);
+
+    double* d_path = nullptr;
+    double* d_out = nullptr;
+    cudaMalloc(&d_path, path.size() * sizeof(double));
+    cudaMalloc(&d_out, batch_size * num_idx * sizeof(double));
+    cudaMemcpy(d_path, path.data(), path.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    std::cout << "planar: " << planar << "\n";
+    std::cout << "num_idx: " << num_idx << "\n";
+    std::cout << "batch_size: " << batch_size << "\n";
+    std::cout << "dimension: " << dimension << "\n";
+    std::cout << "length: " << length << "\n";
+    std::cout << "degree: " << degree << "\n";
+    std::cout << "num_runs: " << num_runs << "\n";
+
+    time_function(num_runs, branched_sig_coef_cuda_d, d_path, d_out,
+        tree_data.data(), tree_data.size(), batch_size, dimension, length, degree,
+        false, false, 1., planar, nullptr, 0, 0, 0);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+}
+
+void example_batch_branched_sig_coef_backprop_cuda(
+    uint64_t num_idx,
+    uint64_t batch_size,
+    uint64_t dimension,
+    uint64_t degree,
+    uint64_t length,
+    int num_runs,
+    bool planar
+) {
+    print_header("Batch Branched Sig Coef Backprop CUDA");
+    if (num_idx == 0)
+        throw std::invalid_argument("num_idx must be positive");
+    const auto tree_data = branched_sig_coef_tree_data_(num_idx, dimension, degree);
+    if (prepare_branched_sig_coef_cuda(
+        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar) != 0)
+        throw std::runtime_error("prepare_branched_sig_coef_cuda failed");
+    std::vector<double> path = test_data<double>(batch_size * dimension * length);
+    std::vector<double> derivs(batch_size * num_idx, 1.);
+
+    double* d_path = nullptr;
+    double* d_out = nullptr;
+    double* d_coefs = nullptr;
+    double* d_derivs = nullptr;
+    cudaMalloc(&d_path, path.size() * sizeof(double));
+    cudaMalloc(&d_out, path.size() * sizeof(double));
+    cudaMalloc(&d_coefs, derivs.size() * sizeof(double));
+    cudaMalloc(&d_derivs, derivs.size() * sizeof(double));
+    cudaMemcpy(d_path, path.data(), path.size() * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_derivs, derivs.data(), derivs.size() * sizeof(double), cudaMemcpyHostToDevice);
+    if (branched_sig_coef_cuda_d(
+        d_path, d_coefs, tree_data.data(), tree_data.size(), batch_size,
+        dimension, length, degree, false, false, 1., planar,
+        nullptr, 0, 0, 0) != 0)
+        throw std::runtime_error("branched_sig_coef_cuda_d failed");
+
+    std::cout << "planar: " << planar << "\n";
+    std::cout << "num_idx: " << num_idx << "\n";
+    std::cout << "batch_size: " << batch_size << "\n";
+    std::cout << "dimension: " << dimension << "\n";
+    std::cout << "length: " << length << "\n";
+    std::cout << "degree: " << degree << "\n";
+    std::cout << "num_runs: " << num_runs << "\n";
+
+    time_function(num_runs, branched_sig_coef_backprop_cuda_d,
+        d_path, d_out, d_coefs, d_derivs, tree_data.data(), tree_data.size(),
+        batch_size, dimension, length, degree, false, false, 1., planar,
+        nullptr, 0, 0, 0);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+    cudaFree(d_coefs);
+    cudaFree(d_derivs);
 }
 
 void example_batch_sig_coef_cuda_d(

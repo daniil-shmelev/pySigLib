@@ -237,6 +237,26 @@ void example_batch_branched_sig_coef_backprop(
 	bool planar = false
 );
 
+void example_batch_branched_sig_coef_cuda(
+	uint64_t num_idx = 32,
+	uint64_t batch_size = 64,
+	uint64_t dimension = 3,
+	uint64_t degree = 4,
+	uint64_t length = 256,
+	int num_runs = 20,
+	bool planar = false
+);
+
+void example_batch_branched_sig_coef_backprop_cuda(
+	uint64_t num_idx = 32,
+	uint64_t batch_size = 64,
+	uint64_t dimension = 3,
+	uint64_t degree = 4,
+	uint64_t length = 256,
+	int num_runs = 20,
+	bool planar = false
+);
+
 void example_batch_sig_coef_cuda_d(
 	uint64_t num_idx = 10,
 	uint64_t batch_size = 1000,

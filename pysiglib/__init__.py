@@ -41,7 +41,7 @@ from .transform_path_backprop import transform_path_backprop
 from .static_kernels import Context, StaticKernel, LinearKernel, ScaledLinearKernel, RBFKernel, PolynomialKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel, RationalQuadraticKernel
 from .branched_sig import prepare_branched_sig, branched_sig, branched_sig_combine, branched_sig_length
 from .branched_sig_backprop import branched_sig_backprop, branched_sig_combine_backprop
-from .branched_sig_coef import branched_sig_coef
+from .branched_sig_coef import prepare_branched_sig_coef, branched_sig_coef
 from .branched_sig_coef_backprop import branched_sig_coef_backprop
 from .branched_log_sig import branched_sig_to_log_sig, branched_log_sig
 from .branched_log_sig_backprop import branched_sig_to_log_sig_backprop

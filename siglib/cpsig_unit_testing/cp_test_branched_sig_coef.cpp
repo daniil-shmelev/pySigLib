@@ -28,12 +28,18 @@ TEST(BranchedSigCoef, ForwardAndBackpropMatchFullSignature) {
 	for (uint64_t i = 0; i < path.size(); ++i)
 		path[i] = 0.03 * static_cast<double>(i) - 0.2;
 	const std::vector<uint64_t> tree_indices{ 0, 1, 4, full_length - 1, 4 };
+	const std::vector<uint64_t> tree_data{
+		5, 0, 1, 0, 0, 1, 1, 1, 0, 0,
+		1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0
+	};
+	ASSERT_EQ(prepare_branched_sig_coef(
+		tree_data.data(), tree_data.size(), dimension, dimension, degree), 0);
 	std::vector<double> full(batch_size * full_length);
 	std::vector<double> coefs(batch_size * tree_indices.size());
 	ASSERT_EQ(branched_sig_d(
 		path.data(), full.data(), batch_size, dimension, length, degree), 0);
 	ASSERT_EQ(branched_sig_coef_d(
-		path.data(), coefs.data(), tree_indices.data(), tree_indices.size(),
+		path.data(), coefs.data(), tree_data.data(), tree_data.size(),
 		batch_size, dimension, length, degree), 0);
 
 	for (uint64_t batch = 0; batch < batch_size; ++batch) {
@@ -59,21 +65,35 @@ TEST(BranchedSigCoef, ForwardAndBackpropMatchFullSignature) {
 		batch_size, dimension, length, degree), 0);
 	ASSERT_EQ(branched_sig_coef_backprop_d(
 		path.data(), actual.data(), coefs.data(), derivs.data(),
-		tree_indices.data(), tree_indices.size(), batch_size, dimension, length, degree), 0);
+		tree_data.data(), tree_data.size(), batch_size, dimension, length, degree), 0);
 	for (uint64_t i = 0; i < actual.size(); ++i)
 		EXPECT_NEAR(actual[i], expected[i], 2e-13);
 }
 
+TEST(BranchedSigCoef, RequiresPreparation) {
+	ASSERT_EQ(clear_cache(false), 0);
+	constexpr uint64_t tree_data[] = { 1, 1, 0, 0 };
+	constexpr double path[] = { 0.0, 0.0, 1.0, 1.0 };
+	double out = 0.0;
+
+	EXPECT_NE(branched_sig_coef_d(
+		path, &out, tree_data, std::size(tree_data), 1, 2, 2, 1), 0);
+	ASSERT_EQ(prepare_branched_sig_coef(
+		tree_data, std::size(tree_data), 2, 2, 1), 0);
+	EXPECT_EQ(branched_sig_coef_d(
+		path, &out, tree_data, std::size(tree_data), 1, 2, 2, 1), 0);
+}
+
 TEST(BranchedSigCoef, RejectsEmptyLeadLagPath) {
-	constexpr uint64_t tree_index = 0;
+	constexpr uint64_t tree_data[] = { 1, 0 };
 	constexpr double coef = 1.0;
 	constexpr double deriv = 1.0;
 	double out = 0.0;
 
 	EXPECT_NE(branched_sig_coef_d(
-		nullptr, &out, &tree_index, 1, 1, 2, 0, 0,
+		nullptr, &out, tree_data, std::size(tree_data), 1, 2, 0, 0,
 		1, false, true), 0);
 	EXPECT_NE(branched_sig_coef_backprop_d(
-		nullptr, &out, &coef, &deriv, &tree_index, 1, 1, 2, 0, 0,
+		nullptr, &out, &coef, &deriv, tree_data, std::size(tree_data), 1, 2, 0, 0,
 		1, false, true), 0);
 }

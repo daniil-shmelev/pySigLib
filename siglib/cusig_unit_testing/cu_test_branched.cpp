@@ -256,3 +256,100 @@ TEST(branchedSigCombineBackpropCudaTest, ZeroDerivative) {
         EXPECT_TRUE(std::abs(out2[i]) < DOUBLE_EPSILON);
     }
 }
+
+TEST(branchedSigCoefCudaTest, ForwardAndBackpropMatchFull) {
+    const uint64_t batch_size = 2;
+    const uint64_t dimension = 2;
+    const uint64_t length = 4;
+    const uint64_t max_nodes = 3;
+    const uint64_t bs_len = compute_branched_sig_length(dimension, max_nodes);
+    const std::vector<uint64_t> indices = {1, 3, bs_len - 1, 3};
+    const uint64_t num_indices = indices.size();
+    const std::vector<uint64_t> tree_data{
+        4, 1, 0, 0, 1, 0, 1, 0, 0,
+        1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 0
+    };
+
+    std::vector<double> path(batch_size * length * dimension);
+    for (uint64_t i = 0; i < path.size(); ++i)
+        path[i] = 0.07 * static_cast<double>(i) - 0.2;
+    std::vector<double> derivs(batch_size * num_indices);
+    for (uint64_t i = 0; i < derivs.size(); ++i)
+        derivs[i] = 0.13 * static_cast<double>(i + 1) - 0.4;
+
+    double* d_path = nullptr;
+    double* d_full = nullptr;
+    double* d_coefs = nullptr;
+    double* d_derivs = nullptr;
+    double* d_full_derivs = nullptr;
+    double* d_sparse_grad = nullptr;
+    double* d_full_grad = nullptr;
+    cudaMalloc(&d_path, path.size() * sizeof(double));
+    cudaMalloc(&d_full, batch_size * bs_len * sizeof(double));
+    cudaMalloc(&d_coefs, derivs.size() * sizeof(double));
+    cudaMalloc(&d_derivs, derivs.size() * sizeof(double));
+    cudaMalloc(&d_full_derivs, batch_size * bs_len * sizeof(double));
+    cudaMalloc(&d_sparse_grad, path.size() * sizeof(double));
+    cudaMalloc(&d_full_grad, path.size() * sizeof(double));
+    cudaMemcpy(d_path, path.data(), path.size() * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_derivs, derivs.data(), derivs.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    cusig_shutdown();
+    EXPECT_NE(0, branched_sig_coef_cuda_d(
+        d_path, d_coefs, tree_data.data(), tree_data.size(), batch_size,
+        dimension, length, max_nodes));
+    ASSERT_EQ(0, prepare_branched_sig_coef_cuda(
+        tree_data.data(), tree_data.size(), dimension, dimension, max_nodes));
+
+    int err = branched_sig_cuda_d(
+        d_path, d_full, batch_size, dimension, length, max_nodes);
+    EXPECT_EQ(0, err);
+    err = branched_sig_coef_cuda_d(
+        d_path, d_coefs, tree_data.data(), tree_data.size(), batch_size,
+        dimension, length, max_nodes);
+    EXPECT_EQ(0, err);
+
+    std::vector<double> full(batch_size * bs_len);
+    std::vector<double> coefs(derivs.size());
+    cudaMemcpy(full.data(), d_full, full.size() * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(coefs.data(), d_coefs, coefs.size() * sizeof(double), cudaMemcpyDeviceToHost);
+    for (uint64_t batch = 0; batch < batch_size; ++batch) {
+        for (uint64_t i = 0; i < num_indices; ++i)
+            EXPECT_NEAR(coefs[batch * num_indices + i],
+                full[batch * bs_len + indices[i]], 1e-12);
+    }
+
+    std::vector<double> full_derivs(batch_size * bs_len, 0.);
+    for (uint64_t batch = 0; batch < batch_size; ++batch) {
+        for (uint64_t i = 0; i < num_indices; ++i)
+            full_derivs[batch * bs_len + indices[i]] += derivs[batch * num_indices + i];
+    }
+    cudaMemcpy(d_full_derivs, full_derivs.data(),
+        full_derivs.size() * sizeof(double), cudaMemcpyHostToDevice);
+
+    err = branched_sig_coef_backprop_cuda_d(
+        d_path, d_sparse_grad, d_coefs, d_derivs, tree_data.data(),
+        tree_data.size(), batch_size, dimension, length, max_nodes);
+    EXPECT_EQ(0, err);
+    err = branched_sig_backprop_cuda_d(
+        d_path, d_full_grad, d_full_derivs, d_full, batch_size,
+        dimension, length, max_nodes);
+    EXPECT_EQ(0, err);
+
+    std::vector<double> sparse_grad(path.size());
+    std::vector<double> full_grad(path.size());
+    cudaMemcpy(sparse_grad.data(), d_sparse_grad,
+        sparse_grad.size() * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(full_grad.data(), d_full_grad,
+        full_grad.size() * sizeof(double), cudaMemcpyDeviceToHost);
+    for (uint64_t i = 0; i < path.size(); ++i)
+        EXPECT_NEAR(sparse_grad[i], full_grad[i], 1e-11);
+
+    cudaFree(d_path);
+    cudaFree(d_full);
+    cudaFree(d_coefs);
+    cudaFree(d_derivs);
+    cudaFree(d_full_derivs);
+    cudaFree(d_sparse_grad);
+    cudaFree(d_full_grad);
+}

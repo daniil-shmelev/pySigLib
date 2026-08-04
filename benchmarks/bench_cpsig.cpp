@@ -45,6 +45,21 @@ static std::vector<double> random_data(uint64_t n, unsigned seed = 42) {
     return v;
 }
 
+static std::vector<uint64_t> branched_coef_tree_data() {
+    constexpr uint64_t num_trees = 32;
+    constexpr uint64_t dimension = 3;
+    constexpr uint64_t degree = 4;
+    std::vector<uint64_t> tree_data{num_trees};
+    for (uint64_t tree = 0; tree < num_trees; ++tree) {
+        tree_data.push_back(1);
+        for (uint64_t node = 0; node < degree; ++node) {
+            tree_data.push_back((tree + node) % dimension);
+            tree_data.push_back(node + 1 < degree ? 1 : 0);
+        }
+    }
+    return tree_data;
+}
+
 // =========================================================================
 // Path transforms
 // =========================================================================
@@ -548,20 +563,32 @@ static void BM_branched_sig_length(benchmark::State& state) {
 }
 BENCHMARK(BM_branched_sig_length)->Unit(benchmark::kMicrosecond);
 
+static void BM_prepare_branched_sig_coef(benchmark::State& state) {
+    const auto tree_data = branched_coef_tree_data();
+    for (auto _ : state) {
+        state.PauseTiming();
+        check(::clear_cache(false), "clear_cache");
+        state.ResumeTiming();
+        check(::prepare_branched_sig_coef(
+            tree_data.data(), tree_data.size(), 3, 3, 4, false),
+            "prepare_branched_sig_coef");
+    }
+}
+BENCHMARK(BM_prepare_branched_sig_coef)->Unit(benchmark::kMillisecond);
+
 static void BM_branched_sig_coef(benchmark::State& state) {
-    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
-    const uint64_t blen = ::branched_sig_length(3, 4, false);
     auto path = random_data(8 * 3 * 32, 1);
-    std::vector<uint64_t> tree_indices(32);
-    for (uint64_t i = 0; i < tree_indices.size(); ++i)
-        tree_indices[i] = 1 + i * (blen - 1) / tree_indices.size();
-    std::vector<double> out(8 * tree_indices.size());
+    const auto tree_data = branched_coef_tree_data();
+    check(::prepare_branched_sig_coef(
+        tree_data.data(), tree_data.size(), 3, 3, 4, false),
+        "prepare_branched_sig_coef");
+    std::vector<double> out(8 * tree_data[0]);
     check(::branched_sig_coef_d(
-        path.data(), out.data(), tree_indices.data(), tree_indices.size(),
+        path.data(), out.data(), tree_data.data(), tree_data.size(),
         8, 3, 32, 4), "branched_sig_coef_d");
     for (auto _ : state) {
         ::branched_sig_coef_d(
-            path.data(), out.data(), tree_indices.data(), tree_indices.size(),
+            path.data(), out.data(), tree_data.data(), tree_data.size(),
             8, 3, 32, 4);
         benchmark::DoNotOptimize(out.data());
     }
@@ -569,26 +596,25 @@ static void BM_branched_sig_coef(benchmark::State& state) {
 BENCHMARK(BM_branched_sig_coef)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_coef_backprop(benchmark::State& state) {
-    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
-    const uint64_t blen = ::branched_sig_length(3, 4, false);
     auto path = random_data(8 * 3 * 32, 1);
-    std::vector<uint64_t> tree_indices(32);
-    for (uint64_t i = 0; i < tree_indices.size(); ++i)
-        tree_indices[i] = 1 + i * (blen - 1) / tree_indices.size();
-    std::vector<double> coefs(8 * tree_indices.size());
-    auto derivs = random_data(8 * tree_indices.size(), 2);
+    const auto tree_data = branched_coef_tree_data();
+    check(::prepare_branched_sig_coef(
+        tree_data.data(), tree_data.size(), 3, 3, 4, false),
+        "prepare_branched_sig_coef");
+    std::vector<double> coefs(8 * tree_data[0]);
+    auto derivs = random_data(8 * tree_data[0], 2);
     std::vector<double> out(8 * 3 * 32);
     check(::branched_sig_coef_d(
-        path.data(), coefs.data(), tree_indices.data(), tree_indices.size(),
+        path.data(), coefs.data(), tree_data.data(), tree_data.size(),
         8, 3, 32, 4), "branched_sig_coef_d");
     check(::branched_sig_coef_backprop_d(
         path.data(), out.data(), coefs.data(), derivs.data(),
-        tree_indices.data(), tree_indices.size(), 8, 3, 32, 4),
+        tree_data.data(), tree_data.size(), 8, 3, 32, 4),
         "branched_sig_coef_backprop_d");
     for (auto _ : state) {
         ::branched_sig_coef_backprop_d(
             path.data(), out.data(), coefs.data(), derivs.data(),
-            tree_indices.data(), tree_indices.size(), 8, 3, 32, 4);
+            tree_data.data(), tree_data.size(), 8, 3, 32, 4);
         benchmark::DoNotOptimize(out.data());
     }
 }

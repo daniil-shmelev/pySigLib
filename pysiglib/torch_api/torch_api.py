@@ -724,7 +724,7 @@ log_sig_combine.__doc__ = log_sig_combine_forward.__doc__
 
 from ..branched_sig import branched_sig as branched_sig_forward, prepare_branched_sig, branched_sig_length, branched_sig_combine as branched_sig_combine_forward
 from ..branched_sig_backprop import branched_sig_backprop, branched_sig_combine_backprop
-from ..branched_sig_coef import branched_sig_coef as branched_sig_coef_forward
+from ..branched_sig_coef import branched_sig_coef as branched_sig_coef_forward, prepare_branched_sig_coef
 from ..branched_sig_coef_backprop import branched_sig_coef_backprop
 from ..branched_log_sig import branched_sig_to_log_sig as branched_sig_to_log_sig_forward
 from ..branched_log_sig import branched_log_sig as branched_log_sig_forward

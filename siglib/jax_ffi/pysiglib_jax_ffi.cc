@@ -321,6 +321,8 @@ struct CpuFns<float> {
 
     static constexpr auto bsig = branched_sig_f;
     static constexpr auto bsig_backprop = branched_sig_backprop_f;
+    static constexpr auto bsig_coef = branched_sig_coef_f;
+    static constexpr auto bsig_coef_backprop = branched_sig_coef_backprop_f;
 
     static constexpr auto bsig_combine = branched_sig_combine_f;
     static constexpr auto bsig_combine_backprop = branched_sig_combine_backprop_f;
@@ -361,6 +363,8 @@ struct CpuFns<double> {
 
     static constexpr auto bsig = branched_sig_d;
     static constexpr auto bsig_backprop = branched_sig_backprop_d;
+    static constexpr auto bsig_coef = branched_sig_coef_d;
+    static constexpr auto bsig_coef_backprop = branched_sig_coef_backprop_d;
 
     static constexpr auto bsig_combine = branched_sig_combine_d;
     static constexpr auto bsig_combine_backprop = branched_sig_combine_backprop_d;
@@ -411,6 +415,8 @@ struct CudaFns<float> {
 
     static constexpr auto bsig = branched_sig_cuda_f;
     static constexpr auto bsig_backprop = branched_sig_backprop_cuda_f;
+    static constexpr auto bsig_coef = branched_sig_coef_cuda_f;
+    static constexpr auto bsig_coef_backprop = branched_sig_coef_backprop_cuda_f;
 
     static constexpr auto bsig_combine = branched_sig_combine_cuda_f;
     static constexpr auto bsig_combine_backprop = branched_sig_combine_backprop_cuda_f;
@@ -451,6 +457,8 @@ struct CudaFns<double> {
 
     static constexpr auto bsig = branched_sig_cuda_d;
     static constexpr auto bsig_backprop = branched_sig_backprop_cuda_d;
+    static constexpr auto bsig_coef = branched_sig_coef_cuda_d;
+    static constexpr auto bsig_coef_backprop = branched_sig_coef_backprop_cuda_d;
 
     static constexpr auto bsig_combine = branched_sig_combine_cuda_d;
     static constexpr auto bsig_combine_backprop = branched_sig_combine_backprop_cuda_d;
@@ -2336,6 +2344,242 @@ ffi::Error BranchedSigBackpropCuda(
 #endif
 
 // ---------------------------------------------------------------------------
+// branched_sig_coef
+// ---------------------------------------------------------------------------
+
+template <typename T>
+ffi::Error BranchedSigCoefCpuImpl(
+    ffi::Span<const std::uint64_t> tree_data,
+    std::int64_t max_nodes,
+    bool time_aug,
+    bool lead_lag,
+    double end_time,
+    std::int64_t n_jobs,
+    bool planar,
+    ffi::AnyBuffer& path,
+    ffi::AnyBuffer& correction,
+    ffi::Result<ffi::AnyBuffer>& out
+) {
+    PathSpec spec;
+    if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty()) return InvalidArgument(msg);
+
+    int err_code = CpuFns<T>::bsig_coef(
+        BufferData<T>(path), BufferData<T>(out), tree_data.begin(),
+        static_cast<std::uint64_t>(tree_data.size()),
+        spec.is_batch ? spec.batch_size : 1,
+        spec.dimension, spec.length, static_cast<std::uint64_t>(max_nodes),
+        static_cast<int>(n_jobs), time_aug, lead_lag, static_cast<T>(end_time),
+        planar, BufferData<T>(correction), corr_spec.len,
+        corr_spec.batch_stride, corr_spec.segment_stride);
+    if (err_code != 0) return NativeCallError("branched_sig_coef", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error BranchedSigCoefBackpropCpuImpl(
+    ffi::Span<const std::uint64_t> tree_data,
+    std::int64_t max_nodes,
+    bool time_aug,
+    bool lead_lag,
+    double end_time,
+    std::int64_t n_jobs,
+    bool planar,
+    ffi::AnyBuffer& path,
+    ffi::AnyBuffer& coefs,
+    ffi::AnyBuffer& cotangent,
+    ffi::AnyBuffer& correction,
+    ffi::Result<ffi::AnyBuffer>& out
+) {
+    PathSpec spec;
+    if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty()) return InvalidArgument(msg);
+
+    int err_code = CpuFns<T>::bsig_coef_backprop(
+        BufferData<T>(path), BufferData<T>(out), BufferData<T>(coefs),
+        BufferData<T>(cotangent), tree_data.begin(),
+        static_cast<std::uint64_t>(tree_data.size()),
+        spec.is_batch ? spec.batch_size : 1,
+        spec.dimension, spec.length, static_cast<std::uint64_t>(max_nodes),
+        static_cast<int>(n_jobs), time_aug, lead_lag, static_cast<T>(end_time),
+        planar, BufferData<T>(correction), corr_spec.len,
+        corr_spec.batch_stride, corr_spec.segment_stride);
+    if (err_code != 0) return NativeCallError("branched_sig_coef_backprop", err_code);
+    return ffi::Error::Success();
+}
+
+ffi::Error BranchedSigCoefCpu(
+    std::int64_t max_nodes,
+    bool time_aug,
+    bool lead_lag,
+    double end_time,
+    std::int64_t n_jobs,
+    bool planar,
+    ffi::Span<const std::uint64_t> tree_data,
+    ffi::AnyBuffer path,
+    ffi::AnyBuffer correction,
+    ffi::Result<ffi::AnyBuffer> out
+) {
+    if (max_nodes < 0) return InvalidArgument("max_nodes must be non-negative");
+    if (tree_data.size() == 0) return InvalidArgument("tree_data must be non-empty");
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
+        return BranchedSigCoefCpuImpl<T>(tree_data, max_nodes, time_aug,
+            lead_lag, end_time, n_jobs, planar, path, correction, out);
+    });
+}
+
+ffi::Error BranchedSigCoefBackpropCpu(
+    std::int64_t max_nodes,
+    bool time_aug,
+    bool lead_lag,
+    double end_time,
+    std::int64_t n_jobs,
+    bool planar,
+    ffi::Span<const std::uint64_t> tree_data,
+    ffi::AnyBuffer path,
+    ffi::AnyBuffer coefs,
+    ffi::AnyBuffer cotangent,
+    ffi::AnyBuffer correction,
+    ffi::Result<ffi::AnyBuffer> out
+) {
+    if (max_nodes < 0) return InvalidArgument("max_nodes must be non-negative");
+    if (tree_data.size() == 0) return InvalidArgument("tree_data must be non-empty");
+    if (auto msg = ValidateSameFloatDtype("path", path, "coefs", coefs); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
+        return BranchedSigCoefBackpropCpuImpl<T>(tree_data, max_nodes,
+            time_aug, lead_lag, end_time, n_jobs, planar, path, coefs,
+            cotangent, correction, out);
+    });
+}
+
+#ifdef PYSIGLIB_JAX_WITH_CUDA
+template <typename T>
+ffi::Error BranchedSigCoefCudaImpl(
+    cudaStream_t stream,
+    ffi::Span<const std::uint64_t> tree_data,
+    std::int64_t max_nodes,
+    bool time_aug,
+    bool lead_lag,
+    double end_time,
+    bool planar,
+    ffi::AnyBuffer& path,
+    ffi::AnyBuffer& correction,
+    ffi::Result<ffi::AnyBuffer>& out
+) {
+    PathSpec spec;
+    if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+
+    int err_code = CudaFns<T>::bsig_coef(
+        BufferData<T>(path), BufferData<T>(out), tree_data.begin(),
+        static_cast<std::uint64_t>(tree_data.size()),
+        spec.is_batch ? spec.batch_size : 1,
+        spec.dimension, spec.length, static_cast<std::uint64_t>(max_nodes),
+        time_aug, lead_lag, static_cast<T>(end_time), planar,
+        BufferData<T>(correction), corr_spec.len,
+        corr_spec.batch_stride, corr_spec.segment_stride);
+    if (err_code != 0) return NativeCallError("branched_sig_coef_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error BranchedSigCoefBackpropCudaImpl(
+    cudaStream_t stream,
+    ffi::Span<const std::uint64_t> tree_data,
+    std::int64_t max_nodes,
+    bool time_aug,
+    bool lead_lag,
+    double end_time,
+    bool planar,
+    ffi::AnyBuffer& path,
+    ffi::AnyBuffer& coefs,
+    ffi::AnyBuffer& cotangent,
+    ffi::AnyBuffer& correction,
+    ffi::Result<ffi::AnyBuffer>& out
+) {
+    PathSpec spec;
+    if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
+    CorrectionSpec corr_spec;
+    if (auto msg = GetCorrectionSpec(path, correction, corr_spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+
+    int err_code = CudaFns<T>::bsig_coef_backprop(
+        BufferData<T>(path), BufferData<T>(out), BufferData<T>(coefs),
+        BufferData<T>(cotangent), tree_data.begin(),
+        static_cast<std::uint64_t>(tree_data.size()),
+        spec.is_batch ? spec.batch_size : 1,
+        spec.dimension, spec.length, static_cast<std::uint64_t>(max_nodes),
+        time_aug, lead_lag, static_cast<T>(end_time), planar,
+        BufferData<T>(correction), corr_spec.len,
+        corr_spec.batch_stride, corr_spec.segment_stride);
+    if (err_code != 0) return NativeCallError("branched_sig_coef_backprop_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+ffi::Error BranchedSigCoefCuda(
+    cudaStream_t stream,
+    std::int64_t max_nodes,
+    bool time_aug,
+    bool lead_lag,
+    double end_time,
+    std::int64_t /*n_jobs*/,
+    bool planar,
+    ffi::Span<const std::uint64_t> tree_data,
+    ffi::AnyBuffer path,
+    ffi::AnyBuffer correction,
+    ffi::Result<ffi::AnyBuffer> out
+) {
+    if (max_nodes < 0) return InvalidArgument("max_nodes must be non-negative");
+    if (tree_data.size() == 0) return InvalidArgument("tree_data must be non-empty");
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
+        return BranchedSigCoefCudaImpl<T>(stream, tree_data, max_nodes,
+            time_aug, lead_lag, end_time, planar, path, correction, out);
+    });
+}
+
+ffi::Error BranchedSigCoefBackpropCuda(
+    cudaStream_t stream,
+    std::int64_t max_nodes,
+    bool time_aug,
+    bool lead_lag,
+    double end_time,
+    std::int64_t /*n_jobs*/,
+    bool planar,
+    ffi::Span<const std::uint64_t> tree_data,
+    ffi::AnyBuffer path,
+    ffi::AnyBuffer coefs,
+    ffi::AnyBuffer cotangent,
+    ffi::AnyBuffer correction,
+    ffi::Result<ffi::AnyBuffer> out
+) {
+    if (max_nodes < 0) return InvalidArgument("max_nodes must be non-negative");
+    if (tree_data.size() == 0) return InvalidArgument("tree_data must be non-empty");
+    if (auto msg = ValidateSameFloatDtype("path", path, "coefs", coefs); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "correction", correction); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
+        return BranchedSigCoefBackpropCudaImpl<T>(stream, tree_data,
+            max_nodes, time_aug, lead_lag, end_time, planar, path, coefs,
+            cotangent, correction, out);
+    });
+}
+#endif
+
+// ---------------------------------------------------------------------------
 // branched_sig_combine
 // ---------------------------------------------------------------------------
 
@@ -2689,6 +2933,42 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigBackpropCuda, BranchedSigBackpr
         .Attr<std::int64_t>("max_nodes").Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time")
         .Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+#endif
+
+// branched_sig_coef
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCoefCpu, BranchedSigCoefCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("max_nodes")
+        .Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
+        .Attr<ffi::Span<const std::uint64_t>>("tree_data")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCoefBackpropCpu, BranchedSigCoefBackpropCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("max_nodes")
+        .Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
+        .Attr<ffi::Span<const std::uint64_t>>("tree_data")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+#ifdef PYSIGLIB_JAX_WITH_CUDA
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCoefCuda, BranchedSigCoefCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("max_nodes").Attr<bool>("time_aug")
+        .Attr<bool>("lead_lag").Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
+        .Attr<ffi::Span<const std::uint64_t>>("tree_data")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigCoefBackpropCuda, BranchedSigCoefBackpropCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("max_nodes").Attr<bool>("time_aug")
+        .Attr<bool>("lead_lag").Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs").Attr<bool>("planar")
+        .Attr<ffi::Span<const std::uint64_t>>("tree_data")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
 
 // branched_sig_combine

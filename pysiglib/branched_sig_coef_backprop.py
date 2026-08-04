@@ -19,9 +19,9 @@ from typing import Union
 import numpy as np
 import torch
 
-from .branched_sig_coef import _branched_coef_indices
+from .branched_sig_coef import _branched_coef_data
 from .data_handlers import CorrectionInputHandler, MultipleSigInputHandler, PathInputHandler, PathOutputHandler
-from .dtypes import CPSIG_BRANCHED_SIG_COEF_BACKPROP
+from .dtypes import CPSIG_BRANCHED_SIG_COEF_BACKPROP, CUSIG_BRANCHED_SIG_COEF_BACKPROP_CUDA
 from .error_codes import err_msg
 from .param_checks import check_n_jobs, check_type
 
@@ -40,11 +40,11 @@ def branched_sig_coef_backprop(
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
-    Backpropagates through selected CPU branched-signature coefficients.
+    Backpropagates through selected branched-signature coefficients.
 
-    The basis elements and options must match the forward call. Reverse mode
-    rebuilds the sparse coproduct dependency closure internally, so ``coefs``
-    contains only the requested forward values.
+    The basis elements and options must match the forward call and the preceding
+    :func:`prepare_branched_sig_coef` call. ``coefs`` contains only the requested
+    forward values.
 
     :param path: Path or batch of paths used in the forward call, with shape
         ``(..., length, dimension)``.
@@ -67,8 +67,8 @@ def branched_sig_coef_backprop(
     :param correction: Correction data passed to the forward call. It is treated
         as constant, so this function returns derivatives only for ``path``.
     :type correction: numpy.ndarray | torch.tensor | None
-    :param n_jobs: Number of CPU threads. Use 1 for serial execution or -1 for
-        all available threads.
+    :param n_jobs: Number of CPU threads. Ignored for CUDA input. Use 1 for
+        serial CPU execution or -1 for all available CPU threads.
     :type n_jobs: int
     :return: Path derivatives with the same shape and container type as ``path``.
     :rtype: numpy.ndarray | torch.tensor
@@ -83,7 +83,7 @@ def branched_sig_coef_backprop(
 
         path = np.random.default_rng(0).normal(size=(100, 2))
         requested = [(0,), ((0,), 1)]
-        pysiglib.prepare_branched_sig(2, 2)
+        pysiglib.prepare_branched_sig_coef(2, requested)
         coefs = pysiglib.branched_sig_coef(path, requested)
         grad = pysiglib.branched_sig_coef_backprop(
             path, requested, coefs, np.ones_like(coefs))
@@ -98,10 +98,8 @@ def branched_sig_coef_backprop(
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     if path_data.lead_lag and path_data.data_length == 0:
         raise ValueError("lead_lag requires a path with at least one point")
-    if path_data.device != "cpu":
-        raise ValueError("branched_sig_coef_backprop is currently CPU-only")
-
-    basis_elements, degree, indices = _branched_coef_indices(trees, path_data.dimension, planar)
+    basis_elements, degree, tree_data = _branched_coef_data(
+        trees, path_data.dimension, planar)
     coef_data = MultipleSigInputHandler(
         [coefs, derivs], len(basis_elements), ["coefs", "derivs"])
     if coef_data.type_ != path_data.type_:
@@ -113,35 +111,34 @@ def branched_sig_coef_backprop(
     if coef_data.batch_shape != path_data.batch_shape:
         raise ValueError("coefs and derivs must have the same batch shape as path")
     correction_data = CorrectionInputHandler(correction, path_data, degree)
-    indices_tensor = torch.tensor(indices, dtype=torch.uint64)
-    indices_ptr = cast(indices_tensor.data_ptr(), POINTER(c_uint64))
+    tree_data_tensor = torch.tensor(tree_data, dtype=torch.uint64)
+    tree_data_ptr = cast(tree_data_tensor.data_ptr(), POINTER(c_uint64))
     result = PathOutputHandler(
         path_data.data_length, path_data.data_dimension, path_data)
 
     if path_data.batch_size == 0:
         return result.data
 
-    err_code = CPSIG_BRANCHED_SIG_COEF_BACKPROP[path_data.dtype](
-        path_data.data_ptr,
-        result.data_ptr,
-        coef_data.data[0].data_ptr,
-        coef_data.data[1].data_ptr,
-        indices_ptr,
-        len(indices),
-        path_data.batch_size,
-        path_data.data_dimension,
-        path_data.data_length,
-        degree,
-        n_jobs,
-        path_data.time_aug,
-        path_data.lead_lag,
-        path_data.end_time,
-        planar,
-        correction_data.data_ptr,
-        correction_data.length,
-        correction_data.batch_stride,
-        correction_data.segment_stride,
-    )
+    if path_data.device == "cpu":
+        err_code = CPSIG_BRANCHED_SIG_COEF_BACKPROP[path_data.dtype](
+            path_data.data_ptr, result.data_ptr, coef_data.data[0].data_ptr,
+            coef_data.data[1].data_ptr, tree_data_ptr, len(tree_data),
+            path_data.batch_size, path_data.data_dimension,
+            path_data.data_length, degree, n_jobs, path_data.time_aug,
+            path_data.lead_lag, path_data.end_time, planar,
+            correction_data.data_ptr, correction_data.length,
+            correction_data.batch_stride, correction_data.segment_stride,
+        )
+    else:
+        err_code = CUSIG_BRANCHED_SIG_COEF_BACKPROP_CUDA[path_data.dtype](
+            path_data.data_ptr, result.data_ptr, coef_data.data[0].data_ptr,
+            coef_data.data[1].data_ptr, tree_data_ptr, len(tree_data),
+            path_data.batch_size, path_data.data_dimension,
+            path_data.data_length, degree, path_data.time_aug,
+            path_data.lead_lag, path_data.end_time, planar,
+            correction_data.data_ptr, correction_data.length,
+            correction_data.batch_stride, correction_data.segment_stride,
+        )
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_coef_backprop: " + err_msg(err_code))
     return result.data

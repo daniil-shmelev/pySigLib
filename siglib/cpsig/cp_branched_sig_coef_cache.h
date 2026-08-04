@@ -15,47 +15,24 @@
 
 #pragma once
 #include "cppch.h"
+#include "../shared/branched_sig_coef_cache.h"
 
-template<std::floating_point T>
-void branched_sig_coef_(
-	const T* path,
-	T* out,
+void prepare_branched_sig_coef_cache(
 	const uint64_t* tree_data,
 	uint64_t tree_data_len,
-	uint64_t batch_size,
+	uint64_t data_dimension,
 	uint64_t dimension,
-	uint64_t length,
 	uint64_t max_nodes,
-	int n_jobs = 1,
-	bool time_aug = false,
-	bool lead_lag = false,
-	T end_time = static_cast<T>(1.),
-	bool planar = false,
-	const T* correction = nullptr,
-	uint64_t correction_len = 0,
-	uint64_t correction_batch_stride = 0,
-	uint64_t correction_segment_stride = 0
+	bool planar = false
 );
 
-template<std::floating_point T>
-void branched_sig_coef_backprop_(
-	const T* path,
-	T* out,
-	const T* coefs,
-	const T* derivs,
+const BranchedSigCoefCache& get_branched_sig_coef_cache(
 	const uint64_t* tree_data,
 	uint64_t tree_data_len,
-	uint64_t batch_size,
+	uint64_t data_dimension,
 	uint64_t dimension,
-	uint64_t length,
 	uint64_t max_nodes,
-	int n_jobs = 1,
-	bool time_aug = false,
-	bool lead_lag = false,
-	T end_time = static_cast<T>(1.),
-	bool planar = false,
-	const T* correction = nullptr,
-	uint64_t correction_len = 0,
-	uint64_t correction_batch_stride = 0,
-	uint64_t correction_segment_stride = 0
+	bool planar = false
 );
+
+void clear_branched_sig_coef_cache();

@@ -16,3 +16,4 @@ of the mathematical operations, for which we refer the user to the corresponding
    cpsig/cp_log_sig
    cpsig/cp_sig_kernel
    cpsig/cp_branched_sig
+   cpsig/cp_branched_sig_coef
