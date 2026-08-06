@@ -35,9 +35,13 @@ __global__ void signature_naive_ker(
 	uint64_t sig_stride,
 	uint64_t path_flat_len,
 	T* __restrict__ linear_sig_workspace,  // [batch_size * sig_stride]
-	bool scalar_term
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int thread_id = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -134,12 +138,16 @@ __global__ void signature_per_word_ker(
 	const uint64_t level_offset,
 	const uint64_t level_size,
 	const uint64_t path_stride,       // length * dim
-	const bool scalar_term
+	const bool scalar_term,
+	const uint64_t batch_offset,
+	const uint64_t batch_chunk_size
 ) {
 	static_assert(DEGREE >= 1 && DEGREE <= 12, "DEGREE must be 1-12");
 
 	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	const uint64_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const bool active = word_idx < level_size;
 
 	extern __shared__ char smem[];
@@ -223,10 +231,14 @@ __global__ void signature_per_word_generic_ker(
 	const uint64_t level_offset,
 	const uint64_t level_size,
 	const uint64_t path_stride,
-	const bool /*scalar_term*/  // only relevant for the k==1 scalar write in the templated kernel
+	const bool /*scalar_term*/,  // only relevant for the k==1 scalar write in the templated kernel
+	const uint64_t batch_offset,
+	const uint64_t batch_chunk_size
 ) {
 	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	const uint64_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const bool active = word_idx < level_size;
 
 	extern __shared__ char smem[];
@@ -304,10 +316,14 @@ void sig_backprop_per_word_generic_ker(
 	const uint64_t level_offset,
 	const uint64_t level_size,
 	const uint64_t path_stride,
-	const bool scalar_term
+	const bool scalar_term,
+	const uint64_t batch_offset,
+	const uint64_t batch_chunk_size
 ) {
 	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	const uint64_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const bool active = word_idx < level_size;
 
 	extern __shared__ char smem[];
@@ -490,12 +506,16 @@ void sig_backprop_per_word_ker(
 	const uint64_t level_offset,
 	const uint64_t level_size,
 	const uint64_t path_stride,
-	const bool scalar_term
+	const bool scalar_term,
+	const uint64_t batch_offset,
+	const uint64_t batch_chunk_size
 ) {
 	static_assert(DEGREE >= 1 && DEGREE <= 12, "DEGREE must be 1-12");
 
 	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	const uint64_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const bool active = word_idx < level_size;
 
 	extern __shared__ char smem[];
@@ -1019,7 +1039,9 @@ __global__ void increment_to_path_grad_batch_ker(
 	const T* __restrict__ increment_grad,
 	T* __restrict__ path_grad,
 	int length,
-	int dim
+	int dim,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
 	const int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	const int path_size = length * dim;
@@ -1028,10 +1050,13 @@ __global__ void increment_to_path_grad_batch_ker(
 	const int step = idx / dim;
 	const int letter = idx - step * dim;
 	const int increment_steps = length - 1;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const T* batch_increment_grad = increment_grad
-		+ static_cast<uint64_t>(blockIdx.y) * increment_steps * dim;
+		+ batch_idx * increment_steps * dim;
 	T* batch_path_grad = path_grad
-		+ static_cast<uint64_t>(blockIdx.y) * path_size;
+		+ batch_idx * path_size;
 	if (step == 0) {
 		batch_path_grad[idx] = -batch_increment_grad[letter];
 	} else if (step == increment_steps) {
@@ -1053,14 +1078,18 @@ __global__ void sig_context_scan_persistent_ker(
 	uint64_t padded_steps,
 	uint64_t context_size,
 	uint64_t level_offset,
-	uint64_t path_stride
+	uint64_t path_stride,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
 	using BlockScan = cub::BlockScan<T, BLOCK_SIZE>;
 	__shared__ typename BlockScan::TempStorage scan_storage;
 	__shared__ T carry;
 
 	const uint32_t word_idx = blockIdx.x;
-	const uint64_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	uint32_t powers[LEVEL + 1];
 	uint32_t level_starts[LEVEL + 1];
 	powers[0] = 1;
@@ -1136,14 +1165,18 @@ __global__ void sig_level_adjoint_scan_ker(
 	uint64_t context_size,
 	uint64_t level_offset,
 	uint64_t sig_stride,
-	bool scalar_term
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
 	using BlockScan = cub::BlockScan<T, BLOCK_SIZE>;
 	__shared__ typename BlockScan::TempStorage scan_storage;
 	__shared__ T carry;
 
 	const uint64_t word_idx = blockIdx.x;
-	const uint64_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	if (threadIdx.x == 0) {
 		carry = sig_grads[batch_idx * sig_stride + (scalar_term ? 1 : 0)
 			+ level_offset + word_idx];
@@ -1713,7 +1746,6 @@ void signature_per_word_core_(
 		unsigned int block = 128;
 		if (level_size < 128) block = 32;
 		unsigned int grid_x = (unsigned int)((level_size + block - 1) / block);
-		dim3 grid(grid_x, (unsigned int)batch_size, 1);
 		cudaStream_t stream = (use_streams && k <= MAX_PER_WORD_STREAMS)
 			? s_per_word_streams[k - 1] : nullptr;
 
@@ -1721,31 +1753,39 @@ void signature_per_word_core_(
 			case D: \
 				configure_dynamic_smem( \
 					signature_per_word_ker<T, D>, smem, "CUDA signature", smem_limits); \
-				signature_per_word_ker<T, D><<<grid, block, smem, stream>>>( \
+				signature_per_word_ker<T, D><<<batch_chunk.grid, block, smem, stream>>>( \
 					path, out, dim, steps, chunk_size, sig_stride, level_offset, \
-					level_size, path_stride, scalar_term); break;
+					level_size, path_stride, scalar_term, \
+					batch_chunk.offset, batch_chunk.size); break;
 
-		switch (k) {
-			LAUNCH_DEGREE(1)
-			LAUNCH_DEGREE(2)
-			LAUNCH_DEGREE(3)
-			LAUNCH_DEGREE(4)
-			LAUNCH_DEGREE(5)
-			LAUNCH_DEGREE(6)
-			LAUNCH_DEGREE(7)
-			LAUNCH_DEGREE(8)
-			LAUNCH_DEGREE(9)
-			LAUNCH_DEGREE(10)
-			LAUNCH_DEGREE(11)
-			LAUNCH_DEGREE(12)
-			default:
-				configure_dynamic_smem(
-					signature_per_word_generic_ker<T>, smem,
-					"CUDA signature", smem_limits);
-				signature_per_word_generic_ker<T><<<grid, block, smem, stream>>>(
-					path, out, dim, steps, chunk_size, static_cast<int>(k),
-					sig_stride, level_offset, level_size, path_stride, scalar_term);
-				break;
+		for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+			const auto batch_chunk = make_cuda_batch_grid_chunk(
+				grid_x, batch_size, batch_offset);
+			switch (k) {
+				LAUNCH_DEGREE(1)
+				LAUNCH_DEGREE(2)
+				LAUNCH_DEGREE(3)
+				LAUNCH_DEGREE(4)
+				LAUNCH_DEGREE(5)
+				LAUNCH_DEGREE(6)
+				LAUNCH_DEGREE(7)
+				LAUNCH_DEGREE(8)
+				LAUNCH_DEGREE(9)
+				LAUNCH_DEGREE(10)
+				LAUNCH_DEGREE(11)
+				LAUNCH_DEGREE(12)
+				default:
+					configure_dynamic_smem(
+						signature_per_word_generic_ker<T>, smem,
+						"CUDA signature", smem_limits);
+					signature_per_word_generic_ker<T><<<
+						batch_chunk.grid, block, smem, stream>>>(
+							path, out, dim, steps, chunk_size, static_cast<int>(k),
+							sig_stride, level_offset, level_size, path_stride, scalar_term,
+							batch_chunk.offset, batch_chunk.size);
+					break;
+			}
+			batch_offset += batch_chunk.size;
 		}
 		#undef LAUNCH_DEGREE
 	}
@@ -2128,9 +2168,13 @@ __global__ void signature_correction_ker(
 	uint64_t sig_stride,
 	uint64_t path_flat_len,
 	T* __restrict__ workspace,
-	bool scalar_term
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -2222,12 +2266,18 @@ void signature_cuda_core_(
 		CudaBuf<T> d_workspace(batch_size * 5 * full_sig_len * sizeof(T));
 		const unsigned int threads_per_block = std::min(
 			host_choose_threads_per_block(full_sig_len), 128u);
-		signature_correction_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block>>>(
-			path, out, correction, correction_len,
-			correction_batch_stride, correction_segment_stride,
-			d_level_index.get(),
-			data_dimension, dimension, length, degree, full_sig_len, sig_stride,
-			path_flat_len, d_workspace.get(), scalar_term);
+		for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+			const auto batch_chunk = make_cuda_batch_grid_chunk(
+				1, batch_size, batch_offset);
+			signature_correction_ker<T><<<
+				batch_chunk.grid, threads_per_block>>>(
+					path, out, correction, correction_len,
+					correction_batch_stride, correction_segment_stride,
+					d_level_index.get(), data_dimension, dimension, length, degree,
+					full_sig_len, sig_stride, path_flat_len, d_workspace.get(),
+					scalar_term, batch_chunk.offset, batch_chunk.size);
+			batch_offset += batch_chunk.size;
+		}
 		check_cuda_kernel_launch();
 		cudaDeviceSynchronize();
 		check_cuda_error();
@@ -2260,11 +2310,17 @@ void signature_cuda_core_(
 
 	configure_dynamic_smem(
 		signature_naive_ker<T>, smem_size, "CUDA signature Chen fallback");
-	signature_naive_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-		path, out, d_level_index,
-		dimension, length, degree, sig_stride, path_flat_len,
-		d_linear_sig, scalar_term
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		signature_naive_ker<T><<<
+			batch_chunk.grid, threads_per_block, smem_size>>>(
+				path, out, d_level_index,
+				dimension, length, degree, sig_stride, path_flat_len,
+				d_linear_sig, scalar_term, batch_chunk.offset, batch_chunk.size
+			);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
@@ -2334,9 +2390,13 @@ __global__ void sig_backprop_correction_ker(
 	uint64_t sig_stride,
 	uint64_t path_flat_len,
 	T* __restrict__ workspace,
-	bool scalar_term
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -2528,12 +2588,18 @@ void sig_backprop_cuda_core_(
 		CUDA_CHECK(cudaMemcpy(d_level_index.get(), level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
 		CudaBuf<T> d_workspace(batch_size * (degree + 12) * full_sig_len * sizeof(T));
 		const unsigned int threads_per_block = host_choose_threads_per_block(full_sig_len);
-		sig_backprop_correction_ker<T><<<static_cast<unsigned int>(batch_size), threads_per_block>>>(
-			path, out, sig_derivs, sig, correction, correction_len,
-			correction_batch_stride, correction_segment_stride,
-			d_level_index.get(),
-			data_dimension, dimension, length, degree, full_sig_len, sig_stride,
-			path_flat_len, d_workspace.get(), scalar_term);
+		for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+			const auto batch_chunk = make_cuda_batch_grid_chunk(
+				1, batch_size, batch_offset);
+			sig_backprop_correction_ker<T><<<
+				batch_chunk.grid, threads_per_block>>>(
+					path, out, sig_derivs, sig, correction, correction_len,
+					correction_batch_stride, correction_segment_stride,
+					d_level_index.get(), data_dimension, dimension, length, degree,
+					full_sig_len, sig_stride, path_flat_len, d_workspace.get(),
+					scalar_term, batch_chunk.offset, batch_chunk.size);
+			batch_offset += batch_chunk.size;
+		}
 		check_cuda_kernel_launch();
 		cudaDeviceSynchronize();
 		check_cuda_error();
@@ -2651,14 +2717,14 @@ void sig_backprop_cuda_stream_(
 		uint64_t level_offset = dimension;
 		for (uint64_t level = 2; !reuse_prefix_context && level < degree; ++level) {
 			const uint64_t level_size = host_power(dimension, level);
-			const dim3 scan_grid(
-				static_cast<unsigned int>(level_size),
-				static_cast<unsigned int>(batch_size), 1);
+			const auto scan_chunk = make_cuda_batch_grid_chunk(
+				level_size, batch_size, 0);
 			#define LAUNCH_LEVEL_PREFIX(D) \
 				case D: sig_context_scan_persistent_ker<T, D, 256><<< \
-					scan_grid, 256, 0, stream>>>( \
+					scan_chunk.grid, 256, 0, stream>>>( \
 						path, prefix_context, dim, steps, steps, context_size, \
-						level_offset, length * dimension); break;
+						level_offset, length * dimension, \
+						scan_chunk.offset, scan_chunk.size); break;
 
 			switch (level) {
 				LAUNCH_LEVEL_PREFIX(2)  LAUNCH_LEVEL_PREFIX(3)
@@ -2694,13 +2760,13 @@ void sig_backprop_cuda_stream_(
 			const uint64_t current_offset = host_sig_length(dimension, level - 1) - 1;
 			const bool top_level = level == degree;
 			if (!top_level) {
-				const dim3 adjoint_grid(
-					static_cast<unsigned int>(level_size),
-					static_cast<unsigned int>(batch_size), 1);
+				const auto adjoint_chunk = make_cuda_batch_grid_chunk(
+					level_size, batch_size, 0);
 				sig_level_adjoint_scan_ker<T, 256><<<
-					adjoint_grid, 256, 0, stream>>>(
+					adjoint_chunk.grid, 256, 0, stream>>>(
 						adjoint_context, sig_derivs, steps, steps, context_size,
-						current_offset, sig_stride, scalar_term);
+						current_offset, sig_stride, scalar_term,
+						adjoint_chunk.offset, adjoint_chunk.size);
 			}
 			const unsigned int grouped_grid = static_cast<unsigned int>(
 				(total_times + groups_per_block - 1) / groups_per_block);
@@ -2715,13 +2781,13 @@ void sig_backprop_cuda_stream_(
 					top_level);
 		}
 
-		const dim3 level_one_grid(
-			static_cast<unsigned int>(dimension),
-			static_cast<unsigned int>(batch_size), 1);
+		const auto level_one_chunk = make_cuda_batch_grid_chunk(
+			dimension, batch_size, 0);
 		sig_level_adjoint_scan_ker<T, 256><<<
-			level_one_grid, 256, 0, stream>>>(
+			level_one_chunk.grid, 256, 0, stream>>>(
 				adjoint_context, sig_derivs, steps, steps, context_size,
-				0, sig_stride, scalar_term);
+				0, sig_stride, scalar_term,
+				level_one_chunk.offset, level_one_chunk.size);
 		const unsigned int grouped_grid = static_cast<unsigned int>(
 			(total_times + groups_per_block - 1) / groups_per_block);
 		sig_level_horner_backprop_ker<T><<<
@@ -2730,11 +2796,13 @@ void sig_backprop_cuda_stream_(
 				increment_grads, dim, steps, 1, group_width, dimension, 0,
 				batch_size, sig_stride, context_size, steps,
 				length * dimension, scalar_term, false);
-		const dim3 convert_grid(
-			static_cast<unsigned int>((length * dimension + block - 1) / block),
-			static_cast<unsigned int>(batch_size), 1);
-		increment_to_path_grad_batch_ker<T><<<convert_grid, block, 0, stream>>>(
-			increment_grads, out, static_cast<int>(length), dim);
+		const auto convert_chunk = make_cuda_batch_grid_chunk(
+			(length * dimension + block - 1) / block,
+			batch_size, 0);
+		increment_to_path_grad_batch_ker<T><<<
+			convert_chunk.grid, block, 0, stream>>>(
+				increment_grads, out, static_cast<int>(length), dim,
+				convert_chunk.offset, convert_chunk.size);
 		check_cuda_kernel_launch();
 		return;
 	}
@@ -2784,15 +2852,15 @@ void sig_backprop_cuda_stream_(
 			++level) {
 			const uint64_t level_size = host_power(dimension, level);
 			const int scan_block = 256;
-			const dim3 scan_grid(
-				static_cast<unsigned int>(level_size),
-				static_cast<unsigned int>(batch_size), 1);
+			const auto scan_chunk = make_cuda_batch_grid_chunk(
+				level_size, batch_size, 0);
 			#define LAUNCH_PREFIX(D) \
 				case D: \
 					sig_context_scan_persistent_ker<T, D, 256><<< \
-						scan_grid, scan_block, 0, stream>>>( \
-						path, prefix_context, dim, steps, padded_steps, context_size, \
-						level_offset, length * dimension); \
+						scan_chunk.grid, scan_block, 0, stream>>>( \
+							path, prefix_context, dim, steps, padded_steps, context_size, \
+							level_offset, length * dimension, \
+							scan_chunk.offset, scan_chunk.size); \
 					sig_suffix_from_prefix_ker<T, D><<< \
 					static_cast<unsigned int>((batch_size * static_cast<uint64_t>(steps) \
 						* level_size + scan_block - 1) / scan_block), \
@@ -2896,42 +2964,54 @@ void sig_backprop_cuda_stream_(
 			: level_index[k] - 1;
 		const unsigned int grid_x = static_cast<unsigned int>(
 			(level_size + block - 1) / block);
-		const dim3 grid(grid_x, static_cast<unsigned int>(batch_size), 1);
 
 		#define LAUNCH_BWD(D) \
 			case D: \
 				configure_dynamic_smem( \
 					sig_backprop_per_word_ker<T, D>, smem_size, \
 					"CUDA signature backprop", smem_limits); \
-				sig_backprop_per_word_ker<T, D><<<grid, block, smem_size, stream>>>( \
+				sig_backprop_per_word_ker<T, D><<< \
+					batch_chunk.grid, block, smem_size, stream>>>( \
 					path, sig, sig_derivs, d_inc_grads, dim, steps, chunk_size, \
 					sig_stride, level_offset, level_size, length * dimension, \
-					scalar_term); break;
+					scalar_term, batch_chunk.offset, batch_chunk.size); break;
 
-		switch (k) {
-			LAUNCH_BWD(1)  LAUNCH_BWD(2)  LAUNCH_BWD(3)  LAUNCH_BWD(4)
-			LAUNCH_BWD(5)  LAUNCH_BWD(6)  LAUNCH_BWD(7)  LAUNCH_BWD(8)
-			LAUNCH_BWD(9)  LAUNCH_BWD(10) LAUNCH_BWD(11) LAUNCH_BWD(12)
-			default:
-				configure_dynamic_smem(
-					sig_backprop_per_word_generic_ker<T>, smem_size,
-					"CUDA signature backprop", smem_limits);
-				sig_backprop_per_word_generic_ker<T><<<grid, block, smem_size, stream>>>(
-					path, sig, sig_derivs, d_inc_grads, dim, steps, chunk_size,
-					static_cast<int>(k),
-					sig_stride, level_offset, level_size, length * dimension, scalar_term);
-				break;
+		for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+			const auto batch_chunk = make_cuda_batch_grid_chunk(
+				grid_x, batch_size, batch_offset);
+			switch (k) {
+				LAUNCH_BWD(1)  LAUNCH_BWD(2)  LAUNCH_BWD(3)  LAUNCH_BWD(4)
+				LAUNCH_BWD(5)  LAUNCH_BWD(6)  LAUNCH_BWD(7)  LAUNCH_BWD(8)
+				LAUNCH_BWD(9)  LAUNCH_BWD(10) LAUNCH_BWD(11) LAUNCH_BWD(12)
+				default:
+					configure_dynamic_smem(
+						sig_backprop_per_word_generic_ker<T>, smem_size,
+						"CUDA signature backprop", smem_limits);
+					sig_backprop_per_word_generic_ker<T><<<
+						batch_chunk.grid, block, smem_size, stream>>>(
+							path, sig, sig_derivs, d_inc_grads, dim, steps, chunk_size,
+							static_cast<int>(k), sig_stride, level_offset, level_size,
+							length * dimension, scalar_term,
+							batch_chunk.offset, batch_chunk.size);
+					break;
+			}
+			batch_offset += batch_chunk.size;
 		}
 		#undef LAUNCH_BWD
 	}
 
-	const int total = static_cast<int>(batch_size * length * dimension);
 	const int convert_block = 256;
-	const int convert_grid = (total + convert_block - 1) / convert_block;
-	increment_to_path_grad_ker<T><<<convert_grid, convert_block, 0, stream>>>(
-		d_inc_grads, nullptr, out, static_cast<int>(batch_size),
-		static_cast<int>(length), dim, dimension,
-		static_cast<uint64_t>(steps) * dimension, 0, 0);
+	const unsigned int convert_grid_x = static_cast<unsigned int>(
+		(length * dimension + convert_block - 1) / convert_block);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			convert_grid_x, batch_size, batch_offset);
+		increment_to_path_grad_batch_ker<T><<<
+			batch_chunk.grid, convert_block, 0, stream>>>(
+				d_inc_grads, out, static_cast<int>(length), dim,
+				batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 	CUDA_CHECK(cudaFreeAsync(d_inc_grads, stream));
 	check_cuda_kernel_launch();
 }

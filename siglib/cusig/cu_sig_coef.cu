@@ -80,11 +80,13 @@ __global__ void sig_coef_kernel(
 	uint64_t dimension,
 	uint64_t path_length,
 	uint64_t result_length,
-	bool prefixes
+	bool prefixes,
+	uint64_t work_offset,
+	uint64_t work_size
 ) {
-	const uint64_t global_idx = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
-	const uint64_t total_work = batch_size * num_multi_idx;
-	if (global_idx >= total_work) return;
+	const uint64_t local_idx = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
+	if (local_idx >= work_size) return;
+	const uint64_t global_idx = work_offset + local_idx;
 
 	const uint64_t batch_idx = global_idx / num_multi_idx;
 	const uint64_t word_idx = global_idx % num_multi_idx;
@@ -171,11 +173,13 @@ __global__ void sig_coef_kernel_fixed_degree(
 	uint64_t dimension,
 	uint64_t path_length,
 	uint64_t result_length,
-	bool prefixes
+	bool prefixes,
+	uint64_t work_offset,
+	uint64_t work_size
 ) {
-	const uint64_t global_idx = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
-	const uint64_t total_work = batch_size * num_multi_idx;
-	if (global_idx >= total_work) return;
+	const uint64_t local_idx = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
+	if (local_idx >= work_size) return;
+	const uint64_t global_idx = work_offset + local_idx;
 
 	const uint64_t batch_idx = global_idx / num_multi_idx;
 	const uint64_t word_idx = global_idx % num_multi_idx;
@@ -301,19 +305,28 @@ void sig_coef_cuda_(
 	// Launch kernel
 	uint64_t total_work = batch_size * num_multi_idx;
 	unsigned int tpb = 256;
-	unsigned int num_blocks = static_cast<unsigned int>((total_work + tpb - 1) / tpb);
+	const uint64_t work_capacity = CUDA_GRID_X_LIMIT * tpb;
+	for (uint64_t work_offset = 0; work_offset < total_work;) {
+		const uint64_t work_size = std::min(
+			work_capacity, total_work - work_offset);
+		const unsigned int num_blocks = static_cast<unsigned int>(
+			work_size / tpb + (work_size % tpb != 0));
 
-	if (all_same_degree && max_degree > 0 && max_degree <= 10) {
-		CUSIG_DISPATCH_FIXED_DEGREE(sig_coef_kernel_fixed_degree, num_blocks, tpb,
-			d_path, d_out, d_multi_idx, d_one_over_fact,
-			d_idx_offsets, d_out_offsets,
-			num_multi_idx, batch_size, dimension, length, result_length, prefixes);
-	}
-	else {
-		sig_coef_kernel<T><<<num_blocks, tpb>>>(
-			d_path, d_out, d_multi_idx, d_degrees, d_one_over_fact,
-			d_idx_offsets, d_out_offsets,
-			num_multi_idx, batch_size, dimension, length, result_length, prefixes);
+		if (all_same_degree && max_degree > 0 && max_degree <= 10) {
+			CUSIG_DISPATCH_FIXED_DEGREE(sig_coef_kernel_fixed_degree, num_blocks, tpb,
+				d_path, d_out, d_multi_idx, d_one_over_fact,
+				d_idx_offsets, d_out_offsets,
+				num_multi_idx, batch_size, dimension, length, result_length, prefixes,
+				work_offset, work_size);
+		}
+		else {
+			sig_coef_kernel<T><<<num_blocks, tpb>>>(
+				d_path, d_out, d_multi_idx, d_degrees, d_one_over_fact,
+				d_idx_offsets, d_out_offsets,
+				num_multi_idx, batch_size, dimension, length, result_length, prefixes,
+				work_offset, work_size);
+		}
+		work_offset += work_size;
 	}
 
 	cudaFree(d_offsets);
@@ -378,11 +391,13 @@ __global__ void sig_coef_backprop_kernel(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t path_length,
-	uint64_t coefs_length
+	uint64_t coefs_length,
+	uint64_t work_offset,
+	uint64_t work_size
 ) {
-	const uint64_t global_idx = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
-	const uint64_t total_work = batch_size * num_multi_idx;
-	if (global_idx >= total_work) return;
+	const uint64_t local_idx = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
+	if (local_idx >= work_size) return;
+	const uint64_t global_idx = work_offset + local_idx;
 
 	const uint64_t batch_idx = global_idx / num_multi_idx;
 	const uint64_t word_idx = global_idx % num_multi_idx;
@@ -521,11 +536,13 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t path_length,
-	uint64_t coefs_length
+	uint64_t coefs_length,
+	uint64_t work_offset,
+	uint64_t work_size
 ) {
-	const uint64_t global_idx = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
-	const uint64_t total_work = batch_size * num_multi_idx;
-	if (global_idx >= total_work) return;
+	const uint64_t local_idx = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
+	if (local_idx >= work_size) return;
+	const uint64_t global_idx = work_offset + local_idx;
 
 	const uint64_t batch_idx = global_idx / num_multi_idx;
 	const uint64_t word_idx = global_idx % num_multi_idx;
@@ -728,19 +745,28 @@ void sig_coef_backprop_cuda_(
 	// Launch kernel
 	uint64_t total_work = batch_size * num_multi_idx;
 	unsigned int tpb = 256;
-	unsigned int num_blocks = static_cast<unsigned int>((total_work + tpb - 1) / tpb);
+	const uint64_t work_capacity = CUDA_GRID_X_LIMIT * tpb;
+	for (uint64_t work_offset = 0; work_offset < total_work;) {
+		const uint64_t work_size = std::min(
+			work_capacity, total_work - work_offset);
+		const unsigned int num_blocks = static_cast<unsigned int>(
+			work_size / tpb + (work_size % tpb != 0));
 
-	if (all_same_degree && max_degree > 0 && max_degree <= 10) {
-		CUSIG_DISPATCH_FIXED_DEGREE(sig_coef_backprop_kernel_fixed_degree, num_blocks, tpb,
-			d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
-			d_idx_offsets, d_coef_offsets,
-			num_multi_idx, batch_size, dimension, length, coefs_length);
-	}
-	else {
-		sig_coef_backprop_kernel<T><<<num_blocks, tpb>>>(
-			d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_degrees, d_ovf,
-			d_idx_offsets, d_coef_offsets,
-			num_multi_idx, batch_size, dimension, length, coefs_length);
+		if (all_same_degree && max_degree > 0 && max_degree <= 10) {
+			CUSIG_DISPATCH_FIXED_DEGREE(sig_coef_backprop_kernel_fixed_degree, num_blocks, tpb,
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
+				d_idx_offsets, d_coef_offsets,
+				num_multi_idx, batch_size, dimension, length, coefs_length,
+				work_offset, work_size);
+		}
+		else {
+			sig_coef_backprop_kernel<T><<<num_blocks, tpb>>>(
+				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_degrees, d_ovf,
+				d_idx_offsets, d_coef_offsets,
+				num_multi_idx, batch_size, dimension, length, coefs_length,
+				work_offset, work_size);
+		}
+		work_offset += work_size;
 	}
 
 	cudaFree(d_offsets);

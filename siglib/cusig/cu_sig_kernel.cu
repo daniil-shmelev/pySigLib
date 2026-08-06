@@ -59,14 +59,16 @@ static SigKernelParams make_params(uint64_t length1_, uint64_t length2_,
 // Device utility kernels
 template<typename T>
 __global__ void fill_kernel(T* ptr, T val, uint64_t n) {
-	uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if (idx < n) ptr[idx] = val;
+	for (uint64_t idx = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		idx < n; idx += static_cast<uint64_t>(blockDim.x) * gridDim.x)
+		ptr[idx] = val;
 }
 
 template<typename T>
 __global__ void gather_last(const T* src, T* dst, uint64_t stride, uint64_t n) {
-	uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
-	if (i < n) dst[i] = src[(i + 1) * stride - 1];
+	for (uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		i < n; i += static_cast<uint64_t>(blockDim.x) * gridDim.x)
+		dst[i] = src[(i + 1) * stride - 1];
 }
 
 template<typename T> __device__ inline constexpr T k_twelfth() { return static_cast<T>(1.0 / 12.0); }
@@ -200,9 +202,13 @@ __global__ void goursat_pde(
 	T* const initial_condition, //This is the top row of the grid, which will be overwritten to become the bottom row of this grid.
 	const T* const gram,
 	T dyadic_frac,
-	const SigKernelParams p
+	const SigKernelParams p,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const int blockId = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t blockId = batch_offset + local_batch_idx;
 	const T* const gram_ = gram + blockId * p.gram_length;
 
 	__shared__ T diagonals[99]; // Three diagonals of length 33 (32 + initial condition) are rotated and reused
@@ -292,9 +298,13 @@ __global__ void goursat_pde_full(
 	T* const pde_grid,
 	const T* const gram,
 	T dyadic_frac,
-	const SigKernelParams p
+	const SigKernelParams p,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const int blockId = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t blockId = batch_offset + local_batch_idx;
 
 	const T* const gram_ = gram + blockId * p.gram_length;
 	T* const pde_grid_ = pde_grid + blockId * p.grid_length;
@@ -342,17 +352,34 @@ void sig_kernel_cuda_(
 	if (!return_grid) {
 		CudaBuf<T> initial_condition(p.main_dyadic_length * batch_size_ * sizeof(T));
 		const uint64_t fill_n = p.main_dyadic_length * batch_size_;
-		fill_kernel<<<static_cast<unsigned int>((fill_n + 255) / 256), 256U>>>(initial_condition.get(), static_cast<T>(1.), fill_n);
+		fill_kernel<<<make_cuda_1d_grid(fill_n, 256), 256U>>>(
+			initial_condition.get(), static_cast<T>(1.), fill_n);
 
-		goursat_pde<<<static_cast<unsigned int>(batch_size_), 32U>>>(initial_condition.get(), gram, dyadic_frac, p);
+		for (uint64_t batch_offset = 0; batch_offset < batch_size_;) {
+			const auto batch_chunk = make_cuda_batch_grid_chunk(
+				1, batch_size_, batch_offset);
+			goursat_pde<<<batch_chunk.grid, 32U>>>(
+				initial_condition.get(), gram, dyadic_frac, p,
+				batch_chunk.offset, batch_chunk.size);
+			batch_offset += batch_chunk.size;
+		}
 
-		gather_last<<<static_cast<unsigned int>((batch_size_ + 255) / 256), 256U>>>(initial_condition.get(), out, p.main_dyadic_length, batch_size_);
+		gather_last<<<make_cuda_1d_grid(batch_size_, 256), 256U>>>(
+			initial_condition.get(), out, p.main_dyadic_length, batch_size_);
 	}
 	else {
 		const uint64_t fill_n = batch_size_ * p.grid_length;
-		fill_kernel<<<static_cast<unsigned int>((fill_n + 255) / 256), 256U>>>(out, static_cast<T>(1.), fill_n);
+		fill_kernel<<<make_cuda_1d_grid(fill_n, 256), 256U>>>(
+			out, static_cast<T>(1.), fill_n);
 
-		goursat_pde_full<<<static_cast<unsigned int>(batch_size_), 32U>>>(out, gram, dyadic_frac, p);
+		for (uint64_t batch_offset = 0; batch_offset < batch_size_;) {
+			const auto batch_chunk = make_cuda_batch_grid_chunk(
+				1, batch_size_, batch_offset);
+			goursat_pde_full<<<batch_chunk.grid, 32U>>>(
+				out, gram, dyadic_frac, p,
+				batch_chunk.offset, batch_chunk.size);
+			batch_offset += batch_chunk.size;
+		}
 	}
 
 	check_cuda_kernel_launch();
@@ -561,9 +588,13 @@ __global__ void goursat_pde_deriv(
 	T dyadic_frac,
 	bool return_grid,
 	uint64_t derivs_length,
-	const SigKernelParams p
+	const SigKernelParams p,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const int blockId = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t blockId = batch_offset + local_batch_idx;
 	const T* const gram_ = gram + blockId * p.gram_length;
 	const T* derivs_ = derivs + blockId * derivs_length;
 	const T* const k_grid_ = k_grid + blockId * p.grid_length;
@@ -634,7 +665,15 @@ void sig_kernel_backprop_cuda_(
 	T* d_a_initial_condition = d_ic_buf.get() + ic_size;
 	T* d_b_initial_condition = d_ic_buf.get() + 2 * ic_size;
 
-	goursat_pde_deriv<<<static_cast<unsigned int>(batch_size_), 32U>>>(d_initial_condition, d_a_initial_condition, d_b_initial_condition, gram, derivs, k_grid, out, dyadic_frac, return_grid, derivs_length_, p);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size_;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size_, batch_offset);
+		goursat_pde_deriv<<<batch_chunk.grid, 32U>>>(
+			d_initial_condition, d_a_initial_condition, d_b_initial_condition,
+			gram, derivs, k_grid, out, dyadic_frac, return_grid,
+			derivs_length_, p, batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }

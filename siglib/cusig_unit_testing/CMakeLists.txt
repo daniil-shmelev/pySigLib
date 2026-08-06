@@ -11,6 +11,7 @@ if(NOT TARGET GTest::gtest_main)
 endif()
 
 add_executable(cusig_tests
+    cu_test_batch_grid.cpp
     cu_test_signature.cpp
     cu_test_sig_backprop.cpp
     cu_test_sig_coef.cpp

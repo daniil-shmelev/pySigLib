@@ -196,8 +196,9 @@ __global__ void batch_log_sig_add_kernel_(
 	T* __restrict__ out,
 	uint64_t m
 ) {
-	const uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if (idx < m) {
+	for (uint64_t idx = blockIdx.x * static_cast<uint64_t>(blockDim.x)
+		+ threadIdx.x; idx < m;
+		idx += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
 		out[idx] = log_sig1[idx] + log_sig2[idx];
 	}
 }
@@ -221,7 +222,7 @@ void log_sig_combine_cuda_(
 	if (degree < 2) {
 		uint64_t total = batch_size * m;
 		unsigned int threads = 256;
-		unsigned int blocks = static_cast<unsigned int>((total + threads - 1) / threads);
+		unsigned int blocks = make_cuda_1d_grid(total, threads);
 		batch_log_sig_add_kernel_<T><<<blocks, threads>>>(log_sig1, log_sig2, out, total);
 		check_cuda_kernel_launch();
 		return;
@@ -235,7 +236,8 @@ void log_sig_combine_cuda_(
 	// Use at most half of free memory for memo
 	uint64_t max_batch = free_mem / (memo_per_batch * sizeof(T) * 2);
 	if (max_batch < 1) max_batch = 1;
-	uint64_t chunk_size = std::min(batch_size, max_batch);
+	uint64_t chunk_size = std::min(
+		std::min(batch_size, max_batch), CUDA_GRID_X_LIMIT);
 
 	T* d_memo = nullptr;
 	cudaMalloc(&d_memo, chunk_size * memo_per_batch * sizeof(T));
@@ -585,6 +587,7 @@ void log_sig_combine_backprop_cuda_(
 
 	uint64_t chunk_size = s_workspace_elems / ws_per_batch;
 	if (chunk_size > batch_size) chunk_size = batch_size;
+	if (chunk_size > CUDA_GRID_X_LIMIT) chunk_size = CUDA_GRID_X_LIMIT;
 
 	unsigned int threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(64), m));
 	threads = ((threads + 31) / 32) * 32;
@@ -822,9 +825,15 @@ void log_sig_from_path_cuda_(
 		unsigned int threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(256), m));
 		threads = ((threads + 31) / 32) * 32;
 		if (threads < 32) threads = 32;
-		batch_log_sig_from_path_deg1_kernel_<T><<<static_cast<unsigned int>(batch_size), threads>>>(
-			path, out, m, length, dimension
-		);
+		for (uint64_t offset = 0; offset < batch_size; offset += CUDA_GRID_X_LIMIT) {
+			const uint64_t current_batch = std::min(
+				CUDA_GRID_X_LIMIT, batch_size - offset);
+			batch_log_sig_from_path_deg1_kernel_<T><<<
+				static_cast<unsigned int>(current_batch), threads>>>(
+					path + offset * length * dimension,
+					out + offset * m, m, length, dimension
+				);
+		}
 		check_cuda_kernel_launch();
 		return;
 	}
@@ -851,6 +860,7 @@ void log_sig_from_path_cuda_(
 
 	uint64_t chunk_size = s_workspace_elems / ws_per_batch;
 	if (chunk_size > batch_size) chunk_size = batch_size;
+	if (chunk_size > CUDA_GRID_X_LIMIT) chunk_size = CUDA_GRID_X_LIMIT;
 
 	unsigned int threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(64), m));
 	threads = ((threads + 31) / 32) * 32;
@@ -1111,9 +1121,16 @@ void log_sig_from_path_backprop_cuda_(
 		unsigned int deg1_threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(256), m));
 		deg1_threads = ((deg1_threads + 31) / 32) * 32;
 		if (deg1_threads < 32) deg1_threads = 32;
-		batch_log_sig_from_path_deg1_backprop_kernel_<T><<<static_cast<unsigned int>(batch_size), deg1_threads>>>(
-			d_out, d_path, m, length, dimension
-		);
+		for (uint64_t offset = 0; offset < batch_size; offset += CUDA_GRID_X_LIMIT) {
+			const uint64_t current_batch = std::min(
+				CUDA_GRID_X_LIMIT, batch_size - offset);
+			batch_log_sig_from_path_deg1_backprop_kernel_<T><<<
+				static_cast<unsigned int>(current_batch), deg1_threads>>>(
+					d_out + offset * m,
+					d_path + offset * length * dimension,
+					m, length, dimension
+				);
+		}
 		check_cuda_kernel_launch();
 		return;
 	}
@@ -1130,7 +1147,8 @@ void log_sig_from_path_backprop_cuda_(
 
 	uint64_t max_batch = free_mem / (ws_per_batch * sizeof(T) * 2);
 	if (max_batch < 1) max_batch = 1;
-	uint64_t chunk_size = std::min(batch_size, max_batch);
+	uint64_t chunk_size = std::min(
+		std::min(batch_size, max_batch), CUDA_GRID_X_LIMIT);
 
 	T* d_workspace = nullptr;
 	cudaMalloc(&d_workspace, chunk_size * ws_per_batch * sizeof(T));

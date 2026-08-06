@@ -31,9 +31,13 @@ __global__ void sig_combine_kernel(
 	T* __restrict__ out,                 // [batch_size * sig_stride]
 	uint64_t dimension,
 	uint64_t degree,
-	bool scalar_term
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -129,9 +133,16 @@ void sig_combine_cuda_core_(
 
 	configure_dynamic_smem(
 		sig_combine_kernel<T>, smem_size, "CUDA sig combine");
-	sig_combine_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-		sig1, sig2, out, dimension, degree, scalar_term
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		sig_combine_kernel<T><<<
+			batch_chunk.grid, threads_per_block, smem_size>>>(
+				sig1, sig2, out, dimension, degree, scalar_term,
+				batch_chunk.offset, batch_chunk.size
+			);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
@@ -172,8 +183,13 @@ sig_combine_backprop_kernel(
 	uint64_t dimension,
 	uint64_t degree,
 	uint64_t sig_len,                    // elements to iterate per batch (sig_stride)
-	bool scalar_term
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	extern __shared__ char smem[];
 	uint64_t* level_index = reinterpret_cast<uint64_t*>(smem);
 	if (threadIdx.x == 0) {
@@ -190,7 +206,7 @@ sig_combine_backprop_kernel(
 	const uint64_t elem = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
 	if (elem >= sig_len) return;
 
-	const uint64_t offset = (uint64_t)blockIdx.y * sig_len;
+	const uint64_t offset = batch_idx * sig_len;
 	const T* my_d_out = d_out + offset;
 	const T* my_sig2 = sig2 + offset;
 	const T* my_sig1 = sig1 + offset;
@@ -277,17 +293,22 @@ void sig_combine_backprop_cuda_core_(
 
 	unsigned int threads_per_block = 256;
 	unsigned int grid_x = static_cast<unsigned int>((sig_stride + threads_per_block - 1) / threads_per_block);
-	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
-
 	size_t smem_size = (degree + 2) * sizeof(uint64_t);
 
 	configure_dynamic_smem(
 		sig_combine_backprop_kernel<T>, smem_size,
 		"CUDA sig combine backprop");
-	sig_combine_backprop_kernel<T><<<grid, threads_per_block, smem_size>>>(
-		sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2,
-		dimension, degree, sig_stride, scalar_term
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			grid_x, batch_size, batch_offset);
+		sig_combine_backprop_kernel<T><<<
+			batch_chunk.grid, threads_per_block, smem_size>>>(
+				sig_combined_deriv, sig1_deriv, sig2_deriv, sig1, sig2,
+				dimension, degree, sig_stride, scalar_term,
+				batch_chunk.offset, batch_chunk.size
+			);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
@@ -320,9 +341,13 @@ __global__ void linear_sig_kernel(
 	uint64_t dimension,
 	uint64_t degree,
 	uint64_t sig_stride,
-	bool scalar_term
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -371,9 +396,15 @@ void linear_sig_cuda_(
 
 	configure_dynamic_smem(
 		linear_sig_kernel<T>, smem, "CUDA linear signature");
-	linear_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem>>>(
-		displacement, out, d_li.get(), dimension, degree, sig_stride, scalar_term
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		linear_sig_kernel<T><<<batch_chunk.grid, threads, smem>>>(
+			displacement, out, d_li.get(), dimension, degree, sig_stride,
+			scalar_term, batch_chunk.offset, batch_chunk.size
+		);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
@@ -393,9 +424,13 @@ __global__ void sig_join_kernel(
 	uint64_t degree,
 	uint64_t sig_stride,
 	bool prepend,
-	bool scalar_term
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -485,11 +520,16 @@ void sig_join_cuda_(
 
 	configure_dynamic_smem(
 		sig_join_kernel<T>, smem, "CUDA sig join");
-	sig_join_kernel<T><<<static_cast<unsigned int>(batch_size), threads, smem>>>(
-		sig, displacement, out,
-		static_cast<T*>(g_sig_join_lsig_buf),
-		d_li.get(), dimension, degree, sig_stride, prepend, scalar_term
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		sig_join_kernel<T><<<batch_chunk.grid, threads, smem>>>(
+			sig, displacement, out, static_cast<T*>(g_sig_join_lsig_buf),
+			d_li.get(), dimension, degree, sig_stride, prepend, scalar_term,
+			batch_chunk.offset, batch_chunk.size
+		);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
