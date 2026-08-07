@@ -508,14 +508,12 @@ inline void log_sig_from_path_backprop_x4_(
 	uint64_t m2 = cache.bch_coefficients.size();
 	uint64_t n_segs = length - 1;
 
-	// Workspace: curr[m*4] + prev[m*4] + seg[m*4] + neg_seg[m*4]
-	//          + bch_ws[m2*m*4] + bch_bp_ws[2*m2*m*4] + d_acc[m*4] + d_ls1[m*4] + d_ls2[m*4]
+	// The forward memo reuses the first half of the backprop workspace.
 	double* curr = workspace;
 	double* prev = curr + m * 4;
 	double* seg = prev + m * 4;
 	double* neg_seg = seg + m * 4;
-	double* bch_ws = neg_seg + m * 4;
-	double* bch_bp_ws = bch_ws + m2 * m * 4;
+	double* bch_bp_ws = neg_seg + m * 4;
 	double* d_acc = bch_bp_ws + 2 * m2 * m * 4;
 	double* d_ls1 = d_acc + m * 4;
 	double* d_ls2 = d_ls1 + m * 4;
@@ -532,7 +530,7 @@ inline void log_sig_from_path_backprop_x4_(
 			for (int b = 0; b < 4; ++b)
 				seg[k * 4 + b] = paths[b][(s + 1) * dimension + k] - paths[b][s * dimension + k];
 
-		bch_combine_linear_impl_x4_(curr, seg, prev, cache, bch_ws);
+		bch_combine_linear_impl_x4_(curr, seg, prev, cache, bch_bp_ws);
 		std::swap(curr, prev);
 	}
 
@@ -557,7 +555,7 @@ inline void log_sig_from_path_backprop_x4_(
 		}
 
 		// Uncombine: prev = BCH(curr, -seg)
-		bch_combine_linear_impl_x4_(curr, neg_seg, prev, cache, bch_ws);
+		bch_combine_linear_impl_x4_(curr, neg_seg, prev, cache, bch_bp_ws);
 
 		// Backprop through BCH(prev, seg) -> curr
 		bch_combine_linear_backprop_impl_x4_(d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
@@ -674,16 +672,14 @@ void log_sig_from_path_backprop_(
 	// prev: m (previous accumulator, recovered via BCH(curr, -seg))
 	// seg: m (segment log-sig buffer)
 	// neg_seg: m (negated segment for uncombination)
-	// bch_ws: m2 * m (BCH forward memo, shared between combine and backprop)
-	// bch_bp_ws: 2 * m2 * m (backprop workspace: memo + d_memo)
+	// bch_bp_ws: 2 * m2 * m (forward memo, then backprop memo + d_memo)
 	// d_acc: m (gradient flowing backward)
 	// d_ls1: m, d_ls2: m
 	T* curr = workspace;
 	T* prev = curr + m;
 	T* seg = prev + m;
 	T* neg_seg = seg + m;
-	T* bch_ws = neg_seg + m;
-	T* bch_bp_ws = bch_ws + m2 * m;
+	T* bch_bp_ws = neg_seg + m;
 	T* d_acc = bch_bp_ws + 2 * m2 * m;
 	T* d_ls1 = d_acc + m;
 	T* d_ls2 = d_ls1 + m;
@@ -704,7 +700,7 @@ void log_sig_from_path_backprop_(
 			seg[k] = pb[k] - pa[k];
 
 		// curr = BCH(curr, seg) - reuse prev as temp output, then swap
-		bch_combine_impl_<T>(curr, seg, prev, cache, bch_ws);
+		bch_combine_impl_<T>(curr, seg, prev, cache, bch_bp_ws);
 		std::swap(curr, prev);
 	}
 
@@ -723,7 +719,7 @@ void log_sig_from_path_backprop_(
 		}
 
 		// Recover prev = BCH(curr, -seg) - the "uncombine" step
-		bch_combine_impl_<T>(curr, neg_seg, prev, cache, bch_ws);
+		bch_combine_impl_<T>(curr, neg_seg, prev, cache, bch_bp_ws);
 
 		// Backprop through BCH(prev, seg) -> curr
 		bch_combine_backprop_impl_<T>(d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
@@ -771,8 +767,7 @@ void batch_log_sig_from_path_backprop_(
 
 	uint64_t m2 = cache.bch_coefficients.size();
 	uint64_t path_stride = length * dimension;
-	// Workspace: 4*m (curr, prev, seg, neg_seg) + 3*m2*m (bch_ws + bch_bp_ws) + 3*m (d_acc, d_ls1, d_ls2)
-	uint64_t ws_size = 7 * m + 3 * m2 * m;
+	uint64_t ws_size = 7 * m + 2 * m2 * m;
 	uint64_t scalar_start = 0;
 
 #ifdef VEC
