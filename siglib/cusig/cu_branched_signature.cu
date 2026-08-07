@@ -1702,8 +1702,6 @@ void launch_branched_sig_coef_forward_(
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride
 ) {
-	if (batch_size > UINT32_MAX)
-		throw std::invalid_argument("CUDA branched sig coef batch size exceeds grid range");
 	if (length > static_cast<uint64_t>(UINT32_MAX) + 1)
 		throw std::invalid_argument("CUDA branched sig coef path length exceeds kernel range");
 
@@ -1732,15 +1730,21 @@ void launch_branched_sig_coef_forward_(
 
 	configure_dynamic_smem(
 		branched_sig_coef_forward_kernel_<T>, smem, "CUDA branched sig coef");
-	branched_sig_coef_forward_kernel_<T><<<static_cast<unsigned int>(batch_size), block, smem>>>(
-		path, state, out, static_cast<uint32_t>(dimension),
-		length == 0 ? 0 : static_cast<uint32_t>(length - 1), length * dimension,
-		cache.cache_size, cache.d_target_indices, cache.num_targets,
-		cache.d_labels_data, cache.d_labels_offsets, d_inv_factorial,
-		cache.d_coprod_data, cache.d_coprod_offsets, cache.d_order_index,
-		cache.d_leaf_indices, cache.d_correction_offsets, cache.d_correction_locals,
-		num_corrections, cache.max_nodes, cache.coprod_data_len, correction,
-		correction_batch_stride, correction_segment_stride);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		branched_sig_coef_forward_kernel_<T><<<batch_chunk.grid, block, smem>>>(
+			path, state, out, static_cast<uint32_t>(dimension),
+			length == 0 ? 0 : static_cast<uint32_t>(length - 1), length * dimension,
+			cache.cache_size, cache.d_target_indices, cache.num_targets,
+			cache.d_labels_data, cache.d_labels_offsets, d_inv_factorial,
+			cache.d_coprod_data, cache.d_coprod_offsets, cache.d_order_index,
+			cache.d_leaf_indices, cache.d_correction_offsets, cache.d_correction_locals,
+			num_corrections, cache.max_nodes, cache.coprod_data_len, correction,
+			correction_batch_stride, correction_segment_stride,
+			batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 }
 
 template<typename T>
@@ -1895,15 +1899,20 @@ void branched_sig_coef_backprop_cuda_core_(
 	configure_dynamic_smem(
 		branched_sig_coef_backprop_kernel_<T>, smem,
 		"CUDA branched sig coef backprop");
-	branched_sig_coef_backprop_kernel_<T><<<static_cast<unsigned int>(batch_size), block, smem>>>(
-		path, out, state.get(), coefs, derivs, static_cast<uint32_t>(dimension),
-		static_cast<uint32_t>(length - 1), length * dimension, cache.cache_size,
-		cache.d_target_indices, cache.num_targets, cache.d_labels_data,
-		cache.d_labels_offsets, d_inv_factorial, cache.d_coprod_data,
-		cache.d_coprod_offsets, cache.d_order_index, cache.d_leaf_indices,
-		cache.d_correction_offsets, cache.d_correction_locals, num_corrections,
-		cache.max_nodes, cache.coprod_data_len, correction, correction_batch_stride,
-		correction_segment_stride);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		branched_sig_coef_backprop_kernel_<T><<<batch_chunk.grid, block, smem>>>(
+			path, out, state.get(), coefs, derivs, static_cast<uint32_t>(dimension),
+			static_cast<uint32_t>(length - 1), length * dimension, cache.cache_size,
+			cache.d_target_indices, cache.num_targets, cache.d_labels_data,
+			cache.d_labels_offsets, d_inv_factorial, cache.d_coprod_data,
+			cache.d_coprod_offsets, cache.d_order_index, cache.d_leaf_indices,
+			cache.d_correction_offsets, cache.d_correction_locals, num_corrections,
+			cache.max_nodes, cache.coprod_data_len, correction, correction_batch_stride,
+			correction_segment_stride, batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 	cudaDeviceSynchronize();
 	check_cuda_error();
 }

@@ -84,6 +84,17 @@ def test_branched_cuda_batch_above_grid_y_limit():
         bsig, torch.ones_like(blog_sig), 1, 1)
     torch.testing.assert_close(blog_grad, torch.ones_like(blog_grad))
 
+    requested = [(0,)]
+    pysiglib.prepare_branched_sig_coef(
+        1, requested, device="cuda", use_disk=False)
+    coefs = pysiglib.branched_sig_coef(path, requested)
+    torch.testing.assert_close(coefs, torch.ones_like(coefs))
+
+    coef_grad = pysiglib.branched_sig_coef_backprop(
+        path, requested, coefs, torch.ones_like(coefs))
+    torch.testing.assert_close(coef_grad[:, 0, :], -torch.ones_like(coef_grad[:, 0, :]))
+    torch.testing.assert_close(coef_grad[:, 1, :], torch.ones_like(coef_grad[:, 1, :]))
+
 
 @skip_no_cuda
 def test_cuda_kernel_batches_above_grid_y_limit():
