@@ -15,6 +15,7 @@
 
 #include "cppch.h"
 #include "cp_branched_sig_coef_cache.h"
+#include "disk_cache.h"
 
 namespace {
 struct BranchedSigCoefCacheKey {
@@ -89,7 +90,8 @@ void prepare_branched_sig_coef_cache(
 	uint64_t data_dimension,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	bool planar
+	bool planar,
+	bool use_disk
 ) {
 	if (data_dimension == 0)
 		throw std::invalid_argument("prepare_branched_sig_coef received dimension 0");
@@ -102,9 +104,26 @@ void prepare_branched_sig_coef_cache(
 			return;
 	}
 
-	auto cache = std::make_unique<BranchedSigCoefCache>(build_branched_sig_coef_cache(
+	auto cache = std::make_unique<BranchedSigCoefCache>();
+	const auto cache_dir = get_cache_dir() / cache_folder_name;
+	if (use_disk) {
+		std::filesystem::create_directories(cache_dir);
+		if (read_branched_sig_coef_cache(
+			cache_dir, data_dimension, dimension, max_nodes, planar,
+			key.tree_data, *cache)) {
+			std::unique_lock wlock(registry.mu);
+			registry.map.try_emplace(std::move(key), std::move(cache));
+			return;
+		}
+	}
+
+	*cache = build_branched_sig_coef_cache(
 		key.tree_data.data(), key.tree_data.size(), data_dimension, dimension,
-		max_nodes, planar));
+		max_nodes, planar);
+	if (use_disk)
+		write_branched_sig_coef_cache(
+			cache_dir, data_dimension, dimension, max_nodes, planar,
+			key.tree_data, *cache);
 
 	std::unique_lock wlock(registry.mu);
 	registry.map.try_emplace(std::move(key), std::move(cache));

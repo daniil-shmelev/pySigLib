@@ -17,6 +17,7 @@
 #include "cusig.h"
 #include "cu_macros.h"
 #include "cu_atomic.h"
+#include "cu_disk_cache.h"
 #include "cu_path_transforms.h"
 #include "cu_utils.h"
 #include "../shared/branched_cache.h"
@@ -200,7 +201,102 @@ static void upload(T*& d_ptr, const T* h_data, size_t count) {
 	CUDA_CHECK(cudaMemcpy(d_ptr, h_data, count * sizeof(T), cudaMemcpyHostToDevice));
 }
 
-static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, uint64_t max_nodes, bool planar = false) {
+static constexpr const char* branched_cache_version = "v3";
+
+static std::filesystem::path branched_cache_file_path_(uint64_t dimension, uint64_t max_nodes, bool planar) {
+	const char* prefix = planar ? "planar_branched_" : "branched_";
+	return get_cuda_cache_dir_() / cu_cache_folder_name /
+		(prefix + std::to_string(dimension) + "_" + std::to_string(max_nodes) + "_" + branched_cache_version + ".bin");
+}
+
+static void write_branched_cache_(const BranchedSigCache& c) {
+	std::ofstream out(branched_cache_file_path_(c.dimension, c.max_nodes, c.planar), std::ios::binary);
+	if (!out)
+		throw std::filesystem::filesystem_error(
+			"Failed to open CUDA branched cache file for writing",
+			branched_cache_file_path_(c.dimension, c.max_nodes, c.planar),
+			std::make_error_code(std::errc::io_error));
+
+	out.write(reinterpret_cast<const char*>(&cu_cache_magic_number), sizeof(cu_cache_magic_number));
+	out.write(reinterpret_cast<const char*>(&c.dimension), sizeof(c.dimension));
+	out.write(reinterpret_cast<const char*>(&c.max_nodes), sizeof(c.max_nodes));
+	out.write(reinterpret_cast<const char*>(&c.total_length), sizeof(c.total_length));
+	cu_serialize_vector_(out, c.order_index);
+
+	uint64_t n = c.inv_tree_factorial.size();
+	out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+	if (n > 0)
+		out.write(reinterpret_cast<const char*>(c.inv_tree_factorial.data()), n * sizeof(double));
+
+	n = c.node_labels_data.size();
+	out.write(reinterpret_cast<const char*>(&n), sizeof(n));
+	if (n > 0)
+		out.write(reinterpret_cast<const char*>(c.node_labels_data.data()), n);
+
+	cu_serialize_vector_(out, c.node_labels_offsets);
+	cu_serialize_vector_(out, c.chain_index_offsets);
+	cu_serialize_vector_(out, c.chain_indices);
+	cu_serialize_vector_(out, c.coproduct_data);
+	cu_serialize_vector_(out, c.coproduct_offsets);
+}
+
+static bool read_branched_cache_(uint64_t dimension, uint64_t max_nodes, bool planar, BranchedSigCache& c) {
+	const auto path = branched_cache_file_path_(dimension, max_nodes, planar);
+	if (!std::filesystem::exists(path))
+		return false;
+
+	std::ifstream in(path, std::ios::binary);
+	if (!in)
+		return false;
+
+	BranchedSigCache tmp;
+	uint64_t magic;
+	in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+	if (!in || magic != cu_cache_magic_number)
+		throw corrupted_cache_error("Tried to read an invalid cache file. Cache may have been corrupted.");
+
+	in.read(reinterpret_cast<char*>(&tmp.dimension), sizeof(tmp.dimension));
+	in.read(reinterpret_cast<char*>(&tmp.max_nodes), sizeof(tmp.max_nodes));
+	if (!in || tmp.dimension != dimension || tmp.max_nodes != max_nodes)
+		return false;
+	in.read(reinterpret_cast<char*>(&tmp.total_length), sizeof(tmp.total_length));
+	if (!in || tmp.total_length > kCuMaxCacheVectorSize)
+		throw std::runtime_error("Tried to read an invalid cache file: branched total_length exceeds limit");
+
+	cu_deserialize_vector_(in, tmp.order_index);
+
+	uint64_t n;
+	in.read(reinterpret_cast<char*>(&n), sizeof(n));
+	if (!in || n > kCuMaxCacheVectorSize || n + 1 > tmp.total_length)
+		throw std::runtime_error("Tried to read an invalid cache file: branched inv_tree_factorial size invalid");
+	cu_check_stream_has_bytes_(in, n * sizeof(double), "branched inv_tree_factorial body");
+	tmp.inv_tree_factorial.resize(n);
+	if (n > 0)
+		in.read(reinterpret_cast<char*>(tmp.inv_tree_factorial.data()), n * sizeof(double));
+
+	in.read(reinterpret_cast<char*>(&n), sizeof(n));
+	if (!in || n > kCuMaxCacheVectorSize)
+		throw std::runtime_error("Tried to read an invalid cache file: branched node_labels_data size invalid");
+	cu_check_stream_has_bytes_(in, n, "branched node_labels_data body");
+	tmp.node_labels_data.resize(n);
+	if (n > 0)
+		in.read(reinterpret_cast<char*>(tmp.node_labels_data.data()), n);
+
+	cu_deserialize_vector_(in, tmp.node_labels_offsets);
+	cu_deserialize_vector_(in, tmp.chain_index_offsets);
+	cu_deserialize_vector_(in, tmp.chain_indices);
+	cu_deserialize_vector_(in, tmp.coproduct_data);
+	cu_deserialize_vector_(in, tmp.coproduct_offsets);
+
+	if (!in.good())
+		return false;
+
+	tmp.planar = planar;
+	c = std::move(tmp);
+	return true;
+}
+
+static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) {
 	BranchedSigCacheKey key;
 	CUDA_CHECK(cudaGetDevice(&key.device));
 	key.dimension = dimension;
@@ -213,8 +309,14 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 			return *(it->second);
 	}
 
-	// Build cache on CPU using shared header (no cpsig.dll dependency)
-	BranchedSigCache c = build_branched_sig_cache(dimension, max_nodes, planar);
+	BranchedSigCache c;
+	if (use_disk)
+		ensure_cuda_cache_dir_();
+	if (!use_disk || !read_branched_cache_(dimension, max_nodes, planar, c)) {
+		c = build_branched_sig_cache(dimension, max_nodes, planar);
+		if (use_disk)
+			write_branched_cache_(c);
+	}
 
 	uint64_t num_trees = c.total_length - 1;
 
@@ -274,7 +376,8 @@ static void prepare_branched_sig_coef_cache_cuda_(
 	uint64_t data_dimension,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	bool planar
+	bool planar,
+	bool use_disk
 ) {
 	if (data_dimension == 0)
 		throw std::invalid_argument("prepare_branched_sig_coef_cuda received dimension 0");
@@ -297,9 +400,20 @@ static void prepare_branched_sig_coef_cache_cuda_(
 			return;
 	}
 
-	const BranchedSigCoefCache cache = build_branched_sig_coef_cache(
-		key.tree_data.data(), key.tree_data.size(), data_dimension, dimension,
-		max_nodes, planar);
+	BranchedSigCoefCache cache;
+	if (use_disk)
+		ensure_cuda_cache_dir_();
+	if (!use_disk || !read_branched_sig_coef_cache(
+		get_cuda_cache_dir_() / cu_cache_folder_name, data_dimension, dimension,
+		max_nodes, planar, key.tree_data, cache)) {
+		cache = build_branched_sig_coef_cache(
+			key.tree_data.data(), key.tree_data.size(), data_dimension, dimension,
+			max_nodes, planar);
+		if (use_disk)
+			write_branched_sig_coef_cache(
+				get_cuda_cache_dir_() / cu_cache_folder_name, data_dimension,
+				dimension, max_nodes, planar, key.tree_data, cache);
+	}
 
 	auto narrow = [](const std::vector<uint64_t>& source) {
 		std::vector<uint32_t> result(source.size());
@@ -1977,12 +2091,12 @@ void branched_sig_backprop_cuda_(
 
 extern "C" {
 
-	CUSIG_API int prepare_branched_sig_cuda(uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
-		CUSIG_SAFE_CALL(get_or_upload_gpu_cache(dimension, max_nodes, planar));
+	CUSIG_API int prepare_branched_sig_cuda(uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk) noexcept {
+		CUSIG_SAFE_CALL(get_or_upload_gpu_cache(dimension, max_nodes, planar, use_disk));
 	}
 
-	CUSIG_API int prepare_branched_sig_coef_cuda(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
-		CUSIG_SAFE_CALL(prepare_branched_sig_coef_cache_cuda_(tree_data, tree_data_len, data_dimension, dimension, max_nodes, planar));
+	CUSIG_API int prepare_branched_sig_coef_cuda(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk) noexcept {
+		CUSIG_SAFE_CALL(prepare_branched_sig_coef_cache_cuda_(tree_data, tree_data_len, data_dimension, dimension, max_nodes, planar, use_disk));
 	}
 
 	CUSIG_API int branched_sig_coef_cuda_f(const float* path, float* out, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {

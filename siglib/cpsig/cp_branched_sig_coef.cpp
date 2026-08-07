@@ -737,8 +737,8 @@ void branched_sig_coef_backprop_(
 
 extern "C" {
 
-	CPSIG_API int prepare_branched_sig_coef(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
-		SAFE_CALL(prepare_branched_sig_coef_cache(tree_data, tree_data_len, data_dimension, dimension, max_nodes, planar));
+	CPSIG_API int prepare_branched_sig_coef(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk) noexcept {
+		SAFE_CALL(prepare_branched_sig_coef_cache(tree_data, tree_data_len, data_dimension, dimension, max_nodes, planar, use_disk));
 	}
 
 	CPSIG_API int branched_sig_coef_f(const float* path, float* out, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time, bool planar, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {

@@ -13,6 +13,10 @@
 # limitations under the License.
 # =========================================================================
 
+import os
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -443,6 +447,87 @@ def test_branched_sig_dense_cuda_cache_is_per_device():
             actual = pysiglib.branched_sig(cuda_path, degree)
             np.testing.assert_allclose(
                 actual.cpu().numpy(), expected, rtol=1e-12, atol=1e-12)
+
+
+@skip_no_cuda
+def test_branched_sig_dense_cuda_disk_cache():
+    if sys.platform == "win32":
+        cache_dir = Path(os.environ["LOCALAPPDATA"])
+    elif sys.platform == "darwin":
+        cache_dir = Path.home() / "Library" / "Caches"
+    else:
+        cache_dir = Path.home() / ".cache"
+
+    dimension, degree = 2, 3
+    cache_file = cache_dir / "pysiglib_cache" / "branched_2_3_v3.bin"
+    pysiglib.clear_cache(use_disk=True)
+    try:
+        pysiglib.prepare_branched_sig(
+            dimension, degree, device="cuda", use_disk=True)
+        assert cache_file.is_file()
+
+        pysiglib.clear_cache(device="cuda")
+        cache_file.write_bytes(b"invalid")
+        with pytest.raises(Exception, match="invalid cache file"):
+            pysiglib.prepare_branched_sig(
+                dimension, degree, device="cuda", use_disk=True)
+    finally:
+        pysiglib.clear_cache(use_disk=True)
+
+
+@skip_no_cuda
+def test_branched_sig_coef_cuda_disk_cache():
+    if sys.platform == "win32":
+        cache_dir = Path(os.environ["LOCALAPPDATA"])
+    elif sys.platform == "darwin":
+        cache_dir = Path.home() / "Library" / "Caches"
+    else:
+        cache_dir = Path.home() / ".cache"
+
+    dimension, degree = 2, 3
+    trees = [pysiglib.trees(dimension, degree)[-1]]
+    pysiglib.clear_cache(use_disk=True)
+    try:
+        pysiglib.prepare_branched_sig_coef(
+            dimension, trees, device="cuda", use_disk=True)
+        cache_files = list((cache_dir / "pysiglib_cache").glob(
+            "branched_coef_*.bin"))
+        assert len(cache_files) == 1
+
+        pysiglib.clear_cache(device="cuda")
+        cache_files[0].write_bytes(b"invalid")
+        with pytest.raises(Exception, match="invalid cache file"):
+            pysiglib.prepare_branched_sig_coef(
+                dimension, trees, device="cuda", use_disk=True)
+    finally:
+        pysiglib.clear_cache(use_disk=True)
+
+
+def test_branched_sig_coef_cpu_disk_cache():
+    if sys.platform == "win32":
+        cache_dir = Path(os.environ["LOCALAPPDATA"])
+    elif sys.platform == "darwin":
+        cache_dir = Path.home() / "Library" / "Caches"
+    else:
+        cache_dir = Path.home() / ".cache"
+
+    dimension, degree = 2, 3
+    trees = [pysiglib.trees(dimension, degree)[-1]]
+    pysiglib.clear_cache(use_disk=True)
+    try:
+        pysiglib.prepare_branched_sig_coef(
+            dimension, trees, device="cpu", use_disk=True)
+        cache_files = list((cache_dir / "pysiglib_cache").glob(
+            "branched_coef_*.bin"))
+        assert len(cache_files) == 1
+
+        pysiglib.clear_cache(device="cpu")
+        cache_files[0].write_bytes(b"invalid")
+        with pytest.raises(Exception, match="invalid cache file"):
+            pysiglib.prepare_branched_sig_coef(
+                dimension, trees, device="cpu", use_disk=True)
+    finally:
+        pysiglib.clear_cache(use_disk=True)
 
 
 def test_branched_sig_coef_requires_preparation():

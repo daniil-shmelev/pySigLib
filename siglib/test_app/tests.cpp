@@ -642,7 +642,7 @@ void example_batch_branched_sig_coef(
         throw std::invalid_argument("num_idx must be positive");
     const auto tree_data = branched_sig_coef_tree_data_(num_idx, dimension, degree);
     if (prepare_branched_sig_coef(
-        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar) != 0)
+        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar, false) != 0)
         throw std::runtime_error("prepare_branched_sig_coef failed");
     std::vector<double> path = test_data<double>(batch_size * dimension * length);
     std::vector<double> out(batch_size * num_idx);
@@ -676,7 +676,7 @@ void example_batch_branched_sig_coef_backprop(
         throw std::invalid_argument("num_idx must be positive");
     const auto tree_data = branched_sig_coef_tree_data_(num_idx, dimension, degree);
     if (prepare_branched_sig_coef(
-        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar) != 0)
+        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar, false) != 0)
         throw std::runtime_error("prepare_branched_sig_coef failed");
     const uint64_t path_size = batch_size * dimension * length;
     std::vector<double> path = test_data<double>(path_size);
@@ -716,7 +716,7 @@ void example_batch_branched_sig_coef_cuda(
         throw std::invalid_argument("num_idx must be positive");
     const auto tree_data = branched_sig_coef_tree_data_(num_idx, dimension, degree);
     if (prepare_branched_sig_coef_cuda(
-        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar) != 0)
+        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar, false) != 0)
         throw std::runtime_error("prepare_branched_sig_coef_cuda failed");
     std::vector<double> path = test_data<double>(batch_size * dimension * length);
 
@@ -756,7 +756,7 @@ void example_batch_branched_sig_coef_backprop_cuda(
         throw std::invalid_argument("num_idx must be positive");
     const auto tree_data = branched_sig_coef_tree_data_(num_idx, dimension, degree);
     if (prepare_branched_sig_coef_cuda(
-        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar) != 0)
+        tree_data.data(), tree_data.size(), dimension, dimension, degree, planar, false) != 0)
         throw std::runtime_error("prepare_branched_sig_coef_cuda failed");
     std::vector<double> path = test_data<double>(batch_size * dimension * length);
     std::vector<double> derivs(batch_size * num_idx, 1.);

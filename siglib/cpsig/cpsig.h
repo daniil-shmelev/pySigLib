@@ -595,9 +595,10 @@ extern "C" {
 	* @param dimension Dimension after time or lead-lag augmentation.
 	* @param max_nodes Maximum number of nodes in the requested basis elements.
 	* @param planar Whether the data uses the planar MKW ordered-forest basis.
+	* @param use_disk Whether to persist and load the shared host-side sparse plan.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int prepare_branched_sig_coef(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
+	[[nodiscard]] CPSIG_API int prepare_branched_sig_coef(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) noexcept;
 
 	/**
 	* @brief Computes selected branched-signature coefficients for float paths.

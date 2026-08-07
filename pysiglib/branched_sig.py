@@ -53,9 +53,11 @@ def prepare_branched_sig(
     :type dimension: int
     :param degree: Maximum order (number of nodes).
     :type degree: int
-    :param use_disk: If True, cache the CPU precomputed tables to disk for
-        faster loading in future sessions. Uses the same cache directory
-        as ``set_cache_dir()`` / ``prepare_log_sig()``.
+    :param use_disk: If ``False``, will cache prepared objects in memory only.
+        If ``True``, will also save these objects in a shared disk cache to be
+        re-used for future runs. The CPU and GPU libraries share the same
+        disk cache format and directory.
+        See additionally the documentation for ``pysiglib.set_cache_dir``.
     :type use_disk: bool
     :param time_aug: If True, prepare for time-augmented paths (dim + 1).
     :type time_aug: bool
@@ -89,7 +91,7 @@ def prepare_branched_sig(
 
     if BUILT_WITH_CUDA and device in ("cuda", "both"):
         err_code = CUSIG.prepare_branched_sig_cuda(
-            aug_dimension, degree, planar)
+            aug_dimension, degree, planar, use_disk)
         if err_code:
             raise Exception(
                 "Error in pysiglib.prepare_branched_sig (CUDA): "

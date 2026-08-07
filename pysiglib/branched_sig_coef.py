@@ -165,6 +165,7 @@ def prepare_branched_sig_coef(
         dimension: int,
         trees,
         *,
+        use_disk: bool = False,
         time_aug: bool = False,
         lead_lag: bool = False,
         planar: bool = False,
@@ -184,6 +185,12 @@ def prepare_branched_sig_coef(
     :param trees: A decorated rooted tree, or a list of decorated rooted trees.
         With ``planar=True``, each requested basis element is an ordered forest.
     :type trees: tuple | None | list[tuple | None]
+    :param use_disk: If ``False``, will cache prepared objects in memory only.
+        If ``True``, will also save these objects in a shared disk cache to be
+        re-used for future runs. The CPU and GPU libraries share the same
+        disk cache format and directory.
+        See additionally the documentation for ``pysiglib.set_cache_dir``.
+    :type use_disk: bool
     :param time_aug: Whether to prepare for time-augmented paths.
     :type time_aug: bool
     :param lead_lag: Whether to prepare for lead-lag transformed paths.
@@ -195,6 +202,7 @@ def prepare_branched_sig_coef(
     :type device: str
     """
     check_type(dimension, "dimension", int)
+    check_type(use_disk, "use_disk", bool)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(planar, "planar", bool)
@@ -211,7 +219,7 @@ def prepare_branched_sig_coef(
     if device in ("cpu", "both"):
         err_code = CPSIG.prepare_branched_sig_coef(
             tree_data_ptr, len(tree_data), dimension, augmented_dimension,
-            degree, planar,
+            degree, planar, use_disk,
         )
         if err_code:
             raise Exception(
@@ -222,7 +230,7 @@ def prepare_branched_sig_coef(
     if BUILT_WITH_CUDA and device in ("cuda", "both"):
         err_code = CUSIG.prepare_branched_sig_coef_cuda(
             tree_data_ptr, len(tree_data), dimension, augmented_dimension,
-            degree, planar,
+            degree, planar, use_disk,
         )
         if err_code:
             raise Exception(

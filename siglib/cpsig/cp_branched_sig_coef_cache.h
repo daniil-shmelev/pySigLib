@@ -23,7 +23,8 @@ void prepare_branched_sig_coef_cache(
 	uint64_t data_dimension,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	bool planar = false
+	bool planar = false,
+	bool use_disk = false
 );
 
 const BranchedSigCoefCache& get_branched_sig_coef_cache(

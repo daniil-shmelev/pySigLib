@@ -15,9 +15,18 @@
 
 #pragma once
 #include "branched_trees.h"
+#include "errors.h"
 #include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+#include <string>
+#include <system_error>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 struct BranchedSigCoefCache {
 	uint64_t max_nodes = 0;
@@ -593,4 +602,209 @@ inline BranchedSigCoefCache build_branched_sig_coef_cache(
 	std::sort(cache.correction_indices.begin(), cache.correction_indices.end());
 
 	return cache;
+}
+
+inline constexpr uint64_t branched_sig_coef_cache_magic_number = 0x70797369676C6962;
+inline constexpr uint64_t branched_sig_coef_max_disk_vector_size = 1'000'000'000ULL;
+inline constexpr const char* branched_sig_coef_cache_version = "v1";
+
+inline void branched_sig_coef_cache_hash_value_(uint64_t value, uint64_t& hash) {
+	for (int i = 0; i < 8; ++i) {
+		hash ^= static_cast<uint8_t>(value);
+		hash *= 1099511628211ULL;
+		value >>= 8;
+	}
+}
+
+inline uint64_t branched_sig_coef_cache_hash_(
+	uint64_t data_dimension,
+	uint64_t dimension,
+	uint64_t max_nodes,
+	bool planar,
+	const std::vector<uint64_t>& tree_data
+) {
+	uint64_t hash = 14695981039346656037ULL;
+	branched_sig_coef_cache_hash_value_(data_dimension, hash);
+	branched_sig_coef_cache_hash_value_(dimension, hash);
+	branched_sig_coef_cache_hash_value_(max_nodes, hash);
+	branched_sig_coef_cache_hash_value_(static_cast<uint64_t>(planar), hash);
+	branched_sig_coef_cache_hash_value_(tree_data.size(), hash);
+	for (uint64_t value : tree_data)
+		branched_sig_coef_cache_hash_value_(value, hash);
+	return hash;
+}
+
+inline std::filesystem::path branched_sig_coef_cache_file_path(
+	const std::filesystem::path& cache_dir,
+	uint64_t data_dimension,
+	uint64_t dimension,
+	uint64_t max_nodes,
+	bool planar,
+	const std::vector<uint64_t>& tree_data
+) {
+	return cache_dir / (
+		"branched_coef_" + std::to_string(data_dimension) + "_" +
+		std::to_string(dimension) + "_" + std::to_string(max_nodes) + "_" +
+		std::to_string(static_cast<uint64_t>(planar)) + "_" +
+		std::to_string(branched_sig_coef_cache_hash_(
+			data_dimension, dimension, max_nodes, planar, tree_data)) + "_" +
+		branched_sig_coef_cache_version + ".bin");
+}
+
+template<typename T>
+inline void serialize_branched_sig_coef_cache_vector_(
+	std::ostream& out,
+	const std::vector<T>& values
+) {
+	static_assert(std::is_trivially_copyable_v<T>);
+	const uint64_t size = values.size();
+	out.write(reinterpret_cast<const char*>(&size), sizeof(size));
+	if (size > 0)
+		out.write(reinterpret_cast<const char*>(values.data()), size * sizeof(T));
+}
+
+inline void check_branched_sig_coef_cache_bytes_(
+	std::istream& in,
+	uint64_t need,
+	const char* label
+) {
+	const std::streampos here = in.tellg();
+	in.seekg(0, std::ios::end);
+	const std::streampos end = in.tellg();
+	in.seekg(here);
+	if (here < 0 || end < 0 || static_cast<uint64_t>(end - here) < need)
+		throw std::runtime_error(std::string("Tried to read an invalid cache file: ") + label);
+}
+
+template<typename T>
+inline void deserialize_branched_sig_coef_cache_vector_(
+	std::istream& in,
+	std::vector<T>& values,
+	const char* label
+) {
+	static_assert(std::is_trivially_copyable_v<T>);
+	uint64_t size;
+	in.read(reinterpret_cast<char*>(&size), sizeof(size));
+	if (!in || size > branched_sig_coef_max_disk_vector_size)
+		throw std::runtime_error(std::string("Tried to read an invalid cache file: ") + label);
+	if (size == 0) {
+		values.clear();
+		return;
+	}
+	check_branched_sig_coef_cache_bytes_(in, size * sizeof(T), label);
+	values.resize(size);
+	in.read(reinterpret_cast<char*>(values.data()), size * sizeof(T));
+	if (!in)
+		throw std::runtime_error(std::string("Tried to read an invalid cache file: ") + label);
+}
+
+inline void write_branched_sig_coef_cache(
+	const std::filesystem::path& cache_dir,
+	uint64_t data_dimension,
+	uint64_t dimension,
+	uint64_t max_nodes,
+	bool planar,
+	const std::vector<uint64_t>& tree_data,
+	const BranchedSigCoefCache& cache
+) {
+	const auto path = branched_sig_coef_cache_file_path(
+		cache_dir, data_dimension, dimension, max_nodes, planar, tree_data);
+	std::ofstream out(path, std::ios::binary);
+	if (!out)
+		throw std::filesystem::filesystem_error(
+			"Failed to open branched coefficient cache file for writing", path,
+			std::make_error_code(std::errc::io_error));
+
+	out.write(reinterpret_cast<const char*>(&branched_sig_coef_cache_magic_number), sizeof(branched_sig_coef_cache_magic_number));
+	out.write(reinterpret_cast<const char*>(&data_dimension), sizeof(data_dimension));
+	out.write(reinterpret_cast<const char*>(&dimension), sizeof(dimension));
+	out.write(reinterpret_cast<const char*>(&max_nodes), sizeof(max_nodes));
+	const uint64_t planar_value = planar;
+	out.write(reinterpret_cast<const char*>(&planar_value), sizeof(planar_value));
+	serialize_branched_sig_coef_cache_vector_(out, tree_data);
+	out.write(reinterpret_cast<const char*>(&cache.max_nodes), sizeof(cache.max_nodes));
+	serialize_branched_sig_coef_cache_vector_(out, cache.target_indices);
+	serialize_branched_sig_coef_cache_vector_(out, cache.inv_tree_factorial);
+	serialize_branched_sig_coef_cache_vector_(out, cache.node_labels_offsets);
+	serialize_branched_sig_coef_cache_vector_(out, cache.node_labels_data);
+	serialize_branched_sig_coef_cache_vector_(out, cache.coproduct_offsets);
+	serialize_branched_sig_coef_cache_vector_(out, cache.coproduct_data);
+	serialize_branched_sig_coef_cache_vector_(out, cache.order_index);
+	serialize_branched_sig_coef_cache_vector_(out, cache.leaf_indices);
+
+	std::vector<uint64_t> correction_offsets(cache.correction_indices.size());
+	std::vector<uint64_t> correction_locals(cache.correction_indices.size());
+	for (size_t i = 0; i < cache.correction_indices.size(); ++i) {
+		correction_offsets[i] = cache.correction_indices[i].first;
+		correction_locals[i] = cache.correction_indices[i].second;
+	}
+	serialize_branched_sig_coef_cache_vector_(out, correction_offsets);
+	serialize_branched_sig_coef_cache_vector_(out, correction_locals);
+}
+
+inline bool read_branched_sig_coef_cache(
+	const std::filesystem::path& cache_dir,
+	uint64_t data_dimension,
+	uint64_t dimension,
+	uint64_t max_nodes,
+	bool planar,
+	const std::vector<uint64_t>& tree_data,
+	BranchedSigCoefCache& cache
+) {
+	const auto path = branched_sig_coef_cache_file_path(
+		cache_dir, data_dimension, dimension, max_nodes, planar, tree_data);
+	if (!std::filesystem::exists(path))
+		return false;
+
+	std::ifstream in(path, std::ios::binary);
+	if (!in)
+		return false;
+
+	uint64_t magic;
+	in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+	if (!in || magic != branched_sig_coef_cache_magic_number)
+		throw corrupted_cache_error("Tried to read an invalid cache file. Cache may have been corrupted.");
+
+	uint64_t disk_data_dimension;
+	uint64_t disk_dimension;
+	uint64_t disk_max_nodes;
+	uint64_t disk_planar;
+	in.read(reinterpret_cast<char*>(&disk_data_dimension), sizeof(disk_data_dimension));
+	in.read(reinterpret_cast<char*>(&disk_dimension), sizeof(disk_dimension));
+	in.read(reinterpret_cast<char*>(&disk_max_nodes), sizeof(disk_max_nodes));
+	in.read(reinterpret_cast<char*>(&disk_planar), sizeof(disk_planar));
+	if (!in || disk_data_dimension != data_dimension || disk_dimension != dimension ||
+		disk_max_nodes != max_nodes || disk_planar != static_cast<uint64_t>(planar))
+		return false;
+
+	std::vector<uint64_t> disk_tree_data;
+	deserialize_branched_sig_coef_cache_vector_(in, disk_tree_data, "branched coefficient tree data");
+	if (disk_tree_data != tree_data)
+		return false;
+
+	BranchedSigCoefCache tmp;
+	in.read(reinterpret_cast<char*>(&tmp.max_nodes), sizeof(tmp.max_nodes));
+	if (!in || tmp.max_nodes != max_nodes)
+		return false;
+	deserialize_branched_sig_coef_cache_vector_(in, tmp.target_indices, "branched coefficient target indices");
+	deserialize_branched_sig_coef_cache_vector_(in, tmp.inv_tree_factorial, "branched coefficient inverse factorials");
+	deserialize_branched_sig_coef_cache_vector_(in, tmp.node_labels_offsets, "branched coefficient label offsets");
+	deserialize_branched_sig_coef_cache_vector_(in, tmp.node_labels_data, "branched coefficient label data");
+	deserialize_branched_sig_coef_cache_vector_(in, tmp.coproduct_offsets, "branched coefficient coproduct offsets");
+	deserialize_branched_sig_coef_cache_vector_(in, tmp.coproduct_data, "branched coefficient coproduct data");
+	deserialize_branched_sig_coef_cache_vector_(in, tmp.order_index, "branched coefficient order index");
+	deserialize_branched_sig_coef_cache_vector_(in, tmp.leaf_indices, "branched coefficient leaf indices");
+
+	std::vector<uint64_t> correction_offsets;
+	std::vector<uint64_t> correction_locals;
+	deserialize_branched_sig_coef_cache_vector_(in, correction_offsets, "branched coefficient correction offsets");
+	deserialize_branched_sig_coef_cache_vector_(in, correction_locals, "branched coefficient correction locals");
+	if (!in.good() || correction_offsets.size() != correction_locals.size())
+		return false;
+	tmp.correction_indices.resize(correction_offsets.size());
+	for (size_t i = 0; i < correction_offsets.size(); ++i)
+		tmp.correction_indices[i] = { correction_offsets[i], correction_locals[i] };
+
+	cache = std::move(tmp);
+	return true;
 }

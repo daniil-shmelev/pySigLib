@@ -485,9 +485,10 @@ extern "C" {
 	* @param dimension Dimension after time or lead-lag augmentation.
 	* @param max_nodes Maximum number of nodes in the requested basis elements.
 	* @param planar Whether the data uses the planar MKW basis rather than the non-planar BCK basis.
+	* @param use_disk Whether to persist and load the shared host-side sparse plan.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int prepare_branched_sig_coef_cuda(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
+	[[nodiscard]] CUSIG_API int prepare_branched_sig_coef_cuda(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) noexcept;
 
 	/**
 	* @brief Computes selected branched signature coefficients on the GPU.
@@ -560,9 +561,10 @@ extern "C" {
 	* @param dimension Dimension after time or lead-lag augmentation.
 	* @param max_nodes Maximum number of nodes in the branched-signature basis.
 	* @param planar Whether to prepare the planar MKW basis rather than the non-planar BCK basis.
+	* @param use_disk Whether to persist and load the shared host-side cache tables.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int prepare_branched_sig_cuda(uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
+	[[nodiscard]] CUSIG_API int prepare_branched_sig_cuda(uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) noexcept;
 
 	[[nodiscard]] CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	[[nodiscard]] CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
