@@ -17,6 +17,7 @@ add_executable(cpsig_tests
     cp_test_log_sig.cpp
     cp_test_sig_kernel.cpp
     cp_test_branched.cpp
+    cp_test_branched_sig_coef.cpp
     ../cpsig/words.cpp
     ../cpsig/cp_utils.cpp
 )

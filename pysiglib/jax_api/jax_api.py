@@ -41,6 +41,8 @@ from ..log_sig_join_backprop import log_sig_join_backprop
 from ..linear_sig import linear_sig as linear_sig_forward
 from ..branched_sig import branched_sig as branched_sig_forward
 from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
+from ..branched_sig_coef import _branched_coef_data
+from ..branched_sig_coef import branched_sig_coef as branched_sig_coef_forward
 from ..branched_log_sig import branched_sig_to_log_sig as branched_sig_to_log_sig_forward
 from ..branched_log_sig import branched_log_sig as branched_log_sig_forward
 from ..data_handlers import _infer_correction_degree
@@ -87,6 +89,8 @@ from ._ffi import (
     log_sig_from_path_backprop_ffi_call,
     branched_sig_ffi_call,
     branched_sig_backprop_ffi_call,
+    branched_sig_coef_ffi_call,
+    branched_sig_coef_backprop_ffi_call,
     branched_sig_combine_ffi_call,
     branched_sig_combine_backprop_ffi_call,
     branched_sig_to_log_sig_ffi_call,
@@ -1342,6 +1346,74 @@ def sig_coef(
 
 
 sig_coef.__doc__ = sig_coef_forward.__doc__
+
+
+@partial(jax.custom_vjp, nondiff_argnums=(1, 3, 4, 5, 6, 7, 8))
+def _branched_sig_coef(
+        path, tree_data, correction, max_nodes, time_aug, lead_lag,
+        end_time, n_jobs, planar):
+    return branched_sig_coef_ffi_call(
+        path, correction, tree_data, max_nodes, time_aug, lead_lag,
+        end_time, n_jobs, planar)
+
+
+def _branched_sig_coef_fwd(
+        path, tree_data, correction, max_nodes, time_aug, lead_lag,
+        end_time, n_jobs, planar):
+    coefs = branched_sig_coef_ffi_call(
+        path, correction, tree_data, max_nodes, time_aug, lead_lag,
+        end_time, n_jobs, planar)
+    return coefs, (path, coefs, correction)
+
+
+def _branched_sig_coef_bwd(
+        tree_data, max_nodes, time_aug, lead_lag, end_time, n_jobs,
+        planar, residual, cotangent):
+    path, coefs, correction = residual
+    grad = branched_sig_coef_backprop_ffi_call(
+        path, coefs, cotangent, correction, tree_data, max_nodes,
+        time_aug, lead_lag, end_time, n_jobs, planar)
+    return grad, jnp.zeros_like(correction)
+
+
+_branched_sig_coef.defvjp(
+    _branched_sig_coef_fwd, _branched_sig_coef_bwd)
+
+
+def branched_sig_coef(
+    path,
+    trees,
+    *,
+    time_aug: bool = False,
+    lead_lag: bool = False,
+    end_time: float = 1.0,
+    planar: bool = False,
+    correction=None,
+    n_jobs: int = 1,
+):
+    """Compute selected branched-signature coefficients using JAX."""
+    path = jnp.asarray(path)
+    _validate_shape(path)
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
+    check_type(end_time, "end_time", float)
+    check_type(planar, "planar", bool)
+    check_n_jobs(n_jobs)
+    if lead_lag and path.shape[-2] == 0:
+        raise ValueError("lead_lag requires a path with at least one point")
+
+    augmented_dimension = _augmented_dim(path.shape[-1], time_aug, lead_lag)
+    _, degree, tree_data = _branched_coef_data(
+        trees, augmented_dimension, planar)
+    correction = _prepare_correction_jax(
+        correction, path, degree, lead_lag)
+    ensure_registered()
+    return _branched_sig_coef(
+        path, tuple(tree_data), correction, degree, time_aug, lead_lag,
+        end_time, n_jobs, planar)
+
+
+branched_sig_coef.__doc__ = branched_sig_coef_forward.__doc__
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))

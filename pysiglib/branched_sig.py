@@ -24,7 +24,7 @@ from .sig_length import aug_dim
 from .dtypes import (CPSIG_BRANCHED_SIG, CPSIG_BRANCHED_SIG_COMBINE,
                      CUSIG_BRANCHED_SIG_CUDA, CUSIG_BRANCHED_SIG_COMBINE_CUDA)
 from .data_handlers import PathInputHandler, SigOutputHandler, MultipleSigInputHandler, CorrectionInputHandler
-from .load_siglib import CPSIG
+from .load_siglib import BUILT_WITH_CUDA, CPSIG, CUSIG
 
 
 def prepare_branched_sig(
@@ -34,7 +34,8 @@ def prepare_branched_sig(
         use_disk: bool = False,
         time_aug: bool = False,
         lead_lag: bool = False,
-        planar: bool = False
+        planar: bool = False,
+        device: str = "both",
 ):
     """
     Precomputes the basis enumeration and coproduct tables
@@ -52,9 +53,11 @@ def prepare_branched_sig(
     :type dimension: int
     :param degree: Maximum order (number of nodes).
     :type degree: int
-    :param use_disk: If True, cache the precomputed tables to disk for
-        faster loading in future sessions. Uses the same cache directory
-        as ``set_cache_dir()`` / ``prepare_log_sig()``.
+    :param use_disk: If ``False``, will cache prepared objects in memory only.
+        If ``True``, will also save these objects in a shared disk cache to be
+        re-used for future runs. The CPU and GPU libraries share the same
+        disk cache format and directory.
+        See additionally the documentation for ``pysiglib.set_cache_dir``.
     :type use_disk: bool
     :param time_aug: If True, prepare for time-augmented paths (dim + 1).
     :type time_aug: bool
@@ -62,6 +65,9 @@ def prepare_branched_sig(
     :type lead_lag: bool
     :param planar: If True, prepare for planar (ordered) branched signatures.
     :type planar: bool
+    :param device: Which device caches to prepare. Must be ``"cpu"``,
+        ``"cuda"``, or ``"both"``.
+    :type device: str
     """
     check_type(dimension, "dimension", int)
     check_type(degree, "degree", int)
@@ -69,12 +75,27 @@ def prepare_branched_sig(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(planar, "planar", bool)
+    check_type(device, "device", str)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
+    if device not in ("cpu", "cuda", "both"):
+        raise ValueError("device must be 'cpu', 'cuda', or 'both'")
+
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
-    err_code = CPSIG.prepare_branched_sig(aug_dimension, degree, use_disk, planar)
-    if err_code:
-        raise Exception("Error in pysiglib.prepare_branched_sig: " + err_msg(err_code))
+    if device in ("cpu", "both"):
+        err_code = CPSIG.prepare_branched_sig(
+            aug_dimension, degree, use_disk, planar)
+        if err_code:
+            raise Exception(
+                "Error in pysiglib.prepare_branched_sig: " + err_msg(err_code))
+
+    if BUILT_WITH_CUDA and device in ("cuda", "both"):
+        err_code = CUSIG.prepare_branched_sig_cuda(
+            aug_dimension, degree, planar, use_disk)
+        if err_code:
+            raise Exception(
+                "Error in pysiglib.prepare_branched_sig (CUDA): "
+                + err_msg(err_code))
 
 
 def branched_sig_length(dimension: int, degree: int, *, planar: bool = False, scalar_term: bool = False) -> int:

@@ -150,6 +150,14 @@ _TARGETS = {
         "cpu": ("pysiglib_branched_sig_backprop_cpu", "PySigLibBranchedSigBackpropCpu"),
         "cuda": ("pysiglib_branched_sig_backprop_cuda", "PySigLibBranchedSigBackpropCuda"),
     },
+    "branched_sig_coef": {
+        "cpu": ("pysiglib_branched_sig_coef_cpu", "PySigLibBranchedSigCoefCpu"),
+        "cuda": ("pysiglib_branched_sig_coef_cuda", "PySigLibBranchedSigCoefCuda"),
+    },
+    "branched_sig_coef_backprop": {
+        "cpu": ("pysiglib_branched_sig_coef_backprop_cpu", "PySigLibBranchedSigCoefBackpropCpu"),
+        "cuda": ("pysiglib_branched_sig_coef_backprop_cuda", "PySigLibBranchedSigCoefBackpropCuda"),
+    },
     "branched_sig_combine": {
         "cpu": ("pysiglib_branched_sig_combine_cpu", "PySigLibBranchedSigCombineCpu"),
         "cuda": ("pysiglib_branched_sig_combine_cuda", "PySigLibBranchedSigCombineCuda"),
@@ -605,6 +613,38 @@ def branched_sig_backprop_ffi_call(path, bsig, cotangent, correction, max_nodes,
     call_kwargs = dict(max_nodes=np.int64(max_nodes), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
     return _make_ffi_call("branched_sig_backprop", (path, bsig, cotangent, correction), out_type, call_kwargs)
+
+
+def branched_sig_coef_ffi_call(
+        path, correction, tree_data, max_nodes, time_aug, lead_lag,
+        end_time, n_jobs, planar):
+    _check_same_dtype(path, correction)
+    out_type = jax.ShapeDtypeStruct(
+        (*path.shape[:-2], tree_data[0]), path.dtype)
+    call_kwargs = dict(
+        max_nodes=np.int64(max_nodes), time_aug=np.bool_(time_aug),
+        lead_lag=np.bool_(lead_lag), end_time=np.float64(end_time),
+        n_jobs=np.int64(n_jobs), planar=np.bool_(planar),
+        tree_data=np.asarray(tree_data, dtype=np.uint64),
+    )
+    return _make_ffi_call(
+        "branched_sig_coef", (path, correction), out_type, call_kwargs)
+
+
+def branched_sig_coef_backprop_ffi_call(
+        path, coefs, cotangent, correction, tree_data, max_nodes,
+        time_aug, lead_lag, end_time, n_jobs, planar):
+    _check_same_dtype(path, coefs, cotangent, correction)
+    out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
+    call_kwargs = dict(
+        max_nodes=np.int64(max_nodes), time_aug=np.bool_(time_aug),
+        lead_lag=np.bool_(lead_lag), end_time=np.float64(end_time),
+        n_jobs=np.int64(n_jobs), planar=np.bool_(planar),
+        tree_data=np.asarray(tree_data, dtype=np.uint64),
+    )
+    return _make_ffi_call(
+        "branched_sig_coef_backprop",
+        (path, coefs, cotangent, correction), out_type, call_kwargs)
 
 
 # ---------------------------------------------------------------------------

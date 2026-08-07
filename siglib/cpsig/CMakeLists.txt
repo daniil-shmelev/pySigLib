@@ -2,6 +2,8 @@ add_library(cpsig SHARED
     cp_bch.cpp
     cp_branched_cache.cpp
     cp_branched_log_signature.cpp
+    cp_branched_sig_coef.cpp
+    cp_branched_sig_coef_cache.cpp
     cp_branched_signature.cpp
     cp_branched_sig_kernel.cpp
     cp_log_signatures.cpp

@@ -72,6 +72,8 @@ CUSIG_SIG_JOIN_BACKPROP_CUDA = None
 CUSIG_LOG_SIG_JOIN_CUDA = None
 CUSIG_LOG_SIG_JOIN_BACKPROP_CUDA = None
 CUSIG_BRANCHED_SIG_CUDA = None
+CUSIG_BRANCHED_SIG_COEF_CUDA = None
+CUSIG_BRANCHED_SIG_COEF_BACKPROP_CUDA = None
 CUSIG_BRANCHED_SIG_COMBINE_CUDA = None
 CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA = None
 CUSIG_BRANCHED_SIG_BACKPROP_CUDA = None
@@ -323,6 +325,16 @@ CPSIG_BRANCHED_SIG = {
     "float64": CPSIG.branched_sig_d
 }
 
+CPSIG_BRANCHED_SIG_COEF = {
+    "float32": CPSIG.branched_sig_coef_f,
+    "float64": CPSIG.branched_sig_coef_d
+}
+
+CPSIG_BRANCHED_SIG_COEF_BACKPROP = {
+    "float32": CPSIG.branched_sig_coef_backprop_f,
+    "float64": CPSIG.branched_sig_coef_backprop_d
+}
+
 CPSIG_BRANCHED_SIG_COMBINE = {
     "float32": CPSIG.branched_sig_combine_f,
     "float64": CPSIG.branched_sig_combine_d
@@ -352,6 +364,16 @@ if BUILT_WITH_CUDA:
     CUSIG_BRANCHED_SIG_CUDA = {
         "float32": CUSIG.branched_sig_cuda_f,
         "float64": CUSIG.branched_sig_cuda_d
+    }
+
+    CUSIG_BRANCHED_SIG_COEF_CUDA = {
+        "float32": CUSIG.branched_sig_coef_cuda_f,
+        "float64": CUSIG.branched_sig_coef_cuda_d
+    }
+
+    CUSIG_BRANCHED_SIG_COEF_BACKPROP_CUDA = {
+        "float32": CUSIG.branched_sig_coef_backprop_cuda_f,
+        "float64": CUSIG.branched_sig_coef_backprop_cuda_d
     }
 
     CUSIG_BRANCHED_SIG_COMBINE_CUDA = {

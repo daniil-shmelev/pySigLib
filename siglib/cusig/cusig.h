@@ -472,9 +472,99 @@ extern "C" {
 	[[nodiscard]] CUSIG_API int set_cache_dir_cuda(const char* dir) noexcept;
 	/** @} */
 
+	/** @defgroup branched_sig_coef_cuda_functions Branched signature coefficient CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Prepares a sparse coefficient cache on the active CUDA device.
+	*
+	* @param tree_data Serialized requested trees and ordered forests in host memory.
+	* @param tree_data_len Number of uint64_t values in `tree_data`.
+	* @param data_dimension Dimension of the unaugmented path.
+	* @param dimension Dimension after time or lead-lag augmentation.
+	* @param max_nodes Maximum number of nodes in the requested basis elements.
+	* @param planar Whether the data uses the planar MKW basis rather than the non-planar BCK basis.
+	* @param use_disk Whether to persist and load the shared host-side sparse plan.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int prepare_branched_sig_coef_cuda(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) noexcept;
+
+	/**
+	* @brief Computes selected branched signature coefficients on the GPU.
+	*
+	* Call prepare_branched_sig_coef_cuda with matching arguments on the active
+	* CUDA device before this function.
+	*
+	* @param path Input paths on device, size = `batch_size * length * dimension`.
+	* @param out Output coefficients on device, size = `batch_size * tree_data[0]`.
+	* @param tree_data Serialized requested trees passed to preparation.
+	* @param tree_data_len Number of uint64_t values in `tree_data`.
+	* @param batch_size Number of paths.
+	* @param dimension Dimension of the input paths.
+	* @param length Number of points in each input path.
+	* @param max_nodes Maximum number of nodes in the requested basis elements.
+	* @param time_aug Whether to prepend a time channel.
+	* @param lead_lag Whether to apply the lead-lag transform.
+	* @param end_time Final value of the time channel.
+	* @param planar Whether the data uses the planar MKW basis rather than the non-planar BCK basis.
+	* @param correction Optional log-signature correction data on device.
+	* @param correction_len Number of correction values per segment.
+	* @param correction_batch_stride Correction stride between paths.
+	* @param correction_segment_stride Correction stride between segments.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int branched_sig_coef_cuda_f(const float* path, float* out, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	/** @brief Double-precision variant of branched_sig_coef_cuda_f. */
+	[[nodiscard]] CUSIG_API int branched_sig_coef_cuda_d(const double* path, double* out, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	/** @} */
+
+	/** @defgroup branched_sig_coef_backprop_cuda_functions Branched signature coefficient backprop CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Backpropagates selected branched signature coefficients to path coordinates on the GPU.
+	*
+	* @param path Input paths on device, size = `batch_size * length * dimension`.
+	* @param out Output path derivatives on device, with the same size as `path`.
+	* @param coefs Coefficients returned by branched_sig_coef_cuda_f.
+	* @param derivs Derivatives with respect to `coefs`.
+	* @param tree_data Serialized requested trees passed to the forward call.
+	* @param tree_data_len Number of uint64_t values in `tree_data`.
+	* @param batch_size Number of paths.
+	* @param dimension Dimension of the input paths.
+	* @param length Number of points in each input path.
+	* @param max_nodes Maximum number of nodes in the requested basis elements.
+	* @param time_aug Whether the forward pass prepended a time channel.
+	* @param lead_lag Whether the forward pass applied the lead-lag transform.
+	* @param end_time Final value of the time channel.
+	* @param planar Whether the data uses the planar MKW basis rather than the non-planar BCK basis.
+	* @param correction Optional log-signature correction data on device.
+	* @param correction_len Number of correction values per segment.
+	* @param correction_batch_stride Correction stride between paths.
+	* @param correction_segment_stride Correction stride between segments.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int branched_sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	/** @brief Double-precision variant of branched_sig_coef_backprop_cuda_f. */
+	[[nodiscard]] CUSIG_API int branched_sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	/** @} */
+
 	/** @defgroup branched_sig_cuda_functions Branched signature CUDA functions
 	* @{
 	*/
+
+	/**
+	* @brief Prepares the dense branched-signature basis cache on the active CUDA device.
+	*
+	* @param dimension Dimension after time or lead-lag augmentation.
+	* @param max_nodes Maximum number of nodes in the branched-signature basis.
+	* @param planar Whether to prepare the planar MKW basis rather than the non-planar BCK basis.
+	* @param use_disk Whether to persist and load the shared host-side cache tables.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int prepare_branched_sig_cuda(uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) noexcept;
 
 	[[nodiscard]] CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	[[nodiscard]] CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;

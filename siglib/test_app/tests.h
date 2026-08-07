@@ -212,7 +212,49 @@ void example_batch_sig_coef_backprop(
 	bool lead_lag = false,
 	double end_time = 1.,
 	int n_jobs = 1,
-	int num_runs = 50
+    int num_runs = 50
+);
+
+void example_batch_branched_sig_coef(
+	uint64_t num_idx = 32,
+	uint64_t batch_size = 32,
+	uint64_t dimension = 3,
+	uint64_t degree = 4,
+	uint64_t length = 128,
+	int n_jobs = 1,
+	int num_runs = 50,
+	bool planar = false
+);
+
+void example_batch_branched_sig_coef_backprop(
+	uint64_t num_idx = 32,
+	uint64_t batch_size = 32,
+	uint64_t dimension = 3,
+	uint64_t degree = 4,
+	uint64_t length = 128,
+	int n_jobs = 1,
+	int num_runs = 50,
+	bool planar = false
+);
+
+void example_batch_branched_sig_coef_cuda(
+	uint64_t num_idx = 32,
+	uint64_t batch_size = 64,
+	uint64_t dimension = 3,
+	uint64_t degree = 4,
+	uint64_t length = 256,
+	int num_runs = 20,
+	bool planar = false
+);
+
+void example_batch_branched_sig_coef_backprop_cuda(
+	uint64_t num_idx = 32,
+	uint64_t batch_size = 64,
+	uint64_t dimension = 3,
+	uint64_t degree = 4,
+	uint64_t length = 256,
+	int num_runs = 20,
+	bool planar = false
 );
 
 void example_batch_sig_coef_cuda_d(

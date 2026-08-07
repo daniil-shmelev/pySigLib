@@ -18,6 +18,7 @@
 #include "log_sig_cache.h"
 #include "cp_bch.h"
 #include "cp_branched_cache.h"
+#include "cp_branched_sig_coef_cache.h"
 
 const char* version = "v1";
 const char* cache_folder_name = "pysiglib_cache";
@@ -224,6 +225,7 @@ void clear_cache_(bool use_disk) {
 
 	clear_basis_cache();
 	clear_bch_cache();
+	clear_branched_sig_coef_cache();
 	clear_branched_sig_cache();
 
 	if (use_disk)
@@ -247,6 +249,7 @@ extern "C" {
 	CPSIG_API void cpsig_shutdown() noexcept {
 		try { clear_basis_cache();                                       } catch (...) {}
 		try { clear_bch_cache();                                         } catch (...) {}
+		try { clear_branched_sig_coef_cache();                            } catch (...) {}
 		try { clear_branched_sig_cache();                                } catch (...) {}
 		try { std::unique_lock lk(cache_dir_mu);   cache_dir.clear();    } catch (...) {}
 	}

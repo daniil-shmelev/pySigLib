@@ -63,6 +63,10 @@ using sig_coef_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint
 
 using sig_coef_backprop_d_fn = int(CDECL_*)(const double*, double*, double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, int);
 
+using prepare_branched_sig_coef_fn = int(CDECL_*)(const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool);
+using branched_sig_coef_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, int, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
+using branched_sig_coef_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, int, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
+
 using sig_coef_cuda_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool);
 
 using sig_coef_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t);
@@ -115,6 +119,9 @@ extern signature_cuda_d_fn signature_cuda_d;
 extern sig_coef_d_fn sig_coef_d;
 
 extern sig_coef_backprop_d_fn sig_coef_backprop_d;
+extern prepare_branched_sig_coef_fn prepare_branched_sig_coef;
+extern branched_sig_coef_d_fn branched_sig_coef_d;
+extern branched_sig_coef_backprop_d_fn branched_sig_coef_backprop_d;
 
 extern sig_coef_cuda_d_fn sig_coef_cuda_d;
 
@@ -156,6 +163,9 @@ using prepare_branched_sig_fn = int(CDECL_*)(uint64_t, uint64_t, bool, bool);
 using branched_sig_length_fn = uint64_t(CDECL_*)(uint64_t, uint64_t, bool);
 using branched_sig_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, int, bool, bool, double, bool, bool, const double*, uint64_t, uint64_t, uint64_t);
 using branched_sig_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, bool, const double*, uint64_t, uint64_t, uint64_t);
+using prepare_branched_sig_coef_cuda_fn = int(CDECL_*)(const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool);
+using branched_sig_coef_cuda_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
+using branched_sig_coef_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
 using branched_sig_to_log_sig_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, int, bool, bool);
 using branched_sig_to_log_sig_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, bool, bool);
 
@@ -163,6 +173,9 @@ extern prepare_branched_sig_fn prepare_branched_sig;
 extern branched_sig_length_fn branched_sig_length;
 extern branched_sig_d_fn branched_sig_d;
 extern branched_sig_cuda_d_fn branched_sig_cuda_d;
+extern prepare_branched_sig_coef_cuda_fn prepare_branched_sig_coef_cuda;
+extern branched_sig_coef_cuda_d_fn branched_sig_coef_cuda_d;
+extern branched_sig_coef_backprop_cuda_d_fn branched_sig_coef_backprop_cuda_d;
 extern branched_sig_to_log_sig_d_fn branched_sig_to_log_sig_d;
 extern branched_sig_to_log_sig_cuda_d_fn branched_sig_to_log_sig_cuda_d;
 
