@@ -532,7 +532,7 @@ inline void log_sig_from_path_backprop_x4_(
 			for (int b = 0; b < 4; ++b)
 				seg[k * 4 + b] = paths[b][(s + 1) * dimension + k] - paths[b][s * dimension + k];
 
-		bch_combine_impl_x4_(curr, seg, prev, cache, bch_ws);
+		bch_combine_linear_impl_x4_(curr, seg, prev, cache, bch_ws);
 		std::swap(curr, prev);
 	}
 
@@ -557,10 +557,10 @@ inline void log_sig_from_path_backprop_x4_(
 		}
 
 		// Uncombine: prev = BCH(curr, -seg)
-		bch_combine_impl_x4_(curr, neg_seg, prev, cache, bch_ws);
+		bch_combine_linear_impl_x4_(curr, neg_seg, prev, cache, bch_ws);
 
 		// Backprop through BCH(prev, seg) -> curr
-		bch_combine_backprop_impl_x4_(d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
+		bch_combine_linear_backprop_impl_x4_(d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
 
 		// Scatter d_ls2 to path gradients
 		for (uint64_t k = 0; k < dimension; ++k) {

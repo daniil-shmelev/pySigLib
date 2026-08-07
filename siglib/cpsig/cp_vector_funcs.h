@@ -443,30 +443,14 @@ FORCE_INLINE void vec4_commutator_accum(
 	__m256d sum = _mm256_setzero_pd();
 	for (uint32_t idx = start; idx < end; ++idx) {
 		const uint32_t ci = ki[idx], cj = kj[idx];
+		const __m256d bracket = _mm256_fmsub_pd(
+			_mm256_loadu_pd(&v1[ci * 4]), _mm256_loadu_pd(&v2[cj * 4]),
+			_mm256_mul_pd(_mm256_loadu_pd(&v1[cj * 4]), _mm256_loadu_pd(&v2[ci * 4])));
 		sum = _mm256_fmadd_pd(_mm256_set1_pd(kval[idx]),
-			_mm256_sub_pd(
-				_mm256_mul_pd(_mm256_loadu_pd(&v1[ci * 4]), _mm256_loadu_pd(&v2[cj * 4])),
-				_mm256_mul_pd(_mm256_loadu_pd(&v1[cj * 4]), _mm256_loadu_pd(&v2[ci * 4]))),
+			bracket,
 			sum);
 	}
 	_mm256_storeu_pd(result, sum);
-}
-
-FORCE_INLINE void vec4_bracket_scatter(
-	double* RESTRICT result,
-	const double* RESTRICT v1, const double* RESTRICT v2,
-	uint32_t i, uint32_t j,
-	const uint32_t* ij_k, const double* ij_c,
-	uint32_t start, uint32_t end
-) {
-	__m256d prod = _mm256_sub_pd(
-		_mm256_mul_pd(_mm256_loadu_pd(&v1[i * 4]), _mm256_loadu_pd(&v2[j * 4])),
-		_mm256_mul_pd(_mm256_loadu_pd(&v1[j * 4]), _mm256_loadu_pd(&v2[i * 4])));
-	for (uint32_t idx = start; idx < end; ++idx) {
-		const uint32_t k = ij_k[idx];
-		_mm256_storeu_pd(&result[k * 4],
-			_mm256_fmadd_pd(_mm256_set1_pd(ij_c[idx]), prod, _mm256_loadu_pd(&result[k * 4])));
-	}
 }
 
 FORCE_INLINE void vec4_bracket_grad(
@@ -478,13 +462,16 @@ FORCE_INLINE void vec4_bracket_grad(
 ) {
 	__m256d S = _mm256_setzero_pd();
 	for (uint32_t idx = start; idx < end; ++idx)
-		S = _mm256_fmadd_pd(_mm256_set1_pd(ij_c[idx]), _mm256_loadu_pd(&dm_w[ij_k[idx] * 4]), S);
-	__m256d v1i = _mm256_loadu_pd(&v1[i * 4]), v1j = _mm256_loadu_pd(&v1[j * 4]);
-	__m256d v2i = _mm256_loadu_pd(&v2[i * 4]), v2j = _mm256_loadu_pd(&v2[j * 4]);
+		S = _mm256_add_pd(S, _mm256_mul_pd(
+			_mm256_set1_pd(ij_c[idx]), _mm256_loadu_pd(&dm_w[ij_k[idx] * 4])));
+	const __m256d v1i = _mm256_loadu_pd(&v1[i * 4]);
+	const __m256d v1j = _mm256_loadu_pd(&v1[j * 4]);
+	const __m256d v2i = _mm256_loadu_pd(&v2[i * 4]);
+	const __m256d v2j = _mm256_loadu_pd(&v2[j * 4]);
 	_mm256_storeu_pd(&dm_lf[i * 4], _mm256_fmadd_pd(S, v2j, _mm256_loadu_pd(&dm_lf[i * 4])));
-	_mm256_storeu_pd(&dm_lf[j * 4], _mm256_sub_pd(_mm256_loadu_pd(&dm_lf[j * 4]), _mm256_mul_pd(S, v2i)));
+	_mm256_storeu_pd(&dm_lf[j * 4], _mm256_fnmadd_pd(S, v2i, _mm256_loadu_pd(&dm_lf[j * 4])));
 	_mm256_storeu_pd(&dm_rf[j * 4], _mm256_fmadd_pd(S, v1i, _mm256_loadu_pd(&dm_rf[j * 4])));
-	_mm256_storeu_pd(&dm_rf[i * 4], _mm256_sub_pd(_mm256_loadu_pd(&dm_rf[i * 4]), _mm256_mul_pd(S, v1j)));
+	_mm256_storeu_pd(&dm_rf[i * 4], _mm256_fnmadd_pd(S, v1j, _mm256_loadu_pd(&dm_rf[i * 4])));
 }
 
 #else
@@ -774,34 +761,15 @@ FORCE_INLINE void vec4_commutator_accum(
 	for (uint32_t idx = start; idx < end; ++idx) {
 		const uint32_t ci = ki[idx], cj = kj[idx];
 		float64x2_t val = vdupq_n_f64(kval[idx]);
-		float64x2_t blo = vsubq_f64(vmulq_f64(vld1q_f64(&v1[ci * 4]),     vld1q_f64(&v2[cj * 4])),
-		                             vmulq_f64(vld1q_f64(&v1[cj * 4]),     vld1q_f64(&v2[ci * 4])));
-		float64x2_t bhi = vsubq_f64(vmulq_f64(vld1q_f64(&v1[ci * 4 + 2]), vld1q_f64(&v2[cj * 4 + 2])),
-		                             vmulq_f64(vld1q_f64(&v1[cj * 4 + 2]), vld1q_f64(&v2[ci * 4 + 2])));
+		float64x2_t blo = vfmaq_f64(vnegq_f64(vmulq_f64(vld1q_f64(&v1[cj * 4]),     vld1q_f64(&v2[ci * 4]))),
+		                             vld1q_f64(&v1[ci * 4]),     vld1q_f64(&v2[cj * 4]));
+		float64x2_t bhi = vfmaq_f64(vnegq_f64(vmulq_f64(vld1q_f64(&v1[cj * 4 + 2]), vld1q_f64(&v2[ci * 4 + 2]))),
+		                             vld1q_f64(&v1[ci * 4 + 2]), vld1q_f64(&v2[cj * 4 + 2]));
 		sum_lo = vfmaq_f64(sum_lo, val, blo);
 		sum_hi = vfmaq_f64(sum_hi, val, bhi);
 	}
 	vst1q_f64(result, sum_lo);
 	vst1q_f64(result + 2, sum_hi);
-}
-
-FORCE_INLINE void vec4_bracket_scatter(
-	double* RESTRICT result,
-	const double* RESTRICT v1, const double* RESTRICT v2,
-	uint32_t i, uint32_t j,
-	const uint32_t* ij_k, const double* ij_c,
-	uint32_t start, uint32_t end
-) {
-	float64x2_t plo = vsubq_f64(vmulq_f64(vld1q_f64(&v1[i * 4]),     vld1q_f64(&v2[j * 4])),
-	                             vmulq_f64(vld1q_f64(&v1[j * 4]),     vld1q_f64(&v2[i * 4])));
-	float64x2_t phi = vsubq_f64(vmulq_f64(vld1q_f64(&v1[i * 4 + 2]), vld1q_f64(&v2[j * 4 + 2])),
-	                             vmulq_f64(vld1q_f64(&v1[j * 4 + 2]), vld1q_f64(&v2[i * 4 + 2])));
-	for (uint32_t idx = start; idx < end; ++idx) {
-		const uint32_t k = ij_k[idx];
-		float64x2_t c = vdupq_n_f64(ij_c[idx]);
-		vst1q_f64(&result[k * 4],     vfmaq_f64(vld1q_f64(&result[k * 4]),     c, plo));
-		vst1q_f64(&result[k * 4 + 2], vfmaq_f64(vld1q_f64(&result[k * 4 + 2]), c, phi));
-	}
 }
 
 FORCE_INLINE void vec4_bracket_grad(
@@ -815,21 +783,21 @@ FORCE_INLINE void vec4_bracket_grad(
 	for (uint32_t idx = start; idx < end; ++idx) {
 		float64x2_t c = vdupq_n_f64(ij_c[idx]);
 		const uint32_t k = ij_k[idx];
-		slo = vfmaq_f64(slo, c, vld1q_f64(&dm_w[k * 4]));
-		shi = vfmaq_f64(shi, c, vld1q_f64(&dm_w[k * 4 + 2]));
+		slo = vaddq_f64(slo, vmulq_f64(c, vld1q_f64(&dm_w[k * 4])));
+		shi = vaddq_f64(shi, vmulq_f64(c, vld1q_f64(&dm_w[k * 4 + 2])));
 	}
-	float64x2_t v1ilo = vld1q_f64(&v1[i * 4]),     v1ihi = vld1q_f64(&v1[i * 4 + 2]);
-	float64x2_t v1jlo = vld1q_f64(&v1[j * 4]),     v1jhi = vld1q_f64(&v1[j * 4 + 2]);
-	float64x2_t v2ilo = vld1q_f64(&v2[i * 4]),     v2ihi = vld1q_f64(&v2[i * 4 + 2]);
-	float64x2_t v2jlo = vld1q_f64(&v2[j * 4]),     v2jhi = vld1q_f64(&v2[j * 4 + 2]);
+	const float64x2_t v1ilo = vld1q_f64(&v1[i * 4]), v1ihi = vld1q_f64(&v1[i * 4 + 2]);
+	const float64x2_t v1jlo = vld1q_f64(&v1[j * 4]), v1jhi = vld1q_f64(&v1[j * 4 + 2]);
+	const float64x2_t v2ilo = vld1q_f64(&v2[i * 4]), v2ihi = vld1q_f64(&v2[i * 4 + 2]);
+	const float64x2_t v2jlo = vld1q_f64(&v2[j * 4]), v2jhi = vld1q_f64(&v2[j * 4 + 2]);
 	vst1q_f64(&dm_lf[i * 4],     vfmaq_f64(vld1q_f64(&dm_lf[i * 4]),     slo, v2jlo));
 	vst1q_f64(&dm_lf[i * 4 + 2], vfmaq_f64(vld1q_f64(&dm_lf[i * 4 + 2]), shi, v2jhi));
-	vst1q_f64(&dm_lf[j * 4],     vsubq_f64(vld1q_f64(&dm_lf[j * 4]),     vmulq_f64(slo, v2ilo)));
-	vst1q_f64(&dm_lf[j * 4 + 2], vsubq_f64(vld1q_f64(&dm_lf[j * 4 + 2]), vmulq_f64(shi, v2ihi)));
+	vst1q_f64(&dm_lf[j * 4],     vfmsq_f64(vld1q_f64(&dm_lf[j * 4]),     slo, v2ilo));
+	vst1q_f64(&dm_lf[j * 4 + 2], vfmsq_f64(vld1q_f64(&dm_lf[j * 4 + 2]), shi, v2ihi));
 	vst1q_f64(&dm_rf[j * 4],     vfmaq_f64(vld1q_f64(&dm_rf[j * 4]),     slo, v1ilo));
 	vst1q_f64(&dm_rf[j * 4 + 2], vfmaq_f64(vld1q_f64(&dm_rf[j * 4 + 2]), shi, v1ihi));
-	vst1q_f64(&dm_rf[i * 4],     vsubq_f64(vld1q_f64(&dm_rf[i * 4]),     vmulq_f64(slo, v1jlo)));
-	vst1q_f64(&dm_rf[i * 4 + 2], vsubq_f64(vld1q_f64(&dm_rf[i * 4 + 2]), vmulq_f64(shi, v1jhi)));
+	vst1q_f64(&dm_rf[i * 4],     vfmsq_f64(vld1q_f64(&dm_rf[i * 4]),     slo, v1jlo));
+	vst1q_f64(&dm_rf[i * 4 + 2], vfmsq_f64(vld1q_f64(&dm_rf[i * 4 + 2]), shi, v1jhi));
 }
 
 #endif
