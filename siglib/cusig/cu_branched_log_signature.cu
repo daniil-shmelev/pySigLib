@@ -160,9 +160,13 @@ void branched_sig_to_log_sig_ker(
 	uint32_t forest_trees_len,
 	uint32_t forest_coprod_data_len,
 	int max_nodes,
-	bool scalar_term
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint32_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const uint32_t tid = threadIdx.x;
 	const uint32_t num_trees = total_len - 1;
 	const uint64_t stride = scalar_term ? total_len : total_len - 1;
@@ -274,9 +278,13 @@ void branched_sig_to_log_sig_backprop_ker(
 	uint32_t forest_trees_len,
 	uint32_t forest_coprod_data_len,
 	int max_nodes,
-	bool scalar_term
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint32_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const uint32_t tid = threadIdx.x;
 	const uint32_t num_trees = total_len - 1;
 	const uint32_t levels = static_cast<uint32_t>(max_nodes + 1);
@@ -447,14 +455,18 @@ void branched_sig_to_log_sig_cuda_(
 			+ static_cast<uint64_t>(gc.total_length)) * sizeof(uint32_t);
 	configure_dynamic_smem(
 		branched_sig_to_log_sig_ker<T>, smem, "CUDA branched log sig");
-	dim3 grid(1, static_cast<unsigned int>(batch_size));
-	branched_sig_to_log_sig_ker<T><<<grid, block, smem>>>(
-		bsig, out, gc.total_length, gc.num_forests,
-		gc.d_forest_offsets32, gc.d_forest_trees32,
-		gc.d_forest_coprod_offsets32, gc.d_forest_coprod_data32,
-		gc.d_single_tree_forest32,
-		gc.forest_trees_len, gc.forest_coprod_data_len,
-		gc.max_nodes, scalar_term);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		branched_sig_to_log_sig_ker<T><<<batch_chunk.grid, block, smem>>>(
+			bsig, out, gc.total_length, gc.num_forests,
+			gc.d_forest_offsets32, gc.d_forest_trees32,
+			gc.d_forest_coprod_offsets32, gc.d_forest_coprod_data32,
+			gc.d_single_tree_forest32,
+			gc.forest_trees_len, gc.forest_coprod_data_len,
+			gc.max_nodes, scalar_term, batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 	cudaDeviceSynchronize();
 	check_cuda_error();
 }
@@ -486,14 +498,18 @@ void branched_sig_to_log_sig_backprop_cuda_(
 			+ static_cast<uint64_t>(gc.total_length)) * sizeof(uint32_t);
 	configure_dynamic_smem(
 		branched_sig_to_log_sig_backprop_ker<T>, smem, "CUDA branched log sig backprop");
-	dim3 grid(1, static_cast<unsigned int>(batch_size));
-	branched_sig_to_log_sig_backprop_ker<T><<<grid, block, smem>>>(
-		bsig, derivs, out, gc.total_length, gc.num_forests,
-		gc.d_forest_offsets32, gc.d_forest_trees32,
-		gc.d_forest_coprod_offsets32, gc.d_forest_coprod_data32,
-		gc.d_single_tree_forest32,
-		gc.forest_trees_len, gc.forest_coprod_data_len,
-		gc.max_nodes, scalar_term);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		branched_sig_to_log_sig_backprop_ker<T><<<batch_chunk.grid, block, smem>>>(
+			bsig, derivs, out, gc.total_length, gc.num_forests,
+			gc.d_forest_offsets32, gc.d_forest_trees32,
+			gc.d_forest_coprod_offsets32, gc.d_forest_coprod_data32,
+			gc.d_single_tree_forest32,
+			gc.forest_trees_len, gc.forest_coprod_data_len,
+			gc.max_nodes, scalar_term, batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 	cudaDeviceSynchronize();
 	check_cuda_error();
 }

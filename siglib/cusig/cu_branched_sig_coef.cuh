@@ -356,9 +356,13 @@ void branched_sig_coef_forward_kernel_(
 	uint32_t coprod_data_len,
 	const T* __restrict__ correction,
 	uint64_t correction_batch_stride,
-	uint64_t correction_segment_stride
+	uint64_t correction_segment_stride,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint32_t batch = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch = batch_offset + local_batch_idx;
 	const uint32_t tid = threadIdx.x;
 	const bool has_correction = num_corrections != 0;
 
@@ -463,9 +467,13 @@ void branched_sig_coef_backprop_kernel_(
 	uint32_t coprod_data_len,
 	const T* __restrict__ correction,
 	uint64_t correction_batch_stride,
-	uint64_t correction_segment_stride
+	uint64_t correction_segment_stride,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint32_t batch = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch = batch_offset + local_batch_idx;
 	const uint32_t tid = threadIdx.x;
 	const bool has_correction = num_corrections != 0;
 

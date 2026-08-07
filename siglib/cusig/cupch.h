@@ -60,6 +60,58 @@ inline void check_cuda_kernel_launch() {
 	check_cuda_error();
 }
 
+constexpr unsigned int CUDA_BATCH_GRID_LIMIT = 65535;
+constexpr uint64_t CUDA_GRID_X_LIMIT = 2147483647;
+constexpr uint64_t CUDA_BATCH_GRID_CAPACITY =
+	static_cast<uint64_t>(CUDA_BATCH_GRID_LIMIT) * CUDA_BATCH_GRID_LIMIT;
+
+inline unsigned int make_cuda_1d_grid(uint64_t work_size, unsigned int block_size) {
+	if (work_size == 0)
+		throw std::invalid_argument("CUDA work size must be positive");
+	return static_cast<unsigned int>(std::min<uint64_t>(
+		work_size / block_size + (work_size % block_size != 0),
+		CUDA_BATCH_GRID_LIMIT));
+}
+
+struct CudaBatchGridChunk {
+	dim3 grid;
+	uint64_t offset;
+	uint64_t size;
+};
+
+inline CudaBatchGridChunk make_cuda_batch_grid_chunk(
+	uint64_t grid_x,
+	uint64_t batch_size,
+	uint64_t batch_offset
+) {
+	if (grid_x == 0 || grid_x > CUDA_GRID_X_LIMIT)
+		throw std::invalid_argument("CUDA grid x dimension is out of range");
+	if (batch_size == 0)
+		throw std::invalid_argument("CUDA batch size must be positive");
+	if (batch_offset >= batch_size)
+		throw std::invalid_argument("CUDA batch offset is out of range");
+	const uint64_t chunk_size = std::min<uint64_t>(
+		batch_size - batch_offset, CUDA_BATCH_GRID_CAPACITY);
+	const uint64_t grid_z = chunk_size / CUDA_BATCH_GRID_LIMIT
+		+ (chunk_size % CUDA_BATCH_GRID_LIMIT != 0);
+	const uint64_t grid_y = chunk_size / grid_z + (chunk_size % grid_z != 0);
+	return {
+		dim3(
+			static_cast<unsigned int>(grid_x),
+			static_cast<unsigned int>(grid_y),
+			static_cast<unsigned int>(grid_z)),
+		batch_offset,
+		chunk_size
+	};
+}
+
+#ifdef __CUDACC__
+__device__ __forceinline__ uint64_t cuda_batch_index() {
+	return static_cast<uint64_t>(blockIdx.y)
+		+ static_cast<uint64_t>(gridDim.y) * blockIdx.z;
+}
+#endif
+
 // Wraps a CUDA runtime call; throws std::runtime_error if it returns non-success.
 #define CUDA_CHECK(call) do { \
 	cudaError_t _cuda_err = (call); \

@@ -83,9 +83,13 @@ __global__ void sig_to_log_sig_kernel(
 	const uint64_t* __restrict__ d_level_index,
 	uint64_t degree,
 	uint64_t sig_len,
-	uint64_t buff1_len
+	uint64_t buff1_len,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -122,42 +126,53 @@ template<typename T>
 __global__ void prepend_scalar_one_kernel(
 	const T* __restrict__ in_stripped,   // [batch, full_len-1]
 	T* __restrict__ out_full,            // [batch, full_len]
-	uint64_t full_len
+	uint64_t full_len,
+	uint64_t total
 ) {
-	const uint64_t b = blockIdx.y;
-	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= full_len) return;
-	T* dst = out_full + b * full_len;
-	if (i == 0) dst[0] = static_cast<T>(1);
-	else dst[i] = in_stripped[b * (full_len - 1) + (i - 1)];
+	for (uint64_t flat = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		flat < total; flat += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
+		const uint64_t b = flat / full_len;
+		const uint64_t i = flat - b * full_len;
+		if (i == 0) out_full[flat] = static_cast<T>(1);
+		else out_full[flat] = in_stripped[b * (full_len - 1) + (i - 1)];
+	}
 }
 
 template<typename T>
 __global__ void strip_scalar_kernel(
 	const T* __restrict__ in_full,       // [batch, full_len]
 	T* __restrict__ out_stripped,        // [batch, full_len-1]
-	uint64_t full_len
+	uint64_t full_len,
+	uint64_t total
 ) {
-	const uint64_t b = blockIdx.y;
-	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i + 1 >= full_len) return;
-	out_stripped[b * (full_len - 1) + i] = in_full[b * full_len + (i + 1)];
+	const uint64_t stripped_len = full_len - 1;
+	for (uint64_t flat = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		flat < total; flat += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
+		const uint64_t b = flat / stripped_len;
+		const uint64_t i = flat - b * stripped_len;
+		out_stripped[flat] = in_full[b * full_len + i + 1];
+	}
 }
 
 template<typename T>
 static void stage_prepend_(const T* in_stripped, T* out_full, uint64_t batch_size, uint64_t full_len) {
 	const unsigned int block = 256;
-	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
-	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
-	prepend_scalar_one_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len);
+	const uint64_t total = batch_size * full_len;
+	const unsigned int grid = static_cast<unsigned int>(std::min<uint64_t>(
+		(total + block - 1) / block, CUDA_BATCH_GRID_LIMIT));
+	prepend_scalar_one_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len, total);
+	check_cuda_error();
 }
 
 template<typename T>
 static void stage_strip_(const T* in_full, T* out_stripped, uint64_t batch_size, uint64_t full_len) {
+	if (full_len == 1) return;
 	const unsigned int block = 256;
-	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
-	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
-	strip_scalar_kernel<T><<<grid, block>>>(in_full, out_stripped, full_len);
+	const uint64_t total = batch_size * (full_len - 1);
+	const unsigned int grid = static_cast<unsigned int>(std::min<uint64_t>(
+		(total + block - 1) / block, CUDA_BATCH_GRID_LIMIT));
+	strip_scalar_kernel<T><<<grid, block>>>(in_full, out_stripped, full_len, total);
+	check_cuda_error();
 }
 
 template<typename T>
@@ -199,12 +214,18 @@ void sig_to_log_sig_cuda_core_(
 
 	configure_dynamic_smem(
 		sig_to_log_sig_kernel<T>, smem_size, "CUDA sig to log sig");
-	sig_to_log_sig_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-		sig, out,
-		static_cast<T*>(g_workspace.d_buff1),
-		static_cast<T*>(g_workspace.d_buff2),
-		d_level_index.get(), degree, sig_len, buff1_len
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		sig_to_log_sig_kernel<T><<<
+			batch_chunk.grid, threads_per_block, smem_size>>>(
+				sig, out, static_cast<T*>(g_workspace.d_buff1),
+				static_cast<T*>(g_workspace.d_buff2),
+				d_level_index.get(), degree, sig_len, buff1_len,
+				batch_chunk.offset, batch_chunk.size
+			);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
@@ -228,9 +249,13 @@ __global__ void sig_to_log_sig_m1_kernel(
 	uint64_t degree,
 	uint64_t sig_len,
 	uint64_t buff1_len,
-	uint64_t log_sig_len
+	uint64_t log_sig_len,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -286,9 +311,13 @@ __global__ void sig_to_log_sig_m2_kernel(
 	uint64_t degree,
 	uint64_t sig_len,
 	uint64_t buff1_len,
-	uint64_t log_sig_len
+	uint64_t log_sig_len,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -366,14 +395,20 @@ void sig_to_log_sig_cuda_m1_core_(
 
 	configure_dynamic_smem(
 		sig_to_log_sig_m1_kernel<T>, smem_size, "CUDA sig to log sig method 1");
-	sig_to_log_sig_m1_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
-		sig, out,
-		static_cast<T*>(g_workspace.d_temp),
-		static_cast<T*>(g_workspace.d_buff1),
-		static_cast<T*>(g_workspace.d_buff2),
-		cache.d_level_index,
-		cache.d_lyndon_idx, degree, sig_len, buff1_len, log_sig_len
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		sig_to_log_sig_m1_kernel<T><<<
+			batch_chunk.grid, cache.threads_per_block, smem_size>>>(
+				sig, out, static_cast<T*>(g_workspace.d_temp),
+				static_cast<T*>(g_workspace.d_buff1),
+				static_cast<T*>(g_workspace.d_buff2),
+				cache.d_level_index, cache.d_lyndon_idx,
+				degree, sig_len, buff1_len, log_sig_len,
+				batch_chunk.offset, batch_chunk.size
+			);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
@@ -406,16 +441,21 @@ void sig_to_log_sig_cuda_m2_core_(
 
 	configure_dynamic_smem(
 		sig_to_log_sig_m2_kernel<T>, smem_size, "CUDA sig to log sig method 2");
-	sig_to_log_sig_m2_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
-		sig, out,
-		static_cast<T*>(g_workspace.d_temp),
-		static_cast<T*>(g_workspace.d_buff1),
-		static_cast<T*>(g_workspace.d_buff2),
-		cache.d_level_index,
-		cache.d_lyndon_idx,
-		cache.d_sparse_vals, cache.d_sparse_cols, cache.d_sparse_row_ptr,
-		degree, sig_len, buff1_len, log_sig_len
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		sig_to_log_sig_m2_kernel<T><<<
+			batch_chunk.grid, cache.threads_per_block, smem_size>>>(
+				sig, out, static_cast<T*>(g_workspace.d_temp),
+				static_cast<T*>(g_workspace.d_buff1),
+				static_cast<T*>(g_workspace.d_buff2),
+				cache.d_level_index, cache.d_lyndon_idx,
+				cache.d_sparse_vals, cache.d_sparse_cols, cache.d_sparse_row_ptr,
+				degree, sig_len, buff1_len, log_sig_len,
+				batch_chunk.offset, batch_chunk.size
+			);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
@@ -483,9 +523,13 @@ __global__ void sig_to_log_sig_backprop_kernel(
 	uint64_t degree,
 	uint64_t sig_len,
 	uint64_t buff1_len,
-	uint64_t scratch_per_element
+	uint64_t scratch_per_element,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -571,11 +615,18 @@ void sig_to_log_sig_backprop_cuda_core_(
 	configure_dynamic_smem(
 		sig_to_log_sig_backprop_kernel<T>, smem_size,
 		"CUDA sig to log sig backprop");
-	sig_to_log_sig_backprop_kernel<T><<<static_cast<unsigned int>(batch_size), threads_per_block, smem_size>>>(
-		sig, out, static_cast<T*>(g_bp_workspace.d_derivs),
-		static_cast<T*>(g_bp_workspace.d_buf),
-		d_level_index.get(), dimension, degree, sig_len, buff1_len, scratch_per_element
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		sig_to_log_sig_backprop_kernel<T><<<
+			batch_chunk.grid, threads_per_block, smem_size>>>(
+				sig, out, static_cast<T*>(g_bp_workspace.d_derivs),
+				static_cast<T*>(g_bp_workspace.d_buf), d_level_index.get(),
+				dimension, degree, sig_len, buff1_len, scratch_per_element,
+				batch_chunk.offset, batch_chunk.size
+			);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
@@ -601,9 +652,13 @@ __global__ void sig_to_log_sig_backprop_m1_kernel(
 	uint64_t sig_len,
 	uint64_t buff1_len,
 	uint64_t log_sig_len,
-	uint64_t scratch_per_element
+	uint64_t scratch_per_element,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -676,12 +731,20 @@ void sig_to_log_sig_backprop_cuda_m1_core_(
 	configure_dynamic_smem(
 		sig_to_log_sig_backprop_m1_kernel<T>, smem_size,
 		"CUDA sig to log sig method 1 backprop");
-	sig_to_log_sig_backprop_m1_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
-		sig, out, log_sig_derivs, static_cast<T*>(g_bp_workspace.d_derivs),
-		static_cast<T*>(g_bp_workspace.d_buf),
-		cache.d_level_index, cache.d_lyndon_idx,
-		dimension, degree, sig_len, buff1_len, log_sig_len, scratch_per_element
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		sig_to_log_sig_backprop_m1_kernel<T><<<
+			batch_chunk.grid, cache.threads_per_block, smem_size>>>(
+				sig, out, log_sig_derivs,
+				static_cast<T*>(g_bp_workspace.d_derivs),
+				static_cast<T*>(g_bp_workspace.d_buf),
+				cache.d_level_index, cache.d_lyndon_idx,
+				dimension, degree, sig_len, buff1_len, log_sig_len,
+				scratch_per_element, batch_chunk.offset, batch_chunk.size
+			);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
@@ -711,9 +774,13 @@ __global__ void sig_to_log_sig_backprop_m2_kernel(
 	uint64_t sig_len,
 	uint64_t buff1_len,
 	uint64_t log_sig_len,
-	uint64_t scratch_per_element
+	uint64_t scratch_per_element,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t batch_idx = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const int tid = threadIdx.x;
 	const int nthreads = blockDim.x;
 
@@ -796,13 +863,22 @@ void sig_to_log_sig_backprop_cuda_m2_core_(
 	configure_dynamic_smem(
 		sig_to_log_sig_backprop_m2_kernel<T>, smem_size,
 		"CUDA sig to log sig method 2 backprop");
-	sig_to_log_sig_backprop_m2_kernel<T><<<static_cast<unsigned int>(batch_size), cache.threads_per_block, smem_size>>>(
-		sig, out, log_sig_derivs, static_cast<T*>(g_bp_workspace.d_derivs),
-		static_cast<T*>(g_bp_workspace.d_buf),
-		cache.d_level_index, cache.d_lyndon_idx,
-		cache.d_sparse_vals_t, cache.d_sparse_cols_t, cache.d_sparse_row_ptr_t,
-		dimension, degree, sig_len, buff1_len, log_sig_len, scratch_per_element
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		sig_to_log_sig_backprop_m2_kernel<T><<<
+			batch_chunk.grid, cache.threads_per_block, smem_size>>>(
+				sig, out, log_sig_derivs,
+				static_cast<T*>(g_bp_workspace.d_derivs),
+				static_cast<T*>(g_bp_workspace.d_buf),
+				cache.d_level_index, cache.d_lyndon_idx,
+				cache.d_sparse_vals_t, cache.d_sparse_cols_t,
+				cache.d_sparse_row_ptr_t,
+				dimension, degree, sig_len, buff1_len, log_sig_len,
+				scratch_per_element, batch_chunk.offset, batch_chunk.size
+			);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }

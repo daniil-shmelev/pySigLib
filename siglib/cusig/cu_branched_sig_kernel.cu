@@ -53,8 +53,9 @@ static SigKernelParams make_params(uint64_t length1_, uint64_t length2_,
 
 template<typename T>
 __global__ void bsk_fill_kernel(T* ptr, T val, uint64_t n) {
-	uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if (idx < n) ptr[idx] = val;
+	for (uint64_t idx = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		idx < n; idx += static_cast<uint64_t>(blockDim.x) * gridDim.x)
+		ptr[idx] = val;
 }
 template<typename T>
 __device__ inline T bsk_exp(T x);
@@ -158,9 +159,13 @@ template<typename T>
 __global__ void bsk_depth_one_scalar_kernel(
 	const T* gram,
 	T* out,
-	const SigKernelParams p
+	const SigKernelParams p,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t block_id = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t block_id = batch_offset + local_batch_idx;
 	const T* gram_ = gram + block_id * p.gram_length;
 	__shared__ T shared[256];
 	T total = static_cast<T>(0.);
@@ -178,9 +183,13 @@ __global__ void bsk_scalar_forward_kernel(
 	uint64_t depth,
 	T quarter_scale,
 	const SigKernelParams p,
-	T* work
+	T* work,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t block_id = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t block_id = batch_offset + local_batch_idx;
 	const T* gram_ = gram + block_id * p.gram_length;
 	T* work_ = work + block_id * 3 * p.grid_length;
 	T* buf_a = work_;
@@ -211,9 +220,13 @@ __global__ void bsk_grid_forward_kernel(
 	uint64_t depth,
 	T quarter_scale,
 	const SigKernelParams p,
-	T* work
+	T* work,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t block_id = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t block_id = batch_offset + local_batch_idx;
 	const T* gram_ = gram + block_id * p.gram_length;
 	T* out_ = out + block_id * p.grid_length;
 	T* work_ = work + block_id * 3 * p.grid_length;
@@ -257,7 +270,8 @@ void branched_sig_kernel_cuda_(
 	const uint64_t result_length = return_grid ? p.grid_length : 1;
 
 	if (!gram || depth_ == 0 || p.gram_length == 0) {
-		bsk_fill_kernel<<<static_cast<unsigned int>((batch_size_ * result_length + 255) / 256), 256U>>>(
+		bsk_fill_kernel<<<
+			make_cuda_1d_grid(batch_size_ * result_length, 256), 256U>>>(
 			out, static_cast<T>(1.), batch_size_ * result_length);
 		check_cuda_kernel_launch();
 		return;
@@ -265,26 +279,43 @@ void branched_sig_kernel_cuda_(
 
 	const T cell_scale = static_cast<T>(1.) / (1ULL << (dyadic_order_1_ + dyadic_order_2_));
 	const T quarter_scale = static_cast<T>(0.25) * cell_scale;
-	const unsigned int blocks = static_cast<unsigned int>(batch_size_);
 	constexpr unsigned int threads = 256U;
 
 	if (!return_grid && depth_ == 1) {
-		bsk_depth_one_scalar_kernel<T><<<blocks, threads>>>(gram, out, p);
+		for (uint64_t batch_offset = 0; batch_offset < batch_size_;) {
+			const auto batch_chunk = make_cuda_batch_grid_chunk(
+				1, batch_size_, batch_offset);
+			bsk_depth_one_scalar_kernel<T><<<batch_chunk.grid, threads>>>(
+				gram, out, p, batch_chunk.offset, batch_chunk.size);
+			batch_offset += batch_chunk.size;
+		}
 		check_cuda_kernel_launch();
 		return;
 	}
 
 	if (!return_grid) {
 		CudaBuf<T> work(3 * p.grid_length * batch_size_ * sizeof(T));
-		bsk_scalar_forward_kernel<T><<<blocks, threads>>>(
-			gram, out, depth_, quarter_scale, p, work.get());
+		for (uint64_t batch_offset = 0; batch_offset < batch_size_;) {
+			const auto batch_chunk = make_cuda_batch_grid_chunk(
+				1, batch_size_, batch_offset);
+			bsk_scalar_forward_kernel<T><<<batch_chunk.grid, threads>>>(
+				gram, out, depth_, quarter_scale, p, work.get(),
+				batch_chunk.offset, batch_chunk.size);
+			batch_offset += batch_chunk.size;
+		}
 		check_cuda_kernel_launch();
 		return;
 	}
 
 	CudaBuf<T> work(3 * p.grid_length * batch_size_ * sizeof(T));
-	bsk_grid_forward_kernel<T><<<blocks, threads>>>(
-		gram, out, depth_, quarter_scale, p, work.get());
+	for (uint64_t batch_offset = 0; batch_offset < batch_size_;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size_, batch_offset);
+		bsk_grid_forward_kernel<T><<<batch_chunk.grid, threads>>>(
+			gram, out, depth_, quarter_scale, p, work.get(),
+			batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }
@@ -313,9 +344,13 @@ __global__ void bsk_depth_one_backprop_kernel(
 	const T* gram,
 	T* out,
 	const T* derivs,
-	const SigKernelParams p
+	const SigKernelParams p,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t block_id = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t block_id = batch_offset + local_batch_idx;
 	const T* gram_ = gram + block_id * p.gram_length;
 	T* out_ = out + block_id * p.gram_length;
 	__shared__ T shared[256];
@@ -443,9 +478,13 @@ __global__ void bsk_backprop_kernel(
 	T quarter_scale,
 	const SigKernelParams p,
 	T* work,
-	uint64_t workspace_levels
+	uint64_t workspace_levels,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint64_t block_id = blockIdx.x;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t block_id = batch_offset + local_batch_idx;
 	const uint64_t derivs_stride = return_grid ? p.grid_length : 1;
 	const uint64_t external_stack_stride = (depth + 1) * p.grid_length;
 	const T* gram_ = gram + block_id * p.gram_length;
@@ -521,11 +560,16 @@ void branched_sig_kernel_backprop_cuda_(
 
 	const T cell_scale = static_cast<T>(1.) / (1ULL << (dyadic_order_1_ + dyadic_order_2_));
 	const T quarter_scale = static_cast<T>(0.25) * cell_scale;
-	const unsigned int blocks = static_cast<unsigned int>(batch_size_);
 	constexpr unsigned int threads = 256U;
 
 	if (!return_grid && depth_ == 1) {
-		bsk_depth_one_backprop_kernel<T><<<blocks, threads>>>(gram, out, derivs, p);
+		for (uint64_t batch_offset = 0; batch_offset < batch_size_;) {
+			const auto batch_chunk = make_cuda_batch_grid_chunk(
+				1, batch_size_, batch_offset);
+			bsk_depth_one_backprop_kernel<T><<<batch_chunk.grid, threads>>>(
+				gram, out, derivs, p, batch_chunk.offset, batch_chunk.size);
+			batch_offset += batch_chunk.size;
+		}
 		check_cuda_kernel_launch();
 		return;
 	}
@@ -534,8 +578,15 @@ void branched_sig_kernel_backprop_cuda_(
 	const uint64_t workspace_levels = k_stack ? 3 : build_depth + 5;
 	CudaBuf<T> work(workspace_levels * p.grid_length * batch_size_ * sizeof(T));
 
-	bsk_backprop_kernel<T><<<blocks, threads>>>(
-		gram, out, derivs, k_stack, depth_, return_grid, quarter_scale, p, work.get(), workspace_levels);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size_;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size_, batch_offset);
+		bsk_backprop_kernel<T><<<batch_chunk.grid, threads>>>(
+			gram, out, derivs, k_stack, depth_, return_grid, quarter_scale,
+			p, work.get(), workspace_levels,
+			batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 
 	check_cuda_kernel_launch();
 }

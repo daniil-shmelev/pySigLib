@@ -715,9 +715,13 @@ void branched_sig_ker(
 	uint64_t correction_len,
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride,
-	bool planar_fast_path
+	bool planar_fast_path,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint32_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const uint32_t tid = threadIdx.x;
 	const uint32_t num_trees = total_len - 1;
 
@@ -1009,9 +1013,13 @@ void branched_sig_backprop_ker(
 	const T* __restrict__ correction,
 	uint64_t correction_len,
 	uint64_t correction_batch_stride,
-	uint64_t correction_segment_stride
+	uint64_t correction_segment_stride,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint32_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const uint32_t tid = threadIdx.x;
 	const uint32_t num_trees = total_len - 1;
 
@@ -1179,9 +1187,13 @@ void branched_sig_combine_ker(
 	const uint32_t* __restrict__ g_coprod_offsets,
 	const uint32_t* __restrict__ g_order_index,
 	int max_nodes,
-	uint32_t coprod_data_len
+	uint32_t coprod_data_len,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint32_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const uint32_t tid = threadIdx.x;
 	const uint32_t num_trees = total_len - 1;
 
@@ -1245,9 +1257,13 @@ void branched_sig_combine_backprop_ker(
 	const uint32_t* __restrict__ g_coprod_offsets,
 	const uint32_t* __restrict__ g_order_index,
 	int max_nodes,
-	uint32_t coprod_data_len
+	uint32_t coprod_data_len,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
 ) {
-	const uint32_t batch_idx = blockIdx.y;
+	const uint64_t local_batch_idx = cuda_batch_index();
+	if (local_batch_idx >= batch_chunk_size) return;
+	const uint64_t batch_idx = batch_offset + local_batch_idx;
 	const uint32_t tid = threadIdx.x;
 	const uint32_t num_trees = total_len - 1;
 
@@ -1322,64 +1338,79 @@ template<typename T>
 __global__ void bsig_prepend_one_kernel(
 	const T* __restrict__ in_stripped,
 	T* __restrict__ out_full,
-	uint64_t full_len
+	uint64_t full_len,
+	uint64_t total
 ) {
-	const uint64_t b = blockIdx.y;
-	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= full_len) return;
-	T* dst = out_full + b * full_len;
-	if (i == 0) dst[0] = static_cast<T>(1);
-	else dst[i] = in_stripped[b * (full_len - 1) + (i - 1)];
+	for (uint64_t flat = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		flat < total; flat += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
+		const uint64_t b = flat / full_len;
+		const uint64_t i = flat - b * full_len;
+		if (i == 0) out_full[flat] = static_cast<T>(1);
+		else out_full[flat] = in_stripped[b * (full_len - 1) + (i - 1)];
+	}
 }
 
 template<typename T>
 __global__ void bsig_prepend_zero_kernel(
 	const T* __restrict__ in_stripped,
 	T* __restrict__ out_full,
-	uint64_t full_len
+	uint64_t full_len,
+	uint64_t total
 ) {
-	const uint64_t b = blockIdx.y;
-	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= full_len) return;
-	T* dst = out_full + b * full_len;
-	if (i == 0) dst[0] = static_cast<T>(0);
-	else dst[i] = in_stripped[b * (full_len - 1) + (i - 1)];
+	for (uint64_t flat = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		flat < total; flat += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
+		const uint64_t b = flat / full_len;
+		const uint64_t i = flat - b * full_len;
+		if (i == 0) out_full[flat] = static_cast<T>(0);
+		else out_full[flat] = in_stripped[b * (full_len - 1) + (i - 1)];
+	}
 }
 
 template<typename T>
 __global__ void bsig_strip_kernel(
 	const T* __restrict__ in_full,
 	T* __restrict__ out_stripped,
-	uint64_t full_len
+	uint64_t full_len,
+	uint64_t total
 ) {
-	const uint64_t b = blockIdx.y;
-	const uint64_t i = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-	if (i + 1 >= full_len) return;
-	out_stripped[b * (full_len - 1) + i] = in_full[b * full_len + (i + 1)];
+	const uint64_t stripped_len = full_len - 1;
+	for (uint64_t flat = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		flat < total; flat += static_cast<uint64_t>(blockDim.x) * gridDim.x) {
+		const uint64_t b = flat / stripped_len;
+		const uint64_t i = flat - b * stripped_len;
+		out_stripped[flat] = in_full[b * full_len + i + 1];
+	}
 }
 
 template<typename T>
 static void bsig_stage_prepend_one_(const T* in_stripped, T* out_full, uint64_t batch_size, uint64_t full_len) {
 	const unsigned int block = 256;
-	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
-	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
-	bsig_prepend_one_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len);
+	const uint64_t total = batch_size * full_len;
+	const unsigned int grid = static_cast<unsigned int>(std::min<uint64_t>(
+		(total + block - 1) / block, CUDA_BATCH_GRID_LIMIT));
+	bsig_prepend_one_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len, total);
+	check_cuda_error();
 }
 
 template<typename T>
 static void bsig_stage_prepend_zero_(const T* in_stripped, T* out_full, uint64_t batch_size, uint64_t full_len) {
 	const unsigned int block = 256;
-	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
-	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
-	bsig_prepend_zero_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len);
+	const uint64_t total = batch_size * full_len;
+	const unsigned int grid = static_cast<unsigned int>(std::min<uint64_t>(
+		(total + block - 1) / block, CUDA_BATCH_GRID_LIMIT));
+	bsig_prepend_zero_kernel<T><<<grid, block>>>(in_stripped, out_full, full_len, total);
+	check_cuda_error();
 }
 
 template<typename T>
 static void bsig_stage_strip_(const T* in_full, T* out_stripped, uint64_t batch_size, uint64_t full_len) {
+	if (full_len == 1) return;
 	const unsigned int block = 256;
-	const unsigned int grid_x = static_cast<unsigned int>((full_len + block - 1) / block);
-	dim3 grid(grid_x, static_cast<unsigned int>(batch_size));
-	bsig_strip_kernel<T><<<grid, block>>>(in_full, out_stripped, full_len);
+	const uint64_t total = batch_size * (full_len - 1);
+	const unsigned int grid = static_cast<unsigned int>(std::min<uint64_t>(
+		(total + block - 1) / block, CUDA_BATCH_GRID_LIMIT));
+	bsig_strip_kernel<T><<<grid, block>>>(in_full, out_stripped, full_len, total);
+	check_cuda_error();
 }
 
 // =========================================================================
@@ -1463,14 +1494,18 @@ void branched_sig_combine_cuda_core_(
 	size_t smem = gc.coprod_data_len * sizeof(uint32_t)
 		+ (gc.num_trees + 1) * sizeof(uint32_t)
 		+ (gc.max_nodes + 2) * sizeof(uint32_t);
-	dim3 grid(1, static_cast<unsigned int>(batch_size));
-
 	configure_dynamic_smem(
 		branched_sig_combine_ker<T>, smem, "CUDA branched sig combine");
-	branched_sig_combine_ker<T><<<grid, block, smem>>>(
-		bsig1, bsig2, out, gc.total_length,
-		gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
-		gc.max_nodes, gc.coprod_data_len);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		branched_sig_combine_ker<T><<<batch_chunk.grid, block, smem>>>(
+			bsig1, bsig2, out, gc.total_length,
+			gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
+			gc.max_nodes, gc.coprod_data_len,
+			batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 	cudaDeviceSynchronize();
 	check_cuda_error();
 }
@@ -1489,15 +1524,19 @@ void branched_sig_combine_backprop_cuda_core_(
 	size_t smem = gc.coprod_data_len * sizeof(uint32_t)
 		+ (gc.num_trees + 1) * sizeof(uint32_t)
 		+ (gc.max_nodes + 2) * sizeof(uint32_t);
-	dim3 grid(1, static_cast<unsigned int>(batch_size));
-
 	configure_dynamic_smem(
 		branched_sig_combine_backprop_ker<T>, smem,
 		"CUDA branched sig combine backprop");
-	branched_sig_combine_backprop_ker<T><<<grid, block, smem>>>(
-		bsig1, bsig2, derivs, out1, out2, gc.total_length,
-		gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
-		gc.max_nodes, gc.coprod_data_len);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		branched_sig_combine_backprop_ker<T><<<batch_chunk.grid, block, smem>>>(
+			bsig1, bsig2, derivs, out1, out2, gc.total_length,
+			gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
+			gc.max_nodes, gc.coprod_data_len,
+			batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 	cudaDeviceSynchronize();
 	check_cuda_error();
 }
@@ -1558,8 +1597,6 @@ void branched_sig_cuda_core_(
 		+ (gc.num_trees + 1) * sizeof(uint32_t)
 		+ (gc.max_nodes + 2) * sizeof(uint32_t);
 
-	dim3 grid(1, static_cast<unsigned int>(batch_size));
-
 	// Select float or double inv_factorial
 	const T* d_inv_fact;
 	if constexpr (std::is_same_v<T, float>)
@@ -1569,16 +1606,22 @@ void branched_sig_cuda_core_(
 
 	configure_dynamic_smem(
 		branched_sig_ker<T>, smem, "CUDA branched sig");
-	branched_sig_ker<T><<<grid, block, smem>>>(
-		path, out, static_cast<int>(dimension), static_cast<int>(data_dimension), steps,
-		gc.total_length, path_stride,
-		gc.d_labels_data, gc.d_labels_offsets32,
-		d_inv_fact,
-		gc.d_coprod_data32, gc.d_coprod_offsets32,
-		gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
-		gc.coprod_data_len, correction, correction_len,
-		correction_batch_stride, correction_segment_stride, use_shared_state
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		branched_sig_ker<T><<<batch_chunk.grid, block, smem>>>(
+			path, out, static_cast<int>(dimension), static_cast<int>(data_dimension), steps,
+			gc.total_length, path_stride,
+			gc.d_labels_data, gc.d_labels_offsets32,
+			d_inv_fact,
+			gc.d_coprod_data32, gc.d_coprod_offsets32,
+			gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
+			gc.coprod_data_len, correction, correction_len,
+			correction_batch_stride, correction_segment_stride, use_shared_state,
+			batch_chunk.offset, batch_chunk.size
+		);
+		batch_offset += batch_chunk.size;
+	}
 	cudaDeviceSynchronize();
 	check_cuda_error();
 }
@@ -1659,8 +1702,6 @@ void launch_branched_sig_coef_forward_(
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride
 ) {
-	if (batch_size > UINT32_MAX)
-		throw std::invalid_argument("CUDA branched sig coef batch size exceeds grid range");
 	if (length > static_cast<uint64_t>(UINT32_MAX) + 1)
 		throw std::invalid_argument("CUDA branched sig coef path length exceeds kernel range");
 
@@ -1689,15 +1730,21 @@ void launch_branched_sig_coef_forward_(
 
 	configure_dynamic_smem(
 		branched_sig_coef_forward_kernel_<T>, smem, "CUDA branched sig coef");
-	branched_sig_coef_forward_kernel_<T><<<static_cast<unsigned int>(batch_size), block, smem>>>(
-		path, state, out, static_cast<uint32_t>(dimension),
-		length == 0 ? 0 : static_cast<uint32_t>(length - 1), length * dimension,
-		cache.cache_size, cache.d_target_indices, cache.num_targets,
-		cache.d_labels_data, cache.d_labels_offsets, d_inv_factorial,
-		cache.d_coprod_data, cache.d_coprod_offsets, cache.d_order_index,
-		cache.d_leaf_indices, cache.d_correction_offsets, cache.d_correction_locals,
-		num_corrections, cache.max_nodes, cache.coprod_data_len, correction,
-		correction_batch_stride, correction_segment_stride);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		branched_sig_coef_forward_kernel_<T><<<batch_chunk.grid, block, smem>>>(
+			path, state, out, static_cast<uint32_t>(dimension),
+			length == 0 ? 0 : static_cast<uint32_t>(length - 1), length * dimension,
+			cache.cache_size, cache.d_target_indices, cache.num_targets,
+			cache.d_labels_data, cache.d_labels_offsets, d_inv_factorial,
+			cache.d_coprod_data, cache.d_coprod_offsets, cache.d_order_index,
+			cache.d_leaf_indices, cache.d_correction_offsets, cache.d_correction_locals,
+			num_corrections, cache.max_nodes, cache.coprod_data_len, correction,
+			correction_batch_stride, correction_segment_stride,
+			batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 }
 
 template<typename T>
@@ -1852,15 +1899,20 @@ void branched_sig_coef_backprop_cuda_core_(
 	configure_dynamic_smem(
 		branched_sig_coef_backprop_kernel_<T>, smem,
 		"CUDA branched sig coef backprop");
-	branched_sig_coef_backprop_kernel_<T><<<static_cast<unsigned int>(batch_size), block, smem>>>(
-		path, out, state.get(), coefs, derivs, static_cast<uint32_t>(dimension),
-		static_cast<uint32_t>(length - 1), length * dimension, cache.cache_size,
-		cache.d_target_indices, cache.num_targets, cache.d_labels_data,
-		cache.d_labels_offsets, d_inv_factorial, cache.d_coprod_data,
-		cache.d_coprod_offsets, cache.d_order_index, cache.d_leaf_indices,
-		cache.d_correction_offsets, cache.d_correction_locals, num_corrections,
-		cache.max_nodes, cache.coprod_data_len, correction, correction_batch_stride,
-		correction_segment_stride);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		branched_sig_coef_backprop_kernel_<T><<<batch_chunk.grid, block, smem>>>(
+			path, out, state.get(), coefs, derivs, static_cast<uint32_t>(dimension),
+			static_cast<uint32_t>(length - 1), length * dimension, cache.cache_size,
+			cache.d_target_indices, cache.num_targets, cache.d_labels_data,
+			cache.d_labels_offsets, d_inv_factorial, cache.d_coprod_data,
+			cache.d_coprod_offsets, cache.d_order_index, cache.d_leaf_indices,
+			cache.d_correction_offsets, cache.d_correction_locals, num_corrections,
+			cache.max_nodes, cache.coprod_data_len, correction, correction_batch_stride,
+			correction_segment_stride, batch_chunk.offset, batch_chunk.size);
+		batch_offset += batch_chunk.size;
+	}
 	cudaDeviceSynchronize();
 	check_cuda_error();
 }
@@ -1984,8 +2036,6 @@ void branched_sig_backprop_cuda_core_(
 		+ (gc.num_trees + 1) * sizeof(uint32_t)
 		+ (gc.max_nodes + 2) * sizeof(uint32_t);
 
-	dim3 grid(1, static_cast<unsigned int>(batch_size));
-
 	const T* d_inv_fact;
 	if constexpr (std::is_same_v<T, float>)
 		d_inv_fact = reinterpret_cast<const T*>(gc.d_inv_factorial_f32);
@@ -1994,17 +2044,23 @@ void branched_sig_backprop_cuda_core_(
 
 	configure_dynamic_smem(
 		branched_sig_backprop_ker<T>, smem, "CUDA branched sig backprop");
-	branched_sig_backprop_ker<T><<<grid, block, smem>>>(
-		path, out, bsig, bsig_derivs,
-		static_cast<int>(dimension), static_cast<int>(data_dimension), steps,
-		gc.total_length, path_stride,
-		gc.d_labels_data, gc.d_labels_offsets32,
-		d_inv_fact,
-		gc.d_coprod_data32, gc.d_coprod_offsets32,
-		gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
-		gc.coprod_data_len, correction, correction_len,
-		correction_batch_stride, correction_segment_stride
-	);
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset);
+		branched_sig_backprop_ker<T><<<batch_chunk.grid, block, smem>>>(
+			path, out, bsig, bsig_derivs,
+			static_cast<int>(dimension), static_cast<int>(data_dimension), steps,
+			gc.total_length, path_stride,
+			gc.d_labels_data, gc.d_labels_offsets32,
+			d_inv_fact,
+			gc.d_coprod_data32, gc.d_coprod_offsets32,
+			gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
+			gc.coprod_data_len, correction, correction_len,
+			correction_batch_stride, correction_segment_stride,
+			batch_chunk.offset, batch_chunk.size
+		);
+		batch_offset += batch_chunk.size;
+	}
 	cudaDeviceSynchronize();
 	check_cuda_error();
 }
