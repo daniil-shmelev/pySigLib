@@ -14,6 +14,7 @@
  * ========================================================================= */
 
 #include <benchmark/benchmark.h>
+#include "cp_bch.h"
 #include "cpsig.h"
 
 #include <cstdint>
@@ -61,6 +62,56 @@ static std::vector<uint64_t> branched_coef_tree_data() {
     }
     return tree_data;
 }
+
+static void clear_caches_outside_timing(benchmark::State& state) {
+    state.PauseTiming();
+    check(::clear_cache(false), "clear_cache");
+    state.ResumeTiming();
+}
+
+// =========================================================================
+// Cache construction
+// =========================================================================
+
+static void BM_prepare_log_sig_lyndon_words(benchmark::State& state) {
+    for (auto _ : state) {
+        clear_caches_outside_timing(state);
+        check(::prepare_log_sig(3, 4, 1, false), "prepare_log_sig");
+    }
+}
+BENCHMARK(BM_prepare_log_sig_lyndon_words)->Unit(benchmark::kMicrosecond);
+
+static void BM_prepare_log_sig_lyndon_basis(benchmark::State& state) {
+    for (auto _ : state) {
+        clear_caches_outside_timing(state);
+        check(::prepare_log_sig(3, 4, 2, false), "prepare_log_sig");
+    }
+}
+BENCHMARK(BM_prepare_log_sig_lyndon_basis)->Unit(benchmark::kMicrosecond);
+
+static void BM_prepare_log_sig_bch(benchmark::State& state) {
+    for (auto _ : state) {
+        clear_caches_outside_timing(state);
+        set_bch_cache(3, 4);
+    }
+}
+BENCHMARK(BM_prepare_log_sig_bch)->Unit(benchmark::kMicrosecond);
+
+static void BM_prepare_branched_sig_nonplanar(benchmark::State& state) {
+    for (auto _ : state) {
+        clear_caches_outside_timing(state);
+        check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    }
+}
+BENCHMARK(BM_prepare_branched_sig_nonplanar)->Unit(benchmark::kMicrosecond);
+
+static void BM_prepare_branched_sig_planar(benchmark::State& state) {
+    for (auto _ : state) {
+        clear_caches_outside_timing(state);
+        check(::prepare_branched_sig(3, 4, false, true), "prepare_branched_sig");
+    }
+}
+BENCHMARK(BM_prepare_branched_sig_planar)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Path transforms
