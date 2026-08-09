@@ -88,6 +88,7 @@ static void BM_prepare_log_sig_lyndon_basis(benchmark::State& state) {
 }
 BENCHMARK(BM_prepare_log_sig_lyndon_basis)->Unit(benchmark::kMicrosecond);
 
+#ifndef _WIN32
 static void BM_prepare_log_sig_bch(benchmark::State& state) {
     for (auto _ : state) {
         clear_caches_outside_timing(state);
@@ -95,6 +96,7 @@ static void BM_prepare_log_sig_bch(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_prepare_log_sig_bch)->Unit(benchmark::kMicrosecond);
+#endif
 
 static void BM_prepare_branched_sig_nonplanar(benchmark::State& state) {
     for (auto _ : state) {
@@ -542,6 +544,31 @@ static void BM_sig_kernel(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_sig_kernel)->Unit(benchmark::kMicrosecond);
+
+static void BM_polysig_kernel(benchmark::State& state) {
+    auto gram = random_data(767 * 767, 1);
+    for (auto& x : gram) x *= 0.01;
+    std::vector<double> out(1);
+    for (auto _ : state) {
+        ::polysig_kernel_d(gram.data(), out.data(), 1, 3, 768, 768, 7);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_polysig_kernel)->Unit(benchmark::kMillisecond);
+
+static void BM_polysig_kernel_float32(benchmark::State& state) {
+    auto gram_d = random_data(767 * 767, 1);
+    std::vector<float> gram(gram_d.size());
+    for (size_t i = 0; i < gram.size(); ++i)
+        gram[i] = static_cast<float>(gram_d[i]);
+    for (auto& x : gram) x *= 0.01f;
+    std::vector<float> out(1);
+    for (auto _ : state) {
+        ::polysig_kernel_f(gram.data(), out.data(), 1, 3, 768, 768, 7);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_polysig_kernel_float32)->Unit(benchmark::kMillisecond);
 
 static void BM_sig_kernel_backprop(benchmark::State& state) {
     auto gram = random_data(32 * 63 * 63, 1);

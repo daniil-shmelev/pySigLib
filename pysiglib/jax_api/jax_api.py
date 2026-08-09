@@ -861,8 +861,10 @@ _sig_kernel_pde.defvjp(_sig_kernel_pde_fwd, _sig_kernel_pde_bwd)
 def sig_kernel(
     path1,
     path2,
-    dyadic_order,
+    dyadic_order=None,
     *,
+    method="finite_difference",
+    order=None,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -876,6 +878,10 @@ def sig_kernel(
     This composes the static kernel evaluation (pure JAX) with the
     PDE solver. Fully differentiable via JAX autodiff.
     """
+    if method != "finite_difference" or order is not None:
+        raise ValueError("pysiglib.jax_api supports only method='finite_difference'")
+    if dyadic_order is None:
+        raise ValueError("dyadic_order is required for method='finite_difference'")
     ensure_registered()
 
     path1 = jnp.asarray(path1)
@@ -938,8 +944,10 @@ sig_kernel.__doc__ = sig_kernel_forward.__doc__
 def sig_kernel_gram(
     path1,
     path2,
-    dyadic_order,
+    dyadic_order=None,
     *,
+    method="finite_difference",
+    order=None,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -950,6 +958,10 @@ def sig_kernel_gram(
     normalize: bool = False,
 ):
     """Compute Gram matrix of signature kernels using JAX."""
+    if method != "finite_difference" or order is not None:
+        raise ValueError("pysiglib.jax_api supports only method='finite_difference'")
+    if dyadic_order is None:
+        raise ValueError("dyadic_order is required for method='finite_difference'")
     ensure_registered()
 
     path1 = jnp.asarray(path1)

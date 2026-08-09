@@ -476,6 +476,28 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int sig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
+	/** @defgroup polynomial_sig_kernel_functions Polynomial signature kernel functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes monomial polysigkernel approximations from increment gram matrices.
+	*
+	* @param gram Pointer to batch gram matrix data (row-major), size = `batch_size * (length1 - 1) * (length2 - 1)`.
+	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size`.
+	* @param batch_size Batch size of the path pairs.
+	* @param dimension Dimension of the original paths.
+	* @param length1 Length of the first paths.
+	* @param length2 Length of the second paths.
+	* @param order Highest retained polynomial degree, between 2 and 64.
+	* @param n_jobs Number of threads used across independent batch pairs.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CPSIG_API int polysig_kernel_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, int n_jobs = 1) noexcept;
+	/** @brief Double-precision variant of polysig_kernel_f. */
+	[[nodiscard]] CPSIG_API int polysig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, int n_jobs = 1) noexcept;
+	/** @} */
+
 	/** @defgroup branched_sig_kernel_functions Branched signature kernel functions
 	* @{
 	*/

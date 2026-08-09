@@ -27,5 +27,8 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:tbb>
             $<TARGET_FILE_DIR:bench_cpsig>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cpsig>
+            $<TARGET_FILE_DIR:bench_cpsig>
     )
 endif()

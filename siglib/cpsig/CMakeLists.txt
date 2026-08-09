@@ -8,6 +8,7 @@ add_library(cpsig SHARED
     cp_branched_sig_kernel.cpp
     cp_log_signatures.cpp
     cp_path_transforms.cpp
+    cp_polynomial_sig_kernel.cpp
     cp_sig_coef.cpp
     cp_sig_kernel.cpp
     cp_signature.cpp

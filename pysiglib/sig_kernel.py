@@ -35,10 +35,37 @@ def _ensure_3d(t):
 
 _NORMALIZE_WARNING = (
     "encountered non-positive K(x,x)*K(y,y). "
-    "This indicates the PDE solver has not converged. Increase dyadic_order, "
+    "This indicates the PDE solver has not converged. Increase the solver order, "
     "scale down your paths, or use a bounded static kernel (e.g., RBFKernel). "
     "Affected entries will be set to NaN."
 )
+
+_SIG_KERNEL_METHODS = ("finite_difference", "polynomial")
+
+
+def _parse_sig_kernel_method(method, dyadic_order, order, return_grid):
+    check_type(method, "method", str)
+    if method not in _SIG_KERNEL_METHODS:
+        raise ValueError("method must be one of " + ", ".join(_SIG_KERNEL_METHODS))
+
+    if method == "finite_difference":
+        if dyadic_order is None:
+            raise ValueError("dyadic_order is required when method='finite_difference'")
+        if order is not None:
+            raise ValueError("order is not supported when method='finite_difference'")
+        return parse_dyadic_order(dyadic_order)
+
+    if dyadic_order is not None:
+        raise ValueError("dyadic_order is not supported when method='" + method + "'")
+    if order is None:
+        raise ValueError("order is required when method='" + method + "'")
+    if type(order) is not int:
+        raise TypeError("order must be of type int")
+    if order < 2 or order > 64:
+        raise ValueError("order must be between 2 and 64")
+    if return_grid:
+        raise ValueError("return_grid=True is not supported when method='" + method + "'")
+    return 0, 0
 
 
 def _safe_normalize(result, k1, k2, func_name, stacklevel=2):
@@ -54,15 +81,22 @@ def _safe_normalize(result, k1, k2, func_name, stacklevel=2):
         warnings.warn(func_name + ": " + _NORMALIZE_WARNING, RuntimeWarning, stacklevel=stacklevel + 1)
     safe = torch.sqrt(torch.clamp(denom, min=1e-30))
     return torch.where(bad, float('nan'), result / safe)
-from .dtypes import CPSIG_SIG_KERNEL, DTYPES, CUSIG_SIG_KERNEL_CUDA
+from .dtypes import (
+    CPSIG_POLYSIG_KERNEL,
+    CPSIG_SIG_KERNEL,
+    CUSIG_SIG_KERNEL_CUDA,
+    DTYPES,
+)
 from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOutputHandler
 from .static_kernels import StaticKernel, LinearKernel, Context
 
 def sig_kernel(
         path1 : Union[np.ndarray, torch.Tensor],
         path2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Union[int, tuple],
+        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
+        method : str = "finite_difference",
+        order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -103,7 +137,12 @@ def sig_kernel(
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
-    :type dyadic_order: int | tuple
+    :type dyadic_order: None | int | tuple
+    :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
+    :type method: str
+    :param order: Highest retained polynomial degree for the polynomial method. Must be
+        between 2 and 64. Unsupported for finite differences.
+    :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -177,10 +216,14 @@ def sig_kernel(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_n_jobs(n_jobs)
+    dyadic_order_1, dyadic_order_2 = _parse_sig_kernel_method(
+        method, dyadic_order, order, return_grid)
+    if method != "finite_difference":
+        for path in (path1, path2):
+            if isinstance(path, torch.Tensor) and path.device.type != "cpu":
+                raise ValueError("method='" + method + "' only supports CPU inputs")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
-
-    dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
 
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
@@ -212,7 +255,11 @@ def sig_kernel(
     gram = static_kernel(ctx, torch_path1, torch_path2)
     gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
 
-    if data.device == "cpu":
+    if method == "polynomial":
+        err_code = CPSIG_POLYSIG_KERNEL[data.dtype](
+            gram_ptr, result.data_ptr, data.batch_size, data.dimension,
+            data.length[0], data.length[1], order, n_jobs)
+    elif data.device == "cpu":
         err_code = CPSIG_SIG_KERNEL[data.dtype](
             gram_ptr, result.data_ptr, data.batch_size, data.dimension,
             data.length[0], data.length[1],
@@ -257,8 +304,10 @@ def sig_kernel(
             )
 
     if normalize:
-        k1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
-        k2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        k1 = sig_kernel(path1, path1, dyadic_order, method=method, order=order,
+                        static_kernel=static_kernel, n_jobs=n_jobs)
+        k2 = sig_kernel(path2, path2, dyadic_order, method=method, order=order,
+                        static_kernel=static_kernel, n_jobs=n_jobs)
         result.data = _safe_normalize(result.data, k1, k2, "sig_kernel(normalize=True)")
 
     return result.data
@@ -267,8 +316,10 @@ def sig_kernel(
 def sig_kernel_gram(
         path1 : Union[np.ndarray, torch.Tensor],
         path2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Union[int, tuple],
+        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
+        method : str = "finite_difference",
+        order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -313,7 +364,12 @@ def sig_kernel_gram(
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
-    :type dyadic_order: int | tuple
+    :type dyadic_order: None | int | tuple
+    :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
+    :type method: str
+    :param order: Highest retained polynomial degree for the polynomial method. Must be
+        between 2 and 64. Unsupported for finite differences.
+    :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -405,6 +461,12 @@ def sig_kernel_gram(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(max_batch, "max_batch", int)
+    check_n_jobs(n_jobs)
+    do1, do2 = _parse_sig_kernel_method(method, dyadic_order, order, return_grid)
+    if method != "finite_difference":
+        for path in (path1, path2):
+            if isinstance(path, torch.Tensor) and path.device.type != "cpu":
+                raise ValueError("method='" + method + "' only supports CPU inputs")
     if max_batch == 0 or max_batch < -1:
         raise ValueError("max_batch must be a positive integer or -1")
     if normalize and return_grid:
@@ -431,8 +493,6 @@ def sig_kernel_gram(
     ####################################
     # Now run computation in batches
     ####################################
-
-    do1, do2 = parse_dyadic_order(dyadic_order)
 
     if return_grid:
         gl1 = dyadic_grid_length(data.length[0], do1)
@@ -463,7 +523,9 @@ def sig_kernel_gram(
         ci = idx_i[start:end]
         cj = idx_j[start:end]
 
-        k = sig_kernel(src1[ci], src2[cj], dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=return_grid)
+        k = sig_kernel(src1[ci], src2[cj], dyadic_order, method=method, order=order,
+                       static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+                       end_time=end_time, n_jobs=n_jobs, return_grid=return_grid)
         res[ci, cj] = k
 
         if symmetric:
@@ -475,8 +537,12 @@ def sig_kernel_gram(
                 res[cj[off], ci[off]] = k_mirror
 
     if normalize:
-        d1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
-        d2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if not symmetric else d1
+        d1 = sig_kernel(path1, path1, dyadic_order, method=method, order=order,
+                        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+                        end_time=end_time, n_jobs=n_jobs)
+        d2 = sig_kernel(path2, path2, dyadic_order, method=method, order=order,
+                        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+                        end_time=end_time, n_jobs=n_jobs) if not symmetric else d1
         res = _safe_normalize(res, d1.unsqueeze(1), d2.unsqueeze(0), "sig_kernel_gram(normalize=True)")
 
     out_shape = batch_shape_1 + batch_shape_2

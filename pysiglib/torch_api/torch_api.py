@@ -374,8 +374,10 @@ class SigKernel(torch.autograd.Function):
 def sig_kernel(
         path1 : Union[np.ndarray, torch.Tensor],
         path2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Union[int, tuple],
+        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
+        method : str = "finite_difference",
+        order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -384,6 +386,10 @@ def sig_kernel(
         return_grid: bool = False,
         normalize : bool = False
 ) -> Union[np.ndarray, torch.Tensor]:
+    if method != "finite_difference" or order is not None:
+        raise ValueError("pysiglib.torch_api supports only method='finite_difference'")
+    if dyadic_order is None:
+        raise ValueError("dyadic_order is required for method='finite_difference'")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
     k = SigKernel.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
@@ -436,8 +442,10 @@ class SigKernelGram(torch.autograd.Function):
 def sig_kernel_gram(
         path1: Union[np.ndarray, torch.Tensor],
         path2: Union[np.ndarray, torch.Tensor],
-        dyadic_order: Union[int, tuple],
+        dyadic_order: Optional[Union[int, tuple]] = None,
         *,
+        method: str = "finite_difference",
+        order: Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -447,6 +455,10 @@ def sig_kernel_gram(
         return_grid: bool = False,
         normalize : bool = False
 ) -> Union[np.ndarray, torch.Tensor]:
+    if method != "finite_difference" or order is not None:
+        raise ValueError("pysiglib.torch_api supports only method='finite_difference'")
+    if dyadic_order is None:
+        raise ValueError("dyadic_order is required for method='finite_difference'")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
     gram = SigKernelGram.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid)
