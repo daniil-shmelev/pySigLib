@@ -108,6 +108,28 @@ extern "C" {
 	[[nodiscard]] CUSIG_API int sig_kernel_cuda_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
 
+	/** @defgroup polysig_kernel_cuda_functions Polynomial sig kernel CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes polynomial signature kernels from batch gram matrices on the GPU.
+	*
+	* @param gram Pointer to batch gram matrix data on the device, size = `batch_size * (length1 - 1) * (length2 - 1)`.
+	* @param out Pointer to device output, size = `batch_size * (return_grid ? length1 * length2 : 1)`.
+	* @param batch_size Number of path pairs.
+	* @param dimension Path dimension, retained for API parity with sig_kernel_cuda_f.
+	* @param length1 Length of the first paths.
+	* @param length2 Length of the second paths.
+	* @param order Highest retained polynomial degree, between 2 and 64.
+	* @param return_grid Whether to return the full original-vertex grid.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int polysig_kernel_cuda_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
+	/** @brief Double-precision variant of polysig_kernel_cuda_f. */
+	[[nodiscard]] CUSIG_API int polysig_kernel_cuda_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
+	/** @} */
+
 	/** @defgroup branched_sig_kernel_cuda_functions Branched sig kernel CUDA functions
 	* @{
 	*/

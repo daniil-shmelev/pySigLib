@@ -31,9 +31,75 @@
 
 #include <chrono>
 #include <cmath>
+#include <cuda_runtime.h>
 #include <iostream>
 #include <random>
 #include <vector>
+
+template<typename T, typename Fn>
+static int profile_polysig_cuda(
+    Fn function,
+    uint64_t segments1,
+    uint64_t segments2,
+    uint64_t order,
+    uint64_t batch_size,
+    uint64_t iterations,
+    bool return_grid
+) {
+    std::mt19937_64 rng(25022025);
+    std::normal_distribution<double> normal(
+        0.0, 1.0 / std::sqrt(static_cast<double>(
+            segments1 > segments2 ? segments1 : segments2)));
+    const uint64_t gram_size = batch_size * segments1 * segments2;
+    std::vector<T> gram(gram_size);
+    for (T& value : gram)
+        value = static_cast<T>(normal(rng));
+
+    const uint64_t output_stride = return_grid
+        ? (segments1 + 1) * (segments2 + 1) : 1;
+    T* device_gram = nullptr;
+    T* device_out = nullptr;
+    if (cudaMalloc(&device_gram, gram_size * sizeof(T)) != cudaSuccess
+        || cudaMalloc(&device_out, batch_size * output_stride * sizeof(T)) != cudaSuccess) {
+        cudaFree(device_gram);
+        cudaFree(device_out);
+        return 1;
+    }
+    if (cudaMemcpy(device_gram, gram.data(), gram_size * sizeof(T),
+        cudaMemcpyHostToDevice) != cudaSuccess) {
+        cudaFree(device_gram);
+        cudaFree(device_out);
+        return 1;
+    }
+
+    int status = 0;
+    for (int warmup = 0; warmup < 3 && status == 0; ++warmup) {
+        status = function(device_gram, device_out, batch_size, 2,
+            segments1 + 1, segments2 + 1, order, return_grid);
+    }
+    const auto start = std::chrono::steady_clock::now();
+    for (uint64_t iteration = 0; iteration < iterations && status == 0; ++iteration) {
+        status = function(device_gram, device_out, batch_size, 2,
+            segments1 + 1, segments2 + 1, order, return_grid);
+    }
+    const double elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start).count();
+    T result = static_cast<T>(0);
+    if (status == 0) {
+        cudaMemcpy(&result, device_out + output_stride - 1,
+            sizeof(T), cudaMemcpyDeviceToHost);
+    }
+    cudaFree(device_gram);
+    cudaFree(device_out);
+
+    std::cout << "polynomial segments1=" << segments1
+        << " segments2=" << segments2 << " order=" << order
+        << " batch=" << batch_size << " iterations=" << iterations
+        << " grid=" << return_grid << " seconds=" << elapsed
+        << " seconds_per_iteration=" << elapsed / static_cast<double>(iterations)
+        << " result=" << result << std::endl;
+    return status;
+}
 
 
 int main(int argc, char* argv[])
@@ -142,6 +208,48 @@ int main(int argc, char* argv[])
 
     load_cusig(dir_path);
     get_cusig_fn_ptrs();
+
+    if (argc >= 3 && std::string(argv[2]) == "sig-kernel-cuda-profile") {
+        if (argc != 10) {
+            std::cerr << "Usage: pysiglib_test_app <dll-dir> sig-kernel-cuda-profile "
+                << "<float32|float64> <segments1> <segments2> <order> <batch> "
+                << "<iterations> <scalar|grid>" << std::endl;
+            unload_cpsig();
+            unload_cusig();
+            return 2;
+        }
+        const std::string dtype(argv[3]);
+        const uint64_t segments1 = std::stoull(argv[4]);
+        const uint64_t segments2 = std::stoull(argv[5]);
+        const uint64_t order = std::stoull(argv[6]);
+        const uint64_t batch_size = std::stoull(argv[7]);
+        const uint64_t iterations = std::stoull(argv[8]);
+        const std::string output(argv[9]);
+        if (segments1 == 0 || segments2 == 0 || batch_size == 0 || iterations == 0
+            || (output != "scalar" && output != "grid")) {
+            std::cerr << "segments, batch, and iterations must be positive; "
+                << "output must be scalar or grid" << std::endl;
+            unload_cpsig();
+            unload_cusig();
+            return 2;
+        }
+        int status = 0;
+        if (dtype == "float32") {
+            status = profile_polysig_cuda<float>(polysig_kernel_cuda_f,
+                segments1, segments2, order, batch_size, iterations, output == "grid");
+        }
+        else if (dtype == "float64") {
+            status = profile_polysig_cuda<double>(polysig_kernel_cuda_d,
+                segments1, segments2, order, batch_size, iterations, output == "grid");
+        }
+        else {
+            std::cerr << "dtype must be float32 or float64" << std::endl;
+            status = 2;
+        }
+        unload_cpsig();
+        unload_cusig();
+        return status;
+    }
 
     //example_batch_signature_d(1000, 6, 100, 6, false, false, true, -1, 10);
     //example_batch_signature_cuda_d(1000, 6, 100, 6, false, false, true, 10); // Min run time: 156ms

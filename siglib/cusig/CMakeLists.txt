@@ -13,6 +13,7 @@ add_library(cusig SHARED
     cu_log_sig_combine.cu
     cu_log_signature.cu
     cu_path_transforms.cu
+    cu_polynomial_sig_kernel.cu
     cu_sig_coef.cu
     cu_sig_kernel.cu
     cu_signature.cu

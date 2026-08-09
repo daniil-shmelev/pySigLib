@@ -15,6 +15,80 @@
 
 #include "cu_test_helpers.h"
 
+TEST(polynomialSigKernelCudaTest, PinnedGoldenValues) {
+    std::vector<double> gram = {
+        0.04, -0.115,
+        0.02, 0.055,
+        0.065, -0.08,
+        -0.04, -0.01,
+        -0.045, 0.1575,
+        0.055, -0.0875
+    };
+    const uint64_t orders[] = { 2, 5, 7, 10 };
+    const double expected[][2] = {
+        { 0.9868383588452052, 1.0265309020995697 },
+        { 0.9868046051227348, 1.026566588558175 },
+        { 0.9868046051301949, 1.026566588567865 },
+        { 0.9868046051301949, 1.026566588567865 }
+    };
+    for (uint64_t i = 0; i < 4; ++i) {
+        std::vector<double> true_values = { expected[i][0], expected[i][1] };
+        check_result_typed(polysig_kernel_cuda_d, gram, true_values,
+            static_cast<uint64_t>(2), static_cast<uint64_t>(2),
+            static_cast<uint64_t>(4), static_cast<uint64_t>(3),
+            orders[i], false);
+    }
+}
+
+TEST(polynomialSigKernelCudaTest, FullGrid) {
+    std::vector<double> gram = {
+        0.04, -0.115,
+        0.02, 0.055,
+        0.065, -0.08
+    };
+    std::vector<double> expected = {
+        1.0, 1.0, 1.0,
+        1.0, 1.0404017822293414, 0.92639458601718849,
+        1.0, 1.0609060225540898, 1.0022860490961014,
+        1.0, 1.1289609294541276, 0.98680460513019486
+    };
+    check_result_typed(polysig_kernel_cuda_d, gram, expected,
+        static_cast<uint64_t>(1), static_cast<uint64_t>(2),
+        static_cast<uint64_t>(4), static_cast<uint64_t>(3),
+        static_cast<uint64_t>(7), true);
+}
+
+TEST(polynomialSigKernelCudaTest, FloatAndTrivialPaths) {
+    std::vector<float> gram = {
+        0.04f, -0.115f,
+        0.02f, 0.055f,
+        0.065f, -0.08f
+    };
+    std::vector<float> expected = { 0.9868046f };
+    check_result_typed(polysig_kernel_cuda_f, gram, expected,
+        static_cast<uint64_t>(1), static_cast<uint64_t>(2),
+        static_cast<uint64_t>(4), static_cast<uint64_t>(3),
+        static_cast<uint64_t>(7), false);
+
+    std::vector<double> empty;
+    std::vector<double> ones(5, 1.0);
+    check_result_typed(polysig_kernel_cuda_d, empty, ones,
+        static_cast<uint64_t>(5), static_cast<uint64_t>(1),
+        static_cast<uint64_t>(1), static_cast<uint64_t>(6),
+        static_cast<uint64_t>(7), false);
+}
+
+TEST(polynomialSigKernelCudaTest, RejectsInvalidOrder) {
+    double* gram = nullptr;
+    double* out = nullptr;
+    ASSERT_EQ(cudaMalloc(&gram, sizeof(double)), cudaSuccess);
+    ASSERT_EQ(cudaMalloc(&out, sizeof(double)), cudaSuccess);
+    EXPECT_EQ(polysig_kernel_cuda_d(gram, out, 1, 1, 2, 2, 1, false), 2);
+    EXPECT_EQ(polysig_kernel_cuda_d(gram, out, 1, 1, 2, 2, 65, false), 2);
+    cudaFree(gram);
+    cudaFree(out);
+}
+
 TEST(sigKernelTest, Trivial) {
     auto f = sig_kernel_cuda_d;
     uint64_t dimension = 1, length = 1, batch_size = 1;

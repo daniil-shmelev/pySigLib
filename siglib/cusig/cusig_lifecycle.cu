@@ -24,6 +24,7 @@ void release_sig_combine_state();
 void release_branched_sig_gpu_state();
 void release_branched_log_sig_gpu_state();
 void release_log_sig_combine_state();
+void release_polysig_kernel_state();
 
 extern "C" {
 
@@ -35,6 +36,7 @@ extern "C" {
 		try { release_signature_state();        } catch (...) {}
 		try { release_log_sig_state();          } catch (...) {}
 		try { release_log_sig_combine_state();  } catch (...) {}
+		try { release_polysig_kernel_state();   } catch (...) {}
 		try { release_exp_sig_state();          } catch (...) {}
 		try { release_sig_combine_state();      } catch (...) {}
 		try { release_branched_sig_gpu_state(); } catch (...) {}

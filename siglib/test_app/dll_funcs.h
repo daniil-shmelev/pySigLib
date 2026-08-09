@@ -60,6 +60,9 @@ using polysig_kernel_backprop_d_fn = int(CDECL_*)(const double*, double*, const 
 
 using sig_kernel_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool);
 
+using polysig_kernel_cuda_f_fn = int(CDECL_*)(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool);
+using polysig_kernel_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool);
+
 using signature_cuda_f_fn = int(CDECL_*)(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, bool, const float*, uint64_t, uint64_t, uint64_t);
 using signature_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, bool, const double*, uint64_t, uint64_t, uint64_t);
 
@@ -118,6 +121,8 @@ extern sig_combine_backprop_cuda_d_fn sig_combine_backprop_cuda_d;
 extern sig_backprop_d_fn sig_backprop_d;
 
 extern sig_kernel_cuda_d_fn sig_kernel_cuda_d;
+extern polysig_kernel_cuda_f_fn polysig_kernel_cuda_f;
+extern polysig_kernel_cuda_d_fn polysig_kernel_cuda_d;
 
 extern signature_cuda_f_fn signature_cuda_f;
 extern signature_cuda_d_fn signature_cuda_d;

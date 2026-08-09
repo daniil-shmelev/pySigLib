@@ -173,6 +173,8 @@ sig_combine_backprop_cuda_d_fn sig_combine_backprop_cuda_d = nullptr;
 sig_backprop_d_fn sig_backprop_d = nullptr;
 
 sig_kernel_cuda_d_fn sig_kernel_cuda_d = nullptr;
+polysig_kernel_cuda_f_fn polysig_kernel_cuda_f = nullptr;
+polysig_kernel_cuda_d_fn polysig_kernel_cuda_d = nullptr;
 
 sig_coef_d_fn sig_coef_d = nullptr;
 
@@ -263,6 +265,8 @@ void get_cpsig_fn_ptrs()
 void get_cusig_fn_ptrs()
 {
     GET_FN(sig_kernel_cuda_d, cusig);
+    GET_FN(polysig_kernel_cuda_f, cusig);
+    GET_FN(polysig_kernel_cuda_d, cusig);
     GET_FN(sig_kernel_backprop_cuda_d, cusig);
     GET_FN(signature_cuda_f, cusig);
     GET_FN(signature_cuda_d, cusig);

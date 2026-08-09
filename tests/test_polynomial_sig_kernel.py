@@ -139,12 +139,57 @@ def test_polynomial_sig_kernel_grid_ends_at_scalar():
     assert grid[-1, -1] == scalar
 
 
-def test_polynomial_sig_kernel_rejects_cuda():
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_polynomial_sig_kernel_cuda_matches_cpu(dtype):
     if not torch.cuda.is_available():
         pytest.skip("CUDA is not available")
-    x = torch.zeros((2, 1), dtype=torch.float64, device="cuda")
-    with pytest.raises(ValueError, match="only supports CPU"):
-        pysiglib.sig_kernel(x, x, method=METHOD, order=5)
+    generator = torch.Generator().manual_seed(25022025)
+    x = torch.randn((2, 35, 3), generator=generator, dtype=dtype) * 0.03
+    y = torch.randn((2, 67, 3), generator=generator, dtype=dtype) * 0.03
+
+    cpu_scalar = pysiglib.sig_kernel(x, y, method=METHOD, order=7)
+    cuda_scalar = pysiglib.sig_kernel(
+        x.cuda(), y.cuda(), method=METHOD, order=7).cpu()
+    cpu_grid = pysiglib.sig_kernel(x, y, method=METHOD, order=7, return_grid=True)
+    cuda_grid = pysiglib.sig_kernel(
+        x.cuda(), y.cuda(), method=METHOD, order=7, return_grid=True).cpu()
+
+    tolerance = 3e-5 if dtype == torch.float32 else 2e-12
+    assert torch.allclose(cuda_scalar, cpu_scalar, rtol=tolerance, atol=tolerance)
+    assert torch.allclose(cuda_grid, cpu_grid, rtol=tolerance, atol=tolerance)
+    assert torch.equal(cuda_grid[:, 0], torch.ones_like(cuda_grid[:, 0]))
+    assert torch.equal(cuda_grid[:, :, 0], torch.ones_like(cuda_grid[:, :, 0]))
+    assert torch.equal(cuda_scalar, cuda_grid[:, -1, -1])
+
+
+def test_polynomial_sig_kernel_cuda_composition():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    x = torch.tensor([
+        [[0., 0.], [.2, .1], [.3, -.1]],
+        [[0., 0.], [-.1, .3], [.2, .2]],
+    ], dtype=torch.float64)
+    y = torch.tensor([
+        [[0., 0.], [.1, -.2], [.2, .1]],
+        [[0., 0.], [.3, .1], [.1, .2]],
+        [[0., 0.], [-.2, .1], [.2, -.1]],
+    ], dtype=torch.float64)
+    kwargs = {
+        "method": METHOD,
+        "order": 7,
+        "static_kernel": DoubleLinearKernel(),
+        "time_aug": True,
+        "lead_lag": True,
+    }
+
+    cpu = pysiglib.sig_kernel_gram(x, y, max_batch=1, **kwargs)
+    cuda = pysiglib.sig_kernel_gram(x.cuda(), y.cuda(), max_batch=1, **kwargs).cpu()
+    cpu_normalized = pysiglib.sig_kernel_gram(x, y, max_batch=1, normalize=True, **kwargs)
+    cuda_normalized = pysiglib.sig_kernel_gram(
+        x.cuda(), y.cuda(), max_batch=1, normalize=True, **kwargs).cpu()
+
+    assert torch.allclose(cuda, cpu, rtol=2e-12, atol=2e-12)
+    assert torch.allclose(cuda_normalized, cpu_normalized, rtol=2e-12, atol=2e-12)
 
 
 def test_polynomial_sig_kernel_converges_to_direct_signature():

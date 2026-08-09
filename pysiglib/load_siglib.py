@@ -511,6 +511,12 @@ if BUILT_WITH_CUDA:
     CUSIG.sig_kernel_cuda_d.argtypes = (POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_bool)
     CUSIG.sig_kernel_cuda_d.restype = c_int
 
+    CUSIG.polysig_kernel_cuda_f.argtypes = (POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_bool)
+    CUSIG.polysig_kernel_cuda_f.restype = c_int
+
+    CUSIG.polysig_kernel_cuda_d.argtypes = (POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_bool)
+    CUSIG.polysig_kernel_cuda_d.restype = c_int
+
 ######################################################
 # branched_sig_kernel
 ######################################################

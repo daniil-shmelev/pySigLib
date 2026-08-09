@@ -82,6 +82,7 @@ def _safe_normalize(result, k1, k2, func_name, stacklevel=2):
 from .dtypes import (
     CPSIG_POLYSIG_KERNEL,
     CPSIG_SIG_KERNEL,
+    CUSIG_POLYSIG_KERNEL_CUDA,
     CUSIG_SIG_KERNEL_CUDA,
     DTYPES,
 )
@@ -140,7 +141,8 @@ def sig_kernel(
     :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
     :type method: str
     :param order: Highest retained polynomial degree for the polynomial method. Must be
-        between 2 and 64. Unsupported for finite differences.
+        between 2 and 64. Unsupported for finite differences. CUDA polynomial execution
+        is forward-only and is available through this base API.
     :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
@@ -217,14 +219,14 @@ def sig_kernel(
     check_n_jobs(n_jobs)
     dyadic_order_1, dyadic_order_2 = _parse_sig_kernel_method(
         method, dyadic_order, order, return_grid)
-    if method != "finite_difference":
-        for path in (path1, path2):
-            if isinstance(path, torch.Tensor) and path.device.type != "cpu":
-                raise ValueError("method='" + method + "' only supports CPU inputs")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
     if _return_state and method != "polynomial":
         raise ValueError("_return_state is only supported for method='polynomial'")
+    if _return_state:
+        for path in (path1, path2):
+            if isinstance(path, torch.Tensor) and path.device.type != "cpu":
+                raise ValueError("CUDA polynomial forward state is not supported")
     if _return_state and normalize:
         raise ValueError("_return_state cannot be used with normalize=True")
 
@@ -263,7 +265,7 @@ def sig_kernel(
     gram = static_kernel(ctx, torch_path1, torch_path2)
     gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
 
-    if method == "polynomial":
+    if method == "polynomial" and data.device == "cpu":
         state = gram.new_empty(
             (data.batch_size, data.length[0] - 1, data.length[1] - 1, 2, order + 1)
         ) if _return_state else None
@@ -272,6 +274,10 @@ def sig_kernel(
         err_code = CPSIG_POLYSIG_KERNEL[data.dtype](
             gram_ptr, result.data_ptr, state_ptr, data.batch_size, data.dimension,
             data.length[0], data.length[1], order, return_grid, n_jobs)
+    elif method == "polynomial":
+        err_code = CUSIG_POLYSIG_KERNEL_CUDA[data.dtype](
+            gram_ptr, result.data_ptr, data.batch_size, data.dimension,
+            data.length[0], data.length[1], order, return_grid)
     elif data.device == "cpu":
         err_code = CPSIG_SIG_KERNEL[data.dtype](
             gram_ptr, result.data_ptr, data.batch_size, data.dimension,
@@ -383,7 +389,8 @@ def sig_kernel_gram(
     :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
     :type method: str
     :param order: Highest retained polynomial degree for the polynomial method. Must be
-        between 2 and 64. Unsupported for finite differences.
+        between 2 and 64. Unsupported for finite differences. CUDA polynomial execution
+        is forward-only and is available through this base API.
     :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
@@ -478,10 +485,6 @@ def sig_kernel_gram(
     check_type(max_batch, "max_batch", int)
     check_n_jobs(n_jobs)
     do1, do2 = _parse_sig_kernel_method(method, dyadic_order, order, return_grid)
-    if method != "finite_difference":
-        for path in (path1, path2):
-            if isinstance(path, torch.Tensor) and path.device.type != "cpu":
-                raise ValueError("method='" + method + "' only supports CPU inputs")
     if max_batch == 0 or max_batch < -1:
         raise ValueError("max_batch must be a positive integer or -1")
     if normalize and return_grid:
