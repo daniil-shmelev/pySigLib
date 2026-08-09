@@ -29,6 +29,7 @@ from .dtypes import (
     CPSIG_POLYSIG_KERNEL_BACKPROP,
     CPSIG_SIG_KERNEL_BACKPROP,
     DTYPES,
+    CUSIG_POLYSIG_KERNEL_BACKPROP_CUDA,
     CUSIG_SIG_KERNEL_BACKPROP_CUDA,
 )
 from .data_handlers import MultiplePathInputHandler, ScalarInputHandler, GridOutputHandler, PathInputHandler
@@ -53,10 +54,16 @@ def gram_deriv(
 
     if method == "polynomial":
         state_ptr = None if state is None else cast(state.data_ptr(), POINTER(DTYPES[data.dtype]))
-        err_code = CPSIG_POLYSIG_KERNEL_BACKPROP[data.dtype](
-            gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
-            data.batch_size, data.dimension, data.length[0], data.length[1],
-            order, return_grid, n_jobs)
+        if data.device == "cpu":
+            err_code = CPSIG_POLYSIG_KERNEL_BACKPROP[data.dtype](
+                gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
+                data.batch_size, data.dimension, data.length[0], data.length[1],
+                order, return_grid, n_jobs)
+        else:
+            err_code = CUSIG_POLYSIG_KERNEL_BACKPROP_CUDA[data.dtype](
+                gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
+                data.batch_size, data.dimension, data.length[0], data.length[1],
+                order, return_grid)
     elif data.device == "cpu":
         err_code = CPSIG_SIG_KERNEL_BACKPROP[data.dtype](
             gram_ptr, result.data_ptr, derivs_data.data_ptr, k_grid_data.data_ptr,
@@ -191,11 +198,6 @@ def sig_kernel_backprop(
 
     dyadic_order_1, dyadic_order_2 = _parse_sig_kernel_method(
         method, dyadic_order, order, return_grid)
-    if method == "polynomial":
-        for path in (path1, path2):
-            if isinstance(path, torch.Tensor) and path.device.type != "cpu":
-                raise ValueError("method='polynomial' only supports CPU inputs")
-
     if path1.ndim > 3 or path2.ndim > 3:
         if tuple(path1.shape[:-2]) != tuple(path2.shape[:-2]):
             raise ValueError(
@@ -228,6 +230,20 @@ def sig_kernel_backprop(
         path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
     data = MultiplePathInputHandler([path1, path2], False, False, end_time, ["path1", "path2"])
+
+    if _state is not None and method != "polynomial":
+        raise ValueError("_state is only supported for method='polynomial'")
+    if _state is not None:
+        if not isinstance(_state, torch.Tensor):
+            raise TypeError("_state must be a torch.Tensor")
+        expected_state_size = (data.batch_size * (data.length[0] - 1)
+                               * (data.length[1] - 1) * 2 * (order + 1))
+        if _state.numel() != expected_state_size:
+            raise ValueError("_state has an invalid size")
+        if str(_state.dtype)[6:] != data.dtype or _state.device.type != data.device:
+            raise ValueError("_state, path1 and path2 must have the same dtype and device")
+        if not _state.is_contiguous():
+            raise ValueError("_state must be contiguous")
 
     if data.batch_size == 0:
         from .data_handlers import PathOutputHandler
@@ -426,11 +442,6 @@ def sig_kernel_gram_backprop(
         raise ValueError("max_batch must be a positive integer or -1")
 
     do1, do2 = _parse_sig_kernel_method(method, dyadic_order, order, return_grid)
-    if method == "polynomial":
-        for path in (path1, path2):
-            if isinstance(path, torch.Tensor) and path.device.type != "cpu":
-                raise ValueError("method='polynomial' only supports CPU inputs")
-
     symmetric = path1 is path2
 
     batch_shape_1 = tuple(path1.shape[:-2])

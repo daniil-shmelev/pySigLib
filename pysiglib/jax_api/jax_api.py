@@ -923,9 +923,6 @@ def sig_kernel(
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
     do1, do2 = _parse_sig_kernel_method(method, dyadic_order, order, return_grid)
-    if method == "polynomial" and jax.default_backend() != "cpu":
-        raise ValueError("method='polynomial' only supports CPU inputs")
-
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
@@ -1005,9 +1002,6 @@ def sig_kernel_gram(
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
     _parse_sig_kernel_method(method, dyadic_order, order, return_grid)
-    if method == "polynomial" and jax.default_backend() != "cpu":
-        raise ValueError("method='polynomial' only supports CPU inputs")
-
     batch_shape_1 = tuple(path1.shape[:-2])
     batch_shape_2 = tuple(path2.shape[:-2])
 

@@ -120,9 +120,11 @@ _TARGETS = {
     },
     "polysig_kernel_pde": {
         "cpu": ("pysiglib_polysig_kernel_pde_cpu", "PySigLibPolysigKernelPdeCpu"),
+        "cuda": ("pysiglib_polysig_kernel_pde_cuda", "PySigLibPolysigKernelPdeCuda"),
     },
     "polysig_kernel_pde_backprop": {
         "cpu": ("pysiglib_polysig_kernel_pde_backprop_cpu", "PySigLibPolysigKernelPdeBackpropCpu"),
+        "cuda": ("pysiglib_polysig_kernel_pde_backprop_cuda", "PySigLibPolysigKernelPdeBackpropCuda"),
     },
     "branched_sig_kernel_pde": {
         "cpu": ("pysiglib_branched_sig_kernel_pde_cpu", "PySigLibBranchedSigKernelPdeCpu"),

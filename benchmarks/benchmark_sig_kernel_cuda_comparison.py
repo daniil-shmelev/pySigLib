@@ -89,22 +89,44 @@ def benchmark(function, synchronize, warmups, samples, min_sample_seconds):
     return result, first_call_seconds, repetitions, timings
 
 
-def pysiglib_cases(path1, path2, order):
+def pysiglib_cases(path1, path2, order, operation):
     import pysiglib
     import torch
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available through PyTorch")
-    device_path1 = torch.from_numpy(path1).cuda()
-    device_path2 = torch.from_numpy(path2).cuda()
+    device_path1 = torch.from_numpy(path1).cuda().requires_grad_(operation == "backprop")
+    device_path2 = torch.from_numpy(path2).cuda().requires_grad_(operation == "backprop")
     torch.cuda.synchronize()
+
+    if operation == "backprop":
+        def polynomial():
+            result = pysiglib.torch_api.sig_kernel(
+                device_path1, device_path2, method="polynomial", order=order)
+            gradients = torch.autograd.grad(result.sum(), (device_path1, device_path2))
+            return result, gradients
+
+        def goursat():
+            result = pysiglib.torch_api.sig_kernel(
+                device_path1, device_path2,
+                method="finite_difference", dyadic_order=0)
+            gradients = torch.autograd.grad(result.sum(), (device_path1, device_path2))
+            return result, gradients
+
+        polynomial_function = polynomial
+        goursat_function = goursat
+    else:
+        polynomial_function = lambda: pysiglib.sig_kernel(
+            device_path1, device_path2, method="polynomial", order=order)
+        goursat_function = lambda: pysiglib.sig_kernel(
+            device_path1, device_path2,
+            method="finite_difference", dyadic_order=0)
 
     return [
         (
             "pysiglib_polynomial",
             "pySigLib polynomial",
-            lambda: pysiglib.sig_kernel(
-                device_path1, device_path2, method="polynomial", order=order),
+            polynomial_function,
             lambda result: torch.cuda.synchronize(),
             torch.cuda.get_device_name(),
             torch.__version__,
@@ -112,9 +134,7 @@ def pysiglib_cases(path1, path2, order):
         (
             "pysiglib_goursat",
             "pySigLib Goursat",
-            lambda: pysiglib.sig_kernel(
-                device_path1, device_path2,
-                method="finite_difference", dyadic_order=0),
+            goursat_function,
             lambda result: torch.cuda.synchronize(),
             torch.cuda.get_device_name(),
             torch.__version__,
@@ -122,7 +142,7 @@ def pysiglib_cases(path1, path2, order):
     ]
 
 
-def polysigkernel_cases(path1, path2, order):
+def polysigkernel_cases(path1, path2, order, operation):
     import jax
 
     if not hasattr(jax.lib, "xla_bridge"):
@@ -139,12 +159,21 @@ def polysigkernel_cases(path1, path2, order):
     device_path2 = jax.device_put(jnp.asarray(path2), devices[0])
     kernel = SigKernel(order=order, static_kernel="linear")
 
+    if operation == "backprop":
+        def objective(left, right):
+            return jnp.sum(kernel.kernel_matrix(left, right))
+
+        function = jax.jit(jax.value_and_grad(objective, argnums=(0, 1)))
+        case_function = lambda: function(device_path1, device_path2)
+    else:
+        case_function = lambda: kernel.kernel_matrix(device_path1, device_path2)
+
     return [
         (
             "polysigkernel_jax",
             "polysigkernel JAX",
-            lambda: kernel.kernel_matrix(device_path1, device_path2),
-            lambda result: result.block_until_ready(),
+            case_function,
+            lambda result: jax.block_until_ready(result),
             str(devices[0].device_kind),
             jax.__version__,
         )
@@ -152,6 +181,8 @@ def polysigkernel_cases(path1, path2, order):
 
 
 def result_value(result):
+    if isinstance(result, (tuple, list)):
+        return result_value(result[0])
     if hasattr(result, "detach"):
         result = result.detach().cpu()
     array = np.asarray(result)
@@ -164,9 +195,9 @@ def run_benchmarks(args):
     for segments in args.lengths:
         path1, path2 = brownian_paths(segments, args.seed)
         if args.backend == "pysiglib":
-            cases = pysiglib_cases(path1, path2, args.order)
+            cases = pysiglib_cases(path1, path2, args.order, args.operation)
         else:
-            cases = polysigkernel_cases(path1, path2, args.order)
+            cases = polysigkernel_cases(path1, path2, args.order, args.operation)
 
         for method, label, function, synchronize, device, framework in cases:
             result, first_call, repetitions, timings = benchmark(
@@ -191,6 +222,7 @@ def run_benchmarks(args):
                 "samples": args.samples,
                 "value": f"{result_value(result):.12g}",
                 "scope": "end_to_end",
+                "operation": args.operation,
                 "device": device,
                 "framework_version": framework,
                 "platform": platform.platform(),
@@ -250,7 +282,10 @@ def plot_benchmarks(args):
     axis.set_yscale("log")
     axis.set_xlabel("Path segments per path")
     axis.set_ylabel("End-to-end runtime (ms)")
-    axis.set_title("CUDA signature kernel runtime, one path pair, float32")
+    operation = rows[0].get("operation", "forward")
+    title_operation = "forward and backward" if operation == "backprop" else "forward"
+    axis.set_title(
+        "CUDA signature kernel " + title_operation + " runtime, one path pair, float32")
     axis.grid(True, which="both", alpha=0.25)
     axis.legend(frameon=False)
 
@@ -280,6 +315,7 @@ def parse_args():
     run_parser.add_argument("--samples", type=int, default=15)
     run_parser.add_argument("--min-sample-seconds", type=float, default=0.2)
     run_parser.add_argument("--revision")
+    run_parser.add_argument("--operation", choices=("forward", "backprop"), default="forward")
 
     plot_parser = subparsers.add_parser("plot")
     plot_parser.add_argument("--input", type=Path, nargs="+", required=True)

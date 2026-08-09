@@ -74,12 +74,12 @@ static int profile_polysig_cuda(
 
     int status = 0;
     for (int warmup = 0; warmup < 3 && status == 0; ++warmup) {
-        status = function(device_gram, device_out, batch_size, 2,
+        status = function(device_gram, device_out, nullptr, batch_size, 2,
             segments1 + 1, segments2 + 1, order, return_grid);
     }
     const auto start = std::chrono::steady_clock::now();
     for (uint64_t iteration = 0; iteration < iterations && status == 0; ++iteration) {
-        status = function(device_gram, device_out, batch_size, 2,
+        status = function(device_gram, device_out, nullptr, batch_size, 2,
             segments1 + 1, segments2 + 1, order, return_grid);
     }
     const double elapsed = std::chrono::duration<double>(
@@ -93,6 +93,94 @@ static int profile_polysig_cuda(
     cudaFree(device_out);
 
     std::cout << "polynomial segments1=" << segments1
+        << " segments2=" << segments2 << " order=" << order
+        << " batch=" << batch_size << " iterations=" << iterations
+        << " grid=" << return_grid << " seconds=" << elapsed
+        << " seconds_per_iteration=" << elapsed / static_cast<double>(iterations)
+        << " result=" << result << std::endl;
+    return status;
+}
+
+template<typename T, typename ForwardFn, typename BackpropFn>
+static int profile_polysig_backprop_cuda(
+    ForwardFn forward,
+    BackpropFn backprop,
+    uint64_t segments1,
+    uint64_t segments2,
+    uint64_t order,
+    uint64_t batch_size,
+    uint64_t iterations,
+    bool return_grid
+) {
+    std::mt19937_64 rng(25022025);
+    std::normal_distribution<double> normal(
+        0.0, 1.0 / std::sqrt(static_cast<double>(
+            segments1 > segments2 ? segments1 : segments2)));
+    const uint64_t gram_size = batch_size * segments1 * segments2;
+    const uint64_t output_stride = return_grid
+        ? (segments1 + 1) * (segments2 + 1) : 1;
+    const uint64_t state_size = 2 * gram_size * (order + 1);
+    std::vector<T> gram(gram_size);
+    std::vector<T> derivs(batch_size * output_stride, static_cast<T>(1));
+    for (T& value : gram)
+        value = static_cast<T>(normal(rng));
+
+    T* device_gram = nullptr;
+    T* device_out = nullptr;
+    T* device_state = nullptr;
+    T* device_derivs = nullptr;
+    T* device_gram_derivs = nullptr;
+    if (cudaMalloc(&device_gram, gram_size * sizeof(T)) != cudaSuccess
+        || cudaMalloc(&device_out, batch_size * output_stride * sizeof(T)) != cudaSuccess
+        || cudaMalloc(&device_state, state_size * sizeof(T)) != cudaSuccess
+        || cudaMalloc(&device_derivs, derivs.size() * sizeof(T)) != cudaSuccess
+        || cudaMalloc(&device_gram_derivs, gram_size * sizeof(T)) != cudaSuccess) {
+        cudaFree(device_gram);
+        cudaFree(device_out);
+        cudaFree(device_state);
+        cudaFree(device_derivs);
+        cudaFree(device_gram_derivs);
+        return 1;
+    }
+    if (cudaMemcpy(device_gram, gram.data(), gram_size * sizeof(T),
+        cudaMemcpyHostToDevice) != cudaSuccess
+        || cudaMemcpy(device_derivs, derivs.data(), derivs.size() * sizeof(T),
+            cudaMemcpyHostToDevice) != cudaSuccess) {
+        cudaFree(device_gram);
+        cudaFree(device_out);
+        cudaFree(device_state);
+        cudaFree(device_derivs);
+        cudaFree(device_gram_derivs);
+        return 1;
+    }
+
+    int status = forward(device_gram, device_out, device_state, batch_size, 2,
+        segments1 + 1, segments2 + 1, order, return_grid);
+    for (int warmup = 0; warmup < 3 && status == 0; ++warmup) {
+        status = backprop(device_gram, device_gram_derivs, device_derivs,
+            device_state, batch_size, 2, segments1 + 1, segments2 + 1,
+            order, return_grid);
+    }
+    const auto start = std::chrono::steady_clock::now();
+    for (uint64_t iteration = 0; iteration < iterations && status == 0; ++iteration) {
+        status = backprop(device_gram, device_gram_derivs, device_derivs,
+            device_state, batch_size, 2, segments1 + 1, segments2 + 1,
+            order, return_grid);
+    }
+    const double elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start).count();
+    T result = static_cast<T>(0);
+    if (status == 0) {
+        cudaMemcpy(&result, device_gram_derivs + gram_size - 1,
+            sizeof(T), cudaMemcpyDeviceToHost);
+    }
+    cudaFree(device_gram);
+    cudaFree(device_out);
+    cudaFree(device_state);
+    cudaFree(device_derivs);
+    cudaFree(device_gram_derivs);
+
+    std::cout << "polynomial-backprop segments1=" << segments1
         << " segments2=" << segments2 << " order=" << order
         << " batch=" << batch_size << " iterations=" << iterations
         << " grid=" << return_grid << " seconds=" << elapsed
@@ -209,9 +297,11 @@ int main(int argc, char* argv[])
     load_cusig(dir_path);
     get_cusig_fn_ptrs();
 
-    if (argc >= 3 && std::string(argv[2]) == "sig-kernel-cuda-profile") {
+    if (argc >= 3 && (std::string(argv[2]) == "sig-kernel-cuda-profile"
+        || std::string(argv[2]) == "sig-kernel-cuda-backprop-profile")) {
         if (argc != 10) {
-            std::cerr << "Usage: pysiglib_test_app <dll-dir> sig-kernel-cuda-profile "
+            std::cerr << "Usage: pysiglib_test_app <dll-dir> "
+                << "<sig-kernel-cuda-profile|sig-kernel-cuda-backprop-profile> "
                 << "<float32|float64> <segments1> <segments2> <order> <batch> "
                 << "<iterations> <scalar|grid>" << std::endl;
             unload_cpsig();
@@ -233,14 +323,28 @@ int main(int argc, char* argv[])
             unload_cusig();
             return 2;
         }
+        const bool backprop = std::string(argv[2])
+            == "sig-kernel-cuda-backprop-profile";
         int status = 0;
         if (dtype == "float32") {
-            status = profile_polysig_cuda<float>(polysig_kernel_cuda_f,
-                segments1, segments2, order, batch_size, iterations, output == "grid");
+            status = backprop
+                ? profile_polysig_backprop_cuda<float>(
+                    polysig_kernel_cuda_f, polysig_kernel_backprop_cuda_f,
+                    segments1, segments2, order, batch_size, iterations,
+                    output == "grid")
+                : profile_polysig_cuda<float>(polysig_kernel_cuda_f,
+                    segments1, segments2, order, batch_size, iterations,
+                    output == "grid");
         }
         else if (dtype == "float64") {
-            status = profile_polysig_cuda<double>(polysig_kernel_cuda_d,
-                segments1, segments2, order, batch_size, iterations, output == "grid");
+            status = backprop
+                ? profile_polysig_backprop_cuda<double>(
+                    polysig_kernel_cuda_d, polysig_kernel_backprop_cuda_d,
+                    segments1, segments2, order, batch_size, iterations,
+                    output == "grid")
+                : profile_polysig_cuda<double>(polysig_kernel_cuda_d,
+                    segments1, segments2, order, batch_size, iterations,
+                    output == "grid");
         }
         else {
             std::cerr << "dtype must be float32 or float64" << std::endl;

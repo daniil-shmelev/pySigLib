@@ -51,6 +51,7 @@ CUSIG_TRANSFORM_PATH_BACKPROP_CUDA = None
 CUSIG_SIG_KERNEL_CUDA = None
 CUSIG_SIG_KERNEL_BACKPROP_CUDA = None
 CUSIG_POLYSIG_KERNEL_CUDA = None
+CUSIG_POLYSIG_KERNEL_BACKPROP_CUDA = None
 CUSIG_BRANCHED_SIG_KERNEL_CUDA = None
 CUSIG_BRANCHED_SIG_KERNEL_BACKPROP_CUDA = None
 CUSIG_SIGNATURE_CUDA = None
@@ -99,6 +100,11 @@ if BUILT_WITH_CUDA:
     CUSIG_POLYSIG_KERNEL_CUDA = {
         "float32": CUSIG.polysig_kernel_cuda_f,
         "float64": CUSIG.polysig_kernel_cuda_d
+    }
+
+    CUSIG_POLYSIG_KERNEL_BACKPROP_CUDA = {
+        "float32": CUSIG.polysig_kernel_backprop_cuda_f,
+        "float64": CUSIG.polysig_kernel_backprop_cuda_d
     }
 
     CUSIG_SIG_KERNEL_BACKPROP_CUDA = {

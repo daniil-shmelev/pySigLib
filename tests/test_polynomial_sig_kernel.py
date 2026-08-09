@@ -192,6 +192,83 @@ def test_polynomial_sig_kernel_cuda_composition():
     assert torch.allclose(cuda_normalized, cpu_normalized, rtol=2e-12, atol=2e-12)
 
 
+@pytest.mark.parametrize("return_grid", [False, True])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_polynomial_sig_kernel_cuda_backprop_matches_cpu(dtype, return_grid):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    generator = torch.Generator().manual_seed(25022025)
+    x = torch.randn((2, 6, 3), generator=generator, dtype=dtype) * 0.04
+    y = torch.randn((2, 8, 3), generator=generator, dtype=dtype) * 0.04
+    if return_grid:
+        derivs = torch.randn((2, 6, 8), generator=generator, dtype=dtype)
+    else:
+        derivs = torch.randn((2,), generator=generator, dtype=dtype)
+
+    expected = pysiglib.sig_kernel_backprop(
+        derivs, x, y, method=METHOD, order=7,
+        left_deriv=True, right_deriv=True, return_grid=return_grid)
+    actual = pysiglib.sig_kernel_backprop(
+        derivs.cuda(), x.cuda(), y.cuda(), method=METHOD, order=7,
+        left_deriv=True, right_deriv=True, return_grid=return_grid)
+
+    tolerance = 5e-5 if dtype == torch.float32 else 4e-12
+    assert torch.allclose(actual[0].cpu(), expected[0], rtol=tolerance, atol=tolerance)
+    assert torch.allclose(actual[1].cpu(), expected[1], rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.parametrize("return_grid", [False, True])
+def test_torch_polynomial_sig_kernel_cuda_autograd(return_grid):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    x_cpu = torch.tensor(
+        [[0., 0.], [.2, -.1], [.35, .15]], dtype=torch.float64,
+        requires_grad=True)
+    y_cpu = torch.tensor(
+        [[0., 0.], [-.1, .25], [.2, .3], [.3, .1]], dtype=torch.float64,
+        requires_grad=True)
+    x_cuda = x_cpu.detach().cuda().requires_grad_()
+    y_cuda = y_cpu.detach().cuda().requires_grad_()
+    if return_grid:
+        weights_cpu = torch.arange(12, dtype=torch.float64).reshape(3, 4) / 10
+    else:
+        weights_cpu = torch.tensor(0.7, dtype=torch.float64)
+
+    expected = pysiglib.torch_api.sig_kernel(
+        x_cpu, y_cpu, method=METHOD, order=7, return_grid=return_grid)
+    expected_derivs = torch.autograd.grad(
+        torch.sum(expected * weights_cpu), (x_cpu, y_cpu))
+    actual = pysiglib.torch_api.sig_kernel(
+        x_cuda, y_cuda, method=METHOD, order=7, return_grid=return_grid)
+    actual_derivs = torch.autograd.grad(
+        torch.sum(actual * weights_cpu.cuda()), (x_cuda, y_cuda))
+
+    assert torch.allclose(actual.cpu(), expected, rtol=3e-12, atol=3e-12)
+    assert torch.allclose(
+        actual_derivs[0].cpu(), expected_derivs[0], rtol=5e-12, atol=5e-12)
+    assert torch.allclose(
+        actual_derivs[1].cpu(), expected_derivs[1], rtol=5e-12, atol=5e-12)
+
+
+def test_polynomial_sig_kernel_cuda_backprop_generic_order():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    generator = torch.Generator().manual_seed(25022025)
+    x = torch.randn((1, 4, 2), generator=generator, dtype=torch.float64) * 0.01
+    y = torch.randn((1, 5, 2), generator=generator, dtype=torch.float64) * 0.01
+    derivs = torch.tensor([0.75], dtype=torch.float64)
+
+    expected = pysiglib.sig_kernel_backprop(
+        derivs, x, y, method=METHOD, order=64,
+        left_deriv=True, right_deriv=True)
+    actual = pysiglib.sig_kernel_backprop(
+        derivs.cuda(), x.cuda(), y.cuda(), method=METHOD, order=64,
+        left_deriv=True, right_deriv=True)
+
+    assert torch.allclose(actual[0].cpu(), expected[0], rtol=2e-11, atol=2e-11)
+    assert torch.allclose(actual[1].cpu(), expected[1], rtol=2e-11, atol=2e-11)
+
+
 def test_polynomial_sig_kernel_converges_to_direct_signature():
     rng = np.random.default_rng(25022025)
     increments = rng.normal(scale=0.04, size=(7, 2))
