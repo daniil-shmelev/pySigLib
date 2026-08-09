@@ -63,11 +63,9 @@ struct BchCache {
 	std::vector<uint32_t> comm_ij_k;    // [nnz] output index
 	std::vector<double>   comm_ij_c;    // [nnz] coefficient (pre-cast)
 
-#ifdef VEC
 	// Structurally possible output range for each BCH node when the second
 	// input has degree one.
 	std::vector<std::pair<uint64_t, uint64_t>> linear_range;
-#endif
 
 	// Standard factorization of each d-letter Lyndon word (as index pairs)
 	// For degree-1 words: left_factor[i] = right_factor[i] = UINT64_MAX
@@ -452,7 +450,6 @@ inline void build_commutator_table(BchCache& cache) {
 	}
 }
 
-#ifdef VEC
 inline void build_linear_bch_ranges(BchCache& cache) {
 	const uint64_t m2 = cache.bch_coefficients.size();
 
@@ -472,7 +469,6 @@ inline void build_linear_bch_ranges(BchCache& cache) {
 		cache.linear_range[w] = {begin, ::log_sig_length(cache.dimension, max_degree[w])};
 	}
 }
-#endif
 
 // ========================================================================
 // BCH cache management
@@ -511,9 +507,7 @@ inline void set_bch_cache(uint64_t dimension, uint64_t degree) {
 
 	// Build commutator table for d-letter Lyndon basis
 	build_commutator_table(*cache);
-#ifdef VEC
 	build_linear_bch_ranges(*cache);
-#endif
 
 	std::unique_lock wlock(reg.mu);
 	reg.map.insert_or_assign(key, std::move(cache));
@@ -674,12 +668,15 @@ void bch_combine_linear_impl_(
 		const T* v2 = memo + rf * m;
 		T* result = memo + w * m;
 		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
+		const auto [begin, end] = cache.linear_range[w];
+		std::fill(result, result + begin, T(0));
+		std::fill(result + end, result + m, T(0));
 
 		// When one operand is node 1 (the sparse displacement), use
 		// precomputed sparse_end bounds - no per-entry branch needed.
 		const bool sparse = (rf == 1 || lf == 1);
 
-		for (uint64_t k = 0; k < m; ++k) {
+		for (uint64_t k = begin; k < end; ++k) {
 			T sum = T(0);
 			const uint32_t start = k_ptr[k];
 			const uint32_t end = sparse ? k_sparse_end[k] : k_ptr[k + 1];
@@ -850,7 +847,7 @@ inline void bch_combine_linear_backprop_impl_x4_(
 // bch_combine_backprop_impl_: backward pass through BCH
 // ========================================================================
 
-template<std::floating_point T>
+template<std::floating_point T, bool linear_input = false>
 void bch_combine_backprop_impl_(
 	const T* RESTRICT d_out, T* RESTRICT d_ls1, T* RESTRICT d_ls2,
 	const T* RESTRICT ls1, const T* RESTRICT ls2,
@@ -869,7 +866,7 @@ void bch_combine_backprop_impl_(
 	T* memo = workspace;
 	T* d_memo = workspace + m2 * m;
 
-	// Recompute forward memo using pair-grouped table
+	// Linear inputs use the range-aware combiner; otherwise recompute below.
 	std::memcpy(memo, ls1, m * sizeof(T));
 	std::memcpy(memo + m, ls2, m * sizeof(T));
 
@@ -880,7 +877,10 @@ void bch_combine_backprop_impl_(
 	const double* ij_c = cache.comm_ij_c.data();
 	const uint32_t n_pairs = cache.n_pairs;
 
-	for (uint64_t w = 2; w < m2; ++w) {
+	if constexpr (linear_input)
+		bch_combine_linear_impl_(ls1, ls2, d_memo, cache, memo);
+	const uint64_t first_w = linear_input ? m2 : 2;
+	for (uint64_t w = first_w; w < m2; ++w) {
 		const uint64_t lf = cache.bch_left_factor[w];
 		const uint64_t rf = cache.bch_right_factor[w];
 		const T* v1 = memo + lf * m;

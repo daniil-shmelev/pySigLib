@@ -700,7 +700,7 @@ void log_sig_from_path_backprop_(
 			seg[k] = pb[k] - pa[k];
 
 		// curr = BCH(curr, seg) - reuse prev as temp output, then swap
-		bch_combine_impl_<T>(curr, seg, prev, cache, bch_bp_ws);
+		bch_combine_linear_impl_<T>(curr, seg, prev, cache, bch_bp_ws);
 		std::swap(curr, prev);
 	}
 
@@ -719,10 +719,10 @@ void log_sig_from_path_backprop_(
 		}
 
 		// Recover prev = BCH(curr, -seg) - the "uncombine" step
-		bch_combine_impl_<T>(curr, neg_seg, prev, cache, bch_bp_ws);
+		bch_combine_linear_impl_<T>(curr, neg_seg, prev, cache, bch_bp_ws);
 
 		// Backprop through BCH(prev, seg) -> curr
-		bch_combine_backprop_impl_<T>(d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
+		bch_combine_backprop_impl_<T, true>(d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
 
 		for (uint64_t k = 0; k < dimension; ++k) {
 			d_path[(s + 1) * dimension + k] += d_ls2[k];
