@@ -117,16 +117,6 @@ BENCHMARK(BM_prepare_branched_sig_planar)->Unit(benchmark::kMicrosecond);
 // Path transforms
 // =========================================================================
 
-static void BM_transform_path(benchmark::State& state) {
-    auto path = random_data(16 * 8 * 512, 1);
-    std::vector<double> out(16 * 16 * 1023);
-    for (auto _ : state) {
-        ::transform_path_d(path.data(), out.data(), 16, 8, 512, false, true, 1.0);
-        benchmark::DoNotOptimize(out.data());
-    }
-}
-BENCHMARK(BM_transform_path)->Unit(benchmark::kMicrosecond);
-
 static void BM_transform_path_no_lead_lag(benchmark::State& state) {
     auto path = random_data(16 * 8 * 512, 1);
     std::vector<double> out(16 * 8 * 512);
@@ -136,16 +126,6 @@ static void BM_transform_path_no_lead_lag(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_transform_path_no_lead_lag)->Unit(benchmark::kMicrosecond);
-
-static void BM_transform_path_backprop(benchmark::State& state) {
-    auto derivs = random_data(16 * 16 * 1023, 1);
-    std::vector<double> out(16 * 8 * 512);
-    for (auto _ : state) {
-        ::transform_path_backprop_d(derivs.data(), out.data(), 16, 8, 512, false, true, 1.0);
-        benchmark::DoNotOptimize(out.data());
-    }
-}
-BENCHMARK(BM_transform_path_backprop)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Signature forward / backward
