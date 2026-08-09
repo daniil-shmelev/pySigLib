@@ -32,7 +32,7 @@ def test_expected_sig_score_random(device, dyadic_order):
     Y = torch.tensor(FIXTURES["ess_Y"], device=device, dtype=torch.double)
     expected = float(FIXTURES[f"ess_linear__do{dyadic_order}"])
 
-    d2 = float(pysiglib.expected_sig_score(X, Y, dyadic_order))
+    d2 = float(pysiglib.expected_sig_score(X, Y, dyadic_order=dyadic_order))
 
     assert not abs(expected - d2) > EPSILON
 
@@ -43,7 +43,7 @@ def test_expected_sig_score_random_rbf(device, dyadic_order):
     Y = torch.tensor(FIXTURES["ess_Y"], device=device, dtype=torch.double)
     expected = float(FIXTURES[f"ess_rbf__do{dyadic_order}"])
 
-    d2 = float(pysiglib.expected_sig_score(X, Y, dyadic_order, static_kernel=pysiglib.RBFKernel(2.)))
+    d2 = float(pysiglib.expected_sig_score(X, Y, dyadic_order=dyadic_order, static_kernel=pysiglib.RBFKernel(2.)))
 
     assert not abs(expected - d2) > EPSILON
 
@@ -55,7 +55,7 @@ def test_expected_sig_score_random_non_square(device, len1, len2, dyadic_order):
     Y = torch.tensor(FIXTURES[f"ess_nonsq_{len1}_{len2}__do{dyadic_order}_Y"], device=device, dtype=torch.double)
     expected = float(FIXTURES[f"ess_nonsq_{len1}_{len2}__do{dyadic_order}"])
 
-    d2 = float(pysiglib.expected_sig_score(X, Y, dyadic_order))
+    d2 = float(pysiglib.expected_sig_score(X, Y, dyadic_order=dyadic_order))
 
     assert not abs(expected - d2) > EPSILON
 
@@ -66,7 +66,7 @@ def test_sig_mmd_random(device, dyadic_order):
     Y = torch.tensor(FIXTURES["ess_Y"], device=device, dtype=torch.double)
     expected = float(FIXTURES[f"mmd_linear__do{dyadic_order}"])
 
-    mmd2 = float(pysiglib.sig_mmd(X, Y, dyadic_order))
+    mmd2 = float(pysiglib.sig_mmd(X, Y, dyadic_order=dyadic_order))
 
     assert not abs(expected - mmd2) > EPSILON
 
@@ -77,7 +77,7 @@ def test_sig_mmd_random_rbf(device, dyadic_order):
     Y = torch.tensor(FIXTURES["ess_Y"], device=device, dtype=torch.double)
     expected = float(FIXTURES[f"mmd_rbf__do{dyadic_order}"])
 
-    mmd2 = float(pysiglib.sig_mmd(X, Y, dyadic_order, static_kernel=pysiglib.RBFKernel(2.)))
+    mmd2 = float(pysiglib.sig_mmd(X, Y, dyadic_order=dyadic_order, static_kernel=pysiglib.RBFKernel(2.)))
 
     assert not abs(expected - mmd2) > EPSILON
 
@@ -89,6 +89,6 @@ def test_sig_mmd_random_non_square(device, len1, len2, dyadic_order):
     Y = torch.tensor(FIXTURES[f"ess_nonsq_{len1}_{len2}__do{dyadic_order}_Y"], device=device, dtype=torch.double)
     expected = float(FIXTURES[f"mmd_nonsq_{len1}_{len2}__do{dyadic_order}"])
 
-    mmd2 = float(pysiglib.sig_mmd(X, Y, dyadic_order))
+    mmd2 = float(pysiglib.sig_mmd(X, Y, dyadic_order=dyadic_order))
 
     assert not abs(expected - mmd2) > EPSILON

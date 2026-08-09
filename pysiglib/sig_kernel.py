@@ -92,9 +92,9 @@ from .static_kernels import StaticKernel, LinearKernel, Context
 def sig_kernel(
         path1 : Union[np.ndarray, torch.Tensor],
         path2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
         method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
         order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -133,14 +133,14 @@ def sig_kernel(
         ``(..., length_2, dimension)``. Leading batch dimensions must match those of
         ``path1``.
     :type path2: numpy.ndarray | torch.Tensor
-    :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
+    :param dyadic_order: (``method="finite_difference"`` only) If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
     :type dyadic_order: None | int | tuple
     :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
     :type method: str
-    :param order: Highest retained polynomial degree for the polynomial method. Must be
+    :param order: (``method="polynomial"`` only) Highest retained polynomial degree. Must be
         between 2 and 64. Unsupported for finite differences.
     :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
@@ -321,9 +321,9 @@ def sig_kernel(
             )
 
     if normalize:
-        k1 = sig_kernel(path1, path1, dyadic_order, method=method, order=order,
+        k1 = sig_kernel(path1, path1, dyadic_order=dyadic_order, method=method, order=order,
                         static_kernel=static_kernel, n_jobs=n_jobs)
-        k2 = sig_kernel(path2, path2, dyadic_order, method=method, order=order,
+        k2 = sig_kernel(path2, path2, dyadic_order=dyadic_order, method=method, order=order,
                         static_kernel=static_kernel, n_jobs=n_jobs)
         result.data = _safe_normalize(result.data, k1, k2, "sig_kernel(normalize=True)")
 
@@ -335,9 +335,9 @@ def sig_kernel(
 def sig_kernel_gram(
         path1 : Union[np.ndarray, torch.Tensor],
         path2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
         method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
         order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -379,14 +379,14 @@ def sig_kernel_gram(
     :param path2: A path or batch of paths, of shape ``(*batch_shape_2, length_2, dimension)``.
         Independent of ``path1``'s batch shape.
     :type path2: numpy.ndarray | torch.Tensor
-    :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
+    :param dyadic_order: (``method="finite_difference"`` only) If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
     :type dyadic_order: None | int | tuple
     :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
     :type method: str
-    :param order: Highest retained polynomial degree for the polynomial method. Must be
+    :param order: (``method="polynomial"`` only) Highest retained polynomial degree. Must be
         between 2 and 64. Unsupported for finite differences.
     :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
@@ -542,7 +542,7 @@ def sig_kernel_gram(
         ci = idx_i[start:end]
         cj = idx_j[start:end]
 
-        k = sig_kernel(src1[ci], src2[cj], dyadic_order, method=method, order=order,
+        k = sig_kernel(src1[ci], src2[cj], dyadic_order=dyadic_order, method=method, order=order,
                        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
                        end_time=end_time, n_jobs=n_jobs, return_grid=return_grid)
         res[ci, cj] = k
@@ -556,10 +556,10 @@ def sig_kernel_gram(
                 res[cj[off], ci[off]] = k_mirror
 
     if normalize:
-        d1 = sig_kernel(path1, path1, dyadic_order, method=method, order=order,
+        d1 = sig_kernel(path1, path1, dyadic_order=dyadic_order, method=method, order=order,
                         static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
                         end_time=end_time, n_jobs=n_jobs)
-        d2 = sig_kernel(path2, path2, dyadic_order, method=method, order=order,
+        d2 = sig_kernel(path2, path2, dyadic_order=dyadic_order, method=method, order=order,
                         static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
                         end_time=end_time, n_jobs=n_jobs) if not symmetric else d1
         res = _safe_normalize(res, d1.unsqueeze(1), d2.unsqueeze(0), "sig_kernel_gram(normalize=True)")

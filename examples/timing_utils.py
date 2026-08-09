@@ -273,7 +273,7 @@ def time_pysiglib_kernel(cfg, n_jobs, progress_bar = False):
         if cfg['device'] == "cuda":
             torch.cuda.empty_cache()
         start = timeit.default_timer()
-        pysiglib.sig_kernel(X, Y, cfg['dyadic_order'], n_jobs = n_jobs)
+        pysiglib.sig_kernel(X, Y, dyadic_order=cfg['dyadic_order'], n_jobs = n_jobs)
         end = timeit.default_timer()
         time_ = end - start
         best_time = min(best_time, time_)
@@ -289,7 +289,7 @@ def time_pysiglib_kernel_backprop(cfg, n_jobs, progress_bar = False):
         Y = torch.rand(size=(cfg['batch_size'], cfg['length'], cfg['dimension']), device = cfg['device'], dtype=dtype, requires_grad=True)
         if cfg['device'] == "cuda":
             torch.cuda.empty_cache()
-        K = pysiglib.torch_api.sig_kernel(X, Y, cfg['dyadic_order'], n_jobs = n_jobs)
+        K = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order=cfg['dyadic_order'], n_jobs = n_jobs)
         start = timeit.default_timer()
         K.backward(derivs)
         end = timeit.default_timer()

@@ -45,17 +45,17 @@ def test_grid_backprop_consistency_with_scalar(len1, len2, dyadic_order, device)
     # Scalar backprop
     derivs_scalar = torch.ones(1, dtype=torch.float64, device=device)
     d1_scalar, d2_scalar = pysiglib.sig_kernel_backprop(
-        derivs_scalar, X, Y, dyadic_order, left_deriv=True, right_deriv=True
+        derivs_scalar, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=True
     )
     assert_device(d1_scalar, device)
     assert_device(d2_scalar, device)
 
     # Grid backprop: construct derivs_grid with 1.0 at [-1,-1]
-    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, return_grid=True)
     derivs_grid = torch.zeros_like(k_grid, device=device)
     derivs_grid[-1, -1] = 1.0
     d1_grid, d2_grid = pysiglib.sig_kernel_backprop(
-        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=True,
+        derivs_grid, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=True,
         k_grid=k_grid, return_grid=True
     )
     assert_device(d1_grid, device)
@@ -73,16 +73,16 @@ def test_grid_backprop_consistency_batch(dyadic_order, device):
 
     derivs_scalar = torch.ones(32, dtype=torch.float64, device=device)
     d1_scalar, d2_scalar = pysiglib.sig_kernel_backprop(
-        derivs_scalar, X, Y, dyadic_order, left_deriv=True, right_deriv=True
+        derivs_scalar, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=True
     )
     assert_device(d1_scalar, device)
     assert_device(d2_scalar, device)
 
-    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, return_grid=True)
     derivs_grid = torch.zeros_like(k_grid, device=device)
     derivs_grid[:, -1, -1] = 1.0
     d1_grid, d2_grid = pysiglib.sig_kernel_backprop(
-        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=True,
+        derivs_grid, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=True,
         k_grid=k_grid, return_grid=True
     )
     assert_device(d1_grid, device)
@@ -112,7 +112,7 @@ def _finite_difference_grid(x1, x2, derivs_grid, dyadic_order, time_aug=False, l
     dim = x1.shape[2]
 
     eps = 1e-7
-    k_grid = pysiglib.sig_kernel(x1, x2, dyadic_order, time_aug=time_aug, lead_lag=lead_lag, static_kernel=static_kernel, return_grid=True)
+    k_grid = pysiglib.sig_kernel(x1, x2, dyadic_order=dyadic_order, time_aug=time_aug, lead_lag=lead_lag, static_kernel=static_kernel, return_grid=True)
     F0 = (derivs_grid * k_grid).sum(dim=(-2, -1))  # (batch,)
 
     out = torch.empty(batch_size, length, dim, dtype=torch.double)
@@ -121,7 +121,7 @@ def _finite_difference_grid(x1, x2, derivs_grid, dyadic_order, time_aug=False, l
         for d in range(dim):
             x1_d = deepcopy(x1)
             x1_d[:, i, d] += eps
-            k_grid_d = pysiglib.sig_kernel(x1_d, x2, dyadic_order, time_aug=time_aug, lead_lag=lead_lag, static_kernel=static_kernel, return_grid=True)
+            k_grid_d = pysiglib.sig_kernel(x1_d, x2, dyadic_order=dyadic_order, time_aug=time_aug, lead_lag=lead_lag, static_kernel=static_kernel, return_grid=True)
             F1 = (derivs_grid * k_grid_d).sum(dim=(-2, -1))
             out[:, i, d] = (F1 - F0) / eps
     return out
@@ -133,11 +133,11 @@ def test_grid_backprop_finite_diff(dyadic_order, device):
     X = torch.rand(size=(5, 5), dtype=torch.float64, device=device)
     Y = torch.rand(size=(7, 5), dtype=torch.float64, device=device)
 
-    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, return_grid=True)
     derivs_grid = torch.rand_like(k_grid, device=device)
 
     d1, _ = pysiglib.sig_kernel_backprop(
-        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
+        derivs_grid, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=False,
         k_grid=k_grid, return_grid=True
     )
     assert_device(d1, device)
@@ -152,11 +152,11 @@ def test_grid_backprop_finite_diff_batch(dyadic_order, device):
     X = torch.rand(size=(32, 5, 5), dtype=torch.float64, device=device)
     Y = torch.rand(size=(32, 7, 5), dtype=torch.float64, device=device)
 
-    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, return_grid=True)
     derivs_grid = torch.rand_like(k_grid, device=device)
 
     d1, _ = pysiglib.sig_kernel_backprop(
-        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
+        derivs_grid, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=False,
         k_grid=k_grid, return_grid=True
     )
     assert_device(d1, device)
@@ -170,11 +170,11 @@ def test_grid_backprop_finite_diff_time_aug_batch(dyadic_order, device):
     X = torch.rand(size=(32, 5, 5), dtype=torch.float64, device=device)
     Y = torch.rand(size=(32, 7, 5), dtype=torch.float64, device=device)
 
-    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, time_aug=True, return_grid=True)
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, time_aug=True, return_grid=True)
     derivs_grid = torch.rand_like(k_grid, device=device)
 
     d1, _ = pysiglib.sig_kernel_backprop(
-        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
+        derivs_grid, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=False,
         k_grid=k_grid, return_grid=True, time_aug=True,
     )
     assert_device(d1, device)
@@ -188,11 +188,11 @@ def test_grid_backprop_finite_diff_lead_lag_batch(dyadic_order, device):
     X = torch.rand(size=(32, 5, 5), dtype=torch.float64, device=device) / 200
     Y = torch.rand(size=(32, 10, 5), dtype=torch.float64, device=device) / 200
 
-    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True, lead_lag=True)
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, return_grid=True, lead_lag=True)
     derivs_grid = torch.rand_like(k_grid, device=device)
 
     d1, _ = pysiglib.sig_kernel_backprop(
-        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
+        derivs_grid, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=False,
         k_grid=k_grid, return_grid=True, lead_lag=True
     )
     assert_device(d1, device)
@@ -206,11 +206,11 @@ def test_grid_backprop_finite_diff_time_aug_lead_lag_batch(dyadic_order, device)
     X = torch.rand(size=(32, 5, 5), dtype=torch.float64, device=device) / 200
     Y = torch.rand(size=(32, 10, 5), dtype=torch.float64, device=device) / 200
 
-    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order, return_grid=True, time_aug=True, lead_lag=True)
+    k_grid = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, return_grid=True, time_aug=True, lead_lag=True)
     derivs_grid = torch.rand_like(k_grid, device=device)
 
     d1, _ = pysiglib.sig_kernel_backprop(
-        derivs_grid, X, Y, dyadic_order, left_deriv=True, right_deriv=False,
+        derivs_grid, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=False,
         k_grid=k_grid, return_grid=True, time_aug=True, lead_lag=True
     )
     assert_device(d1, device)
@@ -229,7 +229,7 @@ def test_grid_backprop_torch_api_batch(dyadic_order, device):
     X = torch.rand(size=(32, 5, 5), dtype=torch.float64, device=device, requires_grad=True)
     Y = torch.rand(size=(32, 7, 5), dtype=torch.float64, device=device, requires_grad=True)
 
-    k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, return_grid=True)
+    k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order=dyadic_order, return_grid=True)
     assert_device(k_grid, device)
     derivs = torch.rand(k_grid.shape, device=device)
     k_grid.backward(derivs)
@@ -248,7 +248,7 @@ def test_grid_backprop_torch_api_time_aug_batch(dyadic_order, device):
     X = torch.rand(size=(32, 5, 4), dtype=torch.float64, device=device, requires_grad=True)
     Y = torch.rand(size=(32, 7, 4), dtype=torch.float64, device=device, requires_grad=True)
 
-    k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, time_aug=True, return_grid=True)
+    k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order=dyadic_order, time_aug=True, return_grid=True)
     assert_device(k_grid, device)
     derivs = torch.rand(k_grid.shape, device=device)
     k_grid.backward(derivs)
@@ -267,7 +267,7 @@ def test_grid_backprop_torch_api_lead_lag_batch(dyadic_order, device):
     X = (torch.rand(size=(32, 5, 2)) / 200).to(dtype=torch.float64, device=device).requires_grad_(True)
     Y = (torch.rand(size=(32, 10, 2)) / 200).to(dtype=torch.float64, device=device).requires_grad_(True)
 
-    k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, lead_lag=True, return_grid=True)
+    k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order=dyadic_order, lead_lag=True, return_grid=True)
     assert_device(k_grid, device)
     derivs = torch.rand(k_grid.shape, device=device)
     k_grid.backward(derivs)
@@ -286,7 +286,7 @@ def test_grid_backprop_torch_api_time_aug_lead_lag_batch(dyadic_order, device):
     X = (torch.rand(size=(32, 5, 2)) / 200).to(dtype=torch.float64, device=device).requires_grad_(True)
     Y = (torch.rand(size=(32, 10, 2)) / 200).to(dtype=torch.float64, device=device).requires_grad_(True)
 
-    k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order, time_aug=True, lead_lag=True, return_grid=True)
+    k_grid = pysiglib.torch_api.sig_kernel(X, Y, dyadic_order=dyadic_order, time_aug=True, lead_lag=True, return_grid=True)
     assert_device(k_grid, device)
     derivs = torch.rand(k_grid.shape, device=device)
     k_grid.backward(derivs)

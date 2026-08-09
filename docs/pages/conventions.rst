@@ -41,7 +41,7 @@ Input types
 
 All arrays passed to a given ``pysiglib`` function should be of the same type
 and be located on the same device.
-For example, for the call ``k = pysiglib.sig_kernel(X, Y, 1)``, if ``X`` is a
+For example, for the call ``k = pysiglib.sig_kernel(X, Y, dyadic_order=1)``, if ``X`` is a
 ``torch`` tensor of type ``float`` located on a GPU, then ``Y`` should be the same.
 This will also be the format of the output tensor, ``k``.
 

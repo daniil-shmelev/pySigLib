@@ -45,7 +45,7 @@ if __name__ == '__main__':
     print(kernel)
 
     start = timeit.default_timer()
-    kernel = pysiglib.sig_kernel(X, Y, dyadic_order)
+    kernel = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order)
     end = timeit.default_timer()
     print(end - start)
     print(kernel)

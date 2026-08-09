@@ -325,13 +325,13 @@ class SigKernel(torch.autograd.Function):
     def forward(ctx, path1, path2, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid):
         if method == "polynomial":
             result, solver_state = sig_kernel_forward(
-                path1, path2, dyadic_order, method=method, order=order,
+                path1, path2, dyadic_order=dyadic_order, method=method, order=order,
                 static_kernel=static_kernel, time_aug=time_aug,
                 lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
                 return_grid=return_grid, _return_state=True)
         else:
             solver_state = sig_kernel_forward(
-                path1, path2, dyadic_order, method=method, order=order,
+                path1, path2, dyadic_order=dyadic_order, method=method, order=order,
                 static_kernel=static_kernel, time_aug=time_aug,
                 lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
                 return_grid=True)
@@ -378,7 +378,7 @@ class SigKernel(torch.autograd.Function):
             flat_k_grid = None if ctx.method == "polynomial" else solver_state
             flat_state = solver_state if ctx.method == "polynomial" else None
 
-        new_derivs = sig_kernel_backprop(flat_grad, flat_path1, flat_path2, ctx.dyadic_order,
+        new_derivs = sig_kernel_backprop(flat_grad, flat_path1, flat_path2, dyadic_order=ctx.dyadic_order,
                                          method=ctx.method, order=ctx.order,
                                          static_kernel=ctx.static_kernel,
                                          time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
@@ -395,9 +395,9 @@ class SigKernel(torch.autograd.Function):
 def sig_kernel(
         path1 : Union[np.ndarray, torch.Tensor],
         path2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
         method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
         order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -426,7 +426,7 @@ class SigKernelGram(torch.autograd.Function):
     def forward(ctx, path1, path2, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid):
         compute_grid = return_grid or method == "finite_difference"
         result = sig_kernel_gram_forward(
-            path1, path2, dyadic_order, method=method, order=order,
+            path1, path2, dyadic_order=dyadic_order, method=method, order=order,
             static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
             end_time=end_time, n_jobs=n_jobs, max_batch=max_batch,
             return_grid=compute_grid)
@@ -459,7 +459,7 @@ class SigKernelGram(torch.autograd.Function):
         if ctx.symmetric:
             path2 = path1
 
-        new_derivs = sig_kernel_gram_backprop(grad_output, path1, path2, ctx.dyadic_order,
+        new_derivs = sig_kernel_gram_backprop(grad_output, path1, path2, dyadic_order=ctx.dyadic_order,
                                          method=ctx.method, order=ctx.order,
                                          static_kernel=ctx.static_kernel,
                                          time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
@@ -472,9 +472,9 @@ class SigKernelGram(torch.autograd.Function):
 def sig_kernel_gram(
         path1: Union[np.ndarray, torch.Tensor],
         path2: Union[np.ndarray, torch.Tensor],
-        dyadic_order: Optional[Union[int, tuple]] = None,
         *,
         method: str = "finite_difference",
+        dyadic_order: Optional[Union[int, tuple]] = None,
         order: Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug: bool = False,
@@ -644,9 +644,9 @@ branched_sig_kernel_gram.__doc__ = branched_sig_kernel_gram_forward.__doc__
 def sig_score(
         sample : Union[np.ndarray, torch.Tensor],
         y : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
         method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
         order : Optional[int] = None,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
@@ -667,8 +667,8 @@ def sig_score(
     if B < 2:
         raise ValueError("sig_score requires at least 2 sample paths (got {}).".format(B))
 
-    xx = sig_kernel_gram(sample, sample, dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    xy = sig_kernel_gram(sample, y, dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xx = sig_kernel_gram(sample, sample, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xy = sig_kernel_gram(sample, y, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
@@ -683,9 +683,9 @@ sig_score.__doc__ = sig_score_forward.__doc__
 def expected_sig_score(
         sample1 : Union[np.ndarray, torch.Tensor],
         sample2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
         method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
         order : Optional[int] = None,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
@@ -695,7 +695,7 @@ def expected_sig_score(
         n_jobs : int = 1,
         max_batch : int = -1
 ) -> Union[np.ndarray, torch.Tensor]:
-    res = sig_score(sample1, sample2, dyadic_order, method=method, order=order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
+    res = sig_score(sample1, sample2, dyadic_order=dyadic_order, method=method, order=order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
     return res.mean().reshape(1)
 
 expected_sig_score.__doc__ = expected_sig_score_forward.__doc__
@@ -703,9 +703,9 @@ expected_sig_score.__doc__ = expected_sig_score_forward.__doc__
 def sig_mmd(
         sample1 : Union[np.ndarray, torch.Tensor],
         sample2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
         method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
         order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -724,9 +724,9 @@ def sig_mmd(
     if n < 2:
         raise ValueError("sig_mmd requires at least 2 paths in sample2 (got {}).".format(n))
 
-    xx = sig_kernel_gram(sample1, sample1, dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    xy = sig_kernel_gram(sample1, sample2, dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    yy = sig_kernel_gram(sample2, sample2, dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xx = sig_kernel_gram(sample1, sample1, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xy = sig_kernel_gram(sample1, sample2, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    yy = sig_kernel_gram(sample2, sample2, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * torch.mean(xy)

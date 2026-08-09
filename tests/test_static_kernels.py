@@ -43,14 +43,14 @@ def finite_difference(x1, x2, dyadic_order, kernel):
     dim = x1.shape[2]
 
     eps = 1e-10
-    k = pysiglib.sig_kernel(x1, x2, dyadic_order, static_kernel=kernel)
+    k = pysiglib.sig_kernel(x1, x2, dyadic_order=dyadic_order, static_kernel=kernel)
     out = np.empty(shape=(batch_size, length, dim))
 
     for i in range(length):
         for d in range(dim):
             x1_d = deepcopy(x1)
             x1_d[:, i, d] += eps
-            k_d = pysiglib.sig_kernel(x1_d, x2, dyadic_order, static_kernel=kernel)
+            k_d = pysiglib.sig_kernel(x1_d, x2, dyadic_order=dyadic_order, static_kernel=kernel)
             out[:, i, d] = (k_d - k) / eps
     return out
 
@@ -67,14 +67,14 @@ def finite_difference_gram(x1, x2, dyadic_order, kernel):
     dim = x1.shape[2]
 
     eps = 1e-10
-    k = pysiglib.sig_kernel_gram(x1, x2, dyadic_order, static_kernel=kernel)
+    k = pysiglib.sig_kernel_gram(x1, x2, dyadic_order=dyadic_order, static_kernel=kernel)
     out = np.empty(shape=(batch_size, length, dim))
 
     for i in range(length):
         for d in range(dim):
             x1_d = deepcopy(x1)
             x1_d[:, i, d] += eps
-            k_d = pysiglib.sig_kernel_gram(x1_d, x2, dyadic_order, static_kernel=kernel)
+            k_d = pysiglib.sig_kernel_gram(x1_d, x2, dyadic_order=dyadic_order, static_kernel=kernel)
             out[:, i, d] = ((k_d - k) / eps).sum(1)
     return out
 
@@ -90,7 +90,7 @@ def test_polynomial_kernel_forward_batch(device, dyadic_order):
     Y = torch.rand(size=(batch, len2, dim), device=device, dtype=torch.double) / 2
 
     kernel = pysiglib.PolynomialKernel(degree=2., gamma=1., scale=1.)
-    k = pysiglib.sig_kernel(X, Y, dyadic_order, static_kernel=kernel)
+    k = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, static_kernel=kernel)
     assert_device(k, device)
     assert k.shape == (batch,)
     assert torch.all(torch.isfinite(k))
@@ -104,7 +104,7 @@ def test_polynomial_kernel_gram_batch(device, dyadic_order):
     Y = torch.rand(size=(batch2, len2, dim), device=device, dtype=torch.double) / 2
 
     kernel = pysiglib.PolynomialKernel(degree=2., gamma=1., scale=1.)
-    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order, static_kernel=kernel)
+    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order=dyadic_order, static_kernel=kernel)
     assert_device(gram, device)
     assert gram.shape == (batch1, batch2)
     assert torch.all(torch.isfinite(gram))
@@ -123,7 +123,7 @@ def test_polynomial_kernel_backprop_batch(device, dyadic_order):
     d1 = finite_difference(X, Y, dyadic_order, kernel=kernel)
     d2 = finite_difference(Y, X, dyadic_order, kernel=kernel)
     d3, d4 = pysiglib.sig_kernel_backprop(
-        derivs, X, Y, dyadic_order, left_deriv=True, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=True, static_kernel=kernel
     )
     assert_device(d3, device)
     assert_device(d4, device)
@@ -145,7 +145,7 @@ def test_polynomial_kernel_backprop_grad_y_without_grad_x(device, dyadic_order):
 
     d2 = finite_difference(Y, X, dyadic_order, kernel=kernel)
     _, d5 = pysiglib.sig_kernel_backprop(
-        derivs, X, Y, dyadic_order, left_deriv=False, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=dyadic_order, left_deriv=False, right_deriv=True, static_kernel=kernel
     )
     assert_device(d5, device)
     check_close(d2, d5)
@@ -163,7 +163,7 @@ def test_matern12_kernel_forward_batch(device, dyadic_order):
     Y = torch.rand(size=(batch, len2, dim), device=device, dtype=torch.double) / 2
 
     kernel = pysiglib.Matern12Kernel(sigma=1.0)
-    k = pysiglib.sig_kernel(X, Y, dyadic_order, static_kernel=kernel)
+    k = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, static_kernel=kernel)
     assert_device(k, device)
     assert k.shape == (batch,)
     assert torch.all(torch.isfinite(k))
@@ -177,7 +177,7 @@ def test_matern12_kernel_gram_batch(device, dyadic_order):
     Y = torch.rand(size=(batch2, len2, dim), device=device, dtype=torch.double) / 2
 
     kernel = pysiglib.Matern12Kernel(sigma=1.0)
-    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order, static_kernel=kernel)
+    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order=dyadic_order, static_kernel=kernel)
     assert_device(gram, device)
     assert gram.shape == (batch1, batch2)
     assert torch.all(torch.isfinite(gram))
@@ -196,7 +196,7 @@ def test_matern12_kernel_backprop_batch(device, dyadic_order):
     d1 = finite_difference(X, Y, dyadic_order, kernel=kernel)
     d2 = finite_difference(Y, X, dyadic_order, kernel=kernel)
     d3, d4 = pysiglib.sig_kernel_backprop(
-        derivs, X, Y, dyadic_order, left_deriv=True, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=True, static_kernel=kernel
     )
     assert_device(d3, device)
     assert_device(d4, device)
@@ -217,7 +217,7 @@ def test_matern12_kernel_backprop_grad_y_without_grad_x(device, dyadic_order):
 
     d2 = finite_difference(Y, X, dyadic_order, kernel=kernel)
     _, d5 = pysiglib.sig_kernel_backprop(
-        derivs, X, Y, dyadic_order, left_deriv=False, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=dyadic_order, left_deriv=False, right_deriv=True, static_kernel=kernel
     )
     assert_device(d5, device)
     check_close(d2, d5)
@@ -235,7 +235,7 @@ def test_matern32_kernel_forward_batch(device, dyadic_order):
     Y = torch.rand(size=(batch, len2, dim), device=device, dtype=torch.double) / 2
 
     kernel = pysiglib.Matern32Kernel(sigma=1.0)
-    k = pysiglib.sig_kernel(X, Y, dyadic_order, static_kernel=kernel)
+    k = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, static_kernel=kernel)
     assert_device(k, device)
     assert k.shape == (batch,)
     assert torch.all(torch.isfinite(k))
@@ -249,7 +249,7 @@ def test_matern32_kernel_gram_batch(device, dyadic_order):
     Y = torch.rand(size=(batch2, len2, dim), device=device, dtype=torch.double) / 2
 
     kernel = pysiglib.Matern32Kernel(sigma=1.0)
-    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order, static_kernel=kernel)
+    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order=dyadic_order, static_kernel=kernel)
     assert_device(gram, device)
     assert gram.shape == (batch1, batch2)
     assert torch.all(torch.isfinite(gram))
@@ -268,7 +268,7 @@ def test_matern32_kernel_backprop_batch(device, dyadic_order):
     d1 = finite_difference(X, Y, dyadic_order, kernel=kernel)
     d2 = finite_difference(Y, X, dyadic_order, kernel=kernel)
     d3, d4 = pysiglib.sig_kernel_backprop(
-        derivs, X, Y, dyadic_order, left_deriv=True, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=True, static_kernel=kernel
     )
     assert_device(d3, device)
     assert_device(d4, device)
@@ -289,7 +289,7 @@ def test_matern32_kernel_backprop_grad_y_without_grad_x(device, dyadic_order):
 
     d2 = finite_difference(Y, X, dyadic_order, kernel=kernel)
     _, d5 = pysiglib.sig_kernel_backprop(
-        derivs, X, Y, dyadic_order, left_deriv=False, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=dyadic_order, left_deriv=False, right_deriv=True, static_kernel=kernel
     )
     assert_device(d5, device)
     check_close(d2, d5)
@@ -307,7 +307,7 @@ def test_matern52_kernel_forward_batch(device, dyadic_order):
     Y = torch.rand(size=(batch, len2, dim), device=device, dtype=torch.double) / 2
 
     kernel = pysiglib.Matern52Kernel(sigma=1.0)
-    k = pysiglib.sig_kernel(X, Y, dyadic_order, static_kernel=kernel)
+    k = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, static_kernel=kernel)
     assert_device(k, device)
     assert k.shape == (batch,)
     assert torch.all(torch.isfinite(k))
@@ -321,7 +321,7 @@ def test_matern52_kernel_gram_batch(device, dyadic_order):
     Y = torch.rand(size=(batch2, len2, dim), device=device, dtype=torch.double) / 2
 
     kernel = pysiglib.Matern52Kernel(sigma=1.0)
-    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order, static_kernel=kernel)
+    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order=dyadic_order, static_kernel=kernel)
     assert_device(gram, device)
     assert gram.shape == (batch1, batch2)
     assert torch.all(torch.isfinite(gram))
@@ -340,7 +340,7 @@ def test_matern52_kernel_backprop_batch(device, dyadic_order):
     d1 = finite_difference(X, Y, dyadic_order, kernel=kernel)
     d2 = finite_difference(Y, X, dyadic_order, kernel=kernel)
     d3, d4 = pysiglib.sig_kernel_backprop(
-        derivs, X, Y, dyadic_order, left_deriv=True, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=True, static_kernel=kernel
     )
     assert_device(d3, device)
     assert_device(d4, device)
@@ -361,7 +361,7 @@ def test_matern52_kernel_backprop_grad_y_without_grad_x(device, dyadic_order):
 
     d2 = finite_difference(Y, X, dyadic_order, kernel=kernel)
     _, d5 = pysiglib.sig_kernel_backprop(
-        derivs, X, Y, dyadic_order, left_deriv=False, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=dyadic_order, left_deriv=False, right_deriv=True, static_kernel=kernel
     )
     assert_device(d5, device)
     check_close(d2, d5)
@@ -379,7 +379,7 @@ def test_rational_quadratic_kernel_forward_batch(device, dyadic_order):
     Y = torch.rand(size=(batch, len2, dim), device=device, dtype=torch.double) / 2
 
     kernel = pysiglib.RationalQuadraticKernel(sigma=1.0, alpha=1.0)
-    k = pysiglib.sig_kernel(X, Y, dyadic_order, static_kernel=kernel)
+    k = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, static_kernel=kernel)
     assert_device(k, device)
     assert k.shape == (batch,)
     assert torch.all(torch.isfinite(k))
@@ -393,7 +393,7 @@ def test_rational_quadratic_kernel_gram_batch(device, dyadic_order):
     Y = torch.rand(size=(batch2, len2, dim), device=device, dtype=torch.double) / 2
 
     kernel = pysiglib.RationalQuadraticKernel(sigma=1.0, alpha=1.0)
-    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order, static_kernel=kernel)
+    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order=dyadic_order, static_kernel=kernel)
     assert_device(gram, device)
     assert gram.shape == (batch1, batch2)
     assert torch.all(torch.isfinite(gram))
@@ -412,7 +412,7 @@ def test_rational_quadratic_kernel_backprop_batch(device, dyadic_order):
     d1 = finite_difference(X, Y, dyadic_order, kernel=kernel)
     d2 = finite_difference(Y, X, dyadic_order, kernel=kernel)
     d3, d4 = pysiglib.sig_kernel_backprop(
-        derivs, X, Y, dyadic_order, left_deriv=True, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=dyadic_order, left_deriv=True, right_deriv=True, static_kernel=kernel
     )
     assert_device(d3, device)
     assert_device(d4, device)
@@ -433,7 +433,7 @@ def test_rational_quadratic_kernel_backprop_grad_y_without_grad_x(device, dyadic
 
     d2 = finite_difference(Y, X, dyadic_order, kernel=kernel)
     _, d5 = pysiglib.sig_kernel_backprop(
-        derivs, X, Y, dyadic_order, left_deriv=False, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=dyadic_order, left_deriv=False, right_deriv=True, static_kernel=kernel
     )
     assert_device(d5, device)
     check_close(d2, d5)
@@ -457,7 +457,7 @@ def test_sig_kernel_self_positive(device, kernel_factory):
     X = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
 
     kernel = kernel_factory()
-    k = pysiglib.sig_kernel(X, X, 0, static_kernel=kernel)
+    k = pysiglib.sig_kernel(X, X, dyadic_order=0, static_kernel=kernel)
     assert_device(k, device)
     assert torch.all(k > 0), f"Expected all positive, got {k}"
 
@@ -486,7 +486,7 @@ def test_sig_kernel_gram_backprop_static_kernels(device, kernel_factory, kernel_
     d1 = finite_difference_gram(X, Y, 0, kernel=kernel)
     d2 = finite_difference_gram(Y, X, 0, kernel=kernel)
     d3, d4 = pysiglib.sig_kernel_gram_backprop(
-        derivs, X, Y, 0, left_deriv=True, right_deriv=True, static_kernel=kernel
+        derivs, X, Y, dyadic_order=0, left_deriv=True, right_deriv=True, static_kernel=kernel
     )
     assert_device(d3, device)
     assert_device(d4, device)
@@ -515,7 +515,7 @@ def test_sig_kernel_normalize_self_equals_one(device, kernel_factory):
     X = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
 
     kernel = kernel_factory()
-    k = pysiglib.sig_kernel(X, X, 1, static_kernel=kernel, normalize=True)
+    k = pysiglib.sig_kernel(X, X, dyadic_order=1, static_kernel=kernel, normalize=True)
     assert_device(k, device)
     assert k.shape == (batch,)
     check_close_norm(k, torch.ones(batch, device=device, dtype=torch.double))
@@ -527,7 +527,7 @@ def test_sig_kernel_gram_normalize_diagonal(device):
     batch, length, dim = 4, 15, 3
     X = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
 
-    gram = pysiglib.sig_kernel_gram(X, X, 1, normalize=True)
+    gram = pysiglib.sig_kernel_gram(X, X, dyadic_order=1, normalize=True)
     assert_device(gram, device)
     assert gram.shape == (batch, batch)
     diag = torch.diagonal(gram)
@@ -540,7 +540,7 @@ def test_sig_kernel_gram_normalize_bounded(device):
     batch, length, dim = 4, 15, 3
     X = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
 
-    gram = pysiglib.sig_kernel_gram(X, X, 1, normalize=True)
+    gram = pysiglib.sig_kernel_gram(X, X, dyadic_order=1, normalize=True)
     assert_device(gram, device)
     assert torch.all(gram <= 1.0 + 1e-5), f"Max gram entry: {gram.max().item()}"
 
@@ -553,13 +553,13 @@ def test_sig_kernel_gram_normalize_consistency(device):
     X = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
     Y = torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2
 
-    gram = pysiglib.sig_kernel_gram(X, Y, 1, normalize=True)
+    gram = pysiglib.sig_kernel_gram(X, Y, dyadic_order=1, normalize=True)
     assert_device(gram, device)
 
     for i in range(batch):
         for j in range(batch):
             k_ij = pysiglib.sig_kernel(
-                X[i:i+1], Y[j:j+1], 1, normalize=True
+                X[i:i+1], Y[j:j+1], dyadic_order=1, normalize=True
             )
             check_close_norm(gram[i, j], k_ij)
 
@@ -571,10 +571,10 @@ def test_sig_kernel_normalize_return_grid_raises():
     Y = torch.rand(size=(batch, length, dim), dtype=torch.double) / 2
 
     with pytest.raises(ValueError, match="normalize.*return_grid"):
-        pysiglib.sig_kernel(X, Y, 1, return_grid=True, normalize=True)
+        pysiglib.sig_kernel(X, Y, dyadic_order=1, return_grid=True, normalize=True)
 
     with pytest.raises(ValueError, match="normalize.*return_grid"):
-        pysiglib.sig_kernel_gram(X, Y, 1, return_grid=True, normalize=True)
+        pysiglib.sig_kernel_gram(X, Y, dyadic_order=1, return_grid=True, normalize=True)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -584,7 +584,7 @@ def test_sig_kernel_gram_normalize_torch_api_backward(device):
     X = (torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2).requires_grad_(True)
     Y = (torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2).requires_grad_(True)
 
-    gram = pysiglib_torch.sig_kernel_gram(X, Y, 1, normalize=True)
+    gram = pysiglib_torch.sig_kernel_gram(X, Y, dyadic_order=1, normalize=True)
     loss = gram.sum()
     loss.backward()
 
@@ -603,7 +603,7 @@ def test_sig_kernel_normalize_torch_api_backward(device):
     X = (torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2).requires_grad_(True)
     Y = (torch.rand(size=(batch, length, dim), device=device, dtype=torch.double) / 2).requires_grad_(True)
 
-    k = pysiglib_torch.sig_kernel(X, Y, 1, normalize=True)
+    k = pysiglib_torch.sig_kernel(X, Y, dyadic_order=1, normalize=True)
     loss = k.sum()
     loss.backward()
 

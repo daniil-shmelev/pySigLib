@@ -214,7 +214,7 @@ class TestSigKernel:
     def test_shape(self, batch_shape):
         path1 = _random_path(batch_shape, length=5, dim=2)
         path2 = _random_path(batch_shape, length=5, dim=2)
-        result = pysiglib.sig_kernel(path1, path2, 0)
+        result = pysiglib.sig_kernel(path1, path2, dyadic_order=0)
 
         assert result.shape == batch_shape
 
@@ -225,32 +225,32 @@ class TestSigKernelGram:
     def test_shape(self, batch_shape_1, batch_shape_2):
         path1 = _random_path(batch_shape_1, length=5, dim=2)
         path2 = _random_path(batch_shape_2, length=5, dim=2)
-        result = pysiglib.sig_kernel_gram(path1, path2, 0)
+        result = pysiglib.sig_kernel_gram(path1, path2, dyadic_order=0)
 
         assert result.shape == batch_shape_1 + batch_shape_2
 
     def test_values_match_flattened(self):
         path1 = _random_path((2, 3), length=5, dim=2)
         path2 = _random_path((4,), length=5, dim=2)
-        result = pysiglib.sig_kernel_gram(path1, path2, 0)
+        result = pysiglib.sig_kernel_gram(path1, path2, dyadic_order=0)
         assert result.shape == (2, 3, 4)
 
         flat1 = path1.reshape(-1, 5, 2)
-        expected = pysiglib.sig_kernel_gram(flat1, path2, 0)
+        expected = pysiglib.sig_kernel_gram(flat1, path2, dyadic_order=0)
         check_close(result.reshape(6, 4), expected)
 
     @pytest.mark.parametrize("batch_shape", [(3,), (2, 3)])
     def test_torch(self, batch_shape):
         path1 = torch.from_numpy(_random_path(batch_shape, length=5, dim=2))
         path2 = torch.from_numpy(_random_path((4,), length=5, dim=2))
-        result = pysiglib.sig_kernel_gram(path1, path2, 0)
+        result = pysiglib.sig_kernel_gram(path1, path2, dyadic_order=0)
 
         assert result.shape == batch_shape + (4,)
         assert isinstance(result, torch.Tensor)
 
     def test_symmetric(self):
         path = _random_path((2, 3), length=5, dim=2)
-        result = pysiglib.sig_kernel_gram(path, path, 0)
+        result = pysiglib.sig_kernel_gram(path, path, dyadic_order=0)
 
         assert result.shape == (2, 3, 2, 3)
         flat = result.reshape(6, 6)
@@ -259,8 +259,8 @@ class TestSigKernelGram:
     def test_single_path(self):
         p1 = _random_path((), length=5, dim=2)
         p2 = _random_path((), length=5, dim=2)
-        result = pysiglib.sig_kernel_gram(p1, p2, 0)
-        expected = pysiglib.sig_kernel(p1, p2, 0)
+        result = pysiglib.sig_kernel_gram(p1, p2, dyadic_order=0)
+        expected = pysiglib.sig_kernel(p1, p2, dyadic_order=0)
         check_close(result, expected)
 
 
@@ -270,7 +270,7 @@ class TestSigKernelBackprop:
         path1 = _random_path(batch_shape, length=5, dim=2)
         path2 = _random_path(batch_shape, length=5, dim=2)
         derivs = np.ones(batch_shape)
-        ld, rd = pysiglib.sig_kernel_backprop(derivs, path1, path2, 0,
+        ld, rd = pysiglib.sig_kernel_backprop(derivs, path1, path2, dyadic_order=0,
                                               left_deriv=True, right_deriv=True)
         assert ld.shape == path1.shape
         assert rd.shape == path2.shape
@@ -280,12 +280,12 @@ class TestSigKernelBackprop:
         path1 = _random_path(batch_shape, length=5, dim=2)
         path2 = _random_path(batch_shape, length=5, dim=2)
         derivs = np.ones(batch_shape)
-        ld, _ = pysiglib.sig_kernel_backprop(derivs, path1, path2, 0,
+        ld, _ = pysiglib.sig_kernel_backprop(derivs, path1, path2, dyadic_order=0,
                                              left_deriv=True, right_deriv=False)
         flat_p1 = path1.reshape(-1, 5, 2)
         flat_p2 = path2.reshape(-1, 5, 2)
         flat_d = derivs.reshape(-1)
-        flat_ld, _ = pysiglib.sig_kernel_backprop(flat_d, flat_p1, flat_p2, 0,
+        flat_ld, _ = pysiglib.sig_kernel_backprop(flat_d, flat_p1, flat_p2, dyadic_order=0,
                                                   left_deriv=True, right_deriv=False)
         check_close(ld.reshape(-1, 5, 2), flat_ld)
 
@@ -295,7 +295,7 @@ class TestSigKernelGramBackprop:
         path1 = _random_path((2, 3), length=5, dim=2)
         path2 = _random_path((4,), length=5, dim=2)
         derivs = np.ones((2, 3, 4))
-        ld, rd = pysiglib.sig_kernel_gram_backprop(derivs, path1, path2, 0,
+        ld, rd = pysiglib.sig_kernel_gram_backprop(derivs, path1, path2, dyadic_order=0,
                                                    left_deriv=True, right_deriv=True)
         assert ld.shape == (2, 3, 5, 2)
         assert rd.shape == (4, 5, 2)
@@ -304,11 +304,11 @@ class TestSigKernelGramBackprop:
         path1 = _random_path((2, 3), length=5, dim=2)
         path2 = _random_path((4,), length=5, dim=2)
         derivs = np.ones((2, 3, 4))
-        ld, rd = pysiglib.sig_kernel_gram_backprop(derivs, path1, path2, 0,
+        ld, rd = pysiglib.sig_kernel_gram_backprop(derivs, path1, path2, dyadic_order=0,
                                                    left_deriv=True, right_deriv=True)
         flat_p1 = path1.reshape(-1, 5, 2)
         flat_d = derivs.reshape(6, 4)
-        flat_ld, flat_rd = pysiglib.sig_kernel_gram_backprop(flat_d, flat_p1, path2, 0,
+        flat_ld, flat_rd = pysiglib.sig_kernel_gram_backprop(flat_d, flat_p1, path2, dyadic_order=0,
                                                               left_deriv=True, right_deriv=True)
         check_close(ld.reshape(6, 5, 2), flat_ld)
         check_close(rd, flat_rd)
@@ -318,13 +318,13 @@ class TestSigScore:
     def test_shape_3d(self):
         sample = _random_path((5,), length=5, dim=2)
         y = _random_path((), length=5, dim=2)
-        score = pysiglib.sig_score(sample, y, 0)
+        score = pysiglib.sig_score(sample, y, dyadic_order=0)
         assert score.shape == (1,)
 
     def test_shape_multidim_sample(self):
         sample = _random_path((2, 5), length=5, dim=2)
         y = _random_path((), length=5, dim=2)
-        score = pysiglib.sig_score(sample, y, 0)
+        score = pysiglib.sig_score(sample, y, dyadic_order=0)
         assert score.shape == (1,)
 
 
@@ -332,13 +332,13 @@ class TestSigMmd:
     def test_shape_3d(self):
         s1 = _random_path((5,), length=5, dim=2)
         s2 = _random_path((6,), length=5, dim=2)
-        mmd = pysiglib.sig_mmd(s1, s2, 0)
+        mmd = pysiglib.sig_mmd(s1, s2, dyadic_order=0)
         assert mmd.shape == ()
 
     def test_shape_multidim(self):
         s1 = _random_path((2, 5), length=5, dim=2)
         s2 = _random_path((3, 4), length=5, dim=2)
-        mmd = pysiglib.sig_mmd(s1, s2, 0)
+        mmd = pysiglib.sig_mmd(s1, s2, dyadic_order=0)
         assert mmd.shape == ()
 
 
@@ -390,7 +390,7 @@ class TestTorchAutograd:
     def test_sig_kernel_gram_grad(self, batch_shape_1, batch_shape_2):
         path1 = torch.from_numpy(_random_path(batch_shape_1, length=5, dim=2)).requires_grad_(True)
         path2 = torch.from_numpy(_random_path(batch_shape_2, length=5, dim=2))
-        gram = pysiglib.torch_api.sig_kernel_gram(path1, path2, 0)
+        gram = pysiglib.torch_api.sig_kernel_gram(path1, path2, dyadic_order=0)
         assert gram.shape == batch_shape_1 + batch_shape_2
         gram.sum().backward()
         assert path1.grad is not None
@@ -400,7 +400,7 @@ class TestTorchAutograd:
     def test_sig_score_grad(self, batch_shape):
         sample = torch.from_numpy(_random_path(batch_shape, length=5, dim=2)).requires_grad_(True)
         y = torch.from_numpy(_random_path((), length=5, dim=2))
-        score = pysiglib.torch_api.sig_score(sample, y, 0)
+        score = pysiglib.torch_api.sig_score(sample, y, dyadic_order=0)
         assert score.shape == (1,)
         score.sum().backward()
         assert sample.grad is not None
@@ -410,7 +410,7 @@ class TestTorchAutograd:
     def test_sig_mmd_grad(self, batch_shape):
         sample1 = torch.from_numpy(_random_path(batch_shape, length=5, dim=2)).requires_grad_(True)
         sample2 = torch.from_numpy(_random_path((6,), length=5, dim=2))
-        mmd = pysiglib.torch_api.sig_mmd(sample1, sample2, 0)
+        mmd = pysiglib.torch_api.sig_mmd(sample1, sample2, dyadic_order=0)
         assert mmd.ndim == 0
         mmd.backward()
         assert sample1.grad is not None
@@ -419,7 +419,7 @@ class TestTorchAutograd:
     def test_expected_sig_score_shape(self):
         s1 = torch.from_numpy(_random_path((2, 5), length=5, dim=2))
         s2 = torch.from_numpy(_random_path((3, 4), length=5, dim=2))
-        score = pysiglib.torch_api.expected_sig_score(s1, s2, 0)
+        score = pysiglib.torch_api.expected_sig_score(s1, s2, dyadic_order=0)
         assert score.shape == (1,)
 
 

@@ -82,9 +82,9 @@ def sig_kernel_backprop(
         derivs : Union[np.ndarray, torch.Tensor],
         path1 : Union[np.ndarray, torch.Tensor],
         path2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
         method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
         order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -118,14 +118,14 @@ def sig_kernel_backprop(
         ``(..., length_2, dimension)``. Leading batch dimensions must match those of
         ``path1``.
     :type path2: numpy.ndarray | torch.Tensor
-    :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
-        Required for finite differences and unsupported for the polynomial method.
+    :param dyadic_order: (``method="finite_difference"`` only) The dyadic order(s) used
+        to compute the signature kernels.
     :type dyadic_order: None | int | tuple
     :param method: Solver method used in the forward pass. Must be
         ``"finite_difference"`` or ``"polynomial"``.
     :type method: str
-    :param order: Highest retained polynomial degree used in the forward pass. Must be
-        between 2 and 64. Unsupported for finite differences.
+    :param order: (``method="polynomial"`` only) Highest retained polynomial degree used
+        in the forward pass. Must be between 2 and 64.
     :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
@@ -220,7 +220,7 @@ def sig_kernel_backprop(
         flat_state = None if _state is None else _state.reshape(lead_size, *_state.shape[-4:])
 
         ld, rd = sig_kernel_backprop(
-            flat_derivs, _ensure_3d(path1), _ensure_3d(path2), dyadic_order,
+            flat_derivs, _ensure_3d(path1), _ensure_3d(path2), dyadic_order=dyadic_order,
             method=method, order=order,
             static_kernel=static_kernel,
             time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
@@ -274,7 +274,7 @@ def sig_kernel_backprop(
     torch_path2 = torch.as_tensor(data.path[1])
 
     if method == "finite_difference" and k_grid is None:
-        k_grid = sig_kernel(torch.as_tensor(path1), torch.as_tensor(path2), dyadic_order,
+        k_grid = sig_kernel(torch.as_tensor(path1), torch.as_tensor(path2), dyadic_order=dyadic_order,
                             static_kernel=static_kernel, time_aug=False, lead_lag=False,
                             end_time=end_time, n_jobs=n_jobs, return_grid=True)
 
@@ -314,9 +314,9 @@ def sig_kernel_gram_backprop(
         derivs : Union[np.ndarray, torch.Tensor],
         path1 : Union[np.ndarray, torch.Tensor],
         path2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Optional[Union[int, tuple]] = None,
         *,
         method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
         order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -350,14 +350,14 @@ def sig_kernel_gram_backprop(
     :param path2: A path or batch of paths, of shape ``(*batch_shape_2, length_2, dimension)``.
         Independent of ``path1``'s batch shape.
     :type path2: numpy.ndarray | torch.Tensor
-    :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
-        Required for finite differences and unsupported for the polynomial method.
+    :param dyadic_order: (``method="finite_difference"`` only) The dyadic order(s) used
+        to compute the signature kernels.
     :type dyadic_order: None | int | tuple
     :param method: Solver method used in the forward pass. Must be
         ``"finite_difference"`` or ``"polynomial"``.
     :type method: str
-    :param order: Highest retained polynomial degree used in the forward pass. Must be
-        between 2 and 64. Unsupported for finite differences.
+    :param order: (``method="polynomial"`` only) Highest retained polynomial degree used
+        in the forward pass. Must be between 2 and 64.
     :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
@@ -521,7 +521,7 @@ def sig_kernel_gram_backprop(
         path2_ = src2[cj]
 
         if k_grid is None and method == "finite_difference":
-            k = sig_kernel(path1_, path2_, dyadic_order, method=method, order=order,
+            k = sig_kernel(path1_, path2_, dyadic_order=dyadic_order, method=method, order=order,
                            static_kernel=static_kernel, time_aug=time_aug,
                            lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
                            return_grid=True)
@@ -533,7 +533,7 @@ def sig_kernel_gram_backprop(
         derivs_ = derivs[ci, cj]
 
         ld_, rd_ = sig_kernel_backprop(
-            derivs_, path1_, path2_, dyadic_order, method=method, order=order,
+            derivs_, path1_, path2_, dyadic_order=dyadic_order, method=method, order=order,
             static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
             end_time=end_time, left_deriv=left_deriv, right_deriv=right_deriv,
             k_grid=k, n_jobs=n_jobs, return_grid=return_grid)
@@ -561,7 +561,7 @@ def sig_kernel_gram_backprop(
                     k_t = k[off].transpose(-2, -1)
                 else:
                     k_t = sig_kernel(
-                        path1_t, path2_t, dyadic_order, method=method, order=order,
+                        path1_t, path2_t, dyadic_order=dyadic_order, method=method, order=order,
                         static_kernel=static_kernel, time_aug=time_aug,
                         lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
                         return_grid=True)
@@ -569,7 +569,7 @@ def sig_kernel_gram_backprop(
                 derivs_t = derivs[cj_off, ci_off]
 
                 ld_t, rd_t = sig_kernel_backprop(
-                    derivs_t, path1_t, path2_t, dyadic_order,
+                    derivs_t, path1_t, path2_t, dyadic_order=dyadic_order,
                     method=method, order=order, static_kernel=static_kernel,
                     time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
                     left_deriv=left_deriv, right_deriv=right_deriv,
