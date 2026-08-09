@@ -47,6 +47,11 @@ def log_sig_combine(
 
         L(x_1 * x_2) = \\text{BCH}(L(x_1), L(x_2)).
 
+    .. note::
+
+        This function requires a call to
+        ``pysiglib.prepare_log_sig(dimension, degree, method=3)``.
+
     :param log_sig1: The first truncated log-signature (Lyndon basis, method=2 or method=3)
     :type log_sig1: numpy.ndarray | torch.Tensor
     :param log_sig2: The second truncated log-signature (Lyndon basis, method=2 or method=3).

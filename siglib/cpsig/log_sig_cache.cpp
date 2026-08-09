@@ -145,11 +145,6 @@ void prepare_basis_cache(uint64_t dimension, uint64_t degree, int method, bool u
 	if (method < 1)
 		return;
 
-	auto dir = get_cache_dir();
-
-	if (!std::filesystem::exists(dir / cache_folder_name))
-		std::filesystem::create_directory(dir / cache_folder_name);
-
 	std::pair<uint64_t, uint64_t> key(dimension, degree);
 	auto& reg = basis_cache_registry();
 
@@ -159,19 +154,27 @@ void prepare_basis_cache(uint64_t dimension, uint64_t degree, int method, bool u
 		if (it != reg.map.end() && it->second->method >= method) return;
 	}
 
-	CacheFile file(dimension, degree);
-	if (use_disk && file.exists()) {
-		auto basis_obj = std::make_unique<BasisCache>();
-		file.read(basis_obj);
-		if (basis_obj->method >= method) {
-			std::unique_lock wlock(reg.mu);
-			reg.map.insert_or_assign(key, std::move(basis_obj));
-			return;
+	if (use_disk) {
+		auto dir = get_cache_dir();
+		if (!std::filesystem::exists(dir / cache_folder_name))
+			std::filesystem::create_directory(dir / cache_folder_name);
+		CacheFile file(dimension, degree);
+		if (file.exists()) {
+			auto basis_obj = std::make_unique<BasisCache>();
+			file.read(basis_obj);
+			if (basis_obj->method >= method) {
+				std::unique_lock wlock(reg.mu);
+				reg.map.insert_or_assign(key, std::move(basis_obj));
+				return;
+			}
 		}
 	}
 
 	std::vector<word> lyndon_words = all_lyndon_words(dimension, degree);
-	std::vector<uint64_t> lyndon_idx = all_lyndon_idx(dimension, degree);
+	std::vector<uint64_t> lyndon_idx;
+	lyndon_idx.reserve(lyndon_words.size());
+	for (const auto& w : lyndon_words)
+		lyndon_idx.push_back(word_to_idx(w, dimension));
 	SparseIntMatrix p, p_inv, p_inv_t;
 	if (method == 2) {
 		lyndon_proj_matrix(p, lyndon_words, lyndon_idx, dimension, degree);
@@ -187,6 +190,7 @@ void prepare_basis_cache(uint64_t dimension, uint64_t degree, int method, bool u
 	);
 
 	if (use_disk) {
+		CacheFile file(dimension, degree);
 		file.write(basis_obj);
 	}
 
@@ -222,16 +226,16 @@ const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int metho
 }
 
 void clear_cache_(bool use_disk) {
-	auto dir = get_cache_dir();
-
 	clear_basis_cache();
 	clear_bch_cache();
 	clear_branched_sig_coef_cache();
 	clear_branched_log_sig_cache();
 	clear_branched_sig_cache();
 
-	if (use_disk)
+	if (use_disk) {
+		auto dir = get_cache_dir();
 		std::filesystem::remove_all(dir / cache_folder_name);
+	}
 }
 
 extern "C" {
@@ -244,8 +248,8 @@ extern "C" {
 		SAFE_CALL(
 			if (method != 3)
 				prepare_basis_cache(dimension, degree, method, use_disk);
-			if (method == 2 || method == 3)
-				prepare_bch_cache(dimension, degree)
+			if (method == 3)
+				prepare_bch_cache(dimension, degree, use_disk)
 		);
 	}
 
