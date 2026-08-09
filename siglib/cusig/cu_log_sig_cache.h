@@ -17,6 +17,7 @@
 #include "cupch.h"
 #include "cu_disk_cache.h"
 #include "cu_utils.h"
+#include "log_sig_method.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdint>
@@ -510,7 +511,7 @@ public:
 		return std::filesystem::exists(file_path_);
 	}
 
-	void write(int method, const std::vector<uint64_t>& lyndon_idx,
+	void write(LogSigMethod method, const std::vector<uint64_t>& lyndon_idx,
 	           const CuSparseIntMatrix& inv_proj_mat,
 	           const CuSparseIntMatrix& inv_proj_mat_t) const {
 		std::ofstream out(file_path_, std::ios::binary);
@@ -519,13 +520,14 @@ public:
 				"Failed to open CUDA cache file for writing", file_path_,
 				std::make_error_code(std::errc::io_error));
 		out.write(reinterpret_cast<const char*>(&cu_cache_magic_number), sizeof(cu_cache_magic_number));
-		out.write(reinterpret_cast<const char*>(&method), sizeof(method));
+		const int stored_method = log_sig_method_value(method);
+		out.write(reinterpret_cast<const char*>(&stored_method), sizeof(stored_method));
 		cu_serialize_vector_(out, lyndon_idx);
 		inv_proj_mat.serialize(out);
 		inv_proj_mat_t.serialize(out);
 	}
 
-	void read(int& method, std::vector<uint64_t>& lyndon_idx,
+	void read(LogSigMethod& method, std::vector<uint64_t>& lyndon_idx,
 	          CuSparseIntMatrix& inv_proj_mat,
 	          CuSparseIntMatrix& inv_proj_mat_t) const {
 		std::ifstream in(file_path_, std::ios::binary);
@@ -537,7 +539,9 @@ public:
 		in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
 		if (magic != cu_cache_magic_number)
 			throw corrupted_cache_error("Tried to read an invalid cache file. Cache may have been corrupted.");
-		in.read(reinterpret_cast<char*>(&method), sizeof(method));
+		int stored_method;
+		in.read(reinterpret_cast<char*>(&stored_method), sizeof(stored_method));
+		method = parse_log_sig_conversion_method(stored_method);
 		cu_deserialize_vector_(in, lyndon_idx);
 		CuSparseIntMatrix::deserialize(in, inv_proj_mat);
 		CuSparseIntMatrix::deserialize(in, inv_proj_mat_t);
@@ -576,7 +580,7 @@ inline void populate_cuda_cache_entry_(
 	entry.threads_per_block = host_choose_threads_per_block(max_level_size);
 }
 
-inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int method, bool use_disk) {
+inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, LogSigMethod method, bool use_disk) {
 	auto key = std::make_pair(dimension, degree);
 	auto& cache_map = get_cuda_log_sig_cache_map_();
 	std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
@@ -584,17 +588,17 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 	auto it = cache_map.find(key);
 	if (it != cache_map.end()) {
 		// Entry exists - upgrade to method 2 if needed
-		if (method == 2 && it->second.d_sparse_row_ptr == nullptr) {
+		if (method == LogSigMethod::LyndonBasis && it->second.d_sparse_row_ptr == nullptr) {
 			// Try loading sparse matrices from disk
 			if (use_disk) {
 				ensure_cuda_cache_dir_();
 				CuCacheFile file(dimension, degree);
 				if (file.exists()) {
-					int disk_method;
+					LogSigMethod disk_method;
 					std::vector<uint64_t> disk_lyndon_idx;
 					CuSparseIntMatrix disk_inv, disk_inv_t;
 					file.read(disk_method, disk_lyndon_idx, disk_inv, disk_inv_t);
-					if (disk_method >= 2) {
+					if (disk_method >= LogSigMethod::LyndonBasis) {
 						upload_csr_to_gpu_(disk_inv, it->second.d_sparse_vals, it->second.d_sparse_cols, it->second.d_sparse_row_ptr);
 						upload_csr_to_gpu_(disk_inv_t, it->second.d_sparse_vals_t, it->second.d_sparse_cols_t, it->second.d_sparse_row_ptr_t);
 						return;
@@ -611,7 +615,7 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 		ensure_cuda_cache_dir_();
 		CuCacheFile file(dimension, degree);
 		if (file.exists()) {
-			int disk_method;
+			LogSigMethod disk_method;
 			std::vector<uint64_t> lyndon_idx;
 			CuSparseIntMatrix inv_proj_mat, inv_proj_mat_t;
 			file.read(disk_method, lyndon_idx, inv_proj_mat, inv_proj_mat_t);
@@ -620,7 +624,7 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 				CUDALogSigCache entry;
 				populate_cuda_cache_entry_(entry, lyndon_idx, dimension, degree);
 
-				if (method == 2 && disk_method >= 2) {
+				if (method == LogSigMethod::LyndonBasis && disk_method >= LogSigMethod::LyndonBasis) {
 					upload_csr_to_gpu_(inv_proj_mat, entry.d_sparse_vals, entry.d_sparse_cols, entry.d_sparse_row_ptr);
 					upload_csr_to_gpu_(inv_proj_mat_t, entry.d_sparse_vals_t, entry.d_sparse_cols_t, entry.d_sparse_row_ptr_t);
 				}
@@ -639,7 +643,7 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 
 	// For method 2, compute and upload the sparse matrix
 	CuSparseIntMatrix inv_proj_mat, inv_proj_mat_t;
-	if (method == 2) {
+	if (method == LogSigMethod::LyndonBasis) {
 		std::vector<cu_word> lyndon_words = cu_all_lyndon_words(dimension, degree);
 		CuSparseIntMatrix proj_mat;
 		cu_lyndon_proj_matrix(proj_mat, lyndon_words, lyndon_idx, dimension, degree);
@@ -659,7 +663,11 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 	cache_map.emplace(key, std::move(entry));
 }
 
-inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_t degree, int method = 1) {
+inline const CUDALogSigCache& get_cuda_log_sig_cache(
+	uint64_t dimension,
+	uint64_t degree,
+	LogSigMethod method = LogSigMethod::LyndonWords
+) {
 	auto key = std::make_pair(dimension, degree);
 	auto& cache_map = get_cuda_log_sig_cache_map_();
 	std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
@@ -672,7 +680,7 @@ inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_
 			try {
 				CuCacheFile file(dimension, degree);
 				if (file.exists()) {
-					int disk_method;
+					LogSigMethod disk_method;
 					std::vector<uint64_t> lyndon_idx;
 					CuSparseIntMatrix inv_proj_mat, inv_proj_mat_t;
 					file.read(disk_method, lyndon_idx, inv_proj_mat, inv_proj_mat_t);
@@ -680,7 +688,7 @@ inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_
 					CUDALogSigCache entry;
 					populate_cuda_cache_entry_(entry, lyndon_idx, dimension, degree);
 
-					if (disk_method >= 2) {
+					if (disk_method >= LogSigMethod::LyndonBasis) {
 						upload_csr_to_gpu_(inv_proj_mat, entry.d_sparse_vals, entry.d_sparse_cols, entry.d_sparse_row_ptr);
 						upload_csr_to_gpu_(inv_proj_mat_t, entry.d_sparse_vals_t, entry.d_sparse_cols_t, entry.d_sparse_row_ptr_t);
 					}
@@ -697,7 +705,7 @@ inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_
 	if (it == cache_map.end()) {
 		throw std::runtime_error("CUDA log sig cache not found - call prepare_log_sig_cuda first");
 	}
-	if (method == 2 && it->second.d_sparse_row_ptr == nullptr) {
+	if (method == LogSigMethod::LyndonBasis && it->second.d_sparse_row_ptr == nullptr) {
 		throw std::runtime_error("CUDA log sig cache not found for method 2 - call prepare_log_sig_cuda with method=2 first");
 	}
 	return it->second;

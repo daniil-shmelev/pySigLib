@@ -109,7 +109,7 @@ template<typename T>
 static void build_expansion_matrix_impl(
 	T* h_expand,
 	uint64_t sig_len, uint64_t m,
-	uint64_t dimension, uint64_t degree, int method
+	uint64_t dimension, uint64_t degree, LogSigMethod method
 ) {
 	auto level_index = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(level_index.get(), dimension, degree + 2);
@@ -164,7 +164,7 @@ static void build_expansion_matrix_impl(
 
 	std::fill(h_expand, h_expand + sig_len * m, static_cast<T>(0));
 
-	if (method == 2) {
+	if (method == LogSigMethod::LyndonBasis) {
 		for (uint64_t i = 0; i < m; ++i)
 			for (uint64_t j = 0; j < sig_len; ++j)
 				h_expand[j * m + i] = expansions[i * sig_len + j];
@@ -212,14 +212,14 @@ static void build_expansion_matrix_impl(
 
 void build_expansion_matrix_f(
 	float* h_expand, uint64_t sig_len, uint64_t m,
-	uint64_t dimension, uint64_t degree, int method
+	uint64_t dimension, uint64_t degree, LogSigMethod method
 ) {
 	build_expansion_matrix_impl<float>(h_expand, sig_len, m, dimension, degree, method);
 }
 
 void build_expansion_matrix_d(
 	double* h_expand, uint64_t sig_len, uint64_t m,
-	uint64_t dimension, uint64_t degree, int method
+	uint64_t dimension, uint64_t degree, LogSigMethod method
 ) {
 	build_expansion_matrix_impl<double>(h_expand, sig_len, m, dimension, degree, method);
 }

@@ -21,6 +21,7 @@
 
 #include "cp_path.h"
 #include "cp_bch.h"
+#include "log_sig_method.h"
 
 template<std::floating_point T>
 void get_log_sig_(
@@ -28,17 +29,17 @@ void get_log_sig_(
 	T* out,
 	uint64_t dimension,
 	uint64_t degree,
-	int method = 0
+	LogSigMethod method = LogSigMethod::Expanded
 )
 {
 	switch (method) {
-	case 0:
+	case LogSigMethod::Expanded:
 		log_sig_expanded<T>(sig, out, dimension, degree);
 		break;
-	case 1:
+	case LogSigMethod::LyndonWords:
 		log_sig_lyndon_words<T>(sig, out, dimension, degree);
 		break;
-	case 2:
+	case LogSigMethod::LyndonBasis:
 		log_sig_lyndon_basis<T>(sig, out, dimension, degree);
 		break;
 	default:
@@ -55,7 +56,7 @@ void sig_to_log_sig_(
 	uint64_t degree,
 	bool time_aug = false,
 	bool lead_lag = false,
-	int method = 0,
+	LogSigMethod method = LogSigMethod::Expanded,
 	bool scalar_term = true,
 	int n_jobs = 1
 )
@@ -68,9 +69,9 @@ void sig_to_log_sig_(
 
 	const uint64_t sig_len = ::sig_length(aug_dimension, degree);
 	const uint64_t logsig_len = ::log_sig_length(aug_dimension, degree);
-	const uint64_t full_out_len = method ? logsig_len : sig_len;
+	const uint64_t full_out_len = method == LogSigMethod::Expanded ? sig_len : logsig_len;
 	const uint64_t in_stride = scalar_term ? sig_len : sig_len - 1;
-	const uint64_t out_stride = (method == 0 && !scalar_term) ? (sig_len - 1) : full_out_len;
+	const uint64_t out_stride = (method == LogSigMethod::Expanded && !scalar_term) ? (sig_len - 1) : full_out_len;
 
 	if (scalar_term) {
 		auto f = [&](const T* sig_ptr, T* out_ptr) {
@@ -83,7 +84,7 @@ void sig_to_log_sig_(
 			std::vector<T> sig_full(sig_len);
 			sig_full[0] = static_cast<T>(1);
 			std::memcpy(sig_full.data() + 1, sig_ptr, (sig_len - 1) * sizeof(T));
-			if (method == 0) {
+			if (method == LogSigMethod::Expanded) {
 				std::vector<T> out_full(sig_len);
 				get_log_sig_<T>(sig_full.data(), out_full.data(), aug_dimension, degree, method);
 				std::memcpy(out_ptr, out_full.data() + 1, (sig_len - 1) * sizeof(T));
@@ -108,16 +109,16 @@ void get_sig_to_log_sig_backprop_(
 	T* log_sig_derivs,
 	uint64_t dimension,
 	uint64_t degree,
-	int method = 0
+	LogSigMethod method = LogSigMethod::Expanded
 ) {
 	switch (method) {
-	case 0:
+	case LogSigMethod::Expanded:
 		tensor_log_backprop_<T>(out, log_sig_derivs, sig, dimension, degree);
 		break;
-	case 1:
+	case LogSigMethod::LyndonWords:
 		tensor_log_backprop_lyndon_words<T>(out, log_sig_derivs, sig, dimension, degree);
 		break;
-	case 2:
+	case LogSigMethod::LyndonBasis:
 		tensor_log_backprop_lyndon_basis<T>(out, log_sig_derivs, sig, dimension, degree);
 		break;
 	default:
@@ -135,7 +136,7 @@ void sig_to_log_sig_backprop_(
 	uint64_t degree,
 	bool time_aug = false,
 	bool lead_lag = false,
-	int method = 0,
+	LogSigMethod method = LogSigMethod::Expanded,
 	bool scalar_term = true,
 	int n_jobs = 1
 ) {
@@ -144,12 +145,12 @@ void sig_to_log_sig_backprop_(
 	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 
 	const uint64_t sig_len_ = ::sig_length(aug_dimension, degree);
-	const uint64_t log_sig_len_ = method ? ::log_sig_length(aug_dimension, degree) : sig_len_;
+	const uint64_t log_sig_len_ = method == LogSigMethod::Expanded ? sig_len_ : ::log_sig_length(aug_dimension, degree);
 
 	// Determine caller strides
 	const uint64_t sig_in_stride = scalar_term ? sig_len_ : sig_len_ - 1;
 	// log_sig_derivs: logsig-shaped (method>0, unaffected) or sig-shaped (method==0, may be stripped)
-	const uint64_t lsd_stride = (method == 0 && !scalar_term) ? (sig_len_ - 1) : log_sig_len_;
+	const uint64_t lsd_stride = (method == LogSigMethod::Expanded && !scalar_term) ? (sig_len_ - 1) : log_sig_len_;
 	// Output is sig-shaped
 	const uint64_t out_stride = scalar_term ? sig_len_ : sig_len_ - 1;
 
@@ -172,7 +173,7 @@ void sig_to_log_sig_backprop_(
 		auto log_sig_derivs_copy_uptr = std::make_unique<T[]>(log_sig_len_ * batch_size);
 		T* log_sig_derivs_copy = log_sig_derivs_copy_uptr.get();
 
-		if (method == 0) {
+		if (method == LogSigMethod::Expanded) {
 			// log_sig_derivs is sig-shaped with scalar stripped
 			for (uint64_t b = 0; b < batch_size; ++b) {
 				log_sig_derivs_copy[b * log_sig_len_] = static_cast<T>(0);
