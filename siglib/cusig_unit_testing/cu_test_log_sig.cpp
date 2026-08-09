@@ -311,6 +311,7 @@ TEST(logSignatureLyndonBasisBackpropCudaTest, ManualBatchTest) {
 TEST(logSigCombineCudaTest, ChenIdentity) {
     uint64_t dimension = 2, degree = 3;
     (void)prepare_log_sig_cuda(dimension, degree, 2);
+    (void)prepare_log_sig_cuda(dimension, degree, 3);
 
     std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
     std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
@@ -358,6 +359,7 @@ TEST(logSigCombineCudaTest, ChenIdentity) {
 TEST(logSigCombineCudaTest, BatchChenIdentity) {
     uint64_t dimension = 2, degree = 3, batch_size = 2;
     (void)prepare_log_sig_cuda(dimension, degree, 2);
+    (void)prepare_log_sig_cuda(dimension, degree, 3);
 
     std::vector<double> path1 = {
         0., 0., 1., 0.5, 0.4, 2.,
@@ -412,7 +414,7 @@ TEST(logSigCombineCudaTest, BatchChenIdentity) {
 
 TEST(logSigCombineBackpropCudaTest, FiniteDifference) {
     uint64_t dimension = 2, degree = 3;
-    (void)prepare_log_sig_cuda(dimension, degree, 2);
+    (void)prepare_log_sig_cuda(dimension, degree, 3);
     uint64_t ls_len = log_sig_length_(dimension, degree);
 
     std::vector<double> ls1(ls_len);
@@ -523,7 +525,7 @@ TEST(logSigCombineBackpropCudaTest, FiniteDifference) {
 
 TEST(logSigCombineBackpropCudaTest, ZeroDerivative) {
     uint64_t dimension = 2, degree = 3;
-    (void)prepare_log_sig_cuda(dimension, degree, 2);
+    (void)prepare_log_sig_cuda(dimension, degree, 3);
     uint64_t ls_len = log_sig_length_(dimension, degree);
 
     std::vector<double> ls1(ls_len);

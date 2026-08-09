@@ -646,6 +646,7 @@
         TEST(logSigCombineTest, ChenIdentity) {
             uint64_t dimension = 2, degree = 3;
             (void)prepare_log_sig(dimension, degree, 2, false);
+            (void)prepare_log_sig(dimension, degree, 3, false);
 
             std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
             std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
@@ -675,6 +676,7 @@
         TEST(logSigCombineTest, ChenIdentityHighDeg) {
             uint64_t dimension = 3, degree = 5;
             (void)prepare_log_sig(dimension, degree, 2, false);
+            (void)prepare_log_sig(dimension, degree, 3, false);
 
             std::vector<double> path1 = { 0., 0., 0., 1., 0.5, 0.3, 0.4, 2., 1.5 };
             std::vector<double> path2 = { 0.4, 2., 1.5, 6., 0.1, 0.8, 2.3, 4.1, 3.2 };
@@ -704,6 +706,7 @@
         TEST(logSigCombineTest, BatchChenIdentity) {
             uint64_t dimension = 2, degree = 3, batch_size = 2;
             (void)prepare_log_sig(dimension, degree, 2, false);
+            (void)prepare_log_sig(dimension, degree, 3, false);
 
             std::vector<double> path1 = {
                 0., 0., 1., 0.5, 0.4, 2.,
@@ -739,6 +742,7 @@
         TEST(logSigCombineTest, IdentityElement) {
             uint64_t dimension = 2, degree = 3;
             (void)prepare_log_sig(dimension, degree, 2, false);
+            (void)prepare_log_sig(dimension, degree, 3, false);
 
             uint64_t s_len = sig_length(dimension, degree);
             uint64_t ls_len = log_sig_length(dimension, degree);
@@ -757,7 +761,7 @@
 
         TEST(logSigCombineBackpropTest, FiniteDifference) {
             uint64_t dimension = 2, degree = 3;
-            (void)prepare_log_sig(dimension, degree, 2, false);
+            (void)prepare_log_sig(dimension, degree, 3, false);
             uint64_t ls_len = log_sig_length(dimension, degree);
 
             std::vector<double> ls1(ls_len);
@@ -810,7 +814,7 @@
 
         TEST(logSigCombineBackpropTest, ZeroDerivative) {
             uint64_t dimension = 2, degree = 3;
-            (void)prepare_log_sig(dimension, degree, 2, false);
+            (void)prepare_log_sig(dimension, degree, 3, false);
             uint64_t ls_len = log_sig_length(dimension, degree);
 
             std::vector<double> ls1(ls_len);
@@ -834,7 +838,7 @@
 
         TEST(logSigCombineBackpropTest, BatchFiniteDifference) {
             uint64_t dimension = 2, degree = 3, batch_size = 2;
-            (void)prepare_log_sig(dimension, degree, 2, false);
+            (void)prepare_log_sig(dimension, degree, 3, false);
             uint64_t ls_len = log_sig_length(dimension, degree);
 
             std::vector<double> ls1(ls_len * batch_size);
