@@ -38,9 +38,8 @@ def prepare_branched_sig(
         device: str = "both",
 ):
     """
-    Precomputes the basis enumeration and coproduct tables
-    needed for branched signature computation. Must be called before
-    ``branched_sig()`` for a given ``(dimension, degree)`` pair.
+    Precomputes data required for branched signature computations. Must be called before
+    branched signature computation for a given ``(dimension, degree)`` pair.
 
     With ``planar=False`` this prepares the BCK basis of non-planar rooted
     trees. With ``planar=True`` this prepares the MKW basis of ordered forests

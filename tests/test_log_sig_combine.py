@@ -34,6 +34,7 @@ def test_log_sig_combine_random(deg):
     X2 = torch.cat((X1[[-1], :], X2), dim=0)
 
     pysiglib.prepare_log_sig(dim, deg, 2)
+    pysiglib.prepare_log_sig(dim, deg, 3)
     ls1 = pysiglib.log_sig(X1, deg, method=2)
     ls2 = pysiglib.log_sig(X2, deg, method=2)
     ls_expected = pysiglib.log_sig(X, deg, method=2)
@@ -51,6 +52,7 @@ def test_log_sig_combine_random_batch(deg):
     X2 = torch.cat((X1[:, [-1], :], X2), dim=1)
 
     pysiglib.prepare_log_sig(dim, deg, 2)
+    pysiglib.prepare_log_sig(dim, deg, 3)
     ls1 = pysiglib.log_sig(X1, deg, method=2)
     ls2 = pysiglib.log_sig(X2, deg, method=2)
     ls_expected = pysiglib.log_sig(X, deg, method=2)
@@ -61,6 +63,7 @@ def test_log_sig_combine_random_batch(deg):
 
 def test_log_sig_combine_non_contiguous():
     dim, degree, batch = 3, 3, 16
+    pysiglib.prepare_log_sig(dim, degree, method=3)
     ls_length = pysiglib.log_sig_length(dim, degree)
 
     rand_data = torch.rand(size=(batch,), dtype=torch.float64)[:, None]
@@ -85,6 +88,7 @@ def test_log_sig_combine_identity(deg):
     dim = 5
     X = torch.rand(size=(50, dim), dtype=torch.float64)
     pysiglib.prepare_log_sig(dim, deg, 2)
+    pysiglib.prepare_log_sig(dim, deg, 3)
     ls = pysiglib.log_sig(X, deg, method=2)
 
     ls_length = pysiglib.log_sig_length(dim, deg)
@@ -105,6 +109,7 @@ def test_log_sig_combine_associative(deg):
     X3 = torch.cat((torch.cat((X1, X2[1:]), dim=0)[[-1], :], X3), dim=0)
 
     pysiglib.prepare_log_sig(dim, deg, 2)
+    pysiglib.prepare_log_sig(dim, deg, 3)
     ls1 = pysiglib.log_sig(X1, deg, method=2)
     ls2 = pysiglib.log_sig(X2, deg, method=2)
     ls3 = pysiglib.log_sig(X3, deg, method=2)

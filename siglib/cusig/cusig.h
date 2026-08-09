@@ -327,11 +327,11 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Prepares GPU-side data structures needed for log signature methods 1 and 2.
+	* @brief Prepares GPU-side data structures needed for log signature methods 1, 2, and 3.
 	*
 	* @param dimension Dimension of the underlying path space.
 	* @param degree Truncation degree.
-	* @param method Method (1 or 2).
+	* @param method Method (1, 2, or 3).
 	* @param use_disk If true, check the shared disk cache before computing, and save to disk if not found.
 	* @return Status code (0 = success).
 	*/
@@ -556,7 +556,7 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Prepares the dense branched-signature basis cache on the active CUDA device.
+	* @brief Prepares the branched-signature cache on the active CUDA device.
 	*
 	* @param dimension Dimension after time or lead-lag augmentation.
 	* @param max_nodes Maximum number of nodes in the branched-signature basis.
@@ -582,6 +582,9 @@ extern "C" {
 	/** @defgroup branched_log_sig_cuda_functions Branched log signature CUDA functions
 	* @{
 	*/
+	/** @brief Prepares the branched-signature and derived branched-log caches on the active CUDA device. */
+	[[nodiscard]] CUSIG_API int prepare_branched_log_sig_cuda(uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) noexcept;
+
 	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_cuda_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
 	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_cuda_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
 

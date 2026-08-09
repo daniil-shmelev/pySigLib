@@ -115,6 +115,7 @@ class TestLogSigStream:
     def test_full_path_matches_log_sig(self, dimension, degree, batch_shape):
         """push_batch endpoint should match pysiglib.log_sig of the full path."""
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         path = np.random.randn(*batch_shape, 20, dimension)
         stream = pysiglib.LogSigStream(dimension, degree)
         stream.push_batch(path)
@@ -125,6 +126,7 @@ class TestLogSigStream:
     def test_interval_via_push(self, dimension, degree, batch_shape):
         """Per-point push allows querying arbitrary sub-intervals."""
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         path = np.random.randn(*batch_shape, 30, dimension)
         stream = pysiglib.LogSigStream(dimension, degree)
         for i in range(path.shape[-2]):
@@ -137,6 +139,7 @@ class TestLogSigStream:
     def test_sig_all(self, dimension, degree, batch_shape):
         """sig_all should return cumulative log-signatures at batch boundaries."""
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         path = np.random.randn(*batch_shape, 10, dimension)
         stream = pysiglib.LogSigStream(dimension, degree)
         stream.push_batch(path)
@@ -146,6 +149,7 @@ class TestLogSigStream:
 
     def test_pop_front(self, dimension, degree, batch_shape):
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         path = np.random.randn(*batch_shape, 20, dimension)
         stream = pysiglib.LogSigStream(dimension, degree)
         for i in range(path.shape[-2]):
@@ -192,6 +196,7 @@ class TestLogSigWindowStream:
     def test_windows_match_direct(self, dimension, degree, batch_shape):
         """Each emitted window should match direct log_sig on the sub-path."""
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         path = np.random.randn(*batch_shape, 50, dimension)
         window_size = 10
         stride = 5
@@ -225,6 +230,7 @@ class TestTorchTensors:
         """LogSigStream should work with torch tensors (forward-only)."""
         dim, deg = 3, 3
         pysiglib.prepare_log_sig(dim, deg, method=2)
+        pysiglib.prepare_log_sig(dim, deg, method=3)
         path = torch.randn(*batch_shape, 15, dim, dtype=torch.float64)
         stream = pysiglib.LogSigStream(dim, deg)
         stream.push_batch(path)
@@ -268,6 +274,7 @@ class TestTorchAutograd:
         from pysiglib.torch_api import LogSigStream
         dim, deg = 3, 3
         pysiglib.prepare_log_sig(dim, deg, method=2)
+        pysiglib.prepare_log_sig(dim, deg, method=3)
         path = torch.randn(15, dim, dtype=torch.float64, requires_grad=True)
         stream = LogSigStream(dim, deg)
         for i in range(path.shape[0]):
@@ -342,6 +349,7 @@ class TestBatchedIndependence:
 
     def test_log_sig_stream_batched_matches_single(self):
         pysiglib.prepare_log_sig(3, 3, method=2)
+        pysiglib.prepare_log_sig(3, 3, method=3)
         np.random.seed(2)
         paths = np.random.randn(4, 15, 3)
         batched = pysiglib.LogSigStream(3, 3)
@@ -398,6 +406,7 @@ class TestSinglePathBackwardCompat:
 
     def test_log_sig_stream_single_path_1d_outputs(self):
         pysiglib.prepare_log_sig(3, 3, method=2)
+        pysiglib.prepare_log_sig(3, 3, method=3)
         ls_len = pysiglib.log_sig_length(3, 3)
         stream = pysiglib.LogSigStream(3, 3)
         stream.push_batch(np.random.randn(10, 3))
@@ -506,6 +515,7 @@ class TestNJobsFlag:
 
     def test_log_sig_stream_n_jobs_accepted(self):
         pysiglib.prepare_log_sig(3, 3, method=2)
+        pysiglib.prepare_log_sig(3, 3, method=3)
         path = np.random.randn(20, 3)
         stream = pysiglib.LogSigStream(3, 3, n_jobs=-1)
         stream.push_batch(path)
@@ -521,6 +531,7 @@ class TestNJobsFlag:
 
     def test_log_sig_window_stream_n_jobs_accepted(self):
         pysiglib.prepare_log_sig(3, 3, method=2)
+        pysiglib.prepare_log_sig(3, 3, method=3)
         path = np.random.randn(30, 3)
         ws = pysiglib.LogSigWindowStream(3, 3, window_size=10, stride=5, n_jobs=-1)
         ws.push_batch(path)

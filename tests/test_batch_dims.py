@@ -34,7 +34,7 @@ DIM = 3
 DEGREE = 3
 
 def setup_module(_module):
-    for m in (1, 2):
+    for m in (1, 2, 3):
         pysiglib.prepare_log_sig(DIM, DEGREE, method=m)
         pysiglib.prepare_log_sig(2, 3, method=m)
 

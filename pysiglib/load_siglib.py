@@ -557,6 +557,9 @@ if BUILT_WITH_CUDA:
 CPSIG.prepare_branched_sig.argtypes = (c_uint64, c_uint64, c_bool, c_bool)
 CPSIG.prepare_branched_sig.restype = c_int
 
+CPSIG.prepare_branched_log_sig.argtypes = (c_uint64, c_uint64, c_bool, c_bool)
+CPSIG.prepare_branched_log_sig.restype = c_int
+
 CPSIG.branched_sig_length.argtypes = (c_uint64, c_uint64, c_bool)
 CPSIG.branched_sig_length.restype = c_uint64
 
@@ -585,6 +588,9 @@ CPSIG.branched_sig_coef_backprop_d.restype = c_int
 if BUILT_WITH_CUDA:
     CUSIG.prepare_branched_sig_cuda.argtypes = (c_uint64, c_uint64, c_bool, c_bool)
     CUSIG.prepare_branched_sig_cuda.restype = c_int
+
+    CUSIG.prepare_branched_log_sig_cuda.argtypes = (c_uint64, c_uint64, c_bool, c_bool)
+    CUSIG.prepare_branched_log_sig_cuda.restype = c_int
 
     CUSIG.prepare_branched_sig_coef_cuda.argtypes = (POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool)
     CUSIG.prepare_branched_sig_coef_cuda.restype = c_int

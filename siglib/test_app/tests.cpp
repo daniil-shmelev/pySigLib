@@ -1052,6 +1052,7 @@ void example_batch_branched_sig_cuda_d(
     print_header("Batch Branched Signature CUDA Double");
 
     prepare_branched_sig(dimension, max_nodes, false, planar);
+    prepare_branched_sig_cuda(dimension, max_nodes, planar, false);
     uint64_t out_len = branched_sig_length(dimension, max_nodes, planar);
     uint64_t path_size = batch_size * dimension * length;
     uint64_t out_size = out_len * batch_size;
@@ -1122,7 +1123,8 @@ void example_batch_branched_log_sig_d(
 
     bool planar = false;
     bool scalar_term = true;
-    prepare_branched_sig(dimension, max_nodes, false, planar);
+    prepare_branched_log_sig(dimension, max_nodes, false, planar);
+    prepare_branched_log_sig_cuda(dimension, max_nodes, planar, false);
 
     uint64_t bsig_len = branched_sig_length(dimension, max_nodes, planar);
     uint64_t total = batch_size * bsig_len;

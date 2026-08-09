@@ -413,19 +413,47 @@ struct CUDALogSigCache {
 	}
 };
 
+struct CuLogSigCacheKey {
+	int device = 0;
+	uint64_t dimension = 0;
+	uint64_t degree = 0;
+
+	bool operator==(const CuLogSigCacheKey& other) const noexcept {
+		return device == other.device
+			&& dimension == other.dimension
+			&& degree == other.degree;
+	}
+};
+
+struct CuLogSigCacheKeyHash {
+	size_t operator()(const CuLogSigCacheKey& key) const noexcept {
+		size_t h = std::hash<int>{}(key.device);
+		h ^= std::hash<uint64_t>{}(key.dimension) + kFibHashConst
+			+ (h << 6) + (h >> 2);
+		h ^= std::hash<uint64_t>{}(key.degree) + kFibHashConst
+			+ (h << 6) + (h >> 2);
+		return h;
+	}
+};
+
+inline CuLogSigCacheKey make_cuda_log_sig_cache_key_(
+	uint64_t dimension, uint64_t degree
+) {
+	CuLogSigCacheKey key;
+	CUDA_CHECK(cudaGetDevice(&key.device));
+	key.dimension = dimension;
+	key.degree = degree;
+	return key;
+}
+
 // =========================================================================
 // Cache management (host-side)
 // =========================================================================
 
-inline std::unordered_map<std::pair<uint64_t, uint64_t>, CUDALogSigCache, CuPairHash>& get_cuda_log_sig_cache_map_() {
-	static std::unordered_map<std::pair<uint64_t, uint64_t>, CUDALogSigCache, CuPairHash> cache;
-	return cache;
-}
-
-inline std::mutex& get_cuda_log_sig_cache_mu_() {
-	static std::mutex mu;
-	return mu;
-}
+std::unordered_map<
+	CuLogSigCacheKey, CUDALogSigCache, CuLogSigCacheKeyHash
+>& get_cuda_log_sig_cache_map_();
+std::mutex& get_cuda_log_sig_cache_mu_();
 
 inline void upload_csr_to_gpu_(
 	const CuSparseIntMatrix& mat,
@@ -577,7 +605,7 @@ inline void populate_cuda_cache_entry_(
 }
 
 inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int method, bool use_disk) {
-	auto key = std::make_pair(dimension, degree);
+	auto key = make_cuda_log_sig_cache_key_(dimension, degree);
 	auto& cache_map = get_cuda_log_sig_cache_map_();
 	std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
 
@@ -632,7 +660,16 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 	}
 
 	// Compute from scratch
-	std::vector<uint64_t> lyndon_idx = cu_all_lyndon_idx(dimension, degree);
+	std::vector<cu_word> lyndon_words;
+	std::vector<uint64_t> lyndon_idx;
+	if (method == 2) {
+		lyndon_words = cu_all_lyndon_words(dimension, degree);
+		lyndon_idx.reserve(lyndon_words.size());
+		for (const auto& w : lyndon_words)
+			lyndon_idx.push_back(cu_word_to_idx(w, dimension));
+	} else {
+		lyndon_idx = cu_all_lyndon_idx(dimension, degree);
+	}
 
 	CUDALogSigCache entry;
 	populate_cuda_cache_entry_(entry, lyndon_idx, dimension, degree);
@@ -640,7 +677,6 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 	// For method 2, compute and upload the sparse matrix
 	CuSparseIntMatrix inv_proj_mat, inv_proj_mat_t;
 	if (method == 2) {
-		std::vector<cu_word> lyndon_words = cu_all_lyndon_words(dimension, degree);
 		CuSparseIntMatrix proj_mat;
 		cu_lyndon_proj_matrix(proj_mat, lyndon_words, lyndon_idx, dimension, degree);
 		proj_mat.inverse(inv_proj_mat);
@@ -660,7 +696,7 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 }
 
 inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_t degree, int method = 1) {
-	auto key = std::make_pair(dimension, degree);
+	auto key = make_cuda_log_sig_cache_key_(dimension, degree);
 	auto& cache_map = get_cuda_log_sig_cache_map_();
 	std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
 	auto it = cache_map.find(key);
@@ -695,10 +731,12 @@ inline const CUDALogSigCache& get_cuda_log_sig_cache(uint64_t dimension, uint64_
 	}
 
 	if (it == cache_map.end()) {
-		throw std::runtime_error("CUDA log sig cache not found - call prepare_log_sig_cuda first");
+		throw cache_not_found_error(
+			"CUDA log sig cache not found - call prepare_log_sig with device='cuda' first");
 	}
 	if (method == 2 && it->second.d_sparse_row_ptr == nullptr) {
-		throw std::runtime_error("CUDA log sig cache not found for method 2 - call prepare_log_sig_cuda with method=2 first");
+		throw cache_not_found_error(
+			"CUDA log sig cache not found for method 2 - call prepare_log_sig with method=2 and device='cuda' first");
 	}
 	return it->second;
 }

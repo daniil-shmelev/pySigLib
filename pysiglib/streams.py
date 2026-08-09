@@ -380,8 +380,8 @@ class LogSigStream:
 
     .. note::
 
-        You must call ``pysiglib.prepare_log_sig(dimension, degree)`` before creating
-        a ``LogSigStream``. This precomputes the Lyndon basis and BCH coefficients.
+        The operations of this class require a call to
+        ``pysiglib.prepare_log_sig(dimension, degree, method=3)``.
 
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -404,6 +404,7 @@ class LogSigStream:
         import numpy as np
 
         pysiglib.prepare_log_sig(3, 4, method=2)
+        pysiglib.prepare_log_sig(3, 4, method=3)
 
         # Single path
         stream = pysiglib.LogSigStream(dimension=3, degree=4)
@@ -761,8 +762,8 @@ class LogSigWindowStream(_WindowStream):
 
     .. note::
 
-        You must call ``pysiglib.prepare_log_sig(dimension, degree, method=2)`` before
-        creating a ``LogSigWindowStream``.
+        Before creating a ``LogSigWindowStream``, prepare method 3 for its BCH
+        operations and method 2 for its default log-signature method.
 
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -784,6 +785,7 @@ class LogSigWindowStream(_WindowStream):
         import numpy as np
 
         pysiglib.prepare_log_sig(3, 4, method=2)
+        pysiglib.prepare_log_sig(3, 4, method=3)
         ws = pysiglib.LogSigWindowStream(dimension=3, degree=4, window_size=20, stride=5)
 
         path = np.random.randn(100, 3)

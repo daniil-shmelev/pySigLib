@@ -34,6 +34,7 @@ class TestLogSigJoinBackpropNumpy:
     def test_basic(self, dimension, degree):
         """Basic forward + backward should not crash."""
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         ls_len = pysiglib.log_sig_length(dimension, degree)
         ls = np.random.randn(ls_len)
         disp = np.random.randn(dimension)
@@ -46,6 +47,7 @@ class TestLogSigJoinBackpropNumpy:
     def test_zero_logsig(self, dimension, degree):
         """Backward from zero log-sig (identity) should not crash."""
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         ls_len = pysiglib.log_sig_length(dimension, degree)
         ls = np.zeros(ls_len)
         disp = np.random.randn(dimension)
@@ -57,6 +59,7 @@ class TestLogSigJoinBackpropNumpy:
     def test_chained(self, dimension, degree):
         """Chaining multiple log_sig_join + backprop should work."""
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         ls_len = pysiglib.log_sig_length(dimension, degree)
         ls = np.zeros(ls_len)
         for _ in range(5):
@@ -75,6 +78,7 @@ class TestLogSigJoinBackpropTorch:
         """Single log_sig_join backward via autograd."""
         from pysiglib.torch_api import log_sig_join
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         ls_len = pysiglib.log_sig_length(dimension, degree)
         ls = torch.zeros(ls_len, dtype=torch.float64, requires_grad=True)
         disp = torch.randn(dimension, dtype=torch.float64, requires_grad=True)
@@ -86,6 +90,7 @@ class TestLogSigJoinBackpropTorch:
         """Chained log_sig_join backward via autograd."""
         from pysiglib.torch_api import log_sig_join
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         ls_len = pysiglib.log_sig_length(dimension, degree)
         ls = torch.zeros(ls_len, dtype=torch.float64, requires_grad=True)
         for i in range(5):
@@ -99,6 +104,7 @@ class TestLogSigJoinBackpropTorch:
         """Chained backward should propagate gradients to displacement."""
         from pysiglib.torch_api import log_sig_join
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         ls_len = pysiglib.log_sig_length(dimension, degree)
         ls = torch.zeros(ls_len, dtype=torch.float64)
         disp = torch.randn(dimension, dtype=torch.float64, requires_grad=True)
@@ -111,6 +117,7 @@ class TestLogSigJoinBackpropTorch:
         """14-step chain like LogSigStream uses."""
         from pysiglib.torch_api import log_sig_join
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
         ls_len = pysiglib.log_sig_length(dimension, degree)
         path = torch.randn(15, dimension, dtype=torch.float64, requires_grad=True)
         ls = torch.zeros(ls_len, dtype=torch.float64)

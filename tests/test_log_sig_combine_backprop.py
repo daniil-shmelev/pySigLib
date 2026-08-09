@@ -34,6 +34,7 @@ def _finite_diff_check(ls1, ls2, d_out, dimension, degree, eps=1e-6, n_jobs=1, d
         d_ls1 @ v  \approx  d_out @ (F(ls1+eps*v, ls2) - F(ls1-eps*v, ls2)) / (2*eps)
     and similarly for d_ls2.
     """
+    pysiglib.prepare_log_sig(dimension, degree, 3, device=device)
     d_ls1, d_ls2 = pysiglib.log_sig_combine_backprop(
         d_out, ls1, ls2, dimension, degree, n_jobs=n_jobs
     )
@@ -98,6 +99,7 @@ def test_log_sig_combine_backprop_batch(device, deg):
 def test_log_sig_combine_backprop_multithreaded(deg):
     dim = 5
     batch = 8
+    pysiglib.prepare_log_sig(dim, deg, 3, device="cpu")
     ls_len = pysiglib.log_sig_length(dim, deg)
 
     ls1 = torch.randn(batch, ls_len, dtype=torch.float64)
@@ -117,6 +119,7 @@ def test_log_sig_combine_backprop_multithreaded(deg):
 def test_log_sig_combine_backprop_zero_deriv(device, deg):
     """Backward with zero upstream gradient should give zero derivatives."""
     dim = 5
+    pysiglib.prepare_log_sig(dim, deg, 3, device=device)
     ls_len = pysiglib.log_sig_length(dim, deg)
 
     ls1 = torch.randn(ls_len, dtype=torch.float64, device=device)
@@ -138,6 +141,7 @@ def test_log_sig_combine_backprop_numpy(device, deg):
         pytest.skip("numpy only on cpu")
     dim = 5
     batch = 4
+    pysiglib.prepare_log_sig(dim, deg, 3, device="cpu")
     ls_len = pysiglib.log_sig_length(dim, deg)
 
     ls1 = np.random.randn(batch, ls_len)

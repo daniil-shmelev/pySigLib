@@ -44,10 +44,8 @@ def log_sig_join_backprop(
 
     .. note::
 
-        ``log_sig`` is expected in the Lyndon bracket basis (``method=2`` output). You
-        must call ``pysiglib.prepare_log_sig(dimension, degree, method=2)`` before using
-        this function. This precomputes the Lyndon basis and BCH coefficients needed
-        internally.
+        This function requires a call to
+        ``pysiglib.prepare_log_sig(dimension, degree, method=3)``.
 
     :param d_out: Derivative with respect to the output of log_sig_join,
         :math:`\\partial F / \\partial L(x * v)`, of shape ``(..., log_sig_length)``.
@@ -78,6 +76,7 @@ def log_sig_join_backprop(
 
         dimension, degree = 5, 3
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
 
         path = np.random.uniform(size=(100, dimension))
         ls = pysiglib.log_sig(path, degree, method=2)

@@ -537,12 +537,12 @@ def test_branched_sig_coef_requires_preparation():
     requested = [basis[-1]]
     path = np.zeros((3, dimension), dtype=np.float64)
 
-    with pytest.raises(Exception, match="Runtime error"):
+    with pytest.raises(Exception, match="Could not find prepared cache"):
         pysiglib.branched_sig_coef(path, requested)
 
     pysiglib.prepare_branched_sig_coef(dimension, requested)
     pysiglib.branched_sig_coef(path, requested)
-    with pytest.raises(Exception, match="Runtime error"):
+    with pytest.raises(Exception, match="Could not find prepared cache"):
         pysiglib.branched_sig(path, degree)
 
 
@@ -554,7 +554,7 @@ def test_cuda_branched_sig_coef_requires_preparation():
     requested = [basis[-1]]
     path = torch.zeros((3, dimension), dtype=torch.float64, device="cuda")
 
-    with pytest.raises(Exception, match="Runtime error"):
+    with pytest.raises(Exception, match="Could not find prepared cache"):
         pysiglib.branched_sig_coef(path, requested)
 
     pysiglib.prepare_branched_sig_coef(dimension, requested)
@@ -574,14 +574,14 @@ def test_branched_sig_coef_prepare_device_selection():
     pysiglib.prepare_branched_sig_coef(
         dimension, requested, device="cpu")
     pysiglib.branched_sig_coef(cpu_path, requested)
-    with pytest.raises(Exception, match="Runtime error"):
+    with pytest.raises(Exception, match="Could not find prepared cache"):
         pysiglib.branched_sig_coef(cuda_path, requested)
 
     pysiglib.clear_cache()
     pysiglib.prepare_branched_sig_coef(
         dimension, requested, device="cuda")
     pysiglib.branched_sig_coef(cuda_path, requested)
-    with pytest.raises(Exception, match="Runtime error"):
+    with pytest.raises(Exception, match="Could not find prepared cache"):
         pysiglib.branched_sig_coef(cpu_path, requested)
 
 

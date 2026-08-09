@@ -24,6 +24,20 @@
 
 #include "cu_macros.h"
 
+std::unordered_map<
+	CuLogSigCacheKey, CUDALogSigCache, CuLogSigCacheKeyHash
+>& get_cuda_log_sig_cache_map_() {
+	static std::unordered_map<
+		CuLogSigCacheKey, CUDALogSigCache, CuLogSigCacheKeyHash
+	> cache;
+	return cache;
+}
+
+std::mutex& get_cuda_log_sig_cache_mu_() {
+	static std::mutex mu;
+	return mu;
+}
+
 // =========================================================================
 // Exported C functions
 // =========================================================================
@@ -33,7 +47,12 @@ extern "C" {
 	CUSIG_API int prepare_log_sig_cuda(
 		uint64_t dimension, uint64_t degree, int method, bool use_disk
 	) noexcept {
-		CUSIG_SAFE_CALL(prepare_log_sig_cuda_(dimension, degree, method, use_disk));
+		CUSIG_SAFE_CALL(
+			if (method != 3)
+				prepare_log_sig_cuda_(dimension, degree, method, use_disk);
+			if (method == 3)
+				prepare_cuda_bch_cache_(dimension, degree)
+		);
 	}
 
 	CUSIG_API int clear_cache_cuda(bool use_disk) noexcept {

@@ -281,18 +281,13 @@ struct CUDABchCache {
 // Cache management
 // =========================================================================
 
-inline std::unordered_map<std::pair<uint64_t, uint64_t>, CUDABchCache, CuPairHash>& get_cuda_bch_cache_map_() {
-	static std::unordered_map<std::pair<uint64_t, uint64_t>, CUDABchCache, CuPairHash> cache;
-	return cache;
-}
+std::unordered_map<
+	CuLogSigCacheKey, CUDABchCache, CuLogSigCacheKeyHash
+>& get_cuda_bch_cache_map_();
+std::mutex& get_cuda_bch_cache_mu_();
 
-inline std::mutex& get_cuda_bch_cache_mu_() {
-	static std::mutex mu;
-	return mu;
-}
-
-inline void set_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
-	auto key = std::make_pair(dimension, degree);
+inline void prepare_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
+	auto key = make_cuda_log_sig_cache_key_(dimension, degree);
 	auto& cache_map = get_cuda_bch_cache_map_();
 	std::lock_guard<std::mutex> lock(get_cuda_bch_cache_mu_());
 	if (cache_map.find(key) != cache_map.end()) return;
@@ -386,16 +381,13 @@ inline void set_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 }
 
 inline const CUDABchCache& get_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
-	auto key = std::make_pair(dimension, degree);
+	auto key = make_cuda_log_sig_cache_key_(dimension, degree);
 	auto& cache_map = get_cuda_bch_cache_map_();
-	{
-		std::lock_guard<std::mutex> lock(get_cuda_bch_cache_mu_());
-		auto it = cache_map.find(key);
-		if (it != cache_map.end()) return it->second;
-	}
-	set_cuda_bch_cache_(dimension, degree);
 	std::lock_guard<std::mutex> lock(get_cuda_bch_cache_mu_());
-	return cache_map.at(key);
+	auto it = cache_map.find(key);
+	if (it != cache_map.end()) return it->second;
+	throw cache_not_found_error(
+		"CUDA BCH cache not found - call prepare_log_sig with method=3 and device='cuda' first");
 }
 
 inline void clear_cuda_bch_cache_() {

@@ -14,7 +14,6 @@
  * ========================================================================= */
 
 #include <benchmark/benchmark.h>
-#include "cp_bch.h"
 #include "cpsig.h"
 
 #include <cstdint>
@@ -92,7 +91,7 @@ BENCHMARK(BM_prepare_log_sig_lyndon_basis)->Unit(benchmark::kMicrosecond);
 static void BM_prepare_log_sig_bch(benchmark::State& state) {
     for (auto _ : state) {
         clear_caches_outside_timing(state);
-        set_bch_cache(3, 4);
+        check(::prepare_log_sig(3, 4, 3, false), "prepare_log_sig");
     }
 }
 BENCHMARK(BM_prepare_log_sig_bch)->Unit(benchmark::kMicrosecond);
@@ -112,6 +111,14 @@ static void BM_prepare_branched_sig_planar(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_prepare_branched_sig_planar)->Unit(benchmark::kMicrosecond);
+
+static void BM_prepare_branched_log_sig(benchmark::State& state) {
+    for (auto _ : state) {
+        clear_caches_outside_timing(state);
+        check(::prepare_branched_log_sig(3, 4, false, false), "prepare_branched_log_sig");
+    }
+}
+BENCHMARK(BM_prepare_branched_log_sig)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Path transforms
@@ -733,7 +740,7 @@ static void BM_branched_sig_backprop_correction(benchmark::State& state) {
 BENCHMARK(BM_branched_sig_backprop_correction)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_to_log_sig(benchmark::State& state) {
-    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    check(::prepare_branched_log_sig(3, 4, false, false), "prepare_branched_log_sig");
     const uint64_t blen = ::branched_sig_length(3, 4, false);
     auto bsig = random_data(64 * blen, 1);
     std::vector<double> out(64 * blen);
@@ -747,7 +754,7 @@ static void BM_branched_sig_to_log_sig(benchmark::State& state) {
 BENCHMARK(BM_branched_sig_to_log_sig)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_to_log_sig_backprop(benchmark::State& state) {
-    check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
+    check(::prepare_branched_log_sig(3, 4, false, false), "prepare_branched_log_sig");
     const uint64_t blen = ::branched_sig_length(3, 4, false);
     auto bsig = random_data(64 * blen, 1);
     auto derivs = random_data(64 * blen, 2);

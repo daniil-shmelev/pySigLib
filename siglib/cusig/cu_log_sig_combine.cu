@@ -19,6 +19,20 @@
 #include "cu_macros.h"
 #include "cu_utils.h"
 
+std::unordered_map<
+	CuLogSigCacheKey, CUDABchCache, CuLogSigCacheKeyHash
+>& get_cuda_bch_cache_map_() {
+	static std::unordered_map<
+		CuLogSigCacheKey, CUDABchCache, CuLogSigCacheKeyHash
+	> cache;
+	return cache;
+}
+
+std::mutex& get_cuda_bch_cache_mu_() {
+	static std::mutex mu;
+	return mu;
+}
+
 // Type-erased via void* because the hosting functions are templated over
 // float/double - both share one buffer, sized to the larger allocation.
 static std::mutex s_backprop_workspace_mu;

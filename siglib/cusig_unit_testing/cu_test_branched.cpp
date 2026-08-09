@@ -19,6 +19,7 @@
 TEST(branchedSigCombineCudaTest, ChenIdentity) {
     uint64_t dimension = 2, max_nodes = 3;
     uint64_t bs_len = compute_branched_sig_length(dimension, max_nodes);
+    ASSERT_EQ(0, prepare_branched_sig_cuda(dimension, max_nodes));
 
     std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
     std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
@@ -60,6 +61,7 @@ TEST(branchedSigCombineCudaTest, ChenIdentity) {
 TEST(branchedSigCombineBackpropCudaTest, FiniteDifference) {
     uint64_t dimension = 2, max_nodes = 3;
     uint64_t bs_len = compute_branched_sig_length(dimension, max_nodes);
+    ASSERT_EQ(0, prepare_branched_sig_cuda(dimension, max_nodes));
 
     std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
     std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
@@ -194,6 +196,7 @@ TEST(branchedSigCombineBackpropCudaTest, FiniteDifference) {
 TEST(branchedSigCombineBackpropCudaTest, ZeroDerivative) {
     uint64_t dimension = 2, max_nodes = 3;
     uint64_t bs_len = compute_branched_sig_length(dimension, max_nodes);
+    ASSERT_EQ(0, prepare_branched_sig_cuda(dimension, max_nodes));
 
     std::vector<double> path1 = { 0., 0., 1., 0.5, 0.4, 2. };
     std::vector<double> path2 = { 0.4, 2., 6., 0.1, 2.3, 4.1 };
@@ -298,6 +301,7 @@ TEST(branchedSigCoefCudaTest, ForwardAndBackpropMatchFull) {
     EXPECT_NE(0, branched_sig_coef_cuda_d(
         d_path, d_coefs, tree_data.data(), tree_data.size(), batch_size,
         dimension, length, max_nodes));
+    ASSERT_EQ(0, prepare_branched_sig_cuda(dimension, max_nodes));
     ASSERT_EQ(0, prepare_branched_sig_coef_cuda(
         tree_data.data(), tree_data.size(), dimension, dimension, max_nodes));
 

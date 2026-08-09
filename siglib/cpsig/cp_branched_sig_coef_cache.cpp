@@ -16,6 +16,7 @@
 #include "cppch.h"
 #include "cp_branched_sig_coef_cache.h"
 #include "disk_cache.h"
+#include "../shared/errors.h"
 
 namespace {
 struct BranchedSigCoefCacheKey {
@@ -105,8 +106,9 @@ void prepare_branched_sig_coef_cache(
 	}
 
 	auto cache = std::make_unique<BranchedSigCoefCache>();
-	const auto cache_dir = get_cache_dir() / cache_folder_name;
+	std::filesystem::path cache_dir;
 	if (use_disk) {
+		cache_dir = get_cache_dir() / cache_folder_name;
 		std::filesystem::create_directories(cache_dir);
 		if (read_branched_sig_coef_cache(
 			cache_dir, data_dimension, dimension, max_nodes, planar,
@@ -143,8 +145,8 @@ const BranchedSigCoefCache& get_branched_sig_coef_cache(
 	std::shared_lock rlock(registry.mu);
 	const auto it = registry.map.find(key);
 	if (it == registry.map.end())
-		throw std::runtime_error(
-			"Branched signature coefficient cache not found. Call prepare_branched_sig_coef first.");
+		throw cache_not_found_error(
+			"Branched signature coefficient cache not found - call prepare_branched_sig_coef first");
 	return *(it->second);
 }
 

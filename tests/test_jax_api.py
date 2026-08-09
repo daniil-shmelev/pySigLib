@@ -552,7 +552,8 @@ def test_jax_log_sig_combine_matches_pysiglib(device, jitted, dtype, case):
     x1 = rng.uniform(size=(10, dim)).astype(dtype)
     x2 = rng.uniform(size=(8, dim)).astype(dtype)
 
-    pysiglib.prepare_log_sig(dim, deg, 1, time_aug=ta, lead_lag=ll)
+    pysiglib.prepare_log_sig(dim, deg, 2, time_aug=ta, lead_lag=ll)
+    pysiglib.prepare_log_sig(dim, deg, 3, time_aug=ta, lead_lag=ll)
 
     ls1 = pysiglib.log_sig(x1, deg, time_aug=ta, lead_lag=ll, method=1)
     ls2 = pysiglib.log_sig(x2, deg, time_aug=ta, lead_lag=ll, method=1)
@@ -582,7 +583,8 @@ def test_jax_log_sig_combine_batch_matches_pysiglib(device, jitted, dtype, case)
     x1 = rng.uniform(size=(batch, 10, dim)).astype(dtype)
     x2 = rng.uniform(size=(batch, 8, dim)).astype(dtype)
 
-    pysiglib.prepare_log_sig(dim, deg, 1, time_aug=ta, lead_lag=ll)
+    pysiglib.prepare_log_sig(dim, deg, 2, time_aug=ta, lead_lag=ll)
+    pysiglib.prepare_log_sig(dim, deg, 3, time_aug=ta, lead_lag=ll)
 
     ls1 = pysiglib.log_sig(x1, deg, time_aug=ta, lead_lag=ll, method=1)
     ls2 = pysiglib.log_sig(x2, deg, time_aug=ta, lead_lag=ll, method=1)
@@ -621,7 +623,8 @@ def test_jax_log_sig_combine_grad_matches_pysiglib(device, jitted, dtype, case):
     x1 = rng.uniform(size=(10, dim)).astype(dtype)
     x2 = rng.uniform(size=(8, dim)).astype(dtype)
 
-    pysiglib.prepare_log_sig(dim, deg, 1, time_aug=ta, lead_lag=ll)
+    pysiglib.prepare_log_sig(dim, deg, 2, time_aug=ta, lead_lag=ll)
+    pysiglib.prepare_log_sig(dim, deg, 3, time_aug=ta, lead_lag=ll)
 
     ls1_np = pysiglib.log_sig(x1, deg, time_aug=ta, lead_lag=ll, method=1)
     ls2_np = pysiglib.log_sig(x2, deg, time_aug=ta, lead_lag=ll, method=1)

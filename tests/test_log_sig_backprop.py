@@ -151,7 +151,7 @@ def test_batch_log_signature_lyndon_words_random(device, deg, dtype):
 @pytest.mark.parametrize("method", [2, 3])
 def test_log_signature_backprop_lyndon_basis_random(device, deg, dtype, method):
     X = torch.tensor(FIXTURES["path"][0], dtype=dtype, device=device, requires_grad=True)
-    pysiglib.prepare_log_sig(3, deg, 2)
+    pysiglib.prepare_log_sig(3, deg, method)
     ls = pysiglib.log_sig(X, deg, method=method)
     assert_device(ls, device)
 
@@ -171,7 +171,7 @@ def test_log_signature_backprop_lyndon_basis_random(device, deg, dtype, method):
 @pytest.mark.parametrize("method", [2, 3])
 def test_batch_log_signature_backprop_lyndon_basis_random(device, deg, dtype, method):
     X = torch.tensor(FIXTURES["path"], dtype=dtype, device=device, requires_grad=True)
-    pysiglib.prepare_log_sig(3, deg, 2)
+    pysiglib.prepare_log_sig(3, deg, method)
     ls = pysiglib.log_sig(X, deg, method=method)
     assert_device(ls, device)
 
