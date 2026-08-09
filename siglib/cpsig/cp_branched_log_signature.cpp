@@ -66,12 +66,6 @@ FORCE_INLINE uint64_t log_output_idx_(uint64_t flat_idx) {
 }
 
 
-struct BranchedLogPolyTermBuild_ {
-	double coeff;
-	std::vector<uint64_t> factors;
-};
-
-
 struct BranchedLogConstTerm_ {
 	uint64_t out;
 	double coeff;
@@ -131,99 +125,15 @@ struct BranchedLogPolyCache_ {
 };
 
 
-using BranchedLogPolyBuild_ = std::vector<BranchedLogPolyTermBuild_>;
-using BranchedLogPolyMap_ = std::map<std::vector<uint64_t>, double>;
-
-
-void add_branched_log_poly_term_(
-	BranchedLogPolyMap_& terms,
-	double coeff,
-	std::vector<uint64_t> factors
-) {
-	if (coeff == 0.0)
-		return;
-	std::sort(factors.begin(), factors.end());
-	terms[std::move(factors)] += coeff;
-}
-
-
-BranchedLogPolyBuild_ flatten_branched_log_poly_(BranchedLogPolyMap_&& terms) {
-	BranchedLogPolyBuild_ out;
-	out.reserve(terms.size());
-	for (auto& [factors, coeff] : terms) {
-		if (coeff != 0.0)
-			out.push_back({ coeff, std::move(factors) });
-	}
-	return out;
-}
-
-
-void multiply_branched_log_poly_into_(
-	const BranchedLogPolyBuild_& lhs,
-	const BranchedLogPolyBuild_& rhs,
-	BranchedLogPolyMap_& out
-) {
-	for (const auto& lterm : lhs) {
-		for (const auto& rterm : rhs) {
-			std::vector<uint64_t> factors;
-			factors.reserve(lterm.factors.size() + rterm.factors.size());
-			factors.insert(factors.end(), lterm.factors.begin(), lterm.factors.end());
-			factors.insert(factors.end(), rterm.factors.begin(), rterm.factors.end());
-			add_branched_log_poly_term_(out, lterm.coeff * rterm.coeff, std::move(factors));
-		}
-	}
-}
-
-
 BranchedLogPolyCache_ build_branched_log_poly_cache_(
 	const BranchedSigCache& cache,
 	const BranchedLogForestCache& forest_cache
 ) {
-	const uint64_t total_len = cache.total_length;
-	const uint64_t num_forests = forest_cache.forest_offsets.size() - 1;
-
-	std::vector<BranchedLogPolyBuild_> h_poly(num_forests);
-	for (uint64_t forest_idx = 1; forest_idx < num_forests; ++forest_idx) {
-		const uint64_t start = forest_cache.forest_offsets[forest_idx];
-		const uint64_t end = forest_cache.forest_offsets[forest_idx + 1];
-		std::vector<uint64_t> factors(
-			forest_cache.forest_trees.begin() + start,
-			forest_cache.forest_trees.begin() + end);
-		std::sort(factors.begin(), factors.end());
-		h_poly[forest_idx].push_back({ 1.0, std::move(factors) });
-	}
-
-	std::vector<std::vector<BranchedLogPolyBuild_>> powers(
-		cache.max_nodes + 1,
-		std::vector<BranchedLogPolyBuild_>(num_forests));
-	if (cache.max_nodes >= 1)
-		powers[1] = h_poly;
-
-	for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
-		for (uint64_t forest_idx = 0; forest_idx < num_forests; ++forest_idx) {
-			BranchedLogPolyMap_ terms;
-			const uint64_t start = forest_cache.forest_coprod_offsets[forest_idx];
-			const uint64_t end = forest_cache.forest_coprod_offsets[forest_idx + 1];
-			for (uint64_t pos = start; pos < end; pos += 2) {
-				const uint64_t left = forest_cache.forest_coprod_data[pos];
-				const uint64_t right = forest_cache.forest_coprod_data[pos + 1];
-				multiply_branched_log_poly_into_(powers[k - 1][left], h_poly[right], terms);
-			}
-			powers[k][forest_idx] = flatten_branched_log_poly_(std::move(terms));
-		}
-	}
-
 	BranchedLogPolyCache_ out;
-	for (uint64_t flat_idx = 1; flat_idx < total_len; ++flat_idx) {
-		BranchedLogPolyMap_ terms;
-		const uint64_t forest_idx = forest_cache.single_tree_forest[flat_idx];
-		for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
-			const double coeff = (k % 2 == 0) ? -1.0 / static_cast<double>(k) : 1.0 / static_cast<double>(k);
-			for (const auto& term : powers[k][forest_idx])
-				add_branched_log_poly_term_(terms, coeff * term.coeff, term.factors);
-		}
-		const BranchedLogPolyBuild_ flat_terms = flatten_branched_log_poly_(std::move(terms));
-		for (const auto& term : flat_terms) {
+	const BranchedLogPolynomials polynomials =
+		build_branched_log_polynomials(cache, forest_cache);
+	for (uint64_t flat_idx = 1; flat_idx < cache.total_length; ++flat_idx) {
+		for (const auto& term : polynomials[flat_idx]) {
 			switch (term.factors.size()) {
 			case 0:
 				out.const_terms.push_back({ flat_idx, term.coeff });

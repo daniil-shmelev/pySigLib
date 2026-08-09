@@ -20,8 +20,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 struct BranchedLogForestCache {
@@ -196,5 +198,95 @@ inline BranchedLogForestCache build_branched_log_forest_cache(const BranchedSigC
 	}
 	out.forest_offsets[forests.size()] = out.forest_trees.size();
 
+	return out;
+}
+
+struct BranchedLogPolyTerm {
+	double coeff;
+	std::vector<uint64_t> factors;
+};
+
+using BranchedLogPolynomial = std::vector<BranchedLogPolyTerm>;
+using BranchedLogPolynomials = std::vector<BranchedLogPolynomial>;
+
+namespace branched_log_poly_detail {
+
+using Terms = std::map<std::vector<uint64_t>, double>;
+
+inline void add(Terms& terms, double coeff, std::vector<uint64_t> factors) {
+	if (coeff == 0.0)
+		return;
+	std::sort(factors.begin(), factors.end());
+	terms[std::move(factors)] += coeff;
+}
+
+inline BranchedLogPolynomial flatten(Terms&& terms) {
+	BranchedLogPolynomial out;
+	out.reserve(terms.size());
+	for (auto& [factors, coeff] : terms) {
+		if (coeff != 0.0)
+			out.push_back({ coeff, std::move(factors) });
+	}
+	return out;
+}
+
+inline void multiply(
+	const BranchedLogPolynomial& lhs,
+	const BranchedLogPolynomial& rhs,
+	Terms& out
+) {
+	for (const auto& lterm : lhs) {
+		for (const auto& rterm : rhs) {
+			std::vector<uint64_t> factors = lterm.factors;
+			factors.insert(factors.end(), rterm.factors.begin(), rterm.factors.end());
+			add(out, lterm.coeff * rterm.coeff, std::move(factors));
+		}
+	}
+}
+
+}  // namespace branched_log_poly_detail
+
+inline BranchedLogPolynomials build_branched_log_polynomials(
+	const BranchedSigCache& cache,
+	const BranchedLogForestCache& forests
+) {
+	using namespace branched_log_poly_detail;
+	const uint64_t num_forests = forests.forest_offsets.size() - 1;
+	BranchedLogPolynomials h(num_forests);
+	for (uint64_t i = 1; i < num_forests; ++i) {
+		auto first = forests.forest_trees.begin() + forests.forest_offsets[i];
+		auto last = forests.forest_trees.begin() + forests.forest_offsets[i + 1];
+		h[i].push_back({ 1.0, { first, last } });
+		std::sort(h[i][0].factors.begin(), h[i][0].factors.end());
+	}
+
+	std::vector<BranchedLogPolynomials> powers(
+		cache.max_nodes + 1, BranchedLogPolynomials(num_forests));
+	if (cache.max_nodes >= 1)
+		powers[1] = h;
+	for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
+		for (uint64_t i = 0; i < num_forests; ++i) {
+			Terms terms;
+			for (uint64_t pos = forests.forest_coprod_offsets[i];
+				 pos < forests.forest_coprod_offsets[i + 1]; pos += 2) {
+				multiply(
+					powers[k - 1][forests.forest_coprod_data[pos]],
+					h[forests.forest_coprod_data[pos + 1]], terms);
+			}
+			powers[k][i] = flatten(std::move(terms));
+		}
+	}
+
+	BranchedLogPolynomials out(cache.total_length);
+	for (uint64_t flat_idx = 1; flat_idx < cache.total_length; ++flat_idx) {
+		Terms terms;
+		const uint64_t forest = forests.single_tree_forest[flat_idx];
+		for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
+			const double coeff = (k % 2 ? 1.0 : -1.0) / static_cast<double>(k);
+			for (const auto& term : powers[k][forest])
+				add(terms, coeff * term.coeff, term.factors);
+		}
+		out[flat_idx] = flatten(std::move(terms));
+	}
 	return out;
 }

@@ -22,12 +22,50 @@
 #include "../shared/branched_cache.h"
 #include "../shared/branched_log_cache.h"
 
-#include <cstdint>
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+namespace {
+
+struct CuBranchedLogPolyCacheHost {
+	std::vector<uint32_t> output_term_offsets;
+	std::vector<uint32_t> term_factor_offsets;
+	std::vector<uint32_t> factors;
+	std::vector<double> coeffs;
+};
+
+CuBranchedLogPolyCacheHost build_cu_branched_log_poly_cache(
+	const BranchedSigCache& cache,
+	const BranchedLogForestCache& forests
+) {
+	const BranchedLogPolynomials polynomials =
+		build_branched_log_polynomials(cache, forests);
+	CuBranchedLogPolyCacheHost out;
+	out.output_term_offsets.reserve(polynomials.size() + 1);
+	out.output_term_offsets.push_back(0);
+	for (const auto& polynomial : polynomials) {
+		for (const auto& term : polynomial) {
+			if (out.coeffs.size() >= UINT32_MAX)
+				throw std::overflow_error("CUDA branched log polynomial cache exceeds uint32 range");
+			out.coeffs.push_back(term.coeff);
+			out.term_factor_offsets.push_back(static_cast<uint32_t>(out.factors.size()));
+			for (uint64_t factor : term.factors) {
+				if (factor > UINT32_MAX || out.factors.size() >= UINT32_MAX)
+					throw std::overflow_error("CUDA branched log polynomial factor exceeds uint32 range");
+				out.factors.push_back(static_cast<uint32_t>(factor));
+			}
+		}
+		out.output_term_offsets.push_back(static_cast<uint32_t>(out.coeffs.size()));
+	}
+	out.term_factor_offsets.push_back(static_cast<uint32_t>(out.factors.size()));
+	return out;
+}
+
+}  // namespace
 
 struct BranchedLogSigCacheGPU {
 	uint32_t* d_forest_offsets32 = nullptr;
@@ -35,6 +73,11 @@ struct BranchedLogSigCacheGPU {
 	uint32_t* d_forest_coprod_offsets32 = nullptr;
 	uint32_t* d_forest_coprod_data32 = nullptr;
 	uint32_t* d_single_tree_forest32 = nullptr;
+	uint32_t* d_poly_output_term_offsets = nullptr;
+	uint32_t* d_poly_term_factor_offsets = nullptr;
+	uint32_t* d_poly_factors = nullptr;
+	double* d_poly_coeffs = nullptr;
+	bool poly_ready = false;
 
 	uint32_t total_length = 0;
 	uint32_t num_trees = 0;
@@ -53,6 +96,10 @@ struct BranchedLogSigCacheGPU {
 		if (d_forest_coprod_offsets32) cudaFree(d_forest_coprod_offsets32);
 		if (d_forest_coprod_data32) cudaFree(d_forest_coprod_data32);
 		if (d_single_tree_forest32) cudaFree(d_single_tree_forest32);
+		if (d_poly_output_term_offsets) cudaFree(d_poly_output_term_offsets);
+		if (d_poly_term_factor_offsets) cudaFree(d_poly_term_factor_offsets);
+		if (d_poly_factors) cudaFree(d_poly_factors);
+		if (d_poly_coeffs) cudaFree(d_poly_coeffs);
 	}
 };
 
@@ -82,21 +129,53 @@ void clear_cuda_branched_log_sig_gpu_cache_() {
 
 template<typename T>
 static void upload_branched_log(T*& d_ptr, const T* h_data, size_t count) {
+	if (count == 0)
+		return;
 	CUDA_CHECK(cudaMalloc(&d_ptr, count * sizeof(T)));
 	CUDA_CHECK(cudaMemcpy(d_ptr, h_data, count * sizeof(T), cudaMemcpyHostToDevice));
 }
 
-static const BranchedLogSigCacheGPU& get_or_upload_branched_log_gpu_cache(
+static void upload_branched_log_poly_cache(
+	BranchedLogSigCacheGPU& gpu,
+	const CuBranchedLogPolyCacheHost& pc
+) {
+	upload_branched_log(gpu.d_poly_output_term_offsets, pc.output_term_offsets.data(), pc.output_term_offsets.size());
+	upload_branched_log(gpu.d_poly_term_factor_offsets, pc.term_factor_offsets.data(), pc.term_factor_offsets.size());
+	upload_branched_log(gpu.d_poly_factors, pc.factors.data(), pc.factors.size());
+	upload_branched_log(gpu.d_poly_coeffs, pc.coeffs.data(), pc.coeffs.size());
+	gpu.poly_ready = true;
+}
+
+static void ensure_branched_log_poly_gpu_cache(
+	BranchedLogSigCacheGPU& gpu,
 	uint64_t dimension,
 	uint64_t max_nodes,
 	bool planar
+) {
+	if (gpu.poly_ready)
+		return;
+	BranchedSigCache cache = build_branched_sig_cache(dimension, max_nodes, planar);
+	BranchedLogForestCache forest_cache = build_branched_log_forest_cache(cache);
+	upload_branched_log_poly_cache(
+		gpu, build_cu_branched_log_poly_cache(cache, forest_cache));
+}
+
+static BranchedLogSigCacheGPU& get_or_upload_branched_log_gpu_cache(
+	uint64_t dimension,
+	uint64_t max_nodes,
+	bool planar,
+	bool need_poly = false
 ) {
 	const auto key = make_cu_branched_log_key(dimension, max_nodes, planar);
 	{
 		std::lock_guard<std::mutex> lock(s_branched_log_gpu_cache_mu);
 		auto it = s_branched_log_gpu_cache_map.find(key);
-		if (it != s_branched_log_gpu_cache_map.end())
+		if (it != s_branched_log_gpu_cache_map.end()) {
+			if (need_poly && !it->second->poly_ready)
+				ensure_branched_log_poly_gpu_cache(
+					*(it->second), dimension, max_nodes, planar);
 			return *(it->second);
+		}
 	}
 
 	BranchedSigCache c = build_branched_sig_cache(dimension, max_nodes, planar);
@@ -139,126 +218,66 @@ static const BranchedLogSigCacheGPU& get_or_upload_branched_log_gpu_cache(
 	upload_branched_log(gpu->d_forest_coprod_offsets32, forest_coprod_offsets32.data(), forest_coprod_offsets32.size());
 	upload_branched_log(gpu->d_forest_coprod_data32, forest_coprod_data32.data(), forest_coprod_data32.size());
 	upload_branched_log(gpu->d_single_tree_forest32, single_tree_forest32.data(), single_tree_forest32.size());
+	if (need_poly)
+		upload_branched_log_poly_cache(
+			*gpu, build_cu_branched_log_poly_cache(c, fc));
 
 	std::lock_guard<std::mutex> lock(s_branched_log_gpu_cache_mu);
 	auto [ins, _] = s_branched_log_gpu_cache_map.try_emplace(key, std::move(gpu));
+	if (need_poly && !ins->second->poly_ready)
+		ensure_branched_log_poly_gpu_cache(
+			*(ins->second), dimension, max_nodes, planar);
 	return *(ins->second);
 }
 
 template<typename T>
-__global__ __launch_bounds__(1024)
-void branched_sig_to_log_sig_ker(
+__global__ __launch_bounds__(256)
+void branched_sig_to_log_sig_poly_ker(
 	const T* __restrict__ bsig,
 	T* __restrict__ out,
 	uint32_t total_len,
-	uint32_t num_forests,
-	const uint32_t* __restrict__ g_forest_offsets,
-	const uint32_t* __restrict__ g_forest_trees,
-	const uint32_t* __restrict__ g_forest_coprod_offsets,
-	const uint32_t* __restrict__ g_forest_coprod_data,
-	const uint32_t* __restrict__ g_single_tree_forest,
-	uint32_t forest_trees_len,
-	uint32_t forest_coprod_data_len,
-	int max_nodes,
+	const uint32_t* __restrict__ output_term_offsets,
+	const uint32_t* __restrict__ term_factor_offsets,
+	const uint32_t* __restrict__ factors,
+	const double* __restrict__ coeffs,
 	bool scalar_term,
 	uint64_t batch_offset,
 	uint64_t batch_chunk_size
 ) {
 	const uint64_t local_batch_idx = cuda_batch_index();
-	if (local_batch_idx >= batch_chunk_size) return;
+	if (local_batch_idx >= batch_chunk_size)
+		return;
 	const uint64_t batch_idx = batch_offset + local_batch_idx;
-	const uint32_t tid = threadIdx.x;
+	const uint32_t tree_idx = blockIdx.x * blockDim.x + threadIdx.x;
 	const uint32_t num_trees = total_len - 1;
-	const uint64_t stride = scalar_term ? total_len : total_len - 1;
+	if (tree_idx >= num_trees)
+		return;
 
-	extern __shared__ char smem[];
-	T* h = reinterpret_cast<T*>(smem);
-	T* h_forest = h + total_len;
-	T* power = h_forest + num_forests;
-	T* next_power = power + num_forests;
-	T* full_out = next_power + num_forests;
-	uint32_t* s_forest_offsets = reinterpret_cast<uint32_t*>(full_out + total_len);
-	uint32_t* s_forest_trees = s_forest_offsets + num_forests + 1;
-	uint32_t* s_forest_coprod_offsets = s_forest_trees + forest_trees_len;
-	uint32_t* s_forest_coprod_data = s_forest_coprod_offsets + num_forests + 1;
-	uint32_t* s_single_tree_forest = s_forest_coprod_data + forest_coprod_data_len;
-
-	for (uint32_t i = tid; i < num_forests + 1; i += blockDim.x) {
-		s_forest_offsets[i] = g_forest_offsets[i];
-		s_forest_coprod_offsets[i] = g_forest_coprod_offsets[i];
-	}
-	for (uint32_t i = tid; i < forest_trees_len; i += blockDim.x)
-		s_forest_trees[i] = g_forest_trees[i];
-	for (uint32_t i = tid; i < forest_coprod_data_len; i += blockDim.x)
-		s_forest_coprod_data[i] = g_forest_coprod_data[i];
-	for (uint32_t i = tid; i < total_len; i += blockDim.x)
-		s_single_tree_forest[i] = g_single_tree_forest[i];
-	for (uint32_t i = tid; i < total_len; i += blockDim.x) {
-		h[i] = T(0);
-		full_out[i] = T(0);
-	}
-	for (uint32_t i = tid; i < num_forests; i += blockDim.x) {
-		h_forest[i] = T(0);
-		power[i] = T(0);
-		next_power[i] = T(0);
-	}
-	__syncthreads();
-
+	const uint64_t stride = scalar_term ? total_len : num_trees;
 	const T* src = bsig + static_cast<uint64_t>(batch_idx) * stride;
 	T* dst = out + static_cast<uint64_t>(batch_idx) * stride;
-	for (uint32_t i = tid; i < num_trees; i += blockDim.x) {
-		const T v = scalar_term ? src[i + 1] : src[i];
-		h[i + 1] = v;
-	}
-	__syncthreads();
+	const uint32_t flat_idx = tree_idx + 1;
+	T value = scalar_term ? src[flat_idx] : src[tree_idx];
 
-	for (uint32_t forest_idx = tid + 1; forest_idx < num_forests; forest_idx += blockDim.x) {
-		T val = T(1);
-		const uint32_t start = s_forest_offsets[forest_idx];
-		const uint32_t end = s_forest_offsets[forest_idx + 1];
-		for (uint32_t pos = start; pos < end; ++pos)
-			val *= h[s_forest_trees[pos]];
-		h_forest[forest_idx] = val;
-		power[forest_idx] = val;
-	}
-	__syncthreads();
-
-	for (uint32_t i = tid + 1; i < total_len; i += blockDim.x)
-		full_out[i] = power[s_single_tree_forest[i]];
-	__syncthreads();
-
-	T* cur = power;
-	T* next = next_power;
-	for (int k = 2; k <= max_nodes; ++k) {
-		for (uint32_t forest_idx = tid; forest_idx < num_forests; forest_idx += blockDim.x) {
-			T val = T(0);
-			const uint32_t start = s_forest_coprod_offsets[forest_idx];
-			const uint32_t end = s_forest_coprod_offsets[forest_idx + 1];
-			for (uint32_t pos = start; pos < end; pos += 2) {
-				const uint32_t left = s_forest_coprod_data[pos];
-				const uint32_t right = s_forest_coprod_data[pos + 1];
-				val += cur[left] * h_forest[right];
-			}
-			next[forest_idx] = val;
+	const uint32_t term_start = output_term_offsets[flat_idx];
+	const uint32_t term_end = output_term_offsets[flat_idx + 1];
+	for (uint32_t term_idx = term_start; term_idx < term_end; ++term_idx) {
+		T term = static_cast<T>(coeffs[term_idx]);
+		const uint32_t factor_start = term_factor_offsets[term_idx];
+		const uint32_t factor_end = term_factor_offsets[term_idx + 1];
+		for (uint32_t pos = factor_start; pos < factor_end; ++pos) {
+			const uint32_t factor = factors[pos];
+			term *= scalar_term ? src[factor] : src[factor - 1];
 		}
-		__syncthreads();
-
-		const T coeff = (k % 2 == 0) ? T(-1) / T(k) : T(1) / T(k);
-		for (uint32_t i = tid + 1; i < total_len; i += blockDim.x)
-			full_out[i] += coeff * next[s_single_tree_forest[i]];
-		__syncthreads();
-
-		T* tmp = cur;
-		cur = next;
-		next = tmp;
+		value += term;
 	}
 
 	if (scalar_term) {
-		for (uint32_t i = tid; i < total_len; i += blockDim.x)
-			dst[i] = (i == 0) ? T(0) : full_out[i];
+		if (tree_idx == 0)
+			dst[0] = T(0);
+		dst[flat_idx] = value;
 	} else {
-		for (uint32_t i = tid; i < num_trees; i += blockDim.x)
-			dst[i] = full_out[i + 1];
+		dst[tree_idx] = value;
 	}
 }
 
@@ -442,29 +461,27 @@ void branched_sig_to_log_sig_cuda_(
 	bool planar,
 	bool scalar_term
 ) {
-	const auto& gc = get_or_upload_branched_log_gpu_cache(dimension, max_nodes, planar);
-	const uint32_t work_items = std::max(gc.num_trees, gc.num_forests);
-	unsigned int block = static_cast<unsigned int>((work_items + 31u) & ~31u);
-	if (block < 32) block = 32;
-	if (block > 1024) block = 1024;
+	if (batch_size == 0)
+		return;
+	const auto& gc = get_or_upload_branched_log_gpu_cache(
+		dimension, max_nodes, planar, true);
+	if (gc.num_trees == 0) {
+		if (scalar_term)
+			CUDA_CHECK(cudaMemset(out, 0, batch_size * sizeof(T)));
+		return;
+	}
 
-	size_t smem = (2 * static_cast<uint64_t>(gc.total_length) + 3 * static_cast<uint64_t>(gc.num_forests)) * sizeof(T)
-		+ (2 * (static_cast<uint64_t>(gc.num_forests) + 1)
-			+ static_cast<uint64_t>(gc.forest_trees_len)
-			+ static_cast<uint64_t>(gc.forest_coprod_data_len)
-			+ static_cast<uint64_t>(gc.total_length)) * sizeof(uint32_t);
-	configure_dynamic_smem(
-		branched_sig_to_log_sig_ker<T>, smem, "CUDA branched log sig");
+	constexpr unsigned int block = 256;
+	const uint64_t grid_x = (gc.num_trees + block - 1) / block;
 	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 		const auto batch_chunk = make_cuda_batch_grid_chunk(
-			1, batch_size, batch_offset);
-		branched_sig_to_log_sig_ker<T><<<batch_chunk.grid, block, smem>>>(
-			bsig, out, gc.total_length, gc.num_forests,
-			gc.d_forest_offsets32, gc.d_forest_trees32,
-			gc.d_forest_coprod_offsets32, gc.d_forest_coprod_data32,
-			gc.d_single_tree_forest32,
-			gc.forest_trees_len, gc.forest_coprod_data_len,
-			gc.max_nodes, scalar_term, batch_chunk.offset, batch_chunk.size);
+			grid_x, batch_size, batch_offset);
+		branched_sig_to_log_sig_poly_ker<T><<<batch_chunk.grid, block>>>(
+			bsig, out, gc.total_length,
+			gc.d_poly_output_term_offsets,
+			gc.d_poly_term_factor_offsets,
+			gc.d_poly_factors, gc.d_poly_coeffs,
+			scalar_term, batch_chunk.offset, batch_chunk.size);
 		batch_offset += batch_chunk.size;
 	}
 	cudaDeviceSynchronize();
