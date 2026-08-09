@@ -23,11 +23,73 @@ from .error_codes import err_msg
 from .dtypes import CPSIG_BRANCHED_SIG_TO_LOG_SIG, CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA
 from .data_handlers import MultipleSigInputHandler, SigOutputHandler
 from .sig_length import aug_dim
+from .load_siglib import BUILT_WITH_CUDA, CPSIG, CUSIG
 from .branched_sig import (
     _infer_branched_scalar_term,
     branched_sig,
     branched_sig_length,
 )
+
+
+def prepare_branched_log_sig(
+        dimension: int,
+        degree: int,
+        *,
+        use_disk: bool = False,
+        time_aug: bool = False,
+        lead_lag: bool = False,
+        planar: bool = False,
+        device: str = "both",
+):
+    """
+    Precomputes data required for branched log signature computations. Must be called before
+    ``branched_log_sig()`` or ``branched_sig_to_log_sig()`` for a given
+    ``(dimension, degree, planar)`` combination. This also prepares the corresponding
+    branched-signature cache.
+
+    :param dimension: Dimension of the underlying path.
+    :type dimension: int
+    :param degree: Maximum order (number of nodes).
+    :type degree: int
+    :param use_disk: If ``True``, load or save the branched-signature cache on disk.
+    :type use_disk: bool
+    :param time_aug: If True, prepare for time-augmented paths (dim + 1).
+    :type time_aug: bool
+    :param lead_lag: If True, prepare for lead-lag transformed paths (2 * dim).
+    :type lead_lag: bool
+    :param planar: If True, prepare for planar (ordered) branched signatures.
+    :type planar: bool
+    :param device: Which device caches to prepare. Must be ``"cpu"``,
+        ``"cuda"``, or ``"both"``.
+    :type device: str
+    """
+    check_type(dimension, "dimension", int)
+    check_type(degree, "degree", int)
+    check_type(use_disk, "use_disk", bool)
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
+    check_type(planar, "planar", bool)
+    check_type(device, "device", str)
+    check_non_neg(dimension, "dimension")
+    check_non_neg(degree, "degree")
+    if device not in ("cpu", "cuda", "both"):
+        raise ValueError("device must be 'cpu', 'cuda', or 'both'")
+
+    aug_dimension = aug_dim(dimension, time_aug, lead_lag)
+    if device in ("cpu", "both"):
+        err_code = CPSIG.prepare_branched_log_sig(
+            aug_dimension, degree, use_disk, planar)
+        if err_code:
+            raise Exception(
+                "Error in pysiglib.prepare_branched_log_sig: " + err_msg(err_code))
+
+    if BUILT_WITH_CUDA and device in ("cuda", "both"):
+        err_code = CUSIG.prepare_branched_log_sig_cuda(
+            aug_dimension, degree, planar, use_disk)
+        if err_code:
+            raise Exception(
+                "Error in pysiglib.prepare_branched_log_sig (CUDA): "
+                + err_msg(err_code))
 
 
 def branched_sig_to_log_sig(
@@ -75,6 +137,7 @@ def branched_sig_to_log_sig(
         import torch
         import pysiglib
 
+        pysiglib.prepare_branched_log_sig(5, 3)
         path = torch.rand((10, 100, 5))
         bsig = pysiglib.branched_sig(path, 3)
         blogsig = pysiglib.branched_sig_to_log_sig(bsig, 5, 3)
@@ -193,6 +256,7 @@ def branched_log_sig(
         import torch
         import pysiglib
 
+        pysiglib.prepare_branched_log_sig(5, 3)
         path = torch.rand((10, 100, 5))
         blogsig = pysiglib.branched_log_sig(path, 3)
         print(blogsig)
@@ -220,7 +284,7 @@ def branched_log_sig(
         correction = np.broadcast_to(
             (np.eye(d) * dt).reshape(1, -1), (n_steps, d * d)).copy()
 
-        pysiglib.prepare_branched_sig(d, N)
+        pysiglib.prepare_branched_log_sig(d, N)
         ito_blogsig = pysiglib.branched_log_sig(
             path, N, correction=correction, end_time=T)
         print(ito_blogsig)

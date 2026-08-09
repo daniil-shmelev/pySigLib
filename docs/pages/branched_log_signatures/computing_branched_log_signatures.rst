@@ -19,18 +19,18 @@ Preparing for Branched Log Signature Computations
 -------------------------------------------------
 
 Before computing a branched log signature, ``pysiglib`` requires a call to
-``pysiglib.prepare_branched_sig``. This will pre-compute and cache the tree or
-ordered-forest basis and the coproduct tables required for the computation. This
-function should be run only once before the computation, for each required
-``(dimension, degree, planar)`` combination.
+``pysiglib.prepare_branched_log_sig``. This pre-computes and caches the tree or
+ordered-forest basis, coproduct tables, and derived logarithm tables required for
+the computation. This function should be run only once before the computation,
+for each required ``(dimension, degree, planar)`` combination.
 
 .. code-block:: python
 
     import numpy as np
     import pysiglib
 
-    pysiglib.prepare_branched_sig(2, 3, planar=False)
-    pysiglib.prepare_branched_sig(2, 3, planar=True)
+    pysiglib.prepare_branched_log_sig(2, 3, planar=False)
+    pysiglib.prepare_branched_log_sig(2, 3, planar=True)
 
     for i in range(10):
         X = np.random.rand(200, 2)
@@ -40,4 +40,3 @@ function should be run only once before the computation, for each required
 
 The prepared object depends on the value of ``planar``. Preparing with
 ``planar=False`` is not sufficient for ``planar=True``, and conversely.
-

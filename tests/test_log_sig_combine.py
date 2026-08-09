@@ -61,6 +61,7 @@ def test_log_sig_combine_random_batch(deg):
 
 def test_log_sig_combine_non_contiguous():
     dim, degree, batch = 3, 3, 16
+    pysiglib.prepare_log_sig(dim, degree, method=3)
     ls_length = pysiglib.log_sig_length(dim, degree)
 
     rand_data = torch.rand(size=(batch,), dtype=torch.float64)[:, None]

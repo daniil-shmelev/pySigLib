@@ -18,6 +18,7 @@
 #include "log_sig_cache.h"
 #include "cp_bch.h"
 #include "cp_branched_cache.h"
+#include "cp_branched_log_signature.h"
 #include "cp_branched_sig_coef_cache.h"
 
 const char* version = "v1";
@@ -140,7 +141,7 @@ void set_default_cache_dir() {
 #endif
 }
 
-void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_disk) {
+void prepare_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_disk) {
 	if (method < 1)
 		return;
 
@@ -226,6 +227,7 @@ void clear_cache_(bool use_disk) {
 	clear_basis_cache();
 	clear_bch_cache();
 	clear_branched_sig_coef_cache();
+	clear_branched_log_sig_cache();
 	clear_branched_sig_cache();
 
 	if (use_disk)
@@ -239,7 +241,12 @@ extern "C" {
 	}
 
 	CPSIG_API int prepare_log_sig(uint64_t dimension, uint64_t degree, int method, bool use_disk) noexcept {
-		SAFE_CALL(set_basis_cache(dimension, degree, method, use_disk));
+		SAFE_CALL(
+			if (method != 3)
+				prepare_basis_cache(dimension, degree, method, use_disk);
+			if (method == 2 || method == 3)
+				prepare_bch_cache(dimension, degree)
+		);
 	}
 
 	CPSIG_API int clear_cache(bool use_disk) noexcept {
@@ -250,6 +257,7 @@ extern "C" {
 		try { clear_basis_cache();                                       } catch (...) {}
 		try { clear_bch_cache();                                         } catch (...) {}
 		try { clear_branched_sig_coef_cache();                            } catch (...) {}
+		try { clear_branched_log_sig_cache();                             } catch (...) {}
 		try { clear_branched_sig_cache();                                } catch (...) {}
 		try { std::unique_lock lk(cache_dir_mu);   cache_dir.clear();    } catch (...) {}
 	}

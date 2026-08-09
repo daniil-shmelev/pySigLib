@@ -22,28 +22,24 @@
 #include "macros.h"
 
 namespace {
-const BranchedLogForestCache& get_cached_branched_log_forest_cache(const BranchedSigCache& cache) {
-	static std::unordered_map<
-		std::pair<uint64_t, uint64_t>,
-		std::unique_ptr<BranchedLogForestCache>,
-		PairHash
-	> registry;
-	static std::shared_mutex mu;
+std::unordered_map<
+	std::pair<uint64_t, uint64_t>,
+	std::unique_ptr<BranchedLogForestCache>,
+	PairHash
+> branched_log_forest_cache_registry_;
+std::shared_mutex branched_log_forest_cache_mu_;
 
+const BranchedLogForestCache& get_cached_branched_log_forest_cache(const BranchedSigCache& cache) {
 	const std::pair<uint64_t, uint64_t> key{
 		cache.dimension,
 		cache.max_nodes | (static_cast<uint64_t>(cache.planar) << 63)
 	};
-	{
-		std::shared_lock rlock(mu);
-		auto it = registry.find(key);
-		if (it != registry.end())
-			return *(it->second);
-	}
-	auto fc = std::make_unique<BranchedLogForestCache>(build_branched_log_forest_cache(cache));
-	std::unique_lock wlock(mu);
-	auto [ins, _] = registry.try_emplace(key, std::move(fc));
-	return *(ins->second);
+	std::shared_lock rlock(branched_log_forest_cache_mu_);
+	auto it = branched_log_forest_cache_registry_.find(key);
+	if (it != branched_log_forest_cache_registry_.end())
+		return *(it->second);
+	throw cache_not_found_error(
+		"Branched log sig cache not found - call prepare_branched_log_sig first");
 }
 
 template<std::floating_point T, bool ScalarTerm>
@@ -129,6 +125,14 @@ struct BranchedLogPolyCache_ {
 	std::vector<BranchedLogTermN_> terms_n;
 	std::vector<uint64_t> factors;
 };
+
+
+std::unordered_map<
+	std::pair<uint64_t, uint64_t>,
+	std::unique_ptr<BranchedLogPolyCache_>,
+	PairHash
+> branched_log_poly_cache_registry_;
+std::shared_mutex branched_log_poly_cache_mu_;
 
 
 using BranchedLogPolyBuild_ = std::vector<BranchedLogPolyTermBuild_>;
@@ -257,28 +261,16 @@ const BranchedLogPolyCache_& get_cached_branched_log_poly_cache_(
 	const BranchedSigCache& cache,
 	const BranchedLogForestCache& forest_cache
 ) {
-	static std::unordered_map<
-		std::pair<uint64_t, uint64_t>,
-		std::unique_ptr<BranchedLogPolyCache_>,
-		PairHash
-	> registry;
-	static std::shared_mutex mu;
-
 	const std::pair<uint64_t, uint64_t> key{
 		cache.dimension,
 		cache.max_nodes | (static_cast<uint64_t>(cache.planar) << 63)
 	};
-	{
-		std::shared_lock rlock(mu);
-		auto it = registry.find(key);
-		if (it != registry.end())
-			return *(it->second);
-	}
-	auto pc = std::make_unique<BranchedLogPolyCache_>(
-		build_branched_log_poly_cache_(cache, forest_cache));
-	std::unique_lock wlock(mu);
-	auto [ins, _] = registry.try_emplace(key, std::move(pc));
-	return *(ins->second);
+	std::shared_lock rlock(branched_log_poly_cache_mu_);
+	auto it = branched_log_poly_cache_registry_.find(key);
+	if (it != branched_log_poly_cache_registry_.end())
+		return *(it->second);
+	throw cache_not_found_error(
+		"Branched log sig cache not found - call prepare_branched_log_sig first");
 }
 
 
@@ -589,6 +581,51 @@ void branched_sig_to_log_sig_backprop_(
 }  // namespace
 
 
+void prepare_branched_log_sig_cache(const BranchedSigCache& cache) {
+	const std::pair<uint64_t, uint64_t> key{
+		cache.dimension,
+		cache.max_nodes | (static_cast<uint64_t>(cache.planar) << 63)
+	};
+
+	const BranchedLogForestCache* forest_cache = nullptr;
+	{
+		std::shared_lock rlock(branched_log_forest_cache_mu_);
+		auto it = branched_log_forest_cache_registry_.find(key);
+		if (it != branched_log_forest_cache_registry_.end())
+			forest_cache = it->second.get();
+	}
+	if (forest_cache == nullptr) {
+		auto fc = std::make_unique<BranchedLogForestCache>(
+			build_branched_log_forest_cache(cache));
+		std::unique_lock wlock(branched_log_forest_cache_mu_);
+		auto [it, _] = branched_log_forest_cache_registry_.try_emplace(
+			key, std::move(fc));
+		forest_cache = it->second.get();
+	}
+
+	{
+		std::shared_lock rlock(branched_log_poly_cache_mu_);
+		if (branched_log_poly_cache_registry_.find(key)
+			!= branched_log_poly_cache_registry_.end())
+			return;
+	}
+	auto pc = std::make_unique<BranchedLogPolyCache_>(
+		build_branched_log_poly_cache_(cache, *forest_cache));
+	std::unique_lock wlock(branched_log_poly_cache_mu_);
+	branched_log_poly_cache_registry_.try_emplace(key, std::move(pc));
+}
+
+
+void clear_branched_log_sig_cache() {
+	{
+		std::unique_lock lock(branched_log_forest_cache_mu_);
+		branched_log_forest_cache_registry_.clear();
+	}
+	std::unique_lock lock(branched_log_poly_cache_mu_);
+	branched_log_poly_cache_registry_.clear();
+}
+
+
 template<std::floating_point T>
 void branched_sig_to_log_sig_(
 	const T* bsig,
@@ -630,6 +667,16 @@ void branched_sig_to_log_sig_backprop_(
 
 
 extern "C" {
+
+	CPSIG_API int prepare_branched_log_sig(
+		uint64_t dimension, uint64_t max_nodes, bool use_disk, bool planar
+	) noexcept {
+		SAFE_CALL(
+			prepare_branched_sig_cache(dimension, max_nodes, use_disk, planar);
+			prepare_branched_log_sig_cache(
+				get_branched_sig_cache(dimension, max_nodes, planar))
+		);
+	}
 
 	CPSIG_API int branched_sig_to_log_sig_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar, bool scalar_term) noexcept {
 		SAFE_CALL(branched_sig_to_log_sig_<float>(bsig, out, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));

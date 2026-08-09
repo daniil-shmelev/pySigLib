@@ -18,6 +18,10 @@
 #include "cp_branched_cache.h"
 
 
+void prepare_branched_log_sig_cache(const BranchedSigCache& cache);
+void clear_branched_log_sig_cache();
+
+
 template<std::floating_point T>
 void branched_sig_to_log_sig_(
 	const T* bsig,

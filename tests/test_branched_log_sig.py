@@ -24,6 +24,7 @@ import torch
 
 import pysiglib
 import pysiglib.torch_api as torch_api
+from conftest import DEVICES
 from conftest import check_close
 from conftest import skip_no_cuda
 from test_branched_sig import (
@@ -35,6 +36,29 @@ from test_branched_sig import (
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "branched_log_sig_stochastax_degree2.json"
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_branched_caches_require_preparation(device):
+    d, N = 2, 3
+    path = torch.zeros((3, d), dtype=torch.float64, device=device)
+    pysiglib.clear_cache()
+
+    with pytest.raises(Exception, match="Could not find prepared cache"):
+        pysiglib.branched_sig(path, N)
+
+    pysiglib.prepare_branched_sig(d, N, device=device)
+    bsig = pysiglib.branched_sig(path, N)
+
+    with pytest.raises(Exception, match="Could not find prepared cache"):
+        pysiglib.branched_sig_to_log_sig(bsig, d, N)
+
+    pysiglib.prepare_branched_log_sig(d, N, device=device)
+    pysiglib.branched_sig_to_log_sig(bsig, d, N)
+
+    pysiglib.clear_cache()
+    with pytest.raises(Exception, match="Could not find prepared cache"):
+        pysiglib.branched_sig_to_log_sig(bsig, d, N)
 
 
 def _branched_sig_map_reference(path, d, N):
@@ -109,7 +133,7 @@ def test_branched_sig_to_log_sig_stochastax_degree2_fixture():
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     d = fixture["dimension"]
     N = fixture["degree"]
-    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_log_sig(d, N)
 
     bsig = np.array(fixture["signature_scalar"], dtype=np.float64)
     expected = np.array(fixture["log_signature_scalar"], dtype=np.float64)
@@ -124,7 +148,7 @@ def test_branched_sig_to_log_sig_stochastax_degree2_fixture():
 
 def test_branched_sig_to_log_sig_single_segment_cherry_vanishes():
     d, N = 2, 3
-    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_log_sig(d, N)
 
     c = 0.7
     path = np.array([[0.0, 0.0], [c, 0.0]], dtype=np.float64)
@@ -142,7 +166,7 @@ def test_branched_sig_to_log_sig_single_segment_cherry_vanishes():
 
 @pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
 def test_branched_log_sig_vs_kauri_hopf_log(d, N):
-    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_log_sig(d, N)
     perm = compute_kauri_to_pysiglib_permutation(d, N)
 
     rng = np.random.default_rng(1234)
@@ -157,7 +181,7 @@ def test_branched_log_sig_vs_kauri_hopf_log(d, N):
 
 def test_branched_sig_to_log_sig_scalar_term_roundtrip():
     d, N = 2, 3
-    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_log_sig(d, N)
     path = np.array([[0.0, 0.0], [0.2, 0.5], [0.8, -0.1]], dtype=np.float64)
     bsig_scalar = pysiglib.branched_sig(path, N, scalar_term=True)
     bsig_tail = bsig_scalar[1:]
@@ -172,7 +196,7 @@ def test_branched_sig_to_log_sig_scalar_term_roundtrip():
 @pytest.mark.parametrize("time_aug,lead_lag", [(True, False), (False, True), (True, True)])
 def test_branched_sig_to_log_sig_uses_path_dimension_with_augmentation(time_aug, lead_lag):
     d, N = 2, 2
-    pysiglib.prepare_branched_sig(d, N, time_aug=time_aug, lead_lag=lead_lag)
+    pysiglib.prepare_branched_log_sig(d, N, time_aug=time_aug, lead_lag=lead_lag)
 
     rng = np.random.default_rng(9876)
     path = np.cumsum(rng.normal(scale=0.1, size=(5, d)), axis=0)
@@ -189,7 +213,7 @@ def test_branched_sig_to_log_sig_uses_path_dimension_with_augmentation(time_aug,
 
 def test_branched_sig_to_log_sig_backprop_finite_difference():
     d, N = 2, 3
-    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_log_sig(d, N)
     rng = np.random.default_rng(4321)
     path = np.cumsum(rng.normal(scale=0.2, size=(5, d)), axis=0)
     bsig = pysiglib.branched_sig(path, N, scalar_term=True)
@@ -212,7 +236,7 @@ def test_branched_sig_to_log_sig_backprop_finite_difference():
 
 def test_torch_branched_sig_to_log_sig_backward_matches_explicit_backprop():
     d, N = 2, 3
-    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_log_sig(d, N)
     path = np.array([[0.0, 0.0], [0.2, -0.3], [0.7, 0.4]], dtype=np.float64)
     bsig_np = pysiglib.branched_sig(path, N, scalar_term=True)
     weights_np = np.linspace(-0.4, 0.7, bsig_np.shape[0])
@@ -228,6 +252,7 @@ def test_torch_branched_sig_to_log_sig_backward_matches_explicit_backprop():
 
 def test_torch_branched_log_sig_backward_runs():
     d, N = 2, 3
+    pysiglib.prepare_branched_log_sig(d, N)
     path = torch.tensor(
         [[0.0, 0.0], [0.2, -0.3], [0.7, 0.4]],
         dtype=torch.float64,
@@ -243,6 +268,7 @@ def test_torch_branched_log_sig_backward_runs():
 
 def test_torch_branched_sig_to_log_sig_uses_path_dimension_with_augmentation():
     d, N = 2, 2
+    pysiglib.prepare_branched_log_sig(d, N, time_aug=True)
     path = torch.tensor(
         [[0.0, 0.0], [0.2, -0.3], [0.7, 0.4]],
         dtype=torch.float64,
@@ -264,7 +290,7 @@ def test_torch_branched_sig_to_log_sig_uses_path_dimension_with_augmentation():
 @pytest.mark.parametrize("planar", [False, True])
 def test_branched_sig_to_log_sig_cuda_matches_cpu(scalar_term, planar):
     d, N = 2, 3
-    pysiglib.prepare_branched_sig(d, N, planar=planar)
+    pysiglib.prepare_branched_log_sig(d, N, planar=planar)
     rng = np.random.default_rng(2468)
     path = np.cumsum(rng.normal(scale=0.1, size=(8, d)), axis=0)
 
@@ -281,7 +307,7 @@ def test_branched_sig_to_log_sig_cuda_matches_cpu(scalar_term, planar):
 @pytest.mark.parametrize("scalar_term", [False, True])
 def test_branched_sig_to_log_sig_backprop_cuda_matches_cpu(scalar_term):
     d, N = 2, 3
-    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_log_sig(d, N)
     rng = np.random.default_rng(8642)
     path = np.cumsum(rng.normal(scale=0.1, size=(6, d)), axis=0)
 
@@ -299,7 +325,7 @@ def test_branched_sig_to_log_sig_backprop_cuda_matches_cpu(scalar_term):
 @skip_no_cuda
 def test_torch_branched_sig_to_log_sig_cuda_backward_matches_cpu():
     d, N = 2, 3
-    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_log_sig(d, N)
     rng = np.random.default_rng(9753)
     path_np = np.cumsum(rng.normal(scale=0.1, size=(5, d)), axis=0)
     bsig_np = pysiglib.branched_sig(path_np, N, scalar_term=True)
@@ -331,7 +357,7 @@ def test_jax_branched_sig_to_log_sig_cuda_value_and_grad_matches_cpu():
     import pysiglib.jax_api as jax_api
 
     d, N = 2, 3
-    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_log_sig(d, N)
     rng = np.random.default_rng(3579)
     path_np = np.cumsum(rng.normal(scale=0.1, size=(6, d)), axis=0)
     bsig_np = pysiglib.branched_sig(path_np, N, scalar_term=True)
@@ -358,7 +384,7 @@ def test_jax_branched_sig_to_log_sig_value_and_grad():
     import pysiglib.jax_api as jax_api
 
     d, N = 2, 2
-    pysiglib.prepare_branched_sig(d, N)
+    pysiglib.prepare_branched_log_sig(d, N)
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     bsig = jnp.asarray(fixture["signature_scalar"], dtype=jnp.float64)
     expected = np.array(fixture["log_signature_scalar"], dtype=np.float64)
@@ -379,7 +405,7 @@ def test_jax_branched_sig_to_log_sig_uses_path_dimension_with_augmentation():
     import pysiglib.jax_api as jax_api
 
     d, N = 2, 2
-    pysiglib.prepare_branched_sig(d, N, lead_lag=True)
+    pysiglib.prepare_branched_log_sig(d, N, lead_lag=True)
 
     path = jnp.asarray(
         [[0.0, 0.0], [0.2, -0.3], [0.7, 0.4]],

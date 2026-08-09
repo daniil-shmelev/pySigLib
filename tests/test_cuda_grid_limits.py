@@ -77,6 +77,7 @@ def test_branched_cuda_batch_above_grid_y_limit():
     torch.testing.assert_close(d_bsig1, torch.ones_like(d_bsig1))
     torch.testing.assert_close(d_bsig2, torch.ones_like(d_bsig2))
 
+    pysiglib.prepare_branched_log_sig(1, 1, device="cuda")
     blog_sig = pysiglib.branched_sig_to_log_sig(bsig, 1, 1)
     torch.testing.assert_close(blog_sig, torch.ones_like(blog_sig))
 

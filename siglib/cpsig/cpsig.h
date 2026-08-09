@@ -330,7 +330,7 @@ extern "C" {
 	*/
 	[[nodiscard]] CPSIG_API int clear_cache(bool use_disk = false) noexcept;
 
-	/** @brief Release all in-memory cpsig caches. Idempotent; subsequent calls lazily re-populate. */
+	/** @brief Release all in-memory cpsig caches. Idempotent; cache-backed computations require preparation again. */
 	CPSIG_API void cpsig_shutdown() noexcept;
 
 	/** @defgroup sig_to_log_sig_functions Sig to log sig functions
@@ -570,6 +570,7 @@ extern "C" {
 	* @{
 	*/
 
+	/** @brief Prepares the branched-signature cache. */
 	[[nodiscard]] CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk = false, bool planar = false) noexcept;
 	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
 
@@ -671,6 +672,8 @@ extern "C" {
 	/** @addtogroup branched_sig_functions
 	* @{
 	*/
+	/** @brief Prepares the branched-signature and derived branched-log caches. */
+	[[nodiscard]] CPSIG_API int prepare_branched_log_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk = false, bool planar = false) noexcept;
 
 	[[nodiscard]] CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	[[nodiscard]] CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;

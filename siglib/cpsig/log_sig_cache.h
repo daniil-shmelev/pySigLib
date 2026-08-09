@@ -104,6 +104,6 @@ private:
 	std::filesystem::path file_path;
 };
 
-void set_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_disk = false);
+void prepare_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_disk = false);
 const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int method);
 void clear_cache_(bool use_disk);

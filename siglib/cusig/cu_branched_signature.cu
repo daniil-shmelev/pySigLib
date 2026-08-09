@@ -28,6 +28,9 @@
 #include <memory>
 #include <unordered_map>
 
+void prepare_cuda_branched_log_sig_gpu_cache_(
+	uint64_t dimension, uint64_t max_nodes, bool planar);
+
 // =========================================================================
 // GPU cache: mirrors BranchedSigCache on device memory
 // =========================================================================
@@ -296,7 +299,7 @@ static bool read_branched_cache_(uint64_t dimension, uint64_t max_nodes, bool pl
 	return true;
 }
 
-static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) {
+static void prepare_branched_sig_gpu_cache_(uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) {
 	BranchedSigCacheKey key;
 	CUDA_CHECK(cudaGetDevice(&key.device));
 	key.dimension = dimension;
@@ -306,7 +309,7 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 		std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
 		auto it = s_gpu_cache_map.find(key);
 		if (it != s_gpu_cache_map.end())
-			return *(it->second);
+			return;
 	}
 
 	BranchedSigCache c;
@@ -366,8 +369,25 @@ static const BranchedSigCacheGPU& get_or_upload_gpu_cache(uint64_t dimension, ui
 	upload(gpu->d_labels_data, c.node_labels_data.data(), c.node_labels_data.size());
 
 	std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
-	auto [ins, _] = s_gpu_cache_map.try_emplace(key, std::move(gpu));
-	return *(ins->second);
+	s_gpu_cache_map.try_emplace(key, std::move(gpu));
+}
+
+static const BranchedSigCacheGPU& get_gpu_cache(
+	uint64_t dimension,
+	uint64_t max_nodes,
+	bool planar = false
+) {
+	BranchedSigCacheKey key;
+	CUDA_CHECK(cudaGetDevice(&key.device));
+	key.dimension = dimension;
+	key.max_nodes = max_nodes;
+	key.planar = planar;
+	std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
+	auto it = s_gpu_cache_map.find(key);
+	if (it != s_gpu_cache_map.end())
+		return *(it->second);
+	throw cache_not_found_error(
+		"CUDA branched sig cache not found - call prepare_branched_sig with device='cuda' first");
 }
 
 static void prepare_branched_sig_coef_cache_cuda_(
@@ -491,8 +511,8 @@ static const BranchedSigCoefCacheGPU& get_branched_sig_coef_cache_cuda_(
 	std::lock_guard<std::mutex> lock(s_gpu_coef_cache_map_mu);
 	const auto it = s_gpu_coef_cache_map.find(key);
 	if (it == s_gpu_coef_cache_map.end())
-		throw std::runtime_error(
-			"CUDA branched signature coefficient cache not found. Call prepare_branched_sig_coef first.");
+		throw cache_not_found_error(
+			"CUDA branched signature coefficient cache not found - call prepare_branched_sig_coef with device='cuda' first");
 	return *(it->second);
 }
 
@@ -1442,7 +1462,7 @@ void branched_sig_combine_cuda_(
 		branched_sig_combine_cuda_core_<T>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar);
 		return;
 	}
-	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
+	const auto& gc = get_gpu_cache(dimension, max_nodes, planar);
 	const uint64_t full_len = gc.total_length;
 	CudaBuf<T> d_b1(batch_size * full_len * sizeof(T));
 	CudaBuf<T> d_b2(batch_size * full_len * sizeof(T));
@@ -1464,7 +1484,7 @@ void branched_sig_combine_backprop_cuda_(
 		branched_sig_combine_backprop_cuda_core_<T>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar);
 		return;
 	}
-	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
+	const auto& gc = get_gpu_cache(dimension, max_nodes, planar);
 	const uint64_t full_len = gc.total_length;
 	CudaBuf<T> d_b1(batch_size * full_len * sizeof(T));
 	CudaBuf<T> d_b2(batch_size * full_len * sizeof(T));
@@ -1486,7 +1506,7 @@ void branched_sig_combine_cuda_core_(
 	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes,
 	bool planar
 ) {
-	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
+	const auto& gc = get_gpu_cache(dimension, max_nodes, planar);
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
 	if (block < 32) block = 32;
 	if (block > 1024) throw std::invalid_argument("CUDA branched sig combine: num_trees > 1024 not supported");
@@ -1516,7 +1536,7 @@ void branched_sig_combine_backprop_cuda_core_(
 	uint64_t batch_size, uint64_t dimension, uint64_t max_nodes,
 	bool planar
 ) {
-	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
+	const auto& gc = get_gpu_cache(dimension, max_nodes, planar);
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
 	if (block < 32) block = 32;
 	if (block > 1024) throw std::invalid_argument("CUDA branched sig combine backprop: num_trees > 1024 not supported");
@@ -1565,7 +1585,7 @@ void branched_sig_cuda_core_(
 	if (correction == nullptr && correction_len != 0)
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	const bool has_correction = correction_len != 0;
-	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
+	const auto& gc = get_gpu_cache(dimension, max_nodes, planar);
 
 	// Single-point paths have no increments => identity branched sig
 	if (length <= 1) {
@@ -1659,7 +1679,7 @@ void branched_sig_cuda_(
 	// For scalar_term=false, stage output through a full-sized buffer and strip the scalar.
 	T* core_out = out;
 	CudaBuf<T> d_out_full;
-	const auto& gc = get_or_upload_gpu_cache(t_dimension, max_nodes, planar);
+	const auto& gc = get_gpu_cache(t_dimension, max_nodes, planar);
 	const uint64_t full_len = gc.total_length;
 	if (!scalar_term) {
 		d_out_full = CudaBuf<T>(batch_size * full_len * sizeof(T));
@@ -2010,7 +2030,7 @@ void branched_sig_backprop_cuda_core_(
 	if (correction == nullptr && correction_len != 0)
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	const bool has_correction = correction_len != 0;
-	const auto& gc = get_or_upload_gpu_cache(dimension, max_nodes, planar);
+	const auto& gc = get_gpu_cache(dimension, max_nodes, planar);
 
 	// Single-point paths have no increments => zero path gradients
 	if (length <= 1) {
@@ -2099,7 +2119,7 @@ void branched_sig_backprop_cuda_(
 	CudaBuf<T> d_bsig_full;
 	CudaBuf<T> d_derivs_full;
 	if (!scalar_term) {
-		const auto& gc = get_or_upload_gpu_cache(t_dimension, max_nodes, planar);
+		const auto& gc = get_gpu_cache(t_dimension, max_nodes, planar);
 		const uint64_t full_len = gc.total_length;
 		d_bsig_full = CudaBuf<T>(batch_size * full_len * sizeof(T));
 		d_derivs_full = CudaBuf<T>(batch_size * full_len * sizeof(T));
@@ -2148,7 +2168,16 @@ void branched_sig_backprop_cuda_(
 extern "C" {
 
 	CUSIG_API int prepare_branched_sig_cuda(uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk) noexcept {
-		CUSIG_SAFE_CALL(get_or_upload_gpu_cache(dimension, max_nodes, planar, use_disk));
+		CUSIG_SAFE_CALL(prepare_branched_sig_gpu_cache_(dimension, max_nodes, planar, use_disk));
+	}
+
+	CUSIG_API int prepare_branched_log_sig_cuda(
+		uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk
+	) noexcept {
+		CUSIG_SAFE_CALL(
+			prepare_branched_sig_gpu_cache_(dimension, max_nodes, planar, use_disk);
+			prepare_cuda_branched_log_sig_gpu_cache_(dimension, max_nodes, planar)
+		);
 	}
 
 	CUSIG_API int prepare_branched_sig_coef_cuda(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk) noexcept {

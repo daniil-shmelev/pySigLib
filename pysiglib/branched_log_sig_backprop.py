@@ -85,6 +85,7 @@ def branched_sig_to_log_sig_backprop(
         import torch
         import pysiglib
 
+        pysiglib.prepare_branched_log_sig(5, 3)
         path = torch.rand((10, 100, 5))
         bsig = pysiglib.branched_sig(path, 3)
         blogsig = pysiglib.branched_sig_to_log_sig(bsig, 5, 3)

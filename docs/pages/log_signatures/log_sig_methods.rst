@@ -40,11 +40,11 @@ combination. This call is not thread safe.
         X_ls = pysiglib.log_sig(X, 3, method=2)
         Y_ls = pysiglib.log_sig(Y, 3, method=2)
 
-The ordering of the methods is chosen such that higher
-methods require strictly more preparation than lower methods.
-As such, preparing for ``method=2`` is also sufficient to
-run ``method=1``. We note also that ``method=0`` does not
-require a call to ``pysiglib.prepare_log_sig``.
+Preparing for ``method=2`` is also sufficient to run ``method=1`` and
+prepares the BCH cache used by log-signature combination. Preparing for
+``method=3`` prepares the BCH cache used by the direct method.
+Only ``method=0`` does not require a call to
+``pysiglib.prepare_log_sig``.
 
 .. code-block:: python
 
@@ -57,6 +57,9 @@ require a call to ``pysiglib.prepare_log_sig``.
 
     pysiglib.prepare_log_sig(5, 3, method=2)
     pysiglib.log_sig(X, 3, method=1) # No error: prepare already called with a higher method
+
+    pysiglib.prepare_log_sig(5, 3, method=3)
+    pysiglib.log_sig(X, 3, method=3) # No error: BCH cache is prepared
 
 Methods
 --------
@@ -120,7 +123,8 @@ whose size grows exponentially with degree (:math:`\sum_{k=1}^{N} d^k`). This ma
 the only viable option when the signature would be too large to fit in memory (e.g. high
 degree or high dimension). For typical dimensions and degrees, ``method=2`` is faster.
 
-This method does not require a call to ``pysiglib.prepare_log_sig``.
+This method requires a call to ``pysiglib.prepare_log_sig`` with
+``method=3`` for each dimension and degree pair.
 
 This method corresponds to ``methods="o"`` or ``methods="c"`` in the ``iisignature``
 package. There is no equivalent in the ``signatory`` package.

@@ -41,6 +41,38 @@ def test_prepare_memory():
     pysiglib.log_sig(X, 2, method=1)
     pysiglib.clear_cache()
 
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_bch_requires_preparation(device):
+    X = torch.zeros((3, 2), dtype=torch.float64, device=device)
+    pysiglib.clear_cache()
+
+    with pytest.raises(Exception, match="Could not find prepared cache"):
+        pysiglib.log_sig(X, 3, method=3)
+
+    pysiglib.prepare_log_sig(2, 3, 3, device=device)
+    pysiglib.log_sig(X, 3, method=3)
+    pysiglib.clear_cache()
+
+    with pytest.raises(Exception, match="Could not find prepared cache"):
+        pysiglib.log_sig(X, 3, method=3)
+
+
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2, reason="requires two CUDA devices")
+def test_cuda_log_sig_cache_is_per_device():
+    pysiglib.clear_cache()
+    with torch.cuda.device(0):
+        pysiglib.prepare_log_sig(2, 3, 3, device="cuda")
+
+    with torch.cuda.device(1):
+        X = torch.zeros((3, 2), dtype=torch.float64, device="cuda:1")
+        with pytest.raises(Exception, match="Could not find prepared cache"):
+            pysiglib.log_sig(X, 3, method=3)
+        pysiglib.prepare_log_sig(2, 3, 3, device="cuda")
+        pysiglib.log_sig(X, 3, method=3)
+
+
 def test_prepare_disk():
     X = np.random.uniform(size=(100, 5))
     pysiglib.clear_cache(use_disk=True)
@@ -145,7 +177,7 @@ def test_log_signature_lyndon_basis_random(device, deg, dtype, method):
     X = FIXTURES["path"][0].astype(dtype)
     expected = FIXTURES[f"logsig_basis__d{deg}"][0]
     X_dev = torch.tensor(X, device=device)
-    pysiglib.prepare_log_sig(DIM, deg, 2)
+    pysiglib.prepare_log_sig(DIM, deg, method)
     sig = pysiglib.log_sig(X_dev, deg, method=method)
     assert_device(sig, device)
     check_close(expected, sig)
@@ -159,7 +191,7 @@ def test_batch_log_signature_lyndon_basis_random(device, deg, dtype, method):
     X = FIXTURES["path"].astype(dtype)
     expected = FIXTURES[f"logsig_basis__d{deg}"]
     X_dev = torch.tensor(X, device=device)
-    pysiglib.prepare_log_sig(DIM, deg, 2)
+    pysiglib.prepare_log_sig(DIM, deg, method)
     sig = pysiglib.log_sig(X_dev, deg, method=method)
     assert_device(sig, device)
     check_close(expected, sig)
@@ -191,6 +223,8 @@ def test_log_signature_method3_rejects_correction():
 def test_log_signature_method3_empty_correction_match_default(device):
     X = torch.tensor([[0.0, 0.1], [0.5, 0.4], [1.0, -0.2]], dtype=torch.float64, device=device)
     correction = torch.empty((0,), dtype=torch.float64, device=device)
+
+    pysiglib.prepare_log_sig(2, 3, 3)
 
     expected = pysiglib.log_sig(X, 3, method=3)
     actual = pysiglib.log_sig(X, 3, method=3, correction=correction)

@@ -18,7 +18,7 @@ CPP_ERR_MSG = {
     2: "Invalid argument",
     3: "Out of range",
     4: "Filesystem error",
-    5: "Could not find log sig cache. Please make sure you have run pysiglib.prepare_log_sig with the correct parameters.",
+    5: "Could not find prepared cache. Please call the corresponding preparation function with the correct parameters.",
     6: "Directory does not exist",
     7: "Failed to get default cache directory. Please ensure default directory exists or provide one explicitly using pysiglib.set_cache_dir",
     8: "Unexpected internal error. Cache directory was not set correctly.",

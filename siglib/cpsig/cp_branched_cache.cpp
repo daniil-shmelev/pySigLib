@@ -182,7 +182,8 @@ const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_
 	std::shared_lock rlock(reg.mu);
 	auto it = reg.map.find(key);
 	if (it == reg.map.end()) {
-		throw std::runtime_error("Branched signature cache not found. Call prepare_branched_sig first.");
+		throw cache_not_found_error(
+			"Branched signature cache not found - call prepare_branched_sig first");
 	}
 	return *(it->second);
 }
