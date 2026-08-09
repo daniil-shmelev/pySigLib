@@ -106,8 +106,9 @@ void prepare_branched_sig_coef_cache(
 	}
 
 	auto cache = std::make_unique<BranchedSigCoefCache>();
-	const auto cache_dir = get_cache_dir() / cache_folder_name;
+	std::filesystem::path cache_dir;
 	if (use_disk) {
+		cache_dir = get_cache_dir() / cache_folder_name;
 		std::filesystem::create_directories(cache_dir);
 		if (read_branched_sig_coef_cache(
 			cache_dir, data_dimension, dimension, max_nodes, planar,

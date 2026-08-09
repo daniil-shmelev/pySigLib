@@ -40,9 +40,10 @@ combination. This call is not thread safe.
         X_ls = pysiglib.log_sig(X, 3, method=2)
         Y_ls = pysiglib.log_sig(Y, 3, method=2)
 
-Preparing for ``method=2`` is also sufficient to run ``method=1`` and
-prepares the BCH cache used by log-signature combination. Preparing for
-``method=3`` prepares the BCH cache used by the direct method.
+Preparing for ``method=2`` is also sufficient to run ``method=1``.
+Preparing for ``method=3`` prepares the BCH cache used by the direct method,
+``log_sig_combine``, and ``log_sig_join``. Code that computes log signatures
+with ``method=2`` and then combines or joins them must prepare both methods.
 Only ``method=0`` does not require a call to
 ``pysiglib.prepare_log_sig``.
 
@@ -60,6 +61,10 @@ Only ``method=0`` does not require a call to
 
     pysiglib.prepare_log_sig(5, 3, method=3)
     pysiglib.log_sig(X, 3, method=3) # No error: BCH cache is prepared
+
+    # Prepare both independent caches when method=2 output will be combined.
+    pysiglib.prepare_log_sig(5, 3, method=2)
+    pysiglib.prepare_log_sig(5, 3, method=3)
 
 Methods
 --------

@@ -660,7 +660,16 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 	}
 
 	// Compute from scratch
-	std::vector<uint64_t> lyndon_idx = cu_all_lyndon_idx(dimension, degree);
+	std::vector<cu_word> lyndon_words;
+	std::vector<uint64_t> lyndon_idx;
+	if (method == 2) {
+		lyndon_words = cu_all_lyndon_words(dimension, degree);
+		lyndon_idx.reserve(lyndon_words.size());
+		for (const auto& w : lyndon_words)
+			lyndon_idx.push_back(cu_word_to_idx(w, dimension));
+	} else {
+		lyndon_idx = cu_all_lyndon_idx(dimension, degree);
+	}
 
 	CUDALogSigCache entry;
 	populate_cuda_cache_entry_(entry, lyndon_idx, dimension, degree);
@@ -668,7 +677,6 @@ inline void prepare_log_sig_cuda_(uint64_t dimension, uint64_t degree, int metho
 	// For method 2, compute and upload the sparse matrix
 	CuSparseIntMatrix inv_proj_mat, inv_proj_mat_t;
 	if (method == 2) {
-		std::vector<cu_word> lyndon_words = cu_all_lyndon_words(dimension, degree);
 		CuSparseIntMatrix proj_mat;
 		cu_lyndon_proj_matrix(proj_mat, lyndon_words, lyndon_idx, dimension, degree);
 		proj_mat.inverse(inv_proj_mat);

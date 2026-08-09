@@ -113,6 +113,17 @@ void clear_cuda_branched_log_sig_gpu_cache_() {
 	release_branched_log_sig_gpu_state();
 }
 
+bool is_cuda_branched_log_sig_gpu_cache_prepared_(
+	uint64_t dimension,
+	uint64_t max_nodes,
+	bool planar
+) {
+	const auto key = make_cu_branched_log_key(dimension, max_nodes, planar);
+	std::lock_guard<std::mutex> lock(s_branched_log_gpu_cache_mu);
+	return s_branched_log_gpu_cache_map.find(key)
+		!= s_branched_log_gpu_cache_map.end();
+}
+
 template<typename T>
 static void upload_branched_log(T*& d_ptr, const T* h_data, size_t count) {
 	CUDA_CHECK(cudaMalloc(&d_ptr, count * sizeof(T)));
@@ -120,10 +131,11 @@ static void upload_branched_log(T*& d_ptr, const T* h_data, size_t count) {
 }
 
 void prepare_cuda_branched_log_sig_gpu_cache_(
-	uint64_t dimension,
-	uint64_t max_nodes,
-	bool planar
+	const BranchedSigCache& c
 ) {
+	const uint64_t dimension = c.dimension;
+	const uint64_t max_nodes = c.max_nodes;
+	const bool planar = c.planar;
 	const auto key = make_cu_branched_log_key(dimension, max_nodes, planar);
 	{
 		std::lock_guard<std::mutex> lock(s_branched_log_gpu_cache_mu);
@@ -132,7 +144,6 @@ void prepare_cuda_branched_log_sig_gpu_cache_(
 			return;
 	}
 
-	BranchedSigCache c = build_branched_sig_cache(dimension, max_nodes, planar);
 	BranchedLogForestCache fc = build_branched_log_forest_cache(c);
 	uint64_t num_trees = c.total_length - 1;
 

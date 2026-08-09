@@ -50,7 +50,7 @@ extern "C" {
 		CUSIG_SAFE_CALL(
 			if (method != 3)
 				prepare_log_sig_cuda_(dimension, degree, method, use_disk);
-			if (method == 2 || method == 3)
+			if (method == 3)
 				prepare_cuda_bch_cache_(dimension, degree)
 		);
 	}

@@ -387,7 +387,7 @@ inline const CUDABchCache& get_cuda_bch_cache_(uint64_t dimension, uint64_t degr
 	auto it = cache_map.find(key);
 	if (it != cache_map.end()) return it->second;
 	throw cache_not_found_error(
-		"CUDA BCH cache not found - call prepare_log_sig with method=2 or method=3 and device='cuda' first");
+		"CUDA BCH cache not found - call prepare_log_sig with method=3 and device='cuda' first");
 }
 
 inline void clear_cuda_bch_cache_() {

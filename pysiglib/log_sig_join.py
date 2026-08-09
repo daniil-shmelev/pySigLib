@@ -34,9 +34,8 @@ def log_sig_join(
         n_jobs : int = 1
 ) -> Union[np.ndarray, torch.Tensor]:
     """
-    Extends a truncated log-signature by a single displacement vector using the
-    Baker-Campbell-Hausdorff (BCH) formula. This is the log-signature analogue of
-    ``sig_join``.
+    Extends a truncated log-signature (assumed to be in the Lyndon bracket basis) by
+    a single displacement vector using the Baker-Campbell-Hausdorff (BCH) formula.
 
     Given a log-signature :math:`L(x)` and a displacement :math:`v`, this computes
 
@@ -48,10 +47,8 @@ def log_sig_join(
 
     .. note::
 
-        ``log_sig`` is expected in the Lyndon bracket basis (``method=2`` output). You
-        must call ``pysiglib.prepare_log_sig(dimension, degree, method=2)`` before using
-        this function. This precomputes the Lyndon basis and BCH coefficients needed
-        internally.
+        This function requires a call to
+        ``pysiglib.prepare_log_sig(dimension, degree, method=3)``.
 
     :param log_sig: The existing truncated log-signature, of shape ``(..., log_sig_length)``.
     :type log_sig: numpy.ndarray | torch.Tensor
@@ -80,6 +77,7 @@ def log_sig_join(
         dimension = 5
         degree = 3
         pysiglib.prepare_log_sig(dimension, degree, method=2)
+        pysiglib.prepare_log_sig(dimension, degree, method=3)
 
         path = np.random.uniform(size=(100, dimension))
         ls = pysiglib.log_sig(path, degree, method=2)

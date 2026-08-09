@@ -29,6 +29,8 @@
 #include <unordered_map>
 
 void prepare_cuda_branched_log_sig_gpu_cache_(
+	const BranchedSigCache& cache);
+bool is_cuda_branched_log_sig_gpu_cache_prepared_(
 	uint64_t dimension, uint64_t max_nodes, bool planar);
 
 // =========================================================================
@@ -299,13 +301,19 @@ static bool read_branched_cache_(uint64_t dimension, uint64_t max_nodes, bool pl
 	return true;
 }
 
-static void prepare_branched_sig_gpu_cache_(uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) {
+static void prepare_branched_sig_gpu_cache_(
+	uint64_t dimension,
+	uint64_t max_nodes,
+	bool planar = false,
+	bool use_disk = false,
+	BranchedSigCache* host_cache = nullptr
+) {
 	BranchedSigCacheKey key;
 	CUDA_CHECK(cudaGetDevice(&key.device));
 	key.dimension = dimension;
 	key.max_nodes = max_nodes;
 	key.planar = planar;
-	{
+	if (host_cache == nullptr) {
 		std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
 		auto it = s_gpu_cache_map.find(key);
 		if (it != s_gpu_cache_map.end())
@@ -319,6 +327,14 @@ static void prepare_branched_sig_gpu_cache_(uint64_t dimension, uint64_t max_nod
 		c = build_branched_sig_cache(dimension, max_nodes, planar);
 		if (use_disk)
 			write_branched_cache_(c);
+	}
+	{
+		std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
+		if (s_gpu_cache_map.find(key) != s_gpu_cache_map.end()) {
+			if (host_cache != nullptr)
+				*host_cache = std::move(c);
+			return;
+		}
 	}
 
 	uint64_t num_trees = c.total_length - 1;
@@ -370,6 +386,8 @@ static void prepare_branched_sig_gpu_cache_(uint64_t dimension, uint64_t max_nod
 
 	std::lock_guard<std::mutex> lock(s_gpu_cache_map_mu);
 	s_gpu_cache_map.try_emplace(key, std::move(gpu));
+	if (host_cache != nullptr)
+		*host_cache = std::move(c);
 }
 
 static const BranchedSigCacheGPU& get_gpu_cache(
@@ -2175,8 +2193,13 @@ extern "C" {
 		uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk
 	) noexcept {
 		CUSIG_SAFE_CALL(
-			prepare_branched_sig_gpu_cache_(dimension, max_nodes, planar, use_disk);
-			prepare_cuda_branched_log_sig_gpu_cache_(dimension, max_nodes, planar)
+			if (!is_cuda_branched_log_sig_gpu_cache_prepared_(
+				dimension, max_nodes, planar)) {
+				BranchedSigCache host_cache;
+				prepare_branched_sig_gpu_cache_(
+					dimension, max_nodes, planar, use_disk, &host_cache);
+				prepare_cuda_branched_log_sig_gpu_cache_(host_cache);
+			}
 		);
 	}
 

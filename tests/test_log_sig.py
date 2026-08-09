@@ -50,6 +50,10 @@ def test_bch_requires_preparation(device):
     with pytest.raises(Exception, match="Could not find prepared cache"):
         pysiglib.log_sig(X, 3, method=3)
 
+    pysiglib.prepare_log_sig(2, 3, 2, device=device)
+    with pytest.raises(Exception, match="Could not find prepared cache"):
+        pysiglib.log_sig(X, 3, method=3)
+
     pysiglib.prepare_log_sig(2, 3, 3, device=device)
     pysiglib.log_sig(X, 3, method=3)
     pysiglib.clear_cache()

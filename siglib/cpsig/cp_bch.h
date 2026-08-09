@@ -140,7 +140,6 @@ inline std::vector<double> compute_bch_coefficients(uint64_t degree) {
 	std::vector<double> bch_coefs(lslen, 0.0);
 
 	// Use log_sig_lyndon_basis: first get Lyndon word indices, then project
-	prepare_basis_cache(dim2, degree, 2, false);
 	log_sig_lyndon_basis<double>(result.data(), bch_coefs.data(), dim2, degree);
 
 	return bch_coefs;
@@ -474,7 +473,9 @@ inline void build_linear_bch_ranges(BchCache& cache) {
 // BCH cache management
 // ========================================================================
 
-inline void prepare_bch_cache(uint64_t dimension, uint64_t degree) {
+inline void prepare_bch_cache(
+	uint64_t dimension, uint64_t degree, bool use_disk = false
+) {
 	std::pair<uint64_t, uint64_t> key(dimension, degree);
 	auto& reg = bch_cache_registry();
 	{
@@ -483,7 +484,7 @@ inline void prepare_bch_cache(uint64_t dimension, uint64_t degree) {
 	}
 
 	// Ensure the d-letter basis cache is set (needed for commutator table)
-	prepare_basis_cache(dimension, degree, 2, false);
+	prepare_basis_cache(dimension, degree, 2, use_disk);
 
 	auto cache = std::make_unique<BchCache>();
 	cache->dimension = dimension;
@@ -500,7 +501,8 @@ inline void prepare_bch_cache(uint64_t dimension, uint64_t degree) {
 	else {
 		// Fallback for degree > 12: compute at runtime
 		// This requires a 2-letter basis cache for the Lyndon projection
-		prepare_basis_cache(2, degree, 2, false);
+		if (dimension != 2)
+			prepare_basis_cache(2, degree, 2, use_disk);
 		cache->bch_coefficients = compute_bch_coefficients(degree);
 		compute_factorization_indices(2, degree, cache->bch_left_factor, cache->bch_right_factor);
 	}
@@ -520,7 +522,7 @@ inline const BchCache& get_bch_cache(uint64_t dimension, uint64_t degree) {
 	auto it = reg.map.find(key);
 	if (it != reg.map.end()) return *(it->second);
 	throw cache_not_found_error(
-		"BCH cache not found - call prepare_log_sig with method=2 or method=3 first");
+		"BCH cache not found - call prepare_log_sig with method=3 first");
 }
 
 inline void clear_bch_cache() {
