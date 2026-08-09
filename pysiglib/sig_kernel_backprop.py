@@ -119,7 +119,14 @@ def sig_kernel_backprop(
         ``path1``.
     :type path2: numpy.ndarray | torch.Tensor
     :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
-    :type dyadic_order: int | tuple
+        Required for finite differences and unsupported for the polynomial method.
+    :type dyadic_order: None | int | tuple
+    :param method: Solver method used in the forward pass. Must be
+        ``"finite_difference"`` or ``"polynomial"``.
+    :type method: str
+    :param order: Highest retained polynomial degree used in the forward pass. Must be
+        between 2 and 64. Unsupported for finite differences.
+    :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -144,7 +151,9 @@ def sig_kernel_backprop(
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire PDE grid.
+    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire
+        PDE grid. Finite differences use the dyadically refined grid, while the polynomial
+        method uses one value per vertex of each transformed path.
     :type return_grid: bool
     :return: Tuple of derivatives of :math:`F` with respect to one or both of the
         underlying paths. If ``left_deriv`` is ``True``, the first element of
@@ -331,9 +340,10 @@ def sig_kernel_gram_backprop(
     :param derivs: Derivatives with respect to a gram matrix of signature kernels,
         :math:`\\partial F / G`. Should have the same shape as the output of
         ``pysiglib.sig_kernel_gram`` for the same inputs:
-        ``(*batch_shape_1, *batch_shape_2)`` if ``return_grid=False``, or
-        ``(*batch_shape_1, *batch_shape_2, dyadic_length_1, dyadic_length_2)`` if
-        ``return_grid=True``.
+        ``(*batch_shape_1, *batch_shape_2)`` if ``return_grid=False``. With
+        ``return_grid=True``, the final two dimensions are the dyadically refined grid
+        lengths for finite differences, or the transformed path vertex lengths for the
+        polynomial method.
     :type derivs: numpy.ndarray | torch.Tensor
     :param path1: A path or batch of paths, of shape ``(*batch_shape_1, length_1, dimension)``.
     :type path1: numpy.ndarray | torch.Tensor
@@ -341,7 +351,14 @@ def sig_kernel_gram_backprop(
         Independent of ``path1``'s batch shape.
     :type path2: numpy.ndarray | torch.Tensor
     :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
-    :type dyadic_order: int | tuple
+        Required for finite differences and unsupported for the polynomial method.
+    :type dyadic_order: None | int | tuple
+    :param method: Solver method used in the forward pass. Must be
+        ``"finite_difference"`` or ``"polynomial"``.
+    :type method: str
+    :param order: Highest retained polynomial degree used in the forward pass. Must be
+        between 2 and 64. Unsupported for finite differences.
+    :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -366,7 +383,9 @@ def sig_kernel_gram_backprop(
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire PDE grid.
+    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire
+        PDE grid. Finite differences use the dyadically refined grid, while the polynomial
+        method uses one value per vertex of each transformed path.
     :type return_grid: bool
     :param max_batch: Maximum batch size to run in parallel. If the computation is failing
         due to insufficient memory, this parameter should be decreased.

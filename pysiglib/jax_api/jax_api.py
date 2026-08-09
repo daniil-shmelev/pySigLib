@@ -1014,19 +1014,60 @@ def sig_kernel_gram(
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
-    def _row(p1_single):
-        p1_batch = jnp.broadcast_to(p1_single[None], (batch2,) + p1_single.shape)
-        return sig_kernel(p1_batch, path2, dyadic_order, method=method, order=order,
-                          static_kernel=static_kernel, n_jobs=n_jobs,
-                          return_grid=return_grid)
+    if max_batch == -1 or max_batch >= batch2:
+        def _row(p1_single):
+            p1_batch = jnp.broadcast_to(p1_single[None], (batch2,) + p1_single.shape)
+            return sig_kernel(p1_batch, path2, dyadic_order, method=method, order=order,
+                              static_kernel=static_kernel, n_jobs=n_jobs,
+                              return_grid=return_grid)
+    else:
+        padding = (-batch2) % max_batch
+        padded_batch2 = batch2 + padding
+        path2_chunks = jnp.pad(
+            path2, ((0, padding), (0, 0), (0, 0)), mode="edge")
+        path2_chunks = path2_chunks.reshape(
+            (-1, max_batch) + path2.shape[1:])
+
+        def _row(p1_single):
+            def _chunk(p2_chunk):
+                p1_batch = jnp.broadcast_to(
+                    p1_single[None], (max_batch,) + p1_single.shape)
+                return sig_kernel(
+                    p1_batch, p2_chunk, dyadic_order, method=method, order=order,
+                    static_kernel=static_kernel, n_jobs=n_jobs,
+                    return_grid=return_grid)
+
+            row = jax.lax.map(_chunk, path2_chunks)
+            row = row.reshape((padded_batch2,) + row.shape[2:])
+            return row[:batch2]
 
     res = jax.lax.map(_row, path1)
 
     if normalize:
-        d1 = sig_kernel(path1, path1, dyadic_order, method=method, order=order,
+        diagonals = []
+        for path in (path1, path2):
+            batch = path.shape[0]
+            if max_batch == -1 or max_batch >= batch:
+                diagonal = sig_kernel(
+                    path, path, dyadic_order, method=method, order=order,
+                    static_kernel=static_kernel, n_jobs=n_jobs)
+            else:
+                padding = (-batch) % max_batch
+                padded_batch = batch + padding
+                path_chunks = jnp.pad(
+                    path, ((0, padding), (0, 0), (0, 0)), mode="edge")
+                path_chunks = path_chunks.reshape(
+                    (-1, max_batch) + path.shape[1:])
+
+                def _diagonal(chunk):
+                    return sig_kernel(
+                        chunk, chunk, dyadic_order, method=method, order=order,
                         static_kernel=static_kernel, n_jobs=n_jobs)
-        d2 = sig_kernel(path2, path2, dyadic_order, method=method, order=order,
-                        static_kernel=static_kernel, n_jobs=n_jobs)
+
+                diagonal = jax.lax.map(_diagonal, path_chunks)
+                diagonal = diagonal.reshape(padded_batch)[:batch]
+            diagonals.append(diagonal)
+        d1, d2 = diagonals
         res = res / jnp.sqrt(jnp.clip(d1[:, None] * d2[None, :], 1e-30))
 
     out_shape = batch_shape_1 + batch_shape_2
@@ -1210,8 +1251,10 @@ branched_sig_kernel_gram.__doc__ = branched_sig_kernel_gram_forward.__doc__
 def sig_score(
     sample,
     y,
-    dyadic_order,
+    dyadic_order=None,
     *,
+    method="finite_difference",
+    order=None,
     lam: float = 1.0,
     static_kernel=None,
     time_aug: bool = False,
@@ -1236,8 +1279,8 @@ def sig_score(
         sample = transform_path(sample, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         y = transform_path(y, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
-    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
-    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    xx = sig_kernel_gram(sample, sample, dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    xy = sig_kernel_gram(sample, y, dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
 
     xx_sum = (jnp.sum(xx) - jnp.trace(xx)) / (B * (B - 1.))
     xy_sum = jnp.sum(xy, axis=0) * (2. / B)
@@ -1254,8 +1297,10 @@ sig_score.__doc__ = sig_score_forward.__doc__
 def expected_sig_score(
     sample1,
     sample2,
-    dyadic_order,
+    dyadic_order=None,
     *,
+    method="finite_difference",
+    order=None,
     lam: float = 1.0,
     static_kernel=None,
     time_aug: bool = False,
@@ -1265,7 +1310,7 @@ def expected_sig_score(
     max_batch: int = -1,
 ):
     """Compute expected signature kernel score using JAX."""
-    res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
+    res = sig_score(sample1, sample2, dyadic_order, method=method, order=order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
     return jnp.mean(res).reshape(1)
 
 
@@ -1275,8 +1320,10 @@ expected_sig_score.__doc__ = expected_sig_score_forward.__doc__
 def sig_mmd(
     sample1,
     sample2,
-    dyadic_order,
+    dyadic_order=None,
     *,
+    method="finite_difference",
+    order=None,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -1302,9 +1349,9 @@ def sig_mmd(
         sample1 = transform_path(sample1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         sample2 = transform_path(sample2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
-    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
-    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
-    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    xx = sig_kernel_gram(sample1, sample1, dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    xy = sig_kernel_gram(sample1, sample2, dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
+    yy = sig_kernel_gram(sample2, sample2, dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
 
     xx_sum = (jnp.sum(xx) - jnp.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * jnp.mean(xy)

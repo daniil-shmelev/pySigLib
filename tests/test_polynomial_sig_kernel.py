@@ -127,6 +127,109 @@ def test_polynomial_sig_kernel_gram_normalize():
     assert torch.allclose(result, result.T, rtol=1e-13, atol=1e-13)
 
 
+def test_torch_polynomial_sig_kernel_gram_normalize_multidimensional_batches():
+    generator = torch.Generator().manual_seed(25022025)
+    x = (torch.randn((2, 3, 4, 2), generator=generator, dtype=torch.float64) * 0.03).requires_grad_()
+    y = (torch.randn((5, 3, 2), generator=generator, dtype=torch.float64) * 0.03).requires_grad_()
+    flat_x = x.detach().reshape(6, 4, 2).requires_grad_()
+    flat_y = y.detach().requires_grad_()
+
+    result = pysiglib.torch_api.sig_kernel_gram(
+        x, y, method=METHOD, order=5, normalize=True)
+    expected = pysiglib.torch_api.sig_kernel_gram(
+        flat_x, flat_y, method=METHOD, order=5, normalize=True)
+
+    assert result.shape == (2, 3, 5)
+    assert torch.allclose(result.reshape(6, 5), expected, rtol=1e-13, atol=1e-13)
+
+    result.sum().backward()
+    expected.sum().backward()
+    assert torch.allclose(x.grad.reshape(6, 4, 2), flat_x.grad, rtol=1e-12, atol=1e-12)
+    assert torch.allclose(y.grad, flat_y.grad, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("api_name", ["base", "torch_api", "jax_api"])
+def test_polynomial_sig_metrics_support_method_and_order(api_name):
+    x = np.array([
+        [[0., 0.], [.2, -.1], [.35, .15]],
+        [[0., 0.], [-.1, .2], [.1, .3]],
+        [[0., 0.], [.1, .15], [.25, -.1]],
+    ], dtype=np.float32)
+    y = np.array([
+        [[0., 0.], [-.1, .25], [.2, .3]],
+        [[0., 0.], [.15, .1], [.25, -.2]],
+    ], dtype=np.float32)
+    kwargs = {"method": METHOD, "order": 5, "max_batch": 1}
+
+    xx = np.asarray(pysiglib.sig_kernel_gram(x, x, **kwargs))
+    xy = np.asarray(pysiglib.sig_kernel_gram(x, y, **kwargs))
+    yy = np.asarray(pysiglib.sig_kernel_gram(y, y, **kwargs))
+    xx_mean = (np.sum(xx) - np.trace(xx)) / 6
+    yy_mean = (np.sum(yy) - np.trace(yy)) / 2
+    expected_score = xx_mean - 2 * np.sum(xy, axis=0) / 3
+    expected_mmd = xx_mean - 2 * np.mean(xy) + yy_mean
+
+    if api_name == "base":
+        api = pysiglib
+        left, right = x, y
+    elif api_name == "torch_api":
+        api = pysiglib.torch_api
+        left, right = torch.from_numpy(x), torch.from_numpy(y)
+    else:
+        api = pytest.importorskip("pysiglib.jax_api")
+        jnp = pytest.importorskip("jax.numpy")
+        left, right = jnp.asarray(x), jnp.asarray(y)
+
+    score = np.asarray(api.sig_score(left, right, **kwargs))
+    expected_score_value = np.asarray(api.expected_sig_score(left, right, **kwargs))
+    mmd = np.asarray(api.sig_mmd(left, right, **kwargs))
+
+    assert np.allclose(score, expected_score, rtol=2e-5, atol=2e-6)
+    assert np.allclose(expected_score_value, np.mean(expected_score), rtol=2e-5, atol=2e-6)
+    assert np.allclose(mmd, expected_mmd, rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("solver_kwargs", [
+    {"dyadic_order": 0},
+    {"method": METHOD, "order": 5},
+], ids=["finite_difference", "polynomial"])
+def test_jax_sig_kernel_gram_honors_max_batch(solver_kwargs):
+    api = pytest.importorskip("pysiglib.jax_api")
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+    observed_batch_sizes = []
+
+    class LimitedLinearKernel:
+        def __call__(self, x, y):
+            observed_batch_sizes.append(int(x.shape[0]))
+            if x.shape[0] > 2:
+                raise AssertionError("max_batch was not applied")
+            dx = jnp.diff(x, axis=1)
+            dy = jnp.diff(y, axis=1)
+            return jnp.matmul(dx, jnp.swapaxes(dy, -2, -1))
+
+    rng = np.random.default_rng(25022025)
+    x = rng.normal(scale=0.03, size=(3, 4, 2)).astype(np.float32)
+    y = rng.normal(scale=0.03, size=(5, 3, 2)).astype(np.float32)
+    expected = pysiglib.sig_kernel_gram(
+        x, y, normalize=True, **solver_kwargs)
+
+    def compute(left, right):
+        return api.sig_kernel_gram(
+            left, right, max_batch=2, static_kernel=LimitedLinearKernel(),
+            normalize=True, **solver_kwargs)
+
+    x_jax = jnp.asarray(x)
+    y_jax = jnp.asarray(y)
+    actual = jax.jit(compute)(x_jax, y_jax)
+    grad = jax.grad(lambda left: jnp.sum(compute(left, y_jax)))(x_jax)
+
+    assert observed_batch_sizes
+    assert max(observed_batch_sizes) <= 2
+    assert np.allclose(np.asarray(actual), expected, rtol=2e-5, atol=2e-6)
+    assert np.all(np.isfinite(np.asarray(grad)))
+
+
 def test_polynomial_sig_kernel_grid_ends_at_scalar():
     x = np.array([[0., 0.], [.3, -.2], [.2, .2], [.45, .35]], dtype=np.float64)
     y = np.array([[0., 0.], [.2, .1], [-.15, .15]], dtype=np.float64)

@@ -159,7 +159,9 @@ def sig_kernel(
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param return_grid: If ``True``, returns the entire PDE grid.
+    :param return_grid: If ``True``, returns the entire PDE grid. Finite differences
+        return the dyadically refined grid, while the polynomial method returns one
+        value per vertex of each transformed path.
     :type return_grid: bool
     :param normalize: If ``True``, normalizes the signature kernel so that :math:`k(x, x) = 1`
         by dividing by :math:`\\sqrt{k(x, x) \\cdot k(y, y)}`. Cannot be used with ``return_grid=True``.
@@ -403,18 +405,22 @@ def sig_kernel_gram(
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param max_batch: Maximum batch size to run in parallel. If the computation is failing
-        due to insufficient memory, this parameter should be decreased.
-        If set to -1, the entire batch is computed in parallel.
+    :param max_batch: Maximum batch size to run in parallel. In the JAX API, this bounds
+        the number of path pairs passed to each solver invocation. If the computation is
+        failing due to insufficient memory, this parameter should be decreased.
+        If set to -1, no explicit batch limit is applied.
     :type max_batch: int
-    :param return_grid: If ``True``, returns the entire PDE grid.
+    :param return_grid: If ``True``, returns the entire PDE grid. Finite differences
+        return the dyadically refined grid, while the polynomial method returns one
+        value per vertex of each transformed path.
     :type return_grid: bool
     :param normalize: If ``True``, normalizes the gram matrix so that :math:`K(x, x) = 1` by
         dividing each entry by :math:`\\sqrt{K(x_i, x_i) \\cdot K(y_j, y_j)}`. Cannot be used with ``return_grid=True``.
     :type normalize: bool
-    :return: Gram matrix of signature kernels, of shape ``(*batch_shape_1, *batch_shape_2)``
-        (or ``(*batch_shape_1, *batch_shape_2, dyadic_length_1, dyadic_length_2)`` if
-        ``return_grid=True``).
+    :return: Gram matrix of signature kernels, of shape ``(*batch_shape_1, *batch_shape_2)``.
+        With ``return_grid=True``, the final two dimensions are the dyadically refined
+        grid lengths for finite differences, or the transformed path vertex lengths for
+        the polynomial method.
     :rtype: numpy.ndarray | torch.Tensor
 
     .. note::
