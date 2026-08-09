@@ -88,7 +88,6 @@ static void BM_prepare_log_sig_lyndon_basis(benchmark::State& state) {
 }
 BENCHMARK(BM_prepare_log_sig_lyndon_basis)->Unit(benchmark::kMicrosecond);
 
-#ifndef _WIN32
 static void BM_prepare_log_sig_bch(benchmark::State& state) {
     for (auto _ : state) {
         clear_caches_outside_timing(state);
@@ -96,7 +95,6 @@ static void BM_prepare_log_sig_bch(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_prepare_log_sig_bch)->Unit(benchmark::kMicrosecond);
-#endif
 
 static void BM_prepare_branched_sig_nonplanar(benchmark::State& state) {
     for (auto _ : state) {
