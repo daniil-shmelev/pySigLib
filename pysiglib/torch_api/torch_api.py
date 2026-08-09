@@ -322,12 +322,26 @@ def _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_job
 
 class SigKernel(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid):
-        k_grid = sig_kernel_forward(path1, path2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=True)
+    def forward(ctx, path1, path2, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid):
+        if method == "polynomial":
+            result, solver_state = sig_kernel_forward(
+                path1, path2, dyadic_order, method=method, order=order,
+                static_kernel=static_kernel, time_aug=time_aug,
+                lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
+                return_grid=return_grid, _return_state=True)
+        else:
+            solver_state = sig_kernel_forward(
+                path1, path2, dyadic_order, method=method, order=order,
+                static_kernel=static_kernel, time_aug=time_aug,
+                lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
+                return_grid=True)
+            result = solver_state if return_grid else solver_state[..., -1, -1]
 
-        ctx.save_for_backward(k_grid, path1, path2)
+        ctx.save_for_backward(solver_state, path1, path2)
         ctx.batch_shape = path1.shape[:-2]
         ctx.dyadic_order = dyadic_order
+        ctx.method = method
+        ctx.order = order
         ctx.static_kernel = static_kernel
         ctx.time_aug = time_aug
         ctx.lead_lag = lead_lag
@@ -335,41 +349,48 @@ class SigKernel(torch.autograd.Function):
         ctx.return_grid = return_grid
         ctx.n_jobs = n_jobs
 
-        if return_grid:
-            return k_grid
-        return k_grid[..., -1, -1]
+        return result
 
     @staticmethod
     def backward(ctx, grad_output):
         left_deriv = ctx.needs_input_grad[0]
         right_deriv = ctx.needs_input_grad[1]
 
-        k_grid, path1, path2 = ctx.saved_tensors
+        solver_state, path1, path2 = ctx.saved_tensors
         batch_shape = ctx.batch_shape
 
         # Flatten multi-dim batch to 3D for sig_kernel_backprop
         if len(batch_shape) > 1:
             flat_path1 = path1.reshape(-1, path1.shape[-2], path1.shape[-1])
             flat_path2 = path2.reshape(-1, path2.shape[-2], path2.shape[-1])
-            flat_k_grid = k_grid.reshape(-1, k_grid.shape[-2], k_grid.shape[-1])
+            if ctx.method == "polynomial":
+                flat_k_grid = None
+                flat_state = solver_state.reshape(-1, *solver_state.shape[-4:])
+            else:
+                flat_k_grid = solver_state.reshape(-1, solver_state.shape[-2], solver_state.shape[-1])
+                flat_state = None
             if ctx.return_grid:
                 flat_grad = grad_output.reshape(-1, grad_output.shape[-2], grad_output.shape[-1])
             else:
                 flat_grad = grad_output.reshape(-1)
         else:
-            flat_path1, flat_path2, flat_k_grid, flat_grad = path1, path2, k_grid, grad_output
+            flat_path1, flat_path2, flat_grad = path1, path2, grad_output
+            flat_k_grid = None if ctx.method == "polynomial" else solver_state
+            flat_state = solver_state if ctx.method == "polynomial" else None
 
         new_derivs = sig_kernel_backprop(flat_grad, flat_path1, flat_path2, ctx.dyadic_order,
+                                         method=ctx.method, order=ctx.order,
                                          static_kernel=ctx.static_kernel,
                                          time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
                                          left_deriv=left_deriv, right_deriv=right_deriv, k_grid=flat_k_grid,
-                                         n_jobs=ctx.n_jobs, return_grid=ctx.return_grid)
+                                         n_jobs=ctx.n_jobs, return_grid=ctx.return_grid,
+                                         _state=flat_state)
 
         # Reshape gradients back to original batch shape
         d0 = new_derivs[0].reshape(path1.shape) if new_derivs[0] is not None else None
         d1 = new_derivs[1].reshape(path2.shape) if new_derivs[1] is not None else None
 
-        return d0, d1, None, None, None, None, None, None, None
+        return d0, d1, None, None, None, None, None, None, None, None, None
 
 def sig_kernel(
         path1 : Union[np.ndarray, torch.Tensor],
@@ -386,16 +407,15 @@ def sig_kernel(
         return_grid: bool = False,
         normalize : bool = False
 ) -> Union[np.ndarray, torch.Tensor]:
-    if method != "finite_difference" or order is not None:
-        raise ValueError("pysiglib.torch_api supports only method='finite_difference'")
-    if dyadic_order is None:
-        raise ValueError("dyadic_order is required for method='finite_difference'")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
-    k = SigKernel.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
+    k = SigKernel.apply(path1, path2, dyadic_order, method, order, static_kernel,
+                        time_aug, lead_lag, end_time, n_jobs, return_grid)
     if normalize:
-        k1 = SigKernel.apply(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
-        k2 = SigKernel.apply(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        k1 = SigKernel.apply(path1, path1, dyadic_order, method, order, static_kernel,
+                             time_aug, lead_lag, end_time, n_jobs, False)
+        k2 = SigKernel.apply(path2, path2, dyadic_order, method, order, static_kernel,
+                             time_aug, lead_lag, end_time, n_jobs, False)
         k = _safe_normalize(k, k1, k2, "sig_kernel(normalize=True)")
     return k
 
@@ -403,13 +423,21 @@ sig_kernel.__doc__ = sig_kernel_forward.__doc__
 
 class SigKernelGram(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid):
-        k_grid = sig_kernel_gram_forward(path1, path2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=True)
+    def forward(ctx, path1, path2, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid):
+        compute_grid = return_grid or method == "finite_difference"
+        result = sig_kernel_gram_forward(
+            path1, path2, dyadic_order, method=method, order=order,
+            static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+            end_time=end_time, n_jobs=n_jobs, max_batch=max_batch,
+            return_grid=compute_grid)
 
-        ctx.save_for_backward(k_grid, path1, path2)
+        solver_grid = result if compute_grid else path1.new_empty((0,))
+        ctx.save_for_backward(solver_grid, path1, path2)
         ctx.symmetric = path1 is path2
 
         ctx.dyadic_order = dyadic_order
+        ctx.method = method
+        ctx.order = order
         ctx.static_kernel = static_kernel
         ctx.time_aug = time_aug
         ctx.lead_lag = lead_lag
@@ -418,26 +446,28 @@ class SigKernelGram(torch.autograd.Function):
         ctx.max_batch = max_batch
         ctx.return_grid = return_grid
 
-        if return_grid:
-            return k_grid
-        return k_grid[..., -1, -1]
+        if return_grid or method == "polynomial":
+            return result
+        return result[..., -1, -1]
 
     @staticmethod
     def backward(ctx, grad_output):
         left_deriv = ctx.needs_input_grad[0]
         right_deriv = ctx.needs_input_grad[1]
 
-        k_grid, path1, path2 = ctx.saved_tensors
+        solver_grid, path1, path2 = ctx.saved_tensors
         if ctx.symmetric:
             path2 = path1
 
         new_derivs = sig_kernel_gram_backprop(grad_output, path1, path2, ctx.dyadic_order,
+                                         method=ctx.method, order=ctx.order,
                                          static_kernel=ctx.static_kernel,
                                          time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
-                                         left_deriv=left_deriv, right_deriv=right_deriv, k_grid=k_grid,
+                                         left_deriv=left_deriv, right_deriv=right_deriv,
+                                         k_grid=None if ctx.method == "polynomial" else solver_grid,
                                          n_jobs=ctx.n_jobs, return_grid=ctx.return_grid, max_batch=ctx.max_batch)
 
-        return new_derivs[0], new_derivs[1], None, None, None, None, None, None, None, None
+        return new_derivs[0], new_derivs[1], None, None, None, None, None, None, None, None, None, None
 
 def sig_kernel_gram(
         path1: Union[np.ndarray, torch.Tensor],
@@ -455,16 +485,17 @@ def sig_kernel_gram(
         return_grid: bool = False,
         normalize : bool = False
 ) -> Union[np.ndarray, torch.Tensor]:
-    if method != "finite_difference" or order is not None:
-        raise ValueError("pysiglib.torch_api supports only method='finite_difference'")
-    if dyadic_order is None:
-        raise ValueError("dyadic_order is required for method='finite_difference'")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
-    gram = SigKernelGram.apply(path1, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid)
+    gram = SigKernelGram.apply(path1, path2, dyadic_order, method, order,
+                               static_kernel, time_aug, lead_lag, end_time,
+                               n_jobs, max_batch, return_grid)
     if normalize:
-        d1 = SigKernel.apply(path1, path1, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
-        d2 = d1 if path1 is path2 else SigKernel.apply(path2, path2, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        d1 = SigKernel.apply(path1, path1, dyadic_order, method, order, static_kernel,
+                             time_aug, lead_lag, end_time, n_jobs, False)
+        d2 = d1 if path1 is path2 else SigKernel.apply(
+            path2, path2, dyadic_order, method, order, static_kernel,
+            time_aug, lead_lag, end_time, n_jobs, False)
         gram = _safe_normalize(gram, d1.unsqueeze(1), d2.unsqueeze(0), "sig_kernel_gram(normalize=True)")
     return gram
 

@@ -310,6 +310,11 @@ CPSIG_POLYSIG_KERNEL = {
     "float64": CPSIG.polysig_kernel_d
 }
 
+CPSIG_POLYSIG_KERNEL_BACKPROP = {
+    "float32": CPSIG.polysig_kernel_backprop_f,
+    "float64": CPSIG.polysig_kernel_backprop_d
+}
+
 CPSIG_SIG_KERNEL_BACKPROP = {
     "float32": CPSIG.sig_kernel_backprop_f,
     "float64": CPSIG.sig_kernel_backprop_d

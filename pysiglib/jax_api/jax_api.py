@@ -49,6 +49,7 @@ from ..data_handlers import _infer_correction_degree
 from ..sig_coef import sig_coef as sig_coef_forward
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
+from ..sig_kernel import _parse_sig_kernel_method
 from ..branched_sig_kernel import branched_sig_kernel as branched_sig_kernel_forward
 from ..branched_sig_kernel import branched_sig_kernel_gram as branched_sig_kernel_gram_forward
 
@@ -81,6 +82,8 @@ from ._ffi import (
     log_sig_combine_backprop_ffi_call,
     sig_kernel_pde_ffi_call,
     sig_kernel_pde_backprop_ffi_call,
+    polysig_kernel_pde_ffi_call,
+    polysig_kernel_pde_backprop_ffi_call,
     branched_sig_kernel_pde_ffi_call,
     branched_sig_kernel_pde_backprop_ffi_call,
     logsig_to_sig_ffi_call,
@@ -854,6 +857,32 @@ def _sig_kernel_pde_bwd(dimension, dyadic_order_1, dyadic_order_2, return_grid, 
 _sig_kernel_pde.defvjp(_sig_kernel_pde_fwd, _sig_kernel_pde_bwd)
 
 
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4))
+def _polysig_kernel_pde(gram, dimension, order, return_grid, n_jobs):
+    result, _ = polysig_kernel_pde_ffi_call(
+        gram, dimension, order, return_grid, n_jobs)
+    return result
+
+
+def _polysig_kernel_pde_fwd(gram, dimension, order, return_grid, n_jobs):
+    result, state = polysig_kernel_pde_ffi_call(
+        gram, dimension, order, return_grid, n_jobs)
+    return result, (gram, state)
+
+
+def _polysig_kernel_pde_bwd(
+    dimension, order, return_grid, n_jobs, residual, cotangent
+):
+    gram, state = residual
+    grad_gram = polysig_kernel_pde_backprop_ffi_call(
+        gram, cotangent, state, dimension, order, return_grid, n_jobs)
+    return (grad_gram,)
+
+
+_polysig_kernel_pde.defvjp(
+    _polysig_kernel_pde_fwd, _polysig_kernel_pde_bwd)
+
+
 # ---------------------------------------------------------------------------
 # sig_kernel (public API composing static kernel + PDE solve)
 # ---------------------------------------------------------------------------
@@ -878,10 +907,6 @@ def sig_kernel(
     This composes the static kernel evaluation (pure JAX) with the
     PDE solver. Fully differentiable via JAX autodiff.
     """
-    if method != "finite_difference" or order is not None:
-        raise ValueError("pysiglib.jax_api supports only method='finite_difference'")
-    if dyadic_order is None:
-        raise ValueError("dyadic_order is required for method='finite_difference'")
     ensure_registered()
 
     path1 = jnp.asarray(path1)
@@ -897,6 +922,9 @@ def sig_kernel(
     check_n_jobs(n_jobs)
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
+    do1, do2 = _parse_sig_kernel_method(method, dyadic_order, order, return_grid)
+    if method == "polynomial" and jax.default_backend() != "cpu":
+        raise ValueError("method='polynomial' only supports CPU inputs")
 
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
@@ -916,17 +944,18 @@ def sig_kernel(
         gram = static_kernel(path1, path2)
 
     dimension = path1.shape[-1]
-    do1, do2 = parse_dyadic_order(dyadic_order)
-
-    if return_grid:
-        result = _sig_kernel_pde(gram, dimension, do1, do2, True, n_jobs)
+    if method == "polynomial":
+        result = _polysig_kernel_pde(
+            gram, dimension, order, return_grid, n_jobs)
     else:
-        k_grid = _sig_kernel_pde(gram, dimension, do1, do2, True, n_jobs)
-        result = k_grid[..., -1, -1]
+        result = _sig_kernel_pde(
+            gram, dimension, do1, do2, return_grid, n_jobs)
 
     if normalize:
-        k1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
-        k2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        k1 = sig_kernel(path1, path1, dyadic_order, method=method, order=order,
+                        static_kernel=static_kernel, n_jobs=n_jobs)
+        k2 = sig_kernel(path2, path2, dyadic_order, method=method, order=order,
+                        static_kernel=static_kernel, n_jobs=n_jobs)
         result = result / jnp.sqrt(jnp.clip(k1 * k2, 1e-30))
 
     if squeeze:
@@ -958,10 +987,6 @@ def sig_kernel_gram(
     normalize: bool = False,
 ):
     """Compute Gram matrix of signature kernels using JAX."""
-    if method != "finite_difference" or order is not None:
-        raise ValueError("pysiglib.jax_api supports only method='finite_difference'")
-    if dyadic_order is None:
-        raise ValueError("dyadic_order is required for method='finite_difference'")
     ensure_registered()
 
     path1 = jnp.asarray(path1)
@@ -979,6 +1004,9 @@ def sig_kernel_gram(
         raise ValueError("max_batch must be a positive integer or -1")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
+    _parse_sig_kernel_method(method, dyadic_order, order, return_grid)
+    if method == "polynomial" and jax.default_backend() != "cpu":
+        raise ValueError("method='polynomial' only supports CPU inputs")
 
     batch_shape_1 = tuple(path1.shape[:-2])
     batch_shape_2 = tuple(path2.shape[:-2])
@@ -994,14 +1022,17 @@ def sig_kernel_gram(
 
     def _row(p1_single):
         p1_batch = jnp.broadcast_to(p1_single[None], (batch2,) + p1_single.shape)
-        return sig_kernel(p1_batch, path2, dyadic_order, static_kernel=static_kernel,
-                          n_jobs=n_jobs, return_grid=return_grid)
+        return sig_kernel(p1_batch, path2, dyadic_order, method=method, order=order,
+                          static_kernel=static_kernel, n_jobs=n_jobs,
+                          return_grid=return_grid)
 
     res = jax.lax.map(_row, path1)
 
     if normalize:
-        d1 = sig_kernel(path1, path1, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
-        d2 = sig_kernel(path2, path2, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        d1 = sig_kernel(path1, path1, dyadic_order, method=method, order=order,
+                        static_kernel=static_kernel, n_jobs=n_jobs)
+        d2 = sig_kernel(path2, path2, dyadic_order, method=method, order=order,
+                        static_kernel=static_kernel, n_jobs=n_jobs)
         res = res / jnp.sqrt(jnp.clip(d1[:, None] * d2[None, :], 1e-30))
 
     out_shape = batch_shape_1 + batch_shape_2

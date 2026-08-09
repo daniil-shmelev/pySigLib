@@ -550,7 +550,7 @@ static void BM_polysig_kernel(benchmark::State& state) {
     for (auto& x : gram) x *= 0.01;
     std::vector<double> out(1);
     for (auto _ : state) {
-        ::polysig_kernel_d(gram.data(), out.data(), 1, 3, 768, 768, 7);
+        ::polysig_kernel_d(gram.data(), out.data(), nullptr, 1, 3, 768, 768, 7);
         benchmark::DoNotOptimize(out.data());
     }
 }
@@ -564,11 +564,45 @@ static void BM_polysig_kernel_float32(benchmark::State& state) {
     for (auto& x : gram) x *= 0.01f;
     std::vector<float> out(1);
     for (auto _ : state) {
-        ::polysig_kernel_f(gram.data(), out.data(), 1, 3, 768, 768, 7);
+        ::polysig_kernel_f(gram.data(), out.data(), nullptr, 1, 3, 768, 768, 7);
         benchmark::DoNotOptimize(out.data());
     }
 }
 BENCHMARK(BM_polysig_kernel_float32)->Unit(benchmark::kMillisecond);
+
+static void BM_polysig_kernel_backprop(benchmark::State& state) {
+    auto gram = random_data(511 * 511, 1);
+    for (auto& x : gram) x *= 0.01;
+    std::vector<double> forward(1);
+    std::vector<double> tape(2 * 511 * 511 * 8);
+    std::vector<double> out(511 * 511);
+    const double deriv = 1.0;
+    ::polysig_kernel_d(gram.data(), forward.data(), tape.data(), 1, 3, 512, 512, 7);
+    for (auto _ : state) {
+        ::polysig_kernel_backprop_d(gram.data(), out.data(), &deriv,
+                                    tape.data(), 1, 3, 512, 512, 7);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_polysig_kernel_backprop)->Unit(benchmark::kMillisecond);
+
+static void BM_polysig_kernel_backprop_float32(benchmark::State& state) {
+    auto gram_d = random_data(511 * 511, 1);
+    std::vector<float> gram(gram_d.size());
+    for (size_t i = 0; i < gram.size(); ++i)
+        gram[i] = static_cast<float>(0.01 * gram_d[i]);
+    std::vector<float> forward(1);
+    std::vector<float> tape(2 * 511 * 511 * 8);
+    std::vector<float> out(511 * 511);
+    const float deriv = 1.0f;
+    ::polysig_kernel_f(gram.data(), forward.data(), tape.data(), 1, 3, 512, 512, 7);
+    for (auto _ : state) {
+        ::polysig_kernel_backprop_f(gram.data(), out.data(), &deriv,
+                                    tape.data(), 1, 3, 512, 512, 7);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_polysig_kernel_backprop_float32)->Unit(benchmark::kMillisecond);
 
 static void BM_sig_kernel_backprop(benchmark::State& state) {
     auto gram = random_data(32 * 63 * 63, 1);

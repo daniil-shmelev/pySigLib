@@ -63,8 +63,6 @@ def _parse_sig_kernel_method(method, dyadic_order, order, return_grid):
         raise TypeError("order must be of type int")
     if order < 2 or order > 64:
         raise ValueError("order must be between 2 and 64")
-    if return_grid:
-        raise ValueError("return_grid=True is not supported when method='" + method + "'")
     return 0, 0
 
 
@@ -103,7 +101,8 @@ def sig_kernel(
         end_time : float = 1.,
         n_jobs : int = 1,
         return_grid: bool = False,
-        normalize : bool = False
+        normalize : bool = False,
+        _return_state : bool = False
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes a single signature kernel or a batch of signature kernels.
@@ -224,6 +223,10 @@ def sig_kernel(
                 raise ValueError("method='" + method + "' only supports CPU inputs")
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
+    if _return_state and method != "polynomial":
+        raise ValueError("_return_state is only supported for method='polynomial'")
+    if _return_state and normalize:
+        raise ValueError("_return_state cannot be used with normalize=True")
 
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
@@ -240,6 +243,11 @@ def sig_kernel(
         result = GridOutputHandler(dyadic_len_1, dyadic_len_2, data)
 
     if data.batch_size == 0:
+        if _return_state:
+            state = torch.empty(
+                (0, data.length[0] - 1, data.length[1] - 1, 2, order + 1),
+                dtype=torch.as_tensor(data.path[0]).dtype)
+            return result.data, state
         return result.data
 
     torch_path1 = _ensure_3d(torch.as_tensor(data.path[0]))
@@ -256,9 +264,14 @@ def sig_kernel(
     gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
 
     if method == "polynomial":
+        state = gram.new_empty(
+            (data.batch_size, data.length[0] - 1, data.length[1] - 1, 2, order + 1)
+        ) if _return_state else None
+        state_ptr = None if state is None else cast(
+            state.data_ptr(), POINTER(DTYPES[data.dtype]))
         err_code = CPSIG_POLYSIG_KERNEL[data.dtype](
-            gram_ptr, result.data_ptr, data.batch_size, data.dimension,
-            data.length[0], data.length[1], order, n_jobs)
+            gram_ptr, result.data_ptr, state_ptr, data.batch_size, data.dimension,
+            data.length[0], data.length[1], order, return_grid, n_jobs)
     elif data.device == "cpu":
         err_code = CPSIG_SIG_KERNEL[data.dtype](
             gram_ptr, result.data_ptr, data.batch_size, data.dimension,
@@ -310,6 +323,8 @@ def sig_kernel(
                         static_kernel=static_kernel, n_jobs=n_jobs)
         result.data = _safe_normalize(result.data, k1, k2, "sig_kernel(normalize=True)")
 
+    if _return_state:
+        return result.data, state
     return result.data
 
 

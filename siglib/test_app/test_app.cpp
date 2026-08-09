@@ -47,10 +47,13 @@ int main(int argc, char* argv[])
     load_cpsig(dir_path);
     get_cpsig_fn_ptrs();
 
-    if (argc >= 3 && std::string(argv[2]) == "sig-kernel-profile") {
+    if (argc >= 3 && (std::string(argv[2]) == "sig-kernel-profile"
+        || std::string(argv[2]) == "sig-kernel-backprop-profile")) {
         if (argc != 7) {
-            std::cerr << "Usage: pysiglib_test_app <dll-dir> sig-kernel-profile "
-                << "polynomial <segments> <order> <iterations>" << std::endl;
+            std::cerr << "Usage: pysiglib_test_app <dll-dir> "
+                << "<sig-kernel-profile|sig-kernel-backprop-profile> "
+                << "<polynomial|finite_difference> <segments> <parameter> <iterations>"
+                << std::endl;
             unload_cpsig();
             return 2;
         }
@@ -65,13 +68,11 @@ int main(int argc, char* argv[])
             return 2;
         }
 
-        if (method != "polynomial") {
-            std::cerr << "method must be polynomial" << std::endl;
+        if (method != "polynomial" && method != "finite_difference") {
+            std::cerr << "method must be polynomial or finite_difference" << std::endl;
             unload_cpsig();
             return 2;
         }
-        polysig_kernel_d_fn kernel = polysig_kernel_d;
-
         std::mt19937_64 rng(25022025);
         std::normal_distribution<double> normal(0.0, 1.0 / std::sqrt(static_cast<double>(segments)));
         std::vector<double> dx(2 * segments);
@@ -90,16 +91,51 @@ int main(int argc, char* argv[])
         }
 
 		double out = 0;
-		int status = kernel(gram.data(), &out, 1, 2, segments + 1, segments + 1, order, 1);
+		int status = 0;
+		const bool backprop = std::string(argv[2]) == "sig-kernel-backprop-profile";
+		std::vector<double> gram_derivs(segments * segments);
+		std::vector<double> solver_state;
+		if (method == "polynomial") {
+			solver_state.resize(2 * segments * segments * (order + 1));
+			status = polysig_kernel_d(
+				gram.data(), &out, backprop ? solver_state.data() : nullptr,
+				1, 2, segments + 1, segments + 1, order, false, 1);
+		}
+		else {
+			solver_state.resize((segments + 1) * (segments + 1));
+			status = sig_kernel_d(
+				gram.data(), backprop ? solver_state.data() : &out,
+				1, 2, segments + 1, segments + 1, order, order, backprop, 1);
+		}
+
+		const double output_deriv = 1.0;
 		const auto start = std::chrono::steady_clock::now();
-		for (uint64_t i = 0; i < iterations && status == 0; ++i)
-			status = kernel(gram.data(), &out, 1, 2, segments + 1, segments + 1, order, 1);
+		for (uint64_t i = 0; i < iterations && status == 0; ++i) {
+			if (!backprop && method == "polynomial")
+				status = polysig_kernel_d(
+					gram.data(), &out, nullptr, 1, 2, segments + 1,
+					segments + 1, order, false, 1);
+			else if (!backprop)
+				status = sig_kernel_d(
+					gram.data(), &out, 1, 2, segments + 1, segments + 1,
+					order, order, false, 1);
+			else if (method == "polynomial")
+				status = polysig_kernel_backprop_d(
+					gram.data(), gram_derivs.data(), &output_deriv,
+					solver_state.data(), 1, 2, segments + 1, segments + 1,
+					order, false, 1);
+			else
+				status = sig_kernel_backprop_d(
+					gram.data(), gram_derivs.data(), &output_deriv,
+					solver_state.data(), 1, 2, segments + 1, segments + 1,
+					order, order, false, 1);
+		}
 		const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
 		std::cout << method << " segments=" << segments << " order=" << order
 			<< " iterations=" << iterations << " seconds=" << elapsed
 			<< " seconds_per_iteration=" << elapsed / static_cast<double>(iterations)
-			<< " result=" << out << std::endl;
+			<< " result=" << (backprop ? gram_derivs.back() : out) << std::endl;
         unload_cpsig();
         return status;
     }

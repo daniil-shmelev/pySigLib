@@ -127,10 +127,16 @@ def test_polynomial_sig_kernel_gram_normalize():
     assert torch.allclose(result, result.T, rtol=1e-13, atol=1e-13)
 
 
-def test_polynomial_sig_kernel_rejects_grid():
-    x = np.zeros((2, 1), dtype=np.float64)
-    with pytest.raises(ValueError, match="return_grid"):
-        pysiglib.sig_kernel(x, x, method=METHOD, order=5, return_grid=True)
+def test_polynomial_sig_kernel_grid_ends_at_scalar():
+    x = np.array([[0., 0.], [.3, -.2], [.2, .2], [.45, .35]], dtype=np.float64)
+    y = np.array([[0., 0.], [.2, .1], [-.15, .15]], dtype=np.float64)
+    grid = pysiglib.sig_kernel(x, y, method=METHOD, order=7, return_grid=True)
+    scalar = pysiglib.sig_kernel(x, y, method=METHOD, order=7)
+
+    assert grid.shape == (4, 3)
+    assert np.all(grid[0] == 1)
+    assert np.all(grid[:, 0] == 1)
+    assert grid[-1, -1] == scalar
 
 
 def test_polynomial_sig_kernel_rejects_cuda():
@@ -172,9 +178,118 @@ def test_sig_kernel_method_validation(kwargs):
         pysiglib.sig_kernel(x, x, **kwargs)
 
 
+def test_polynomial_sig_kernel_explicit_grid_backprop():
+    x = np.array([[0., 0.], [.2, -.1], [.35, .15]], dtype=np.float64)
+    y = np.array([[0., 0.], [-.1, .25], [.2, .3]], dtype=np.float64)
+    weights = np.arange(9, dtype=np.float64).reshape(3, 3) / 10
+    dx, dy = pysiglib.sig_kernel_backprop(
+        weights, x, y, method=METHOD, order=7,
+        left_deriv=True, right_deriv=True, return_grid=True)
+
+    epsilon = 1e-6
+    expected_dx = np.empty_like(x)
+    expected_dy = np.empty_like(y)
+    for path, expected in ((x, expected_dx), (y, expected_dy)):
+        for index in np.ndindex(path.shape):
+            plus = path.copy()
+            minus = path.copy()
+            plus[index] += epsilon
+            minus[index] -= epsilon
+            if path is x:
+                value_plus = pysiglib.sig_kernel(
+                    plus, y, method=METHOD, order=7, return_grid=True)
+                value_minus = pysiglib.sig_kernel(
+                    minus, y, method=METHOD, order=7, return_grid=True)
+            else:
+                value_plus = pysiglib.sig_kernel(
+                    x, plus, method=METHOD, order=7, return_grid=True)
+                value_minus = pysiglib.sig_kernel(
+                    x, minus, method=METHOD, order=7, return_grid=True)
+            expected[index] = np.sum(weights * (value_plus - value_minus)) / (2 * epsilon)
+
+    assert np.allclose(dx, expected_dx, rtol=2e-8, atol=2e-9)
+    assert np.allclose(dy, expected_dy, rtol=2e-8, atol=2e-9)
+
+
 @pytest.mark.parametrize("api_name", ["torch_api", "jax_api"])
-def test_reverse_apis_reject_polynomial_methods(api_name):
+def test_reverse_apis_support_polynomial_grid(api_name):
     api = pytest.importorskip("pysiglib." + api_name)
-    x = np.zeros((2, 1), dtype=np.float64)
-    with pytest.raises(ValueError, match="finite_difference"):
-        api.sig_kernel(x, x, method=METHOD, order=5)
+    x_np = np.array([[0., 0.], [.2, -.1], [.35, .15]], dtype=np.float32)
+    y_np = np.array([[0., 0.], [-.1, .25], [.2, .3]], dtype=np.float32)
+    weights_np = np.arange(9, dtype=np.float32).reshape(3, 3) / 10
+
+    if api_name == "torch_api":
+        x = torch.tensor(x_np, requires_grad=True)
+        y = torch.tensor(y_np)
+        weights = torch.tensor(weights_np)
+        grid = api.sig_kernel(
+            x, y, method=METHOD, order=7, return_grid=True)
+        grad, = torch.autograd.grad(torch.sum(grid * weights), (x,))
+        grid_np = grid.detach().numpy()
+        grad_np = grad.detach().numpy()
+    else:
+        import jax
+        import jax.numpy as jnp
+        x = jnp.asarray(x_np)
+        y = jnp.asarray(y_np)
+        weights = jnp.asarray(weights_np)
+
+        def objective(value):
+            return jnp.sum(api.sig_kernel(
+                value, y, method=METHOD, order=7, return_grid=True) * weights)
+
+        grid_np = np.asarray(api.sig_kernel(
+            x, y, method=METHOD, order=7, return_grid=True))
+        grad_np = np.asarray(jax.grad(objective)(x))
+
+    expected_grid = pysiglib.sig_kernel(
+        x_np, y_np, method=METHOD, order=7, return_grid=True)
+    expected_grad, _ = pysiglib.sig_kernel_backprop(
+        weights_np, x_np, y_np, method=METHOD, order=7,
+        left_deriv=True, right_deriv=False, return_grid=True)
+    assert np.allclose(grid_np, expected_grid, rtol=2e-5, atol=2e-6)
+    assert np.allclose(grad_np, expected_grad, rtol=2e-4, atol=2e-5)
+
+
+@pytest.mark.parametrize("api_name", ["torch_api", "jax_api"])
+def test_reverse_apis_support_polynomial_gram(api_name):
+    api = pytest.importorskip("pysiglib." + api_name)
+    x_np = np.array([
+        [[0., 0.], [.2, -.1], [.35, .15]],
+        [[0., 0.], [-.1, .2], [.1, .3]],
+    ], dtype=np.float32)
+    y_np = np.array([
+        [[0., 0.], [-.1, .25], [.2, .3]],
+        [[0., 0.], [.15, .1], [.25, -.2]],
+    ], dtype=np.float32)
+    weights_np = np.array([[.2, -.3], [.5, .7]], dtype=np.float32)
+
+    if api_name == "torch_api":
+        x = torch.tensor(x_np, requires_grad=True)
+        y = torch.tensor(y_np, requires_grad=True)
+        gram = api.sig_kernel_gram(
+            x, y, method=METHOD, order=7, max_batch=1)
+        dx, dy = torch.autograd.grad(
+            torch.sum(gram * torch.tensor(weights_np)), (x, y))
+        dx_np = dx.detach().numpy()
+        dy_np = dy.detach().numpy()
+    else:
+        import jax
+        import jax.numpy as jnp
+        x = jnp.asarray(x_np)
+        y = jnp.asarray(y_np)
+        weights = jnp.asarray(weights_np)
+
+        def objective(left, right):
+            return jnp.sum(api.sig_kernel_gram(
+                left, right, method=METHOD, order=7, max_batch=1) * weights)
+
+        dx, dy = jax.grad(objective, argnums=(0, 1))(x, y)
+        dx_np = np.asarray(dx)
+        dy_np = np.asarray(dy)
+
+    expected_dx, expected_dy = pysiglib.sig_kernel_gram_backprop(
+        weights_np, x_np, y_np, method=METHOD, order=7,
+        left_deriv=True, right_deriv=True, max_batch=1)
+    assert np.allclose(dx_np, expected_dx, rtol=3e-4, atol=3e-5)
+    assert np.allclose(dy_np, expected_dy, rtol=3e-4, atol=3e-5)
