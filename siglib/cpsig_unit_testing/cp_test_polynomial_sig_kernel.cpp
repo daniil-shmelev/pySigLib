@@ -98,6 +98,23 @@ TEST(polynomialSigKernelTest, Float32MatchesFloat64) {
 	EXPECT_NEAR(sig_poly_out, 0.9868046051301949, 2e-6);
 }
 
+TEST(polynomialSigKernelTest, ClearCacheRebuildsTables) {
+	const float gram_f = 0.125f;
+	const double gram_d = 0.125;
+	float before_f = 0;
+	double before_d = 0;
+	ASSERT_EQ(sig_kernel_poly_f(&gram_f, &before_f, nullptr, 1, 1, 2, 2, 7, false, 1), 0);
+	ASSERT_EQ(sig_kernel_poly_d(&gram_d, &before_d, nullptr, 1, 1, 2, 2, 7, false, 1), 0);
+	ASSERT_EQ(clear_cache(false), 0);
+
+	float after_f = 0;
+	double after_d = 0;
+	ASSERT_EQ(sig_kernel_poly_f(&gram_f, &after_f, nullptr, 1, 1, 2, 2, 7, false, 1), 0);
+	ASSERT_EQ(sig_kernel_poly_d(&gram_d, &after_d, nullptr, 1, 1, 2, 2, 7, false, 1), 0);
+	EXPECT_FLOAT_EQ(after_f, before_f);
+	EXPECT_DOUBLE_EQ(after_d, before_d);
+}
+
 TEST(polynomialSigKernelTest, TrivialAndNullGram) {
 	std::vector<double> out(3, 0);
 	EXPECT_EQ(sig_kernel_poly_d(nullptr, out.data(), nullptr, 3, 2, 1, 5, 7, false, 2), 0);

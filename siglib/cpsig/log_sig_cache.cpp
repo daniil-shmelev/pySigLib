@@ -21,6 +21,8 @@
 #include "cp_branched_log_signature.h"
 #include "cp_branched_sig_coef_cache.h"
 
+void clear_sig_poly_table_cache();
+
 const char* version = "v1";
 const char* cache_folder_name = "pysiglib_cache";
 
@@ -231,6 +233,7 @@ void clear_cache_(bool use_disk) {
 	clear_branched_sig_coef_cache();
 	clear_branched_log_sig_cache();
 	clear_branched_sig_cache();
+	clear_sig_poly_table_cache();
 
 	if (use_disk) {
 		auto dir = get_cache_dir();
@@ -263,6 +266,7 @@ extern "C" {
 		try { clear_branched_sig_coef_cache();                            } catch (...) {}
 		try { clear_branched_log_sig_cache();                             } catch (...) {}
 		try { clear_branched_sig_cache();                                } catch (...) {}
+		try { clear_sig_poly_table_cache();                              } catch (...) {}
 		try { std::unique_lock lk(cache_dir_mu);   cache_dir.clear();    } catch (...) {}
 	}
 

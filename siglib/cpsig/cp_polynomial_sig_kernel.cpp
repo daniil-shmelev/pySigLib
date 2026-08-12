@@ -19,6 +19,12 @@
 #include "macros.h"
 
 
+void clear_sig_poly_table_cache() {
+	clear_sig_poly_table_cache_<float>();
+	clear_sig_poly_table_cache_<double>();
+}
+
+
 extern "C" {
 
 	CPSIG_API int sig_kernel_poly_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {

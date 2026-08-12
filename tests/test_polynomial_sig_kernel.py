@@ -47,6 +47,33 @@ def test_polynomial_sig_kernel_golden(dtype):
     assert np.allclose(result, expected, rtol=2e-6, atol=2e-6)
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_polynomial_sig_kernel_cache_clear(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    torch_device = torch.device(device)
+    paths = [
+        (
+            torch.tensor([[0.], [.2], [.1]], dtype=dtype, device=torch_device),
+            torch.tensor([[0.], [-.1], [.3]], dtype=dtype, device=torch_device),
+        )
+        for dtype in (torch.float32, torch.float64)
+    ]
+    expected = [
+        pysiglib.sig_kernel(x, y, method=METHOD, order=7)
+        for x, y in paths
+    ]
+
+    pysiglib.clear_cache(device=device)
+    actual = [
+        pysiglib.sig_kernel(x, y, method=METHOD, order=7)
+        for x, y in paths
+    ]
+
+    for result, reference in zip(actual, expected):
+        assert torch.equal(result, reference)
+
+
 def test_polynomial_sig_kernel_order_is_highest_degree():
     x = torch.tensor([[0.], [1.]], dtype=torch.float64)
     y = torch.tensor([[0.], [2.]], dtype=torch.float64)

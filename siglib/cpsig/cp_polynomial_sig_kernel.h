@@ -60,6 +60,38 @@ struct sig_poly_tables {
 };
 
 template<std::floating_point T>
+struct sig_poly_table_cache {
+	std::mutex mutex;
+	std::vector<std::shared_ptr<const sig_poly_tables<T>>> tables;
+
+	sig_poly_table_cache() : tables(65) {}
+};
+
+template<std::floating_point T>
+sig_poly_table_cache<T>& sig_poly_table_cache_() {
+	static sig_poly_table_cache<T> cache;
+	return cache;
+}
+
+template<std::floating_point T>
+std::shared_ptr<const sig_poly_tables<T>> get_sig_poly_tables_(uint64_t order) {
+	auto& cache = sig_poly_table_cache_<T>();
+	std::lock_guard<std::mutex> lock(cache.mutex);
+	auto& tables = cache.tables[order];
+	if (!tables)
+		tables = std::make_shared<const sig_poly_tables<T>>(order);
+	return tables;
+}
+
+template<std::floating_point T>
+void clear_sig_poly_table_cache_() {
+	auto& cache = sig_poly_table_cache_<T>();
+	std::lock_guard<std::mutex> lock(cache.mutex);
+	for (auto& tables : cache.tables)
+		tables.reset();
+}
+
+template<std::floating_point T>
 inline thread_local std::vector<T> polynomial_sig_kernel_workspace_;
 
 template<std::floating_point T>
@@ -431,10 +463,10 @@ void sig_kernel_poly_(
 		throw std::invalid_argument("signature kernel paths must have length >= 1");
 	if (order < 2 || order > 64)
 		throw std::invalid_argument("signature kernel polynomial order must be between 2 and 64");
-	const sig_poly_tables<T> tables(order);
+	const auto tables = get_sig_poly_tables_<T>(order);
 	polynomial_sig_kernel_<T, sig_poly_tables<T>, sig_kernel_poly_pair_dispatch_<T>>(
 		gram, out, state, batch_size, dimension, length1, length2, order,
-		return_grid, n_jobs, tables);
+		return_grid, n_jobs, *tables);
 }
 
 template<std::floating_point T>
@@ -466,16 +498,16 @@ void sig_kernel_poly_backprop_(
 	if (!output_derivs)
 		throw std::invalid_argument("signature kernel output derivative pointer must not be null");
 
-	const sig_poly_tables<T> tables(order);
+	const auto tables = get_sig_poly_tables_<T>(order);
 	const uint64_t gram_length = (length1 - 1) * (length2 - 1);
 	const uint64_t output_length = return_grid ? length1 * length2 : 1;
 	if (state) {
-		const uint64_t state_length = 2 * gram_length * tables.size;
+		const uint64_t state_length = 2 * gram_length * tables->size;
 		auto kernel_func = [&](const T* const gram_ptr, T* const gram_derivs_ptr,
 			const T* const output_derivs_ptr, const T* const state_ptr) {
 			sig_kernel_poly_backprop_pair_dispatch_<T>(
 				gram_ptr, gram_derivs_ptr, output_derivs_ptr, state_ptr,
-				length1, length2, return_grid, tables);
+				length1, length2, return_grid, *tables);
 		};
 		multi_threaded_batch(kernel_func, batch_size, n_jobs,
 			make_batch(gram, gram_length), make_batch(gram_derivs, gram_length),
@@ -486,7 +518,7 @@ void sig_kernel_poly_backprop_(
 			const T* const output_derivs_ptr) {
 			sig_kernel_poly_backprop_pair_dispatch_<T>(
 				gram_ptr, gram_derivs_ptr, output_derivs_ptr, nullptr,
-				length1, length2, return_grid, tables);
+				length1, length2, return_grid, *tables);
 		};
 		multi_threaded_batch(kernel_func, batch_size, n_jobs,
 			make_batch(gram, gram_length), make_batch(gram_derivs, gram_length),
