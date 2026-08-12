@@ -22,13 +22,13 @@
 
 
 template<std::floating_point T>
-struct polysig_tables {
+struct sig_poly_tables {
 	uint64_t size;
 	std::vector<T> mat1;
 	std::vector<T> mat1_deriv;
 	std::vector<T> mat2;
 
-	explicit polysig_tables(uint64_t order) :
+	explicit sig_poly_tables(uint64_t order) :
 		size(order + 1), mat1(size * size, static_cast<T>(0)),
 		mat1_deriv(size * size, static_cast<T>(0)),
 		mat2(size * size, static_cast<T>(0)) {
@@ -66,7 +66,7 @@ template<std::floating_point T>
 inline thread_local std::vector<T> polynomial_sig_kernel_backprop_workspace_;
 
 template<std::floating_point T, uint64_t FixedSize = 0>
-FORCE_INLINE void polysig_tile_update_(
+FORCE_INLINE void sig_poly_tile_update_(
 	T rho,
 	const T* RESTRICT bottom,
 	const T* RESTRICT left,
@@ -77,7 +77,7 @@ FORCE_INLINE void polysig_tile_update_(
 	T* RESTRICT rho_powers,
 	T& top_endpoint,
 	T& right_endpoint,
-	const polysig_tables<T>& tables
+	const sig_poly_tables<T>& tables
 ) {
 	const uint64_t size = FixedSize == 0 ? tables.size : FixedSize;
 	rho_powers[0] = static_cast<T>(1);
@@ -203,26 +203,26 @@ void sig_kernel_poly_pair_dispatch_(
 	uint64_t length1,
 	uint64_t length2,
 	bool return_grid,
-	const polysig_tables<T>& tables
+	const sig_poly_tables<T>& tables
 ) {
 	switch (tables.size) {
-	case 3: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 3, polysig_tile_update_<T, 3>>(gram, out, state, length1, length2, return_grid, tables); return;
-	case 4: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 4, polysig_tile_update_<T, 4>>(gram, out, state, length1, length2, return_grid, tables); return;
-	case 5: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 5, polysig_tile_update_<T, 5>>(gram, out, state, length1, length2, return_grid, tables); return;
-	case 6: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 6, polysig_tile_update_<T, 6>>(gram, out, state, length1, length2, return_grid, tables); return;
-	case 7: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 7, polysig_tile_update_<T, 7>>(gram, out, state, length1, length2, return_grid, tables); return;
-	case 8: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 8, polysig_tile_update_<T, 8>>(gram, out, state, length1, length2, return_grid, tables); return;
-	case 9: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 9, polysig_tile_update_<T, 9>>(gram, out, state, length1, length2, return_grid, tables); return;
-	case 10: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 10, polysig_tile_update_<T, 10>>(gram, out, state, length1, length2, return_grid, tables); return;
-	case 11: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 11, polysig_tile_update_<T, 11>>(gram, out, state, length1, length2, return_grid, tables); return;
-	case 12: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 12, polysig_tile_update_<T, 12>>(gram, out, state, length1, length2, return_grid, tables); return;
-	case 13: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 13, polysig_tile_update_<T, 13>>(gram, out, state, length1, length2, return_grid, tables); return;
-	default: polynomial_sig_kernel_pair_<T, polysig_tables<T>, 0, polysig_tile_update_<T>>(gram, out, state, length1, length2, return_grid, tables);
+	case 3: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 3, sig_poly_tile_update_<T, 3>>(gram, out, state, length1, length2, return_grid, tables); return;
+	case 4: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 4, sig_poly_tile_update_<T, 4>>(gram, out, state, length1, length2, return_grid, tables); return;
+	case 5: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 5, sig_poly_tile_update_<T, 5>>(gram, out, state, length1, length2, return_grid, tables); return;
+	case 6: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 6, sig_poly_tile_update_<T, 6>>(gram, out, state, length1, length2, return_grid, tables); return;
+	case 7: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 7, sig_poly_tile_update_<T, 7>>(gram, out, state, length1, length2, return_grid, tables); return;
+	case 8: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 8, sig_poly_tile_update_<T, 8>>(gram, out, state, length1, length2, return_grid, tables); return;
+	case 9: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 9, sig_poly_tile_update_<T, 9>>(gram, out, state, length1, length2, return_grid, tables); return;
+	case 10: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 10, sig_poly_tile_update_<T, 10>>(gram, out, state, length1, length2, return_grid, tables); return;
+	case 11: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 11, sig_poly_tile_update_<T, 11>>(gram, out, state, length1, length2, return_grid, tables); return;
+	case 12: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 12, sig_poly_tile_update_<T, 12>>(gram, out, state, length1, length2, return_grid, tables); return;
+	case 13: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 13, sig_poly_tile_update_<T, 13>>(gram, out, state, length1, length2, return_grid, tables); return;
+	default: polynomial_sig_kernel_pair_<T, sig_poly_tables<T>, 0, sig_poly_tile_update_<T>>(gram, out, state, length1, length2, return_grid, tables);
 	}
 }
 
 template<std::floating_point T, uint64_t FixedSize = 0>
-FORCE_INLINE T polysig_tile_backprop_(
+FORCE_INLINE T sig_poly_tile_backprop_(
 	T rho,
 	const T* RESTRICT bottom,
 	const T* RESTRICT left,
@@ -231,7 +231,7 @@ FORCE_INLINE T polysig_tile_backprop_(
 	T* RESTRICT bottom_derivs,
 	T* RESTRICT left_derivs,
 	T* RESTRICT rho_powers,
-	const polysig_tables<T>& tables
+	const sig_poly_tables<T>& tables
 ) {
 	const uint64_t size = FixedSize == 0 ? tables.size : FixedSize;
 	rho_powers[0] = static_cast<T>(1);
@@ -286,7 +286,7 @@ void polynomial_sig_kernel_backprop_pair_(
 	uint64_t length1,
 	uint64_t length2,
 	bool return_grid,
-	const polysig_tables<T>& tables
+	const sig_poly_tables<T>& tables
 ) {
 	const uint64_t rows = length1 - 1;
 	const uint64_t cols = length2 - 1;
@@ -349,21 +349,21 @@ void sig_kernel_poly_backprop_pair_dispatch_(
 	uint64_t length1,
 	uint64_t length2,
 	bool return_grid,
-	const polysig_tables<T>& tables
+	const sig_poly_tables<T>& tables
 ) {
 	switch (tables.size) {
-	case 3: polynomial_sig_kernel_backprop_pair_<T, 3, polysig_tile_backprop_<T, 3>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	case 4: polynomial_sig_kernel_backprop_pair_<T, 4, polysig_tile_backprop_<T, 4>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	case 5: polynomial_sig_kernel_backprop_pair_<T, 5, polysig_tile_backprop_<T, 5>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	case 6: polynomial_sig_kernel_backprop_pair_<T, 6, polysig_tile_backprop_<T, 6>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	case 7: polynomial_sig_kernel_backprop_pair_<T, 7, polysig_tile_backprop_<T, 7>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	case 8: polynomial_sig_kernel_backprop_pair_<T, 8, polysig_tile_backprop_<T, 8>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	case 9: polynomial_sig_kernel_backprop_pair_<T, 9, polysig_tile_backprop_<T, 9>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	case 10: polynomial_sig_kernel_backprop_pair_<T, 10, polysig_tile_backprop_<T, 10>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	case 11: polynomial_sig_kernel_backprop_pair_<T, 11, polysig_tile_backprop_<T, 11>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	case 12: polynomial_sig_kernel_backprop_pair_<T, 12, polysig_tile_backprop_<T, 12>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	case 13: polynomial_sig_kernel_backprop_pair_<T, 13, polysig_tile_backprop_<T, 13>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
-	default: polynomial_sig_kernel_backprop_pair_<T, 0, polysig_tile_backprop_<T>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables);
+	case 3: polynomial_sig_kernel_backprop_pair_<T, 3, sig_poly_tile_backprop_<T, 3>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	case 4: polynomial_sig_kernel_backprop_pair_<T, 4, sig_poly_tile_backprop_<T, 4>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	case 5: polynomial_sig_kernel_backprop_pair_<T, 5, sig_poly_tile_backprop_<T, 5>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	case 6: polynomial_sig_kernel_backprop_pair_<T, 6, sig_poly_tile_backprop_<T, 6>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	case 7: polynomial_sig_kernel_backprop_pair_<T, 7, sig_poly_tile_backprop_<T, 7>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	case 8: polynomial_sig_kernel_backprop_pair_<T, 8, sig_poly_tile_backprop_<T, 8>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	case 9: polynomial_sig_kernel_backprop_pair_<T, 9, sig_poly_tile_backprop_<T, 9>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	case 10: polynomial_sig_kernel_backprop_pair_<T, 10, sig_poly_tile_backprop_<T, 10>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	case 11: polynomial_sig_kernel_backprop_pair_<T, 11, sig_poly_tile_backprop_<T, 11>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	case 12: polynomial_sig_kernel_backprop_pair_<T, 12, sig_poly_tile_backprop_<T, 12>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	case 13: polynomial_sig_kernel_backprop_pair_<T, 13, sig_poly_tile_backprop_<T, 13>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables); return;
+	default: polynomial_sig_kernel_backprop_pair_<T, 0, sig_poly_tile_backprop_<T>>(gram, gram_derivs, output_derivs, state, length1, length2, return_grid, tables);
 	}
 }
 
@@ -431,8 +431,8 @@ void sig_kernel_poly_(
 		throw std::invalid_argument("signature kernel paths must have length >= 1");
 	if (order < 2 || order > 64)
 		throw std::invalid_argument("signature kernel polynomial order must be between 2 and 64");
-	const polysig_tables<T> tables(order);
-	polynomial_sig_kernel_<T, polysig_tables<T>, sig_kernel_poly_pair_dispatch_<T>>(
+	const sig_poly_tables<T> tables(order);
+	polynomial_sig_kernel_<T, sig_poly_tables<T>, sig_kernel_poly_pair_dispatch_<T>>(
 		gram, out, state, batch_size, dimension, length1, length2, order,
 		return_grid, n_jobs, tables);
 }
@@ -466,7 +466,7 @@ void sig_kernel_poly_backprop_(
 	if (!output_derivs)
 		throw std::invalid_argument("signature kernel output derivative pointer must not be null");
 
-	const polysig_tables<T> tables(order);
+	const sig_poly_tables<T> tables(order);
 	const uint64_t gram_length = (length1 - 1) * (length2 - 1);
 	const uint64_t output_length = return_grid ? length1 * length2 : 1;
 	if (state) {

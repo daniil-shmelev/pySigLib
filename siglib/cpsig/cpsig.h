@@ -481,7 +481,7 @@ extern "C" {
 	*/
 
 	/**
-	* @brief Computes monomial polysigkernel approximations from increment gram matrices.
+	* @brief Computes monomial polynomial approximations from increment gram matrices.
 	*
 	* @param gram Pointer to batch gram matrix data (row-major), size = `batch_size * (length1 - 1) * (length2 - 1)`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * (return_grid ? length1 * length2 : 1)`.

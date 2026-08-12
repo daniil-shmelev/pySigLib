@@ -68,7 +68,7 @@ TEST(polynomialSigKernelTest, PinnedGoldenBatchAndThreads) {
 		0.055, -0.0875
 	};
 	const uint64_t orders[] = { 2, 5, 7, 10 };
-	const double polysig_expected[][2] = {
+	const double sig_poly_expected[][2] = {
 		{ 0.9868383588452052, 1.0265309020995697 },
 		{ 0.9868046051227348, 1.026566588558175 },
 		{ 0.9868046051301949, 1.026566588567865 },
@@ -81,7 +81,7 @@ TEST(polynomialSigKernelTest, PinnedGoldenBatchAndThreads) {
 		ASSERT_EQ(sig_kernel_poly_d(gram.data(), serial.data(), nullptr, 2, 2, 4, 3, orders[i], false, 1), 0);
 		ASSERT_EQ(sig_kernel_poly_d(gram.data(), parallel.data(), nullptr, 2, 2, 4, 3, orders[i], false, 2), 0);
 		for (uint64_t batch = 0; batch < 2; ++batch) {
-			EXPECT_NEAR(serial[batch], polysig_expected[i][batch], 2e-14);
+			EXPECT_NEAR(serial[batch], sig_poly_expected[i][batch], 2e-14);
 			EXPECT_DOUBLE_EQ(serial[batch], parallel[batch]);
 		}
 	}
@@ -93,9 +93,9 @@ TEST(polynomialSigKernelTest, Float32MatchesFloat64) {
 		0.02f, 0.055f,
 		0.065f, -0.08f
 	};
-	float polysig_out = 0;
-	ASSERT_EQ(sig_kernel_poly_f(gram.data(), &polysig_out, nullptr, 1, 2, 4, 3, 7, false, 1), 0);
-	EXPECT_NEAR(polysig_out, 0.9868046051301949, 2e-6);
+	float sig_poly_out = 0;
+	ASSERT_EQ(sig_kernel_poly_f(gram.data(), &sig_poly_out, nullptr, 1, 2, 4, 3, 7, false, 1), 0);
+	EXPECT_NEAR(sig_poly_out, 0.9868046051301949, 2e-6);
 }
 
 TEST(polynomialSigKernelTest, TrivialAndNullGram) {

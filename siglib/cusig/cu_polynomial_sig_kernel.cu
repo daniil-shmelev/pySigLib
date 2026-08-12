@@ -18,26 +18,26 @@
 #include "cu_utils.h"
 
 template<typename T>
-struct PolysigTableCacheEntry {
+struct SigPolyTableCacheEntry {
 	int device;
 	uint64_t order;
 	T* data;
 };
 
-static std::mutex polysig_table_cache_mutex_;
+static std::mutex sig_poly_table_cache_mutex_;
 
 template<typename T>
-static std::vector<PolysigTableCacheEntry<T>>& polysig_table_cache_() {
-	static std::vector<PolysigTableCacheEntry<T>> cache;
+static std::vector<SigPolyTableCacheEntry<T>>& sig_poly_table_cache_() {
+	static std::vector<SigPolyTableCacheEntry<T>> cache;
 	return cache;
 }
 
 template<typename T>
-static const T* get_polysig_tables_(uint64_t order) {
+static const T* get_sig_poly_tables_(uint64_t order) {
 	int device = 0;
 	CUDA_CHECK(cudaGetDevice(&device));
-	std::lock_guard<std::mutex> lock(polysig_table_cache_mutex_);
-	auto& cache = polysig_table_cache_<T>();
+	std::lock_guard<std::mutex> lock(sig_poly_table_cache_mutex_);
+	auto& cache = sig_poly_table_cache_<T>();
 	for (const auto& entry : cache) {
 		if (entry.device == device && entry.order == order)
 			return entry.data;
@@ -82,8 +82,8 @@ static const T* get_polysig_tables_(uint64_t order) {
 }
 
 template<typename T>
-static void release_polysig_tables_() {
-	auto& cache = polysig_table_cache_<T>();
+static void release_sig_poly_tables_() {
+	auto& cache = sig_poly_table_cache_<T>();
 	for (const auto& entry : cache) {
 		(void)cudaSetDevice(entry.device);
 		(void)cudaFree(entry.data);
@@ -92,24 +92,24 @@ static void release_polysig_tables_() {
 }
 
 void release_sig_kernel_poly_state() {
-	std::lock_guard<std::mutex> lock(polysig_table_cache_mutex_);
+	std::lock_guard<std::mutex> lock(sig_poly_table_cache_mutex_);
 	int original_device = 0;
 	const bool restore_device = cudaGetDevice(&original_device) == cudaSuccess;
-	release_polysig_tables_<float>();
-	release_polysig_tables_<double>();
+	release_sig_poly_tables_<float>();
+	release_sig_poly_tables_<double>();
 	if (restore_device)
 		(void)cudaSetDevice(original_device);
 }
 
 template<typename T>
-__global__ void polysig_fill_kernel_(T* data, T value, uint64_t count) {
+__global__ void sig_poly_fill_kernel_(T* data, T value, uint64_t count) {
 	for (uint64_t index = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
 		index < count; index += static_cast<uint64_t>(blockDim.x) * gridDim.x)
 		data[index] = value;
 }
 
 template<typename T>
-__global__ void polysig_init_frontiers_kernel_(
+__global__ void sig_poly_init_frontiers_kernel_(
 	T* work,
 	uint64_t boundary_tiles,
 	uint64_t slots,
@@ -125,7 +125,7 @@ __global__ void polysig_init_frontiers_kernel_(
 }
 
 template<typename T, uint64_t FixedSize = 0>
-__global__ void polysig_tile_forward_kernel_(
+__global__ void sig_poly_tile_forward_kernel_(
 	const T* __restrict__ gram,
 	T* __restrict__ out,
 	T* __restrict__ state,
@@ -347,7 +347,7 @@ __global__ void polysig_tile_forward_kernel_(
 }
 
 template<typename T, uint64_t FixedSize = 0>
-static void launch_polysig_tiles_(
+static void launch_sig_poly_tiles_(
 	const T* gram,
 	T* out,
 	T* state,
@@ -367,7 +367,7 @@ static void launch_polysig_tiles_(
 	const size_t smem = static_cast<size_t>(
 		frontier_count * (size + 1) * tile_width) * sizeof(T);
 	configure_dynamic_smem(
-		polysig_tile_forward_kernel_<T, FixedSize>, smem,
+		sig_poly_tile_forward_kernel_<T, FixedSize>, smem,
 		"CUDA polynomial sig kernel", smem_limits);
 	const uint64_t rows = length1 - 1;
 	const uint64_t cols = length2 - 1;
@@ -379,7 +379,7 @@ static void launch_polysig_tiles_(
 		for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 			const auto batch_chunk = make_cuda_batch_grid_chunk(
 				tiles, batch_size, batch_offset);
-			polysig_tile_forward_kernel_<T, FixedSize><<<
+			sig_poly_tile_forward_kernel_<T, FixedSize><<<
 				batch_chunk.grid, 32U, smem>>>(
 					gram, out, state, work, tables, rows, cols, length1, length2,
 					size, tile_width, tile_rows, tile_cols, diagonal,
@@ -390,7 +390,7 @@ static void launch_polysig_tiles_(
 }
 
 template<typename T, uint64_t FixedSize = 0>
-__global__ void polysig_tile_backprop_kernel_(
+__global__ void sig_poly_tile_backprop_kernel_(
 	const T* __restrict__ gram,
 	T* __restrict__ gram_derivs,
 	const T* __restrict__ output_derivs,
@@ -622,7 +622,7 @@ __global__ void polysig_tile_backprop_kernel_(
 }
 
 template<typename T, uint64_t FixedSize = 0>
-static void launch_polysig_backprop_tiles_(
+static void launch_sig_poly_backprop_tiles_(
 	const T* gram,
 	T* gram_derivs,
 	const T* output_derivs,
@@ -643,7 +643,7 @@ static void launch_polysig_backprop_tiles_(
 	const size_t smem = static_cast<size_t>(
 		frontier_count * size * tile_width) * sizeof(T);
 	configure_dynamic_smem(
-		polysig_tile_backprop_kernel_<T, FixedSize>, smem,
+		sig_poly_tile_backprop_kernel_<T, FixedSize>, smem,
 		"CUDA polynomial sig kernel backprop", smem_limits);
 	const uint64_t rows = length1 - 1;
 	const uint64_t cols = length2 - 1;
@@ -655,7 +655,7 @@ static void launch_polysig_backprop_tiles_(
 		for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 			const auto batch_chunk = make_cuda_batch_grid_chunk(
 				tiles, batch_size, batch_offset);
-			polysig_tile_backprop_kernel_<T, FixedSize><<<
+			sig_poly_tile_backprop_kernel_<T, FixedSize><<<
 				batch_chunk.grid, 32U, smem>>>(
 					gram, gram_derivs, output_derivs, state, work, tables,
 					rows, cols, length1, length2, size, tile_width,
@@ -694,7 +694,7 @@ static void sig_kernel_poly_cuda_(
 	const uint64_t result_size = return_grid ? length1 * length2 : 1;
 	if (rows == 0 || cols == 0) {
 		const uint64_t count = batch_size * result_size;
-		polysig_fill_kernel_<<<make_cuda_1d_grid(count, 256), 256U>>>(
+		sig_poly_fill_kernel_<<<make_cuda_1d_grid(count, 256), 256U>>>(
 			out, static_cast<T>(1), count);
 		check_cuda_kernel_launch();
 		return;
@@ -718,37 +718,37 @@ static void sig_kernel_poly_cuda_(
 	const uint64_t boundary_tiles = batch_size * (tile_rows + tile_cols);
 	const uint64_t work_size = boundary_tiles * slots * tile_width;
 	CudaBuf<T> work(work_size * sizeof(T));
-	polysig_init_frontiers_kernel_<<<
+	sig_poly_init_frontiers_kernel_<<<
 		make_cuda_1d_grid(work_size, 256), 256U>>>(
 			work.get(), boundary_tiles, slots, tile_width);
 	if (return_grid) {
 		const uint64_t count = batch_size * result_size;
-		polysig_fill_kernel_<<<make_cuda_1d_grid(count, 256), 256U>>>(
+		sig_poly_fill_kernel_<<<make_cuda_1d_grid(count, 256), 256U>>>(
 			out, static_cast<T>(1), count);
 	}
 
-	const T* const tables = get_polysig_tables_<T>(order);
-#define LAUNCH_POLYSIG_FIXED(size_value) \
-	launch_polysig_tiles_<T, size_value>(gram, out, state, work.get(), tables, batch_size, \
+	const T* const tables = get_sig_poly_tables_<T>(order);
+#define LAUNCH_SIG_POLY_FIXED(size_value) \
+	launch_sig_poly_tiles_<T, size_value>(gram, out, state, work.get(), tables, batch_size, \
 		length1, length2, size, tile_width, tile_rows, tile_cols, return_grid, smem_limits)
 	switch (size) {
-	case 3: LAUNCH_POLYSIG_FIXED(3); break;
-	case 4: LAUNCH_POLYSIG_FIXED(4); break;
-	case 5: LAUNCH_POLYSIG_FIXED(5); break;
-	case 6: LAUNCH_POLYSIG_FIXED(6); break;
-	case 7: LAUNCH_POLYSIG_FIXED(7); break;
-	case 8: LAUNCH_POLYSIG_FIXED(8); break;
-	case 9: LAUNCH_POLYSIG_FIXED(9); break;
-	case 10: LAUNCH_POLYSIG_FIXED(10); break;
-	case 11: LAUNCH_POLYSIG_FIXED(11); break;
-	case 12: LAUNCH_POLYSIG_FIXED(12); break;
-	case 13: LAUNCH_POLYSIG_FIXED(13); break;
+	case 3: LAUNCH_SIG_POLY_FIXED(3); break;
+	case 4: LAUNCH_SIG_POLY_FIXED(4); break;
+	case 5: LAUNCH_SIG_POLY_FIXED(5); break;
+	case 6: LAUNCH_SIG_POLY_FIXED(6); break;
+	case 7: LAUNCH_SIG_POLY_FIXED(7); break;
+	case 8: LAUNCH_SIG_POLY_FIXED(8); break;
+	case 9: LAUNCH_SIG_POLY_FIXED(9); break;
+	case 10: LAUNCH_SIG_POLY_FIXED(10); break;
+	case 11: LAUNCH_SIG_POLY_FIXED(11); break;
+	case 12: LAUNCH_SIG_POLY_FIXED(12); break;
+	case 13: LAUNCH_SIG_POLY_FIXED(13); break;
 	default:
-		launch_polysig_tiles_<T>(gram, out, state, work.get(), tables, batch_size,
+		launch_sig_poly_tiles_<T>(gram, out, state, work.get(), tables, batch_size,
 			length1, length2, size, tile_width, tile_rows, tile_cols,
 			return_grid, smem_limits);
 	}
-#undef LAUNCH_POLYSIG_FIXED
+#undef LAUNCH_SIG_POLY_FIXED
 	check_cuda_kernel_launch();
 }
 
@@ -833,30 +833,30 @@ static void sig_kernel_poly_backprop_cuda_(
 	CUDA_CHECK(cudaMemset(work.get(), 0,
 		static_cast<size_t>(work_size) * sizeof(T)));
 
-	const T* const tables = get_polysig_tables_<T>(order);
-#define LAUNCH_POLYSIG_BACKPROP_FIXED(size_value) \
-	launch_polysig_backprop_tiles_<T, size_value>(gram, gram_derivs, output_derivs, \
+	const T* const tables = get_sig_poly_tables_<T>(order);
+#define LAUNCH_SIG_POLY_BACKPROP_FIXED(size_value) \
+	launch_sig_poly_backprop_tiles_<T, size_value>(gram, gram_derivs, output_derivs, \
 		state, work.get(), tables, batch_size, length1, length2, size, tile_width, \
 		tile_rows, tile_cols, return_grid, smem_limits)
 	switch (size) {
-	case 3: LAUNCH_POLYSIG_BACKPROP_FIXED(3); break;
-	case 4: LAUNCH_POLYSIG_BACKPROP_FIXED(4); break;
-	case 5: LAUNCH_POLYSIG_BACKPROP_FIXED(5); break;
-	case 6: LAUNCH_POLYSIG_BACKPROP_FIXED(6); break;
-	case 7: LAUNCH_POLYSIG_BACKPROP_FIXED(7); break;
-	case 8: LAUNCH_POLYSIG_BACKPROP_FIXED(8); break;
-	case 9: LAUNCH_POLYSIG_BACKPROP_FIXED(9); break;
-	case 10: LAUNCH_POLYSIG_BACKPROP_FIXED(10); break;
-	case 11: LAUNCH_POLYSIG_BACKPROP_FIXED(11); break;
-	case 12: LAUNCH_POLYSIG_BACKPROP_FIXED(12); break;
-	case 13: LAUNCH_POLYSIG_BACKPROP_FIXED(13); break;
+	case 3: LAUNCH_SIG_POLY_BACKPROP_FIXED(3); break;
+	case 4: LAUNCH_SIG_POLY_BACKPROP_FIXED(4); break;
+	case 5: LAUNCH_SIG_POLY_BACKPROP_FIXED(5); break;
+	case 6: LAUNCH_SIG_POLY_BACKPROP_FIXED(6); break;
+	case 7: LAUNCH_SIG_POLY_BACKPROP_FIXED(7); break;
+	case 8: LAUNCH_SIG_POLY_BACKPROP_FIXED(8); break;
+	case 9: LAUNCH_SIG_POLY_BACKPROP_FIXED(9); break;
+	case 10: LAUNCH_SIG_POLY_BACKPROP_FIXED(10); break;
+	case 11: LAUNCH_SIG_POLY_BACKPROP_FIXED(11); break;
+	case 12: LAUNCH_SIG_POLY_BACKPROP_FIXED(12); break;
+	case 13: LAUNCH_SIG_POLY_BACKPROP_FIXED(13); break;
 	default:
-		launch_polysig_backprop_tiles_<T>(
+		launch_sig_poly_backprop_tiles_<T>(
 			gram, gram_derivs, output_derivs, state, work.get(), tables,
 			batch_size, length1, length2, size, tile_width, tile_rows,
 			tile_cols, return_grid, smem_limits);
 	}
-#undef LAUNCH_POLYSIG_BACKPROP_FIXED
+#undef LAUNCH_SIG_POLY_BACKPROP_FIXED
 	check_cuda_kernel_launch();
 }
 
