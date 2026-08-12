@@ -13,6 +13,8 @@
 # limitations under the License.
 # =========================================================================
 
+import inspect
+
 import pytest
 import numpy as np
 import torch
@@ -26,17 +28,27 @@ check_close = partial(_check_close, single_atol=1e-3, double_atol=1e-5)
 FIXTURES = load_fixtures("reference_data.npz")
 
 
+def test_sig_kernel_dyadic_order_is_keyword_only():
+    assert inspect.signature(pysiglib.sig_kernel).parameters["dyadic_order"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert inspect.signature(pysiglib.sig_kernel_gram).parameters["dyadic_order"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert inspect.signature(pysiglib.sig_kernel_backprop).parameters["dyadic_order"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert inspect.signature(pysiglib.sig_kernel_gram_backprop).parameters["dyadic_order"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert inspect.signature(pysiglib.sig_score).parameters["dyadic_order"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert inspect.signature(pysiglib.expected_sig_score).parameters["dyadic_order"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert inspect.signature(pysiglib.sig_mmd).parameters["dyadic_order"].kind is inspect.Parameter.KEYWORD_ONLY
+
+
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_kernel_trivial(device):
     X = torch.tensor([[0.]], device=device)
-    k = pysiglib.sig_kernel(X, X, 0)
+    k = pysiglib.sig_kernel(X, X, dyadic_order=0)
     assert_device(k, device)
     check_close(torch.tensor([1.]), k)
 
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_kernel_numpy(device):
     x = torch.tensor([[0., 1.], [3., 2.]], device=device)
-    k = pysiglib.sig_kernel(x, x, 0)
+    k = pysiglib.sig_kernel(x, x, dyadic_order=0)
     assert_device(k, device)
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -46,7 +58,7 @@ def test_sig_kernel_dtypes(device, dtype):
     Y = torch.tensor(FIXTURES["kern_Y"], device=device, dtype=dtype)
     expected = FIXTURES["kernel_linear__do0"]
 
-    kernel2 = pysiglib.sig_kernel(X, Y, 0)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order=0)
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
@@ -58,7 +70,7 @@ def test_sig_kernel_random(device, dyadic_order):
     Y = torch.tensor(FIXTURES["kern_Y"], device=device, dtype=torch.double)
     expected = FIXTURES[f"kernel_linear__do{dyadic_order}"]
 
-    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order)
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
@@ -71,7 +83,7 @@ def test_sig_kernel_scaled_linear(device, dyadic_order):
     expected = FIXTURES[f"kernel_scaled_linear__do{dyadic_order}"]
 
     static_kernel = pysiglib.ScaledLinearKernel(0.5)
-    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order, static_kernel=static_kernel)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, static_kernel=static_kernel)
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
@@ -84,7 +96,7 @@ def test_sig_kernel_rbf(device, dyadic_order):
     expected = FIXTURES[f"kernel_rbf__do{dyadic_order}"]
 
     static_kernel = pysiglib.RBFKernel(0.5)
-    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order, static_kernel=static_kernel)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, static_kernel=static_kernel)
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
@@ -102,7 +114,7 @@ def test_sig_kernel_random_non_square(device, len1, len2, dyadic_order):
         Y = torch.tensor(FIXTURES["kern_X2"], device=device, dtype=torch.double)
         expected = FIXTURES[f"kernel_nonsq_short_long__do{dyadic_order}"]
 
-    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order)
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
@@ -114,9 +126,9 @@ def test_sig_kernel_different_dyadics(device, dyadic_order):
     X = torch.rand(size=(batch, len1, dim), device=device, dtype = torch.double)
     Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
-    kernel1 = pysiglib.sig_kernel(X, Y, dyadic_order)
+    kernel1 = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order)
     assert_device(kernel1, device)
-    kernel2 = pysiglib.sig_kernel(Y, X, dyadic_order[::-1])
+    kernel2 = pysiglib.sig_kernel(Y, X, dyadic_order=dyadic_order[::-1])
 
     check_close(kernel1, kernel2)
 
@@ -130,8 +142,8 @@ def test_sig_kernel_non_contiguous(device):
     X_non_cont = rand_data.expand(-1, -1, dim)
     X = X_non_cont.clone()
 
-    res1 = pysiglib.sig_kernel(X, X, 0)
-    res2 = pysiglib.sig_kernel(X_non_cont, X_non_cont, 0)
+    res1 = pysiglib.sig_kernel(X, X, dyadic_order=0)
+    res2 = pysiglib.sig_kernel(X_non_cont, X_non_cont, dyadic_order=0)
     assert_device(res1, device)
     assert_device(res2, device)
     check_close(res1, res2)
@@ -140,8 +152,8 @@ def test_sig_kernel_non_contiguous(device):
     X_non_cont = np.broadcast_to(rand_data, (batch, length, dim))
     X = np.array(X_non_cont)
 
-    res1 = pysiglib.sig_kernel(X, X, 0)
-    res2 = pysiglib.sig_kernel(X_non_cont, X_non_cont, 0)
+    res1 = pysiglib.sig_kernel(X, X, dyadic_order=0)
+    res2 = pysiglib.sig_kernel(X_non_cont, X_non_cont, dyadic_order=0)
     check_close(res1, res2)
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -151,7 +163,7 @@ def test_sig_kernel_lead_lag(device, dyadic_order):
     Y = torch.tensor(FIXTURES["kern_Y"], device=device, dtype=torch.double)
     expected = FIXTURES[f"kernel_lead_lag__do{dyadic_order}"]
 
-    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order, lead_lag=True)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order=dyadic_order, lead_lag=True)
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
@@ -163,7 +175,7 @@ def test_sig_kernel_full_grid(device, len1, len2):
     Y = torch.tensor(FIXTURES[f"kernel_grid__{len1}x{len2}__Y"], device=device, dtype=torch.double)
     expected = FIXTURES[f"kernel_grid__{len1}x{len2}__expected"]
 
-    kernel2 = pysiglib.sig_kernel(X, Y, 0, return_grid=True)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order=0, return_grid=True)
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
@@ -174,7 +186,7 @@ def test_sig_kernel_full_grid_time_aug(device):
     Y = torch.tensor(FIXTURES["kernel_grid_ta__Y"], device=device, dtype=torch.double)
     expected = FIXTURES["kernel_grid_ta__expected"]
 
-    kernel2 = pysiglib.sig_kernel(X, Y, 0, time_aug=True, return_grid=True)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order=0, time_aug=True, return_grid=True)
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
@@ -185,7 +197,7 @@ def test_sig_kernel_full_grid_lead_lag(device):
     Y = torch.tensor(FIXTURES["kernel_grid_ll__Y"], device=device, dtype=torch.double)
     expected = FIXTURES["kernel_grid_ll__expected"]
 
-    kernel2 = pysiglib.sig_kernel(X, Y, 0, lead_lag=True, return_grid=True)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order=0, lead_lag=True, return_grid=True)
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
@@ -196,7 +208,7 @@ def test_sig_kernel_full_grid_time_aug_lead_lag(device):
     Y = torch.tensor(FIXTURES["kernel_grid_ta_ll__Y"], device=device, dtype=torch.double)
     expected = FIXTURES["kernel_grid_ta_ll__expected"]
 
-    kernel2 = pysiglib.sig_kernel(X, Y, 0, lead_lag=True, time_aug=True, return_grid=True)
+    kernel2 = pysiglib.sig_kernel(X, Y, dyadic_order=0, lead_lag=True, time_aug=True, return_grid=True)
     assert_device(kernel2, device)
 
     check_close(expected, kernel2)
@@ -212,7 +224,7 @@ def test_sig_kernel_n_jobs_equivalence(return_grid):
     X = torch.tensor(FIXTURES["kern_X"], device="cpu", dtype=torch.double)
     Y = torch.tensor(FIXTURES["kern_Y"], device="cpu", dtype=torch.double)
 
-    serial = pysiglib.sig_kernel(X, Y, 1, n_jobs=1, return_grid=return_grid)
-    parallel = pysiglib.sig_kernel(X, Y, 1, n_jobs=-1, return_grid=return_grid)
+    serial = pysiglib.sig_kernel(X, Y, dyadic_order=1, n_jobs=1, return_grid=return_grid)
+    parallel = pysiglib.sig_kernel(X, Y, dyadic_order=1, n_jobs=-1, return_grid=return_grid)
 
     check_close(serial, parallel)

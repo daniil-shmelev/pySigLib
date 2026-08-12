@@ -22,10 +22,16 @@ import torch
 
 from .transform_path import transform_path
 from .transform_path_backprop import transform_path_backprop
-from .sig_kernel import sig_kernel, _ensure_3d
-from .param_checks import check_type, parse_dyadic_order, check_n_jobs
+from .sig_kernel import sig_kernel, _ensure_3d, _parse_sig_kernel_method
+from .param_checks import check_type, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIG_KERNEL_BACKPROP, DTYPES, CUSIG_SIG_KERNEL_BACKPROP_CUDA
+from .dtypes import (
+    CPSIG_SIG_KERNEL_POLY_BACKPROP,
+    CPSIG_SIG_KERNEL_BACKPROP,
+    DTYPES,
+    CUSIG_SIG_KERNEL_POLY_BACKPROP_CUDA,
+    CUSIG_SIG_KERNEL_BACKPROP_CUDA,
+)
 from .data_handlers import MultiplePathInputHandler, ScalarInputHandler, GridOutputHandler, PathInputHandler
 from .static_kernels import StaticKernel, LinearKernel, Context
 
@@ -37,13 +43,28 @@ def gram_deriv(
         dyadic_order_1,
         dyadic_order_2,
         return_grid : bool = False,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        method : str = "finite_difference",
+        order : Optional[int] = None,
+        state : Optional[torch.Tensor] = None
 ) -> Union[np.ndarray, torch.Tensor]:
 
     result = GridOutputHandler(data.length[0] - 1, data.length[1] - 1, derivs_data) #Derivatives with respect to gram matrix
     gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
 
-    if data.device == "cpu":
+    if method == "polynomial":
+        state_ptr = None if state is None else cast(state.data_ptr(), POINTER(DTYPES[data.dtype]))
+        if data.device == "cpu":
+            err_code = CPSIG_SIG_KERNEL_POLY_BACKPROP[data.dtype](
+                gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
+                data.batch_size, data.dimension, data.length[0], data.length[1],
+                order, return_grid, n_jobs)
+        else:
+            err_code = CUSIG_SIG_KERNEL_POLY_BACKPROP_CUDA[data.dtype](
+                gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
+                data.batch_size, data.dimension, data.length[0], data.length[1],
+                order, return_grid)
+    elif data.device == "cpu":
         err_code = CPSIG_SIG_KERNEL_BACKPROP[data.dtype](
             gram_ptr, result.data_ptr, derivs_data.data_ptr, k_grid_data.data_ptr,
             data.batch_size, data.dimension, data.length[0], data.length[1],
@@ -61,8 +82,10 @@ def sig_kernel_backprop(
         derivs : Union[np.ndarray, torch.Tensor],
         path1 : Union[np.ndarray, torch.Tensor],
         path2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Union[int, tuple],
         *,
+        method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
+        order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -71,7 +94,8 @@ def sig_kernel_backprop(
         right_deriv : bool = False,
         k_grid : Union[np.ndarray, torch.Tensor] = None,
         n_jobs : int = 1,
-        return_grid: bool = False
+        return_grid: bool = False,
+        _state : Optional[torch.Tensor] = None
 ) -> Union[np.ndarray, torch.Tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.Tensor, torch.Tensor]]:
     """
     This function is required to backpropagate through ``pysiglib.sig_kernel``.
@@ -94,8 +118,15 @@ def sig_kernel_backprop(
         ``(..., length_2, dimension)``. Leading batch dimensions must match those of
         ``path1``.
     :type path2: numpy.ndarray | torch.Tensor
-    :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
-    :type dyadic_order: int | tuple
+    :param dyadic_order: (``method="finite_difference"`` only) The dyadic order(s) used
+        to compute the signature kernels.
+    :type dyadic_order: None | int | tuple
+    :param method: Solver method used in the forward pass. Must be
+        ``"finite_difference"`` or ``"polynomial"``.
+    :type method: str
+    :param order: (``method="polynomial"`` only) Highest retained polynomial degree used
+        in the forward pass. Must be between 2 and 64.
+    :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -120,7 +151,9 @@ def sig_kernel_backprop(
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire PDE grid.
+    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire
+        PDE grid. Finite differences use the dyadically refined grid, while the polynomial
+        method uses one value per vertex of each transformed path.
     :type return_grid: bool
     :return: Tuple of derivatives of :math:`F` with respect to one or both of the
         underlying paths. If ``left_deriv`` is ``True``, the first element of
@@ -172,8 +205,8 @@ def sig_kernel_backprop(
     if not (left_deriv or right_deriv):
         return None, None
 
-    dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
-
+    dyadic_order_1, dyadic_order_2 = _parse_sig_kernel_method(
+        method, dyadic_order, order, return_grid)
     if path1.ndim > 3 or path2.ndim > 3:
         if tuple(path1.shape[:-2]) != tuple(path2.shape[:-2]):
             raise ValueError(
@@ -184,13 +217,16 @@ def sig_kernel_backprop(
         lead_size = prod(leading_shape)
         flat_derivs = derivs.reshape(lead_size, *derivs.shape[-2:]) if return_grid else derivs.reshape(lead_size)
         flat_k_grid = None if k_grid is None else k_grid.reshape(lead_size, *k_grid.shape[-2:])
+        flat_state = None if _state is None else _state.reshape(lead_size, *_state.shape[-4:])
 
         ld, rd = sig_kernel_backprop(
-            flat_derivs, _ensure_3d(path1), _ensure_3d(path2), dyadic_order,
+            flat_derivs, _ensure_3d(path1), _ensure_3d(path2), dyadic_order=dyadic_order,
+            method=method, order=order,
             static_kernel=static_kernel,
             time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
             left_deriv=left_deriv, right_deriv=right_deriv,
             k_grid=flat_k_grid, n_jobs=n_jobs, return_grid=return_grid,
+            _state=flat_state,
         )
         if ld is not None:
             ld = ld.reshape(*leading_shape, *ld.shape[-2:])
@@ -203,6 +239,20 @@ def sig_kernel_backprop(
         path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
     data = MultiplePathInputHandler([path1, path2], False, False, end_time, ["path1", "path2"])
+
+    if _state is not None and method != "polynomial":
+        raise ValueError("_state is only supported for method='polynomial'")
+    if _state is not None:
+        if not isinstance(_state, torch.Tensor):
+            raise TypeError("_state must be a torch.Tensor")
+        expected_state_size = (data.batch_size * (data.length[0] - 1)
+                               * (data.length[1] - 1) * 2 * (order + 1))
+        if _state.numel() != expected_state_size:
+            raise ValueError("_state has an invalid size")
+        if str(_state.dtype)[6:] != data.dtype or _state.device.type != data.device:
+            raise ValueError("_state, path1 and path2 must have the same dtype and device")
+        if not _state.is_contiguous():
+            raise ValueError("_state must be contiguous")
 
     if data.batch_size == 0:
         from .data_handlers import PathOutputHandler
@@ -223,8 +273,10 @@ def sig_kernel_backprop(
     torch_path1 = torch.as_tensor(data.path[0])  # Avoids data copy
     torch_path2 = torch.as_tensor(data.path[1])
 
-    if k_grid is None:
-        k_grid = sig_kernel(torch.as_tensor(path1), torch.as_tensor(path2), dyadic_order, static_kernel=static_kernel, time_aug=False, lead_lag=False, end_time=end_time, n_jobs=n_jobs, return_grid=True)
+    if method == "finite_difference" and k_grid is None:
+        k_grid = sig_kernel(torch.as_tensor(path1), torch.as_tensor(path2), dyadic_order=dyadic_order,
+                            static_kernel=static_kernel, time_aug=False, lead_lag=False,
+                            end_time=end_time, n_jobs=n_jobs, return_grid=True)
 
     torch_path1 = _ensure_3d(torch_path1)
     torch_path2 = _ensure_3d(torch_path2)
@@ -238,9 +290,11 @@ def sig_kernel_backprop(
 
     gram = static_kernel(ctx, torch_path1, torch_path2).squeeze()
 
-    k_grid_data = PathInputHandler(k_grid, False, False, 0., "k_grid")
+    k_grid_data = None if method == "polynomial" else PathInputHandler(k_grid, False, False, 0., "k_grid")
 
-    gram_derivs = gram_deriv(derivs_data, data, gram, k_grid_data, dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
+    gram_derivs = gram_deriv(
+        derivs_data, data, gram, k_grid_data, dyadic_order_1, dyadic_order_2,
+        return_grid, n_jobs, method=method, order=order, state=_state)
 
     ld = static_kernel.grad_x(ctx, gram_derivs) if left_deriv else None
     rd = static_kernel.grad_y(ctx, gram_derivs) if right_deriv else None
@@ -260,8 +314,10 @@ def sig_kernel_gram_backprop(
         derivs : Union[np.ndarray, torch.Tensor],
         path1 : Union[np.ndarray, torch.Tensor],
         path2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Union[int, tuple],
         *,
+        method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
+        order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -284,17 +340,25 @@ def sig_kernel_gram_backprop(
     :param derivs: Derivatives with respect to a gram matrix of signature kernels,
         :math:`\\partial F / G`. Should have the same shape as the output of
         ``pysiglib.sig_kernel_gram`` for the same inputs:
-        ``(*batch_shape_1, *batch_shape_2)`` if ``return_grid=False``, or
-        ``(*batch_shape_1, *batch_shape_2, dyadic_length_1, dyadic_length_2)`` if
-        ``return_grid=True``.
+        ``(*batch_shape_1, *batch_shape_2)`` if ``return_grid=False``. With
+        ``return_grid=True``, the final two dimensions are the dyadically refined grid
+        lengths for finite differences, or the transformed path vertex lengths for the
+        polynomial method.
     :type derivs: numpy.ndarray | torch.Tensor
     :param path1: A path or batch of paths, of shape ``(*batch_shape_1, length_1, dimension)``.
     :type path1: numpy.ndarray | torch.Tensor
     :param path2: A path or batch of paths, of shape ``(*batch_shape_2, length_2, dimension)``.
         Independent of ``path1``'s batch shape.
     :type path2: numpy.ndarray | torch.Tensor
-    :param dyadic_order: The dyadic order(s) used to compute the signature kernels.
-    :type dyadic_order: int | tuple
+    :param dyadic_order: (``method="finite_difference"`` only) The dyadic order(s) used
+        to compute the signature kernels.
+    :type dyadic_order: None | int | tuple
+    :param method: Solver method used in the forward pass. Must be
+        ``"finite_difference"`` or ``"polynomial"``.
+    :type method: str
+    :param order: (``method="polynomial"`` only) Highest retained polynomial degree used
+        in the forward pass. Must be between 2 and 64.
+    :type order: None | int
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -319,7 +383,9 @@ def sig_kernel_gram_backprop(
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire PDE grid.
+    :param return_grid: If ``True``, backpropagates derivatives with respect to the entire
+        PDE grid. Finite differences use the dyadically refined grid, while the polynomial
+        method uses one value per vertex of each transformed path.
     :type return_grid: bool
     :param max_batch: Maximum batch size to run in parallel. If the computation is failing
         due to insufficient memory, this parameter should be decreased.
@@ -394,6 +460,7 @@ def sig_kernel_gram_backprop(
     if max_batch == 0 or max_batch < -1:
         raise ValueError("max_batch must be a positive integer or -1")
 
+    do1, do2 = _parse_sig_kernel_method(method, dyadic_order, order, return_grid)
     symmetric = path1 is path2
 
     batch_shape_1 = tuple(path1.shape[:-2])
@@ -443,8 +510,7 @@ def sig_kernel_gram_backprop(
     chunk_size = max_batch * max_batch
 
     # Check if k_grid can be transposed for symmetric off-diagonal pairs
-    do1, do2 = parse_dyadic_order(dyadic_order)
-    can_transpose_k = (do1 == do2)
+    can_transpose_k = method == "finite_difference" and do1 == do2
 
     for start in range(0, n_pairs, chunk_size):
         end = min(start + chunk_size, n_pairs)
@@ -454,14 +520,23 @@ def sig_kernel_gram_backprop(
         path1_ = path1[ci]
         path2_ = src2[cj]
 
-        if k_grid is None:
-            k = sig_kernel(path1_, path2_, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=True)
+        if k_grid is None and method == "finite_difference":
+            k = sig_kernel(path1_, path2_, dyadic_order=dyadic_order, method=method, order=order,
+                           static_kernel=static_kernel, time_aug=time_aug,
+                           lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
+                           return_grid=True)
+        elif k_grid is None:
+            k = None
         else:
             k = k_grid[ci, cj]
 
         derivs_ = derivs[ci, cj]
 
-        ld_, rd_ = sig_kernel_backprop(derivs_, path1_, path2_, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, left_deriv=left_deriv, right_deriv=right_deriv, k_grid=k, n_jobs=n_jobs, return_grid=return_grid)
+        ld_, rd_ = sig_kernel_backprop(
+            derivs_, path1_, path2_, dyadic_order=dyadic_order, method=method, order=order,
+            static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+            end_time=end_time, left_deriv=left_deriv, right_deriv=right_deriv,
+            k_grid=k, n_jobs=n_jobs, return_grid=return_grid)
 
         if left_deriv:
             ld.index_add_(0, ci, ld_.to(ld.dtype))
@@ -480,14 +555,25 @@ def sig_kernel_gram_backprop(
 
                 if k_grid is not None:
                     k_t = k_grid[cj_off, ci_off]
+                elif method == "polynomial":
+                    k_t = None
                 elif can_transpose_k:
                     k_t = k[off].transpose(-2, -1)
                 else:
-                    k_t = sig_kernel(path1_t, path2_t, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, return_grid=True)
+                    k_t = sig_kernel(
+                        path1_t, path2_t, dyadic_order=dyadic_order, method=method, order=order,
+                        static_kernel=static_kernel, time_aug=time_aug,
+                        lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
+                        return_grid=True)
 
                 derivs_t = derivs[cj_off, ci_off]
 
-                ld_t, rd_t = sig_kernel_backprop(derivs_t, path1_t, path2_t, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, left_deriv=left_deriv, right_deriv=right_deriv, k_grid=k_t, n_jobs=n_jobs, return_grid=return_grid)
+                ld_t, rd_t = sig_kernel_backprop(
+                    derivs_t, path1_t, path2_t, dyadic_order=dyadic_order,
+                    method=method, order=order, static_kernel=static_kernel,
+                    time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
+                    left_deriv=left_deriv, right_deriv=right_deriv,
+                    k_grid=k_t, n_jobs=n_jobs, return_grid=return_grid)
 
                 if left_deriv:
                     ld.index_add_(0, cj_off, ld_t.to(ld.dtype))

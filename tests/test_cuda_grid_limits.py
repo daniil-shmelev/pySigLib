@@ -103,10 +103,10 @@ def test_cuda_kernel_batches_above_grid_y_limit():
     path[:, 1, 0] = 1
     weights = torch.ones(BATCH_SIZE, dtype=torch.float32, device="cuda")
 
-    sig_kernel = pysiglib.sig_kernel(path, path, 0)
+    sig_kernel = pysiglib.sig_kernel(path, path, dyadic_order=0)
     torch.testing.assert_close(sig_kernel, sig_kernel[0].expand_as(sig_kernel))
     sig_left, sig_right = pysiglib.sig_kernel_backprop(
-        weights, path, path, 0, left_deriv=True, right_deriv=True)
+        weights, path, path, dyadic_order=0, left_deriv=True, right_deriv=True)
     torch.testing.assert_close(sig_left, sig_left[0].expand_as(sig_left))
     torch.testing.assert_close(sig_right, sig_right[0].expand_as(sig_right))
 

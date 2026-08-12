@@ -683,13 +683,13 @@ def test_jax_sig_kernel_matches_pysiglib(device, jitted, dtype, case):
     p1 = (rng.uniform(size=shape1) * 0.1).astype(dtype)
     p2 = (rng.uniform(size=shape2) * 0.1).astype(dtype)
 
-    expected = pysiglib.sig_kernel(p1, p2, do)
+    expected = pysiglib.sig_kernel(p1, p2, dyadic_order=do)
 
     p1_jax = _as_jax_array(p1, device, dtype)
     p2_jax = _as_jax_array(p2, device, dtype)
 
     def fn(a, b):
-        return jax_api.sig_kernel(a, b, do)
+        return jax_api.sig_kernel(a, b, dyadic_order=do)
 
     actual = jax.jit(fn)(p1_jax, p2_jax) if jitted else fn(p1_jax, p2_jax)
     check_close(np.asarray(expected), actual, double_atol=1e-8)
@@ -718,11 +718,11 @@ def test_jax_sig_kernel_grad_matches_pysiglib(device, jitted, dtype, case):
     p1 = (rng.uniform(size=(batch, l1, dim)) * 0.1).astype(dtype)
     p2 = (rng.uniform(size=(batch, l2, dim)) * 0.1).astype(dtype)
 
-    k_ref = pysiglib.sig_kernel(p1, p2, do)
+    k_ref = pysiglib.sig_kernel(p1, p2, dyadic_order=do)
     weights = rng.uniform(size=k_ref.shape).astype(dtype)
 
     grad_p1_ref, _ = pysiglib.sig_kernel_backprop(
-        weights, p1, p2, do, left_deriv=True, right_deriv=False
+        weights, p1, p2, dyadic_order=do, left_deriv=True, right_deriv=False
     )
 
     p1_jax = _as_jax_array(p1, device, dtype)
@@ -730,7 +730,7 @@ def test_jax_sig_kernel_grad_matches_pysiglib(device, jitted, dtype, case):
     weights_jax = _as_jax_array(weights, device, dtype)
 
     def loss_fn(path1):
-        k = jax_api.sig_kernel(path1, p2_jax, do)
+        k = jax_api.sig_kernel(path1, p2_jax, dyadic_order=do)
         return jnp.sum(k * weights_jax)
 
     grad_fn = jax.jit(jax.grad(loss_fn)) if jitted else jax.grad(loss_fn)
@@ -761,13 +761,13 @@ def test_jax_sig_kernel_gram_matches_pysiglib(device, jitted, dtype, case):
     p1 = (rng.uniform(size=(b1, l1, dim)) * 0.1).astype(dtype)
     p2 = (rng.uniform(size=(b2, l2, dim)) * 0.1).astype(dtype)
 
-    expected = pysiglib.sig_kernel_gram(p1, p2, do)
+    expected = pysiglib.sig_kernel_gram(p1, p2, dyadic_order=do)
 
     p1_jax = _as_jax_array(p1, device, dtype)
     p2_jax = _as_jax_array(p2, device, dtype)
 
     def fn(a, b):
-        return jax_api.sig_kernel_gram(a, b, do)
+        return jax_api.sig_kernel_gram(a, b, dyadic_order=do)
 
     actual = jax.jit(fn)(p1_jax, p2_jax) if jitted else fn(p1_jax, p2_jax)
     check_close(np.asarray(expected), actual, double_atol=1e-5)
@@ -829,13 +829,13 @@ def test_jax_sig_mmd_matches_pysiglib(device, jitted, dtype, case):
     s1 = (rng.uniform(size=(b1, length, dim)) * 0.1).astype(dtype)
     s2 = (rng.uniform(size=(b2, length, dim)) * 0.1).astype(dtype)
 
-    expected = pysiglib.sig_mmd(s1, s2, do)
+    expected = pysiglib.sig_mmd(s1, s2, dyadic_order=do)
 
     s1_jax = _as_jax_array(s1, device, dtype)
     s2_jax = _as_jax_array(s2, device, dtype)
 
     def fn(a, b):
-        return jax_api.sig_mmd(a, b, do)
+        return jax_api.sig_mmd(a, b, dyadic_order=do)
 
     actual = jax.jit(fn)(s1_jax, s2_jax) if jitted else fn(s1_jax, s2_jax)
     check_close(np.asarray(expected), actual, double_atol=1e-5)

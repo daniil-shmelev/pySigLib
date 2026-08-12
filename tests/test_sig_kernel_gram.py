@@ -32,9 +32,9 @@ def test_sig_kernel_gram_dtypes(device, dtype):
     Y = torch.tensor(FIXTURES["gram_Y"], device=device, dtype=dtype)
     expected = FIXTURES["kernel_gram__do0"]
 
-    kernel2 = pysiglib.sig_kernel_gram(X, Y, 0)
+    kernel2 = pysiglib.sig_kernel_gram(X, Y, dyadic_order=0)
     assert_device(kernel2, device)
-    kernel3 = pysiglib.sig_kernel_gram(X, Y, 0, max_batch=2)
+    kernel3 = pysiglib.sig_kernel_gram(X, Y, dyadic_order=0, max_batch=2)
 
     check_close(expected, kernel2)
     check_close(expected, kernel3)
@@ -46,9 +46,9 @@ def test_sig_kernel_gram_random(device, dyadic_order):
     Y = torch.tensor(FIXTURES["gram_Y"], device=device, dtype=torch.double)
     expected = FIXTURES[f"kernel_gram__do{dyadic_order}"]
 
-    kernel2 = pysiglib.sig_kernel_gram(X, Y, dyadic_order)
+    kernel2 = pysiglib.sig_kernel_gram(X, Y, dyadic_order=dyadic_order)
     assert_device(kernel2, device)
-    kernel3 = pysiglib.sig_kernel_gram(X, Y, dyadic_order, max_batch=2)
+    kernel3 = pysiglib.sig_kernel_gram(X, Y, dyadic_order=dyadic_order, max_batch=2)
 
     check_close(expected, kernel2)
     check_close(expected, kernel3)
@@ -60,9 +60,9 @@ def test_sig_kernel_gram_lead_lag(device, dyadic_order):
     Y = torch.tensor(FIXTURES["gram_Y"], device=device, dtype=torch.double)
     expected = FIXTURES[f"kernel_gram_ll__do{dyadic_order}"]
 
-    kernel2 = pysiglib.sig_kernel_gram(X, Y, dyadic_order, lead_lag=True)
+    kernel2 = pysiglib.sig_kernel_gram(X, Y, dyadic_order=dyadic_order, lead_lag=True)
     assert_device(kernel2, device)
-    kernel3 = pysiglib.sig_kernel_gram(X, Y, dyadic_order, lead_lag=True, max_batch=2)
+    kernel3 = pysiglib.sig_kernel_gram(X, Y, dyadic_order=dyadic_order, lead_lag=True, max_batch=2)
 
     check_close(expected, kernel2)
     check_close(expected, kernel3)

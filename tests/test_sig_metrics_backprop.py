@@ -39,7 +39,7 @@ def sig_score_fd(x1, x2, dyadic_order, time_aug = False, lead_lag = False):
     dim = x1.shape[2]
 
     eps = 1e-10
-    k = pysiglib.sig_score(x1, x2, dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
+    k = pysiglib.sig_score(x1, x2, dyadic_order=dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
     out = np.empty(shape = (batch_size, length, dim))
 
     for b in range(batch_size):
@@ -47,7 +47,7 @@ def sig_score_fd(x1, x2, dyadic_order, time_aug = False, lead_lag = False):
             for d in range(dim):
                 x1_d = deepcopy(x1)
                 x1_d[b,i,d] += eps
-                k_d = pysiglib.sig_score(x1_d, x2, dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
+                k_d = pysiglib.sig_score(x1_d, x2, dyadic_order=dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
                 out[b,i,d] = (k_d - k) / eps
     return out
 
@@ -62,7 +62,7 @@ def expected_sig_score_fd(x1, x2, dyadic_order, time_aug = False, lead_lag = Fal
     dim = x1.shape[2]
 
     eps = 1e-10
-    k = pysiglib.expected_sig_score(x1, x2, dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
+    k = pysiglib.expected_sig_score(x1, x2, dyadic_order=dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
     out = np.empty(shape = (batch_size, length, dim))
 
     for b in range(batch_size):
@@ -70,7 +70,7 @@ def expected_sig_score_fd(x1, x2, dyadic_order, time_aug = False, lead_lag = Fal
             for d in range(dim):
                 x1_d = deepcopy(x1)
                 x1_d[b,i,d] += eps
-                k_d = pysiglib.expected_sig_score(x1_d, x2, dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
+                k_d = pysiglib.expected_sig_score(x1_d, x2, dyadic_order=dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
                 out[b,i,d] = (k_d - k) / eps
     return out
 
@@ -85,7 +85,7 @@ def sig_mmd_fd(x1, x2, dyadic_order, time_aug = False, lead_lag = False):
     dim = x1.shape[2]
 
     eps = 1e-10
-    k = pysiglib.sig_mmd(x1, x2, dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
+    k = pysiglib.sig_mmd(x1, x2, dyadic_order=dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
     out = np.empty(shape = (batch_size, length, dim))
 
     for b in range(batch_size):
@@ -93,7 +93,7 @@ def sig_mmd_fd(x1, x2, dyadic_order, time_aug = False, lead_lag = False):
             for d in range(dim):
                 x1_d = deepcopy(x1)
                 x1_d[b,i,d] += eps
-                k_d = pysiglib.sig_mmd(x1_d, x2, dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
+                k_d = pysiglib.sig_mmd(x1_d, x2, dyadic_order=dyadic_order, time_aug = time_aug, lead_lag = lead_lag)
                 out[b,i,d] = (k_d - k) / eps
     return out
 
@@ -106,7 +106,7 @@ def test_sig_score_backprop_random(device, dyadic_order):
     Y = torch.rand(size=(1, len2, dim), device=device, dtype = torch.double)
 
     d1 = sig_score_fd(X.detach(), Y, dyadic_order)
-    k = pysiglib.torch_api.sig_score(X, Y, dyadic_order)
+    k = pysiglib.torch_api.sig_score(X, Y, dyadic_order=dyadic_order)
     assert_device(k, device)
     k.backward()
     d2 = X.grad
@@ -121,7 +121,7 @@ def test_sig_score_backprop_random_batch(device, dyadic_order):
     Y = torch.rand(size=(4, len2, dim), device=device, dtype = torch.double)
 
     d1 = torch.from_numpy(np.array([sig_score_fd(X.detach(), Y[i], dyadic_order) for i in range(4)])).sum(0)
-    k = pysiglib.torch_api.sig_score(X, Y, dyadic_order)
+    k = pysiglib.torch_api.sig_score(X, Y, dyadic_order=dyadic_order)
     assert_device(k, device)
     k.backward(torch.ones(4, device=device))
     d2 = X.grad
@@ -136,7 +136,7 @@ def test_expected_sig_score_backprop_random(device, dyadic_order):
     Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     d1 = expected_sig_score_fd(X.detach(), Y, dyadic_order)
-    k = pysiglib.torch_api.expected_sig_score(X, Y, dyadic_order)
+    k = pysiglib.torch_api.expected_sig_score(X, Y, dyadic_order=dyadic_order)
     assert_device(k, device)
     k.backward()
     d2 = X.grad
@@ -151,7 +151,7 @@ def test_sig_mmd_backprop_random(device, dyadic_order):
     Y = torch.rand(size=(batch, len2, dim), device=device, dtype = torch.double)
 
     d1 = sig_mmd_fd(X.detach(), Y, dyadic_order)
-    k = pysiglib.torch_api.sig_mmd(X, Y, dyadic_order)
+    k = pysiglib.torch_api.sig_mmd(X, Y, dyadic_order=dyadic_order)
     assert_device(k, device)
     k.backward()
     d2 = X.grad

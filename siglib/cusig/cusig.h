@@ -108,6 +108,48 @@ extern "C" {
 	[[nodiscard]] CUSIG_API int sig_kernel_cuda_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
 
+	/** @defgroup sig_kernel_poly_cuda_functions Polynomial sig kernel CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes polynomial signature kernels from batch gram matrices on the GPU.
+	*
+	* @param gram Pointer to batch gram matrix data on the device, size = `batch_size * (length1 - 1) * (length2 - 1)`.
+	* @param out Pointer to device output, size = `batch_size * (return_grid ? length1 * length2 : 1)`.
+	* @param state Optional device output for incoming cell coefficients, size = `2 * batch_size * (length1 - 1) * (length2 - 1) * (order + 1)`. May be null.
+	* @param batch_size Number of path pairs.
+	* @param dimension Path dimension, retained for API parity with sig_kernel_cuda_f.
+	* @param length1 Length of the first paths.
+	* @param length2 Length of the second paths.
+	* @param order Highest retained polynomial degree, between 2 and 64.
+	* @param return_grid Whether to return the full original-vertex grid.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int sig_kernel_poly_cuda_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
+	/** @brief Double-precision variant of sig_kernel_poly_cuda_f. */
+	[[nodiscard]] CUSIG_API int sig_kernel_poly_cuda_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
+
+	/**
+	* @brief Backpropagates through polynomial signature kernels on the GPU.
+	*
+	* @param gram Pointer to batch gram matrix data on the device, size = `batch_size * (length1 - 1) * (length2 - 1)`.
+	* @param gram_derivs Pointer to device gram derivatives, with the same size as `gram`.
+	* @param output_derivs Pointer to device output derivatives, size = `batch_size * (return_grid ? length1 * length2 : 1)`.
+	* @param state Optional incoming-coefficient state produced by sig_kernel_poly_cuda_f. If null, the state is regenerated.
+	* @param batch_size Number of path pairs.
+	* @param dimension Path dimension, retained for API parity.
+	* @param length1 Length of the first paths.
+	* @param length2 Length of the second paths.
+	* @param order Highest retained polynomial degree, between 2 and 64.
+	* @param return_grid Whether `output_derivs` contains full-grid derivatives.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int sig_kernel_poly_backprop_cuda_f(const float* gram, float* gram_derivs, const float* output_derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
+	/** @brief Double-precision variant of sig_kernel_poly_backprop_cuda_f. */
+	[[nodiscard]] CUSIG_API int sig_kernel_poly_backprop_cuda_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
+	/** @} */
+
 	/** @defgroup branched_sig_kernel_cuda_functions Branched sig kernel CUDA functions
 	* @{
 	*/

@@ -59,7 +59,7 @@ def test_signature_value_error(X, deg):
 ])
 def test_sig_kernel_type_error(x, y, d):
     with pytest.raises(TypeError):
-        pysiglib.sig_kernel(x, y, d)
+        pysiglib.sig_kernel(x, y, dyadic_order=d)
 
 
 @pytest.mark.parametrize("x, y, d", [
@@ -71,7 +71,7 @@ def test_sig_kernel_type_error(x, y, d):
 ])
 def test_sig_kernel_value_error(x, y, d):
     with pytest.raises(ValueError):
-        pysiglib.sig_kernel(x, y, d)
+        pysiglib.sig_kernel(x, y, dyadic_order=d)
 
 def test_signature_n_jobs_zero():
     with pytest.raises(ValueError):
@@ -84,4 +84,4 @@ def test_sig_combine_n_jobs_zero():
 
 def test_sig_kernel_n_jobs_zero():
     with pytest.raises(ValueError):
-        pysiglib.sig_kernel(np.array([[0.], [1.]]), np.array([[0.], [1.]]), 0, n_jobs = 0)
+        pysiglib.sig_kernel(np.array([[0.], [1.]]), np.array([[0.], [1.]]), dyadic_order=0, n_jobs = 0)

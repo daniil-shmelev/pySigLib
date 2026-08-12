@@ -9,8 +9,10 @@ from .sig_kernel import sig_kernel_gram, _ensure_3d
 def sig_score(
         sample : Union[np.ndarray, torch.Tensor],
         y : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Union[int, tuple],
         *,
+        method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
+        order : Optional[int] = None,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -43,11 +45,16 @@ def sig_score(
         ``batch_shape_y`` may be empty (single ``y``) or arbitrary; the score is computed
         independently for each ``y``. Independent of ``sample``'s batch shape.
     :type y: numpy.ndarray | torch.Tensor
-    :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
+    :param dyadic_order: (``method="finite_difference"`` only) If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
-    :type dyadic_order: int | tuple
+    :type dyadic_order: None | int | tuple
+    :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
+    :type method: str
+    :param order: (``method="polynomial"`` only) Highest retained polynomial degree. Must be
+        between 2 and 64. Unsupported for finite differences.
+    :type order: None | int
     :param lam: The parameter :math:`\\lambda` of the generalised signature kernel score (default = 1.0).
     :type lam: float
     :param static_kernel: Static kernel passed to the signature kernel computation. If ``None`` (default), the
@@ -69,7 +76,7 @@ def sig_score(
     :type n_jobs: int
     :param max_batch: Maximum batch size to run in parallel. If the computation is failing
         due to insufficient memory, this parameter should be decreased.
-        If set to -1, the entire batch is computed in parallel.
+        If set to -1, no explicit batch limit is applied.
     :type max_batch: int
     :return: Signature kernel score, of shape ``batch_shape_y`` (or ``(1,)`` if ``y``
         is a single 2D path).
@@ -136,8 +143,8 @@ def sig_score(
     if B < 2:
         raise ValueError("sig_score requires at least 2 sample paths (got {}).".format(B))
 
-    xx = sig_kernel_gram(sample, sample, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    xy = sig_kernel_gram(sample, y, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xx = sig_kernel_gram(sample, sample, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xy = sig_kernel_gram(sample, y, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
@@ -153,8 +160,10 @@ def sig_score(
 def expected_sig_score(
         sample1 : Union[np.ndarray, torch.Tensor],
         sample2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Union[int, tuple],
         *,
+        method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
+        order : Optional[int] = None,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -187,11 +196,16 @@ def expected_sig_score(
         ``(*batch_shape, length_2, dimension)``. Independent of ``sample1``'s batch
         shape.
     :type sample2: numpy.ndarray | torch.Tensor
-    :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
+    :param dyadic_order: (``method="finite_difference"`` only) If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
-    :type dyadic_order: int | tuple
+    :type dyadic_order: None | int | tuple
+    :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
+    :type method: str
+    :param order: (``method="polynomial"`` only) Highest retained polynomial degree. Must be
+        between 2 and 64. Unsupported for finite differences.
+    :type order: None | int
     :param lam: The parameter :math:`\\lambda` of the generalised signature kernel score (default = 1.0).
     :type lam: float
     :param static_kernel: Static kernel passed to the signature kernel computation. If ``None`` (default), the
@@ -213,7 +227,7 @@ def expected_sig_score(
     :type n_jobs: int
     :param max_batch: Maximum batch size to run in parallel. If the computation is failing
         due to insufficient memory, this parameter should be decreased.
-        If set to -1, the entire batch is computed in parallel.
+        If set to -1, no explicit batch limit is applied.
     :type max_batch: int
     :return: Expected signature kernel score, of shape ``(1,)``.
     :rtype: numpy.ndarray | torch.Tensor
@@ -251,14 +265,16 @@ def expected_sig_score(
 
     """
 
-    res = sig_score(sample1, sample2, dyadic_order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
+    res = sig_score(sample1, sample2, dyadic_order=dyadic_order, method=method, order=order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
     return res.mean().reshape(1)
 
 def sig_mmd(
         sample1 : Union[np.ndarray, torch.Tensor],
         sample2 : Union[np.ndarray, torch.Tensor],
-        dyadic_order : Union[int, tuple],
         *,
+        method : str = "finite_difference",
+        dyadic_order : Optional[Union[int, tuple]] = None,
+        order : Optional[int] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -296,11 +312,16 @@ def sig_mmd(
         flattened to a single batch :math:`n` of paths. Independent of ``sample1``'s batch
         shape.
     :type sample2: numpy.ndarray | torch.Tensor
-    :param dyadic_order: If set to a positive integer :math:`\\lambda`, will refine the
+    :param dyadic_order: (``method="finite_difference"`` only) If set to a positive integer :math:`\\lambda`, will refine the
         paths by a factor of :math:`2^\\lambda`. If set to a tuple of positive integers
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
-    :type dyadic_order: int | tuple
+    :type dyadic_order: None | int | tuple
+    :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
+    :type method: str
+    :param order: (``method="polynomial"`` only) Highest retained polynomial degree. Must be
+        between 2 and 64. Unsupported for finite differences.
+    :type order: None | int
     :param static_kernel: Static kernel passed to the signature kernel computation. If ``None`` (default), the
         linear kernel will be used. For details, see the documentation on
         :doc:`static kernels </pages/signature_kernels/static_kernels>`.
@@ -320,7 +341,7 @@ def sig_mmd(
     :type n_jobs: int
     :param max_batch: Maximum batch size to run in parallel. If the computation is failing
         due to insufficient memory, this parameter should be decreased.
-        If set to -1, the entire batch is computed in parallel.
+        If set to -1, no explicit batch limit is applied.
     :type max_batch: int
     :return: Signature MMD
     :rtype: numpy.ndarray | torch.Tensor
@@ -371,9 +392,9 @@ def sig_mmd(
     if n < 2:
         raise ValueError("sig_mmd requires at least 2 paths in sample2 (got {}).".format(n))
 
-    xx = sig_kernel_gram(sample1, sample1, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    xy = sig_kernel_gram(sample1, sample2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
-    yy = sig_kernel_gram(sample2, sample2, dyadic_order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xx = sig_kernel_gram(sample1, sample1, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    xy = sig_kernel_gram(sample1, sample2, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
+    yy = sig_kernel_gram(sample2, sample2, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
     xx_sum = (torch.sum(xx) - torch.trace(xx)) / (m * (m - 1))
     xy_sum = 2. * torch.mean(xy)

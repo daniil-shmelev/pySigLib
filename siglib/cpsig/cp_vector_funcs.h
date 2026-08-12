@@ -279,6 +279,60 @@ FORCE_INLINE double dot_product(const double* a, const double* b, size_t N) {
 	return out;
 }
 
+FORCE_INLINE void dot_product_pair(
+	const float* weights, const float* a, const float* b, size_t N,
+	float& result_a, float& result_b
+) {
+	__m256 sum_a = _mm256_setzero_ps();
+	__m256 sum_b = _mm256_setzero_ps();
+	size_t k = 0;
+	for (; k + 8 <= N; k += 8) {
+		const __m256 w = _mm256_loadu_ps(weights + k);
+		sum_a = _mm256_fmadd_ps(w, _mm256_loadu_ps(a + k), sum_a);
+		sum_b = _mm256_fmadd_ps(w, _mm256_loadu_ps(b + k), sum_b);
+	}
+
+	__m128 sum_a_128 = _mm_add_ps(
+		_mm256_castps256_ps128(sum_a), _mm256_extractf128_ps(sum_a, 1));
+	__m128 sum_b_128 = _mm_add_ps(
+		_mm256_castps256_ps128(sum_b), _mm256_extractf128_ps(sum_b, 1));
+	sum_a_128 = _mm_hadd_ps(sum_a_128, sum_a_128);
+	sum_a_128 = _mm_hadd_ps(sum_a_128, sum_a_128);
+	sum_b_128 = _mm_hadd_ps(sum_b_128, sum_b_128);
+	sum_b_128 = _mm_hadd_ps(sum_b_128, sum_b_128);
+	result_a = _mm_cvtss_f32(sum_a_128);
+	result_b = _mm_cvtss_f32(sum_b_128);
+	for (; k < N; ++k) {
+		result_a += weights[k] * a[k];
+		result_b += weights[k] * b[k];
+	}
+}
+
+FORCE_INLINE void dot_product_pair(
+	const double* weights, const double* a, const double* b, size_t N,
+	double& result_a, double& result_b
+) {
+	__m256d sum_a = _mm256_setzero_pd();
+	__m256d sum_b = _mm256_setzero_pd();
+	size_t k = 0;
+	for (; k + 4 <= N; k += 4) {
+		const __m256d w = _mm256_loadu_pd(weights + k);
+		sum_a = _mm256_fmadd_pd(w, _mm256_loadu_pd(a + k), sum_a);
+		sum_b = _mm256_fmadd_pd(w, _mm256_loadu_pd(b + k), sum_b);
+	}
+
+	double values_a[4];
+	double values_b[4];
+	_mm256_storeu_pd(values_a, sum_a);
+	_mm256_storeu_pd(values_b, sum_b);
+	result_a = values_a[0] + values_a[1] + values_a[2] + values_a[3];
+	result_b = values_b[0] + values_b[1] + values_b[2] + values_b[3];
+	for (; k < N; ++k) {
+		result_a += weights[k] * a[k];
+		result_b += weights[k] * b[k];
+	}
+}
+
 FORCE_INLINE float dot_product_mult_add(
 	const float* a, const float* b, float* out, float scalar, size_t N
 ) {
@@ -803,6 +857,19 @@ FORCE_INLINE void vec4_bracket_grad(
 #endif
 
 #endif
+
+template<std::floating_point T>
+FORCE_INLINE void dot_product_pair(
+	const T* weights, const T* a, const T* b, size_t size,
+	T& result_a, T& result_b
+) {
+	result_a = static_cast<T>(0);
+	result_b = static_cast<T>(0);
+	for (size_t k = 0; k < size; ++k) {
+		result_a += weights[k] * a[k];
+		result_b += weights[k] * b[k];
+	}
+}
 
 #ifndef VEC
 
