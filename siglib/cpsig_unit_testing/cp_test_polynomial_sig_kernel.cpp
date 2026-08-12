@@ -39,13 +39,13 @@ void check_golden(
 
 
 TEST(polynomialSigKernelTest, PinnedGoldenOneTile) {
-	check_golden(polysig_kernel_d, { 2.0 }, 2, 2,
+	check_golden(sig_kernel_poly_d, { 2.0 }, 2, 2,
 		{ 4.0, 4.252222222222223, 4.252350718065004, 4.252350879501321 });
 
-	check_golden(polysig_kernel_d, { -0.75 }, 2, 2,
+	check_golden(sig_kernel_poly_d, { -0.75 }, 2, 2,
 		{ 0.390625, 0.3794390869140625, 0.3794394249818762, 0.37943942504289163 });
 
-	check_golden(polysig_kernel_d, { 0.0 }, 2, 2, { 1.0, 1.0, 1.0, 1.0 });
+	check_golden(sig_kernel_poly_d, { 0.0 }, 2, 2, { 1.0, 1.0, 1.0, 1.0 });
 }
 
 TEST(polynomialSigKernelTest, PinnedGoldenRectangular) {
@@ -54,7 +54,7 @@ TEST(polynomialSigKernelTest, PinnedGoldenRectangular) {
 		0.02, 0.055,
 		0.065, -0.08
 	};
-	check_golden(polysig_kernel_d, gram, 4, 3,
+	check_golden(sig_kernel_poly_d, gram, 4, 3,
 		{ 0.9868383588452052, 0.9868046051227348, 0.9868046051301949, 0.9868046051301949 });
 }
 
@@ -78,8 +78,8 @@ TEST(polynomialSigKernelTest, PinnedGoldenBatchAndThreads) {
 	for (uint64_t i = 0; i < 4; ++i) {
 		std::vector<double> serial(2);
 		std::vector<double> parallel(2);
-		ASSERT_EQ(polysig_kernel_d(gram.data(), serial.data(), nullptr, 2, 2, 4, 3, orders[i], false, 1), 0);
-		ASSERT_EQ(polysig_kernel_d(gram.data(), parallel.data(), nullptr, 2, 2, 4, 3, orders[i], false, 2), 0);
+		ASSERT_EQ(sig_kernel_poly_d(gram.data(), serial.data(), nullptr, 2, 2, 4, 3, orders[i], false, 1), 0);
+		ASSERT_EQ(sig_kernel_poly_d(gram.data(), parallel.data(), nullptr, 2, 2, 4, 3, orders[i], false, 2), 0);
 		for (uint64_t batch = 0; batch < 2; ++batch) {
 			EXPECT_NEAR(serial[batch], polysig_expected[i][batch], 2e-14);
 			EXPECT_DOUBLE_EQ(serial[batch], parallel[batch]);
@@ -94,22 +94,22 @@ TEST(polynomialSigKernelTest, Float32MatchesFloat64) {
 		0.065f, -0.08f
 	};
 	float polysig_out = 0;
-	ASSERT_EQ(polysig_kernel_f(gram.data(), &polysig_out, nullptr, 1, 2, 4, 3, 7, false, 1), 0);
+	ASSERT_EQ(sig_kernel_poly_f(gram.data(), &polysig_out, nullptr, 1, 2, 4, 3, 7, false, 1), 0);
 	EXPECT_NEAR(polysig_out, 0.9868046051301949, 2e-6);
 }
 
 TEST(polynomialSigKernelTest, TrivialAndNullGram) {
 	std::vector<double> out(3, 0);
-	EXPECT_EQ(polysig_kernel_d(nullptr, out.data(), nullptr, 3, 2, 1, 5, 7, false, 2), 0);
+	EXPECT_EQ(sig_kernel_poly_d(nullptr, out.data(), nullptr, 3, 2, 1, 5, 7, false, 2), 0);
 	EXPECT_EQ(out, std::vector<double>({ 1.0, 1.0, 1.0 }));
-	EXPECT_EQ(polysig_kernel_d(nullptr, out.data(), nullptr, 3, 2, 5, 5, 7, false, 2), 2);
+	EXPECT_EQ(sig_kernel_poly_d(nullptr, out.data(), nullptr, 3, 2, 5, 5, 7, false, 2), 2);
 }
 
 TEST(polynomialSigKernelTest, RejectsInvalidOrder) {
 	double gram = 0;
 	double out = 0;
-	EXPECT_EQ(polysig_kernel_d(&gram, &out, nullptr, 1, 1, 2, 2, 1, false, 1), 2);
-	EXPECT_EQ(polysig_kernel_d(&gram, &out, nullptr, 1, 1, 2, 2, 65, false, 1), 2);
+	EXPECT_EQ(sig_kernel_poly_d(&gram, &out, nullptr, 1, 1, 2, 2, 1, false, 1), 2);
+	EXPECT_EQ(sig_kernel_poly_d(&gram, &out, nullptr, 1, 1, 2, 2, 65, false, 1), 2);
 }
 
 TEST(polynomialSigKernelTest, GridEndsAtScalarAndStoresState) {
@@ -121,8 +121,8 @@ TEST(polynomialSigKernelTest, GridEndsAtScalarAndStoresState) {
 	std::vector<double> grid(12);
 	std::vector<double> state(2 * 6 * 8);
 	double scalar = 0;
-	ASSERT_EQ(polysig_kernel_d(gram.data(), &scalar, nullptr, 1, 2, 4, 3, 7, false, 1), 0);
-	ASSERT_EQ(polysig_kernel_d(gram.data(), grid.data(), state.data(), 1, 2, 4, 3, 7, true, 1), 0);
+	ASSERT_EQ(sig_kernel_poly_d(gram.data(), &scalar, nullptr, 1, 2, 4, 3, 7, false, 1), 0);
+	ASSERT_EQ(sig_kernel_poly_d(gram.data(), grid.data(), state.data(), 1, 2, 4, 3, 7, true, 1), 0);
 	EXPECT_DOUBLE_EQ(grid.back(), scalar);
 	for (uint64_t j = 0; j < 3; ++j)
 		EXPECT_DOUBLE_EQ(grid[j], 1.0);
@@ -147,8 +147,8 @@ TEST(polynomialSigKernelTest, BackpropMatchesFiniteDifferences) {
 		-1.0, 1.1, -1.2
 	};
 	std::vector<double> gram_derivs(6);
-	ASSERT_EQ(polysig_kernel_d(gram.data(), grid.data(), state.data(), 1, 2, 4, 3, 7, true, 1), 0);
-	ASSERT_EQ(polysig_kernel_backprop_d(
+	ASSERT_EQ(sig_kernel_poly_d(gram.data(), grid.data(), state.data(), 1, 2, 4, 3, 7, true, 1), 0);
+	ASSERT_EQ(sig_kernel_poly_backprop_d(
 		gram.data(), gram_derivs.data(), output_derivs.data(), state.data(),
 		1, 2, 4, 3, 7, true, 1), 0);
 
@@ -157,10 +157,10 @@ TEST(polynomialSigKernelTest, BackpropMatchesFiniteDifferences) {
 		const double original = gram[k];
 		gram[k] = original + epsilon;
 		std::vector<double> plus(12);
-		ASSERT_EQ(polysig_kernel_d(gram.data(), plus.data(), nullptr, 1, 2, 4, 3, 7, true, 1), 0);
+		ASSERT_EQ(sig_kernel_poly_d(gram.data(), plus.data(), nullptr, 1, 2, 4, 3, 7, true, 1), 0);
 		gram[k] = original - epsilon;
 		std::vector<double> minus(12);
-		ASSERT_EQ(polysig_kernel_d(gram.data(), minus.data(), nullptr, 1, 2, 4, 3, 7, true, 1), 0);
+		ASSERT_EQ(sig_kernel_poly_d(gram.data(), minus.data(), nullptr, 1, 2, 4, 3, 7, true, 1), 0);
 		gram[k] = original;
 		double expected = 0;
 		for (uint64_t p = 0; p < grid.size(); ++p)
@@ -169,7 +169,7 @@ TEST(polynomialSigKernelTest, BackpropMatchesFiniteDifferences) {
 	}
 
 	std::vector<double> regenerated_derivs(6);
-	ASSERT_EQ(polysig_kernel_backprop_d(
+	ASSERT_EQ(sig_kernel_poly_backprop_d(
 		gram.data(), regenerated_derivs.data(), output_derivs.data(), nullptr,
 		1, 2, 4, 3, 7, true, 1), 0);
 	EXPECT_EQ(gram_derivs, regenerated_derivs);

@@ -91,7 +91,7 @@ static void release_polysig_tables_() {
 	cache.clear();
 }
 
-void release_polysig_kernel_state() {
+void release_sig_kernel_poly_state() {
 	std::lock_guard<std::mutex> lock(polysig_table_cache_mutex_);
 	int original_device = 0;
 	const bool restore_device = cudaGetDevice(&original_device) == cudaSuccess;
@@ -667,7 +667,7 @@ static void launch_polysig_backprop_tiles_(
 }
 
 template<typename T>
-static void polysig_kernel_cuda_(
+static void sig_kernel_poly_cuda_(
 	const T* gram,
 	T* out,
 	T* state,
@@ -679,15 +679,15 @@ static void polysig_kernel_cuda_(
 	bool return_grid
 ) {
 	if (dimension == 0)
-		throw std::invalid_argument("polysig_kernel_cuda: path dimension must be positive");
+		throw std::invalid_argument("sig_kernel_poly_cuda: path dimension must be positive");
 	if (length1 == 0 || length2 == 0)
-		throw std::invalid_argument("polysig_kernel_cuda: paths must have length >= 1");
+		throw std::invalid_argument("sig_kernel_poly_cuda: paths must have length >= 1");
 	if (order < 2 || order > 64)
-		throw std::invalid_argument("polysig_kernel_cuda: order must be between 2 and 64");
+		throw std::invalid_argument("sig_kernel_poly_cuda: order must be between 2 and 64");
 	if (batch_size == 0)
 		return;
 	if (!out)
-		throw std::invalid_argument("polysig_kernel_cuda: out must not be null");
+		throw std::invalid_argument("sig_kernel_poly_cuda: out must not be null");
 
 	const uint64_t rows = length1 - 1;
 	const uint64_t cols = length2 - 1;
@@ -700,7 +700,7 @@ static void polysig_kernel_cuda_(
 		return;
 	}
 	if (!gram)
-		throw std::invalid_argument("polysig_kernel_cuda: gram must not be null");
+		throw std::invalid_argument("sig_kernel_poly_cuda: gram must not be null");
 
 	const uint64_t size = order + 1;
 	const uint64_t slots = size + 1;
@@ -711,7 +711,7 @@ static void polysig_kernel_cuda_(
 		tile_width /= 2;
 	if (static_cast<size_t>(4 * slots * tile_width) * sizeof(T) > smem_limits.optin_bytes)
 		throw std::invalid_argument(
-			"polysig_kernel_cuda: insufficient shared memory for this order");
+			"sig_kernel_poly_cuda: insufficient shared memory for this order");
 
 	const uint64_t tile_rows = (rows + tile_width - 1) / tile_width;
 	const uint64_t tile_cols = (cols + tile_width - 1) / tile_width;
@@ -753,7 +753,7 @@ static void polysig_kernel_cuda_(
 }
 
 template<typename T>
-static void polysig_kernel_backprop_cuda_(
+static void sig_kernel_poly_backprop_cuda_(
 	const T* gram,
 	T* gram_derivs,
 	const T* output_derivs,
@@ -767,24 +767,24 @@ static void polysig_kernel_backprop_cuda_(
 ) {
 	if (dimension == 0)
 		throw std::invalid_argument(
-			"polysig_kernel_backprop_cuda: path dimension must be positive");
+			"sig_kernel_poly_backprop_cuda: path dimension must be positive");
 	if (length1 == 0 || length2 == 0)
 		throw std::invalid_argument(
-			"polysig_kernel_backprop_cuda: paths must have length >= 1");
+			"sig_kernel_poly_backprop_cuda: paths must have length >= 1");
 	if (order < 2 || order > 64)
 		throw std::invalid_argument(
-			"polysig_kernel_backprop_cuda: order must be between 2 and 64");
+			"sig_kernel_poly_backprop_cuda: order must be between 2 and 64");
 	if (batch_size == 0 || length1 == 1 || length2 == 1)
 		return;
 	if (!gram)
 		throw std::invalid_argument(
-			"polysig_kernel_backprop_cuda: gram must not be null");
+			"sig_kernel_poly_backprop_cuda: gram must not be null");
 	if (!gram_derivs)
 		throw std::invalid_argument(
-			"polysig_kernel_backprop_cuda: gram_derivs must not be null");
+			"sig_kernel_poly_backprop_cuda: gram_derivs must not be null");
 	if (!output_derivs)
 		throw std::invalid_argument(
-			"polysig_kernel_backprop_cuda: output_derivs must not be null");
+			"sig_kernel_poly_backprop_cuda: output_derivs must not be null");
 
 	const uint64_t rows = length1 - 1;
 	const uint64_t cols = length2 - 1;
@@ -792,15 +792,15 @@ static void polysig_kernel_backprop_cuda_(
 	const size_t max_elements = std::numeric_limits<size_t>::max() / sizeof(T);
 	if (cols > max_elements / rows)
 		throw std::overflow_error(
-			"polysig_kernel_backprop_cuda: grid size overflow");
+			"sig_kernel_poly_backprop_cuda: grid size overflow");
 	const uint64_t cells = rows * cols;
 	if (cells > max_elements / (2 * size))
 		throw std::overflow_error(
-			"polysig_kernel_backprop_cuda: state size overflow");
+			"sig_kernel_poly_backprop_cuda: state size overflow");
 	const size_t state_batch_size = static_cast<size_t>(2 * cells * size);
 	if (batch_size > max_elements / state_batch_size)
 		throw std::overflow_error(
-			"polysig_kernel_backprop_cuda: batch state size overflow");
+			"sig_kernel_poly_backprop_cuda: batch state size overflow");
 
 	CudaBuf<T> regenerated_state;
 	CudaBuf<T> ignored_output;
@@ -808,7 +808,7 @@ static void polysig_kernel_backprop_cuda_(
 		regenerated_state = CudaBuf<T>(
 			static_cast<size_t>(batch_size) * state_batch_size * sizeof(T));
 		ignored_output = CudaBuf<T>(static_cast<size_t>(batch_size) * sizeof(T));
-		polysig_kernel_cuda_(
+		sig_kernel_poly_cuda_(
 			gram, ignored_output.get(), regenerated_state.get(), batch_size,
 			dimension, length1, length2, order, false);
 		state = regenerated_state.get();
@@ -823,7 +823,7 @@ static void polysig_kernel_backprop_cuda_(
 	if (static_cast<size_t>(4 * size * tile_width) * sizeof(T)
 		> smem_limits.optin_bytes)
 		throw std::invalid_argument(
-			"polysig_kernel_backprop_cuda: insufficient shared memory for this order");
+			"sig_kernel_poly_backprop_cuda: insufficient shared memory for this order");
 
 	const uint64_t tile_rows = (rows + tile_width - 1) / tile_width;
 	const uint64_t tile_cols = (cols + tile_width - 1) / tile_width;
@@ -864,38 +864,38 @@ static void polysig_kernel_backprop_cuda_(
 
 extern "C" {
 
-	CUSIG_API int polysig_kernel_cuda_f(
+	CUSIG_API int sig_kernel_poly_cuda_f(
 		const float* gram, float* out, float* state,
 		uint64_t batch_size, uint64_t dimension,
 		uint64_t length1, uint64_t length2, uint64_t order, bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(polysig_kernel_cuda_<float>(
+		CUSIG_SAFE_CALL(sig_kernel_poly_cuda_<float>(
 			gram, out, state, batch_size, dimension, length1, length2, order, return_grid));
 	}
 
-	CUSIG_API int polysig_kernel_cuda_d(
+	CUSIG_API int sig_kernel_poly_cuda_d(
 		const double* gram, double* out, double* state,
 		uint64_t batch_size, uint64_t dimension,
 		uint64_t length1, uint64_t length2, uint64_t order, bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(polysig_kernel_cuda_<double>(
+		CUSIG_SAFE_CALL(sig_kernel_poly_cuda_<double>(
 			gram, out, state, batch_size, dimension, length1, length2, order, return_grid));
 	}
 
-	CUSIG_API int polysig_kernel_backprop_cuda_f(
+	CUSIG_API int sig_kernel_poly_backprop_cuda_f(
 		const float* gram, float* gram_derivs, const float* output_derivs,
 		const float* state, uint64_t batch_size, uint64_t dimension,
 		uint64_t length1, uint64_t length2, uint64_t order,
 		bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(polysig_kernel_backprop_cuda_<float>(
+		CUSIG_SAFE_CALL(sig_kernel_poly_backprop_cuda_<float>(
 			gram, gram_derivs, output_derivs, state, batch_size, dimension,
 			length1, length2, order, return_grid));
 	}
 
-	CUSIG_API int polysig_kernel_backprop_cuda_d(
+	CUSIG_API int sig_kernel_poly_backprop_cuda_d(
 		const double* gram, double* gram_derivs, const double* output_derivs,
 		const double* state, uint64_t batch_size, uint64_t dimension,
 		uint64_t length1, uint64_t length2, uint64_t order,
 		bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(polysig_kernel_backprop_cuda_<double>(
+		CUSIG_SAFE_CALL(sig_kernel_poly_backprop_cuda_<double>(
 			gram, gram_derivs, output_derivs, state, batch_size, dimension,
 			length1, length2, order, return_grid));
 	}

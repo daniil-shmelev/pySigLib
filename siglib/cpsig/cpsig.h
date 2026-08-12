@@ -495,13 +495,13 @@ extern "C" {
 	* @param n_jobs Number of threads used across independent batch pairs.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int polysig_kernel_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
-	/** @brief Double-precision variant of polysig_kernel_f. */
-	[[nodiscard]] CPSIG_API int polysig_kernel_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
-	/** @brief Backpropagates through polysig_kernel_f with respect to gram. */
-	[[nodiscard]] CPSIG_API int polysig_kernel_backprop_f(const float* gram, float* gram_derivs, const float* output_derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
-	/** @brief Double-precision variant of polysig_kernel_backprop_f. */
-	[[nodiscard]] CPSIG_API int polysig_kernel_backprop_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_kernel_poly_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @brief Double-precision variant of sig_kernel_poly_f. */
+	[[nodiscard]] CPSIG_API int sig_kernel_poly_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @brief Backpropagates through sig_kernel_poly_f with respect to gram. */
+	[[nodiscard]] CPSIG_API int sig_kernel_poly_backprop_f(const float* gram, float* gram_derivs, const float* output_derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @brief Double-precision variant of sig_kernel_poly_backprop_f. */
+	[[nodiscard]] CPSIG_API int sig_kernel_poly_backprop_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup branched_sig_kernel_functions Branched signature kernel functions

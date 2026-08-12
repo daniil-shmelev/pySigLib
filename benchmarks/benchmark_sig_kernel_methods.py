@@ -91,8 +91,8 @@ def load_cpsig(repo_root):
     polynomial_args = (
         POINTER(c_double), POINTER(c_double), POINTER(c_double), c_uint64,
         c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_int)
-    library.polysig_kernel_d.argtypes = polynomial_args
-    library.polysig_kernel_d.restype = c_int
+    library.sig_kernel_poly_d.argtypes = polynomial_args
+    library.sig_kernel_poly_d.restype = c_int
     library.signature_d.argtypes = (
         POINTER(c_double), POINTER(c_double), c_uint64, c_uint64,
         c_uint64, c_uint64, c_bool, c_bool, c_double, c_bool,
@@ -210,7 +210,7 @@ def make_solver_call(library, method, gram, segments, parameter):
                 raise RuntimeError("sig_kernel_d failed with status " + str(status))
             return out[0]
     else:
-        native = library.polysig_kernel_d
+        native = library.sig_kernel_poly_d
 
         def call():
             status = native(

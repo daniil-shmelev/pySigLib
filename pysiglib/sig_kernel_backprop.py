@@ -26,10 +26,10 @@ from .sig_kernel import sig_kernel, _ensure_3d, _parse_sig_kernel_method
 from .param_checks import check_type, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (
-    CPSIG_POLYSIG_KERNEL_BACKPROP,
+    CPSIG_SIG_KERNEL_POLY_BACKPROP,
     CPSIG_SIG_KERNEL_BACKPROP,
     DTYPES,
-    CUSIG_POLYSIG_KERNEL_BACKPROP_CUDA,
+    CUSIG_SIG_KERNEL_POLY_BACKPROP_CUDA,
     CUSIG_SIG_KERNEL_BACKPROP_CUDA,
 )
 from .data_handlers import MultiplePathInputHandler, ScalarInputHandler, GridOutputHandler, PathInputHandler
@@ -55,12 +55,12 @@ def gram_deriv(
     if method == "polynomial":
         state_ptr = None if state is None else cast(state.data_ptr(), POINTER(DTYPES[data.dtype]))
         if data.device == "cpu":
-            err_code = CPSIG_POLYSIG_KERNEL_BACKPROP[data.dtype](
+            err_code = CPSIG_SIG_KERNEL_POLY_BACKPROP[data.dtype](
                 gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
                 data.batch_size, data.dimension, data.length[0], data.length[1],
                 order, return_grid, n_jobs)
         else:
-            err_code = CUSIG_POLYSIG_KERNEL_BACKPROP_CUDA[data.dtype](
+            err_code = CUSIG_SIG_KERNEL_POLY_BACKPROP_CUDA[data.dtype](
                 gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
                 data.batch_size, data.dimension, data.length[0], data.length[1],
                 order, return_grid)

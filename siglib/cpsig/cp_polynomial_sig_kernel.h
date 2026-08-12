@@ -196,7 +196,7 @@ void polynomial_sig_kernel_pair_(
 }
 
 template<std::floating_point T>
-void polysig_kernel_pair_dispatch_(
+void sig_kernel_poly_pair_dispatch_(
 	const T* RESTRICT gram,
 	T* RESTRICT out,
 	T* RESTRICT state,
@@ -300,7 +300,7 @@ void polynomial_sig_kernel_backprop_pair_(
 	T* const regenerated_state = has_state ? nullptr : workspace.data();
 	if (!has_state) {
 		T ignored;
-		polysig_kernel_pair_dispatch_<T>(
+		sig_kernel_poly_pair_dispatch_<T>(
 			gram, &ignored, regenerated_state, length1, length2, false, tables);
 		state = regenerated_state;
 	}
@@ -341,7 +341,7 @@ void polynomial_sig_kernel_backprop_pair_(
 }
 
 template<std::floating_point T>
-void polysig_kernel_backprop_pair_dispatch_(
+void sig_kernel_poly_backprop_pair_dispatch_(
 	const T* RESTRICT gram,
 	T* RESTRICT gram_derivs,
 	const T* RESTRICT output_derivs,
@@ -413,7 +413,7 @@ void polynomial_sig_kernel_(
 }
 
 template<std::floating_point T>
-void polysig_kernel_(
+void sig_kernel_poly_(
 	const T* gram,
 	T* out,
 	T* state,
@@ -432,13 +432,13 @@ void polysig_kernel_(
 	if (order < 2 || order > 64)
 		throw std::invalid_argument("signature kernel polynomial order must be between 2 and 64");
 	const polysig_tables<T> tables(order);
-	polynomial_sig_kernel_<T, polysig_tables<T>, polysig_kernel_pair_dispatch_<T>>(
+	polynomial_sig_kernel_<T, polysig_tables<T>, sig_kernel_poly_pair_dispatch_<T>>(
 		gram, out, state, batch_size, dimension, length1, length2, order,
 		return_grid, n_jobs, tables);
 }
 
 template<std::floating_point T>
-void polysig_kernel_backprop_(
+void sig_kernel_poly_backprop_(
 	const T* gram,
 	T* gram_derivs,
 	const T* output_derivs,
@@ -473,7 +473,7 @@ void polysig_kernel_backprop_(
 		const uint64_t state_length = 2 * gram_length * tables.size;
 		auto kernel_func = [&](const T* const gram_ptr, T* const gram_derivs_ptr,
 			const T* const output_derivs_ptr, const T* const state_ptr) {
-			polysig_kernel_backprop_pair_dispatch_<T>(
+			sig_kernel_poly_backprop_pair_dispatch_<T>(
 				gram_ptr, gram_derivs_ptr, output_derivs_ptr, state_ptr,
 				length1, length2, return_grid, tables);
 		};
@@ -484,7 +484,7 @@ void polysig_kernel_backprop_(
 	else {
 		auto kernel_func = [&](const T* const gram_ptr, T* const gram_derivs_ptr,
 			const T* const output_derivs_ptr) {
-			polysig_kernel_backprop_pair_dispatch_<T>(
+			sig_kernel_poly_backprop_pair_dispatch_<T>(
 				gram_ptr, gram_derivs_ptr, output_derivs_ptr, nullptr,
 				length1, length2, return_grid, tables);
 		};

@@ -56,26 +56,26 @@ void check_polynomial_sig_kernel_backprop_cuda_(bool return_grid) {
 
     int err = 0;
     if constexpr (std::is_same_v<T, float>) {
-        err = polysig_kernel_cuda_f(device_gram, device_out, device_state,
+        err = sig_kernel_poly_cuda_f(device_gram, device_out, device_state,
             batch_size, 2, length1, length2, order, return_grid);
         EXPECT_EQ(err, 0);
-        err = polysig_kernel_backprop_cuda_f(
+        err = sig_kernel_poly_backprop_cuda_f(
             device_gram, device_analytic, device_output_derivs, device_state,
             batch_size, 2, length1, length2, order, return_grid);
         EXPECT_EQ(err, 0);
-        err = polysig_kernel_backprop_cuda_f(
+        err = sig_kernel_poly_backprop_cuda_f(
             device_gram, device_regenerated, device_output_derivs, nullptr,
             batch_size, 2, length1, length2, order, return_grid);
     }
     else {
-        err = polysig_kernel_cuda_d(device_gram, device_out, device_state,
+        err = sig_kernel_poly_cuda_d(device_gram, device_out, device_state,
             batch_size, 2, length1, length2, order, return_grid);
         EXPECT_EQ(err, 0);
-        err = polysig_kernel_backprop_cuda_d(
+        err = sig_kernel_poly_backprop_cuda_d(
             device_gram, device_analytic, device_output_derivs, device_state,
             batch_size, 2, length1, length2, order, return_grid);
         EXPECT_EQ(err, 0);
-        err = polysig_kernel_backprop_cuda_d(
+        err = sig_kernel_poly_backprop_cuda_d(
             device_gram, device_regenerated, device_output_derivs, nullptr,
             batch_size, 2, length1, length2, order, return_grid);
     }
@@ -95,10 +95,10 @@ void check_polynomial_sig_kernel_backprop_cuda_(bool return_grid) {
         ASSERT_EQ(cudaMemcpy(device_gram, gram.data(), gram_size * sizeof(T),
             cudaMemcpyHostToDevice), cudaSuccess);
         if constexpr (std::is_same_v<T, float>)
-            err = polysig_kernel_cuda_f(device_gram, device_out, nullptr,
+            err = sig_kernel_poly_cuda_f(device_gram, device_out, nullptr,
                 batch_size, 2, length1, length2, order, return_grid);
         else
-            err = polysig_kernel_cuda_d(device_gram, device_out, nullptr,
+            err = sig_kernel_poly_cuda_d(device_gram, device_out, nullptr,
                 batch_size, 2, length1, length2, order, return_grid);
         EXPECT_EQ(err, 0);
         ASSERT_EQ(cudaMemcpy(plus_output.data(), device_out,
@@ -108,10 +108,10 @@ void check_polynomial_sig_kernel_backprop_cuda_(bool return_grid) {
         ASSERT_EQ(cudaMemcpy(device_gram, gram.data(), gram_size * sizeof(T),
             cudaMemcpyHostToDevice), cudaSuccess);
         if constexpr (std::is_same_v<T, float>)
-            err = polysig_kernel_cuda_f(device_gram, device_out, nullptr,
+            err = sig_kernel_poly_cuda_f(device_gram, device_out, nullptr,
                 batch_size, 2, length1, length2, order, return_grid);
         else
-            err = polysig_kernel_cuda_d(device_gram, device_out, nullptr,
+            err = sig_kernel_poly_cuda_d(device_gram, device_out, nullptr,
                 batch_size, 2, length1, length2, order, return_grid);
         EXPECT_EQ(err, 0);
         ASSERT_EQ(cudaMemcpy(minus_output.data(), device_out,
@@ -156,7 +156,7 @@ TEST(polynomialSigKernelCudaTest, PinnedGoldenValues) {
     };
     for (uint64_t i = 0; i < 4; ++i) {
         std::vector<double> true_values = { expected[i][0], expected[i][1] };
-        check_result_typed(polysig_kernel_cuda_d, gram, true_values,
+        check_result_typed(sig_kernel_poly_cuda_d, gram, true_values,
 			static_cast<double*>(nullptr),
             static_cast<uint64_t>(2), static_cast<uint64_t>(2),
             static_cast<uint64_t>(4), static_cast<uint64_t>(3),
@@ -176,7 +176,7 @@ TEST(polynomialSigKernelCudaTest, FullGrid) {
         1.0, 1.0609060225540898, 1.0022860490961014,
         1.0, 1.1289609294541276, 0.98680460513019486
     };
-    check_result_typed(polysig_kernel_cuda_d, gram, expected,
+    check_result_typed(sig_kernel_poly_cuda_d, gram, expected,
 		static_cast<double*>(nullptr),
         static_cast<uint64_t>(1), static_cast<uint64_t>(2),
         static_cast<uint64_t>(4), static_cast<uint64_t>(3),
@@ -190,7 +190,7 @@ TEST(polynomialSigKernelCudaTest, FloatAndTrivialPaths) {
         0.065f, -0.08f
     };
     std::vector<float> expected = { 0.9868046f };
-    check_result_typed(polysig_kernel_cuda_f, gram, expected,
+    check_result_typed(sig_kernel_poly_cuda_f, gram, expected,
 		static_cast<float*>(nullptr),
         static_cast<uint64_t>(1), static_cast<uint64_t>(2),
         static_cast<uint64_t>(4), static_cast<uint64_t>(3),
@@ -198,7 +198,7 @@ TEST(polynomialSigKernelCudaTest, FloatAndTrivialPaths) {
 
     std::vector<double> empty;
     std::vector<double> ones(5, 1.0);
-    check_result_typed(polysig_kernel_cuda_d, empty, ones,
+    check_result_typed(sig_kernel_poly_cuda_d, empty, ones,
 		static_cast<double*>(nullptr),
         static_cast<uint64_t>(5), static_cast<uint64_t>(1),
         static_cast<uint64_t>(1), static_cast<uint64_t>(6),
@@ -210,8 +210,8 @@ TEST(polynomialSigKernelCudaTest, RejectsInvalidOrder) {
     double* out = nullptr;
     ASSERT_EQ(cudaMalloc(&gram, sizeof(double)), cudaSuccess);
     ASSERT_EQ(cudaMalloc(&out, sizeof(double)), cudaSuccess);
-    EXPECT_EQ(polysig_kernel_cuda_d(gram, out, nullptr, 1, 1, 2, 2, 1, false), 2);
-    EXPECT_EQ(polysig_kernel_cuda_d(gram, out, nullptr, 1, 1, 2, 2, 65, false), 2);
+    EXPECT_EQ(sig_kernel_poly_cuda_d(gram, out, nullptr, 1, 1, 2, 2, 1, false), 2);
+    EXPECT_EQ(sig_kernel_poly_cuda_d(gram, out, nullptr, 1, 1, 2, 2, 65, false), 2);
     cudaFree(gram);
     cudaFree(out);
 }

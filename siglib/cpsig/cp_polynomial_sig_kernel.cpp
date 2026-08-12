@@ -21,19 +21,19 @@
 
 extern "C" {
 
-	CPSIG_API int polysig_kernel_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
-		SAFE_CALL(polysig_kernel_<float>(gram, out, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
+	CPSIG_API int sig_kernel_poly_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
+		SAFE_CALL(sig_kernel_poly_<float>(gram, out, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
 	}
 
-	CPSIG_API int polysig_kernel_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
-		SAFE_CALL(polysig_kernel_<double>(gram, out, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
+	CPSIG_API int sig_kernel_poly_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
+		SAFE_CALL(sig_kernel_poly_<double>(gram, out, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
 	}
 
-	CPSIG_API int polysig_kernel_backprop_f(const float* gram, float* gram_derivs, const float* output_derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
-		SAFE_CALL(polysig_kernel_backprop_<float>(gram, gram_derivs, output_derivs, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
+	CPSIG_API int sig_kernel_poly_backprop_f(const float* gram, float* gram_derivs, const float* output_derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
+		SAFE_CALL(sig_kernel_poly_backprop_<float>(gram, gram_derivs, output_derivs, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
 	}
 
-	CPSIG_API int polysig_kernel_backprop_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
-		SAFE_CALL(polysig_kernel_backprop_<double>(gram, gram_derivs, output_derivs, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
+	CPSIG_API int sig_kernel_poly_backprop_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
+		SAFE_CALL(sig_kernel_poly_backprop_<double>(gram, gram_derivs, output_derivs, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
 	}
 }

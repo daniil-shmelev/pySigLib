@@ -82,8 +82,8 @@ from ._ffi import (
     log_sig_combine_backprop_ffi_call,
     sig_kernel_pde_ffi_call,
     sig_kernel_pde_backprop_ffi_call,
-    polysig_kernel_pde_ffi_call,
-    polysig_kernel_pde_backprop_ffi_call,
+    sig_kernel_poly_pde_ffi_call,
+    sig_kernel_poly_pde_backprop_ffi_call,
     branched_sig_kernel_pde_ffi_call,
     branched_sig_kernel_pde_backprop_ffi_call,
     logsig_to_sig_ffi_call,
@@ -858,29 +858,29 @@ _sig_kernel_pde.defvjp(_sig_kernel_pde_fwd, _sig_kernel_pde_bwd)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4))
-def _polysig_kernel_pde(gram, dimension, order, return_grid, n_jobs):
-    result, _ = polysig_kernel_pde_ffi_call(
+def _sig_kernel_poly_pde(gram, dimension, order, return_grid, n_jobs):
+    result, _ = sig_kernel_poly_pde_ffi_call(
         gram, dimension, order, return_grid, n_jobs)
     return result
 
 
-def _polysig_kernel_pde_fwd(gram, dimension, order, return_grid, n_jobs):
-    result, state = polysig_kernel_pde_ffi_call(
+def _sig_kernel_poly_pde_fwd(gram, dimension, order, return_grid, n_jobs):
+    result, state = sig_kernel_poly_pde_ffi_call(
         gram, dimension, order, return_grid, n_jobs)
     return result, (gram, state)
 
 
-def _polysig_kernel_pde_bwd(
+def _sig_kernel_poly_pde_bwd(
     dimension, order, return_grid, n_jobs, residual, cotangent
 ):
     gram, state = residual
-    grad_gram = polysig_kernel_pde_backprop_ffi_call(
+    grad_gram = sig_kernel_poly_pde_backprop_ffi_call(
         gram, cotangent, state, dimension, order, return_grid, n_jobs)
     return (grad_gram,)
 
 
-_polysig_kernel_pde.defvjp(
-    _polysig_kernel_pde_fwd, _polysig_kernel_pde_bwd)
+_sig_kernel_poly_pde.defvjp(
+    _sig_kernel_poly_pde_fwd, _sig_kernel_poly_pde_bwd)
 
 
 # ---------------------------------------------------------------------------
@@ -942,7 +942,7 @@ def sig_kernel(
 
     dimension = path1.shape[-1]
     if method == "polynomial":
-        result = _polysig_kernel_pde(
+        result = _sig_kernel_poly_pde(
             gram, dimension, order, return_grid, n_jobs)
     else:
         result = _sig_kernel_pde(

@@ -50,8 +50,8 @@ CUSIG_TRANSFORM_PATH_CUDA = None
 CUSIG_TRANSFORM_PATH_BACKPROP_CUDA = None
 CUSIG_SIG_KERNEL_CUDA = None
 CUSIG_SIG_KERNEL_BACKPROP_CUDA = None
-CUSIG_POLYSIG_KERNEL_CUDA = None
-CUSIG_POLYSIG_KERNEL_BACKPROP_CUDA = None
+CUSIG_SIG_KERNEL_POLY_CUDA = None
+CUSIG_SIG_KERNEL_POLY_BACKPROP_CUDA = None
 CUSIG_BRANCHED_SIG_KERNEL_CUDA = None
 CUSIG_BRANCHED_SIG_KERNEL_BACKPROP_CUDA = None
 CUSIG_SIGNATURE_CUDA = None
@@ -97,14 +97,14 @@ if BUILT_WITH_CUDA:
         "float64": CUSIG.sig_kernel_cuda_d
     }
 
-    CUSIG_POLYSIG_KERNEL_CUDA = {
-        "float32": CUSIG.polysig_kernel_cuda_f,
-        "float64": CUSIG.polysig_kernel_cuda_d
+    CUSIG_SIG_KERNEL_POLY_CUDA = {
+        "float32": CUSIG.sig_kernel_poly_cuda_f,
+        "float64": CUSIG.sig_kernel_poly_cuda_d
     }
 
-    CUSIG_POLYSIG_KERNEL_BACKPROP_CUDA = {
-        "float32": CUSIG.polysig_kernel_backprop_cuda_f,
-        "float64": CUSIG.polysig_kernel_backprop_cuda_d
+    CUSIG_SIG_KERNEL_POLY_BACKPROP_CUDA = {
+        "float32": CUSIG.sig_kernel_poly_backprop_cuda_f,
+        "float64": CUSIG.sig_kernel_poly_backprop_cuda_d
     }
 
     CUSIG_SIG_KERNEL_BACKPROP_CUDA = {
@@ -317,14 +317,14 @@ CPSIG_SIG_KERNEL = {
     "float64": CPSIG.sig_kernel_d
 }
 
-CPSIG_POLYSIG_KERNEL = {
-    "float32": CPSIG.polysig_kernel_f,
-    "float64": CPSIG.polysig_kernel_d
+CPSIG_SIG_KERNEL_POLY = {
+    "float32": CPSIG.sig_kernel_poly_f,
+    "float64": CPSIG.sig_kernel_poly_d
 }
 
-CPSIG_POLYSIG_KERNEL_BACKPROP = {
-    "float32": CPSIG.polysig_kernel_backprop_f,
-    "float64": CPSIG.polysig_kernel_backprop_d
+CPSIG_SIG_KERNEL_POLY_BACKPROP = {
+    "float32": CPSIG.sig_kernel_poly_backprop_f,
+    "float64": CPSIG.sig_kernel_poly_backprop_d
 }
 
 CPSIG_SIG_KERNEL_BACKPROP = {

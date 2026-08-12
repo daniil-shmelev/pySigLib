@@ -80,9 +80,9 @@ def _safe_normalize(result, k1, k2, func_name, stacklevel=2):
     safe = torch.sqrt(torch.clamp(denom, min=1e-30))
     return torch.where(bad, float('nan'), result / safe)
 from .dtypes import (
-    CPSIG_POLYSIG_KERNEL,
+    CPSIG_SIG_KERNEL_POLY,
     CPSIG_SIG_KERNEL,
-    CUSIG_POLYSIG_KERNEL_CUDA,
+    CUSIG_SIG_KERNEL_POLY_CUDA,
     CUSIG_SIG_KERNEL_CUDA,
     DTYPES,
 )
@@ -269,11 +269,11 @@ def sig_kernel(
             state.data_ptr(), POINTER(DTYPES[data.dtype]))
 
     if method == "polynomial" and data.device == "cpu":
-        err_code = CPSIG_POLYSIG_KERNEL[data.dtype](
+        err_code = CPSIG_SIG_KERNEL_POLY[data.dtype](
             gram_ptr, result.data_ptr, state_ptr, data.batch_size, data.dimension,
             data.length[0], data.length[1], order, return_grid, n_jobs)
     elif method == "polynomial":
-        err_code = CUSIG_POLYSIG_KERNEL_CUDA[data.dtype](
+        err_code = CUSIG_SIG_KERNEL_POLY_CUDA[data.dtype](
             gram_ptr, result.data_ptr, state_ptr, data.batch_size, data.dimension,
             data.length[0], data.length[1], order, return_grid)
     elif data.device == "cpu":
