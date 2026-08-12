@@ -63,8 +63,6 @@ template<std::floating_point T>
 struct sig_poly_table_cache {
 	std::mutex mutex;
 	std::vector<std::shared_ptr<const sig_poly_tables<T>>> tables;
-
-	sig_poly_table_cache() : tables(65) {}
 };
 
 template<std::floating_point T>
@@ -77,6 +75,8 @@ template<std::floating_point T>
 std::shared_ptr<const sig_poly_tables<T>> get_sig_poly_tables_(uint64_t order) {
 	auto& cache = sig_poly_table_cache_<T>();
 	std::lock_guard<std::mutex> lock(cache.mutex);
+	if (cache.tables.empty())
+		cache.tables.resize(65);
 	auto& tables = cache.tables[order];
 	if (!tables)
 		tables = std::make_shared<const sig_poly_tables<T>>(order);
@@ -87,8 +87,9 @@ template<std::floating_point T>
 void clear_sig_poly_table_cache_() {
 	auto& cache = sig_poly_table_cache_<T>();
 	std::lock_guard<std::mutex> lock(cache.mutex);
-	for (auto& tables : cache.tables)
-		tables.reset();
+	if (cache.tables.empty())
+		return;
+	decltype(cache.tables)().swap(cache.tables);
 }
 
 template<std::floating_point T>
