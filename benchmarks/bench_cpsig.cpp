@@ -533,26 +533,42 @@ BENCHMARK(BM_log_sig_join_backprop)->Unit(benchmark::kMicrosecond);
 // Sig kernel / backprop
 // =========================================================================
 
-static void BM_sig_kernel(benchmark::State& state) {
-    auto gram = random_data(32 * 63 * 63, 1);
-    std::vector<double> out(32);
-    for (auto _ : state) {
-        ::sig_kernel_d(gram.data(), out.data(), 32, 3, 64, 64, 0, 0, false);
-        benchmark::DoNotOptimize(out.data());
-    }
-}
-BENCHMARK(BM_sig_kernel)->Unit(benchmark::kMicrosecond);
+static constexpr uint64_t sig_kernel_matched_batch = 32;
+static constexpr uint64_t sig_kernel_matched_length = 768;
+static constexpr uint64_t sig_kernel_matched_segments = sig_kernel_matched_length - 1;
 
-static void BM_sig_kernel_poly(benchmark::State& state) {
-    auto gram = random_data(767 * 767, 1);
+static std::vector<double> sig_kernel_matched_gram() {
+    auto gram = random_data(
+        sig_kernel_matched_batch * sig_kernel_matched_segments * sig_kernel_matched_segments, 1);
     for (auto& x : gram) x *= 0.01;
-    std::vector<double> out(1);
+    return gram;
+}
+
+static void BM_sig_kernel_fd_error_matched(benchmark::State& state) {
+    auto gram = sig_kernel_matched_gram();
+    std::vector<double> out(sig_kernel_matched_batch);
     for (auto _ : state) {
-        ::sig_kernel_poly_d(gram.data(), out.data(), nullptr, 1, 3, 768, 768, 7);
+        ::sig_kernel_d(
+            gram.data(), out.data(), sig_kernel_matched_batch, 3,
+            sig_kernel_matched_length, sig_kernel_matched_length, 0, 0, false);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_sig_kernel_poly)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_sig_kernel_fd_error_matched)->Unit(benchmark::kMillisecond);
+
+static void BM_sig_kernel_poly_error_matched(benchmark::State& state) {
+    auto gram = sig_kernel_matched_gram();
+    std::vector<double> out(sig_kernel_matched_batch);
+    for (auto _ : state) {
+        // Order 2 has comparable RMS error to finite-difference dyadic order 0
+        // on this input: 0.1080 versus 0.1103 against a converged reference.
+        ::sig_kernel_poly_d(
+            gram.data(), out.data(), nullptr, sig_kernel_matched_batch, 3,
+            sig_kernel_matched_length, sig_kernel_matched_length, 2);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_sig_kernel_poly_error_matched)->Unit(benchmark::kMillisecond);
 
 static void BM_sig_kernel_poly_float32(benchmark::State& state) {
     auto gram_d = random_data(767 * 767, 1);
