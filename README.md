@@ -64,7 +64,7 @@ the input already lives.
 - Accelerated CPU and CUDA implementations for large workloads.
 - Native NumPy, PyTorch, and JAX support without moving data between frameworks.
 - Automatic differentiation with PyTorch and JAX, including `jit` and `vmap` support in JAX.
-- Online signature streams with efficient interval queries for real-time and sliding-window features.
+- Cross-platform - Windows, Linux and Mac systems supported.
 
 ## Capabilities
 
