@@ -522,7 +522,7 @@ inline void upload_sparse_matrix_(CUDALogSigCache& entry, uint64_t dimension, ui
 // Disk cache infrastructure (shared format with cpsig)
 // =========================================================================
 
-constexpr const char* cu_cache_version = "v1";
+constexpr const char* cu_cache_version = "v2";
 
 class CuCacheFile {
 public:

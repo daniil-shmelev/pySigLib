@@ -507,6 +507,7 @@ inline void log_sig_from_path_backprop_x4_(
 	uint64_t m = cache.m;
 	uint64_t m2 = cache.bch_coefficients.size();
 	uint64_t n_segs = length - 1;
+	const bool prune_backprop = cache.prune_linear_backprop;
 
 	// The forward memo reuses the first half of the backprop workspace.
 	double* curr = workspace;
@@ -558,7 +559,12 @@ inline void log_sig_from_path_backprop_x4_(
 		bch_combine_linear_impl_x4_(curr, neg_seg, prev, cache, bch_bp_ws);
 
 		// Backprop through BCH(prev, seg) -> curr
-		bch_combine_linear_backprop_impl_x4_(d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
+		if (prune_backprop)
+			bch_combine_linear_backprop_impl_x4_<true>(
+				d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
+		else
+			bch_combine_linear_backprop_impl_x4_<false>(
+				d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
 
 		// Scatter d_ls2 to path gradients
 		for (uint64_t k = 0; k < dimension; ++k) {
@@ -666,6 +672,7 @@ void log_sig_from_path_backprop_(
 	uint64_t m = cache.m;
 	uint64_t m2 = cache.bch_coefficients.size();
 	uint64_t n_segs = length - 1;
+	const bool prune_backprop = cache.prune_linear_backprop;
 
 	// Workspace layout:
 	// curr: m (current accumulator, recovered via uncombination)
@@ -722,7 +729,12 @@ void log_sig_from_path_backprop_(
 		bch_combine_linear_impl_<T>(curr, neg_seg, prev, cache, bch_bp_ws);
 
 		// Backprop through BCH(prev, seg) -> curr
-		bch_combine_backprop_impl_<T, true>(d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
+		if (prune_backprop)
+			bch_combine_backprop_impl_<T, true, true>(
+				d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
+		else
+			bch_combine_backprop_impl_<T, true, false>(
+				d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
 
 		for (uint64_t k = 0; k < dimension; ++k) {
 			d_path[(s + 1) * dimension + k] += d_ls2[k];

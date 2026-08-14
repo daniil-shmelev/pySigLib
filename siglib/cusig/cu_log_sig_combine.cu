@@ -920,10 +920,15 @@ void log_sig_from_path_cuda_(
 
 	size_t shared_size = 2 * m * sizeof(T);
 	bool use_shmem = (shared_size <= CUDA_BASE_DYNAMIC_SMEM);
-	// Dense loops are faster for small bases where there is little work to skip.
-	const uint64_t* linear_range =
-		length > 2 && (m >= 64 || (degree >= 7 && m >= 32))
-			? cache.d_linear_range : nullptr;
+	const uint64_t node_count = m2 > 2 ? m2 - 2 : 0;
+	const uint64_t bch_passes = length - 2;
+	const long double dense_forward_work = bch_passes
+		* static_cast<long double>(cache.linear_dense_forward_work);
+	const long double pruned_forward_work = bch_passes
+		* static_cast<long double>(cache.linear_active_forward_work + 2 * node_count)
+		+ cache.linear_zero_work;
+	const uint64_t* linear_range = pruned_forward_work < dense_forward_work
+		? cache.d_linear_range : nullptr;
 	uint64_t path_stride = length * dimension;
 
 	for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
@@ -984,7 +989,7 @@ void log_sig_from_path_cuda_(
 
 // Backward using BCH uncombination: recovers each intermediate via BCH(curr, -seg).
 // No O(N*m) intermediate storage - uses O(m) memory per batch element.
-template<typename T>
+template<typename T, bool use_linear_range, bool save_states, bool use_linear_reverse>
 __global__ void batch_log_sig_from_path_backprop_kernel_(
 	const T* __restrict__ d_out,
 	T* __restrict__ d_path,
@@ -993,6 +998,7 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 	const double* __restrict__ bch_coefs,
 	const uint64_t* __restrict__ bch_lf,
 	const uint64_t* __restrict__ bch_rf,
+	const uint64_t* __restrict__ linear_range,
 	const uint32_t* __restrict__ comm_k_ptr,
 	const uint32_t* __restrict__ comm_k_i,
 	const uint32_t* __restrict__ comm_k_j,
@@ -1001,6 +1007,8 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 	const uint32_t* __restrict__ comm_a_k,
 	const uint32_t* __restrict__ comm_a_partner,
 	const int* __restrict__ comm_a_signed_c,
+	const uint64_t* __restrict__ linear_a_ptr,
+	const uint32_t* __restrict__ linear_a_idx,
 	uint64_t m, uint64_t m2, uint64_t length, uint64_t dimension
 ) {
 	const uint64_t batch_idx = blockIdx.x;
@@ -1016,17 +1024,29 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 	const T* my_dout = d_out + batch_idx * m;
 	T* my_dpath = d_path + batch_idx * length * dimension;
 
-	// Workspace: curr[m] + prev[m] + memo[m2*m] + d_memo[m2*m] + d_acc[m]
-	const uint64_t ws_per_batch = 3 * m + 2 * m2 * m;
-	T* curr = workspace + batch_idx * ws_per_batch;
+	const uint64_t state_count = save_states ? n_segs : 2;
+	const uint64_t ws_per_batch = (state_count + 1) * m + 2 * m2 * m;
+	T* states = workspace + batch_idx * ws_per_batch;
+	T* curr = states;
 	T* prev = curr + m;
-	T* memo = prev + m;
+	T* memo = states + state_count * m;
 	T* d_memo = memo + m2 * m;
 	T* d_acc = d_memo + m2 * m;
 
 	// Zero d_path
 	for (uint64_t k = tid; k < length * dimension; k += stride)
 		my_dpath[k] = T(0);
+	if constexpr (use_linear_range) {
+		for (uint64_t w = 2; w < m2; ++w) {
+			T* result = memo + w * m;
+			const uint64_t begin = linear_range[2 * w];
+			const uint64_t end = linear_range[2 * w + 1];
+			for (uint64_t k = tid; k < begin; k += stride)
+				result[k] = T(0);
+			for (uint64_t k = end + tid; k < m; k += stride)
+				result[k] = T(0);
+		}
+	}
 	__syncthreads();
 
 	// === Forward recomputation into curr (no intermediate storage) ===
@@ -1036,25 +1056,37 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 	for (uint64_t s = 1; s < n_segs; ++s) {
 		const T* pa = my_path + s * dimension;
 		const T* pb = my_path + (s + 1) * dimension;
+		const T* accum = curr;
+		T* next = prev;
+		if constexpr (save_states) {
+			accum = states + (s - 1) * m;
+			next = states + s * m;
+		}
 
 		for (uint64_t k = tid; k < m; k += stride) {
 			T seg_k = (k < dimension) ? (pb[k] - pa[k]) : T(0);
-			memo[k] = curr[k];
+			memo[k] = accum[k];
 			memo[m + k] = seg_k;
-			prev[k] = curr[k] + seg_k; // prev used as temp output
+			next[k] = accum[k] + seg_k;
 		}
 		__syncthreads();
 
 		for (uint64_t w = 2; w < m2; ++w) {
 			const uint64_t lf = bch_lf[w];
 			const uint64_t rf = bch_rf[w];
+			uint64_t begin = 0;
+			uint64_t end = m;
+			if constexpr (use_linear_range) {
+				begin = linear_range[2 * w];
+				end = linear_range[2 * w + 1];
+			}
 			T* result = memo + w * m;
 			const T* v1_global = memo + lf * m;
 			const T* v2_global = memo + rf * m;
 			for (uint64_t k = tid; k < m; k += stride) { s_v1[k] = v1_global[k]; s_v2[k] = v2_global[k]; }
 			__syncthreads();
 			const T c_w = T(bch_coefs[w]);
-			for (uint64_t k = tid; k < m; k += stride) {
+			for (uint64_t k = begin + tid; k < end; k += stride) {
 				T sum = T(0);
 				const uint32_t start = comm_k_ptr[k], end = comm_k_ptr[k + 1];
 				for (uint32_t idx = start; idx < end; ++idx) {
@@ -1062,12 +1094,13 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 					sum += T(c) * (s_v1[i] * s_v2[j] - s_v1[j] * s_v2[i]);
 				}
 				result[k] = sum;
-				if (c_w != T(0)) prev[k] += c_w * sum;
+				if (c_w != T(0)) next[k] += c_w * sum;
 			}
 			__syncthreads();
 		}
-		// Swap curr and prev
-		T* tmp = curr; curr = prev; prev = tmp;
+		if constexpr (!save_states) {
+			T* tmp = curr; curr = prev; prev = tmp;
+		}
 	}
 
 	// === Backward: uncombine to recover prev, backprop, repeat ===
@@ -1079,33 +1112,38 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 		const T* pa = my_path + s * dimension;
 		const T* pb = my_path + (s + 1) * dimension;
 
-		// Uncombine: prev = BCH(curr, -seg)
-		for (uint64_t k = tid; k < m; k += stride) {
-			T neg_seg_k = (k < dimension) ? -(pb[k] - pa[k]) : T(0);
-			memo[k] = curr[k];
-			memo[m + k] = neg_seg_k;
-			prev[k] = curr[k] + neg_seg_k;
+		if constexpr (save_states) {
+			prev = states + (s - 1) * m;
 		}
-		__syncthreads();
-
-		for (uint64_t w = 2; w < m2; ++w) {
-			const uint64_t lf = bch_lf[w]; const uint64_t rf = bch_rf[w];
-			T* result = memo + w * m;
-			const T* v1_global = memo + lf * m; const T* v2_global = memo + rf * m;
-			for (uint64_t k = tid; k < m; k += stride) { s_v1[k] = v1_global[k]; s_v2[k] = v2_global[k]; }
-			__syncthreads();
-			const T c_w = T(bch_coefs[w]);
+		else {
+			// Uncombine: prev = BCH(curr, -seg)
 			for (uint64_t k = tid; k < m; k += stride) {
-				T sum = T(0);
-				const uint32_t start = comm_k_ptr[k], end = comm_k_ptr[k + 1];
-				for (uint32_t idx = start; idx < end; ++idx) {
-					const uint32_t i = comm_k_i[idx], j = comm_k_j[idx]; const int c = comm_k_val[idx];
-					sum += T(c) * (s_v1[i] * s_v2[j] - s_v1[j] * s_v2[i]);
-				}
-				result[k] = sum;
-				if (c_w != T(0)) prev[k] += c_w * sum;
+				T neg_seg_k = (k < dimension) ? -(pb[k] - pa[k]) : T(0);
+				memo[k] = curr[k];
+				memo[m + k] = neg_seg_k;
+				prev[k] = curr[k] + neg_seg_k;
 			}
 			__syncthreads();
+
+			for (uint64_t w = 2; w < m2; ++w) {
+				const uint64_t lf = bch_lf[w]; const uint64_t rf = bch_rf[w];
+				T* result = memo + w * m;
+				const T* v1_global = memo + lf * m; const T* v2_global = memo + rf * m;
+				for (uint64_t k = tid; k < m; k += stride) { s_v1[k] = v1_global[k]; s_v2[k] = v2_global[k]; }
+				__syncthreads();
+				const T c_w = T(bch_coefs[w]);
+				for (uint64_t k = tid; k < m; k += stride) {
+					T sum = T(0);
+					const uint32_t start = comm_k_ptr[k], end = comm_k_ptr[k + 1];
+					for (uint32_t idx = start; idx < end; ++idx) {
+						const uint32_t i = comm_k_i[idx], j = comm_k_j[idx]; const int c = comm_k_val[idx];
+						sum += T(c) * (s_v1[i] * s_v2[j] - s_v1[j] * s_v2[i]);
+					}
+					result[k] = sum;
+					if (c_w != T(0)) prev[k] += c_w * sum;
+				}
+				__syncthreads();
+			}
 		}
 
 		// Recompute BCH memo for backprop: BCH(prev, seg) -> curr
@@ -1118,11 +1156,17 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 
 		for (uint64_t w = 2; w < m2; ++w) {
 			const uint64_t lf = bch_lf[w]; const uint64_t rf = bch_rf[w];
+			uint64_t begin = 0;
+			uint64_t end = m;
+			if constexpr (use_linear_range) {
+				begin = linear_range[2 * w];
+				end = linear_range[2 * w + 1];
+			}
 			T* result = memo + w * m;
 			const T* v1_global = memo + lf * m; const T* v2_global = memo + rf * m;
 			for (uint64_t k = tid; k < m; k += stride) { s_v1[k] = v1_global[k]; s_v2[k] = v2_global[k]; }
 			__syncthreads();
-			for (uint64_t k = tid; k < m; k += stride) {
+			for (uint64_t k = begin + tid; k < end; k += stride) {
 				T sum = T(0);
 				const uint32_t start = comm_k_ptr[k], end = comm_k_ptr[k + 1];
 				for (uint32_t idx = start; idx < end; ++idx) {
@@ -1137,7 +1181,13 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 		// d_memo init + reverse BCH backprop
 		for (uint64_t k = tid; k < m; k += stride) { d_memo[k] = T(0); d_memo[m + k] = T(0); }
 		for (uint64_t w = 2; w < m2; ++w) {
-			for (uint64_t k = tid; k < m; k += stride)
+			uint64_t begin = 0;
+			uint64_t end = m;
+			if constexpr (use_linear_range) {
+				begin = linear_range[2 * w];
+				end = linear_range[2 * w + 1];
+			}
+			for (uint64_t k = begin + tid; k < end; k += stride)
 				d_memo[w * m + k] = T(bch_coefs[w]) * d_acc[k];
 		}
 		__syncthreads();
@@ -1150,14 +1200,32 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 			__syncthreads();
 			for (uint64_t a = tid; a < m; a += stride) {
 				T acc_dv1 = T(0), acc_dv2 = T(0);
-				const uint32_t start = comm_a_ptr[a], end = comm_a_ptr[a + 1];
-				for (uint32_t idx = start; idx < end; ++idx) {
-					const uint32_t k = comm_a_k[idx]; const uint32_t partner = comm_a_partner[idx];
-					const int sc = comm_a_signed_c[idx]; const T dk = dm_w[k];
-					acc_dv1 += T(sc) * s_v2[partner] * dk;
-					acc_dv2 -= T(sc) * s_v1[partner] * dk;
+				if constexpr (use_linear_reverse) {
+					const uint64_t row = w * m + a;
+					for (uint64_t q = linear_a_ptr[row]; q < linear_a_ptr[row + 1]; ++q) {
+						const uint32_t packed = linear_a_idx[q];
+						const uint32_t idx = packed >> 1;
+						const uint32_t k = comm_a_k[idx];
+						const uint32_t partner = comm_a_partner[idx];
+						const int sc = comm_a_signed_c[idx];
+						const T dk = dm_w[k];
+						if (packed & 1)
+							acc_dv2 -= T(sc) * s_v1[partner] * dk;
+						else
+							acc_dv1 += T(sc) * s_v2[partner] * dk;
+					}
+					dm_lf[a] += acc_dv1; dm_rf[a] += acc_dv2;
 				}
-				dm_lf[a] += acc_dv1; dm_rf[a] += acc_dv2;
+				else {
+					const uint32_t start = comm_a_ptr[a], end = comm_a_ptr[a + 1];
+					for (uint32_t idx = start; idx < end; ++idx) {
+						const uint32_t k = comm_a_k[idx]; const uint32_t partner = comm_a_partner[idx];
+						const int sc = comm_a_signed_c[idx]; const T dk = dm_w[k];
+						acc_dv1 += T(sc) * s_v2[partner] * dk;
+						acc_dv2 -= T(sc) * s_v1[partner] * dk;
+					}
+					dm_lf[a] += acc_dv1; dm_rf[a] += acc_dv2;
+				}
 			}
 			__syncthreads();
 		}
@@ -1173,8 +1241,9 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 		}
 		__syncthreads();
 
-		// Move to previous accumulator
-		T* tmp = curr; curr = prev; prev = tmp;
+		if constexpr (!save_states) {
+			T* tmp = curr; curr = prev; prev = tmp;
+		}
 	}
 
 	for (uint64_t k = tid; k < dimension; k += stride) {
@@ -1218,12 +1287,44 @@ void log_sig_from_path_backprop_cuda_(
 	}
 
 	const size_t shared_size = 2 * m * sizeof(T);
-	configure_dynamic_smem(
-		batch_log_sig_from_path_backprop_kernel_<T>, shared_size,
-		"CUDA log sig from path backprop");
+	unsigned int threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(64), m));
+	threads = ((threads + 31) / 32) * 32;
+	if (threads < 32) threads = 32;
+	const bool save_states = length > 2 && length - 1 <= 2 * m2;
+	const bool use_linear_reverse = save_states && (4 * m2 >= m || m >= 512);
+	const uint64_t node_count = m2 > 2 ? m2 - 2 : 0;
+	const uint64_t bch_passes = 2 * (length - 2);
+	const long double dense_forward_work = bch_passes
+		* static_cast<long double>(cache.linear_dense_forward_work);
+	const long double pruned_forward_work = bch_passes
+		* static_cast<long double>(cache.linear_active_forward_work + 2 * node_count)
+		+ cache.linear_zero_work;
+	const uint64_t* linear_range = save_states && use_linear_reverse
+		&& pruned_forward_work < dense_forward_work
+			? cache.d_linear_range : nullptr;
+	if (linear_range) {
+		configure_dynamic_smem(
+			batch_log_sig_from_path_backprop_kernel_<T, true, true, true>, shared_size,
+			"CUDA log sig from path backprop");
+	}
+	else if (save_states && use_linear_reverse) {
+		configure_dynamic_smem(
+			batch_log_sig_from_path_backprop_kernel_<T, false, true, true>, shared_size,
+			"CUDA log sig from path backprop");
+	}
+	else if (save_states) {
+		configure_dynamic_smem(
+			batch_log_sig_from_path_backprop_kernel_<T, false, true, false>, shared_size,
+			"CUDA log sig from path backprop");
+	}
+	else {
+		configure_dynamic_smem(
+			batch_log_sig_from_path_backprop_kernel_<T, false, false, false>, shared_size,
+			"CUDA log sig from path backprop");
+	}
 
-	// Workspace per batch: curr[m] + prev[m] + memo[m2*m] + d_memo[m2*m] + d_acc[m]
-	uint64_t ws_per_batch = 3 * m + 2 * m2 * m;
+	const uint64_t state_count = save_states ? length - 1 : 2;
+	uint64_t ws_per_batch = (state_count + 1) * m + 2 * m2 * m;
 	size_t free_mem, total_mem;
 	cudaMemGetInfo(&free_mem, &total_mem);
 
@@ -1236,25 +1337,67 @@ void log_sig_from_path_backprop_cuda_(
 	cudaMalloc(&d_workspace, chunk_size * ws_per_batch * sizeof(T));
 	check_cuda_error();
 
-	unsigned int threads = static_cast<unsigned int>(std::min(static_cast<uint64_t>(64), m));
-	threads = ((threads + 31) / 32) * 32;
-	if (threads < 32) threads = 32;
-
 	uint64_t path_stride = length * dimension;
 
 	for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
 		uint64_t current_batch = std::min(chunk_size, batch_size - offset);
 
-		batch_log_sig_from_path_backprop_kernel_<T><<<static_cast<unsigned int>(current_batch), threads, shared_size>>>(
-			d_out + offset * m,
-			d_path + offset * path_stride,
-			path + offset * path_stride,
-			d_workspace,
-			cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
-			cache.d_comm_k_ptr, cache.d_comm_k_i, cache.d_comm_k_j, cache.d_comm_k_val,
-			cache.d_comm_a_ptr, cache.d_comm_a_k, cache.d_comm_a_partner, cache.d_comm_a_signed_c,
-			m, m2, length, dimension
-		);
+		if (linear_range) {
+			batch_log_sig_from_path_backprop_kernel_<T, true, true, true><<<static_cast<unsigned int>(current_batch), threads, shared_size>>>(
+				d_out + offset * m,
+				d_path + offset * path_stride,
+				path + offset * path_stride,
+				d_workspace,
+				cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
+				linear_range,
+				cache.d_comm_k_ptr, cache.d_comm_k_i, cache.d_comm_k_j, cache.d_comm_k_val,
+				cache.d_comm_a_ptr, cache.d_comm_a_k, cache.d_comm_a_partner, cache.d_comm_a_signed_c,
+				cache.d_linear_a_ptr, cache.d_linear_a_idx,
+				m, m2, length, dimension
+			);
+		}
+		else if (save_states && use_linear_reverse) {
+			batch_log_sig_from_path_backprop_kernel_<T, false, true, true><<<static_cast<unsigned int>(current_batch), threads, shared_size>>>(
+				d_out + offset * m,
+				d_path + offset * path_stride,
+				path + offset * path_stride,
+				d_workspace,
+				cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
+				nullptr,
+				cache.d_comm_k_ptr, cache.d_comm_k_i, cache.d_comm_k_j, cache.d_comm_k_val,
+				cache.d_comm_a_ptr, cache.d_comm_a_k, cache.d_comm_a_partner, cache.d_comm_a_signed_c,
+				cache.d_linear_a_ptr, cache.d_linear_a_idx,
+				m, m2, length, dimension
+			);
+		}
+		else if (save_states) {
+			batch_log_sig_from_path_backprop_kernel_<T, false, true, false><<<static_cast<unsigned int>(current_batch), threads, shared_size>>>(
+				d_out + offset * m,
+				d_path + offset * path_stride,
+				path + offset * path_stride,
+				d_workspace,
+				cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
+				nullptr,
+				cache.d_comm_k_ptr, cache.d_comm_k_i, cache.d_comm_k_j, cache.d_comm_k_val,
+				cache.d_comm_a_ptr, cache.d_comm_a_k, cache.d_comm_a_partner, cache.d_comm_a_signed_c,
+				nullptr, nullptr,
+				m, m2, length, dimension
+			);
+		}
+		else {
+			batch_log_sig_from_path_backprop_kernel_<T, false, false, false><<<static_cast<unsigned int>(current_batch), threads, shared_size>>>(
+				d_out + offset * m,
+				d_path + offset * path_stride,
+				path + offset * path_stride,
+				d_workspace,
+				cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
+				nullptr,
+				cache.d_comm_k_ptr, cache.d_comm_k_i, cache.d_comm_k_j, cache.d_comm_k_val,
+				cache.d_comm_a_ptr, cache.d_comm_a_k, cache.d_comm_a_partner, cache.d_comm_a_signed_c,
+				nullptr, nullptr,
+				m, m2, length, dimension
+			);
+		}
 		check_cuda_kernel_launch();
 	}
 
