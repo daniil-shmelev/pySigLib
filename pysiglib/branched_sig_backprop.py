@@ -95,9 +95,9 @@ def branched_sig_backprop(
         path = np.zeros((n_steps + 1, d))
         path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
 
-        # Ito level-2 correction: one dt * Sigma row per path segment.
+        # Ito level-2 correction: -0.5 * dt * Sigma per path segment.
         correction = np.broadcast_to(
-            (np.eye(d) * dt).reshape(1, -1), (n_steps, d * d)).copy()
+            (-0.5 * np.eye(d) * dt).reshape(1, -1), (n_steps, d * d)).copy()
 
         pysiglib.prepare_branched_sig(d, N)
         bsig = pysiglib.branched_sig(

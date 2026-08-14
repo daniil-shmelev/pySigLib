@@ -381,7 +381,7 @@ def log_sig(
 
     Ito-lifted log signature of a sampled Brownian path. For Brownian
     motion with instantaneous covariance :math:`\\Sigma`, setting the
-    level-2 correction to :math:`c^{(2)}_{ij} = \\Sigma_{ij}\\,\\Delta t`
+    level-2 correction to :math:`c^{(2)}_{ij} = -\\frac{1}{2}\\Sigma_{ij}\\,\\Delta t`
     per segment gives the Ito correction. The Ito level-2 term is not
     Lie-valued (its symmetric part is not in the free Lie algebra), so
     ``method=0`` is used to retain the full tensor logarithm.
@@ -400,8 +400,8 @@ def log_sig(
         path = np.zeros((n_steps + 1, d))
         path[1:] = np.cumsum(rng.normal(0, np.sqrt(dt), (n_steps, d)), axis=0)
 
-        # Ito level-2 correction: one dt * Sigma row per path segment.
-        correction = np.broadcast_to((np.eye(d) * dt).reshape(1, -1), (n_steps, d * d))
+        # Ito level-2 correction: -0.5 * dt * Sigma per path segment.
+        correction = np.broadcast_to((-0.5 * np.eye(d) * dt).reshape(1, -1), (n_steps, d * d))
 
         ito_log_sig = pysiglib.log_sig(
             path, N, correction=correction, end_time=T, method=0)
