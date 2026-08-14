@@ -119,11 +119,17 @@ inline void cu_build_transposed_commutator_table_(
 	std::vector<uint32_t>& k_i,
 	std::vector<uint32_t>& k_j,
 	std::vector<int>& k_val,
+	std::vector<uint64_t>& degree_offsets,
 	uint64_t& out_m
 ) {
 	std::vector<cu_word> lyndon_words = cu_all_lyndon_words(dimension, degree);
 	uint64_t m = lyndon_words.size();
 	out_m = m;
+	degree_offsets.assign(degree + 1, 0);
+	for (const auto& word : lyndon_words)
+		++degree_offsets[word.size()];
+	for (uint64_t n = 1; n <= degree; ++n)
+		degree_offsets[n] += degree_offsets[n - 1];
 
 	std::vector<uint64_t> left_factor, right_factor;
 	cu_compute_factorization_indices_(lyndon_words, left_factor, right_factor, dimension);
@@ -231,6 +237,7 @@ struct CUDABchCache {
 	double* d_bch_coefficients = nullptr;
 	uint64_t* d_bch_left_factor = nullptr;
 	uint64_t* d_bch_right_factor = nullptr;
+	uint64_t* d_linear_range = nullptr;
 	uint64_t m2 = 0;
 	uint64_t m = 0;
 
@@ -248,6 +255,7 @@ struct CUDABchCache {
 		if (d_bch_coefficients) cudaFree(d_bch_coefficients);
 		if (d_bch_left_factor) cudaFree(d_bch_left_factor);
 		if (d_bch_right_factor) cudaFree(d_bch_right_factor);
+		if (d_linear_range) cudaFree(d_linear_range);
 		if (d_comm_k_ptr) cudaFree(d_comm_k_ptr);
 		if (d_comm_k_i) cudaFree(d_comm_k_i);
 		if (d_comm_k_j) cudaFree(d_comm_k_j);
@@ -265,6 +273,7 @@ struct CUDABchCache {
 		: d_bch_coefficients(std::exchange(o.d_bch_coefficients, nullptr)),
 		  d_bch_left_factor(std::exchange(o.d_bch_left_factor, nullptr)),
 		  d_bch_right_factor(std::exchange(o.d_bch_right_factor, nullptr)),
+		  d_linear_range(std::exchange(o.d_linear_range, nullptr)),
 		  m2(std::exchange(o.m2, 0)), m(std::exchange(o.m, 0)),
 		  d_comm_k_ptr(std::exchange(o.d_comm_k_ptr, nullptr)),
 		  d_comm_k_i(std::exchange(o.d_comm_k_i, nullptr)),
@@ -303,7 +312,10 @@ inline void prepare_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 	// Build transposed commutator table on host
 	std::vector<uint32_t> h_k_ptr, h_k_i, h_k_j;
 	std::vector<int> h_k_val;
-	cu_build_transposed_commutator_table_(dimension, degree, h_k_ptr, h_k_i, h_k_j, h_k_val, cache.m);
+	std::vector<uint64_t> h_degree_offsets;
+	cu_build_transposed_commutator_table_(
+		dimension, degree, h_k_ptr, h_k_i, h_k_j, h_k_val,
+		h_degree_offsets, cache.m);
 
 	CUDA_CHECK(cudaMalloc(&cache.d_bch_coefficients, cache.m2 * sizeof(double)));
 	CUDA_CHECK(cudaMemcpy(cache.d_bch_coefficients, hc->coefficients, cache.m2 * sizeof(double), cudaMemcpyHostToDevice));
@@ -313,6 +325,24 @@ inline void prepare_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 
 	CUDA_CHECK(cudaMalloc(&cache.d_bch_right_factor, cache.m2 * sizeof(uint64_t)));
 	CUDA_CHECK(cudaMemcpy(cache.d_bch_right_factor, hc->right_factor, cache.m2 * sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+	std::vector<uint64_t> min_degree(cache.m2, 1);
+	std::vector<uint64_t> max_degree(cache.m2, degree);
+	if (cache.m2 > 1) max_degree[1] = 1;
+	for (uint64_t w = 2; w < cache.m2; ++w) {
+		const uint64_t lf = hc->left_factor[w];
+		const uint64_t rf = hc->right_factor[w];
+		min_degree[w] = min_degree[lf] + min_degree[rf];
+		max_degree[w] = std::min(degree, max_degree[lf] + max_degree[rf]);
+	}
+	std::vector<uint64_t> h_linear_range(2 * cache.m2);
+	for (uint64_t w = 0; w < cache.m2; ++w) {
+		h_linear_range[2 * w] = h_degree_offsets[min_degree[w] - 1];
+		h_linear_range[2 * w + 1] = h_degree_offsets[max_degree[w]];
+	}
+	CUDA_CHECK(cudaMalloc(&cache.d_linear_range, h_linear_range.size() * sizeof(uint64_t)));
+	CUDA_CHECK(cudaMemcpy(cache.d_linear_range, h_linear_range.data(),
+		h_linear_range.size() * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
 	uint32_t nnz = h_k_ptr.back();
 
