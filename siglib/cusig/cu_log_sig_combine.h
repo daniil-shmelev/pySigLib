@@ -119,11 +119,17 @@ inline void cu_build_transposed_commutator_table_(
 	std::vector<uint32_t>& k_i,
 	std::vector<uint32_t>& k_j,
 	std::vector<int>& k_val,
+	std::vector<uint64_t>& degree_offsets,
 	uint64_t& out_m
 ) {
 	std::vector<cu_word> lyndon_words = cu_all_lyndon_words(dimension, degree);
 	uint64_t m = lyndon_words.size();
 	out_m = m;
+	degree_offsets.assign(degree + 1, 0);
+	for (const auto& word : lyndon_words)
+		++degree_offsets[word.size()];
+	for (uint64_t n = 1; n <= degree; ++n)
+		degree_offsets[n] += degree_offsets[n - 1];
 
 	std::vector<uint64_t> left_factor, right_factor;
 	cu_compute_factorization_indices_(lyndon_words, left_factor, right_factor, dimension);
@@ -231,8 +237,12 @@ struct CUDABchCache {
 	double* d_bch_coefficients = nullptr;
 	uint64_t* d_bch_left_factor = nullptr;
 	uint64_t* d_bch_right_factor = nullptr;
+	uint64_t* d_linear_range = nullptr;
 	uint64_t m2 = 0;
 	uint64_t m = 0;
+	uint64_t linear_dense_forward_work = 0;
+	uint64_t linear_active_forward_work = 0;
+	uint64_t linear_zero_work = 0;
 
 	uint32_t* d_comm_k_ptr = nullptr;
 	uint32_t* d_comm_k_i = nullptr;
@@ -243,11 +253,14 @@ struct CUDABchCache {
 	uint32_t* d_comm_a_k = nullptr;
 	uint32_t* d_comm_a_partner = nullptr;
 	int* d_comm_a_signed_c = nullptr;
+	uint64_t* d_linear_a_ptr = nullptr;
+	uint32_t* d_linear_a_idx = nullptr;
 
 	~CUDABchCache() {
 		if (d_bch_coefficients) cudaFree(d_bch_coefficients);
 		if (d_bch_left_factor) cudaFree(d_bch_left_factor);
 		if (d_bch_right_factor) cudaFree(d_bch_right_factor);
+		if (d_linear_range) cudaFree(d_linear_range);
 		if (d_comm_k_ptr) cudaFree(d_comm_k_ptr);
 		if (d_comm_k_i) cudaFree(d_comm_k_i);
 		if (d_comm_k_j) cudaFree(d_comm_k_j);
@@ -256,6 +269,8 @@ struct CUDABchCache {
 		if (d_comm_a_k) cudaFree(d_comm_a_k);
 		if (d_comm_a_partner) cudaFree(d_comm_a_partner);
 		if (d_comm_a_signed_c) cudaFree(d_comm_a_signed_c);
+		if (d_linear_a_ptr) cudaFree(d_linear_a_ptr);
+		if (d_linear_a_idx) cudaFree(d_linear_a_idx);
 	}
 
 	CUDABchCache(const CUDABchCache&) = delete;
@@ -265,7 +280,11 @@ struct CUDABchCache {
 		: d_bch_coefficients(std::exchange(o.d_bch_coefficients, nullptr)),
 		  d_bch_left_factor(std::exchange(o.d_bch_left_factor, nullptr)),
 		  d_bch_right_factor(std::exchange(o.d_bch_right_factor, nullptr)),
+		  d_linear_range(std::exchange(o.d_linear_range, nullptr)),
 		  m2(std::exchange(o.m2, 0)), m(std::exchange(o.m, 0)),
+		  linear_dense_forward_work(std::exchange(o.linear_dense_forward_work, 0)),
+		  linear_active_forward_work(std::exchange(o.linear_active_forward_work, 0)),
+		  linear_zero_work(std::exchange(o.linear_zero_work, 0)),
 		  d_comm_k_ptr(std::exchange(o.d_comm_k_ptr, nullptr)),
 		  d_comm_k_i(std::exchange(o.d_comm_k_i, nullptr)),
 		  d_comm_k_j(std::exchange(o.d_comm_k_j, nullptr)),
@@ -273,7 +292,9 @@ struct CUDABchCache {
 		  d_comm_a_ptr(std::exchange(o.d_comm_a_ptr, nullptr)),
 		  d_comm_a_k(std::exchange(o.d_comm_a_k, nullptr)),
 		  d_comm_a_partner(std::exchange(o.d_comm_a_partner, nullptr)),
-		  d_comm_a_signed_c(std::exchange(o.d_comm_a_signed_c, nullptr))
+		  d_comm_a_signed_c(std::exchange(o.d_comm_a_signed_c, nullptr)),
+		  d_linear_a_ptr(std::exchange(o.d_linear_a_ptr, nullptr)),
+		  d_linear_a_idx(std::exchange(o.d_linear_a_idx, nullptr))
 	{}
 };
 
@@ -303,7 +324,10 @@ inline void prepare_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 	// Build transposed commutator table on host
 	std::vector<uint32_t> h_k_ptr, h_k_i, h_k_j;
 	std::vector<int> h_k_val;
-	cu_build_transposed_commutator_table_(dimension, degree, h_k_ptr, h_k_i, h_k_j, h_k_val, cache.m);
+	std::vector<uint64_t> h_degree_offsets;
+	cu_build_transposed_commutator_table_(
+		dimension, degree, h_k_ptr, h_k_i, h_k_j, h_k_val,
+		h_degree_offsets, cache.m);
 
 	CUDA_CHECK(cudaMalloc(&cache.d_bch_coefficients, cache.m2 * sizeof(double)));
 	CUDA_CHECK(cudaMemcpy(cache.d_bch_coefficients, hc->coefficients, cache.m2 * sizeof(double), cudaMemcpyHostToDevice));
@@ -313,6 +337,59 @@ inline void prepare_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 
 	CUDA_CHECK(cudaMalloc(&cache.d_bch_right_factor, cache.m2 * sizeof(uint64_t)));
 	CUDA_CHECK(cudaMemcpy(cache.d_bch_right_factor, hc->right_factor, cache.m2 * sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+	std::vector<uint64_t> min_degree(cache.m2, 1);
+	std::vector<uint64_t> max_degree(cache.m2, degree);
+	if (cache.m2 > 1) max_degree[1] = 1;
+	for (uint64_t w = 2; w < cache.m2; ++w) {
+		const uint64_t lf = hc->left_factor[w];
+		const uint64_t rf = hc->right_factor[w];
+		min_degree[w] = min_degree[lf] + min_degree[rf];
+		max_degree[w] = std::min(degree, max_degree[lf] + max_degree[rf]);
+	}
+	std::vector<uint64_t> h_linear_range(2 * cache.m2);
+	for (uint64_t w = 0; w < cache.m2; ++w) {
+		h_linear_range[2 * w] = h_degree_offsets[min_degree[w] - 1];
+		h_linear_range[2 * w + 1] = h_degree_offsets[max_degree[w]];
+	}
+	uint64_t linear_threads = std::min<uint64_t>(64, cache.m);
+	linear_threads = std::max<uint64_t>(32, ((linear_threads + 31) / 32) * 32);
+	const uint64_t linear_warps = linear_threads / 32;
+	uint64_t dense_node_work = 0;
+	for (uint64_t warp = 0; warp < linear_warps; ++warp) {
+		uint64_t warp_work = 0;
+		for (uint64_t start = 32 * warp; start < cache.m; start += linear_threads) {
+			uint64_t round_work = 0;
+			for (uint64_t k = start; k < std::min(start + 32, cache.m); ++k)
+				round_work = std::max<uint64_t>(
+					round_work, 1 + h_k_ptr[k + 1] - h_k_ptr[k]);
+			warp_work += round_work;
+		}
+		dense_node_work += warp_work;
+	}
+	for (uint64_t w = 2; w < cache.m2; ++w) {
+		const uint64_t begin = h_linear_range[2 * w];
+		const uint64_t end = h_linear_range[2 * w + 1];
+		uint64_t active_node_work = 0;
+		for (uint64_t warp = 0; warp < linear_warps; ++warp) {
+			uint64_t warp_work = 0;
+			for (uint64_t start = begin + 32 * warp; start < end; start += linear_threads) {
+				uint64_t round_work = 0;
+				for (uint64_t k = start; k < std::min(start + 32, end); ++k)
+					round_work = std::max<uint64_t>(
+						round_work, 1 + h_k_ptr[k + 1] - h_k_ptr[k]);
+				warp_work += round_work;
+			}
+			active_node_work += warp_work;
+		}
+		cache.linear_active_forward_work += active_node_work;
+		cache.linear_zero_work += (begin + 31) / 32 + (cache.m - end + 31) / 32;
+	}
+	const uint64_t node_count = cache.m2 > 2 ? cache.m2 - 2 : 0;
+	cache.linear_dense_forward_work = node_count * dense_node_work;
+	CUDA_CHECK(cudaMalloc(&cache.d_linear_range, h_linear_range.size() * sizeof(uint64_t)));
+	CUDA_CHECK(cudaMemcpy(cache.d_linear_range, h_linear_range.data(),
+		h_linear_range.size() * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
 	uint32_t nnz = h_k_ptr.back();
 
@@ -361,6 +438,42 @@ inline void prepare_cuda_bch_cache_(uint64_t dimension, uint64_t degree) {
 			h_a_signed_c[a_idx] = e.signed_c;
 			++a_idx;
 		}
+	}
+
+	if (a_nnz > (std::numeric_limits<uint32_t>::max() >> 1))
+		throw std::overflow_error("CUDA BCH linear reverse plan exceeds uint32_t packing");
+	std::vector<uint64_t> h_linear_a_ptr(cache.m2 * cache.m + 1);
+	std::vector<uint32_t> h_linear_a_idx;
+	for (uint64_t w = 0; w < cache.m2; ++w) {
+		for (uint64_t a = 0; a < cache.m; ++a) {
+			const uint64_t row = w * cache.m + a;
+			h_linear_a_ptr[row] = h_linear_a_idx.size();
+			if (w < 2) continue;
+			const uint64_t lf = hc->left_factor[w];
+			const uint64_t rf = hc->right_factor[w];
+			const uint64_t lf_begin = h_linear_range[2 * lf];
+			const uint64_t lf_end = h_linear_range[2 * lf + 1];
+			const uint64_t rf_begin = h_linear_range[2 * rf];
+			const uint64_t rf_end = h_linear_range[2 * rf + 1];
+			const bool active_dv1 = a >= lf_begin && a < lf_end;
+			const bool active_dv2 = a >= rf_begin && a < rf_end;
+			for (uint32_t idx = h_a_ptr[a]; idx < h_a_ptr[a + 1]; ++idx) {
+				const uint32_t partner = h_a_partner[idx];
+				if (active_dv1 && partner >= rf_begin && partner < rf_end)
+					h_linear_a_idx.push_back(idx << 1);
+				if (active_dv2 && partner >= lf_begin && partner < lf_end)
+					h_linear_a_idx.push_back((idx << 1) | 1);
+			}
+		}
+	}
+	h_linear_a_ptr.back() = h_linear_a_idx.size();
+	CUDA_CHECK(cudaMalloc(&cache.d_linear_a_ptr, h_linear_a_ptr.size() * sizeof(uint64_t)));
+	CUDA_CHECK(cudaMemcpy(cache.d_linear_a_ptr, h_linear_a_ptr.data(),
+		h_linear_a_ptr.size() * sizeof(uint64_t), cudaMemcpyHostToDevice));
+	if (!h_linear_a_idx.empty()) {
+		CUDA_CHECK(cudaMalloc(&cache.d_linear_a_idx, h_linear_a_idx.size() * sizeof(uint32_t)));
+		CUDA_CHECK(cudaMemcpy(cache.d_linear_a_idx, h_linear_a_idx.data(),
+			h_linear_a_idx.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
 	}
 
 	CUDA_CHECK(cudaMalloc(&cache.d_comm_a_ptr, (cache.m + 1) * sizeof(uint32_t)));

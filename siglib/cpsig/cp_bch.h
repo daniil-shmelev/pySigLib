@@ -66,6 +66,9 @@ struct BchCache {
 	// Structurally possible output range for each BCH node when the second
 	// input has degree one.
 	std::vector<std::pair<uint64_t, uint64_t>> linear_range;
+	std::vector<uint64_t> linear_pair_ptr;
+	std::vector<uint32_t> linear_pair_idx;
+	bool prune_linear_backprop = false;
 
 	// Standard factorization of each d-letter Lyndon word (as index pairs)
 	// For degree-1 words: left_factor[i] = right_factor[i] = UINT64_MAX
@@ -467,6 +470,24 @@ inline void build_linear_bch_ranges(BchCache& cache) {
 			? 0 : ::log_sig_length(cache.dimension, min_degree[w] - 1);
 		cache.linear_range[w] = {begin, ::log_sig_length(cache.dimension, max_degree[w])};
 	}
+
+	cache.linear_pair_ptr.assign(m2 + 1, 0);
+	for (uint64_t w = 2; w < m2; ++w) {
+		const auto [lf_begin, lf_end] = cache.linear_range[cache.bch_left_factor[w]];
+		const auto [rf_begin, rf_end] = cache.linear_range[cache.bch_right_factor[w]];
+		for (uint32_t p = 0; p < cache.n_pairs; ++p) {
+			const uint32_t i = cache.comm_ij_i[p];
+			const uint32_t j = cache.comm_ij_j[p];
+			const bool forward_pair = i >= lf_begin && i < lf_end && j >= rf_begin && j < rf_end;
+			const bool reverse_pair = j >= lf_begin && j < lf_end && i >= rf_begin && i < rf_end;
+			if (forward_pair || reverse_pair)
+				cache.linear_pair_idx.push_back(p);
+		}
+		cache.linear_pair_ptr[w + 1] = cache.linear_pair_idx.size();
+	}
+	const uint64_t dense_pair_count = m2 > 2 ? (m2 - 2) * cache.n_pairs : 0;
+	cache.prune_linear_backprop = dense_pair_count > 0
+		&& cache.linear_pair_idx.size() <= dense_pair_count - dense_pair_count / 3;
 }
 
 // ========================================================================
@@ -764,6 +785,7 @@ inline void bch_combine_linear_impl_x4_(
 	}
 }
 // 4-wide BCH backprop for a degree-one second input.
+template<bool prune_linear>
 inline void bch_combine_linear_backprop_impl_x4_(
 	const double* RESTRICT d_out, double* RESTRICT d_ls1, double* RESTRICT d_ls2,
 	const double* RESTRICT ls1, const double* RESTRICT ls2,
@@ -815,10 +837,21 @@ inline void bch_combine_linear_backprop_impl_x4_(
 	for (uint64_t w = 2; w < m2; ++w) {
 		const double c_w = cache.bch_coefficients[w];
 		double* dm = d_memo + w * m * 4;
-		if (c_w != 0.0)
+		if constexpr (prune_linear) {
+			const auto [begin, end] = cache.linear_range[w];
+			std::memset(dm, 0, begin * 4 * sizeof(double));
+			if (c_w != 0.0)
+				vec4_scale(dm + begin * 4, d_out + begin * 4, c_w, end - begin);
+			else
+				std::memset(dm + begin * 4, 0, (end - begin) * 4 * sizeof(double));
+			std::memset(dm + end * 4, 0, (m - end) * 4 * sizeof(double));
+		}
+		else if (c_w != 0.0) {
 			vec4_scale(dm, d_out, c_w, m);
-		else
+		}
+		else {
 			std::memset(dm, 0, m * 4 * sizeof(double));
+		}
 	}
 
 	// Reverse BCH (pair-grouped, 4-wide)
@@ -831,9 +864,18 @@ inline void bch_combine_linear_backprop_impl_x4_(
 		double* dm_lf = d_memo + lf * m * 4;
 		double* dm_rf = d_memo + rf * m * 4;
 
-		for (uint32_t p = 0; p < n_pairs; ++p)
-			vec4_bracket_grad(dm_lf, dm_rf, dm_w, v1, v2, ij_i[p], ij_j[p],
-				ij_k, ij_c, ij_ptr[p], ij_ptr[p + 1]);
+		if constexpr (prune_linear) {
+			for (uint64_t q = cache.linear_pair_ptr[w]; q < cache.linear_pair_ptr[w + 1]; ++q) {
+				const uint32_t p = cache.linear_pair_idx[q];
+				vec4_bracket_grad(dm_lf, dm_rf, dm_w, v1, v2, ij_i[p], ij_j[p],
+					ij_k, ij_c, ij_ptr[p], ij_ptr[p + 1]);
+			}
+		}
+		else {
+			for (uint32_t p = 0; p < n_pairs; ++p)
+				vec4_bracket_grad(dm_lf, dm_rf, dm_w, v1, v2, ij_i[p], ij_j[p],
+					ij_k, ij_c, ij_ptr[p], ij_ptr[p + 1]);
+		}
 	}
 
 	// Add the direct gradient to the accumulated BCH leaf gradients.
@@ -846,7 +888,7 @@ inline void bch_combine_linear_backprop_impl_x4_(
 // bch_combine_backprop_impl_: backward pass through BCH
 // ========================================================================
 
-template<std::floating_point T, bool linear_input = false>
+template<std::floating_point T, bool linear_input = false, bool prune_linear = false>
 void bch_combine_backprop_impl_(
 	const T* RESTRICT d_out, T* RESTRICT d_ls1, T* RESTRICT d_ls2,
 	const T* RESTRICT ls1, const T* RESTRICT ls2,
@@ -905,13 +947,26 @@ void bch_combine_backprop_impl_(
 	for (uint64_t w = 2; w < m2; ++w) {
 		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
 		T* RESTRICT dm = d_memo + w * m;
-		if (c_w != T(0)) {
-			for (uint64_t k = 0; k < m; ++k) {
-				dm[k] = c_w * d_out[k];
+		if constexpr (linear_input && prune_linear) {
+			const auto [begin, end] = cache.linear_range[w];
+			std::memset(dm, 0, begin * sizeof(T));
+			if (c_w != T(0)) {
+				for (uint64_t k = begin; k < end; ++k)
+					dm[k] = c_w * d_out[k];
 			}
+			else {
+				std::memset(dm + begin, 0, (end - begin) * sizeof(T));
+			}
+			std::memset(dm + end, 0, (m - end) * sizeof(T));
 		}
 		else {
-			std::memset(dm, 0, m * sizeof(T));
+			if (c_w != T(0)) {
+				for (uint64_t k = 0; k < m; ++k)
+					dm[k] = c_w * d_out[k];
+			}
+			else {
+				std::memset(dm, 0, m * sizeof(T));
+			}
 		}
 	}
 
@@ -926,22 +981,37 @@ void bch_combine_backprop_impl_(
 		T* dm_lf = d_memo + lf * m;
 		T* dm_rf = d_memo + rf * m;
 
-		for (uint32_t p = 0; p < n_pairs; ++p) {
-			// Dot product: S = sum_k c_{ijk} * dm_w[k]
-			T S = T(0);
-			const uint32_t start = ij_ptr[p];
-			const uint32_t end = ij_ptr[p + 1];
-			for (uint32_t idx = start; idx < end; ++idx) {
-				S += static_cast<T>(ij_c[idx]) * dm_w[ij_k[idx]];
+		if constexpr (linear_input && prune_linear) {
+			for (uint64_t q = cache.linear_pair_ptr[w]; q < cache.linear_pair_ptr[w + 1]; ++q) {
+				const uint32_t p = cache.linear_pair_idx[q];
+				const uint32_t i = ij_i[p];
+				const uint32_t j = ij_j[p];
+				T S = T(0);
+				for (uint32_t idx = ij_ptr[p]; idx < ij_ptr[p + 1]; ++idx)
+					S += static_cast<T>(ij_c[idx]) * dm_w[ij_k[idx]];
+				if (S == T(0)) continue;
+				dm_lf[i] += S * v2[j];
+				dm_lf[j] -= S * v2[i];
+				dm_rf[j] += S * v1[i];
+				dm_rf[i] -= S * v1[j];
 			}
-			if (S == T(0)) continue;
-
-			const uint32_t i = ij_i[p];
-			const uint32_t j = ij_j[p];
-			dm_lf[i] += S * v2[j];
-			dm_lf[j] -= S * v2[i];
-			dm_rf[j] += S * v1[i];
-			dm_rf[i] -= S * v1[j];
+		}
+		else {
+			for (uint32_t p = 0; p < n_pairs; ++p) {
+				T S = T(0);
+				const uint32_t start = ij_ptr[p];
+				const uint32_t end = ij_ptr[p + 1];
+				for (uint32_t idx = start; idx < end; ++idx) {
+					S += static_cast<T>(ij_c[idx]) * dm_w[ij_k[idx]];
+				}
+				if (S == T(0)) continue;
+				const uint32_t i = ij_i[p];
+				const uint32_t j = ij_j[p];
+				dm_lf[i] += S * v2[j];
+				dm_lf[j] -= S * v2[i];
+				dm_rf[j] += S * v1[i];
+				dm_rf[i] -= S * v1[j];
+			}
 		}
 	}
 

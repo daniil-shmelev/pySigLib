@@ -23,7 +23,7 @@
 
 void clear_sig_poly_table_cache();
 
-const char* version = "v1";
+const char* version = "v2";
 const char* cache_folder_name = "pysiglib_cache";
 
 namespace {
