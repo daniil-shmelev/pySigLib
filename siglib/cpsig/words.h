@@ -65,3 +65,11 @@ void lyndon_proj_matrix(
 	uint64_t degree
 );
 
+void lyndon_proj_matrix_from_words(
+	SparseIntMatrix& out,
+	const std::vector<word>& lyndon_words,
+	uint64_t flat_word_count,
+	const std::function<uint64_t(const word&)>& word_to_flat_idx,
+	const std::function<uint64_t(uint64_t, uint64_t, uint64_t)>& concatenate_flat_idx
+);
+

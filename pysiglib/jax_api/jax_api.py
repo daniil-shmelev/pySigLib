@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from functools import partial
+from typing import Optional
 
 import numpy as np
 
@@ -43,8 +44,11 @@ from ..branched_sig import branched_sig as branched_sig_forward
 from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
 from ..branched_sig_coef import _branched_coef_data
 from ..branched_sig_coef import branched_sig_coef as branched_sig_coef_forward
-from ..branched_log_sig import branched_sig_to_log_sig as branched_sig_to_log_sig_forward
-from ..branched_log_sig import branched_log_sig as branched_log_sig_forward
+from ..branched_log_sig import (
+    _resolve_branched_log_sig_method,
+    branched_sig_to_log_sig as branched_sig_to_log_sig_forward,
+    branched_log_sig as branched_log_sig_forward,
+)
 from ..data_handlers import _infer_correction_degree
 from ..sig_coef import sig_coef as sig_coef_forward
 from ..sig_kernel import sig_kernel as sig_kernel_forward
@@ -1620,26 +1624,42 @@ branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
 # branched_sig_to_log_sig
 # ---------------------------------------------------------------------------
 
-@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4))
-def _branched_sig_to_log_sig(bsig, dimension, degree, n_jobs, planar):
-    return branched_sig_to_log_sig_ffi_call(bsig, dimension, degree, n_jobs, planar)
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5))
+def _branched_sig_to_log_sig(bsig, dimension, degree, method, n_jobs, planar):
+    return branched_sig_to_log_sig_ffi_call(
+        bsig, dimension, degree, method, n_jobs, planar)
 
 
-def _branched_sig_to_log_sig_fwd(bsig, dimension, degree, n_jobs, planar):
-    result = branched_sig_to_log_sig_ffi_call(bsig, dimension, degree, n_jobs, planar)
+def _branched_sig_to_log_sig_fwd(
+    bsig, dimension, degree, method, n_jobs, planar
+):
+    result = branched_sig_to_log_sig_ffi_call(
+        bsig, dimension, degree, method, n_jobs, planar)
     return result, (bsig,)
 
 
 def _branched_sig_to_log_sig_bwd(
-    dimension, degree, n_jobs, planar, residual, cotangent
+    dimension, degree, method, n_jobs, planar, residual, cotangent
 ):
     bsig, = residual
     grad = branched_sig_to_log_sig_backprop_ffi_call(
-        bsig, cotangent, dimension, degree, n_jobs, planar)
+        bsig, cotangent, dimension, degree, method, n_jobs, planar)
     return (grad,)
 
 
 _branched_sig_to_log_sig.defvjp(_branched_sig_to_log_sig_fwd, _branched_sig_to_log_sig_bwd)
+
+
+def _check_branched_log_sig_device(arr, method: int) -> None:
+    if method == 0 or isinstance(arr, jax.core.Tracer):
+        return
+    devices = getattr(arr, "devices", None)
+    if not callable(devices):
+        return
+    if any(device.platform in ("cuda", "gpu") for device in devices()):
+        raise NotImplementedError(
+            "MKW branched log signature methods 1 and 2 are only implemented on CPU."
+        )
 
 
 def branched_sig_to_log_sig(
@@ -1650,6 +1670,7 @@ def branched_sig_to_log_sig(
     time_aug: bool = False,
     lead_lag: bool = False,
     planar: bool = False,
+    method: Optional[int] = None,
     n_jobs: int = 1,
 ):
     ensure_registered()
@@ -1665,14 +1686,17 @@ def branched_sig_to_log_sig(
     check_type(lead_lag, "lead_lag", bool)
     check_type(planar, "planar", bool)
     check_n_jobs(n_jobs)
+    method = _resolve_branched_log_sig_method(method, planar)
+    _check_branched_log_sig_device(bsig, method)
 
     aug_dimension = _augmented_dim(dimension, time_aug, lead_lag)
     scalar_term = _infer_branched_scalar_term_jax(bsig, aug_dimension, degree, planar=planar)
     if not scalar_term:
         bsig = _prepend_scalar_one(bsig)
 
-    result = _branched_sig_to_log_sig(bsig, aug_dimension, degree, n_jobs, planar)
-    if not scalar_term:
+    result = _branched_sig_to_log_sig(
+        bsig, aug_dimension, degree, method, n_jobs, planar)
+    if method == 0 and not scalar_term:
         result = _strip_scalar(result)
     return result
 
@@ -1689,17 +1713,20 @@ def branched_log_sig(
     end_time: float = 1.0,
     planar: bool = False,
     scalar_term: bool = False,
+    method: Optional[int] = None,
     correction = None,
     n_jobs: int = 1,
 ):
     path = jnp.asarray(path)
+    method = _resolve_branched_log_sig_method(method, planar)
+    _check_branched_log_sig_device(path, method)
     bsig = branched_sig(
         path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
         planar=planar, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs)
     dimension = path.shape[-1]
     return branched_sig_to_log_sig(
         bsig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag,
-        planar=planar, n_jobs=n_jobs)
+        planar=planar, method=method, n_jobs=n_jobs)
 
 
 branched_log_sig.__doc__ = branched_log_sig_forward.__doc__

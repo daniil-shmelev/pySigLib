@@ -13,7 +13,7 @@
 # limitations under the License.
 # =========================================================================
 
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -24,11 +24,15 @@ from .dtypes import (
     CPSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP,
     CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA,
 )
-from .data_handlers import MultipleSigInputHandler, SigOutputHandler
+from .data_handlers import SigInputHandler, SigOutputHandler
 from .sig_length import aug_dim
 from .branched_sig import (
     _infer_branched_scalar_term,
     branched_sig_length,
+)
+from .branched_log_sig import (
+    _resolve_branched_log_sig_method,
+    branched_log_sig_length,
 )
 
 
@@ -41,6 +45,7 @@ def branched_sig_to_log_sig_backprop(
         time_aug: bool = False,
         lead_lag: bool = False,
         planar: bool = False,
+        method: Optional[int] = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -68,6 +73,10 @@ def branched_sig_to_log_sig_backprop(
     :type lead_lag: bool
     :param planar: If True, use planar branched signatures.
     :type planar: bool
+    :param method: Method used in the forward computation. If omitted, method
+        0 is used for nonplanar signatures and method 1 is used for planar
+        signatures.
+    :type method: int | None
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
@@ -85,7 +94,7 @@ def branched_sig_to_log_sig_backprop(
         import torch
         import pysiglib
 
-        pysiglib.prepare_branched_log_sig(5, 3)
+        pysiglib.prepare_branched_log_sig(5, 3, 0)
         path = torch.rand((10, 100, 5))
         bsig = pysiglib.branched_sig(path, 3)
         blogsig = pysiglib.branched_sig_to_log_sig(bsig, 5, 3)
@@ -100,26 +109,56 @@ def branched_sig_to_log_sig_backprop(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(planar, "planar", bool)
+    method = _resolve_branched_log_sig_method(method, planar)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
+    if method and (
+        isinstance(bsig, torch.Tensor) and bsig.device.type != "cpu"
+        or isinstance(blogsig_derivs, torch.Tensor)
+        and blogsig_derivs.device.type != "cpu"
+    ):
+        raise NotImplementedError(
+            "Compressed MKW branched log signatures are only supported on CPU")
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
     scalar_term = _infer_branched_scalar_term(bsig, aug_dimension, degree, planar=planar)
     bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
-    data = MultipleSigInputHandler([bsig, blogsig_derivs], bsig_len, ["bsig", "blogsig_derivs"])
+    blogsig_len = (bsig_len if method == 0 else
+                   branched_log_sig_length(aug_dimension, degree, planar=True))
+    data = SigInputHandler(bsig, bsig_len, "bsig")
+    derivs_data = SigInputHandler(blogsig_derivs, blogsig_len, "blogsig_derivs")
+    if method != 0 and blogsig_derivs.shape[-1] != blogsig_len:
+        raise ValueError(
+            "blogsig_derivs is of incorrect length. Expected "
+            + str(blogsig_len) + ", got " + str(blogsig_derivs.shape[-1]))
+
+    if data.type_ != derivs_data.type_:
+        raise ValueError(
+            "bsig and blogsig_derivs must both be numpy arrays or both be torch tensors")
+    if data.dtype != derivs_data.dtype:
+        raise ValueError("bsig and blogsig_derivs must have the same dtype")
+    if data.batch_shape != derivs_data.batch_shape:
+        raise ValueError("bsig and blogsig_derivs have different batch shapes")
+    if data.device != derivs_data.device:
+        raise ValueError("bsig and blogsig_derivs must be on the same device")
+
     result = SigOutputHandler(data, bsig_len)
+
+    if method and data.device != "cpu":
+        raise NotImplementedError(
+            "Compressed MKW branched log signatures are only supported on CPU")
 
     if data.batch_size == 0:
         return result.data
 
     if data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP[data.dtype](
-            data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
-            data.batch_size, aug_dimension, degree, n_jobs, planar, scalar_term)
+            data.data_ptr, derivs_data.data_ptr, result.data_ptr,
+            data.batch_size, aug_dimension, degree, method, n_jobs, planar, scalar_term)
     else:
         err_code = CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA[data.dtype](
-            data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
+            data.data_ptr, derivs_data.data_ptr, result.data_ptr,
             data.batch_size, aug_dimension, degree, planar, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_to_log_sig_backprop: " + err_msg(err_code))

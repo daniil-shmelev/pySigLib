@@ -22,7 +22,7 @@ from ..sig_coef import extract_sig_coef
 from ..branched_sig_coef import extract_branched_sig_coef
 from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache
 from ..static_kernels import Context, StaticKernel, LinearKernel, ScaledLinearKernel, RBFKernel, PolynomialKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel, RationalQuadraticKernel
-from .torch_api import sig, sig_combine, sig_coef, branched_sig_coef, prepare_branched_sig_coef, transform_path, sig_to_log_sig, log_sig, log_sig_combine, logsig_to_sig, sig_kernel, sig_kernel_gram, branched_sig_kernel, branched_sig_kernel_gram, sig_score, expected_sig_score, sig_mmd, branched_sig, prepare_branched_sig, branched_sig_length, branched_sig_combine, prepare_branched_log_sig, branched_sig_to_log_sig, branched_log_sig, linear_sig, sig_join, log_sig_join
+from .torch_api import sig, sig_combine, sig_coef, branched_sig_coef, prepare_branched_sig_coef, transform_path, sig_to_log_sig, log_sig, log_sig_combine, logsig_to_sig, sig_kernel, sig_kernel_gram, branched_sig_kernel, branched_sig_kernel_gram, sig_score, expected_sig_score, sig_mmd, branched_sig, prepare_branched_sig, branched_sig_length, branched_sig_combine, prepare_branched_log_sig, branched_sig_to_log_sig, branched_log_sig, branched_log_sig_length, linear_sig, sig_join, log_sig_join
 
 from ..streams import (
     SigStream as _SigStream,

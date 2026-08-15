@@ -13,7 +13,7 @@
 # limitations under the License.
 # =========================================================================
 
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -34,6 +34,7 @@ from .branched_sig import (
 def prepare_branched_log_sig(
         dimension: int,
         degree: int,
+        method: int,
         *,
         use_disk: bool = False,
         time_aug: bool = False,
@@ -51,6 +52,10 @@ def prepare_branched_log_sig(
     :type dimension: int
     :param degree: Maximum order (number of nodes).
     :type degree: int
+    :param method: Method to prepare. Method 0 computes the expanded branched
+        log signature. Methods 1 and 2 compute compressed MKW log signatures
+        and require ``planar=True``.
+    :type method: int
     :param use_disk: If ``True``, load or save the branched-signature cache on disk.
     :type use_disk: bool
     :param time_aug: If True, prepare for time-augmented paths (dim + 1).
@@ -69,27 +74,73 @@ def prepare_branched_log_sig(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(planar, "planar", bool)
+    check_type(method, "method", int)
+    method = _resolve_branched_log_sig_method(method, planar)
     check_type(device, "device", str)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     if device not in ("cpu", "cuda", "both"):
         raise ValueError("device must be 'cpu', 'cuda', or 'both'")
+    if method and device == "cuda":
+        raise NotImplementedError(
+            "Compressed MKW branched log signatures are only supported on CPU")
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
     if device in ("cpu", "both"):
         err_code = CPSIG.prepare_branched_log_sig(
-            aug_dimension, degree, use_disk, planar)
+            aug_dimension, degree, method, use_disk, planar)
         if err_code:
             raise Exception(
                 "Error in pysiglib.prepare_branched_log_sig: " + err_msg(err_code))
 
-    if BUILT_WITH_CUDA and device in ("cuda", "both"):
+    if method == 0 and BUILT_WITH_CUDA and device in ("cuda", "both"):
         err_code = CUSIG.prepare_branched_log_sig_cuda(
             aug_dimension, degree, planar, use_disk)
         if err_code:
             raise Exception(
                 "Error in pysiglib.prepare_branched_log_sig (CUDA): "
                 + err_msg(err_code))
+
+
+def _resolve_branched_log_sig_method(method: Optional[int], planar: bool) -> int:
+    check_type(planar, "planar", bool)
+    if method is None:
+        return 1 if planar else 0
+    check_type(method, "method", int)
+    if method == 3:
+        raise NotImplementedError(
+            "branched log signature method 3 is not implemented")
+    if method not in (0, 1, 2):
+        raise ValueError("method must be one of 0, 1 or 2. Got " + str(method) + " instead.")
+    if method and not planar:
+        raise ValueError(
+            "branched log signature methods 1 and 2 require planar=True")
+    return method
+
+
+def branched_log_sig_length(
+        dimension: int,
+        degree: int,
+        *,
+        planar: bool = False,
+) -> int:
+    """Returns the scalar-free length of a branched log signature.
+
+    For ``planar=True``, this is the number of weighted Lyndon forests. For
+    ``planar=False``, this is the number of decorated nonplanar rooted trees.
+    """
+    check_type(dimension, "dimension", int)
+    check_type(degree, "degree", int)
+    check_type(planar, "planar", bool)
+    check_non_neg(dimension, "dimension")
+    check_non_neg(degree, "degree")
+    if dimension > 255:
+        raise ValueError("branched log signature dimension must be <= 255")
+    out = CPSIG.branched_log_sig_length(dimension, degree, planar)
+    if out == 0 and dimension > 0 and degree > 0:
+        raise ValueError(
+            "Invalid parameters or integer overflow in branched_log_sig_length")
+    return out
 
 
 def branched_sig_to_log_sig(
@@ -100,6 +151,7 @@ def branched_sig_to_log_sig(
         time_aug: bool = False,
         lead_lag: bool = False,
         planar: bool = False,
+        method: Optional[int] = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -120,13 +172,18 @@ def branched_sig_to_log_sig(
     :type lead_lag: bool
     :param planar: If True, use planar branched signatures.
     :type planar: bool
+    :param method: Method to use. Method 0 returns the expanded branched log
+        signature. Methods 1 and 2 return compressed MKW coordinates and
+        require ``planar=True``. If omitted, method 0 is used for nonplanar
+        signatures and method 1 is used for planar signatures.
+    :type method: int | None
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :return: The branched log signature or batch of branched log signatures, in the same
-        scalar-term format as ``bsig``.
+    :return: The branched log signature or batch of branched log signatures. Method 0
+        preserves the scalar-term format of ``bsig``. Methods 1 and 2 are scalar-free.
     :rtype: numpy.ndarray | torch.Tensor
 
     Example usage:
@@ -137,7 +194,7 @@ def branched_sig_to_log_sig(
         import torch
         import pysiglib
 
-        pysiglib.prepare_branched_log_sig(5, 3)
+        pysiglib.prepare_branched_log_sig(5, 3, 0)
         path = torch.rand((10, 100, 5))
         bsig = pysiglib.branched_sig(path, 3)
         blogsig = pysiglib.branched_sig_to_log_sig(bsig, 5, 3)
@@ -148,15 +205,25 @@ def branched_sig_to_log_sig(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(planar, "planar", bool)
+    method = _resolve_branched_log_sig_method(method, planar)
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
+    if method and isinstance(bsig, torch.Tensor) and bsig.device.type != "cpu":
+        raise NotImplementedError(
+            "Compressed MKW branched log signatures are only supported on CPU")
 
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
     scalar_term = _infer_branched_scalar_term(bsig, aug_dimension, degree, planar=planar)
     bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
     data = MultipleSigInputHandler([bsig], bsig_len, ["bsig"])
-    result = SigOutputHandler(data, bsig_len)
+    out_len = (bsig_len if method == 0 else
+               branched_log_sig_length(aug_dimension, degree, planar=True))
+    result = SigOutputHandler(data, out_len)
+
+    if method and data.device != "cpu":
+        raise NotImplementedError(
+            "Compressed MKW branched log signatures are only supported on CPU")
 
     if data.batch_size == 0:
         return result.data
@@ -164,7 +231,7 @@ def branched_sig_to_log_sig(
     if data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG_TO_LOG_SIG[data.dtype](
             data.sig_ptr[0], result.data_ptr, data.batch_size,
-            aug_dimension, degree, n_jobs, planar, scalar_term)
+            aug_dimension, degree, method, n_jobs, planar, scalar_term)
     else:
         err_code = CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA[data.dtype](
             data.sig_ptr[0], result.data_ptr, data.batch_size,
@@ -184,6 +251,7 @@ def branched_log_sig(
         end_time: float = 1.0,
         planar: bool = False,
         scalar_term: bool = False,
+        method: Optional[int] = None,
         correction = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
@@ -210,6 +278,12 @@ def branched_log_sig(
     :type planar: bool
     :param scalar_term: If True, include the leading scalar coefficient, which is zero.
     :type scalar_term: bool
+    :param method: Method to use. Method 0 returns the expanded branched log
+        signature. Methods 1 and 2 return compressed MKW coordinates and
+        require ``planar=True``. If omitted, method 0 is used for nonplanar
+        signatures and method 1 is used for planar signatures. ``scalar_term``
+        affects only method 0.
+    :type method: int | None
     :param correction: Optional per-segment correction of level
         :math:`\\geq 2` added to the path increment on each path
         segment, before the branched log signature is taken. The
@@ -256,7 +330,7 @@ def branched_log_sig(
         import torch
         import pysiglib
 
-        pysiglib.prepare_branched_log_sig(5, 3)
+        pysiglib.prepare_branched_log_sig(5, 3, 0)
         path = torch.rand((10, 100, 5))
         blogsig = pysiglib.branched_log_sig(path, 3)
         print(blogsig)
@@ -284,15 +358,19 @@ def branched_log_sig(
         correction = np.broadcast_to(
             (-0.5 * np.eye(d) * dt).reshape(1, -1), (n_steps, d * d)).copy()
 
-        pysiglib.prepare_branched_log_sig(d, N)
+        pysiglib.prepare_branched_log_sig(d, N, 0)
         ito_blogsig = pysiglib.branched_log_sig(
             path, N, correction=correction, end_time=T)
         print(ito_blogsig)
     """
+    method = _resolve_branched_log_sig_method(method, planar)
+    if method and isinstance(path, torch.Tensor) and path.device.type != "cpu":
+        raise NotImplementedError(
+            "Compressed MKW branched log signatures are only supported on CPU")
     bsig = branched_sig(
         path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
         planar=planar, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs)
     dimension = path.shape[-1]
     return branched_sig_to_log_sig(
         bsig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag,
-        planar=planar, n_jobs=n_jobs)
+        planar=planar, method=method, n_jobs=n_jobs)
