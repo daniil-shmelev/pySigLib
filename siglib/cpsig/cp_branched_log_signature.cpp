@@ -472,17 +472,6 @@ std::unordered_map<
 > branched_log_forest_cache_registry_;
 std::shared_mutex branched_log_forest_cache_mu_;
 
-const BranchedLogForestCache& get_cached_branched_log_forest_cache(const BranchedSigCache& cache) {
-	const auto key = make_branched_sig_cache_key(
-		cache.dimension, cache.max_nodes, cache.planar);
-	std::shared_lock rlock(branched_log_forest_cache_mu_);
-	auto it = branched_log_forest_cache_registry_.find(key);
-	if (it != branched_log_forest_cache_registry_.end())
-		return *(it->second);
-	throw cache_not_found_error(
-		"Branched log sig cache not found - call prepare_branched_log_sig first");
-}
-
 template<std::floating_point T, bool ScalarTerm>
 FORCE_INLINE T sig_tree_value_(const T* bsig, uint64_t flat_idx) {
 	if constexpr (ScalarTerm) {
@@ -699,8 +688,7 @@ BranchedLogPolyCache_ build_branched_log_poly_cache_(
 
 
 const BranchedLogPolyCache_& get_cached_branched_log_poly_cache_(
-	const BranchedSigCache& cache,
-	const BranchedLogForestCache& forest_cache
+	const BranchedSigCache& cache
 ) {
 	const auto key = make_branched_sig_cache_key(
 		cache.dimension, cache.max_nodes, cache.planar);
@@ -976,8 +964,7 @@ void branched_sig_to_log_sig_(
 	uint64_t total_len = cache.total_length;
 	uint64_t stride = ScalarTerm ? total_len : total_len - 1;
 
-	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
-	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache, forest_cache);
+	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache);
 	auto work_range = [&](uint64_t start, uint64_t end) {
 		branched_sig_to_log_sig_poly_range_<T, ScalarTerm>(
 			bsig, out, start, end, stride, poly_cache);
@@ -1005,8 +992,7 @@ void branched_sig_to_log_sig_backprop_(
 	uint64_t total_len = cache.total_length;
 	uint64_t stride = ScalarTerm ? total_len : total_len - 1;
 
-	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
-	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache, forest_cache);
+	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache);
 	auto work_range = [&](uint64_t start, uint64_t end) {
 		branched_sig_to_log_sig_backprop_poly_range_<T, ScalarTerm>(
 			bsig, derivs, out, start, end, stride, poly_cache);
@@ -1033,8 +1019,7 @@ void branched_sig_to_log_sig_compressed_(
 	const uint64_t input_stride = ScalarTerm
 		? cache.total_length
 		: cache.total_length - 1;
-	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
-	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache, forest_cache);
+	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache);
 	const auto& basis_cache = get_branched_log_basis_cache_(dimension, max_nodes, method);
 	const uint64_t output_stride = basis_cache.lyndon_idx.size();
 	if (output_stride == 0)
@@ -1078,8 +1063,7 @@ void branched_sig_to_log_sig_backprop_compressed_(
 	const uint64_t input_stride = ScalarTerm
 		? cache.total_length
 		: cache.total_length - 1;
-	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
-	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache, forest_cache);
+	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache);
 	const auto& basis_cache = get_branched_log_basis_cache_(dimension, max_nodes, method);
 	const uint64_t deriv_stride = basis_cache.lyndon_idx.size();
 	if (input_stride == 0)
@@ -1341,8 +1325,7 @@ void branched_log_sig_from_path_backprop_(
 
 
 void prepare_branched_log_sig_cache(const BranchedSigCache& cache) {
-	const auto key = make_branched_sig_cache_key(
-		cache.dimension, cache.max_nodes, cache.planar);
+	const auto key = make_branched_sig_cache_key(cache.dimension, cache.max_nodes, cache.planar);
 
 	const BranchedLogForestCache* forest_cache = nullptr;
 	{
