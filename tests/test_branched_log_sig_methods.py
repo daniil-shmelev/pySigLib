@@ -21,6 +21,7 @@ import torch
 
 import pysiglib
 import pysiglib.torch_api as torch_api
+from conftest import check_close, skip_no_cuda
 from pysiglib.branched_log_sig_backprop import (
     _branched_log_sig_from_path_backprop,
 )
@@ -539,10 +540,6 @@ def test_branched_log_sig_method_validation():
         pysiglib.prepare_branched_log_sig(2, 2, 1)
     with pytest.raises(ValueError, match="one of 0, 1, 2 or 3"):
         pysiglib.branched_log_sig(path, 2, planar=True, method=4)
-    for method in (1, 2, 3):
-        with pytest.raises(NotImplementedError, match="only supported on CPU"):
-            pysiglib.prepare_branched_log_sig(
-                2, 2, method, planar=True, device="cuda")
 
 
 def test_prepare_compressed_device_both_prepares_cpu():
@@ -652,13 +649,285 @@ def test_method_three_rejects_correction():
             path, 2, planar=True, method=3, correction=correction)
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
-def test_compressed_method_rejects_cuda_tensor():
-    dimension, degree = 2, 2
-    length = pysiglib.branched_sig_length(
-        dimension, degree, planar=True, scalar_term=True)
-    bsig = torch.zeros(length, dtype=torch.float64, device="cuda")
+@pytest.mark.parametrize(
+    "time_aug,lead_lag",
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+@pytest.mark.parametrize("batch_shape", [(), (0,)])
+def test_method_three_rejects_empty_paths(
+        batch_shape, time_aug, lead_lag):
+    path = np.empty(batch_shape + (0, 2), dtype=np.float64)
+    with pytest.raises(ValueError, match="empty path"):
+        pysiglib.branched_log_sig(
+            path, 2, planar=True, method=3,
+            time_aug=time_aug, lead_lag=lead_lag)
 
-    with pytest.raises(NotImplementedError, match="only supported on CPU"):
-        pysiglib.branched_sig_to_log_sig(
+    cotangent = np.empty(
+        batch_shape + (
+            pysiglib.branched_log_sig_length(2, 2, planar=True),),
+        dtype=np.float64,
+    )
+    with pytest.raises(ValueError, match="empty path"):
+        _branched_log_sig_from_path_backprop(cotangent, path, 2)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("method", [1, 2])
+@pytest.mark.parametrize("scalar_term", [False, True])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_cuda_compressed_forward_and_backward_match_cpu(
+        method, scalar_term, dtype):
+    dimension, degree = 2, 3
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, method, planar=True, device="both")
+    path = np.stack([_path(), 0.6 * _path()]).astype(dtype)
+    bsig = pysiglib.branched_sig(
+        path, degree, planar=True, scalar_term=scalar_term)
+    expected = pysiglib.branched_sig_to_log_sig(
+        bsig, dimension, degree, planar=True, method=method)
+    weights = np.random.default_rng(8162).normal(
+        size=expected.shape).astype(dtype)
+    expected_grad = pysiglib.branched_sig_to_log_sig_backprop(
+        bsig, weights, dimension, degree, planar=True, method=method)
+
+    torch_dtype = torch.float32 if dtype == np.float32 else torch.float64
+    bsig_cuda = torch.tensor(
+        bsig, dtype=torch_dtype, device="cuda", requires_grad=True)
+    weights_cuda = torch.tensor(weights, dtype=torch_dtype, device="cuda")
+    saved_weights = weights_cuda.clone()
+    actual = torch_api.branched_sig_to_log_sig(
+        bsig_cuda, dimension, degree, planar=True, method=method)
+    explicit_grad = pysiglib.branched_sig_to_log_sig_backprop(
+        bsig_cuda.detach(), weights_cuda, dimension, degree,
+        planar=True, method=method)
+    (actual * weights_cuda).sum().backward()
+
+    check_close(actual, expected, single_atol=2e-5, double_atol=2e-10)
+    check_close(
+        explicit_grad, expected_grad,
+        single_atol=5e-5, double_atol=2e-9)
+    check_close(
+        bsig_cuda.grad, expected_grad,
+        single_atol=5e-5, double_atol=2e-9)
+    torch.testing.assert_close(weights_cuda, saved_weights)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("scalar_term", [False, True])
+def test_cuda_compressed_empty_batch(scalar_term):
+    dimension, degree = 2, 3
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, 2, planar=True, device="cuda")
+    input_width = pysiglib.branched_sig_length(
+        dimension, degree, planar=True, scalar_term=scalar_term)
+    compact_width = pysiglib.branched_log_sig_length(
+        dimension, degree, planar=True)
+    bsig = torch.empty(
+        (0, input_width), dtype=torch.float64, device="cuda")
+    result = torch_api.branched_sig_to_log_sig(
+        bsig, dimension, degree, planar=True, method=2)
+    cotangent = torch.empty(
+        (0, compact_width), dtype=torch.float64, device="cuda")
+    gradient = pysiglib.branched_sig_to_log_sig_backprop(
+        bsig, cotangent, dimension, degree, planar=True, method=2)
+
+    assert result.shape == (0, compact_width)
+    assert gradient.shape == bsig.shape
+
+
+@skip_no_cuda
+def test_cuda_compressed_cache_upgrade_clear_and_disk_round_trip(tmp_path):
+    dimension, degree = 2, 3
+    input_width = pysiglib.branched_sig_length(
+        dimension, degree, planar=True, scalar_term=True)
+    bsig = torch.cat((
+        torch.ones(1, dtype=torch.float64, device="cuda"),
+        torch.linspace(
+            -0.2, 0.3, input_width - 1,
+            dtype=torch.float64, device="cuda"),
+    ))
+    pysiglib.set_cache_dir(str(tmp_path))
+    pysiglib.clear_cache(use_disk=True)
+    try:
+        pysiglib.prepare_branched_log_sig(
+            dimension, degree, 1, planar=True, device="cuda")
+        torch_api.branched_sig_to_log_sig(
             bsig, dimension, degree, planar=True, method=1)
+        with pytest.raises(Exception, match="cache"):
+            torch_api.branched_sig_to_log_sig(
+                bsig, dimension, degree, planar=True, method=2)
+
+        pysiglib.prepare_branched_log_sig(
+            dimension, degree, 2, planar=True, device="cuda",
+            use_disk=True)
+        expected = torch_api.branched_sig_to_log_sig(
+            bsig, dimension, degree, planar=True, method=2)
+
+        pysiglib.clear_cache(use_disk=False, device="cuda")
+        with pytest.raises(Exception, match="cache"):
+            torch_api.branched_sig_to_log_sig(
+                bsig, dimension, degree, planar=True, method=1)
+
+        pysiglib.prepare_branched_log_sig(
+            dimension, degree, 1, planar=True, device="cuda",
+            use_disk=True)
+        actual = torch_api.branched_sig_to_log_sig(
+            bsig, dimension, degree, planar=True, method=2)
+        torch.testing.assert_close(actual, expected)
+    finally:
+        pysiglib.clear_cache(use_disk=True)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("method", [0, 1, 2])
+def test_cuda_direct_branched_log_sig_with_correction_matches_cpu(method):
+    dimension, degree = 2, 3
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, method, planar=True, device="both")
+    path = torch.tensor(
+        _path(), dtype=torch.float64, requires_grad=True)
+    correction = torch.linspace(
+        -0.02, 0.03,
+        (path.shape[0] - 1) * dimension * dimension,
+        dtype=torch.float64,
+    ).reshape(path.shape[0] - 1, dimension * dimension)
+    expected = torch_api.branched_log_sig(
+        path, degree, planar=True, method=method,
+        correction=correction)
+    weights = torch.linspace(
+        -0.4, 0.6, expected.numel(), dtype=torch.float64)
+    (expected * weights).sum().backward()
+
+    path_cuda = path.detach().cuda().requires_grad_(True)
+    actual = torch_api.branched_log_sig(
+        path_cuda,
+        degree, planar=True, method=method,
+        correction=correction.cuda(),
+    )
+    (actual * weights.cuda()).sum().backward()
+
+    check_close(actual, expected, double_atol=2e-9)
+    check_close(path_cuda.grad, path.grad, double_atol=2e-8)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("dimension,degree", [(0, 3), (2, 0)])
+def test_cuda_compressed_zero_width(dimension, degree):
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, 2, planar=True, device="cuda")
+    bsig = torch.ones(1, dtype=torch.float64, device="cuda")
+    cotangent = torch.empty(0, dtype=torch.float64, device="cuda")
+
+    output = pysiglib.branched_sig_to_log_sig(
+        bsig, dimension, degree, planar=True, method=2)
+    gradient = pysiglib.branched_sig_to_log_sig_backprop(
+        bsig, cotangent, dimension, degree, planar=True, method=2)
+
+    assert output.shape == (0,)
+    torch.testing.assert_close(gradient, torch.zeros_like(bsig))
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("batch", [False, True])
+def test_cuda_method_three_forward_and_backward_match_cpu(dtype, batch):
+    dimension, degree = 2, 3
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, 3, planar=True, device="both")
+    path = np.insert(_path().astype(dtype), 2, _path()[1], axis=0)
+    if batch:
+        path = np.stack([path, 0.7 * path])
+    expected = pysiglib.branched_log_sig(
+        path, degree, planar=True, method=3)
+    weights = np.random.default_rng(9163).normal(
+        size=expected.shape).astype(dtype)
+    expected_grad = _branched_log_sig_from_path_backprop(
+        weights, path, degree)
+
+    torch_dtype = torch.float32 if dtype == np.float32 else torch.float64
+    path_cuda = torch.tensor(
+        path, dtype=torch_dtype, device="cuda", requires_grad=True)
+    weights_cuda = torch.tensor(weights, dtype=torch_dtype, device="cuda")
+    saved_weights = weights_cuda.clone()
+    actual = torch_api.branched_log_sig(
+        path_cuda, degree, planar=True, method=3)
+    explicit_grad = _branched_log_sig_from_path_backprop(
+        weights_cuda, path_cuda.detach(), degree)
+    (actual * weights_cuda).sum().backward()
+
+    tolerance = 5e-4 if dtype == np.float32 else 2e-9
+    check_close(actual, expected, atol=tolerance)
+    check_close(explicit_grad, expected_grad, atol=tolerance)
+    check_close(path_cuda.grad, expected_grad, atol=tolerance)
+    torch.testing.assert_close(weights_cuda, saved_weights)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("method", [0, 1, 2, 3])
+@pytest.mark.parametrize(
+    "time_aug,lead_lag", [(True, False), (False, True), (True, True)])
+def test_cuda_augmentation_matches_cpu(method, time_aug, lead_lag):
+    dimension, degree = 2, 2
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, method, planar=True, time_aug=time_aug,
+        lead_lag=lead_lag, device="both")
+    path_cpu = torch.tensor(
+        _path(), dtype=torch.float64, requires_grad=True)
+    expected = torch_api.branched_log_sig(
+        path_cpu, degree, planar=True, method=method, time_aug=time_aug,
+        lead_lag=lead_lag)
+    weights = torch.linspace(
+        -0.3, 0.7, expected.numel(), dtype=torch.float64)
+    (expected * weights).sum().backward()
+
+    path_cuda = torch.tensor(
+        _path(), dtype=torch.float64, device="cuda", requires_grad=True)
+    actual = torch_api.branched_log_sig(
+        path_cuda, degree, planar=True, method=method, time_aug=time_aug,
+        lead_lag=lead_lag)
+    (actual * weights.cuda()).sum().backward()
+
+    check_close(actual, expected, double_atol=2e-9)
+    check_close(path_cuda.grad, path_cpu.grad, double_atol=2e-8)
+
+
+@skip_no_cuda
+def test_cuda_method_three_length_one_returns_zero_gradient():
+    dimension, degree = 2, 3
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, 3, planar=True, device="cuda")
+    path = torch.tensor(
+        [[0.2, -0.3]], dtype=torch.float64, device="cuda",
+        requires_grad=True)
+    output = torch_api.branched_log_sig(
+        path, degree, planar=True, method=3)
+    output.sum().backward()
+
+    assert torch.count_nonzero(output) == 0
+    assert torch.count_nonzero(path.grad) == 0
+
+
+@skip_no_cuda
+def test_cuda_method_three_degree_zero_returns_empty_output_and_zero_gradient():
+    dimension, degree = 2, 0
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, 3, planar=True, device="cuda")
+    path = torch.tensor(
+        [[0.0, 0.1], [0.3, -0.2], [0.7, 0.4]],
+        dtype=torch.float64, device="cuda", requires_grad=True)
+    output = torch_api.branched_log_sig(
+        path, degree, planar=True, method=3)
+    output.sum().backward()
+
+    assert output.shape == (0,)
+    assert torch.count_nonzero(path.grad) == 0
+
+
+@skip_no_cuda
+def test_cuda_method_three_rejects_degree_above_twelve():
+    with pytest.raises(
+        NotImplementedError,
+        match="CUDA MKW BCH method supports degree at most 12",
+    ):
+        pysiglib.prepare_branched_log_sig(
+            1, 13, 3, planar=True, device="cuda")

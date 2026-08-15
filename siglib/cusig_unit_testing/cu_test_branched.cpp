@@ -357,3 +357,497 @@ TEST(branchedSigCoefCudaTest, ForwardAndBackpropMatchFull) {
     cudaFree(d_sparse_grad);
     cudaFree(d_full_grad);
 }
+
+TEST(branchedLogSigFromPathCudaTest, ForwardAndBackwardMatchMethodTwo) {
+    const uint64_t batch_size = 2;
+    const uint64_t length = 5;
+    const uint64_t dimension = 2;
+    const uint64_t max_nodes = 3;
+    const uint64_t full_length = compute_branched_sig_length(
+        dimension, max_nodes, true);
+    const uint64_t log_length = compute_branched_log_sig_length(
+        dimension, max_nodes, true);
+    ASSERT_EQ(0, prepare_branched_log_sig_cuda(
+        dimension, max_nodes, 3, true, false));
+
+    const std::vector<double> path{
+        0.1, -0.2, 0.4, 0.3, 0.4, 0.3, -0.1, 0.8, 0.2, -0.4,
+        -0.3, 0.2, 0.6, -0.5, 0.6, -0.5, 0.9, 0.1, -0.2, 0.7
+    };
+    std::vector<double> derivs(batch_size * log_length);
+    for (uint64_t index = 0; index < derivs.size(); ++index)
+        derivs[index] = 0.09 * static_cast<double>(index + 1) - 0.4;
+
+    double* d_path = nullptr;
+    double* d_out = nullptr;
+    double* d_derivs = nullptr;
+    double* d_path_derivs = nullptr;
+    double* d_bsig = nullptr;
+    double* d_method_two_out = nullptr;
+    double* d_bsig_derivs = nullptr;
+    double* d_method_two_path_derivs = nullptr;
+    cudaMalloc(&d_path, path.size() * sizeof(double));
+    cudaMalloc(&d_out, derivs.size() * sizeof(double));
+    cudaMalloc(&d_derivs, derivs.size() * sizeof(double));
+    cudaMalloc(&d_path_derivs, path.size() * sizeof(double));
+    cudaMalloc(&d_bsig, batch_size * full_length * sizeof(double));
+    cudaMalloc(&d_method_two_out, derivs.size() * sizeof(double));
+    cudaMalloc(&d_bsig_derivs,
+        batch_size * full_length * sizeof(double));
+    cudaMalloc(&d_method_two_path_derivs, path.size() * sizeof(double));
+    cudaMemcpy(d_path, path.data(), path.size() * sizeof(double),
+        cudaMemcpyHostToDevice);
+    cudaMemcpy(d_derivs, derivs.data(), derivs.size() * sizeof(double),
+        cudaMemcpyHostToDevice);
+
+    ASSERT_EQ(0, branched_sig_cuda_d(
+        d_path, d_bsig, batch_size, dimension, length, max_nodes,
+        false, false, 1., true, true));
+    ASSERT_EQ(0, branched_sig_to_log_sig_cuda_d(
+        d_bsig, d_method_two_out, batch_size, dimension, max_nodes,
+        2, true, true));
+    ASSERT_EQ(0, branched_sig_to_log_sig_backprop_cuda_d(
+        d_bsig, d_derivs, d_bsig_derivs, batch_size, dimension,
+        max_nodes, 2, true, true));
+    ASSERT_EQ(0, branched_sig_backprop_cuda_d(
+        d_path, d_method_two_path_derivs, d_bsig_derivs, d_bsig,
+        batch_size, dimension, length, max_nodes,
+        false, false, 1., true, true));
+    ASSERT_EQ(0, branched_log_sig_from_path_cuda_d(
+        d_path, d_out, batch_size, length, dimension, max_nodes));
+    ASSERT_EQ(0, branched_log_sig_from_path_backprop_cuda_d(
+        d_derivs, d_path_derivs, d_path, batch_size, length,
+        dimension, max_nodes));
+    ASSERT_EQ(cudaSuccess, cudaDeviceSynchronize());
+
+    std::vector<double> expected(derivs.size());
+    std::vector<double> expected_gradient(path.size());
+    std::vector<double> actual(derivs.size());
+    std::vector<double> actual_gradient(path.size());
+    std::vector<double> actual_derivs(derivs.size());
+    cudaMemcpy(expected.data(), d_method_two_out,
+        expected.size() * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(expected_gradient.data(), d_method_two_path_derivs,
+        expected_gradient.size() * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(actual.data(), d_out, actual.size() * sizeof(double),
+        cudaMemcpyDeviceToHost);
+    cudaMemcpy(actual_gradient.data(), d_path_derivs,
+        actual_gradient.size() * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(actual_derivs.data(), d_derivs,
+        actual_derivs.size() * sizeof(double), cudaMemcpyDeviceToHost);
+    for (uint64_t index = 0; index < actual.size(); ++index)
+        EXPECT_NEAR(actual[index], expected[index], 2e-11);
+    for (uint64_t index = 0; index < actual_gradient.size(); ++index)
+        EXPECT_NEAR(actual_gradient[index], expected_gradient[index], 2e-10);
+    EXPECT_EQ(actual_derivs, derivs);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+    cudaFree(d_derivs);
+    cudaFree(d_path_derivs);
+    cudaFree(d_bsig);
+    cudaFree(d_method_two_out);
+    cudaFree(d_bsig_derivs);
+    cudaFree(d_method_two_path_derivs);
+}
+
+TEST(branchedLogSigFromPathCudaTest, FloatForwardAndBackwardMatchMethodTwo) {
+    const uint64_t batch_size = 1;
+    const uint64_t length = 4;
+    const uint64_t dimension = 2;
+    const uint64_t max_nodes = 3;
+    const uint64_t full_length = compute_branched_sig_length(
+        dimension, max_nodes, true);
+    const uint64_t log_length = compute_branched_log_sig_length(
+        dimension, max_nodes, true);
+    ASSERT_EQ(0, prepare_branched_log_sig_cuda(
+        dimension, max_nodes, 3, true, false));
+
+    const std::vector<float> path{
+        0.2f, -0.1f, 0.5f, 0.3f, -0.4f, 0.8f, 0.7f, -0.2f
+    };
+    std::vector<float> derivs(log_length);
+    for (uint64_t index = 0; index < derivs.size(); ++index)
+        derivs[index] = 0.05f * static_cast<float>(index + 1) - 0.3f;
+
+    float* d_path = nullptr;
+    float* d_out = nullptr;
+    float* d_derivs = nullptr;
+    float* d_path_derivs = nullptr;
+    float* d_bsig = nullptr;
+    float* d_method_two_out = nullptr;
+    float* d_bsig_derivs = nullptr;
+    float* d_method_two_path_derivs = nullptr;
+    cudaMalloc(&d_path, path.size() * sizeof(float));
+    cudaMalloc(&d_out, derivs.size() * sizeof(float));
+    cudaMalloc(&d_derivs, derivs.size() * sizeof(float));
+    cudaMalloc(&d_path_derivs, path.size() * sizeof(float));
+    cudaMalloc(&d_bsig, batch_size * full_length * sizeof(float));
+    cudaMalloc(&d_method_two_out, derivs.size() * sizeof(float));
+    cudaMalloc(&d_bsig_derivs,
+        batch_size * full_length * sizeof(float));
+    cudaMalloc(&d_method_two_path_derivs, path.size() * sizeof(float));
+    cudaMemcpy(d_path, path.data(), path.size() * sizeof(float),
+        cudaMemcpyHostToDevice);
+    cudaMemcpy(d_derivs, derivs.data(), derivs.size() * sizeof(float),
+        cudaMemcpyHostToDevice);
+    ASSERT_EQ(0, branched_sig_cuda_f(
+        d_path, d_bsig, batch_size, dimension, length, max_nodes,
+        false, false, 1.f, true, true));
+    ASSERT_EQ(0, branched_sig_to_log_sig_cuda_f(
+        d_bsig, d_method_two_out, batch_size, dimension, max_nodes,
+        2, true, true));
+    ASSERT_EQ(0, branched_sig_to_log_sig_backprop_cuda_f(
+        d_bsig, d_derivs, d_bsig_derivs, batch_size, dimension,
+        max_nodes, 2, true, true));
+    ASSERT_EQ(0, branched_sig_backprop_cuda_f(
+        d_path, d_method_two_path_derivs, d_bsig_derivs, d_bsig,
+        batch_size, dimension, length, max_nodes,
+        false, false, 1.f, true, true));
+    ASSERT_EQ(0, branched_log_sig_from_path_cuda_f(
+        d_path, d_out, batch_size, length, dimension, max_nodes));
+    ASSERT_EQ(0, branched_log_sig_from_path_backprop_cuda_f(
+        d_derivs, d_path_derivs, d_path, batch_size, length,
+        dimension, max_nodes));
+    ASSERT_EQ(cudaSuccess, cudaDeviceSynchronize());
+
+    std::vector<float> expected(derivs.size());
+    std::vector<float> expected_gradient(path.size());
+    std::vector<float> actual(derivs.size());
+    std::vector<float> actual_gradient(path.size());
+    cudaMemcpy(expected.data(), d_method_two_out,
+        expected.size() * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(expected_gradient.data(), d_method_two_path_derivs,
+        expected_gradient.size() * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(actual.data(), d_out, actual.size() * sizeof(float),
+        cudaMemcpyDeviceToHost);
+    cudaMemcpy(actual_gradient.data(), d_path_derivs,
+        actual_gradient.size() * sizeof(float), cudaMemcpyDeviceToHost);
+    for (uint64_t index = 0; index < actual.size(); ++index)
+        EXPECT_NEAR(actual[index], expected[index], 2e-5);
+    for (uint64_t index = 0; index < actual_gradient.size(); ++index)
+        EXPECT_NEAR(actual_gradient[index], expected_gradient[index], 2e-4);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+    cudaFree(d_derivs);
+    cudaFree(d_path_derivs);
+    cudaFree(d_bsig);
+    cudaFree(d_method_two_out);
+    cudaFree(d_bsig_derivs);
+    cudaFree(d_method_two_path_derivs);
+}
+
+TEST(branchedLogSigFromPathCudaTest, ZeroIncrementGradientFiniteDifference) {
+    const uint64_t length = 5;
+    const uint64_t dimension = 2;
+    const uint64_t max_nodes = 3;
+    const uint64_t log_length = compute_branched_log_sig_length(
+        dimension, max_nodes, true);
+    ASSERT_EQ(0, prepare_branched_log_sig_cuda(
+        dimension, max_nodes, 3, true, false));
+
+    std::vector<double> path{
+        0.1, -0.2, 0.4, 0.3, 0.4, 0.3, -0.1, 0.8, 0.2, -0.4
+    };
+    std::vector<double> derivs(log_length);
+    for (uint64_t index = 0; index < derivs.size(); ++index)
+        derivs[index] = 0.07 * static_cast<double>(index + 1) - 0.25;
+
+    double* d_path = nullptr;
+    double* d_out = nullptr;
+    double* d_derivs = nullptr;
+    double* d_path_derivs = nullptr;
+    cudaMalloc(&d_path, path.size() * sizeof(double));
+    cudaMalloc(&d_out, log_length * sizeof(double));
+    cudaMalloc(&d_derivs, derivs.size() * sizeof(double));
+    cudaMalloc(&d_path_derivs, path.size() * sizeof(double));
+    cudaMemcpy(d_derivs, derivs.data(), derivs.size() * sizeof(double),
+        cudaMemcpyHostToDevice);
+    cudaMemcpy(d_path, path.data(), path.size() * sizeof(double),
+        cudaMemcpyHostToDevice);
+    ASSERT_EQ(0, branched_log_sig_from_path_backprop_cuda_d(
+        d_derivs, d_path_derivs, d_path, 1, length, dimension, max_nodes));
+    ASSERT_EQ(cudaSuccess, cudaDeviceSynchronize());
+    std::vector<double> gradient(path.size());
+    cudaMemcpy(gradient.data(), d_path_derivs, gradient.size() * sizeof(double),
+        cudaMemcpyDeviceToHost);
+
+    const double epsilon = 1e-6;
+    std::vector<double> out_plus(log_length);
+    std::vector<double> out_minus(log_length);
+    for (uint64_t path_index = 0; path_index < path.size(); ++path_index) {
+        const double original = path[path_index];
+        path[path_index] = original + epsilon;
+        cudaMemcpy(d_path, path.data(), path.size() * sizeof(double),
+            cudaMemcpyHostToDevice);
+        ASSERT_EQ(0, branched_log_sig_from_path_cuda_d(
+            d_path, d_out, 1, length, dimension, max_nodes));
+        cudaMemcpy(out_plus.data(), d_out, out_plus.size() * sizeof(double),
+            cudaMemcpyDeviceToHost);
+
+        path[path_index] = original - epsilon;
+        cudaMemcpy(d_path, path.data(), path.size() * sizeof(double),
+            cudaMemcpyHostToDevice);
+        ASSERT_EQ(0, branched_log_sig_from_path_cuda_d(
+            d_path, d_out, 1, length, dimension, max_nodes));
+        cudaMemcpy(out_minus.data(), d_out, out_minus.size() * sizeof(double),
+            cudaMemcpyDeviceToHost);
+        path[path_index] = original;
+
+        double numerical = 0.;
+        for (uint64_t output_index = 0; output_index < log_length;
+            ++output_index) {
+            numerical += derivs[output_index]
+                * (out_plus[output_index] - out_minus[output_index])
+                / (2. * epsilon);
+        }
+        EXPECT_NEAR(gradient[path_index], numerical, 2e-7);
+    }
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+    cudaFree(d_derivs);
+    cudaFree(d_path_derivs);
+}
+
+TEST(branchedLogSigFromPathCudaTest, LengthOneReturnsZeros) {
+    const uint64_t batch_size = 2;
+    const uint64_t length = 1;
+    const uint64_t dimension = 2;
+    const uint64_t max_nodes = 3;
+    const uint64_t log_length = compute_branched_log_sig_length(
+        dimension, max_nodes, true);
+    ASSERT_EQ(0, prepare_branched_log_sig_cuda(
+        dimension, max_nodes, 3, true, false));
+
+    const std::vector<double> path{ 0.2, -0.3, 0.7, 0.1 };
+    const std::vector<double> derivs(batch_size * log_length, 1.);
+    double* d_path = nullptr;
+    double* d_out = nullptr;
+    double* d_derivs = nullptr;
+    double* d_path_derivs = nullptr;
+    cudaMalloc(&d_path, path.size() * sizeof(double));
+    cudaMalloc(&d_out, derivs.size() * sizeof(double));
+    cudaMalloc(&d_derivs, derivs.size() * sizeof(double));
+    cudaMalloc(&d_path_derivs, path.size() * sizeof(double));
+    cudaMemcpy(d_path, path.data(), path.size() * sizeof(double),
+        cudaMemcpyHostToDevice);
+    cudaMemcpy(d_derivs, derivs.data(), derivs.size() * sizeof(double),
+        cudaMemcpyHostToDevice);
+
+    ASSERT_EQ(0, branched_log_sig_from_path_cuda_d(
+        d_path, d_out, batch_size, length, dimension, max_nodes));
+    ASSERT_EQ(0, branched_log_sig_from_path_backprop_cuda_d(
+        d_derivs, d_path_derivs, d_path, batch_size, length,
+        dimension, max_nodes));
+    std::vector<double> output(derivs.size());
+    std::vector<double> gradient(path.size());
+    cudaMemcpy(output.data(), d_out, output.size() * sizeof(double),
+        cudaMemcpyDeviceToHost);
+    cudaMemcpy(gradient.data(), d_path_derivs, gradient.size() * sizeof(double),
+        cudaMemcpyDeviceToHost);
+    for (double value : output)
+        EXPECT_DOUBLE_EQ(value, 0.);
+    for (double value : gradient)
+        EXPECT_DOUBLE_EQ(value, 0.);
+
+    cudaFree(d_path);
+    cudaFree(d_out);
+    cudaFree(d_derivs);
+    cudaFree(d_path_derivs);
+}
+
+TEST(branchedLogSigFromPathCudaTest, DegreeLimit) {
+    EXPECT_EQ(0, prepare_branched_log_sig_cuda(0, 12, 3, true, false));
+    EXPECT_NE(0, prepare_branched_log_sig_cuda(0, 13, 3, true, false));
+}
+
+TEST(branchedLogSigFromPathCudaTest, EmptyPathRejected) {
+    EXPECT_NE(0, branched_log_sig_from_path_cuda_d(
+        nullptr, nullptr, 1, 0, 2, 3));
+    EXPECT_NE(0, branched_log_sig_from_path_backprop_cuda_d(
+        nullptr, nullptr, nullptr, 1, 0, 2, 3));
+}
+
+TEST(branchedSigToLogSigCudaTest, MethodsZeroToTwoFiniteDifference) {
+    const uint64_t batch_size = 2;
+    const uint64_t dimension = 3;
+    const uint64_t max_nodes = 4;
+    const uint64_t full_length = compute_branched_sig_length(
+        dimension, max_nodes, true);
+    const uint64_t compact_length = compute_branched_log_sig_length(
+        dimension, max_nodes, true);
+    ASSERT_EQ(0, prepare_branched_log_sig_cuda(
+        dimension, max_nodes, 2, true, false));
+
+    for (bool scalar_term : { true, false }) {
+        const uint64_t input_length = scalar_term
+            ? full_length : full_length - 1;
+        std::vector<double> input(batch_size * input_length);
+        for (uint64_t batch = 0; batch < batch_size; ++batch) {
+            for (uint64_t index = 0; index < input_length; ++index) {
+                if (scalar_term && index == 0) {
+                    input[batch * input_length] = 1.;
+                } else {
+                    const int64_t centered = static_cast<int64_t>(
+                        (batch * 31 + index * 7) % 19) - 9;
+                    input[batch * input_length + index]
+                        = 0.015 * static_cast<double>(centered);
+                }
+            }
+        }
+
+        double* d_input = nullptr;
+        cudaMalloc(&d_input, input.size() * sizeof(double));
+        cudaMemcpy(d_input, input.data(), input.size() * sizeof(double),
+            cudaMemcpyHostToDevice);
+
+        for (int method = 0; method <= 2; ++method) {
+            const uint64_t output_length = method == 0
+                ? input_length : compact_length;
+            std::vector<double> derivs(batch_size * output_length);
+            for (uint64_t index = 0; index < derivs.size(); ++index) {
+                const int64_t centered = static_cast<int64_t>(
+                    (index * 11) % 23) - 11;
+                derivs[index] = 0.02 * static_cast<double>(centered);
+            }
+
+            double* d_output = nullptr;
+            double* d_derivs = nullptr;
+            double* d_gradient = nullptr;
+            cudaMalloc(&d_output,
+                batch_size * output_length * sizeof(double));
+            cudaMalloc(&d_derivs, derivs.size() * sizeof(double));
+            cudaMalloc(&d_gradient, input.size() * sizeof(double));
+            cudaMemcpy(d_derivs, derivs.data(), derivs.size() * sizeof(double),
+                cudaMemcpyHostToDevice);
+
+            ASSERT_EQ(0, branched_sig_to_log_sig_cuda_d(
+                d_input, d_output, batch_size, dimension, max_nodes,
+                method, true, scalar_term));
+            ASSERT_EQ(0, branched_sig_to_log_sig_backprop_cuda_d(
+                d_input, d_derivs, d_gradient, batch_size, dimension,
+                max_nodes, method, true, scalar_term));
+            ASSERT_EQ(cudaSuccess, cudaDeviceSynchronize());
+
+            std::vector<double> actual(batch_size * output_length);
+            std::vector<double> actual_gradient(input.size());
+            std::vector<double> actual_derivs(derivs.size());
+            cudaMemcpy(actual.data(), d_output,
+                actual.size() * sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpy(actual_gradient.data(), d_gradient,
+                actual_gradient.size() * sizeof(double),
+                cudaMemcpyDeviceToHost);
+            cudaMemcpy(actual_derivs.data(), d_derivs,
+                actual_derivs.size() * sizeof(double), cudaMemcpyDeviceToHost);
+            for (double value : actual)
+                EXPECT_TRUE(std::isfinite(value));
+            EXPECT_EQ(actual_derivs, derivs);
+
+            const double epsilon = 1e-6;
+            std::vector<double> out_plus(actual.size());
+            std::vector<double> out_minus(actual.size());
+            uint64_t checked = 0;
+            for (uint64_t input_index = 0;
+                input_index < input.size() && checked < 8; ++input_index) {
+                if (scalar_term && input_index % input_length == 0)
+                    continue;
+                const double original = input[input_index];
+                input[input_index] = original + epsilon;
+                cudaMemcpy(d_input, input.data(), input.size() * sizeof(double),
+                    cudaMemcpyHostToDevice);
+                ASSERT_EQ(0, branched_sig_to_log_sig_cuda_d(
+                    d_input, d_output, batch_size, dimension, max_nodes,
+                    method, true, scalar_term));
+                cudaMemcpy(out_plus.data(), d_output,
+                    out_plus.size() * sizeof(double), cudaMemcpyDeviceToHost);
+
+                input[input_index] = original - epsilon;
+                cudaMemcpy(d_input, input.data(), input.size() * sizeof(double),
+                    cudaMemcpyHostToDevice);
+                ASSERT_EQ(0, branched_sig_to_log_sig_cuda_d(
+                    d_input, d_output, batch_size, dimension, max_nodes,
+                    method, true, scalar_term));
+                cudaMemcpy(out_minus.data(), d_output,
+                    out_minus.size() * sizeof(double), cudaMemcpyDeviceToHost);
+                input[input_index] = original;
+
+                double numerical = 0.;
+                for (uint64_t output_index = 0;
+                    output_index < derivs.size(); ++output_index) {
+                    numerical += derivs[output_index]
+                        * (out_plus[output_index] - out_minus[output_index])
+                        / (2. * epsilon);
+                }
+                EXPECT_NEAR(actual_gradient[input_index], numerical, 2e-7);
+                ++checked;
+            }
+            cudaMemcpy(d_input, input.data(), input.size() * sizeof(double),
+                cudaMemcpyHostToDevice);
+
+            cudaFree(d_output);
+            cudaFree(d_derivs);
+            cudaFree(d_gradient);
+        }
+        cudaFree(d_input);
+    }
+}
+
+TEST(branchedSigToLogSigCudaTest, CacheUpgradeClearAndDiskRoundTrip) {
+    const uint64_t dimension = 1;
+    const uint64_t max_nodes = 3;
+    const uint64_t full_length = compute_branched_sig_length(
+        dimension, max_nodes, true);
+    const uint64_t compact_length = compute_branched_log_sig_length(
+        dimension, max_nodes, true);
+    const std::vector<double> input(full_length, 0.);
+
+    double* d_input = nullptr;
+    double* d_output = nullptr;
+    cudaMalloc(&d_input, input.size() * sizeof(double));
+    cudaMalloc(&d_output, compact_length * sizeof(double));
+    cudaMemcpy(d_input, input.data(), input.size() * sizeof(double),
+        cudaMemcpyHostToDevice);
+
+    ASSERT_EQ(0, clear_cache_cuda(true));
+    ASSERT_EQ(0, prepare_branched_log_sig_cuda(
+        dimension, max_nodes, 1, true, false));
+    EXPECT_EQ(0, branched_sig_to_log_sig_cuda_d(
+        d_input, d_output, 1, dimension, max_nodes, 1, true, true));
+    EXPECT_NE(0, branched_sig_to_log_sig_cuda_d(
+        d_input, d_output, 1, dimension, max_nodes, 2, true, true));
+
+    ASSERT_EQ(0, prepare_branched_log_sig_cuda(
+        dimension, max_nodes, 2, true, false));
+    EXPECT_EQ(0, branched_sig_to_log_sig_cuda_d(
+        d_input, d_output, 1, dimension, max_nodes, 1, true, true));
+    EXPECT_EQ(0, branched_sig_to_log_sig_cuda_d(
+        d_input, d_output, 1, dimension, max_nodes, 2, true, true));
+
+    ASSERT_EQ(0, clear_cache_cuda(false));
+    ASSERT_EQ(0, prepare_branched_log_sig_cuda(
+        dimension, max_nodes, 3, true, false));
+    EXPECT_EQ(0, branched_sig_to_log_sig_cuda_d(
+        d_input, d_output, 1, dimension, max_nodes, 1, true, true));
+    EXPECT_EQ(0, branched_sig_to_log_sig_cuda_d(
+        d_input, d_output, 1, dimension, max_nodes, 2, true, true));
+
+    ASSERT_EQ(0, clear_cache_cuda(false));
+    EXPECT_NE(0, branched_sig_to_log_sig_cuda_d(
+        d_input, d_output, 1, dimension, max_nodes, 1, true, true));
+    EXPECT_NE(0, branched_sig_to_log_sig_cuda_d(
+        d_input, d_output, 1, dimension, max_nodes, 2, true, true));
+
+    ASSERT_EQ(0, prepare_branched_log_sig_cuda(
+        dimension, max_nodes, 2, true, true));
+    ASSERT_EQ(0, clear_cache_cuda(false));
+    ASSERT_EQ(0, prepare_branched_log_sig_cuda(
+        dimension, max_nodes, 1, true, true));
+    EXPECT_EQ(0, branched_sig_to_log_sig_cuda_d(
+        d_input, d_output, 1, dimension, max_nodes, 2, true, true));
+
+    cudaFree(d_input);
+    cudaFree(d_output);
+    EXPECT_EQ(0, clear_cache_cuda(true));
+}

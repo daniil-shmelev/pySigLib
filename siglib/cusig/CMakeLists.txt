@@ -4,6 +4,7 @@ if(NOT DEFINED CUSIG_INSTALL_DESTINATION)
 endif()
 
 add_library(cusig SHARED
+	cu_branched_log_bch.cu
     cu_branched_log_signature.cu
     cu_branched_signature.cu
     cu_branched_sig_kernel.cu

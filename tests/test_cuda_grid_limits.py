@@ -16,6 +16,7 @@
 import torch
 
 import pysiglib
+import pysiglib.torch_api as torch_api
 from conftest import skip_no_cuda
 
 
@@ -84,6 +85,32 @@ def test_branched_cuda_batch_above_grid_y_limit():
     blog_grad = pysiglib.branched_sig_to_log_sig_backprop(
         bsig, torch.ones_like(blog_sig), 1, 1)
     torch.testing.assert_close(blog_grad, torch.ones_like(blog_grad))
+
+    pysiglib.prepare_branched_log_sig(
+        1, 1, 3, planar=True, device="cuda")
+    planar_bsig = pysiglib.branched_sig(path, 1, planar=True)
+    for method in (1, 2):
+        compact = pysiglib.branched_sig_to_log_sig(
+            planar_bsig, 1, 1, planar=True, method=method)
+        torch.testing.assert_close(compact, torch.ones_like(compact))
+
+        compact_grad = pysiglib.branched_sig_to_log_sig_backprop(
+            planar_bsig, torch.ones_like(compact), 1, 1,
+            planar=True, method=method)
+        torch.testing.assert_close(
+            compact_grad, torch.ones_like(compact_grad))
+
+    direct_path = path.clone().detach().requires_grad_(True)
+    direct = torch_api.branched_log_sig(
+        direct_path, 1, planar=True, method=3)
+    torch.testing.assert_close(direct, torch.ones_like(direct))
+    direct.sum().backward()
+    torch.testing.assert_close(
+        direct_path.grad[:, 0, :],
+        -torch.ones_like(direct_path.grad[:, 0, :]))
+    torch.testing.assert_close(
+        direct_path.grad[:, 1, :],
+        torch.ones_like(direct_path.grad[:, 1, :]))
 
     requested = [(0,)]
     pysiglib.prepare_branched_sig_coef(
