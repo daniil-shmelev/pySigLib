@@ -140,10 +140,23 @@ uint64_t branched_sig_length_(uint64_t dimension, uint64_t max_nodes, bool plana
     return compute_branched_sig_length(dimension, max_nodes, planar);
 }
 
+uint64_t branched_log_sig_length_(uint64_t dimension, uint64_t max_nodes, bool planar) {
+    return compute_branched_log_sig_length(dimension, max_nodes, planar);
+}
+
 extern "C" {
     CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
         try {
             return branched_sig_length_(dimension, max_nodes, planar);
+        }
+        catch (...) {
+            return 0;
+        }
+    }
+
+    CPSIG_API uint64_t branched_log_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar) noexcept {
+        try {
+            return branched_log_sig_length_(dimension, max_nodes, planar);
         }
         catch (...) {
             return 0;

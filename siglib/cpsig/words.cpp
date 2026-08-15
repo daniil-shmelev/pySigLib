@@ -133,51 +133,77 @@ void lyndon_proj_matrix(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	// Note the final output here will drop the diagonal of 1s
-
-	std::unordered_set<word, WordHash> lyndon_set(lyndon_words.begin(), lyndon_words.end());
-	uint64_t n = sig_length(dimension, degree);
+	const uint64_t n = sig_length(dimension, degree);
 	if (n == 0)
 		throw std::overflow_error("lyndon_proj_matrix: sig_length overflow");
-	uint64_t m = lyndon_words.size();
+	if (lyndon_idx.size() != lyndon_words.size())
+		throw std::invalid_argument("lyndon_proj_matrix: index count mismatch");
 
-	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
-	uint64_t* level_index = level_index_uptr.get();
-	populate_level_index(level_index, dimension, degree + 2);
+	std::unordered_map<word, uint64_t, WordHash> flat_idx;
+	flat_idx.reserve(lyndon_words.size());
+	for (uint64_t i = 0; i < lyndon_words.size(); ++i)
+		flat_idx[lyndon_words[i]] = lyndon_idx[i];
 
-	SparseIntMatrix full_mat_transpose(m, n);
+	lyndon_proj_matrix_from_words(
+		out,
+		lyndon_words,
+		n,
+		[&flat_idx](const word& w) {
+			return flat_idx.at(w);
+		},
+		[dimension](uint64_t i, uint64_t j, uint64_t len_j) {
+			return concatenate_idx(i, j, len_j, dimension);
+		});
+}
 
+void lyndon_proj_matrix_from_words(
+	SparseIntMatrix& out,
+	const std::vector<word>& lyndon_words,
+	uint64_t flat_word_count,
+	const std::function<uint64_t(const word&)>& word_to_flat_idx,
+	const std::function<uint64_t(uint64_t, uint64_t, uint64_t)>& concatenate_flat_idx
+) {
+	std::unordered_set<word, WordHash> lyndon_set(lyndon_words.begin(), lyndon_words.end());
+	const uint64_t m = lyndon_words.size();
+	SparseIntMatrix full_mat_transpose(m, flat_word_count);
 	std::unordered_map<word, uint64_t, WordHash> col_idx;
+	col_idx.reserve(m);
 
-	for (uint64_t i = 0; i < m; ++i) {
+	for (uint64_t i = 0; i < m; ++i)
 		col_idx[lyndon_words[i]] = i;
-	}
 
 	for (uint64_t i = 0; i < m; ++i) {
 		const word& w = lyndon_words[i];
 
 		if (w.size() == 1) {
-			full_mat_transpose.insert_entry(i, w[0] + 1, 1);
+			const uint64_t flat_idx = word_to_flat_idx(w);
+			if (flat_idx >= flat_word_count)
+				throw std::out_of_range("lyndon projection word index out of range");
+			full_mat_transpose.insert_entry(i, flat_idx, 1);
 		}
 		else {
 			word v = longest_lyndon_suffix_(w, lyndon_set);
 			word u(w.begin(), w.end() - v.size());
 
-			uint64_t jw = col_idx[w];
-			uint64_t jv = col_idx[v];
-			uint64_t ju = col_idx[u];
+			const uint64_t jw = col_idx.at(w);
+			const uint64_t jv = col_idx.at(v);
+			const uint64_t ju = col_idx.at(u);
 
 			for (const auto& eu : full_mat_transpose.rows[ju]) {
-				if (eu.val) {
-					for (const auto& ev : full_mat_transpose.rows[jv]) {
-						if (ev.val) {
-							uint64_t ic = concatenate_idx(eu.col, ev.col, v.size(), dimension);
-							int val = eu.val * ev.val;
-							full_mat_transpose.add_to_entry(jw, ic, val);
-							ic = concatenate_idx(ev.col, eu.col, u.size(), dimension);
-							full_mat_transpose.add_to_entry(jw, ic, -val);
-						}
-					}
+				if (eu.val == 0)
+					continue;
+				for (const auto& ev : full_mat_transpose.rows[jv]) {
+					if (ev.val == 0)
+					continue;
+					uint64_t flat_idx = concatenate_flat_idx(eu.col, ev.col, v.size());
+					if (flat_idx >= flat_word_count)
+						throw std::out_of_range("lyndon projection concatenation index out of range");
+					const int coeff = eu.val * ev.val;
+					full_mat_transpose.add_to_entry(jw, flat_idx, coeff);
+					flat_idx = concatenate_flat_idx(ev.col, eu.col, u.size());
+					if (flat_idx >= flat_word_count)
+						throw std::out_of_range("lyndon projection concatenation index out of range");
+					full_mat_transpose.add_to_entry(jw, flat_idx, -coeff);
 				}
 			}
 		}
@@ -185,10 +211,12 @@ void lyndon_proj_matrix(
 
 	SparseIntMatrix full_mat;
 	full_mat_transpose.transpose(full_mat);
-	out.resize(full_mat.m, full_mat.m);
-
+	out.resize(m, m);
 	for (uint64_t i = 0; i < m; ++i) {
-		out.rows[i] = full_mat.rows[lyndon_idx[i]];
+		const uint64_t flat_idx = word_to_flat_idx(lyndon_words[i]);
+		if (flat_idx >= flat_word_count)
+			throw std::out_of_range("lyndon projection word index out of range");
+		out.rows[i] = full_mat.rows[flat_idx];
 	}
 
 	out.drop_diagonal();

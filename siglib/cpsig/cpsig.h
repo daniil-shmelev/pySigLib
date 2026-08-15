@@ -601,6 +601,7 @@ extern "C" {
 	/** @brief Prepares the branched-signature cache. */
 	[[nodiscard]] CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk = false, bool planar = false) noexcept;
 	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
+	CPSIG_API uint64_t branched_log_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
 
 	[[nodiscard]] CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	[[nodiscard]] CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
@@ -701,7 +702,7 @@ extern "C" {
 	* @{
 	*/
 	/** @brief Prepares the branched-signature and derived branched-log caches. */
-	[[nodiscard]] CPSIG_API int prepare_branched_log_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk = false, bool planar = false) noexcept;
+	[[nodiscard]] CPSIG_API int prepare_branched_log_sig(uint64_t dimension, uint64_t max_nodes, int method, bool use_disk = false, bool planar = false) noexcept;
 
 	[[nodiscard]] CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	[[nodiscard]] CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
@@ -709,12 +710,13 @@ extern "C" {
 	/**
 	* @brief Computes the truncated Hopf logarithm of a branched signature.
 	*
-	* The input and output use the same decorated-tree basis and the same scalar-term
-	* convention. If scalar_term is true, the output scalar coefficient is zero.
+	* Method 0 returns the expanded decorated-tree or ordered-forest basis and
+	* preserves the scalar-term convention. Methods 1 and 2 return scalar-free
+	* compressed MKW coordinates and require planar=true.
 	*/
-	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	/** @brief */
-	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 
 	/**
 	* @brief Backpropagation through branched_sig_to_log_sig.
@@ -722,9 +724,9 @@ extern "C" {
 	* Computes the vector-Jacobian product from derivatives with respect to the
 	* branched log signature to derivatives with respect to the branched signature.
 	*/
-	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_backprop_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_backprop_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	/** @brief */
-	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_backprop_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_backprop_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 
 	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;

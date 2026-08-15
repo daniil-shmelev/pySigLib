@@ -59,14 +59,14 @@ extern const char* version;
 class CacheFile {
 public:
 
-	CacheFile(uint64_t dimension_, uint64_t degree_) {
+	CacheFile(uint64_t dimension_, uint64_t degree_, std::string prefix = "") {
 		auto dir = get_cache_dir();
 		if (dir.empty() || !std::filesystem::exists(dir / cache_folder_name))
 			throw cache_dir_not_set_error("Unexpected internal error. Cache directory was not set correctly.");
 
 		dimension = dimension_;
 		degree = degree_;
-		file_name = std::to_string(dimension) + "_" + std::to_string(degree) + "_" + version + ".bin";
+		file_name = prefix + std::to_string(dimension) + "_" + std::to_string(degree) + "_" + version + ".bin";
 		file_path = dir / cache_folder_name / file_name;
 	}
 

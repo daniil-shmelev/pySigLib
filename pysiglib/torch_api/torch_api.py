@@ -779,8 +779,13 @@ from ..branched_sig import branched_sig as branched_sig_forward, prepare_branche
 from ..branched_sig_backprop import branched_sig_backprop, branched_sig_combine_backprop
 from ..branched_sig_coef import branched_sig_coef as branched_sig_coef_forward, prepare_branched_sig_coef
 from ..branched_sig_coef_backprop import branched_sig_coef_backprop
-from ..branched_log_sig import prepare_branched_log_sig, branched_sig_to_log_sig as branched_sig_to_log_sig_forward
-from ..branched_log_sig import branched_log_sig as branched_log_sig_forward
+from ..branched_log_sig import (
+    _resolve_branched_log_sig_method,
+    branched_log_sig as branched_log_sig_forward,
+    branched_log_sig_length,
+    branched_sig_to_log_sig as branched_sig_to_log_sig_forward,
+    prepare_branched_log_sig,
+)
 from ..branched_log_sig_backprop import branched_sig_to_log_sig_backprop
 
 class BranchedSigCoef(torch.autograd.Function):
@@ -910,16 +915,17 @@ branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
 
 class BranchedSigToLogSig(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, bsig, dimension, degree, time_aug, lead_lag, planar, n_jobs):
+    def forward(ctx, bsig, dimension, degree, time_aug, lead_lag, planar, method, n_jobs):
         blogsig = branched_sig_to_log_sig_forward(
             bsig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag,
-            planar=planar, n_jobs=n_jobs)
+            planar=planar, method=method, n_jobs=n_jobs)
         ctx.save_for_backward(bsig)
         ctx.dimension = dimension
         ctx.degree = degree
         ctx.time_aug = time_aug
         ctx.lead_lag = lead_lag
         ctx.planar = planar
+        ctx.method = method
         ctx.n_jobs = n_jobs
         return blogsig
 
@@ -929,8 +935,8 @@ class BranchedSigToLogSig(torch.autograd.Function):
         grad = branched_sig_to_log_sig_backprop(
             bsig, grad_output, ctx.dimension, ctx.degree,
             time_aug=ctx.time_aug, lead_lag=ctx.lead_lag,
-            planar=ctx.planar, n_jobs=ctx.n_jobs)
-        return grad, None, None, None, None, None, None
+            planar=ctx.planar, method=ctx.method, n_jobs=ctx.n_jobs)
+        return grad, None, None, None, None, None, None, None
 
 
 def branched_sig_to_log_sig(
@@ -941,10 +947,12 @@ def branched_sig_to_log_sig(
         time_aug: bool = False,
         lead_lag: bool = False,
         planar: bool = False,
+        method: Optional[int] = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
+    method = _resolve_branched_log_sig_method(method, planar)
     return BranchedSigToLogSig.apply(
-        bsig, dimension, degree, time_aug, lead_lag, planar, n_jobs)
+        bsig, dimension, degree, time_aug, lead_lag, planar, method, n_jobs)
 
 
 branched_sig_to_log_sig.__doc__ = branched_sig_to_log_sig_forward.__doc__
@@ -959,16 +967,21 @@ def branched_log_sig(
         end_time: float = 1.0,
         planar: bool = False,
         scalar_term: bool = False,
+        method: Optional[int] = None,
         correction = None,
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
+    method = _resolve_branched_log_sig_method(method, planar)
+    if method and isinstance(path, torch.Tensor) and path.device.type != "cpu":
+        raise NotImplementedError(
+            "Compressed MKW branched log signatures are only supported on CPU")
     bsig = branched_sig(
         path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
         planar=planar, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs)
     dimension = path.shape[-1]
     return branched_sig_to_log_sig(
         bsig, dimension, degree, time_aug=time_aug, lead_lag=lead_lag,
-        planar=planar, n_jobs=n_jobs)
+        planar=planar, method=method, n_jobs=n_jobs)
 
 
 branched_log_sig.__doc__ = branched_log_sig_forward.__doc__
