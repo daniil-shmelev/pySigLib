@@ -624,14 +624,24 @@ extern "C" {
 	/** @defgroup branched_log_sig_cuda_functions Branched log signature CUDA functions
 	* @{
 	*/
-	/** @brief Prepares the branched-signature and derived branched-log caches on the active CUDA device. */
-	[[nodiscard]] CUSIG_API int prepare_branched_log_sig_cuda(uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) noexcept;
+	/**
+	* @brief Prepares the branched-signature and derived branched-log caches on the active CUDA device.
+	* @param method Branched log-signature method in the range 0 to 3. Methods 1 to 3 require planar=true. Method 3 supports max_nodes up to 12.
+	*/
+	[[nodiscard]] CUSIG_API int prepare_branched_log_sig_cuda(uint64_t dimension, uint64_t max_nodes, int method, bool planar = false, bool use_disk = false) noexcept;
 
-	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_cuda_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
-	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_cuda_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_cuda_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_cuda_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar = false, bool scalar_term = true) noexcept;
 
-	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_backprop_cuda_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
-	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_backprop_cuda_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_backprop_cuda_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar = false, bool scalar_term = true) noexcept;
+	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_backprop_cuda_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar = false, bool scalar_term = true) noexcept;
+
+	/** @brief Computes planar method 3 directly from a path. */
+	[[nodiscard]] CUSIG_API int branched_log_sig_from_path_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes) noexcept;
+	[[nodiscard]] CUSIG_API int branched_log_sig_from_path_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes) noexcept;
+
+	[[nodiscard]] CUSIG_API int branched_log_sig_from_path_backprop_cuda_f(const float* derivs, float* path_derivs, const float* path, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes) noexcept;
+	[[nodiscard]] CUSIG_API int branched_log_sig_from_path_backprop_cuda_d(const double* derivs, double* path_derivs, const double* path, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes) noexcept;
 	/** @} */
 
 	/** @defgroup linear_sig_cuda_functions Linear sig CUDA functions

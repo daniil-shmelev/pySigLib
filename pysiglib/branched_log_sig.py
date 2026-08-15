@@ -23,6 +23,7 @@ from .error_codes import err_msg
 from .dtypes import (
     CPSIG_BRANCHED_LOG_SIG_FROM_PATH,
     CPSIG_BRANCHED_SIG_TO_LOG_SIG,
+    CUSIG_BRANCHED_LOG_SIG_FROM_PATH_CUDA,
     CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA,
 )
 from .data_handlers import (
@@ -91,10 +92,6 @@ def prepare_branched_log_sig(
     check_non_neg(degree, "degree")
     if device not in ("cpu", "cuda", "both"):
         raise ValueError("device must be 'cpu', 'cuda', or 'both'")
-    if method and device == "cuda":
-        raise NotImplementedError(
-            "Compressed MKW branched log signatures are only supported on CPU")
-
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
     if device in ("cpu", "both"):
         err_code = CPSIG.prepare_branched_log_sig(
@@ -103,9 +100,13 @@ def prepare_branched_log_sig(
             raise Exception(
                 "Error in pysiglib.prepare_branched_log_sig: " + err_msg(err_code))
 
-    if method == 0 and BUILT_WITH_CUDA and device in ("cuda", "both"):
+    if (method == 3 and degree > 12 and BUILT_WITH_CUDA
+            and device in ("cuda", "both")):
+        raise NotImplementedError(
+            "CUDA MKW BCH method supports degree at most 12")
+    if BUILT_WITH_CUDA and device in ("cuda", "both"):
         err_code = CUSIG.prepare_branched_log_sig_cuda(
-            aug_dimension, degree, planar, use_disk)
+            aug_dimension, degree, method, planar, use_disk)
         if err_code:
             raise Exception(
                 "Error in pysiglib.prepare_branched_log_sig (CUDA): "
@@ -185,7 +186,8 @@ def branched_sig_to_log_sig(
         signatures and method 1 is used for planar signatures. Method 3 is not
         available for conversion from a branched signature.
     :type method: int | None
-    :param n_jobs: Number of threads to run in parallel.
+    :param n_jobs: Number of CPU threads to run in parallel. CUDA execution
+        ignores this value.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
@@ -221,10 +223,6 @@ def branched_sig_to_log_sig(
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
-    if method and isinstance(bsig, torch.Tensor) and bsig.device.type != "cpu":
-        raise NotImplementedError(
-            "Compressed MKW branched log signatures are only supported on CPU")
-
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
     scalar_term = _infer_branched_scalar_term(bsig, aug_dimension, degree, planar=planar)
     bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
@@ -232,10 +230,6 @@ def branched_sig_to_log_sig(
     out_len = (bsig_len if method == 0 else
                branched_log_sig_length(aug_dimension, degree, planar=True))
     result = SigOutputHandler(data, out_len)
-
-    if method and data.device != "cpu":
-        raise NotImplementedError(
-            "Compressed MKW branched log signatures are only supported on CPU")
 
     if data.batch_size == 0:
         return result.data
@@ -247,7 +241,7 @@ def branched_sig_to_log_sig(
     else:
         err_code = CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA[data.dtype](
             data.sig_ptr[0], result.data_ptr, data.batch_size,
-            aug_dimension, degree, planar, scalar_term)
+            aug_dimension, degree, method, planar, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_to_log_sig: " + err_msg(err_code))
 
@@ -327,7 +321,8 @@ def branched_log_sig(
         appended time channel contributes no correction. Cannot be combined with
         ``lead_lag=True``.
     :type correction: numpy.ndarray | torch.Tensor | None
-    :param n_jobs: Number of threads to run in parallel.
+    :param n_jobs: Number of CPU threads to run in parallel. CUDA execution
+        ignores this value.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
@@ -378,43 +373,47 @@ def branched_log_sig(
     """
     method = _resolve_branched_log_sig_method(method, planar)
     if method == 3:
+        input_data = PathInputHandler(
+            path, time_aug, lead_lag, end_time, "path")
+        if input_data.data_length == 0:
+            raise ValueError(
+                "branched_log_sig method 3 received an empty path")
         if correction is not None:
             correction_data = CorrectionInputHandler(
-                correction,
-                PathInputHandler(path, time_aug, lead_lag, end_time, "path"),
-                degree,
+                correction, input_data, degree,
             )
             if correction_data.length != 0:
                 raise ValueError(
                     "correction is not supported with branched_log_sig method=3")
-        if isinstance(path, torch.Tensor) and path.device.type != "cpu":
-            raise NotImplementedError(
-                "MKW branched log signature method 3 is only supported on CPU")
         if time_aug or lead_lag:
             path = transform_path(
                 path, time_aug=time_aug, lead_lag=lead_lag,
                 end_time=end_time, n_jobs=n_jobs)
-        data = PathInputHandler(path, False, False, 1.0, "path")
-        if data.device != "cpu":
+            data = PathInputHandler(path, False, False, 1.0, "path")
+        else:
+            data = input_data
+        if data.device != "cpu" and degree > 12:
             raise NotImplementedError(
-                "MKW branched log signature method 3 is only supported on CPU")
+                "CUDA MKW BCH method supports degree at most 12")
         out_len = branched_log_sig_length(
             data.data_dimension, degree, planar=True)
         result = SigOutputHandler(data, out_len)
         if data.batch_size == 0:
             return result.data
-        err_code = CPSIG_BRANCHED_LOG_SIG_FROM_PATH[data.dtype](
-            data.data_ptr, result.data_ptr, data.batch_size, data.data_length,
-            data.data_dimension, degree, n_jobs)
+        if data.device == "cpu":
+            err_code = CPSIG_BRANCHED_LOG_SIG_FROM_PATH[data.dtype](
+                data.data_ptr, result.data_ptr, data.batch_size,
+                data.data_length, data.data_dimension, degree, n_jobs)
+        else:
+            err_code = CUSIG_BRANCHED_LOG_SIG_FROM_PATH_CUDA[data.dtype](
+                data.data_ptr, result.data_ptr, data.batch_size,
+                data.data_length, data.data_dimension, degree)
         if err_code:
             raise Exception(
                 "Error in pysiglib.branched_log_sig (method=3): "
                 + err_msg(err_code))
         return result.data
 
-    if method and isinstance(path, torch.Tensor) and path.device.type != "cpu":
-        raise NotImplementedError(
-            "Compressed MKW branched log signatures are only supported on CPU")
     bsig = branched_sig(
         path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
         planar=planar, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs)

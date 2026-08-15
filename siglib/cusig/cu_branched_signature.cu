@@ -17,6 +17,7 @@
 #include "cusig.h"
 #include "cu_macros.h"
 #include "cu_atomic.h"
+#include "cu_branched_log_sig_cache.h"
 #include "cu_disk_cache.h"
 #include "cu_path_transforms.h"
 #include "cu_utils.h"
@@ -27,11 +28,6 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
-
-void prepare_cuda_branched_log_sig_gpu_cache_(
-	const BranchedSigCache& cache);
-bool is_cuda_branched_log_sig_gpu_cache_prepared_(
-	uint64_t dimension, uint64_t max_nodes, bool planar);
 
 // =========================================================================
 // GPU cache: mirrors BranchedSigCache on device memory
@@ -2198,15 +2194,37 @@ extern "C" {
 	}
 
 	CUSIG_API int prepare_branched_log_sig_cuda(
-		uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk
+		uint64_t dimension, uint64_t max_nodes, int method,
+		bool planar, bool use_disk
 	) noexcept {
 		CUSIG_SAFE_CALL(
-			if (!is_cuda_branched_log_sig_gpu_cache_prepared_(
-				dimension, max_nodes, planar)) {
+			if (method < 0 || method > 3)
+				throw std::invalid_argument(
+					"branched log signature method must be 0, 1, 2, or 3");
+			if (method == 3 && max_nodes > 12)
+				throw std::runtime_error(
+					"CUDA MKW BCH method supports degree at most 12");
+			if (method != 0 && !planar)
+				throw std::invalid_argument(
+					"compressed branched log signatures require planar=True");
+			if (method == 0) {
+				if (!is_cuda_branched_log_sig_gpu_cache_prepared_(
+					dimension, max_nodes, planar)) {
+					BranchedSigCache host_cache;
+					prepare_branched_sig_gpu_cache_(dimension, max_nodes, planar,
+						use_disk, &host_cache);
+					prepare_cuda_branched_log_sig_gpu_cache_(host_cache);
+				}
+			} else {
 				BranchedSigCache host_cache;
-				prepare_branched_sig_gpu_cache_(
-					dimension, max_nodes, planar, use_disk, &host_cache);
-				prepare_cuda_branched_log_sig_gpu_cache_(host_cache);
+				prepare_branched_sig_gpu_cache_(dimension, max_nodes, planar,
+					use_disk, &host_cache);
+				if (!is_cuda_branched_log_sig_gpu_cache_prepared_(
+					dimension, max_nodes, planar))
+					prepare_cuda_branched_log_sig_gpu_cache_(host_cache);
+				prepare_cuda_mkw_basis_cache_(host_cache, method, use_disk);
+				if (method == 3)
+					prepare_cuda_branched_bch_cache_(host_cache, use_disk);
 			}
 		);
 	}
