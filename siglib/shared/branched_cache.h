@@ -55,6 +55,18 @@ struct BranchedSigCache {
 	std::vector<uint64_t> coproduct_data;
 };
 
+// max_nodes is combinatorially bounded, so bit 63 is available for planar.
+inline std::pair<uint64_t, uint64_t> make_branched_sig_cache_key(
+	uint64_t dimension,
+	uint64_t max_nodes,
+	bool planar
+) {
+	return {
+		dimension,
+		max_nodes | (static_cast<uint64_t>(planar) << 63)
+	};
+}
+
 // Result of a single admissible cut
 struct CutResult {
 	std::vector<uint64_t> forest;  // tree indices of pruned subtrees

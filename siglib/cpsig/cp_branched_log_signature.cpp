@@ -414,7 +414,6 @@ std::unique_ptr<BranchedBchCache_> build_branched_bch_cache_(
 	build_commutator_views(bch);
 	build_bch_formula_data(bch, use_disk);
 
-	prepare_branched_log_sig_cache(branched_cache);
 	std::vector<double> unit_increment(branched_cache.dimension, 1.0);
 	std::vector<double> linear_sig(branched_cache.total_length);
 	result->linear_coefficients.resize(m);
@@ -474,10 +473,8 @@ std::unordered_map<
 std::shared_mutex branched_log_forest_cache_mu_;
 
 const BranchedLogForestCache& get_cached_branched_log_forest_cache(const BranchedSigCache& cache) {
-	const std::pair<uint64_t, uint64_t> key{
-		cache.dimension,
-		cache.max_nodes | (static_cast<uint64_t>(cache.planar) << 63)
-	};
+	const auto key = make_branched_sig_cache_key(
+		cache.dimension, cache.max_nodes, cache.planar);
 	std::shared_lock rlock(branched_log_forest_cache_mu_);
 	auto it = branched_log_forest_cache_registry_.find(key);
 	if (it != branched_log_forest_cache_registry_.end())
@@ -705,10 +702,8 @@ const BranchedLogPolyCache_& get_cached_branched_log_poly_cache_(
 	const BranchedSigCache& cache,
 	const BranchedLogForestCache& forest_cache
 ) {
-	const std::pair<uint64_t, uint64_t> key{
-		cache.dimension,
-		cache.max_nodes | (static_cast<uint64_t>(cache.planar) << 63)
-	};
+	const auto key = make_branched_sig_cache_key(
+		cache.dimension, cache.max_nodes, cache.planar);
 	std::shared_lock rlock(branched_log_poly_cache_mu_);
 	auto it = branched_log_poly_cache_registry_.find(key);
 	if (it != branched_log_poly_cache_registry_.end())
@@ -1346,10 +1341,8 @@ void branched_log_sig_from_path_backprop_(
 
 
 void prepare_branched_log_sig_cache(const BranchedSigCache& cache) {
-	const std::pair<uint64_t, uint64_t> key{
-		cache.dimension,
-		cache.max_nodes | (static_cast<uint64_t>(cache.planar) << 63)
-	};
+	const auto key = make_branched_sig_cache_key(
+		cache.dimension, cache.max_nodes, cache.planar);
 
 	const BranchedLogForestCache* forest_cache = nullptr;
 	{
@@ -1466,27 +1459,33 @@ void branched_sig_to_log_sig_backprop_(
 	}
 }
 
+static void prepare_branched_log_sig_(
+	uint64_t dimension,
+	uint64_t max_nodes,
+	int method,
+	bool use_disk,
+	bool planar
+) {
+	if (method < 0 || method > 3)
+		throw std::invalid_argument("branched log signature method must be 0, 1, 2, or 3");
+	if (method != 0 && !planar)
+		throw std::invalid_argument("compressed branched log signatures are not available for planar=False");
+	prepare_branched_sig_cache(dimension, max_nodes, use_disk, planar);
+	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
+	prepare_branched_log_sig_cache(cache);
+	if (method >= 1)
+		prepare_branched_log_basis_cache_(
+			cache, (std::min)(method, 2), use_disk);
+	if (method == 3)
+		prepare_branched_bch_cache_(cache, use_disk);
+}
+
 
 
 extern "C" {
 
-	CPSIG_API int prepare_branched_log_sig(
-		uint64_t dimension, uint64_t max_nodes, int method, bool use_disk, bool planar
-	) noexcept {
-		SAFE_CALL(
-			if (method < 0 || method > 3)
-				throw std::invalid_argument(
-					"branched log signature method must be 0, 1, 2, or 3");
-			if (method != 0 && !planar)
-				throw std::invalid_argument("compressed branched log signatures require planar=True");
-			prepare_branched_sig_cache(dimension, max_nodes, use_disk, planar);
-			const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
-			if (method != 3)
-				prepare_branched_log_sig_cache(cache);
-			prepare_branched_log_basis_cache_(cache, method, use_disk);
-			if (method == 3)
-				prepare_branched_bch_cache_(cache, use_disk)
-		);
+	CPSIG_API int prepare_branched_log_sig(uint64_t dimension, uint64_t max_nodes, int method, bool use_disk, bool planar) noexcept {
+		SAFE_CALL(prepare_branched_log_sig_(dimension, max_nodes, method, use_disk, planar));
 	}
 
 	CPSIG_API int branched_sig_to_log_sig_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term) noexcept {
@@ -1506,8 +1505,7 @@ extern "C" {
 	}
 
 	CPSIG_API int branched_log_sig_from_path_f(const float* path, float* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {
-		SAFE_CALL(branched_log_sig_from_path_<float>(
-			path, out, batch_size, length, dimension, max_nodes, n_jobs));
+		SAFE_CALL(branched_log_sig_from_path_<float>(path, out, batch_size, length, dimension, max_nodes, n_jobs));
 	}
 
 	CPSIG_API int branched_log_sig_from_path_d(const double* path, double* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {
@@ -1516,13 +1514,11 @@ extern "C" {
 	}
 
 	CPSIG_API int branched_log_sig_from_path_backprop_f(const float* derivs, float* path_derivs, const float* path, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {
-		SAFE_CALL(branched_log_sig_from_path_backprop_<float>(
-			derivs, path_derivs, path, batch_size, length, dimension, max_nodes, n_jobs));
+		SAFE_CALL(branched_log_sig_from_path_backprop_<float>(derivs, path_derivs, path, batch_size, length, dimension, max_nodes, n_jobs));
 	}
 
 	CPSIG_API int branched_log_sig_from_path_backprop_d(const double* derivs, double* path_derivs, const double* path, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {
-		SAFE_CALL(branched_log_sig_from_path_backprop_<double>(
-			derivs, path_derivs, path, batch_size, length, dimension, max_nodes, n_jobs));
+		SAFE_CALL(branched_log_sig_from_path_backprop_<double>(derivs, path_derivs, path, batch_size, length, dimension, max_nodes, n_jobs));
 	}
 
 }

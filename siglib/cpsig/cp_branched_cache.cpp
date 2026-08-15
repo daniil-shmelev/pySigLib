@@ -20,13 +20,6 @@
 #include "macros.h"
 
 namespace {
-// max_nodes is combinatorially bounded (dozens at most), so bit 63 is free for
-// the planar flag. Packing it lets us reuse PairHash instead of maintaining a
-// parallel tuple-hash.
-inline std::pair<uint64_t, uint64_t> make_key(uint64_t dimension, uint64_t max_nodes, bool planar) {
-	return { dimension, max_nodes | (static_cast<uint64_t>(planar) << 63) };
-}
-
 struct BranchedSigCacheRegistry {
 	std::unordered_map<
 		std::pair<uint64_t, uint64_t>,
@@ -183,7 +176,7 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool pla
 // ---------------------------------------------------------------------------
 
 void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk, bool planar) {
-	const auto key = make_key(dimension, max_nodes, planar);
+	const auto key = make_branched_sig_cache_key(dimension, max_nodes, planar);
 	auto& reg = branched_sig_cache_registry();
 
 	{
@@ -217,7 +210,7 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 }
 
 const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool planar) {
-	const auto key = make_key(dimension, max_nodes, planar);
+	const auto key = make_branched_sig_cache_key(dimension, max_nodes, planar);
 	auto& reg = branched_sig_cache_registry();
 	std::shared_lock rlock(reg.mu);
 	auto it = reg.map.find(key);
