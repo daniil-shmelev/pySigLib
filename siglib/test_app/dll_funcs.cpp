@@ -229,6 +229,8 @@ branched_sig_coef_cuda_d_fn branched_sig_coef_cuda_d = nullptr;
 branched_sig_coef_backprop_cuda_d_fn branched_sig_coef_backprop_cuda_d = nullptr;
 branched_sig_to_log_sig_d_fn branched_sig_to_log_sig_d = nullptr;
 branched_sig_to_log_sig_cuda_d_fn branched_sig_to_log_sig_cuda_d = nullptr;
+branched_log_sig_from_path_d_fn branched_log_sig_from_path_d = nullptr;
+branched_log_sig_from_path_backprop_d_fn branched_log_sig_from_path_backprop_d = nullptr;
 
 
 void get_cpsig_fn_ptrs()
@@ -262,6 +264,8 @@ void get_cpsig_fn_ptrs()
     GET_FN(branched_sig_length, cpsig);
     GET_FN(branched_sig_d, cpsig);
     GET_FN(branched_sig_to_log_sig_d, cpsig);
+    GET_FN(branched_log_sig_from_path_d, cpsig);
+    GET_FN(branched_log_sig_from_path_backprop_d, cpsig);
 }
 
 void get_cusig_fn_ptrs()

@@ -183,6 +183,14 @@ _TARGETS = {
         "cpu": ("pysiglib_branched_sig_to_log_sig_backprop_cpu", "PySigLibBranchedSigToLogSigBackpropCpu"),
         "cuda": ("pysiglib_branched_sig_to_log_sig_backprop_cuda", "PySigLibBranchedSigToLogSigBackpropCuda"),
     },
+    "branched_log_sig_from_path": {
+        "cpu": ("pysiglib_branched_log_sig_from_path_cpu", "PySigLibBranchedLogSigFromPathCpu"),
+        "cuda": ("pysiglib_branched_log_sig_from_path_cuda", "PySigLibBranchedLogSigFromPathCuda"),
+    },
+    "branched_log_sig_from_path_backprop": {
+        "cpu": ("pysiglib_branched_log_sig_from_path_backprop_cpu", "PySigLibBranchedLogSigFromPathBackpropCpu"),
+        "cuda": ("pysiglib_branched_log_sig_from_path_backprop_cuda", "PySigLibBranchedLogSigFromPathBackpropCuda"),
+    },
 }
 
 
@@ -727,3 +735,29 @@ def branched_sig_to_log_sig_backprop_ffi_call(
                        method=np.int64(method), n_jobs=np.int64(n_jobs),
                        planar=np.bool_(planar))
     return _make_ffi_call("branched_sig_to_log_sig_backprop", (bsig, cotangent), out_type, call_kwargs)
+
+
+def branched_log_sig_from_path_ffi_call(
+        path, dimension, max_nodes, n_jobs):
+    _normalize_dtype(path.dtype)
+    out_len = branched_log_sig_length(
+        dimension, max_nodes, planar=True)
+    out_type = jax.ShapeDtypeStruct(
+        (*path.shape[:-2], out_len), path.dtype)
+    call_kwargs = dict(
+        dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
+        n_jobs=np.int64(n_jobs))
+    return _make_ffi_call(
+        "branched_log_sig_from_path", (path,), out_type, call_kwargs)
+
+
+def branched_log_sig_from_path_backprop_ffi_call(
+        cotangent, path, dimension, max_nodes, n_jobs):
+    _check_same_dtype(cotangent, path)
+    out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
+    call_kwargs = dict(
+        dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
+        n_jobs=np.int64(n_jobs))
+    return _make_ffi_call(
+        "branched_log_sig_from_path_backprop", (cotangent, path),
+        out_type, call_kwargs)

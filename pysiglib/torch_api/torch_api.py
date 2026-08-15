@@ -786,7 +786,10 @@ from ..branched_log_sig import (
     branched_sig_to_log_sig as branched_sig_to_log_sig_forward,
     prepare_branched_log_sig,
 )
-from ..branched_log_sig_backprop import branched_sig_to_log_sig_backprop
+from ..branched_log_sig_backprop import (
+    _branched_log_sig_from_path_backprop,
+    branched_sig_to_log_sig_backprop,
+)
 
 class BranchedSigCoef(torch.autograd.Function):
     @staticmethod
@@ -951,11 +954,47 @@ def branched_sig_to_log_sig(
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     method = _resolve_branched_log_sig_method(method, planar)
+    if method == 3:
+        raise ValueError(
+            "method=3 is not supported in branched_sig_to_log_sig. "
+            "Use branched_log_sig(path, degree, method=3) instead.")
     return BranchedSigToLogSig.apply(
         bsig, dimension, degree, time_aug, lead_lag, planar, method, n_jobs)
 
 
 branched_sig_to_log_sig.__doc__ = branched_sig_to_log_sig_forward.__doc__
+
+
+class BranchedLogSigFromPath(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, path, degree, time_aug, lead_lag, end_time, n_jobs):
+        if time_aug or lead_lag:
+            transformed = transform_path(
+                path, time_aug=time_aug, lead_lag=lead_lag,
+                end_time=end_time, n_jobs=n_jobs)
+        else:
+            transformed = path
+        result = branched_log_sig_forward(
+            transformed, degree, planar=True, method=3,
+            time_aug=False, lead_lag=False, n_jobs=n_jobs)
+        ctx.save_for_backward(transformed)
+        ctx.degree = degree
+        ctx.time_aug = time_aug
+        ctx.lead_lag = lead_lag
+        ctx.end_time = end_time
+        ctx.n_jobs = n_jobs
+        return result
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        transformed, = ctx.saved_tensors
+        d_path = _branched_log_sig_from_path_backprop(
+            grad_output, transformed, ctx.degree, n_jobs=ctx.n_jobs)
+        if ctx.time_aug or ctx.lead_lag:
+            d_path = transform_path_backprop(
+                d_path, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag,
+                end_time=ctx.end_time, n_jobs=ctx.n_jobs)
+        return d_path, None, None, None, None, None
 
 
 def branched_log_sig(
@@ -972,6 +1011,19 @@ def branched_log_sig(
         n_jobs: int = 1,
 ) -> Union[np.ndarray, torch.Tensor]:
     method = _resolve_branched_log_sig_method(method, planar)
+    if method == 3:
+        if not isinstance(path, torch.Tensor) or _has_non_empty_correction(correction):
+            return branched_log_sig_forward(
+                path, degree, time_aug=time_aug, lead_lag=lead_lag,
+                end_time=end_time, planar=planar, scalar_term=scalar_term,
+                method=method, correction=correction, n_jobs=n_jobs)
+        if path.requires_grad:
+            return BranchedLogSigFromPath.apply(
+                path, degree, time_aug, lead_lag, end_time, n_jobs)
+        return branched_log_sig_forward(
+            path, degree, time_aug=time_aug, lead_lag=lead_lag,
+            end_time=end_time, planar=planar, scalar_term=scalar_term,
+            method=method, n_jobs=n_jobs)
     if method and isinstance(path, torch.Tensor) and path.device.type != "cpu":
         raise NotImplementedError(
             "Compressed MKW branched log signatures are only supported on CPU")
