@@ -372,6 +372,16 @@ CPSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP = {
     "float64": CPSIG.branched_sig_to_log_sig_backprop_d
 }
 
+CPSIG_BRANCHED_LOG_SIG_FROM_PATH = {
+    "float32": CPSIG.branched_log_sig_from_path_f,
+    "float64": CPSIG.branched_log_sig_from_path_d
+}
+
+CPSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP = {
+    "float32": CPSIG.branched_log_sig_from_path_backprop_f,
+    "float64": CPSIG.branched_log_sig_from_path_backprop_d
+}
+
 CPSIG_BRANCHED_SIG_COMBINE_BACKPROP = {
     "float32": CPSIG.branched_sig_combine_backprop_f,
     "float64": CPSIG.branched_sig_combine_backprop_d

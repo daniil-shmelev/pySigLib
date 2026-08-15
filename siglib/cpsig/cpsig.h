@@ -701,7 +701,7 @@ extern "C" {
 	/** @addtogroup branched_sig_functions
 	* @{
 	*/
-	/** @brief Prepares the branched-signature and derived branched-log caches. */
+	/** @brief Prepares branched-log caches for methods 0, 1, 2, or 3. */
 	[[nodiscard]] CPSIG_API int prepare_branched_log_sig(uint64_t dimension, uint64_t max_nodes, int method, bool use_disk = false, bool planar = false) noexcept;
 
 	[[nodiscard]] CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
@@ -712,7 +712,8 @@ extern "C" {
 	*
 	* Method 0 returns the expanded decorated-tree or ordered-forest basis and
 	* preserves the scalar-term convention. Methods 1 and 2 return scalar-free
-	* compressed MKW coordinates and require planar=true.
+	* compressed MKW coordinates and require planar=true. Method 3 is available
+	* only through branched_log_sig_from_path_f and branched_log_sig_from_path_d.
 	*/
 	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	/** @brief */
@@ -727,6 +728,16 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_backprop_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	/** @brief */
 	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_backprop_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
+
+	/** @brief Computes method 3 for a planar MKW path directly using BCH. */
+	[[nodiscard]] CPSIG_API int branched_log_sig_from_path_f(const float* path, float* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
+	/** @copydoc branched_log_sig_from_path_f */
+	[[nodiscard]] CPSIG_API int branched_log_sig_from_path_d(const double* path, double* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
+
+	/** @brief Backpropagation through the direct planar MKW BCH computation. */
+	[[nodiscard]] CPSIG_API int branched_log_sig_from_path_backprop_f(const float* derivs, float* path_derivs, const float* path, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
+	/** @copydoc branched_log_sig_from_path_backprop_f */
+	[[nodiscard]] CPSIG_API int branched_log_sig_from_path_backprop_d(const double* derivs, double* path_derivs, const double* path, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
 
 	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
