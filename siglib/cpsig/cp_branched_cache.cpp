@@ -82,6 +82,8 @@ static void write_branched_cache(const BranchedSigCache& c) {
 	serialize_vector(out, c.chain_indices);
 	serialize_vector(out, c.coproduct_data);
 	serialize_vector(out, c.coproduct_offsets);
+	serialize_vector(out, c.basis_forest_data);
+	serialize_vector(out, c.basis_forest_offsets);
 }
 
 static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool planar, BranchedSigCache& c) {
@@ -133,6 +135,44 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool pla
 	deserialize_vector(in, tmp.coproduct_offsets);
 
 	if (!in.good()) return false;
+	if (in.peek() != std::char_traits<char>::eof()) {
+		deserialize_vector(in, tmp.basis_forest_data);
+		deserialize_vector(in, tmp.basis_forest_offsets);
+		if (!in.good()) return false;
+	}
+
+	if (planar && tmp.basis_forest_offsets.empty()) {
+		std::vector<DecoratedTreeInfo> trees;
+		std::vector<uint64_t> tree_order_index;
+		enumerate_all_decorated_trees(
+			dimension, max_nodes, trees, tree_order_index, true);
+		std::vector<std::vector<uint64_t>> forests;
+		std::vector<uint64_t> forest_order_index;
+		enumerate_ordered_forest_basis_(
+			trees, max_nodes, forests, forest_order_index);
+		if (forests.size() + 1 != tmp.total_length
+			|| forest_order_index != tmp.order_index)
+			return false;
+		tmp.basis_forest_offsets.resize(tmp.total_length);
+		for (uint64_t i = 0; i < forests.size(); ++i) {
+			tmp.basis_forest_offsets[i] = tmp.basis_forest_data.size();
+			tmp.basis_forest_data.insert(
+				tmp.basis_forest_data.end(), forests[i].begin(), forests[i].end());
+		}
+		tmp.basis_forest_offsets[forests.size()] = tmp.basis_forest_data.size();
+	}
+	if (planar) {
+		if (tmp.basis_forest_offsets.size() != tmp.total_length
+			|| tmp.basis_forest_offsets.empty()
+			|| tmp.basis_forest_offsets.front() != 0
+			|| tmp.basis_forest_offsets.back() != tmp.basis_forest_data.size())
+			return false;
+		for (uint64_t i = 1; i < tmp.basis_forest_offsets.size(); ++i) {
+			if (tmp.basis_forest_offsets[i] < tmp.basis_forest_offsets[i - 1]
+				|| tmp.basis_forest_offsets[i] > tmp.basis_forest_data.size())
+				return false;
+		}
+	}
 
 	c = std::move(tmp);
 	return true;

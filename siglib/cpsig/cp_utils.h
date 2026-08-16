@@ -25,3 +25,4 @@ void populate_level_index(uint64_t* level_index, uint64_t dimension, uint64_t de
 
 // Length of a branched signature vector (1 + basis size up to max_nodes).
 uint64_t branched_sig_length_(uint64_t dimension, uint64_t max_nodes, bool planar = false);
+uint64_t branched_log_sig_length_(uint64_t dimension, uint64_t max_nodes, bool planar = false);

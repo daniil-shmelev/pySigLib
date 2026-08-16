@@ -17,11 +17,179 @@
 #include "cpsig.h"
 #include "cp_branched_log_signature.h"
 #include "cp_branched_cache.h"
+#include "log_sig_cache.h"
+#include "words.h"
 #include "../shared/branched_log_cache.h"
 #include "multithreading.h"
 #include "macros.h"
 
 namespace {
+constexpr const char* mkw_basis_cache_prefix_ = "mkw_lyndon_";
+
+struct BranchedLogBasisCacheRegistry_ {
+	std::unordered_map<
+		std::pair<uint64_t, uint64_t>,
+		std::unique_ptr<BasisCache>,
+		PairHash
+	> map;
+	std::shared_mutex mu;
+};
+
+BranchedLogBasisCacheRegistry_& branched_log_basis_cache_registry_() {
+	static BranchedLogBasisCacheRegistry_ registry;
+	return registry;
+}
+
+void clear_branched_log_basis_cache_() {
+	auto& registry = branched_log_basis_cache_registry_();
+	std::unique_lock lock(registry.mu);
+	registry.map.clear();
+}
+
+std::unique_ptr<BasisCache> build_branched_log_basis_cache_(
+	const BranchedSigCache& cache,
+	int method
+) {
+	if (!cache.planar)
+		throw std::invalid_argument("compressed branched log signatures require planar=True");
+
+	std::vector<word> lyndon_words;
+	std::vector<uint64_t> lyndon_idx;
+	std::vector<word> flat_words;
+	const uint64_t lyndon_count = compute_branched_log_sig_length(
+		cache.dimension, cache.max_nodes, true);
+	lyndon_idx.reserve(lyndon_count);
+	if (method == 2) {
+		lyndon_words.reserve(lyndon_count);
+		flat_words.resize(cache.total_length);
+	}
+	for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
+		const uint64_t start = cache.basis_forest_offsets[basis_idx];
+		const uint64_t end = cache.basis_forest_offsets[basis_idx + 1];
+		word forest(
+			cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(start),
+			cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(end));
+		if (method == 2)
+			flat_words[basis_idx + 1] = forest;
+		if (is_lyndon(forest)) {
+			if (method == 2)
+				lyndon_words.push_back(forest);
+			lyndon_idx.push_back(basis_idx + 1);
+		}
+	}
+
+	if (lyndon_idx.size() != lyndon_count)
+		throw std::runtime_error("MKW Lyndon cache length mismatch");
+
+	SparseIntMatrix projection;
+	SparseIntMatrix inverse;
+	SparseIntMatrix inverse_transpose;
+	if (method == 2) {
+		std::unordered_map<word, uint64_t, WordHash> flat_idx;
+		flat_idx.reserve(flat_words.size());
+		for (uint64_t i = 0; i < flat_words.size(); ++i)
+			flat_idx[flat_words[i]] = i;
+		lyndon_proj_matrix_from_words(
+			projection,
+			lyndon_words,
+			cache.total_length,
+			[&flat_idx](const word& w) {
+				return flat_idx.at(w);
+			},
+			[&flat_words, &flat_idx](uint64_t i, uint64_t j, uint64_t) {
+				return flat_idx.at(concatenate_words(flat_words.at(i), flat_words.at(j)));
+			});
+		projection.inverse(inverse);
+		inverse.transpose(inverse_transpose);
+	}
+
+	return std::make_unique<BasisCache>(
+		method,
+		std::move(lyndon_idx),
+		std::move(inverse),
+		std::move(inverse_transpose));
+}
+
+void prepare_branched_log_basis_cache_(
+	const BranchedSigCache& cache,
+	int method,
+	bool use_disk
+) {
+	if (method < 1)
+		return;
+	if (method == 3)
+		throw std::invalid_argument("branched log signature method 3 is not implemented");
+	if (method > 2)
+		throw std::invalid_argument("branched log signature method must be 0, 1, or 2");
+
+	const std::pair<uint64_t, uint64_t> key(cache.dimension, cache.max_nodes);
+	auto& registry = branched_log_basis_cache_registry_();
+	{
+		std::shared_lock lock(registry.mu);
+		auto it = registry.map.find(key);
+		if (it != registry.map.end() && it->second->method >= method)
+			return;
+	}
+
+	std::unique_ptr<CacheFile> file;
+	if (use_disk) {
+		auto dir = get_cache_dir();
+		if (!std::filesystem::exists(dir / cache_folder_name))
+			std::filesystem::create_directory(dir / cache_folder_name);
+		file = std::make_unique<CacheFile>(
+			cache.dimension, cache.max_nodes, mkw_basis_cache_prefix_);
+	}
+	if (file && file->exists()) {
+		auto basis = std::make_unique<BasisCache>();
+		file->read(basis);
+		if (basis->method >= method) {
+			std::unique_lock lock(registry.mu);
+			registry.map.insert_or_assign(key, std::move(basis));
+			return;
+		}
+	}
+
+	auto basis = build_branched_log_basis_cache_(cache, method);
+	if (file)
+		file->write(basis);
+
+	std::unique_lock lock(registry.mu);
+	registry.map.insert_or_assign(key, std::move(basis));
+}
+
+const BasisCache& get_branched_log_basis_cache_(
+	uint64_t dimension,
+	uint64_t max_nodes,
+	int method
+) {
+	const std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
+	auto& registry = branched_log_basis_cache_registry_();
+	{
+		std::shared_lock lock(registry.mu);
+		auto it = registry.map.find(key);
+		if (it != registry.map.end() && it->second->method >= method)
+			return *(it->second);
+	}
+
+	auto dir = get_cache_dir();
+	if (!std::filesystem::exists(dir / cache_folder_name))
+		throw cache_not_found_error(
+			"MKW branched log basis cache not found - call prepare_branched_log_sig first");
+	CacheFile file(dimension, max_nodes, mkw_basis_cache_prefix_);
+	if (!file.exists())
+		throw cache_not_found_error(
+			"MKW branched log basis cache not found - call prepare_branched_log_sig first");
+	auto basis = std::make_unique<BasisCache>();
+	file.read(basis);
+	if (basis->method < method)
+		throw cache_not_found_error(
+			"MKW branched log basis cache does not support the requested method");
+
+	std::unique_lock lock(registry.mu);
+	auto inserted = registry.map.insert_or_assign(key, std::move(basis));
+	return *(inserted.first->second);
+}
+
 std::unordered_map<
 	std::pair<uint64_t, uint64_t>,
 	std::unique_ptr<BranchedLogForestCache>,
@@ -578,6 +746,100 @@ void branched_sig_to_log_sig_backprop_(
 	}
 	spawn_batch_threads(batch_size, n_jobs, work_range);
 }
+
+
+template<std::floating_point T, bool ScalarTerm>
+void branched_sig_to_log_sig_compressed_(
+	const T* bsig,
+	T* out,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t max_nodes,
+	int method,
+	int n_jobs
+) {
+	const auto& cache = get_branched_sig_cache(dimension, max_nodes, true);
+	const uint64_t input_stride = ScalarTerm
+		? cache.total_length
+		: cache.total_length - 1;
+	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
+	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache, forest_cache);
+	const auto& basis_cache = get_branched_log_basis_cache_(dimension, max_nodes, method);
+	const uint64_t output_stride = basis_cache.lyndon_idx.size();
+	if (output_stride == 0)
+		return;
+
+	auto work_range = [&](uint64_t start, uint64_t end) {
+		std::vector<T> expanded(input_stride);
+		for (uint64_t row = start; row < end; ++row) {
+			const T* bsig_row = bsig + row * input_stride;
+			branched_sig_to_log_sig_poly_range_<T, ScalarTerm>(
+				bsig_row, expanded.data(), 0, 1, input_stride, poly_cache);
+			T* out_row = out + row * output_stride;
+			for (uint64_t i = 0; i < output_stride; ++i) {
+				const uint64_t flat_idx = basis_cache.lyndon_idx[i];
+				out_row[i] = expanded[ScalarTerm ? flat_idx : flat_idx - 1];
+			}
+			if (method == 2)
+				basis_cache.inv_proj_mat.mul_vec_inplace_lower(out_row);
+		}
+	};
+	if (batch_size == 0 || n_jobs == 1 || batch_size == 1) {
+		work_range(0, batch_size);
+		return;
+	}
+	spawn_batch_threads(batch_size, n_jobs, work_range);
+}
+
+
+template<std::floating_point T, bool ScalarTerm>
+void branched_sig_to_log_sig_backprop_compressed_(
+	const T* bsig,
+	const T* derivs,
+	T* out,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t max_nodes,
+	int method,
+	int n_jobs
+) {
+	const auto& cache = get_branched_sig_cache(dimension, max_nodes, true);
+	const uint64_t input_stride = ScalarTerm
+		? cache.total_length
+		: cache.total_length - 1;
+	const auto& forest_cache = get_cached_branched_log_forest_cache(cache);
+	const auto& poly_cache = get_cached_branched_log_poly_cache_(cache, forest_cache);
+	const auto& basis_cache = get_branched_log_basis_cache_(dimension, max_nodes, method);
+	const uint64_t deriv_stride = basis_cache.lyndon_idx.size();
+	if (input_stride == 0)
+		return;
+
+	auto work_range = [&](uint64_t start, uint64_t end) {
+		std::vector<T> compact(deriv_stride);
+		std::vector<T> expanded_derivs(input_stride);
+		for (uint64_t row = start; row < end; ++row) {
+			if (deriv_stride != 0)
+				std::copy_n(derivs + row * deriv_stride, deriv_stride, compact.begin());
+			if (method == 2)
+				basis_cache.inv_proj_mat_transpose.mul_vec_inplace_upper(compact.data());
+			std::fill(expanded_derivs.begin(), expanded_derivs.end(), static_cast<T>(0));
+			for (uint64_t i = 0; i < deriv_stride; ++i) {
+				const uint64_t flat_idx = basis_cache.lyndon_idx[i];
+				expanded_derivs[ScalarTerm ? flat_idx : flat_idx - 1] = compact[i];
+			}
+			branched_sig_to_log_sig_backprop_poly_range_<T, ScalarTerm>(
+				bsig + row * input_stride,
+				expanded_derivs.data(),
+				out + row * input_stride,
+				0, 1, input_stride, poly_cache);
+		}
+	};
+	if (batch_size == 0 || n_jobs == 1 || batch_size == 1) {
+		work_range(0, batch_size);
+		return;
+	}
+	spawn_batch_threads(batch_size, n_jobs, work_range);
+}
 }  // namespace
 
 
@@ -617,6 +879,7 @@ void prepare_branched_log_sig_cache(const BranchedSigCache& cache) {
 
 
 void clear_branched_log_sig_cache() {
+	clear_branched_log_basis_cache_();
 	{
 		std::unique_lock lock(branched_log_forest_cache_mu_);
 		branched_log_forest_cache_registry_.clear();
@@ -633,14 +896,31 @@ void branched_sig_to_log_sig_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
+	int method,
 	int n_jobs,
 	bool planar,
 	bool scalar_term
 ) {
-	if (scalar_term) {
-		branched_sig_to_log_sig_<T, true>(bsig, out, batch_size, dimension, max_nodes, n_jobs, planar);
+	if (method == 3)
+		throw std::invalid_argument("branched log signature method 3 is not implemented");
+	if (method < 0 || method > 2)
+		throw std::invalid_argument("branched log signature method must be 0, 1, or 2");
+	if (method != 0 && !planar)
+		throw std::invalid_argument("compressed branched log signatures require planar=True");
+	if (method == 0) {
+		if (scalar_term) {
+			branched_sig_to_log_sig_<T, true>(
+				bsig, out, batch_size, dimension, max_nodes, n_jobs, planar);
+		} else {
+			branched_sig_to_log_sig_<T, false>(
+				bsig, out, batch_size, dimension, max_nodes, n_jobs, planar);
+		}
+	} else if (scalar_term) {
+		branched_sig_to_log_sig_compressed_<T, true>(
+			bsig, out, batch_size, dimension, max_nodes, method, n_jobs);
 	} else {
-		branched_sig_to_log_sig_<T, false>(bsig, out, batch_size, dimension, max_nodes, n_jobs, planar);
+		branched_sig_to_log_sig_compressed_<T, false>(
+			bsig, out, batch_size, dimension, max_nodes, method, n_jobs);
 	}
 }
 
@@ -653,14 +933,31 @@ void branched_sig_to_log_sig_backprop_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
+	int method,
 	int n_jobs,
 	bool planar,
 	bool scalar_term
 ) {
-	if (scalar_term) {
-		branched_sig_to_log_sig_backprop_<T, true>(bsig, derivs, out, batch_size, dimension, max_nodes, n_jobs, planar);
+	if (method == 3)
+		throw std::invalid_argument("branched log signature method 3 is not implemented");
+	if (method < 0 || method > 2)
+		throw std::invalid_argument("branched log signature method must be 0, 1, or 2");
+	if (method != 0 && !planar)
+		throw std::invalid_argument("compressed branched log signatures require planar=True");
+	if (method == 0) {
+		if (scalar_term) {
+			branched_sig_to_log_sig_backprop_<T, true>(
+				bsig, derivs, out, batch_size, dimension, max_nodes, n_jobs, planar);
+		} else {
+			branched_sig_to_log_sig_backprop_<T, false>(
+				bsig, derivs, out, batch_size, dimension, max_nodes, n_jobs, planar);
+		}
+	} else if (scalar_term) {
+		branched_sig_to_log_sig_backprop_compressed_<T, true>(
+			bsig, derivs, out, batch_size, dimension, max_nodes, method, n_jobs);
 	} else {
-		branched_sig_to_log_sig_backprop_<T, false>(bsig, derivs, out, batch_size, dimension, max_nodes, n_jobs, planar);
+		branched_sig_to_log_sig_backprop_compressed_<T, false>(
+			bsig, derivs, out, batch_size, dimension, max_nodes, method, n_jobs);
 	}
 }
 
@@ -669,29 +966,36 @@ void branched_sig_to_log_sig_backprop_(
 extern "C" {
 
 	CPSIG_API int prepare_branched_log_sig(
-		uint64_t dimension, uint64_t max_nodes, bool use_disk, bool planar
+		uint64_t dimension, uint64_t max_nodes, int method, bool use_disk, bool planar
 	) noexcept {
 		SAFE_CALL(
+			if (method == 3)
+				throw std::invalid_argument("branched log signature method 3 is not implemented");
+			if (method < 0 || method > 2)
+				throw std::invalid_argument("branched log signature method must be 0, 1, or 2");
+			if (method != 0 && !planar)
+				throw std::invalid_argument("compressed branched log signatures require planar=True");
 			prepare_branched_sig_cache(dimension, max_nodes, use_disk, planar);
-			prepare_branched_log_sig_cache(
-				get_branched_sig_cache(dimension, max_nodes, planar))
+			const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
+			prepare_branched_log_sig_cache(cache);
+			prepare_branched_log_basis_cache_(cache, method, use_disk)
 		);
 	}
 
-	CPSIG_API int branched_sig_to_log_sig_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_sig_to_log_sig_<float>(bsig, out, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
+	CPSIG_API int branched_sig_to_log_sig_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term) noexcept {
+		SAFE_CALL(branched_sig_to_log_sig_<float>(bsig, out, batch_size, dimension, max_nodes, method, n_jobs, planar, scalar_term));
 	}
 
-	CPSIG_API int branched_sig_to_log_sig_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_sig_to_log_sig_<double>(bsig, out, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
+	CPSIG_API int branched_sig_to_log_sig_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term) noexcept {
+		SAFE_CALL(branched_sig_to_log_sig_<double>(bsig, out, batch_size, dimension, max_nodes, method, n_jobs, planar, scalar_term));
 	}
 
-	CPSIG_API int branched_sig_to_log_sig_backprop_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_sig_to_log_sig_backprop_<float>(bsig, derivs, out, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
+	CPSIG_API int branched_sig_to_log_sig_backprop_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term) noexcept {
+		SAFE_CALL(branched_sig_to_log_sig_backprop_<float>(bsig, derivs, out, batch_size, dimension, max_nodes, method, n_jobs, planar, scalar_term));
 	}
 
-	CPSIG_API int branched_sig_to_log_sig_backprop_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_sig_to_log_sig_backprop_<double>(bsig, derivs, out, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
+	CPSIG_API int branched_sig_to_log_sig_backprop_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term) noexcept {
+		SAFE_CALL(branched_sig_to_log_sig_backprop_<double>(bsig, derivs, out, batch_size, dimension, max_nodes, method, n_jobs, planar, scalar_term));
 	}
 
 }

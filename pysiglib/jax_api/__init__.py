@@ -36,7 +36,7 @@ from ..trees import trees, trees_of_order, tree_to_idx, idx_to_tree
 from ..sig_coef import extract_sig_coef
 from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache
 from ..branched_sig import prepare_branched_sig, branched_sig_length
-from ..branched_log_sig import prepare_branched_log_sig
+from ..branched_log_sig import branched_log_sig_length, prepare_branched_log_sig
 from ..branched_sig_coef import extract_branched_sig_coef, prepare_branched_sig_coef
 from ..load_siglib import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
 
@@ -98,7 +98,8 @@ __all__ = [
     "sig_score", "expected_sig_score", "sig_mmd",
     "branched_sig", "branched_sig_combine",
     "branched_sig_to_log_sig", "branched_log_sig",
-    "prepare_branched_sig", "prepare_branched_log_sig", "prepare_branched_sig_coef", "branched_sig_length",
+    "prepare_branched_sig", "prepare_branched_log_sig", "prepare_branched_sig_coef",
+    "branched_sig_length", "branched_log_sig_length",
     "sig_length", "log_sig_length",
     "words_of_length", "words", "lyndon_words_of_length", "lyndon_words",
     "is_lyndon", "word_to_idx", "idx_to_word",

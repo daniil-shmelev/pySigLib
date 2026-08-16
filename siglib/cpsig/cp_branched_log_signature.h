@@ -29,6 +29,7 @@ void branched_sig_to_log_sig_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
+	int method,
 	int n_jobs,
 	bool planar = false,
 	bool scalar_term = true
@@ -43,6 +44,7 @@ void branched_sig_to_log_sig_backprop_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
+	int method,
 	int n_jobs,
 	bool planar = false,
 	bool scalar_term = true

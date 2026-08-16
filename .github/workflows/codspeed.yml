@@ -3,9 +3,17 @@ name: CodSpeed Benchmarks
 on:
   push:
     branches: ["main"]
-    paths: ["siglib/cpsig/**"]
+    paths:
+      - ".github/workflows/codspeed.yml"
+      - "benchmarks/**"
+      - "siglib/cpsig/**"
+      - "siglib/shared/**"
   pull_request:
-    paths: ["siglib/cpsig/**"]
+    paths:
+      - ".github/workflows/codspeed.yml"
+      - "benchmarks/**"
+      - "siglib/cpsig/**"
+      - "siglib/shared/**"
   workflow_dispatch:
 
 permissions:
