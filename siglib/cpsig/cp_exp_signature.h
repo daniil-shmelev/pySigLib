@@ -17,8 +17,8 @@
 #include "cppch.h"
 
 #include "multithreading.h"
-#include "words.h"
-#include "log_sig_cache.h"
+#include "../shared/preparation/lyndon_words.h"
+#include "cache_lifecycle/log_sig_cache.h"
 #ifdef VEC
 #include "cp_vector_funcs.h"
 #endif

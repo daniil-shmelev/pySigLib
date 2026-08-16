@@ -19,45 +19,11 @@
 #include "macros.h"
 #include "multithreading.h"
 #include "cp_vector_funcs.h"
+#include "../shared/preparation/polynomial_sig_kernel_tables.h"
 
 
 template<std::floating_point T>
-struct sig_poly_tables {
-	uint64_t size;
-	std::vector<T> mat1;
-	std::vector<T> mat1_deriv;
-	std::vector<T> mat2;
-
-	explicit sig_poly_tables(uint64_t order) :
-		size(order + 1), mat1(size * size, static_cast<T>(0)),
-		mat1_deriv(size * size, static_cast<T>(0)),
-		mat2(size * size, static_cast<T>(0)) {
-		long double inverse_factorial = 1.0L;
-		for (uint64_t n = 1; n < size; ++n) {
-			inverse_factorial /= static_cast<long double>(n);
-			long double mat2_value = inverse_factorial * inverse_factorial;
-			mat2[n * size] = static_cast<T>(mat2_value);
-			for (uint64_t k = 1; k < size; ++k) {
-				mat2_value *= static_cast<long double>(k) / static_cast<long double>(n + k);
-				mat2[n * size + k] = static_cast<T>(mat2_value);
-			}
-		}
-
-		long double inverse_nm1_factorial = 1.0L;
-		for (uint64_t n = 2; n < size; ++n) {
-			const long double inverse_n_factorial = inverse_nm1_factorial / static_cast<long double>(n);
-			long double mat1_value = inverse_n_factorial * inverse_nm1_factorial;
-			mat1[n * size + 1] = static_cast<T>(mat1_value);
-			mat1_deriv[n * size + 1] = static_cast<T>(n - 1) * static_cast<T>(mat1_value);
-			for (uint64_t k = 2; k < n; ++k) {
-				mat1_value *= static_cast<long double>(k * (n - k + 1));
-				mat1[n * size + k] = static_cast<T>(mat1_value);
-				mat1_deriv[n * size + k] = static_cast<T>(n - k) * static_cast<T>(mat1_value);
-			}
-			inverse_nm1_factorial = inverse_n_factorial;
-		}
-	}
-};
+using sig_poly_tables = PolynomialSigKernelTables<T>;
 
 template<std::floating_point T>
 struct sig_poly_table_cache {

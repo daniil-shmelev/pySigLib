@@ -3,6 +3,13 @@ if(NOT DEFINED CUSIG_INSTALL_DESTINATION)
     set(CUSIG_INSTALL_DESTINATION "pysiglib")
 endif()
 
+if(NOT TARGET pysiglib_preparation)
+    add_subdirectory(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../shared/preparation"
+        "${CMAKE_CURRENT_BINARY_DIR}/preparation"
+    )
+endif()
+
 add_library(cusig SHARED
 	cu_branched_log_bch.cu
     cu_branched_log_signature.cu
@@ -10,7 +17,7 @@ add_library(cusig SHARED
     cu_branched_sig_kernel.cu
     cu_exp_host.cpp
     cu_exp_signature.cu
-    cu_log_sig_cache.cu
+    cache_lifecycle/cu_log_sig_cache.cu
     cu_log_sig_combine.cu
     cu_log_signature.cu
     cu_path_transforms.cu
@@ -19,7 +26,7 @@ add_library(cusig SHARED
     cu_sig_kernel.cu
     cu_signature.cu
     cu_sig_combine.cu
-    cusig_lifecycle.cu
+    cache_lifecycle/cusig_lifecycle.cu
     cupch.cpp
 )
 
@@ -31,7 +38,10 @@ set_target_properties(cusig PROPERTIES
     CUDA_ARCHITECTURES         "${PYSIGLIB_CUDA_ARCH}"
 )
 
-target_include_directories(cusig PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
+target_include_directories(cusig PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../shared"
+)
 target_compile_definitions(cusig PRIVATE CUSIG_EXPORTS NDEBUG)
 
 # nvcc flags: -lineinfo (device-code line info), --dopt=on (device optimizer).
@@ -48,7 +58,7 @@ if(MSVC)
     target_compile_definitions(cusig PRIVATE _USRDLL _UNICODE UNICODE)
 endif()
 
-target_link_libraries(cusig PRIVATE CUDA::cudart)
+target_link_libraries(cusig PRIVATE CUDA::cudart pysiglib_preparation)
 
 # cudadevrt is needed for separable compilation (device linking).
 if(TARGET CUDA::cudadevrt)

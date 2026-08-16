@@ -48,10 +48,11 @@ extern "C" {
 		uint64_t dimension, uint64_t degree, int method, bool use_disk
 	) noexcept {
 		CUSIG_SAFE_CALL(
-			if (method != 3)
-				prepare_log_sig_cuda_(dimension, degree, method, use_disk);
 			if (method == 3)
-				prepare_cuda_bch_cache_(dimension, degree)
+				prepare_cuda_log_sig_method3_(
+					dimension, degree, use_disk);
+			else
+				prepare_log_sig_cuda_(dimension, degree, method, use_disk);
 		);
 	}
 

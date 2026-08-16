@@ -17,20 +17,21 @@ add_executable(cpsig_tests
     cp_test_log_sig.cpp
     cp_test_sig_kernel.cpp
     cp_test_polynomial_sig_kernel.cpp
+    cp_test_preparation.cpp
     cp_test_branched.cpp
     cp_test_branched_sig_coef.cpp
-    ../cpsig/words.cpp
     ../cpsig/cp_utils.cpp
 )
 
 target_include_directories(cpsig_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../cpsig"
     "${CMAKE_CURRENT_SOURCE_DIR}/../shared"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../shared/preparation"
 )
 
 target_compile_features(cpsig_tests PRIVATE cxx_std_20)
 target_compile_definitions(cpsig_tests PRIVATE CPSIG_EXPORTS)
-target_link_libraries(cpsig_tests PRIVATE cpsig Threads::Threads GTest::gtest_main)
+target_link_libraries(cpsig_tests PRIVATE cpsig pysiglib_preparation Threads::Threads GTest::gtest_main)
 
 if(_enable_vec)
     target_compile_definitions(cpsig_tests PRIVATE VEC)

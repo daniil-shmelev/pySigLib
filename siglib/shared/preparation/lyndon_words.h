@@ -14,9 +14,15 @@
  * ========================================================================= */
 
 #pragma once
-#include "cppch.h"
-#include "cp_utils.h"
-#include "sparse.h"
+#include "sparse_int_matrix.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 typedef std::vector<uint64_t> word;
 

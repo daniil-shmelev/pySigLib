@@ -13,8 +13,12 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cppch.h"
-#include "words.h"
+#include "lyndon_words.h"
+#include "tensor_basis.h"
+
+#include <algorithm>
+#include <limits>
+#include <stdexcept>
 
 bool is_lyndon(const word& w) {
 	const uint64_t n = w.size();
@@ -117,7 +121,7 @@ uint64_t concatenate_idx(uint64_t i, uint64_t j, uint64_t len_j, uint64_t dimens
 	// If i and j correspond to word_to_idx(a) and word_to_idx(b),
 	// then this function outputs word_to_idx(c) where c is the
 	// concatenation of a and b.
-	const uint64_t p = ::power(dimension, len_j);
+	const uint64_t p = tensor_power(dimension, len_j);
 	if (!p || (i != 0 && i > UINT64_MAX / p))
 		throw std::overflow_error("concatenate_idx: index overflow");
 	const uint64_t mul = i * p;
@@ -133,7 +137,7 @@ void lyndon_proj_matrix(
 	uint64_t dimension,
 	uint64_t degree
 ) {
-	const uint64_t n = sig_length(dimension, degree);
+	const uint64_t n = tensor_sig_length(dimension, degree);
 	if (n == 0)
 		throw std::overflow_error("lyndon_proj_matrix: sig_length overflow");
 	if (lyndon_idx.size() != lyndon_words.size())

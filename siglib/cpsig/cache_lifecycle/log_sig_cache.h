@@ -1,4 +1,4 @@
-/* Copyright 2026 Daniil Shmelev
+/* Copyright 2025 Daniil Shmelev
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,34 +14,29 @@
  * ========================================================================= */
 
 #pragma once
-#include "cppch.h"
-#include "cache_lifecycle/cp_branched_log_cache.h"
 
+#include "preparation/log_sig_cache.h"
 
-template<std::floating_point T>
-void branched_sig_to_log_sig_(
-	const T* bsig,
-	T* out,
-	uint64_t batch_size,
+#include <cstdint>
+#include <memory>
+
+struct BchCache;
+
+void prepare_basis_cache(
 	uint64_t dimension,
-	uint64_t max_nodes,
+	uint64_t degree,
 	int method,
-	int n_jobs,
-	bool planar = false,
-	bool scalar_term = true
-);
-
-
-template<std::floating_point T>
-void branched_sig_to_log_sig_backprop_(
-	const T* bsig,
-	const T* derivs,
-	T* out,
-	uint64_t batch_size,
+	bool use_disk = false);
+const BasisCache& get_basis_cache(
 	uint64_t dimension,
-	uint64_t max_nodes,
-	int method,
-	int n_jobs,
-	bool planar = false,
-	bool scalar_term = true
-);
+	uint64_t degree,
+	int method);
+const LogSigCache& get_log_sig_cache(
+	uint64_t dimension,
+	uint64_t degree,
+	int method);
+LogSigCache& get_log_sig_cache_mutable(
+	uint64_t dimension,
+	uint64_t degree,
+	int method);
+void clear_cache_(bool use_disk);

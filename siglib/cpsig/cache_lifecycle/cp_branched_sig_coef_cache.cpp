@@ -16,7 +16,7 @@
 #include "cppch.h"
 #include "cp_branched_sig_coef_cache.h"
 #include "disk_cache.h"
-#include "../shared/errors.h"
+#include "errors.h"
 
 namespace {
 struct BranchedSigCoefCacheKey {
@@ -119,7 +119,7 @@ void prepare_branched_sig_coef_cache(
 		}
 	}
 
-	*cache = build_branched_sig_coef_cache(
+	*cache = BranchedSigCoefCache(
 		key.tree_data.data(), key.tree_data.size(), data_dimension, dimension,
 		max_nodes, planar);
 	if (use_disk)

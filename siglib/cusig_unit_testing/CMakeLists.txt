@@ -23,6 +23,7 @@ add_executable(cusig_tests
 target_include_directories(cusig_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../cusig"
     "${CMAKE_CURRENT_SOURCE_DIR}/../shared"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../shared/preparation"
 )
 
 target_compile_features(cusig_tests PRIVATE cxx_std_20)

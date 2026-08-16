@@ -16,6 +16,7 @@
 #pragma once
 #include "cppch.h"
 #include "log_sig_cache.h"
+#include "disk_cache.h"
 #include "cp_bch.h"
 #include "cp_branched_cache.h"
 #include "cp_branched_log_signature.h"
@@ -27,16 +28,16 @@ const char* version = "v2";
 const char* cache_folder_name = "pysiglib_cache";
 
 namespace {
-struct BasisCacheRegistry {
-	std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<BasisCache>, PairHash> map;
+struct LogSigCacheRegistry {
+	std::unordered_map<std::pair<uint64_t, uint64_t>, std::unique_ptr<LogSigCache>, PairHash> map;
 	std::shared_mutex mu;
 };
-BasisCacheRegistry& basis_cache_registry() {
-	static BasisCacheRegistry r;
+LogSigCacheRegistry& log_sig_cache_registry() {
+	static LogSigCacheRegistry r;
 	return r;
 }
-void clear_basis_cache() {
-	auto& reg = basis_cache_registry();
+void clear_log_sig_cache() {
+	auto& reg = log_sig_cache_registry();
 	std::unique_lock lk(reg.mu);
 	reg.map.clear();
 }
@@ -54,37 +55,6 @@ std::filesystem::path get_cache_dir() {
 	set_default_cache_dir();
 	std::shared_lock rlk(cache_dir_mu);
 	return cache_dir;
-}
-
-void serialize_vector(std::ostream& out, const std::vector<uint64_t>& v) {
-
-	uint64_t size = v.size();
-	out.write(reinterpret_cast<const char*>(&size), sizeof(size));
-
-	if (size > 0) {
-		out.write(reinterpret_cast<const char*>(v.data()), size * sizeof(uint64_t));
-	}
-}
-
-void deserialize_vector(std::istream& in, std::vector<uint64_t>& out) {
-
-	uint64_t size;
-	in.read(reinterpret_cast<char*>(&size), sizeof(size));
-	if (!in)
-		throw std::runtime_error("Tried to read an invalid cache file: vector size header");
-	if (size > MAX_CACHE_VECTOR_SIZE)
-		throw std::runtime_error("Tried to read an invalid cache file: vector size exceeds limit");
-
-	if (size > 0) {
-		check_stream_has_bytes(in, size * sizeof(uint64_t), "vector body");
-		out.resize(size);
-		in.read(reinterpret_cast<char*>(out.data()), size * sizeof(uint64_t));
-		if (!in)
-			throw std::runtime_error("Tried to read an invalid cache file: vector body read");
-	}
-	else {
-		out.clear();
-	}
 }
 
 void set_cache_dir_(const char* dir) {
@@ -146,89 +116,80 @@ void set_default_cache_dir() {
 void prepare_basis_cache(uint64_t dimension, uint64_t degree, int method, bool use_disk) {
 	if (method < 1)
 		return;
-
-	std::pair<uint64_t, uint64_t> key(dimension, degree);
-	auto& reg = basis_cache_registry();
-
+	const std::pair<uint64_t, uint64_t> key(dimension, degree);
+	auto& reg = log_sig_cache_registry();
 	{
 		std::shared_lock rlock(reg.mu);
 		auto it = reg.map.find(key);
-		if (it != reg.map.end() && it->second->method >= method) return;
+		if (it != reg.map.end() && it->second->supports(method))
+			return;
 	}
-
-	if (use_disk) {
-		auto dir = get_cache_dir();
-		if (!std::filesystem::exists(dir / cache_folder_name))
-			std::filesystem::create_directory(dir / cache_folder_name);
-		CacheFile file(dimension, degree);
-		if (file.exists()) {
-			auto basis_obj = std::make_unique<BasisCache>();
-			file.read(basis_obj);
-			if (basis_obj->method >= method) {
-				std::unique_lock wlock(reg.mu);
-				reg.map.insert_or_assign(key, std::move(basis_obj));
-				return;
-			}
-		}
-	}
-
-	std::vector<word> lyndon_words = all_lyndon_words(dimension, degree);
-	std::vector<uint64_t> lyndon_idx;
-	lyndon_idx.reserve(lyndon_words.size());
-	for (const auto& w : lyndon_words)
-		lyndon_idx.push_back(word_to_idx(w, dimension));
-	SparseIntMatrix p, p_inv, p_inv_t;
-	if (method == 2) {
-		lyndon_proj_matrix(p, lyndon_words, lyndon_idx, dimension, degree);
-		p.inverse(p_inv);
-		p_inv.transpose(p_inv_t);
-	}
-
-	auto basis_obj = std::make_unique<BasisCache>(
-		method,
-		std::move(lyndon_idx),
-		std::move(p_inv),
-		std::move(p_inv_t)
-	);
-
-	if (use_disk) {
-		CacheFile file(dimension, degree);
-		file.write(basis_obj);
-	}
-
+	const auto cache_directory = get_cache_dir() / cache_folder_name;
 	std::unique_lock wlock(reg.mu);
-	reg.map.insert_or_assign(key, std::move(basis_obj));
+	auto found = reg.map.find(key);
+	if (found == reg.map.end()) {
+		reg.map.try_emplace(
+			key,
+			std::make_unique<LogSigCache>(
+				dimension, degree, method, cache_directory, use_disk));
+	}
+	else if (!found->second->supports(method))
+		found->second->upgrade(method, cache_directory, use_disk);
 }
 
-const BasisCache& get_basis_cache(uint64_t dimension, uint64_t degree, int method) {
-
-	std::pair<uint64_t, uint64_t> key(dimension, degree);
-	auto& reg = basis_cache_registry();
-
+const LogSigCache& get_log_sig_cache(
+	uint64_t dimension,
+	uint64_t degree,
+	int method
+) {
+	const std::pair<uint64_t, uint64_t> key(dimension, degree);
+	auto& reg = log_sig_cache_registry();
 	{
 		std::shared_lock rlock(reg.mu);
 		auto it = reg.map.find(key);
-		if (it != reg.map.end() && it->second->method >= method)
+		if (it != reg.map.end() && it->second->supports(method))
 			return *(it->second);
 	}
 
-	CacheFile file(dimension, degree);
-	if (!file.exists())
+	BasisCache disk_basis;
+	const auto cache_directory = get_cache_dir() / cache_folder_name;
+	if (!read_log_sig_basis_cache(
+		cache_directory, dimension, degree, disk_basis)
+		|| !disk_basis.supports((std::min)(method, 2)))
 		throw cache_not_found_error("Could not find basis cache");
-
-	auto basis_obj = std::make_unique<BasisCache>();
-	file.read(basis_obj);
-
-	if (basis_obj->method < method)
-		throw cache_not_found_error("Could not find basis cache");
-
+	auto cache = std::make_unique<LogSigCache>(
+		dimension, degree, disk_basis.method, cache_directory, true);
 	std::unique_lock wlock(reg.mu);
-	auto p = reg.map.insert_or_assign(key, std::move(basis_obj));
+	auto p = reg.map.insert_or_assign(key, std::move(cache));
 	return *(p.first->second);
 }
 
+LogSigCache& get_log_sig_cache_mutable(
+	uint64_t dimension,
+	uint64_t degree,
+	int method
+) {
+	const std::pair<uint64_t, uint64_t> key(dimension, degree);
+	auto& reg = log_sig_cache_registry();
+	std::shared_lock lock(reg.mu);
+	const auto found = reg.map.find(key);
+	if (found == reg.map.end()
+		|| !found->second->basis((std::min)(method, 2)).supports(
+			(std::min)(method, 2)))
+		throw cache_not_found_error("Could not find basis cache");
+	return *found->second;
+}
+
+const BasisCache& get_basis_cache(
+	uint64_t dimension,
+	uint64_t degree,
+	int method
+) {
+	return get_log_sig_cache(dimension, degree, method).basis(method);
+}
+
 void clear_cache_(bool use_disk) {
-	clear_basis_cache();
+	clear_log_sig_cache();
 	clear_bch_cache();
 	clear_branched_sig_coef_cache();
 	clear_branched_log_sig_cache();
@@ -261,7 +222,7 @@ extern "C" {
 	}
 
 	CPSIG_API void cpsig_shutdown() noexcept {
-		try { clear_basis_cache();                                       } catch (...) {}
+		try { clear_log_sig_cache();                                     } catch (...) {}
 		try { clear_bch_cache();                                         } catch (...) {}
 		try { clear_branched_sig_coef_cache();                            } catch (...) {}
 		try { clear_branched_log_sig_cache();                             } catch (...) {}
