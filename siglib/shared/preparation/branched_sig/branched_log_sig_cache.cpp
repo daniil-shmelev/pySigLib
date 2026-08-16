@@ -24,7 +24,6 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
-#include <memory>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -41,10 +40,16 @@ struct MkwWordData_ {
 	std::vector<word> lyndon_words;
 	std::vector<uint64_t> lyndon_idx;
 	std::vector<uint64_t> lyndon_weights;
-	// One-letter Lyndon words provide the path increment generators for BCH.
-	std::vector<uint32_t> letter_log_idx;
-	std::vector<uint64_t> letter_basis_idx;
 };
+
+
+word mkw_forest_word_(const BranchedSigCache& cache, uint64_t basis_idx) {
+	const uint64_t start = cache.basis_forest_offsets[basis_idx];
+	const uint64_t end = cache.basis_forest_offsets[basis_idx + 1];
+	return word(
+		cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(start),
+		cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(end));
+}
 
 
 MkwWordData_ build_mkw_word_data_(const BranchedSigCache& cache) {
@@ -59,18 +64,9 @@ MkwWordData_ build_mkw_word_data_(const BranchedSigCache& cache) {
 	data.lyndon_idx.reserve(lyndon_count);
 	data.lyndon_weights.reserve(lyndon_count);
 	for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
-		const uint64_t start = cache.basis_forest_offsets[basis_idx];
-		const uint64_t end = cache.basis_forest_offsets[basis_idx + 1];
-		word forest(
-			cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(start),
-			cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(end));
+		word forest = mkw_forest_word_(cache, basis_idx);
 		data.flat_words[basis_idx + 1] = forest;
 		if (is_lyndon(forest)) {
-			if (forest.size() == 1) {
-				data.letter_log_idx.push_back(
-					static_cast<uint32_t>(data.lyndon_words.size()));
-				data.letter_basis_idx.push_back(basis_idx);
-			}
 			data.lyndon_words.push_back(forest);
 			data.lyndon_idx.push_back(basis_idx + 1);
 			data.lyndon_weights.push_back(
@@ -86,17 +82,17 @@ MkwWordData_ build_mkw_word_data_(const BranchedSigCache& cache) {
 }
 
 void build_mkw_projection_(
-	const BranchedSigCache& cache,
+	uint64_t total_length,
+	const MkwWordData_& word_data,
 	BasisCache& basis
 ) {
-	const MkwWordData_ word_data = build_mkw_word_data_(cache);
 	if (basis.lyndon_idx != word_data.lyndon_idx)
 		throw std::runtime_error("MKW Lyndon cache index mismatch");
 	SparseIntMatrix projection;
 	lyndon_proj_matrix_from_words(
 		projection,
 		word_data.lyndon_words,
-		cache.total_length,
+		total_length,
 		[&word_data](const word& value) {
 			return word_data.flat_idx.at(value);
 		},
@@ -110,56 +106,50 @@ void build_mkw_projection_(
 }
 
 
-std::unique_ptr<BasisCache> build_branched_log_basis_cache_(
+std::vector<uint64_t> build_mkw_lyndon_indices_(
+	const BranchedSigCache& cache
+) {
+	std::vector<uint64_t> lyndon_idx;
+	const uint64_t lyndon_count = compute_branched_log_sig_length(
+		cache.dimension, cache.max_nodes, true);
+	lyndon_idx.reserve(lyndon_count);
+	for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
+		if (is_lyndon(mkw_forest_word_(cache, basis_idx)))
+			lyndon_idx.push_back(basis_idx + 1);
+	}
+	if (lyndon_idx.size() != lyndon_count)
+		throw std::runtime_error("MKW Lyndon cache length mismatch");
+	return lyndon_idx;
+}
+
+
+BasisCache build_branched_log_basis_cache_(
 	const BranchedSigCache& cache,
 	int method
 ) {
 	if (!cache.planar)
 		throw std::invalid_argument("compressed branched log signatures require planar=True");
 
-	std::vector<uint64_t> lyndon_idx;
-	const uint64_t lyndon_count = compute_branched_log_sig_length(
-		cache.dimension, cache.max_nodes, true);
-	lyndon_idx.reserve(lyndon_count);
-	MkwWordData_ word_data;
-	if (method == 2)
-		word_data = build_mkw_word_data_(cache);
-	else {
-		for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
-			const uint64_t start = cache.basis_forest_offsets[basis_idx];
-			const uint64_t end = cache.basis_forest_offsets[basis_idx + 1];
-			word forest(
-				cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(start),
-				cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(end));
-			if (is_lyndon(forest))
-				lyndon_idx.push_back(basis_idx + 1);
-		}
-	}
-	if (method == 2)
-		lyndon_idx = word_data.lyndon_idx;
-
-	if (lyndon_idx.size() != lyndon_count)
-		throw std::runtime_error("MKW Lyndon cache length mismatch");
-
 	if (method == 2) {
+		MkwWordData_ word_data = build_mkw_word_data_(cache);
 		BasisCache result(
 			method,
-			std::move(lyndon_idx),
+			word_data.lyndon_idx,
 			{},
 			{});
-		build_mkw_projection_(cache, result);
-		return std::make_unique<BasisCache>(std::move(result));
+		build_mkw_projection_(cache.total_length, word_data, result);
+		return result;
 	}
 
-	return std::make_unique<BasisCache>(
+	return BasisCache(
 		method,
-		std::move(lyndon_idx),
+		build_mkw_lyndon_indices_(cache),
 		SparseIntMatrix{},
 		SparseIntMatrix{});
 }
 
 
-std::unique_ptr<BasisCache> load_or_build_branched_log_basis_cache_(
+BasisCache load_or_build_branched_log_basis_cache_(
 	const BranchedSigCache& cache,
 	int method,
 	const std::filesystem::path& cache_directory,
@@ -167,14 +157,14 @@ std::unique_ptr<BasisCache> load_or_build_branched_log_basis_cache_(
 ) {
 	if (use_disk && !cache_directory.empty()) {
 		// A method 2 disk entry is also valid for a method 1 request.
-		auto basis = std::make_unique<BasisCache>();
+		BasisCache basis;
 		if (read_log_sig_basis_cache(
 			cache_directory,
 			cache.dimension,
 			cache.max_nodes,
-			*basis,
+			basis,
 			mkw_basis_cache_prefix_)
-			&& basis->method >= method)
+			&& basis.method >= method)
 			return basis;
 	}
 
@@ -184,7 +174,7 @@ std::unique_ptr<BasisCache> load_or_build_branched_log_basis_cache_(
 			cache_directory,
 			cache.dimension,
 			cache.max_nodes,
-			*basis,
+			basis,
 			mkw_basis_cache_prefix_);
 	}
 	return basis;
@@ -267,8 +257,7 @@ TensorElem mkw_infinitesimal_product_(
 BranchedBchCache::BranchedBchCache(
 	const BranchedSigCache& branched_cache,
 	const BranchedLogHornerPlan& horner_plan,
-	const BasisCache& basis,
-	bool
+	const BasisCache& basis
 ) {
 	// BCH operates in method 2 coordinates, not in the expanded forest basis.
 	MkwWordData_ words = build_mkw_word_data_(branched_cache);
@@ -424,10 +413,13 @@ void BranchedLogSigCache::upgrade(
 						loaded,
 						mkw_basis_cache_prefix_)
 					&& loaded.supports(2)) {
-					basis_cache_ = std::make_unique<BasisCache>(std::move(loaded));
+					basis_cache_ = std::move(loaded);
 				}
 				else {
-					build_mkw_projection_(branched_cache, *basis_cache_);
+					const MkwWordData_ word_data =
+						build_mkw_word_data_(branched_cache);
+					build_mkw_projection_(
+						branched_cache.total_length, word_data, *basis_cache_);
 					if (use_disk && !cache_directory.empty()) {
 						write_log_sig_basis_cache(
 							cache_directory,
@@ -445,11 +437,8 @@ void BranchedLogSigCache::upgrade(
 		}
 	}
 	if (method == 3 && !bch_cache_) {
-		bch_cache_ = std::make_unique<BranchedBchCache>(
-			branched_cache,
-			horner_plan_,
-			*basis_cache_,
-			use_disk);
+		bch_cache_.emplace(
+			branched_cache, horner_plan_, *basis_cache_);
 	}
 	method_ = (std::max)(method_, method);
 }

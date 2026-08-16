@@ -320,23 +320,6 @@ std::filesystem::path branched_sig_coef_cache_file_path(
 		branched_sig_coef_cache_version + ".bin");
 }
 
-template<typename T>
-void serialize_branched_sig_coef_cache_vector_(
-	std::ostream& out,
-	const std::vector<T>& values
-) {
-	serialize_cache_vector(out, values);
-}
-
-template<typename T>
-void deserialize_branched_sig_coef_cache_vector_(
-	std::istream& in,
-	std::vector<T>& values,
-	const char* label
-) {
-	deserialize_cache_vector(in, values, label);
-}
-
 void write_branched_sig_coef_cache(
 	const std::filesystem::path& cache_dir,
 	uint64_t data_dimension,
@@ -360,16 +343,16 @@ void write_branched_sig_coef_cache(
 	out.write(reinterpret_cast<const char*>(&max_nodes), sizeof(max_nodes));
 	const uint64_t planar_value = planar;
 	out.write(reinterpret_cast<const char*>(&planar_value), sizeof(planar_value));
-	serialize_branched_sig_coef_cache_vector_(out, tree_data);
+	serialize_cache_vector(out, tree_data);
 	out.write(reinterpret_cast<const char*>(&cache.max_nodes), sizeof(cache.max_nodes));
-	serialize_branched_sig_coef_cache_vector_(out, cache.target_indices);
-	serialize_branched_sig_coef_cache_vector_(out, cache.inv_tree_factorial);
-	serialize_branched_sig_coef_cache_vector_(out, cache.node_labels_offsets);
-	serialize_branched_sig_coef_cache_vector_(out, cache.node_labels_data);
-	serialize_branched_sig_coef_cache_vector_(out, cache.coproduct_offsets);
-	serialize_branched_sig_coef_cache_vector_(out, cache.coproduct_data);
-	serialize_branched_sig_coef_cache_vector_(out, cache.order_index);
-	serialize_branched_sig_coef_cache_vector_(out, cache.leaf_indices);
+	serialize_cache_vector(out, cache.target_indices);
+	serialize_cache_vector(out, cache.inv_tree_factorial);
+	serialize_cache_vector(out, cache.node_labels_offsets);
+	serialize_cache_vector(out, cache.node_labels_data);
+	serialize_cache_vector(out, cache.coproduct_offsets);
+	serialize_cache_vector(out, cache.coproduct_data);
+	serialize_cache_vector(out, cache.order_index);
+	serialize_cache_vector(out, cache.leaf_indices);
 
 	std::vector<uint64_t> correction_offsets(cache.correction_indices.size());
 	std::vector<uint64_t> correction_locals(cache.correction_indices.size());
@@ -377,8 +360,8 @@ void write_branched_sig_coef_cache(
 		correction_offsets[i] = cache.correction_indices[i].first;
 		correction_locals[i] = cache.correction_indices[i].second;
 	}
-	serialize_branched_sig_coef_cache_vector_(out, correction_offsets);
-	serialize_branched_sig_coef_cache_vector_(out, correction_locals);
+	serialize_cache_vector(out, correction_offsets);
+	serialize_cache_vector(out, correction_locals);
 }
 
 bool read_branched_sig_coef_cache(
@@ -417,7 +400,7 @@ bool read_branched_sig_coef_cache(
 		return false;
 
 	std::vector<uint64_t> disk_tree_data;
-	deserialize_branched_sig_coef_cache_vector_(in, disk_tree_data, "branched coefficient tree data");
+	deserialize_cache_vector(in, disk_tree_data, "branched coefficient tree data");
 	if (disk_tree_data != tree_data)
 		return false;
 
@@ -425,19 +408,19 @@ bool read_branched_sig_coef_cache(
 	in.read(reinterpret_cast<char*>(&tmp.max_nodes), sizeof(tmp.max_nodes));
 	if (!in || tmp.max_nodes != max_nodes)
 		return false;
-	deserialize_branched_sig_coef_cache_vector_(in, tmp.target_indices, "branched coefficient target indices");
-	deserialize_branched_sig_coef_cache_vector_(in, tmp.inv_tree_factorial, "branched coefficient inverse factorials");
-	deserialize_branched_sig_coef_cache_vector_(in, tmp.node_labels_offsets, "branched coefficient label offsets");
-	deserialize_branched_sig_coef_cache_vector_(in, tmp.node_labels_data, "branched coefficient label data");
-	deserialize_branched_sig_coef_cache_vector_(in, tmp.coproduct_offsets, "branched coefficient coproduct offsets");
-	deserialize_branched_sig_coef_cache_vector_(in, tmp.coproduct_data, "branched coefficient coproduct data");
-	deserialize_branched_sig_coef_cache_vector_(in, tmp.order_index, "branched coefficient order index");
-	deserialize_branched_sig_coef_cache_vector_(in, tmp.leaf_indices, "branched coefficient leaf indices");
+	deserialize_cache_vector(in, tmp.target_indices, "branched coefficient target indices");
+	deserialize_cache_vector(in, tmp.inv_tree_factorial, "branched coefficient inverse factorials");
+	deserialize_cache_vector(in, tmp.node_labels_offsets, "branched coefficient label offsets");
+	deserialize_cache_vector(in, tmp.node_labels_data, "branched coefficient label data");
+	deserialize_cache_vector(in, tmp.coproduct_offsets, "branched coefficient coproduct offsets");
+	deserialize_cache_vector(in, tmp.coproduct_data, "branched coefficient coproduct data");
+	deserialize_cache_vector(in, tmp.order_index, "branched coefficient order index");
+	deserialize_cache_vector(in, tmp.leaf_indices, "branched coefficient leaf indices");
 
 	std::vector<uint64_t> correction_offsets;
 	std::vector<uint64_t> correction_locals;
-	deserialize_branched_sig_coef_cache_vector_(in, correction_offsets, "branched coefficient correction offsets");
-	deserialize_branched_sig_coef_cache_vector_(in, correction_locals, "branched coefficient correction locals");
+	deserialize_cache_vector(in, correction_offsets, "branched coefficient correction offsets");
+	deserialize_cache_vector(in, correction_locals, "branched coefficient correction locals");
 	if (!in.good() || correction_offsets.size() != correction_locals.size())
 		return false;
 	tmp.correction_indices.resize(correction_offsets.size());

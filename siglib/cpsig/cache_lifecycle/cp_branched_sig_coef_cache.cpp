@@ -53,7 +53,7 @@ struct BranchedSigCoefCacheKeyHash {
 struct BranchedSigCoefCacheRegistry {
 	std::unordered_map<
 		BranchedSigCoefCacheKey,
-		std::unique_ptr<BranchedSigCoefCache>,
+		BranchedSigCoefCache,
 		BranchedSigCoefCacheKeyHash
 	> map;
 	std::shared_mutex mu;
@@ -105,27 +105,27 @@ void prepare_branched_sig_coef_cache(
 			return;
 	}
 
-	auto cache = std::make_unique<BranchedSigCoefCache>();
+	BranchedSigCoefCache cache;
 	std::filesystem::path cache_dir;
 	if (use_disk) {
 		cache_dir = get_cache_dir() / cache_folder_name;
 		std::filesystem::create_directories(cache_dir);
 		if (read_branched_sig_coef_cache(
 			cache_dir, data_dimension, dimension, max_nodes, planar,
-			key.tree_data, *cache)) {
+			key.tree_data, cache)) {
 			std::unique_lock wlock(registry.mu);
 			registry.map.try_emplace(std::move(key), std::move(cache));
 			return;
 		}
 	}
 
-	*cache = BranchedSigCoefCache(
+	cache = BranchedSigCoefCache(
 		key.tree_data.data(), key.tree_data.size(), data_dimension, dimension,
 		max_nodes, planar);
 	if (use_disk)
 		write_branched_sig_coef_cache(
 			cache_dir, data_dimension, dimension, max_nodes, planar,
-			key.tree_data, *cache);
+			key.tree_data, cache);
 
 	std::unique_lock wlock(registry.mu);
 	registry.map.try_emplace(std::move(key), std::move(cache));
@@ -147,7 +147,7 @@ const BranchedSigCoefCache& get_branched_sig_coef_cache(
 	if (it == registry.map.end())
 		throw cache_not_found_error(
 			"Branched signature coefficient cache not found - call prepare_branched_sig_coef first");
-	return *(it->second);
+	return it->second;
 }
 
 void clear_branched_sig_coef_cache() {

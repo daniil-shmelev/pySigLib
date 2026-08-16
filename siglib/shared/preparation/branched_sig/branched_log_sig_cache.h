@@ -20,7 +20,7 @@
 #include "../log_sig/log_sig_cache.h"
 
 #include <filesystem>
-#include <memory>
+#include <optional>
 #include <vector>
 
 
@@ -28,8 +28,7 @@ struct BranchedBchCache {
 	BranchedBchCache(
 		const BranchedSigCache& branched_cache,
 		const BranchedLogHornerPlan& horner_plan,
-		const BasisCache& basis,
-		bool use_disk
+		const BasisCache& basis
 	);
 
 	// Ordinary BCH data plus the sparse lift of one path increment.
@@ -62,6 +61,6 @@ public:
 private:
 	int method_ = -1;
 	BranchedLogHornerPlan horner_plan_;
-	std::unique_ptr<BasisCache> basis_cache_;
-	std::unique_ptr<BranchedBchCache> bch_cache_;
+	std::optional<BasisCache> basis_cache_;
+	std::optional<BranchedBchCache> bch_cache_;
 };

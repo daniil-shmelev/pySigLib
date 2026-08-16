@@ -223,6 +223,86 @@ TEST(treeEnumerationTest, PreservesBckAndMkwBasisOrdering) {
         check_result_2(branched_sig_combine_d, bsig1, bsig2, true_bsig, batch_size, dimension, max_nodes, 1, false, true);
     }
 
+    TEST(branchedSigCombineTest, ScalarTermFreeMatchesFullBatch) {
+        const uint64_t dimension = 2;
+        const uint64_t max_nodes = 3;
+        const uint64_t batch_size = 2;
+        const uint64_t length = 3;
+        ASSERT_EQ(prepare_branched_sig(dimension, max_nodes, false, false), 0);
+
+        const uint64_t full_length = branched_sig_length(dimension, max_nodes);
+        const uint64_t tail_length = full_length - 1;
+        const std::vector<double> path1 = {
+            0., 0., 0.4, -0.1, 0.7, 0.2,
+            0.1, 0.2, 0.5, 0.4, 0.2, 0.9
+        };
+        const std::vector<double> path2 = {
+            0.2, -0.3, 0.8, 0.1, 0.6, 0.5,
+            -0.4, 0.7, 0.3, 0.2, 0.9, -0.1
+        };
+        std::vector<double> full1(batch_size * full_length);
+        std::vector<double> full2(batch_size * full_length);
+        ASSERT_EQ(branched_sig_d(
+            path1.data(), full1.data(), batch_size, dimension, length, max_nodes), 0);
+        ASSERT_EQ(branched_sig_d(
+            path2.data(), full2.data(), batch_size, dimension, length, max_nodes), 0);
+
+        std::vector<double> tail1(batch_size * tail_length);
+        std::vector<double> tail2(batch_size * tail_length);
+        for (uint64_t b = 0; b < batch_size; ++b) {
+            for (uint64_t i = 0; i < tail_length; ++i) {
+                tail1[b * tail_length + i] = full1[b * full_length + i + 1];
+                tail2[b * tail_length + i] = full2[b * full_length + i + 1];
+            }
+        }
+
+        std::vector<double> full_out(batch_size * full_length);
+        std::vector<double> tail_out(batch_size * tail_length);
+        ASSERT_EQ(branched_sig_combine_d(
+            full1.data(), full2.data(), full_out.data(),
+            batch_size, dimension, max_nodes), 0);
+        ASSERT_EQ(branched_sig_combine_d(
+            tail1.data(), tail2.data(), tail_out.data(),
+            batch_size, dimension, max_nodes, 1, false, false), 0);
+        for (uint64_t b = 0; b < batch_size; ++b) {
+            for (uint64_t i = 0; i < tail_length; ++i) {
+                EXPECT_DOUBLE_EQ(
+                    full_out[b * full_length + i + 1],
+                    tail_out[b * tail_length + i]);
+            }
+        }
+
+        std::vector<double> full_derivs(batch_size * full_length, 0.);
+        std::vector<double> tail_derivs(batch_size * tail_length);
+        for (uint64_t b = 0; b < batch_size; ++b) {
+            for (uint64_t i = 0; i < tail_length; ++i) {
+                tail_derivs[b * tail_length + i] = 0.2 * (i + 1) - 0.3 * b;
+                full_derivs[b * full_length + i + 1] = tail_derivs[b * tail_length + i];
+            }
+        }
+        std::vector<double> full_d1(batch_size * full_length);
+        std::vector<double> full_d2(batch_size * full_length);
+        std::vector<double> tail_d1(batch_size * tail_length);
+        std::vector<double> tail_d2(batch_size * tail_length);
+        ASSERT_EQ(branched_sig_combine_backprop_d(
+            full1.data(), full2.data(), full_derivs.data(),
+            full_d1.data(), full_d2.data(), batch_size, dimension, max_nodes), 0);
+        ASSERT_EQ(branched_sig_combine_backprop_d(
+            tail1.data(), tail2.data(), tail_derivs.data(),
+            tail_d1.data(), tail_d2.data(),
+            batch_size, dimension, max_nodes, 1, false, false), 0);
+        for (uint64_t b = 0; b < batch_size; ++b) {
+            for (uint64_t i = 0; i < tail_length; ++i) {
+                EXPECT_DOUBLE_EQ(
+                    full_d1[b * full_length + i + 1],
+                    tail_d1[b * tail_length + i]);
+                EXPECT_DOUBLE_EQ(
+                    full_d2[b * full_length + i + 1],
+                    tail_d2[b * tail_length + i]);
+            }
+        }
+    }
+
     TEST(branchedSigCombineBackpropTest, FiniteDifference) {
         uint64_t dimension = 2, max_nodes = 3;
         (void)prepare_branched_sig(dimension, max_nodes, false, false);

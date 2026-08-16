@@ -25,7 +25,7 @@ namespace {
 struct BranchedSigCacheRegistry {
 	std::unordered_map<
 		std::pair<uint64_t, uint64_t>,
-		std::unique_ptr<BranchedSigCache>,
+		BranchedSigCache,
 		PairHash
 	> map;
 	std::shared_mutex mu;
@@ -52,10 +52,10 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 
 	// Disk data uses the same flattened BranchedSigCache representation.
 	if (use_disk) {
-		auto cache = std::make_unique<BranchedSigCache>();
-		bool cache_file_exists = read_branched_sig_cache(get_cache_dir() / cache_folder_name, dimension, max_nodes, planar, *cache);
+		BranchedSigCache cache;
+		bool cache_file_exists = read_branched_sig_cache(get_cache_dir() / cache_folder_name, dimension, max_nodes, planar, cache);
 		if (cache_file_exists) {
-			cache->planar = planar;
+			cache.planar = planar;
 			std::unique_lock wlock(reg.mu);
 			reg.map.try_emplace(key, std::move(cache));
 			return;
@@ -63,10 +63,10 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 	}
 
 	// Compute from scratch using the shared constructor.
-	auto cache = std::make_unique<BranchedSigCache>(dimension, max_nodes, planar);
+	BranchedSigCache cache(dimension, max_nodes, planar);
 
 	if (use_disk) {
-		write_branched_sig_cache(get_cache_dir() / cache_folder_name, *cache);
+		write_branched_sig_cache(get_cache_dir() / cache_folder_name, cache);
 	}
 
 	// try_emplace: if a concurrent caller raced us to the write lock and
@@ -84,7 +84,7 @@ const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_
 		throw cache_not_found_error(
 			"Branched signature cache not found - call prepare_branched_sig first");
 	}
-	return *(it->second);
+	return it->second;
 }
 
 void clear_branched_sig_cache() {
