@@ -44,13 +44,17 @@ void build_basis_projection_(
 	basis.method = 2;
 }
 
-BasisCache build_basis_cache_(
+void build_basis_cache_(
+	BasisCache& result,
 	uint64_t dimension,
 	uint64_t degree,
 	int method
 ) {
-	BasisCache result;
 	result.method = method;
+	if (method == 1) {
+		result.lyndon_idx = all_lyndon_idx(dimension, degree);
+		return;
+	}
 	const std::vector<word> lyndon_words = all_lyndon_words(
 		dimension, degree);
 	result.lyndon_idx.reserve(lyndon_words.size());
@@ -58,7 +62,6 @@ BasisCache build_basis_cache_(
 		result.lyndon_idx.push_back(word_to_idx(value, dimension));
 	if (method >= 2)
 		build_basis_projection_(result, lyndon_words, dimension, degree);
-	return result;
 }
 }  // namespace
 
@@ -233,7 +236,7 @@ void LogSigCache::upgrade(
 			bch_ = make_standard_bch_cache(dimension_, degree_, basis_);
 		return;
 	}
-	basis_ = build_basis_cache_(dimension_, degree_, basis_method);
+	build_basis_cache_(basis_, dimension_, degree_, basis_method);
 	if (use_disk && !cache_directory.empty()) {
 		write_log_sig_basis_cache(
 			cache_directory, dimension_, degree_, basis_, file_prefix);
