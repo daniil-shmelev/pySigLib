@@ -24,18 +24,26 @@
 #include <unordered_map>
 #include <vector>
 
-// Product coordinates let the logarithm reuse one coproduct evaluation path.
-// A product is a forest of flat branched-signature coordinates. The logarithm
-// evaluates powers and coproducts over these products, then maps back to the
-// original flat coordinates through flat_to_product.
-struct BranchedLogProductCache {
-	// CSR list of flat factors for each product.
-	std::vector<uint64_t> product_offsets;
-	std::vector<uint64_t> product_factors;
+struct BranchedLogProductChain {
+	std::vector<uint64_t> parent;
+	std::vector<uint64_t> last_factor;
+};
+
+struct BranchedLogProductCsr {
+	std::vector<uint64_t> offsets;
+	std::vector<uint64_t> factors;
+};
+
+// A product is a forest of flat branched-signature coordinates. The Horner
+// plan stores the reduced coproduct and the backend-specific product layouts.
+struct BranchedLogHornerPlan {
+	uint64_t product_count = 0;
+	BranchedLogProductChain cpu_products;
+	BranchedLogProductCsr cuda_products;
 	// CSR list of (left product, right product) coproduct pairs.
 	std::vector<uint64_t> coproduct_offsets;
 	std::vector<uint64_t> coproduct_pairs;
-	// Product index for each non-scalar branched-signature coordinate.
+	// Empty for planar signatures, where the mapping is the identity.
 	std::vector<uint64_t> flat_to_product;
 };
 
@@ -93,30 +101,17 @@ inline std::vector<Product> enumerate_nonplanar_products_(
 	return products;
 }
 
-inline BranchedLogProductCache build_planar_product_cache_(
+inline BranchedLogHornerPlan build_planar_horner_plan_(
 	const BranchedSigCache& cache
 ) {
-	BranchedLogProductCache out;
+	BranchedLogHornerPlan out;
 	// MKW coordinates already are ordered forests, so each flat coordinate is
-	// one product and its coproduct can be copied directly.
-	out.product_offsets.resize(cache.total_length + 1, 0);
-	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
-		out.product_offsets[flat] = out.product_factors.size();
-		out.product_factors.push_back(flat);
-	}
-	out.product_offsets[cache.total_length] = out.product_factors.size();
-
-	out.flat_to_product.resize(cache.total_length, 0);
-	for (uint64_t flat = 1; flat < cache.total_length; ++flat)
-		out.flat_to_product[flat] = flat;
+	// one product. All product mappings are therefore implicit.
+	out.product_count = cache.total_length;
 
 	out.coproduct_offsets.resize(cache.total_length + 1, 0);
 	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
 		out.coproduct_offsets[flat] = out.coproduct_pairs.size();
-		out.coproduct_pairs.push_back(flat);
-		out.coproduct_pairs.push_back(0);
-		out.coproduct_pairs.push_back(0);
-		out.coproduct_pairs.push_back(flat);
 
 		const uint64_t basis_idx = flat - 1;
 		uint64_t pos = cache.coproduct_offsets[basis_idx];
@@ -129,8 +124,10 @@ inline BranchedLogProductCache build_planar_product_cache_(
 				left_flat = cache.coproduct_data[pos++];
 			else if (num_forest != 0)
 				throw std::runtime_error("Invalid MKW coproduct term");
-			out.coproduct_pairs.push_back(left_flat);
-			out.coproduct_pairs.push_back(right_flat);
+			if (left_flat != 0 && right_flat != 0) {
+				out.coproduct_pairs.push_back(left_flat);
+				out.coproduct_pairs.push_back(right_flat);
+			}
 		}
 	}
 	out.coproduct_offsets[cache.total_length] = out.coproduct_pairs.size();
@@ -217,43 +214,55 @@ inline std::vector<std::vector<ProductPair>> expand_product_coproducts_(
 	return coproducts;
 }
 
-inline BranchedLogProductCache build_nonplanar_product_cache_(
+inline BranchedLogHornerPlan build_nonplanar_horner_plan_(
 	const BranchedSigCache& cache
 ) {
 	ProductMap product_index;
 	const std::vector<Product> products = enumerate_nonplanar_products_(
 		cache, product_index);
-	BranchedLogProductCache out;
+	BranchedLogHornerPlan out;
+	out.product_count = products.size();
 	out.flat_to_product = build_flat_to_product_(cache, product_index);
+	out.cpu_products.parent.resize(products.size(), 0);
+	out.cpu_products.last_factor.resize(products.size(), 0);
+	for (uint64_t product = 1; product < products.size(); ++product) {
+		Product prefix = products[product];
+		out.cpu_products.last_factor[product] = prefix.back();
+		prefix.pop_back();
+		out.cpu_products.parent[product] = find_product_(product_index, prefix);
+	}
 	const TreeCoproduct tree_coproduct = build_tree_product_coproducts_(
 		cache, product_index, out.flat_to_product);
 	const auto coproducts = expand_product_coproducts_(
 		products, product_index, tree_coproduct);
 
 	// Flatten temporary products and coproducts into the kernel CSR layout.
-	out.product_offsets.resize(products.size() + 1, 0);
+	out.cuda_products.offsets.resize(products.size() + 1, 0);
 	out.coproduct_offsets.resize(products.size() + 1, 0);
 	for (uint64_t product = 0; product < products.size(); ++product) {
-		out.product_offsets[product] = out.product_factors.size();
-		out.product_factors.insert(
-			out.product_factors.end(), products[product].begin(), products[product].end());
+		out.cuda_products.offsets[product] = out.cuda_products.factors.size();
+		out.cuda_products.factors.insert(
+			out.cuda_products.factors.end(),
+			products[product].begin(), products[product].end());
 		out.coproduct_offsets[product] = out.coproduct_pairs.size();
 		for (const ProductPair& term : coproducts[product]) {
+			if (term.first == 0 || term.second == 0)
+				continue;
 			out.coproduct_pairs.push_back(term.first);
 			out.coproduct_pairs.push_back(term.second);
 		}
 	}
-	out.product_offsets.back() = out.product_factors.size();
+	out.cuda_products.offsets.back() = out.cuda_products.factors.size();
 	out.coproduct_offsets.back() = out.coproduct_pairs.size();
 	return out;
 }
 
 } // namespace branched_log_detail
 
-inline BranchedLogProductCache build_branched_log_product_cache(
+inline BranchedLogHornerPlan build_branched_log_horner_plan(
 	const BranchedSigCache& cache
 ) {
 	if (cache.planar)
-		return branched_log_detail::build_planar_product_cache_(cache);
-	return branched_log_detail::build_nonplanar_product_cache_(cache);
+		return branched_log_detail::build_planar_horner_plan_(cache);
+	return branched_log_detail::build_nonplanar_horner_plan_(cache);
 }

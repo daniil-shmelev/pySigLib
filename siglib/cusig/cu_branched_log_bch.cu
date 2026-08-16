@@ -19,7 +19,7 @@
 #include "cu_log_sig_combine.h"
 #include "cu_macros.h"
 #include "cu_utils.h"
-#include "../shared/branched_log_cache.h"
+#include "../shared/branched_log_horner.h"
 
 #include <cmath>
 #include <limits>
@@ -254,46 +254,20 @@ std::vector<double> build_unit_segment_coefficients_(
 ) {
 	// Evaluate log(signature) for a unit increment, then project to method 2.
 	// The resulting coefficients scale the corresponding increment monomials.
-	const BranchedLogProductCache products = build_branched_log_product_cache(cache);
-	const uint64_t product_count = products.product_offsets.size() - 1;
+	const BranchedLogHornerPlan plan = build_branched_log_horner_plan(cache);
+	BranchedLogHornerWorkspace<double> workspace(plan.product_count);
 	std::vector<double> h(cache.total_length, 0.0);
-	std::vector<double> h_products(product_count, 0.0);
-	std::vector<double> power(product_count, 0.0);
-	std::vector<double> next(product_count, 0.0);
 	std::vector<double> expanded(cache.total_length, 0.0);
 
 	for (uint64_t flat = 1; flat < cache.total_length; ++flat)
 		h[flat] = cache.inv_tree_factorial[flat - 1];
-	for (uint64_t product = 1; product < product_count; ++product) {
-		double value = 1.0;
-		for (uint64_t position = products.product_offsets[product];
-			position < products.product_offsets[product + 1]; ++position)
-			value *= h[products.product_factors[position]];
-		h_products[product] = value;
-		power[product] = value;
-	}
-	for (uint64_t flat = 1; flat < cache.total_length; ++flat)
-		expanded[flat] = power[products.flat_to_product[flat]];
-
-	for (uint64_t order = 2; order <= cache.max_nodes; ++order) {
-		for (uint64_t product = 0; product < product_count; ++product) {
-			double value = 0.0;
-			for (uint64_t position = products.coproduct_offsets[product];
-				position < products.coproduct_offsets[product + 1];
-				position += 2) {
-				value += power[products.coproduct_pairs[position]]
-					* h_products[products.coproduct_pairs[position + 1]];
-			}
-			next[product] = value;
-		}
-		const double coefficient = order % 2 == 0
-			? -1.0 / static_cast<double>(order)
-			: 1.0 / static_cast<double>(order);
-		for (uint64_t flat = 1; flat < cache.total_length; ++flat)
-			expanded[flat] += coefficient
-				* next[products.flat_to_product[flat]];
-		power.swap(next);
-	}
+	auto flat_value = [&h](uint64_t flat) { return h[flat]; };
+	auto set_output = [&expanded](uint64_t flat, double value) {
+		expanded[flat] = value;
+	};
+	branched_log_horner_forward<double>(
+		cache.total_length, cache.max_nodes, cache.planar,
+		plan, flat_value, set_output, workspace);
 
 	std::vector<double> compact(basis.lyndon_idx.size(), 0.0);
 	for (uint64_t index = 0; index < compact.size(); ++index)

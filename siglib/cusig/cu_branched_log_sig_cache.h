@@ -61,10 +61,10 @@ struct CuMkwBasisGpuCache {
 	~CuMkwBasisGpuCache();
 };
 
-void prepare_cuda_branched_log_sig_gpu_cache_(
+void prepare_cuda_branched_log_horner_plan_(
 	const BranchedSigCache& cache);
 
-bool is_cuda_branched_log_sig_gpu_cache_prepared_(
+bool is_cuda_branched_log_horner_plan_prepared_(
 	uint64_t dimension,
 	uint64_t max_nodes,
 	bool planar);

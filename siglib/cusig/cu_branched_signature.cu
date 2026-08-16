@@ -2207,21 +2207,16 @@ extern "C" {
 			if (method != 0 && !planar)
 				throw std::invalid_argument(
 					"compressed branched log signatures require planar=True");
-			if (method == 0) {
-				if (!is_cuda_branched_log_sig_gpu_cache_prepared_(
-					dimension, max_nodes, planar)) {
-					BranchedSigCache host_cache;
-					prepare_branched_sig_gpu_cache_(dimension, max_nodes, planar,
-						use_disk, &host_cache);
-					prepare_cuda_branched_log_sig_gpu_cache_(host_cache);
-				}
-			} else {
-				BranchedSigCache host_cache;
+			const bool horner_prepared =
+				is_cuda_branched_log_horner_plan_prepared_(
+					dimension, max_nodes, planar);
+			BranchedSigCache host_cache;
+			if (!horner_prepared || method >= 1)
 				prepare_branched_sig_gpu_cache_(dimension, max_nodes, planar,
 					use_disk, &host_cache);
-				if (!is_cuda_branched_log_sig_gpu_cache_prepared_(
-					dimension, max_nodes, planar))
-					prepare_cuda_branched_log_sig_gpu_cache_(host_cache);
+			if (!horner_prepared)
+				prepare_cuda_branched_log_horner_plan_(host_cache);
+			if (method >= 1) {
 				prepare_cuda_mkw_basis_cache_(host_cache, method, use_disk);
 				if (method == 3)
 					prepare_cuda_branched_bch_cache_(host_cache, use_disk);
