@@ -163,8 +163,10 @@ BranchedSigCache build_nonplanar_cache(
 	cache.max_nodes = max_nodes;
 
 	TreeTable trees(dimension, TreeKind::NonPlanar);
+	const uint64_t tree_count = compute_branched_sig_length(
+		dimension, max_nodes, false) - 1;
+	trees.reserve(static_cast<size_t>(tree_count));
 	enumerate_trees(trees, max_nodes, cache.order_index);
-	const uint64_t tree_count = trees.size();
 	cache.total_length = tree_count + 1;
 	cache.inv_tree_factorial.resize(tree_count);
 	cache.node_labels_offsets.resize(tree_count + 1);

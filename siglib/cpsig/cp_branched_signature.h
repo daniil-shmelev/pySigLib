@@ -256,6 +256,35 @@ void butcher_product_inplace_(
 	const uint64_t* coproduct_offsets = cache.coproduct_offsets.data();
 	const uint64_t* coproduct_data = cache.coproduct_data.data();
 
+	if (cache.planar) {
+		for (int64_t order = static_cast<int64_t>(cache.max_nodes); order >= 1; --order) {
+			uint64_t start = order_index[order];
+			uint64_t end = order_index[order + 1];
+
+			for (uint64_t tree_idx = start; tree_idx < end; ++tree_idx) {
+				uint64_t flat_idx = tree_idx + 1;
+				T new_val = X[flat_idx] + Y[flat_idx];
+
+				uint64_t pos = coproduct_offsets[tree_idx];
+				uint64_t pos_end = coproduct_offsets[tree_idx + 1];
+
+				while (pos < pos_end) {
+					uint64_t has_forest = coproduct_data[pos++];
+					uint64_t trunk_flat = coproduct_data[pos++];
+					T term = Y[trunk_flat];
+
+					if (has_forest)
+						term *= X[coproduct_data[pos++]];
+
+					new_val += term;
+				}
+
+				X[flat_idx] = new_val;
+			}
+		}
+		return;
+	}
+
 	for (int64_t order = static_cast<int64_t>(cache.max_nodes); order >= 1; --order) {
 		uint64_t start = order_index[order];
 		uint64_t end = order_index[order + 1];
@@ -856,7 +885,7 @@ void branched_sig_backprop_inplace_(
 			? data_dim
 			: 0;
 		const uint64_t positive_offset = lead_lag
-			? (data_length - 1 - reverse_segment) * data_dim
+			? (data_length - 1 - reverse_segment / 2) * data_dim
 			: static_cast<uint64_t>(seg + 1) * data_dim;
 		T* positive = out + positive_offset;
 		T* negative = positive - data_dim;

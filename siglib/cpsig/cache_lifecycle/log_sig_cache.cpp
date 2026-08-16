@@ -124,7 +124,9 @@ void prepare_basis_cache(uint64_t dimension, uint64_t degree, int method, bool u
 		if (it != reg.map.end() && it->second->supports(method))
 			return;
 	}
-	const auto cache_directory = get_cache_dir() / cache_folder_name;
+	const auto cache_directory = use_disk
+		? get_cache_dir() / cache_folder_name
+		: std::filesystem::path{};
 	std::unique_lock wlock(reg.mu);
 	auto found = reg.map.find(key);
 	if (found == reg.map.end()) {
