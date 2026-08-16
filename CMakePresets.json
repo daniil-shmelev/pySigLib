@@ -172,7 +172,7 @@
       "configuration": "Debug",
       "jobs": 1,
       "targets": [
-        "pysiglib_test_app"
+        "test_app"
       ]
     },
     {
@@ -182,7 +182,7 @@
       "configuration": "Release",
       "jobs": 1,
       "targets": [
-        "pysiglib_test_app"
+        "test_app"
       ]
     },
     {
@@ -214,7 +214,7 @@
     {
       "name": "windows-cpp-solution-debug",
       "displayName": "Windows: Full C++ Solution Debug",
-      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and pysiglib_test_app.",
+      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and test_app.",
       "configurePreset": "windows-cpp-solution",
       "configuration": "Debug",
       "jobs": 1,
@@ -225,7 +225,7 @@
     {
       "name": "windows-cpp-solution-release",
       "displayName": "Windows: Full C++ Solution Release",
-      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and pysiglib_test_app.",
+      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and test_app.",
       "configurePreset": "windows-cpp-solution",
       "configuration": "Release",
       "jobs": 1,
@@ -290,7 +290,7 @@
       "displayName": "Linux/WSL: Test App Debug",
       "configurePreset": "linux-cpp-solution-debug",
       "targets": [
-        "pysiglib_test_app"
+        "test_app"
       ]
     },
     {
@@ -298,13 +298,13 @@
       "displayName": "Linux/WSL: Test App Release",
       "configurePreset": "linux-cpp-solution-release",
       "targets": [
-        "pysiglib_test_app"
+        "test_app"
       ]
     },
     {
       "name": "linux-cpp-solution-debug",
       "displayName": "Linux/WSL: Full C++ Solution Debug",
-      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and pysiglib_test_app.",
+      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and test_app.",
       "configurePreset": "linux-cpp-solution-debug",
       "targets": [
         "pysiglib_cpp_solution"
@@ -313,7 +313,7 @@
     {
       "name": "linux-cpp-solution-release",
       "displayName": "Linux/WSL: Full C++ Solution Release",
-      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and pysiglib_test_app.",
+      "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and test_app.",
       "configurePreset": "linux-cpp-solution-release",
       "targets": [
         "pysiglib_cpp_solution"

@@ -196,9 +196,9 @@ function Resolve-NvidiaProfiler {
 
 function Get-TestAppCandidates {
     return @(
-        "out\build\windows-cpp-solution\siglib\test_app\Release\pysiglib_test_app.exe",
-        "out\build\windows-cpp-solution\siglib\test_app\RelWithDebInfo\pysiglib_test_app.exe",
-        "out\build\windows-cpp-solution\siglib\test_app\Debug\pysiglib_test_app.exe"
+        "out\build\windows-cpp-solution\siglib\test_app\Release\test_app.exe",
+        "out\build\windows-cpp-solution\siglib\test_app\RelWithDebInfo\test_app.exe",
+        "out\build\windows-cpp-solution\siglib\test_app\Debug\test_app.exe"
     )
 }
 
@@ -225,7 +225,7 @@ function Resolve-TestAppPath {
 
     $fallback = ConvertTo-FullPath -Path (Get-TestAppCandidates | Select-Object -First 1) -BasePath $repoRoot
     if ($Required) {
-        throw "Could not find pysiglib_test_app.exe. Run with -BuildIfMissing or pass -TestAppPath."
+        throw "Could not find test_app.exe. Run with -BuildIfMissing or pass -TestAppPath."
     }
     return $fallback
 }
