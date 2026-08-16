@@ -142,7 +142,7 @@ __global__ void signature_per_word_ker(
 	const uint64_t batch_offset,
 	const uint64_t batch_chunk_size
 ) {
-	static_assert(DEGREE >= 1 && DEGREE <= 12, "DEGREE must be 1-12");
+	static_assert(DEGREE >= 1 && DEGREE <= 13, "DEGREE must be 1-13");
 
 	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
 	const uint64_t local_batch_idx = cuda_batch_index();
@@ -213,7 +213,7 @@ __global__ void signature_per_word_ker(
 }
 
 // ---------------------------------------------------------------------------
-// Generic (non-template) per-word forward kernel for degree > 12.
+// Generic (non-template) per-word forward kernel for degree > 13.
 // Same algorithm as the template version but with runtime degree parameter.
 // ---------------------------------------------------------------------------
 
@@ -409,32 +409,24 @@ void sig_backprop_per_word_generic_ker(
 			for (int i = 0; i < degree; ++i) letter_grads_local[i] = T(0);
 
 			if (active) {
+				T left_prod[MAX_GENERIC_DEGREE];
 				for (int pref_len = 0; pref_len < degree; ++pref_len) {
 					const T pref_val = pref[pref_len];
-					T prev_prod = T(1);
-
-					{
-						T temp_prod = prev_prod;
-						T temp_grad = temp_prod * suf[degree - pref_len - 1];
-						int denom = 2;
-						for (int pos = pref_len + 1; pos < degree; ++pos, ++denom) {
-							temp_prod *= inc[letters[pos]] * d_recip_rt<T>(denom);
-							temp_grad += temp_prod * suf[degree - pos - 1];
-						}
-						letter_grads_local[pref_len] += temp_grad * pref_val;
+					left_prod[pref_len] = T(1);
+					for (int lp = pref_len + 1; lp < degree; ++lp) {
+						left_prod[lp] = left_prod[lp - 1]
+							* inc[letters[lp - 1]]
+							* d_recip_rt<T>(lp - pref_len + 1);
 					}
 
-					int denom_lp = 2;
-					for (int lp = pref_len + 1; lp < degree; ++lp, ++denom_lp) {
-						prev_prod *= inc[letters[lp - 1]] * d_recip_rt<T>(denom_lp);
-						T temp_prod = prev_prod;
-						T temp_grad = temp_prod * suf[degree - lp - 1];
-						int denom = denom_lp + 1;
-						for (int pos = lp + 1; pos < degree; ++pos, ++denom) {
-							temp_prod *= inc[letters[pos]] * d_recip_rt<T>(denom);
-							temp_grad += temp_prod * suf[degree - pos - 1];
+					T right = suf[0];
+					for (int lp = degree - 1; lp >= pref_len; --lp) {
+						letter_grads_local[lp] += pref_val * left_prod[lp] * right;
+						if (lp > pref_len) {
+							right = suf[degree - lp]
+								+ inc[letters[lp]]
+								* d_recip_rt<T>(lp - pref_len + 1) * right;
 						}
-						letter_grads_local[lp] += temp_grad * pref_val;
 					}
 				}
 			}
@@ -569,6 +561,7 @@ void sig_backprop_per_word_ker(
 	T* batch_inc_grad = inc_grads + batch_idx * static_cast<uint64_t>(steps) * dim;
 
 	const unsigned warp_id = threadIdx.x >> 5;
+	const unsigned lane = threadIdx.x & 31;
 
 	for (int chunk_end = steps; chunk_end > 0; chunk_end -= chunk_size) {
 		const int chunk_start = (chunk_end - chunk_size > 0)
@@ -608,37 +601,49 @@ void sig_backprop_per_word_ker(
 			for (int i = 0; i < DEGREE; ++i) letter_grads_local[i] = T(0);
 
 			if (active) {
+				T left_prod[DEGREE];
 				for (int pref_len = 0; pref_len < DEGREE; ++pref_len) {
 					const T pref_val = pref[pref_len];
-					T prev_prod = T(1);
-
-					{
-						T temp_prod = prev_prod;
-						T temp_grad = temp_prod * suf[DEGREE - pref_len - 1];
-						int denom = 2;
-						for (int pos = pref_len + 1; pos < DEGREE; ++pos, ++denom) {
-							temp_prod *= inc[letters[pos]] * d_recip<T>(denom);
-							temp_grad += temp_prod * suf[DEGREE - pos - 1];
-						}
-						letter_grads_local[pref_len] += temp_grad * pref_val;
+					left_prod[pref_len] = T(1);
+					for (int lp = pref_len + 1; lp < DEGREE; ++lp) {
+						left_prod[lp] = left_prod[lp - 1]
+							* inc[letters[lp - 1]]
+							* d_recip<T>(lp - pref_len + 1);
 					}
 
-					int denom_lp = 2;
-					for (int lp = pref_len + 1; lp < DEGREE; ++lp, ++denom_lp) {
-						prev_prod *= inc[letters[lp - 1]] * d_recip<T>(denom_lp);
-						T temp_prod = prev_prod;
-						T temp_grad = temp_prod * suf[DEGREE - lp - 1];
-						int denom = denom_lp + 1;
-						for (int pos = lp + 1; pos < DEGREE; ++pos, ++denom) {
-							temp_prod *= inc[letters[pos]] * d_recip<T>(denom);
-							temp_grad += temp_prod * suf[DEGREE - pos - 1];
+					T right = suf[0];
+					for (int lp = DEGREE - 1; lp >= pref_len; --lp) {
+						letter_grads_local[lp] += pref_val * left_prod[lp] * right;
+						if (lp > pref_len) {
+							right = suf[DEGREE - lp]
+								+ inc[letters[lp]]
+								* d_recip<T>(lp - pref_len + 1) * right;
 						}
-						letter_grads_local[lp] += temp_grad * pref_val;
 					}
 				}
 			}
 
-			if (active) {
+			if (dim <= 4) {
+				for (int letter = 0; letter < dim; ++letter) {
+					T val = T(0);
+					if (active) {
+						for (int lp = 0; lp < DEGREE; ++lp) {
+							if (letters[lp] == letter) {
+								val += letter_grads_local[lp];
+							}
+						}
+					}
+					val *= grad_val;
+					val += __shfl_down_sync(0xffffffff, val, 16);
+					val += __shfl_down_sync(0xffffffff, val, 8);
+					val += __shfl_down_sync(0xffffffff, val, 4);
+					val += __shfl_down_sync(0xffffffff, val, 2);
+					val += __shfl_down_sync(0xffffffff, val, 1);
+					if (lane == 0) {
+						shared_letter_grads[letter * num_warps + warp_id] = val;
+					}
+				}
+			} else if (active) {
 				for (int lp = 0; lp < DEGREE; ++lp) {
 					myAtomicAdd(
 						&shared_letter_grads[letters[lp] * num_warps + warp_id],
@@ -1774,6 +1779,7 @@ void signature_per_word_core_(
 				LAUNCH_DEGREE(10)
 				LAUNCH_DEGREE(11)
 				LAUNCH_DEGREE(12)
+				LAUNCH_DEGREE(13)
 				default:
 					configure_dynamic_smem(
 						signature_per_word_generic_ker<T>, smem,

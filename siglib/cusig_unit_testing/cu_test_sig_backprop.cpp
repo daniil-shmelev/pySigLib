@@ -15,6 +15,85 @@
 
 #include "cu_test_helpers.h"
 
+void check_per_word_horner_degree(uint64_t degree) {
+    const uint64_t dimension = 2;
+    const uint64_t length = 4;
+    const uint64_t sig_len = sig_length_(dimension, degree);
+    std::vector<double> path = {
+        0.1, -0.2, 0.4, 0.3, -0.1, 0.7, 0.5, -0.4
+    };
+    std::vector<double> weights(sig_len);
+    for (uint64_t i = 0; i < sig_len; ++i) {
+        weights[i] = static_cast<double>(static_cast<int>(i % 17) - 8) * 0.001;
+    }
+
+    std::vector<double> horner_sig(sig_len);
+    std::vector<double> direct_sig(sig_len);
+    std::vector<double> path_grad(path.size());
+    double* d_path;
+    double* d_sig;
+    double* d_weights;
+    double* d_path_grad;
+    cudaMalloc(&d_path, path.size() * sizeof(double));
+    cudaMalloc(&d_sig, sig_len * sizeof(double));
+    cudaMalloc(&d_weights, sig_len * sizeof(double));
+    cudaMalloc(&d_path_grad, path.size() * sizeof(double));
+    cudaMemcpy(d_path, path.data(), path.size() * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_weights, weights.data(), sig_len * sizeof(double), cudaMemcpyHostToDevice);
+
+    EXPECT_EQ(0, signature_cuda_d(
+        d_path, d_sig, 1, dimension, length, degree,
+        false, false, 1., true));
+    cudaMemcpy(
+        horner_sig.data(), d_sig, sig_len * sizeof(double), cudaMemcpyDeviceToHost);
+
+    EXPECT_EQ(0, signature_cuda_d(
+        d_path, d_sig, 1, dimension, length, degree,
+        false, false, 1., false));
+    cudaMemcpy(
+        direct_sig.data(), d_sig, sig_len * sizeof(double), cudaMemcpyDeviceToHost);
+    for (uint64_t i = 0; i < sig_len; ++i) {
+        EXPECT_NEAR(horner_sig[i], direct_sig[i], 1e-9);
+    }
+
+    cudaMemcpy(
+        d_sig, horner_sig.data(), sig_len * sizeof(double), cudaMemcpyHostToDevice);
+    EXPECT_EQ(0, sig_backprop_cuda_d(
+        d_path, d_path_grad, d_weights, d_sig, 1, dimension, length, degree));
+    cudaMemcpy(
+        path_grad.data(), d_path_grad, path.size() * sizeof(double),
+        cudaMemcpyDeviceToHost);
+
+    const double eps = 1e-6;
+    std::vector<double> shifted_sig(sig_len);
+    for (uint64_t coord = 0; coord < path.size(); ++coord) {
+        double losses[2] = { 0., 0. };
+        for (int direction = -1; direction <= 1; direction += 2) {
+            path[coord] += direction * eps;
+            cudaMemcpy(
+                d_path, path.data(), path.size() * sizeof(double),
+                cudaMemcpyHostToDevice);
+            EXPECT_EQ(0, signature_cuda_d(
+                d_path, d_sig, 1, dimension, length, degree,
+                false, false, 1., true));
+            cudaMemcpy(
+                shifted_sig.data(), d_sig, sig_len * sizeof(double),
+                cudaMemcpyDeviceToHost);
+            for (uint64_t i = 0; i < sig_len; ++i) {
+                losses[(direction + 1) / 2] += weights[i] * shifted_sig[i];
+            }
+            path[coord] -= direction * eps;
+        }
+        const double expected = (losses[1] - losses[0]) / (2 * eps);
+        EXPECT_NEAR(expected, path_grad[coord], 2e-6);
+    }
+
+    cudaFree(d_path);
+    cudaFree(d_sig);
+    cudaFree(d_weights);
+    cudaFree(d_path_grad);
+}
+
 // Degree 0 or length <= 1: output should be all zeros
 TEST(sigBackpropDoubleTest, TrivialDegree0) {
     auto f = sig_backprop_cuda_d;
@@ -74,6 +153,14 @@ TEST(sigBackpropDoubleTest, Degree2Dim2) {
     std::vector<double> sig_derivs = { 0., 1., 0., 0., 0., 0., 0. };
     std::vector<double> expected_out = { -1., 0., 1., 0. };
     check_backprop_result(f, path, sig, sig_derivs, expected_out, dimension, length, degree, false, false, 1.);
+}
+
+TEST(sigBackpropDoubleTest, FixedDegreeHorner) {
+    check_per_word_horner_degree(8);
+}
+
+TEST(sigBackpropDoubleTest, GenericDegreeHorner) {
+    check_per_word_horner_degree(13);
 }
 
 TEST(sigBackpropDoubleTest, CorrectionSingleSegment) {
