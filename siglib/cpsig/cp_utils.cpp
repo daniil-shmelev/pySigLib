@@ -16,7 +16,7 @@
 #include "cppch.h"
 #include "cpsig.h"
 #include "cp_utils.h"
-#include "../shared/branched_trees.h"
+#include "../shared/trees/basis_counts.h"
 #include "macros.h"
 
 uint64_t power(uint64_t base, uint64_t exp) noexcept {

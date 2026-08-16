@@ -14,7 +14,7 @@
  * ========================================================================= */
 
 #include "cu_test_helpers.h"
-#include "branched_trees.h"
+#include "trees/basis_counts.h"
 
 TEST(branchedSigCombineCudaTest, ChenIdentity) {
     uint64_t dimension = 2, max_nodes = 3;

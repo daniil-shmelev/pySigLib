@@ -31,6 +31,9 @@
 #include <vector>
 
 struct BranchedLogSigCacheGPU {
+	// All arrays are uint32 CSR data uploaded from BranchedLogProductCache.
+	// The kernels use this layout for expanded method 0 and as scratch for
+	// compact methods 1 and 2.
 	uint32_t* d_forest_offsets32 = nullptr;
 	uint32_t* d_forest_trees32 = nullptr;
 	uint32_t* d_forest_coprod_offsets32 = nullptr;
@@ -58,6 +61,8 @@ struct BranchedLogSigCacheGPU {
 };
 
 struct CuBranchedLogCacheKey {
+	// CUDA allocations are local to the active device.
+	// The same mathematical cache therefore has one entry per device.
 	int device = 0;
 	uint64_t dimension = 0;
 	uint64_t max_nodes = 0;
@@ -138,6 +143,8 @@ static std::unique_ptr<CuMkwHostBasisData> build_mkw_word_data_(
 	const BranchedSigCache& cache
 ) {
 	auto data = std::make_unique<CuMkwHostBasisData>();
+	// Reconstruct forest words from the portable flattened branched cache.
+	// The CPU and CUDA builders must select the same Lyndon word ordering.
 	const uint64_t lyndon_count = compute_branched_log_sig_length(
 		cache.dimension, cache.max_nodes, true);
 	data->flat_words.resize(cache.total_length);
@@ -196,6 +203,8 @@ static void build_mkw_projection_(
 	CuMkwHostBasisData& data,
 	uint64_t flat_word_count
 ) {
+	// Build once on the host, then upload the inverse and its transpose as CSR.
+	// The unit triangular matrix maps bracket coefficients to Lyndon coordinates.
 	CuSparseIntMatrix projection;
 	cu_lyndon_proj_matrix_from_words(
 		projection,
@@ -262,6 +271,8 @@ static void prepare_cuda_mkw_host_basis_cache_(
 		}
 	}
 	if (!loaded) {
+		// Method 1 has only Lyndon indices. Method 2 adds the inverse projection.
+		// A cached method 2 entry remains usable for later method 1 preparation.
 		data->method = basis_method;
 		if (basis_method == 2)
 			build_mkw_projection_(*data, cache.total_length);
@@ -358,6 +369,8 @@ static void upload_mkw_projection_(
 	CuMkwBasisGpuCache& gpu,
 	const CuMkwHostBasisData& host
 ) {
+	// Keep both orientations because forward and backward use opposite products.
+	// Values stay signed integers because the projection is integral.
 	int* values = nullptr;
 	uint32_t* columns = nullptr;
 	uint32_t* row_offsets = nullptr;
@@ -493,7 +506,9 @@ void prepare_cuda_branched_log_sig_gpu_cache_(
 			return;
 	}
 
-	BranchedLogForestCache fc = build_branched_log_forest_cache(c);
+	BranchedLogProductCache product_cache = build_branched_log_product_cache(c);
+	// Kernels use uint32 indices, so validate every host offset before upload.
+	// The host cache remains uint64 so CPU and CUDA use the same disk format.
 	uint64_t num_trees = c.total_length - 1;
 
 	auto safe_narrow = [](const uint64_t* src, uint32_t* dst, size_t n) {
@@ -504,16 +519,26 @@ void prepare_cuda_branched_log_sig_gpu_cache_(
 		}
 	};
 
-	std::vector<uint32_t> forest_offsets32(fc.forest_offsets.size());
-	std::vector<uint32_t> forest_trees32(fc.forest_trees.size());
-	std::vector<uint32_t> forest_coprod_offsets32(fc.forest_coprod_offsets.size());
-	std::vector<uint32_t> forest_coprod_data32(fc.forest_coprod_data.size());
-	std::vector<uint32_t> single_tree_forest32(fc.single_tree_forest.size());
-	safe_narrow(fc.forest_offsets.data(), forest_offsets32.data(), fc.forest_offsets.size());
-	safe_narrow(fc.forest_trees.data(), forest_trees32.data(), fc.forest_trees.size());
-	safe_narrow(fc.forest_coprod_offsets.data(), forest_coprod_offsets32.data(), fc.forest_coprod_offsets.size());
-	safe_narrow(fc.forest_coprod_data.data(), forest_coprod_data32.data(), fc.forest_coprod_data.size());
-	safe_narrow(fc.single_tree_forest.data(), single_tree_forest32.data(), fc.single_tree_forest.size());
+	std::vector<uint32_t> forest_offsets32(product_cache.product_offsets.size());
+	std::vector<uint32_t> forest_trees32(product_cache.product_factors.size());
+	std::vector<uint32_t> forest_coprod_offsets32(product_cache.coproduct_offsets.size());
+	std::vector<uint32_t> forest_coprod_data32(product_cache.coproduct_pairs.size());
+	std::vector<uint32_t> single_tree_forest32(product_cache.flat_to_product.size());
+	safe_narrow(
+		product_cache.product_offsets.data(), forest_offsets32.data(),
+		product_cache.product_offsets.size());
+	safe_narrow(
+		product_cache.product_factors.data(), forest_trees32.data(),
+		product_cache.product_factors.size());
+	safe_narrow(
+		product_cache.coproduct_offsets.data(), forest_coprod_offsets32.data(),
+		product_cache.coproduct_offsets.size());
+	safe_narrow(
+		product_cache.coproduct_pairs.data(), forest_coprod_data32.data(),
+		product_cache.coproduct_pairs.size());
+	safe_narrow(
+		product_cache.flat_to_product.data(), single_tree_forest32.data(),
+		product_cache.flat_to_product.size());
 
 	auto narrow32 = [](uint64_t v) -> uint32_t {
 		if (v > UINT32_MAX) throw std::overflow_error("Branched log sig cache value exceeds uint32 range");
@@ -523,9 +548,9 @@ void prepare_cuda_branched_log_sig_gpu_cache_(
 	auto gpu = std::make_unique<BranchedLogSigCacheGPU>();
 	gpu->total_length = narrow32(c.total_length);
 	gpu->num_trees = narrow32(num_trees);
-	gpu->num_forests = narrow32(fc.forest_offsets.size() - 1);
-	gpu->forest_trees_len = narrow32(fc.forest_trees.size());
-	gpu->forest_coprod_data_len = narrow32(fc.forest_coprod_data.size());
+	gpu->num_forests = narrow32(product_cache.product_offsets.size() - 1);
+	gpu->forest_trees_len = narrow32(product_cache.product_factors.size());
+	gpu->forest_coprod_data_len = narrow32(product_cache.coproduct_pairs.size());
 	gpu->max_nodes = static_cast<int>(max_nodes);
 	upload_branched_log(gpu->d_forest_offsets32, forest_offsets32.data(), forest_offsets32.size());
 	upload_branched_log(gpu->d_forest_trees32, forest_trees32.data(), forest_trees32.size());

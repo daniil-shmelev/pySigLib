@@ -22,10 +22,15 @@
 #include <unordered_map>
 #include <vector>
 
+// Host data builds the MKW Lyndon basis before its compact GPU representation.
+// It mirrors the CPU basis cache but keeps the data needed to upload CUDA CSR
+// buffers and to build the method 3 BCH cache.
 struct CuMkwHostBasisData {
 	int method = 0;
+	// Flat forests and their reverse lookup, represented as words of tree IDs.
 	std::vector<cu_word> flat_words;
 	std::unordered_map<cu_word, uint64_t, CuWordHash> flat_idx;
+	// Compact Lyndon coordinates and their weighted degrees.
 	std::vector<cu_word> lyndon_words;
 	std::vector<uint64_t> lyndon_idx;
 	std::vector<uint64_t> lyndon_weights;
@@ -38,6 +43,8 @@ struct CuMkwHostBasisData {
 };
 
 struct CuMkwBasisGpuCache {
+	// Method 1 uses indices. Method 2 additionally uses these CSR matrices.
+	// Both matrix orientations are needed because the backward pass is adjoint.
 	uint32_t* d_lyndon_idx = nullptr;
 	int* d_sparse_vals = nullptr;
 	uint32_t* d_sparse_cols = nullptr;

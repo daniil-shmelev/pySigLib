@@ -28,6 +28,8 @@
 namespace {
 constexpr const char* mkw_basis_cache_prefix_ = "mkw_lyndon_";
 
+// Method 2 data also provides the coordinate indices needed by method 1.
+// The registry stores only the strongest prepared representation per key.
 struct BranchedLogBasisCacheRegistry_ {
 	std::unordered_map<
 		std::pair<uint64_t, uint64_t>,
@@ -43,17 +45,22 @@ BranchedLogBasisCacheRegistry_& branched_log_basis_cache_registry_() {
 }
 
 struct MkwWordData_ {
+	// Every flat MKW forest reconstructed as a word of tree IDs.
 	std::vector<word> flat_words;
 	std::unordered_map<word, uint64_t, WordHash> flat_idx;
+	// Lyndon words identify compact coordinates in methods 1 and 2.
 	std::vector<word> lyndon_words;
 	std::vector<uint64_t> lyndon_idx;
 	std::vector<uint64_t> lyndon_weights;
+	// One-letter Lyndon words provide the path increment generators for BCH.
 	std::vector<uint32_t> letter_log_idx;
 	std::vector<uint64_t> letter_basis_idx;
 };
 
 MkwWordData_ build_mkw_word_data_(const BranchedSigCache& cache) {
 	MkwWordData_ data;
+	// Treat each decorated planar tree as a letter in the forest-word alphabet.
+	// cache.basis_forest_data holds these words in the same order as the output.
 	const uint64_t lyndon_count = compute_branched_log_sig_length(
 		cache.dimension, cache.max_nodes, true);
 	data.flat_words.resize(cache.total_length);
@@ -129,6 +136,8 @@ std::unique_ptr<BasisCache> build_branched_log_basis_cache_(
 	SparseIntMatrix inverse;
 	SparseIntMatrix inverse_transpose;
 	if (method == 2) {
+		// The inverse projection converts Lyndon coordinates to bracket coordinates.
+		// Its transpose is cached separately for the reverse pass.
 		lyndon_proj_matrix_from_words(
 			projection,
 			word_data.lyndon_words,
@@ -161,6 +170,7 @@ void prepare_branched_log_basis_cache_(
 	if (method > 3)
 		throw std::invalid_argument("branched log signature method must be 0, 1, 2, or 3");
 	const int basis_method = std::min(method, 2);
+	// Method 3 also uses the method 2 coordinate system for its BCH state.
 
 	const std::pair<uint64_t, uint64_t> key(cache.dimension, cache.max_nodes);
 	auto& registry = branched_log_basis_cache_registry_();
@@ -180,6 +190,7 @@ void prepare_branched_log_basis_cache_(
 			cache.dimension, cache.max_nodes, mkw_basis_cache_prefix_);
 	}
 	if (file && file->exists()) {
+		// A method 2 disk entry is also valid for a method 1 request.
 		auto basis = std::make_unique<BasisCache>();
 		file->read(basis);
 		if (basis->method >= basis_method) {
@@ -231,7 +242,9 @@ const BasisCache& get_branched_log_basis_cache_(
 }
 
 struct BranchedBchCache_ {
+	// Ordinary BCH data plus the sparse lift of one path increment.
 	BchCache bch;
+	// Multipliers and flat coordinates for the nonzero segment lift entries.
 	std::vector<double> linear_coefficients;
 	std::vector<uint64_t> linear_basis_idx;
 };
@@ -286,6 +299,8 @@ using MkwInfinitesimalProduct_ = std::unordered_map<
 MkwInfinitesimalProduct_ build_mkw_infinitesimal_product_(
 	const BranchedSigCache& cache
 ) {
+	// Retain only one-branch cuts, which define the infinitesimal product.
+	// The keys are the two input flat coordinates and the values are outputs.
 	MkwInfinitesimalProduct_ product;
 	for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
 		uint64_t pos = cache.coproduct_offsets[basis_idx];
@@ -329,6 +344,7 @@ std::unique_ptr<BranchedBchCache_> build_branched_bch_cache_(
 	const BranchedSigCache& branched_cache,
 	bool use_disk
 ) {
+	// BCH operates in method 2 coordinates, not in the expanded forest basis.
 	const BasisCache& basis = get_branched_log_basis_cache_(
 		branched_cache.dimension, branched_cache.max_nodes, 2);
 	MkwWordData_ words = build_mkw_word_data_(branched_cache);
@@ -363,6 +379,8 @@ std::unique_ptr<BranchedBchCache_> build_branched_bch_cache_(
 	}
 
 	std::vector<TensorElem> tensor_reps(m);
+	// Expand standard Lyndon bracketings in the forest concatenation algebra.
+	// Each representation is then used to derive the infinitesimal commutator.
 	for (uint64_t i = 0; i < m; ++i) {
 		if (words.lyndon_words[i].size() == 1) {
 			tensor_reps[i] = { { words.flat_idx.at(words.lyndon_words[i]), 1 } };
@@ -411,6 +429,8 @@ std::unique_ptr<BranchedBchCache_> build_branched_bch_cache_(
 		}
 	}
 
+	// Reuse the ordinary BCH formula and its coefficient-pruning plans. Only
+	// the MKW commutator table and segment lift are specific to branched paths.
 	build_commutator_views(bch);
 	build_bch_formula_data(bch, use_disk);
 
@@ -467,10 +487,10 @@ void clear_branched_bch_cache_() {
 
 std::unordered_map<
 	std::pair<uint64_t, uint64_t>,
-	std::unique_ptr<BranchedLogForestCache>,
+	std::unique_ptr<BranchedLogProductCache>,
 	PairHash
-> branched_log_forest_cache_registry_;
-std::shared_mutex branched_log_forest_cache_mu_;
+> branched_log_product_cache_registry_;
+std::shared_mutex branched_log_product_cache_mu_;
 
 template<std::floating_point T, bool ScalarTerm>
 FORCE_INLINE T sig_tree_value_(const T* bsig, uint64_t flat_idx) {
@@ -611,49 +631,49 @@ void multiply_branched_log_poly_into_(
 
 BranchedLogPolyCache_ build_branched_log_poly_cache_(
 	const BranchedSigCache& cache,
-	const BranchedLogForestCache& forest_cache
+	const BranchedLogProductCache& product_cache
 ) {
 	const uint64_t total_len = cache.total_length;
-	const uint64_t num_forests = forest_cache.forest_offsets.size() - 1;
+	const uint64_t num_products = product_cache.product_offsets.size() - 1;
 
-	std::vector<BranchedLogPolyBuild_> h_poly(num_forests);
-	for (uint64_t forest_idx = 1; forest_idx < num_forests; ++forest_idx) {
-		const uint64_t start = forest_cache.forest_offsets[forest_idx];
-		const uint64_t end = forest_cache.forest_offsets[forest_idx + 1];
+	std::vector<BranchedLogPolyBuild_> h_poly(num_products);
+	for (uint64_t product_idx = 1; product_idx < num_products; ++product_idx) {
+		const uint64_t start = product_cache.product_offsets[product_idx];
+		const uint64_t end = product_cache.product_offsets[product_idx + 1];
 		std::vector<uint64_t> factors(
-			forest_cache.forest_trees.begin() + start,
-			forest_cache.forest_trees.begin() + end);
+			product_cache.product_factors.begin() + start,
+			product_cache.product_factors.begin() + end);
 		std::sort(factors.begin(), factors.end());
-		h_poly[forest_idx].push_back({ 1.0, std::move(factors) });
+		h_poly[product_idx].push_back({ 1.0, std::move(factors) });
 	}
 
 	std::vector<std::vector<BranchedLogPolyBuild_>> powers(
 		cache.max_nodes + 1,
-		std::vector<BranchedLogPolyBuild_>(num_forests));
+		std::vector<BranchedLogPolyBuild_>(num_products));
 	if (cache.max_nodes >= 1)
 		powers[1] = h_poly;
 
 	for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
-		for (uint64_t forest_idx = 0; forest_idx < num_forests; ++forest_idx) {
+		for (uint64_t product_idx = 0; product_idx < num_products; ++product_idx) {
 			BranchedLogPolyMap_ terms;
-			const uint64_t start = forest_cache.forest_coprod_offsets[forest_idx];
-			const uint64_t end = forest_cache.forest_coprod_offsets[forest_idx + 1];
+			const uint64_t start = product_cache.coproduct_offsets[product_idx];
+			const uint64_t end = product_cache.coproduct_offsets[product_idx + 1];
 			for (uint64_t pos = start; pos < end; pos += 2) {
-				const uint64_t left = forest_cache.forest_coprod_data[pos];
-				const uint64_t right = forest_cache.forest_coprod_data[pos + 1];
+				const uint64_t left = product_cache.coproduct_pairs[pos];
+				const uint64_t right = product_cache.coproduct_pairs[pos + 1];
 				multiply_branched_log_poly_into_(powers[k - 1][left], h_poly[right], terms);
 			}
-			powers[k][forest_idx] = flatten_branched_log_poly_(std::move(terms));
+			powers[k][product_idx] = flatten_branched_log_poly_(std::move(terms));
 		}
 	}
 
 	BranchedLogPolyCache_ out;
 	for (uint64_t flat_idx = 1; flat_idx < total_len; ++flat_idx) {
 		BranchedLogPolyMap_ terms;
-		const uint64_t forest_idx = forest_cache.single_tree_forest[flat_idx];
+		const uint64_t product_idx = product_cache.flat_to_product[flat_idx];
 		for (uint64_t k = 2; k <= cache.max_nodes; ++k) {
 			const double coeff = (k % 2 == 0) ? -1.0 / static_cast<double>(k) : 1.0 / static_cast<double>(k);
-			for (const auto& term : powers[k][forest_idx])
+			for (const auto& term : powers[k][product_idx])
 				add_branched_log_poly_term_(terms, coeff * term.coeff, term.factors);
 		}
 		const BranchedLogPolyBuild_ flat_terms = flatten_branched_log_poly_(std::move(terms));
@@ -1327,20 +1347,20 @@ void branched_log_sig_from_path_backprop_(
 void prepare_branched_log_sig_cache(const BranchedSigCache& cache) {
 	const auto key = make_branched_sig_cache_key(cache.dimension, cache.max_nodes, cache.planar);
 
-	const BranchedLogForestCache* forest_cache = nullptr;
+	const BranchedLogProductCache* product_cache = nullptr;
 	{
-		std::shared_lock rlock(branched_log_forest_cache_mu_);
-		auto it = branched_log_forest_cache_registry_.find(key);
-		if (it != branched_log_forest_cache_registry_.end())
-			forest_cache = it->second.get();
+		std::shared_lock rlock(branched_log_product_cache_mu_);
+		auto it = branched_log_product_cache_registry_.find(key);
+		if (it != branched_log_product_cache_registry_.end())
+			product_cache = it->second.get();
 	}
-	if (forest_cache == nullptr) {
-		auto fc = std::make_unique<BranchedLogForestCache>(
-			build_branched_log_forest_cache(cache));
-		std::unique_lock wlock(branched_log_forest_cache_mu_);
-		auto [it, _] = branched_log_forest_cache_registry_.try_emplace(
-			key, std::move(fc));
-		forest_cache = it->second.get();
+	if (product_cache == nullptr) {
+		auto built = std::make_unique<BranchedLogProductCache>(
+			build_branched_log_product_cache(cache));
+		std::unique_lock wlock(branched_log_product_cache_mu_);
+		auto [it, _] = branched_log_product_cache_registry_.try_emplace(
+			key, std::move(built));
+		product_cache = it->second.get();
 	}
 
 	{
@@ -1350,7 +1370,7 @@ void prepare_branched_log_sig_cache(const BranchedSigCache& cache) {
 			return;
 	}
 	auto pc = std::make_unique<BranchedLogPolyCache_>(
-		build_branched_log_poly_cache_(cache, *forest_cache));
+		build_branched_log_poly_cache_(cache, *product_cache));
 	std::unique_lock wlock(branched_log_poly_cache_mu_);
 	branched_log_poly_cache_registry_.try_emplace(key, std::move(pc));
 }
@@ -1360,8 +1380,8 @@ void clear_branched_log_sig_cache() {
 	clear_branched_bch_cache_();
 	clear_branched_log_basis_cache_();
 	{
-		std::unique_lock lock(branched_log_forest_cache_mu_);
-		branched_log_forest_cache_registry_.clear();
+		std::unique_lock lock(branched_log_product_cache_mu_);
+		branched_log_product_cache_registry_.clear();
 	}
 	std::unique_lock lock(branched_log_poly_cache_mu_);
 	branched_log_poly_cache_registry_.clear();

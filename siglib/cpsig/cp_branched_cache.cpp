@@ -20,6 +20,7 @@
 #include "macros.h"
 
 namespace {
+// One cache per dimension, degree, and planar basis kind.
 struct BranchedSigCacheRegistry {
 	std::unordered_map<
 		std::pair<uint64_t, uint64_t>,
@@ -135,11 +136,11 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool pla
 	}
 
 	if (planar && tmp.basis_forest_offsets.empty()) {
-		std::vector<DecoratedTreeInfo> trees;
+		// Older planar files can lack forest CSR data. Reconstruct it here.
+		TreeTable trees(dimension, TreeKind::Planar);
 		std::vector<uint64_t> tree_order_index;
-		enumerate_all_decorated_trees(
-			dimension, max_nodes, trees, tree_order_index, true);
-		std::vector<std::vector<uint64_t>> forests;
+		enumerate_trees(trees, max_nodes, tree_order_index);
+		std::vector<Forest> forests;
 		std::vector<uint64_t> forest_order_index;
 		enumerate_ordered_forest_basis_(
 			trees, max_nodes, forests, forest_order_index);
@@ -149,8 +150,8 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool pla
 		tmp.basis_forest_offsets.resize(tmp.total_length);
 		for (uint64_t i = 0; i < forests.size(); ++i) {
 			tmp.basis_forest_offsets[i] = tmp.basis_forest_data.size();
-			tmp.basis_forest_data.insert(
-				tmp.basis_forest_data.end(), forests[i].begin(), forests[i].end());
+			for (TreeId tree : forests[i])
+				tmp.basis_forest_data.push_back(tree);
 		}
 		tmp.basis_forest_offsets[forests.size()] = tmp.basis_forest_data.size();
 	}
@@ -185,7 +186,7 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 			return;
 	}
 
-	// Try loading from disk
+	// Disk data uses the same flattened BranchedSigCache representation.
 	if (use_disk) {
 		auto cache = std::make_unique<BranchedSigCache>();
 		if (read_branched_cache(dimension, max_nodes, planar, *cache)) {

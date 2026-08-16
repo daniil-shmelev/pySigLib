@@ -24,15 +24,22 @@
 #include <unordered_map>
 #include <vector>
 
-struct BranchedLogForestCache {
-	std::vector<uint64_t> forest_offsets;
-	std::vector<uint64_t> forest_trees;
-	std::vector<uint64_t> forest_coprod_offsets;
-	std::vector<uint64_t> forest_coprod_data;
-	std::vector<uint64_t> single_tree_forest;
+// Product coordinates let the logarithm reuse one coproduct evaluation path.
+// A product is a forest of flat branched-signature coordinates. The logarithm
+// evaluates powers and coproducts over these products, then maps back to the
+// original flat coordinates through flat_to_product.
+struct BranchedLogProductCache {
+	// CSR list of flat factors for each product.
+	std::vector<uint64_t> product_offsets;
+	std::vector<uint64_t> product_factors;
+	// CSR list of (left product, right product) coproduct pairs.
+	std::vector<uint64_t> coproduct_offsets;
+	std::vector<uint64_t> coproduct_pairs;
+	// Product index for each non-scalar branched-signature coordinate.
+	std::vector<uint64_t> flat_to_product;
 };
 
-struct BranchedLogForestHash {
+struct BranchedLogProductHash {
 	static constexpr std::size_t kFibHashConst = 0x9e3779b97f4a7c15ULL;
 	size_t operator()(const std::vector<uint64_t>& forest) const noexcept {
 		size_t seed = forest.size();
@@ -43,112 +50,113 @@ struct BranchedLogForestHash {
 	}
 };
 
-inline uint64_t branched_log_tree_nodes(const BranchedSigCache& cache, uint64_t flat_idx) {
-	const uint64_t tree_idx = flat_idx - 1;
-	return cache.node_labels_offsets[tree_idx + 1] - cache.node_labels_offsets[tree_idx];
+namespace branched_log_detail {
+
+using Product = std::vector<uint64_t>;
+using ProductMap = std::unordered_map<Product, uint64_t, BranchedLogProductHash>;
+using ProductPair = std::pair<uint64_t, uint64_t>;
+using TreeCoproduct = std::vector<std::vector<ProductPair>>;
+
+inline uint64_t find_product_(const ProductMap& products, const Product& product) {
+	const auto found = products.find(product);
+	if (found == products.end())
+		throw std::runtime_error("Branched log forest not found");
+	return found->second;
 }
 
-inline BranchedLogForestCache build_branched_log_forest_cache(const BranchedSigCache& cache) {
-	using ForestMap = std::unordered_map<std::vector<uint64_t>, uint64_t, BranchedLogForestHash>;
+inline std::vector<Product> enumerate_nonplanar_products_(
+	const BranchedSigCache& cache,
+	ProductMap& product_index
+) {
+	std::vector<Product> products;
+	product_index.reserve(cache.total_length);
+	product_index.emplace(Product{}, 0);
+	products.push_back({});
 
-	BranchedLogForestCache out;
-	if (cache.planar) {
-		out.forest_offsets.resize(cache.total_length + 1, 0);
-		for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
-			out.forest_offsets[flat] = out.forest_trees.size();
-			out.forest_trees.push_back(flat);
-		}
-		out.forest_offsets[cache.total_length] = out.forest_trees.size();
-
-		out.single_tree_forest.resize(cache.total_length, 0);
-		for (uint64_t flat = 1; flat < cache.total_length; ++flat)
-			out.single_tree_forest[flat] = flat;
-
-		out.forest_coprod_offsets.resize(cache.total_length + 1, 0);
-		for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
-			out.forest_coprod_offsets[flat] = out.forest_coprod_data.size();
-			out.forest_coprod_data.push_back(flat);
-			out.forest_coprod_data.push_back(0);
-			out.forest_coprod_data.push_back(0);
-			out.forest_coprod_data.push_back(flat);
-
-			const uint64_t basis_idx = flat - 1;
-			uint64_t pos = cache.coproduct_offsets[basis_idx];
-			const uint64_t pos_end = cache.coproduct_offsets[basis_idx + 1];
-			while (pos < pos_end) {
-				const uint64_t num_forest = cache.coproduct_data[pos++];
-				const uint64_t right_flat = cache.coproduct_data[pos++];
-				uint64_t left_flat = 0;
-				if (num_forest == 1)
-					left_flat = cache.coproduct_data[pos++];
-				else if (num_forest != 0)
-					throw std::runtime_error("Invalid MKW coproduct term");
-				out.forest_coprod_data.push_back(left_flat);
-				out.forest_coprod_data.push_back(right_flat);
-			}
-		}
-		out.forest_coprod_offsets[cache.total_length] = out.forest_coprod_data.size();
-		return out;
-	}
-
-	std::vector<std::vector<uint64_t>> forests;
-	ForestMap forest_index;
-
-	auto normalize_forest = [&](std::vector<uint64_t>& forest) {
-		if (!cache.planar)
-			std::sort(forest.begin(), forest.end());
-	};
-
-	auto add_forest = [&](const std::vector<uint64_t>& forest) -> uint64_t {
-		auto [it, inserted] = forest_index.try_emplace(forest, forests.size());
-		if (inserted)
-			forests.push_back(forest);
-		return it->second;
-	};
-
-	auto find_forest = [&](const std::vector<uint64_t>& forest) -> uint64_t {
-		auto it = forest_index.find(forest);
-		if (it == forest_index.end())
-			throw std::runtime_error("Branched log forest not found");
-		return it->second;
-	};
-
-	add_forest({});
-
+	// Enumerate nondecreasing tree-coordinate sequences by total node count.
 	const uint64_t num_trees = cache.total_length - 1;
-	std::vector<uint64_t> current;
-	auto enumerate = [&](auto&& self, uint64_t min_flat, uint64_t remaining) -> void {
+	Product current;
+	const auto enumerate = [&](auto&& self, uint64_t min_flat, uint64_t remaining) -> void {
 		for (uint64_t flat = min_flat; flat <= num_trees; ++flat) {
-			const uint64_t nodes = branched_log_tree_nodes(cache, flat);
+			const uint64_t nodes = cache.basis_node_count(flat - 1);
 			if (nodes > remaining)
 				continue;
 			current.push_back(flat);
-			add_forest(current);
-			self(self, cache.planar ? 1 : flat, remaining - nodes);
+			const bool inserted = product_index.try_emplace(current, products.size()).second;
+			if (inserted)
+				products.push_back(current);
+			self(self, flat, remaining - nodes);
 			current.pop_back();
 		}
 	};
 	enumerate(enumerate, 1, cache.max_nodes);
+	return products;
+}
 
-	out.single_tree_forest.assign(cache.total_length, 0);
+inline BranchedLogProductCache build_planar_product_cache_(
+	const BranchedSigCache& cache
+) {
+	BranchedLogProductCache out;
+	// MKW coordinates already are ordered forests, so each flat coordinate is
+	// one product and its coproduct can be copied directly.
+	out.product_offsets.resize(cache.total_length + 1, 0);
 	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
-		std::vector<uint64_t> singleton{ flat };
-		out.single_tree_forest[flat] = find_forest(singleton);
+		out.product_offsets[flat] = out.product_factors.size();
+		out.product_factors.push_back(flat);
 	}
+	out.product_offsets[cache.total_length] = out.product_factors.size();
 
-	auto combine_forests = [&](uint64_t a, uint64_t b) -> uint64_t {
-		std::vector<uint64_t> combined;
-		combined.reserve(forests[a].size() + forests[b].size());
-		combined.insert(combined.end(), forests[a].begin(), forests[a].end());
-		combined.insert(combined.end(), forests[b].begin(), forests[b].end());
-		normalize_forest(combined);
-		return find_forest(combined);
-	};
+	out.flat_to_product.resize(cache.total_length, 0);
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat)
+		out.flat_to_product[flat] = flat;
 
-	std::vector<std::vector<std::pair<uint64_t, uint64_t>>> tree_coprod(cache.total_length);
+	out.coproduct_offsets.resize(cache.total_length + 1, 0);
 	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
-		tree_coprod[flat].push_back({ out.single_tree_forest[flat], 0 });
-		tree_coprod[flat].push_back({ 0, out.single_tree_forest[flat] });
+		out.coproduct_offsets[flat] = out.coproduct_pairs.size();
+		out.coproduct_pairs.push_back(flat);
+		out.coproduct_pairs.push_back(0);
+		out.coproduct_pairs.push_back(0);
+		out.coproduct_pairs.push_back(flat);
+
+		const uint64_t basis_idx = flat - 1;
+		uint64_t pos = cache.coproduct_offsets[basis_idx];
+		const uint64_t pos_end = cache.coproduct_offsets[basis_idx + 1];
+		while (pos < pos_end) {
+			const uint64_t num_forest = cache.coproduct_data[pos++];
+			const uint64_t right_flat = cache.coproduct_data[pos++];
+			uint64_t left_flat = 0;
+			if (num_forest == 1)
+				left_flat = cache.coproduct_data[pos++];
+			else if (num_forest != 0)
+				throw std::runtime_error("Invalid MKW coproduct term");
+			out.coproduct_pairs.push_back(left_flat);
+			out.coproduct_pairs.push_back(right_flat);
+		}
+	}
+	out.coproduct_offsets[cache.total_length] = out.coproduct_pairs.size();
+	return out;
+}
+
+inline std::vector<uint64_t> build_flat_to_product_(
+	const BranchedSigCache& cache,
+	const ProductMap& product_index
+) {
+	std::vector<uint64_t> flat_to_product(cache.total_length, 0);
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat)
+		flat_to_product[flat] = find_product_(product_index, { flat });
+	return flat_to_product;
+}
+
+inline TreeCoproduct build_tree_product_coproducts_(
+	const BranchedSigCache& cache,
+	const ProductMap& product_index,
+	const std::vector<uint64_t>& flat_to_product
+) {
+	TreeCoproduct tree_coproduct(cache.total_length);
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+		// Include tree tensor scalar and scalar tensor tree explicitly.
+		tree_coproduct[flat].push_back({ flat_to_product[flat], 0 });
+		tree_coproduct[flat].push_back({ 0, flat_to_product[flat] });
 
 		const uint64_t tree_idx = flat - 1;
 		uint64_t pos = cache.coproduct_offsets[tree_idx];
@@ -156,45 +164,96 @@ inline BranchedLogForestCache build_branched_log_forest_cache(const BranchedSigC
 		while (pos < pos_end) {
 			const uint64_t num_forest = cache.coproduct_data[pos++];
 			const uint64_t trunk_flat = cache.coproduct_data[pos++];
-			std::vector<uint64_t> forest;
+			Product forest;
 			forest.reserve(num_forest);
 			for (uint64_t j = 0; j < num_forest; ++j)
 				forest.push_back(cache.coproduct_data[pos++]);
-			normalize_forest(forest);
-			tree_coprod[flat].push_back({ find_forest(forest), out.single_tree_forest[trunk_flat] });
+			std::sort(forest.begin(), forest.end());
+			tree_coproduct[flat].push_back({
+				find_product_(product_index, forest), flat_to_product[trunk_flat] });
 		}
 	}
+	return tree_coproduct;
+}
 
-	out.forest_coprod_offsets.resize(forests.size() + 1, 0);
-	for (uint64_t forest_idx = 0; forest_idx < forests.size(); ++forest_idx) {
-		out.forest_coprod_offsets[forest_idx] = out.forest_coprod_data.size();
-		std::vector<std::pair<uint64_t, uint64_t>> terms{ {0, 0} };
-		for (uint64_t flat : forests[forest_idx]) {
-			std::vector<std::pair<uint64_t, uint64_t>> next_terms;
-			next_terms.reserve(terms.size() * tree_coprod[flat].size());
-			for (const auto& term : terms) {
-				for (const auto& tree_term : tree_coprod[flat]) {
+inline uint64_t combine_products_(
+	const std::vector<Product>& products,
+	const ProductMap& product_index,
+	uint64_t left,
+	uint64_t right
+) {
+	Product combined;
+	combined.reserve(products[left].size() + products[right].size());
+	combined.insert(combined.end(), products[left].begin(), products[left].end());
+	combined.insert(combined.end(), products[right].begin(), products[right].end());
+	std::sort(combined.begin(), combined.end());
+	return find_product_(product_index, combined);
+}
+
+inline std::vector<std::vector<ProductPair>> expand_product_coproducts_(
+	const std::vector<Product>& products,
+	const ProductMap& product_index,
+	const TreeCoproduct& tree_coproduct
+) {
+	std::vector<std::vector<ProductPair>> coproducts(products.size());
+	for (uint64_t product = 0; product < products.size(); ++product) {
+		// The coproduct is multiplicative over the factors of a product.
+		std::vector<ProductPair> terms{ { 0, 0 } };
+		for (uint64_t flat : products[product]) {
+			std::vector<ProductPair> next_terms;
+			next_terms.reserve(terms.size() * tree_coproduct[flat].size());
+			for (const ProductPair& term : terms) {
+				for (const ProductPair& tree_term : tree_coproduct[flat]) {
 					next_terms.push_back({
-						combine_forests(term.first, tree_term.first),
-						combine_forests(term.second, tree_term.second)
+						combine_products_(products, product_index, term.first, tree_term.first),
+						combine_products_(products, product_index, term.second, tree_term.second)
 					});
 				}
 			}
 			terms.swap(next_terms);
 		}
-		for (const auto& term : terms) {
-			out.forest_coprod_data.push_back(term.first);
-			out.forest_coprod_data.push_back(term.second);
+		coproducts[product] = std::move(terms);
+	}
+	return coproducts;
+}
+
+inline BranchedLogProductCache build_nonplanar_product_cache_(
+	const BranchedSigCache& cache
+) {
+	ProductMap product_index;
+	const std::vector<Product> products = enumerate_nonplanar_products_(
+		cache, product_index);
+	BranchedLogProductCache out;
+	out.flat_to_product = build_flat_to_product_(cache, product_index);
+	const TreeCoproduct tree_coproduct = build_tree_product_coproducts_(
+		cache, product_index, out.flat_to_product);
+	const auto coproducts = expand_product_coproducts_(
+		products, product_index, tree_coproduct);
+
+	// Flatten temporary products and coproducts into the kernel CSR layout.
+	out.product_offsets.resize(products.size() + 1, 0);
+	out.coproduct_offsets.resize(products.size() + 1, 0);
+	for (uint64_t product = 0; product < products.size(); ++product) {
+		out.product_offsets[product] = out.product_factors.size();
+		out.product_factors.insert(
+			out.product_factors.end(), products[product].begin(), products[product].end());
+		out.coproduct_offsets[product] = out.coproduct_pairs.size();
+		for (const ProductPair& term : coproducts[product]) {
+			out.coproduct_pairs.push_back(term.first);
+			out.coproduct_pairs.push_back(term.second);
 		}
 	}
-	out.forest_coprod_offsets[forests.size()] = out.forest_coprod_data.size();
-
-	out.forest_offsets.resize(forests.size() + 1, 0);
-	for (uint64_t forest_idx = 0; forest_idx < forests.size(); ++forest_idx) {
-		out.forest_offsets[forest_idx] = out.forest_trees.size();
-		out.forest_trees.insert(out.forest_trees.end(), forests[forest_idx].begin(), forests[forest_idx].end());
-	}
-	out.forest_offsets[forests.size()] = out.forest_trees.size();
-
+	out.product_offsets.back() = out.product_factors.size();
+	out.coproduct_offsets.back() = out.coproduct_pairs.size();
 	return out;
+}
+
+} // namespace branched_log_detail
+
+inline BranchedLogProductCache build_branched_log_product_cache(
+	const BranchedSigCache& cache
+) {
+	if (cache.planar)
+		return branched_log_detail::build_planar_product_cache_(cache);
+	return branched_log_detail::build_nonplanar_product_cache_(cache);
 }
