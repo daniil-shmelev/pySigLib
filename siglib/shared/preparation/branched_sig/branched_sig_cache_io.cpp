@@ -15,8 +15,8 @@
 
 #include "branched_sig_cache_io.h"
 
-#include "cache_io.h"
-#include "../errors.h"
+#include "../cache_io.h"
+#include "../../errors.h"
 
 #include <fstream>
 #include <stdexcept>

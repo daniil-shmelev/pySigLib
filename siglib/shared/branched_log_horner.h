@@ -15,7 +15,7 @@
 
 #pragma once
 
-#include "preparation/branched_log_plan.h"
+#include "preparation/branched_sig/branched_log_plan.h"
 
 #include <concepts>
 #include <cstdint>

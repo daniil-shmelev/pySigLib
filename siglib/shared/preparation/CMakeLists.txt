@@ -1,11 +1,14 @@
 add_library(pysiglib_preparation STATIC
-    lyndon_words.cpp
-    log_sig_cache.cpp
-    bch_cache.cpp
-    branched_log_sig_cache.cpp
-    branched_sig_cache_io.cpp
-    branched_sig_cache.cpp
-    branched_sig_coef_cache.cpp
+    log_sig/lyndon_words.cpp
+    log_sig/log_sig_cache.cpp
+    log_sig/bch_cache.cpp
+    branched_sig/branched_log_sig_cache.cpp
+    branched_sig/branched_sig_cache_io.cpp
+    branched_sig/branched_sig_cache.cpp
+    branched_sig/branched_sig_cache_common.cpp
+    branched_sig/branched_sig_cache_bck.cpp
+    branched_sig/branched_sig_cache_mkw.cpp
+    branched_sig/branched_sig_coef_cache.cpp
 )
 
 set_target_properties(pysiglib_preparation PROPERTIES

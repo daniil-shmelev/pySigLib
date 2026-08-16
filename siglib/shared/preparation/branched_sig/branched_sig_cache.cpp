@@ -13,11 +13,18 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
-#include "cppch.h"
-#include "preparation/branched_sig/branched_sig_cache.h"
-#include "preparation/log_sig/lyndon_words.h"  // for PairHash
+#include "branched_sig_cache.h"
+#include "branched_sig_cache_builders.h"
 
-void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk = false, bool planar = false);
-const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool planar = false);
-void clear_branched_sig_cache();
+BranchedSigCache::BranchedSigCache(
+	uint64_t dimension_value,
+	uint64_t max_nodes_value,
+	bool planar_value
+) {
+	if (planar_value)
+		*this = branched_sig_cache_detail::build_mkw_branched_sig_cache_(
+			dimension_value, max_nodes_value);
+	else
+		*this = branched_sig_cache_detail::build_bck_branched_sig_cache_(
+			dimension_value, max_nodes_value);
+}

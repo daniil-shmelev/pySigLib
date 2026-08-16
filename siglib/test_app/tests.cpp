@@ -1128,13 +1128,10 @@ void example_batch_branched_log_sig_d(
 
     const bool scalar_term = true;
     prepare_branched_log_sig(dimension, max_nodes, method, false, planar);
-    prepare_branched_log_sig_cuda(
-        dimension, max_nodes, method, planar, false);
+    prepare_branched_log_sig_cuda(dimension, max_nodes, method, planar, false);
 
     uint64_t bsig_len = branched_sig_length(dimension, max_nodes, planar);
-    uint64_t out_len = method == 0
-        ? bsig_len
-        : branched_log_sig_length(dimension, max_nodes, planar);
+    uint64_t out_len = method == 0 ? bsig_len : branched_log_sig_length(dimension, max_nodes, planar);
     uint64_t bsig_total = batch_size * bsig_len;
     uint64_t out_total = batch_size * out_len;
 
@@ -1147,35 +1144,21 @@ void example_batch_branched_log_sig_d(
     cudaMalloc(&d_out, sizeof(double) * out_total);
     if (method == 3) {
         const uint64_t path_size = path.size();
-        branched_log_sig_from_path_d(
-            path.data(), cpu_out.data(), batch_size, length, dimension,
-            max_nodes, n_jobs);
+        branched_log_sig_from_path_d(path.data(), cpu_out.data(), batch_size, length, dimension, max_nodes, n_jobs);
         cudaMalloc(&d_input, sizeof(double) * path_size);
-        cudaMemcpy(
-            d_input, path.data(), sizeof(double) * path_size,
-            cudaMemcpyHostToDevice);
-        branched_log_sig_from_path_cuda_d(
-            d_input, d_out, batch_size, length, dimension, max_nodes);
+        cudaMemcpy(d_input, path.data(), sizeof(double) * path_size, cudaMemcpyHostToDevice);
+        branched_log_sig_from_path_cuda_d(d_input, d_out, batch_size, length, dimension, max_nodes);
     } else {
         std::vector<double> bsig(bsig_total, 0.);
-        branched_sig_d(
-            path.data(), bsig.data(), batch_size, dimension, length,
-            max_nodes, n_jobs, false, false, 1., planar, scalar_term,
-            nullptr, 0, 0, 0);
-        branched_sig_to_log_sig_d(
-            bsig.data(), cpu_out.data(), batch_size, dimension, max_nodes,
+        branched_sig_d(path.data(), bsig.data(), batch_size, dimension, length,
+            max_nodes, n_jobs, false, false, 1., planar, scalar_term, nullptr, 0, 0, 0);
+        branched_sig_to_log_sig_d(bsig.data(), cpu_out.data(), batch_size, dimension, max_nodes,
             method, n_jobs, planar, scalar_term);
         cudaMalloc(&d_input, sizeof(double) * bsig_total);
-        cudaMemcpy(
-            d_input, bsig.data(), sizeof(double) * bsig_total,
-            cudaMemcpyHostToDevice);
-        branched_sig_to_log_sig_cuda_d(
-            d_input, d_out, batch_size, dimension, max_nodes, method, planar,
-            scalar_term);
+        cudaMemcpy(d_input, bsig.data(), sizeof(double) * bsig_total, cudaMemcpyHostToDevice);
+        branched_sig_to_log_sig_cuda_d(d_input, d_out, batch_size, dimension, max_nodes, method, planar, scalar_term);
     }
-    cudaMemcpy(
-        cuda_out.data(), d_out, sizeof(double) * out_total,
-        cudaMemcpyDeviceToHost);
+    cudaMemcpy(cuda_out.data(), d_out, sizeof(double) * out_total, cudaMemcpyDeviceToHost);
 
     cudaFree(d_input);
     cudaFree(d_out);

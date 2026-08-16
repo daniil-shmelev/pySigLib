@@ -14,10 +14,14 @@
  * ========================================================================= */
 
 #pragma once
-#include "cppch.h"
-#include "preparation/branched_sig/branched_sig_cache.h"
-#include "preparation/log_sig/lyndon_words.h"  // for PairHash
 
-void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk = false, bool planar = false);
-const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool planar = false);
-void clear_branched_sig_cache();
+#include "branched_sig_cache.h"
+
+namespace branched_sig_cache_detail {
+BranchedSigCache build_bck_branched_sig_cache_(
+	uint64_t dimension,
+	uint64_t max_nodes);
+BranchedSigCache build_mkw_branched_sig_cache_(
+	uint64_t dimension,
+	uint64_t max_nodes);
+}  // namespace branched_sig_cache_detail

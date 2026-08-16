@@ -16,7 +16,7 @@
 #include "cupch.h"
 #include "cusig.h"
 #include "cu_utils.h"
-#include "../shared/preparation/polynomial_sig_kernel_tables.h"
+#include "../shared/preparation/polynomial_sig_kernel/polynomial_sig_kernel_tables.h"
 
 template<typename T>
 struct SigPolyTableCacheEntry {

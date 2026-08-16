@@ -15,10 +15,10 @@
 
 #include "log_sig_cache.h"
 
-#include "../errors.h"
+#include "../../errors.h"
 #include "bch_cache.h"
 #include "bch_data.h"
-#include "cache_io.h"
+#include "../cache_io.h"
 #include "lyndon_words.h"
 
 #include <algorithm>

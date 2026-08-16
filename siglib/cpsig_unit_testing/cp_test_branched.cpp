@@ -14,7 +14,7 @@
  * ========================================================================= */
 
 #include "cp_test_helpers.h"
-#include "branched_sig_cache.h"
+#include "branched_sig/branched_sig_cache.h"
 #include "trees/coproduct.h"
 #include "trees/tree.h"
 

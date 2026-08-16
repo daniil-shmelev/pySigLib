@@ -20,8 +20,8 @@
 #include "cache_lifecycle/cu_log_sig_cache.h"
 #include "cu_macros.h"
 #include "cu_utils.h"
-#include "../shared/preparation/branched_sig_cache.h"
-#include "../shared/preparation/branched_log_plan.h"
+#include "../shared/preparation/branched_sig/branched_sig_cache.h"
+#include "../shared/preparation/branched_sig/branched_log_plan.h"
 #include "../shared/trees/basis_counts.h"
 
 #include <cstdint>

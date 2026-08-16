@@ -14,10 +14,10 @@
  * ========================================================================= */
 
 #pragma once
-#include "bch_cache.h"
+#include "../log_sig/bch_cache.h"
 #include "branched_log_plan.h"
 #include "branched_sig_cache.h"
-#include "log_sig_cache.h"
+#include "../log_sig/log_sig_cache.h"
 
 #include <filesystem>
 #include <memory>

@@ -17,8 +17,8 @@
 
 #include "cupch.h"
 #include "cache_lifecycle/cu_log_sig_cache.h"
-#include "../shared/preparation/bch_cache.h"
-#include "../shared/preparation/bch_data.h"
+#include "../shared/preparation/log_sig/bch_cache.h"
+#include "../shared/preparation/log_sig/bch_data.h"
 
 #include <algorithm>
 #include <cstdint>

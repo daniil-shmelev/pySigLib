@@ -19,7 +19,7 @@
 #include "macros.h"
 #include "multithreading.h"
 #include "cp_vector_funcs.h"
-#include "../shared/preparation/polynomial_sig_kernel_tables.h"
+#include "../shared/preparation/polynomial_sig_kernel/polynomial_sig_kernel_tables.h"
 
 
 template<std::floating_point T>
