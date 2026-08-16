@@ -13,11 +13,16 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cupch.h"
 #include "cusig.h"
+#include "cu_runtime_utils.h"
 #include "cu_sig_coef.h"
 #include "cu_atomic.h"
+#include <algorithm>
+#include <cstdint>
+#include <mutex>
+#include <stdexcept>
 #include <type_traits>
+#include <vector>
 
 // =========================================================================
 // Constant memory for 1/k! values (max 21 doubles = 168 bytes)

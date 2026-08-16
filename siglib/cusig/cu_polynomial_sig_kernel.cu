@@ -13,10 +13,15 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cupch.h"
 #include "cusig.h"
 #include "cu_utils.h"
 #include "../shared/preparation/polynomial_sig_kernel/polynomial_sig_kernel_tables.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <mutex>
+#include <stdexcept>
+#include <vector>
 
 template<typename T>
 struct SigPolyTableCacheEntry {

@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include "cu_runtime_utils.h"
+
 template<typename T>
 __device__ void sparse_branched_hopf_convolution_block_(
 	const T* X,

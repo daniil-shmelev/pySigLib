@@ -16,6 +16,7 @@
 #pragma once
 
 #include "cu_log_sig_cache.h"
+#include "cu_runtime_utils.h"
 #include "preparation/branched_sig/branched_log_sig_cache.h"
 
 #include <cstdint>

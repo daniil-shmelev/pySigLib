@@ -17,6 +17,7 @@ set_target_properties(pysiglib_preparation PROPERTIES
     CXX_EXTENSIONS NO
     POSITION_INDEPENDENT_CODE ON
 )
+target_precompile_headers(pysiglib_preparation PRIVATE preparation_pch.h)
 
 target_include_directories(pysiglib_preparation PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"

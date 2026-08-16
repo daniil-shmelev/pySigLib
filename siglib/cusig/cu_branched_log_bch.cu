@@ -13,7 +13,6 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cupch.h"
 #include "cusig.h"
 #include "cache_lifecycle/cu_branched_log_sig_cache.h"
 #include "cu_log_sig_combine.h"
@@ -21,9 +20,16 @@
 #include "cu_utils.h"
 #include "../shared/branched_log_horner.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace {
 

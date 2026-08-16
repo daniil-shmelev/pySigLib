@@ -14,8 +14,9 @@
  * ========================================================================= */
 
 #pragma once
-#include "cupch.h"
 #include "cu_log_signature.h"
+
+#include <cstdint>
 
 // =========================================================================
 // CUDA device function: uncombine_sig_deriv_zero

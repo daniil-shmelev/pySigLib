@@ -15,7 +15,6 @@
 
 #pragma once
 
-#include "cupch.h"
 #include "cu_disk_cache.h"
 #include "cu_utils.h"
 #include "preparation/log_sig/log_sig_cache.h"
