@@ -39,7 +39,7 @@ function Show-Usage {
 Usage:
   .\scripts\profile_vtune.ps1
   .\scripts\profile_vtune.ps1 -BuildIfMissing
-  .\scripts\profile_vtune.ps1 -TestAppPath .\out\build\windows-cpp-solution\siglib\test_app\Release\pysiglib_test_app.exe
+  .\scripts\profile_vtune.ps1 -TestAppPath .\out\build\windows-cpp-solution\siglib\test_app\Release\test_app.exe
   .\scripts\profile_vtune.ps1 -DllDir .\pysiglib -AppArgs @("extra", "test", "args")
 
 Important options:
@@ -161,9 +161,9 @@ function Resolve-VTune {
 
 function Get-TestAppCandidates {
     return @(
-        "out\build\windows-cpp-solution\siglib\test_app\Release\pysiglib_test_app.exe",
-        "out\build\windows-cpp-solution\siglib\test_app\RelWithDebInfo\pysiglib_test_app.exe",
-        "out\build\windows-cpp-solution\siglib\test_app\Debug\pysiglib_test_app.exe"
+        "out\build\windows-cpp-solution\siglib\test_app\Release\test_app.exe",
+        "out\build\windows-cpp-solution\siglib\test_app\RelWithDebInfo\test_app.exe",
+        "out\build\windows-cpp-solution\siglib\test_app\Debug\test_app.exe"
     )
 }
 
@@ -190,7 +190,7 @@ function Resolve-TestAppPath {
 
     $fallback = ConvertTo-FullPath -Path (Get-TestAppCandidates | Select-Object -First 1) -BasePath $repoRoot
     if ($Required) {
-        throw "Could not find pysiglib_test_app.exe. Run with -BuildIfMissing or pass -TestAppPath."
+        throw "Could not find test_app.exe. Run with -BuildIfMissing or pass -TestAppPath."
     }
     return $fallback
 }
