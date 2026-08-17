@@ -290,15 +290,11 @@ static bool read_branched_cache_(uint64_t dimension, uint64_t max_nodes, bool pl
 	cu_deserialize_vector_(in, tmp.chain_indices);
 	cu_deserialize_vector_(in, tmp.coproduct_data);
 	cu_deserialize_vector_(in, tmp.coproduct_offsets);
+	cu_deserialize_vector_(in, tmp.basis_forest_data);
+	cu_deserialize_vector_(in, tmp.basis_forest_offsets);
 
 	if (!in.good())
 		return false;
-	if (in.peek() != std::char_traits<char>::eof()) {
-		cu_deserialize_vector_(in, tmp.basis_forest_data);
-		cu_deserialize_vector_(in, tmp.basis_forest_offsets);
-		if (!in.good())
-			return false;
-	}
 
 	tmp.planar = planar;
 	c = std::move(tmp);

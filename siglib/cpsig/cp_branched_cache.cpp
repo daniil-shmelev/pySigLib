@@ -127,34 +127,10 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool pla
 	deserialize_vector(in, tmp.chain_indices);
 	deserialize_vector(in, tmp.coproduct_data);
 	deserialize_vector(in, tmp.coproduct_offsets);
+	deserialize_vector(in, tmp.basis_forest_data);
+	deserialize_vector(in, tmp.basis_forest_offsets);
 
 	if (!in.good()) return false;
-	if (in.peek() != std::char_traits<char>::eof()) {
-		deserialize_vector(in, tmp.basis_forest_data);
-		deserialize_vector(in, tmp.basis_forest_offsets);
-		if (!in.good()) return false;
-	}
-
-	if (planar && tmp.basis_forest_offsets.empty()) {
-		// Older planar files can lack forest CSR data. Reconstruct it here.
-		TreeTable trees(dimension, TreeKind::Planar);
-		std::vector<uint64_t> tree_order_index;
-		enumerate_trees(trees, max_nodes, tree_order_index);
-		std::vector<Forest> forests;
-		std::vector<uint64_t> forest_order_index;
-		enumerate_ordered_forest_basis_(
-			trees, max_nodes, forests, forest_order_index);
-		if (forests.size() + 1 != tmp.total_length
-			|| forest_order_index != tmp.order_index)
-			return false;
-		tmp.basis_forest_offsets.resize(tmp.total_length);
-		for (uint64_t i = 0; i < forests.size(); ++i) {
-			tmp.basis_forest_offsets[i] = tmp.basis_forest_data.size();
-			for (TreeId tree : forests[i])
-				tmp.basis_forest_data.push_back(tree);
-		}
-		tmp.basis_forest_offsets[forests.size()] = tmp.basis_forest_data.size();
-	}
 	if (planar) {
 		if (tmp.basis_forest_offsets.size() != tmp.total_length
 			|| tmp.basis_forest_offsets.empty()
