@@ -21,10 +21,11 @@ import torch
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (
+    CPSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP,
     CPSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP,
     CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA,
 )
-from .data_handlers import SigInputHandler, SigOutputHandler
+from .data_handlers import PathInputHandler, PathOutputHandler, SigInputHandler, SigOutputHandler
 from .sig_length import aug_dim
 from .branched_sig import (
     _infer_branched_scalar_term,
@@ -110,6 +111,10 @@ def branched_sig_to_log_sig_backprop(
     check_type(lead_lag, "lead_lag", bool)
     check_type(planar, "planar", bool)
     method = _resolve_branched_log_sig_method(method, planar)
+    if method == 3:
+        raise ValueError(
+            "method=3 is not supported in branched_sig_to_log_sig_backprop. "
+            "Use the direct branched_log_sig path backward instead.")
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
@@ -163,4 +168,46 @@ def branched_sig_to_log_sig_backprop(
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_to_log_sig_backprop: " + err_msg(err_code))
 
+    return result.data
+
+
+def _branched_log_sig_from_path_backprop(
+        grad_output: Union[np.ndarray, torch.Tensor],
+        path: Union[np.ndarray, torch.Tensor],
+        degree: int,
+        *,
+        n_jobs: int = 1,
+) -> Union[np.ndarray, torch.Tensor]:
+    """Backpropagates through the MKW method=3 computation."""
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_n_jobs(n_jobs)
+
+    data = PathInputHandler(path, False, False, 1.0, "path")
+    if data.device != "cpu":
+        raise NotImplementedError(
+            "MKW branched log signature method 3 is only supported on CPU")
+    out_len = branched_log_sig_length(
+        data.data_dimension, degree, planar=True)
+    derivs_data = SigInputHandler(grad_output, out_len, "grad_output")
+    if data.type_ != derivs_data.type_:
+        raise ValueError(
+            "grad_output and path must both be numpy arrays or both be torch tensors")
+    if data.dtype != derivs_data.dtype:
+        raise ValueError("grad_output and path must have the same dtype")
+    if data.batch_shape != derivs_data.batch_shape:
+        raise ValueError("grad_output and path have different batch shapes")
+    if data.device != derivs_data.device:
+        raise ValueError("grad_output and path must be on the same device")
+
+    result = PathOutputHandler(data.data_length, data.data_dimension, data)
+    if data.batch_size == 0:
+        return result.data
+    err_code = CPSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP[data.dtype](
+        derivs_data.data_ptr, result.data_ptr, data.data_ptr,
+        data.batch_size, data.data_length, data.data_dimension, degree, n_jobs)
+    if err_code:
+        raise Exception(
+            "Error in pysiglib.branched_log_sig_from_path_backprop: "
+            + err_msg(err_code))
     return result.data

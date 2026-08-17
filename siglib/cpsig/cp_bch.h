@@ -45,6 +45,8 @@ struct BchCache {
 	std::vector<int> comm_k_val;
 	std::vector<double> comm_k_val_d; // pre-cast to double
 	std::vector<uint32_t> comm_k_sparse_end; // per-output k: end index for entries with k_i < dim
+	std::vector<uint32_t> comm_k_sparse_ptr;
+	std::vector<uint32_t> comm_k_sparse_idx;
 
 	// Input-grouped commutator table (CSR format, grouped by input index a)
 	// For each input index a, stores (k, partner, signed_c) triples where
@@ -68,6 +70,10 @@ struct BchCache {
 	std::vector<std::pair<uint64_t, uint64_t>> linear_range;
 	std::vector<uint64_t> linear_pair_ptr;
 	std::vector<uint32_t> linear_pair_idx;
+	std::vector<uint64_t> coordinate_weights;
+	std::vector<uint32_t> linear_input_idx;
+	std::vector<uint8_t> linear_input_mask;
+	bool linear_input_prefix = true;
 	bool prune_linear_backprop = false;
 
 	// Standard factorization of each d-letter Lyndon word (as index pairs)
@@ -248,6 +254,119 @@ inline std::vector<word> compute_factorization_indices(
 	return lyndon_words;
 }
 
+inline void build_commutator_views(BchCache& cache) {
+	const uint64_t m = cache.m;
+	std::vector<uint32_t> counts(m, 0);
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			for (const auto& [k, c] : cache.commutator_table[i * m + j])
+				++counts[k];
+		}
+	}
+
+	cache.comm_k_ptr.resize(m + 1);
+	cache.comm_k_ptr[0] = 0;
+	for (uint64_t k = 0; k < m; ++k)
+		cache.comm_k_ptr[k + 1] = cache.comm_k_ptr[k] + counts[k];
+
+	const uint32_t nnz = cache.comm_k_ptr[m];
+	cache.comm_k_i.resize(nnz);
+	cache.comm_k_j.resize(nnz);
+	cache.comm_k_val.resize(nnz);
+	std::fill(counts.begin(), counts.end(), 0);
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
+				const uint32_t pos = cache.comm_k_ptr[k] + counts[k]++;
+				cache.comm_k_i[pos] = static_cast<uint32_t>(i);
+				cache.comm_k_j[pos] = static_cast<uint32_t>(j);
+				cache.comm_k_val[pos] = c;
+			}
+		}
+	}
+
+	cache.comm_k_val_d.resize(nnz);
+	for (uint32_t idx = 0; idx < nnz; ++idx)
+		cache.comm_k_val_d[idx] = static_cast<double>(cache.comm_k_val[idx]);
+
+	cache.comm_k_sparse_end.resize(m);
+	for (uint64_t k = 0; k < m; ++k) {
+		uint32_t sparse_end = cache.comm_k_ptr[k];
+		for (uint32_t idx = cache.comm_k_ptr[k]; idx < cache.comm_k_ptr[k + 1]; ++idx) {
+			if (cache.comm_k_i[idx] >= cache.dimension)
+				break;
+			sparse_end = idx + 1;
+		}
+		cache.comm_k_sparse_end[k] = sparse_end;
+	}
+
+	std::vector<uint32_t> a_counts(m, 0);
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
+				a_counts[i]++;
+				a_counts[j]++;
+			}
+		}
+	}
+	cache.comm_a_ptr.resize(m + 1);
+	cache.comm_a_ptr[0] = 0;
+	for (uint64_t a = 0; a < m; ++a)
+		cache.comm_a_ptr[a + 1] = cache.comm_a_ptr[a] + a_counts[a];
+
+	const uint32_t a_nnz = cache.comm_a_ptr[m];
+	cache.comm_a_k.resize(a_nnz);
+	cache.comm_a_partner.resize(a_nnz);
+	cache.comm_a_signed_c.resize(a_nnz);
+	std::fill(a_counts.begin(), a_counts.end(), 0);
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
+				const uint32_t pos_i = cache.comm_a_ptr[i] + a_counts[i]++;
+				cache.comm_a_k[pos_i] = static_cast<uint32_t>(k);
+				cache.comm_a_partner[pos_i] = static_cast<uint32_t>(j);
+				cache.comm_a_signed_c[pos_i] = c;
+
+				const uint32_t pos_j = cache.comm_a_ptr[j] + a_counts[j]++;
+				cache.comm_a_k[pos_j] = static_cast<uint32_t>(k);
+				cache.comm_a_partner[pos_j] = static_cast<uint32_t>(i);
+				cache.comm_a_signed_c[pos_j] = -c;
+			}
+		}
+	}
+
+	cache.n_pairs = 0;
+	for (uint64_t i = 0; i < m; ++i)
+		for (uint64_t j = i + 1; j < m; ++j)
+			if (!cache.commutator_table[i * m + j].empty())
+				cache.n_pairs++;
+
+	cache.comm_ij_i.resize(cache.n_pairs);
+	cache.comm_ij_j.resize(cache.n_pairs);
+	cache.comm_ij_ptr.resize(cache.n_pairs + 1);
+	cache.comm_ij_k.resize(nnz);
+	cache.comm_ij_c.resize(nnz);
+	uint32_t pair_idx = 0;
+	uint32_t entry_idx = 0;
+	cache.comm_ij_ptr[0] = 0;
+	for (uint64_t i = 0; i < m; ++i) {
+		for (uint64_t j = i + 1; j < m; ++j) {
+			const auto& entries = cache.commutator_table[i * m + j];
+			if (entries.empty())
+				continue;
+			cache.comm_ij_i[pair_idx] = static_cast<uint32_t>(i);
+			cache.comm_ij_j[pair_idx] = static_cast<uint32_t>(j);
+			for (const auto& [k, c] : entries) {
+				cache.comm_ij_k[entry_idx] = static_cast<uint32_t>(k);
+				cache.comm_ij_c[entry_idx] = static_cast<double>(c);
+				entry_idx++;
+			}
+			cache.comm_ij_ptr[pair_idx + 1] = entry_idx;
+			pair_idx++;
+		}
+	}
+}
+
 inline void build_commutator_table(BchCache& cache) {
 	uint64_t m = cache.m;
 	uint64_t dim = cache.dimension;
@@ -261,6 +380,7 @@ inline void build_commutator_table(BchCache& cache) {
 	std::vector<uint64_t> tensor_degs;
 	build_tensor_representations(lyndon_words, cache.left_factor, cache.right_factor,
 		dim, deg, tensor_reps, tensor_degs);
+	cache.coordinate_weights = tensor_degs;
 
 	// Get the Lyndon word tensor indices and P^{-1} matrix from BasisCache
 // (prepare_basis_cache has already been called before build_commutator_table)
@@ -323,141 +443,30 @@ inline void build_commutator_table(BchCache& cache) {
 		}
 	}
 
-	// Build transposed commutator table (CSR format, grouped by output k)
-	std::vector<uint32_t> counts(m, 0);
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
-				++counts[k];
-			}
-		}
-	}
-
-	cache.comm_k_ptr.resize(m + 1);
-	cache.comm_k_ptr[0] = 0;
-	for (uint64_t k = 0; k < m; ++k) {
-		cache.comm_k_ptr[k + 1] = cache.comm_k_ptr[k] + counts[k];
-	}
-
-	uint32_t nnz = cache.comm_k_ptr[m];
-	cache.comm_k_i.resize(nnz);
-	cache.comm_k_j.resize(nnz);
-	cache.comm_k_val.resize(nnz);
-
-	std::fill(counts.begin(), counts.end(), 0);
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
-				uint32_t pos = cache.comm_k_ptr[k] + counts[k]++;
-				cache.comm_k_i[pos] = static_cast<uint32_t>(i);
-				cache.comm_k_j[pos] = static_cast<uint32_t>(j);
-				cache.comm_k_val[pos] = c;
-			}
-		}
-	}
-
-	// Pre-cast k-grouped coefficients to double
-	cache.comm_k_val_d.resize(nnz);
-	for (uint32_t idx = 0; idx < nnz; ++idx) {
-		cache.comm_k_val_d[idx] = static_cast<double>(cache.comm_k_val[idx]);
-	}
-
-	// Sparse threshold: for each output k, find where k_i first reaches dimension.
-	// Entries within each k-group are ordered by (i, j) with i increasing,
-	// so entries with i < dimension come first.
-	cache.comm_k_sparse_end.resize(m);
-	for (uint64_t k = 0; k < m; ++k) {
-		uint32_t kend = cache.comm_k_ptr[k + 1];
-		uint32_t sparse_end = cache.comm_k_ptr[k];
-		for (uint32_t idx = cache.comm_k_ptr[k]; idx < kend; ++idx) {
-			if (cache.comm_k_i[idx] >= cache.dimension) break;
-			sparse_end = idx + 1;
-		}
-		cache.comm_k_sparse_end[k] = sparse_end;
-	}
-
-	// Build input-grouped commutator table (CSR format, grouped by input index a)
-	std::vector<uint32_t> a_counts(m, 0);
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
-				a_counts[i]++;
-				a_counts[j]++;
-			}
-		}
-	}
-
-	cache.comm_a_ptr.resize(m + 1);
-	cache.comm_a_ptr[0] = 0;
-	for (uint64_t a = 0; a < m; ++a) {
-		cache.comm_a_ptr[a + 1] = cache.comm_a_ptr[a] + a_counts[a];
-	}
-
-	uint32_t a_nnz = cache.comm_a_ptr[m];
-	cache.comm_a_k.resize(a_nnz);
-	cache.comm_a_partner.resize(a_nnz);
-	cache.comm_a_signed_c.resize(a_nnz);
-
-	std::fill(a_counts.begin(), a_counts.end(), 0);
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			for (const auto& [k, c] : cache.commutator_table[i * m + j]) {
-				uint32_t pos_i = cache.comm_a_ptr[i] + a_counts[i]++;
-				cache.comm_a_k[pos_i] = static_cast<uint32_t>(k);
-				cache.comm_a_partner[pos_i] = static_cast<uint32_t>(j);
-				cache.comm_a_signed_c[pos_i] = c;
-
-				uint32_t pos_j = cache.comm_a_ptr[j] + a_counts[j]++;
-				cache.comm_a_k[pos_j] = static_cast<uint32_t>(k);
-				cache.comm_a_partner[pos_j] = static_cast<uint32_t>(i);
-				cache.comm_a_signed_c[pos_j] = -c;
-			}
-		}
-	}
-
-	// Build pair-grouped commutator table (CSR format, grouped by (i,j) pair)
-	// Iterate non-empty pairs and flatten their (k, c) entries
-	cache.n_pairs = 0;
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			if (!cache.commutator_table[i * m + j].empty()) {
-				cache.n_pairs++;
-			}
-		}
-	}
-
-	cache.comm_ij_i.resize(cache.n_pairs);
-	cache.comm_ij_j.resize(cache.n_pairs);
-	cache.comm_ij_ptr.resize(cache.n_pairs + 1);
-	cache.comm_ij_k.resize(nnz);
-	cache.comm_ij_c.resize(nnz);
-
-	uint32_t pair_idx = 0;
-	uint32_t entry_idx = 0;
-	cache.comm_ij_ptr[0] = 0;
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			const auto& entries = cache.commutator_table[i * m + j];
-			if (entries.empty()) continue;
-			cache.comm_ij_i[pair_idx] = static_cast<uint32_t>(i);
-			cache.comm_ij_j[pair_idx] = static_cast<uint32_t>(j);
-			for (const auto& [k, c] : entries) {
-				cache.comm_ij_k[entry_idx] = static_cast<uint32_t>(k);
-				cache.comm_ij_c[entry_idx] = static_cast<double>(c);
-				entry_idx++;
-			}
-			cache.comm_ij_ptr[pair_idx + 1] = entry_idx;
-			pair_idx++;
-		}
-	}
+	build_commutator_views(cache);
 }
 
 inline void build_linear_bch_ranges(BchCache& cache) {
 	const uint64_t m2 = cache.bch_coefficients.size();
+	if (cache.coordinate_weights.size() != cache.m)
+		throw std::runtime_error("BCH coordinate weight count mismatch");
+	if (cache.linear_input_mask.size() != cache.m)
+		throw std::runtime_error("BCH linear input mask size mismatch");
 
 	std::vector<uint64_t> min_degree(m2, 1);
 	std::vector<uint64_t> max_degree(m2, cache.degree);
-	if (m2 > 1) max_degree[1] = 1;
+	if (m2 > 1) {
+		min_degree[1] = cache.degree + 1;
+		max_degree[1] = 0;
+		for (uint32_t index : cache.linear_input_idx) {
+			if (index >= cache.m)
+				throw std::out_of_range("BCH linear input index out of range");
+			min_degree[1] = std::min(min_degree[1], cache.coordinate_weights[index]);
+			max_degree[1] = std::max(max_degree[1], cache.coordinate_weights[index]);
+		}
+		if (cache.linear_input_idx.empty())
+			min_degree[1] = 1;
+	}
 	for (uint64_t w = 2; w < m2; ++w) {
 		const uint64_t lf = cache.bch_left_factor[w];
 		const uint64_t rf = cache.bch_right_factor[w];
@@ -466,20 +475,36 @@ inline void build_linear_bch_ranges(BchCache& cache) {
 	}
 	cache.linear_range.resize(m2);
 	for (uint64_t w = 0; w < m2; ++w) {
-		const uint64_t begin = min_degree[w] == 1
-			? 0 : ::log_sig_length(cache.dimension, min_degree[w] - 1);
-		cache.linear_range[w] = {begin, ::log_sig_length(cache.dimension, max_degree[w])};
+		const auto begin = std::lower_bound(
+			cache.coordinate_weights.begin(), cache.coordinate_weights.end(), min_degree[w]);
+		const auto end = std::upper_bound(
+			cache.coordinate_weights.begin(), cache.coordinate_weights.end(), max_degree[w]);
+		cache.linear_range[w] = {
+			static_cast<uint64_t>(begin - cache.coordinate_weights.begin()),
+			static_cast<uint64_t>(end - cache.coordinate_weights.begin())
+		};
 	}
 
 	cache.linear_pair_ptr.assign(m2 + 1, 0);
+	cache.linear_pair_idx.clear();
 	for (uint64_t w = 2; w < m2; ++w) {
 		const auto [lf_begin, lf_end] = cache.linear_range[cache.bch_left_factor[w]];
 		const auto [rf_begin, rf_end] = cache.linear_range[cache.bch_right_factor[w]];
 		for (uint32_t p = 0; p < cache.n_pairs; ++p) {
 			const uint32_t i = cache.comm_ij_i[p];
 			const uint32_t j = cache.comm_ij_j[p];
-			const bool forward_pair = i >= lf_begin && i < lf_end && j >= rf_begin && j < rf_end;
-			const bool reverse_pair = j >= lf_begin && j < lf_end && i >= rf_begin && i < rf_end;
+			const uint64_t lf = cache.bch_left_factor[w];
+			const uint64_t rf = cache.bch_right_factor[w];
+			const bool i_lf = lf == 1 ? cache.linear_input_mask[i]
+				: i >= lf_begin && i < lf_end;
+			const bool j_lf = lf == 1 ? cache.linear_input_mask[j]
+				: j >= lf_begin && j < lf_end;
+			const bool i_rf = rf == 1 ? cache.linear_input_mask[i]
+				: i >= rf_begin && i < rf_end;
+			const bool j_rf = rf == 1 ? cache.linear_input_mask[j]
+				: j >= rf_begin && j < rf_end;
+			const bool forward_pair = i_lf && j_rf;
+			const bool reverse_pair = j_lf && i_rf;
 			if (forward_pair || reverse_pair)
 				cache.linear_pair_idx.push_back(p);
 		}
@@ -490,9 +515,50 @@ inline void build_linear_bch_ranges(BchCache& cache) {
 		&& cache.linear_pair_idx.size() <= dense_pair_count - dense_pair_count / 3;
 }
 
+inline void configure_linear_bch_input(
+	BchCache& cache,
+	std::vector<uint32_t> input_indices,
+	bool prefix
+) {
+	cache.linear_input_idx = std::move(input_indices);
+	cache.linear_input_prefix = prefix;
+	cache.linear_input_mask.assign(cache.m, 0);
+	for (uint32_t index : cache.linear_input_idx) {
+		if (index >= cache.m)
+			throw std::out_of_range("BCH linear input index out of range");
+		cache.linear_input_mask[index] = 1;
+	}
+
+	cache.comm_k_sparse_ptr.assign(cache.m + 1, 0);
+	cache.comm_k_sparse_idx.clear();
+	for (uint64_t k = 0; k < cache.m; ++k) {
+		for (uint32_t idx = cache.comm_k_ptr[k]; idx < cache.comm_k_ptr[k + 1]; ++idx) {
+			if (cache.linear_input_mask[cache.comm_k_i[idx]]
+				|| cache.linear_input_mask[cache.comm_k_j[idx]])
+				cache.comm_k_sparse_idx.push_back(idx);
+		}
+		cache.comm_k_sparse_ptr[k + 1] = cache.comm_k_sparse_idx.size();
+	}
+	build_linear_bch_ranges(cache);
+}
+
 // ========================================================================
 // BCH cache management
 // ========================================================================
+
+inline void build_bch_formula_data(BchCache& cache, bool use_disk) {
+	const BchHardcodedData* hc = get_hardcoded_bch_data(cache.degree);
+	if (hc) {
+		cache.bch_coefficients.assign(hc->coefficients, hc->coefficients + hc->size);
+		cache.bch_left_factor.assign(hc->left_factor, hc->left_factor + hc->size);
+		cache.bch_right_factor.assign(hc->right_factor, hc->right_factor + hc->size);
+		return;
+	}
+	prepare_basis_cache(2, cache.degree, 2, use_disk);
+	cache.bch_coefficients = compute_bch_coefficients(cache.degree);
+	compute_factorization_indices(
+		2, cache.degree, cache.bch_left_factor, cache.bch_right_factor);
+}
 
 inline void prepare_bch_cache(
 	uint64_t dimension, uint64_t degree, bool use_disk = false
@@ -512,25 +578,17 @@ inline void prepare_bch_cache(
 	cache->degree = degree;
 	cache->m = ::log_sig_length(dimension, degree);
 
-	// Use hardcoded BCH data when available (degrees 1-12)
-	const BchHardcodedData* hc = get_hardcoded_bch_data(degree);
-	if (hc) {
-		cache->bch_coefficients.assign(hc->coefficients, hc->coefficients + hc->size);
-		cache->bch_left_factor.assign(hc->left_factor, hc->left_factor + hc->size);
-		cache->bch_right_factor.assign(hc->right_factor, hc->right_factor + hc->size);
-	}
-	else {
-		// Fallback for degree > 12: compute at runtime
-		// This requires a 2-letter basis cache for the Lyndon projection
-		if (dimension != 2)
-			prepare_basis_cache(2, degree, 2, use_disk);
-		cache->bch_coefficients = compute_bch_coefficients(degree);
-		compute_factorization_indices(2, degree, cache->bch_left_factor, cache->bch_right_factor);
-	}
+	build_bch_formula_data(*cache, use_disk);
 
 	// Build commutator table for d-letter Lyndon basis
 	build_commutator_table(*cache);
-	build_linear_bch_ranges(*cache);
+	const uint64_t linear_input_size = std::min(dimension, cache->m);
+	if (linear_input_size > UINT32_MAX)
+		throw std::overflow_error("BCH linear input is too large");
+	std::vector<uint32_t> linear_input_idx(linear_input_size);
+	for (uint64_t i = 0; i < linear_input_size; ++i)
+		linear_input_idx[i] = static_cast<uint32_t>(i);
+	configure_linear_bch_input(*cache, std::move(linear_input_idx), true);
 
 	std::unique_lock wlock(reg.mu);
 	reg.map.insert_or_assign(key, std::move(cache));
@@ -667,7 +725,14 @@ void bch_combine_linear_impl_(
 	uint64_t m2 = cache.bch_coefficients.size();
 
 	std::memcpy(out, ls1, m * sizeof(T));
-	for (uint64_t i = 0; i < dim; ++i) out[i] += ls2[i];
+	if (cache.linear_input_prefix) {
+		for (uint64_t i = 0; i < dim; ++i)
+			out[i] += ls2[i];
+	}
+	else {
+		for (uint32_t i : cache.linear_input_idx)
+			out[i] += ls2[i];
+	}
 
 	if (m2 <= 2) return;
 
@@ -679,7 +744,6 @@ void bch_combine_linear_impl_(
 	const uint32_t* k_i = cache.comm_k_i.data();
 	const uint32_t* k_j = cache.comm_k_j.data();
 	const double* k_val_d = cache.comm_k_val_d.data();
-	const uint32_t* k_sparse_end = cache.comm_k_sparse_end.data();
 
 	for (uint64_t w = 2; w < m2; ++w) {
 		const uint64_t lf = cache.bch_left_factor[w];
@@ -698,10 +762,24 @@ void bch_combine_linear_impl_(
 
 		for (uint64_t k = begin; k < end; ++k) {
 			T sum = T(0);
-			const uint32_t start = k_ptr[k];
-			const uint32_t end = sparse ? k_sparse_end[k] : k_ptr[k + 1];
-			for (uint32_t idx = start; idx < end; ++idx) {
-				sum += static_cast<T>(k_val_d[idx]) * (v1[k_i[idx]] * v2[k_j[idx]] - v1[k_j[idx]] * v2[k_i[idx]]);
+			if (sparse && !cache.linear_input_prefix) {
+				for (uint32_t q = cache.comm_k_sparse_ptr[k];
+					q < cache.comm_k_sparse_ptr[k + 1]; ++q) {
+					const uint32_t idx = cache.comm_k_sparse_idx[q];
+					sum += static_cast<T>(k_val_d[idx])
+						* (v1[k_i[idx]] * v2[k_j[idx]]
+							- v1[k_j[idx]] * v2[k_i[idx]]);
+				}
+			}
+			else {
+				const uint32_t start = k_ptr[k];
+				const uint32_t stop = sparse
+					? cache.comm_k_sparse_end[k] : k_ptr[k + 1];
+				for (uint32_t idx = start; idx < stop; ++idx) {
+					sum += static_cast<T>(k_val_d[idx])
+						* (v1[k_i[idx]] * v2[k_j[idx]]
+							- v1[k_j[idx]] * v2[k_i[idx]]);
+				}
 			}
 			result[k] = sum;
 			if (c_w != T(0)) out[k] += c_w * sum;

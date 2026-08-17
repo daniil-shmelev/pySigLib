@@ -130,7 +130,7 @@ static void BM_prepare_branched_log_sig_planar(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_prepare_branched_log_sig_planar)
-    ->Arg(0)->Arg(1)->Arg(2)->Unit(benchmark::kMicrosecond);
+    ->Arg(0)->Arg(1)->Arg(2)->Arg(3)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Path transforms
@@ -849,6 +849,25 @@ static void BM_branched_sig_to_log_sig_planar(benchmark::State& state) {
 BENCHMARK(BM_branched_sig_to_log_sig_planar)
     ->Arg(0)->Arg(1)->Arg(2)->Unit(benchmark::kMicrosecond);
 
+static void BM_branched_log_sig_from_path_planar_method_3(
+        benchmark::State& state) {
+    check(::prepare_branched_log_sig(3, 4, 3, false, true),
+          "prepare_branched_log_sig");
+    const uint64_t out_len = ::branched_log_sig_length(3, 4, true);
+    auto path = random_data(64 * 32 * 3, 1);
+    std::vector<double> out(64 * out_len);
+    check(::branched_log_sig_from_path_d(
+        path.data(), out.data(), 64, 32, 3, 4, 1),
+        "branched_log_sig_from_path_d");
+    for (auto _ : state) {
+        ::branched_log_sig_from_path_d(
+            path.data(), out.data(), 64, 32, 3, 4, 1);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_log_sig_from_path_planar_method_3)
+    ->Unit(benchmark::kMicrosecond);
+
 static void BM_branched_sig_to_log_sig_backprop(benchmark::State& state) {
     check(::prepare_branched_log_sig(3, 4, 0, false, false),
           "prepare_branched_log_sig");
@@ -894,6 +913,28 @@ static void BM_branched_sig_to_log_sig_backprop_planar(
 }
 BENCHMARK(BM_branched_sig_to_log_sig_backprop_planar)
     ->Arg(0)->Arg(1)->Arg(2)->Unit(benchmark::kMicrosecond);
+
+static void BM_branched_log_sig_from_path_backprop_planar_method_3(
+        benchmark::State& state) {
+    check(::prepare_branched_log_sig(3, 4, 3, false, true),
+          "prepare_branched_log_sig");
+    const uint64_t out_len = ::branched_log_sig_length(3, 4, true);
+    auto path = random_data(64 * 32 * 3, 1);
+    auto derivs = random_data(64 * out_len, 2);
+    std::vector<double> path_derivs(64 * 32 * 3);
+    check(::branched_log_sig_from_path_backprop_d(
+        derivs.data(), path_derivs.data(), path.data(),
+        64, 32, 3, 4, 1),
+        "branched_log_sig_from_path_backprop_d");
+    for (auto _ : state) {
+        ::branched_log_sig_from_path_backprop_d(
+            derivs.data(), path_derivs.data(), path.data(),
+            64, 32, 3, 4, 1);
+        benchmark::DoNotOptimize(path_derivs.data());
+    }
+}
+BENCHMARK(BM_branched_log_sig_from_path_backprop_planar_method_3)
+    ->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_combine(benchmark::State& state) {
     check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");

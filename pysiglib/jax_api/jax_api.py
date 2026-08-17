@@ -102,6 +102,8 @@ from ._ffi import (
     branched_sig_combine_backprop_ffi_call,
     branched_sig_to_log_sig_ffi_call,
     branched_sig_to_log_sig_backprop_ffi_call,
+    branched_log_sig_from_path_ffi_call,
+    branched_log_sig_from_path_backprop_ffi_call,
 )
 
 
@@ -1658,7 +1660,7 @@ def _check_branched_log_sig_device(arr, method: int) -> None:
         return
     if any(device.platform in ("cuda", "gpu") for device in devices()):
         raise NotImplementedError(
-            "MKW branched log signature methods 1 and 2 are only implemented on CPU."
+            "MKW branched log signature methods 1, 2 and 3 are only implemented on CPU."
         )
 
 
@@ -1687,6 +1689,10 @@ def branched_sig_to_log_sig(
     check_type(planar, "planar", bool)
     check_n_jobs(n_jobs)
     method = _resolve_branched_log_sig_method(method, planar)
+    if method == 3:
+        raise ValueError(
+            "method=3 is not supported in branched_sig_to_log_sig. "
+            "Use branched_log_sig(path, degree, method=3) instead.")
     _check_branched_log_sig_device(bsig, method)
 
     aug_dimension = _augmented_dim(dimension, time_aug, lead_lag)
@@ -1704,6 +1710,32 @@ def branched_sig_to_log_sig(
 branched_sig_to_log_sig.__doc__ = branched_sig_to_log_sig_forward.__doc__
 
 
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3))
+def _branched_log_sig_from_path(path, dimension, degree, n_jobs):
+    return branched_log_sig_from_path_ffi_call(
+        path, dimension, degree, n_jobs)
+
+
+def _branched_log_sig_from_path_fwd(path, dimension, degree, n_jobs):
+    result = branched_log_sig_from_path_ffi_call(
+        path, dimension, degree, n_jobs)
+    return result, (path,)
+
+
+def _branched_log_sig_from_path_bwd(
+        dimension, degree, n_jobs, residual, cotangent):
+    path, = residual
+    grad = branched_log_sig_from_path_backprop_ffi_call(
+        cotangent, path, dimension, degree, n_jobs)
+    return (grad,)
+
+
+_branched_log_sig_from_path.defvjp(
+    _branched_log_sig_from_path_fwd,
+    _branched_log_sig_from_path_bwd,
+)
+
+
 def branched_log_sig(
     path,
     degree: int,
@@ -1717,9 +1749,23 @@ def branched_log_sig(
     correction = None,
     n_jobs: int = 1,
 ):
+    ensure_registered()
     path = jnp.asarray(path)
+    _validate_shape(path)
     method = _resolve_branched_log_sig_method(method, planar)
     _check_branched_log_sig_device(path, method)
+    if method == 3:
+        correction = _prepare_correction_jax(
+            correction, path, degree, lead_lag)
+        if correction.shape[0] != 0:
+            raise ValueError(
+                "correction is not supported with branched_log_sig method=3")
+        if time_aug or lead_lag:
+            path = transform_path(
+                path, time_aug=time_aug, lead_lag=lead_lag,
+                end_time=end_time, n_jobs=n_jobs)
+        return _branched_log_sig_from_path(
+            path, path.shape[-1], degree, n_jobs)
     bsig = branched_sig(
         path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
         planar=planar, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs)

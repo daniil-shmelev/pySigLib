@@ -20,8 +20,17 @@ import torch
 
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_BRANCHED_SIG_TO_LOG_SIG, CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA
-from .data_handlers import MultipleSigInputHandler, SigOutputHandler
+from .dtypes import (
+    CPSIG_BRANCHED_LOG_SIG_FROM_PATH,
+    CPSIG_BRANCHED_SIG_TO_LOG_SIG,
+    CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA,
+)
+from .data_handlers import (
+    CorrectionInputHandler,
+    MultipleSigInputHandler,
+    PathInputHandler,
+    SigOutputHandler,
+)
 from .sig_length import aug_dim
 from .load_siglib import BUILT_WITH_CUDA, CPSIG, CUSIG
 from .branched_sig import (
@@ -29,6 +38,7 @@ from .branched_sig import (
     branched_sig,
     branched_sig_length,
 )
+from .transform_path import transform_path
 
 
 def prepare_branched_log_sig(
@@ -53,7 +63,7 @@ def prepare_branched_log_sig(
     :param degree: Maximum order (number of nodes).
     :type degree: int
     :param method: Method to prepare. Method 0 computes the expanded branched
-        log signature. Methods 1 and 2 compute compressed MKW log signatures
+        log signature. Methods 1, 2, and 3 compute compressed MKW log signatures
         and require ``planar=True``.
     :type method: int
     :param use_disk: If ``True``, load or save the branched-signature cache on disk.
@@ -107,14 +117,11 @@ def _resolve_branched_log_sig_method(method: Optional[int], planar: bool) -> int
     if method is None:
         return 1 if planar else 0
     check_type(method, "method", int)
-    if method == 3:
-        raise NotImplementedError(
-            "branched log signature method 3 is not implemented")
-    if method not in (0, 1, 2):
-        raise ValueError("method must be one of 0, 1 or 2. Got " + str(method) + " instead.")
+    if method not in (0, 1, 2, 3):
+        raise ValueError("method must be one of 0, 1, 2 or 3. Got " + str(method) + " instead.")
     if method and not planar:
         raise ValueError(
-            "branched log signature methods 1 and 2 require planar=True")
+            "branched log signature methods 1, 2 and 3 require planar=True")
     return method
 
 
@@ -175,7 +182,8 @@ def branched_sig_to_log_sig(
     :param method: Method to use. Method 0 returns the expanded branched log
         signature. Methods 1 and 2 return compressed MKW coordinates and
         require ``planar=True``. If omitted, method 0 is used for nonplanar
-        signatures and method 1 is used for planar signatures.
+        signatures and method 1 is used for planar signatures. Method 3 is not
+        available for conversion from a branched signature.
     :type method: int | None
     :param n_jobs: Number of threads to run in parallel.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
@@ -206,6 +214,10 @@ def branched_sig_to_log_sig(
     check_type(lead_lag, "lead_lag", bool)
     check_type(planar, "planar", bool)
     method = _resolve_branched_log_sig_method(method, planar)
+    if method == 3:
+        raise ValueError(
+            "method=3 is not supported in branched_sig_to_log_sig. "
+            "Use branched_log_sig(path, degree, method=3) instead.")
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
@@ -279,10 +291,11 @@ def branched_log_sig(
     :param scalar_term: If True, include the leading scalar coefficient, which is zero.
     :type scalar_term: bool
     :param method: Method to use. Method 0 returns the expanded branched log
-        signature. Methods 1 and 2 return compressed MKW coordinates and
-        require ``planar=True``. If omitted, method 0 is used for nonplanar
-        signatures and method 1 is used for planar signatures. ``scalar_term``
-        affects only method 0.
+        signature. Methods 1, 2, and 3 return compressed MKW coordinates and
+        require ``planar=True``. Method 3 uses direct sequential BCH updates
+        and does not support non-empty corrections. If omitted, method 0 is
+        used for nonplanar signatures and method 1 is used for planar
+        signatures. ``scalar_term`` affects only method 0.
     :type method: int | None
     :param correction: Optional per-segment correction of level
         :math:`\\geq 2` added to the path increment on each path
@@ -364,6 +377,41 @@ def branched_log_sig(
         print(ito_blogsig)
     """
     method = _resolve_branched_log_sig_method(method, planar)
+    if method == 3:
+        if correction is not None:
+            correction_data = CorrectionInputHandler(
+                correction,
+                PathInputHandler(path, time_aug, lead_lag, end_time, "path"),
+                degree,
+            )
+            if correction_data.length != 0:
+                raise ValueError(
+                    "correction is not supported with branched_log_sig method=3")
+        if isinstance(path, torch.Tensor) and path.device.type != "cpu":
+            raise NotImplementedError(
+                "MKW branched log signature method 3 is only supported on CPU")
+        if time_aug or lead_lag:
+            path = transform_path(
+                path, time_aug=time_aug, lead_lag=lead_lag,
+                end_time=end_time, n_jobs=n_jobs)
+        data = PathInputHandler(path, False, False, 1.0, "path")
+        if data.device != "cpu":
+            raise NotImplementedError(
+                "MKW branched log signature method 3 is only supported on CPU")
+        out_len = branched_log_sig_length(
+            data.data_dimension, degree, planar=True)
+        result = SigOutputHandler(data, out_len)
+        if data.batch_size == 0:
+            return result.data
+        err_code = CPSIG_BRANCHED_LOG_SIG_FROM_PATH[data.dtype](
+            data.data_ptr, result.data_ptr, data.batch_size, data.data_length,
+            data.data_dimension, degree, n_jobs)
+        if err_code:
+            raise Exception(
+                "Error in pysiglib.branched_log_sig (method=3): "
+                + err_msg(err_code))
+        return result.data
+
     if method and isinstance(path, torch.Tensor) and path.device.type != "cpu":
         raise NotImplementedError(
             "Compressed MKW branched log signatures are only supported on CPU")
