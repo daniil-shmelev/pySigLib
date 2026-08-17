@@ -616,7 +616,7 @@ if BUILT_WITH_CUDA:
     CUSIG.prepare_branched_sig_cuda.argtypes = (c_uint64, c_uint64, c_bool, c_bool)
     CUSIG.prepare_branched_sig_cuda.restype = c_int
 
-    CUSIG.prepare_branched_log_sig_cuda.argtypes = (c_uint64, c_uint64, c_bool, c_bool)
+    CUSIG.prepare_branched_log_sig_cuda.argtypes = (c_uint64, c_uint64, c_int, c_bool, c_bool)
     CUSIG.prepare_branched_log_sig_cuda.restype = c_int
 
     CUSIG.prepare_branched_sig_coef_cuda.argtypes = (POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool)
@@ -702,17 +702,29 @@ if BUILT_WITH_CUDA:
     CUSIG.branched_sig_backprop_cuda_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, c_double, c_bool, c_bool, POINTER(c_double), c_uint64, c_uint64, c_uint64)
     CUSIG.branched_sig_backprop_cuda_d.restype = c_int
 
-    CUSIG.branched_sig_to_log_sig_cuda_f.argtypes = (POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_bool, c_bool)
+    CUSIG.branched_sig_to_log_sig_cuda_f.argtypes = (POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
     CUSIG.branched_sig_to_log_sig_cuda_f.restype = c_int
 
-    CUSIG.branched_sig_to_log_sig_cuda_d.argtypes = (POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_bool, c_bool)
+    CUSIG.branched_sig_to_log_sig_cuda_d.argtypes = (POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
     CUSIG.branched_sig_to_log_sig_cuda_d.restype = c_int
 
-    CUSIG.branched_sig_to_log_sig_backprop_cuda_f.argtypes = (POINTER(c_float), POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_bool, c_bool)
+    CUSIG.branched_sig_to_log_sig_backprop_cuda_f.argtypes = (POINTER(c_float), POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
     CUSIG.branched_sig_to_log_sig_backprop_cuda_f.restype = c_int
 
-    CUSIG.branched_sig_to_log_sig_backprop_cuda_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_bool, c_bool)
+    CUSIG.branched_sig_to_log_sig_backprop_cuda_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_int, c_bool, c_bool)
     CUSIG.branched_sig_to_log_sig_backprop_cuda_d.restype = c_int
+
+    CUSIG.branched_log_sig_from_path_cuda_f.argtypes = (POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_uint64)
+    CUSIG.branched_log_sig_from_path_cuda_f.restype = c_int
+
+    CUSIG.branched_log_sig_from_path_cuda_d.argtypes = (POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64)
+    CUSIG.branched_log_sig_from_path_cuda_d.restype = c_int
+
+    CUSIG.branched_log_sig_from_path_backprop_cuda_f.argtypes = (POINTER(c_float), POINTER(c_float), POINTER(c_float), c_uint64, c_uint64, c_uint64, c_uint64)
+    CUSIG.branched_log_sig_from_path_backprop_cuda_f.restype = c_int
+
+    CUSIG.branched_log_sig_from_path_backprop_cuda_d.argtypes = (POINTER(c_double), POINTER(c_double), POINTER(c_double), c_uint64, c_uint64, c_uint64, c_uint64)
+    CUSIG.branched_log_sig_from_path_backprop_cuda_d.restype = c_int
 
     ######################################################
     # logsig_to_sig_cuda

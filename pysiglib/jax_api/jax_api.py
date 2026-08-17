@@ -1652,18 +1652,6 @@ def _branched_sig_to_log_sig_bwd(
 _branched_sig_to_log_sig.defvjp(_branched_sig_to_log_sig_fwd, _branched_sig_to_log_sig_bwd)
 
 
-def _check_branched_log_sig_device(arr, method: int) -> None:
-    if method == 0 or isinstance(arr, jax.core.Tracer):
-        return
-    devices = getattr(arr, "devices", None)
-    if not callable(devices):
-        return
-    if any(device.platform in ("cuda", "gpu") for device in devices()):
-        raise NotImplementedError(
-            "MKW branched log signature methods 1, 2 and 3 are only implemented on CPU."
-        )
-
-
 def branched_sig_to_log_sig(
     bsig,
     dimension: int,
@@ -1693,8 +1681,6 @@ def branched_sig_to_log_sig(
         raise ValueError(
             "method=3 is not supported in branched_sig_to_log_sig. "
             "Use branched_log_sig(path, degree, method=3) instead.")
-    _check_branched_log_sig_device(bsig, method)
-
     aug_dimension = _augmented_dim(dimension, time_aug, lead_lag)
     scalar_term = _infer_branched_scalar_term_jax(bsig, aug_dimension, degree, planar=planar)
     if not scalar_term:
@@ -1753,8 +1739,10 @@ def branched_log_sig(
     path = jnp.asarray(path)
     _validate_shape(path)
     method = _resolve_branched_log_sig_method(method, planar)
-    _check_branched_log_sig_device(path, method)
     if method == 3:
+        if path.shape[-2] == 0:
+            raise ValueError(
+                "branched_log_sig method 3 received an empty path")
         correction = _prepare_correction_jax(
             correction, path, degree, lead_lag)
         if correction.shape[0] != 0:

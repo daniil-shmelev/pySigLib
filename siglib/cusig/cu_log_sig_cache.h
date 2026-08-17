@@ -291,24 +291,20 @@ public:
 // lyndon_proj_matrix (ported from cpsig/words.cpp)
 // =========================================================================
 
-inline void cu_lyndon_proj_matrix(
+template<typename WordToFlatIndex, typename ConcatenateFlatIndex>
+inline void cu_lyndon_proj_matrix_from_words(
 	CuSparseIntMatrix& out,
 	const std::vector<cu_word>& lyndon_words,
-	std::vector<uint64_t> lyndon_idx,
-	uint64_t dimension,
-	uint64_t degree
+	uint64_t flat_word_count,
+	WordToFlatIndex word_to_flat_idx,
+	ConcatenateFlatIndex concatenate_flat_idx
 ) {
 	std::unordered_set<cu_word, CuWordHash> lyndon_set(lyndon_words.begin(), lyndon_words.end());
-	uint64_t n = host_sig_length(dimension, degree);
-	uint64_t m_ = lyndon_words.size();
-
-	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
-	uint64_t* level_index = level_index_uptr.get();
-	host_populate_level_index(level_index, dimension, degree + 2);
-
-	CuSparseIntMatrix full_mat_transpose(m_, n);
+	const uint64_t m_ = lyndon_words.size();
+	CuSparseIntMatrix full_mat_transpose(m_, flat_word_count);
 
 	std::unordered_map<cu_word, uint64_t, CuWordHash> col_idx;
+	col_idx.reserve(m_);
 	for (uint64_t i = 0; i < m_; ++i) {
 		col_idx[lyndon_words[i]] = i;
 	}
@@ -317,27 +313,34 @@ inline void cu_lyndon_proj_matrix(
 		cu_word w = lyndon_words[i];
 
 		if (w.size() == 1) {
-			full_mat_transpose.insert_entry(i, w[0] + 1, 1);
+			const uint64_t flat_idx = word_to_flat_idx(w);
+			if (flat_idx >= flat_word_count)
+				throw std::out_of_range("lyndon projection word index out of range");
+			full_mat_transpose.insert_entry(i, flat_idx, 1);
 		}
 		else {
 			cu_word v = cu_longest_lyndon_suffix_(w, lyndon_set);
 			cu_word u(w.begin(), w.end() - v.size());
 
-			uint64_t jw = col_idx[w];
-			uint64_t jv = col_idx[v];
-			uint64_t ju = col_idx[u];
+			const uint64_t jw = col_idx.at(w);
+			const uint64_t jv = col_idx.at(v);
+			const uint64_t ju = col_idx.at(u);
 
 			for (const auto& eu : full_mat_transpose.rows[ju]) {
-				if (eu.val) {
-					for (const auto& ev : full_mat_transpose.rows[jv]) {
-						if (ev.val) {
-							uint64_t ic = cu_concatenate_idx(eu.col, ev.col, v.size(), dimension);
-							int val = eu.val * ev.val;
-							full_mat_transpose.add_to_entry(jw, ic, val);
-							ic = cu_concatenate_idx(ev.col, eu.col, u.size(), dimension);
-							full_mat_transpose.add_to_entry(jw, ic, -val);
-						}
-					}
+				if (eu.val == 0)
+					continue;
+				for (const auto& ev : full_mat_transpose.rows[jv]) {
+					if (ev.val == 0)
+						continue;
+					uint64_t flat_idx = concatenate_flat_idx(eu.col, ev.col, v.size());
+					if (flat_idx >= flat_word_count)
+						throw std::out_of_range("lyndon projection concatenation index out of range");
+					const int coeff = eu.val * ev.val;
+					full_mat_transpose.add_to_entry(jw, flat_idx, coeff);
+					flat_idx = concatenate_flat_idx(ev.col, eu.col, u.size());
+					if (flat_idx >= flat_word_count)
+						throw std::out_of_range("lyndon projection concatenation index out of range");
+					full_mat_transpose.add_to_entry(jw, flat_idx, -coeff);
 				}
 			}
 		}
@@ -348,10 +351,36 @@ inline void cu_lyndon_proj_matrix(
 	out.resize(full_mat.m, full_mat.m);
 
 	for (uint64_t i = 0; i < m_; ++i) {
-		out.rows[i] = full_mat.rows[lyndon_idx[i]];
+		const uint64_t flat_idx = word_to_flat_idx(lyndon_words[i]);
+		if (flat_idx >= flat_word_count)
+			throw std::out_of_range("lyndon projection word index out of range");
+		out.rows[i] = full_mat.rows[flat_idx];
 	}
 
 	out.drop_diagonal();
+}
+
+inline void cu_lyndon_proj_matrix(
+	CuSparseIntMatrix& out,
+	const std::vector<cu_word>& lyndon_words,
+	std::vector<uint64_t> lyndon_idx,
+	uint64_t dimension,
+	uint64_t degree
+) {
+	std::unordered_map<cu_word, uint64_t, CuWordHash> flat_idx;
+	flat_idx.reserve(lyndon_words.size());
+	for (uint64_t i = 0; i < lyndon_words.size(); ++i)
+		flat_idx[lyndon_words[i]] = lyndon_idx[i];
+	cu_lyndon_proj_matrix_from_words(
+		out,
+		lyndon_words,
+		host_sig_length(dimension, degree),
+		[&flat_idx](const cu_word& w) {
+			return flat_idx.at(w);
+		},
+		[dimension](uint64_t i, uint64_t j, uint64_t len_j) {
+			return cu_concatenate_idx(i, j, len_j, dimension);
+		});
 }
 
 // =========================================================================
@@ -526,11 +555,15 @@ constexpr const char* cu_cache_version = "v2";
 
 class CuCacheFile {
 public:
-	CuCacheFile(uint64_t dimension, uint64_t degree) {
+	CuCacheFile(
+		uint64_t dimension,
+		uint64_t degree,
+		const std::string& prefix = ""
+	) {
 		auto& dir = get_cuda_cache_dir_();
 		if (dir.empty() || !std::filesystem::exists(dir / cu_cache_folder_name))
 			throw cache_dir_not_set_error("Unexpected internal error. Cache directory was not set correctly.");
-		file_name_ = std::to_string(dimension) + "_" + std::to_string(degree) + "_" + cu_cache_version + ".bin";
+		file_name_ = prefix + std::to_string(dimension) + "_" + std::to_string(degree) + "_" + cu_cache_version + ".bin";
 		file_path_ = dir / cu_cache_folder_name / file_name_;
 	}
 
@@ -751,6 +784,7 @@ void clear_cuda_bch_cache_();
 // Forward declaration - defined in cu_branched_signature.cu
 void clear_cuda_branched_sig_gpu_cache_();
 void clear_cuda_branched_log_sig_gpu_cache_();
+void clear_cuda_branched_bch_cache_();
 void release_sig_kernel_poly_state();
 
 inline void clear_cache_cuda_(bool use_disk) {
@@ -761,6 +795,7 @@ inline void clear_cache_cuda_(bool use_disk) {
 	clear_cuda_bch_cache_();
 	clear_cuda_branched_sig_gpu_cache_();
 	clear_cuda_branched_log_sig_gpu_cache_();
+	clear_cuda_branched_bch_cache_();
 	release_sig_kernel_poly_state();
 	free_cuda_log_sig_workspace_();
 	free_cuda_log_sig_backprop_workspace_();

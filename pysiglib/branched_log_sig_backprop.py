@@ -23,6 +23,7 @@ from .error_codes import err_msg
 from .dtypes import (
     CPSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP,
     CPSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP,
+    CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP_CUDA,
     CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA,
 )
 from .data_handlers import PathInputHandler, PathOutputHandler, SigInputHandler, SigOutputHandler
@@ -78,7 +79,8 @@ def branched_sig_to_log_sig_backprop(
         0 is used for nonplanar signatures and method 1 is used for planar
         signatures.
     :type method: int | None
-    :param n_jobs: Number of threads to run in parallel.
+    :param n_jobs: Number of CPU threads to run in parallel. CUDA execution
+        ignores this value.
         If n_jobs = 1, the computation is run serially. If set to -1, all available threads
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
@@ -118,14 +120,6 @@ def branched_sig_to_log_sig_backprop(
     check_non_neg(dimension, "dimension")
     check_non_neg(degree, "degree")
     check_n_jobs(n_jobs)
-    if method and (
-        isinstance(bsig, torch.Tensor) and bsig.device.type != "cpu"
-        or isinstance(blogsig_derivs, torch.Tensor)
-        and blogsig_derivs.device.type != "cpu"
-    ):
-        raise NotImplementedError(
-            "Compressed MKW branched log signatures are only supported on CPU")
-
     aug_dimension = aug_dim(dimension, time_aug, lead_lag)
     scalar_term = _infer_branched_scalar_term(bsig, aug_dimension, degree, planar=planar)
     bsig_len = branched_sig_length(aug_dimension, degree, planar=planar, scalar_term=scalar_term)
@@ -150,10 +144,6 @@ def branched_sig_to_log_sig_backprop(
 
     result = SigOutputHandler(data, bsig_len)
 
-    if method and data.device != "cpu":
-        raise NotImplementedError(
-            "Compressed MKW branched log signatures are only supported on CPU")
-
     if data.batch_size == 0:
         return result.data
 
@@ -164,7 +154,8 @@ def branched_sig_to_log_sig_backprop(
     else:
         err_code = CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA[data.dtype](
             data.data_ptr, derivs_data.data_ptr, result.data_ptr,
-            data.batch_size, aug_dimension, degree, planar, scalar_term)
+            data.batch_size, aug_dimension, degree, method, planar,
+            scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.branched_sig_to_log_sig_backprop: " + err_msg(err_code))
 
@@ -184,9 +175,12 @@ def _branched_log_sig_from_path_backprop(
     check_n_jobs(n_jobs)
 
     data = PathInputHandler(path, False, False, 1.0, "path")
-    if data.device != "cpu":
+    if data.data_length == 0:
+        raise ValueError(
+            "branched_log_sig method 3 received an empty path")
+    if data.device != "cpu" and degree > 12:
         raise NotImplementedError(
-            "MKW branched log signature method 3 is only supported on CPU")
+            "CUDA MKW BCH method supports degree at most 12")
     out_len = branched_log_sig_length(
         data.data_dimension, degree, planar=True)
     derivs_data = SigInputHandler(grad_output, out_len, "grad_output")
@@ -203,9 +197,15 @@ def _branched_log_sig_from_path_backprop(
     result = PathOutputHandler(data.data_length, data.data_dimension, data)
     if data.batch_size == 0:
         return result.data
-    err_code = CPSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP[data.dtype](
-        derivs_data.data_ptr, result.data_ptr, data.data_ptr,
-        data.batch_size, data.data_length, data.data_dimension, degree, n_jobs)
+    if data.device == "cpu":
+        err_code = CPSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP[data.dtype](
+            derivs_data.data_ptr, result.data_ptr, data.data_ptr,
+            data.batch_size, data.data_length, data.data_dimension, degree,
+            n_jobs)
+    else:
+        err_code = CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP_CUDA[data.dtype](
+            derivs_data.data_ptr, result.data_ptr, data.data_ptr,
+            data.batch_size, data.data_length, data.data_dimension, degree)
     if err_code:
         raise Exception(
             "Error in pysiglib.branched_log_sig_from_path_backprop: "

@@ -81,6 +81,8 @@ CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA = None
 CUSIG_BRANCHED_SIG_BACKPROP_CUDA = None
 CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA = None
 CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA = None
+CUSIG_BRANCHED_LOG_SIG_FROM_PATH_CUDA = None
+CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP_CUDA = None
 if BUILT_WITH_CUDA:
     CUSIG_TRANSFORM_PATH_CUDA = {
         "float32": CUSIG.transform_path_cuda_f,
@@ -430,4 +432,14 @@ if BUILT_WITH_CUDA:
     CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA = {
         "float32": CUSIG.branched_sig_to_log_sig_backprop_cuda_f,
         "float64": CUSIG.branched_sig_to_log_sig_backprop_cuda_d
+    }
+
+    CUSIG_BRANCHED_LOG_SIG_FROM_PATH_CUDA = {
+        "float32": CUSIG.branched_log_sig_from_path_cuda_f,
+        "float64": CUSIG.branched_log_sig_from_path_cuda_d
+    }
+
+    CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP_CUDA = {
+        "float32": CUSIG.branched_log_sig_from_path_backprop_cuda_f,
+        "float64": CUSIG.branched_log_sig_from_path_backprop_cuda_d
     }
