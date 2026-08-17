@@ -14,8 +14,17 @@
  * ========================================================================= */
 
 #pragma once
-#include "cppch.h"
-#include "disk_cache.h"
+#include "cache_io.h"
+
+#include <algorithm>
+#include <concepts>
+#include <cstdint>
+#include <istream>
+#include <ostream>
+#include <stdexcept>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 struct Entry {
     uint64_t col;

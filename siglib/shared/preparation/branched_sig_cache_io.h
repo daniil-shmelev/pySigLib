@@ -14,34 +14,22 @@
  * ========================================================================= */
 
 #pragma once
-#include "cppch.h"
-#include "cache_lifecycle/cp_branched_log_cache.h"
 
+#include "branched_sig_cache.h"
 
-template<std::floating_point T>
-void branched_sig_to_log_sig_(
-	const T* bsig,
-	T* out,
-	uint64_t batch_size,
+#include <filesystem>
+
+std::filesystem::path branched_sig_cache_file_path(
+	const std::filesystem::path& cache_directory,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method,
-	int n_jobs,
-	bool planar = false,
-	bool scalar_term = true
-);
-
-
-template<std::floating_point T>
-void branched_sig_to_log_sig_backprop_(
-	const T* bsig,
-	const T* derivs,
-	T* out,
-	uint64_t batch_size,
+	bool planar);
+void write_branched_sig_cache(
+	const std::filesystem::path& cache_directory,
+	const BranchedSigCache& cache);
+bool read_branched_sig_cache(
+	const std::filesystem::path& cache_directory,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method,
-	int n_jobs,
-	bool planar = false,
-	bool scalar_term = true
-);
+	bool planar,
+	BranchedSigCache& cache);

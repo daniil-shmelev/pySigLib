@@ -14,34 +14,36 @@
  * ========================================================================= */
 
 #pragma once
-#include "cppch.h"
-#include "cache_lifecycle/cp_branched_log_cache.h"
 
+#include <cstdint>
+#include <limits>
 
-template<std::floating_point T>
-void branched_sig_to_log_sig_(
-	const T* bsig,
-	T* out,
-	uint64_t batch_size,
+inline uint64_t tensor_power(uint64_t base, uint64_t exponent) noexcept {
+	uint64_t result = 1;
+	while (exponent != 0) {
+		if ((exponent & 1) != 0) {
+			if (result != 0 && base > UINT64_MAX / result)
+				return 0;
+			result *= base;
+		}
+		exponent >>= 1;
+		if (exponent != 0) {
+			if (base != 0 && base > UINT64_MAX / base)
+				return 0;
+			base *= base;
+		}
+	}
+	return result;
+}
+
+inline uint64_t tensor_sig_length(
 	uint64_t dimension,
-	uint64_t max_nodes,
-	int method,
-	int n_jobs,
-	bool planar = false,
-	bool scalar_term = true
-);
-
-
-template<std::floating_point T>
-void branched_sig_to_log_sig_backprop_(
-	const T* bsig,
-	const T* derivs,
-	T* out,
-	uint64_t batch_size,
-	uint64_t dimension,
-	uint64_t max_nodes,
-	int method,
-	int n_jobs,
-	bool planar = false,
-	bool scalar_term = true
-);
+	uint64_t degree
+) noexcept {
+	if (dimension == 0)
+		return 1;
+	if (dimension == 1)
+		return degree + 1;
+	const uint64_t value = tensor_power(dimension, degree + 1);
+	return value == 0 ? 0 : (value - 1) / (dimension - 1);
+}

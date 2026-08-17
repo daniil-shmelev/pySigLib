@@ -16,6 +16,7 @@
 #include "cupch.h"
 #include "cusig.h"
 #include "cu_utils.h"
+#include "../shared/preparation/polynomial_sig_kernel_tables.h"
 
 template<typename T>
 struct SigPolyTableCacheEntry {
@@ -43,35 +44,14 @@ static const T* get_sig_poly_tables_(uint64_t order) {
 			return entry.data;
 	}
 
-	const uint64_t size = order + 1;
+	const PolynomialSigKernelTables<T> prepared(order);
+	const uint64_t size = prepared.size;
 	const uint64_t matrix_size = size * size;
-	std::vector<T> host_tables(2 * matrix_size, static_cast<T>(0));
+	std::vector<T> host_tables(2 * matrix_size);
 	T* const mat1 = host_tables.data();
 	T* const mat2 = mat1 + matrix_size;
-
-	long double inverse_factorial = 1.0L;
-	for (uint64_t n = 1; n < size; ++n) {
-		inverse_factorial /= static_cast<long double>(n);
-		long double value = inverse_factorial * inverse_factorial;
-		mat2[n * size] = static_cast<T>(value);
-		for (uint64_t k = 1; k < size; ++k) {
-			value *= static_cast<long double>(k) / static_cast<long double>(n + k);
-			mat2[n * size + k] = static_cast<T>(value);
-		}
-	}
-
-	long double inverse_nm1_factorial = 1.0L;
-	for (uint64_t n = 2; n < size; ++n) {
-		const long double inverse_n_factorial =
-			inverse_nm1_factorial / static_cast<long double>(n);
-		long double value = inverse_n_factorial * inverse_nm1_factorial;
-		mat1[n * size + 1] = static_cast<T>(value);
-		for (uint64_t k = 2; k < n; ++k) {
-			value *= static_cast<long double>(k * (n - k + 1));
-			mat1[n * size + k] = static_cast<T>(value);
-		}
-		inverse_nm1_factorial = inverse_n_factorial;
-	}
+	std::copy(prepared.mat1.begin(), prepared.mat1.end(), mat1);
+	std::copy(prepared.mat2.begin(), prepared.mat2.end(), mat2);
 
 	CudaBuf<T> device_tables(host_tables.size() * sizeof(T));
 	CUDA_CHECK(cudaMemcpy(device_tables.get(), host_tables.data(),

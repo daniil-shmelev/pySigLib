@@ -14,26 +14,14 @@
  * ========================================================================= */
 
 #pragma once
-#include "cppch.h"
-#include "../shared/branched_sig_coef_cache.h"
 
-void prepare_branched_sig_coef_cache(
-	const uint64_t* tree_data,
-	uint64_t tree_data_len,
-	uint64_t data_dimension,
-	uint64_t dimension,
-	uint64_t max_nodes,
-	bool planar = false,
-	bool use_disk = false
-);
+#include "preparation/branched_log_sig_cache.h"
 
-const BranchedSigCoefCache& get_branched_sig_coef_cache(
-	const uint64_t* tree_data,
-	uint64_t tree_data_len,
-	uint64_t data_dimension,
-	uint64_t dimension,
-	uint64_t max_nodes,
-	bool planar = false
-);
-
-void clear_branched_sig_coef_cache();
+void prepare_branched_log_sig_cache(
+	const BranchedSigCache& cache,
+	int method,
+	bool use_disk);
+const BranchedLogSigCache& get_branched_log_sig_cache_(
+	const BranchedSigCache& cache,
+	int method);
+void clear_branched_log_sig_cache();

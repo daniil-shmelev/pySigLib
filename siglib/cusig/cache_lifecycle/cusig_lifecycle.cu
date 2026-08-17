@@ -23,7 +23,6 @@ void release_exp_sig_state();
 void release_sig_combine_state();
 void release_branched_sig_gpu_state();
 void release_branched_log_sig_gpu_state();
-void clear_cuda_branched_bch_cache_();
 void release_log_sig_combine_state();
 void release_sig_kernel_poly_state();
 
@@ -42,7 +41,6 @@ extern "C" {
 		try { release_sig_combine_state();      } catch (...) {}
 		try { release_branched_sig_gpu_state(); } catch (...) {}
 		try { release_branched_log_sig_gpu_state(); } catch (...) {}
-		try { clear_cuda_branched_bch_cache_(); } catch (...) {}
 	}
 
 }

@@ -14,7 +14,9 @@
  * ========================================================================= */
 
 #include "cp_test_helpers.h"
-#include "branched_cache.h"
+#include "branched_sig_cache.h"
+#include "trees/coproduct.h"
+#include "trees/tree.h"
 
 TEST(treeTest, StoresLeafAndNestedMetadata) {
 	TreeTable trees(3, TreeKind::Planar);
@@ -156,7 +158,7 @@ TEST(treeEnumerationTest, PreservesBckAndMkwBasisOrdering) {
 	TreeTable planar_trees(1, TreeKind::Planar);
 	std::vector<uint64_t> planar_offsets;
 	enumerate_trees(planar_trees, 3, planar_offsets);
-	const BranchedSigCache cache = build_branched_sig_cache(1, 3, true);
+	const BranchedSigCache cache(1, 3, true);
 	EXPECT_EQ(cache.basis_size(), 8);
 	const std::vector<Forest> expected = {
 		Forest{ 0 }, Forest{ 0, 0 }, Forest{ 1 }, Forest{ 0, 0, 0 },
@@ -312,7 +314,7 @@ TEST(treeEnumerationTest, PreservesBckAndMkwBasisOrdering) {
             { 1, 1 }, { 1, 3 }, { 2, 3 }, { 3, 2 }
         };
         for (const auto& [dimension, max_nodes] : cases) {
-            const auto cache = build_branched_sig_cache(dimension, max_nodes, true);
+            const BranchedSigCache cache(dimension, max_nodes, true);
             uint64_t expected = 0;
             for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
                 const uint64_t start = cache.basis_forest_offsets[basis_idx];
@@ -355,7 +357,7 @@ TEST(treeEnumerationTest, PreservesBckAndMkwBasisOrdering) {
             bsig.data(), method_two.data(), 1, dimension, max_nodes,
             2, 1, true, true), 0);
 
-        const auto cache = build_branched_sig_cache(dimension, max_nodes, true);
+        const BranchedSigCache cache(dimension, max_nodes, true);
         std::vector<word> lyndon_words;
         std::vector<uint64_t> lyndon_idx;
         std::vector<word> flat_words(cache.total_length);

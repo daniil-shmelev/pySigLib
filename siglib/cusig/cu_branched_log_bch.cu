@@ -15,7 +15,7 @@
 
 #include "cupch.h"
 #include "cusig.h"
-#include "cu_branched_log_sig_cache.h"
+#include "cache_lifecycle/cu_branched_log_sig_cache.h"
 #include "cu_log_sig_combine.h"
 #include "cu_macros.h"
 #include "cu_utils.h"
@@ -26,10 +26,6 @@
 #include <unordered_set>
 
 namespace {
-
-using CuMkwTensorElem = std::unordered_map<uint64_t, int>;
-using CuMkwInfinitesimalProduct = std::unordered_map<
-	std::pair<uint64_t, uint64_t>, CuMkwTensorElem, CuPairHash>;
 
 struct CuMkwBchDeviceData {
 	const double* bch_coefficients = nullptr;
@@ -126,13 +122,6 @@ struct CuMkwBchCache {
 	}
 };
 
-std::unordered_map<
-	CuLogSigCacheKey,
-	std::unique_ptr<CuMkwBchCache>,
-	CuLogSigCacheKeyHash
-> s_mkw_bch_cache;
-std::mutex s_mkw_bch_cache_mu;
-
 template<typename T>
 void upload_mkw_vector_(T*& device, const std::vector<T>& host) {
 	if (host.empty())
@@ -150,132 +139,6 @@ uint32_t narrow_mkw_u32_(uint64_t value, const char* message) {
 	return static_cast<uint32_t>(value);
 }
 
-void add_mkw_coefficient_(int& target, int64_t value) {
-	const int64_t result = static_cast<int64_t>(target) + value;
-	if (result < std::numeric_limits<int>::min()
-		|| result > std::numeric_limits<int>::max())
-		throw std::overflow_error("MKW BCH integer coefficient overflow");
-	target = static_cast<int>(result);
-}
-
-void remove_mkw_zero_entries_(CuMkwTensorElem& element) {
-	for (auto it = element.begin(); it != element.end();) {
-		if (it->second == 0)
-			it = element.erase(it);
-		else
-			++it;
-	}
-}
-
-CuMkwTensorElem mkw_tensor_product_(
-	const CuMkwTensorElem& left,
-	const CuMkwTensorElem& right,
-	const CuMkwHostBasisData& basis
-) {
-	CuMkwTensorElem result;
-	for (const auto& [left_idx, left_coefficient] : left) {
-		for (const auto& [right_idx, right_coefficient] : right) {
-			cu_word word = basis.flat_words.at(left_idx);
-			const cu_word& suffix = basis.flat_words.at(right_idx);
-			word.insert(word.end(), suffix.begin(), suffix.end());
-			const auto flat = basis.flat_idx.find(word);
-			if (flat == basis.flat_idx.end())
-				continue;
-			add_mkw_coefficient_(
-				result[flat->second],
-				static_cast<int64_t>(left_coefficient) * right_coefficient);
-		}
-	}
-	remove_mkw_zero_entries_(result);
-	return result;
-}
-
-CuMkwInfinitesimalProduct build_mkw_infinitesimal_product_(
-	const BranchedSigCache& cache
-) {
-	CuMkwInfinitesimalProduct product;
-	for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
-		uint64_t position = cache.coproduct_offsets[basis_idx];
-		const uint64_t end = cache.coproduct_offsets[basis_idx + 1];
-		while (position < end) {
-			const uint64_t forest_size = cache.coproduct_data[position++];
-			const uint64_t trunk = cache.coproduct_data[position++];
-			if (forest_size == 1) {
-				const uint64_t branch = cache.coproduct_data[position++];
-				add_mkw_coefficient_(
-					product[{ branch, trunk }][basis_idx + 1], 1);
-			}
-			else {
-				position += forest_size;
-			}
-		}
-	}
-	return product;
-}
-
-CuMkwTensorElem mkw_infinitesimal_product_(
-	const CuMkwTensorElem& left,
-	const CuMkwTensorElem& right,
-	const CuMkwInfinitesimalProduct& product
-) {
-	CuMkwTensorElem result;
-	for (const auto& [left_idx, left_coefficient] : left) {
-		for (const auto& [right_idx, right_coefficient] : right) {
-			const auto found = product.find({ left_idx, right_idx });
-			if (found == product.end())
-				continue;
-			for (const auto& [out_idx, coefficient] : found->second) {
-				add_mkw_coefficient_(
-					result[out_idx],
-					static_cast<int64_t>(left_coefficient)
-						* right_coefficient * coefficient);
-			}
-		}
-	}
-	remove_mkw_zero_entries_(result);
-	return result;
-}
-
-void apply_mkw_inverse_projection_(
-	const CuSparseIntMatrix& inverse,
-	std::vector<double>& coordinates
-) {
-	for (uint64_t offset = 0; offset < inverse.n; ++offset) {
-		const uint64_t row = inverse.n - offset - 1;
-		for (const CuEntry& entry : inverse.rows[row])
-			coordinates[row] += static_cast<double>(entry.val)
-				* coordinates[entry.col];
-	}
-}
-
-std::vector<double> build_unit_segment_coefficients_(
-	const BranchedSigCache& cache,
-	const CuMkwHostBasisData& basis
-) {
-	// Evaluate log(signature) for a unit increment, then project to method 2.
-	// The resulting coefficients scale the corresponding increment monomials.
-	const BranchedLogHornerPlan plan = build_branched_log_horner_plan(cache);
-	BranchedLogHornerWorkspace<double> workspace(plan.product_count);
-	std::vector<double> h(cache.total_length, 0.0);
-	std::vector<double> expanded(cache.total_length, 0.0);
-
-	for (uint64_t flat = 1; flat < cache.total_length; ++flat)
-		h[flat] = cache.inv_tree_factorial[flat - 1];
-	auto flat_value = [&h](uint64_t flat) { return h[flat]; };
-	auto set_output = [&expanded](uint64_t flat, double value) {
-		expanded[flat] = value;
-	};
-	branched_log_horner_forward<double>(
-		cache.total_length, cache.max_nodes, cache.planar,
-		plan, flat_value, set_output, workspace);
-
-	std::vector<double> compact(basis.lyndon_idx.size(), 0.0);
-	for (uint64_t index = 0; index < compact.size(); ++index)
-		compact[index] = expanded[basis.lyndon_idx[index]];
-	apply_mkw_inverse_projection_(basis.inv_proj_mat, compact);
-	return compact;
-}
-
 struct HostMkwBchTables_ {
 	std::vector<uint32_t> k_ptr;
 	std::vector<uint32_t> k_i;
@@ -286,139 +149,6 @@ struct HostMkwBchTables_ {
 	std::vector<uint32_t> a_partner;
 	std::vector<int> a_signed_c;
 };
-
-HostMkwBchTables_ build_mkw_commutator_tables_(
-	const BranchedSigCache& cache,
-	const CuMkwHostBasisData& basis
-) {
-	// Build sparse forward and reverse tables for the MKW Lie commutator.
-	const uint64_t m = basis.lyndon_words.size();
-	std::vector<CuMkwTensorElem> tensor_representations(m);
-	for (uint64_t index = 0; index < m; ++index) {
-		if (basis.lyndon_words[index].size() == 1) {
-			tensor_representations[index] = {
-				{ basis.flat_idx.at(basis.lyndon_words[index]), 1 }
-			};
-			continue;
-		}
-		CuMkwTensorElem left_right = mkw_tensor_product_(
-			tensor_representations[basis.left_factor[index]],
-			tensor_representations[basis.right_factor[index]], basis);
-		const CuMkwTensorElem right_left = mkw_tensor_product_(
-			tensor_representations[basis.right_factor[index]],
-			tensor_representations[basis.left_factor[index]], basis);
-		for (const auto& [flat, coefficient] : right_left)
-			add_mkw_coefficient_(left_right[flat], -static_cast<int64_t>(coefficient));
-		remove_mkw_zero_entries_(left_right);
-		tensor_representations[index] = std::move(left_right);
-	}
-
-	struct KEntry_ {
-		uint32_t i;
-		uint32_t j;
-		int coefficient;
-	};
-	std::vector<std::vector<KEntry_>> by_output(m);
-	const CuMkwInfinitesimalProduct product
-		= build_mkw_infinitesimal_product_(cache);
-	std::vector<double> coordinates(m, 0.0);
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			const uint64_t weight = basis.lyndon_weights[i]
-				+ basis.lyndon_weights[j];
-			if (weight > cache.max_nodes)
-				continue;
-			CuMkwTensorElem commutator = mkw_infinitesimal_product_(
-				tensor_representations[i], tensor_representations[j], product);
-			const CuMkwTensorElem reverse = mkw_infinitesimal_product_(
-				tensor_representations[j], tensor_representations[i], product);
-			for (const auto& [flat, coefficient] : reverse)
-				add_mkw_coefficient_(commutator[flat], -static_cast<int64_t>(coefficient));
-			remove_mkw_zero_entries_(commutator);
-			std::fill(coordinates.begin(), coordinates.end(), 0.0);
-			for (uint64_t k = 0; k < m; ++k) {
-				if (basis.lyndon_weights[k] != weight)
-					continue;
-				const auto found = commutator.find(basis.lyndon_idx[k]);
-				if (found != commutator.end())
-					coordinates[k] = static_cast<double>(found->second);
-			}
-			apply_mkw_inverse_projection_(basis.inv_proj_mat, coordinates);
-			for (uint64_t k = 0; k < m; ++k) {
-				const double rounded = std::round(coordinates[k]);
-				if (rounded == 0.0)
-					continue;
-				if (rounded < std::numeric_limits<int>::min()
-					|| rounded > std::numeric_limits<int>::max())
-					throw std::overflow_error("MKW BCH commutator coefficient overflow");
-				by_output[k].push_back({
-					static_cast<uint32_t>(i),
-					static_cast<uint32_t>(j),
-					static_cast<int>(rounded)
-				});
-			}
-		}
-	}
-
-	HostMkwBchTables_ tables;
-	tables.k_ptr.resize(m + 1);
-	uint64_t offset = 0;
-	for (uint64_t k = 0; k < m; ++k) {
-		tables.k_ptr[k] = narrow_mkw_u32_(
-			offset, "MKW BCH commutator table exceeds uint32 range");
-		offset += by_output[k].size();
-	}
-	tables.k_ptr[m] = narrow_mkw_u32_(
-		offset, "MKW BCH commutator table exceeds uint32 range");
-	tables.k_i.reserve(offset);
-	tables.k_j.reserve(offset);
-	tables.k_val.reserve(offset);
-	for (const auto& entries : by_output) {
-		for (const KEntry_& entry : entries) {
-			tables.k_i.push_back(entry.i);
-			tables.k_j.push_back(entry.j);
-			tables.k_val.push_back(entry.coefficient);
-		}
-	}
-
-	struct AEntry_ {
-		uint32_t k;
-		uint32_t partner;
-		int signed_coefficient;
-	};
-	std::vector<std::vector<AEntry_>> by_input(m);
-	for (uint64_t k = 0; k < m; ++k) {
-		for (uint32_t index = tables.k_ptr[k]; index < tables.k_ptr[k + 1]; ++index) {
-			const uint32_t i = tables.k_i[index];
-			const uint32_t j = tables.k_j[index];
-			const int coefficient = tables.k_val[index];
-			by_input[i].push_back({ static_cast<uint32_t>(k), j, coefficient });
-			by_input[j].push_back({ static_cast<uint32_t>(k), i, -coefficient });
-		}
-	}
-	tables.a_ptr.resize(m + 1);
-	offset = 0;
-	for (uint64_t a = 0; a < m; ++a) {
-		tables.a_ptr[a] = narrow_mkw_u32_(
-			offset, "MKW BCH reverse table exceeds uint32 range");
-		offset += by_input[a].size();
-	}
-	tables.a_ptr[m] = narrow_mkw_u32_(
-		offset, "MKW BCH reverse table exceeds uint32 range");
-	if (offset > (UINT32_MAX >> 1))
-		throw std::overflow_error("MKW BCH reverse plan exceeds uint32 packing");
-	tables.a_k.reserve(offset);
-	tables.a_partner.reserve(offset);
-	tables.a_signed_c.reserve(offset);
-	for (const auto& entries : by_input) {
-		for (const AEntry_& entry : entries) {
-			tables.a_k.push_back(entry.k);
-			tables.a_partner.push_back(entry.partner);
-			tables.a_signed_c.push_back(entry.signed_coefficient);
-		}
-	}
-	return tables;
-}
 
 struct HostMkwPruning_ {
 	std::vector<uint64_t> range;
@@ -546,7 +276,8 @@ HostMkwPruning_ build_mkw_pruning_(
 }
 
 std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
-	const BranchedSigCache& cache
+	const BranchedSigCache& cache,
+	const BranchedBchCache& host_cache
 ) {
 	if (!cache.planar)
 		throw std::invalid_argument("MKW BCH requires planar=True");
@@ -554,10 +285,8 @@ std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
 		throw std::runtime_error(
 			"CUDA MKW BCH method supports degree at most 12");
 
-	// Method 3 reuses the prepared method 2 basis and adds BCH-specific data.
-	const CuMkwHostBasisData& basis = get_cuda_mkw_host_basis_data_(
-		cache.dimension, cache.max_nodes, 2);
-	const uint64_t m = basis.lyndon_words.size();
+	const BchCache& host_bch = host_cache.bch;
+	const uint64_t m = host_bch.m;
 	if (m > UINT32_MAX)
 		throw std::overflow_error("CUDA MKW BCH basis exceeds uint32 range");
 
@@ -572,18 +301,17 @@ std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
 			"CUDA MKW BCH method supports degree at most 12");
 	result->bch.m2 = formula->size;
 
-	std::vector<double> segment_coefficients_full
-		= build_unit_segment_coefficients_(cache, basis);
 	std::vector<uint32_t> segment_idx;
 	std::vector<double> segment_coefficients;
 	std::vector<uint32_t> segment_label_offsets{ 0 };
 	std::vector<uint8_t> segment_labels;
 	for (uint64_t coordinate = 0; coordinate < m; ++coordinate) {
-		if (segment_coefficients_full[coordinate] == 0.0)
+		if (host_cache.linear_coefficients[coordinate] == 0.0)
 			continue;
 		segment_idx.push_back(static_cast<uint32_t>(coordinate));
-		segment_coefficients.push_back(segment_coefficients_full[coordinate]);
-		const uint64_t basis_idx = basis.lyndon_idx[coordinate] - 1;
+		segment_coefficients.push_back(
+			host_cache.linear_coefficients[coordinate]);
+		const uint64_t basis_idx = host_cache.linear_basis_idx[coordinate];
 		const uint64_t start = cache.node_labels_offsets[basis_idx];
 		const uint64_t end = cache.node_labels_offsets[basis_idx + 1];
 		segment_labels.insert(
@@ -595,9 +323,17 @@ std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
 	}
 	result->segment_count = segment_idx.size();
 
-	const HostMkwBchTables_ tables = build_mkw_commutator_tables_(cache, basis);
+	HostMkwBchTables_ tables;
+	tables.k_ptr = host_bch.comm_k_ptr;
+	tables.k_i = host_bch.comm_k_i;
+	tables.k_j = host_bch.comm_k_j;
+	tables.k_val = host_bch.comm_k_val;
+	tables.a_ptr = host_bch.comm_a_ptr;
+	tables.a_k = host_bch.comm_a_k;
+	tables.a_partner = host_bch.comm_a_partner;
+	tables.a_signed_c = host_bch.comm_a_signed_c;
 	const HostMkwPruning_ pruning = build_mkw_pruning_(
-		*formula, tables, basis.lyndon_weights, segment_idx);
+		*formula, tables, host_bch.coordinate_weights, segment_idx);
 	result->bch.linear_dense_forward_work = pruning.dense_forward_work;
 	result->bch.linear_active_forward_work = pruning.exact_forward_work;
 	result->bch.linear_zero_work = pruning.exact_zero_work;
@@ -642,14 +378,15 @@ const CuMkwBchCache& get_cuda_mkw_bch_cache_(
 	uint64_t dimension,
 	uint64_t max_nodes
 ) {
-	const CuLogSigCacheKey key = make_cuda_log_sig_cache_key_(
-		dimension, max_nodes);
-	std::lock_guard<std::mutex> lock(s_mkw_bch_cache_mu);
-	const auto found = s_mkw_bch_cache.find(key);
-	if (found == s_mkw_bch_cache.end())
+	const auto key = make_cuda_branched_log_cache_key_(
+		dimension, max_nodes, true);
+	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
+	const auto found = get_cuda_branched_log_sig_cache_map_().find(key);
+	if (found == get_cuda_branched_log_sig_cache_map_().end()
+		|| !found->second.bch)
 		throw cache_not_found_error(
 			"CUDA MKW BCH cache not found - call prepare_branched_log_sig with method=3 first");
-	return *found->second;
+	return *static_cast<const CuMkwBchCache*>(found->second.bch.get());
 }
 
 template<typename T>
@@ -1378,23 +1115,24 @@ void branched_log_sig_from_path_backprop_cuda_(
 
 void prepare_cuda_branched_bch_cache_(
 	const BranchedSigCache& cache,
-	bool
+	const BranchedBchCache& host_cache
 ) {
-	const CuLogSigCacheKey key = make_cuda_log_sig_cache_key_(
-		cache.dimension, cache.max_nodes);
+	const auto key = make_cuda_branched_log_cache_key_(
+		cache.dimension, cache.max_nodes, true);
 	{
-		std::lock_guard<std::mutex> lock(s_mkw_bch_cache_mu);
-		if (s_mkw_bch_cache.find(key) != s_mkw_bch_cache.end())
+		std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
+		const auto found = get_cuda_branched_log_sig_cache_map_().find(key);
+		if (found != get_cuda_branched_log_sig_cache_map_().end()
+			&& found->second.bch)
 			return;
 	}
-	auto built = build_cuda_mkw_bch_cache_(cache);
-	std::lock_guard<std::mutex> lock(s_mkw_bch_cache_mu);
-	s_mkw_bch_cache.try_emplace(key, std::move(built));
-}
-
-void clear_cuda_branched_bch_cache_() {
-	std::lock_guard<std::mutex> lock(s_mkw_bch_cache_mu);
-	s_mkw_bch_cache.clear();
+	std::shared_ptr<CuMkwBchCache> built =
+		build_cuda_mkw_bch_cache_(cache, host_cache);
+	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
+	auto [found, inserted] =
+		get_cuda_branched_log_sig_cache_map_().try_emplace(key);
+	if (!found->second.bch)
+		found->second.bch = std::move(built);
 }
 
 extern "C" {

@@ -21,8 +21,8 @@
 #include "cp_path.h"
 #include "cp_signature.h"
 #include "cp_sig_kernel.h"
-#include "sparse.h"
-#include "words.h"
+#include "sparse_int_matrix.h"
+#include "lyndon_words.h"
 #include <algorithm>
 #include <random>
 #include <iostream>

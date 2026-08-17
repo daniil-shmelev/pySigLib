@@ -16,7 +16,7 @@
 #include "cppch.h"
 #include "cpsig.h"
 #include "cp_branched_signature.h"
-#include "cp_branched_cache.h"
+#include "cache_lifecycle/cp_branched_cache.h"
 #include "macros.h"
 
 extern "C" {
