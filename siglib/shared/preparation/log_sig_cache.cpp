@@ -32,10 +32,9 @@ inline constexpr const char* basis_cache_version_ = "v2";
 void build_basis_projection_(
 	BasisCache& basis,
 	uint64_t dimension,
-	uint64_t degree
+	uint64_t degree,
+	const std::vector<word>& lyndon_words
 ) {
-	const std::vector<word> lyndon_words = all_lyndon_words(
-		dimension, degree);
 	SparseIntMatrix projection;
 	lyndon_proj_matrix(
 		projection, lyndon_words, basis.lyndon_idx,
@@ -58,7 +57,8 @@ BasisCache build_basis_cache_(
 	for (const word& value : lyndon_words)
 		result.lyndon_idx.push_back(word_to_idx(value, dimension));
 	if (method >= 2)
-		build_basis_projection_(result, dimension, degree);
+		build_basis_projection_(
+			result, dimension, degree, lyndon_words);
 	return result;
 }
 }  // namespace
@@ -222,7 +222,10 @@ void LogSigCache::upgrade(
 		}
 	}
 	if (basis_.method == 1 && basis_method == 2) {
-		build_basis_projection_(basis_, dimension_, degree_);
+		const std::vector<word> lyndon_words = all_lyndon_words(
+			dimension_, degree_);
+		build_basis_projection_(
+			basis_, dimension_, degree_, lyndon_words);
 		if (use_disk && !cache_directory.empty()) {
 			write_log_sig_basis_cache(
 				cache_directory, dimension_, degree_, basis_, file_prefix);

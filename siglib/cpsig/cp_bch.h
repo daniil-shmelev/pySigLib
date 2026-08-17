@@ -43,7 +43,7 @@ inline void prepare_bch_cache(
 		return;
 
 	log_cache.set_bch(make_standard_bch_cache(
-		dimension, degree, get_basis_cache(dimension, degree, 2)));
+		dimension, degree, log_cache.basis(2)));
 }
 
 inline const BchCache& get_bch_cache(uint64_t dimension, uint64_t degree) {

@@ -124,7 +124,9 @@ void prepare_basis_cache(uint64_t dimension, uint64_t degree, int method, bool u
 		if (it != reg.map.end() && it->second->supports(method))
 			return;
 	}
-	const auto cache_directory = get_cache_dir() / cache_folder_name;
+	const std::filesystem::path cache_directory = use_disk
+		? get_cache_dir() / cache_folder_name
+		: std::filesystem::path{};
 	std::unique_lock wlock(reg.mu);
 	auto found = reg.map.find(key);
 	if (found == reg.map.end()) {
@@ -173,9 +175,9 @@ LogSigCache& get_log_sig_cache_mutable(
 	auto& reg = log_sig_cache_registry();
 	std::shared_lock lock(reg.mu);
 	const auto found = reg.map.find(key);
+	const int basis_method = (std::min)(method, 2);
 	if (found == reg.map.end()
-		|| !found->second->basis((std::min)(method, 2)).supports(
-			(std::min)(method, 2)))
+		|| !found->second->supports(basis_method))
 		throw cache_not_found_error("Could not find basis cache");
 	return *found->second;
 }
