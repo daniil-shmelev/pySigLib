@@ -13,22 +13,24 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cupch.h"
 #include "cusig.h"
 #include "cu_atomic.h"
 #include "cache_lifecycle/cu_branched_log_sig_cache.h"
 #include "cache_lifecycle/cu_log_sig_cache.h"
 #include "cu_macros.h"
 #include "cu_utils.h"
-#include "../shared/preparation/branched_sig_cache.h"
-#include "../shared/preparation/branched_log_plan.h"
+#include "../shared/preparation/branched_sig/branched_sig_cache.h"
+#include "../shared/preparation/branched_sig/branched_log_plan.h"
 #include "../shared/trees/basis_counts.h"
 
 #include <cstdint>
 #include <algorithm>
 #include <memory>
+#include <mutex>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 std::unordered_map<

@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 #if defined(CUSIG_EXPORTS)
 	#if defined(_MSC_VER)
 		#define CUSIG_API __declspec(dllexport)

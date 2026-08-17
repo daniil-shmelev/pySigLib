@@ -27,7 +27,6 @@ add_library(cusig SHARED
     cu_signature.cu
     cu_sig_combine.cu
     cache_lifecycle/cusig_lifecycle.cu
-    cupch.cpp
 )
 
 set_target_properties(cusig PROPERTIES
@@ -50,11 +49,6 @@ target_compile_options(cusig PRIVATE
 )
 
 if(MSVC)
-    # cl.exe flags for cupch.cpp: /GL whole-program opt, /Gy func-level linking,
-    # /Oi intrinsics, /sdl security checks, /Zi PDB, /permissive- strict C++.
-    set_source_files_properties(cupch.cpp PROPERTIES
-        COMPILE_FLAGS "/Oi /GL /Gy /sdl /Zi /permissive-"
-    )
     target_compile_definitions(cusig PRIVATE _USRDLL _UNICODE UNICODE)
 endif()
 
@@ -71,10 +65,9 @@ else()
 endif()
 
 if(MSVC)
-    # link.exe flags: /LTCG pairs with /GL, /OPT:REF drops unused code, /OPT:ICF
-    # folds identical COMDATs, /DEBUG emits a PDB.
+    # link.exe flags: /OPT:REF drops unused code, /OPT:ICF folds identical
+    # COMDATs, and /DEBUG emits a PDB.
     target_link_options(cusig PRIVATE
-        "$<HOST_LINK:/LTCG:incremental>"
         "$<HOST_LINK:/OPT:REF>"
         "$<HOST_LINK:/OPT:ICF>"
         "$<HOST_LINK:/DEBUG>"

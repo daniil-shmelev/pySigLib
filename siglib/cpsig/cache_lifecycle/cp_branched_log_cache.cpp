@@ -39,8 +39,7 @@ void prepare_branched_log_sig_cache(
 	int method,
 	bool use_disk
 ) {
-	const auto key = make_branched_sig_cache_key(
-		cache.dimension, cache.max_nodes, cache.planar);
+	const auto key = make_branched_sig_cache_key(cache.dimension, cache.max_nodes, cache.planar);
 	auto& registry = branched_log_sig_cache_registry_();
 	{
 		std::shared_lock lock(registry.mu);
@@ -48,16 +47,11 @@ void prepare_branched_log_sig_cache(
 		if (found != registry.map.end() && found->second->supports(method))
 			return;
 	}
-	const std::filesystem::path cache_directory = use_disk
-		? get_cache_dir() / cache_folder_name
-		: std::filesystem::path{};
+	const std::filesystem::path cache_directory = use_disk ? get_cache_dir() / cache_folder_name : std::filesystem::path{};
 	std::unique_lock lock(registry.mu);
 	const auto found = registry.map.find(key);
 	if (found == registry.map.end()) {
-		registry.map.try_emplace(
-			key,
-			std::make_unique<BranchedLogSigCache>(
-				cache, method, cache_directory, use_disk));
+		registry.map.try_emplace(key, std::make_unique<BranchedLogSigCache>(cache, method, cache_directory, use_disk));
 	}
 	else if (!found->second->supports(method))
 		found->second->upgrade(cache, method, cache_directory, use_disk);

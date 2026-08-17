@@ -18,7 +18,7 @@
 
 #include "cp_sig_combine.h"
 #include "cp_signature.h"
-#include "../shared/preparation/lyndon_words.h"
+#include "../shared/preparation/log_sig/lyndon_words.h"
 #include "cache_lifecycle/log_sig_cache.h"
 
 #include "macros.h"

@@ -15,7 +15,7 @@
 
 #pragma once
 #include "cppch.h"
-#include "preparation/branched_sig_coef_cache.h"
+#include "preparation/branched_sig/branched_sig_coef_cache.h"
 
 void prepare_branched_sig_coef_cache(
 	const uint64_t* tree_data,

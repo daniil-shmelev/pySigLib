@@ -14,7 +14,11 @@
  * ========================================================================= */
 
 #pragma once
-#include "cupch.h"
+#include "cu_runtime_utils.h"
+
+#include <cstdint>
+#include <stdexcept>
+#include <string>
 
 constexpr size_t CUDA_BASE_DYNAMIC_SMEM = 48 * 1024;
 

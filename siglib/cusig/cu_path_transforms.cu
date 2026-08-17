@@ -13,9 +13,11 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cupch.h"
 #include "cusig.h"
+#include "cu_runtime_utils.h"
 #include "cu_path_transforms.h"
+
+#include <cstdint>
 
 namespace {
 struct TransformPathParams {

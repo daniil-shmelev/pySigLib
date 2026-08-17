@@ -14,7 +14,8 @@
  * ========================================================================= */
 
 #pragma once
-#include "cupch.h"
+
+#include <cstdint>
 
 template<typename T>
 void cu_transform_path_(

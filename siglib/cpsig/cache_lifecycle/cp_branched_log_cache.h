@@ -15,7 +15,7 @@
 
 #pragma once
 
-#include "preparation/branched_log_sig_cache.h"
+#include "preparation/branched_sig/branched_log_sig_cache.h"
 
 void prepare_branched_log_sig_cache(
 	const BranchedSigCache& cache,

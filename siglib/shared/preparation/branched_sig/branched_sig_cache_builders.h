@@ -1,4 +1,4 @@
-/* Copyright 2025 Daniil Shmelev
+/* Copyright 2026 Daniil Shmelev
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,38 +13,15 @@
  * limitations under the License.
  * ========================================================================= */
 
-// Stable standard-library headers precompiled by the cpsig target.
-
 #pragma once
 
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <stdexcept>
-#include <vector>
-#include <string>
-#include <span>
-#include <memory>
-#include <algorithm>
-#include <utility>
-#include <thread>
-#include <mutex>
-#include <shared_mutex>
-#include <functional>
-#include <concepts>
-#include <variant>
-#include <set>
-#include <map>
-#include <unordered_set>
-#include <unordered_map>
-#include <fstream>
-#include <filesystem>
-#include <cmath>
+#include "branched_sig_cache.h"
 
-#ifdef VEC
-#ifndef __APPLE__
-#include <immintrin.h>
-#else
-#include <arm_neon.h>
-#endif
-#endif
+namespace branched_sig_cache_detail {
+BranchedSigCache build_bck_branched_sig_cache_(
+	uint64_t dimension,
+	uint64_t max_nodes);
+BranchedSigCache build_mkw_branched_sig_cache_(
+	uint64_t dimension,
+	uint64_t max_nodes);
+}  // namespace branched_sig_cache_detail

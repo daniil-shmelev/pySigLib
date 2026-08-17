@@ -16,7 +16,6 @@
 #pragma once
 
 #include <cstdint>
-#include <filesystem>
 #include <istream>
 #include <ostream>
 #include <stdexcept>
@@ -37,8 +36,7 @@ inline void check_stream_has_bytes(
 	const std::streampos end = in.tellg();
 	in.seekg(here);
 	if (here < 0 || end < 0 || static_cast<uint64_t>(end - here) < need)
-		throw std::runtime_error(
-			std::string("Tried to read an invalid cache file: ") + label);
+		throw std::runtime_error(std::string("Tried to read an invalid cache file: ") + label);
 }
 
 template<typename T>
@@ -50,9 +48,7 @@ inline void serialize_cache_vector(
 	const uint64_t size = values.size();
 	out.write(reinterpret_cast<const char*>(&size), sizeof(size));
 	if (size != 0) {
-		out.write(
-			reinterpret_cast<const char*>(values.data()),
-			static_cast<std::streamsize>(size * sizeof(T)));
+		out.write(reinterpret_cast<const char*>(values.data()), static_cast<std::streamsize>(size * sizeof(T)));
 	}
 }
 
@@ -66,18 +62,14 @@ inline void deserialize_cache_vector(
 	uint64_t size = 0;
 	in.read(reinterpret_cast<char*>(&size), sizeof(size));
 	if (!in || size > MAX_CACHE_VECTOR_SIZE)
-		throw std::runtime_error(
-			std::string("Tried to read an invalid cache file: ") + label);
+		throw std::runtime_error(std::string("Tried to read an invalid cache file: ") + label);
 	if (size == 0) {
 		values.clear();
 		return;
 	}
 	check_stream_has_bytes(in, size * sizeof(T), label);
 	values.resize(size);
-	in.read(
-		reinterpret_cast<char*>(values.data()),
-		static_cast<std::streamsize>(size * sizeof(T)));
+	in.read(reinterpret_cast<char*>(values.data()), static_cast<std::streamsize>(size * sizeof(T)));
 	if (!in)
-		throw std::runtime_error(
-			std::string("Tried to read an invalid cache file: ") + label);
+		throw std::runtime_error(std::string("Tried to read an invalid cache file: ") + label);
 }

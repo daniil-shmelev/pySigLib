@@ -19,7 +19,7 @@
 #include "cp_branched_log_signature.h"
 #include "cache_lifecycle/cp_branched_cache.h"
 #include "cp_bch.h"
-#include "../shared/preparation/branched_log_plan.h"
+#include "../shared/preparation/branched_sig/branched_log_plan.h"
 #include "../shared/branched_log_horner.h"
 #include "multithreading.h"
 #include "macros.h"

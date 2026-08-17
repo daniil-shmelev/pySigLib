@@ -15,7 +15,7 @@
 
 #include <gtest/gtest.h>
 
-#include "cupch.h"
+#include "cu_runtime_utils.h"
 
 TEST(cudaBatchGridTest, SplitsAcrossLaunches) {
 	const uint64_t batch_size = CUDA_BATCH_GRID_CAPACITY + 1;

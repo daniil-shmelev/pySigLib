@@ -16,6 +16,12 @@
 #pragma once
 
 #include <charconv>
+#include <filesystem>
+#include <iostream>
+#include <new>
+#include <stdexcept>
+#include <string>
+#include <system_error>
 #include "../shared/errors.h"
 
 // Unified error-handling macro for all cusig exported functions.

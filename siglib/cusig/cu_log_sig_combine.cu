@@ -13,11 +13,15 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cupch.h"
 #include "cusig.h"
 #include "cu_log_sig_combine.h"
 #include "cu_macros.h"
 #include "cu_utils.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <mutex>
+#include <stdexcept>
 
 // Type-erased via void* because the hosting functions are templated over
 // float/double - both share one buffer, sized to the larger allocation.

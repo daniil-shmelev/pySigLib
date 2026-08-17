@@ -13,7 +13,6 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cupch.h"
 #include "cusig.h"
 #include <cuda_runtime.h>
 

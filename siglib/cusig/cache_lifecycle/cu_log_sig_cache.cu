@@ -13,7 +13,6 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cupch.h"
 #include "cusig.h"
 #include "cu_log_sig_cache.h"
 #include "cu_log_sig_combine.h"
@@ -23,6 +22,9 @@
 // =========================================================================
 
 #include "cu_macros.h"
+
+#include <cstdint>
+#include <mutex>
 
 std::unordered_map<
 	CuLogSigCacheKey, CUDALogSigCache, CuLogSigCacheKeyHash

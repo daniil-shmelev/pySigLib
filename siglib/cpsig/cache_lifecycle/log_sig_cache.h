@@ -15,7 +15,7 @@
 
 #pragma once
 
-#include "preparation/log_sig_cache.h"
+#include "preparation/log_sig/log_sig_cache.h"
 
 #include <cstdint>
 #include <memory>
