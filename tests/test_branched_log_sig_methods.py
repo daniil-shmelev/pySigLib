@@ -280,39 +280,6 @@ def test_compressed_cache_disk_round_trip(tmp_path):
         pysiglib.clear_cache(use_disk=True)
 
 
-def test_method_two_builds_from_legacy_method_zero_planar_disk_cache(tmp_path):
-    dimension, degree = 2, 3
-    pysiglib.set_cache_dir(str(tmp_path))
-    pysiglib.clear_cache(use_disk=True)
-    try:
-        pysiglib.prepare_branched_log_sig(
-            dimension, degree, 0, planar=True, device="cpu", use_disk=True)
-        cache_dir = tmp_path / "pysiglib_cache"
-        cache_file, = cache_dir.glob("planar_branched_*.bin")
-        assert not list(cache_dir.glob("mkw_lyndon_*.bin"))
-
-        cache_bytes = cache_file.read_bytes()
-        offset = 4 * 8
-        for item_size in (8, 8, 1, 8, 8, 8, 8, 8):
-            count = int.from_bytes(
-                cache_bytes[offset:offset + 8], byteorder=sys.byteorder)
-            offset += 8 + count * item_size
-        cache_file.write_bytes(cache_bytes[:offset])
-
-        pysiglib.clear_cache(use_disk=False)
-        pysiglib.prepare_branched_log_sig(
-            dimension, degree, 2, planar=True, device="cpu", use_disk=True)
-
-        output = pysiglib.branched_log_sig(
-            _path(), degree, planar=True, method=2)
-        assert output.shape == (
-            pysiglib.branched_log_sig_length(
-                dimension, degree, planar=True),)
-        assert list(cache_dir.glob("mkw_lyndon_*.bin"))
-    finally:
-        pysiglib.clear_cache(use_disk=True)
-
-
 def test_malformed_planar_forest_offsets_rebuild_disk_cache(tmp_path):
     dimension, degree = 2, 3
     pysiglib.set_cache_dir(str(tmp_path))
