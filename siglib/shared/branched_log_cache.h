@@ -38,6 +38,8 @@ struct BranchedLogProductCsr {
 // plan stores the reduced coproduct and the backend-specific product layouts.
 struct BranchedLogHornerPlan {
 	uint64_t product_count = 0;
+	// Horner level k only needs products with at most max_nodes - k + 1 nodes.
+	std::vector<uint64_t> product_node_counts;
 	BranchedLogProductChain cpu_products;
 	BranchedLogProductCsr cuda_products;
 	// CSR list of (left product, right product) coproduct pairs.
@@ -108,6 +110,9 @@ inline BranchedLogHornerPlan build_planar_horner_plan_(
 	// MKW coordinates already are ordered forests, so each flat coordinate is
 	// one product. All product mappings are therefore implicit.
 	out.product_count = cache.total_length;
+	out.product_node_counts.resize(cache.total_length, 0);
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat)
+		out.product_node_counts[flat] = cache.basis_node_count(flat - 1);
 
 	out.coproduct_offsets.resize(cache.total_length + 1, 0);
 	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
@@ -222,6 +227,7 @@ inline BranchedLogHornerPlan build_nonplanar_horner_plan_(
 		cache, product_index);
 	BranchedLogHornerPlan out;
 	out.product_count = products.size();
+	out.product_node_counts.resize(products.size(), 0);
 	out.flat_to_product = build_flat_to_product_(cache, product_index);
 	out.cpu_products.parent.resize(products.size(), 0);
 	out.cpu_products.last_factor.resize(products.size(), 0);
@@ -230,6 +236,9 @@ inline BranchedLogHornerPlan build_nonplanar_horner_plan_(
 		out.cpu_products.last_factor[product] = prefix.back();
 		prefix.pop_back();
 		out.cpu_products.parent[product] = find_product_(product_index, prefix);
+		out.product_node_counts[product]
+			= out.product_node_counts[out.cpu_products.parent[product]]
+			+ cache.basis_node_count(out.cpu_products.last_factor[product] - 1);
 	}
 	const TreeCoproduct tree_coproduct = build_tree_product_coproducts_(
 		cache, product_index, out.flat_to_product);

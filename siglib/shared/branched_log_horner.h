@@ -87,12 +87,17 @@ void branched_log_horner_forward(
 	}
 
 	const T initial_scale = T(1) / static_cast<T>(max_nodes);
-	for (uint64_t product = 1; product < plan.product_count; ++product)
-		current[product] = initial_scale * h[product];
+	for (uint64_t product = 1; product < plan.product_count; ++product) {
+		if (plan.product_node_counts[product] == 1)
+			current[product] = initial_scale * h[product];
+	}
 
 	for (uint64_t k = max_nodes - 1; k > 1; --k) {
 		const T scale = T(1) / static_cast<T>(k);
+		const uint64_t max_product_nodes = max_nodes - k + 1;
 		for (uint64_t product = 1; product < plan.product_count; ++product) {
+			if (plan.product_node_counts[product] > max_product_nodes)
+				continue;
 			T value = T(0);
 			const uint64_t start = plan.coproduct_offsets[product];
 			const uint64_t end = plan.coproduct_offsets[product + 1];

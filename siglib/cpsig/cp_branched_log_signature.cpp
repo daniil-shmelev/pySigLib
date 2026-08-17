@@ -600,14 +600,19 @@ void branched_sig_to_log_sig_backprop_horner_row_(
 	T* const last = workspace.states.data()
 		+ (cache.max_nodes - 2) * num_products;
 	const T initial_scale = T(1) / static_cast<T>(cache.max_nodes);
-	for (uint64_t product = 1; product < num_products; ++product)
-		last[product] = initial_scale * h[product];
+	for (uint64_t product = 1; product < num_products; ++product) {
+		if (plan.product_node_counts[product] == 1)
+			last[product] = initial_scale * h[product];
+	}
 
 	for (uint64_t k = cache.max_nodes - 1; k > 1; --k) {
 		T* const current = workspace.states.data() + (k - 2) * num_products;
 		const T* const next = current + num_products;
 		const T scale = T(1) / static_cast<T>(k);
+		const uint64_t max_product_nodes = cache.max_nodes - k + 1;
 		for (uint64_t product = 1; product < num_products; ++product) {
+			if (plan.product_node_counts[product] > max_product_nodes)
+				continue;
 			T value = T(0);
 			const uint64_t start = plan.coproduct_offsets[product];
 			const uint64_t end = plan.coproduct_offsets[product + 1];
@@ -644,7 +649,10 @@ void branched_sig_to_log_sig_backprop_horner_row_(
 		const T* const next_state = workspace.states.data()
 			+ (k - 1) * num_products;
 		const T scale = T(1) / static_cast<T>(k);
+		const uint64_t max_product_nodes = cache.max_nodes - k + 1;
 		for (uint64_t product = 1; product < num_products; ++product) {
+			if (plan.product_node_counts[product] > max_product_nodes)
+				continue;
 			const T d = d_current[product];
 			d_h[product] += scale * d;
 			const uint64_t start = plan.coproduct_offsets[product];
@@ -660,16 +668,21 @@ void branched_sig_to_log_sig_backprop_horner_row_(
 		std::fill(d_next, d_next + num_products, T(0));
 	}
 	const T last_scale = T(1) / static_cast<T>(cache.max_nodes);
-	for (uint64_t product = 1; product < num_products; ++product)
-		d_h[product] += last_scale * d_current[product];
+	for (uint64_t product = 1; product < num_products; ++product) {
+		if (plan.product_node_counts[product] == 1)
+			d_h[product] += last_scale * d_current[product];
+	}
 
 	if (cache.planar) {
 		for (uint64_t product = 1; product < num_products; ++product) {
-			out[log_output_idx_<ScalarTerm>(product)] += d_h[product];
+			if (plan.product_node_counts[product] < cache.max_nodes)
+				out[log_output_idx_<ScalarTerm>(product)] += d_h[product];
 		}
 		return;
 	}
 	for (uint64_t product = num_products - 1; product > 0; --product) {
+		if (plan.product_node_counts[product] >= cache.max_nodes)
+			continue;
 		const uint64_t factor = plan.cpu_products.last_factor[product];
 		const uint64_t parent = plan.cpu_products.parent[product];
 		const T d = d_h[product];
@@ -733,7 +746,7 @@ void branched_sig_to_log_sig_horner_range_(
 	if (start == end || stride == 0)
 		return;
 	const uint64_t row_count = end - start;
-	constexpr uint64_t tile_rows = 256;
+	constexpr uint64_t tile_rows = 64;
 	if (row_count > tile_rows) {
 		for (uint64_t tile_start = start; tile_start < end; tile_start += tile_rows) {
 			branched_sig_to_log_sig_horner_range_<T, ScalarTerm>(
@@ -773,6 +786,8 @@ void branched_sig_to_log_sig_horner_range_(
 
 	const T initial_scale = T(1) / static_cast<T>(cache.max_nodes);
 	for (uint64_t product = 1; product < product_count; ++product) {
+		if (plan.product_node_counts[product] != 1)
+			continue;
 		T* const current_product = current + product * row_count;
 		const T* const h_product = h + product * row_count;
 		for (uint64_t row = 0; row < row_count; ++row)
@@ -781,7 +796,10 @@ void branched_sig_to_log_sig_horner_range_(
 
 	for (uint64_t k = cache.max_nodes - 1; k > 1; --k) {
 		const T scale = T(1) / static_cast<T>(k);
+		const uint64_t max_product_nodes = cache.max_nodes - k + 1;
 		for (uint64_t product = 1; product < product_count; ++product) {
+			if (plan.product_node_counts[product] > max_product_nodes)
+				continue;
 			T* const next_product = next + product * row_count;
 			const T* const h_product = h + product * row_count;
 			for (uint64_t row = 0; row < row_count; ++row)
@@ -885,9 +903,22 @@ void branched_sig_to_log_sig_backprop_horner_range_(
 			states + state * workspace_size + row_count,
 			T(0));
 	}
-	std::fill(d_h, d_h + workspace_size, T(0));
-	std::fill(d_current, d_current + workspace_size, T(0));
-	std::fill(d_next, d_next + workspace_size, T(0));
+	for (uint64_t product = 1; product < product_count; ++product) {
+		const uint64_t product_nodes = plan.product_node_counts[product];
+		if (product_nodes < cache.max_nodes) {
+			std::fill(
+				d_h + product * row_count,
+				d_h + (product + 1) * row_count, T(0));
+			std::fill(
+				d_current + product * row_count,
+				d_current + (product + 1) * row_count, T(0));
+		}
+		if (product_nodes + 1 < cache.max_nodes) {
+			std::fill(
+				d_next + product * row_count,
+				d_next + (product + 1) * row_count, T(0));
+		}
+	}
 	fill_branched_log_horner_products_range_<T, ScalarTerm>(
 		bsig_start, row_count, stride, cache, plan, h);
 
@@ -902,6 +933,8 @@ void branched_sig_to_log_sig_backprop_horner_range_(
 		+ (cache.max_nodes - 2) * workspace_size;
 	const T initial_scale = T(1) / static_cast<T>(cache.max_nodes);
 	for (uint64_t product = 1; product < product_count; ++product) {
+		if (plan.product_node_counts[product] != 1)
+			continue;
 		T* const last_product = last + product * row_count;
 		const T* const h_product = h + product * row_count;
 		for (uint64_t row = 0; row < row_count; ++row)
@@ -912,7 +945,10 @@ void branched_sig_to_log_sig_backprop_horner_range_(
 		T* const current_state = states + (k - 2) * workspace_size;
 		const T* const next_state = current_state + workspace_size;
 		const T scale = T(1) / static_cast<T>(k);
+		const uint64_t max_product_nodes = cache.max_nodes - k + 1;
 		for (uint64_t product = 1; product < product_count; ++product) {
+			if (plan.product_node_counts[product] > max_product_nodes)
+				continue;
 			T* const current_product = current_state + product * row_count;
 			const T* const h_product = h + product * row_count;
 			for (uint64_t row = 0; row < row_count; ++row)
@@ -955,7 +991,10 @@ void branched_sig_to_log_sig_backprop_horner_range_(
 	for (uint64_t k = 2; k < cache.max_nodes; ++k) {
 		const T* const next_state = states + (k - 1) * workspace_size;
 		const T scale = T(1) / static_cast<T>(k);
+		const uint64_t max_product_nodes = cache.max_nodes - k + 1;
 		for (uint64_t product = 1; product < product_count; ++product) {
+			if (plan.product_node_counts[product] > max_product_nodes)
+				continue;
 			T* const d_h_product = d_h + product * row_count;
 			const T* const d_current_product
 				= d_current + product * row_count;
@@ -979,10 +1018,21 @@ void branched_sig_to_log_sig_backprop_horner_range_(
 			}
 		}
 		std::swap(d_current, d_next);
-		std::fill(d_next, d_next + workspace_size, T(0));
+		if (k + 1 < cache.max_nodes) {
+			const uint64_t max_next_nodes = cache.max_nodes - k - 1;
+			for (uint64_t product = 1; product < product_count; ++product) {
+				if (plan.product_node_counts[product] <= max_next_nodes) {
+					std::fill(
+						d_next + product * row_count,
+						d_next + (product + 1) * row_count, T(0));
+				}
+			}
+		}
 	}
 	const T last_scale = T(1) / static_cast<T>(cache.max_nodes);
 	for (uint64_t product = 1; product < product_count; ++product) {
+		if (plan.product_node_counts[product] != 1)
+			continue;
 		T* const d_h_product = d_h + product * row_count;
 		const T* const d_current_product = d_current + product * row_count;
 		for (uint64_t row = 0; row < row_count; ++row)
@@ -991,6 +1041,8 @@ void branched_sig_to_log_sig_backprop_horner_range_(
 
 	if (cache.planar) {
 		for (uint64_t product = 1; product < product_count; ++product) {
+			if (plan.product_node_counts[product] >= cache.max_nodes)
+				continue;
 			const T* const d_h_product = d_h + product * row_count;
 			for (uint64_t row = 0; row < row_count; ++row) {
 				out_start[row * stride + log_output_idx_<ScalarTerm>(product)]
@@ -1000,6 +1052,8 @@ void branched_sig_to_log_sig_backprop_horner_range_(
 		return;
 	}
 	for (uint64_t product = product_count - 1; product > 0; --product) {
+		if (plan.product_node_counts[product] >= cache.max_nodes)
+			continue;
 		const uint64_t factor = plan.cpu_products.last_factor[product];
 		const uint64_t parent = plan.cpu_products.parent[product];
 		const T* const h_parent = h + parent * row_count;
