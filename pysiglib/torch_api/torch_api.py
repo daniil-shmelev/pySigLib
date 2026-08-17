@@ -1024,9 +1024,6 @@ def branched_log_sig(
             path, degree, time_aug=time_aug, lead_lag=lead_lag,
             end_time=end_time, planar=planar, scalar_term=scalar_term,
             method=method, n_jobs=n_jobs)
-    if method and isinstance(path, torch.Tensor) and path.device.type != "cpu":
-        raise NotImplementedError(
-            "Compressed MKW branched log signatures are only supported on CPU")
     bsig = branched_sig(
         path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
         planar=planar, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs)

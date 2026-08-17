@@ -436,6 +436,9 @@ struct CudaFns<float> {
     static constexpr auto bsig_to_log_sig = branched_sig_to_log_sig_cuda_f;
     static constexpr auto bsig_to_log_sig_backprop = branched_sig_to_log_sig_backprop_cuda_f;
 
+    static constexpr auto branched_log_sig_from_path = branched_log_sig_from_path_cuda_f;
+    static constexpr auto branched_log_sig_from_path_backprop = branched_log_sig_from_path_backprop_cuda_f;
+
     static constexpr auto log_sig_from_path = log_sig_from_path_cuda_f;
     static constexpr auto log_sig_from_path_backprop = log_sig_from_path_backprop_cuda_f;
 
@@ -479,6 +482,9 @@ struct CudaFns<double> {
 
     static constexpr auto bsig_to_log_sig = branched_sig_to_log_sig_cuda_d;
     static constexpr auto bsig_to_log_sig_backprop = branched_sig_to_log_sig_backprop_cuda_d;
+
+    static constexpr auto branched_log_sig_from_path = branched_log_sig_from_path_cuda_d;
+    static constexpr auto branched_log_sig_from_path_backprop = branched_log_sig_from_path_backprop_cuda_d;
 
     static constexpr auto log_sig_from_path = log_sig_from_path_cuda_d;
     static constexpr auto log_sig_from_path_backprop = log_sig_from_path_backprop_cuda_d;
@@ -2918,7 +2924,7 @@ ffi::Error BranchedSigToLogSigBackpropCpu(
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
-ffi::Error BranchedSigToLogSigCudaImpl(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t /*n_jobs*/, bool planar,
+ffi::Error BranchedSigToLogSigCudaImpl(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t method, std::int64_t /*n_jobs*/, bool planar,
     ffi::AnyBuffer& bsig, ffi::Result<ffi::AnyBuffer>& out) {
     SigSpec spec;
     if (auto msg = GetSigSpec(bsig, spec); !msg.empty()) return InvalidArgument(msg);
@@ -2926,13 +2932,14 @@ ffi::Error BranchedSigToLogSigCudaImpl(cudaStream_t stream, std::int64_t dimensi
     if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
     int err_code = CudaFns<T>::bsig_to_log_sig(BufferData<T>(bsig), BufferData<T>(out),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), planar, true);
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes),
+        static_cast<int>(method), planar, true);
     if (err_code != 0) return NativeCallError("branched_sig_to_log_sig_cuda", err_code);
     return ffi::Error::Success();
 }
 
 template <typename T>
-ffi::Error BranchedSigToLogSigBackpropCudaImpl(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t /*n_jobs*/, bool planar,
+ffi::Error BranchedSigToLogSigBackpropCudaImpl(cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes, std::int64_t method, std::int64_t /*n_jobs*/, bool planar,
     ffi::AnyBuffer& bsig, ffi::AnyBuffer& cotangent, ffi::Result<ffi::AnyBuffer>& out) {
     SigSpec spec;
     if (auto msg = GetSigSpec(bsig, spec); !msg.empty()) return InvalidArgument(msg);
@@ -2941,7 +2948,8 @@ ffi::Error BranchedSigToLogSigBackpropCudaImpl(cudaStream_t stream, std::int64_t
     int err_code = CudaFns<T>::bsig_to_log_sig_backprop(BufferData<T>(bsig), BufferData<T>(cotangent),
         BufferData<T>(out),
         spec.is_batch ? spec.batch_size : 1,
-        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes), planar, true);
+        static_cast<std::uint64_t>(dimension), static_cast<std::uint64_t>(max_nodes),
+        static_cast<int>(method), planar, true);
     if (err_code != 0) return NativeCallError("branched_sig_to_log_sig_backprop_cuda", err_code);
     return ffi::Error::Success();
 }
@@ -2950,13 +2958,10 @@ ffi::Error BranchedSigToLogSigCuda(
     cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes,
     std::int64_t method, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer bsig, ffi::Result<ffi::AnyBuffer> out) {
-    if (method != 0) {
-        return InvalidArgument(
-            "MKW branched log signature methods 1, 2 and 3 are only implemented on CPU");
-    }
     if (auto msg = ValidateFloatBuffer("bsig", bsig); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(bsig), [&]<typename T>() -> ffi::Error {
-        return BranchedSigToLogSigCudaImpl<T>(stream, dimension, max_nodes, n_jobs, planar, bsig, out);
+        return BranchedSigToLogSigCudaImpl<T>(
+            stream, dimension, max_nodes, method, n_jobs, planar, bsig, out);
     });
 }
 
@@ -2964,13 +2969,11 @@ ffi::Error BranchedSigToLogSigBackpropCuda(
     cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes,
     std::int64_t method, std::int64_t n_jobs, bool planar,
     ffi::AnyBuffer bsig, ffi::AnyBuffer cotangent, ffi::Result<ffi::AnyBuffer> out) {
-    if (method != 0) {
-        return InvalidArgument(
-            "MKW branched log signature methods 1, 2 and 3 are only implemented on CPU");
-    }
     if (auto msg = ValidateSameFloatDtype("bsig", bsig, "cotangent", cotangent); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(bsig), [&]<typename T>() -> ffi::Error {
-        return BranchedSigToLogSigBackpropCudaImpl<T>(stream, dimension, max_nodes, n_jobs, planar, bsig, cotangent, out);
+        return BranchedSigToLogSigBackpropCudaImpl<T>(
+            stream, dimension, max_nodes, method, n_jobs, planar, bsig,
+            cotangent, out);
     });
 }
 #endif
@@ -3038,20 +3041,70 @@ ffi::Error BranchedLogSigFromPathBackpropCpu(
 }
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
-ffi::Error BranchedLogSigFromPathCuda(
-    cudaStream_t, std::int64_t, std::int64_t, std::int64_t,
-    ffi::AnyBuffer, ffi::Result<ffi::AnyBuffer>
+template <typename T>
+ffi::Error BranchedLogSigFromPathCudaImpl(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes,
+    ffi::AnyBuffer& path, ffi::Result<ffi::AnyBuffer>& out
 ) {
-    return InvalidArgument(
-        "MKW branched log signature method 3 is only implemented on CPU");
+    PathSpec spec;
+    if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+
+    const std::uint64_t batch = spec.is_batch ? spec.batch_size : 1;
+    const int err_code = CudaFns<T>::branched_log_sig_from_path(
+        BufferData<T>(path), BufferData<T>(out), batch, spec.length,
+        static_cast<std::uint64_t>(dimension),
+        static_cast<std::uint64_t>(max_nodes));
+    if (err_code != 0) return NativeCallError(
+        "branched_log_sig_from_path_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+template <typename T>
+ffi::Error BranchedLogSigFromPathBackpropCudaImpl(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes,
+    ffi::AnyBuffer& cotangent, ffi::AnyBuffer& path,
+    ffi::Result<ffi::AnyBuffer>& out
+) {
+    PathSpec spec;
+    if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+
+    const std::uint64_t batch = spec.is_batch ? spec.batch_size : 1;
+    const int err_code = CudaFns<T>::branched_log_sig_from_path_backprop(
+        BufferData<T>(cotangent), BufferData<T>(out), BufferData<T>(path),
+        batch, spec.length, static_cast<std::uint64_t>(dimension),
+        static_cast<std::uint64_t>(max_nodes));
+    if (err_code != 0) return NativeCallError(
+        "branched_log_sig_from_path_backprop_cuda", err_code);
+    return ffi::Error::Success();
+}
+
+ffi::Error BranchedLogSigFromPathCuda(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes,
+    std::int64_t /*n_jobs*/, ffi::AnyBuffer path,
+    ffi::Result<ffi::AnyBuffer> out
+) {
+    if (auto msg = ValidateFloatBuffer("path", path); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
+        return BranchedLogSigFromPathCudaImpl<T>(
+            stream, dimension, max_nodes, path, out);
+    });
 }
 
 ffi::Error BranchedLogSigFromPathBackpropCuda(
-    cudaStream_t, std::int64_t, std::int64_t, std::int64_t,
-    ffi::AnyBuffer, ffi::AnyBuffer, ffi::Result<ffi::AnyBuffer>
+    cudaStream_t stream, std::int64_t dimension, std::int64_t max_nodes,
+    std::int64_t /*n_jobs*/, ffi::AnyBuffer cotangent, ffi::AnyBuffer path,
+    ffi::Result<ffi::AnyBuffer> out
 ) {
-    return InvalidArgument(
-        "MKW branched log signature method 3 is only implemented on CPU");
+    if (auto msg = ValidateSameFloatDtype(
+        "cotangent", cotangent, "path", path); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
+        return BranchedLogSigFromPathBackpropCudaImpl<T>(
+            stream, dimension, max_nodes, cotangent, path, out);
+    });
 }
 #endif
 

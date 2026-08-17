@@ -42,6 +42,16 @@ def _planar_bsig(dimension, degree, *, batch=False, scalar_term=False):
         path, degree, planar=True, scalar_term=scalar_term)
 
 
+def _gpu_device():
+    try:
+        devices = jax.devices("gpu")
+    except RuntimeError:
+        devices = []
+    if not devices:
+        pytest.skip("JAX GPU device unavailable")
+    return devices[0]
+
+
 @pytest.mark.parametrize("method", [1, 2])
 @pytest.mark.parametrize("scalar_term", [False, True])
 @pytest.mark.parametrize("jitted", [False, True])
@@ -186,26 +196,42 @@ def test_jax_branched_log_sig_method_validation():
             bsig, dimension, degree, planar=True, method=-1)
 
 
-def test_jax_compressed_branched_log_sig_rejects_gpu_array():
-    gpu_devices = [
-        device for device in jax.devices()
-        if device.platform in ("cuda", "gpu")
-    ]
-    if not gpu_devices:
-        pytest.skip("JAX GPU device unavailable")
+@pytest.mark.parametrize("method", [1, 2])
+@pytest.mark.parametrize("scalar_term", [False, True])
+@pytest.mark.parametrize("jitted", [False, True])
+def test_jax_cuda_compressed_value_and_grad_match_cpu(
+        method, scalar_term, jitted):
+    gpu = _gpu_device()
+    dimension, degree = 2, 3
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, method, planar=True, device="both",
+        use_disk=False)
+    bsig = _planar_bsig(
+        dimension, degree, batch=True, scalar_term=scalar_term)
+    expected = pysiglib.branched_sig_to_log_sig(
+        bsig, dimension, degree, planar=True, method=method)
+    weights = np.random.default_rng(6741).normal(size=expected.shape)
+    expected_grad = pysiglib.branched_sig_to_log_sig_backprop(
+        bsig, weights, dimension, degree, planar=True, method=method)
+    bsig_gpu = jax.device_put(jnp.asarray(bsig), gpu)
+    weights_gpu = jax.device_put(jnp.asarray(weights), gpu)
 
-    dimension, degree = 1, 1
-    bsig = jax.device_put(
-        jnp.ones(
-            pysiglib.branched_sig_length(
-                dimension, degree, planar=True, scalar_term=True),
-            dtype=jnp.float64,
-        ),
-        gpu_devices[0],
-    )
-    with pytest.raises(NotImplementedError, match="only implemented on CPU"):
-        jax_api.branched_sig_to_log_sig(
-            bsig, dimension, degree, planar=True, method=1)
+    def convert(value):
+        return jax_api.branched_sig_to_log_sig(
+            value, dimension, degree, planar=True, method=method)
+
+    def loss(value):
+        return jnp.sum(convert(value) * weights_gpu)
+
+    convert_fn = jax.jit(convert) if jitted else convert
+    grad_fn = jax.jit(jax.grad(loss)) if jitted else jax.grad(loss)
+    actual = convert_fn(bsig_gpu)
+    actual_grad = grad_fn(bsig_gpu)
+
+    np.testing.assert_allclose(
+        np.asarray(actual), expected, atol=2e-9, rtol=2e-9)
+    np.testing.assert_allclose(
+        np.asarray(actual_grad), expected_grad, atol=2e-8, rtol=2e-8)
 
 
 @pytest.mark.parametrize("jitted", [False, True])
@@ -288,3 +314,92 @@ def test_jax_method_three_rejects_correction():
     with pytest.raises(ValueError, match="correction is not supported"):
         jax_api.branched_log_sig(
             path, 2, planar=True, method=3, correction=correction)
+
+
+@pytest.mark.parametrize(
+    "time_aug,lead_lag",
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+@pytest.mark.parametrize("batch_shape", [(), (0,)])
+def test_jax_method_three_rejects_empty_paths(
+        batch_shape, time_aug, lead_lag):
+    path = jnp.empty(batch_shape + (0, 2), dtype=jnp.float64)
+    with pytest.raises(ValueError, match="empty path"):
+        jax_api.branched_log_sig(
+            path, 2, planar=True, method=3,
+            time_aug=time_aug, lead_lag=lead_lag)
+
+
+@pytest.mark.parametrize("jitted", [False, True])
+@pytest.mark.parametrize("batch", [False, True])
+def test_jax_cuda_method_three_value_and_grad_match_cpu(jitted, batch):
+    gpu = _gpu_device()
+    dimension, degree = 2, 3
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, 3, planar=True, device="both",
+        use_disk=False)
+    rng = np.random.default_rng(5814)
+    shape = (2, 5, dimension) if batch else (5, dimension)
+    path = np.cumsum(rng.normal(scale=0.2, size=shape), axis=-2)
+    expected = pysiglib.branched_log_sig(
+        path, degree, planar=True, method=3)
+    weights = rng.normal(size=expected.shape)
+    expected_grad = _branched_log_sig_from_path_backprop(
+        weights, path, degree)
+    path_gpu = jax.device_put(jnp.asarray(path), gpu)
+    weights_gpu = jax.device_put(jnp.asarray(weights), gpu)
+
+    def compute(value):
+        return jax_api.branched_log_sig(
+            value, degree, planar=True, method=3)
+
+    def loss(value):
+        return jnp.sum(compute(value) * weights_gpu)
+
+    compute_fn = jax.jit(compute) if jitted else compute
+    grad_fn = jax.jit(jax.grad(loss)) if jitted else jax.grad(loss)
+    actual = compute_fn(path_gpu)
+    actual_grad = grad_fn(path_gpu)
+
+    np.testing.assert_allclose(
+        np.asarray(actual), expected, atol=2e-9, rtol=2e-9)
+    np.testing.assert_allclose(
+        np.asarray(actual_grad), expected_grad, atol=2e-8, rtol=2e-8)
+
+
+@pytest.mark.parametrize("jitted", [False, True])
+def test_jax_cuda_empty_batch_compressed_and_method_three(jitted):
+    gpu = _gpu_device()
+    dimension, degree = 2, 2
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, 2, planar=True, device="both",
+        use_disk=False)
+    pysiglib.prepare_branched_log_sig(
+        dimension, degree, 3, planar=True, device="both",
+        use_disk=False)
+    bsig_length = pysiglib.branched_sig_length(
+        dimension, degree, planar=True, scalar_term=True)
+    compact_length = pysiglib.branched_log_sig_length(
+        dimension, degree, planar=True)
+    bsig = jax.device_put(
+        jnp.empty((0, bsig_length), dtype=jnp.float64), gpu)
+    path = jax.device_put(
+        jnp.empty((0, 3, dimension), dtype=jnp.float64), gpu)
+
+    def convert(value):
+        return jax_api.branched_sig_to_log_sig(
+            value, dimension, degree, planar=True, method=2)
+
+    def direct(value):
+        return jax_api.branched_log_sig(
+            value, degree, planar=True, method=3)
+
+    convert_fn = jax.jit(convert) if jitted else convert
+    direct_fn = jax.jit(direct) if jitted else direct
+    converted = convert_fn(bsig)
+    computed = direct_fn(path)
+
+    assert converted.shape == (0, compact_length)
+    assert computed.shape == (0, compact_length)
+    converted.block_until_ready()
+    computed.block_until_ready()

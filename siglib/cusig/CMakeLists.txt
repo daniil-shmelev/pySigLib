@@ -4,6 +4,7 @@ if(NOT DEFINED CUSIG_INSTALL_DESTINATION)
 endif()
 
 add_library(cusig SHARED
+	cu_branched_log_bch.cu
     cu_branched_log_signature.cu
     cu_branched_signature.cu
     cu_branched_sig_kernel.cu
@@ -23,8 +24,9 @@ add_library(cusig SHARED
 )
 
 set_target_properties(cusig PROPERTIES
-    CUDA_STANDARD 17
-    CXX_STANDARD  20
+    CUDA_STANDARD          20
+    CUDA_STANDARD_REQUIRED ON
+    CXX_STANDARD           20
     CUDA_SEPARABLE_COMPILATION ON
     CUDA_ARCHITECTURES         "${PYSIGLIB_CUDA_ARCH}"
 )
