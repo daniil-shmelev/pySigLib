@@ -16,6 +16,7 @@
 #pragma once
 
 #include "cupch.h"
+#include "preparation/cache_io.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -25,49 +26,11 @@
 #include <string>
 #include <vector>
 
-inline constexpr uint64_t kCuMaxCacheVectorSize = 1'000'000'000ULL;
-inline constexpr uint64_t cu_cache_magic_number = 0x70797369676C6962;
 inline constexpr const char* cu_cache_folder_name = "pysiglib_cache";
-
-inline void cu_check_stream_has_bytes_(std::istream& in, uint64_t need, const char* label) {
-	const std::streampos here = in.tellg();
-	in.seekg(0, std::ios::end);
-	const std::streampos end = in.tellg();
-	in.seekg(here);
-	if (here < 0 || end < 0 || static_cast<uint64_t>(end - here) < need)
-		throw std::runtime_error(std::string("Tried to read an invalid cache file: ") + label);
-}
 
 inline std::filesystem::path& get_cuda_cache_dir_() {
 	static std::filesystem::path dir;
 	return dir;
-}
-
-inline void cu_serialize_vector_(std::ostream& out, const std::vector<uint64_t>& v) {
-	const uint64_t size = v.size();
-	out.write(reinterpret_cast<const char*>(&size), sizeof(size));
-	if (size > 0)
-		out.write(reinterpret_cast<const char*>(v.data()), size * sizeof(uint64_t));
-}
-
-inline void cu_deserialize_vector_(std::istream& in, std::vector<uint64_t>& out) {
-	uint64_t size;
-	in.read(reinterpret_cast<char*>(&size), sizeof(size));
-	if (!in)
-		throw std::runtime_error("Tried to read an invalid cache file: vector size header");
-	if (size > kCuMaxCacheVectorSize)
-		throw std::runtime_error("Tried to read an invalid cache file: vector size exceeds limit");
-
-	if (size == 0) {
-		out.clear();
-		return;
-	}
-
-	cu_check_stream_has_bytes_(in, size * sizeof(uint64_t), "vector body");
-	out.resize(size);
-	in.read(reinterpret_cast<char*>(out.data()), size * sizeof(uint64_t));
-	if (!in)
-		throw std::runtime_error("Tried to read an invalid cache file: vector body read");
 }
 
 inline void set_cache_dir_cuda_(const char* dir) {

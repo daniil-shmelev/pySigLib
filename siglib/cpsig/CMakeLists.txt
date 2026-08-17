@@ -1,9 +1,17 @@
+if(NOT TARGET pysiglib_preparation)
+    add_subdirectory(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../shared/preparation"
+        "${CMAKE_CURRENT_BINARY_DIR}/preparation"
+    )
+endif()
+
 add_library(cpsig SHARED
     cp_bch.cpp
-    cp_branched_cache.cpp
+    cache_lifecycle/cp_branched_cache.cpp
+    cache_lifecycle/cp_branched_log_cache.cpp
     cp_branched_log_signature.cpp
     cp_branched_sig_coef.cpp
-    cp_branched_sig_coef_cache.cpp
+    cache_lifecycle/cp_branched_sig_coef_cache.cpp
     cp_branched_signature.cpp
     cp_branched_sig_kernel.cpp
     cp_log_signatures.cpp
@@ -17,8 +25,7 @@ add_library(cpsig SHARED
     cp_sig_join.cpp
     cppch.cpp
     cpsig.cpp
-    log_sig_cache.cpp
-    words.cpp
+    cache_lifecycle/log_sig_cache.cpp
 )
 
 include(FetchContent)
@@ -50,11 +57,15 @@ if(APPLE)
 elseif(UNIX)
     set_target_properties(cpsig PROPERTIES INSTALL_RPATH "$ORIGIN")
 endif()
-target_include_directories(cpsig PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
+target_include_directories(cpsig PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../shared"
+)
 target_compile_definitions(cpsig PRIVATE CPSIG_EXPORTS)
 
 target_link_libraries(cpsig
     PRIVATE Threads::Threads
+    PRIVATE pysiglib_preparation
     PUBLIC TBB::tbb
 )
 

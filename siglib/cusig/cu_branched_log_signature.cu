@@ -16,12 +16,13 @@
 #include "cupch.h"
 #include "cusig.h"
 #include "cu_atomic.h"
-#include "cu_branched_log_sig_cache.h"
-#include "cu_log_sig_cache.h"
+#include "cache_lifecycle/cu_branched_log_sig_cache.h"
+#include "cache_lifecycle/cu_log_sig_cache.h"
 #include "cu_macros.h"
 #include "cu_utils.h"
-#include "../shared/branched_cache.h"
-#include "../shared/branched_log_cache.h"
+#include "../shared/preparation/branched_sig_cache.h"
+#include "../shared/preparation/branched_log_plan.h"
+#include "../shared/trees/basis_counts.h"
 
 #include <cstdint>
 #include <algorithm>
@@ -30,96 +31,23 @@
 #include <unordered_map>
 #include <vector>
 
-struct BranchedLogHornerPlanGPU {
-	uint32_t* d_product_offsets = nullptr;
-	uint32_t* d_product_factors = nullptr;
-	uint32_t* d_coproduct_offsets = nullptr;
-	uint32_t* d_coproduct_pairs = nullptr;
-	uint32_t* d_flat_to_product = nullptr;
-
-	uint32_t total_length = 0;
-	uint32_t num_trees = 0;
-	uint32_t product_count = 0;
-	int max_nodes = 0;
-
-	BranchedLogHornerPlanGPU() = default;
-	BranchedLogHornerPlanGPU(const BranchedLogHornerPlanGPU&) = delete;
-	BranchedLogHornerPlanGPU& operator=(const BranchedLogHornerPlanGPU&) = delete;
-
-	~BranchedLogHornerPlanGPU() {
-		if (d_product_offsets) cudaFree(d_product_offsets);
-		if (d_product_factors) cudaFree(d_product_factors);
-		if (d_coproduct_offsets) cudaFree(d_coproduct_offsets);
-		if (d_coproduct_pairs) cudaFree(d_coproduct_pairs);
-		if (d_flat_to_product) cudaFree(d_flat_to_product);
-	}
-};
-
-struct CuBranchedLogCacheKey {
-	// CUDA allocations are local to the active device.
-	// The same mathematical cache therefore has one entry per device.
-	int device = 0;
-	uint64_t dimension = 0;
-	uint64_t max_nodes = 0;
-	bool planar = false;
-
-	bool operator==(const CuBranchedLogCacheKey& other) const noexcept {
-		return device == other.device
-			&& dimension == other.dimension
-			&& max_nodes == other.max_nodes
-			&& planar == other.planar;
-	}
-};
-
-struct CuBranchedLogCacheKeyHash {
-	size_t operator()(const CuBranchedLogCacheKey& key) const noexcept {
-		size_t h = std::hash<int>{}(key.device);
-		auto combine = [&h](uint64_t value) {
-			h ^= std::hash<uint64_t>{}(value) + 0x9e3779b9ULL
-				+ (h << 6) + (h >> 2);
-		};
-		combine(key.dimension);
-		combine(key.max_nodes);
-		combine(static_cast<uint64_t>(key.planar));
-		return h;
-	}
-};
-
-static CuBranchedLogCacheKey make_cu_branched_log_key(
-	uint64_t dimension,
-	uint64_t max_nodes,
-	bool planar
-) {
-	CuBranchedLogCacheKey key;
-	CUDA_CHECK(cudaGetDevice(&key.device));
-	key.dimension = dimension;
-	key.max_nodes = max_nodes;
-	key.planar = planar;
-	return key;
+std::unordered_map<
+	CuBranchedLogCacheKey,
+	CudaBranchedLogSigCache,
+	CuBranchedLogCacheKeyHash
+>& get_cuda_branched_log_sig_cache_map_() {
+	static std::unordered_map<
+		CuBranchedLogCacheKey,
+		CudaBranchedLogSigCache,
+		CuBranchedLogCacheKeyHash
+	> cache;
+	return cache;
 }
 
-static std::unordered_map<
-	CuBranchedLogCacheKey,
-	std::unique_ptr<BranchedLogHornerPlanGPU>,
-	CuBranchedLogCacheKeyHash
-> s_branched_log_horner_plan_map;
-static std::mutex s_branched_log_horner_plan_mu;
-
-static constexpr const char* cu_mkw_basis_cache_prefix_ = "mkw_lyndon_";
-
-static std::unordered_map<
-	std::pair<uint64_t, uint64_t>,
-	std::unique_ptr<CuMkwHostBasisData>,
-	CuPairHash
-> s_mkw_host_basis_cache_map;
-static std::mutex s_mkw_host_basis_cache_mu;
-
-static std::unordered_map<
-	CuBranchedLogCacheKey,
-	std::unique_ptr<CuMkwBasisGpuCache>,
-	CuBranchedLogCacheKeyHash
-> s_mkw_gpu_basis_cache_map;
-static std::mutex s_mkw_gpu_basis_cache_mu;
+std::mutex& get_cuda_branched_log_sig_cache_mu_() {
+	static std::mutex mu;
+	return mu;
+}
 
 template<typename T>
 static void upload_branched_log(T*& d_ptr, const T* h_data, size_t count);
@@ -134,172 +62,6 @@ CuMkwBasisGpuCache::~CuMkwBasisGpuCache() {
 	if (d_sparse_row_ptr_t) cudaFree(d_sparse_row_ptr_t);
 }
 
-static std::unique_ptr<CuMkwHostBasisData> build_mkw_word_data_(
-	const BranchedSigCache& cache
-) {
-	auto data = std::make_unique<CuMkwHostBasisData>();
-	// Reconstruct forest words from the portable flattened branched cache.
-	// The CPU and CUDA builders must select the same Lyndon word ordering.
-	const uint64_t lyndon_count = compute_branched_log_sig_length(
-		cache.dimension, cache.max_nodes, true);
-	data->flat_words.resize(cache.total_length);
-	data->flat_idx.reserve(cache.total_length);
-	data->lyndon_words.reserve(lyndon_count);
-	data->lyndon_idx.reserve(lyndon_count);
-	data->lyndon_weights.reserve(lyndon_count);
-	for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
-		const uint64_t start = cache.basis_forest_offsets[basis_idx];
-		const uint64_t end = cache.basis_forest_offsets[basis_idx + 1];
-		cu_word forest(
-			cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(start),
-			cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(end));
-		data->flat_words[basis_idx + 1] = forest;
-		if (cu_is_lyndon(forest)) {
-			if (forest.size() == 1) {
-				if (data->lyndon_words.size() > UINT32_MAX)
-					throw std::overflow_error("MKW Lyndon letter index exceeds uint32 range");
-				data->letter_log_idx.push_back(
-					static_cast<uint32_t>(data->lyndon_words.size()));
-				data->letter_basis_idx.push_back(basis_idx);
-			}
-			data->lyndon_words.push_back(forest);
-			data->lyndon_idx.push_back(basis_idx + 1);
-			data->lyndon_weights.push_back(
-				cache.node_labels_offsets[basis_idx + 1]
-				- cache.node_labels_offsets[basis_idx]);
-		}
-	}
-	if (data->lyndon_idx.size() != lyndon_count)
-		throw std::runtime_error("MKW Lyndon cache length mismatch");
-	for (uint64_t i = 0; i < data->flat_words.size(); ++i)
-		data->flat_idx[data->flat_words[i]] = i;
-
-	std::unordered_set<cu_word, CuWordHash> lyndon_set(
-		data->lyndon_words.begin(), data->lyndon_words.end());
-	std::unordered_map<cu_word, uint64_t, CuWordHash> lyndon_map;
-	lyndon_map.reserve(lyndon_count);
-	for (uint64_t i = 0; i < lyndon_count; ++i)
-		lyndon_map[data->lyndon_words[i]] = i;
-	data->left_factor.assign(lyndon_count, UINT64_MAX);
-	data->right_factor.assign(lyndon_count, UINT64_MAX);
-	for (uint64_t i = 0; i < lyndon_count; ++i) {
-		const cu_word& w = data->lyndon_words[i];
-		if (w.size() == 1)
-			continue;
-		const cu_word right = cu_longest_lyndon_suffix_(w, lyndon_set);
-		const cu_word left(w.begin(), w.end() - right.size());
-		data->left_factor[i] = lyndon_map.at(left);
-		data->right_factor[i] = lyndon_map.at(right);
-	}
-	return data;
-}
-
-static void build_mkw_projection_(
-	CuMkwHostBasisData& data,
-	uint64_t flat_word_count
-) {
-	// Build once on the host, then upload the inverse and its transpose as CSR.
-	// The unit triangular matrix maps bracket coefficients to Lyndon coordinates.
-	CuSparseIntMatrix projection;
-	cu_lyndon_proj_matrix_from_words(
-		projection,
-		data.lyndon_words,
-		flat_word_count,
-		[&data](const cu_word& w) {
-			return data.flat_idx.at(w);
-		},
-		[&data](uint64_t i, uint64_t j, uint64_t) {
-			cu_word product = data.flat_words.at(i);
-			const cu_word& right = data.flat_words.at(j);
-			product.insert(product.end(), right.begin(), right.end());
-			return data.flat_idx.at(product);
-		});
-	projection.inverse(data.inv_proj_mat);
-	data.inv_proj_mat.transpose(data.inv_proj_mat_t);
-}
-
-static void prepare_cuda_mkw_host_basis_cache_(
-	const BranchedSigCache& cache,
-	int method,
-	bool use_disk
-) {
-	const int basis_method = std::min(method, 2);
-	const std::pair<uint64_t, uint64_t> key(cache.dimension, cache.max_nodes);
-	{
-		std::lock_guard<std::mutex> lock(s_mkw_host_basis_cache_mu);
-		auto found = s_mkw_host_basis_cache_map.find(key);
-		if (found != s_mkw_host_basis_cache_map.end()
-			&& found->second->method >= basis_method)
-			return;
-	}
-
-	auto data = build_mkw_word_data_(cache);
-	bool loaded = false;
-	std::unique_ptr<CuCacheFile> file;
-	if (use_disk) {
-		ensure_cuda_cache_dir_();
-		file = std::make_unique<CuCacheFile>(
-			cache.dimension, cache.max_nodes, cu_mkw_basis_cache_prefix_);
-	}
-	if (file && file->exists()) {
-		int disk_method = 0;
-		std::vector<uint64_t> disk_lyndon_idx;
-		CuSparseIntMatrix disk_inverse;
-		CuSparseIntMatrix disk_inverse_t;
-		file->read(
-			disk_method, disk_lyndon_idx, disk_inverse, disk_inverse_t);
-		if (disk_lyndon_idx != data->lyndon_idx)
-			throw corrupted_cache_error(
-				"MKW Lyndon cache indices do not match the branched basis");
-		if (disk_method >= basis_method) {
-			if (disk_method >= 2
-				&& (disk_inverse.n != data->lyndon_idx.size()
-					|| disk_inverse.m != data->lyndon_idx.size()
-					|| disk_inverse_t.n != data->lyndon_idx.size()
-					|| disk_inverse_t.m != data->lyndon_idx.size()))
-				throw corrupted_cache_error(
-					"MKW Lyndon cache matrix has an invalid shape");
-			data->method = std::min(disk_method, 2);
-			data->inv_proj_mat = std::move(disk_inverse);
-			data->inv_proj_mat_t = std::move(disk_inverse_t);
-			loaded = true;
-		}
-	}
-	if (!loaded) {
-		// Method 1 has only Lyndon indices. Method 2 adds the inverse projection.
-		// A cached method 2 entry remains usable for later method 1 preparation.
-		data->method = basis_method;
-		if (basis_method == 2)
-			build_mkw_projection_(*data, cache.total_length);
-		if (file)
-			file->write(
-				data->method, data->lyndon_idx,
-				data->inv_proj_mat, data->inv_proj_mat_t);
-	}
-
-	std::lock_guard<std::mutex> lock(s_mkw_host_basis_cache_mu);
-	auto found = s_mkw_host_basis_cache_map.find(key);
-	if (found == s_mkw_host_basis_cache_map.end()
-		|| found->second->method < data->method)
-		s_mkw_host_basis_cache_map.insert_or_assign(key, std::move(data));
-}
-
-const CuMkwHostBasisData& get_cuda_mkw_host_basis_data_(
-	uint64_t dimension,
-	uint64_t max_nodes,
-	int method
-) {
-	const int basis_method = std::min(method, 2);
-	const std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
-	std::lock_guard<std::mutex> lock(s_mkw_host_basis_cache_mu);
-	auto found = s_mkw_host_basis_cache_map.find(key);
-	if (found == s_mkw_host_basis_cache_map.end()
-		|| found->second->method < basis_method)
-		throw cache_not_found_error(
-			"CUDA MKW basis cache not found - call prepare_branched_log_sig first");
-	return *found->second;
-}
-
 static uint32_t narrow_mkw_u32_(uint64_t value, const char* label) {
 	if (value > UINT32_MAX)
 		throw std::overflow_error(std::string(label) + " exceeds uint32 range");
@@ -307,7 +69,7 @@ static uint32_t narrow_mkw_u32_(uint64_t value, const char* label) {
 }
 
 static void upload_mkw_csr_(
-	const CuSparseIntMatrix& matrix,
+	const SparseIntMatrix& matrix,
 	int*& d_values,
 	uint32_t*& d_columns,
 	uint32_t*& d_row_offsets
@@ -327,7 +89,7 @@ static void upload_mkw_csr_(
 	uint32_t entry = 0;
 	for (uint32_t row = 0; row < row_count; ++row) {
 		row_offsets[row] = entry;
-		for (const CuEntry& item : matrix.rows[row]) {
+		for (const Entry& item : matrix.rows[row]) {
 			values[entry] = item.val;
 			columns[entry] = narrow_mkw_u32_(
 				item.col, "MKW matrix column index");
@@ -362,7 +124,7 @@ static void upload_mkw_csr_(
 
 static void upload_mkw_projection_(
 	CuMkwBasisGpuCache& gpu,
-	const CuMkwHostBasisData& host
+	const BasisCache& host
 ) {
 	// Keep both orientations because forward and backward use opposite products.
 	// Values stay signed integers because the projection is integral.
@@ -376,7 +138,7 @@ static void upload_mkw_projection_(
 		upload_mkw_csr_(
 			host.inv_proj_mat, values, columns, row_offsets);
 		upload_mkw_csr_(
-			host.inv_proj_mat_t, values_t, columns_t, row_offsets_t);
+			host.inv_proj_mat_transpose, values_t, columns_t, row_offsets_t);
 	} catch (...) {
 		if (values) cudaFree(values);
 		if (columns) cudaFree(columns);
@@ -397,26 +159,18 @@ static void upload_mkw_projection_(
 
 void prepare_cuda_mkw_basis_cache_(
 	const BranchedSigCache& cache,
-	int method,
-	bool use_disk
+	const BasisCache& host
 ) {
-	if (method < 1 || method > 3)
-		throw std::invalid_argument(
-			"branched log signature method must be 0, 1, 2, or 3");
 	if (!cache.planar)
 		throw std::invalid_argument(
 			"compressed branched log signatures require planar=True");
-	const int basis_method = std::min(method, 2);
-	prepare_cuda_mkw_host_basis_cache_(cache, basis_method, use_disk);
-	const CuMkwHostBasisData& host = get_cuda_mkw_host_basis_data_(
-		cache.dimension, cache.max_nodes, basis_method);
-	const auto key = make_cu_branched_log_key(
+	const auto key = make_cuda_branched_log_cache_key_(
 		cache.dimension, cache.max_nodes, true);
-	std::lock_guard<std::mutex> lock(s_mkw_gpu_basis_cache_mu);
-	auto found = s_mkw_gpu_basis_cache_map.find(key);
-	if (found != s_mkw_gpu_basis_cache_map.end()) {
-		if (host.method >= 2 && found->second->method < 2)
-			upload_mkw_projection_(*found->second, host);
+	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
+	auto [found, inserted] = get_cuda_branched_log_sig_cache_map_().try_emplace(key);
+	if (found->second.basis) {
+		if (host.method >= 2 && found->second.basis->method < 2)
+			upload_mkw_projection_(*found->second.basis, host);
 		return;
 	}
 
@@ -434,7 +188,7 @@ void prepare_cuda_mkw_basis_cache_(
 	gpu->method = 1;
 	if (host.method >= 2)
 		upload_mkw_projection_(*gpu, host);
-	s_mkw_gpu_basis_cache_map.try_emplace(key, std::move(gpu));
+	found->second.basis = std::move(gpu);
 }
 
 const CuMkwBasisGpuCache& get_cuda_mkw_basis_gpu_cache_(
@@ -443,27 +197,20 @@ const CuMkwBasisGpuCache& get_cuda_mkw_basis_gpu_cache_(
 	int method
 ) {
 	const int basis_method = std::min(method, 2);
-	const auto key = make_cu_branched_log_key(dimension, max_nodes, true);
-	std::lock_guard<std::mutex> lock(s_mkw_gpu_basis_cache_mu);
-	auto found = s_mkw_gpu_basis_cache_map.find(key);
-	if (found == s_mkw_gpu_basis_cache_map.end()
-		|| found->second->method < basis_method)
+	const auto key = make_cuda_branched_log_cache_key_(dimension, max_nodes, true);
+	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
+	auto found = get_cuda_branched_log_sig_cache_map_().find(key);
+	if (found == get_cuda_branched_log_sig_cache_map_().end()
+		|| !found->second.basis
+		|| found->second.basis->method < basis_method)
 		throw cache_not_found_error(
 			"CUDA MKW basis cache not found - call prepare_branched_log_sig first");
-	return *found->second;
+	return *found->second.basis;
 }
 
 void release_branched_log_sig_gpu_state() {
-	{
-		std::lock_guard<std::mutex> lock(s_branched_log_horner_plan_mu);
-		s_branched_log_horner_plan_map.clear();
-	}
-	{
-		std::lock_guard<std::mutex> lock(s_mkw_gpu_basis_cache_mu);
-		s_mkw_gpu_basis_cache_map.clear();
-	}
-	std::lock_guard<std::mutex> lock(s_mkw_host_basis_cache_mu);
-	s_mkw_host_basis_cache_map.clear();
+	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
+	get_cuda_branched_log_sig_cache_map_().clear();
 }
 
 void clear_cuda_branched_log_sig_gpu_cache_() {
@@ -475,10 +222,12 @@ bool is_cuda_branched_log_horner_plan_prepared_(
 	uint64_t max_nodes,
 	bool planar
 ) {
-	const auto key = make_cu_branched_log_key(dimension, max_nodes, planar);
-	std::lock_guard<std::mutex> lock(s_branched_log_horner_plan_mu);
-	return s_branched_log_horner_plan_map.find(key)
-		!= s_branched_log_horner_plan_map.end();
+	const auto key = make_cuda_branched_log_cache_key_(
+		dimension, max_nodes, planar);
+	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
+	const auto found = get_cuda_branched_log_sig_cache_map_().find(key);
+	return found != get_cuda_branched_log_sig_cache_map_().end()
+		&& found->second.horner;
 }
 
 template<typename T>
@@ -492,20 +241,22 @@ static void upload_branched_log(T*& d_ptr, const T* h_data, size_t count) {
 }
 
 void prepare_cuda_branched_log_horner_plan_(
-	const BranchedSigCache& c
+	const BranchedSigCache& c,
+	const BranchedLogHornerPlan& plan
 ) {
 	const uint64_t dimension = c.dimension;
 	const uint64_t max_nodes = c.max_nodes;
 	const bool planar = c.planar;
-	const auto key = make_cu_branched_log_key(dimension, max_nodes, planar);
+	const auto key = make_cuda_branched_log_cache_key_(
+		dimension, max_nodes, planar);
 	{
-		std::lock_guard<std::mutex> lock(s_branched_log_horner_plan_mu);
-		auto it = s_branched_log_horner_plan_map.find(key);
-		if (it != s_branched_log_horner_plan_map.end())
+		std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
+		auto found = get_cuda_branched_log_sig_cache_map_().find(key);
+		if (found != get_cuda_branched_log_sig_cache_map_().end()
+			&& found->second.horner)
 			return;
 	}
 
-	BranchedLogHornerPlan plan = build_branched_log_horner_plan(c);
 	// Kernels use uint32 indices, so validate every host offset before upload.
 	// The host cache remains uint64 so CPU and CUDA use the same disk format.
 	uint64_t num_trees = c.total_length - 1;
@@ -560,8 +311,10 @@ void prepare_cuda_branched_log_horner_plan_(
 	upload_branched_log(
 		gpu->d_flat_to_product, flat_to_product32.data(), flat_to_product32.size());
 
-	std::lock_guard<std::mutex> lock(s_branched_log_horner_plan_mu);
-	s_branched_log_horner_plan_map.try_emplace(key, std::move(gpu));
+	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
+	auto [found, inserted] = get_cuda_branched_log_sig_cache_map_().try_emplace(key);
+	if (!found->second.horner)
+		found->second.horner = std::move(gpu);
 }
 
 static const BranchedLogHornerPlanGPU& get_branched_log_horner_plan_gpu_(
@@ -569,11 +322,13 @@ static const BranchedLogHornerPlanGPU& get_branched_log_horner_plan_gpu_(
 	uint64_t max_nodes,
 	bool planar
 ) {
-	const auto key = make_cu_branched_log_key(dimension, max_nodes, planar);
-	std::lock_guard<std::mutex> lock(s_branched_log_horner_plan_mu);
-	auto it = s_branched_log_horner_plan_map.find(key);
-	if (it != s_branched_log_horner_plan_map.end())
-		return *(it->second);
+	const auto key = make_cuda_branched_log_cache_key_(
+		dimension, max_nodes, planar);
+	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
+	auto found = get_cuda_branched_log_sig_cache_map_().find(key);
+	if (found != get_cuda_branched_log_sig_cache_map_().end()
+		&& found->second.horner)
+		return *found->second.horner;
 	throw cache_not_found_error(
 		"CUDA branched log sig cache not found - call prepare_branched_log_sig with device='cuda' first");
 }

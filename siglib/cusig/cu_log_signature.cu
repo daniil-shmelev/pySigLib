@@ -18,7 +18,7 @@
 #include "cu_utils.h"
 #include "cu_log_signature.h"
 #include "cu_log_sig_backprop.h"
-#include "cu_log_sig_cache.h"
+#include "cache_lifecycle/cu_log_sig_cache.h"
 
 // =========================================================================
 // Scratch buffer workspace - cached across calls to avoid per-call

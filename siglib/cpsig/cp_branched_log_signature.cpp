@@ -15,484 +15,16 @@
 
 #include "cppch.h"
 #include "cpsig.h"
+#include "cache_lifecycle/cp_branched_log_cache.h"
 #include "cp_branched_log_signature.h"
-#include "cp_branched_cache.h"
-#include "cp_branched_signature.h"
+#include "cache_lifecycle/cp_branched_cache.h"
 #include "cp_bch.h"
-#include "log_sig_cache.h"
-#include "words.h"
-#include "../shared/branched_log_cache.h"
+#include "../shared/preparation/branched_log_plan.h"
 #include "../shared/branched_log_horner.h"
 #include "multithreading.h"
 #include "macros.h"
 
 namespace {
-constexpr const char* mkw_basis_cache_prefix_ = "mkw_lyndon_";
-
-// Method 2 data also provides the coordinate indices needed by method 1.
-// The registry stores only the strongest prepared representation per key.
-struct BranchedLogBasisCacheRegistry_ {
-	std::unordered_map<
-		std::pair<uint64_t, uint64_t>,
-		std::unique_ptr<BasisCache>,
-		PairHash
-	> map;
-	std::shared_mutex mu;
-};
-
-BranchedLogBasisCacheRegistry_& branched_log_basis_cache_registry_() {
-	static BranchedLogBasisCacheRegistry_ registry;
-	return registry;
-}
-
-struct MkwWordData_ {
-	// Every flat MKW forest reconstructed as a word of tree IDs.
-	std::vector<word> flat_words;
-	std::unordered_map<word, uint64_t, WordHash> flat_idx;
-	// Lyndon words identify compact coordinates in methods 1 and 2.
-	std::vector<word> lyndon_words;
-	std::vector<uint64_t> lyndon_idx;
-	std::vector<uint64_t> lyndon_weights;
-	// One-letter Lyndon words provide the path increment generators for BCH.
-	std::vector<uint32_t> letter_log_idx;
-	std::vector<uint64_t> letter_basis_idx;
-};
-
-MkwWordData_ build_mkw_word_data_(const BranchedSigCache& cache) {
-	MkwWordData_ data;
-	// Treat each decorated planar tree as a letter in the forest-word alphabet.
-	// cache.basis_forest_data holds these words in the same order as the output.
-	const uint64_t lyndon_count = compute_branched_log_sig_length(
-		cache.dimension, cache.max_nodes, true);
-	data.flat_words.resize(cache.total_length);
-	data.flat_idx.reserve(cache.total_length);
-	data.lyndon_words.reserve(lyndon_count);
-	data.lyndon_idx.reserve(lyndon_count);
-	data.lyndon_weights.reserve(lyndon_count);
-	for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
-		const uint64_t start = cache.basis_forest_offsets[basis_idx];
-		const uint64_t end = cache.basis_forest_offsets[basis_idx + 1];
-		word forest(
-			cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(start),
-			cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(end));
-		data.flat_words[basis_idx + 1] = forest;
-		if (is_lyndon(forest)) {
-			if (forest.size() == 1) {
-				data.letter_log_idx.push_back(
-					static_cast<uint32_t>(data.lyndon_words.size()));
-				data.letter_basis_idx.push_back(basis_idx);
-			}
-			data.lyndon_words.push_back(forest);
-			data.lyndon_idx.push_back(basis_idx + 1);
-			data.lyndon_weights.push_back(
-				cache.node_labels_offsets[basis_idx + 1]
-				- cache.node_labels_offsets[basis_idx]);
-		}
-	}
-	if (data.lyndon_idx.size() != lyndon_count)
-		throw std::runtime_error("MKW Lyndon cache length mismatch");
-	for (uint64_t i = 0; i < data.flat_words.size(); ++i)
-		data.flat_idx[data.flat_words[i]] = i;
-	return data;
-}
-
-void clear_branched_log_basis_cache_() {
-	auto& registry = branched_log_basis_cache_registry_();
-	std::unique_lock lock(registry.mu);
-	registry.map.clear();
-}
-
-std::unique_ptr<BasisCache> build_branched_log_basis_cache_(
-	const BranchedSigCache& cache,
-	int method
-) {
-	if (!cache.planar)
-		throw std::invalid_argument("compressed branched log signatures require planar=True");
-
-	std::vector<uint64_t> lyndon_idx;
-	const uint64_t lyndon_count = compute_branched_log_sig_length(
-		cache.dimension, cache.max_nodes, true);
-	lyndon_idx.reserve(lyndon_count);
-	MkwWordData_ word_data;
-	if (method == 2)
-		word_data = build_mkw_word_data_(cache);
-	else {
-		for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
-			const uint64_t start = cache.basis_forest_offsets[basis_idx];
-			const uint64_t end = cache.basis_forest_offsets[basis_idx + 1];
-			word forest(
-				cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(start),
-				cache.basis_forest_data.begin() + static_cast<std::ptrdiff_t>(end));
-			if (is_lyndon(forest))
-				lyndon_idx.push_back(basis_idx + 1);
-		}
-	}
-	if (method == 2)
-		lyndon_idx = word_data.lyndon_idx;
-
-	if (lyndon_idx.size() != lyndon_count)
-		throw std::runtime_error("MKW Lyndon cache length mismatch");
-
-	SparseIntMatrix projection;
-	SparseIntMatrix inverse;
-	SparseIntMatrix inverse_transpose;
-	if (method == 2) {
-		// The inverse projection converts Lyndon coordinates to bracket coordinates.
-		// Its transpose is cached separately for the reverse pass.
-		lyndon_proj_matrix_from_words(
-			projection,
-			word_data.lyndon_words,
-			cache.total_length,
-			[&word_data](const word& w) {
-				return word_data.flat_idx.at(w);
-			},
-			[&word_data](uint64_t i, uint64_t j, uint64_t) {
-				return word_data.flat_idx.at(concatenate_words(
-					word_data.flat_words.at(i), word_data.flat_words.at(j)));
-			});
-		projection.inverse(inverse);
-		inverse.transpose(inverse_transpose);
-	}
-
-	return std::make_unique<BasisCache>(
-		method,
-		std::move(lyndon_idx),
-		std::move(inverse),
-		std::move(inverse_transpose));
-}
-
-void prepare_branched_log_basis_cache_(
-	const BranchedSigCache& cache,
-	int method,
-	bool use_disk
-) {
-	if (method < 1)
-		return;
-	if (method > 3)
-		throw std::invalid_argument("branched log signature method must be 0, 1, 2, or 3");
-	const int basis_method = std::min(method, 2);
-	// Method 3 also uses the method 2 coordinate system for its BCH state.
-
-	const std::pair<uint64_t, uint64_t> key(cache.dimension, cache.max_nodes);
-	auto& registry = branched_log_basis_cache_registry_();
-	{
-		std::shared_lock lock(registry.mu);
-		auto it = registry.map.find(key);
-		if (it != registry.map.end() && it->second->method >= basis_method)
-			return;
-	}
-
-	std::unique_ptr<CacheFile> file;
-	if (use_disk) {
-		auto dir = get_cache_dir();
-		if (!std::filesystem::exists(dir / cache_folder_name))
-			std::filesystem::create_directory(dir / cache_folder_name);
-		file = std::make_unique<CacheFile>(
-			cache.dimension, cache.max_nodes, mkw_basis_cache_prefix_);
-	}
-	if (file && file->exists()) {
-		// A method 2 disk entry is also valid for a method 1 request.
-		auto basis = std::make_unique<BasisCache>();
-		file->read(basis);
-		if (basis->method >= basis_method) {
-			std::unique_lock lock(registry.mu);
-			registry.map.insert_or_assign(key, std::move(basis));
-			return;
-		}
-	}
-
-	auto basis = build_branched_log_basis_cache_(cache, basis_method);
-	if (file)
-		file->write(basis);
-
-	std::unique_lock lock(registry.mu);
-	registry.map.insert_or_assign(key, std::move(basis));
-}
-
-const BasisCache& get_branched_log_basis_cache_(
-	uint64_t dimension,
-	uint64_t max_nodes,
-	int method
-) {
-	const std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
-	auto& registry = branched_log_basis_cache_registry_();
-	{
-		std::shared_lock lock(registry.mu);
-		auto it = registry.map.find(key);
-		if (it != registry.map.end() && it->second->method >= method)
-			return *(it->second);
-	}
-
-	auto dir = get_cache_dir();
-	if (!std::filesystem::exists(dir / cache_folder_name))
-		throw cache_not_found_error(
-			"MKW branched log basis cache not found - call prepare_branched_log_sig first");
-	CacheFile file(dimension, max_nodes, mkw_basis_cache_prefix_);
-	if (!file.exists())
-		throw cache_not_found_error(
-			"MKW branched log basis cache not found - call prepare_branched_log_sig first");
-	auto basis = std::make_unique<BasisCache>();
-	file.read(basis);
-	if (basis->method < method)
-		throw cache_not_found_error(
-			"MKW branched log basis cache does not support the requested method");
-
-	std::unique_lock lock(registry.mu);
-	auto inserted = registry.map.insert_or_assign(key, std::move(basis));
-	return *(inserted.first->second);
-}
-
-struct BranchedBchCache_ {
-	// Ordinary BCH data plus the sparse lift of one path increment.
-	BchCache bch;
-	// Multipliers and flat coordinates for the nonzero segment lift entries.
-	std::vector<double> linear_coefficients;
-	std::vector<uint64_t> linear_basis_idx;
-};
-
-template<std::floating_point T, bool ScalarTerm>
-void branched_sig_to_log_sig_compressed_(
-	const T* bsig,
-	T* out,
-	uint64_t batch_size,
-	uint64_t dimension,
-	uint64_t max_nodes,
-	int method,
-	int n_jobs
-);
-
-struct BranchedBchCacheRegistry_ {
-	std::unordered_map<
-		std::pair<uint64_t, uint64_t>,
-		std::unique_ptr<BranchedBchCache_>,
-		PairHash
-	> map;
-	std::shared_mutex mu;
-};
-
-BranchedBchCacheRegistry_& branched_bch_cache_registry_() {
-	static BranchedBchCacheRegistry_ registry;
-	return registry;
-}
-
-TensorElem mkw_tensor_product_(
-	const TensorElem& left,
-	const TensorElem& right,
-	const MkwWordData_& words
-) {
-	TensorElem result;
-	for (const auto& [left_idx, left_coefficient] : left) {
-		for (const auto& [right_idx, right_coefficient] : right) {
-			const word product = concatenate_words(
-				words.flat_words.at(left_idx), words.flat_words.at(right_idx));
-			const auto flat = words.flat_idx.find(product);
-			if (flat != words.flat_idx.end())
-				result[flat->second] += left_coefficient * right_coefficient;
-		}
-	}
-	remove_zero_entries(result);
-	return result;
-}
-
-using MkwInfinitesimalProduct_ = std::unordered_map<
-	std::pair<uint64_t, uint64_t>, TensorElem, PairHash>;
-
-MkwInfinitesimalProduct_ build_mkw_infinitesimal_product_(
-	const BranchedSigCache& cache
-) {
-	// Retain only one-branch cuts, which define the infinitesimal product.
-	// The keys are the two input flat coordinates and the values are outputs.
-	MkwInfinitesimalProduct_ product;
-	for (uint64_t basis_idx = 0; basis_idx + 1 < cache.total_length; ++basis_idx) {
-		uint64_t pos = cache.coproduct_offsets[basis_idx];
-		const uint64_t end = cache.coproduct_offsets[basis_idx + 1];
-		while (pos < end) {
-			const uint64_t forest_size = cache.coproduct_data[pos++];
-			const uint64_t trunk = cache.coproduct_data[pos++];
-			if (forest_size == 1) {
-				const uint64_t branch = cache.coproduct_data[pos++];
-				product[{ branch, trunk }][basis_idx + 1] += 1;
-			} else {
-				pos += forest_size;
-			}
-		}
-	}
-	return product;
-}
-
-TensorElem mkw_infinitesimal_product_(
-	const TensorElem& left,
-	const TensorElem& right,
-	const MkwInfinitesimalProduct_& product
-) {
-	TensorElem result;
-	for (const auto& [left_idx, left_coefficient] : left) {
-		for (const auto& [right_idx, right_coefficient] : right) {
-			const auto found = product.find({ left_idx, right_idx });
-			if (found == product.end())
-				continue;
-			for (const auto& [out_idx, coefficient] : found->second) {
-				result[out_idx] += left_coefficient
-					* right_coefficient * coefficient;
-			}
-		}
-	}
-	remove_zero_entries(result);
-	return result;
-}
-
-std::unique_ptr<BranchedBchCache_> build_branched_bch_cache_(
-	const BranchedSigCache& branched_cache,
-	bool use_disk
-) {
-	// BCH operates in method 2 coordinates, not in the expanded forest basis.
-	const BasisCache& basis = get_branched_log_basis_cache_(
-		branched_cache.dimension, branched_cache.max_nodes, 2);
-	MkwWordData_ words = build_mkw_word_data_(branched_cache);
-	const uint64_t m = words.lyndon_words.size();
-	if (m > UINT32_MAX)
-		throw std::overflow_error("MKW BCH basis is too large");
-
-	auto result = std::make_unique<BranchedBchCache_>();
-	BchCache& bch = result->bch;
-	bch.dimension = branched_cache.dimension;
-	bch.degree = branched_cache.max_nodes;
-	bch.m = m;
-	bch.coordinate_weights = words.lyndon_weights;
-	result->linear_basis_idx.resize(m);
-	for (uint64_t i = 0; i < m; ++i)
-		result->linear_basis_idx[i] = basis.lyndon_idx[i] - 1;
-
-	std::unordered_set<word, WordHash> lyndon_set(
-		words.lyndon_words.begin(), words.lyndon_words.end());
-	std::unordered_map<word, uint64_t, WordHash> lyndon_map;
-	lyndon_map.reserve(m);
-	for (uint64_t i = 0; i < m; ++i)
-		lyndon_map[words.lyndon_words[i]] = i;
-	bch.left_factor.assign(m, UINT64_MAX);
-	bch.right_factor.assign(m, UINT64_MAX);
-	for (uint64_t i = 0; i < m; ++i) {
-		if (words.lyndon_words[i].size() <= 1)
-			continue;
-		auto [left, right] = standard_factorization(words.lyndon_words[i], lyndon_set);
-		bch.left_factor[i] = lyndon_map.at(left);
-		bch.right_factor[i] = lyndon_map.at(right);
-	}
-
-	std::vector<TensorElem> tensor_reps(m);
-	// Expand standard Lyndon bracketings in the forest concatenation algebra.
-	// Each representation is then used to derive the infinitesimal commutator.
-	for (uint64_t i = 0; i < m; ++i) {
-		if (words.lyndon_words[i].size() == 1) {
-			tensor_reps[i] = { { words.flat_idx.at(words.lyndon_words[i]), 1 } };
-			continue;
-		}
-		TensorElem left_right = mkw_tensor_product_(
-			tensor_reps[bch.left_factor[i]], tensor_reps[bch.right_factor[i]], words);
-		TensorElem right_left = mkw_tensor_product_(
-			tensor_reps[bch.right_factor[i]], tensor_reps[bch.left_factor[i]], words);
-		for (const auto& [index, coefficient] : right_left)
-			left_right[index] -= coefficient;
-		remove_zero_entries(left_right);
-		tensor_reps[i] = std::move(left_right);
-	}
-
-	const MkwInfinitesimalProduct_ infinitesimal_product
-		= build_mkw_infinitesimal_product_(branched_cache);
-	bch.commutator_table.resize(m * m);
-	std::vector<double> coordinates(m, 0.0);
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			const uint64_t weight = bch.coordinate_weights[i] + bch.coordinate_weights[j];
-			if (weight > bch.degree)
-				continue;
-			TensorElem commutator = mkw_infinitesimal_product_(
-				tensor_reps[i], tensor_reps[j], infinitesimal_product);
-			TensorElem reverse = mkw_infinitesimal_product_(
-				tensor_reps[j], tensor_reps[i], infinitesimal_product);
-			for (const auto& [index, coefficient] : reverse)
-				commutator[index] -= coefficient;
-			std::fill(coordinates.begin(), coordinates.end(), 0.0);
-			for (uint64_t k = 0; k < m; ++k) {
-				if (bch.coordinate_weights[k] != weight)
-					continue;
-				const auto entry = commutator.find(basis.lyndon_idx[k]);
-				if (entry != commutator.end())
-					coordinates[k] = static_cast<double>(entry->second);
-			}
-			basis.inv_proj_mat.mul_vec_inplace_lower(coordinates.data());
-			SparseVec& entry = bch.commutator_table[i * m + j];
-			for (uint64_t k = 0; k < m; ++k) {
-				const int coefficient = static_cast<int>(std::round(coordinates[k]));
-				if (coefficient != 0)
-					entry.push_back({ k, coefficient });
-			}
-		}
-	}
-
-	// Reuse the ordinary BCH formula and its coefficient-pruning plans. Only
-	// the MKW commutator table and segment lift are specific to branched paths.
-	build_commutator_views(bch);
-	build_bch_formula_data(bch, use_disk);
-
-	std::vector<double> unit_increment(branched_cache.dimension, 1.0);
-	std::vector<double> linear_sig(branched_cache.total_length);
-	result->linear_coefficients.resize(m);
-	linear_branched_sig_(
-		unit_increment.data(), linear_sig.data(), branched_cache);
-	branched_sig_to_log_sig_compressed_<double, true>(
-		linear_sig.data(), result->linear_coefficients.data(), 1,
-		branched_cache.dimension, branched_cache.max_nodes, 2, 1);
-	std::vector<uint32_t> linear_input_idx;
-	linear_input_idx.reserve(m);
-	for (uint64_t i = 0; i < m; ++i) {
-		if (result->linear_coefficients[i] != 0.0)
-			linear_input_idx.push_back(static_cast<uint32_t>(i));
-	}
-	configure_linear_bch_input(bch, std::move(linear_input_idx), false);
-	return result;
-}
-
-void prepare_branched_bch_cache_(const BranchedSigCache& cache, bool use_disk) {
-	const std::pair<uint64_t, uint64_t> key(cache.dimension, cache.max_nodes);
-	auto& registry = branched_bch_cache_registry_();
-	{
-		std::shared_lock lock(registry.mu);
-		if (registry.map.find(key) != registry.map.end())
-			return;
-	}
-	auto bch = build_branched_bch_cache_(cache, use_disk);
-	std::unique_lock lock(registry.mu);
-	registry.map.try_emplace(key, std::move(bch));
-}
-
-const BranchedBchCache_& get_branched_bch_cache_(
-	uint64_t dimension,
-	uint64_t max_nodes
-) {
-	const std::pair<uint64_t, uint64_t> key(dimension, max_nodes);
-	auto& registry = branched_bch_cache_registry_();
-	std::shared_lock lock(registry.mu);
-	const auto found = registry.map.find(key);
-	if (found == registry.map.end())
-		throw cache_not_found_error(
-			"MKW BCH cache not found - call prepare_branched_log_sig with method=3 first");
-	return *found->second;
-}
-
-void clear_branched_bch_cache_() {
-	auto& registry = branched_bch_cache_registry_();
-	std::unique_lock lock(registry.mu);
-	registry.map.clear();
-}
-
-std::unordered_map<
-	std::pair<uint64_t, uint64_t>,
-	std::unique_ptr<BranchedLogHornerPlan>,
-	PairHash
-> branched_log_horner_plan_registry_;
-std::shared_mutex branched_log_horner_plan_mu_;
-
 template<std::floating_point T, bool ScalarTerm>
 FORCE_INLINE T sig_tree_value_(const T* bsig, uint64_t flat_idx) {
 	if constexpr (ScalarTerm) {
@@ -510,20 +42,6 @@ FORCE_INLINE uint64_t log_output_idx_(uint64_t flat_idx) {
 	} else {
 		return flat_idx - 1;
 	}
-}
-
-
-const BranchedLogHornerPlan& get_cached_branched_log_horner_plan_(
-	const BranchedSigCache& cache
-) {
-	const auto key = make_branched_sig_cache_key(
-		cache.dimension, cache.max_nodes, cache.planar);
-	std::shared_lock rlock(branched_log_horner_plan_mu_);
-	auto it = branched_log_horner_plan_registry_.find(key);
-	if (it != branched_log_horner_plan_registry_.end())
-		return *(it->second);
-	throw cache_not_found_error(
-		"Branched log Horner plan not found - call prepare_branched_log_sig first");
 }
 
 
@@ -1089,7 +607,8 @@ void branched_sig_to_log_sig_(
 	uint64_t total_len = cache.total_length;
 	uint64_t stride = ScalarTerm ? total_len : total_len - 1;
 
-	const auto& plan = get_cached_branched_log_horner_plan_(cache);
+	const auto& log_cache = get_branched_log_sig_cache_(cache, 0);
+	const auto& plan = log_cache.horner_plan();
 	auto work_range = [&](uint64_t start, uint64_t end) {
 		branched_sig_to_log_sig_horner_range_<T, ScalarTerm>(
 			bsig, out, start, end, stride, cache, plan);
@@ -1117,7 +636,8 @@ void branched_sig_to_log_sig_backprop_(
 	uint64_t total_len = cache.total_length;
 	uint64_t stride = ScalarTerm ? total_len : total_len - 1;
 
-	const auto& plan = get_cached_branched_log_horner_plan_(cache);
+	const auto& log_cache = get_branched_log_sig_cache_(cache, 0);
+	const auto& plan = log_cache.horner_plan();
 	auto work_range = [&](uint64_t start, uint64_t end) {
 		branched_sig_to_log_sig_backprop_horner_range_<T, ScalarTerm>(
 			bsig, derivs, out, start, end, stride, cache, plan);
@@ -1144,8 +664,9 @@ void branched_sig_to_log_sig_compressed_(
 	const uint64_t input_stride = ScalarTerm
 		? cache.total_length
 		: cache.total_length - 1;
-	const auto& plan = get_cached_branched_log_horner_plan_(cache);
-	const auto& basis_cache = get_branched_log_basis_cache_(dimension, max_nodes, method);
+	const auto& log_cache = get_branched_log_sig_cache_(cache, method);
+	const auto& plan = log_cache.horner_plan();
+	const auto& basis_cache = log_cache.basis_cache(method);
 	const uint64_t output_stride = basis_cache.lyndon_idx.size();
 	if (output_stride == 0)
 		return;
@@ -1193,8 +714,9 @@ void branched_sig_to_log_sig_backprop_compressed_(
 	const uint64_t input_stride = ScalarTerm
 		? cache.total_length
 		: cache.total_length - 1;
-	const auto& plan = get_cached_branched_log_horner_plan_(cache);
-	const auto& basis_cache = get_branched_log_basis_cache_(dimension, max_nodes, method);
+	const auto& log_cache = get_branched_log_sig_cache_(cache, method);
+	const auto& plan = log_cache.horner_plan();
+	const auto& basis_cache = log_cache.basis_cache(method);
 	const uint64_t deriv_stride = basis_cache.lyndon_idx.size();
 	if (input_stride == 0)
 		return;
@@ -1240,7 +762,7 @@ void linear_mkw_log_sig_(
 	const T* increment,
 	T* out,
 	const BranchedSigCache& branched_cache,
-	const BranchedBchCache_& branched_bch
+	const BranchedBchCache& branched_bch
 ) {
 	const BchCache& bch = branched_bch.bch;
 	std::fill(out, out + bch.m, T(0));
@@ -1261,7 +783,7 @@ void linear_mkw_log_sig_backprop_(
 	const T* increment,
 	T* increment_derivs,
 	const BranchedSigCache& branched_cache,
-	const BranchedBchCache_& branched_bch
+	const BranchedBchCache& branched_bch
 ) {
 	std::fill(
 		increment_derivs,
@@ -1299,8 +821,8 @@ void branched_log_sig_from_path_(
 		throw std::invalid_argument("branched_log_sig method 3 received an empty path");
 	const BranchedSigCache& branched_cache = get_branched_sig_cache(
 		dimension, max_nodes, true);
-	const BranchedBchCache_& branched_bch = get_branched_bch_cache_(
-		dimension, max_nodes);
+	const auto& log_cache = get_branched_log_sig_cache_(branched_cache, 3);
+	const BranchedBchCache& branched_bch = log_cache.bch_cache();
 	const BchCache& bch = branched_bch.bch;
 	if (bch.m == 0)
 		return;
@@ -1362,8 +884,8 @@ void branched_log_sig_from_path_backprop_(
 		throw std::invalid_argument("branched_log_sig method 3 received an empty path");
 	const BranchedSigCache& branched_cache = get_branched_sig_cache(
 		dimension, max_nodes, true);
-	const BranchedBchCache_& branched_bch = get_branched_bch_cache_(
-		dimension, max_nodes);
+	const auto& log_cache = get_branched_log_sig_cache_(branched_cache, 3);
+	const BranchedBchCache& branched_bch = log_cache.bch_cache();
 	const BchCache& bch = branched_bch.bch;
 	const uint64_t path_stride = length * dimension;
 	if (bch.m == 0) {
@@ -1463,29 +985,6 @@ void branched_log_sig_from_path_backprop_(
 }  // namespace
 
 
-void prepare_branched_log_sig_cache(const BranchedSigCache& cache) {
-	const auto key = make_branched_sig_cache_key(cache.dimension, cache.max_nodes, cache.planar);
-	{
-		std::shared_lock rlock(branched_log_horner_plan_mu_);
-		if (branched_log_horner_plan_registry_.find(key)
-			!= branched_log_horner_plan_registry_.end())
-			return;
-	}
-	auto built = std::make_unique<BranchedLogHornerPlan>(
-		build_branched_log_horner_plan(cache));
-	std::unique_lock wlock(branched_log_horner_plan_mu_);
-	branched_log_horner_plan_registry_.try_emplace(key, std::move(built));
-}
-
-
-void clear_branched_log_sig_cache() {
-	clear_branched_bch_cache_();
-	clear_branched_log_basis_cache_();
-	std::unique_lock lock(branched_log_horner_plan_mu_);
-	branched_log_horner_plan_registry_.clear();
-}
-
-
 template<std::floating_point T>
 void branched_sig_to_log_sig_(
 	const T* bsig,
@@ -1573,12 +1072,7 @@ static void prepare_branched_log_sig_(
 		throw std::invalid_argument("compressed branched log signatures are not available for planar=False");
 	prepare_branched_sig_cache(dimension, max_nodes, use_disk, planar);
 	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
-	prepare_branched_log_sig_cache(cache);
-	if (method >= 1)
-		prepare_branched_log_basis_cache_(
-			cache, (std::min)(method, 2), use_disk);
-	if (method == 3)
-		prepare_branched_bch_cache_(cache, use_disk);
+	prepare_branched_log_sig_cache(cache, method, use_disk);
 }
 
 
