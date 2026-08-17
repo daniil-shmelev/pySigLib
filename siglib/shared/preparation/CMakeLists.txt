@@ -5,9 +5,6 @@ add_library(pysiglib_preparation STATIC
     branched_sig/branched_log_sig_cache.cpp
     branched_sig/branched_sig_cache_io.cpp
     branched_sig/branched_sig_cache.cpp
-    branched_sig/branched_sig_cache_common.cpp
-    branched_sig/branched_sig_cache_bck.cpp
-    branched_sig/branched_sig_cache_mkw.cpp
     branched_sig/branched_sig_coef_cache.cpp
 )
 

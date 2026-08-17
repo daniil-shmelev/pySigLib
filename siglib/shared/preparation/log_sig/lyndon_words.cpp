@@ -20,6 +20,38 @@
 #include <limits>
 #include <stdexcept>
 
+namespace {
+
+template<typename Consumer>
+void for_each_lyndon_word_of_length_n(
+	uint64_t n,
+	uint64_t dimension,
+	Consumer&& consumer
+) {
+	word w;
+	w.reserve(static_cast<size_t>(n));
+	w.push_back(0);
+
+	while (!w.empty())
+	{
+		uint64_t m = w.size();
+		if (m == n)
+			consumer(w);
+
+		while (w.size() < n)
+			w.push_back(w[w.size() - m]);
+
+		while (!w.empty() && w.back() == dimension - 1)
+			w.pop_back();
+
+		if (!w.empty())
+			++w.back();
+	}
+}
+
+}  // namespace
+
+
 bool is_lyndon(const word& w) {
 	const uint64_t n = w.size();
 	if (n == 0)
@@ -37,24 +69,8 @@ bool is_lyndon(const word& w) {
 }
 
 void all_lyndon_words_of_length_n(std::vector<word>& res, uint64_t n, uint64_t dimension) {
-	word w;
-	w.push_back(0);
-
-	while (!w.empty())
-	{
-		uint64_t m = w.size();
-		if (m == n)
-			res.push_back(w);
-
-		while (w.size() < n)
-			w.push_back(w[w.size() - m]);
-
-		while (!w.empty() && w.back() == dimension - 1)
-			w.pop_back();
-
-		if (!w.empty())
-			++w.back();
-	}
+	for_each_lyndon_word_of_length_n(
+		n, dimension, [&res](const word& value) { res.push_back(value); });
 }
 
 std::vector<word> all_lyndon_words(uint64_t dimension, uint64_t degree) {
@@ -82,12 +98,13 @@ uint64_t word_to_idx(const word& w, uint64_t dimension) {
 }
 
 std::vector<uint64_t> all_lyndon_idx(uint64_t dimension, uint64_t degree) {
-	std::vector<word> words = all_lyndon_words(dimension, degree);
 	std::vector<uint64_t> res;
-	res.reserve(words.size());
-	for (const auto& w : words) {
-		res.push_back(word_to_idx(w, dimension));
-	}
+	for (uint64_t n = 1; n <= degree; ++n)
+		for_each_lyndon_word_of_length_n(
+			n, dimension,
+			[&res, dimension](const word& value) {
+				res.push_back(word_to_idx(value, dimension));
+			});
 	return res;
 }
 

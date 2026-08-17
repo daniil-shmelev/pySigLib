@@ -193,6 +193,10 @@ public:
 	uint64_t size() const noexcept { return static_cast<uint64_t>(trees_.size()); }
 	uint64_t dimension() const noexcept { return dimension_; }
 	TreeKind kind() const noexcept { return kind_; }
+	void reserve(size_t size) {
+		trees_.reserve(size);
+		indices_.reserve(size);
+	}
 	void seal() noexcept { sealed_ = true; }
 	bool sealed() const noexcept { return sealed_; }
 
