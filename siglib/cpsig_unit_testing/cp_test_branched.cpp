@@ -16,6 +16,161 @@
 #include "cp_test_helpers.h"
 #include "branched_cache.h"
 
+TEST(treeTest, StoresLeafAndNestedMetadata) {
+	TreeTable trees(3, TreeKind::Planar);
+	const TreeId leaf_zero = trees.intern(0, {});
+	const TreeId leaf_one = trees.intern(1, {});
+	const TreeId branch = trees.intern(2, Forest{ leaf_zero, leaf_one });
+	const TreeId nested = trees.intern(1, Forest{ branch });
+
+	EXPECT_EQ(leaf_zero, 0);
+	EXPECT_EQ(trees.tree(leaf_zero).node_count(), 1);
+	EXPECT_DOUBLE_EQ(trees.tree(leaf_zero).tree_factorial(), 1.0);
+	EXPECT_EQ(
+		std::vector<TreeLabel>(
+			trees.tree(branch).node_labels().begin(),
+			trees.tree(branch).node_labels().end()),
+		(std::vector<TreeLabel>{ 2, 0, 1 }));
+	EXPECT_EQ(trees.tree(nested).node_count(), 4);
+	EXPECT_DOUBLE_EQ(trees.tree(nested).tree_factorial(), 12.0);
+	EXPECT_EQ(
+		std::vector<TreeLabel>(
+			trees.tree(nested).node_labels().begin(),
+			trees.tree(nested).node_labels().end()),
+		(std::vector<TreeLabel>{ 1, 2, 0, 1 }));
+}
+
+TEST(forestTest, SupportsCanonicalizationAndMetadata) {
+	TreeTable trees(2, TreeKind::Planar);
+	const TreeId leaf_zero = trees.intern(0, {});
+	const TreeId leaf_one = trees.intern(1, {});
+	const TreeId branch = trees.intern(0, Forest{ leaf_one });
+
+	Forest forest{ branch };
+	forest.append(Forest{ leaf_zero });
+	EXPECT_EQ(forest, (Forest{ branch, leaf_zero }));
+	EXPECT_EQ(forest.node_count(trees), 3);
+	EXPECT_EQ(
+		forest.node_labels(trees),
+		(std::vector<TreeLabel>{ 0, 1, 0 }));
+
+	Forest first{ leaf_one, leaf_zero };
+	Forest second{ leaf_zero, leaf_one };
+	first.canonicalize(TreeKind::NonPlanar);
+	EXPECT_EQ(first, second);
+	EXPECT_EQ(Forest::Hash{}(first), Forest::Hash{}(second));
+}
+
+TEST(treeTableTest, InternsAndSealsTrees) {
+	TreeTable nonplanar(2, TreeKind::NonPlanar);
+	const TreeId leaf_zero = nonplanar.intern(0, {});
+	const TreeId leaf_one = nonplanar.intern(1, {});
+	const TreeId first = nonplanar.intern(
+		0, Forest{ leaf_one, leaf_zero });
+	const TreeId second = nonplanar.intern(
+		0, Forest{ leaf_zero, leaf_one });
+	EXPECT_EQ(first, second);
+	EXPECT_EQ(nonplanar.size(), 3);
+
+	TreeTable planar(2, TreeKind::Planar);
+	const TreeId planar_leaf_zero = planar.intern(0, {});
+	const TreeId planar_leaf_one = planar.intern(1, {});
+	EXPECT_NE(
+		planar.intern(0, Forest{ planar_leaf_zero, planar_leaf_one }),
+		planar.intern(0, Forest{ planar_leaf_one, planar_leaf_zero }));
+
+	planar.seal();
+	EXPECT_EQ(planar.intern(0, {}), planar_leaf_zero);
+	EXPECT_THROW(planar.intern(1, Forest{ planar_leaf_zero }), std::runtime_error);
+	EXPECT_THROW(planar.intern(2, {}), std::invalid_argument);
+	EXPECT_THROW(planar.intern(0, Forest{ 99 }), std::out_of_range);
+
+	TreeTable empty(1, TreeKind::Planar);
+	std::vector<uint64_t> offsets;
+	EXPECT_THROW(enumerate_trees(empty, UINT64_MAX, offsets), std::overflow_error);
+}
+
+TEST(treeCutTest, MatchesKnownBckAndMkwCuts) {
+	TreeTable nonplanar(1, TreeKind::NonPlanar);
+	const TreeId leaf = nonplanar.intern(0, {});
+	const TreeId chain = nonplanar.intern(0, Forest{ leaf });
+	const TreeId fork = nonplanar.intern(0, Forest{ leaf, leaf });
+	std::vector<std::vector<TreeCut>> bck_cuts;
+	std::vector<uint8_t> bck_ready;
+	ensure_tree_cuts(fork, nonplanar, bck_cuts, bck_ready);
+	ASSERT_EQ(bck_cuts[fork].size(), 3);
+	EXPECT_EQ(bck_cuts[fork][0], (TreeCut{ Forest{ leaf, leaf }, leaf }));
+	EXPECT_EQ(bck_cuts[fork][1], (TreeCut{ Forest{ leaf }, chain }));
+	EXPECT_EQ(bck_cuts[fork][2], (TreeCut{ Forest{ leaf }, chain }));
+
+	TreeTable planar(1, TreeKind::Planar);
+	const TreeId planar_leaf = planar.intern(0, {});
+	const TreeId planar_chain = planar.intern(0, Forest{ planar_leaf });
+	const TreeId planar_fork = planar.intern(
+		0, Forest{ planar_leaf, planar_leaf });
+	std::vector<std::vector<TreeCut>> mkw_cuts;
+	std::vector<uint8_t> mkw_ready;
+	ensure_tree_cuts(planar_fork, planar, mkw_cuts, mkw_ready);
+	ASSERT_EQ(mkw_cuts[planar_fork].size(), 2);
+	EXPECT_EQ(
+		mkw_cuts[planar_fork][0],
+		(TreeCut{ Forest{ planar_leaf }, planar_chain }));
+	EXPECT_EQ(
+		mkw_cuts[planar_fork][1],
+		(TreeCut{ Forest{ planar_leaf, planar_leaf }, planar_leaf }));
+}
+
+TEST(treeCutTest, CompleteAndSparseTablesGiveIdenticalCuts) {
+	TreeTable complete(1, TreeKind::NonPlanar);
+	std::vector<uint64_t> order_offsets;
+	enumerate_trees(complete, 3, order_offsets);
+
+	TreeTable sparse(1, TreeKind::NonPlanar);
+	const TreeId leaf = sparse.intern(0, {});
+	const TreeId chain = sparse.intern(0, Forest{ leaf });
+	sparse.intern(0, Forest{ leaf, leaf });
+	sparse.intern(0, Forest{ chain });
+
+	ASSERT_EQ(complete.size(), sparse.size());
+	std::vector<std::vector<TreeCut>> complete_cuts;
+	std::vector<std::vector<TreeCut>> sparse_cuts;
+	std::vector<uint8_t> complete_ready;
+	std::vector<uint8_t> sparse_ready;
+	for (TreeId tree = 0; tree < complete.size(); ++tree) {
+		ensure_tree_cuts(tree, complete, complete_cuts, complete_ready);
+		ensure_tree_cuts(tree, sparse, sparse_cuts, sparse_ready);
+	}
+	EXPECT_EQ(complete_cuts, sparse_cuts);
+}
+
+TEST(treeEnumerationTest, PreservesBckAndMkwBasisOrdering) {
+	TreeTable trees(1, TreeKind::NonPlanar);
+	std::vector<uint64_t> order_offsets;
+	enumerate_trees(trees, 3, order_offsets);
+	EXPECT_EQ(order_offsets, (std::vector<uint64_t>{ 0, 0, 1, 2, 4 }));
+	EXPECT_EQ(trees.tree(0).children(), Forest{});
+	EXPECT_EQ(trees.tree(1).children(), (Forest{ 0 }));
+	EXPECT_EQ(trees.tree(2).children(), (Forest{ 0, 0 }));
+	EXPECT_EQ(trees.tree(3).children(), (Forest{ 1 }));
+
+	TreeTable planar_trees(1, TreeKind::Planar);
+	std::vector<uint64_t> planar_offsets;
+	enumerate_trees(planar_trees, 3, planar_offsets);
+	const BranchedSigCache cache = build_branched_sig_cache(1, 3, true);
+	EXPECT_EQ(cache.basis_size(), 8);
+	const std::vector<Forest> expected = {
+		Forest{ 0 }, Forest{ 0, 0 }, Forest{ 1 }, Forest{ 0, 0, 0 },
+		Forest{ 0, 1 }, Forest{ 1, 0 }, Forest{ 2 }, Forest{ 3 }
+	};
+	for (uint64_t index = 0; index < expected.size(); ++index) {
+		const auto actual = cache.basis_forest(index);
+		EXPECT_EQ(Forest(actual.begin(), actual.end()), expected[index]);
+		EXPECT_EQ(
+			cache.basis_node_count(index),
+			expected[index].node_count(planar_trees));
+	}
+}
+
     TEST(branchedSigCombineTest, ChenIdentity) {
         uint64_t dimension = 2, max_nodes = 3;
         (void)prepare_branched_sig(dimension, max_nodes, false, false);

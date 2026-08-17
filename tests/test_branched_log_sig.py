@@ -28,6 +28,7 @@ from conftest import DEVICES
 from conftest import check_close
 from conftest import skip_no_cuda
 from test_branched_sig import (
+    _pure_branched_product,
     compute_kauri_to_pysiglib_permutation,
     enumerate_decorated_trees,
     linear_branched_sig_ref,
@@ -129,6 +130,20 @@ def _kauri_log_reference(path, d, N):
     return np.array(out)
 
 
+def _planar_tensor_log_reference(bsig, d, N):
+    h = bsig.copy()
+    h[0] = 0.0
+    out = np.zeros_like(h)
+    power = h
+    for k in range(1, N + 1):
+        coeff = -1.0 / k if k % 2 == 0 else 1.0 / k
+        out += coeff * power
+        if k < N:
+            power = _pure_branched_product(
+                power, h, d, N, planar=True)
+    return out
+
+
 def test_branched_sig_to_log_sig_stochastax_degree2_fixture():
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     d = fixture["dimension"]
@@ -164,7 +179,7 @@ def test_branched_sig_to_log_sig_single_segment_cherry_vanishes():
     np.testing.assert_allclose(out[cherry_idx], 0.0, atol=1e-14)
 
 
-@pytest.mark.parametrize("d,N", [(2, 3), (3, 2)])
+@pytest.mark.parametrize("d,N", [(2, 3), (3, 2), (2, 5)])
 def test_branched_log_sig_vs_kauri_hopf_log(d, N):
     pysiglib.prepare_branched_log_sig(d, N, 0)
     perm = compute_kauri_to_pysiglib_permutation(d, N)
@@ -177,6 +192,49 @@ def test_branched_log_sig_vs_kauri_hopf_log(d, N):
     ref_reordered = reorder_kauri_to_pysiglib(ref, perm)
 
     np.testing.assert_allclose(out, ref_reordered, atol=1e-10)
+
+
+def test_planar_branched_sig_to_log_sig_degree5_matches_explicit_powers():
+    d, N = 2, 5
+    planar = True
+    pysiglib.prepare_branched_log_sig(d, N, 0, planar=planar)
+    length = pysiglib.branched_sig_length(
+        d, N, planar=planar, scalar_term=True)
+    rng = np.random.default_rng(24601)
+    bsig = rng.normal(scale=0.05, size=length)
+    bsig[0] = 1.0
+
+    actual = pysiglib.branched_sig_to_log_sig(
+        bsig, d, N, planar=planar, method=0)
+    expected = _planar_tensor_log_reference(bsig, d, N)
+
+    np.testing.assert_allclose(actual, expected, atol=2e-12, rtol=2e-12)
+
+
+@pytest.mark.parametrize("planar", [False, True])
+def test_branched_sig_to_log_sig_degree5_backprop_directional(planar):
+    d, N = 2, 5
+    pysiglib.prepare_branched_log_sig(d, N, 0, planar=planar)
+    length = pysiglib.branched_sig_length(
+        d, N, planar=planar, scalar_term=True)
+    rng = np.random.default_rng(13579)
+    bsig = rng.normal(scale=0.05, size=length)
+    bsig[0] = 1.0
+    derivs = rng.normal(size=length)
+    direction = rng.normal(size=length)
+    direction[0] = 0.0
+
+    grad = pysiglib.branched_sig_to_log_sig_backprop(
+        bsig, derivs, d, N, planar=planar, method=0)
+    eps = 1e-6
+    plus = pysiglib.branched_sig_to_log_sig(
+        bsig + eps * direction, d, N, planar=planar, method=0)
+    minus = pysiglib.branched_sig_to_log_sig(
+        bsig - eps * direction, d, N, planar=planar, method=0)
+    finite_difference = np.dot(plus - minus, derivs) / (2 * eps)
+
+    np.testing.assert_allclose(
+        np.dot(grad, direction), finite_difference, atol=2e-7, rtol=2e-7)
 
 
 def test_branched_sig_to_log_sig_scalar_term_roundtrip():

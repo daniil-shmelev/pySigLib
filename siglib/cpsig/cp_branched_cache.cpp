@@ -20,13 +20,7 @@
 #include "macros.h"
 
 namespace {
-// max_nodes is combinatorially bounded (dozens at most), so bit 63 is free for
-// the planar flag. Packing it lets us reuse PairHash instead of maintaining a
-// parallel tuple-hash.
-inline std::pair<uint64_t, uint64_t> make_key(uint64_t dimension, uint64_t max_nodes, bool planar) {
-	return { dimension, max_nodes | (static_cast<uint64_t>(planar) << 63) };
-}
-
+// One cache per dimension, degree, and planar basis kind.
 struct BranchedSigCacheRegistry {
 	std::unordered_map<
 		std::pair<uint64_t, uint64_t>,
@@ -133,34 +127,10 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool pla
 	deserialize_vector(in, tmp.chain_indices);
 	deserialize_vector(in, tmp.coproduct_data);
 	deserialize_vector(in, tmp.coproduct_offsets);
+	deserialize_vector(in, tmp.basis_forest_data);
+	deserialize_vector(in, tmp.basis_forest_offsets);
 
 	if (!in.good()) return false;
-	if (in.peek() != std::char_traits<char>::eof()) {
-		deserialize_vector(in, tmp.basis_forest_data);
-		deserialize_vector(in, tmp.basis_forest_offsets);
-		if (!in.good()) return false;
-	}
-
-	if (planar && tmp.basis_forest_offsets.empty()) {
-		std::vector<DecoratedTreeInfo> trees;
-		std::vector<uint64_t> tree_order_index;
-		enumerate_all_decorated_trees(
-			dimension, max_nodes, trees, tree_order_index, true);
-		std::vector<std::vector<uint64_t>> forests;
-		std::vector<uint64_t> forest_order_index;
-		enumerate_ordered_forest_basis_(
-			trees, max_nodes, forests, forest_order_index);
-		if (forests.size() + 1 != tmp.total_length
-			|| forest_order_index != tmp.order_index)
-			return false;
-		tmp.basis_forest_offsets.resize(tmp.total_length);
-		for (uint64_t i = 0; i < forests.size(); ++i) {
-			tmp.basis_forest_offsets[i] = tmp.basis_forest_data.size();
-			tmp.basis_forest_data.insert(
-				tmp.basis_forest_data.end(), forests[i].begin(), forests[i].end());
-		}
-		tmp.basis_forest_offsets[forests.size()] = tmp.basis_forest_data.size();
-	}
 	if (planar) {
 		if (tmp.basis_forest_offsets.size() != tmp.total_length
 			|| tmp.basis_forest_offsets.empty()
@@ -183,7 +153,7 @@ static bool read_branched_cache(uint64_t dimension, uint64_t max_nodes, bool pla
 // ---------------------------------------------------------------------------
 
 void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use_disk, bool planar) {
-	const auto key = make_key(dimension, max_nodes, planar);
+	const auto key = make_branched_sig_cache_key(dimension, max_nodes, planar);
 	auto& reg = branched_sig_cache_registry();
 
 	{
@@ -192,7 +162,7 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 			return;
 	}
 
-	// Try loading from disk
+	// Disk data uses the same flattened BranchedSigCache representation.
 	if (use_disk) {
 		auto cache = std::make_unique<BranchedSigCache>();
 		if (read_branched_cache(dimension, max_nodes, planar, *cache)) {
@@ -217,7 +187,7 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 }
 
 const BranchedSigCache& get_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool planar) {
-	const auto key = make_key(dimension, max_nodes, planar);
+	const auto key = make_branched_sig_cache_key(dimension, max_nodes, planar);
 	auto& reg = branched_sig_cache_registry();
 	std::shared_lock rlock(reg.mu);
 	auto it = reg.map.find(key);

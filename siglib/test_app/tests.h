@@ -329,5 +329,7 @@ void example_batch_branched_log_sig_d(
 	uint64_t dimension = 3,
 	uint64_t length = 8,
 	uint64_t max_nodes = 4,
-	int n_jobs = 1
+	int method = 0,
+	int n_jobs = 1,
+	bool planar = false
 );

@@ -290,15 +290,11 @@ static bool read_branched_cache_(uint64_t dimension, uint64_t max_nodes, bool pl
 	cu_deserialize_vector_(in, tmp.chain_indices);
 	cu_deserialize_vector_(in, tmp.coproduct_data);
 	cu_deserialize_vector_(in, tmp.coproduct_offsets);
+	cu_deserialize_vector_(in, tmp.basis_forest_data);
+	cu_deserialize_vector_(in, tmp.basis_forest_offsets);
 
 	if (!in.good())
 		return false;
-	if (in.peek() != std::char_traits<char>::eof()) {
-		cu_deserialize_vector_(in, tmp.basis_forest_data);
-		cu_deserialize_vector_(in, tmp.basis_forest_offsets);
-		if (!in.good())
-			return false;
-	}
 
 	tmp.planar = planar;
 	c = std::move(tmp);
@@ -410,27 +406,20 @@ static void prepare_branched_log_sig_gpu_cache_(
 	if (method != 0 && !planar)
 		throw std::invalid_argument(
 			"compressed branched log signatures require planar=True");
-	if (method == 0) {
-		if (is_cuda_branched_log_sig_gpu_cache_prepared_(
-			dimension, max_nodes, planar))
-			return;
-
-		BranchedSigCache host_cache;
+	const bool horner_prepared =
+		is_cuda_branched_log_horner_plan_prepared_(
+			dimension, max_nodes, planar);
+	BranchedSigCache host_cache;
+	if (!horner_prepared || method >= 1)
 		prepare_branched_sig_gpu_cache_(
 			dimension, max_nodes, planar, use_disk, &host_cache);
-		prepare_cuda_branched_log_sig_gpu_cache_(host_cache);
-		return;
+	if (!horner_prepared)
+		prepare_cuda_branched_log_horner_plan_(host_cache);
+	if (method >= 1) {
+		prepare_cuda_mkw_basis_cache_(host_cache, method, use_disk);
+		if (method == 3)
+			prepare_cuda_branched_bch_cache_(host_cache, use_disk);
 	}
-
-	BranchedSigCache host_cache;
-	prepare_branched_sig_gpu_cache_(
-		dimension, max_nodes, planar, use_disk, &host_cache);
-	if (!is_cuda_branched_log_sig_gpu_cache_prepared_(
-		dimension, max_nodes, planar))
-		prepare_cuda_branched_log_sig_gpu_cache_(host_cache);
-	prepare_cuda_mkw_basis_cache_(host_cache, method, use_disk);
-	if (method == 3)
-		prepare_cuda_branched_bch_cache_(host_cache, use_disk);
 }
 
 static const BranchedSigCacheGPU& get_gpu_cache(

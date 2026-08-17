@@ -14,7 +14,7 @@
  * ========================================================================= */
 
 #pragma once
-#include "branched_trees.h"
+#include "trees/coproduct.h"
 #include "errors.h"
 #include <algorithm>
 #include <cstdint>
@@ -41,344 +41,31 @@ struct BranchedSigCoefCache {
 	std::vector<std::pair<uint64_t, uint64_t>> correction_indices;
 };
 
-struct BranchedSigCoefCut_ {
-	std::vector<uint64_t> forest;
-	uint64_t trunk = 0;
-};
-
-struct BranchedSigCoefTreeStore_ {
-	uint64_t dimension = 0;
-	bool planar = false;
-	std::vector<DecoratedTreeInfo> trees;
-	std::unordered_map<CanonicalTree, uint64_t, CanonicalTreeHash> tree_map;
-	std::vector<std::vector<BranchedSigCoefCut_>> cuts;
-	std::vector<uint8_t> cuts_ready;
-
-	uint64_t intern(uint64_t label, std::vector<uint64_t> children) {
-		if (label >= dimension)
-			throw std::invalid_argument("branched_sig_coef tree label out of range");
-		if (!planar)
-			std::sort(children.begin(), children.end());
-
-		CanonicalTree canonical;
-		canonical.root_label = static_cast<uint8_t>(label);
-		canonical.child_ids = std::move(children);
-		canonical.num_nodes = 1;
-		for (uint64_t child : canonical.child_ids) {
-			if (canonical.num_nodes > UINT64_MAX - trees[child].canonical.num_nodes)
-				throw std::overflow_error("branched_sig_coef tree size overflow");
-			canonical.num_nodes += trees[child].canonical.num_nodes;
-		}
-
-		const auto existing = tree_map.find(canonical);
-		if (existing != tree_map.end())
-			return existing->second;
-
-		DecoratedTreeInfo info;
-		info.canonical = canonical;
-		info.tree_factorial = static_cast<double>(canonical.num_nodes);
-		for (uint64_t child : canonical.child_ids)
-			info.tree_factorial *= trees[child].tree_factorial;
-		collect_labels(info.canonical, trees, info.node_labels);
-
-		const uint64_t index = trees.size();
-		trees.push_back(std::move(info));
-		tree_map.emplace(trees.back().canonical, index);
-		cuts.emplace_back();
-		cuts_ready.push_back(0);
-		return index;
-	}
-};
-
-inline uint64_t parse_branched_sig_coef_tree_(
+inline TreeId parse_branched_sig_coef_tree_(
 	const uint64_t* tree_data,
 	uint64_t tree_data_len,
 	uint64_t& position,
-	BranchedSigCoefTreeStore_& store
+	TreeTable& trees
 ) {
+	// Input trees use preorder: root label, child count, then each child.
 	if (position > tree_data_len || tree_data_len - position < 2)
 		throw std::invalid_argument("branched_sig_coef tree data is truncated");
 	const uint64_t label = tree_data[position++];
 	const uint64_t num_children = tree_data[position++];
 	if (num_children > (tree_data_len - position) / 2)
 		throw std::invalid_argument("branched_sig_coef child count is invalid");
-	std::vector<uint64_t> children;
+	Forest children;
 	children.reserve(num_children);
 	for (uint64_t i = 0; i < num_children; ++i)
 		children.push_back(parse_branched_sig_coef_tree_(
-			tree_data, tree_data_len, position, store));
-	return store.intern(label, std::move(children));
+			tree_data, tree_data_len, position, trees));
+	return trees.intern(label, std::move(children));
 }
-
-inline void append_branched_sig_coef_shuffles_(
-	const std::vector<uint64_t>& a,
-	const std::vector<uint64_t>& b,
-	uint64_t ai,
-	uint64_t bi,
-	std::vector<uint64_t>& current,
-	std::vector<std::vector<uint64_t>>& out
-) {
-	if (ai == a.size() && bi == b.size()) {
-		out.push_back(current);
-		return;
-	}
-	if (ai < a.size()) {
-		current.push_back(a[ai]);
-		append_branched_sig_coef_shuffles_(a, b, ai + 1, bi, current, out);
-		current.pop_back();
-	}
-	if (bi < b.size()) {
-		current.push_back(b[bi]);
-		append_branched_sig_coef_shuffles_(a, b, ai, bi + 1, current, out);
-		current.pop_back();
-	}
-}
-
-inline void shuffle_branched_sig_coef_groups_(
-	const std::vector<std::vector<uint64_t>>& groups,
-	std::vector<std::vector<uint64_t>>& out
-) {
-	out.assign(1, {});
-	for (const auto& group : groups) {
-		if (group.empty())
-			continue;
-		std::vector<std::vector<uint64_t>> next;
-		for (const auto& base : out) {
-			std::vector<uint64_t> current;
-			current.reserve(base.size() + group.size());
-			append_branched_sig_coef_shuffles_(
-				base, group, 0, 0, current, next);
-		}
-		out.swap(next);
-	}
-}
-
-inline void ensure_branched_sig_coef_cuts_(
-	uint64_t tree_index,
-	BranchedSigCoefTreeStore_& store
-) {
-	if (store.cuts_ready[tree_index])
-		return;
-
-	const CanonicalTree tree = store.trees[tree_index].canonical;
-	for (uint64_t child : tree.child_ids)
-		ensure_branched_sig_coef_cuts_(child, store);
-
-	std::vector<BranchedSigCoefCut_> results;
-	if (tree.child_ids.empty()) {
-		store.cuts_ready[tree_index] = 1;
-		return;
-	}
-
-	if (store.planar) {
-		struct ChildOption {
-			std::vector<uint64_t> forest;
-			uint64_t trunk = 0;
-		};
-		std::vector<std::vector<ChildOption>> child_options;
-		child_options.reserve(tree.child_ids.size());
-		for (uint64_t child : tree.child_ids) {
-			std::vector<ChildOption> options;
-			options.push_back({ {}, child });
-			for (const auto& cut : store.cuts[child])
-				options.push_back({ cut.forest, cut.trunk });
-			child_options.push_back(std::move(options));
-		}
-
-		for (uint64_t prefix_len = 0; prefix_len <= tree.child_ids.size(); ++prefix_len) {
-			std::vector<uint64_t> prefix(
-				tree.child_ids.begin(), tree.child_ids.begin() + prefix_len);
-			if (prefix_len == tree.child_ids.size()) {
-				results.push_back({ std::move(prefix), store.intern(tree.root_label, {}) });
-				continue;
-			}
-
-			std::vector<uint64_t> indices(tree.child_ids.size() - prefix_len, 0);
-			while (true) {
-				std::vector<std::vector<uint64_t>> forest_groups;
-				std::vector<uint64_t> trunk_children;
-				bool nontrivial = prefix_len != 0;
-				for (uint64_t c = prefix_len; c < tree.child_ids.size(); ++c) {
-					const auto& option = child_options[c][indices[c - prefix_len]];
-					if (!option.forest.empty()) {
-						forest_groups.push_back(option.forest);
-						nontrivial = true;
-					}
-					trunk_children.push_back(option.trunk);
-				}
-				forest_groups.push_back(prefix);
-				if (nontrivial) {
-					std::vector<std::vector<uint64_t>> forests;
-					shuffle_branched_sig_coef_groups_(forest_groups, forests);
-					const uint64_t trunk = store.intern(
-						tree.root_label, trunk_children);
-					for (auto& forest : forests)
-						results.push_back({ std::move(forest), trunk });
-				}
-
-				int64_t pos = static_cast<int64_t>(indices.size()) - 1;
-				while (pos >= 0) {
-					const uint64_t child_pos = prefix_len + static_cast<uint64_t>(pos);
-					indices[pos]++;
-					if (indices[pos] < child_options[child_pos].size())
-						break;
-					indices[pos] = 0;
-					--pos;
-				}
-				if (pos < 0)
-					break;
-			}
-		}
-	}
-	else {
-		struct ChildOption {
-			std::vector<uint64_t> forest;
-			uint64_t trunk = 0;
-			bool has_trunk = false;
-		};
-		std::vector<std::vector<ChildOption>> child_options;
-		child_options.reserve(tree.child_ids.size());
-		for (uint64_t child : tree.child_ids) {
-			std::vector<ChildOption> options;
-			options.push_back({ { child }, 0, false });
-			options.push_back({ {}, child, true });
-			for (const auto& cut : store.cuts[child])
-				options.push_back({ cut.forest, cut.trunk, true });
-			child_options.push_back(std::move(options));
-		}
-
-		std::vector<uint64_t> indices(tree.child_ids.size(), 0);
-		while (true) {
-			std::vector<uint64_t> forest;
-			std::vector<uint64_t> trunk_children;
-			bool all_kept = true;
-			for (uint64_t c = 0; c < tree.child_ids.size(); ++c) {
-				const auto& option = child_options[c][indices[c]];
-				forest.insert(forest.end(), option.forest.begin(), option.forest.end());
-				if (option.has_trunk)
-					trunk_children.push_back(option.trunk);
-				if (indices[c] != 1)
-					all_kept = false;
-			}
-			if (!all_kept) {
-				std::sort(forest.begin(), forest.end());
-				results.push_back({ std::move(forest), store.intern(
-					tree.root_label, std::move(trunk_children)) });
-			}
-
-			int64_t pos = static_cast<int64_t>(indices.size()) - 1;
-			while (pos >= 0) {
-				indices[pos]++;
-				if (indices[pos] < child_options[pos].size())
-					break;
-				indices[pos] = 0;
-				--pos;
-			}
-			if (pos < 0)
-				break;
-		}
-	}
-
-	store.cuts[tree_index] = std::move(results);
-	store.cuts_ready[tree_index] = 1;
-}
-
-struct BranchedSigCoefForestTerm_ {
-	std::vector<uint64_t> left;
-	std::vector<uint64_t> right;
-};
-
-inline void enumerate_branched_sig_coef_forest_terms_(
-	const std::vector<uint64_t>& forest,
-	const BranchedSigCoefTreeStore_& store,
-	std::vector<BranchedSigCoefForestTerm_>& results
-) {
-	if (forest.empty())
-		return;
-
-	struct ChildOption {
-		std::vector<uint64_t> forest;
-		uint64_t trunk = 0;
-	};
-	std::vector<std::vector<ChildOption>> child_options;
-	child_options.reserve(forest.size());
-	for (uint64_t tree : forest) {
-		std::vector<ChildOption> options;
-		options.push_back({ {}, tree });
-		for (const auto& cut : store.cuts[tree])
-			options.push_back({ cut.forest, cut.trunk });
-		child_options.push_back(std::move(options));
-	}
-
-	for (uint64_t prefix_len = 0; prefix_len <= forest.size(); ++prefix_len) {
-		std::vector<uint64_t> prefix(forest.begin(), forest.begin() + prefix_len);
-		if (prefix_len == forest.size()) {
-			results.push_back({ std::move(prefix), {} });
-			continue;
-		}
-
-		std::vector<uint64_t> indices(forest.size() - prefix_len, 0);
-		while (true) {
-			std::vector<std::vector<uint64_t>> forest_groups;
-			std::vector<uint64_t> right;
-			bool nontrivial = prefix_len != 0;
-			for (uint64_t c = prefix_len; c < forest.size(); ++c) {
-				const auto& option = child_options[c][indices[c - prefix_len]];
-				if (!option.forest.empty()) {
-					forest_groups.push_back(option.forest);
-					nontrivial = true;
-				}
-				right.push_back(option.trunk);
-			}
-			forest_groups.push_back(prefix);
-			if (nontrivial) {
-				std::vector<std::vector<uint64_t>> lefts;
-				shuffle_branched_sig_coef_groups_(forest_groups, lefts);
-				for (auto& left : lefts)
-					results.push_back({ std::move(left), right });
-			}
-
-			int64_t pos = static_cast<int64_t>(indices.size()) - 1;
-			while (pos >= 0) {
-				const uint64_t child_pos = prefix_len + static_cast<uint64_t>(pos);
-				indices[pos]++;
-				if (indices[pos] < child_options[child_pos].size())
-					break;
-				indices[pos] = 0;
-				--pos;
-			}
-			if (pos < 0)
-				break;
-		}
-	}
-}
-
-struct BranchedSigCoefCoordinateHash_ {
-	size_t operator()(const std::vector<uint64_t>& coordinate) const noexcept {
-		size_t h = coordinate.size();
-		for (uint64_t tree : coordinate)
-			h ^= std::hash<uint64_t>{}(tree) + 0x9e3779b9ULL + (h << 6) + (h >> 2);
-		return h;
-	}
-};
 
 struct BranchedSigCoefLocalTerm_ {
 	std::vector<uint64_t> left;
 	uint64_t right = 0;
 };
-
-inline uint64_t branched_sig_coef_coordinate_nodes_(
-	const std::vector<uint64_t>& coordinate,
-	const BranchedSigCoefTreeStore_& store
-) {
-	uint64_t nodes = 0;
-	for (uint64_t tree : coordinate) {
-		if (nodes > UINT64_MAX - store.trees[tree].canonical.num_nodes)
-			throw std::overflow_error("branched_sig_coef forest size overflow");
-		nodes += store.trees[tree].canonical.num_nodes;
-	}
-	return nodes;
-}
 
 inline BranchedSigCoefCache build_branched_sig_coef_cache(
 	const uint64_t* tree_data,
@@ -396,10 +83,12 @@ inline BranchedSigCoefCache build_branched_sig_coef_cache(
 	if (num_indices == 0)
 		throw std::invalid_argument("branched_sig_coef requires at least one tree");
 
-	BranchedSigCoefTreeStore_ store;
-	store.dimension = dimension;
-	store.planar = planar;
-	std::vector<std::vector<uint64_t>> requested;
+	// Keep only the requested coordinates and their coproduct dependencies.
+	TreeTable trees(
+		dimension, planar ? TreeKind::Planar : TreeKind::NonPlanar);
+	std::vector<std::vector<TreeCut>> tree_cuts;
+	std::vector<uint8_t> cuts_ready;
+	std::vector<Forest> requested;
 	requested.reserve(num_indices);
 	uint64_t position = 1;
 	for (uint64_t i = 0; i < num_indices; ++i) {
@@ -408,25 +97,23 @@ inline BranchedSigCoefCache build_branched_sig_coef_cache(
 		const uint64_t num_roots = tree_data[position++];
 		if (!planar && num_roots > 1)
 			throw std::invalid_argument("non-planar coefficient must contain one tree");
-		std::vector<uint64_t> coordinate;
+		Forest coordinate;
 		coordinate.reserve(num_roots);
 		for (uint64_t root = 0; root < num_roots; ++root)
 			coordinate.push_back(parse_branched_sig_coef_tree_(
-				tree_data, tree_data_len, position, store));
-		if (branched_sig_coef_coordinate_nodes_(coordinate, store) > max_nodes)
+				tree_data, tree_data_len, position, trees));
+		if (coordinate.node_count(trees) > max_nodes)
 			throw std::invalid_argument("branched_sig_coef tree exceeds max_nodes");
 		requested.push_back(std::move(coordinate));
 	}
 	if (position != tree_data_len)
 		throw std::invalid_argument("branched_sig_coef tree data has trailing values");
 
-	std::vector<std::vector<uint64_t>> coordinates(1);
+	std::vector<Forest> coordinates(1);
 	std::vector<std::vector<BranchedSigCoefLocalTerm_>> coordinate_terms(1);
-	std::unordered_map<
-		std::vector<uint64_t>, uint64_t, BranchedSigCoefCoordinateHash_
-	> coordinate_map;
-	coordinate_map.emplace(std::vector<uint64_t>{}, 0);
-	auto add_coordinate = [&](const std::vector<uint64_t>& coordinate) {
+	std::unordered_map<Forest, uint64_t, Forest::Hash> coordinate_map;
+	coordinate_map.emplace(Forest{}, 0);
+	auto add_coordinate = [&](const Forest& coordinate) {
 		const auto existing = coordinate_map.find(coordinate);
 		if (existing != coordinate_map.end())
 			return existing->second;
@@ -442,15 +129,16 @@ inline BranchedSigCoefCache build_branched_sig_coef_cache(
 	for (const auto& coordinate : requested)
 		target_provisional.push_back(add_coordinate(coordinate));
 
+	// Close the requested coordinates under all coproduct dependencies.
 	for (uint64_t current = 1; current < coordinates.size(); ++current) {
 		const auto coordinate = coordinates[current];
 		std::vector<BranchedSigCoefLocalTerm_> terms;
 		if (planar) {
-			for (uint64_t tree : coordinate)
-				ensure_branched_sig_coef_cuts_(tree, store);
-			std::vector<BranchedSigCoefForestTerm_> forest_terms;
-			enumerate_branched_sig_coef_forest_terms_(
-				coordinate, store, forest_terms);
+			for (TreeId tree : coordinate)
+				ensure_tree_cuts(tree, trees, tree_cuts, cuts_ready);
+			std::vector<CoproductTerm> forest_terms;
+			enumerate_mkw_forest_coproduct_terms(
+				coordinate, tree_cuts, forest_terms);
 			for (const auto& term : forest_terms) {
 				if ((term.left.empty() && term.right == coordinate)
 					|| (term.left == coordinate && term.right.empty()))
@@ -465,13 +153,13 @@ inline BranchedSigCoefCache build_branched_sig_coef_cache(
 		else {
 			if (coordinate.size() != 1)
 				throw std::runtime_error("invalid non-planar sparse coordinate");
-			ensure_branched_sig_coef_cuts_(coordinate[0], store);
-			const auto cuts = store.cuts[coordinate[0]];
+			ensure_tree_cuts(coordinate[0], trees, tree_cuts, cuts_ready);
+			const auto cuts = tree_cuts[coordinate[0]];
 			for (const auto& cut : cuts) {
 				BranchedSigCoefLocalTerm_ term;
-				term.right = add_coordinate({ cut.trunk });
-				for (uint64_t tree : cut.forest)
-					term.left.push_back(add_coordinate({ tree }));
+				term.right = add_coordinate(Forest{ cut.trunk });
+				for (TreeId tree : cut.pruned)
+					term.left.push_back(add_coordinate(Forest{ tree }));
 				terms.push_back(std::move(term));
 			}
 		}
@@ -483,8 +171,8 @@ inline BranchedSigCoefCache build_branched_sig_coef_cache(
 	for (uint64_t i = 1; i < coordinates.size(); ++i)
 		ordered.push_back(i);
 	std::sort(ordered.begin(), ordered.end(), [&](uint64_t a, uint64_t b) {
-		const uint64_t a_nodes = branched_sig_coef_coordinate_nodes_(coordinates[a], store);
-		const uint64_t b_nodes = branched_sig_coef_coordinate_nodes_(coordinates[b], store);
+		const uint64_t a_nodes = coordinates[a].node_count(trees);
+		const uint64_t b_nodes = coordinates[b].node_count(trees);
 		if (a_nodes != b_nodes)
 			return a_nodes < b_nodes;
 		return coordinates[a] < coordinates[b];
@@ -494,6 +182,7 @@ inline BranchedSigCoefCache build_branched_sig_coef_cache(
 	for (uint64_t i = 0; i < ordered.size(); ++i)
 		local_index[ordered[i]] = i + 1;
 
+	// Reindex by degree and flatten to the existing sparse cache format.
 	BranchedSigCoefCache cache;
 	const uint64_t cache_size = coordinates.size();
 	cache.target_indices.reserve(num_indices);
@@ -506,13 +195,14 @@ inline BranchedSigCoefCache build_branched_sig_coef_cache(
 	for (uint64_t local = 1; local < cache_size; ++local) {
 		const uint64_t provisional = ordered[local - 1];
 		const auto& coordinate = coordinates[provisional];
-		const uint64_t nodes = branched_sig_coef_coordinate_nodes_(coordinate, store);
+		const uint64_t nodes = coordinate.node_count(trees);
 		cache.max_nodes = std::max(cache.max_nodes, nodes);
 
 		double inv_factorial = 1.0;
-		for (uint64_t tree : coordinate) {
-			inv_factorial /= store.trees[tree].tree_factorial;
-			const auto& labels = store.trees[tree].node_labels;
+		for (TreeId tree : coordinate) {
+			const Tree& tree_data = trees.tree(tree);
+			inv_factorial /= tree_data.tree_factorial();
+			const auto& labels = tree_data.node_labels();
 			cache.node_labels_data.insert(
 				cache.node_labels_data.end(), labels.begin(), labels.end());
 		}
@@ -544,13 +234,10 @@ inline BranchedSigCoefCache build_branched_sig_coef_cache(
 
 	cache.leaf_indices.assign(dimension, 0);
 	for (uint64_t label = 0; label < dimension; ++label) {
-		CanonicalTree leaf;
-		leaf.num_nodes = 1;
-		leaf.root_label = static_cast<uint8_t>(label);
-		const auto tree = store.tree_map.find(leaf);
-		if (tree == store.tree_map.end())
+		const auto tree = trees.find(label, Forest{});
+		if (!tree)
 			continue;
-		const auto coordinate = coordinate_map.find({ tree->second });
+		const auto coordinate = coordinate_map.find(Forest{ *tree });
 		if (coordinate != coordinate_map.end())
 			cache.leaf_indices[label] = local_index[coordinate->second];
 	}
@@ -559,29 +246,29 @@ inline BranchedSigCoefCache build_branched_sig_coef_cache(
 		const auto& coordinate = coordinates[ordered[local_idx - 1]];
 		if (coordinate.size() != 1)
 			continue;
-		uint64_t tree = coordinate[0];
-		const uint64_t level = store.trees[tree].canonical.num_nodes;
+		TreeId tree = coordinate[0];
+		const uint64_t level = trees.tree(tree).node_count();
 		if (level < 2 || level > max_nodes)
 			continue;
 
 		uint64_t word_index = 0;
 		bool is_data_chain = true;
 		while (true) {
-			const auto& node = store.trees[tree].canonical;
-			if (node.root_label >= data_dimension) {
+			const Tree& node = trees.tree(tree);
+			if (node.root_label() >= data_dimension) {
 				is_data_chain = false;
 				break;
 			}
-			if (word_index > (UINT64_MAX - node.root_label) / data_dimension)
+			if (word_index > (UINT64_MAX - node.root_label()) / data_dimension)
 				throw std::overflow_error("branched_sig_coef correction index overflow");
-			word_index = word_index * data_dimension + node.root_label;
-			if (node.child_ids.empty())
+			word_index = word_index * data_dimension + node.root_label();
+			if (node.children().empty())
 				break;
-			if (node.child_ids.size() != 1) {
+			if (node.children().size() != 1) {
 				is_data_chain = false;
 				break;
 			}
-			tree = node.child_ids[0];
+			tree = node.children()[0];
 		}
 		if (!is_data_chain)
 			continue;
