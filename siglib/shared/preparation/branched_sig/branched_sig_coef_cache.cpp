@@ -14,9 +14,9 @@
  * ========================================================================= */
 
 #include "branched_sig_coef_cache.h"
-#include "cache_io.h"
-#include "../errors.h"
-#include "../trees/coproduct.h"
+#include "../cache_io.h"
+#include "../../errors.h"
+#include "../../trees/coproduct.h"
 
 #include <algorithm>
 #include <fstream>

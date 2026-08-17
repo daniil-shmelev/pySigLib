@@ -18,7 +18,7 @@
 #include "cp_branched_cache.h"
 #include "disk_cache.h"
 #include "macros.h"
-#include "preparation/branched_sig_cache_io.h"
+#include "preparation/branched_sig/branched_sig_cache_io.h"
 
 namespace {
 // One cache per dimension, degree, and planar basis kind.
@@ -53,9 +53,8 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 	// Disk data uses the same flattened BranchedSigCache representation.
 	if (use_disk) {
 		auto cache = std::make_unique<BranchedSigCache>();
-		if (read_branched_sig_cache(
-			get_cache_dir() / cache_folder_name,
-			dimension, max_nodes, planar, *cache)) {
+		bool cache_file_exists = read_branched_sig_cache(get_cache_dir() / cache_folder_name, dimension, max_nodes, planar, *cache);
+		if (cache_file_exists) {
 			cache->planar = planar;
 			std::unique_lock wlock(reg.mu);
 			reg.map.try_emplace(key, std::move(cache));
@@ -64,12 +63,10 @@ void prepare_branched_sig_cache(uint64_t dimension, uint64_t max_nodes, bool use
 	}
 
 	// Compute from scratch using the shared constructor.
-	auto cache = std::make_unique<BranchedSigCache>(
-		dimension, max_nodes, planar);
+	auto cache = std::make_unique<BranchedSigCache>(dimension, max_nodes, planar);
 
 	if (use_disk) {
-		write_branched_sig_cache(
-			get_cache_dir() / cache_folder_name, *cache);
+		write_branched_sig_cache(get_cache_dir() / cache_folder_name, *cache);
 	}
 
 	// try_emplace: if a concurrent caller raced us to the write lock and

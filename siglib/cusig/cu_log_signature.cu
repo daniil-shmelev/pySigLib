@@ -13,12 +13,17 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cupch.h"
 #include "cusig.h"
 #include "cu_utils.h"
 #include "cu_log_signature.h"
 #include "cu_log_sig_backprop.h"
 #include "cache_lifecycle/cu_log_sig_cache.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
 
 // =========================================================================
 // Scratch buffer workspace - cached across calls to avoid per-call

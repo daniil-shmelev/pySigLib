@@ -15,11 +15,11 @@
 
 #include <gtest/gtest.h>
 
-#include "bch_cache.h"
-#include "branched_log_sig_cache.h"
-#include "branched_sig_cache_io.h"
+#include "log_sig/bch_cache.h"
+#include "branched_sig/branched_log_sig_cache.h"
+#include "branched_sig/branched_sig_cache_io.h"
 #include "cache_io.h"
-#include "polynomial_sig_kernel_tables.h"
+#include "polynomial_sig_kernel/polynomial_sig_kernel_tables.h"
 
 #include <chrono>
 #include <filesystem>

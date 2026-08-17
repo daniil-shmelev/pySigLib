@@ -1,4 +1,4 @@
-/* Copyright 2025 Daniil Shmelev
+/* Copyright 2026 Daniil Shmelev
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,8 +13,18 @@
  * limitations under the License.
  * ========================================================================= */
 
-// pch.cpp: source file corresponding to the pre-compiled header
+#include "branched_sig_cache.h"
+#include "branched_sig_cache_builders.h"
 
-#include "cupch.h"
-
-// When you are using pre-compiled headers, this source file is necessary for compilation to succeed.
+BranchedSigCache::BranchedSigCache(
+	uint64_t dimension_value,
+	uint64_t max_nodes_value,
+	bool planar_value
+) {
+	if (planar_value)
+		*this = branched_sig_cache_detail::build_mkw_branched_sig_cache_(
+			dimension_value, max_nodes_value);
+	else
+		*this = branched_sig_cache_detail::build_bck_branched_sig_cache_(
+			dimension_value, max_nodes_value);
+}

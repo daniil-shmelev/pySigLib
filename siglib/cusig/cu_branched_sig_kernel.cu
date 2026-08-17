@@ -13,9 +13,12 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cupch.h"
 #include "cusig.h"
+#include "cu_runtime_utils.h"
 #include "cu_sig_kernel.h"
+
+#include <cstdint>
+#include <stdexcept>
 
 struct SigKernelParams {
 	uint64_t length2;

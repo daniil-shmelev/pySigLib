@@ -23,7 +23,6 @@ add_library(cpsig SHARED
     cp_utils.cpp
     cp_sig_combine.cpp
     cp_sig_join.cpp
-    cppch.cpp
     cpsig.cpp
     cache_lifecycle/log_sig_cache.cpp
 )
@@ -52,6 +51,7 @@ set_target_properties(cpsig PROPERTIES
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
 )
+target_precompile_headers(cpsig PRIVATE cppch.h)
 if(APPLE)
     set_target_properties(cpsig PROPERTIES INSTALL_RPATH "@loader_path")
 elseif(UNIX)

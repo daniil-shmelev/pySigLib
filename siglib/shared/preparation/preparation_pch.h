@@ -1,4 +1,4 @@
-/* Copyright 2025 Daniil Shmelev
+/* Copyright 2026 Daniil Shmelev
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,8 +13,26 @@
  * limitations under the License.
  * ========================================================================= */
 
-// cppch.cpp: source file corresponding to the pre-compiled header
+#pragma once
 
-#include "cppch.h"
-
-// When you are using pre-compiled headers, this source file is necessary for compilation to succeed.
+#include <algorithm>
+#include <cmath>
+#include <concepts>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <istream>
+#include <limits>
+#include <memory>
+#include <ostream>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <system_error>
+#include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>

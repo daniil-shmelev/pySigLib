@@ -17,9 +17,9 @@
 #include "cppch.h"
 #include "cp_sig_combine.h"
 #include "cp_tensor_log.h"
-#include "preparation/bch_data.h"
-#include "../shared/preparation/lyndon_words.h"
-#include "../shared/preparation/bch_cache.h"
+#include "preparation/log_sig/bch_data.h"
+#include "../shared/preparation/log_sig/lyndon_words.h"
+#include "../shared/preparation/log_sig/bch_cache.h"
 #include "macros.h"
 #ifdef VEC
 #include "cp_vector_funcs.h"

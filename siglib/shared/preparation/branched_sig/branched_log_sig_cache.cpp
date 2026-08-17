@@ -15,11 +15,11 @@
 
 #include "branched_log_sig_cache.h"
 
-#include "bch_data.h"
-#include "lyndon_words.h"
-#include "../branched_log_horner.h"
-#include "../errors.h"
-#include "../trees/basis_counts.h"
+#include "../log_sig/bch_data.h"
+#include "../log_sig/lyndon_words.h"
+#include "../../branched_log_horner.h"
+#include "../../errors.h"
+#include "../../trees/basis_counts.h"
 
 #include <algorithm>
 #include <cmath>

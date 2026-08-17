@@ -14,6 +14,5 @@
  * ========================================================================= */
 
 #pragma once
-#include "cupch.h"
 
 #define SIG_COEF_CUDA_MAX_DEGREE 20
