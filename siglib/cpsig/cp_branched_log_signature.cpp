@@ -743,7 +743,10 @@ void branched_sig_to_log_sig_horner_range_(
 		return;
 	}
 	if (row_count < 4 || cache.max_nodes <= 1) {
-		BranchedLogHornerWorkspace<T> workspace(plan.product_count);
+		thread_local BranchedLogHornerWorkspace<T> workspace(0);
+		workspace.h.resize(plan.product_count);
+		workspace.current.resize(plan.product_count);
+		workspace.next.resize(plan.product_count);
 		for (uint64_t row = start; row < end; ++row) {
 			branched_sig_to_log_sig_horner_row_<T, ScalarTerm>(
 				bsig + row * stride, out + row * stride,
@@ -756,9 +759,9 @@ void branched_sig_to_log_sig_horner_range_(
 	T* const out_start = out + start * stride;
 	const uint64_t product_count = plan.product_count;
 	const uint64_t workspace_size = product_count * row_count;
-	auto workspace = std::make_unique_for_overwrite<T[]>(
-		3 * workspace_size + row_count);
-	T* const h = workspace.get();
+	thread_local std::vector<T> workspace;
+	workspace.resize(3 * workspace_size + row_count);
+	T* const h = workspace.data();
 	T* current = h + workspace_size;
 	T* next = current + workspace_size;
 	T* const values = next + workspace_size;
@@ -848,8 +851,13 @@ void branched_sig_to_log_sig_backprop_horner_range_(
 		return;
 	}
 	if (row_count < 4 || cache.max_nodes <= 1) {
-		BranchedLogHornerBackpropWorkspace_<T> workspace(
-			plan.product_count, cache.max_nodes);
+		thread_local BranchedLogHornerBackpropWorkspace_<T> workspace(0, 0);
+		workspace.h.resize(plan.product_count);
+		workspace.states.resize(
+			plan.product_count * (cache.max_nodes > 1 ? cache.max_nodes - 1 : 0));
+		workspace.d_h.resize(plan.product_count);
+		workspace.d_current.resize(plan.product_count);
+		workspace.d_next.resize(plan.product_count);
 		for (uint64_t row = start; row < end; ++row) {
 			branched_sig_to_log_sig_backprop_horner_row_<T, ScalarTerm>(
 				bsig + row * stride, derivs + row * stride, out + row * stride,
@@ -863,9 +871,9 @@ void branched_sig_to_log_sig_backprop_horner_range_(
 	T* const out_start = out + start * stride;
 	const uint64_t product_count = plan.product_count;
 	const uint64_t workspace_size = product_count * row_count;
-	auto workspace = std::make_unique_for_overwrite<T[]>(
-		(cache.max_nodes + 3) * workspace_size);
-	T* const h = workspace.get();
+	thread_local std::vector<T> workspace;
+	workspace.resize((cache.max_nodes + 3) * workspace_size);
+	T* const h = workspace.data();
 	T* const states = h + workspace_size;
 	T* const d_h = states + (cache.max_nodes - 1) * workspace_size;
 	T* d_current = d_h + workspace_size;
@@ -1089,8 +1097,12 @@ void branched_sig_to_log_sig_compressed_(
 		return;
 
 	auto work_range = [&](uint64_t start, uint64_t end) {
-		std::vector<T> expanded(input_stride);
-		BranchedLogHornerWorkspace<T> workspace(plan.product_count);
+		thread_local std::vector<T> expanded;
+		thread_local BranchedLogHornerWorkspace<T> workspace(0);
+		expanded.resize(input_stride);
+		workspace.h.resize(plan.product_count);
+		workspace.current.resize(plan.product_count);
+		workspace.next.resize(plan.product_count);
 		for (uint64_t row = start; row < end; ++row) {
 			const T* bsig_row = bsig + row * input_stride;
 			branched_sig_to_log_sig_horner_row_<T, ScalarTerm>(
@@ -1134,10 +1146,17 @@ void branched_sig_to_log_sig_backprop_compressed_(
 		return;
 
 	auto work_range = [&](uint64_t start, uint64_t end) {
-		std::vector<T> compact(deriv_stride);
-		std::vector<T> expanded_derivs(input_stride);
-		BranchedLogHornerBackpropWorkspace_<T> workspace(
-			plan.product_count, cache.max_nodes);
+		thread_local std::vector<T> compact;
+		thread_local std::vector<T> expanded_derivs;
+		thread_local BranchedLogHornerBackpropWorkspace_<T> workspace(0, 0);
+		compact.resize(deriv_stride);
+		expanded_derivs.resize(input_stride);
+		workspace.h.resize(plan.product_count);
+		workspace.states.resize(
+			plan.product_count * (cache.max_nodes > 1 ? cache.max_nodes - 1 : 0));
+		workspace.d_h.resize(plan.product_count);
+		workspace.d_current.resize(plan.product_count);
+		workspace.d_next.resize(plan.product_count);
 		for (uint64_t row = start; row < end; ++row) {
 			if (deriv_stride != 0)
 				std::copy_n(derivs + row * deriv_stride, deriv_stride, compact.begin());
