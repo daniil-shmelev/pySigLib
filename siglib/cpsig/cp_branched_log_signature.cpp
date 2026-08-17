@@ -684,6 +684,43 @@ void branched_sig_to_log_sig_backprop_horner_row_(
 
 
 template<std::floating_point T, bool ScalarTerm>
+void fill_branched_log_horner_products_range_(
+	const T* bsig,
+	uint64_t row_count,
+	uint64_t stride,
+	const BranchedSigCache& cache,
+	const BranchedLogHornerPlan& plan,
+	T* h
+) {
+	const uint64_t product_count = plan.product_count;
+	if (cache.planar) {
+		for (uint64_t product = 1; product < product_count; ++product) {
+			T* const h_product = h + product * row_count;
+			for (uint64_t row = 0; row < row_count; ++row) {
+				h_product[row] = sig_tree_value_<T, ScalarTerm>(
+					bsig + row * stride, product);
+			}
+		}
+		return;
+	}
+
+	for (uint64_t product = 1; product < product_count; ++product) {
+		T* const h_product = h + product * row_count;
+		const uint64_t parent = plan.cpu_products.parent[product];
+		const uint64_t factor = plan.cpu_products.last_factor[product];
+		const T* const h_parent = h + parent * row_count;
+		for (uint64_t row = 0; row < row_count; ++row) {
+			const T factor_value = sig_tree_value_<T, ScalarTerm>(
+				bsig + row * stride, factor);
+			h_product[row] = parent == 0
+				? factor_value
+				: h_parent[row] * factor_value;
+		}
+	}
+}
+
+
+template<std::floating_point T, bool ScalarTerm>
 void branched_sig_to_log_sig_horner_range_(
 	const T* bsig,
 	T* out,
@@ -695,11 +732,94 @@ void branched_sig_to_log_sig_horner_range_(
 ) {
 	if (start == end || stride == 0)
 		return;
-	BranchedLogHornerWorkspace<T> workspace(plan.product_count);
-	for (uint64_t row = start; row < end; ++row) {
-		branched_sig_to_log_sig_horner_row_<T, ScalarTerm>(
-			bsig + row * stride, out + row * stride,
-			cache, plan, workspace);
+	const uint64_t row_count = end - start;
+	constexpr uint64_t tile_rows = 256;
+	if (row_count > tile_rows) {
+		for (uint64_t tile_start = start; tile_start < end; tile_start += tile_rows) {
+			branched_sig_to_log_sig_horner_range_<T, ScalarTerm>(
+				bsig, out, tile_start, (std::min)(tile_start + tile_rows, end),
+				stride, cache, plan);
+		}
+		return;
+	}
+	if (row_count < 4 || cache.max_nodes <= 1) {
+		BranchedLogHornerWorkspace<T> workspace(plan.product_count);
+		for (uint64_t row = start; row < end; ++row) {
+			branched_sig_to_log_sig_horner_row_<T, ScalarTerm>(
+				bsig + row * stride, out + row * stride,
+				cache, plan, workspace);
+		}
+		return;
+	}
+
+	const T* const bsig_start = bsig + start * stride;
+	T* const out_start = out + start * stride;
+	const uint64_t product_count = plan.product_count;
+	const uint64_t workspace_size = product_count * row_count;
+	auto workspace = std::make_unique_for_overwrite<T[]>(
+		3 * workspace_size + row_count);
+	T* const h = workspace.get();
+	T* current = h + workspace_size;
+	T* next = current + workspace_size;
+	T* const values = next + workspace_size;
+	std::fill(h, h + row_count, T(0));
+	std::fill(current, current + row_count, T(0));
+	std::fill(next, next + row_count, T(0));
+	fill_branched_log_horner_products_range_<T, ScalarTerm>(
+		bsig_start, row_count, stride, cache, plan, h);
+
+	const T initial_scale = T(1) / static_cast<T>(cache.max_nodes);
+	for (uint64_t product = 1; product < product_count; ++product) {
+		T* const current_product = current + product * row_count;
+		const T* const h_product = h + product * row_count;
+		for (uint64_t row = 0; row < row_count; ++row)
+			current_product[row] = initial_scale * h_product[row];
+	}
+
+	for (uint64_t k = cache.max_nodes - 1; k > 1; --k) {
+		const T scale = T(1) / static_cast<T>(k);
+		for (uint64_t product = 1; product < product_count; ++product) {
+			T* const next_product = next + product * row_count;
+			const T* const h_product = h + product * row_count;
+			for (uint64_t row = 0; row < row_count; ++row)
+				next_product[row] = scale * h_product[row];
+			const uint64_t coprod_start = plan.coproduct_offsets[product];
+			const uint64_t coprod_end = plan.coproduct_offsets[product + 1];
+			for (uint64_t pos = coprod_start; pos < coprod_end; pos += 2) {
+				const T* const left = current
+					+ plan.coproduct_pairs[pos] * row_count;
+				const T* const right = h
+					+ plan.coproduct_pairs[pos + 1] * row_count;
+				for (uint64_t row = 0; row < row_count; ++row)
+					next_product[row] -= left[row] * right[row];
+			}
+		}
+		std::swap(current, next);
+	}
+
+	if constexpr (ScalarTerm) {
+		for (uint64_t row = 0; row < row_count; ++row)
+			out_start[row * stride] = T(0);
+	}
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+		const uint64_t product = branched_log_product_for_flat(
+			plan, cache.planar, flat);
+		const uint64_t coprod_start = plan.coproduct_offsets[product];
+		const uint64_t coprod_end = plan.coproduct_offsets[product + 1];
+		std::fill(values, values + row_count, T(0));
+		for (uint64_t pos = coprod_start; pos < coprod_end; pos += 2) {
+			const T* const left = current
+				+ plan.coproduct_pairs[pos] * row_count;
+			const T* const right = h
+				+ plan.coproduct_pairs[pos + 1] * row_count;
+			for (uint64_t row = 0; row < row_count; ++row)
+				values[row] += left[row] * right[row];
+		}
+		for (uint64_t row = 0; row < row_count; ++row) {
+			out_start[row * stride + log_output_idx_<ScalarTerm>(flat)]
+				= sig_tree_value_<T, ScalarTerm>(
+					bsig_start + row * stride, flat) - values[row];
+		}
 	}
 }
 
@@ -717,12 +837,178 @@ void branched_sig_to_log_sig_backprop_horner_range_(
 ) {
 	if (start == end || stride == 0)
 		return;
-	BranchedLogHornerBackpropWorkspace_<T> workspace(
-		plan.product_count, cache.max_nodes);
-	for (uint64_t row = start; row < end; ++row) {
-		branched_sig_to_log_sig_backprop_horner_row_<T, ScalarTerm>(
-			bsig + row * stride, derivs + row * stride, out + row * stride,
-			stride, cache, plan, workspace);
+	const uint64_t row_count = end - start;
+	constexpr uint64_t tile_rows = 64;
+	if (row_count > tile_rows) {
+		for (uint64_t tile_start = start; tile_start < end; tile_start += tile_rows) {
+			branched_sig_to_log_sig_backprop_horner_range_<T, ScalarTerm>(
+				bsig, derivs, out, tile_start,
+				(std::min)(tile_start + tile_rows, end), stride, cache, plan);
+		}
+		return;
+	}
+	if (row_count < 4 || cache.max_nodes <= 1) {
+		BranchedLogHornerBackpropWorkspace_<T> workspace(
+			plan.product_count, cache.max_nodes);
+		for (uint64_t row = start; row < end; ++row) {
+			branched_sig_to_log_sig_backprop_horner_row_<T, ScalarTerm>(
+				bsig + row * stride, derivs + row * stride, out + row * stride,
+				stride, cache, plan, workspace);
+		}
+		return;
+	}
+
+	const T* const bsig_start = bsig + start * stride;
+	const T* const derivs_start = derivs + start * stride;
+	T* const out_start = out + start * stride;
+	const uint64_t product_count = plan.product_count;
+	const uint64_t workspace_size = product_count * row_count;
+	auto workspace = std::make_unique_for_overwrite<T[]>(
+		(cache.max_nodes + 3) * workspace_size);
+	T* const h = workspace.get();
+	T* const states = h + workspace_size;
+	T* const d_h = states + (cache.max_nodes - 1) * workspace_size;
+	T* d_current = d_h + workspace_size;
+	T* d_next = d_current + workspace_size;
+	std::fill(h, h + row_count, T(0));
+	for (uint64_t state = 0; state < cache.max_nodes - 1; ++state) {
+		std::fill(
+			states + state * workspace_size,
+			states + state * workspace_size + row_count,
+			T(0));
+	}
+	std::fill(d_h, d_h + workspace_size, T(0));
+	std::fill(d_current, d_current + workspace_size, T(0));
+	std::fill(d_next, d_next + workspace_size, T(0));
+	fill_branched_log_horner_products_range_<T, ScalarTerm>(
+		bsig_start, row_count, stride, cache, plan, h);
+
+	for (uint64_t row = 0; row < row_count; ++row) {
+		std::copy_n(
+			derivs_start + row * stride, stride, out_start + row * stride);
+		if constexpr (ScalarTerm)
+			out_start[row * stride] = T(0);
+	}
+
+	T* const last = states
+		+ (cache.max_nodes - 2) * workspace_size;
+	const T initial_scale = T(1) / static_cast<T>(cache.max_nodes);
+	for (uint64_t product = 1; product < product_count; ++product) {
+		T* const last_product = last + product * row_count;
+		const T* const h_product = h + product * row_count;
+		for (uint64_t row = 0; row < row_count; ++row)
+			last_product[row] = initial_scale * h_product[row];
+	}
+
+	for (uint64_t k = cache.max_nodes - 1; k > 1; --k) {
+		T* const current_state = states + (k - 2) * workspace_size;
+		const T* const next_state = current_state + workspace_size;
+		const T scale = T(1) / static_cast<T>(k);
+		for (uint64_t product = 1; product < product_count; ++product) {
+			T* const current_product = current_state + product * row_count;
+			const T* const h_product = h + product * row_count;
+			for (uint64_t row = 0; row < row_count; ++row)
+				current_product[row] = scale * h_product[row];
+			const uint64_t coprod_start = plan.coproduct_offsets[product];
+			const uint64_t coprod_end = plan.coproduct_offsets[product + 1];
+			for (uint64_t pos = coprod_start; pos < coprod_end; pos += 2) {
+				const T* const left = next_state
+					+ plan.coproduct_pairs[pos] * row_count;
+				const T* const right = h
+					+ plan.coproduct_pairs[pos + 1] * row_count;
+				for (uint64_t row = 0; row < row_count; ++row)
+					current_product[row] -= left[row] * right[row];
+			}
+		}
+	}
+
+	const T* const b2 = states;
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+		const uint64_t product = branched_log_product_for_flat(
+			plan, cache.planar, flat);
+		const uint64_t coprod_start = plan.coproduct_offsets[product];
+		const uint64_t coprod_end = plan.coproduct_offsets[product + 1];
+		for (uint64_t pos = coprod_start; pos < coprod_end; pos += 2) {
+			const uint64_t left = plan.coproduct_pairs[pos];
+			const uint64_t right = plan.coproduct_pairs[pos + 1];
+			T* const d_current_left = d_current + left * row_count;
+			T* const d_h_right = d_h + right * row_count;
+			const T* const h_right = h + right * row_count;
+			const T* const b2_left = b2 + left * row_count;
+			for (uint64_t row = 0; row < row_count; ++row) {
+				const T d = derivs_start[
+					row * stride + log_output_idx_<ScalarTerm>(flat)];
+				d_current_left[row] -= d * h_right[row];
+				d_h_right[row] -= d * b2_left[row];
+			}
+		}
+	}
+
+	for (uint64_t k = 2; k < cache.max_nodes; ++k) {
+		const T* const next_state = states + (k - 1) * workspace_size;
+		const T scale = T(1) / static_cast<T>(k);
+		for (uint64_t product = 1; product < product_count; ++product) {
+			T* const d_h_product = d_h + product * row_count;
+			const T* const d_current_product
+				= d_current + product * row_count;
+			for (uint64_t row = 0; row < row_count; ++row)
+				d_h_product[row] += scale * d_current_product[row];
+			const uint64_t coprod_start = plan.coproduct_offsets[product];
+			const uint64_t coprod_end = plan.coproduct_offsets[product + 1];
+			for (uint64_t pos = coprod_start; pos < coprod_end; pos += 2) {
+				const uint64_t left = plan.coproduct_pairs[pos];
+				const uint64_t right = plan.coproduct_pairs[pos + 1];
+				T* const d_next_left = d_next + left * row_count;
+				T* const d_h_right = d_h + right * row_count;
+				const T* const h_right = h + right * row_count;
+				const T* const next_state_left
+					= next_state + left * row_count;
+				for (uint64_t row = 0; row < row_count; ++row) {
+					const T d = d_current_product[row];
+					d_next_left[row] -= d * h_right[row];
+					d_h_right[row] -= d * next_state_left[row];
+				}
+			}
+		}
+		std::swap(d_current, d_next);
+		std::fill(d_next, d_next + workspace_size, T(0));
+	}
+	const T last_scale = T(1) / static_cast<T>(cache.max_nodes);
+	for (uint64_t product = 1; product < product_count; ++product) {
+		T* const d_h_product = d_h + product * row_count;
+		const T* const d_current_product = d_current + product * row_count;
+		for (uint64_t row = 0; row < row_count; ++row)
+			d_h_product[row] += last_scale * d_current_product[row];
+	}
+
+	if (cache.planar) {
+		for (uint64_t product = 1; product < product_count; ++product) {
+			const T* const d_h_product = d_h + product * row_count;
+			for (uint64_t row = 0; row < row_count; ++row) {
+				out_start[row * stride + log_output_idx_<ScalarTerm>(product)]
+					+= d_h_product[row];
+			}
+		}
+		return;
+	}
+	for (uint64_t product = product_count - 1; product > 0; --product) {
+		const uint64_t factor = plan.cpu_products.last_factor[product];
+		const uint64_t parent = plan.cpu_products.parent[product];
+		const T* const h_parent = h + parent * row_count;
+		T* const d_h_product = d_h + product * row_count;
+		T* const d_h_parent = d_h + parent * row_count;
+		for (uint64_t row = 0; row < row_count; ++row) {
+			const T d = d_h_product[row];
+			T& out_factor = out_start[
+				row * stride + log_output_idx_<ScalarTerm>(factor)];
+			if (parent == 0) {
+				out_factor += d;
+			} else {
+				d_h_parent[row] += d * sig_tree_value_<T, ScalarTerm>(
+					bsig_start + row * stride, factor);
+				out_factor += d * h_parent[row];
+			}
+		}
 	}
 }
 
