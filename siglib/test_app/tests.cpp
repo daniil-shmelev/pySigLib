@@ -1117,41 +1117,75 @@ void example_batch_branched_log_sig_d(
     uint64_t dimension,
     uint64_t length,
     uint64_t max_nodes,
-    int n_jobs
+    int method,
+    int n_jobs,
+    bool planar
 ) {
     print_header("Batch Branched Log Signature Double");
 
-    bool planar = false;
-    bool scalar_term = true;
-    prepare_branched_log_sig(dimension, max_nodes, 0, false, planar);
-    prepare_branched_log_sig_cuda(dimension, max_nodes, planar, false);
+    if (method < 0 || method > 3)
+        throw std::invalid_argument("method must be 0, 1, 2, or 3");
+
+    const bool scalar_term = true;
+    prepare_branched_log_sig(dimension, max_nodes, method, false, planar);
+    prepare_branched_log_sig_cuda(
+        dimension, max_nodes, method, planar, false);
 
     uint64_t bsig_len = branched_sig_length(dimension, max_nodes, planar);
-    uint64_t total = batch_size * bsig_len;
+    uint64_t out_len = method == 0
+        ? bsig_len
+        : branched_log_sig_length(dimension, max_nodes, planar);
+    uint64_t bsig_total = batch_size * bsig_len;
+    uint64_t out_total = batch_size * out_len;
 
     std::vector<double> path = test_data<double>(batch_size * dimension * length);
-    std::vector<double> bsig(total, 0.);
-    std::vector<double> cpu_out(total, 0.);
-    std::vector<double> cuda_out(total, 0.);
+    std::vector<double> cpu_out(out_total, 0.);
+    std::vector<double> cuda_out(out_total, 0.);
 
-    branched_sig_d(path.data(), bsig.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1., planar, scalar_term, nullptr, 0, 0, 0);
-    branched_sig_to_log_sig_d(bsig.data(), cpu_out.data(), batch_size, dimension, max_nodes, 0, n_jobs, planar, scalar_term);
-
-    double* d_bsig;
+    double* d_input;
     double* d_out;
-    cudaMalloc(&d_bsig, sizeof(double) * total);
-    cudaMalloc(&d_out, sizeof(double) * total);
-    cudaMemcpy(d_bsig, bsig.data(), sizeof(double) * total, cudaMemcpyHostToDevice);
+    cudaMalloc(&d_out, sizeof(double) * out_total);
+    if (method == 3) {
+        const uint64_t path_size = path.size();
+        branched_log_sig_from_path_d(
+            path.data(), cpu_out.data(), batch_size, length, dimension,
+            max_nodes, n_jobs);
+        cudaMalloc(&d_input, sizeof(double) * path_size);
+        cudaMemcpy(
+            d_input, path.data(), sizeof(double) * path_size,
+            cudaMemcpyHostToDevice);
+        branched_log_sig_from_path_cuda_d(
+            d_input, d_out, batch_size, length, dimension, max_nodes);
+    } else {
+        std::vector<double> bsig(bsig_total, 0.);
+        branched_sig_d(
+            path.data(), bsig.data(), batch_size, dimension, length,
+            max_nodes, n_jobs, false, false, 1., planar, scalar_term,
+            nullptr, 0, 0, 0);
+        branched_sig_to_log_sig_d(
+            bsig.data(), cpu_out.data(), batch_size, dimension, max_nodes,
+            method, n_jobs, planar, scalar_term);
+        cudaMalloc(&d_input, sizeof(double) * bsig_total);
+        cudaMemcpy(
+            d_input, bsig.data(), sizeof(double) * bsig_total,
+            cudaMemcpyHostToDevice);
+        branched_sig_to_log_sig_cuda_d(
+            d_input, d_out, batch_size, dimension, max_nodes, method, planar,
+            scalar_term);
+    }
+    cudaMemcpy(
+        cuda_out.data(), d_out, sizeof(double) * out_total,
+        cudaMemcpyDeviceToHost);
 
-    branched_sig_to_log_sig_cuda_d(d_bsig, d_out, batch_size, dimension, max_nodes, planar, scalar_term);
-    cudaMemcpy(cuda_out.data(), d_out, sizeof(double) * total, cudaMemcpyDeviceToHost);
-
-    cudaFree(d_bsig);
+    cudaFree(d_input);
     cudaFree(d_out);
 
+    std::cout << "method: " << method << "\n";
+    std::cout << "planar: " << planar << "\n";
     std::cout << "bsig length: " << bsig_len << "\n";
+    std::cout << "log sig length: " << out_len << "\n";
     std::cout << "first CPU / CUDA entries:\n";
-    for (uint64_t i = 0; i < total && i < 8; ++i) {
+    for (uint64_t i = 0; i < out_total && i < 8; ++i) {
         std::cout << i << ": " << cpu_out[i] << " / " << cuda_out[i] << "\n";
     }
 

@@ -19,7 +19,7 @@
 #include "cu_log_sig_combine.h"
 #include "cu_macros.h"
 #include "cu_utils.h"
-#include "../shared/branched_log_cache.h"
+#include "../shared/branched_log_horner.h"
 
 #include <cmath>
 #include <limits>
@@ -252,46 +252,22 @@ std::vector<double> build_unit_segment_coefficients_(
 	const BranchedSigCache& cache,
 	const CuMkwHostBasisData& basis
 ) {
-	const BranchedLogForestCache forest = build_branched_log_forest_cache(cache);
-	const uint64_t num_forests = forest.forest_offsets.size() - 1;
+	// Evaluate log(signature) for a unit increment, then project to method 2.
+	// The resulting coefficients scale the corresponding increment monomials.
+	const BranchedLogHornerPlan plan = build_branched_log_horner_plan(cache);
+	BranchedLogHornerWorkspace<double> workspace(plan.product_count);
 	std::vector<double> h(cache.total_length, 0.0);
-	std::vector<double> h_forest(num_forests, 0.0);
-	std::vector<double> power(num_forests, 0.0);
-	std::vector<double> next(num_forests, 0.0);
 	std::vector<double> expanded(cache.total_length, 0.0);
 
 	for (uint64_t flat = 1; flat < cache.total_length; ++flat)
 		h[flat] = cache.inv_tree_factorial[flat - 1];
-	for (uint64_t forest_idx = 1; forest_idx < num_forests; ++forest_idx) {
-		double value = 1.0;
-		for (uint64_t position = forest.forest_offsets[forest_idx];
-			position < forest.forest_offsets[forest_idx + 1]; ++position)
-			value *= h[forest.forest_trees[position]];
-		h_forest[forest_idx] = value;
-		power[forest_idx] = value;
-	}
-	for (uint64_t flat = 1; flat < cache.total_length; ++flat)
-		expanded[flat] = power[forest.single_tree_forest[flat]];
-
-	for (uint64_t order = 2; order <= cache.max_nodes; ++order) {
-		for (uint64_t forest_idx = 0; forest_idx < num_forests; ++forest_idx) {
-			double value = 0.0;
-			for (uint64_t position = forest.forest_coprod_offsets[forest_idx];
-				position < forest.forest_coprod_offsets[forest_idx + 1];
-				position += 2) {
-				value += power[forest.forest_coprod_data[position]]
-					* h_forest[forest.forest_coprod_data[position + 1]];
-			}
-			next[forest_idx] = value;
-		}
-		const double coefficient = order % 2 == 0
-			? -1.0 / static_cast<double>(order)
-			: 1.0 / static_cast<double>(order);
-		for (uint64_t flat = 1; flat < cache.total_length; ++flat)
-			expanded[flat] += coefficient
-				* next[forest.single_tree_forest[flat]];
-		power.swap(next);
-	}
+	auto flat_value = [&h](uint64_t flat) { return h[flat]; };
+	auto set_output = [&expanded](uint64_t flat, double value) {
+		expanded[flat] = value;
+	};
+	branched_log_horner_forward<double>(
+		cache.total_length, cache.max_nodes, cache.planar,
+		plan, flat_value, set_output, workspace);
 
 	std::vector<double> compact(basis.lyndon_idx.size(), 0.0);
 	for (uint64_t index = 0; index < compact.size(); ++index)
@@ -315,6 +291,7 @@ HostMkwBchTables_ build_mkw_commutator_tables_(
 	const BranchedSigCache& cache,
 	const CuMkwHostBasisData& basis
 ) {
+	// Build sparse forward and reverse tables for the MKW Lie commutator.
 	const uint64_t m = basis.lyndon_words.size();
 	std::vector<CuMkwTensorElem> tensor_representations(m);
 	for (uint64_t index = 0; index < m; ++index) {
@@ -465,6 +442,8 @@ HostMkwPruning_ build_mkw_pruning_(
 	const std::vector<uint64_t>& weights,
 	const std::vector<uint32_t>& segment_idx
 ) {
+	// Propagate exact coordinate support through the BCH expression tree.
+	// This selects sparse plans only when they save enough work to justify them.
 	const uint64_t m = weights.size();
 	const uint64_t m2 = formula.size;
 	std::vector<uint8_t> input_mask(m, 0);
@@ -575,6 +554,7 @@ std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
 		throw std::runtime_error(
 			"CUDA MKW BCH method supports degree at most 12");
 
+	// Method 3 reuses the prepared method 2 basis and adds BCH-specific data.
 	const CuMkwHostBasisData& basis = get_cuda_mkw_host_basis_data_(
 		cache.dimension, cache.max_nodes, 2);
 	const uint64_t m = basis.lyndon_words.size();

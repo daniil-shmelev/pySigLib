@@ -852,6 +852,65 @@ static void BM_branched_sig_to_log_sig_planar(benchmark::State& state) {
 BENCHMARK(BM_branched_sig_to_log_sig_planar)
     ->Arg(0)->Arg(1)->Arg(2)->Unit(benchmark::kMicrosecond);
 
+static void BM_branched_sig_to_log_sig_nonplanar_large(
+        benchmark::State& state) {
+    constexpr uint64_t dimension = 3;
+    constexpr uint64_t max_nodes = 5;
+    constexpr uint64_t batch_size = 4096;
+    check(::prepare_branched_log_sig(
+        dimension, max_nodes, 0, false, false),
+        "prepare_branched_log_sig");
+    const uint64_t blen = ::branched_sig_length(
+        dimension, max_nodes, false);
+    auto bsig = random_data(batch_size * blen, 1);
+    std::vector<double> out(batch_size * blen);
+    check(::branched_sig_to_log_sig_d(
+        bsig.data(), out.data(), batch_size, dimension, max_nodes,
+        0, 1, false, true),
+        "branched_sig_to_log_sig_d");
+    for (auto _ : state) {
+        ::branched_sig_to_log_sig_d(
+            bsig.data(), out.data(), batch_size, dimension, max_nodes,
+            0, 1, false, true);
+        benchmark::DoNotOptimize(out.data());
+    }
+    state.SetItemsProcessed(state.iterations() * batch_size);
+}
+BENCHMARK(BM_branched_sig_to_log_sig_nonplanar_large)
+    ->MinTime(0.1)->Unit(benchmark::kMillisecond);
+
+static void BM_branched_sig_to_log_sig_planar_large(
+        benchmark::State& state) {
+    constexpr uint64_t dimension = 3;
+    constexpr uint64_t max_nodes = 5;
+    constexpr uint64_t batch_size = 1024;
+    const int method = static_cast<int>(state.range(0));
+    check(::prepare_branched_log_sig(
+        dimension, max_nodes, method, false, true),
+        "prepare_branched_log_sig");
+    const uint64_t blen = ::branched_sig_length(
+        dimension, max_nodes, true);
+    const uint64_t out_len = method == 0
+        ? blen
+        : ::branched_log_sig_length(dimension, max_nodes, true);
+    auto bsig = random_data(batch_size * blen, 1);
+    std::vector<double> out(batch_size * out_len);
+    check(::branched_sig_to_log_sig_d(
+        bsig.data(), out.data(), batch_size, dimension, max_nodes,
+        method, 1, true, true),
+        "branched_sig_to_log_sig_d");
+    for (auto _ : state) {
+        ::branched_sig_to_log_sig_d(
+            bsig.data(), out.data(), batch_size, dimension, max_nodes,
+            method, 1, true, true);
+        benchmark::DoNotOptimize(out.data());
+    }
+    state.SetItemsProcessed(state.iterations() * batch_size);
+}
+BENCHMARK(BM_branched_sig_to_log_sig_planar_large)
+    ->Arg(0)->Arg(1)->Arg(2)->MinTime(0.1)
+    ->Unit(benchmark::kMillisecond);
+
 static void BM_branched_log_sig_from_path_planar_method_3(
         benchmark::State& state) {
     check(::prepare_branched_log_sig(3, 4, 3, false, true),
