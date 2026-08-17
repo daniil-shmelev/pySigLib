@@ -195,8 +195,8 @@ endif()
 if(PYSIGLIB_TESTS AND TARGET cusig_tests)
     list(APPEND _pysiglib_cpp_solution_targets cusig_tests)
 endif()
-if(PYSIGLIB_TEST_APP AND TARGET pysiglib_test_app)
-    list(APPEND _pysiglib_cpp_solution_targets pysiglib_test_app)
+if(PYSIGLIB_TEST_APP AND TARGET test_app)
+    list(APPEND _pysiglib_cpp_solution_targets test_app)
 endif()
 
 add_custom_target(pysiglib_cpp_solution ALL
