@@ -1123,7 +1123,7 @@ void example_batch_branched_log_sig_d(
 
     bool planar = false;
     bool scalar_term = true;
-    prepare_branched_log_sig(dimension, max_nodes, false, planar);
+    prepare_branched_log_sig(dimension, max_nodes, 0, false, planar);
     prepare_branched_log_sig_cuda(dimension, max_nodes, planar, false);
 
     uint64_t bsig_len = branched_sig_length(dimension, max_nodes, planar);
@@ -1135,7 +1135,7 @@ void example_batch_branched_log_sig_d(
     std::vector<double> cuda_out(total, 0.);
 
     branched_sig_d(path.data(), bsig.data(), batch_size, dimension, length, max_nodes, n_jobs, false, false, 1., planar, scalar_term, nullptr, 0, 0, 0);
-    branched_sig_to_log_sig_d(bsig.data(), cpu_out.data(), batch_size, dimension, max_nodes, n_jobs, planar, scalar_term);
+    branched_sig_to_log_sig_d(bsig.data(), cpu_out.data(), batch_size, dimension, max_nodes, 0, n_jobs, planar, scalar_term);
 
     double* d_bsig;
     double* d_out;

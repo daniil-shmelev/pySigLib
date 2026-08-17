@@ -243,6 +243,8 @@ static void write_branched_cache_(const BranchedSigCache& c) {
 	cu_serialize_vector_(out, c.chain_indices);
 	cu_serialize_vector_(out, c.coproduct_data);
 	cu_serialize_vector_(out, c.coproduct_offsets);
+	cu_serialize_vector_(out, c.basis_forest_data);
+	cu_serialize_vector_(out, c.basis_forest_offsets);
 }
 
 static bool read_branched_cache_(uint64_t dimension, uint64_t max_nodes, bool planar, BranchedSigCache& c) {
@@ -295,6 +297,12 @@ static bool read_branched_cache_(uint64_t dimension, uint64_t max_nodes, bool pl
 
 	if (!in.good())
 		return false;
+	if (in.peek() != std::char_traits<char>::eof()) {
+		cu_deserialize_vector_(in, tmp.basis_forest_data);
+		cu_deserialize_vector_(in, tmp.basis_forest_offsets);
+		if (!in.good())
+			return false;
+	}
 
 	tmp.planar = planar;
 	c = std::move(tmp);

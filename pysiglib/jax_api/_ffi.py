@@ -30,6 +30,7 @@ from ..load_siglib import (
 )
 from ..sig_length import sig_length, log_sig_length
 from ..branched_sig import branched_sig_length
+from ..branched_log_sig import branched_log_sig_length
 
 import jax
 
@@ -703,17 +704,26 @@ def branched_sig_combine_backprop_ffi_call(cotangent, bsig1, bsig2, dimension, m
 # branched_sig_to_log_sig
 # ---------------------------------------------------------------------------
 
-def branched_sig_to_log_sig_ffi_call(bsig, dimension, max_nodes, n_jobs, planar):
+def branched_sig_to_log_sig_ffi_call(
+        bsig, dimension, max_nodes, method, n_jobs, planar):
     _normalize_dtype(bsig.dtype)
-    out_type = jax.ShapeDtypeStruct(bsig.shape, bsig.dtype)
+    out_len = (
+        bsig.shape[-1]
+        if method == 0
+        else branched_log_sig_length(dimension, max_nodes, planar=planar)
+    )
+    out_type = jax.ShapeDtypeStruct((*bsig.shape[:-1], out_len), bsig.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
-                       n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
+                       method=np.int64(method), n_jobs=np.int64(n_jobs),
+                       planar=np.bool_(planar))
     return _make_ffi_call("branched_sig_to_log_sig", (bsig,), out_type, call_kwargs)
 
 
-def branched_sig_to_log_sig_backprop_ffi_call(bsig, cotangent, dimension, max_nodes, n_jobs, planar):
+def branched_sig_to_log_sig_backprop_ffi_call(
+        bsig, cotangent, dimension, max_nodes, method, n_jobs, planar):
     _check_same_dtype(bsig, cotangent)
     out_type = jax.ShapeDtypeStruct(bsig.shape, bsig.dtype)
     call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
-                       n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
+                       method=np.int64(method), n_jobs=np.int64(n_jobs),
+                       planar=np.bool_(planar))
     return _make_ffi_call("branched_sig_to_log_sig_backprop", (bsig, cotangent), out_type, call_kwargs)

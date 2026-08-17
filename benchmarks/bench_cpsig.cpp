@@ -115,10 +115,22 @@ BENCHMARK(BM_prepare_branched_sig_planar)->Unit(benchmark::kMicrosecond);
 static void BM_prepare_branched_log_sig(benchmark::State& state) {
     for (auto _ : state) {
         clear_caches_outside_timing(state);
-        check(::prepare_branched_log_sig(3, 4, false, false), "prepare_branched_log_sig");
+        check(::prepare_branched_log_sig(3, 4, 0, false, false),
+              "prepare_branched_log_sig");
     }
 }
 BENCHMARK(BM_prepare_branched_log_sig)->Unit(benchmark::kMicrosecond);
+
+static void BM_prepare_branched_log_sig_planar(benchmark::State& state) {
+    const int method = static_cast<int>(state.range(0));
+    for (auto _ : state) {
+        clear_caches_outside_timing(state);
+        check(::prepare_branched_log_sig(3, 4, method, false, true),
+              "prepare_branched_log_sig");
+    }
+}
+BENCHMARK(BM_prepare_branched_log_sig_planar)
+    ->Arg(0)->Arg(1)->Arg(2)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Path transforms
@@ -799,35 +811,89 @@ static void BM_branched_sig_backprop_correction(benchmark::State& state) {
 BENCHMARK(BM_branched_sig_backprop_correction)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_to_log_sig(benchmark::State& state) {
-    check(::prepare_branched_log_sig(3, 4, false, false), "prepare_branched_log_sig");
+    check(::prepare_branched_log_sig(3, 4, 0, false, false),
+          "prepare_branched_log_sig");
     const uint64_t blen = ::branched_sig_length(3, 4, false);
     auto bsig = random_data(64 * blen, 1);
     std::vector<double> out(64 * blen);
     check(::branched_sig_to_log_sig_d(
-        bsig.data(), out.data(), 64, 3, 4), "branched_sig_to_log_sig_d");
+        bsig.data(), out.data(), 64, 3, 4, 0, 1, false, true),
+        "branched_sig_to_log_sig_d");
     for (auto _ : state) {
-        ::branched_sig_to_log_sig_d(bsig.data(), out.data(), 64, 3, 4);
+        ::branched_sig_to_log_sig_d(
+            bsig.data(), out.data(), 64, 3, 4, 0, 1, false, true);
         benchmark::DoNotOptimize(out.data());
     }
 }
 BENCHMARK(BM_branched_sig_to_log_sig)->Unit(benchmark::kMicrosecond);
 
+static void BM_branched_sig_to_log_sig_planar(benchmark::State& state) {
+    const int method = static_cast<int>(state.range(0));
+    check(::prepare_branched_log_sig(3, 4, method, false, true),
+          "prepare_branched_log_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, true);
+    const uint64_t out_len = method == 0
+        ? blen
+        : ::branched_log_sig_length(3, 4, true);
+    auto bsig = random_data(64 * blen, 1);
+    std::vector<double> out(64 * out_len);
+    check(::branched_sig_to_log_sig_d(
+        bsig.data(), out.data(), 64, 3, 4, method, 1, true, true),
+        "branched_sig_to_log_sig_d");
+    for (auto _ : state) {
+        ::branched_sig_to_log_sig_d(
+            bsig.data(), out.data(), 64, 3, 4, method, 1, true, true);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_to_log_sig_planar)
+    ->Arg(0)->Arg(1)->Arg(2)->Unit(benchmark::kMicrosecond);
+
 static void BM_branched_sig_to_log_sig_backprop(benchmark::State& state) {
-    check(::prepare_branched_log_sig(3, 4, false, false), "prepare_branched_log_sig");
+    check(::prepare_branched_log_sig(3, 4, 0, false, false),
+          "prepare_branched_log_sig");
     const uint64_t blen = ::branched_sig_length(3, 4, false);
     auto bsig = random_data(64 * blen, 1);
     auto derivs = random_data(64 * blen, 2);
     std::vector<double> out(64 * blen);
     check(::branched_sig_to_log_sig_backprop_d(
-        bsig.data(), derivs.data(), out.data(), 64, 3, 4),
+        bsig.data(), derivs.data(), out.data(), 64, 3, 4,
+        0, 1, false, true),
         "branched_sig_to_log_sig_backprop_d");
     for (auto _ : state) {
         ::branched_sig_to_log_sig_backprop_d(
-            bsig.data(), derivs.data(), out.data(), 64, 3, 4);
+            bsig.data(), derivs.data(), out.data(), 64, 3, 4,
+            0, 1, false, true);
         benchmark::DoNotOptimize(out.data());
     }
 }
 BENCHMARK(BM_branched_sig_to_log_sig_backprop)->Unit(benchmark::kMicrosecond);
+
+static void BM_branched_sig_to_log_sig_backprop_planar(
+        benchmark::State& state) {
+    const int method = static_cast<int>(state.range(0));
+    check(::prepare_branched_log_sig(3, 4, method, false, true),
+          "prepare_branched_log_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, true);
+    const uint64_t out_len = method == 0
+        ? blen
+        : ::branched_log_sig_length(3, 4, true);
+    auto bsig = random_data(64 * blen, 1);
+    auto derivs = random_data(64 * out_len, 2);
+    std::vector<double> out(64 * blen);
+    check(::branched_sig_to_log_sig_backprop_d(
+        bsig.data(), derivs.data(), out.data(), 64, 3, 4,
+        method, 1, true, true),
+        "branched_sig_to_log_sig_backprop_d");
+    for (auto _ : state) {
+        ::branched_sig_to_log_sig_backprop_d(
+            bsig.data(), derivs.data(), out.data(), 64, 3, 4,
+            method, 1, true, true);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_to_log_sig_backprop_planar)
+    ->Arg(0)->Arg(1)->Arg(2)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_combine(benchmark::State& state) {
     check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
