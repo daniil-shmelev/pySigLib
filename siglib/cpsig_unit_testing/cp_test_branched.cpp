@@ -241,3 +241,64 @@
             EXPECT_NEAR(reconstructed, method_one[row], 1e-12);
         }
     }
+
+    TEST(branchedLogSigMethodsTest, BchForwardAndBackward) {
+        const uint64_t dimension = 2;
+        const uint64_t max_nodes = 3;
+        const uint64_t length = 4;
+        ASSERT_EQ(prepare_branched_log_sig(
+            dimension, max_nodes, 2, false, true), 0);
+        ASSERT_EQ(prepare_branched_log_sig(
+            dimension, max_nodes, 3, false, true), 0);
+
+        const uint64_t bsig_len = branched_sig_length(
+            dimension, max_nodes, true);
+        const uint64_t logsig_len = branched_log_sig_length(
+            dimension, max_nodes, true);
+        std::vector<double> path = {
+            0., 0., 0.2, -0.3, 0.7, 0.4, 0.5, 0.8
+        };
+        std::vector<double> bsig(bsig_len);
+        std::vector<double> expected(logsig_len);
+        std::vector<double> actual(logsig_len);
+        ASSERT_EQ(branched_sig_d(
+            path.data(), bsig.data(), 1, dimension, length, max_nodes,
+            1, false, false, 1., true, true), 0);
+        ASSERT_EQ(branched_sig_to_log_sig_d(
+            bsig.data(), expected.data(), 1, dimension, max_nodes,
+            2, 1, true, true), 0);
+        ASSERT_EQ(branched_log_sig_from_path_d(
+            path.data(), actual.data(), 1, length, dimension,
+            max_nodes, 1), 0);
+        for (uint64_t i = 0; i < logsig_len; ++i)
+            EXPECT_NEAR(actual[i], expected[i], 1e-12);
+
+        std::vector<double> cotangent(logsig_len);
+        for (uint64_t i = 0; i < logsig_len; ++i)
+            cotangent[i] = 0.1 + static_cast<double>(i) / logsig_len;
+        std::vector<double> path_derivs(path.size());
+        ASSERT_EQ(branched_log_sig_from_path_backprop_d(
+            cotangent.data(), path_derivs.data(), path.data(), 1,
+            length, dimension, max_nodes, 1), 0);
+
+        const double eps = 1e-6;
+        std::vector<double> plus(logsig_len);
+        std::vector<double> minus(logsig_len);
+        for (uint64_t i = 0; i < path.size(); ++i) {
+            path[i] += eps;
+            ASSERT_EQ(branched_log_sig_from_path_d(
+                path.data(), plus.data(), 1, length, dimension,
+                max_nodes, 1), 0);
+            path[i] -= 2. * eps;
+            ASSERT_EQ(branched_log_sig_from_path_d(
+                path.data(), minus.data(), 1, length, dimension,
+                max_nodes, 1), 0);
+            path[i] += eps;
+            double numerical = 0.;
+            for (uint64_t j = 0; j < logsig_len; ++j) {
+                numerical += cotangent[j]
+                    * (plus[j] - minus[j]) / (2. * eps);
+            }
+            EXPECT_NEAR(path_derivs[i], numerical, 1e-8);
+        }
+    }

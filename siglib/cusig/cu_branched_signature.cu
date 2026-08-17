@@ -398,6 +398,22 @@ static void prepare_branched_sig_gpu_cache_(
 		*host_cache = std::move(c);
 }
 
+static void prepare_branched_log_sig_gpu_cache_(
+	uint64_t dimension,
+	uint64_t max_nodes,
+	bool planar,
+	bool use_disk
+) {
+	if (is_cuda_branched_log_sig_gpu_cache_prepared_(
+		dimension, max_nodes, planar))
+		return;
+
+	BranchedSigCache host_cache;
+	prepare_branched_sig_gpu_cache_(
+		dimension, max_nodes, planar, use_disk, &host_cache);
+	prepare_cuda_branched_log_sig_gpu_cache_(host_cache);
+}
+
 static const BranchedSigCacheGPU& get_gpu_cache(
 	uint64_t dimension,
 	uint64_t max_nodes,
@@ -2200,15 +2216,8 @@ extern "C" {
 	CUSIG_API int prepare_branched_log_sig_cuda(
 		uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk
 	) noexcept {
-		CUSIG_SAFE_CALL(
-			if (!is_cuda_branched_log_sig_gpu_cache_prepared_(
-				dimension, max_nodes, planar)) {
-				BranchedSigCache host_cache;
-				prepare_branched_sig_gpu_cache_(
-					dimension, max_nodes, planar, use_disk, &host_cache);
-				prepare_cuda_branched_log_sig_gpu_cache_(host_cache);
-			}
-		);
+		CUSIG_SAFE_CALL(prepare_branched_log_sig_gpu_cache_(
+			dimension, max_nodes, planar, use_disk));
 	}
 
 	CUSIG_API int prepare_branched_sig_coef_cuda(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk) noexcept {

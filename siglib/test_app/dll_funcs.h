@@ -186,6 +186,8 @@ using branched_sig_coef_cuda_d_fn = int(CDECL_*)(const double*, double*, const u
 using branched_sig_coef_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
 using branched_sig_to_log_sig_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, int, int, bool, bool);
 using branched_sig_to_log_sig_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, bool, bool);
+using branched_log_sig_from_path_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, int);
+using branched_log_sig_from_path_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, int);
 
 extern prepare_branched_sig_fn prepare_branched_sig;
 extern prepare_branched_log_sig_fn prepare_branched_log_sig;
@@ -199,6 +201,8 @@ extern branched_sig_coef_cuda_d_fn branched_sig_coef_cuda_d;
 extern branched_sig_coef_backprop_cuda_d_fn branched_sig_coef_backprop_cuda_d;
 extern branched_sig_to_log_sig_d_fn branched_sig_to_log_sig_d;
 extern branched_sig_to_log_sig_cuda_d_fn branched_sig_to_log_sig_cuda_d;
+extern branched_log_sig_from_path_d_fn branched_log_sig_from_path_d;
+extern branched_log_sig_from_path_backprop_d_fn branched_log_sig_from_path_backprop_d;
 
 #if defined(_WIN32)
 #define GET_FN_PTR ::GetProcAddress
