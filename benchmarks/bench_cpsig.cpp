@@ -112,15 +112,14 @@ static void BM_prepare_branched_sig_planar(benchmark::State& state) {
 }
 BENCHMARK(BM_prepare_branched_sig_planar)->Unit(benchmark::kMicrosecond);
 
-static void BM_prepare_branched_log_sig_nonplanar_method_0(benchmark::State& state) {
+static void BM_prepare_branched_log_sig(benchmark::State& state) {
     for (auto _ : state) {
         clear_caches_outside_timing(state);
         check(::prepare_branched_log_sig(3, 4, 0, false, false),
               "prepare_branched_log_sig");
     }
 }
-BENCHMARK(BM_prepare_branched_log_sig_nonplanar_method_0)
-    ->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_prepare_branched_log_sig)->Unit(benchmark::kMicrosecond);
 
 static void BM_prepare_branched_log_sig_planar(benchmark::State& state) {
     const int method = static_cast<int>(state.range(0));
@@ -811,8 +810,7 @@ static void BM_branched_sig_backprop_correction(benchmark::State& state) {
 }
 BENCHMARK(BM_branched_sig_backprop_correction)->Unit(benchmark::kMicrosecond);
 
-static void BM_branched_sig_to_log_sig_nonplanar_method_0(
-        benchmark::State& state) {
+static void BM_branched_sig_to_log_sig(benchmark::State& state) {
     check(::prepare_branched_log_sig(3, 4, 0, false, false),
           "prepare_branched_log_sig");
     const uint64_t blen = ::branched_sig_length(3, 4, false);
@@ -827,8 +825,7 @@ static void BM_branched_sig_to_log_sig_nonplanar_method_0(
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_branched_sig_to_log_sig_nonplanar_method_0)
-    ->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_branched_sig_to_log_sig)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_to_log_sig_planar(benchmark::State& state) {
     const int method = static_cast<int>(state.range(0));
@@ -852,8 +849,7 @@ static void BM_branched_sig_to_log_sig_planar(benchmark::State& state) {
 BENCHMARK(BM_branched_sig_to_log_sig_planar)
     ->Arg(0)->Arg(1)->Arg(2)->Unit(benchmark::kMicrosecond);
 
-static void BM_branched_sig_to_log_sig_backprop_nonplanar_method_0(
-        benchmark::State& state) {
+static void BM_branched_sig_to_log_sig_backprop(benchmark::State& state) {
     check(::prepare_branched_log_sig(3, 4, 0, false, false),
           "prepare_branched_log_sig");
     const uint64_t blen = ::branched_sig_length(3, 4, false);
@@ -871,8 +867,7 @@ static void BM_branched_sig_to_log_sig_backprop_nonplanar_method_0(
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_branched_sig_to_log_sig_backprop_nonplanar_method_0)
-    ->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_branched_sig_to_log_sig_backprop)->Unit(benchmark::kMicrosecond);
 
 static void BM_branched_sig_to_log_sig_backprop_planar(
         benchmark::State& state) {
