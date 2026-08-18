@@ -23,7 +23,7 @@ namespace {
 struct BranchedLogSigCacheRegistry_ {
 	std::unordered_map<
 		std::pair<uint64_t, uint64_t>,
-		std::unique_ptr<BranchedLogSigCache>,
+		BranchedLogSigCache,
 		PairHash> map;
 	std::shared_mutex mu;
 };
@@ -44,17 +44,17 @@ void prepare_branched_log_sig_cache(
 	{
 		std::shared_lock lock(registry.mu);
 		const auto found = registry.map.find(key);
-		if (found != registry.map.end() && found->second->supports(method))
+		if (found != registry.map.end() && found->second.supports(method))
 			return;
 	}
 	const std::filesystem::path cache_directory = use_disk ? get_cache_dir() / cache_folder_name : std::filesystem::path{};
 	std::unique_lock lock(registry.mu);
 	const auto found = registry.map.find(key);
 	if (found == registry.map.end()) {
-		registry.map.try_emplace(key, std::make_unique<BranchedLogSigCache>(cache, method, cache_directory, use_disk));
+		registry.map.try_emplace(key, cache, method, cache_directory, use_disk);
 	}
-	else if (!found->second->supports(method))
-		found->second->upgrade(cache, method, cache_directory, use_disk);
+	else if (!found->second.supports(method))
+		found->second.upgrade(cache, method, cache_directory, use_disk);
 }
 
 const BranchedLogSigCache& get_branched_log_sig_cache_(
@@ -66,10 +66,10 @@ const BranchedLogSigCache& get_branched_log_sig_cache_(
 	auto& registry = branched_log_sig_cache_registry_();
 	std::shared_lock lock(registry.mu);
 	const auto found = registry.map.find(key);
-	if (found == registry.map.end() || !found->second->supports(method))
+	if (found == registry.map.end() || !found->second.supports(method))
 		throw cache_not_found_error(
 			"Branched log signature cache not found - call prepare_branched_log_sig first");
-	return *found->second;
+	return found->second;
 }
 
 void clear_branched_log_sig_cache() {

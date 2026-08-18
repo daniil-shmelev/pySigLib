@@ -273,9 +273,8 @@ void butcher_product_inplace_(
 					uint64_t trunk_flat = coproduct_data[pos++];
 					T term = Y[trunk_flat];
 
-					if (has_forest) {
+					if (has_forest)
 						term *= X[coproduct_data[pos++]];
-					}
 
 					new_val += term;
 				}
@@ -374,6 +373,33 @@ void branched_signature_with_buffers_(
 
 
 template<std::floating_point T>
+struct BranchedSigForwardWorkspace_ {
+	std::unique_ptr<T[]> increment;
+	std::unique_ptr<T[]> temp;
+	std::unique_ptr<T[]> local_log;
+	std::unique_ptr<T[]> power;
+	std::unique_ptr<T[]> next_power;
+	std::unique_ptr<T[]> full_output;
+
+	BranchedSigForwardWorkspace_(
+		uint64_t dimension,
+		uint64_t total_length,
+		bool has_correction,
+		bool scalar_term
+	) : increment(std::make_unique<T[]>(dimension)),
+		temp(std::make_unique<T[]>(total_length)) {
+		if (has_correction) {
+			local_log = std::make_unique<T[]>(total_length);
+			power = std::make_unique<T[]>(total_length);
+			next_power = std::make_unique<T[]>(total_length);
+		}
+		if (!scalar_term)
+			full_output = std::make_unique<T[]>(total_length);
+	}
+};
+
+
+template<std::floating_point T>
 void branched_signature_(
 	const T* path,
 	T* out,
@@ -404,64 +430,47 @@ void branched_signature_(
 	uint64_t flat_path_length = length * dimension;
 	uint64_t out_stride = scalar_term ? total_len : total_len - 1;
 
-	auto compute_one = [&](const T* path_ptr, T* out_ptr, T* increment, T* temp,
-		T* local_log, T* power, T* next_power, const T* correction_ptr) {
+	auto compute_one = [&](const T* path_ptr, T* out_ptr,
+		BranchedSigForwardWorkspace_<T>& workspace,
+		const T* correction_ptr) {
 		Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
 		if (scalar_term) {
-			branched_signature_with_buffers_(path_obj, out_ptr, increment, temp,
-				local_log, power, next_power, correction_ptr, correction_len,
+			branched_signature_with_buffers_(path_obj, out_ptr,
+				workspace.increment.get(), workspace.temp.get(),
+				workspace.local_log.get(), workspace.power.get(), workspace.next_power.get(),
+				correction_ptr, correction_len,
 				correction_segment_stride, has_correction, cache);
 		} else {
-			std::vector<T> buf(total_len);
-			branched_signature_with_buffers_(path_obj, buf.data(), increment, temp,
-				local_log, power, next_power, correction_ptr, correction_len,
+			branched_signature_with_buffers_(path_obj, workspace.full_output.get(),
+				workspace.increment.get(), workspace.temp.get(),
+				workspace.local_log.get(), workspace.power.get(), workspace.next_power.get(),
+				correction_ptr, correction_len,
 				correction_segment_stride, has_correction, cache);
-			std::memcpy(out_ptr, buf.data() + 1, (total_len - 1) * sizeof(T));
+			std::memcpy(out_ptr, workspace.full_output.get() + 1,
+				(total_len - 1) * sizeof(T));
 		}
 	};
 
-	if (n_jobs == 1 || batch_size == 1) {
-		auto increment = std::make_unique<T[]>(aug_dim);
-		auto temp = std::make_unique<T[]>(total_len);
-		std::unique_ptr<T[]> local_log;
-		std::unique_ptr<T[]> power;
-		std::unique_ptr<T[]> next_power;
-		if (has_correction) {
-			local_log = std::make_unique<T[]>(total_len);
-			power = std::make_unique<T[]>(total_len);
-			next_power = std::make_unique<T[]>(total_len);
+	auto work_range = [&](uint64_t start, uint64_t end) {
+		if (start == end)
+			return;
+		BranchedSigForwardWorkspace_<T> workspace(
+			aug_dim, total_len, has_correction, scalar_term);
+		for (uint64_t b = start; b < end; ++b) {
+			const T* correction_ptr = has_correction
+				? correction + b * correction_batch_stride
+				: nullptr;
+			compute_one(
+				path + b * flat_path_length,
+				out + b * out_stride,
+				workspace,
+				correction_ptr);
 		}
-		const T* path_ptr = path;
-		T* out_ptr = out;
-		for (uint64_t b = 0; b < batch_size; ++b) {
-			const T* correction_ptr = has_correction ? correction + b * correction_batch_stride : nullptr;
-			compute_one(path_ptr, out_ptr, increment.get(), temp.get(),
-				local_log.get(), power.get(), next_power.get(), correction_ptr);
-			path_ptr += flat_path_length;
-			out_ptr += out_stride;
-		}
-	}
-	else {
-		auto work_range = [&](uint64_t start, uint64_t end) {
-			auto increment = std::make_unique<T[]>(aug_dim);
-			auto temp = std::make_unique<T[]>(total_len);
-			std::unique_ptr<T[]> local_log;
-			std::unique_ptr<T[]> power;
-			std::unique_ptr<T[]> next_power;
-			if (has_correction) {
-				local_log = std::make_unique<T[]>(total_len);
-				power = std::make_unique<T[]>(total_len);
-				next_power = std::make_unique<T[]>(total_len);
-			}
-			for (uint64_t b = start; b < end; ++b) {
-				const T* correction_ptr = has_correction ? correction + b * correction_batch_stride : nullptr;
-				compute_one(path + b * flat_path_length, out + b * out_stride,
-					increment.get(), temp.get(), local_log.get(), power.get(), next_power.get(),
-					correction_ptr);
-			}
-		};
+	};
+	if (n_jobs == 1 || batch_size == 1)
+		work_range(0, batch_size);
+	else
 		spawn_batch_threads(batch_size, n_jobs, work_range);
-	}
 }
 
 
@@ -481,40 +490,38 @@ void branched_sig_combine_(
 	uint64_t total_len = cache.total_length;
 	uint64_t stride = scalar_term ? total_len : total_len - 1;
 
-	if (scalar_term) {
-		auto thread_func = [&](const T* sig1_ptr, const T* sig2_ptr, T* out_ptr) {
-			std::memcpy(out_ptr, sig1_ptr, total_len * sizeof(T));
-			butcher_product_inplace_(out_ptr, sig2_ptr, cache);
-		};
-
-		if (n_jobs == 1 || batch_size == 1) {
-			for (uint64_t b = 0; b < batch_size; ++b)
-				thread_func(bsig1 + b * total_len, bsig2 + b * total_len, out + b * total_len);
-		} else {
-			multi_threaded_batch(thread_func, batch_size, n_jobs,
-				make_batch(bsig1, total_len), make_batch(bsig2, total_len), make_batch(out, total_len));
+	auto work_range = [&](uint64_t start, uint64_t end) {
+		if (start == end)
+			return;
+		if (scalar_term) {
+			for (uint64_t b = start; b < end; ++b) {
+				T* out_ptr = out + b * total_len;
+				std::memcpy(out_ptr, bsig1 + b * total_len, total_len * sizeof(T));
+				butcher_product_inplace_(out_ptr, bsig2 + b * total_len, cache);
+			}
+			return;
 		}
-	} else {
-		// Per-element copy: reconstruct full buffers, compute, strip
-		auto thread_func = [&](const T* sig1_ptr, const T* sig2_ptr, T* out_ptr) {
-			std::vector<T> s1(total_len), s2(total_len), buf(total_len);
+
+		std::vector<T> s1(total_len);
+		std::vector<T> s2(total_len);
+		std::vector<T> combined(total_len);
+		for (uint64_t b = start; b < end; ++b) {
+			const T* sig1_ptr = bsig1 + b * stride;
+			const T* sig2_ptr = bsig2 + b * stride;
 			s1[0] = static_cast<T>(1);
-			std::memcpy(s1.data() + 1, sig1_ptr, (total_len - 1) * sizeof(T));
 			s2[0] = static_cast<T>(1);
+			std::memcpy(s1.data() + 1, sig1_ptr, (total_len - 1) * sizeof(T));
 			std::memcpy(s2.data() + 1, sig2_ptr, (total_len - 1) * sizeof(T));
-			std::memcpy(buf.data(), s1.data(), total_len * sizeof(T));
-			butcher_product_inplace_(buf.data(), s2.data(), cache);
-			std::memcpy(out_ptr, buf.data() + 1, (total_len - 1) * sizeof(T));
-		};
-
-		if (n_jobs == 1 || batch_size == 1) {
-			for (uint64_t b = 0; b < batch_size; ++b)
-				thread_func(bsig1 + b * stride, bsig2 + b * stride, out + b * stride);
-		} else {
-			multi_threaded_batch(thread_func, batch_size, n_jobs,
-				make_batch(bsig1, stride), make_batch(bsig2, stride), make_batch(out, stride));
+			std::memcpy(combined.data(), s1.data(), total_len * sizeof(T));
+			butcher_product_inplace_(combined.data(), s2.data(), cache);
+			std::memcpy(out + b * stride, combined.data() + 1,
+				(total_len - 1) * sizeof(T));
 		}
-	}
+	};
+	if (n_jobs == 1 || batch_size == 1)
+		work_range(0, batch_size);
+	else
+		spawn_batch_threads(batch_size, n_jobs, work_range);
 }
 
 
@@ -541,35 +548,41 @@ void branched_sig_combine_backprop_(
 			uint64_t off = b * total_len;
 			std::memcpy(out1 + off, derivs_in + off, total_len * sizeof(T));
 			butcher_product_deriv_(bsig1 + off, bsig2 + off, out1 + off, out2 + off, cache);
-		} else {
-			// Per-element copy: reconstruct full buffers
-			std::vector<T> s1(total_len), s2(total_len), df(total_len);
-			std::vector<T> d1(total_len), d2(total_len);
-			uint64_t off = b * stride;
+		}
+	};
+
+	auto work_range = [&](uint64_t start, uint64_t end) {
+		if (start == end)
+			return;
+		if (scalar_term) {
+			for (uint64_t b = start; b < end; ++b)
+				work(b);
+			return;
+		}
+
+		std::vector<T> s1(total_len);
+		std::vector<T> s2(total_len);
+		std::vector<T> derivs(total_len);
+		std::vector<T> d1(total_len);
+		std::vector<T> d2(total_len);
+		for (uint64_t b = start; b < end; ++b) {
+			const uint64_t off = b * stride;
 			s1[0] = static_cast<T>(1);
-			std::memcpy(s1.data() + 1, bsig1 + off, (total_len - 1) * sizeof(T));
 			s2[0] = static_cast<T>(1);
+			derivs[0] = static_cast<T>(0);
+			std::memcpy(s1.data() + 1, bsig1 + off, (total_len - 1) * sizeof(T));
 			std::memcpy(s2.data() + 1, bsig2 + off, (total_len - 1) * sizeof(T));
-			df[0] = static_cast<T>(0);
-			std::memcpy(df.data() + 1, derivs_in + off, (total_len - 1) * sizeof(T));
-			std::memcpy(d1.data(), df.data(), total_len * sizeof(T));
+			std::memcpy(derivs.data() + 1, derivs_in + off, (total_len - 1) * sizeof(T));
+			std::memcpy(d1.data(), derivs.data(), total_len * sizeof(T));
 			butcher_product_deriv_(s1.data(), s2.data(), d1.data(), d2.data(), cache);
 			std::memcpy(out1 + off, d1.data() + 1, (total_len - 1) * sizeof(T));
 			std::memcpy(out2 + off, d2.data() + 1, (total_len - 1) * sizeof(T));
 		}
 	};
-
-	if (n_jobs == 1 || batch_size == 1) {
-		for (uint64_t b = 0; b < batch_size; ++b)
-			work(b);
-	}
-	else {
-		auto work_range = [&](uint64_t start, uint64_t end) {
-			for (uint64_t b = start; b < end; ++b)
-				work(b);
-		};
+	if (n_jobs == 1 || batch_size == 1)
+		work_range(0, batch_size);
+	else
 		spawn_batch_threads(batch_size, n_jobs, work_range);
-	}
 }
 
 
@@ -764,6 +777,44 @@ void local_log_bsig_deriv_to_increment_deriv_(
 }
 
 
+template<std::floating_point T>
+struct BranchedSigBackpropWorkspace_ {
+	std::unique_ptr<T[]> bsig;
+	std::unique_ptr<T[]> derivs;
+	std::unique_ptr<T[]> increment;
+	std::unique_ptr<T[]> temp_Y;
+	std::unique_ptr<T[]> local_derivs;
+	std::unique_ptr<T[]> inc_derivs;
+	std::unique_ptr<T[]> local_log;
+	std::unique_ptr<T[]> power;
+	std::unique_ptr<T[]> next_power;
+	std::unique_ptr<T[]> powers;
+	std::unique_ptr<T[]> power_derivs;
+	std::unique_ptr<T[]> d_correction;
+
+	BranchedSigBackpropWorkspace_(
+		uint64_t dimension,
+		uint64_t total_length,
+		uint64_t max_nodes,
+		bool has_correction
+	) : bsig(std::make_unique<T[]>(total_length)),
+		derivs(std::make_unique<T[]>(total_length)),
+		increment(std::make_unique<T[]>(dimension)),
+		temp_Y(std::make_unique<T[]>(total_length)),
+		local_derivs(std::make_unique<T[]>(total_length)),
+		inc_derivs(std::make_unique<T[]>(dimension)) {
+		if (has_correction) {
+			local_log = std::make_unique<T[]>(total_length);
+			power = std::make_unique<T[]>(total_length);
+			next_power = std::make_unique<T[]>(total_length);
+			powers = std::make_unique<T[]>(max_nodes * total_length);
+			power_derivs = std::make_unique<T[]>(max_nodes * total_length);
+			d_correction = std::make_unique<T[]>(total_length);
+		}
+	}
+};
+
+
 // Main backward loop.
 template<std::floating_point T>
 void branched_sig_backprop_inplace_(
@@ -795,94 +846,53 @@ void branched_sig_backprop_inplace_(
 	if (len <= 1) return;
 
 	int steps = static_cast<int>(len - 1);
+	const bool lead_lag = path.lead_lag();
+	const uint64_t data_length = path.data_length();
+	for (int seg = steps - 1; seg >= 0; --seg) {
+		auto p0 = path[seg];
+		auto p1 = path[seg + 1];
+		for (uint64_t d = 0; d < dim; ++d)
+			increment[d] = p1[d] - p0[d];
 
-	if (!path.lead_lag()) {
-		for (int seg = steps - 1; seg >= 0; --seg) {
-			auto p0 = path[seg];
-			auto p1 = path[seg + 1];
-			for (uint64_t d = 0; d < dim; ++d)
-				increment[d] = p1[d] - p0[d];
-
-			if (!has_correction) {
-				linear_branched_sig_(increment, temp_Y, cache);
-			} else {
-				const T* seg_correction = correction + static_cast<uint64_t>(seg) * correction_segment_stride;
-				local_correction_branched_sig_(increment, temp_Y, local_log, power, next_power,
-					seg_correction, correction_len, data_dim, cache);
-			}
-
-			if (seg > 0)
-				butcher_uncombine_inplace_(bsig, temp_Y, cache);
-
-			if (seg > 0)
-				butcher_product_deriv_(bsig, temp_Y, bsig_derivs, local_derivs, cache);
-			else
-				std::memcpy(local_derivs, bsig_derivs, total_len * sizeof(T));
-
-			if (!has_correction) {
-				linear_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs, dim, cache);
-			} else {
-				const T* seg_correction = correction + static_cast<uint64_t>(seg) * correction_segment_stride;
-				local_log_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs,
-					local_log, powers, power_derivs, d_correction, seg_correction,
-					correction_len, data_dim, cache);
-			}
-
-			T* pos = out + (seg + 1) * data_dim;
-			T* neg = out + seg * data_dim;
-			for (uint64_t d = 0; d < data_dim; ++d) {
-				pos[d] += inc_derivs[d];
-				neg[d] -= inc_derivs[d];
-			}
+		const T* seg_correction = has_correction
+			? correction + static_cast<uint64_t>(seg) * correction_segment_stride
+			: nullptr;
+		if (!has_correction) {
+			linear_branched_sig_(increment, temp_Y, cache);
+		} else {
+			local_correction_branched_sig_(increment, temp_Y, local_log, power, next_power,
+				seg_correction, correction_len, data_dim, cache);
 		}
-	}
-	else {
-		uint64_t data_length = path.data_length();
-		T* pos_ptr = out + (data_length - 1) * data_dim;
-		T* neg_ptr = pos_ptr - data_dim;
-		bool parity = false;
 
-		for (int seg = steps - 1; seg >= 0; --seg) {
-			auto p0 = path[seg];
-			auto p1 = path[seg + 1];
-			for (uint64_t d = 0; d < dim; ++d)
-				increment[d] = p1[d] - p0[d];
+		if (seg > 0)
+			butcher_uncombine_inplace_(bsig, temp_Y, cache);
 
-			if (!has_correction) {
-				linear_branched_sig_(increment, temp_Y, cache);
-			} else {
-				const T* seg_correction = correction + static_cast<uint64_t>(seg) * correction_segment_stride;
-				local_correction_branched_sig_(increment, temp_Y, local_log, power, next_power,
-					seg_correction, correction_len, data_dim, cache);
-			}
+		if (seg > 0)
+			butcher_product_deriv_(bsig, temp_Y, bsig_derivs, local_derivs, cache);
+		else
+			std::memcpy(local_derivs, bsig_derivs, total_len * sizeof(T));
 
-			if (seg > 0)
-				butcher_uncombine_inplace_(bsig, temp_Y, cache);
+		if (!has_correction) {
+			linear_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs, dim, cache);
+		} else {
+			local_log_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs,
+				local_log, powers, power_derivs, d_correction, seg_correction,
+				correction_len, data_dim, cache);
+		}
 
-			if (seg > 0)
-				butcher_product_deriv_(bsig, temp_Y, bsig_derivs, local_derivs, cache);
-			else
-				std::memcpy(local_derivs, bsig_derivs, total_len * sizeof(T));
-
-			if (!has_correction) {
-				linear_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs, dim, cache);
-			} else {
-				const T* seg_correction = correction + static_cast<uint64_t>(seg) * correction_segment_stride;
-				local_log_bsig_deriv_to_increment_deriv_(local_derivs, increment, inc_derivs,
-					local_log, powers, power_derivs, d_correction, seg_correction,
-					correction_len, data_dim, cache);
-			}
-
-			T* s = parity ? inc_derivs + data_dim : inc_derivs;
-			for (uint64_t d = 0; d < data_dim; ++d) {
-				pos_ptr[d] += s[d];
-				neg_ptr[d] -= s[d];
-			}
-			if (parity) {
-				pos_ptr -= data_dim;
-				neg_ptr -= data_dim;
-			}
-			parity = !parity;
+		const uint64_t reverse_segment = static_cast<uint64_t>(steps - 1 - seg);
+		const uint64_t value_offset = lead_lag && (reverse_segment & 1)
+			? data_dim
+			: 0;
+		const uint64_t positive_offset = lead_lag
+			? (data_length - 1 - reverse_segment / 2) * data_dim
+			: static_cast<uint64_t>(seg + 1) * data_dim;
+		T* positive = out + positive_offset;
+		T* negative = positive - data_dim;
+		const T* values = inc_derivs + value_offset;
+		for (uint64_t d = 0; d < data_dim; ++d) {
+			positive[d] += values[d];
+			negative[d] -= values[d];
 		}
 	}
 }
@@ -921,81 +931,42 @@ void branched_sig_backprop_(
 	uint64_t flat_path_length = length * dimension;
 	uint64_t in_stride = scalar_term ? total_len : total_len - 1;
 
-	auto work = [&](uint64_t b, T* increment, T* temp_Y, T* local_derivs, T* inc_derivs,
-		T* local_log, T* power, T* next_power, T* powers, T* power_derivs, T* d_correction) {
+	auto work = [&](uint64_t b, BranchedSigBackpropWorkspace_<T>& workspace) {
 		Path<T> path_obj(path + b * flat_path_length, dimension, length, time_aug, lead_lag, end_time);
 
-		auto bsig_copy = std::make_unique<T[]>(total_len);
-		auto derivs_copy = std::make_unique<T[]>(total_len);
-
 		if (scalar_term) {
-			std::memcpy(bsig_copy.get(), bsig_in + b * total_len, total_len * sizeof(T));
-			std::memcpy(derivs_copy.get(), bsig_derivs_in + b * total_len, total_len * sizeof(T));
+			std::memcpy(workspace.bsig.get(), bsig_in + b * total_len, total_len * sizeof(T));
+			std::memcpy(workspace.derivs.get(), bsig_derivs_in + b * total_len, total_len * sizeof(T));
 		} else {
-			bsig_copy[0] = static_cast<T>(1);
-			std::memcpy(bsig_copy.get() + 1, bsig_in + b * in_stride, (total_len - 1) * sizeof(T));
-			derivs_copy[0] = static_cast<T>(0);
-			std::memcpy(derivs_copy.get() + 1, bsig_derivs_in + b * in_stride, (total_len - 1) * sizeof(T));
+			workspace.bsig[0] = static_cast<T>(1);
+			std::memcpy(workspace.bsig.get() + 1, bsig_in + b * in_stride, (total_len - 1) * sizeof(T));
+			workspace.derivs[0] = static_cast<T>(0);
+			std::memcpy(workspace.derivs.get() + 1, bsig_derivs_in + b * in_stride, (total_len - 1) * sizeof(T));
 		}
 
 		T* out_ptr = out + b * flat_path_length;
 		std::memset(out_ptr, 0, flat_path_length * sizeof(T));
 
 		branched_sig_backprop_inplace_(
-			path_obj, out_ptr, derivs_copy.get(), bsig_copy.get(),
-			increment, temp_Y, local_derivs, inc_derivs,
-			local_log, power, next_power, powers, power_derivs, d_correction,
+			path_obj, out_ptr, workspace.derivs.get(), workspace.bsig.get(),
+			workspace.increment.get(), workspace.temp_Y.get(),
+			workspace.local_derivs.get(), workspace.inc_derivs.get(),
+			workspace.local_log.get(), workspace.power.get(), workspace.next_power.get(),
+			workspace.powers.get(), workspace.power_derivs.get(), workspace.d_correction.get(),
 			has_correction ? correction + b * correction_batch_stride : nullptr,
 			correction_len, correction_segment_stride, has_correction, cache);
 	};
 
-	if (n_jobs == 1 || batch_size == 1) {
-		auto increment = std::make_unique<T[]>(aug_dim);
-		auto temp_Y = std::make_unique<T[]>(total_len);
-		auto local_derivs = std::make_unique<T[]>(total_len);
-		auto inc_derivs = std::make_unique<T[]>(aug_dim);
-		std::unique_ptr<T[]> local_log;
-		std::unique_ptr<T[]> power;
-		std::unique_ptr<T[]> next_power;
-		std::unique_ptr<T[]> powers;
-		std::unique_ptr<T[]> power_derivs;
-		std::unique_ptr<T[]> d_correction;
-		if (has_correction) {
-			local_log = std::make_unique<T[]>(total_len);
-			power = std::make_unique<T[]>(total_len);
-			next_power = std::make_unique<T[]>(total_len);
-			powers = std::make_unique<T[]>(max_nodes * total_len);
-			power_derivs = std::make_unique<T[]>(max_nodes * total_len);
-			d_correction = std::make_unique<T[]>(total_len);
-		}
-		for (uint64_t b = 0; b < batch_size; ++b)
-			work(b, increment.get(), temp_Y.get(), local_derivs.get(), inc_derivs.get(),
-				local_log.get(), power.get(), next_power.get(), powers.get(), power_derivs.get(), d_correction.get());
-	}
-	else {
-		auto work_range = [&](uint64_t start, uint64_t end) {
-			auto increment = std::make_unique<T[]>(aug_dim);
-			auto temp_Y = std::make_unique<T[]>(total_len);
-			auto local_derivs = std::make_unique<T[]>(total_len);
-			auto inc_derivs = std::make_unique<T[]>(aug_dim);
-			std::unique_ptr<T[]> local_log;
-			std::unique_ptr<T[]> power;
-			std::unique_ptr<T[]> next_power;
-			std::unique_ptr<T[]> powers;
-			std::unique_ptr<T[]> power_derivs;
-			std::unique_ptr<T[]> d_correction;
-			if (has_correction) {
-				local_log = std::make_unique<T[]>(total_len);
-				power = std::make_unique<T[]>(total_len);
-				next_power = std::make_unique<T[]>(total_len);
-				powers = std::make_unique<T[]>(max_nodes * total_len);
-				power_derivs = std::make_unique<T[]>(max_nodes * total_len);
-				d_correction = std::make_unique<T[]>(total_len);
-			}
-			for (uint64_t b = start; b < end; ++b)
-				work(b, increment.get(), temp_Y.get(), local_derivs.get(), inc_derivs.get(),
-					local_log.get(), power.get(), next_power.get(), powers.get(), power_derivs.get(), d_correction.get());
-		};
+	auto work_range = [&](uint64_t start, uint64_t end) {
+		if (start == end)
+			return;
+		BranchedSigBackpropWorkspace_<T> workspace(
+			aug_dim, total_len, max_nodes, has_correction);
+		for (uint64_t b = start; b < end; ++b)
+			work(b, workspace);
+	};
+	if (n_jobs == 1 || batch_size == 1)
+		work_range(0, batch_size);
+	else
 		spawn_batch_threads(batch_size, n_jobs, work_range);
-	}
 }

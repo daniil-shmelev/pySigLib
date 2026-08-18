@@ -880,6 +880,27 @@ def test_branched_sig_backprop_random_derivs(d, N):
     np.testing.assert_allclose(grad_bp, grad_fd, atol=1e-4)
 
 
+def test_branched_sig_backprop_lead_lag_matches_explicit_transform():
+    d, N = 2, 3
+    pysiglib.prepare_branched_sig(d, N, lead_lag=True)
+    np.random.seed(402)
+    path = np.cumsum(np.random.randn(5, d) * 0.1, axis=0)
+    transformed_path = pysiglib.transform_path(path, lead_lag=True)
+
+    bsig = pysiglib.branched_sig(path, N, lead_lag=True)
+    explicit_bsig = pysiglib.branched_sig(transformed_path, N)
+    derivs = np.random.randn(len(bsig))
+
+    grad = pysiglib.branched_sig_backprop(
+        path, bsig, derivs, N, lead_lag=True)
+    transformed_grad = pysiglib.branched_sig_backprop(
+        transformed_path, explicit_bsig, derivs, N)
+    expected = pysiglib.transform_path_backprop(
+        transformed_grad, lead_lag=True)
+
+    np.testing.assert_allclose(grad, expected, atol=1e-12)
+
+
 @pytest.mark.parametrize("time_aug", [False, True])
 def test_branched_sig_backprop_correction_finite_diff(time_aug):
     d, N = 1, 3
