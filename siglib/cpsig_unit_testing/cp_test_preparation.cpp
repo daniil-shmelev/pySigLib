@@ -93,6 +93,34 @@ TEST(preparationCacheTest, BranchedDiskRoundTripAndTruncation) {
 	EXPECT_EQ(loaded.order_index, expected.order_index);
 	EXPECT_EQ(loaded.basis_forest_data, expected.basis_forest_data);
 	EXPECT_EQ(loaded.coproduct_data, expected.coproduct_data);
+	EXPECT_EQ(loaded.horner.product_count, expected.horner.product_count);
+	EXPECT_EQ(
+		loaded.horner.planar_coproduct_left,
+		expected.horner.planar_coproduct_left);
+	EXPECT_EQ(
+		loaded.horner.coproduct_pairs,
+		expected.horner.coproduct_pairs);
+	EXPECT_EQ(
+		loaded.horner.correction_horner_roots,
+		expected.horner.correction_horner_roots);
+	EXPECT_EQ(
+		loaded.horner.correction_horner_node_offsets,
+		expected.horner.correction_horner_node_offsets);
+	EXPECT_EQ(
+		loaded.horner.correction_horner_variables,
+		expected.horner.correction_horner_variables);
+	EXPECT_EQ(
+		loaded.horner.correction_horner_children,
+		expected.horner.correction_horner_children);
+	EXPECT_EQ(
+		loaded.horner.correction_horner_constants,
+		expected.horner.correction_horner_constants);
+	EXPECT_EQ(
+		loaded.horner.planar_log_coefficients,
+		expected.horner.planar_log_coefficients);
+	EXPECT_EQ(
+		loaded.horner.planar_log_monomial_parent,
+		expected.horner.planar_log_monomial_parent);
 
 	const auto path = branched_sig_cache_file_path(directory, 2, 3, true);
 	std::ofstream truncated(path, std::ios::binary | std::ios::trunc);

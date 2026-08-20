@@ -790,6 +790,23 @@ static void BM_branched_sig_backprop(benchmark::State& state) {
 }
 BENCHMARK(BM_branched_sig_backprop)->Unit(benchmark::kMicrosecond);
 
+static void BM_branched_sig_backprop_planar(benchmark::State& state) {
+    check(::prepare_branched_sig(3, 4, false, true), "prepare_branched_sig");
+    const uint64_t blen = ::branched_sig_length(3, 4, true);
+    auto path = random_data(8 * 3 * 32, 1);
+    auto bsig = random_data(8 * blen, 2);
+    auto bsig_derivs = random_data(8 * blen, 3);
+    std::vector<double> out(8 * 3 * 32);
+    for (auto _ : state) {
+        ::branched_sig_backprop_d(
+            path.data(), out.data(), bsig_derivs.data(), bsig.data(),
+            8, 3, 32, 4, 1, false, false, 1., true);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_backprop_planar)
+    ->Unit(benchmark::kMicrosecond);
+
 static void BM_branched_sig_backprop_correction(benchmark::State& state) {
     check(::prepare_branched_sig(3, 4, false, false), "prepare_branched_sig");
     const uint64_t blen = ::branched_sig_length(3, 4, false);
