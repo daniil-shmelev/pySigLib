@@ -843,14 +843,14 @@ extern "C" {
 		const float* log_sig, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(logsig_to_sig_cuda_<float>(log_sig, out, batch_size, dimension, degree, method, scalar_term));
+		CUDA_SAFE_CALL(logsig_to_sig_cuda_<float>(log_sig, out, batch_size, dimension, degree, method, scalar_term));
 	}
 
 	CUSIG_API int logsig_to_sig_cuda_d(
 		const double* log_sig, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(logsig_to_sig_cuda_<double>(log_sig, out, batch_size, dimension, degree, method, scalar_term));
+		CUDA_SAFE_CALL(logsig_to_sig_cuda_<double>(log_sig, out, batch_size, dimension, degree, method, scalar_term));
 	}
 
 
@@ -858,14 +858,14 @@ extern "C" {
 		const float* log_sig, float* d_logsig, const float* d_sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(logsig_to_sig_backprop_cuda_<float>(log_sig, d_logsig, d_sig, batch_size, dimension, degree, method, scalar_term));
+		CUDA_SAFE_CALL(logsig_to_sig_backprop_cuda_<float>(log_sig, d_logsig, d_sig, batch_size, dimension, degree, method, scalar_term));
 	}
 
 	CUSIG_API int logsig_to_sig_backprop_cuda_d(
 		const double* log_sig, double* d_logsig, const double* d_sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term
 	) noexcept {
-		CUSIG_SAFE_CALL(logsig_to_sig_backprop_cuda_<double>(log_sig, d_logsig, d_sig, batch_size, dimension, degree, method, scalar_term));
+		CUDA_SAFE_CALL(logsig_to_sig_backprop_cuda_<double>(log_sig, d_logsig, d_sig, batch_size, dimension, degree, method, scalar_term));
 	}
 
 }

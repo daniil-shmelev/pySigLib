@@ -853,7 +853,7 @@ extern "C" {
 		const float* gram, float* out, float* state,
 		uint64_t batch_size, uint64_t dimension,
 		uint64_t length1, uint64_t length2, uint64_t order, bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(sig_kernel_poly_cuda_<float>(
+		CUDA_SAFE_CALL(sig_kernel_poly_cuda_<float>(
 			gram, out, state, batch_size, dimension, length1, length2, order, return_grid));
 	}
 
@@ -861,7 +861,7 @@ extern "C" {
 		const double* gram, double* out, double* state,
 		uint64_t batch_size, uint64_t dimension,
 		uint64_t length1, uint64_t length2, uint64_t order, bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(sig_kernel_poly_cuda_<double>(
+		CUDA_SAFE_CALL(sig_kernel_poly_cuda_<double>(
 			gram, out, state, batch_size, dimension, length1, length2, order, return_grid));
 	}
 
@@ -870,7 +870,7 @@ extern "C" {
 		const float* state, uint64_t batch_size, uint64_t dimension,
 		uint64_t length1, uint64_t length2, uint64_t order,
 		bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(sig_kernel_poly_backprop_cuda_<float>(
+		CUDA_SAFE_CALL(sig_kernel_poly_backprop_cuda_<float>(
 			gram, gram_derivs, output_derivs, state, batch_size, dimension,
 			length1, length2, order, return_grid));
 	}
@@ -880,7 +880,7 @@ extern "C" {
 		const double* state, uint64_t batch_size, uint64_t dimension,
 		uint64_t length1, uint64_t length2, uint64_t order,
 		bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(sig_kernel_poly_backprop_cuda_<double>(
+		CUDA_SAFE_CALL(sig_kernel_poly_backprop_cuda_<double>(
 			gram, gram_derivs, output_derivs, state, batch_size, dimension,
 			length1, length2, order, return_grid));
 	}

@@ -2225,62 +2225,62 @@ static void prepare_branched_log_sig_cuda_(
 extern "C" {
 
 	CUSIG_API int prepare_branched_sig_cuda(uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk) noexcept {
-		CUSIG_SAFE_CALL(prepare_branched_sig_gpu_cache_(dimension, max_nodes, planar, use_disk));
+		CUDA_SAFE_CALL(prepare_branched_sig_gpu_cache_(dimension, max_nodes, planar, use_disk));
 	}
 
 	CUSIG_API int prepare_branched_log_sig_cuda(uint64_t dimension, uint64_t max_nodes, int method, bool planar, bool use_disk) noexcept {
-		CUSIG_SAFE_CALL(prepare_branched_log_sig_cuda_(dimension, max_nodes, method, planar, use_disk));
+		CUDA_SAFE_CALL(prepare_branched_log_sig_cuda_(dimension, max_nodes, method, planar, use_disk));
 	}
 
 	CUSIG_API int prepare_branched_sig_coef_cuda(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk) noexcept {
-		CUSIG_SAFE_CALL(prepare_branched_sig_coef_cache_cuda_(tree_data, tree_data_len, data_dimension, dimension, max_nodes, planar, use_disk));
+		CUDA_SAFE_CALL(prepare_branched_sig_coef_cache_cuda_(tree_data, tree_data_len, data_dimension, dimension, max_nodes, planar, use_disk));
 	}
 
 	CUSIG_API int branched_sig_coef_cuda_f(const float* path, float* out, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_coef_cuda_<float>(path, out, tree_data, tree_data_len, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(branched_sig_coef_cuda_<float>(path, out, tree_data, tree_data_len, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int branched_sig_coef_cuda_d(const double* path, double* out, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_coef_cuda_<double>(path, out, tree_data, tree_data_len, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(branched_sig_coef_cuda_<double>(path, out, tree_data, tree_data_len, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int branched_sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_coef_backprop_cuda_<float>(path, out, coefs, derivs, tree_data, tree_data_len, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(branched_sig_coef_backprop_cuda_<float>(path, out, coefs, derivs, tree_data, tree_data_len, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int branched_sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_coef_backprop_cuda_<double>(path, out, coefs, derivs, tree_data, tree_data_len, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(branched_sig_coef_backprop_cuda_<double>(path, out, coefs, derivs, tree_data, tree_data_len, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_cuda_<float>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(branched_sig_cuda_<float>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(branched_sig_cuda_<double>(path, out, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar, bool scalar_term) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<float>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar, scalar_term));
+		CUDA_SAFE_CALL(branched_sig_combine_cuda_<float>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar, scalar_term));
 	}
 	CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar, bool scalar_term) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_cuda_<double>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar, scalar_term));
+		CUDA_SAFE_CALL(branched_sig_combine_cuda_<double>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar, scalar_term));
 	}
 
 	CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar, bool scalar_term) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<float>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar, scalar_term));
+		CUDA_SAFE_CALL(branched_sig_combine_backprop_cuda_<float>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar, scalar_term));
 	}
 	CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar, bool scalar_term) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_combine_backprop_cuda_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar, scalar_term));
+		CUDA_SAFE_CALL(branched_sig_combine_backprop_cuda_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar, scalar_term));
 	}
 
 
 	CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(branched_sig_backprop_cuda_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		CUSIG_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(branched_sig_backprop_cuda_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 }

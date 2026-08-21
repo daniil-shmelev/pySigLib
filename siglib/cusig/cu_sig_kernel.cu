@@ -688,19 +688,19 @@ extern "C" {
 
 
 	CUSIG_API int sig_kernel_cuda_f(const float* const gram, float* const out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(sig_kernel_cuda_<float>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUDA_SAFE_CALL(sig_kernel_cuda_<float>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int sig_kernel_cuda_d(const double* const gram, double* const out, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(sig_kernel_cuda_<double>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUDA_SAFE_CALL(sig_kernel_cuda_<double>(gram, out, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 
 	CUSIG_API int sig_kernel_backprop_cuda_f(const float* const gram, float* const out, const float* const derivs, const float* const k_grid, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUDA_SAFE_CALL(sig_kernel_backprop_cuda_<float>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 
 	CUSIG_API int sig_kernel_backprop_cuda_d(const double* const gram, double* const out, const double* const derivs, const double* const k_grid, const uint64_t batch_size, const uint64_t dimension, const uint64_t length1, const uint64_t length2, const uint64_t dyadic_order_1, const uint64_t dyadic_order_2, const bool return_grid) noexcept {
-		CUSIG_SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
+		CUDA_SAFE_CALL(sig_kernel_backprop_cuda_<double>(gram, out, derivs, k_grid, batch_size, dimension, length1, length2, dyadic_order_1, dyadic_order_2, return_grid));
 	}
 }
