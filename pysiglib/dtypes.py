@@ -46,175 +46,175 @@ CPSIG_TRANSFORM_PATH_BACKPROP = {
     "float64": CPSIG.transform_path_backprop_d
 }
 
-CUSIG_TRANSFORM_PATH_CUDA = None
-CUSIG_TRANSFORM_PATH_BACKPROP_CUDA = None
-CUSIG_SIG_KERNEL_CUDA = None
-CUSIG_SIG_KERNEL_BACKPROP_CUDA = None
-CUSIG_SIG_KERNEL_POLY_CUDA = None
-CUSIG_SIG_KERNEL_POLY_BACKPROP_CUDA = None
-CUSIG_BRANCHED_SIG_KERNEL_CUDA = None
-CUSIG_BRANCHED_SIG_KERNEL_BACKPROP_CUDA = None
-CUSIG_SIGNATURE_CUDA = None
-CUSIG_SIG_BACKPROP_CUDA = None
-CUSIG_SIG_COMBINE_CUDA = None
-CUSIG_SIG_COMBINE_BACKPROP_CUDA = None
-CUSIG_SIG_TO_LOG_SIG_CUDA = None
-CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA = None
-CUSIG_SIG_COEF_CUDA = None
-CUSIG_SIG_COEF_BACKPROP_CUDA = None
-CUSIG_LOG_SIG_COMBINE_CUDA = None
-CUSIG_LOG_SIG_COMBINE_BACKPROP_CUDA = None
-CUSIG_LOG_SIG_FROM_PATH_CUDA = None
-CUSIG_LOG_SIG_FROM_PATH_BACKPROP_CUDA = None
-CUSIG_LOGSIG_TO_SIG_CUDA = None
-CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA = None
-CUSIG_LINEAR_SIG_CUDA = None
-CUSIG_SIG_JOIN_CUDA = None
-CUSIG_SIG_JOIN_BACKPROP_CUDA = None
-CUSIG_LOG_SIG_JOIN_CUDA = None
-CUSIG_LOG_SIG_JOIN_BACKPROP_CUDA = None
-CUSIG_BRANCHED_SIG_CUDA = None
-CUSIG_BRANCHED_SIG_COEF_CUDA = None
-CUSIG_BRANCHED_SIG_COEF_BACKPROP_CUDA = None
-CUSIG_BRANCHED_SIG_COMBINE_CUDA = None
-CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA = None
-CUSIG_BRANCHED_SIG_BACKPROP_CUDA = None
-CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA = None
-CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA = None
-CUSIG_BRANCHED_LOG_SIG_FROM_PATH_CUDA = None
-CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP_CUDA = None
+CUSIG_TRANSFORM_PATH = None
+CUSIG_TRANSFORM_PATH_BACKPROP = None
+CUSIG_SIG_KERNEL = None
+CUSIG_SIG_KERNEL_BACKPROP = None
+CUSIG_SIG_KERNEL_POLY = None
+CUSIG_SIG_KERNEL_POLY_BACKPROP = None
+CUSIG_BRANCHED_SIG_KERNEL = None
+CUSIG_BRANCHED_SIG_KERNEL_BACKPROP = None
+CUSIG_SIGNATURE = None
+CUSIG_SIG_BACKPROP = None
+CUSIG_SIG_COMBINE = None
+CUSIG_SIG_COMBINE_BACKPROP = None
+CUSIG_SIG_TO_LOG_SIG = None
+CUSIG_SIG_TO_LOG_SIG_BACKPROP = None
+CUSIG_SIG_COEF = None
+CUSIG_SIG_COEF_BACKPROP = None
+CUSIG_LOG_SIG_COMBINE = None
+CUSIG_LOG_SIG_COMBINE_BACKPROP = None
+CUSIG_LOG_SIG_FROM_PATH = None
+CUSIG_LOG_SIG_FROM_PATH_BACKPROP = None
+CUSIG_LOGSIG_TO_SIG = None
+CUSIG_LOGSIG_TO_SIG_BACKPROP = None
+CUSIG_LINEAR_SIG = None
+CUSIG_SIG_JOIN = None
+CUSIG_SIG_JOIN_BACKPROP = None
+CUSIG_LOG_SIG_JOIN = None
+CUSIG_LOG_SIG_JOIN_BACKPROP = None
+CUSIG_BRANCHED_SIG = None
+CUSIG_BRANCHED_SIG_COEF = None
+CUSIG_BRANCHED_SIG_COEF_BACKPROP = None
+CUSIG_BRANCHED_SIG_COMBINE = None
+CUSIG_BRANCHED_SIG_COMBINE_BACKPROP = None
+CUSIG_BRANCHED_SIG_BACKPROP = None
+CUSIG_BRANCHED_SIG_TO_LOG_SIG = None
+CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP = None
+CUSIG_BRANCHED_LOG_SIG_FROM_PATH = None
+CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP = None
 if BUILT_WITH_CUDA:
-    CUSIG_TRANSFORM_PATH_CUDA = {
+    CUSIG_TRANSFORM_PATH = {
         "float32": CUSIG.transform_path_cuda_f,
         "float64": CUSIG.transform_path_cuda_d
     }
 
-    CUSIG_TRANSFORM_PATH_BACKPROP_CUDA = {
+    CUSIG_TRANSFORM_PATH_BACKPROP = {
         "float32": CUSIG.transform_path_backprop_cuda_f,
         "float64": CUSIG.transform_path_backprop_cuda_d
     }
 
-    CUSIG_SIG_KERNEL_CUDA = {
+    CUSIG_SIG_KERNEL = {
         "float32": CUSIG.sig_kernel_cuda_f,
         "float64": CUSIG.sig_kernel_cuda_d
     }
 
-    CUSIG_SIG_KERNEL_POLY_CUDA = {
+    CUSIG_SIG_KERNEL_POLY = {
         "float32": CUSIG.sig_kernel_poly_cuda_f,
         "float64": CUSIG.sig_kernel_poly_cuda_d
     }
 
-    CUSIG_SIG_KERNEL_POLY_BACKPROP_CUDA = {
+    CUSIG_SIG_KERNEL_POLY_BACKPROP = {
         "float32": CUSIG.sig_kernel_poly_backprop_cuda_f,
         "float64": CUSIG.sig_kernel_poly_backprop_cuda_d
     }
 
-    CUSIG_SIG_KERNEL_BACKPROP_CUDA = {
+    CUSIG_SIG_KERNEL_BACKPROP = {
         "float32": CUSIG.sig_kernel_backprop_cuda_f,
         "float64": CUSIG.sig_kernel_backprop_cuda_d
     }
 
-    CUSIG_BRANCHED_SIG_KERNEL_CUDA = {
+    CUSIG_BRANCHED_SIG_KERNEL = {
         "float32": CUSIG.branched_sig_kernel_cuda_f,
         "float64": CUSIG.branched_sig_kernel_cuda_d
     }
 
-    CUSIG_BRANCHED_SIG_KERNEL_BACKPROP_CUDA = {
+    CUSIG_BRANCHED_SIG_KERNEL_BACKPROP = {
         "float32": CUSIG.branched_sig_kernel_backprop_cuda_f,
         "float64": CUSIG.branched_sig_kernel_backprop_cuda_d
     }
 
-    CUSIG_SIGNATURE_CUDA = {
+    CUSIG_SIGNATURE = {
         "float32": CUSIG.signature_cuda_f,
         "float64": CUSIG.signature_cuda_d
     }
 
-    CUSIG_SIG_BACKPROP_CUDA = {
+    CUSIG_SIG_BACKPROP = {
         "float32": CUSIG.sig_backprop_cuda_f,
         "float64": CUSIG.sig_backprop_cuda_d
     }
 
-    CUSIG_SIG_COMBINE_CUDA = {
+    CUSIG_SIG_COMBINE = {
         "float32": CUSIG.sig_combine_cuda_f,
         "float64": CUSIG.sig_combine_cuda_d
     }
 
-    CUSIG_SIG_COMBINE_BACKPROP_CUDA = {
+    CUSIG_SIG_COMBINE_BACKPROP = {
         "float32": CUSIG.sig_combine_backprop_cuda_f,
         "float64": CUSIG.sig_combine_backprop_cuda_d
     }
 
-    CUSIG_SIG_TO_LOG_SIG_CUDA = {
+    CUSIG_SIG_TO_LOG_SIG = {
         "float32": CUSIG.sig_to_log_sig_cuda_f,
         "float64": CUSIG.sig_to_log_sig_cuda_d
     }
 
-    CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA = {
+    CUSIG_SIG_TO_LOG_SIG_BACKPROP = {
         "float32": CUSIG.sig_to_log_sig_backprop_cuda_f,
         "float64": CUSIG.sig_to_log_sig_backprop_cuda_d
     }
 
-    CUSIG_SIG_COEF_CUDA = {
+    CUSIG_SIG_COEF = {
         "float32": CUSIG.sig_coef_cuda_f,
         "float64": CUSIG.sig_coef_cuda_d
     }
 
-    CUSIG_SIG_COEF_BACKPROP_CUDA = {
+    CUSIG_SIG_COEF_BACKPROP = {
         "float32": CUSIG.sig_coef_backprop_cuda_f,
         "float64": CUSIG.sig_coef_backprop_cuda_d
     }
 
-    CUSIG_LOG_SIG_COMBINE_CUDA = {
+    CUSIG_LOG_SIG_COMBINE = {
         "float32": CUSIG.log_sig_combine_cuda_f,
         "float64": CUSIG.log_sig_combine_cuda_d
     }
 
-    CUSIG_LOG_SIG_COMBINE_BACKPROP_CUDA = {
+    CUSIG_LOG_SIG_COMBINE_BACKPROP = {
         "float32": CUSIG.log_sig_combine_backprop_cuda_f,
         "float64": CUSIG.log_sig_combine_backprop_cuda_d
     }
 
-    CUSIG_LOG_SIG_FROM_PATH_CUDA = {
+    CUSIG_LOG_SIG_FROM_PATH = {
         "float32": CUSIG.log_sig_from_path_cuda_f,
         "float64": CUSIG.log_sig_from_path_cuda_d
     }
 
-    CUSIG_LOG_SIG_FROM_PATH_BACKPROP_CUDA = {
+    CUSIG_LOG_SIG_FROM_PATH_BACKPROP = {
         "float32": CUSIG.log_sig_from_path_backprop_cuda_f,
         "float64": CUSIG.log_sig_from_path_backprop_cuda_d
     }
 
-    CUSIG_LOGSIG_TO_SIG_CUDA = {
+    CUSIG_LOGSIG_TO_SIG = {
         "float32": CUSIG.logsig_to_sig_cuda_f,
         "float64": CUSIG.logsig_to_sig_cuda_d
     }
 
-    CUSIG_LOGSIG_TO_SIG_BACKPROP_CUDA = {
+    CUSIG_LOGSIG_TO_SIG_BACKPROP = {
         "float32": CUSIG.logsig_to_sig_backprop_cuda_f,
         "float64": CUSIG.logsig_to_sig_backprop_cuda_d
     }
 
-    CUSIG_LINEAR_SIG_CUDA = {
+    CUSIG_LINEAR_SIG = {
         "float32": CUSIG.linear_sig_cuda_f,
         "float64": CUSIG.linear_sig_cuda_d
     }
 
-    CUSIG_SIG_JOIN_CUDA = {
+    CUSIG_SIG_JOIN = {
         "float32": CUSIG.sig_join_cuda_f,
         "float64": CUSIG.sig_join_cuda_d
     }
 
-    CUSIG_SIG_JOIN_BACKPROP_CUDA = {
+    CUSIG_SIG_JOIN_BACKPROP = {
         "float32": CUSIG.sig_join_backprop_cuda_f,
         "float64": CUSIG.sig_join_backprop_cuda_d
     }
 
-    CUSIG_LOG_SIG_JOIN_CUDA = {
+    CUSIG_LOG_SIG_JOIN = {
         "float32": CUSIG.log_sig_join_cuda_f,
         "float64": CUSIG.log_sig_join_cuda_d
     }
 
-    CUSIG_LOG_SIG_JOIN_BACKPROP_CUDA = {
+    CUSIG_LOG_SIG_JOIN_BACKPROP = {
         "float32": CUSIG.log_sig_join_backprop_cuda_f,
         "float64": CUSIG.log_sig_join_backprop_cuda_d
     }
@@ -395,51 +395,51 @@ CPSIG_BRANCHED_SIG_BACKPROP = {
 }
 
 if BUILT_WITH_CUDA:
-    CUSIG_BRANCHED_SIG_CUDA = {
+    CUSIG_BRANCHED_SIG = {
         "float32": CUSIG.branched_sig_cuda_f,
         "float64": CUSIG.branched_sig_cuda_d
     }
 
-    CUSIG_BRANCHED_SIG_COEF_CUDA = {
+    CUSIG_BRANCHED_SIG_COEF = {
         "float32": CUSIG.branched_sig_coef_cuda_f,
         "float64": CUSIG.branched_sig_coef_cuda_d
     }
 
-    CUSIG_BRANCHED_SIG_COEF_BACKPROP_CUDA = {
+    CUSIG_BRANCHED_SIG_COEF_BACKPROP = {
         "float32": CUSIG.branched_sig_coef_backprop_cuda_f,
         "float64": CUSIG.branched_sig_coef_backprop_cuda_d
     }
 
-    CUSIG_BRANCHED_SIG_COMBINE_CUDA = {
+    CUSIG_BRANCHED_SIG_COMBINE = {
         "float32": CUSIG.branched_sig_combine_cuda_f,
         "float64": CUSIG.branched_sig_combine_cuda_d
     }
-    CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA = {
+    CUSIG_BRANCHED_SIG_COMBINE_BACKPROP = {
         "float32": CUSIG.branched_sig_combine_backprop_cuda_f,
         "float64": CUSIG.branched_sig_combine_backprop_cuda_d
     }
 
-    CUSIG_BRANCHED_SIG_BACKPROP_CUDA = {
+    CUSIG_BRANCHED_SIG_BACKPROP = {
         "float32": CUSIG.branched_sig_backprop_cuda_f,
         "float64": CUSIG.branched_sig_backprop_cuda_d
     }
 
-    CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA = {
+    CUSIG_BRANCHED_SIG_TO_LOG_SIG = {
         "float32": CUSIG.branched_sig_to_log_sig_cuda_f,
         "float64": CUSIG.branched_sig_to_log_sig_cuda_d
     }
 
-    CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA = {
+    CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP = {
         "float32": CUSIG.branched_sig_to_log_sig_backprop_cuda_f,
         "float64": CUSIG.branched_sig_to_log_sig_backprop_cuda_d
     }
 
-    CUSIG_BRANCHED_LOG_SIG_FROM_PATH_CUDA = {
+    CUSIG_BRANCHED_LOG_SIG_FROM_PATH = {
         "float32": CUSIG.branched_log_sig_from_path_cuda_f,
         "float64": CUSIG.branched_log_sig_from_path_cuda_d
     }
 
-    CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP_CUDA = {
+    CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP = {
         "float32": CUSIG.branched_log_sig_from_path_backprop_cuda_f,
         "float64": CUSIG.branched_log_sig_from_path_backprop_cuda_d
     }

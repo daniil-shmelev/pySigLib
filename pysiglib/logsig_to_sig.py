@@ -21,7 +21,7 @@ import torch
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (CPSIG_LOGSIG_TO_SIG,
-                     CUSIG_LOGSIG_TO_SIG_CUDA)
+                     CUSIG_LOGSIG_TO_SIG)
 from .sig_length import sig_length, log_sig_length, aug_dim, _infer_scalar_term
 from .data_handlers import SigOutputHandler, SigInputHandler
 
@@ -116,7 +116,7 @@ def logsig_to_sig(
             data.data_ptr, result.data_ptr, data.batch_size,
             dimension, degree, time_aug, lead_lag, method, scalar_term, n_jobs)
     else:
-        err_code = CUSIG_LOGSIG_TO_SIG_CUDA[data.dtype](
+        err_code = CUSIG_LOGSIG_TO_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             aug_dimension, degree, method, scalar_term)
     if err_code:

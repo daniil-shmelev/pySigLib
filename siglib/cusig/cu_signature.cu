@@ -3093,7 +3093,7 @@ extern "C" {
 		const float* correction, uint64_t correction_len,
 		uint64_t correction_batch_stride, uint64_t correction_segment_stride
 	) noexcept {
-		CUSIG_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int signature_cuda_d(
@@ -3104,7 +3104,7 @@ extern "C" {
 		const double* correction, uint64_t correction_len,
 		uint64_t correction_batch_stride, uint64_t correction_segment_stride
 	) noexcept {
-		CUSIG_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	// =====================================================================
@@ -3120,7 +3120,7 @@ extern "C" {
 		const float* correction, uint64_t correction_len,
 		uint64_t correction_batch_stride, uint64_t correction_segment_stride
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CUSIG_API int sig_backprop_cuda_d(
@@ -3131,6 +3131,6 @@ extern "C" {
 		const double* correction, uint64_t correction_len,
 		uint64_t correction_batch_stride, uint64_t correction_segment_stride
 	) noexcept {
-		CUSIG_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 }

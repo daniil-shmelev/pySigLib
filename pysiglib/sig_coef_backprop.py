@@ -21,7 +21,7 @@ import torch
 
 from .param_checks import check_word_or_word_list, check_type, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIG_COEF_BACKPROP, CUSIG_SIG_COEF_BACKPROP_CUDA
+from .dtypes import CPSIG_SIG_COEF_BACKPROP, CUSIG_SIG_COEF_BACKPROP
 from .data_handlers import PathInputHandler, MultipleSigInputHandler, PathOutputHandler
 
 
@@ -177,7 +177,7 @@ def sig_coef_backprop(
             data.batch_size, data.data_dimension, data.data_length,
             data.time_aug, data.lead_lag, data.end_time, n_jobs)
     else:
-        err_code = CUSIG_SIG_COEF_BACKPROP_CUDA[data.dtype](
+        err_code = CUSIG_SIG_COEF_BACKPROP[data.dtype](
             data.data_ptr, result.data_ptr,
             deriv_data.data[0].data_ptr, deriv_data.data[1].data_ptr,
             multi_indices_ptr, num_multi_indices, degrees_ptr,

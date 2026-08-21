@@ -20,7 +20,7 @@ import torch
 
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_LOG_SIG_COMBINE, CUSIG_LOG_SIG_COMBINE_CUDA, CPSIG_LOG_SIG_COMBINE_BACKPROP, CUSIG_LOG_SIG_COMBINE_BACKPROP_CUDA
+from .dtypes import CPSIG_LOG_SIG_COMBINE, CUSIG_LOG_SIG_COMBINE, CPSIG_LOG_SIG_COMBINE_BACKPROP, CUSIG_LOG_SIG_COMBINE_BACKPROP
 from .sig_length import log_sig_length, aug_dim
 from .data_handlers import MultipleSigInputHandler, SigOutputHandler
 
@@ -95,7 +95,7 @@ def log_sig_combine(
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, aug_dimension, degree, n_jobs)
     else:
-        err_code = CUSIG_LOG_SIG_COMBINE_CUDA[data.dtype](
+        err_code = CUSIG_LOG_SIG_COMBINE[data.dtype](
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, aug_dimension, degree)
     if err_code:
@@ -163,7 +163,7 @@ def log_sig_combine_backprop(
             data.sig_ptr[0], data.sig_ptr[1],
             data.batch_size, aug_dimension, degree, n_jobs)
     else:
-        err_code = CUSIG_LOG_SIG_COMBINE_BACKPROP_CUDA[data.dtype](
+        err_code = CUSIG_LOG_SIG_COMBINE_BACKPROP[data.dtype](
             data.sig_ptr[2], result1.data_ptr, result2.data_ptr,
             data.sig_ptr[0], data.sig_ptr[1],
             data.batch_size, aug_dimension, degree)

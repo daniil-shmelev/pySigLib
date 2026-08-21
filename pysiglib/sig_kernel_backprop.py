@@ -29,8 +29,8 @@ from .dtypes import (
     CPSIG_SIG_KERNEL_POLY_BACKPROP,
     CPSIG_SIG_KERNEL_BACKPROP,
     DTYPES,
-    CUSIG_SIG_KERNEL_POLY_BACKPROP_CUDA,
-    CUSIG_SIG_KERNEL_BACKPROP_CUDA,
+    CUSIG_SIG_KERNEL_POLY_BACKPROP,
+    CUSIG_SIG_KERNEL_BACKPROP,
 )
 from .data_handlers import MultiplePathInputHandler, ScalarInputHandler, GridOutputHandler, PathInputHandler
 from .static_kernels import StaticKernel, LinearKernel, Context
@@ -60,7 +60,7 @@ def gram_deriv(
                 data.batch_size, data.dimension, data.length[0], data.length[1],
                 order, return_grid, n_jobs)
         else:
-            err_code = CUSIG_SIG_KERNEL_POLY_BACKPROP_CUDA[data.dtype](
+            err_code = CUSIG_SIG_KERNEL_POLY_BACKPROP[data.dtype](
                 gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
                 data.batch_size, data.dimension, data.length[0], data.length[1],
                 order, return_grid)
@@ -70,7 +70,7 @@ def gram_deriv(
             data.batch_size, data.dimension, data.length[0], data.length[1],
             dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
     else:
-        err_code = CUSIG_SIG_KERNEL_BACKPROP_CUDA[data.dtype](
+        err_code = CUSIG_SIG_KERNEL_BACKPROP[data.dtype](
             gram_ptr, result.data_ptr, derivs_data.data_ptr, k_grid_data.data_ptr,
             data.batch_size, data.dimension, data.length[0], data.length[1],
             dyadic_order_1, dyadic_order_2, return_grid)

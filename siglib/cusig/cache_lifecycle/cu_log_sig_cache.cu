@@ -49,7 +49,7 @@ extern "C" {
 	CUSIG_API int prepare_log_sig_cuda(
 		uint64_t dimension, uint64_t degree, int method, bool use_disk
 	) noexcept {
-		CUSIG_SAFE_CALL(
+		CUDA_SAFE_CALL(
 			if (method == 3)
 				prepare_cuda_log_sig_method3_(
 					dimension, degree, use_disk);
@@ -59,10 +59,10 @@ extern "C" {
 	}
 
 	CUSIG_API int clear_cache_cuda(bool use_disk) noexcept {
-		CUSIG_SAFE_CALL(clear_cache_cuda_(use_disk));
+		CUDA_SAFE_CALL(clear_cache_cuda_(use_disk));
 	}
 
 	CUSIG_API int set_cache_dir_cuda(const char* dir) noexcept {
-		CUSIG_SAFE_CALL(set_cache_dir_cuda_(dir));
+		CUDA_SAFE_CALL(set_cache_dir_cuda_(dir));
 	}
 }

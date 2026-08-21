@@ -22,8 +22,8 @@ import torch
 from .param_checks import check_type, check_non_neg, check_log_sig_method, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (CPSIG_SIG_TO_LOG_SIG,
-                     CUSIG_SIG_TO_LOG_SIG_CUDA,
-                     CPSIG_LOG_SIG_FROM_PATH, CUSIG_LOG_SIG_FROM_PATH_CUDA)
+                     CUSIG_SIG_TO_LOG_SIG,
+                     CPSIG_LOG_SIG_FROM_PATH, CUSIG_LOG_SIG_FROM_PATH)
 from .sig_length import sig_length, log_sig_length, aug_dim, _infer_scalar_term
 from .sig import sig
 from .data_handlers import SigOutputHandler, SigInputHandler, PathInputHandler, CorrectionInputHandler
@@ -303,7 +303,7 @@ def sig_to_log_sig(
             data.data_ptr, result.data_ptr, data.batch_size,
             dimension, degree, time_aug, lead_lag, method, scalar_term, n_jobs)
     else:
-        err_code = CUSIG_SIG_TO_LOG_SIG_CUDA[data.dtype](
+        err_code = CUSIG_SIG_TO_LOG_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             aug_dimension, degree, method, scalar_term)
     if err_code:
@@ -426,7 +426,7 @@ def log_sig(
                 data.data_ptr, result.data_ptr, data.batch_size,
                 data.data_length, aug_dim, degree, n_jobs)
         else:
-            err_code = CUSIG_LOG_SIG_FROM_PATH_CUDA[data.dtype](
+            err_code = CUSIG_LOG_SIG_FROM_PATH[data.dtype](
                 data.data_ptr, result.data_ptr, data.batch_size,
                 data.data_length, aug_dim, degree)
         if err_code:

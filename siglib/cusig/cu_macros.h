@@ -40,7 +40,7 @@
 //   11     = unknown exception
 //   100000+= CUDA errors (100000 + cudaError_t code)
 
-#define CUSIG_SAFE_CALL(function_call)                                  \
+#define CUDA_SAFE_CALL(function_call)                                   \
     try {                                                               \
         function_call;                                                  \
     }                                                                   \

@@ -1405,28 +1405,28 @@ CUSIG_API int log_sig_from_path_backprop_cuda_f(
 	const float* d_out, float* d_path, const float* path,
 	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(log_sig_from_path_backprop_cuda_<float>(d_out, d_path, path, batch_size, length, dimension, degree));
+	CUDA_SAFE_CALL(log_sig_from_path_backprop_cuda_<float>(d_out, d_path, path, batch_size, length, dimension, degree));
 }
 
 CUSIG_API int log_sig_from_path_backprop_cuda_d(
 	const double* d_out, double* d_path, const double* path,
 	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(log_sig_from_path_backprop_cuda_<double>(d_out, d_path, path, batch_size, length, dimension, degree));
+	CUDA_SAFE_CALL(log_sig_from_path_backprop_cuda_<double>(d_out, d_path, path, batch_size, length, dimension, degree));
 }
 
 CUSIG_API int log_sig_from_path_cuda_f(
 	const float* path, float* out,
 	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(log_sig_from_path_cuda_<float>(path, out, batch_size, length, dimension, degree));
+	CUDA_SAFE_CALL(log_sig_from_path_cuda_<float>(path, out, batch_size, length, dimension, degree));
 }
 
 CUSIG_API int log_sig_from_path_cuda_d(
 	const double* path, double* out,
 	uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(log_sig_from_path_cuda_<double>(path, out, batch_size, length, dimension, degree));
+	CUDA_SAFE_CALL(log_sig_from_path_cuda_<double>(path, out, batch_size, length, dimension, degree));
 }
 
 
@@ -1434,14 +1434,14 @@ CUSIG_API int log_sig_combine_cuda_f(
 	const float* log_sig1, const float* log_sig2, float* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(log_sig_combine_cuda_<float>(log_sig1, log_sig2, out, batch_size, dimension, degree));
+	CUDA_SAFE_CALL(log_sig_combine_cuda_<float>(log_sig1, log_sig2, out, batch_size, dimension, degree));
 }
 
 CUSIG_API int log_sig_combine_cuda_d(
 	const double* log_sig1, const double* log_sig2, double* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(log_sig_combine_cuda_<double>(log_sig1, log_sig2, out, batch_size, dimension, degree));
+	CUDA_SAFE_CALL(log_sig_combine_cuda_<double>(log_sig1, log_sig2, out, batch_size, dimension, degree));
 }
 
 
@@ -1450,7 +1450,7 @@ CUSIG_API int log_sig_combine_backprop_cuda_f(
 	const float* ls1, const float* ls2,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(log_sig_combine_backprop_cuda_<float>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree));
+	CUDA_SAFE_CALL(log_sig_combine_backprop_cuda_<float>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree));
 }
 
 CUSIG_API int log_sig_combine_backprop_cuda_d(
@@ -1458,7 +1458,7 @@ CUSIG_API int log_sig_combine_backprop_cuda_d(
 	const double* ls1, const double* ls2,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree
 ) noexcept {
-	CUSIG_SAFE_CALL(log_sig_combine_backprop_cuda_<double>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree));
+	CUDA_SAFE_CALL(log_sig_combine_backprop_cuda_<double>(d_out, d_ls1, d_ls2, ls1, ls2, batch_size, dimension, degree));
 }
 
 // =========================================================================

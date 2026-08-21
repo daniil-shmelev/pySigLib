@@ -23,8 +23,8 @@ from .error_codes import err_msg
 from .dtypes import (
     CPSIG_BRANCHED_LOG_SIG_FROM_PATH,
     CPSIG_BRANCHED_SIG_TO_LOG_SIG,
-    CUSIG_BRANCHED_LOG_SIG_FROM_PATH_CUDA,
-    CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA,
+    CUSIG_BRANCHED_LOG_SIG_FROM_PATH,
+    CUSIG_BRANCHED_SIG_TO_LOG_SIG,
 )
 from .data_handlers import (
     CorrectionInputHandler,
@@ -239,7 +239,7 @@ def branched_sig_to_log_sig(
             data.sig_ptr[0], result.data_ptr, data.batch_size,
             aug_dimension, degree, method, n_jobs, planar, scalar_term)
     else:
-        err_code = CUSIG_BRANCHED_SIG_TO_LOG_SIG_CUDA[data.dtype](
+        err_code = CUSIG_BRANCHED_SIG_TO_LOG_SIG[data.dtype](
             data.sig_ptr[0], result.data_ptr, data.batch_size,
             aug_dimension, degree, method, planar, scalar_term)
     if err_code:
@@ -405,7 +405,7 @@ def branched_log_sig(
                 data.data_ptr, result.data_ptr, data.batch_size,
                 data.data_length, data.data_dimension, degree, n_jobs)
         else:
-            err_code = CUSIG_BRANCHED_LOG_SIG_FROM_PATH_CUDA[data.dtype](
+            err_code = CUSIG_BRANCHED_LOG_SIG_FROM_PATH[data.dtype](
                 data.data_ptr, result.data_ptr, data.batch_size,
                 data.data_length, data.data_dimension, degree)
         if err_code:

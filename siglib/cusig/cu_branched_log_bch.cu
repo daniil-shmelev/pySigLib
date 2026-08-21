@@ -1147,7 +1147,7 @@ extern "C" {
 		const float* path, float* out, uint64_t batch_size, uint64_t length,
 		uint64_t dimension, uint64_t max_nodes
 	) noexcept {
-		CUSIG_SAFE_CALL(branched_log_sig_from_path_cuda_<float>(
+		CUDA_SAFE_CALL(branched_log_sig_from_path_cuda_<float>(
 			path, out, batch_size, length, dimension, max_nodes));
 	}
 
@@ -1155,7 +1155,7 @@ extern "C" {
 		const double* path, double* out, uint64_t batch_size, uint64_t length,
 		uint64_t dimension, uint64_t max_nodes
 	) noexcept {
-		CUSIG_SAFE_CALL(branched_log_sig_from_path_cuda_<double>(
+		CUDA_SAFE_CALL(branched_log_sig_from_path_cuda_<double>(
 			path, out, batch_size, length, dimension, max_nodes));
 	}
 
@@ -1164,7 +1164,7 @@ extern "C" {
 		uint64_t batch_size, uint64_t length, uint64_t dimension,
 		uint64_t max_nodes
 	) noexcept {
-		CUSIG_SAFE_CALL(branched_log_sig_from_path_backprop_cuda_<float>(
+		CUDA_SAFE_CALL(branched_log_sig_from_path_backprop_cuda_<float>(
 			derivs, path_derivs, path, batch_size, length, dimension, max_nodes));
 	}
 
@@ -1173,7 +1173,7 @@ extern "C" {
 		uint64_t batch_size, uint64_t length, uint64_t dimension,
 		uint64_t max_nodes
 	) noexcept {
-		CUSIG_SAFE_CALL(branched_log_sig_from_path_backprop_cuda_<double>(
+		CUDA_SAFE_CALL(branched_log_sig_from_path_backprop_cuda_<double>(
 			derivs, path_derivs, path, batch_size, length, dimension, max_nodes));
 	}
 

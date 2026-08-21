@@ -20,7 +20,7 @@ import torch
 
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_LOG_SIG_JOIN, CUSIG_LOG_SIG_JOIN_CUDA
+from .dtypes import CPSIG_LOG_SIG_JOIN, CUSIG_LOG_SIG_JOIN
 from .sig_length import log_sig_length
 from .data_handlers import SigInputHandler, SigOutputHandler
 
@@ -114,7 +114,7 @@ def log_sig_join(
             logsig_data.data_ptr, disp_data.data_ptr, result.data_ptr,
             logsig_data.batch_size, dimension, degree, n_jobs)
     else:
-        err_code = CUSIG_LOG_SIG_JOIN_CUDA[logsig_data.dtype](
+        err_code = CUSIG_LOG_SIG_JOIN[logsig_data.dtype](
             logsig_data.data_ptr, disp_data.data_ptr, result.data_ptr,
             logsig_data.batch_size, dimension, degree)
     if err_code:

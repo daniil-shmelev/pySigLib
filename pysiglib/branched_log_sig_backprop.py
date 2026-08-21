@@ -23,8 +23,8 @@ from .error_codes import err_msg
 from .dtypes import (
     CPSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP,
     CPSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP,
-    CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP_CUDA,
-    CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA,
+    CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP,
+    CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP,
 )
 from .data_handlers import PathInputHandler, PathOutputHandler, SigInputHandler, SigOutputHandler
 from .sig_length import aug_dim
@@ -152,7 +152,7 @@ def branched_sig_to_log_sig_backprop(
             data.data_ptr, derivs_data.data_ptr, result.data_ptr,
             data.batch_size, aug_dimension, degree, method, n_jobs, planar, scalar_term)
     else:
-        err_code = CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP_CUDA[data.dtype](
+        err_code = CUSIG_BRANCHED_SIG_TO_LOG_SIG_BACKPROP[data.dtype](
             data.data_ptr, derivs_data.data_ptr, result.data_ptr,
             data.batch_size, aug_dimension, degree, method, planar,
             scalar_term)
@@ -203,7 +203,7 @@ def _branched_log_sig_from_path_backprop(
             data.batch_size, data.data_length, data.data_dimension, degree,
             n_jobs)
     else:
-        err_code = CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP_CUDA[data.dtype](
+        err_code = CUSIG_BRANCHED_LOG_SIG_FROM_PATH_BACKPROP[data.dtype](
             derivs_data.data_ptr, result.data_ptr, data.data_ptr,
             data.batch_size, data.data_length, data.data_dimension, degree)
     if err_code:

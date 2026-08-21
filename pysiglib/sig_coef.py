@@ -22,7 +22,7 @@ import torch
 from .param_checks import check_word_or_word_list, check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .sig_length import aug_dim
-from .dtypes import CPSIG_SIG_COEF, CUSIG_SIG_COEF_CUDA
+from .dtypes import CPSIG_SIG_COEF, CUSIG_SIG_COEF
 from .words import word_to_idx
 from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler
 
@@ -249,7 +249,7 @@ def sig_coef(
             data.batch_size, data.data_dimension, data.data_length,
             data.time_aug, data.lead_lag, data.end_time, prefixes, n_jobs)
     else:
-        err_code = CUSIG_SIG_COEF_CUDA[data.dtype](
+        err_code = CUSIG_SIG_COEF[data.dtype](
             data.data_ptr, result.data_ptr,
             multi_indices_ptr, num_multi_indices, degrees_ptr,
             data.batch_size, data.data_dimension, data.data_length, prefixes)
