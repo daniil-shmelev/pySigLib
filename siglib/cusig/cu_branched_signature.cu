@@ -54,6 +54,7 @@ struct BranchedSigCacheGPU {
 	uint32_t total_length = 0;
 	uint32_t num_trees = 0;
 	uint32_t coprod_data_len = 0;
+	uint32_t deriv_target_count = 0;
 	int max_nodes = 0;
 
 	BranchedSigCacheGPU() = default;
@@ -281,6 +282,7 @@ static void prepare_branched_sig_gpu_cache_(
 	gpu->total_length = narrow32(c.total_length);
 	gpu->num_trees = narrow32(num_trees);
 	gpu->coprod_data_len = narrow32(c.coproduct_data.size());
+	gpu->deriv_target_count = order_index32[static_cast<size_t>(max_nodes)] + 1;
 	gpu->max_nodes = static_cast<int>(max_nodes);
 
 	upload(gpu->d_coprod_data32, coprod_data32.data(), coprod_data32.size());
@@ -763,7 +765,7 @@ void branched_sig_ker(
 
 // Shared memory layout:
 // | s_bsig[total_len] | s_derivs[total_len] | temp_Y[total_len] | local_derivs[total_len] |
-// | inc[dim] | inc_derivs[dim] | coprod tables (same as forward) |
+// | inc[dim] | inc_derivs[dim] | increment reduction | coprod tables (same as forward) |
 
 template<typename T>
 __device__ void branched_hopf_convolution_deriv_block_(
@@ -823,6 +825,8 @@ __device__ void linear_bsig_deriv_to_inc_block_(
 	const T* local_derivs,
 	const T* inc,
 	T* inc_derivs,
+	T* reduction,
+	bool use_reduction,
 	int dim,
 	uint32_t total_len,
 	const uint8_t* labels_data,
@@ -831,28 +835,67 @@ __device__ void linear_bsig_deriv_to_inc_block_(
 	uint32_t tid
 ) {
 	const uint32_t num_trees = total_len - 1;
-	for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
-		inc_derivs[d] = T(0);
-	__syncthreads();
+	if (!use_reduction) {
+		for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
+			inc_derivs[d] = T(0);
+		__syncthreads();
 
-	if (tid < num_trees) {
-		const T dF_dYi = local_derivs[tid + 1];
-		if (dF_dYi != T(0)) {
-			const T inv_gamma = inv_factorial[tid];
-			const uint32_t lstart = labels_offsets[tid];
-			const uint32_t lend = labels_offsets[tid + 1];
-			const uint32_t n_labels = lend - lstart;
-
-			const T base = inv_gamma * dF_dYi;
-			T prefix = T(1);
-			for (uint32_t j = 0; j < n_labels; ++j) {
-				T suffix = T(1);
-				for (uint32_t k = j + 1; k < n_labels; ++k)
-					suffix *= inc[labels_data[lstart + k]];
-				myAtomicAdd(&inc_derivs[labels_data[lstart + j]], base * prefix * suffix);
-				prefix *= inc[labels_data[lstart + j]];
+		if (tid < num_trees) {
+			const T dF_dYi = local_derivs[tid + 1];
+			if (dF_dYi != T(0)) {
+				const uint32_t lstart = labels_offsets[tid];
+				const uint32_t lend = labels_offsets[tid + 1];
+				const T base = inv_factorial[tid] * dF_dYi;
+				T prefix = T(1);
+				for (uint32_t j = lstart; j < lend; ++j) {
+					T suffix = T(1);
+					for (uint32_t k = j + 1; k < lend; ++k)
+						suffix *= inc[labels_data[k]];
+					myAtomicAdd(&inc_derivs[labels_data[j]], base * prefix * suffix);
+					prefix *= inc[labels_data[j]];
+				}
 			}
 		}
+		__syncthreads();
+		return;
+	}
+
+	const uint32_t num_warps = blockDim.x >> 5;
+	const uint32_t warp = tid >> 5;
+	const uint32_t lane = tid & 31u;
+	for (uint32_t d = 0; d < static_cast<uint32_t>(dim); ++d) {
+		T value = T(0);
+		if (tid < num_trees) {
+			const T dF_dYi = local_derivs[tid + 1];
+			if (dF_dYi != T(0)) {
+				const uint32_t lstart = labels_offsets[tid];
+				const uint32_t lend = labels_offsets[tid + 1];
+				const T base = inv_factorial[tid] * dF_dYi;
+				T prefix = T(1);
+				for (uint32_t j = lstart; j < lend; ++j) {
+					T suffix = T(1);
+					for (uint32_t k = j + 1; k < lend; ++k)
+						suffix *= inc[labels_data[k]];
+					if (labels_data[j] == d)
+						value += base * prefix * suffix;
+					prefix *= inc[labels_data[j]];
+				}
+			}
+		}
+		value += __shfl_down_sync(0xffffffff, value, 16);
+		value += __shfl_down_sync(0xffffffff, value, 8);
+		value += __shfl_down_sync(0xffffffff, value, 4);
+		value += __shfl_down_sync(0xffffffff, value, 2);
+		value += __shfl_down_sync(0xffffffff, value, 1);
+		if (lane == 0)
+			reduction[d * num_warps + warp] = value;
+	}
+	__syncthreads();
+	for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x) {
+		T value = T(0);
+		for (uint32_t warp_idx = 0; warp_idx < num_warps; ++warp_idx)
+			value += reduction[d * num_warps + warp_idx];
+		inc_derivs[d] = value;
 	}
 	__syncthreads();
 }
@@ -862,6 +905,8 @@ __device__ void local_log_bsig_deriv_to_inc_block_(
 	const T* local_derivs,
 	const T* inc,
 	T* inc_derivs,
+	T* inc_reduction,
+	bool use_inc_reduction,
 	T* local_log,
 	T* powers,
 	T* power_derivs,
@@ -883,7 +928,8 @@ __device__ void local_log_bsig_deriv_to_inc_block_(
 	uint32_t tid
 ) {
 	if (max_nodes <= 2) {
-		linear_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs, dim,
+		linear_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs,
+			inc_reduction, use_inc_reduction, dim,
 			total_len, labels_data, labels_offsets, inv_factorial, tid);
 		return;
 	}
@@ -957,6 +1003,9 @@ void branched_sig_backprop_ker(
 	const uint32_t* __restrict__ chain_indices,
 	int max_nodes,
 	uint32_t coprod_data_len,
+	uint32_t deriv_target_count,
+	bool use_inc_reduction,
+	bool use_product_reduction,
 	const T* __restrict__ correction,
 	uint64_t correction_len,
 	uint64_t correction_batch_stride,
@@ -977,12 +1026,19 @@ void branched_sig_backprop_ker(
 	T* local_derivs = temp_Y + total_len;
 	T* inc = local_derivs + total_len;
 	T* inc_derivs = inc + dim;
-	T* local_log = inc_derivs + dim;
+	const uint32_t num_warps = blockDim.x >> 5;
+	T* inc_reduction = inc_derivs + dim;
 	const bool has_correction = correction_len != 0;
+	T* product_x_reduction = inc_reduction
+		+ (use_inc_reduction ? static_cast<uint32_t>(dim) * num_warps : 0);
+	T* product_y_reduction = product_x_reduction + num_warps * deriv_target_count;
+	T* local_log = use_product_reduction
+		? product_y_reduction + num_warps * deriv_target_count
+		: product_x_reduction;
 	T* powers = has_correction ? local_log + total_len : local_log;
 	T* power_derivs = has_correction ? powers + static_cast<uint32_t>(max_nodes) * total_len : powers;
 	T* d_correction = has_correction ? power_derivs + static_cast<uint32_t>(max_nodes) * total_len : power_derivs;
-	T* local_log_end = has_correction ? d_correction + total_len : inc_derivs + dim;
+	T* local_log_end = has_correction ? d_correction + total_len : local_log;
 	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(local_log_end);
 	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
 	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
@@ -1055,6 +1111,11 @@ void branched_sig_backprop_ker(
 			if (tid == 0) local_derivs[0] = T(0);
 			for (uint32_t i = tid; i < num_trees; i += blockDim.x)
 				local_derivs[i + 1] = s_derivs[i + 1];
+			if (use_product_reduction) {
+				const uint32_t reduction_len = 2 * num_warps * deriv_target_count;
+				for (uint32_t i = tid; i < reduction_len; i += blockDim.x)
+					product_x_reduction[i] = T(0);
+			}
 			__syncthreads();
 
 			const T dF_tau = (tid < num_trees) ? s_derivs[tid + 1] : T(0);
@@ -1073,10 +1134,16 @@ void branched_sig_backprop_ker(
 					for (uint32_t j = 0; j < nf; ++j)
 						forest_product *= s_bsig[s_coprod_data[pos++]];
 
-					myAtomicAdd(&local_derivs[trunk_flat], dF_tau * forest_product);
+					T* d_Y = use_product_reduction
+						? product_y_reduction + (tid >> 5) * deriv_target_count
+						: local_derivs;
+					myAtomicAdd(&d_Y[trunk_flat], dF_tau * forest_product);
 
 					if (nf > 0) {
 						T base = dF_tau * temp_Y[trunk_flat];
+						T* d_X = use_product_reduction
+							? product_x_reduction + (tid >> 5) * deriv_target_count
+							: s_derivs;
 						for (uint32_t k = 0; k < nf; ++k) {
 							uint32_t fk = s_coprod_data[forest_start + k];
 							T partial = base;
@@ -1084,12 +1151,25 @@ void branched_sig_backprop_ker(
 								if (j != k)
 									partial *= s_bsig[s_coprod_data[forest_start + j]];
 							}
-							myAtomicAdd(&s_derivs[fk], partial);
+							myAtomicAdd(&d_X[fk], partial);
 						}
 					}
 				}
 			}
 			__syncthreads();
+			if (use_product_reduction) {
+				for (uint32_t target = tid; target < deriv_target_count; target += blockDim.x) {
+					T d_X = T(0);
+					T d_Y = T(0);
+					for (uint32_t warp = 0; warp < num_warps; ++warp) {
+						d_X += product_x_reduction[warp * deriv_target_count + target];
+						d_Y += product_y_reduction[warp * deriv_target_count + target];
+					}
+					s_derivs[target] += d_X;
+					local_derivs[target] += d_Y;
+				}
+				__syncthreads();
+			}
 		}
 		else {
 			// seg == 0: local_derivs = s_derivs
@@ -1099,10 +1179,12 @@ void branched_sig_backprop_ker(
 		}
 
 		if (!has_correction) {
-			linear_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs, dim,
+			linear_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs,
+				inc_reduction, use_inc_reduction, dim,
 				total_len, labels_data, labels_offsets, inv_factorial, tid);
 		} else {
 			local_log_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs,
+				inc_reduction, use_inc_reduction,
 				local_log, powers, power_derivs, d_correction,
 				dim, data_dim, seg_correction, correction_len, total_len,
 				labels_data, labels_offsets, inv_factorial,
@@ -1975,9 +2057,19 @@ void branched_sig_backprop_cuda_core_(
 	if (block > 1024)
 		throw std::invalid_argument("CUDA branched sig backprop: num_trees > 1024 not supported");
 
-	const uint64_t t_arrays = has_correction
+	const bool use_inc_reduction = dimension <= 4;
+	const uint64_t reduction_length = use_inc_reduction
+		? dimension * (block >> 5)
+		: 0;
+	const bool use_product_reduction = !has_correction && max_nodes >= 4
+		&& (planar || std::is_same_v<T, double>);
+	const uint64_t product_reduction_length = use_product_reduction
+		? 2 * static_cast<uint64_t>(block >> 5) * gc.deriv_target_count
+		: 0;
+	const uint64_t t_arrays = (has_correction
 		? ((6 + 2 * static_cast<uint64_t>(gc.max_nodes)) * gc.total_length + 2 * dimension)
-		: (4 * gc.total_length + 2 * dimension);
+		: (4 * gc.total_length + 2 * dimension))
+		+ reduction_length + product_reduction_length;
 	size_t smem = t_arrays * sizeof(T)
 		+ gc.coprod_data_len * sizeof(uint32_t)
 		+ (gc.num_trees + 1) * sizeof(uint32_t)
@@ -2002,7 +2094,9 @@ void branched_sig_backprop_cuda_core_(
 			d_inv_fact,
 			gc.d_coprod_data32, gc.d_coprod_offsets32,
 			gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
-			gc.coprod_data_len, correction, correction_len,
+			gc.coprod_data_len, gc.deriv_target_count,
+			use_inc_reduction, use_product_reduction,
+			correction, correction_len,
 			correction_batch_stride, correction_segment_stride,
 			batch_chunk.offset, batch_chunk.size
 		);

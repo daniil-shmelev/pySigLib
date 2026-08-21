@@ -15,10 +15,14 @@
 
 #include "branched_sig_cache.h"
 
+#include "branched_log_plan.h"
+#include "../../branched_log_horner.h"
+
 #include "../../trees/basis_counts.h"
 #include "../../trees/coproduct.h"
 #include "../../trees/tree.h"
 
+#include <algorithm>
 #include <unordered_map>
 
 namespace {
@@ -292,7 +296,433 @@ BranchedSigCache build_planar_cache(
 	return cache;
 }
 
+
+using CorrectionMonomial = std::vector<uint64_t>;
+using CorrectionTerm = std::pair<CorrectionMonomial, double>;
+using CorrectionPolynomial = std::vector<CorrectionTerm>;
+
+void normalize_correction_polynomial_(CorrectionPolynomial& polynomial) {
+	std::sort(polynomial.begin(), polynomial.end(),
+		[](const CorrectionTerm& left, const CorrectionTerm& right) {
+			return left.first < right.first;
+		});
+	size_t write = 0;
+	for (size_t read = 0; read < polynomial.size(); ++read) {
+		if (write != 0 && polynomial[write - 1].first == polynomial[read].first) {
+			polynomial[write - 1].second += polynomial[read].second;
+		}
+		else {
+			if (write != read)
+				polynomial[write] = std::move(polynomial[read]);
+			++write;
+		}
+	}
+	polynomial.resize(write);
+}
+
+void add_correction_polynomial_(
+	CorrectionPolynomial& out,
+	const CorrectionPolynomial& source,
+	double scale = 1.0
+) {
+	out.reserve(out.size() + source.size());
+	for (const auto& [monomial, coefficient] : source)
+		out.push_back({ monomial, scale * coefficient });
+}
+
+CorrectionPolynomial multiply_correction_polynomials_(
+	const CorrectionPolynomial& left,
+	const CorrectionPolynomial& right
+) {
+	CorrectionPolynomial out;
+	out.reserve(left.size() * right.size());
+	for (const auto& [left_monomial, left_coefficient] : left) {
+		for (const auto& [right_monomial, right_coefficient] : right) {
+			CorrectionMonomial monomial;
+			monomial.reserve(left_monomial.size() + right_monomial.size());
+			std::merge(
+				left_monomial.begin(), left_monomial.end(),
+				right_monomial.begin(), right_monomial.end(),
+				std::back_inserter(monomial));
+			out.push_back({
+				std::move(monomial), left_coefficient * right_coefficient });
+		}
+	}
+	normalize_correction_polynomial_(out);
+	return out;
+}
+
+uint64_t build_correction_horner_node_(
+	CorrectionPolynomial::const_iterator begin,
+	CorrectionPolynomial::const_iterator end,
+	uint64_t depth,
+	BranchedSigHornerPlan& plan
+) {
+	double constant = 0.0;
+	if (begin != end && begin->first.size() == depth) {
+		constant = begin->second;
+		++begin;
+	}
+
+	std::vector<std::pair<uint64_t, uint64_t>> children;
+	while (begin != end) {
+		const uint64_t variable = begin->first[depth];
+		auto group_end = begin;
+		while (group_end != end
+			&& group_end->first.size() > depth
+			&& group_end->first[depth] == variable) {
+			++group_end;
+		}
+		children.push_back({ variable, build_correction_horner_node_(
+			begin, group_end, depth + 1, plan) });
+		begin = group_end;
+	}
+
+	const uint64_t node = plan.correction_horner_constants.size();
+	plan.correction_horner_constants.push_back(constant);
+	for (const auto& [variable, child] : children) {
+		plan.correction_horner_variables.push_back(variable);
+		plan.correction_horner_children.push_back(child);
+	}
+	plan.correction_horner_node_offsets.push_back(
+		plan.correction_horner_variables.size());
+	return node;
+}
+
+void populate_correction_horner_plan_(
+	const BranchedSigCache& cache,
+	BranchedSigHornerPlan& plan
+) {
+	std::vector<uint8_t> active(cache.total_length, 0);
+	for (const uint64_t flat : cache.chain_indices) {
+		if (flat != 0)
+			active[flat] = 1;
+	}
+
+	std::vector<CorrectionPolynomial> output(cache.total_length);
+	std::vector<CorrectionPolynomial> power(cache.total_length);
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+		if (active[flat] != 0)
+			power[flat].push_back({ CorrectionMonomial{ flat }, 1.0 });
+	}
+
+	double inverse_factorial = 1.0;
+	for (uint64_t k = 1; k <= cache.max_nodes; ++k) {
+		inverse_factorial /= static_cast<double>(k);
+		for (uint64_t flat = 1; flat < cache.total_length; ++flat)
+			add_correction_polynomial_(output[flat], power[flat], inverse_factorial);
+		if (k == cache.max_nodes)
+			break;
+
+		std::vector<CorrectionPolynomial> next(cache.total_length);
+		for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+			uint64_t pos = cache.coproduct_offsets[flat - 1];
+			const uint64_t end = cache.coproduct_offsets[flat];
+			while (pos < end) {
+				const uint64_t forest_size = cache.coproduct_data[pos++];
+				const uint64_t trunk = cache.coproduct_data[pos++];
+				if (active[trunk] == 0) {
+					pos += forest_size;
+					continue;
+				}
+
+				CorrectionPolynomial term;
+				term.push_back({ CorrectionMonomial{ trunk }, 1.0 });
+				for (uint64_t factor = 0; factor < forest_size; ++factor) {
+					const uint64_t forest_flat = cache.coproduct_data[pos++];
+					if (power[forest_flat].empty()) {
+						term.clear();
+						pos += forest_size - factor - 1;
+						break;
+					}
+					term = multiply_correction_polynomials_(
+						term, power[forest_flat]);
+				}
+				add_correction_polynomial_(next[flat], term);
+			}
+		}
+		for (uint64_t flat = 1; flat < cache.total_length; ++flat)
+			normalize_correction_polynomial_(next[flat]);
+		power.swap(next);
+	}
+
+	plan.correction_horner_node_offsets.push_back(0);
+	plan.correction_horner_roots.assign(cache.total_length, UINT64_MAX);
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+		if (!output[flat].empty()) {
+			normalize_correction_polynomial_(output[flat]);
+			plan.correction_horner_roots[flat]
+				= build_correction_horner_node_(
+					output[flat].cbegin(), output[flat].cend(), 0, plan);
+		}
+	}
+}
+
 }  // namespace
+
+
+static void populate_branched_sig_horner_plan(BranchedSigCache& cache) {
+	BranchedSigHornerPlan plan;
+	populate_correction_horner_plan_(cache, plan);
+	if (cache.planar) {
+		BranchedLogHornerPlan full = build_branched_log_horner_plan(cache);
+		plan.product_count = full.product_count;
+		plan.product_node_counts = full.product_node_counts;
+		plan.coproduct_offsets = full.coproduct_offsets;
+		plan.coproduct_pairs = full.coproduct_pairs;
+		plan.planar_log_coefficients.assign(cache.total_length, 0.0);
+		BranchedLogHornerWorkspace<double> workspace(full.product_count);
+		branched_log_horner_forward<double>(
+			cache.total_length, cache.max_nodes, true, full,
+			[&cache](uint64_t flat) {
+				return cache.inv_tree_factorial[flat - 1];
+			},
+			[&plan](uint64_t flat, double value) {
+				plan.planar_log_coefficients[flat] = value;
+			},
+			workspace);
+		for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+			if (plan.planar_log_coefficients[flat] != 0.0)
+				plan.planar_log_flats.push_back(flat);
+		}
+		using Monomial = std::vector<uint64_t>;
+		std::unordered_map<Monomial, uint64_t, BranchedLogProductHash>
+			monomial_index;
+		monomial_index.emplace(Monomial{}, 0);
+		plan.planar_log_monomial_parent.push_back(0);
+		plan.planar_log_monomial_label.push_back(0);
+		const auto ensure_monomial = [&monomial_index, &plan](
+			auto&& self, const Monomial& monomial) -> uint64_t {
+			const auto found = monomial_index.find(monomial);
+			if (found != monomial_index.end())
+				return found->second;
+			Monomial parent = monomial;
+			const uint64_t label = parent.back();
+			parent.pop_back();
+			const uint64_t parent_index = self(self, parent);
+			const uint64_t index = plan.planar_log_monomial_parent.size();
+			monomial_index.emplace(monomial, index);
+			plan.planar_log_monomial_parent.push_back(parent_index);
+			plan.planar_log_monomial_label.push_back(label);
+			return index;
+		};
+		for (const uint64_t flat : plan.planar_log_flats) {
+			Monomial monomial;
+			const uint64_t start = cache.node_labels_offsets[flat - 1];
+			const uint64_t end = cache.node_labels_offsets[flat];
+			monomial.reserve(end - start);
+			for (uint64_t pos = start; pos < end; ++pos)
+				monomial.push_back(cache.node_labels_data[pos]);
+			std::sort(monomial.begin(), monomial.end());
+			plan.planar_log_flat_monomial.push_back(
+				ensure_monomial(ensure_monomial, monomial));
+		}
+
+		plan.planar_coproduct_offsets.resize(full.coproduct_offsets.size());
+		plan.planar_coproduct_left.reserve(full.coproduct_pairs.size() / 2);
+		plan.planar_coproduct_right.reserve(full.coproduct_pairs.size() / 2);
+		for (uint64_t product = 0; product < full.product_count; ++product) {
+			plan.planar_coproduct_offsets[product]
+				= plan.planar_coproduct_left.size();
+			const uint64_t start = full.coproduct_offsets[product];
+			const uint64_t end = full.coproduct_offsets[product + 1];
+			for (uint64_t pos = start; pos < end; pos += 2) {
+				const uint64_t right = full.coproduct_pairs[pos + 1];
+				if (plan.planar_log_coefficients[right] == 0.0)
+					continue;
+				plan.planar_coproduct_left.push_back(
+					full.coproduct_pairs[pos]);
+				plan.planar_coproduct_right.push_back(right);
+			}
+		}
+		plan.planar_coproduct_offsets[full.product_count]
+			= plan.planar_coproduct_left.size();
+		cache.horner = std::move(plan);
+		return;
+	}
+
+	using branched_log_detail::Product;
+	using branched_log_detail::ProductMap;
+	using branched_log_detail::ProductPair;
+	ProductMap product_index;
+	const std::vector<Product> products =
+		branched_log_detail::enumerate_nonplanar_products_(
+			cache, product_index);
+	plan.product_count = products.size();
+	plan.product_node_counts.resize(plan.product_count, 0);
+	plan.flat_to_product = branched_log_detail::build_flat_to_product_(
+		cache, product_index);
+	plan.product_parent.resize(plan.product_count, 0);
+	plan.product_factor.resize(plan.product_count, 0);
+	for (uint64_t product = 1; product < plan.product_count; ++product) {
+		Product prefix = products[product];
+		plan.product_factor[product] = prefix.back();
+		prefix.pop_back();
+		plan.product_parent[product]
+			= branched_log_detail::find_product_(product_index, prefix);
+		plan.product_node_counts[product]
+			= plan.product_node_counts[plan.product_parent[product]]
+			+ cache.basis_node_count(plan.product_factor[product] - 1);
+	}
+
+	std::vector<std::vector<ProductPair>> reduced_coproducts(
+		plan.product_count);
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+		auto& terms = reduced_coproducts[plan.flat_to_product[flat]];
+		uint64_t pos = cache.coproduct_offsets[flat - 1];
+		const uint64_t end = cache.coproduct_offsets[flat];
+		while (pos < end) {
+			const uint64_t forest_size = cache.coproduct_data[pos++];
+			const uint64_t trunk = cache.coproduct_data[pos++];
+			Product forest;
+			forest.reserve(forest_size);
+			for (uint64_t factor = 0; factor < forest_size; ++factor)
+				forest.push_back(cache.coproduct_data[pos++]);
+			if (forest.empty())
+				continue;
+			std::sort(forest.begin(), forest.end());
+			terms.push_back({
+				branched_log_detail::find_product_(product_index, forest),
+				plan.flat_to_product[trunk] });
+		}
+	}
+	plan.coproduct_offsets.resize(plan.product_count + 1, 0);
+	for (uint64_t product = 0; product < plan.product_count; ++product) {
+		plan.coproduct_offsets[product] = plan.coproduct_pairs.size();
+		for (const ProductPair& term : reduced_coproducts[product]) {
+			plan.coproduct_pairs.push_back(term.first);
+			plan.coproduct_pairs.push_back(term.second);
+		}
+	}
+	plan.coproduct_offsets[plan.product_count] = plan.coproduct_pairs.size();
+
+	std::vector<uint64_t> product_labels(plan.product_count, UINT64_MAX);
+	if (cache.max_nodes >= 1) {
+		for (uint64_t label = 0; label < cache.dimension; ++label) {
+			const uint64_t flat = cache.order_index[1] + label + 1;
+			product_labels[plan.flat_to_product[flat]] = label;
+		}
+	}
+
+	std::vector<uint64_t> full_derivative_offsets(plan.product_count + 1, 0);
+	std::vector<uint64_t> full_derivative_left;
+	std::vector<uint64_t> full_derivative_label;
+	for (uint64_t product = 0; product < plan.product_count; ++product) {
+		full_derivative_offsets[product] = full_derivative_left.size();
+		if (product == 0)
+			continue;
+		const uint64_t parent = plan.product_parent[product];
+		const uint64_t factor_flat = plan.product_factor[product];
+		const uint64_t factor_product = plan.flat_to_product[factor_flat];
+		const uint64_t parent_start = full_derivative_offsets[parent];
+		const uint64_t parent_end = parent + 1 == product
+			? full_derivative_left.size()
+			: full_derivative_offsets[parent + 1];
+		for (uint64_t pos = parent_start; pos < parent_end; ++pos) {
+			full_derivative_left.push_back(
+				branched_log_detail::combine_products_(
+					products, product_index,
+					full_derivative_left[pos], factor_product));
+			full_derivative_label.push_back(full_derivative_label[pos]);
+		}
+		const uint64_t factor_label = product_labels[factor_product];
+		if (factor_label != UINT64_MAX) {
+			full_derivative_left.push_back(parent);
+			full_derivative_label.push_back(factor_label);
+		}
+		for (const ProductPair& term : reduced_coproducts[factor_product]) {
+			const uint64_t label = product_labels[term.second];
+			if (label != UINT64_MAX) {
+				full_derivative_left.push_back(
+					branched_log_detail::combine_products_(
+						products, product_index, parent, term.first));
+				full_derivative_label.push_back(label);
+			}
+		}
+	}
+	full_derivative_offsets[plan.product_count] = full_derivative_left.size();
+
+	const uint64_t stage_width = cache.max_nodes + 1;
+	plan.stage_offsets.resize(stage_width * stage_width + 1, 0);
+	for (uint64_t target_order = 0;
+		target_order <= cache.max_nodes; ++target_order) {
+		std::vector<std::vector<uint64_t>> active(stage_width);
+		if (target_order > 0) {
+			for (uint64_t flat_idx = cache.order_index[target_order];
+				flat_idx < cache.order_index[target_order + 1]; ++flat_idx) {
+				active[target_order].push_back(
+					plan.flat_to_product[flat_idx + 1]);
+			}
+			std::sort(active[target_order].begin(), active[target_order].end());
+			active[target_order].erase(
+				std::unique(active[target_order].begin(), active[target_order].end()),
+				active[target_order].end());
+
+			for (uint64_t stage_order = target_order;
+				stage_order > 1; --stage_order) {
+				auto& previous = active[stage_order - 1];
+				for (const uint64_t product : active[stage_order]) {
+					const uint64_t start = full_derivative_offsets[product];
+					const uint64_t end = full_derivative_offsets[product + 1];
+					previous.insert(previous.end(),
+						full_derivative_left.begin() + start,
+						full_derivative_left.begin() + end);
+				}
+				std::sort(previous.begin(), previous.end());
+				previous.erase(
+					std::unique(previous.begin(), previous.end()), previous.end());
+			}
+		}
+
+		for (uint64_t stage_order = 0;
+			stage_order <= cache.max_nodes; ++stage_order) {
+			const uint64_t key = target_order * stage_width + stage_order;
+			plan.stage_offsets[key] = plan.stage_products.size();
+			plan.stage_products.insert(plan.stage_products.end(),
+				active[stage_order].begin(), active[stage_order].end());
+		}
+	}
+	plan.stage_offsets[stage_width * stage_width] = plan.stage_products.size();
+
+	std::vector<bool> active_products(plan.product_count, false);
+	for (const uint64_t product : plan.stage_products)
+		active_products[product] = true;
+	plan.derivative_offsets.resize(plan.product_count + 1, 0);
+	for (uint64_t product = 0; product < plan.product_count; ++product) {
+		plan.derivative_offsets[product] = plan.derivative_left.size();
+		if (!active_products[product])
+			continue;
+		const uint64_t start = full_derivative_offsets[product];
+		const uint64_t end = full_derivative_offsets[product + 1];
+		plan.derivative_left.insert(plan.derivative_left.end(),
+			full_derivative_left.begin() + start,
+			full_derivative_left.begin() + end);
+		plan.derivative_label.insert(plan.derivative_label.end(),
+			full_derivative_label.begin() + start,
+			full_derivative_label.begin() + end);
+	}
+	plan.derivative_offsets[plan.product_count] = plan.derivative_left.size();
+
+	std::vector<bool> needed_products(plan.product_count, false);
+	needed_products[0] = true;
+	for (const uint64_t product : plan.stage_products) {
+		uint64_t current = product;
+		while (!needed_products[current]) {
+			needed_products[current] = true;
+			current = plan.product_parent[current];
+		}
+	}
+	for (uint64_t product = 1; product < plan.product_count; ++product) {
+		if (needed_products[product]) {
+			plan.product_build.push_back(product);
+			plan.product_build_parent.push_back(
+				plan.product_parent[product]);
+			plan.product_build_factor.push_back(
+				plan.product_factor[product]);
+		}
+	}
+	cache.horner = std::move(plan);
+}
 
 
 BranchedSigCache::BranchedSigCache(
@@ -303,4 +733,5 @@ BranchedSigCache::BranchedSigCache(
 	*this = planar_value
 		? build_planar_cache(dimension_value, max_nodes_value)
 		: build_nonplanar_cache(dimension_value, max_nodes_value);
+	populate_branched_sig_horner_plan(*this);
 }

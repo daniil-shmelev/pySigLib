@@ -21,6 +21,37 @@
 #include <utility>
 #include <vector>
 
+struct BranchedSigHornerPlan {
+	uint64_t product_count = 0;
+	std::vector<uint64_t> product_build;
+	std::vector<uint64_t> product_build_parent;
+	std::vector<uint64_t> product_build_factor;
+	std::vector<uint64_t> flat_to_product;
+	std::vector<uint64_t> product_parent;
+	std::vector<uint64_t> product_factor;
+	std::vector<uint64_t> product_node_counts;
+	std::vector<uint64_t> coproduct_offsets;
+	std::vector<uint64_t> coproduct_pairs;
+	std::vector<uint64_t> correction_horner_node_offsets;
+	std::vector<uint64_t> correction_horner_variables;
+	std::vector<uint64_t> correction_horner_children;
+	std::vector<double> correction_horner_constants;
+	std::vector<uint64_t> correction_horner_roots;
+	std::vector<uint64_t> stage_offsets;
+	std::vector<uint64_t> stage_products;
+	std::vector<uint64_t> derivative_offsets;
+	std::vector<uint64_t> derivative_left;
+	std::vector<uint64_t> derivative_label;
+	std::vector<uint64_t> planar_coproduct_offsets;
+	std::vector<uint64_t> planar_coproduct_left;
+	std::vector<uint64_t> planar_coproduct_right;
+	std::vector<double> planar_log_coefficients;
+	std::vector<uint64_t> planar_log_flats;
+	std::vector<uint64_t> planar_log_flat_monomial;
+	std::vector<uint64_t> planar_log_monomial_parent;
+	std::vector<uint64_t> planar_log_monomial_label;
+};
+
 // Flattened basis data for execution kernels and stable disk serialization.
 struct BranchedSigCache {
 	BranchedSigCache() = default;
@@ -40,6 +71,7 @@ struct BranchedSigCache {
 	std::vector<uint64_t> chain_indices;
 	std::vector<uint64_t> coproduct_offsets;
 	std::vector<uint64_t> coproduct_data;
+	BranchedSigHornerPlan horner;
 
 	uint64_t basis_size() const noexcept {
 		return total_length == 0 ? 0 : total_length - 1;

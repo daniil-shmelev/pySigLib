@@ -90,7 +90,7 @@ inline std::vector<Product> enumerate_nonplanar_products_(
 		for (uint64_t flat = min_flat; flat <= num_trees; ++flat) {
 			const uint64_t nodes = cache.basis_node_count(flat - 1);
 			if (nodes > remaining)
-				continue;
+				break;
 			current.push_back(flat);
 			const bool inserted = product_index.try_emplace(current, products.size()).second;
 			if (inserted)
