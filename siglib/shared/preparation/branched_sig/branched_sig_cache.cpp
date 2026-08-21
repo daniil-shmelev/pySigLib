@@ -23,7 +23,6 @@
 #include "../../trees/tree.h"
 
 #include <algorithm>
-#include <map>
 #include <unordered_map>
 
 namespace {
@@ -299,15 +298,36 @@ BranchedSigCache build_planar_cache(
 
 
 using CorrectionMonomial = std::vector<uint64_t>;
-using CorrectionPolynomial = std::map<CorrectionMonomial, double>;
+using CorrectionTerm = std::pair<CorrectionMonomial, double>;
+using CorrectionPolynomial = std::vector<CorrectionTerm>;
+
+void normalize_correction_polynomial_(CorrectionPolynomial& polynomial) {
+	std::sort(polynomial.begin(), polynomial.end(),
+		[](const CorrectionTerm& left, const CorrectionTerm& right) {
+			return left.first < right.first;
+		});
+	size_t write = 0;
+	for (size_t read = 0; read < polynomial.size(); ++read) {
+		if (write != 0 && polynomial[write - 1].first == polynomial[read].first) {
+			polynomial[write - 1].second += polynomial[read].second;
+		}
+		else {
+			if (write != read)
+				polynomial[write] = std::move(polynomial[read]);
+			++write;
+		}
+	}
+	polynomial.resize(write);
+}
 
 void add_correction_polynomial_(
 	CorrectionPolynomial& out,
 	const CorrectionPolynomial& source,
 	double scale = 1.0
 ) {
+	out.reserve(out.size() + source.size());
 	for (const auto& [monomial, coefficient] : source)
-		out[monomial] += scale * coefficient;
+		out.push_back({ monomial, scale * coefficient });
 }
 
 CorrectionPolynomial multiply_correction_polynomials_(
@@ -315,6 +335,7 @@ CorrectionPolynomial multiply_correction_polynomials_(
 	const CorrectionPolynomial& right
 ) {
 	CorrectionPolynomial out;
+	out.reserve(left.size() * right.size());
 	for (const auto& [left_monomial, left_coefficient] : left) {
 		for (const auto& [right_monomial, right_coefficient] : right) {
 			CorrectionMonomial monomial;
@@ -323,32 +344,38 @@ CorrectionPolynomial multiply_correction_polynomials_(
 				left_monomial.begin(), left_monomial.end(),
 				right_monomial.begin(), right_monomial.end(),
 				std::back_inserter(monomial));
-			out[std::move(monomial)] += left_coefficient * right_coefficient;
+			out.push_back({
+				std::move(monomial), left_coefficient * right_coefficient });
 		}
 	}
+	normalize_correction_polynomial_(out);
 	return out;
 }
 
 uint64_t build_correction_horner_node_(
-	const CorrectionPolynomial& polynomial,
+	CorrectionPolynomial::const_iterator begin,
+	CorrectionPolynomial::const_iterator end,
+	uint64_t depth,
 	BranchedSigHornerPlan& plan
 ) {
 	double constant = 0.0;
-	std::map<uint64_t, CorrectionPolynomial> groups;
-	for (const auto& [monomial, coefficient] : polynomial) {
-		if (monomial.empty()) {
-			constant += coefficient;
-			continue;
-		}
-		CorrectionMonomial tail(monomial.begin() + 1, monomial.end());
-		groups[monomial.front()][std::move(tail)] += coefficient;
+	if (begin != end && begin->first.size() == depth) {
+		constant = begin->second;
+		++begin;
 	}
 
 	std::vector<std::pair<uint64_t, uint64_t>> children;
-	children.reserve(groups.size());
-	for (const auto& [variable, child] : groups) {
-		children.push_back({
-			variable, build_correction_horner_node_(child, plan) });
+	while (begin != end) {
+		const uint64_t variable = begin->first[depth];
+		auto group_end = begin;
+		while (group_end != end
+			&& group_end->first.size() > depth
+			&& group_end->first[depth] == variable) {
+			++group_end;
+		}
+		children.push_back({ variable, build_correction_horner_node_(
+			begin, group_end, depth + 1, plan) });
+		begin = group_end;
 	}
 
 	const uint64_t node = plan.correction_horner_constants.size();
@@ -376,7 +403,7 @@ void populate_correction_horner_plan_(
 	std::vector<CorrectionPolynomial> power(cache.total_length);
 	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
 		if (active[flat] != 0)
-			power[flat][CorrectionMonomial{ flat }] = 1.0;
+			power[flat].push_back({ CorrectionMonomial{ flat }, 1.0 });
 	}
 
 	double inverse_factorial = 1.0;
@@ -400,7 +427,7 @@ void populate_correction_horner_plan_(
 				}
 
 				CorrectionPolynomial term;
-				term[CorrectionMonomial{ trunk }] = 1.0;
+				term.push_back({ CorrectionMonomial{ trunk }, 1.0 });
 				for (uint64_t factor = 0; factor < forest_size; ++factor) {
 					const uint64_t forest_flat = cache.coproduct_data[pos++];
 					if (power[forest_flat].empty()) {
@@ -414,6 +441,8 @@ void populate_correction_horner_plan_(
 				add_correction_polynomial_(next[flat], term);
 			}
 		}
+		for (uint64_t flat = 1; flat < cache.total_length; ++flat)
+			normalize_correction_polynomial_(next[flat]);
 		power.swap(next);
 	}
 
@@ -421,8 +450,10 @@ void populate_correction_horner_plan_(
 	plan.correction_horner_roots.assign(cache.total_length, UINT64_MAX);
 	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
 		if (!output[flat].empty()) {
+			normalize_correction_polynomial_(output[flat]);
 			plan.correction_horner_roots[flat]
-				= build_correction_horner_node_(output[flat], plan);
+				= build_correction_horner_node_(
+					output[flat].cbegin(), output[flat].cend(), 0, plan);
 		}
 	}
 }
@@ -431,16 +462,14 @@ void populate_correction_horner_plan_(
 
 
 static void populate_branched_sig_horner_plan(BranchedSigCache& cache) {
-	BranchedLogHornerPlan full = build_branched_log_horner_plan(cache);
 	BranchedSigHornerPlan plan;
-	plan.product_count = full.product_count;
-	plan.product_parent = full.cpu_products.parent;
-	plan.product_factor = full.cpu_products.last_factor;
-	plan.product_node_counts = full.product_node_counts;
-	plan.coproduct_offsets = full.coproduct_offsets;
-	plan.coproduct_pairs = full.coproduct_pairs;
 	populate_correction_horner_plan_(cache, plan);
 	if (cache.planar) {
+		BranchedLogHornerPlan full = build_branched_log_horner_plan(cache);
+		plan.product_count = full.product_count;
+		plan.product_node_counts = full.product_node_counts;
+		plan.coproduct_offsets = full.coproduct_offsets;
+		plan.coproduct_pairs = full.coproduct_pairs;
 		plan.planar_log_coefficients.assign(cache.total_length, 0.0);
 		BranchedLogHornerWorkspace<double> workspace(full.product_count);
 		branched_log_horner_forward<double>(
@@ -511,7 +540,61 @@ static void populate_branched_sig_horner_plan(BranchedSigCache& cache) {
 		cache.horner = std::move(plan);
 		return;
 	}
-	plan.flat_to_product = full.flat_to_product;
+
+	using branched_log_detail::Product;
+	using branched_log_detail::ProductMap;
+	using branched_log_detail::ProductPair;
+	ProductMap product_index;
+	const std::vector<Product> products =
+		branched_log_detail::enumerate_nonplanar_products_(
+			cache, product_index);
+	plan.product_count = products.size();
+	plan.product_node_counts.resize(plan.product_count, 0);
+	plan.flat_to_product = branched_log_detail::build_flat_to_product_(
+		cache, product_index);
+	plan.product_parent.resize(plan.product_count, 0);
+	plan.product_factor.resize(plan.product_count, 0);
+	for (uint64_t product = 1; product < plan.product_count; ++product) {
+		Product prefix = products[product];
+		plan.product_factor[product] = prefix.back();
+		prefix.pop_back();
+		plan.product_parent[product]
+			= branched_log_detail::find_product_(product_index, prefix);
+		plan.product_node_counts[product]
+			= plan.product_node_counts[plan.product_parent[product]]
+			+ cache.basis_node_count(plan.product_factor[product] - 1);
+	}
+
+	std::vector<std::vector<ProductPair>> reduced_coproducts(
+		plan.product_count);
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+		auto& terms = reduced_coproducts[plan.flat_to_product[flat]];
+		uint64_t pos = cache.coproduct_offsets[flat - 1];
+		const uint64_t end = cache.coproduct_offsets[flat];
+		while (pos < end) {
+			const uint64_t forest_size = cache.coproduct_data[pos++];
+			const uint64_t trunk = cache.coproduct_data[pos++];
+			Product forest;
+			forest.reserve(forest_size);
+			for (uint64_t factor = 0; factor < forest_size; ++factor)
+				forest.push_back(cache.coproduct_data[pos++]);
+			if (forest.empty())
+				continue;
+			std::sort(forest.begin(), forest.end());
+			terms.push_back({
+				branched_log_detail::find_product_(product_index, forest),
+				plan.flat_to_product[trunk] });
+		}
+	}
+	plan.coproduct_offsets.resize(plan.product_count + 1, 0);
+	for (uint64_t product = 0; product < plan.product_count; ++product) {
+		plan.coproduct_offsets[product] = plan.coproduct_pairs.size();
+		for (const ProductPair& term : reduced_coproducts[product]) {
+			plan.coproduct_pairs.push_back(term.first);
+			plan.coproduct_pairs.push_back(term.second);
+		}
+	}
+	plan.coproduct_offsets[plan.product_count] = plan.coproduct_pairs.size();
 
 	std::vector<uint64_t> product_labels(plan.product_count, UINT64_MAX);
 	if (cache.max_nodes >= 1) {
@@ -526,23 +609,35 @@ static void populate_branched_sig_horner_plan(BranchedSigCache& cache) {
 	std::vector<uint64_t> full_derivative_label;
 	for (uint64_t product = 0; product < plan.product_count; ++product) {
 		full_derivative_offsets[product] = full_derivative_left.size();
-		if (full.product_node_counts[product] == 1) {
-			const uint64_t label = product_labels[product];
-			if (label == UINT64_MAX)
-				throw std::runtime_error("Invalid degree-one branched Horner product");
-			full_derivative_left.push_back(0);
-			full_derivative_label.push_back(label);
+		if (product == 0)
+			continue;
+		const uint64_t parent = plan.product_parent[product];
+		const uint64_t factor_flat = plan.product_factor[product];
+		const uint64_t factor_product = plan.flat_to_product[factor_flat];
+		const uint64_t parent_start = full_derivative_offsets[parent];
+		const uint64_t parent_end = parent + 1 == product
+			? full_derivative_left.size()
+			: full_derivative_offsets[parent + 1];
+		for (uint64_t pos = parent_start; pos < parent_end; ++pos) {
+			full_derivative_left.push_back(
+				branched_log_detail::combine_products_(
+					products, product_index,
+					full_derivative_left[pos], factor_product));
+			full_derivative_label.push_back(full_derivative_label[pos]);
 		}
-
-		const uint64_t start = full.coproduct_offsets[product];
-		const uint64_t end = full.coproduct_offsets[product + 1];
-		for (uint64_t pos = start; pos < end; pos += 2) {
-			const uint64_t right = full.coproduct_pairs[pos + 1];
-			const uint64_t label = product_labels[right];
-			if (label == UINT64_MAX)
-				continue;
-			full_derivative_left.push_back(full.coproduct_pairs[pos]);
-			full_derivative_label.push_back(label);
+		const uint64_t factor_label = product_labels[factor_product];
+		if (factor_label != UINT64_MAX) {
+			full_derivative_left.push_back(parent);
+			full_derivative_label.push_back(factor_label);
+		}
+		for (const ProductPair& term : reduced_coproducts[factor_product]) {
+			const uint64_t label = product_labels[term.second];
+			if (label != UINT64_MAX) {
+				full_derivative_left.push_back(
+					branched_log_detail::combine_products_(
+						products, product_index, parent, term.first));
+				full_derivative_label.push_back(label);
+			}
 		}
 	}
 	full_derivative_offsets[plan.product_count] = full_derivative_left.size();
@@ -614,16 +709,16 @@ static void populate_branched_sig_horner_plan(BranchedSigCache& cache) {
 		uint64_t current = product;
 		while (!needed_products[current]) {
 			needed_products[current] = true;
-			current = full.cpu_products.parent[current];
+			current = plan.product_parent[current];
 		}
 	}
 	for (uint64_t product = 1; product < plan.product_count; ++product) {
 		if (needed_products[product]) {
 			plan.product_build.push_back(product);
 			plan.product_build_parent.push_back(
-				full.cpu_products.parent[product]);
+				plan.product_parent[product]);
 			plan.product_build_factor.push_back(
-				full.cpu_products.last_factor[product]);
+				plan.product_factor[product]);
 		}
 	}
 	cache.horner = std::move(plan);
