@@ -20,7 +20,7 @@ import torch
 
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_LINEAR_SIG, CUSIG_LINEAR_SIG_CUDA
+from .dtypes import CPSIG_LINEAR_SIG, CUSIG_LINEAR_SIG
 from .sig_length import sig_length
 from .data_handlers import SigInputHandler, SigOutputHandler
 
@@ -97,7 +97,7 @@ def linear_sig(
         err_code = CPSIG_LINEAR_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size, dimension, degree, scalar_term, n_jobs)
     else:
-        err_code = CUSIG_LINEAR_SIG_CUDA[data.dtype](
+        err_code = CUSIG_LINEAR_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size, dimension, degree, scalar_term)
     if err_code:
         raise Exception("Error in pysiglib.linear_sig: " + err_msg(err_code))

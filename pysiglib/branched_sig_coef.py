@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from .data_handlers import CorrectionInputHandler, PathInputHandler, SigInputHandler, SigOutputHandler
-from .dtypes import CPSIG_BRANCHED_SIG_COEF, CUSIG_BRANCHED_SIG_COEF_CUDA
+from .dtypes import CPSIG_BRANCHED_SIG_COEF, CUSIG_BRANCHED_SIG_COEF
 from .error_codes import err_msg
 from .load_siglib import BUILT_WITH_CUDA, CPSIG, CUSIG
 from .param_checks import check_n_jobs, check_non_neg, check_type
@@ -324,7 +324,7 @@ def branched_sig_coef(
             correction_data.batch_stride, correction_data.segment_stride,
         )
     else:
-        err_code = CUSIG_BRANCHED_SIG_COEF_CUDA[data.dtype](
+        err_code = CUSIG_BRANCHED_SIG_COEF[data.dtype](
             data.data_ptr, result.data_ptr, tree_data_ptr, len(tree_data),
             data.batch_size, data.data_dimension, data.data_length, degree,
             data.time_aug, data.lead_lag, data.end_time, planar,

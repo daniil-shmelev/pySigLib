@@ -22,7 +22,7 @@ from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .sig_length import aug_dim
 from .dtypes import (CPSIG_BRANCHED_SIG, CPSIG_BRANCHED_SIG_COMBINE,
-                     CUSIG_BRANCHED_SIG_CUDA, CUSIG_BRANCHED_SIG_COMBINE_CUDA)
+                     CUSIG_BRANCHED_SIG, CUSIG_BRANCHED_SIG_COMBINE)
 from .data_handlers import PathInputHandler, SigOutputHandler, MultipleSigInputHandler, CorrectionInputHandler
 from .load_siglib import BUILT_WITH_CUDA, CPSIG, CUSIG
 
@@ -300,7 +300,7 @@ def branched_sig(
             correction_data.batch_stride, correction_data.segment_stride)
     else:
         _check_cuda_num_basis(aug_dimension, degree, planar, "branched_sig")
-        err_code = CUSIG_BRANCHED_SIG_CUDA[data.dtype](
+        err_code = CUSIG_BRANCHED_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             dimension, data.data_length, degree,
             data.time_aug, data.lead_lag, data.end_time, planar, scalar_term,
@@ -359,7 +359,7 @@ def branched_sig_combine(
             data.batch_size, dimension, degree, n_jobs, planar, scalar_term)
     else:
         _check_cuda_num_basis(dimension, degree, planar, "branched_sig_combine")
-        err_code = CUSIG_BRANCHED_SIG_COMBINE_CUDA[data.dtype](
+        err_code = CUSIG_BRANCHED_SIG_COMBINE[data.dtype](
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, dimension, degree, planar, scalar_term)
     if err_code:

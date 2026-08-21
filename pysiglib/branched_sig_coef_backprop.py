@@ -21,7 +21,7 @@ import torch
 
 from .branched_sig_coef import _branched_coef_data
 from .data_handlers import CorrectionInputHandler, MultipleSigInputHandler, PathInputHandler, PathOutputHandler
-from .dtypes import CPSIG_BRANCHED_SIG_COEF_BACKPROP, CUSIG_BRANCHED_SIG_COEF_BACKPROP_CUDA
+from .dtypes import CPSIG_BRANCHED_SIG_COEF_BACKPROP, CUSIG_BRANCHED_SIG_COEF_BACKPROP
 from .error_codes import err_msg
 from .param_checks import check_n_jobs, check_type
 
@@ -130,7 +130,7 @@ def branched_sig_coef_backprop(
             correction_data.batch_stride, correction_data.segment_stride,
         )
     else:
-        err_code = CUSIG_BRANCHED_SIG_COEF_BACKPROP_CUDA[path_data.dtype](
+        err_code = CUSIG_BRANCHED_SIG_COEF_BACKPROP[path_data.dtype](
             path_data.data_ptr, result.data_ptr, coef_data.data[0].data_ptr,
             coef_data.data[1].data_ptr, tree_data_ptr, len(tree_data),
             path_data.batch_size, path_data.data_dimension,

@@ -23,7 +23,7 @@ import torch
 from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOutputHandler
 from .dtypes import (
     CPSIG_BRANCHED_SIG_KERNEL,
-    CUSIG_BRANCHED_SIG_KERNEL_CUDA,
+    CUSIG_BRANCHED_SIG_KERNEL,
     DTYPES,
 )
 from .error_codes import err_msg
@@ -134,7 +134,7 @@ def branched_sig_kernel(
             data.length[0], data.length[1], depth,
             dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
     else:
-        err_code = CUSIG_BRANCHED_SIG_KERNEL_CUDA[data.dtype](
+        err_code = CUSIG_BRANCHED_SIG_KERNEL[data.dtype](
             gram_ptr, result.data_ptr, data.batch_size, data.dimension,
             data.length[0], data.length[1], depth,
             dyadic_order_1, dyadic_order_2, return_grid)

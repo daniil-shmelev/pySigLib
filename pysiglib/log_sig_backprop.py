@@ -21,8 +21,8 @@ import torch
 from .param_checks import check_type, check_non_neg, check_log_sig_method, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (CPSIG_SIG_TO_LOG_SIG_BACKPROP,
-                     CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA,
-                     CPSIG_LOG_SIG_FROM_PATH_BACKPROP, CUSIG_LOG_SIG_FROM_PATH_BACKPROP_CUDA)
+                     CUSIG_SIG_TO_LOG_SIG_BACKPROP,
+                     CPSIG_LOG_SIG_FROM_PATH_BACKPROP, CUSIG_LOG_SIG_FROM_PATH_BACKPROP)
 from .sig_length import sig_length, log_sig_length, aug_dim, _infer_scalar_term
 from .data_handlers import SigOutputHandler, SigInputHandler, PathInputHandler, PathOutputHandler
 
@@ -126,7 +126,7 @@ def sig_to_log_sig_backprop(
             data.batch_size, dimension, degree,
             time_aug, lead_lag, method, scalar_term, n_jobs)
     else:
-        err_code = CUSIG_SIG_TO_LOG_SIG_BACKPROP_CUDA[data.dtype](
+        err_code = CUSIG_SIG_TO_LOG_SIG_BACKPROP[data.dtype](
             data.data_ptr, result.data_ptr, derivs_data.data_ptr,
             data.batch_size, aug_dimension, degree, method, scalar_term)
     if err_code:
@@ -163,7 +163,7 @@ def _log_sig_from_path_backprop(
             derivs_data.data_ptr, result.data_ptr, data.data_ptr,
             data.batch_size, data.data_length, data.data_dimension, degree, n_jobs)
     else:
-        err_code = CUSIG_LOG_SIG_FROM_PATH_BACKPROP_CUDA[data.dtype](
+        err_code = CUSIG_LOG_SIG_FROM_PATH_BACKPROP[data.dtype](
             derivs_data.data_ptr, result.data_ptr, data.data_ptr,
             data.batch_size, data.data_length, data.data_dimension, degree)
     if err_code:

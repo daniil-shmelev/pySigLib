@@ -21,7 +21,7 @@ import torch
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler, CorrectionInputHandler
-from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP_CUDA, CUSIG_SIG_COMBINE_BACKPROP_CUDA
+from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP, CUSIG_SIG_COMBINE_BACKPROP
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
 
 def sig_combine_backprop(
@@ -115,7 +115,7 @@ def sig_combine_backprop(
             sig_data.sig_ptr[0], sig_data.sig_ptr[1],
             sig_data.batch_size, aug_dimension, degree, scalar_term, n_jobs)
     else:
-        err_code = CUSIG_SIG_COMBINE_BACKPROP_CUDA[sig_data.dtype](
+        err_code = CUSIG_SIG_COMBINE_BACKPROP[sig_data.dtype](
             sig_data.sig_ptr[2], sig1_deriv.data_ptr, sig2_deriv.data_ptr,
             sig_data.sig_ptr[0], sig_data.sig_ptr[1],
             sig_data.batch_size, aug_dimension, degree, scalar_term)
@@ -240,7 +240,7 @@ def sig_backprop(
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride)
     else:
-        err_code = CUSIG_SIG_BACKPROP_CUDA[path_data.dtype](
+        err_code = CUSIG_SIG_BACKPROP[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, path_data.data_dimension, path_data.data_length,

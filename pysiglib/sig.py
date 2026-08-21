@@ -21,7 +21,7 @@ import torch
 
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIGNATURE, CPSIG_SIG_COMBINE, CUSIG_SIGNATURE_CUDA, CUSIG_SIG_COMBINE_CUDA
+from .dtypes import CPSIG_SIGNATURE, CPSIG_SIG_COMBINE, CUSIG_SIGNATURE, CUSIG_SIG_COMBINE
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
 from .data_handlers import PathInputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
 
@@ -116,7 +116,7 @@ def sig_combine(
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, aug_dimension, degree, scalar_term, n_jobs)
     else:
-        err_code = CUSIG_SIG_COMBINE_CUDA[data.dtype](
+        err_code = CUSIG_SIG_COMBINE[data.dtype](
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, aug_dimension, degree, scalar_term)
     if err_code:
@@ -284,7 +284,7 @@ def sig(
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride)
     else:
-        err_code = CUSIG_SIGNATURE_CUDA[data.dtype](
+        err_code = CUSIG_SIGNATURE[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             data.data_dimension, data.data_length, degree,
             data.time_aug, data.lead_lag, data.end_time, horner, scalar_term,

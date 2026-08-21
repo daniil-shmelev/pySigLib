@@ -20,7 +20,7 @@ import torch
 
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_SIG_JOIN_BACKPROP, CUSIG_SIG_JOIN_BACKPROP_CUDA
+from .dtypes import CPSIG_SIG_JOIN_BACKPROP, CUSIG_SIG_JOIN_BACKPROP
 from .sig_length import sig_length, _infer_scalar_term
 from .data_handlers import SigInputHandler, SigOutputHandler
 
@@ -120,7 +120,7 @@ def sig_join_backprop(
             sig_data.data_ptr, disp_data.data_ptr,
             d_out_data.batch_size, dimension, degree, prepend, scalar_term, n_jobs)
     else:
-        err_code = CUSIG_SIG_JOIN_BACKPROP_CUDA[d_out_data.dtype](
+        err_code = CUSIG_SIG_JOIN_BACKPROP[d_out_data.dtype](
             d_out_data.data_ptr, d_sig.data_ptr, d_disp.data_ptr,
             sig_data.data_ptr, disp_data.data_ptr,
             d_out_data.batch_size, dimension, degree, prepend, scalar_term)

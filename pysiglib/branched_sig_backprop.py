@@ -22,8 +22,8 @@ from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CPSIG_BRANCHED_SIG_COMBINE_BACKPROP,
-                     CUSIG_BRANCHED_SIG_BACKPROP_CUDA,
-                     CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA)
+                     CUSIG_BRANCHED_SIG_BACKPROP,
+                     CUSIG_BRANCHED_SIG_COMBINE_BACKPROP)
 from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
 from .branched_sig import (branched_sig_length, _infer_branched_scalar_term,
                            _check_cuda_num_basis)
@@ -138,7 +138,7 @@ def branched_sig_backprop(
             correction_data.batch_stride, correction_data.segment_stride)
     else:
         _check_cuda_num_basis(aug_dimension, degree, planar, "branched_sig_backprop")
-        err_code = CUSIG_BRANCHED_SIG_BACKPROP_CUDA[path_data.dtype](
+        err_code = CUSIG_BRANCHED_SIG_BACKPROP[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, dimension, path_data.data_length, degree,
@@ -206,7 +206,7 @@ def branched_sig_combine_backprop(
             data.batch_size, dimension, degree, n_jobs, planar, scalar_term)
     else:
         _check_cuda_num_basis(dimension, degree, planar, "branched_sig_combine_backprop")
-        err_code = CUSIG_BRANCHED_SIG_COMBINE_BACKPROP_CUDA[data.dtype](
+        err_code = CUSIG_BRANCHED_SIG_COMBINE_BACKPROP[data.dtype](
             data.sig_ptr[1], data.sig_ptr[2], data.sig_ptr[0],
             result1.data_ptr, result2.data_ptr,
             data.batch_size, dimension, degree, planar, scalar_term)

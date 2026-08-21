@@ -21,7 +21,7 @@ import torch
 from .data_handlers import PathOutputHandler
 from .param_checks import check_type, check_n_jobs
 from .error_codes import err_msg
-from .dtypes import CPSIG_TRANSFORM_PATH, CUSIG_TRANSFORM_PATH_CUDA
+from .dtypes import CPSIG_TRANSFORM_PATH, CUSIG_TRANSFORM_PATH
 
 from .data_handlers import PathInputHandler
 
@@ -143,7 +143,7 @@ def transform_path(
             data.data_ptr, result.data_ptr, data.batch_size, data.data_dimension,
             data.data_length, data.time_aug, data.lead_lag, data.end_time, n_jobs)
     else:
-        err_code = CUSIG_TRANSFORM_PATH_CUDA[data.dtype](
+        err_code = CUSIG_TRANSFORM_PATH[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size, data.data_dimension,
             data.data_length, data.time_aug, data.lead_lag, data.end_time)
     if err_code:
