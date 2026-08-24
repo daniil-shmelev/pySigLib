@@ -479,11 +479,11 @@ __device__ void branched_hopf_convolution_block_(
 ) {
 	const uint32_t num_trees = total_len - 1;
 	if (tid == 0) out[0] = X[0] * Y[0];
-	if (tid < num_trees) {
-		const uint32_t fi = tid + 1;
+	for (uint32_t tree = tid; tree < num_trees; tree += blockDim.x) {
+		const uint32_t fi = tree + 1;
 		T val = X[fi] * Y[0] + X[0] * Y[fi];
-		uint32_t pos = s_coprod_off[tid];
-		const uint32_t pend = s_coprod_off[tid + 1];
+		uint32_t pos = s_coprod_off[tree];
+		const uint32_t pend = s_coprod_off[tree + 1];
 		while (pos < pend) {
 			const uint32_t nf = s_coprod_data[pos++];
 			T term = Y[s_coprod_data[pos++]];
@@ -558,14 +558,14 @@ __device__ void linear_branched_sig_block_(
 ) {
 	const uint32_t num_trees = total_len - 1;
 	if (tid == 0) out[0] = T(1);
-	if (tid < num_trees) {
+	for (uint32_t tree = tid; tree < num_trees; tree += blockDim.x) {
 		T prod = T(1);
-		const uint32_t lstart = labels_offsets[tid];
-		const uint32_t lend = labels_offsets[tid + 1];
+		const uint32_t lstart = labels_offsets[tree];
+		const uint32_t lend = labels_offsets[tree + 1];
 		#pragma unroll 8
 		for (uint32_t j = lstart; j < lend; ++j)
 			prod *= inc[labels_data[j]];
-		out[tid + 1] = prod * inv_factorial[tid];
+		out[tree + 1] = prod * inv_factorial[tree];
 	}
 	__syncthreads();
 }
@@ -640,8 +640,8 @@ __device__ void local_branched_sig_block_(
 	}
 }
 
-template<typename T>
-__global__ __launch_bounds__(1024)
+template<typename T, bool use_shared_storage>
+__global__ __launch_bounds__(use_shared_storage ? 1024 : 256)
 void branched_sig_ker(
 	const T* __restrict__ path,
 	T* __restrict__ out,
@@ -665,6 +665,8 @@ void branched_sig_ker(
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride,
 	bool planar_fast_path,
+	T* __restrict__ workspace,
+	uint64_t workspace_stride,
 	uint64_t batch_offset,
 	uint64_t batch_chunk_size
 ) {
@@ -675,7 +677,9 @@ void branched_sig_ker(
 	const uint32_t num_trees = total_len - 1;
 
 	extern __shared__ char smem[];
-	T* temp = reinterpret_cast<T*>(smem);
+	T* temp = use_shared_storage
+		? reinterpret_cast<T*>(smem)
+		: workspace + local_batch_idx * workspace_stride;
 	const bool has_correction = correction_len != 0;
 	const bool use_shared_state = planar_fast_path && !has_correction;
 	T* local_log = has_correction ? temp + total_len : temp;
@@ -684,17 +688,26 @@ void branched_sig_ker(
 	T* state = use_shared_state ? temp + total_len : nullptr;
 	T* next_state = use_shared_state ? state + total_len : nullptr;
 	T* inc = has_correction ? next_power + total_len : (use_shared_state ? next_state + total_len : temp + total_len);
-	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(inc + dim);
-	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
-	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
+	uint32_t* shared_coprod_data = reinterpret_cast<uint32_t*>(inc + dim);
+	uint32_t* shared_coprod_off = shared_coprod_data + coprod_data_len;
+	uint32_t* shared_order_idx = shared_coprod_off + num_trees + 1;
+	const uint32_t* s_coprod_data = g_coprod_data;
+	const uint32_t* s_coprod_off = g_coprod_offsets;
+	const uint32_t* s_order_idx = g_order_index;
 
 	// --- One-time cooperative load of coproduct table into shared memory ---
-	for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
-		s_coprod_data[i] = g_coprod_data[i];
-	for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
-		s_coprod_off[i] = g_coprod_offsets[i];
-	for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2); i += blockDim.x)
-		s_order_idx[i] = g_order_index[i];
+	if constexpr (use_shared_storage) {
+		for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
+			shared_coprod_data[i] = g_coprod_data[i];
+		for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
+			shared_coprod_off[i] = g_coprod_offsets[i];
+		for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2);
+			i += blockDim.x)
+			shared_order_idx[i] = g_order_index[i];
+		s_coprod_data = shared_coprod_data;
+		s_coprod_off = shared_coprod_off;
+		s_order_idx = shared_order_idx;
+	}
 	__syncthreads();
 
 	const T* bp = path + static_cast<uint64_t>(batch_idx) * path_stride;
@@ -730,14 +743,15 @@ void branched_sig_ker(
 		}
 		else if (seg > 0) {
 			for (int order = max_nodes; order >= 1; --order) {
-				uint32_t ostart = s_order_idx[order];
-				uint32_t oend = s_order_idx[order + 1];
-				if (tid >= ostart && tid < oend) {
-					uint32_t fi = tid + 1;
+				const uint32_t ostart = s_order_idx[order];
+				const uint32_t oend = s_order_idx[order + 1];
+				for (uint32_t tree = ostart + tid; tree < oend;
+					tree += blockDim.x) {
+					uint32_t fi = tree + 1;
 					T val = X[fi] + temp[fi];
 
-					uint32_t pos = s_coprod_off[tid];
-					uint32_t pend = s_coprod_off[tid + 1];
+					uint32_t pos = s_coprod_off[tree];
+					uint32_t pend = s_coprod_off[tree + 1];
 					while (pos < pend) {
 						uint32_t nf = s_coprod_data[pos++];
 						T term = temp[s_coprod_data[pos++]];
@@ -784,8 +798,8 @@ __device__ void branched_hopf_convolution_deriv_block_(
 		myAtomicAdd(&d_X[0], d_out[0] * Y[0]);
 		myAtomicAdd(&d_Y[0], d_out[0] * X[0]);
 	}
-	if (tid < num_trees) {
-		const uint32_t fi = tid + 1;
+	for (uint32_t tree = tid; tree < num_trees; tree += blockDim.x) {
+		const uint32_t fi = tree + 1;
 		const T d = d_out[fi];
 		if (d != T(0)) {
 			myAtomicAdd(&d_X[fi], d * Y[0]);
@@ -793,8 +807,8 @@ __device__ void branched_hopf_convolution_deriv_block_(
 			myAtomicAdd(&d_X[0], d * Y[fi]);
 			myAtomicAdd(&d_Y[fi], d * X[0]);
 
-			uint32_t pos = s_coprod_off[tid];
-			const uint32_t pend = s_coprod_off[tid + 1];
+			uint32_t pos = s_coprod_off[tree];
+			const uint32_t pend = s_coprod_off[tree + 1];
 			while (pos < pend) {
 				const uint32_t nf = s_coprod_data[pos++];
 				const uint32_t trunk_flat = s_coprod_data[pos++];
@@ -840,12 +854,12 @@ __device__ void linear_bsig_deriv_to_inc_block_(
 			inc_derivs[d] = T(0);
 		__syncthreads();
 
-		if (tid < num_trees) {
-			const T dF_dYi = local_derivs[tid + 1];
+		for (uint32_t tree = tid; tree < num_trees; tree += blockDim.x) {
+			const T dF_dYi = local_derivs[tree + 1];
 			if (dF_dYi != T(0)) {
-				const uint32_t lstart = labels_offsets[tid];
-				const uint32_t lend = labels_offsets[tid + 1];
-				const T base = inv_factorial[tid] * dF_dYi;
+				const uint32_t lstart = labels_offsets[tree];
+				const uint32_t lend = labels_offsets[tree + 1];
+				const T base = inv_factorial[tree] * dF_dYi;
 				T prefix = T(1);
 				for (uint32_t j = lstart; j < lend; ++j) {
 					T suffix = T(1);
@@ -865,12 +879,12 @@ __device__ void linear_bsig_deriv_to_inc_block_(
 	const uint32_t lane = tid & 31u;
 	for (uint32_t d = 0; d < static_cast<uint32_t>(dim); ++d) {
 		T value = T(0);
-		if (tid < num_trees) {
-			const T dF_dYi = local_derivs[tid + 1];
+		for (uint32_t tree = tid; tree < num_trees; tree += blockDim.x) {
+			const T dF_dYi = local_derivs[tree + 1];
 			if (dF_dYi != T(0)) {
-				const uint32_t lstart = labels_offsets[tid];
-				const uint32_t lend = labels_offsets[tid + 1];
-				const T base = inv_factorial[tid] * dF_dYi;
+				const uint32_t lstart = labels_offsets[tree];
+				const uint32_t lend = labels_offsets[tree + 1];
+				const T base = inv_factorial[tree] * dF_dYi;
 				T prefix = T(1);
 				for (uint32_t j = lstart; j < lend; ++j) {
 					T suffix = T(1);
@@ -901,7 +915,7 @@ __device__ void linear_bsig_deriv_to_inc_block_(
 }
 
 template<typename T>
-__device__ void local_log_bsig_deriv_to_inc_block_(
+__device__ void local_log_bsig_deriv_to_inc_rolling_block_(
 	const T* local_derivs,
 	const T* inc,
 	T* inc_derivs,
@@ -938,7 +952,106 @@ __device__ void local_log_bsig_deriv_to_inc_block_(
 		local_log[i] = T(0);
 		d_correction[i] = T(0);
 	}
-	for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes) * total_len; i += blockDim.x)
+	__syncthreads();
+
+	for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
+		local_log[s_order_idx[1] + d + 1] = inc[d];
+	__syncthreads();
+	add_correction_block_(local_log, dim, data_dim, correction, correction_len,
+		chain_index_offsets, chain_indices, max_nodes, tid);
+
+	T* power_current = powers;
+	T* power_next = powers + total_len;
+	T* adjoint_current = power_derivs;
+	T* adjoint_next = power_derivs + total_len;
+	T inv_k_factorial = T(1);
+	for (int k = 2; k <= max_nodes; ++k)
+		inv_k_factorial /= static_cast<T>(k);
+	for (uint32_t i = tid; i < total_len; i += blockDim.x)
+		adjoint_current[i] = i == 0
+			? T(0) : inv_k_factorial * local_derivs[i];
+	__syncthreads();
+
+	for (int k = max_nodes; k > 1; --k) {
+		for (uint32_t i = tid; i < total_len; i += blockDim.x)
+			power_current[i] = local_log[i];
+		__syncthreads();
+		T* current = power_current;
+		T* next = power_next;
+		for (int power_level = 2; power_level < k; ++power_level) {
+			branched_hopf_convolution_block_(
+				current, local_log, next, total_len,
+				s_coprod_data, s_coprod_off, tid);
+			T* swap = current;
+			current = next;
+			next = swap;
+		}
+
+		for (uint32_t i = tid; i < total_len; i += blockDim.x)
+			adjoint_next[i] = T(0);
+		__syncthreads();
+		branched_hopf_convolution_deriv_block_(
+			current, local_log, adjoint_current, adjoint_next,
+			d_correction, total_len, s_coprod_data, s_coprod_off, tid);
+		inv_k_factorial *= static_cast<T>(k);
+		for (uint32_t i = tid + 1; i < total_len; i += blockDim.x)
+			adjoint_next[i] += inv_k_factorial * local_derivs[i];
+		__syncthreads();
+		T* adjoint_swap = adjoint_current;
+		adjoint_current = adjoint_next;
+		adjoint_next = adjoint_swap;
+	}
+
+	for (uint32_t i = tid; i < total_len; i += blockDim.x)
+		d_correction[i] += adjoint_current[i];
+	__syncthreads();
+
+	for (uint32_t d = tid; d < static_cast<uint32_t>(dim); d += blockDim.x)
+		inc_derivs[d] = d_correction[s_order_idx[1] + d + 1];
+	__syncthreads();
+}
+
+template<typename T>
+__device__ void local_log_bsig_deriv_to_inc_saved_block_(
+	const T* local_derivs,
+	const T* inc,
+	T* inc_derivs,
+	T* inc_reduction,
+	bool use_inc_reduction,
+	T* local_log,
+	T* powers,
+	T* power_derivs,
+	T* d_correction,
+	int dim,
+	int data_dim,
+	const T* correction,
+	uint64_t correction_len,
+	uint32_t total_len,
+	const uint8_t* labels_data,
+	const uint32_t* labels_offsets,
+	const T* inv_factorial,
+	const uint32_t* s_coprod_data,
+	const uint32_t* s_coprod_off,
+	const uint32_t* s_order_idx,
+	const uint32_t* chain_index_offsets,
+	const uint32_t* chain_indices,
+	int max_nodes,
+	uint32_t tid
+) {
+	if (max_nodes <= 2) {
+		linear_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs,
+			inc_reduction, use_inc_reduction, dim,
+			total_len, labels_data, labels_offsets, inv_factorial, tid);
+		return;
+	}
+
+	for (uint32_t i = tid; i < total_len; i += blockDim.x) {
+		local_log[i] = T(0);
+		d_correction[i] = T(0);
+	}
+	for (uint32_t i = tid;
+		i < static_cast<uint32_t>(max_nodes) * total_len;
+		i += blockDim.x)
 		power_derivs[i] = T(0);
 	__syncthreads();
 
@@ -952,21 +1065,27 @@ __device__ void local_log_bsig_deriv_to_inc_block_(
 		powers[i] = local_log[i];
 	__syncthreads();
 	for (int k = 2; k <= max_nodes; ++k) {
-		branched_hopf_convolution_block_(powers + static_cast<uint32_t>(k - 2) * total_len, local_log,
-			powers + static_cast<uint32_t>(k - 1) * total_len, total_len, s_coprod_data, s_coprod_off, tid);
+		branched_hopf_convolution_block_(
+			powers + static_cast<uint32_t>(k - 2) * total_len,
+			local_log,
+			powers + static_cast<uint32_t>(k - 1) * total_len,
+			total_len, s_coprod_data, s_coprod_off, tid);
 	}
 
 	T inv_k_factorial = T(1);
 	for (int k = 1; k <= max_nodes; ++k) {
 		inv_k_factorial /= static_cast<T>(k);
-		T* d_power = power_derivs + static_cast<uint32_t>(k - 1) * total_len;
+		T* d_power = power_derivs
+			+ static_cast<uint32_t>(k - 1) * total_len;
 		for (uint32_t i = tid + 1; i < total_len; i += blockDim.x)
 			d_power[i] += inv_k_factorial * local_derivs[i];
 		__syncthreads();
 	}
 
 	for (int k = max_nodes; k > 1; --k) {
-		branched_hopf_convolution_deriv_block_(powers + static_cast<uint32_t>(k - 2) * total_len, local_log,
+		branched_hopf_convolution_deriv_block_(
+			powers + static_cast<uint32_t>(k - 2) * total_len,
+			local_log,
 			power_derivs + static_cast<uint32_t>(k - 1) * total_len,
 			power_derivs + static_cast<uint32_t>(k - 2) * total_len,
 			d_correction, total_len, s_coprod_data, s_coprod_off, tid);
@@ -981,8 +1100,8 @@ __device__ void local_log_bsig_deriv_to_inc_block_(
 	__syncthreads();
 }
 
-template<typename T>
-__global__ __launch_bounds__(1024)
+template<typename T, bool use_shared_storage>
+__global__ __launch_bounds__(use_shared_storage ? 1024 : 256)
 void branched_sig_backprop_ker(
 	const T* __restrict__ path,
 	T* __restrict__ path_derivs,
@@ -1010,6 +1129,8 @@ void branched_sig_backprop_ker(
 	uint64_t correction_len,
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride,
+	T* __restrict__ workspace,
+	uint64_t workspace_stride,
 	uint64_t batch_offset,
 	uint64_t batch_chunk_size
 ) {
@@ -1020,7 +1141,9 @@ void branched_sig_backprop_ker(
 	const uint32_t num_trees = total_len - 1;
 
 	extern __shared__ char smem[];
-	T* s_bsig = reinterpret_cast<T*>(smem);
+	T* s_bsig = use_shared_storage
+		? reinterpret_cast<T*>(smem)
+		: workspace + local_batch_idx * workspace_stride;
 	T* s_derivs = s_bsig + total_len;
 	T* temp_Y = s_derivs + total_len;
 	T* local_derivs = temp_Y + total_len;
@@ -1036,12 +1159,18 @@ void branched_sig_backprop_ker(
 		? product_y_reduction + num_warps * deriv_target_count
 		: product_x_reduction;
 	T* powers = has_correction ? local_log + total_len : local_log;
-	T* power_derivs = has_correction ? powers + static_cast<uint32_t>(max_nodes) * total_len : powers;
-	T* d_correction = has_correction ? power_derivs + static_cast<uint32_t>(max_nodes) * total_len : power_derivs;
+	const uint32_t power_count = use_shared_storage
+		? static_cast<uint32_t>(max_nodes) : 2u;
+	T* power_derivs = has_correction ? powers + power_count * total_len : powers;
+	T* d_correction = has_correction
+		? power_derivs + power_count * total_len : power_derivs;
 	T* local_log_end = has_correction ? d_correction + total_len : local_log;
-	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(local_log_end);
-	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
-	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
+	uint32_t* shared_coprod_data = reinterpret_cast<uint32_t*>(local_log_end);
+	uint32_t* shared_coprod_off = shared_coprod_data + coprod_data_len;
+	uint32_t* shared_order_idx = shared_coprod_off + num_trees + 1;
+	const uint32_t* s_coprod_data = g_coprod_data;
+	const uint32_t* s_coprod_off = g_coprod_offsets;
+	const uint32_t* s_order_idx = g_order_index;
 
 	// --- One-time loads ---
 	const uint64_t batch_off = static_cast<uint64_t>(batch_idx) * total_len;
@@ -1049,12 +1178,18 @@ void branched_sig_backprop_ker(
 		s_bsig[i] = bsig_in[batch_off + i];
 		s_derivs[i] = bsig_derivs_in[batch_off + i];
 	}
-	for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
-		s_coprod_data[i] = g_coprod_data[i];
-	for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
-		s_coprod_off[i] = g_coprod_offsets[i];
-	for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2); i += blockDim.x)
-		s_order_idx[i] = g_order_index[i];
+	if constexpr (use_shared_storage) {
+		for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
+			shared_coprod_data[i] = g_coprod_data[i];
+		for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
+			shared_coprod_off[i] = g_coprod_offsets[i];
+		for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2);
+			i += blockDim.x)
+			shared_order_idx[i] = g_order_index[i];
+		s_coprod_data = shared_coprod_data;
+		s_coprod_off = shared_coprod_off;
+		s_order_idx = shared_order_idx;
+	}
 
 	// Initialize path_derivs to zero
 	const T* bp = path + static_cast<uint64_t>(batch_idx) * path_stride;
@@ -1075,7 +1210,8 @@ void branched_sig_backprop_ker(
 		const T* seg_correction = has_correction
 			? batch_correction + static_cast<uint64_t>(seg) * correction_segment_stride
 			: nullptr;
-		local_branched_sig_block_(inc, temp_Y, local_log, powers, power_derivs,
+		local_branched_sig_block_(inc, temp_Y, local_log, powers,
+			powers + total_len,
 			dim, data_dim, seg_correction, correction_len, total_len,
 			labels_data, labels_offsets, inv_factorial,
 			s_coprod_data, s_coprod_off, s_order_idx,
@@ -1084,13 +1220,14 @@ void branched_sig_backprop_ker(
 		// --- 3. Butcher uncombine (order 1 to max_nodes) ---
 		if (seg > 0) {
 			for (int order = 1; order <= max_nodes; ++order) {
-				uint32_t ostart = s_order_idx[order];
-				uint32_t oend = s_order_idx[order + 1];
-				if (tid >= ostart && tid < oend) {
-					uint32_t fi = tid + 1;
+				const uint32_t ostart = s_order_idx[order];
+				const uint32_t oend = s_order_idx[order + 1];
+				for (uint32_t tree = ostart + tid; tree < oend;
+					tree += blockDim.x) {
+					uint32_t fi = tree + 1;
 					T val = s_bsig[fi] - temp_Y[fi];
-					uint32_t pos = s_coprod_off[tid];
-					uint32_t pend = s_coprod_off[tid + 1];
+					uint32_t pos = s_coprod_off[tree];
+					uint32_t pend = s_coprod_off[tree + 1];
 					while (pos < pend) {
 						uint32_t nf = s_coprod_data[pos++];
 						T term = temp_Y[s_coprod_data[pos++]];
@@ -1118,12 +1255,13 @@ void branched_sig_backprop_ker(
 			}
 			__syncthreads();
 
-			const T dF_tau = (tid < num_trees) ? s_derivs[tid + 1] : T(0);
-			__syncthreads();
-
-			if (tid < num_trees && dF_tau != T(0)) {
-				uint32_t pos = s_coprod_off[tid];
-				uint32_t pend = s_coprod_off[tid + 1];
+			for (uint32_t tree = tid; tree < num_trees;
+				tree += blockDim.x) {
+				const T dF_tau = s_derivs[tree + 1];
+				if (dF_tau == T(0))
+					continue;
+				uint32_t pos = s_coprod_off[tree];
+				uint32_t pend = s_coprod_off[tree + 1];
 				while (pos < pend) {
 					uint32_t nf = s_coprod_data[pos++];
 					uint32_t trunk_flat = s_coprod_data[pos++];
@@ -1135,14 +1273,14 @@ void branched_sig_backprop_ker(
 						forest_product *= s_bsig[s_coprod_data[pos++]];
 
 					T* d_Y = use_product_reduction
-						? product_y_reduction + (tid >> 5) * deriv_target_count
+						? product_y_reduction + (threadIdx.x >> 5) * deriv_target_count
 						: local_derivs;
 					myAtomicAdd(&d_Y[trunk_flat], dF_tau * forest_product);
 
 					if (nf > 0) {
 						T base = dF_tau * temp_Y[trunk_flat];
 						T* d_X = use_product_reduction
-							? product_x_reduction + (tid >> 5) * deriv_target_count
+							? product_x_reduction + (threadIdx.x >> 5) * deriv_target_count
 							: s_derivs;
 						for (uint32_t k = 0; k < nf; ++k) {
 							uint32_t fk = s_coprod_data[forest_start + k];
@@ -1183,13 +1321,23 @@ void branched_sig_backprop_ker(
 				inc_reduction, use_inc_reduction, dim,
 				total_len, labels_data, labels_offsets, inv_factorial, tid);
 		} else {
-			local_log_bsig_deriv_to_inc_block_(local_derivs, inc, inc_derivs,
-				inc_reduction, use_inc_reduction,
-				local_log, powers, power_derivs, d_correction,
-				dim, data_dim, seg_correction, correction_len, total_len,
-				labels_data, labels_offsets, inv_factorial,
-				s_coprod_data, s_coprod_off, s_order_idx,
-				chain_index_offsets, chain_indices, max_nodes, tid);
+			if constexpr (use_shared_storage) {
+				local_log_bsig_deriv_to_inc_saved_block_(
+					local_derivs, inc, inc_derivs, inc_reduction,
+					use_inc_reduction, local_log, powers, power_derivs,
+					d_correction, dim, data_dim, seg_correction, correction_len,
+					total_len, labels_data, labels_offsets, inv_factorial,
+					s_coprod_data, s_coprod_off, s_order_idx,
+					chain_index_offsets, chain_indices, max_nodes, tid);
+			} else {
+				local_log_bsig_deriv_to_inc_rolling_block_(
+					local_derivs, inc, inc_derivs, inc_reduction,
+					use_inc_reduction, local_log, powers, power_derivs,
+					d_correction, dim, data_dim, seg_correction, correction_len,
+					total_len, labels_data, labels_offsets, inv_factorial,
+					s_coprod_data, s_coprod_off, s_order_idx,
+					chain_index_offsets, chain_indices, max_nodes, tid);
+			}
 		}
 
 		// --- 6. Accumulate into path derivs ---
@@ -1205,8 +1353,8 @@ void branched_sig_backprop_ker(
 // Combine kernel: out = butcher_product(bsig1, bsig2)
 // =========================================================================
 
-template<typename T>
-__global__ __launch_bounds__(1024)
+template<typename T, bool use_shared_tables>
+__global__ __launch_bounds__(use_shared_tables ? 1024 : 256)
 void branched_sig_combine_ker(
 	const T* __restrict__ bsig1,
 	const T* __restrict__ bsig2,
@@ -1227,16 +1375,24 @@ void branched_sig_combine_ker(
 	const uint32_t num_trees = total_len - 1;
 
 	extern __shared__ char smem[];
-	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(smem);
-	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
-	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
-
-	for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
-		s_coprod_data[i] = g_coprod_data[i];
-	for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
-		s_coprod_off[i] = g_coprod_offsets[i];
-	for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2); i += blockDim.x)
-		s_order_idx[i] = g_order_index[i];
+	uint32_t* shared_coprod_data = reinterpret_cast<uint32_t*>(smem);
+	uint32_t* shared_coprod_off = shared_coprod_data + coprod_data_len;
+	uint32_t* shared_order_idx = shared_coprod_off + num_trees + 1;
+	const uint32_t* coprod_data = g_coprod_data;
+	const uint32_t* coprod_off = g_coprod_offsets;
+	const uint32_t* order_idx = g_order_index;
+	if constexpr (use_shared_tables) {
+		for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
+			shared_coprod_data[i] = g_coprod_data[i];
+		for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
+			shared_coprod_off[i] = g_coprod_offsets[i];
+		for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2);
+			i += blockDim.x)
+			shared_order_idx[i] = g_order_index[i];
+		coprod_data = shared_coprod_data;
+		coprod_off = shared_coprod_off;
+		order_idx = shared_order_idx;
+	}
 	__syncthreads();
 
 	const uint64_t off = static_cast<uint64_t>(batch_idx) * total_len;
@@ -1251,19 +1407,20 @@ void branched_sig_combine_ker(
 
 	// Butcher product: out = butcher_product(X, Y) - process high to low order
 	for (int order = max_nodes; order >= 1; --order) {
-		uint32_t ostart = s_order_idx[order];
-		uint32_t oend = s_order_idx[order + 1];
-		if (tid >= ostart && tid < oend) {
-			uint32_t fi = tid + 1;
+		const uint32_t ostart = order_idx[order];
+		const uint32_t oend = order_idx[order + 1];
+		for (uint32_t tree = ostart + tid; tree < oend;
+			tree += blockDim.x) {
+			uint32_t fi = tree + 1;
 			T val = O[fi] + Y[fi];
-			uint32_t pos = s_coprod_off[tid];
-			uint32_t pend = s_coprod_off[tid + 1];
+			uint32_t pos = coprod_off[tree];
+			uint32_t pend = coprod_off[tree + 1];
 			while (pos < pend) {
-				uint32_t nf = s_coprod_data[pos++];
-				T term = Y[s_coprod_data[pos++]];
+				uint32_t nf = coprod_data[pos++];
+				T term = Y[coprod_data[pos++]];
 				#pragma unroll 4
 				for (uint32_t j = 0; j < nf; ++j)
-					term *= O[s_coprod_data[pos++]];
+					term *= O[coprod_data[pos++]];
 				val += term;
 			}
 			O[fi] = val;
@@ -1273,8 +1430,8 @@ void branched_sig_combine_ker(
 }
 
 // Combine backprop kernel: given dF/d(out), compute dF/d(bsig1) and dF/d(bsig2)
-template<typename T>
-__global__ __launch_bounds__(1024)
+template<typename T, bool use_shared_tables>
+__global__ __launch_bounds__(use_shared_tables ? 1024 : 256)
 void branched_sig_combine_backprop_ker(
 	const T* __restrict__ bsig1,
 	const T* __restrict__ bsig2,
@@ -1297,16 +1454,22 @@ void branched_sig_combine_backprop_ker(
 	const uint32_t num_trees = total_len - 1;
 
 	extern __shared__ char smem[];
-	uint32_t* s_coprod_data = reinterpret_cast<uint32_t*>(smem);
-	uint32_t* s_coprod_off = s_coprod_data + coprod_data_len;
-	uint32_t* s_order_idx = s_coprod_off + num_trees + 1;
-
-	for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
-		s_coprod_data[i] = g_coprod_data[i];
-	for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
-		s_coprod_off[i] = g_coprod_offsets[i];
-	for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2); i += blockDim.x)
-		s_order_idx[i] = g_order_index[i];
+	uint32_t* shared_coprod_data = reinterpret_cast<uint32_t*>(smem);
+	uint32_t* shared_coprod_off = shared_coprod_data + coprod_data_len;
+	uint32_t* shared_order_idx = shared_coprod_off + num_trees + 1;
+	const uint32_t* coprod_data = g_coprod_data;
+	const uint32_t* coprod_off = g_coprod_offsets;
+	if constexpr (use_shared_tables) {
+		for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
+			shared_coprod_data[i] = g_coprod_data[i];
+		for (uint32_t i = tid; i < num_trees + 1; i += blockDim.x)
+			shared_coprod_off[i] = g_coprod_offsets[i];
+		for (uint32_t i = tid; i < static_cast<uint32_t>(max_nodes + 2);
+			i += blockDim.x)
+			shared_order_idx[i] = g_order_index[i];
+		coprod_data = shared_coprod_data;
+		coprod_off = shared_coprod_off;
+	}
 	__syncthreads();
 
 	const uint64_t off = static_cast<uint64_t>(batch_idx) * total_len;
@@ -1324,32 +1487,32 @@ void branched_sig_combine_backprop_ker(
 	__syncthreads();
 
 	// Differentiate coproduct terms
-	if (tid < num_trees) {
-		uint32_t fi = tid + 1;
+	for (uint32_t tree = tid; tree < num_trees; tree += blockDim.x) {
+		uint32_t fi = tree + 1;
 		T dF_tau = derivs[off + fi];
 		if (dF_tau != T(0)) {
-			uint32_t pos = s_coprod_off[tid];
-			uint32_t pend = s_coprod_off[tid + 1];
+			uint32_t pos = coprod_off[tree];
+			uint32_t pend = coprod_off[tree + 1];
 			while (pos < pend) {
-				uint32_t nf = s_coprod_data[pos++];
-				uint32_t trunk_flat = s_coprod_data[pos++];
+				uint32_t nf = coprod_data[pos++];
+				uint32_t trunk_flat = coprod_data[pos++];
 				uint32_t forest_start = pos;
 
 				T forest_product = T(1);
 				#pragma unroll 4
 				for (uint32_t j = 0; j < nf; ++j)
-					forest_product *= X[s_coprod_data[pos++]];
+					forest_product *= X[coprod_data[pos++]];
 
 				myAtomicAdd(&dY[trunk_flat], dF_tau * forest_product);
 
 				if (nf > 0) {
 					T base = dF_tau * Y[trunk_flat];
 					for (uint32_t k = 0; k < nf; ++k) {
-						uint32_t fk = s_coprod_data[forest_start + k];
+						uint32_t fk = coprod_data[forest_start + k];
 						T partial = base;
 						for (uint32_t j = 0; j < nf; ++j) {
 							if (j != k)
-								partial *= X[s_coprod_data[forest_start + j]];
+								partial *= X[coprod_data[forest_start + j]];
 						}
 						myAtomicAdd(&dX[fk], partial);
 					}
@@ -1467,19 +1630,37 @@ void branched_sig_combine_cuda_(
 	bool planar = false,
 	bool scalar_term = true
 ) {
+	if (batch_size == 0)
+		return;
 	if (scalar_term) {
 		branched_sig_combine_cuda_core_<T>(bsig1, bsig2, out, batch_size, dimension, max_nodes, planar);
 		return;
 	}
 	const auto& gc = get_gpu_cache(dimension, max_nodes, planar);
 	const uint64_t full_len = gc.total_length;
-	CudaBuf<T> d_b1(batch_size * full_len * sizeof(T));
-	CudaBuf<T> d_b2(batch_size * full_len * sizeof(T));
-	CudaBuf<T> d_out(batch_size * full_len * sizeof(T));
-	bsig_stage_prepend_one_<T>(bsig1, d_b1.get(), batch_size, full_len);
-	bsig_stage_prepend_one_<T>(bsig2, d_b2.get(), batch_size, full_len);
-	branched_sig_combine_cuda_core_<T>(d_b1.get(), d_b2.get(), d_out.get(), batch_size, dimension, max_nodes, planar);
-	bsig_stage_strip_<T>(d_out.get(), out, batch_size, full_len);
+	const size_t workspace_row = checked_cuda_size_mul(
+		3, static_cast<size_t>(full_len),
+		"CUDA branched sig combine scalar staging");
+	CudaBatchWorkspace<T> workspace(
+		batch_size, workspace_row,
+		"CUDA branched sig combine scalar staging");
+	T* d_b1 = workspace.get();
+	T* d_b2 = d_b1 + workspace.capacity() * full_len;
+	T* d_out = d_b2 + workspace.capacity() * full_len;
+	const uint64_t stripped_len = full_len - 1;
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset, workspace.capacity());
+		bsig_stage_prepend_one_<T>(
+			bsig1 + chunk.offset * stripped_len, d_b1, chunk.size, full_len);
+		bsig_stage_prepend_one_<T>(
+			bsig2 + chunk.offset * stripped_len, d_b2, chunk.size, full_len);
+		branched_sig_combine_cuda_core_<T>(
+			d_b1, d_b2, d_out, chunk.size, dimension, max_nodes, planar);
+		bsig_stage_strip_<T>(
+			d_out, out + chunk.offset * stripped_len, chunk.size, full_len);
+		batch_offset += chunk.size;
+	}
 }
 
 template<typename T>
@@ -1489,24 +1670,44 @@ void branched_sig_combine_backprop_cuda_(
 	bool planar = false,
 	bool scalar_term = true
 ) {
+	if (batch_size == 0)
+		return;
 	if (scalar_term) {
 		branched_sig_combine_backprop_cuda_core_<T>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, planar);
 		return;
 	}
 	const auto& gc = get_gpu_cache(dimension, max_nodes, planar);
 	const uint64_t full_len = gc.total_length;
-	CudaBuf<T> d_b1(batch_size * full_len * sizeof(T));
-	CudaBuf<T> d_b2(batch_size * full_len * sizeof(T));
-	CudaBuf<T> d_der(batch_size * full_len * sizeof(T));
-	CudaBuf<T> d_o1(batch_size * full_len * sizeof(T));
-	CudaBuf<T> d_o2(batch_size * full_len * sizeof(T));
-	bsig_stage_prepend_one_<T>(bsig1, d_b1.get(), batch_size, full_len);
-	bsig_stage_prepend_one_<T>(bsig2, d_b2.get(), batch_size, full_len);
-	bsig_stage_prepend_zero_<T>(derivs, d_der.get(), batch_size, full_len);
-	branched_sig_combine_backprop_cuda_core_<T>(d_b1.get(), d_b2.get(), d_der.get(), d_o1.get(), d_o2.get(),
-		batch_size, dimension, max_nodes, planar);
-	bsig_stage_strip_<T>(d_o1.get(), out1, batch_size, full_len);
-	bsig_stage_strip_<T>(d_o2.get(), out2, batch_size, full_len);
+	const size_t workspace_row = checked_cuda_size_mul(
+		5, static_cast<size_t>(full_len),
+		"CUDA branched sig combine backprop scalar staging");
+	CudaBatchWorkspace<T> workspace(
+		batch_size, workspace_row,
+		"CUDA branched sig combine backprop scalar staging");
+	T* d_b1 = workspace.get();
+	T* d_b2 = d_b1 + workspace.capacity() * full_len;
+	T* d_der = d_b2 + workspace.capacity() * full_len;
+	T* d_o1 = d_der + workspace.capacity() * full_len;
+	T* d_o2 = d_o1 + workspace.capacity() * full_len;
+	const uint64_t stripped_len = full_len - 1;
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset, workspace.capacity());
+		bsig_stage_prepend_one_<T>(
+			bsig1 + chunk.offset * stripped_len, d_b1, chunk.size, full_len);
+		bsig_stage_prepend_one_<T>(
+			bsig2 + chunk.offset * stripped_len, d_b2, chunk.size, full_len);
+		bsig_stage_prepend_zero_<T>(
+			derivs + chunk.offset * stripped_len, d_der, chunk.size, full_len);
+		branched_sig_combine_backprop_cuda_core_<T>(
+			d_b1, d_b2, d_der, d_o1, d_o2, chunk.size,
+			dimension, max_nodes, planar);
+		bsig_stage_strip_<T>(
+			d_o1, out1 + chunk.offset * stripped_len, chunk.size, full_len);
+		bsig_stage_strip_<T>(
+			d_o2, out2 + chunk.offset * stripped_len, chunk.size, full_len);
+		batch_offset += chunk.size;
+	}
 }
 
 template<typename T>
@@ -1518,21 +1719,35 @@ void branched_sig_combine_cuda_core_(
 	const auto& gc = get_gpu_cache(dimension, max_nodes, planar);
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
 	if (block < 32) block = 32;
-	if (block > 1024) throw std::invalid_argument("CUDA branched sig combine: num_trees > 1024 not supported");
-
-	size_t smem = gc.coprod_data_len * sizeof(uint32_t)
-		+ (gc.num_trees + 1) * sizeof(uint32_t)
-		+ (gc.max_nodes + 2) * sizeof(uint32_t);
-	configure_dynamic_smem(
-		branched_sig_combine_ker<T>, smem, "CUDA branched sig combine");
+	if (block > 1024) block = 1024;
+	const size_t table_entries = checked_cuda_size_add(
+		static_cast<size_t>(gc.coprod_data_len),
+		checked_cuda_size_add(
+			static_cast<size_t>(gc.num_trees) + 1,
+			static_cast<size_t>(gc.max_nodes) + 2,
+			"CUDA branched sig combine"),
+		"CUDA branched sig combine");
+	const size_t smem = checked_cuda_size_mul(
+		table_entries, sizeof(uint32_t), "CUDA branched sig combine");
+	const bool use_shared_tables = try_configure_dynamic_smem(
+		branched_sig_combine_ker<T, true>, smem);
 	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 		const auto batch_chunk = make_cuda_batch_grid_chunk(
 			1, batch_size, batch_offset);
-		branched_sig_combine_ker<T><<<batch_chunk.grid, block, smem>>>(
-			bsig1, bsig2, out, gc.total_length,
-			gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
-			gc.max_nodes, gc.coprod_data_len,
-			batch_chunk.offset, batch_chunk.size);
+		if (use_shared_tables) {
+			branched_sig_combine_ker<T, true><<<batch_chunk.grid, block, smem>>>(
+				bsig1, bsig2, out, gc.total_length,
+				gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
+				gc.max_nodes, gc.coprod_data_len,
+				batch_chunk.offset, batch_chunk.size);
+		} else {
+			branched_sig_combine_ker<T, false><<<
+				batch_chunk.grid, std::min(block, 256u)>>>(
+				bsig1, bsig2, out, gc.total_length,
+				gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
+				gc.max_nodes, gc.coprod_data_len,
+				batch_chunk.offset, batch_chunk.size);
+		}
 		batch_offset += batch_chunk.size;
 	}
 	cudaDeviceSynchronize();
@@ -1548,22 +1763,37 @@ void branched_sig_combine_backprop_cuda_core_(
 	const auto& gc = get_gpu_cache(dimension, max_nodes, planar);
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
 	if (block < 32) block = 32;
-	if (block > 1024) throw std::invalid_argument("CUDA branched sig combine backprop: num_trees > 1024 not supported");
-
-	size_t smem = gc.coprod_data_len * sizeof(uint32_t)
-		+ (gc.num_trees + 1) * sizeof(uint32_t)
-		+ (gc.max_nodes + 2) * sizeof(uint32_t);
-	configure_dynamic_smem(
-		branched_sig_combine_backprop_ker<T>, smem,
+	if (block > 1024) block = 1024;
+	const size_t table_entries = checked_cuda_size_add(
+		static_cast<size_t>(gc.coprod_data_len),
+		checked_cuda_size_add(
+			static_cast<size_t>(gc.num_trees) + 1,
+			static_cast<size_t>(gc.max_nodes) + 2,
+			"CUDA branched sig combine backprop"),
 		"CUDA branched sig combine backprop");
+	const size_t smem = checked_cuda_size_mul(
+		table_entries, sizeof(uint32_t),
+		"CUDA branched sig combine backprop");
+	const bool use_shared_tables = try_configure_dynamic_smem(
+		branched_sig_combine_backprop_ker<T, true>, smem);
 	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 		const auto batch_chunk = make_cuda_batch_grid_chunk(
 			1, batch_size, batch_offset);
-		branched_sig_combine_backprop_ker<T><<<batch_chunk.grid, block, smem>>>(
-			bsig1, bsig2, derivs, out1, out2, gc.total_length,
-			gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
-			gc.max_nodes, gc.coprod_data_len,
-			batch_chunk.offset, batch_chunk.size);
+		if (use_shared_tables) {
+			branched_sig_combine_backprop_ker<T, true><<<
+				batch_chunk.grid, block, smem>>>(
+				bsig1, bsig2, derivs, out1, out2, gc.total_length,
+				gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
+				gc.max_nodes, gc.coprod_data_len,
+				batch_chunk.offset, batch_chunk.size);
+		} else {
+			branched_sig_combine_backprop_ker<T, false><<<
+				batch_chunk.grid, std::min(block, 256u)>>>(
+				bsig1, bsig2, derivs, out1, out2, gc.total_length,
+				gc.d_coprod_data32, gc.d_coprod_offsets32, gc.d_order_index32,
+				gc.max_nodes, gc.coprod_data_len,
+				batch_chunk.offset, batch_chunk.size);
+		}
 		batch_offset += batch_chunk.size;
 	}
 	cudaDeviceSynchronize();
@@ -1610,21 +1840,33 @@ void branched_sig_cuda_core_(
 	}
 
 	const int steps = static_cast<int>(length - 1);
-	const uint64_t path_stride = length * dimension;
+	const size_t path_stride = checked_cuda_size_mul(
+		static_cast<size_t>(length), static_cast<size_t>(dimension),
+		"CUDA branched sig");
 
 	const bool use_shared_state = !has_correction && planar;
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
 	if (block < 32) block = 32;
-	if (block > 1024)
-		throw std::invalid_argument("CUDA branched sig: num_trees > 1024 not supported");
+	if (block > 1024) block = 1024;
 
-	const uint64_t t_arrays = has_correction
-		? (4 * gc.total_length + dimension)
-		: ((use_shared_state ? 3 * gc.total_length : gc.total_length) + dimension);
-	size_t smem = t_arrays * sizeof(T)
-		+ gc.coprod_data_len * sizeof(uint32_t)
-		+ (gc.num_trees + 1) * sizeof(uint32_t)
-		+ (gc.max_nodes + 2) * sizeof(uint32_t);
+	const size_t state_arrays = has_correction ? 4 : (use_shared_state ? 3 : 1);
+	const size_t t_arrays = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			state_arrays, static_cast<size_t>(gc.total_length),
+			"CUDA branched sig"),
+		static_cast<size_t>(dimension), "CUDA branched sig");
+	const size_t table_entries = checked_cuda_size_add(
+		static_cast<size_t>(gc.coprod_data_len),
+		checked_cuda_size_add(
+			static_cast<size_t>(gc.num_trees) + 1,
+			static_cast<size_t>(gc.max_nodes) + 2,
+			"CUDA branched sig"),
+		"CUDA branched sig");
+	const size_t smem = checked_cuda_size_add(
+		checked_cuda_size_mul(t_arrays, sizeof(T), "CUDA branched sig"),
+		checked_cuda_size_mul(
+			table_entries, sizeof(uint32_t), "CUDA branched sig"),
+		"CUDA branched sig");
 
 	// Select float or double inv_factorial
 	const T* d_inv_fact;
@@ -1633,22 +1875,44 @@ void branched_sig_cuda_core_(
 	else
 		d_inv_fact = reinterpret_cast<const T*>(gc.d_inv_factorial_f64);
 
-	configure_dynamic_smem(
-		branched_sig_ker<T>, smem, "CUDA branched sig");
+	const bool use_shared_storage = try_configure_dynamic_smem(
+		branched_sig_ker<T, true>, smem);
+	std::unique_ptr<CudaBatchWorkspace<T>> workspace;
+	if (!use_shared_storage) {
+		workspace = std::make_unique<CudaBatchWorkspace<T>>(
+			batch_size, t_arrays, "CUDA branched sig global workspace");
+	}
+	const uint64_t max_chunk_size = use_shared_storage
+		? CUDA_BATCH_GRID_CAPACITY : workspace->capacity();
 	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 		const auto batch_chunk = make_cuda_batch_grid_chunk(
-			1, batch_size, batch_offset);
-		branched_sig_ker<T><<<batch_chunk.grid, block, smem>>>(
-			path, out, static_cast<int>(dimension), static_cast<int>(data_dimension), steps,
-			gc.total_length, path_stride,
-			gc.d_labels_data, gc.d_labels_offsets32,
-			d_inv_fact,
-			gc.d_coprod_data32, gc.d_coprod_offsets32,
-			gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
-			gc.coprod_data_len, correction, correction_len,
-			correction_batch_stride, correction_segment_stride, use_shared_state,
-			batch_chunk.offset, batch_chunk.size
-		);
+			1, batch_size, batch_offset, max_chunk_size);
+		if (use_shared_storage) {
+			branched_sig_ker<T, true><<<batch_chunk.grid, block, smem>>>(
+				path, out, static_cast<int>(dimension),
+				static_cast<int>(data_dimension), steps,
+				gc.total_length, path_stride,
+				gc.d_labels_data, gc.d_labels_offsets32, d_inv_fact,
+				gc.d_coprod_data32, gc.d_coprod_offsets32,
+				gc.d_order_index32, gc.d_chain_index_offsets32,
+				gc.d_chain_indices32, gc.max_nodes, gc.coprod_data_len,
+				correction, correction_len, correction_batch_stride,
+				correction_segment_stride, use_shared_state, nullptr, 0,
+				batch_chunk.offset, batch_chunk.size);
+		} else {
+			branched_sig_ker<T, false><<<
+				batch_chunk.grid, std::min(block, 256u)>>>(
+				path, out, static_cast<int>(dimension),
+				static_cast<int>(data_dimension), steps,
+				gc.total_length, path_stride,
+				gc.d_labels_data, gc.d_labels_offsets32, d_inv_fact,
+				gc.d_coprod_data32, gc.d_coprod_offsets32,
+				gc.d_order_index32, gc.d_chain_index_offsets32,
+				gc.d_chain_indices32, gc.max_nodes, gc.coprod_data_len,
+				correction, correction_len, correction_batch_stride,
+				correction_segment_stride, use_shared_state, workspace->get(),
+				t_arrays, batch_chunk.offset, batch_chunk.size);
+		}
 		batch_offset += batch_chunk.size;
 	}
 	cudaDeviceSynchronize();
@@ -1682,38 +1946,61 @@ void branched_sig_cuda_(
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	if (lead_lag && correction_len != 0)
 		throw std::invalid_argument("correction cannot be used with lead_lag=true");
+	if (batch_size == 0)
+		return;
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
-
-	// For scalar_term=false, stage output through a full-sized buffer and strip the scalar.
-	T* core_out = out;
-	CudaBuf<T> d_out_full;
 	const auto& gc = get_gpu_cache(t_dimension, max_nodes, planar);
 	const uint64_t full_len = gc.total_length;
-	if (!scalar_term) {
-		d_out_full = CudaBuf<T>(batch_size * full_len * sizeof(T));
-		core_out = d_out_full.get();
-	}
-
-	if (time_aug || lead_lag) {
-		const uint64_t t_path_size = batch_size * t_length * t_dimension;
-		CudaBuf<T> d_transformed(t_path_size * sizeof(T));
-
-		cu_transform_path_<T>(path, d_transformed.get(), batch_size, dimension, length, time_aug, lead_lag, end_time);
-		cudaDeviceSynchronize();
-
-		branched_sig_cuda_core_<T>(d_transformed.get(), core_out, batch_size, t_dimension, t_length,
+	if (scalar_term && !time_aug && !lead_lag) {
+		branched_sig_cuda_core_<T>(path, out, batch_size, dimension, length,
 			max_nodes, planar, dimension, correction, correction_len,
 			correction_batch_stride, correction_segment_stride);
-	}
-	else {
-		branched_sig_cuda_core_<T>(path, core_out, batch_size, dimension, length,
-			max_nodes, planar, dimension, correction, correction_len,
-			correction_batch_stride, correction_segment_stride);
+		return;
 	}
 
-	if (!scalar_term) {
-		bsig_stage_strip_<T>(core_out, out, batch_size, full_len);
+	const size_t path_stride = checked_cuda_size_mul(
+		static_cast<size_t>(length), static_cast<size_t>(dimension),
+		"CUDA branched sig path staging");
+	const size_t transformed_stride = time_aug || lead_lag
+		? checked_cuda_size_mul(
+			static_cast<size_t>(t_length), static_cast<size_t>(t_dimension),
+			"CUDA branched sig path staging")
+		: 0;
+	const size_t output_staging = scalar_term ? 0 : static_cast<size_t>(full_len);
+	const size_t workspace_row = checked_cuda_size_add(
+		transformed_stride, output_staging,
+		"CUDA branched sig path staging");
+	CudaBatchWorkspace<T> workspace(
+		batch_size, workspace_row, "CUDA branched sig path staging");
+	T* transformed = workspace.get();
+	T* staged_out = transformed
+		+ workspace.capacity() * transformed_stride;
+	const uint64_t output_stride = scalar_term ? full_len : full_len - 1;
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset, workspace.capacity());
+		const T* core_path = path + chunk.offset * path_stride;
+		if (time_aug || lead_lag) {
+			cu_transform_path_<T>(
+				core_path, transformed, chunk.size, dimension, length,
+				time_aug, lead_lag, end_time);
+			core_path = transformed;
+		}
+		T* core_out = scalar_term
+			? out + chunk.offset * output_stride : staged_out;
+		const T* chunk_correction = correction_len == 0 ? nullptr
+			: correction + chunk.offset * correction_batch_stride;
+		branched_sig_cuda_core_<T>(
+			core_path, core_out, chunk.size, t_dimension, t_length,
+			max_nodes, planar, dimension, chunk_correction, correction_len,
+			correction_batch_stride, correction_segment_stride);
+		if (!scalar_term) {
+			bsig_stage_strip_<T>(
+				staged_out, out + chunk.offset * output_stride,
+				chunk.size, full_len);
+		}
+		batch_offset += chunk.size;
 	}
 }
 
@@ -1729,50 +2016,114 @@ void launch_branched_sig_coef_forward_(
 	const T* correction,
 	uint64_t correction_len,
 	uint64_t correction_batch_stride,
-	uint64_t correction_segment_stride
+	uint64_t correction_segment_stride,
+	uint64_t batch_offset_start = 0,
+	uint64_t batch_count = 0,
+	uint64_t state_stride = 0,
+	T* external_workspace = nullptr,
+	uint64_t external_workspace_stride = 0
 ) {
 	if (length > static_cast<uint64_t>(UINT32_MAX) + 1)
 		throw std::invalid_argument("CUDA branched sig coef path length exceeds kernel range");
+	if (batch_count == 0)
+		batch_count = batch_size - batch_offset_start;
+	if (state_stride == 0)
+		state_stride = cache.cache_size;
 
 	const uint32_t num_non_scalar = cache.cache_size - 1;
 	unsigned int block = (num_non_scalar + 31u) & ~31u;
 	if (block < 32)
 		block = 32;
 	if (block > 1024)
-		throw std::invalid_argument("CUDA branched sig coef sparse closure exceeds 1024 trees");
+		block = 1024;
 
 	const uint32_t num_corrections = branched_sig_coef_num_corrections_(cache, correction_len);
 	const bool has_correction = num_corrections != 0;
-	const uint64_t t_arrays = has_correction
-		? 4 * static_cast<uint64_t>(cache.cache_size) + dimension
-		: static_cast<uint64_t>(cache.cache_size) + dimension;
-	const uint64_t state_arrays = state == nullptr ? cache.cache_size : 0;
-	const size_t smem = (t_arrays + state_arrays) * sizeof(T)
-		+ cache.coprod_data_len * sizeof(uint32_t)
-		+ (static_cast<uint64_t>(cache.cache_size) + 1) * sizeof(uint32_t)
-		+ (static_cast<uint64_t>(cache.max_nodes) + 2) * sizeof(uint32_t);
+	const size_t t_arrays = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			has_correction ? 4 : 1,
+			static_cast<size_t>(cache.cache_size),
+			"CUDA branched sig coef"),
+		static_cast<size_t>(dimension), "CUDA branched sig coef");
+	const size_t state_arrays = state == nullptr ? cache.cache_size : 0;
+	const size_t numeric_arrays = checked_cuda_size_add(
+		t_arrays, state_arrays, "CUDA branched sig coef");
+	const size_t table_entries = checked_cuda_size_add(
+		static_cast<size_t>(cache.coprod_data_len),
+		checked_cuda_size_add(
+			static_cast<size_t>(cache.cache_size) + 1,
+			static_cast<size_t>(cache.max_nodes) + 2,
+			"CUDA branched sig coef"),
+		"CUDA branched sig coef");
+	const size_t smem = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			numeric_arrays, sizeof(T), "CUDA branched sig coef"),
+		checked_cuda_size_mul(
+			table_entries, sizeof(uint32_t), "CUDA branched sig coef"),
+		"CUDA branched sig coef");
 	const T* d_inv_factorial;
 	if constexpr (std::is_same_v<T, float>)
 		d_inv_factorial = reinterpret_cast<const T*>(cache.d_inv_factorial_f32);
 	else
 		d_inv_factorial = reinterpret_cast<const T*>(cache.d_inv_factorial_f64);
 
-	configure_dynamic_smem(
-		branched_sig_coef_forward_kernel_<T>, smem, "CUDA branched sig coef");
-	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+	const bool use_shared_storage = try_configure_dynamic_smem(
+		branched_sig_coef_forward_kernel_<T, true>, smem);
+	std::unique_ptr<CudaBatchWorkspace<T>> owned_workspace;
+	if (!use_shared_storage && external_workspace == nullptr) {
+		owned_workspace = std::make_unique<CudaBatchWorkspace<T>>(
+			batch_count, numeric_arrays,
+			"CUDA branched sig coef global workspace");
+		external_workspace = owned_workspace->get();
+		external_workspace_stride = numeric_arrays;
+	}
+	const uint64_t max_chunk_size = use_shared_storage
+		? CUDA_BATCH_GRID_CAPACITY
+		: (owned_workspace == nullptr
+			? batch_count : owned_workspace->capacity());
+	uint64_t local_offset = 0;
+	for (uint64_t batch_offset = batch_offset_start;
+		batch_offset < batch_offset_start + batch_count;) {
 		const auto batch_chunk = make_cuda_batch_grid_chunk(
-			1, batch_size, batch_offset);
-		branched_sig_coef_forward_kernel_<T><<<batch_chunk.grid, block, smem>>>(
-			path, state, out, static_cast<uint32_t>(dimension),
-			length == 0 ? 0 : static_cast<uint32_t>(length - 1), length * dimension,
-			cache.cache_size, cache.d_target_indices, cache.num_targets,
-			cache.d_labels_data, cache.d_labels_offsets, d_inv_factorial,
-			cache.d_coprod_data, cache.d_coprod_offsets, cache.d_order_index,
-			cache.d_leaf_indices, cache.d_correction_offsets, cache.d_correction_locals,
-			num_corrections, cache.max_nodes, cache.coprod_data_len, correction,
-			correction_batch_stride, correction_segment_stride,
-			batch_chunk.offset, batch_chunk.size);
+			1, batch_size, batch_offset,
+			std::min<uint64_t>(max_chunk_size,
+				batch_offset_start + batch_count - batch_offset));
+		T* chunk_state = state == nullptr
+			? nullptr : state + local_offset * state_stride;
+		T* chunk_workspace = external_workspace == nullptr
+			? nullptr
+			: external_workspace + (owned_workspace == nullptr
+				? local_offset * external_workspace_stride : 0);
+		if (use_shared_storage) {
+			branched_sig_coef_forward_kernel_<T, true><<<
+				batch_chunk.grid, block, smem>>>(
+				path, chunk_state, out, static_cast<uint32_t>(dimension),
+				length == 0 ? 0 : static_cast<uint32_t>(length - 1),
+				length * dimension, cache.cache_size, cache.d_target_indices,
+				cache.num_targets, cache.d_labels_data, cache.d_labels_offsets,
+				d_inv_factorial, cache.d_coprod_data, cache.d_coprod_offsets,
+				cache.d_order_index, cache.d_leaf_indices,
+				cache.d_correction_offsets, cache.d_correction_locals,
+				num_corrections, cache.max_nodes, cache.coprod_data_len,
+				correction, correction_batch_stride, correction_segment_stride,
+				state_stride, nullptr, 0, batch_chunk.offset, batch_chunk.size);
+		} else {
+			branched_sig_coef_forward_kernel_<T, false><<<
+				batch_chunk.grid, std::min(block, 256u)>>>(
+				path, chunk_state, out, static_cast<uint32_t>(dimension),
+				length == 0 ? 0 : static_cast<uint32_t>(length - 1),
+				length * dimension, cache.cache_size, cache.d_target_indices,
+				cache.num_targets, cache.d_labels_data, cache.d_labels_offsets,
+				d_inv_factorial, cache.d_coprod_data, cache.d_coprod_offsets,
+				cache.d_order_index, cache.d_leaf_indices,
+				cache.d_correction_offsets, cache.d_correction_locals,
+				num_corrections, cache.max_nodes, cache.coprod_data_len,
+				correction, correction_batch_stride, correction_segment_stride,
+				state_stride, chunk_workspace, external_workspace_stride,
+				batch_chunk.offset, batch_chunk.size);
+		}
 		batch_offset += batch_chunk.size;
+		local_offset += batch_chunk.size;
 	}
 }
 
@@ -1849,14 +2200,36 @@ void branched_sig_coef_cuda_(
 	}
 
 	if (time_aug || lead_lag) {
-		CudaBuf<T> transformed(
-			batch_size * transformed_length * transformed_dimension * sizeof(T));
-		cu_transform_path_<T>(path, transformed.get(), batch_size, dimension, length,
-			time_aug, lead_lag, end_time);
-		branched_sig_coef_cuda_core_(transformed.get(), out, tree_data, tree_data_len,
-			batch_size, transformed_dimension, transformed_length, max_nodes, dimension,
-			planar, correction, correction_len, correction_batch_stride,
-			correction_segment_stride);
+		const size_t path_stride = checked_cuda_size_mul(
+			static_cast<size_t>(length), static_cast<size_t>(dimension),
+			"CUDA branched sig coef transformed path");
+		const size_t transformed_stride = checked_cuda_size_mul(
+			static_cast<size_t>(transformed_length),
+			static_cast<size_t>(transformed_dimension),
+			"CUDA branched sig coef transformed path");
+		const auto& cache = get_branched_sig_coef_cache_cuda_(
+			tree_data, tree_data_len, dimension, transformed_dimension,
+			max_nodes, planar);
+		const uint64_t output_stride = cache.num_targets;
+		CudaBatchWorkspace<T> transformed(
+			batch_size, transformed_stride,
+			"CUDA branched sig coef transformed path");
+		for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+			const auto chunk = make_cuda_batch_grid_chunk(
+				1, batch_size, batch_offset, transformed.capacity());
+			cu_transform_path_<T>(
+				path + chunk.offset * path_stride, transformed.get(), chunk.size,
+				dimension, length, time_aug, lead_lag, end_time);
+			const T* chunk_correction = correction_len == 0 ? nullptr
+				: correction + chunk.offset * correction_batch_stride;
+			branched_sig_coef_cuda_core_(
+				transformed.get(), out + chunk.offset * output_stride,
+				tree_data, tree_data_len, chunk.size, transformed_dimension,
+				transformed_length, max_nodes, dimension, planar,
+				chunk_correction, correction_len, correction_batch_stride,
+				correction_segment_stride);
+			batch_offset += chunk.size;
+		}
 	}
 	else {
 		branched_sig_coef_cuda_core_(path, out, tree_data, tree_data_len, batch_size,
@@ -1898,48 +2271,128 @@ void branched_sig_coef_backprop_cuda_core_(
 		return;
 	}
 
-	CudaBuf<T> state(batch_size * static_cast<uint64_t>(cache.cache_size) * sizeof(T));
-	launch_branched_sig_coef_forward_(path, state.get(), static_cast<T*>(nullptr),
-		batch_size, dimension, length, cache, correction, correction_len,
-		correction_batch_stride, correction_segment_stride);
-
 	const uint32_t num_non_scalar = cache.cache_size - 1;
 	unsigned int block = (num_non_scalar + 31u) & ~31u;
 	if (block < 32)
 		block = 32;
 	if (block > 1024)
-		throw std::invalid_argument("CUDA branched sig coef sparse closure exceeds 1024 trees");
+		block = 1024;
 	const uint32_t num_corrections = branched_sig_coef_num_corrections_(cache, correction_len);
 	const bool has_correction = num_corrections != 0;
-	const uint64_t t_arrays = has_correction
-		? (6 + 2 * static_cast<uint64_t>(cache.max_nodes)) * cache.cache_size
-			+ 2 * dimension
-		: 4 * static_cast<uint64_t>(cache.cache_size) + 2 * dimension;
-	const size_t smem = t_arrays * sizeof(T)
-		+ cache.coprod_data_len * sizeof(uint32_t)
-		+ (static_cast<uint64_t>(cache.cache_size) + 1) * sizeof(uint32_t)
-		+ (static_cast<uint64_t>(cache.max_nodes) + 2) * sizeof(uint32_t);
+	const size_t global_basis_arrays = has_correction ? 10 : 4;
+	const size_t shared_basis_arrays = has_correction
+		? checked_cuda_size_add(
+			6, checked_cuda_size_mul(
+				2, static_cast<size_t>(max_nodes),
+				"CUDA branched sig coef backprop"),
+			"CUDA branched sig coef backprop")
+		: 4;
+	const size_t global_backprop_arrays = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			global_basis_arrays, static_cast<size_t>(cache.cache_size),
+			"CUDA branched sig coef backprop"),
+		checked_cuda_size_mul(
+			2, static_cast<size_t>(dimension),
+			"CUDA branched sig coef backprop"),
+		"CUDA branched sig coef backprop");
+	const size_t shared_backprop_arrays = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			shared_basis_arrays, static_cast<size_t>(cache.cache_size),
+			"CUDA branched sig coef backprop"),
+		checked_cuda_size_mul(
+			2, static_cast<size_t>(dimension),
+			"CUDA branched sig coef backprop"),
+		"CUDA branched sig coef backprop");
+	const size_t forward_arrays = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			has_correction ? 4 : 1,
+			static_cast<size_t>(cache.cache_size),
+			"CUDA branched sig coef backprop"),
+		static_cast<size_t>(dimension),
+		"CUDA branched sig coef backprop");
+	const size_t table_entries = checked_cuda_size_add(
+		static_cast<size_t>(cache.coprod_data_len),
+		checked_cuda_size_add(
+			static_cast<size_t>(cache.cache_size) + 1,
+			static_cast<size_t>(cache.max_nodes) + 2,
+			"CUDA branched sig coef backprop"),
+		"CUDA branched sig coef backprop");
+	const size_t table_bytes = checked_cuda_size_mul(
+		table_entries, sizeof(uint32_t),
+		"CUDA branched sig coef backprop");
+	const size_t smem = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			shared_backprop_arrays, sizeof(T),
+			"CUDA branched sig coef backprop"),
+		table_bytes, "CUDA branched sig coef backprop");
+	const size_t forward_smem = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			forward_arrays, sizeof(T),
+			"CUDA branched sig coef backprop"),
+		table_bytes, "CUDA branched sig coef backprop");
 	const T* d_inv_factorial;
 	if constexpr (std::is_same_v<T, float>)
 		d_inv_factorial = reinterpret_cast<const T*>(cache.d_inv_factorial_f32);
 	else
 		d_inv_factorial = reinterpret_cast<const T*>(cache.d_inv_factorial_f64);
 
-	configure_dynamic_smem(
-		branched_sig_coef_backprop_kernel_<T>, smem,
+	const bool use_shared_forward = try_configure_dynamic_smem(
+		branched_sig_coef_forward_kernel_<T, true>, forward_smem);
+	const bool use_shared_backprop = try_configure_dynamic_smem(
+		branched_sig_coef_backprop_kernel_<T, true>, smem);
+	const size_t scratch_arrays = std::max(
+		use_shared_forward ? size_t(0) : forward_arrays,
+		use_shared_backprop ? size_t(0) : global_backprop_arrays);
+	const size_t workspace_stride = checked_cuda_size_add(
+		static_cast<size_t>(cache.cache_size), scratch_arrays,
 		"CUDA branched sig coef backprop");
+	CudaBatchWorkspace<T> workspace(
+		batch_size, workspace_stride,
+		"CUDA branched sig coef backprop workspace");
+	T* state = workspace.get();
+	T* scratch = state + cache.cache_size;
+	const size_t path_stride = checked_cuda_size_mul(
+		static_cast<size_t>(length), static_cast<size_t>(dimension),
+		"CUDA branched sig coef backprop");
+
 	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 		const auto batch_chunk = make_cuda_batch_grid_chunk(
-			1, batch_size, batch_offset);
-		branched_sig_coef_backprop_kernel_<T><<<batch_chunk.grid, block, smem>>>(
-			path, out, state.get(), coefs, derivs, static_cast<uint32_t>(dimension),
-			static_cast<uint32_t>(length - 1), length * dimension, cache.cache_size,
-			cache.d_target_indices, cache.num_targets, cache.d_labels_data,
-			cache.d_labels_offsets, d_inv_factorial, cache.d_coprod_data,
-			cache.d_coprod_offsets, cache.d_order_index, cache.d_leaf_indices,
-			cache.d_correction_offsets, cache.d_correction_locals, num_corrections,
-			cache.max_nodes, cache.coprod_data_len, correction, correction_batch_stride,
-			correction_segment_stride, batch_chunk.offset, batch_chunk.size);
+			1, batch_size, batch_offset, workspace.capacity());
+		launch_branched_sig_coef_forward_(
+			path, state, static_cast<T*>(nullptr), batch_size, dimension, length,
+			cache, correction, correction_len, correction_batch_stride,
+			correction_segment_stride, batch_chunk.offset, batch_chunk.size,
+			workspace_stride, use_shared_forward ? nullptr : scratch,
+			workspace_stride);
+		if (use_shared_backprop) {
+			branched_sig_coef_backprop_kernel_<T, true><<<
+				batch_chunk.grid, block, smem>>>(
+				path, out, state, coefs, derivs,
+				static_cast<uint32_t>(dimension),
+				static_cast<uint32_t>(length - 1), path_stride,
+				cache.cache_size, cache.d_target_indices, cache.num_targets,
+				cache.d_labels_data, cache.d_labels_offsets, d_inv_factorial,
+				cache.d_coprod_data, cache.d_coprod_offsets, cache.d_order_index,
+				cache.d_leaf_indices, cache.d_correction_offsets,
+				cache.d_correction_locals, num_corrections, cache.max_nodes,
+				cache.coprod_data_len, correction, correction_batch_stride,
+				correction_segment_stride, workspace_stride, nullptr, 0,
+				batch_chunk.offset, batch_chunk.size);
+		} else {
+			branched_sig_coef_backprop_kernel_<T, false><<<
+				batch_chunk.grid, std::min(block, 256u)>>>(
+				path, out, state, coefs, derivs,
+				static_cast<uint32_t>(dimension),
+				static_cast<uint32_t>(length - 1), path_stride,
+				cache.cache_size, cache.d_target_indices, cache.num_targets,
+				cache.d_labels_data, cache.d_labels_offsets, d_inv_factorial,
+				cache.d_coprod_data, cache.d_coprod_offsets, cache.d_order_index,
+				cache.d_leaf_indices, cache.d_correction_offsets,
+				cache.d_correction_locals, num_corrections, cache.max_nodes,
+				cache.coprod_data_len, correction, correction_batch_stride,
+				correction_segment_stride, workspace_stride, scratch,
+				workspace_stride, batch_chunk.offset, batch_chunk.size);
+		}
 		batch_offset += batch_chunk.size;
 	}
 	cudaDeviceSynchronize();
@@ -1989,19 +2442,46 @@ void branched_sig_coef_backprop_cuda_(
 	}
 
 	if (time_aug || lead_lag) {
-		CudaBuf<T> transformed(
-			batch_size * transformed_length * transformed_dimension * sizeof(T));
-		CudaBuf<T> transformed_derivs(
-			batch_size * transformed_length * transformed_dimension * sizeof(T));
-		cu_transform_path_<T>(path, transformed.get(), batch_size, dimension, length,
-			time_aug, lead_lag, end_time);
-		branched_sig_coef_backprop_cuda_core_(transformed.get(),
-			transformed_derivs.get(), coefs, derivs, tree_data, tree_data_len,
-			batch_size, transformed_dimension, transformed_length, max_nodes, dimension,
-			planar, correction, correction_len, correction_batch_stride,
-			correction_segment_stride);
-		cu_transform_path_backprop_<T>(transformed_derivs.get(), out, batch_size,
-			dimension, length, time_aug, lead_lag, end_time);
+		const size_t path_stride = checked_cuda_size_mul(
+			static_cast<size_t>(length), static_cast<size_t>(dimension),
+			"CUDA branched sig coef backprop transformed path");
+		const size_t transformed_stride = checked_cuda_size_mul(
+			static_cast<size_t>(transformed_length),
+			static_cast<size_t>(transformed_dimension),
+			"CUDA branched sig coef backprop transformed path");
+		const size_t workspace_row = checked_cuda_size_mul(
+			2, transformed_stride,
+			"CUDA branched sig coef backprop transformed path");
+		const auto& cache = get_branched_sig_coef_cache_cuda_(
+			tree_data, tree_data_len, dimension, transformed_dimension,
+			max_nodes, planar);
+		const uint64_t coef_stride = cache.num_targets;
+		CudaBatchWorkspace<T> transformed(
+			batch_size, workspace_row,
+			"CUDA branched sig coef backprop transformed path");
+		T* transformed_derivs = transformed.get()
+			+ transformed.capacity() * transformed_stride;
+		for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+			const auto chunk = make_cuda_batch_grid_chunk(
+				1, batch_size, batch_offset, transformed.capacity());
+			cu_transform_path_<T>(
+				path + chunk.offset * path_stride, transformed.get(), chunk.size,
+				dimension, length, time_aug, lead_lag, end_time);
+			const T* chunk_correction = correction_len == 0 ? nullptr
+				: correction + chunk.offset * correction_batch_stride;
+			branched_sig_coef_backprop_cuda_core_(
+				transformed.get(), transformed_derivs,
+				coefs + chunk.offset * coef_stride,
+				derivs + chunk.offset * coef_stride,
+				tree_data, tree_data_len, chunk.size, transformed_dimension,
+				transformed_length, max_nodes, dimension, planar,
+				chunk_correction, correction_len, correction_batch_stride,
+				correction_segment_stride);
+			cu_transform_path_backprop_<T>(
+				transformed_derivs, out + chunk.offset * path_stride, chunk.size,
+				dimension, length, time_aug, lead_lag, end_time);
+			batch_offset += chunk.size;
+		}
 		cudaDeviceSynchronize();
 		check_cuda_error();
 	}
@@ -2050,30 +2530,71 @@ void branched_sig_backprop_cuda_core_(
 	}
 
 	const int steps = static_cast<int>(length - 1);
-	const uint64_t path_stride = length * dimension;
+	const size_t path_stride = checked_cuda_size_mul(
+		static_cast<size_t>(length), static_cast<size_t>(dimension),
+		"CUDA branched sig backprop");
 
 	unsigned int block = static_cast<unsigned int>((gc.num_trees + 31u) & ~31u);
 	if (block < 32) block = 32;
-	if (block > 1024)
-		throw std::invalid_argument("CUDA branched sig backprop: num_trees > 1024 not supported");
+	if (block > 1024) block = 1024;
 
 	const bool use_inc_reduction = dimension <= 4;
-	const uint64_t reduction_length = use_inc_reduction
-		? dimension * (block >> 5)
+	const size_t reduction_length = use_inc_reduction
+		? checked_cuda_size_mul(
+			static_cast<size_t>(dimension), block >> 5,
+			"CUDA branched sig backprop")
 		: 0;
 	const bool use_product_reduction = !has_correction && max_nodes >= 4
 		&& (planar || std::is_same_v<T, double>);
-	const uint64_t product_reduction_length = use_product_reduction
-		? 2 * static_cast<uint64_t>(block >> 5) * gc.deriv_target_count
+	const size_t product_reduction_length = use_product_reduction
+		? checked_cuda_size_mul(
+			2 * static_cast<size_t>(block >> 5),
+			static_cast<size_t>(gc.deriv_target_count),
+			"CUDA branched sig backprop")
 		: 0;
-	const uint64_t t_arrays = (has_correction
-		? ((6 + 2 * static_cast<uint64_t>(gc.max_nodes)) * gc.total_length + 2 * dimension)
-		: (4 * gc.total_length + 2 * dimension))
-		+ reduction_length + product_reduction_length;
-	size_t smem = t_arrays * sizeof(T)
-		+ gc.coprod_data_len * sizeof(uint32_t)
-		+ (gc.num_trees + 1) * sizeof(uint32_t)
-		+ (gc.max_nodes + 2) * sizeof(uint32_t);
+	const size_t global_basis_arrays = has_correction ? 10 : 4;
+	const size_t shared_basis_arrays = has_correction
+		? checked_cuda_size_add(
+			6, checked_cuda_size_mul(
+				2, static_cast<size_t>(max_nodes),
+				"CUDA branched sig backprop"),
+			"CUDA branched sig backprop")
+		: 4;
+	const size_t global_t_arrays = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			global_basis_arrays, static_cast<size_t>(gc.total_length),
+			"CUDA branched sig backprop"),
+		checked_cuda_size_mul(
+			2, static_cast<size_t>(dimension),
+			"CUDA branched sig backprop"),
+		"CUDA branched sig backprop");
+	const size_t shared_t_arrays = checked_cuda_size_add(
+		checked_cuda_size_add(
+			checked_cuda_size_mul(
+				shared_basis_arrays, static_cast<size_t>(gc.total_length),
+				"CUDA branched sig backprop"),
+			checked_cuda_size_mul(
+				2, static_cast<size_t>(dimension),
+				"CUDA branched sig backprop"),
+			"CUDA branched sig backprop"),
+		checked_cuda_size_add(
+			reduction_length, product_reduction_length,
+			"CUDA branched sig backprop"),
+		"CUDA branched sig backprop");
+	const size_t table_entries = checked_cuda_size_add(
+		static_cast<size_t>(gc.coprod_data_len),
+		checked_cuda_size_add(
+			static_cast<size_t>(gc.num_trees) + 1,
+			static_cast<size_t>(gc.max_nodes) + 2,
+			"CUDA branched sig backprop"),
+		"CUDA branched sig backprop");
+	const size_t smem = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			shared_t_arrays, sizeof(T), "CUDA branched sig backprop"),
+		checked_cuda_size_mul(
+			table_entries, sizeof(uint32_t),
+			"CUDA branched sig backprop"),
+		"CUDA branched sig backprop");
 
 	const T* d_inv_fact;
 	if constexpr (std::is_same_v<T, float>)
@@ -2081,25 +2602,48 @@ void branched_sig_backprop_cuda_core_(
 	else
 		d_inv_fact = reinterpret_cast<const T*>(gc.d_inv_factorial_f64);
 
-	configure_dynamic_smem(
-		branched_sig_backprop_ker<T>, smem, "CUDA branched sig backprop");
+	const bool use_shared_storage = try_configure_dynamic_smem(
+		branched_sig_backprop_ker<T, true>, smem);
+	std::unique_ptr<CudaBatchWorkspace<T>> workspace;
+	if (!use_shared_storage) {
+		workspace = std::make_unique<CudaBatchWorkspace<T>>(
+			batch_size, global_t_arrays,
+			"CUDA branched sig backprop global workspace");
+	}
+	const uint64_t max_chunk_size = use_shared_storage
+		? CUDA_BATCH_GRID_CAPACITY : workspace->capacity();
 	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 		const auto batch_chunk = make_cuda_batch_grid_chunk(
-			1, batch_size, batch_offset);
-		branched_sig_backprop_ker<T><<<batch_chunk.grid, block, smem>>>(
-			path, out, bsig, bsig_derivs,
-			static_cast<int>(dimension), static_cast<int>(data_dimension), steps,
-			gc.total_length, path_stride,
-			gc.d_labels_data, gc.d_labels_offsets32,
-			d_inv_fact,
-			gc.d_coprod_data32, gc.d_coprod_offsets32,
-			gc.d_order_index32, gc.d_chain_index_offsets32, gc.d_chain_indices32, gc.max_nodes,
-			gc.coprod_data_len, gc.deriv_target_count,
-			use_inc_reduction, use_product_reduction,
-			correction, correction_len,
-			correction_batch_stride, correction_segment_stride,
-			batch_chunk.offset, batch_chunk.size
-		);
+			1, batch_size, batch_offset, max_chunk_size);
+		if (use_shared_storage) {
+			branched_sig_backprop_ker<T, true><<<
+				batch_chunk.grid, block, smem>>>(
+				path, out, bsig, bsig_derivs,
+				static_cast<int>(dimension), static_cast<int>(data_dimension),
+				steps, gc.total_length, path_stride,
+				gc.d_labels_data, gc.d_labels_offsets32, d_inv_fact,
+				gc.d_coprod_data32, gc.d_coprod_offsets32,
+				gc.d_order_index32, gc.d_chain_index_offsets32,
+				gc.d_chain_indices32, gc.max_nodes, gc.coprod_data_len,
+				gc.deriv_target_count, use_inc_reduction,
+				use_product_reduction, correction, correction_len,
+				correction_batch_stride, correction_segment_stride,
+				nullptr, 0, batch_chunk.offset, batch_chunk.size);
+		} else {
+			branched_sig_backprop_ker<T, false><<<
+				batch_chunk.grid, std::min(block, 256u)>>>(
+				path, out, bsig, bsig_derivs,
+				static_cast<int>(dimension), static_cast<int>(data_dimension),
+				steps, gc.total_length, path_stride,
+				gc.d_labels_data, gc.d_labels_offsets32, d_inv_fact,
+				gc.d_coprod_data32, gc.d_coprod_offsets32,
+				gc.d_order_index32, gc.d_chain_index_offsets32,
+				gc.d_chain_indices32, gc.max_nodes, gc.coprod_data_len,
+				gc.deriv_target_count, false, false, correction, correction_len,
+				correction_batch_stride, correction_segment_stride,
+				workspace->get(), global_t_arrays,
+				batch_chunk.offset, batch_chunk.size);
+		}
 		batch_offset += batch_chunk.size;
 	}
 	cudaDeviceSynchronize();
@@ -2131,54 +2675,82 @@ void branched_sig_backprop_cuda_(
 		throw std::invalid_argument("correction pointer is null but correction_len is nonzero");
 	if (lead_lag && correction_len != 0)
 		throw std::invalid_argument("correction cannot be used with lead_lag=true");
+	if (batch_size == 0)
+		return;
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
-
-	// Stage bsig and bsig_derivs to full-size buffers when scalar_term=false.
-	const T* core_bsig = bsig;
-	const T* core_derivs = bsig_derivs;
-	CudaBuf<T> d_bsig_full;
-	CudaBuf<T> d_derivs_full;
-	if (!scalar_term) {
-		const auto& gc = get_gpu_cache(t_dimension, max_nodes, planar);
-		const uint64_t full_len = gc.total_length;
-		d_bsig_full = CudaBuf<T>(batch_size * full_len * sizeof(T));
-		d_derivs_full = CudaBuf<T>(batch_size * full_len * sizeof(T));
-		bsig_stage_prepend_one_<T>(bsig, d_bsig_full.get(), batch_size, full_len);
-		bsig_stage_prepend_zero_<T>(bsig_derivs, d_derivs_full.get(), batch_size, full_len);
-		core_bsig = d_bsig_full.get();
-		core_derivs = d_derivs_full.get();
-	}
-
-	if (time_aug || lead_lag) {
-		const uint64_t t_path_size = batch_size * t_length * t_dimension;
-		T* d_transformed = nullptr;
-		T* d_transformed_derivs = nullptr;
-
-		try {
-			cudaMalloc(&d_transformed, t_path_size * sizeof(T));
-			cu_transform_path_<T>(path, d_transformed, batch_size, dimension, length, time_aug, lead_lag, end_time);
-
-			cudaMalloc(&d_transformed_derivs, t_path_size * sizeof(T));
-			branched_sig_backprop_cuda_core_<T>(d_transformed, d_transformed_derivs, core_derivs, core_bsig,
-				batch_size, t_dimension, t_length, max_nodes, planar, dimension, correction, correction_len,
-				correction_batch_stride, correction_segment_stride);
-
-			cudaFree(d_transformed);
-			d_transformed = nullptr;
-
-			cu_transform_path_backprop_<T>(d_transformed_derivs, out, batch_size, dimension, length, time_aug, lead_lag, end_time);
-			cudaFree(d_transformed_derivs);
-		} catch (...) {
-			if (d_transformed) cudaFree(d_transformed);
-			if (d_transformed_derivs) cudaFree(d_transformed_derivs);
-			throw;
-		}
-	}
-	else {
-		branched_sig_backprop_cuda_core_<T>(path, out, core_derivs, core_bsig,
-			batch_size, dimension, length, max_nodes, planar, dimension, correction, correction_len,
+	if (scalar_term && !time_aug && !lead_lag) {
+		branched_sig_backprop_cuda_core_<T>(
+			path, out, bsig_derivs, bsig, batch_size, dimension, length,
+			max_nodes, planar, dimension, correction, correction_len,
 			correction_batch_stride, correction_segment_stride);
+		return;
+	}
+
+	const auto& gc = get_gpu_cache(t_dimension, max_nodes, planar);
+	const uint64_t full_len = gc.total_length;
+	const uint64_t sig_stride = scalar_term ? full_len : full_len - 1;
+	const size_t path_stride = checked_cuda_size_mul(
+		static_cast<size_t>(length), static_cast<size_t>(dimension),
+		"CUDA branched sig backprop staging");
+	const size_t transformed_stride = time_aug || lead_lag
+		? checked_cuda_size_mul(
+			static_cast<size_t>(t_length), static_cast<size_t>(t_dimension),
+			"CUDA branched sig backprop staging")
+		: 0;
+	const size_t transformed_arrays = checked_cuda_size_mul(
+		2, transformed_stride, "CUDA branched sig backprop staging");
+	const size_t scalar_arrays = scalar_term ? 0 : checked_cuda_size_mul(
+		2, static_cast<size_t>(full_len),
+		"CUDA branched sig backprop staging");
+	const size_t workspace_row = checked_cuda_size_add(
+		transformed_arrays, scalar_arrays,
+		"CUDA branched sig backprop staging");
+	CudaBatchWorkspace<T> workspace(
+		batch_size, workspace_row, "CUDA branched sig backprop staging");
+	T* transformed = workspace.get();
+	T* transformed_derivs = transformed
+		+ workspace.capacity() * transformed_stride;
+	T* staged_bsig = transformed_derivs
+		+ workspace.capacity() * transformed_stride;
+	T* staged_derivs = staged_bsig
+		+ workspace.capacity() * (scalar_term ? 0 : full_len);
+
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto chunk = make_cuda_batch_grid_chunk(
+			1, batch_size, batch_offset, workspace.capacity());
+		const T* core_path = path + chunk.offset * path_stride;
+		T* core_out = out + chunk.offset * path_stride;
+		if (time_aug || lead_lag) {
+			cu_transform_path_<T>(
+				core_path, transformed, chunk.size, dimension, length,
+				time_aug, lead_lag, end_time);
+			core_path = transformed;
+			core_out = transformed_derivs;
+		}
+		const T* core_bsig = bsig + chunk.offset * sig_stride;
+		const T* core_derivs = bsig_derivs + chunk.offset * sig_stride;
+		if (!scalar_term) {
+			bsig_stage_prepend_one_<T>(
+				core_bsig, staged_bsig, chunk.size, full_len);
+			bsig_stage_prepend_zero_<T>(
+				core_derivs, staged_derivs, chunk.size, full_len);
+			core_bsig = staged_bsig;
+			core_derivs = staged_derivs;
+		}
+		const T* chunk_correction = correction_len == 0 ? nullptr
+			: correction + chunk.offset * correction_batch_stride;
+		branched_sig_backprop_cuda_core_<T>(
+			core_path, core_out, core_derivs, core_bsig, chunk.size,
+			t_dimension, t_length, max_nodes, planar, dimension,
+			chunk_correction, correction_len, correction_batch_stride,
+			correction_segment_stride);
+		if (time_aug || lead_lag) {
+			cu_transform_path_backprop_<T>(
+				transformed_derivs, out + chunk.offset * path_stride,
+				chunk.size, dimension, length, time_aug, lead_lag, end_time);
+		}
+		batch_offset += chunk.size;
 	}
 }
 

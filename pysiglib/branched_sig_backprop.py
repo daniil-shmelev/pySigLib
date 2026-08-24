@@ -25,8 +25,7 @@ from .dtypes import (CPSIG_BRANCHED_SIG_BACKPROP,
                      CUSIG_BRANCHED_SIG_BACKPROP,
                      CUSIG_BRANCHED_SIG_COMBINE_BACKPROP)
 from .data_handlers import PathInputHandler, PathOutputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
-from .branched_sig import (branched_sig_length, _infer_branched_scalar_term,
-                           _check_cuda_num_basis)
+from .branched_sig import branched_sig_length, _infer_branched_scalar_term
 
 
 def branched_sig_backprop(
@@ -137,7 +136,6 @@ def branched_sig_backprop(
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride)
     else:
-        _check_cuda_num_basis(aug_dimension, degree, planar, "branched_sig_backprop")
         err_code = CUSIG_BRANCHED_SIG_BACKPROP[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
@@ -146,7 +144,9 @@ def branched_sig_backprop(
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride)
     if err_code:
-        raise Exception("Error in pysiglib.branched_sig_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.branched_sig_backprop: "
+            + err_msg(err_code, result.device))
     return result.data
 
 
@@ -205,11 +205,12 @@ def branched_sig_combine_backprop(
             result1.data_ptr, result2.data_ptr,
             data.batch_size, dimension, degree, n_jobs, planar, scalar_term)
     else:
-        _check_cuda_num_basis(dimension, degree, planar, "branched_sig_combine_backprop")
         err_code = CUSIG_BRANCHED_SIG_COMBINE_BACKPROP[data.dtype](
             data.sig_ptr[1], data.sig_ptr[2], data.sig_ptr[0],
             result1.data_ptr, result2.data_ptr,
             data.batch_size, dimension, degree, planar, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.branched_sig_combine_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.branched_sig_combine_backprop: "
+            + err_msg(err_code, result1.device))
     return result1.data, result2.data

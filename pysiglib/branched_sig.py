@@ -86,7 +86,8 @@ def prepare_branched_sig(
             aug_dimension, degree, use_disk, planar)
         if err_code:
             raise Exception(
-                "Error in pysiglib.prepare_branched_sig: " + err_msg(err_code))
+                "Error in pysiglib.prepare_branched_sig: "
+                + err_msg(err_code, "cpu"))
 
     if BUILT_WITH_CUDA and device in ("cuda", "both"):
         err_code = CUSIG.prepare_branched_sig_cuda(
@@ -94,7 +95,7 @@ def prepare_branched_sig(
         if err_code:
             raise Exception(
                 "Error in pysiglib.prepare_branched_sig (CUDA): "
-                + err_msg(err_code))
+                + err_msg(err_code, "cuda"))
 
 
 def branched_sig_length(dimension: int, degree: int, *, planar: bool = False, scalar_term: bool = False) -> int:
@@ -125,26 +126,6 @@ def branched_sig_length(dimension: int, degree: int, *, planar: bool = False, sc
     if out == 0:
         raise ValueError("Invalid parameters or integer overflow in branched_sig_length")
     return out - (0 if scalar_term else 1)
-
-
-_CUDA_MAX_NUM_BASIS = 1024  # CUDA kernel hardcoded thread-block size limit
-
-
-def _check_cuda_num_basis(dimension: int, degree: int, planar: bool, fn_name: str) -> None:
-    """Precheck the number of basis elements against the CUDA kernel limit.
-
-    The branched_sig CUDA kernel launches one thread per basis element within a single
-    block, capped at 1024. Above that, the kernel aborts with an opaque
-    ``Invalid argument (2)`` error. Surface a clear Python-level error instead.
-    """
-    num_basis = branched_sig_length(dimension, degree, planar=planar, scalar_term=False)
-    if num_basis > _CUDA_MAX_NUM_BASIS:
-        raise RuntimeError(
-            f"{fn_name}: num_basis={num_basis} exceeds CUDA kernel limit of "
-            f"{_CUDA_MAX_NUM_BASIS} for (dim={dimension}, degree={degree}"
-            + (f", planar={planar}" if planar else "")
-            + "). Use CPU or reduce degree."
-        )
 
 
 def _infer_branched_scalar_term(bsig, dimension: int, degree: int, planar: bool = False) -> bool:
@@ -299,7 +280,6 @@ def branched_sig(
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride)
     else:
-        _check_cuda_num_basis(aug_dimension, degree, planar, "branched_sig")
         err_code = CUSIG_BRANCHED_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             dimension, data.data_length, degree,
@@ -307,7 +287,9 @@ def branched_sig(
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride)
     if err_code:
-        raise Exception("Error in pysiglib.branched_sig: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.branched_sig: "
+            + err_msg(err_code, result.device))
     return result.data
 
 
@@ -358,10 +340,11 @@ def branched_sig_combine(
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, dimension, degree, n_jobs, planar, scalar_term)
     else:
-        _check_cuda_num_basis(dimension, degree, planar, "branched_sig_combine")
         err_code = CUSIG_BRANCHED_SIG_COMBINE[data.dtype](
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, dimension, degree, planar, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.branched_sig_combine: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.branched_sig_combine: "
+            + err_msg(err_code, result.device))
     return result.data

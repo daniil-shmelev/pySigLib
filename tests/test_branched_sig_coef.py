@@ -449,12 +449,14 @@ def test_branched_sig_dense_cuda_cache_is_per_device():
 def test_branched_sig_dense_cuda_disk_cache(tmp_path):
     pysiglib.set_cache_dir(str(tmp_path))
     dimension, degree = 2, 3
-    cache_file = tmp_path / "pysiglib_cache" / "branched_2_3_v3.bin"
     pysiglib.clear_cache(use_disk=True)
     try:
         pysiglib.prepare_branched_sig(
             dimension, degree, device="cuda", use_disk=True)
-        assert cache_file.is_file()
+        cache_files = list((tmp_path / "pysiglib_cache").glob(
+            "branched_2_3_v*.bin"))
+        assert len(cache_files) == 1
+        cache_file = cache_files[0]
 
         pysiglib.clear_cache(device="cuda")
         cache_file.write_bytes(b"invalid")

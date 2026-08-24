@@ -36,6 +36,7 @@
 #endif
 
 extern "C" {
+	CUSIG_API const char* cusig_last_error_message() noexcept;
 
 	
 	/** @defgroup transform_path_cuda_functions Transform path CUDA functions

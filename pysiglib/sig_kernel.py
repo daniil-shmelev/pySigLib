@@ -287,7 +287,9 @@ def sig_kernel(
             data.length[0], data.length[1],
             dyadic_order_1, dyadic_order_2, return_grid)
     if err_code:
-        raise Exception("Error in pysiglib.sig_kernel: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.sig_kernel: "
+            + err_msg(err_code, result.device))
 
     if isinstance(result.data, np.ndarray):
         has_bad = np.isnan(result.data).any() or np.isinf(result.data).any()

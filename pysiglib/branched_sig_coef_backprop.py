@@ -140,5 +140,7 @@ def branched_sig_coef_backprop(
             correction_data.batch_stride, correction_data.segment_stride,
         )
     if err_code:
-        raise Exception("Error in pysiglib.branched_sig_coef_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.branched_sig_coef_backprop: "
+            + err_msg(err_code, result.device))
     return result.data

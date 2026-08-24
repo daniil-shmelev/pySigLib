@@ -29,8 +29,8 @@ __device__ void sparse_branched_hopf_convolution_block_(
 ) {
 	if (tid == 0)
 		out[0] = X[0] * Y[0];
-	const uint32_t local = tid + 1;
-	if (local < cache_size) {
+	for (uint32_t local = tid + 1; local < cache_size;
+		local += blockDim.x) {
 		T value = X[local] * Y[0] + X[0] * Y[local];
 		uint32_t pos = coprod_offsets[local];
 		const uint32_t end = coprod_offsets[local + 1];
@@ -63,8 +63,8 @@ __device__ void sparse_branched_hopf_convolution_deriv_block_(
 		myAtomicAdd(&d_X[0], d_out[0] * Y[0]);
 		myAtomicAdd(&d_Y[0], d_out[0] * X[0]);
 	}
-	const uint32_t local = tid + 1;
-	if (local < cache_size) {
+	for (uint32_t local = tid + 1; local < cache_size;
+		local += blockDim.x) {
 		const T d = d_out[local];
 		if (d != T(0)) {
 			myAtomicAdd(&d_X[local], d * Y[0]);
@@ -125,8 +125,8 @@ __device__ void sparse_linear_branched_sig_block_(
 ) {
 	if (tid == 0)
 		out[0] = T(1);
-	const uint32_t local = tid + 1;
-	if (local < cache_size) {
+	for (uint32_t local = tid + 1; local < cache_size;
+		local += blockDim.x) {
 		T product = T(1);
 		const uint32_t start = labels_offsets[local];
 		const uint32_t end = labels_offsets[local + 1];
@@ -228,8 +228,8 @@ __device__ void sparse_linear_branched_sig_deriv_block_(
 		increment_derivs[d] = T(0);
 	__syncthreads();
 
-	const uint32_t local = tid + 1;
-	if (local < cache_size) {
+	for (uint32_t local = tid + 1; local < cache_size;
+		local += blockDim.x) {
 		const T derivative = local_derivs[local];
 		if (derivative != T(0)) {
 			const uint32_t start = labels_offsets[local];
@@ -249,7 +249,104 @@ __device__ void sparse_linear_branched_sig_deriv_block_(
 }
 
 template<typename T>
-__device__ void sparse_local_branched_sig_deriv_block_(
+__device__ void sparse_local_branched_sig_deriv_rolling_block_(
+	const T* local_derivs,
+	const T* increment,
+	T* increment_derivs,
+	T* local_log,
+	T* powers,
+	T* power_derivs,
+	T* d_local_log,
+	uint32_t dimension,
+	const T* correction,
+	uint32_t cache_size,
+	const uint8_t* labels_data,
+	const uint32_t* labels_offsets,
+	const T* inv_factorial,
+	const uint32_t* coprod_data,
+	const uint32_t* coprod_offsets,
+	const uint32_t* leaf_indices,
+	const uint32_t* correction_offsets,
+	const uint32_t* correction_locals,
+	uint32_t num_corrections,
+	uint32_t max_nodes,
+	uint32_t tid
+) {
+	if (num_corrections == 0 || max_nodes <= 2) {
+		sparse_linear_branched_sig_deriv_block_(local_derivs, increment,
+			increment_derivs, dimension, cache_size, labels_data,
+			labels_offsets, inv_factorial, tid);
+		return;
+	}
+
+	for (uint32_t i = tid; i < cache_size; i += blockDim.x)
+		local_log[i] = T(0);
+	__syncthreads();
+	for (uint32_t d = tid; d < dimension; d += blockDim.x) {
+		const uint32_t local = leaf_indices[d];
+		if (local != 0)
+			local_log[local] = increment[d];
+	}
+	__syncthreads();
+	sparse_branched_add_correction_block_(local_log, correction,
+		correction_offsets, correction_locals, num_corrections, tid);
+
+	T* power_current = powers;
+	T* power_next = powers + cache_size;
+	T* adjoint_current = power_derivs;
+	T* adjoint_next = power_derivs + cache_size;
+	for (uint32_t i = tid; i < cache_size; i += blockDim.x)
+		d_local_log[i] = T(0);
+	T inv_k_factorial = T(1);
+	for (uint32_t k = 2; k <= max_nodes; ++k)
+		inv_k_factorial /= static_cast<T>(k);
+	for (uint32_t i = tid; i < cache_size; i += blockDim.x)
+		adjoint_current[i] = i == 0
+			? T(0) : inv_k_factorial * local_derivs[i];
+	__syncthreads();
+
+	for (uint32_t k = max_nodes; k > 1; --k) {
+		for (uint32_t i = tid; i < cache_size; i += blockDim.x)
+			power_current[i] = local_log[i];
+		__syncthreads();
+		T* current = power_current;
+		T* next = power_next;
+		for (uint32_t power_level = 2; power_level < k; ++power_level) {
+			sparse_branched_hopf_convolution_block_(
+				current, local_log, next, cache_size,
+				coprod_data, coprod_offsets, tid);
+			T* swap = current;
+			current = next;
+			next = swap;
+		}
+
+		for (uint32_t i = tid; i < cache_size; i += blockDim.x)
+			adjoint_next[i] = T(0);
+		__syncthreads();
+		sparse_branched_hopf_convolution_deriv_block_(
+			current, local_log, adjoint_current, adjoint_next,
+			d_local_log, cache_size, coprod_data, coprod_offsets, tid);
+		inv_k_factorial *= static_cast<T>(k);
+		for (uint32_t i = tid + 1; i < cache_size; i += blockDim.x)
+			adjoint_next[i] += inv_k_factorial * local_derivs[i];
+		__syncthreads();
+		T* adjoint_swap = adjoint_current;
+		adjoint_current = adjoint_next;
+		adjoint_next = adjoint_swap;
+	}
+
+	for (uint32_t i = tid; i < cache_size; i += blockDim.x)
+		d_local_log[i] += adjoint_current[i];
+	__syncthreads();
+	for (uint32_t d = tid; d < dimension; d += blockDim.x) {
+		const uint32_t local = leaf_indices[d];
+		increment_derivs[d] = local == 0 ? T(0) : d_local_log[local];
+	}
+	__syncthreads();
+}
+
+template<typename T>
+__device__ void sparse_local_branched_sig_deriv_saved_block_(
 	const T* local_derivs,
 	const T* increment,
 	T* increment_derivs,
@@ -294,11 +391,12 @@ __device__ void sparse_local_branched_sig_deriv_block_(
 	for (uint32_t i = tid; i < cache_size; i += blockDim.x)
 		powers[i] = local_log[i];
 	__syncthreads();
-	for (uint32_t k = 2; k <= max_nodes; ++k)
+	for (uint32_t k = 2; k <= max_nodes; ++k) {
 		sparse_branched_hopf_convolution_block_(
 			powers + (k - 2) * cache_size, local_log,
 			powers + (k - 1) * cache_size, cache_size,
 			coprod_data, coprod_offsets, tid);
+	}
 
 	for (uint32_t i = tid; i < max_nodes * cache_size; i += blockDim.x)
 		power_derivs[i] = T(0);
@@ -309,18 +407,21 @@ __device__ void sparse_local_branched_sig_deriv_block_(
 	T inv_k_factorial = T(1);
 	for (uint32_t k = 1; k <= max_nodes; ++k) {
 		inv_k_factorial /= static_cast<T>(k);
-		for (uint32_t local = tid + 1; local < cache_size; local += blockDim.x)
+		for (uint32_t local = tid + 1; local < cache_size;
+			local += blockDim.x) {
 			power_derivs[(k - 1) * cache_size + local]
 				+= inv_k_factorial * local_derivs[local];
+		}
 	}
 	__syncthreads();
 
-	for (uint32_t k = max_nodes; k > 1; --k)
+	for (uint32_t k = max_nodes; k > 1; --k) {
 		sparse_branched_hopf_convolution_deriv_block_(
 			powers + (k - 2) * cache_size, local_log,
 			power_derivs + (k - 1) * cache_size,
 			power_derivs + (k - 2) * cache_size, d_local_log,
 			cache_size, coprod_data, coprod_offsets, tid);
+	}
 
 	for (uint32_t i = tid; i < cache_size; i += blockDim.x)
 		d_local_log[i] += power_derivs[i];
@@ -332,8 +433,8 @@ __device__ void sparse_local_branched_sig_deriv_block_(
 	__syncthreads();
 }
 
-template<typename T>
-__global__ __launch_bounds__(1024)
+template<typename T, bool use_shared_storage>
+__global__ __launch_bounds__(use_shared_storage ? 1024 : 256)
 void branched_sig_coef_forward_kernel_(
 	const T* __restrict__ path,
 	T* __restrict__ state,
@@ -359,6 +460,9 @@ void branched_sig_coef_forward_kernel_(
 	const T* __restrict__ correction,
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride,
+	uint64_t state_stride,
+	T* __restrict__ workspace,
+	uint64_t workspace_stride,
 	uint64_t batch_offset,
 	uint64_t batch_chunk_size
 ) {
@@ -369,24 +473,34 @@ void branched_sig_coef_forward_kernel_(
 	const bool has_correction = num_corrections != 0;
 
 	extern __shared__ char shared[];
-	T* shared_state = reinterpret_cast<T*>(shared);
+	T* shared_state = use_shared_storage
+		? reinterpret_cast<T*>(shared)
+		: workspace + local_batch_idx * workspace_stride;
 	T* batch_state = state == nullptr
-		? shared_state : state + static_cast<uint64_t>(batch) * cache_size;
+		? shared_state : state + local_batch_idx * state_stride;
 	T* temp = state == nullptr ? shared_state + cache_size : shared_state;
 	T* local_log = has_correction ? temp + cache_size : temp;
 	T* power = has_correction ? local_log + cache_size : temp;
 	T* next_power = has_correction ? power + cache_size : temp;
 	T* increment = has_correction ? next_power + cache_size : temp + cache_size;
-	uint32_t* coprod_data = reinterpret_cast<uint32_t*>(increment + dimension);
-	uint32_t* coprod_offsets = coprod_data + coprod_data_len;
-	uint32_t* order_index = coprod_offsets + cache_size + 1;
+	uint32_t* shared_coprod_data = reinterpret_cast<uint32_t*>(increment + dimension);
+	uint32_t* shared_coprod_offsets = shared_coprod_data + coprod_data_len;
+	uint32_t* shared_order_index = shared_coprod_offsets + cache_size + 1;
+	const uint32_t* coprod_data = global_coprod_data;
+	const uint32_t* coprod_offsets = global_coprod_offsets;
+	const uint32_t* order_index = global_order_index;
 
-	for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
-		coprod_data[i] = global_coprod_data[i];
-	for (uint32_t i = tid; i < cache_size + 1; i += blockDim.x)
-		coprod_offsets[i] = global_coprod_offsets[i];
-	for (uint32_t i = tid; i < max_nodes + 2; i += blockDim.x)
-		order_index[i] = global_order_index[i];
+	if constexpr (use_shared_storage) {
+		for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
+			shared_coprod_data[i] = global_coprod_data[i];
+		for (uint32_t i = tid; i < cache_size + 1; i += blockDim.x)
+			shared_coprod_offsets[i] = global_coprod_offsets[i];
+		for (uint32_t i = tid; i < max_nodes + 2; i += blockDim.x)
+			shared_order_index[i] = global_order_index[i];
+		coprod_data = shared_coprod_data;
+		coprod_offsets = shared_coprod_offsets;
+		order_index = shared_order_index;
+	}
 
 	for (uint32_t i = tid; i < cache_size; i += blockDim.x)
 		batch_state[i] = T(0);
@@ -413,10 +527,10 @@ void branched_sig_coef_forward_kernel_(
 			num_corrections, max_nodes, tid);
 
 		if (segment > 0) {
-			const uint32_t local_index = tid + 1;
 			for (uint32_t order = max_nodes; order > 0; --order) {
-				if (local_index >= order_index[order]
-					&& local_index < order_index[order + 1]) {
+				for (uint32_t local_index = order_index[order] + tid;
+					local_index < order_index[order + 1];
+					local_index += blockDim.x) {
 					T value = batch_state[local_index] + temp[local_index];
 					uint32_t pos = coprod_offsets[local_index];
 					const uint32_t end = coprod_offsets[local_index + 1];
@@ -441,8 +555,8 @@ void branched_sig_coef_forward_kernel_(
 	}
 }
 
-template<typename T>
-__global__ __launch_bounds__(1024)
+template<typename T, bool use_shared_storage>
+__global__ __launch_bounds__(use_shared_storage ? 1024 : 256)
 void branched_sig_coef_backprop_kernel_(
 	const T* __restrict__ path,
 	T* __restrict__ path_derivs,
@@ -470,6 +584,9 @@ void branched_sig_coef_backprop_kernel_(
 	const T* __restrict__ correction,
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride,
+	uint64_t state_stride,
+	T* __restrict__ workspace,
+	uint64_t workspace_stride,
 	uint64_t batch_offset,
 	uint64_t batch_chunk_size
 ) {
@@ -480,7 +597,9 @@ void branched_sig_coef_backprop_kernel_(
 	const bool has_correction = num_corrections != 0;
 
 	extern __shared__ char shared[];
-	T* batch_state = reinterpret_cast<T*>(shared);
+	T* batch_state = use_shared_storage
+		? reinterpret_cast<T*>(shared)
+		: workspace + local_batch_idx * workspace_stride;
 	T* state_derivs = batch_state + cache_size;
 	T* local_sig = state_derivs + cache_size;
 	T* local_derivs = local_sig + cache_size;
@@ -488,23 +607,33 @@ void branched_sig_coef_backprop_kernel_(
 	T* increment_derivs = increment + dimension;
 	T* local_log = increment_derivs + dimension;
 	T* powers = has_correction ? local_log + cache_size : local_log;
+	const uint64_t power_count = use_shared_storage
+		? static_cast<uint64_t>(max_nodes) : 2;
 	T* power_derivs = has_correction
-		? powers + static_cast<uint64_t>(max_nodes) * cache_size : powers;
+		? powers + power_count * cache_size : powers;
 	T* d_local_log = has_correction
-		? power_derivs + static_cast<uint64_t>(max_nodes) * cache_size : power_derivs;
+		? power_derivs + power_count * cache_size : power_derivs;
 	T* arrays_end = has_correction ? d_local_log + cache_size : increment_derivs + dimension;
-	uint32_t* coprod_data = reinterpret_cast<uint32_t*>(arrays_end);
-	uint32_t* coprod_offsets = coprod_data + coprod_data_len;
-	uint32_t* order_index = coprod_offsets + cache_size + 1;
+	uint32_t* shared_coprod_data = reinterpret_cast<uint32_t*>(arrays_end);
+	uint32_t* shared_coprod_offsets = shared_coprod_data + coprod_data_len;
+	uint32_t* shared_order_index = shared_coprod_offsets + cache_size + 1;
+	const uint32_t* coprod_data = global_coprod_data;
+	const uint32_t* coprod_offsets = global_coprod_offsets;
+	const uint32_t* order_index = global_order_index;
 
-	for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
-		coprod_data[i] = global_coprod_data[i];
-	for (uint32_t i = tid; i < cache_size + 1; i += blockDim.x)
-		coprod_offsets[i] = global_coprod_offsets[i];
-	for (uint32_t i = tid; i < max_nodes + 2; i += blockDim.x)
-		order_index[i] = global_order_index[i];
+	if constexpr (use_shared_storage) {
+		for (uint32_t i = tid; i < coprod_data_len; i += blockDim.x)
+			shared_coprod_data[i] = global_coprod_data[i];
+		for (uint32_t i = tid; i < cache_size + 1; i += blockDim.x)
+			shared_coprod_offsets[i] = global_coprod_offsets[i];
+		for (uint32_t i = tid; i < max_nodes + 2; i += blockDim.x)
+			shared_order_index[i] = global_order_index[i];
+		coprod_data = shared_coprod_data;
+		coprod_offsets = shared_coprod_offsets;
+		order_index = shared_order_index;
+	}
 
-	const uint64_t state_offset = static_cast<uint64_t>(batch) * cache_size;
+	const uint64_t state_offset = local_batch_idx * state_stride;
 	for (uint32_t i = tid; i < cache_size; i += blockDim.x) {
 		batch_state[i] = state[state_offset + i];
 		state_derivs[i] = T(0);
@@ -536,16 +665,16 @@ void branched_sig_coef_backprop_kernel_(
 			? batch_correction + static_cast<uint64_t>(segment) * correction_segment_stride
 			: nullptr;
 		sparse_local_branched_sig_block_(increment, local_sig, local_log,
-			powers, power_derivs, dimension, segment_correction, cache_size,
+			powers, powers + cache_size, dimension, segment_correction, cache_size,
 			labels_data, labels_offsets, inv_factorial, coprod_data,
 			coprod_offsets, leaf_indices, correction_offsets, correction_locals,
 			num_corrections, max_nodes, tid);
 
-		const uint32_t local_index = tid + 1;
 		if (segment > 0) {
 			for (uint32_t order = 1; order <= max_nodes; ++order) {
-				if (local_index >= order_index[order]
-					&& local_index < order_index[order + 1]) {
+				for (uint32_t local_index = order_index[order] + tid;
+					local_index < order_index[order + 1];
+					local_index += blockDim.x) {
 					T value = batch_state[local_index] - local_sig[local_index];
 					uint32_t pos = coprod_offsets[local_index];
 					const uint32_t end = coprod_offsets[local_index + 1];
@@ -563,13 +692,15 @@ void branched_sig_coef_backprop_kernel_(
 
 			if (tid == 0)
 				local_derivs[0] = T(0);
-			if (local_index < cache_size)
+			for (uint32_t local_index = tid + 1; local_index < cache_size;
+				local_index += blockDim.x)
 				local_derivs[local_index] = state_derivs[local_index];
 			__syncthreads();
 
 			for (uint32_t order = 1; order <= max_nodes; ++order) {
-				if (local_index >= order_index[order]
-					&& local_index < order_index[order + 1]) {
+				for (uint32_t local_index = order_index[order] + tid;
+					local_index < order_index[order + 1];
+					local_index += blockDim.x) {
 					const T d_out = state_derivs[local_index];
 					if (d_out != T(0)) {
 						uint32_t pos = coprod_offsets[local_index];
@@ -602,11 +733,21 @@ void branched_sig_coef_backprop_kernel_(
 			__syncthreads();
 		}
 
-		sparse_local_branched_sig_deriv_block_(local_derivs, increment,
-			increment_derivs, local_log, powers, power_derivs, d_local_log,
-			dimension, segment_correction, cache_size, labels_data, labels_offsets,
-			inv_factorial, coprod_data, coprod_offsets, leaf_indices,
-			correction_offsets, correction_locals, num_corrections, max_nodes, tid);
+		if constexpr (use_shared_storage) {
+			sparse_local_branched_sig_deriv_saved_block_(
+				local_derivs, increment, increment_derivs, local_log, powers,
+				power_derivs, d_local_log, dimension, segment_correction,
+				cache_size, labels_data, labels_offsets, inv_factorial,
+				coprod_data, coprod_offsets, leaf_indices, correction_offsets,
+				correction_locals, num_corrections, max_nodes, tid);
+		} else {
+			sparse_local_branched_sig_deriv_rolling_block_(
+				local_derivs, increment, increment_derivs, local_log, powers,
+				power_derivs, d_local_log, dimension, segment_correction,
+				cache_size, labels_data, labels_offsets, inv_factorial,
+				coprod_data, coprod_offsets, leaf_indices, correction_offsets,
+				correction_locals, num_corrections, max_nodes, tid);
+		}
 
 		for (uint32_t d = tid; d < dimension; d += blockDim.x) {
 			batch_path_derivs[(segment + 1) * dimension + d] += increment_derivs[d];

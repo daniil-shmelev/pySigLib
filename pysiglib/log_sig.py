@@ -77,12 +77,15 @@ def set_cache_dir(
 
     err_code = CPSIG.set_cache_dir(dir.encode("utf-8"))
     if err_code:
-        raise Exception("Error in pysiglib.set_cache_dir: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.set_cache_dir: " + err_msg(err_code, "cpu"))
 
     if BUILT_WITH_CUDA:
         err_code = CUSIG.set_cache_dir_cuda(dir.encode("utf-8"))
         if err_code:
-            raise Exception("Error in pysiglib.set_cache_dir (CUDA): " + err_msg(err_code))
+            raise Exception(
+                "Error in pysiglib.set_cache_dir (CUDA): "
+                + err_msg(err_code, "cuda"))
 
 
 def prepare_log_sig(
@@ -168,12 +171,16 @@ def prepare_log_sig(
         )
 
         if err_code:
-            raise Exception("Error in pysiglib.prepare_log_sig: " + err_msg(err_code))
+            raise Exception(
+                "Error in pysiglib.prepare_log_sig: "
+                + err_msg(err_code, "cpu"))
 
     if BUILT_WITH_CUDA and device in ("cuda", "both"):
         err_code = CUSIG.prepare_log_sig_cuda(aug_dimension, degree, method, use_disk)
         if err_code:
-            raise Exception("Error in pysiglib.prepare_log_sig (CUDA): " + err_msg(err_code))
+            raise Exception(
+                "Error in pysiglib.prepare_log_sig (CUDA): "
+                + err_msg(err_code, "cuda"))
 
 def clear_cache(
         *,
@@ -215,12 +222,16 @@ def clear_cache(
     if device in ("cpu", "both"):
         err_code = CPSIG.clear_cache(use_disk)
         if err_code:
-            raise Exception("Error in pysiglib.clear_cache: " + err_msg(err_code))
+            raise Exception(
+                "Error in pysiglib.clear_cache: "
+                + err_msg(err_code, "cpu"))
 
     if BUILT_WITH_CUDA and device in ("cuda", "both"):
         err_code = CUSIG.clear_cache_cuda(use_disk)
         if err_code:
-            raise Exception("Error in pysiglib.clear_cache (CUDA): " + err_msg(err_code))
+            raise Exception(
+                "Error in pysiglib.clear_cache (CUDA): "
+                + err_msg(err_code, "cuda"))
 
 def sig_to_log_sig(
         sig : Union[np.ndarray, torch.Tensor],
@@ -307,7 +318,9 @@ def sig_to_log_sig(
             data.data_ptr, result.data_ptr, data.batch_size,
             aug_dimension, degree, method, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.sig_to_log_sig: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.sig_to_log_sig: "
+            + err_msg(err_code, result.device))
     return result.data
 
 def log_sig(
@@ -430,7 +443,9 @@ def log_sig(
                 data.data_ptr, result.data_ptr, data.batch_size,
                 data.data_length, aug_dim, degree)
         if err_code:
-            raise Exception("Error in pysiglib.log_sig (method=3): " + err_msg(err_code))
+            raise Exception(
+                "Error in pysiglib.log_sig (method=3): "
+                + err_msg(err_code, result.device))
         return result.data
 
     # Methods 0-2: compute sig then project to log sig.

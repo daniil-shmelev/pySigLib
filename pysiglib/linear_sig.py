@@ -100,5 +100,7 @@ def linear_sig(
         err_code = CUSIG_LINEAR_SIG[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size, dimension, degree, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.linear_sig: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.linear_sig: "
+            + err_msg(err_code, result.device))
     return result.data

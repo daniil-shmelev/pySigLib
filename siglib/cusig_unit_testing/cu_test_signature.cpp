@@ -15,6 +15,41 @@
 
 #include "cu_test_helpers.h"
 
+#include <string>
+#include <thread>
+
+TEST(cudaErrorDetailTest, PreservesDetailAndClearsAfterSuccess) {
+	EXPECT_EQ(2, signature_cuda_d(
+		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true, true,
+		nullptr, 0, 0, 0));
+	EXPECT_STREQ(
+		cusig_last_error_message(),
+		"signature_cuda received path of dimension 0");
+
+	EXPECT_EQ(0, signature_cuda_d(
+		nullptr, nullptr, 0, 1, 0, 0, false, false, 1., true, true,
+		nullptr, 0, 0, 0));
+	EXPECT_STREQ(cusig_last_error_message(), "");
+}
+
+TEST(cudaErrorDetailTest, IsThreadLocal) {
+	EXPECT_EQ(2, signature_cuda_d(
+		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true, true,
+		nullptr, 0, 0, 0));
+	std::string child_message;
+	std::thread child([&child_message]() {
+		EXPECT_EQ(2, signature_cuda_d(
+			nullptr, nullptr, 1, 1, 2, 2, false, false, 1., true, true,
+			nullptr, 1, 0, 0));
+		child_message = cusig_last_error_message();
+	});
+	child.join();
+	EXPECT_NE(child_message.find("correction pointer is null"), std::string::npos);
+	EXPECT_STREQ(
+		cusig_last_error_message(),
+		"signature_cuda received path of dimension 0");
+}
+
 TEST(signatureDoubleTest, TrivialCases) {
     auto f = signature_cuda_d;
     std::vector<double> path;

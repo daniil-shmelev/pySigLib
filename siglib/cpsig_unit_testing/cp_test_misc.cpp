@@ -15,6 +15,40 @@
 
 #include "cp_test_helpers.h"
 
+#include <string>
+#include <thread>
+
+TEST(cpuErrorDetailTest, PreservesDetailAndClearsAfterSuccess) {
+	EXPECT_EQ(2, signature_d(
+		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true, true, 1,
+		nullptr, 0, 0, 0));
+	EXPECT_NE(
+		std::string(cpsig_last_error_message()).find("dimension"),
+		std::string::npos);
+
+	EXPECT_EQ(0, signature_d(
+		nullptr, nullptr, 0, 1, 0, 0, false, false, 1., true, true, 1,
+		nullptr, 0, 0, 0));
+	EXPECT_STREQ(cpsig_last_error_message(), "");
+}
+
+TEST(cpuErrorDetailTest, IsThreadLocal) {
+	EXPECT_EQ(2, signature_d(
+		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true, true, 1,
+		nullptr, 0, 0, 0));
+	const std::string parent_message = cpsig_last_error_message();
+	std::string child_message;
+	std::thread child([&child_message]() {
+		EXPECT_EQ(2, signature_d(
+			nullptr, nullptr, 1, 1, 2, 2, false, false, 1., true, true, 1,
+			nullptr, 1, 0, 0));
+		child_message = cpsig_last_error_message();
+	});
+	child.join();
+	EXPECT_NE(child_message.find("correction pointer is null"), std::string::npos);
+	EXPECT_EQ(cpsig_last_error_message(), parent_message);
+}
+
 TEST(SparseMatrixTest, BasicTest1) {
     // Note the diagonal of 1s is assumed in both the matrix and the inverse
     SparseIntMatrix mat(4);

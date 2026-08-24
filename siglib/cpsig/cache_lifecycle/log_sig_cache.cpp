@@ -205,6 +205,9 @@ void clear_cache_(bool use_disk) {
 }
 
 extern "C" {
+	CPSIG_API const char* cpsig_last_error_message() noexcept {
+		return get_pysiglib_last_error();
+	}
 
 	CPSIG_API int set_cache_dir(const char* dir) noexcept {
 		SAFE_CALL(set_cache_dir_(dir));

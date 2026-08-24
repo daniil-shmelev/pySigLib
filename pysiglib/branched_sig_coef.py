@@ -224,7 +224,7 @@ def prepare_branched_sig_coef(
         if err_code:
             raise Exception(
                 "Error in pysiglib.prepare_branched_sig_coef: "
-                + err_msg(err_code)
+                + err_msg(err_code, "cpu")
             )
 
     if BUILT_WITH_CUDA and device in ("cuda", "both"):
@@ -235,7 +235,7 @@ def prepare_branched_sig_coef(
         if err_code:
             raise Exception(
                 "Error in pysiglib.prepare_branched_sig_coef (CUDA): "
-                + err_msg(err_code)
+                + err_msg(err_code, "cuda")
             )
 
 
@@ -332,5 +332,7 @@ def branched_sig_coef(
             correction_data.batch_stride, correction_data.segment_stride,
         )
     if err_code:
-        raise Exception("Error in pysiglib.branched_sig_coef: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.branched_sig_coef: "
+            + err_msg(err_code, result.device))
     return result.data

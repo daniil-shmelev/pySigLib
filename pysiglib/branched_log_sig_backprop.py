@@ -157,7 +157,9 @@ def branched_sig_to_log_sig_backprop(
             data.batch_size, aug_dimension, degree, method, planar,
             scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.branched_sig_to_log_sig_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.branched_sig_to_log_sig_backprop: "
+            + err_msg(err_code, result.device))
 
     return result.data
 
@@ -209,5 +211,5 @@ def _branched_log_sig_from_path_backprop(
     if err_code:
         raise Exception(
             "Error in pysiglib.branched_log_sig_from_path_backprop: "
-            + err_msg(err_code))
+            + err_msg(err_code, result.device))
     return result.data

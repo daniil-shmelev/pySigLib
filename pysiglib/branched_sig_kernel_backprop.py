@@ -66,7 +66,9 @@ def branched_gram_deriv(
             data.batch_size, data.dimension, data.length[0], data.length[1],
             depth, dyadic_order_1, dyadic_order_2, return_grid)
     if err_code:
-        raise Exception("Error in pysiglib.branched_sig_kernel_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.branched_sig_kernel_backprop: "
+            + err_msg(err_code, result.device))
     return torch.as_tensor(result.data)
 
 

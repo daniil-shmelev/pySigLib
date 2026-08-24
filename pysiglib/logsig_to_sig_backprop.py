@@ -108,5 +108,7 @@ def logsig_to_sig_backprop(
             data.data_ptr, result.data_ptr, derivs_data.data_ptr,
             data.batch_size, aug_dimension, degree, method, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.logsig_to_sig_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.logsig_to_sig_backprop: "
+            + err_msg(err_code, result.device))
     return result.data

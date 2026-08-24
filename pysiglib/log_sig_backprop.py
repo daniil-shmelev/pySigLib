@@ -130,7 +130,9 @@ def sig_to_log_sig_backprop(
             data.data_ptr, result.data_ptr, derivs_data.data_ptr,
             data.batch_size, aug_dimension, degree, method, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.sig_to_log_sig_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.sig_to_log_sig_backprop: "
+            + err_msg(err_code, result.device))
     return result.data
 
 
@@ -167,5 +169,7 @@ def _log_sig_from_path_backprop(
             derivs_data.data_ptr, result.data_ptr, data.data_ptr,
             data.batch_size, data.data_length, data.data_dimension, degree)
     if err_code:
-        raise Exception("Error in pysiglib.log_sig_from_path_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.log_sig_from_path_backprop: "
+            + err_msg(err_code, result.device))
     return result.data

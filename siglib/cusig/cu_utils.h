@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 constexpr size_t CUDA_BASE_DYNAMIC_SMEM = 48 * 1024;
 
@@ -27,21 +28,95 @@ struct CudaSharedMemoryLimits {
 	size_t optin_bytes;
 };
 
+inline bool cuda_shared_memory_fits(
+	size_t static_bytes,
+	size_t dynamic_bytes,
+	const CudaSharedMemoryLimits& limits
+) {
+	return checked_cuda_size_add(
+		static_bytes, dynamic_bytes, "CUDA shared memory request")
+		<= limits.optin_bytes;
+}
+
 inline CudaSharedMemoryLimits cuda_shared_memory_limits() {
 	int device = 0;
+	CUDA_CHECK(cudaGetDevice(&device));
+	static thread_local int cached_device = -1;
+	static thread_local CudaSharedMemoryLimits cached_limits{};
+	if (device == cached_device)
+		return cached_limits;
+
 	int default_bytes = 0;
 	int optin_bytes = 0;
-	CUDA_CHECK(cudaGetDevice(&device));
 	CUDA_CHECK(cudaDeviceGetAttribute(
 		&default_bytes, cudaDevAttrMaxSharedMemoryPerBlock, device));
 	CUDA_CHECK(cudaDeviceGetAttribute(
 		&optin_bytes, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
 	if (optin_bytes == 0)
 		optin_bytes = default_bytes;
-	return {
+	cached_device = device;
+	cached_limits = {
 		static_cast<size_t>(default_bytes),
 		static_cast<size_t>(optin_bytes)
 	};
+	return cached_limits;
+}
+
+struct CudaKernelSharedMemoryState {
+	size_t static_bytes;
+	int configured_device;
+	size_t configured_dynamic_bytes;
+};
+
+template<typename Kernel>
+inline CudaKernelSharedMemoryState& cuda_kernel_shared_memory_state(Kernel kernel) {
+	static thread_local std::unordered_map<const void*, CudaKernelSharedMemoryState> states;
+	const void* key = reinterpret_cast<const void*>(kernel);
+	auto [it, inserted] = states.try_emplace(key, CudaKernelSharedMemoryState{});
+	if (inserted) {
+		cudaFuncAttributes attributes{};
+		CUDA_CHECK(cudaFuncGetAttributes(&attributes, kernel));
+		it->second.static_bytes = attributes.sharedSizeBytes;
+		it->second.configured_device = -1;
+	}
+	return it->second;
+}
+
+template<typename Kernel>
+inline bool try_configure_dynamic_smem(
+	Kernel kernel,
+	size_t smem,
+	const CudaSharedMemoryLimits& limits
+) {
+	auto& state = cuda_kernel_shared_memory_state(kernel);
+	const size_t static_bytes = state.static_bytes;
+	const size_t total_bytes = checked_cuda_size_add(
+		static_bytes, smem, "CUDA shared memory request");
+	if (!cuda_shared_memory_fits(static_bytes, smem, limits))
+		return false;
+	if (total_bytes > limits.default_bytes) {
+		int device = 0;
+		CUDA_CHECK(cudaGetDevice(&device));
+		if (device != state.configured_device
+			|| smem > state.configured_dynamic_bytes) {
+			CUDA_CHECK(cudaFuncSetAttribute(
+				kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+				static_cast<int>(smem)));
+			state.configured_device = device;
+			state.configured_dynamic_bytes = smem;
+		}
+	}
+	return true;
+}
+
+template<typename Kernel>
+inline bool try_configure_dynamic_smem(Kernel kernel, size_t smem) {
+	const CudaSharedMemoryLimits base_limits = {
+		CUDA_BASE_DYNAMIC_SMEM, CUDA_BASE_DYNAMIC_SMEM
+	};
+	if (try_configure_dynamic_smem(kernel, smem, base_limits))
+		return true;
+	return try_configure_dynamic_smem(kernel, smem, cuda_shared_memory_limits());
 }
 
 template<typename Kernel>
@@ -51,22 +126,19 @@ inline void configure_dynamic_smem(
 	const char* op_name,
 	const CudaSharedMemoryLimits& limits
 ) {
-	if (smem > limits.optin_bytes) {
+	if (!try_configure_dynamic_smem(kernel, smem, limits)) {
+		const auto& state = cuda_kernel_shared_memory_state(kernel);
 		throw std::invalid_argument(
-			std::string(op_name) +
-			" requires more dynamic shared memory than this CUDA device supports");
-	}
-	if (smem > limits.default_bytes) {
-		CUDA_CHECK(cudaFuncSetAttribute(
-			kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
-			static_cast<int>(smem)));
+			std::string(op_name) + " requested " + std::to_string(smem)
+			+ " dynamic shared-memory bytes plus "
+			+ std::to_string(state.static_bytes)
+			+ " static bytes, but the device opt-in limit is "
+			+ std::to_string(limits.optin_bytes) + " bytes");
 	}
 }
 
 template<typename Kernel>
 inline void configure_dynamic_smem(Kernel kernel, size_t smem, const char* op_name) {
-	if (smem <= CUDA_BASE_DYNAMIC_SMEM)
-		return;
 	configure_dynamic_smem(kernel, smem, op_name, cuda_shared_memory_limits());
 }
 

@@ -14,6 +14,7 @@
  * ========================================================================= */
 
 #include "cusig.h"
+#include "../../shared/last_error.h"
 #include <cuda_runtime.h>
 
 void release_signature_state();
@@ -26,6 +27,9 @@ void release_log_sig_combine_state();
 void release_sig_kernel_poly_state();
 
 extern "C" {
+	CUSIG_API const char* cusig_last_error_message() noexcept {
+		return get_pysiglib_last_error();
+	}
 
 	CUSIG_API void cusig_shutdown() noexcept {
 		// Sync before freeing: in-flight kernels may still hold pointers into

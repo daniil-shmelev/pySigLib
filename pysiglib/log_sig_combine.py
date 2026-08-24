@@ -99,7 +99,9 @@ def log_sig_combine(
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, aug_dimension, degree)
     if err_code:
-        raise Exception("Error in pysiglib.log_sig_combine: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.log_sig_combine: "
+            + err_msg(err_code, result.device))
     return result.data
 
 
@@ -168,5 +170,7 @@ def log_sig_combine_backprop(
             data.sig_ptr[0], data.sig_ptr[1],
             data.batch_size, aug_dimension, degree)
     if err_code:
-        raise Exception("Error in pysiglib.log_sig_combine_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.log_sig_combine_backprop: "
+            + err_msg(err_code, result1.device))
     return result1.data, result2.data
