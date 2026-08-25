@@ -17,12 +17,12 @@
 
 #include <charconv>
 #include <filesystem>
-#include <iostream>
 #include <new>
 #include <stdexcept>
 #include <string>
 #include <system_error>
 #include "../shared/errors.h"
+#include "../shared/last_error.h"
 
 // Unified error-handling macro for all cusig exported functions.
 // Error codes match pysiglib/error_codes.py:
@@ -41,32 +41,33 @@
 //   100000+= CUDA errors (100000 + cudaError_t code)
 
 #define CUDA_SAFE_CALL(function_call)                                   \
+    clear_pysiglib_last_error();                                        \
     try {                                                               \
         function_call;                                                  \
     }                                                                   \
     catch (const std::bad_alloc&) {                                     \
-        std::cerr << "Failed to allocate memory";                       \
+        set_pysiglib_last_error("Failed to allocate memory");           \
         return 1;                                                       \
     }                                                                   \
     catch (const std::invalid_argument& e) {                            \
-        std::cerr << e.what();                                          \
+        set_pysiglib_last_error(e.what());                              \
         return 2;                                                       \
     }                                                                   \
     catch (const std::out_of_range& e) {                                \
-        std::cerr << e.what();                                          \
+        set_pysiglib_last_error(e.what());                              \
         return 3;                                                       \
     }                                                                   \
     catch (const std::filesystem::filesystem_error& e) {                \
-        std::cerr << e.what();                                          \
+        set_pysiglib_last_error(e.what());                              \
         return 4;                                                       \
     }                                                                   \
     catch (const coded_runtime_error& e) {                              \
-        std::cerr << e.what();                                          \
+        set_pysiglib_last_error(e.what());                              \
         return e.code;                                                  \
     }                                                                   \
     catch (const std::runtime_error& e) {                               \
         std::string msg = e.what();                                     \
-        std::cerr << msg;                                               \
+        set_pysiglib_last_error(msg.c_str());                           \
         auto cuda_pos = msg.find("CUDA Error (");                       \
         if (cuda_pos != std::string::npos) {                            \
             const auto num_start = cuda_pos + 12;                       \
@@ -82,7 +83,7 @@
         return 10;                                                      \
     }                                                                   \
     catch (...) {                                                       \
-        std::cerr << "Unknown exception";                               \
+        set_pysiglib_last_error("Unknown exception");                   \
         return 11;                                                      \
     }                                                                   \
     return 0;

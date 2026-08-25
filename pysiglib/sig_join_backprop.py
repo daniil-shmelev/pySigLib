@@ -125,5 +125,7 @@ def sig_join_backprop(
             sig_data.data_ptr, disp_data.data_ptr,
             d_out_data.batch_size, dimension, degree, prepend, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.sig_join_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.sig_join_backprop: "
+            + err_msg(err_code, d_sig.device))
     return d_sig.data, d_disp.data

@@ -99,6 +99,13 @@ if _cuda_plugin is not None:
     except OSError:
         pass
 
+if hasattr(CPSIG, "cpsig_last_error_message"):
+    CPSIG.cpsig_last_error_message.argtypes = ()
+    CPSIG.cpsig_last_error_message.restype = c_char_p
+if BUILT_WITH_CUDA and hasattr(CUSIG, "cusig_last_error_message"):
+    CUSIG.cusig_last_error_message.argtypes = ()
+    CUSIG.cusig_last_error_message.restype = c_char_p
+
 ######################################################
 # Set argtypes and restypes for all imported functions
 ######################################################

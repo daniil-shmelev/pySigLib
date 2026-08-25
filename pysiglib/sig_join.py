@@ -115,5 +115,7 @@ def sig_join(
             sig_data.data_ptr, disp_data.data_ptr, result.data_ptr,
             sig_data.batch_size, dimension, degree, prepend, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.sig_join: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.sig_join: "
+            + err_msg(err_code, result.device))
     return result.data

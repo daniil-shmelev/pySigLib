@@ -118,5 +118,7 @@ def log_sig_join(
             logsig_data.data_ptr, disp_data.data_ptr, result.data_ptr,
             logsig_data.batch_size, dimension, degree)
     if err_code:
-        raise Exception("Error in pysiglib.log_sig_join: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.log_sig_join: "
+            + err_msg(err_code, result.device))
     return result.data

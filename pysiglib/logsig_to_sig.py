@@ -120,5 +120,7 @@ def logsig_to_sig(
             data.data_ptr, result.data_ptr, data.batch_size,
             aug_dimension, degree, method, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.logsig_to_sig: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.logsig_to_sig: "
+            + err_msg(err_code, result.device))
     return result.data

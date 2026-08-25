@@ -254,5 +254,7 @@ def sig_coef(
             multi_indices_ptr, num_multi_indices, degrees_ptr,
             data.batch_size, data.data_dimension, data.data_length, prefixes)
     if err_code:
-        raise Exception("Error in pysiglib.sig_coef: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.sig_coef: "
+            + err_msg(err_code, result.device))
     return result.data

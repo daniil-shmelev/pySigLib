@@ -35,6 +35,7 @@
 #endif
 
 extern "C" {
+	CPSIG_API const char* cpsig_last_error_message() noexcept;
 
 	/** @defgroup transform_path_functions Transform path functions
 	* @{

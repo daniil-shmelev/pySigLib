@@ -120,7 +120,9 @@ def sig_combine(
             data.sig_ptr[0], data.sig_ptr[1], result.data_ptr,
             data.batch_size, aug_dimension, degree, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.sig_combine: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.sig_combine: "
+            + err_msg(err_code, result.device))
     return result.data
 
 def sig(
@@ -291,7 +293,8 @@ def sig(
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride)
     if err_code:
-        raise Exception("Error in pysiglib.sig: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.sig: " + err_msg(err_code, result.device))
 
     if isinstance(result.data, np.ndarray):
         has_bad = np.isnan(result.data).any() or np.isinf(result.data).any()

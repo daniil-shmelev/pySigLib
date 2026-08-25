@@ -147,5 +147,7 @@ def transform_path(
             data.data_ptr, result.data_ptr, data.batch_size, data.data_dimension,
             data.data_length, data.time_aug, data.lead_lag, data.end_time)
     if err_code:
-        raise Exception("Error in pysiglib.transform_path: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.transform_path: "
+            + err_msg(err_code, result.device))
     return result.data

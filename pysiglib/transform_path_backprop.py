@@ -101,5 +101,7 @@ def transform_path_backprop(
             data.data_ptr, result.data_ptr, data.batch_size, dimension, length,
             time_aug, lead_lag, end_time)
     if err_code:
-        raise Exception("Error in pysiglib.transform_path_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.transform_path_backprop: "
+            + err_msg(err_code, result.device))
     return result.data

@@ -27,9 +27,28 @@ CPP_ERR_MSG = {
     11: "Unknown exception"
 }
 
-def err_msg(err_code):
+def _native_error_message(device):
+    from .load_siglib import BUILT_WITH_CUDA, CPSIG, CUSIG
+
+    device_type = getattr(device, "type", device)
+    library = CUSIG if device_type == "cuda" and BUILT_WITH_CUDA else CPSIG
+    getter_name = (
+        "cusig_last_error_message" if library is CUSIG
+        else "cpsig_last_error_message"
+    )
+    getter = getattr(library, getter_name, None)
+    if getter is None:
+        return ""
+    message = getter()
+    return message.decode("utf-8", errors="replace") if message else ""
+
+
+def err_msg(err_code, device="cpu"):
     if err_code < 100000:
-        return CPP_ERR_MSG[err_code] + " (" + str(err_code) + ")"
-    if err_code == 100500:
-        return "CUDA error: named symbol not found (500). pysiglib: This error may suggest your GPU's compute capability is currently not supported by pysiglib. Please contact the developer."
-    return "CUDA error (" + str(err_code - 100000) + ")"
+        message = CPP_ERR_MSG[err_code] + " (" + str(err_code) + ")"
+    elif err_code == 100500:
+        message = "CUDA error: named symbol not found (500). pysiglib: This error may suggest your GPU's compute capability is currently not supported by pysiglib. Please contact the developer."
+    else:
+        message = "CUDA error (" + str(err_code - 100000) + ")"
+    detail = _native_error_message(device)
+    return message + (": " + detail if detail else "")

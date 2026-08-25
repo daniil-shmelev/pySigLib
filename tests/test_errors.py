@@ -18,6 +18,7 @@ import numpy as np
 import torch
 
 import pysiglib
+from conftest import skip_no_cuda
 
 np.random.seed(42)
 torch.manual_seed(42)
@@ -85,3 +86,46 @@ def test_sig_combine_n_jobs_zero():
 def test_sig_kernel_n_jobs_zero():
     with pytest.raises(ValueError):
         pysiglib.sig_kernel(np.array([[0.], [1.]]), np.array([[0.], [1.]]), dyadic_order=0, n_jobs = 0)
+
+
+def test_cpu_native_error_detail_is_propagated_without_stderr(capsys):
+    pysiglib.clear_cache(device="cpu")
+    path = np.zeros((3, 2), dtype=np.float64)
+
+    with pytest.raises(Exception) as exc_info:
+        pysiglib.branched_sig(path, 3)
+
+    message = str(exc_info.value)
+    assert "Could not find prepared cache" in message
+    assert "call prepare_branched_sig first" in message
+    assert capsys.readouterr().err == ""
+
+
+@skip_no_cuda
+def test_cuda_native_error_detail_is_propagated_without_stderr(capsys):
+    pysiglib.clear_cache(device="cuda")
+    path = torch.zeros((3, 2), dtype=torch.float64, device="cuda")
+
+    with pytest.raises(Exception) as exc_info:
+        pysiglib.branched_sig(path, 3)
+
+    message = str(exc_info.value)
+    assert "Could not find prepared cache" in message
+    assert "device='cuda'" in message
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.skipif(
+    not pysiglib.BUILT_WITH_JAX_FFI,
+    reason="pysiglib was built without JAX FFI",
+)
+def test_jax_native_error_detail_is_propagated():
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+    import pysiglib.jax_api as jax_api
+
+    pysiglib.clear_cache(device="cpu")
+    path = jnp.zeros((3, 2), dtype=jnp.float32)
+
+    with pytest.raises(Exception, match="call prepare_branched_sig first"):
+        jax_api.branched_sig(path, 3).block_until_ready()

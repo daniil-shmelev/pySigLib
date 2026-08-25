@@ -335,8 +335,8 @@ static const BranchedLogHornerPlanGPU& get_branched_log_horner_plan_gpu_(
 		"CUDA branched log sig cache not found - call prepare_branched_log_sig with device='cuda' first");
 }
 
-template<typename T, int Method, bool Planar>
-__global__ __launch_bounds__(1024)
+template<typename T, int Method, bool Planar, bool use_shared_scratch>
+__global__ __launch_bounds__(use_shared_scratch ? 1024 : 256)
 void branched_sig_to_log_sig_horner_ker(
 	const T* __restrict__ bsig,
 	T* __restrict__ out,
@@ -354,6 +354,8 @@ void branched_sig_to_log_sig_horner_ker(
 	const int* __restrict__ g_sparse_vals,
 	const uint32_t* __restrict__ g_sparse_cols,
 	const uint32_t* __restrict__ g_sparse_row_ptr,
+	T* __restrict__ workspace,
+	uint64_t workspace_stride,
 	uint64_t batch_offset,
 	uint64_t batch_chunk_size
 ) {
@@ -366,7 +368,9 @@ void branched_sig_to_log_sig_horner_ker(
 	const uint64_t output_stride = Method == 0 ? input_stride : compact_len;
 
 	extern __shared__ char smem[];
-	T* h = reinterpret_cast<T*>(smem);
+	T* h = use_shared_scratch
+		? reinterpret_cast<T*>(smem)
+		: workspace + local_batch_idx * workspace_stride;
 	T* h_products = h + total_len;
 	T* horner_current = h_products + product_count;
 	T* horner_next = horner_current + product_count;
@@ -468,8 +472,8 @@ void branched_sig_to_log_sig_horner_ker(
 	}
 }
 
-template<typename T, int Method, bool Planar>
-__global__ __launch_bounds__(1024)
+template<typename T, int Method, bool Planar, bool use_shared_scratch>
+__global__ __launch_bounds__(use_shared_scratch ? 1024 : 256)
 void branched_sig_to_log_sig_backprop_horner_ker(
 	const T* __restrict__ bsig,
 	const T* __restrict__ derivs,
@@ -482,6 +486,7 @@ void branched_sig_to_log_sig_backprop_horner_ker(
 	const uint32_t* __restrict__ g_coproduct_pairs,
 	const uint32_t* __restrict__ g_flat_to_product,
 	T* __restrict__ workspace,
+	uint64_t workspace_stride,
 	int max_nodes,
 	bool scalar_term,
 	const uint32_t* __restrict__ g_lyndon_idx,
@@ -505,10 +510,12 @@ void branched_sig_to_log_sig_backprop_horner_ker(
 		? static_cast<uint64_t>(max_nodes - 1) : 0;
 	const uint64_t states_size = state_levels * product_count;
 	const uint64_t workspace_size = states_size + 2 * product_count;
-	T* states = workspace + local_batch_idx * workspace_size;
+	T* states = workspace + local_batch_idx * workspace_stride;
 	T* d_current = states + states_size;
 	T* d_next = d_current + product_count;
-	T* h = reinterpret_cast<T*>(smem);
+	T* h = use_shared_scratch
+		? reinterpret_cast<T*>(smem)
+		: states + workspace_size;
 	T* h_products = h + total_len;
 	T* d_h_products = h_products + product_count;
 	T* d_h_tree = d_h_products + product_count;
@@ -697,27 +704,53 @@ static void branched_sig_to_log_sig_cuda_method_(
 	if (block < 32) block = 32;
 	if (block > 1024) block = 1024;
 
-	size_t smem = (static_cast<uint64_t>(plan.total_length)
-		+ 3 * static_cast<uint64_t>(plan.product_count)) * sizeof(T);
-	configure_dynamic_smem(
-		branched_sig_to_log_sig_horner_ker<T, Method, Planar>, smem,
+	const size_t scratch_elements = checked_cuda_size_add(
+		static_cast<size_t>(plan.total_length),
+		checked_cuda_size_mul(
+			3, static_cast<size_t>(plan.product_count),
+			"CUDA branched log sig"),
 		"CUDA branched log sig");
+	const size_t smem = checked_cuda_size_mul(
+		scratch_elements, sizeof(T), "CUDA branched log sig");
+	const bool use_shared_scratch = try_configure_dynamic_smem(
+		branched_sig_to_log_sig_horner_ker<T, Method, Planar, true>, smem);
+	std::unique_ptr<CudaBatchWorkspace<T>> workspace;
+	if (!use_shared_scratch) {
+		workspace = std::make_unique<CudaBatchWorkspace<T>>(
+			batch_size, scratch_elements,
+			"CUDA branched log sig global workspace");
+	}
+	const uint64_t max_chunk_size = use_shared_scratch
+		? CUDA_BATCH_GRID_CAPACITY : workspace->capacity();
 	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 		const auto batch_chunk = make_cuda_batch_grid_chunk(
-			1, batch_size, batch_offset);
-		branched_sig_to_log_sig_horner_ker<T, Method, Planar>
-			<<<batch_chunk.grid, block, smem>>>(
-			bsig, out, plan.total_length, plan.product_count,
-			plan.d_product_offsets, plan.d_product_factors,
-			plan.d_coproduct_offsets, plan.d_coproduct_pairs,
-			plan.d_flat_to_product,
-			plan.max_nodes, scalar_term,
-			basis == nullptr ? nullptr : basis->d_lyndon_idx,
-			compact_len,
-			basis == nullptr ? nullptr : basis->d_sparse_vals,
-			basis == nullptr ? nullptr : basis->d_sparse_cols,
-			basis == nullptr ? nullptr : basis->d_sparse_row_ptr,
-			batch_chunk.offset, batch_chunk.size);
+			1, batch_size, batch_offset, max_chunk_size);
+		if (use_shared_scratch) {
+			branched_sig_to_log_sig_horner_ker<T, Method, Planar, true>
+				<<<batch_chunk.grid, block, smem>>>(
+				bsig, out, plan.total_length, plan.product_count,
+				plan.d_product_offsets, plan.d_product_factors,
+				plan.d_coproduct_offsets, plan.d_coproduct_pairs,
+				plan.d_flat_to_product, plan.max_nodes, scalar_term,
+				basis == nullptr ? nullptr : basis->d_lyndon_idx, compact_len,
+				basis == nullptr ? nullptr : basis->d_sparse_vals,
+				basis == nullptr ? nullptr : basis->d_sparse_cols,
+				basis == nullptr ? nullptr : basis->d_sparse_row_ptr,
+				nullptr, 0, batch_chunk.offset, batch_chunk.size);
+		} else {
+			branched_sig_to_log_sig_horner_ker<T, Method, Planar, false>
+				<<<batch_chunk.grid, std::min(block, 256u)>>>(
+				bsig, out, plan.total_length, plan.product_count,
+				plan.d_product_offsets, plan.d_product_factors,
+				plan.d_coproduct_offsets, plan.d_coproduct_pairs,
+				plan.d_flat_to_product, plan.max_nodes, scalar_term,
+				basis == nullptr ? nullptr : basis->d_lyndon_idx, compact_len,
+				basis == nullptr ? nullptr : basis->d_sparse_vals,
+				basis == nullptr ? nullptr : basis->d_sparse_cols,
+				basis == nullptr ? nullptr : basis->d_sparse_row_ptr,
+				workspace->get(), scratch_elements,
+				batch_chunk.offset, batch_chunk.size);
+		}
 		batch_offset += batch_chunk.size;
 	}
 	cudaDeviceSynchronize();
@@ -797,55 +830,62 @@ static void branched_sig_to_log_sig_backprop_cuda_method_(
 	const uint64_t state_levels = plan.max_nodes > 1
 		? static_cast<uint64_t>(plan.max_nodes - 1) : 0;
 	const uint64_t workspace_levels = state_levels + 2;
-	const uint64_t workspace_elements = checked_branched_mul_(
+	const uint64_t persistent_elements = checked_branched_mul_(
 		workspace_levels,
 		plan.product_count,
 		"CUDA branched log sig backprop workspace size overflow");
-	const uint64_t workspace_bytes = checked_branched_mul_(
-		workspace_elements, sizeof(T),
-		"CUDA branched log sig backprop workspace byte size overflow");
-	size_t free_memory = 0;
-	size_t total_memory = 0;
-	CUDA_CHECK(cudaMemGetInfo(&free_memory, &total_memory));
-	const uint64_t reservation_bytes = checked_branched_mul_(
-		2, workspace_bytes,
-		"CUDA branched log sig backprop memory reservation overflow");
-	uint64_t workspace_chunk_size = workspace_bytes == 0
-		? batch_size
-		: free_memory / reservation_bytes;
-	workspace_chunk_size = std::max<uint64_t>(1, workspace_chunk_size);
-	workspace_chunk_size = std::min<uint64_t>(
-		std::min<uint64_t>(batch_size, workspace_chunk_size),
-		CUDA_BATCH_GRID_CAPACITY);
-	CudaBuf<T> workspace(checked_branched_mul_(
-		workspace_chunk_size, workspace_bytes,
-		"CUDA branched log sig backprop workspace allocation overflow"));
-
-	size_t smem = (2 * static_cast<uint64_t>(plan.product_count)
-		+ 3 * static_cast<uint64_t>(plan.total_length)) * sizeof(T);
-	configure_dynamic_smem(
-		branched_sig_to_log_sig_backprop_horner_ker<T, Method, Planar>, smem,
+	const size_t scratch_elements = checked_cuda_size_add(
+		checked_cuda_size_mul(
+			2, static_cast<size_t>(plan.product_count),
+			"CUDA branched log sig backprop"),
+		checked_cuda_size_mul(
+			3, static_cast<size_t>(plan.total_length),
+			"CUDA branched log sig backprop"),
 		"CUDA branched log sig backprop");
-	for (uint64_t batch_offset = 0; batch_offset < batch_size;
-		batch_offset += workspace_chunk_size) {
-		const uint64_t current_batch = std::min<uint64_t>(
-			workspace_chunk_size, batch_size - batch_offset);
+	const size_t smem = checked_cuda_size_mul(
+		scratch_elements, sizeof(T), "CUDA branched log sig backprop");
+	const bool use_shared_scratch = try_configure_dynamic_smem(
+		branched_sig_to_log_sig_backprop_horner_ker<
+			T, Method, Planar, true>, smem);
+	const size_t workspace_stride = checked_cuda_size_add(
+		static_cast<size_t>(persistent_elements),
+		use_shared_scratch ? size_t(0) : scratch_elements,
+		"CUDA branched log sig backprop");
+	CudaBatchWorkspace<T> workspace(
+		batch_size, workspace_stride,
+		"CUDA branched log sig backprop workspace");
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 		const auto batch_chunk = make_cuda_batch_grid_chunk(
-			1, current_batch, 0);
-		branched_sig_to_log_sig_backprop_horner_ker<T, Method, Planar>
-			<<<batch_chunk.grid, block, smem>>>(
-			bsig, derivs, out, plan.total_length, plan.product_count,
-			plan.d_product_offsets, plan.d_product_factors,
-			plan.d_coproduct_offsets, plan.d_coproduct_pairs,
-			plan.d_flat_to_product,
-			workspace.get(),
-			plan.max_nodes, scalar_term,
-			basis == nullptr ? nullptr : basis->d_lyndon_idx,
-			compact_len,
-			basis == nullptr ? nullptr : basis->d_sparse_vals_t,
-			basis == nullptr ? nullptr : basis->d_sparse_cols_t,
-			basis == nullptr ? nullptr : basis->d_sparse_row_ptr_t,
-			batch_offset, current_batch);
+			1, batch_size, batch_offset, workspace.capacity());
+		if (use_shared_scratch) {
+			branched_sig_to_log_sig_backprop_horner_ker<
+				T, Method, Planar, true><<<batch_chunk.grid, block, smem>>>(
+				bsig, derivs, out, plan.total_length, plan.product_count,
+				plan.d_product_offsets, plan.d_product_factors,
+				plan.d_coproduct_offsets, plan.d_coproduct_pairs,
+				plan.d_flat_to_product, workspace.get(), workspace_stride,
+				plan.max_nodes, scalar_term,
+				basis == nullptr ? nullptr : basis->d_lyndon_idx, compact_len,
+				basis == nullptr ? nullptr : basis->d_sparse_vals_t,
+				basis == nullptr ? nullptr : basis->d_sparse_cols_t,
+				basis == nullptr ? nullptr : basis->d_sparse_row_ptr_t,
+				batch_chunk.offset, batch_chunk.size);
+		} else {
+			branched_sig_to_log_sig_backprop_horner_ker<
+				T, Method, Planar, false><<<
+					batch_chunk.grid, std::min(block, 256u)>>>(
+				bsig, derivs, out, plan.total_length, plan.product_count,
+				plan.d_product_offsets, plan.d_product_factors,
+				plan.d_coproduct_offsets, plan.d_coproduct_pairs,
+				plan.d_flat_to_product, workspace.get(), workspace_stride,
+				plan.max_nodes, scalar_term,
+				basis == nullptr ? nullptr : basis->d_lyndon_idx, compact_len,
+				basis == nullptr ? nullptr : basis->d_sparse_vals_t,
+				basis == nullptr ? nullptr : basis->d_sparse_cols_t,
+				basis == nullptr ? nullptr : basis->d_sparse_row_ptr_t,
+				batch_chunk.offset, batch_chunk.size);
+		}
+		batch_offset += batch_chunk.size;
 	}
 	cudaDeviceSynchronize();
 	check_cuda_error();

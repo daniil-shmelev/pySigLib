@@ -98,7 +98,8 @@ def prepare_branched_log_sig(
             aug_dimension, degree, method, use_disk, planar)
         if err_code:
             raise Exception(
-                "Error in pysiglib.prepare_branched_log_sig: " + err_msg(err_code))
+                "Error in pysiglib.prepare_branched_log_sig: "
+                + err_msg(err_code, "cpu"))
 
     if (method == 3 and degree > 12 and BUILT_WITH_CUDA
             and device in ("cuda", "both")):
@@ -110,7 +111,7 @@ def prepare_branched_log_sig(
         if err_code:
             raise Exception(
                 "Error in pysiglib.prepare_branched_log_sig (CUDA): "
-                + err_msg(err_code))
+                + err_msg(err_code, "cuda"))
 
 
 def _resolve_branched_log_sig_method(method: Optional[int], planar: bool) -> int:
@@ -243,7 +244,9 @@ def branched_sig_to_log_sig(
             data.sig_ptr[0], result.data_ptr, data.batch_size,
             aug_dimension, degree, method, planar, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.branched_sig_to_log_sig: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.branched_sig_to_log_sig: "
+            + err_msg(err_code, result.device))
 
     return result.data
 
@@ -411,7 +414,7 @@ def branched_log_sig(
         if err_code:
             raise Exception(
                 "Error in pysiglib.branched_log_sig (method=3): "
-                + err_msg(err_code))
+                + err_msg(err_code, result.device))
         return result.data
 
     bsig = branched_sig(

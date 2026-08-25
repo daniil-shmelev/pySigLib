@@ -120,7 +120,9 @@ def sig_combine_backprop(
             sig_data.sig_ptr[0], sig_data.sig_ptr[1],
             sig_data.batch_size, aug_dimension, degree, scalar_term)
     if err_code:
-        raise Exception("Error in pysiglib.sig_combine_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.sig_combine_backprop: "
+            + err_msg(err_code, sig1_deriv.device))
     return sig1_deriv.data, sig2_deriv.data
 
 def sig_backprop(
@@ -248,5 +250,7 @@ def sig_backprop(
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride)
     if err_code:
-        raise Exception("Error in pysiglib.sig_backprop: " + err_msg(err_code))
+        raise Exception(
+            "Error in pysiglib.sig_backprop: "
+            + err_msg(err_code, result.device))
     return result.data
