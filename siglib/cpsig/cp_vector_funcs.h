@@ -528,6 +528,208 @@ FORCE_INLINE void vec4_bracket_grad(
 	_mm256_storeu_pd(&dm_rf[i * 4], _mm256_fnmadd_pd(S, v1j, _mm256_loadu_pd(&dm_rf[i * 4])));
 }
 
+// Fixed-width operations on aligned coefficients from several batch elements.
+
+inline constexpr uint64_t vec_batch_bytes = 32;
+
+FORCE_INLINE void vec_batch_fill(float* out, float value) {
+	_mm256_store_ps(out, _mm256_set1_ps(value));
+}
+
+FORCE_INLINE void vec_batch_fill(double* out, double value) {
+	_mm256_store_pd(out, _mm256_set1_pd(value));
+}
+
+FORCE_INLINE void vec_batch_copy(float* out, const float* value) {
+	_mm256_store_ps(out, _mm256_load_ps(value));
+}
+
+FORCE_INLINE void vec_batch_copy(double* out, const double* value) {
+	_mm256_store_pd(out, _mm256_load_pd(value));
+}
+
+FORCE_INLINE void vec_batch_add(
+	float* out, const float* left, const float* right
+) {
+	_mm256_store_ps(out,
+		_mm256_add_ps(_mm256_load_ps(left), _mm256_load_ps(right)));
+}
+
+FORCE_INLINE void vec_batch_add(
+	double* out, const double* left, const double* right
+) {
+	_mm256_store_pd(out,
+		_mm256_add_pd(_mm256_load_pd(left), _mm256_load_pd(right)));
+}
+
+FORCE_INLINE void vec_batch_add_inplace(float* out, const float* value) {
+	_mm256_store_ps(out,
+		_mm256_add_ps(_mm256_load_ps(out), _mm256_load_ps(value)));
+}
+
+FORCE_INLINE void vec_batch_add_inplace(double* out, const double* value) {
+	_mm256_store_pd(out,
+		_mm256_add_pd(_mm256_load_pd(out), _mm256_load_pd(value)));
+}
+
+FORCE_INLINE void vec_batch_subtract(
+	float* out, const float* left, const float* right
+) {
+	_mm256_store_ps(out,
+		_mm256_sub_ps(_mm256_load_ps(left), _mm256_load_ps(right)));
+}
+
+FORCE_INLINE void vec_batch_subtract(
+	double* out, const double* left, const double* right
+) {
+	_mm256_store_pd(out,
+		_mm256_sub_pd(_mm256_load_pd(left), _mm256_load_pd(right)));
+}
+
+FORCE_INLINE void vec_batch_subtract_inplace(float* out, const float* value) {
+	_mm256_store_ps(out,
+		_mm256_sub_ps(_mm256_load_ps(out), _mm256_load_ps(value)));
+}
+
+FORCE_INLINE void vec_batch_subtract_inplace(double* out, const double* value) {
+	_mm256_store_pd(out,
+		_mm256_sub_pd(_mm256_load_pd(out), _mm256_load_pd(value)));
+}
+
+FORCE_INLINE void vec_batch_multiply(
+	float* out, const float* left, const float* right
+) {
+	_mm256_store_ps(out,
+		_mm256_mul_ps(_mm256_load_ps(left), _mm256_load_ps(right)));
+}
+
+FORCE_INLINE void vec_batch_multiply(
+	double* out, const double* left, const double* right
+) {
+	_mm256_store_pd(out,
+		_mm256_mul_pd(_mm256_load_pd(left), _mm256_load_pd(right)));
+}
+
+FORCE_INLINE void vec_batch_multiply_inplace(float* out, const float* value) {
+	_mm256_store_ps(out,
+		_mm256_mul_ps(_mm256_load_ps(out), _mm256_load_ps(value)));
+}
+
+FORCE_INLINE void vec_batch_multiply_inplace(double* out, const double* value) {
+	_mm256_store_pd(out,
+		_mm256_mul_pd(_mm256_load_pd(out), _mm256_load_pd(value)));
+}
+
+FORCE_INLINE void vec_batch_scale(float* out, const float* value, float scalar) {
+	_mm256_store_ps(out,
+		_mm256_mul_ps(_mm256_load_ps(value), _mm256_set1_ps(scalar)));
+}
+
+FORCE_INLINE void vec_batch_scale(double* out, const double* value, double scalar) {
+	_mm256_store_pd(out,
+		_mm256_mul_pd(_mm256_load_pd(value), _mm256_set1_pd(scalar)));
+}
+
+FORCE_INLINE void vec_batch_negate_inplace(float* out) {
+	_mm256_store_ps(out,
+		_mm256_xor_ps(_mm256_load_ps(out), _mm256_set1_ps(-0.0f)));
+}
+
+FORCE_INLINE void vec_batch_negate_inplace(double* out) {
+	_mm256_store_pd(out,
+		_mm256_xor_pd(_mm256_load_pd(out), _mm256_set1_pd(-0.0)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add(
+	float* out, const float* left, const float* right
+) {
+	_mm256_store_ps(out, _mm256_fmadd_ps(
+		_mm256_load_ps(left), _mm256_load_ps(right), _mm256_load_ps(out)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add(
+	double* out, const double* left, const double* right
+) {
+	_mm256_store_pd(out, _mm256_fmadd_pd(
+		_mm256_load_pd(left), _mm256_load_pd(right), _mm256_load_pd(out)));
+}
+
+FORCE_INLINE void vec_batch_scaled_add(
+	float* out, const float* value, float scalar
+) {
+	_mm256_store_ps(out, _mm256_fmadd_ps(
+		_mm256_load_ps(value), _mm256_set1_ps(scalar), _mm256_load_ps(out)));
+}
+
+FORCE_INLINE void vec_batch_scaled_add(
+	double* out, const double* value, double scalar
+) {
+	_mm256_store_pd(out, _mm256_fmadd_pd(
+		_mm256_load_pd(value), _mm256_set1_pd(scalar), _mm256_load_pd(out)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add_scaled(
+	float* out, const float* left, const float* right, float scalar
+) {
+	const __m256 product = _mm256_mul_ps(
+		_mm256_load_ps(left), _mm256_load_ps(right));
+	_mm256_store_ps(out, _mm256_fmadd_ps(
+		product, _mm256_set1_ps(scalar), _mm256_load_ps(out)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add_scaled(
+	double* out, const double* left, const double* right, double scalar
+) {
+	const __m256d product = _mm256_mul_pd(
+		_mm256_load_pd(left), _mm256_load_pd(right));
+	_mm256_store_pd(out, _mm256_fmadd_pd(
+		product, _mm256_set1_pd(scalar), _mm256_load_pd(out)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add3(
+	float* out, const float* first, const float* second, const float* third
+) {
+	const __m256 product = _mm256_mul_ps(
+		_mm256_load_ps(first), _mm256_load_ps(second));
+	_mm256_store_ps(out, _mm256_fmadd_ps(
+		product, _mm256_load_ps(third), _mm256_load_ps(out)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add3(
+	double* out, const double* first, const double* second, const double* third
+) {
+	const __m256d product = _mm256_mul_pd(
+		_mm256_load_pd(first), _mm256_load_pd(second));
+	_mm256_store_pd(out, _mm256_fmadd_pd(
+		product, _mm256_load_pd(third), _mm256_load_pd(out)));
+}
+
+FORCE_INLINE void vec_batch_subtract_product(
+	float* out, const float* left, const float* right
+) {
+	_mm256_store_ps(out, _mm256_fnmadd_ps(
+		_mm256_load_ps(left), _mm256_load_ps(right), _mm256_load_ps(out)));
+}
+
+FORCE_INLINE void vec_batch_subtract_product(
+	double* out, const double* left, const double* right
+) {
+	_mm256_store_pd(out, _mm256_fnmadd_pd(
+		_mm256_load_pd(left), _mm256_load_pd(right), _mm256_load_pd(out)));
+}
+
+FORCE_INLINE bool vec_batch_is_zero(const float* value) {
+	const __m256 unequal = _mm256_cmp_ps(
+		_mm256_load_ps(value), _mm256_setzero_ps(), _CMP_NEQ_UQ);
+	return _mm256_movemask_ps(unequal) == 0;
+}
+
+FORCE_INLINE bool vec_batch_is_zero(const double* value) {
+	const __m256d unequal = _mm256_cmp_pd(
+		_mm256_load_pd(value), _mm256_setzero_pd(), _CMP_NEQ_UQ);
+	return _mm256_movemask_pd(unequal) == 0;
+}
+
 #else
 
 FORCE_INLINE void vec_mult_add(float* out, const float* other, float scalar, uint64_t size)
@@ -852,6 +1054,190 @@ FORCE_INLINE void vec4_bracket_grad(
 	vst1q_f64(&dm_rf[j * 4 + 2], vfmaq_f64(vld1q_f64(&dm_rf[j * 4 + 2]), shi, v1ihi));
 	vst1q_f64(&dm_rf[i * 4],     vfmsq_f64(vld1q_f64(&dm_rf[i * 4]),     slo, v1jlo));
 	vst1q_f64(&dm_rf[i * 4 + 2], vfmsq_f64(vld1q_f64(&dm_rf[i * 4 + 2]), shi, v1jhi));
+}
+
+// Fixed-width operations on coefficients from several batch elements.
+
+inline constexpr uint64_t vec_batch_bytes = 16;
+
+FORCE_INLINE void vec_batch_fill(float* out, float value) {
+	vst1q_f32(out, vdupq_n_f32(value));
+}
+
+FORCE_INLINE void vec_batch_fill(double* out, double value) {
+	vst1q_f64(out, vdupq_n_f64(value));
+}
+
+FORCE_INLINE void vec_batch_copy(float* out, const float* value) {
+	vst1q_f32(out, vld1q_f32(value));
+}
+
+FORCE_INLINE void vec_batch_copy(double* out, const double* value) {
+	vst1q_f64(out, vld1q_f64(value));
+}
+
+FORCE_INLINE void vec_batch_add(
+	float* out, const float* left, const float* right
+) {
+	vst1q_f32(out, vaddq_f32(vld1q_f32(left), vld1q_f32(right)));
+}
+
+FORCE_INLINE void vec_batch_add(
+	double* out, const double* left, const double* right
+) {
+	vst1q_f64(out, vaddq_f64(vld1q_f64(left), vld1q_f64(right)));
+}
+
+FORCE_INLINE void vec_batch_add_inplace(float* out, const float* value) {
+	vst1q_f32(out, vaddq_f32(vld1q_f32(out), vld1q_f32(value)));
+}
+
+FORCE_INLINE void vec_batch_add_inplace(double* out, const double* value) {
+	vst1q_f64(out, vaddq_f64(vld1q_f64(out), vld1q_f64(value)));
+}
+
+FORCE_INLINE void vec_batch_subtract(
+	float* out, const float* left, const float* right
+) {
+	vst1q_f32(out, vsubq_f32(vld1q_f32(left), vld1q_f32(right)));
+}
+
+FORCE_INLINE void vec_batch_subtract(
+	double* out, const double* left, const double* right
+) {
+	vst1q_f64(out, vsubq_f64(vld1q_f64(left), vld1q_f64(right)));
+}
+
+FORCE_INLINE void vec_batch_subtract_inplace(float* out, const float* value) {
+	vst1q_f32(out, vsubq_f32(vld1q_f32(out), vld1q_f32(value)));
+}
+
+FORCE_INLINE void vec_batch_subtract_inplace(double* out, const double* value) {
+	vst1q_f64(out, vsubq_f64(vld1q_f64(out), vld1q_f64(value)));
+}
+
+FORCE_INLINE void vec_batch_multiply(
+	float* out, const float* left, const float* right
+) {
+	vst1q_f32(out, vmulq_f32(vld1q_f32(left), vld1q_f32(right)));
+}
+
+FORCE_INLINE void vec_batch_multiply(
+	double* out, const double* left, const double* right
+) {
+	vst1q_f64(out, vmulq_f64(vld1q_f64(left), vld1q_f64(right)));
+}
+
+FORCE_INLINE void vec_batch_multiply_inplace(float* out, const float* value) {
+	vst1q_f32(out, vmulq_f32(vld1q_f32(out), vld1q_f32(value)));
+}
+
+FORCE_INLINE void vec_batch_multiply_inplace(double* out, const double* value) {
+	vst1q_f64(out, vmulq_f64(vld1q_f64(out), vld1q_f64(value)));
+}
+
+FORCE_INLINE void vec_batch_scale(float* out, const float* value, float scalar) {
+	vst1q_f32(out, vmulq_f32(vld1q_f32(value), vdupq_n_f32(scalar)));
+}
+
+FORCE_INLINE void vec_batch_scale(double* out, const double* value, double scalar) {
+	vst1q_f64(out, vmulq_f64(vld1q_f64(value), vdupq_n_f64(scalar)));
+}
+
+FORCE_INLINE void vec_batch_negate_inplace(float* out) {
+	vst1q_f32(out, vnegq_f32(vld1q_f32(out)));
+}
+
+FORCE_INLINE void vec_batch_negate_inplace(double* out) {
+	vst1q_f64(out, vnegq_f64(vld1q_f64(out)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add(
+	float* out, const float* left, const float* right
+) {
+	vst1q_f32(out, vfmaq_f32(
+		vld1q_f32(out), vld1q_f32(left), vld1q_f32(right)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add(
+	double* out, const double* left, const double* right
+) {
+	vst1q_f64(out, vfmaq_f64(
+		vld1q_f64(out), vld1q_f64(left), vld1q_f64(right)));
+}
+
+FORCE_INLINE void vec_batch_scaled_add(
+	float* out, const float* value, float scalar
+) {
+	vst1q_f32(out, vfmaq_f32(
+		vld1q_f32(out), vld1q_f32(value), vdupq_n_f32(scalar)));
+}
+
+FORCE_INLINE void vec_batch_scaled_add(
+	double* out, const double* value, double scalar
+) {
+	vst1q_f64(out, vfmaq_f64(
+		vld1q_f64(out), vld1q_f64(value), vdupq_n_f64(scalar)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add_scaled(
+	float* out, const float* left, const float* right, float scalar
+) {
+	const float32x4_t product = vmulq_f32(vld1q_f32(left), vld1q_f32(right));
+	vst1q_f32(out, vfmaq_f32(
+		vld1q_f32(out), product, vdupq_n_f32(scalar)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add_scaled(
+	double* out, const double* left, const double* right, double scalar
+) {
+	const float64x2_t product = vmulq_f64(vld1q_f64(left), vld1q_f64(right));
+	vst1q_f64(out, vfmaq_f64(
+		vld1q_f64(out), product, vdupq_n_f64(scalar)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add3(
+	float* out, const float* first, const float* second, const float* third
+) {
+	const float32x4_t product = vmulq_f32(vld1q_f32(first), vld1q_f32(second));
+	vst1q_f32(out, vfmaq_f32(
+		vld1q_f32(out), product, vld1q_f32(third)));
+}
+
+FORCE_INLINE void vec_batch_multiply_add3(
+	double* out, const double* first, const double* second, const double* third
+) {
+	const float64x2_t product = vmulq_f64(vld1q_f64(first), vld1q_f64(second));
+	vst1q_f64(out, vfmaq_f64(
+		vld1q_f64(out), product, vld1q_f64(third)));
+}
+
+FORCE_INLINE void vec_batch_subtract_product(
+	float* out, const float* left, const float* right
+) {
+	vst1q_f32(out, vfmsq_f32(
+		vld1q_f32(out), vld1q_f32(left), vld1q_f32(right)));
+}
+
+FORCE_INLINE void vec_batch_subtract_product(
+	double* out, const double* left, const double* right
+) {
+	vst1q_f64(out, vfmsq_f64(
+		vld1q_f64(out), vld1q_f64(left), vld1q_f64(right)));
+}
+
+FORCE_INLINE bool vec_batch_is_zero(const float* value) {
+	const uint32x4_t equal = vceqq_f32(vld1q_f32(value), vdupq_n_f32(0.0f));
+	return vgetq_lane_u32(equal, 0) != 0
+		&& vgetq_lane_u32(equal, 1) != 0
+		&& vgetq_lane_u32(equal, 2) != 0
+		&& vgetq_lane_u32(equal, 3) != 0;
+}
+
+FORCE_INLINE bool vec_batch_is_zero(const double* value) {
+	const uint64x2_t equal = vceqq_f64(vld1q_f64(value), vdupq_n_f64(0.0));
+	return vgetq_lane_u64(equal, 0) != 0
+		&& vgetq_lane_u64(equal, 1) != 0;
 }
 
 #endif

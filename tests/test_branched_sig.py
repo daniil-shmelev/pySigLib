@@ -1034,24 +1034,26 @@ def test_planar_branched_sig_backprop_torch_api(d, N):
     check_close(grad_torch, grad_manual, double_atol=1e-12)
 
 
-@pytest.mark.parametrize("d,N", [(2, 3)])
-def test_branched_sig_backprop_batch(d, N):
+@pytest.mark.parametrize("d,N", [(2, 0), (2, 3)])
+@pytest.mark.parametrize("dtype,atol", [(np.float32, 1e-4), (np.float64, 1e-12)])
+@pytest.mark.parametrize("scalar_term", [False, True])
+def test_branched_sig_backprop_batch(d, N, dtype, atol, scalar_term):
     """Batched backprop matches single-path backprop."""
     pysiglib.prepare_branched_sig(d, N)
     np.random.seed(403)
-    B, L = 4, 6
-    paths = np.random.randn(B, L, d)
+    B, L = 5, 6
+    paths = np.random.randn(B, L, d).astype(dtype)
 
-    bsigs = pysiglib.branched_sig(paths, N)
+    bsigs = pysiglib.branched_sig(paths, N, scalar_term=scalar_term)
     bsig_len = bsigs.shape[1]
-    derivs = np.random.randn(B, bsig_len)
+    derivs = np.random.randn(B, bsig_len).astype(dtype)
 
     batch_grad = np.array(pysiglib.branched_sig_backprop(paths, bsigs, derivs, N))
 
     for i in range(B):
         single_grad = np.array(pysiglib.branched_sig_backprop(
             paths[i], bsigs[i], derivs[i], N))
-        np.testing.assert_allclose(batch_grad[i], single_grad, atol=1e-12)
+        np.testing.assert_allclose(batch_grad[i], single_grad, rtol=atol, atol=atol)
 
 
 # ---------------------------------------------------------------------------
@@ -1595,22 +1597,25 @@ def test_planar_branched_sig_backprop_random_derivs(d, N):
     np.testing.assert_allclose(grad_bp, grad_fd, atol=1e-4)
 
 
-@pytest.mark.parametrize("d,N", [(2, 3)])
-def test_planar_branched_sig_backprop_batch(d, N):
+@pytest.mark.parametrize("d,N", [(2, 0), (2, 3)])
+@pytest.mark.parametrize("dtype,atol", [(np.float32, 1e-4), (np.float64, 1e-12)])
+@pytest.mark.parametrize("scalar_term", [False, True])
+def test_planar_branched_sig_backprop_batch(d, N, dtype, atol, scalar_term):
     """Batched planar backprop matches single-path backprop."""
     pysiglib.prepare_branched_sig(d, N, planar=True)
     np.random.seed(1302)
-    B, L = 4, 6
-    paths = np.random.randn(B, L, d)
+    B, L = 5, 6
+    paths = np.random.randn(B, L, d).astype(dtype)
 
-    bsigs = pysiglib.branched_sig(paths, N, planar=True)
-    derivs = np.random.randn(B, bsigs.shape[1])
+    bsigs = pysiglib.branched_sig(
+        paths, N, planar=True, scalar_term=scalar_term)
+    derivs = np.random.randn(B, bsigs.shape[1]).astype(dtype)
 
     batch_grad = np.array(pysiglib.branched_sig_backprop(paths, bsigs, derivs, N, planar=True))
     for i in range(B):
         single_grad = np.array(pysiglib.branched_sig_backprop(
             paths[i], bsigs[i], derivs[i], N, planar=True))
-        np.testing.assert_allclose(batch_grad[i], single_grad, atol=1e-12)
+        np.testing.assert_allclose(batch_grad[i], single_grad, rtol=atol, atol=atol)
 
 
 # ---------------------------------------------------------------------------
