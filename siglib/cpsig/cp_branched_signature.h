@@ -17,8 +17,11 @@
 #include "cppch.h"
 #include "cache_lifecycle/cp_branched_cache.h"
 #include "cp_path.h"
+#include "cp_vector_funcs.h"
 #include "multithreading.h"
 #include "macros.h"
+
+#include <new>
 
 template<std::floating_point T>
 void linear_branched_sig_(
@@ -1449,6 +1452,697 @@ void branched_sig_backprop_inplace_(
 }
 
 
+#ifdef VEC
+template<std::floating_point T, size_t Width>
+void linear_branched_sig_batch_(
+	const T* increment,
+	T* out,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	alignas(32) T product[Width];
+	vec_batch_fill(out, static_cast<T>(1));
+
+	const uint64_t num_trees = cache.total_length - 1;
+	const uint8_t* labels = cache.node_labels_data.data();
+	const uint64_t* offsets = cache.node_labels_offsets.data();
+	for (uint64_t i = 0; i < num_trees; ++i) {
+		vec_batch_fill(product, static_cast<T>(1));
+		for (uint64_t pos = offsets[i]; pos < offsets[i + 1]; ++pos) {
+			vec_batch_multiply_inplace(
+				product, increment + static_cast<uint64_t>(labels[pos]) * Width);
+		}
+		vec_batch_scale(
+			out + (i + 1) * Width, product,
+			static_cast<T>(cache.inv_tree_factorial[i]));
+	}
+}
+
+
+template<std::floating_point T, size_t Width>
+void fill_branched_horner_products_batch_(
+	const T* sig,
+	T* products,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	const auto& plan = cache.horner;
+	vec_batch_copy(products, sig);
+	for (uint64_t pos = 0; pos < plan.product_build.size(); ++pos) {
+		const uint64_t product = plan.product_build[pos];
+		vec_batch_multiply(
+			products + product * Width,
+			products + plan.product_build_parent[pos] * Width,
+			sig + plan.product_build_factor[pos] * Width);
+	}
+}
+
+
+template<std::floating_point T, size_t Width>
+void branched_horner_derivative_level_batch_(
+	const T* base,
+	const T* extra,
+	const T* increment,
+	T* out,
+	uint64_t target_order,
+	uint64_t stage_order,
+	T scale,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	alignas(32) T value[Width];
+	alignas(32) T source_sum[Width];
+	const auto& plan = cache.horner;
+	const uint64_t stage_width = cache.max_nodes + 1;
+	const uint64_t stage_key = target_order * stage_width + stage_order;
+	const uint64_t start = plan.stage_offsets[stage_key];
+	const uint64_t end = plan.stage_offsets[stage_key + 1];
+	for (uint64_t stage_pos = start; stage_pos < end; ++stage_pos) {
+		const uint64_t target = plan.stage_products[stage_pos];
+		vec_batch_fill(value, static_cast<T>(0));
+		const uint64_t term_start = plan.derivative_offsets[target];
+		const uint64_t term_end = plan.derivative_offsets[target + 1];
+		for (uint64_t pos = term_start; pos < term_end; ++pos) {
+			const uint64_t left = plan.derivative_left[pos];
+			const uint64_t label = plan.derivative_label[pos];
+			const T* source = base + left * Width;
+			if (extra != nullptr) {
+				vec_batch_add(source_sum, source, extra + left * Width);
+				source = source_sum;
+			}
+			vec_batch_multiply_add(
+				value, source, increment + label * Width);
+		}
+		vec_batch_scale(out + target * Width, value, scale);
+	}
+}
+
+
+template<std::floating_point T, size_t Width>
+void branched_horner_step_batch_(
+	T* sig,
+	const T* increment,
+	T* base,
+	T* current,
+	T* next,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	if (cache.max_nodes == 0)
+		return;
+	const auto& plan = cache.horner;
+	fill_branched_horner_products_batch_<T, Width>(sig, base, cache);
+
+	branched_horner_derivative_level_batch_<T, Width>(
+		base, nullptr, increment, current, 1, 1, static_cast<T>(1), cache);
+	for (uint64_t flat_idx = cache.order_index[1];
+		flat_idx < cache.order_index[2]; ++flat_idx) {
+		const uint64_t flat = flat_idx + 1;
+		const uint64_t product = plan.flat_to_product[flat];
+		vec_batch_add(
+			sig + flat * Width, base + product * Width,
+			current + product * Width);
+	}
+
+	for (uint64_t target_order = 2;
+		target_order <= cache.max_nodes; ++target_order) {
+		branched_horner_derivative_level_batch_<T, Width>(
+			base, nullptr, increment, current, target_order, 1,
+			static_cast<T>(1) / static_cast<T>(target_order), cache);
+		for (uint64_t source_order = 1;
+			source_order + 1 < target_order; ++source_order) {
+			branched_horner_derivative_level_batch_<T, Width>(
+				base, current, increment, next, target_order, source_order + 1,
+				static_cast<T>(1)
+					/ static_cast<T>(target_order - source_order), cache);
+			std::swap(current, next);
+		}
+
+		branched_horner_derivative_level_batch_<T, Width>(
+			base, current, increment, next, target_order, target_order,
+			static_cast<T>(1), cache);
+		for (uint64_t flat_idx = cache.order_index[target_order];
+			flat_idx < cache.order_index[target_order + 1]; ++flat_idx) {
+			const uint64_t flat = flat_idx + 1;
+			const uint64_t product = plan.flat_to_product[flat];
+			vec_batch_add(
+				sig + flat * Width, base + product * Width,
+				next + product * Width);
+		}
+	}
+}
+
+
+template<std::floating_point T, size_t Width>
+void branched_horner_derivative_level_backprop_batch_(
+	const T* base,
+	const T* extra,
+	const T* increment,
+	const T* d_target,
+	T* d_base,
+	T* d_extra,
+	T* d_increment,
+	uint64_t target_order,
+	uint64_t stage_order,
+	T scale,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	alignas(32) T deriv[Width];
+	alignas(32) T source_sum[Width];
+	alignas(32) T source_deriv[Width];
+	const auto& plan = cache.horner;
+	const uint64_t stage_width = cache.max_nodes + 1;
+	const uint64_t stage_key = target_order * stage_width + stage_order;
+	const uint64_t start = plan.stage_offsets[stage_key];
+	const uint64_t end = plan.stage_offsets[stage_key + 1];
+	for (uint64_t stage_pos = start; stage_pos < end; ++stage_pos) {
+		const uint64_t target = plan.stage_products[stage_pos];
+		vec_batch_scale(deriv, d_target + target * Width, scale);
+		if (vec_batch_is_zero(deriv))
+			continue;
+		const uint64_t term_start = plan.derivative_offsets[target];
+		const uint64_t term_end = plan.derivative_offsets[target + 1];
+		for (uint64_t pos = term_start; pos < term_end; ++pos) {
+			const uint64_t left = plan.derivative_left[pos];
+			const uint64_t label = plan.derivative_label[pos];
+			const T* source = base + left * Width;
+			if (extra != nullptr) {
+				vec_batch_add(source_sum, source, extra + left * Width);
+				source = source_sum;
+			}
+			vec_batch_multiply(
+				source_deriv, deriv, increment + label * Width);
+			vec_batch_add_inplace(d_base + left * Width, source_deriv);
+			if (d_extra != nullptr)
+				vec_batch_add_inplace(d_extra + left * Width, source_deriv);
+			vec_batch_multiply_add(
+				d_increment + label * Width, deriv, source);
+		}
+	}
+}
+
+
+template<std::floating_point T, size_t Width>
+void branched_horner_step_backprop_batch_(
+	const T* sig,
+	const T* increment,
+	const T* d_out,
+	T* d_sig,
+	T* d_increment,
+	T* base,
+	T* states,
+	T* d_base,
+	T* d_current_buffer,
+	T* d_next_buffer,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	const auto& plan = cache.horner;
+	const uint64_t product_count = plan.product_count;
+	fill_branched_horner_products_batch_<T, Width>(sig, base, cache);
+	std::memset(d_base, 0, product_count * Width * sizeof(T));
+	std::memset(d_increment, 0, cache.dimension * Width * sizeof(T));
+	vec_batch_copy(d_base, d_out);
+	for (uint64_t flat = 1; flat < cache.total_length; ++flat) {
+		vec_batch_add_inplace(
+			d_base + plan.flat_to_product[flat] * Width,
+			d_out + flat * Width);
+	}
+
+	for (uint64_t target_order = 1;
+		target_order <= cache.max_nodes; ++target_order) {
+		T* d_current = d_current_buffer;
+		T* d_next = d_next_buffer;
+		const uint64_t stage_width = cache.max_nodes + 1;
+		uint64_t stage_key = target_order * stage_width + target_order;
+		for (uint64_t pos = plan.stage_offsets[stage_key];
+			pos < plan.stage_offsets[stage_key + 1]; ++pos) {
+			vec_batch_fill(
+				d_current + plan.stage_products[pos] * Width,
+				static_cast<T>(0));
+		}
+		for (uint64_t flat_idx = cache.order_index[target_order];
+			flat_idx < cache.order_index[target_order + 1]; ++flat_idx) {
+			const uint64_t flat = flat_idx + 1;
+			vec_batch_add_inplace(
+				d_current + plan.flat_to_product[flat] * Width,
+				d_out + flat * Width);
+		}
+
+		if (target_order == 1) {
+			branched_horner_derivative_level_backprop_batch_<T, Width>(
+				base, nullptr, increment, d_current, d_base, nullptr,
+				d_increment, 1, 1, static_cast<T>(1), cache);
+			continue;
+		}
+
+		T* state = states + product_count * Width;
+		branched_horner_derivative_level_batch_<T, Width>(
+			base, nullptr, increment, state, target_order, 1,
+			static_cast<T>(1) / static_cast<T>(target_order), cache);
+		for (uint64_t source_order = 1;
+			source_order + 1 < target_order; ++source_order) {
+			T* next_state = states
+				+ (source_order + 1) * product_count * Width;
+			branched_horner_derivative_level_batch_<T, Width>(
+				base, state, increment, next_state, target_order, source_order + 1,
+				static_cast<T>(1)
+					/ static_cast<T>(target_order - source_order), cache);
+			state = next_state;
+		}
+
+		stage_key = target_order * stage_width + target_order - 1;
+		for (uint64_t pos = plan.stage_offsets[stage_key];
+			pos < plan.stage_offsets[stage_key + 1]; ++pos) {
+			vec_batch_fill(
+				d_next + plan.stage_products[pos] * Width,
+				static_cast<T>(0));
+		}
+		branched_horner_derivative_level_backprop_batch_<T, Width>(
+			base, state, increment, d_current, d_base, d_next,
+			d_increment, target_order, target_order, static_cast<T>(1), cache);
+		std::swap(d_current, d_next);
+
+		for (uint64_t source_order = target_order - 2;
+			source_order >= 1; --source_order) {
+			state = states + source_order * product_count * Width;
+			stage_key = target_order * stage_width + source_order;
+			for (uint64_t pos = plan.stage_offsets[stage_key];
+				pos < plan.stage_offsets[stage_key + 1]; ++pos) {
+				vec_batch_fill(
+					d_next + plan.stage_products[pos] * Width,
+					static_cast<T>(0));
+			}
+			branched_horner_derivative_level_backprop_batch_<T, Width>(
+				base, state, increment, d_current, d_base, d_next,
+				d_increment, target_order, source_order + 1,
+				static_cast<T>(1)
+					/ static_cast<T>(target_order - source_order), cache);
+			std::swap(d_current, d_next);
+		}
+
+		branched_horner_derivative_level_backprop_batch_<T, Width>(
+			base, nullptr, increment, d_current, d_base, nullptr,
+			d_increment, target_order, 1,
+			static_cast<T>(1) / static_cast<T>(target_order), cache);
+	}
+
+	std::memset(d_sig, 0, cache.total_length * Width * sizeof(T));
+	for (uint64_t pos = plan.product_build.size(); pos > 0; --pos) {
+		const uint64_t product = plan.product_build[pos - 1];
+		const uint64_t parent = plan.product_build_parent[pos - 1];
+		const uint64_t factor = plan.product_build_factor[pos - 1];
+		const T* deriv = d_base + product * Width;
+		vec_batch_multiply_add(
+			d_base + parent * Width, deriv, sig + factor * Width);
+		vec_batch_multiply_add(
+			d_sig + factor * Width, deriv, base + parent * Width);
+	}
+	vec_batch_copy(d_sig, d_base);
+}
+
+
+template<std::floating_point T, size_t Width>
+void linear_bsig_deriv_to_increment_deriv_batch_(
+	const T* dF_dY,
+	const T* increment,
+	T* inc_derivs,
+	uint64_t dimension,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	alignas(32) T base[Width];
+	alignas(32) T prefix[Width];
+	alignas(32) T suffix[Width];
+	std::memset(inc_derivs, 0, dimension * Width * sizeof(T));
+
+	const uint64_t num_trees = cache.total_length - 1;
+	const uint8_t* labels = cache.node_labels_data.data();
+	const uint64_t* offsets = cache.node_labels_offsets.data();
+	for (uint64_t i = 0; i < num_trees; ++i) {
+		const T* deriv = dF_dY + (i + 1) * Width;
+		if (vec_batch_is_zero(deriv))
+			continue;
+		vec_batch_scale(
+			base, deriv, static_cast<T>(cache.inv_tree_factorial[i]));
+		vec_batch_fill(prefix, static_cast<T>(1));
+		const uint64_t label_start = offsets[i];
+		const uint64_t label_count = offsets[i + 1] - label_start;
+		for (uint64_t j = 0; j < label_count; ++j) {
+			vec_batch_fill(suffix, static_cast<T>(1));
+			for (uint64_t k = j + 1; k < label_count; ++k) {
+				vec_batch_multiply_inplace(
+					suffix,
+					increment + static_cast<uint64_t>(labels[label_start + k]) * Width);
+			}
+			const uint64_t label = labels[label_start + j];
+			vec_batch_multiply_add3(
+				inc_derivs + label * Width, base, prefix, suffix);
+			vec_batch_multiply_inplace(prefix, increment + label * Width);
+		}
+	}
+}
+
+
+template<std::floating_point T, size_t Width>
+void planar_monomial_derivs_to_increment_batch_(
+	const T* monomial_derivs,
+	const T* increment,
+	T* inc_derivs,
+	uint64_t dimension,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	std::memset(inc_derivs, 0, dimension * Width * sizeof(T));
+	if (cache.max_nodes == 0)
+		return;
+
+	uint64_t offset = 1;
+	for (uint64_t label = 0; label < dimension; ++label) {
+		vec_batch_add_inplace(
+			inc_derivs + label * Width,
+			monomial_derivs + (offset + label) * Width);
+	}
+	if (cache.max_nodes == 1)
+		return;
+
+	offset += dimension;
+	for (uint64_t label0 = 0; label0 < dimension; ++label0) {
+		for (uint64_t label1 = 0; label1 < dimension; ++label1) {
+			const T* deriv = monomial_derivs
+				+ (offset + label0 * dimension + label1) * Width;
+			if (vec_batch_is_zero(deriv))
+				continue;
+			vec_batch_multiply_add(
+				inc_derivs + label0 * Width, deriv,
+				increment + label1 * Width);
+			vec_batch_multiply_add(
+				inc_derivs + label1 * Width, deriv,
+				increment + label0 * Width);
+		}
+	}
+	if (cache.max_nodes == 2)
+		return;
+
+	offset += dimension * dimension;
+	for (uint64_t label0 = 0; label0 < dimension; ++label0) {
+		for (uint64_t label1 = 0; label1 < dimension; ++label1) {
+			for (uint64_t label2 = 0; label2 < dimension; ++label2) {
+				const T* deriv = monomial_derivs + (offset
+					+ (label0 * dimension + label1) * dimension + label2) * Width;
+				if (vec_batch_is_zero(deriv))
+					continue;
+				vec_batch_multiply_add3(
+					inc_derivs + label0 * Width, deriv,
+					increment + label1 * Width, increment + label2 * Width);
+				vec_batch_multiply_add3(
+					inc_derivs + label1 * Width, deriv,
+					increment + label0 * Width, increment + label2 * Width);
+				vec_batch_multiply_add3(
+					inc_derivs + label2 * Width, deriv,
+					increment + label0 * Width, increment + label1 * Width);
+			}
+		}
+	}
+}
+
+
+template<std::floating_point T, size_t Width>
+void planar_linear_bsig_deriv_to_increment_deriv_batch_(
+	const T* dF_dY,
+	const T* increment,
+	T* inc_derivs,
+	T* monomial_derivs,
+	const uint64_t* flat_monomials,
+	uint64_t monomial_count,
+	uint64_t dimension,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	std::memset(monomial_derivs, 0, monomial_count * Width * sizeof(T));
+	for (uint64_t tree_idx = 0; tree_idx + 1 < cache.total_length; ++tree_idx) {
+		const T* deriv = dF_dY + (tree_idx + 1) * Width;
+		if (vec_batch_is_zero(deriv))
+			continue;
+		vec_batch_scaled_add(
+			monomial_derivs + flat_monomials[tree_idx + 1] * Width, deriv,
+			static_cast<T>(cache.inv_tree_factorial[tree_idx]));
+	}
+	planar_monomial_derivs_to_increment_batch_<T, Width>(
+		monomial_derivs, increment, inc_derivs, dimension, cache);
+}
+
+
+template<std::floating_point T, size_t Width>
+void planar_butcher_uncombine_backprop_batch_(
+	T* combined,
+	const T* local_sig,
+	T* d_previous,
+	T* monomial_derivs,
+	const uint64_t* flat_monomials,
+	uint64_t monomial_count,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	alignas(32) T value[Width];
+	std::memset(monomial_derivs, 0, monomial_count * Width * sizeof(T));
+	const uint64_t* order_index = cache.order_index.data();
+	const uint64_t* coproduct_offsets = cache.coproduct_offsets.data();
+	const uint64_t* coproduct_data = cache.coproduct_data.data();
+	for (uint64_t order = 1; order <= cache.max_nodes; ++order) {
+		const uint64_t start = order_index[order];
+		const uint64_t end = order_index[order + 1];
+		for (uint64_t tree_idx = start; tree_idx < end; ++tree_idx) {
+			const uint64_t flat = tree_idx + 1;
+			const T* deriv = d_previous + flat * Width;
+			vec_batch_scaled_add(
+				monomial_derivs + flat_monomials[flat] * Width, deriv,
+				static_cast<T>(cache.inv_tree_factorial[tree_idx]));
+			vec_batch_subtract(
+				value, combined + flat * Width, local_sig + flat * Width);
+			uint64_t pos = coproduct_offsets[tree_idx];
+			const uint64_t pos_end = coproduct_offsets[tree_idx + 1];
+			while (pos < pos_end) {
+				const uint64_t has_forest = coproduct_data[pos++];
+				const uint64_t trunk = coproduct_data[pos++];
+				if (has_forest == 0) {
+					vec_batch_subtract_inplace(
+						value, local_sig + trunk * Width);
+					if (trunk != 0) {
+						vec_batch_scaled_add(
+							monomial_derivs + flat_monomials[trunk] * Width, deriv,
+							static_cast<T>(cache.inv_tree_factorial[trunk - 1]));
+					}
+					continue;
+				}
+				const uint64_t forest = coproduct_data[pos++];
+				vec_batch_subtract_product(
+					value, local_sig + trunk * Width,
+					combined + forest * Width);
+				if (trunk != 0) {
+					vec_batch_multiply_add_scaled(
+						monomial_derivs + flat_monomials[trunk] * Width, deriv,
+						combined + forest * Width,
+						static_cast<T>(cache.inv_tree_factorial[trunk - 1]));
+				}
+				vec_batch_multiply_add(
+					d_previous + forest * Width, deriv,
+					local_sig + trunk * Width);
+			}
+			vec_batch_copy(combined + flat * Width, value);
+		}
+	}
+}
+
+
+template<std::floating_point T, size_t Width>
+struct BranchedSigBatchBackpropWorkspace_ {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	struct AlignedDelete_ {
+		void operator()(T* ptr) const noexcept {
+			::operator delete[](ptr, std::align_val_t(32));
+		}
+	};
+	using AlignedArray = std::unique_ptr<T[], AlignedDelete_>;
+
+	static AlignedArray allocate_(uint64_t size) {
+		return AlignedArray(static_cast<T*>(::operator new[](
+			size * sizeof(T), std::align_val_t(32))));
+	}
+
+	AlignedArray bsig;
+	AlignedArray derivs;
+	AlignedArray increment;
+	AlignedArray local_derivs;
+	AlignedArray inc_derivs;
+	AlignedArray local_log;
+	AlignedArray horner_base;
+	AlignedArray horner_current;
+	AlignedArray horner_next;
+	AlignedArray horner_states;
+	AlignedArray horner_d_base;
+	AlignedArray linear_monomial_derivs;
+
+	BranchedSigBatchBackpropWorkspace_(
+		uint64_t dimension,
+		uint64_t total_length,
+		uint64_t max_nodes,
+		uint64_t product_count,
+		uint64_t linear_monomial_count,
+		bool planar
+	) : bsig(allocate_(total_length * Width)),
+		derivs(allocate_(total_length * Width)),
+		increment(allocate_(dimension * Width)),
+		inc_derivs(allocate_(dimension * Width)) {
+		if (planar) {
+			local_log = allocate_(total_length * Width);
+			linear_monomial_derivs
+				= allocate_(linear_monomial_count * Width);
+		}
+		else {
+			local_derivs = allocate_(total_length * Width);
+			horner_base = allocate_(product_count * Width);
+			horner_current = allocate_(product_count * Width);
+			horner_next = allocate_(product_count * Width);
+			horner_states
+				= allocate_((max_nodes + 1) * product_count * Width);
+			horner_d_base = allocate_(product_count * Width);
+		}
+	}
+};
+
+
+template<std::floating_point T, size_t Width>
+void branched_sig_backprop_batch_inplace_(
+	const T* path,
+	T* out,
+	const T* bsig_derivs_in,
+	const T* bsig_in,
+	uint64_t batch_start,
+	uint64_t active_width,
+	uint64_t dimension,
+	uint64_t length,
+	bool scalar_term,
+	const uint64_t* flat_monomials,
+	uint64_t monomial_count,
+	BranchedSigBatchBackpropWorkspace_<T, Width>& workspace,
+	const BranchedSigCache& cache
+) {
+	static_assert(Width == vec_batch_bytes / sizeof(T));
+	const uint64_t total_len = cache.total_length;
+	const uint64_t in_stride = scalar_term ? total_len : total_len - 1;
+	const uint64_t flat_path_length = length * dimension;
+
+	for (uint64_t flat = 0; flat < total_len; ++flat) {
+		T* sig_value = workspace.bsig.get() + flat * Width;
+		T* deriv_value = workspace.derivs.get() + flat * Width;
+		vec_batch_fill(
+			sig_value, flat == 0 ? static_cast<T>(1) : static_cast<T>(0));
+		vec_batch_fill(deriv_value, static_cast<T>(0));
+		for (uint64_t lane = 0; lane < active_width; ++lane) {
+			const uint64_t batch = batch_start + lane;
+			if (scalar_term) {
+				sig_value[lane] = bsig_in[batch * total_len + flat];
+				deriv_value[lane] = bsig_derivs_in[batch * total_len + flat];
+			}
+			else if (flat != 0) {
+				sig_value[lane] = bsig_in[batch * in_stride + flat - 1];
+				deriv_value[lane] = bsig_derivs_in[batch * in_stride + flat - 1];
+			}
+		}
+	}
+
+	for (uint64_t lane = 0; lane < active_width; ++lane) {
+		std::memset(
+			out + (batch_start + lane) * flat_path_length,
+			0, flat_path_length * sizeof(T));
+	}
+
+	if (length <= 1)
+		return;
+
+	const int steps = static_cast<int>(length - 1);
+	for (int seg = steps - 1; seg >= 0; --seg) {
+		for (uint64_t d = 0; d < dimension; ++d) {
+			T* value = workspace.increment.get() + d * Width;
+			vec_batch_fill(value, static_cast<T>(0));
+			for (uint64_t lane = 0; lane < active_width; ++lane) {
+				const T* path_ptr = path
+					+ (batch_start + lane) * flat_path_length;
+				value[lane] = path_ptr[(seg + 1) * dimension + d]
+					- path_ptr[seg * dimension + d];
+			}
+		}
+
+		if (cache.planar) {
+			if (seg > 0) {
+				linear_branched_sig_batch_<T, Width>(
+					workspace.increment.get(), workspace.local_log.get(),
+					cache);
+				planar_butcher_uncombine_backprop_batch_<T, Width>(
+					workspace.bsig.get(), workspace.local_log.get(),
+					workspace.derivs.get(), workspace.linear_monomial_derivs.get(),
+					flat_monomials, monomial_count, cache);
+				planar_monomial_derivs_to_increment_batch_<T, Width>(
+					workspace.linear_monomial_derivs.get(), workspace.increment.get(),
+					workspace.inc_derivs.get(),
+					dimension, cache);
+			}
+			else {
+				planar_linear_bsig_deriv_to_increment_deriv_batch_<T, Width>(
+					workspace.derivs.get(), workspace.increment.get(),
+					workspace.inc_derivs.get(),
+					workspace.linear_monomial_derivs.get(), flat_monomials,
+					monomial_count, dimension, cache);
+			}
+		}
+		else {
+			if (seg > 0) {
+				for (uint64_t d = 0; d < dimension; ++d) {
+					vec_batch_negate_inplace(
+						workspace.increment.get() + d * Width);
+				}
+				branched_horner_step_batch_<T, Width>(
+					workspace.bsig.get(), workspace.increment.get(),
+					workspace.horner_base.get(), workspace.horner_current.get(),
+					workspace.horner_next.get(), cache);
+				for (uint64_t d = 0; d < dimension; ++d) {
+					vec_batch_negate_inplace(
+						workspace.increment.get() + d * Width);
+				}
+				branched_horner_step_backprop_batch_<T, Width>(
+					workspace.bsig.get(), workspace.increment.get(),
+					workspace.derivs.get(), workspace.local_derivs.get(),
+					workspace.inc_derivs.get(), workspace.horner_base.get(),
+					workspace.horner_states.get(), workspace.horner_d_base.get(),
+					workspace.horner_current.get(), workspace.horner_next.get(), cache);
+				std::memcpy(
+					workspace.derivs.get(), workspace.local_derivs.get(),
+					total_len * Width * sizeof(T));
+			}
+			else {
+				linear_bsig_deriv_to_increment_deriv_batch_<T, Width>(
+					workspace.derivs.get(), workspace.increment.get(),
+					workspace.inc_derivs.get(), dimension, cache);
+			}
+		}
+
+		for (uint64_t lane = 0; lane < active_width; ++lane) {
+			T* positive = out + (batch_start + lane) * flat_path_length
+				+ static_cast<uint64_t>(seg + 1) * dimension;
+			T* negative = positive - dimension;
+			for (uint64_t d = 0; d < dimension; ++d) {
+				const T value = workspace.inc_derivs[d * Width + lane];
+				positive[d] += value;
+				negative[d] -= value;
+			}
+		}
+	}
+}
+
+#endif
+
 template<std::floating_point T>
 void branched_sig_backprop_(
 	const T* path,
@@ -1524,6 +2218,67 @@ void branched_sig_backprop_(
 		for (uint64_t b = start; b < end; ++b)
 			work(b, workspace);
 	};
+#ifdef VEC
+	if (!has_correction && !time_aug && !lead_lag && batch_size > 1
+		&& (!planar || max_nodes <= 3)) {
+		constexpr size_t batch_width = vec_batch_bytes / sizeof(T);
+		const uint64_t pack_count = (batch_size + batch_width - 1) / batch_width;
+		std::vector<uint64_t> flat_monomials;
+		uint64_t monomial_count = 0;
+		if (planar) {
+			flat_monomials.resize(total_len, 0);
+			uint64_t level_size = 1;
+			uint64_t level_offset = 1;
+			for (uint64_t order = 1; order <= max_nodes; ++order) {
+				level_size *= dimension;
+				for (uint64_t tree_idx = cache.order_index[order];
+					tree_idx < cache.order_index[order + 1]; ++tree_idx) {
+					uint64_t encoded = 0;
+					for (uint64_t pos = cache.node_labels_offsets[tree_idx];
+						pos < cache.node_labels_offsets[tree_idx + 1]; ++pos) {
+						encoded = encoded * dimension + cache.node_labels_data[pos];
+					}
+					flat_monomials[tree_idx + 1] = level_offset + encoded;
+				}
+				level_offset += level_size;
+			}
+			monomial_count = level_offset;
+		}
+		auto work_pack_range = [&](uint64_t start, uint64_t end) {
+			BranchedSigBatchBackpropWorkspace_<T, batch_width> workspace(
+				aug_dim, total_len, max_nodes, cache.horner.product_count,
+				monomial_count, cache.planar);
+			for (uint64_t pack = start; pack < end; ++pack) {
+				const uint64_t batch_start = pack * batch_width;
+				const uint64_t active_width = std::min<uint64_t>(
+					batch_width, batch_size - batch_start);
+				branched_sig_backprop_batch_inplace_(
+					path, out, bsig_derivs_in, bsig_in, batch_start, active_width,
+					dimension, length, scalar_term, flat_monomials.data(),
+					monomial_count, workspace, cache);
+			}
+		};
+		if (n_jobs == 1 || pack_count == 1)
+			work_pack_range(0, pack_count);
+		else {
+			int pack_jobs = n_jobs;
+			if (n_jobs < 0) {
+				const int max_threads = get_max_threads() + 1 + n_jobs;
+				if (max_threads < 1) {
+					throw std::invalid_argument(
+						"received negative n_jobs which is less than max_threads + 1; n_jobs too low");
+				}
+				const uint64_t packs_per_thread = (pack_count
+					+ static_cast<uint64_t>(max_threads) - 1)
+					/ static_cast<uint64_t>(max_threads);
+				pack_jobs = static_cast<int>((pack_count + packs_per_thread - 1)
+					/ packs_per_thread);
+			}
+			spawn_batch_threads(pack_count, pack_jobs, work_pack_range);
+		}
+		return;
+	}
+#endif
 	if (n_jobs == 1 || batch_size == 1)
 		work_range(0, batch_size);
 	else
