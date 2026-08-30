@@ -39,7 +39,24 @@ jobs:
           cmake --build build --target bench_cpsig -j$(nproc)
 
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@v4
+        uses: CodSpeedHQ/action@v5
         with:
           mode: simulation
           run: ./build/benchmarks/bench_cpsig
+
+      - name: Build cpsig + benchmarks for memory
+        env:
+          CIBUILDWHEEL: "1"
+        run: |
+          cmake -B build-memory \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPYSIGLIB_BENCHMARKS=ON \
+            -DPYSIGLIB_JAX_FFI=OFF \
+            -DCODSPEED_MODE=memory
+          cmake --build build-memory --target bench_cpsig -j$(nproc)
+
+      - name: Run memory benchmarks
+        uses: CodSpeedHQ/action@v5
+        with:
+          mode: memory
+          run: ./build-memory/benchmarks/bench_cpsig
