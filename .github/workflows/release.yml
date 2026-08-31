@@ -94,6 +94,21 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull CUDA build image
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if docker pull "${{ steps.image.outputs.name }}"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Image pull failed after 5 attempts."
+              exit 1
+            fi
+            delay=$((attempt * 15))
+            echo "Image pull failed (attempt $attempt), retrying in ${delay}s..."
+            sleep "$delay"
+          done
       - uses: pypa/cibuildwheel@v3.2
         with:
           package-dir: plugins/cuda
