@@ -10,6 +10,48 @@ if(NOT TARGET pysiglib_preparation)
     )
 endif()
 
+set(_pysiglib_broken_cccl_header "")
+if(WIN32)
+    set(_pysiglib_cuda_include_dirs
+        ${CUDAToolkit_INCLUDE_DIRS}
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+        ${CMAKE_CUDA_IMPLICIT_INCLUDE_DIRECTORIES}
+    )
+    list(REMOVE_DUPLICATES _pysiglib_cuda_include_dirs)
+    foreach(_pysiglib_cuda_include_dir IN LISTS _pysiglib_cuda_include_dirs)
+        set(_pysiglib_clusterlaunchcontrol_header
+            "${_pysiglib_cuda_include_dir}/cuda/__ptx/instructions/generated/clusterlaunchcontrol.h")
+        if(EXISTS "${_pysiglib_clusterlaunchcontrol_header}")
+            file(STRINGS "${_pysiglib_clusterlaunchcontrol_header}"
+                _pysiglib_broken_cccl_lines
+                REGEX "reinterpret_cast<long2")
+            if(_pysiglib_broken_cccl_lines)
+                set(_pysiglib_broken_cccl_header
+                    "${_pysiglib_clusterlaunchcontrol_header}")
+                break()
+            endif()
+        endif()
+    endforeach()
+endif()
+
+set(_pysiglib_cccl_include_dirs "")
+if(_pysiglib_broken_cccl_header)
+    include(FetchContent)
+    FetchContent_Declare(
+        pysiglib_cccl
+        URL https://github.com/NVIDIA/cccl/archive/refs/tags/v3.4.0.tar.gz
+        URL_HASH SHA256=F566AC36E2E4E9F8B85122BAA131E445113B6C1B4D395C94944FE9037B2A6352
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR pysiglib_headers_only
+    )
+    FetchContent_MakeAvailable(pysiglib_cccl)
+    list(APPEND _pysiglib_cccl_include_dirs
+        "${pysiglib_cccl_SOURCE_DIR}/thrust"
+        "${pysiglib_cccl_SOURCE_DIR}/libcudacxx/include"
+        "${pysiglib_cccl_SOURCE_DIR}/cub"
+    )
+endif()
+
 add_library(cusig SHARED
 	cu_branched_log_bch.cu
     cu_branched_log_signature.cu
@@ -36,6 +78,17 @@ set_target_properties(cusig PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
     CUDA_ARCHITECTURES         "${PYSIGLIB_CUDA_ARCH}"
 )
+
+if(_pysiglib_cccl_include_dirs)
+    # Affected CCCL headers use 32-bit long for 64-bit PTX operands on Windows.
+    target_include_directories(cusig BEFORE PRIVATE ${_pysiglib_cccl_include_dirs})
+    if(MSVC)
+        target_compile_options(cusig PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>
+        )
+    endif()
+endif()
 
 target_include_directories(cusig PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
