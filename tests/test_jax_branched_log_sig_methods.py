@@ -52,6 +52,10 @@ def _gpu_device():
     return devices[0]
 
 
+def _cache_device():
+    return "both" if jax.default_backend() == "gpu" else "cpu"
+
+
 @pytest.mark.parametrize("method", [1, 2])
 @pytest.mark.parametrize("scalar_term", [False, True])
 @pytest.mark.parametrize("jitted", [False, True])
@@ -59,7 +63,8 @@ def test_jax_compressed_branched_log_sig_matches_base(
         method, scalar_term, jitted):
     dimension, degree = 2, 3
     pysiglib.prepare_branched_log_sig(
-        dimension, degree, method, planar=True, device="cpu", use_disk=False)
+        dimension, degree, method, planar=True,
+        device=_cache_device(), use_disk=False)
     bsig = _planar_bsig(
         dimension, degree, batch=True, scalar_term=scalar_term)
     expected = pysiglib.branched_sig_to_log_sig(
@@ -85,7 +90,8 @@ def test_jax_compressed_branched_log_sig_grad_matches_base(
         method, scalar_term, jitted):
     dimension, degree = 2, 3
     pysiglib.prepare_branched_log_sig(
-        dimension, degree, method, planar=True, device="cpu", use_disk=False)
+        dimension, degree, method, planar=True,
+        device=_cache_device(), use_disk=False)
     bsig = _planar_bsig(
         dimension, degree, batch=True, scalar_term=scalar_term)
     out = pysiglib.branched_sig_to_log_sig(
@@ -111,15 +117,17 @@ def test_jax_compressed_branched_log_sig_grad_matches_base(
 def test_jax_direct_compressed_branched_log_sig_is_scalar_free(method):
     dimension, degree = 2, 3
     pysiglib.prepare_branched_log_sig(
-        dimension, degree, method, planar=True, device="cpu", use_disk=False)
+        dimension, degree, method, planar=True,
+        device=_cache_device(), use_disk=False)
     path = np.array(
         [[0.0, 0.0], [0.2, -0.3], [0.7, 0.4]], dtype=np.float64)
 
+    path_jax = jnp.asarray(path)
     without_scalar = jax_api.branched_log_sig(
-        jnp.asarray(path), degree, planar=True, method=method,
+        path_jax, degree, planar=True, method=method,
         scalar_term=False)
     with_scalar = jax_api.branched_log_sig(
-        jnp.asarray(path), degree, planar=True, method=method,
+        path_jax, degree, planar=True, method=method,
         scalar_term=True)
 
     expected_length = jax_api.branched_log_sig_length(
@@ -136,7 +144,8 @@ def test_jax_direct_compressed_branched_log_sig_grad_matches_base(
         method, jitted):
     dimension, degree = 2, 3
     pysiglib.prepare_branched_log_sig(
-        dimension, degree, method, planar=True, device="cpu", use_disk=False)
+        dimension, degree, method, planar=True,
+        device=_cache_device(), use_disk=False)
     path = np.array(
         [[0.0, 0.0], [0.2, -0.3], [0.7, 0.4]], dtype=np.float64)
     bsig = pysiglib.branched_sig(
@@ -164,7 +173,8 @@ def test_jax_direct_compressed_branched_log_sig_grad_matches_base(
 def test_jax_planar_default_is_method_1():
     dimension, degree = 2, 3
     pysiglib.prepare_branched_log_sig(
-        dimension, degree, 1, planar=True, device="cpu", use_disk=False)
+        dimension, degree, 1, planar=True,
+        device=_cache_device(), use_disk=False)
     bsig = _planar_bsig(dimension, degree)
     bsig_jax = jnp.asarray(bsig, dtype=jnp.float64)
 
@@ -239,9 +249,11 @@ def test_jax_cuda_compressed_value_and_grad_match_cpu(
 def test_jax_method_three_matches_method_two(jitted, batch):
     dimension, degree = 2, 3
     pysiglib.prepare_branched_log_sig(
-        dimension, degree, 2, planar=True, device="cpu", use_disk=False)
+        dimension, degree, 2, planar=True,
+        device=_cache_device(), use_disk=False)
     pysiglib.prepare_branched_log_sig(
-        dimension, degree, 3, planar=True, device="cpu", use_disk=False)
+        dimension, degree, 3, planar=True,
+        device=_cache_device(), use_disk=False)
     rng = np.random.default_rng(9124)
     shape = (3, 5, dimension) if batch else (5, dimension)
     path = np.cumsum(rng.normal(scale=0.2, size=shape), axis=-2)
@@ -262,7 +274,8 @@ def test_jax_method_three_matches_method_two(jitted, batch):
 def test_jax_method_three_gradient_matches_explicit_backward(jitted):
     dimension, degree = 2, 3
     pysiglib.prepare_branched_log_sig(
-        dimension, degree, 3, planar=True, device="cpu", use_disk=False)
+        dimension, degree, 3, planar=True,
+        device=_cache_device(), use_disk=False)
     path = np.array(
         [[0.0, 0.0], [0.2, -0.3], [0.7, 0.4]], dtype=np.float64)
     weights = np.random.default_rng(31415).normal(
@@ -290,10 +303,10 @@ def test_jax_method_three_augmentation_matches_method_two(
     dimension, degree = 2, 2
     pysiglib.prepare_branched_log_sig(
         dimension, degree, 2, planar=True, time_aug=time_aug,
-        lead_lag=lead_lag, device="cpu", use_disk=False)
+        lead_lag=lead_lag, device=_cache_device(), use_disk=False)
     pysiglib.prepare_branched_log_sig(
         dimension, degree, 3, planar=True, time_aug=time_aug,
-        lead_lag=lead_lag, device="cpu", use_disk=False)
+        lead_lag=lead_lag, device=_cache_device(), use_disk=False)
     path = np.array(
         [[0.0, 0.0], [0.2, -0.3], [0.7, 0.4]], dtype=np.float64)
     expected = pysiglib.branched_log_sig(

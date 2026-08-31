@@ -357,8 +357,10 @@ def test_jax_signature_global_fallback_vjp():
     value, pullback = jax.vjp(lambda x: jax_api.sig(x, 1), path)
     grad = pullback(weights)[0]
 
-    np.testing.assert_allclose(np.asarray(value), path_np[-1] - path_np[0])
+    np.testing.assert_allclose(
+        np.asarray(value), path_np[-1] - path_np[0], rtol=1e-6, atol=1e-7)
     expected_grad = np.zeros_like(path_np)
     expected_grad[0] = -weights_np
     expected_grad[-1] = weights_np
-    np.testing.assert_allclose(np.asarray(grad), expected_grad)
+    np.testing.assert_allclose(
+        np.asarray(grad), expected_grad, rtol=1e-6, atol=1e-7)

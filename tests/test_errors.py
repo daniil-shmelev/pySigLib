@@ -124,8 +124,13 @@ def test_jax_native_error_detail_is_propagated():
     jnp = pytest.importorskip("jax.numpy")
     import pysiglib.jax_api as jax_api
 
-    pysiglib.clear_cache(device="cpu")
+    cuda_backend = jax.default_backend() == "gpu"
+    device = "cuda" if cuda_backend else "cpu"
+    expected = (
+        "call prepare_branched_sig with device='cuda' first"
+        if cuda_backend else "call prepare_branched_sig first")
+    pysiglib.clear_cache(device=device)
     path = jnp.zeros((3, 2), dtype=jnp.float32)
 
-    with pytest.raises(Exception, match="call prepare_branched_sig first"):
+    with pytest.raises(Exception, match=expected):
         jax_api.branched_sig(path, 3).block_until_ready()
