@@ -203,8 +203,8 @@ def test_polynomial_sig_metrics_support_method_and_order(api_name):
         api = pysiglib.torch_api
         left, right = torch.from_numpy(x), torch.from_numpy(y)
     else:
-        api = pytest.importorskip("pysiglib.jax_api")
         jnp = pytest.importorskip("jax.numpy")
+        api = pytest.importorskip("pysiglib.jax_api")
         left, right = jnp.asarray(x), jnp.asarray(y)
 
     score = np.asarray(api.sig_score(left, right, **kwargs))
@@ -221,9 +221,9 @@ def test_polynomial_sig_metrics_support_method_and_order(api_name):
     {"method": METHOD, "order": 5},
 ], ids=["finite_difference", "polynomial"])
 def test_jax_sig_kernel_gram_honors_max_batch(solver_kwargs):
-    api = pytest.importorskip("pysiglib.jax_api")
     jax = pytest.importorskip("jax")
     jnp = pytest.importorskip("jax.numpy")
+    api = pytest.importorskip("pysiglib.jax_api")
     observed_batch_sizes = []
 
     class LimitedLinearKernel:
@@ -465,6 +465,8 @@ def test_polynomial_sig_kernel_explicit_grid_backprop():
 
 @pytest.mark.parametrize("api_name", ["torch_api", "jax_api"])
 def test_reverse_apis_support_polynomial_grid(api_name):
+    if api_name == "jax_api":
+        pytest.importorskip("jax")
     api = pytest.importorskip("pysiglib." + api_name)
     x_np = np.array([[0., 0.], [.2, -.1], [.35, .15]], dtype=np.float32)
     y_np = np.array([[0., 0.], [-.1, .25], [.2, .3]], dtype=np.float32)
@@ -505,6 +507,8 @@ def test_reverse_apis_support_polynomial_grid(api_name):
 
 @pytest.mark.parametrize("api_name", ["torch_api", "jax_api"])
 def test_reverse_apis_support_polynomial_gram(api_name):
+    if api_name == "jax_api":
+        pytest.importorskip("jax")
     api = pytest.importorskip("pysiglib." + api_name)
     x_np = np.array([
         [[0., 0.], [.2, -.1], [.35, .15]],
