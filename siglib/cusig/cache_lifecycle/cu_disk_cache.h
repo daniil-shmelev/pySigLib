@@ -63,7 +63,11 @@ inline void set_default_cuda_cache_dir_() {
 	std::string dir_str = std::string(home) + "/.cache";
 	const char* dir = dir_str.c_str();
 #endif
-	set_cache_dir_cuda_(dir);
+	std::filesystem::path dir_path = dir;
+	std::filesystem::path cache_path = dir_path / cu_cache_folder_name;
+	if (!std::filesystem::exists(cache_path))
+		std::filesystem::create_directories(cache_path);
+	get_cuda_cache_dir_() = dir_path;
 #ifdef _WIN32
 	free(dir);
 #endif
