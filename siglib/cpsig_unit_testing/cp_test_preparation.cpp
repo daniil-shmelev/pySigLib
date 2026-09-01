@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 
+#include "cp_bch.h"
 #include "log_sig/bch_cache.h"
 #include "branched_sig/branched_log_sig_cache.h"
 #include "branched_sig/branched_sig_cache_io.h"
@@ -47,6 +48,89 @@ TEST(preparationCacheTest, UpstreamBchHasExpectedPrefix) {
 	EXPECT_DOUBLE_EQ(cache.bch_coefficients[5], 0.0);
 }
 #endif
+
+TEST(preparationCacheTest, LiveBchPlansAreMinimalAndTopological) {
+	struct ExpectedPlanSize {
+		uint64_t degree;
+		size_t live_nodes;
+	};
+	const ExpectedPlanSize cases[] = {
+		{ 1, 0 }, { 2, 1 }, { 3, 3 }, { 4, 4 }, { 5, 12 },
+		{ 6, 17 }, { 7, 39 }, { 8, 56 }, { 9, 124 }, { 10, 180 },
+		{ 11, 410 }, { 12, 595 }
+	};
+	for (const auto& [degree, expected_size] : cases) {
+		SCOPED_TRACE(degree);
+		BchCache cache;
+		cache.degree = degree;
+		build_bch_formula_data(cache);
+		build_live_bch_nodes(cache);
+		EXPECT_EQ(cache.live_bch_nodes.size(), expected_size);
+		EXPECT_EQ(cache.all_bch_nodes_live,
+			expected_size + 2 == cache.bch_coefficients.size());
+
+		std::vector<uint8_t> available(cache.bch_coefficients.size(), 0);
+		if (!available.empty())
+			available[0] = 1;
+		if (available.size() > 1)
+			available[1] = 1;
+		for (uint32_t node : cache.live_bch_nodes) {
+			EXPECT_TRUE(available[cache.bch_left_factor[node]]);
+			EXPECT_TRUE(available[cache.bch_right_factor[node]]);
+			available[node] = 1;
+		}
+		for (uint64_t node = 2; node < cache.bch_coefficients.size(); ++node) {
+			if (cache.bch_coefficients[node] != 0.0)
+				EXPECT_TRUE(available[node]);
+		}
+	}
+}
+
+TEST(preparationCacheTest, PrunedAndFullBchPlansAgree) {
+	const uint64_t degrees[] = { 3, 4, 5, 8 };
+	for (uint64_t degree : degrees) {
+		SCOPED_TRACE(degree);
+		LogSigCache log_cache(2, degree, 3);
+		const BchCache& pruned = log_cache.bch();
+		BchCache full = pruned;
+		full.live_bch_nodes.clear();
+		for (uint64_t node = 2; node < full.bch_coefficients.size(); ++node)
+			full.live_bch_nodes.push_back(static_cast<uint32_t>(node));
+		full.all_bch_nodes_live = true;
+
+		const uint64_t m = pruned.m;
+		const uint64_t m2 = pruned.bch_coefficients.size();
+		std::vector<double> ls1(m), ls2(m), d_out(m);
+		for (uint64_t index = 0; index < m; ++index) {
+			ls1[index] = 0.03125 * (static_cast<int>(index % 9) - 4);
+			ls2[index] = 0.015625 * (static_cast<int>(index % 7) - 3);
+			d_out[index] = 0.0625 * (static_cast<int>(index % 5) - 2);
+		}
+		std::vector<double> pruned_out(m), full_out(m);
+		std::vector<double> pruned_memo(m2 * m), full_memo(m2 * m);
+		bch_combine_impl_(
+			ls1.data(), ls2.data(), pruned_out.data(), pruned,
+			pruned_memo.data());
+		bch_combine_impl_(
+			ls1.data(), ls2.data(), full_out.data(), full,
+			full_memo.data());
+		EXPECT_EQ(pruned_out, full_out);
+
+		std::vector<double> pruned_d_ls1(m), pruned_d_ls2(m);
+		std::vector<double> full_d_ls1(m), full_d_ls2(m);
+		std::vector<double> pruned_workspace(2 * m2 * m);
+		std::vector<double> full_workspace(2 * m2 * m);
+		bch_combine_backprop_impl_<double>(
+			d_out.data(), pruned_d_ls1.data(), pruned_d_ls2.data(),
+			ls1.data(), ls2.data(), pruned, pruned_workspace.data());
+		bch_combine_backprop_impl_<double>(
+			d_out.data(), full_d_ls1.data(), full_d_ls2.data(),
+			ls1.data(), ls2.data(), full, full_workspace.data());
+		EXPECT_EQ(pruned_d_ls1, full_d_ls1);
+		EXPECT_EQ(pruned_d_ls2, full_d_ls2);
+	}
+}
+
 }
 
 TEST(preparationCacheTest, StandardLogMethodsUpgradeInPlace) {

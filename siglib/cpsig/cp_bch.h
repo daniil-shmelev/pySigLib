@@ -54,6 +54,35 @@ inline void clear_bch_cache() {
 	// BCH data is owned by the LogSigCache registry.
 }
 
+template<typename Function>
+FORCE_INLINE void for_each_bch_node_(
+	const BchCache& cache, Function&& function
+) {
+	if (cache.all_bch_nodes_live) {
+		for (uint64_t node = 2; node < cache.bch_coefficients.size(); ++node)
+			function(node);
+	}
+	else {
+		for (uint32_t node : cache.live_bch_nodes)
+			function(node);
+	}
+}
+
+template<typename Function>
+FORCE_INLINE void for_each_bch_node_reverse_(
+	const BchCache& cache, Function&& function
+) {
+	if (cache.all_bch_nodes_live) {
+		for (uint64_t node = cache.bch_coefficients.size(); node-- > 2;)
+			function(node);
+	}
+	else {
+		for (auto node = cache.live_bch_nodes.rbegin();
+			node != cache.live_bch_nodes.rend(); ++node)
+			function(*node);
+	}
+}
+
 // ========================================================================
 // Lie bracket of two dense vectors using the commutator table
 // ========================================================================
@@ -131,7 +160,7 @@ void bch_combine_impl_(
 
 	// Forward pass: BCH indices are topologically sorted (children < parent),
 	// so memo[lf] and memo[rf] are always already computed when we reach w.
-	for (uint64_t w = 2; w < m2; ++w) {
+	for_each_bch_node_(cache, [&](uint64_t w) FORCE_INLINE_LAMBDA {
 		const uint64_t lf = cache.bch_left_factor[w];
 		const uint64_t rf = cache.bch_right_factor[w];
 		const T* v1 = memo + lf * m;
@@ -150,7 +179,7 @@ void bch_combine_impl_(
 			result[k] = sum;
 			if (c_w != T(0)) out[k] += c_w * sum;
 		}
-	}
+	});
 }
 
 // ========================================================================
@@ -189,7 +218,7 @@ void bch_combine_linear_impl_(
 	const uint32_t* k_j = cache.comm_k_j.data();
 	const double* k_val_d = cache.comm_k_val_d.data();
 
-	for (uint64_t w = 2; w < m2; ++w) {
+	for_each_bch_node_(cache, [&](uint64_t w) FORCE_INLINE_LAMBDA {
 		const uint64_t lf = cache.bch_left_factor[w];
 		const uint64_t rf = cache.bch_right_factor[w];
 		const T* v1 = memo + lf * m;
@@ -228,7 +257,7 @@ void bch_combine_linear_impl_(
 			result[k] = sum;
 			if (c_w != T(0)) out[k] += c_w * sum;
 		}
-	}
+	});
 }
 
 // 4-wide BCH combination (works on both AVX2 and NEON).
@@ -251,7 +280,7 @@ inline void bch_combine_impl_x4_(
 	const uint32_t* k_j = cache.comm_k_j.data();
 	const double* k_val_d = cache.comm_k_val_d.data();
 
-	for (uint64_t w = 2; w < m2; ++w) {
+	for_each_bch_node_(cache, [&](uint64_t w) FORCE_INLINE_LAMBDA {
 		const uint64_t lf = cache.bch_left_factor[w];
 		const uint64_t rf = cache.bch_right_factor[w];
 		const double* v1 = memo + lf * m * 4;
@@ -264,7 +293,7 @@ inline void bch_combine_impl_x4_(
 			if (c_w != 0.0)
 				vec4_fmadd(&out[k * 4], &result[k * 4], c_w, 1);
 		}
-	}
+	});
 }
 // 4-wide BCH with a degree-one second input.
 inline void bch_combine_linear_impl_x4_(
@@ -287,7 +316,7 @@ inline void bch_combine_linear_impl_x4_(
 	const uint32_t* k_j = cache.comm_k_j.data();
 	const double* k_val_d = cache.comm_k_val_d.data();
 
-	for (uint64_t w = 2; w < m2; ++w) {
+	for_each_bch_node_(cache, [&](uint64_t w) FORCE_INLINE_LAMBDA {
 		const uint64_t lf = cache.bch_left_factor[w];
 		const uint64_t rf = cache.bch_right_factor[w];
 		const double* v1 = memo + lf * m * 4;
@@ -304,7 +333,7 @@ inline void bch_combine_linear_impl_x4_(
 			if (c_w != 0.0)
 				vec4_fmadd(&out[k * 4], &result[k * 4], c_w, 1);
 		}
-	}
+	});
 }
 // 4-wide BCH backprop for a degree-one second input.
 template<bool prune_linear>
@@ -340,7 +369,7 @@ inline void bch_combine_linear_backprop_impl_x4_(
 	const uint32_t n_pairs = cache.n_pairs;
 
 	// Forward recompute (output-grouped, 4-wide)
-	for (uint64_t w = 2; w < m2; ++w) {
+	for_each_bch_node_(cache, [&](uint64_t w) FORCE_INLINE_LAMBDA {
 		const uint64_t lf = cache.bch_left_factor[w];
 		const uint64_t rf = cache.bch_right_factor[w];
 		const double* v1 = memo + lf * m * 4;
@@ -352,11 +381,11 @@ inline void bch_combine_linear_backprop_impl_x4_(
 		for (uint64_t k = begin; k < end; ++k)
 			vec4_commutator_accum(&result[k * 4], v1, v2, k_i, k_j, k_c,
 				k_ptr[k], k_ptr[k + 1]);
-	}
+	});
 
 	// d_memo init
 	std::memset(d_memo, 0, 2 * m * 4 * sizeof(double));
-	for (uint64_t w = 2; w < m2; ++w) {
+	for_each_bch_node_(cache, [&](uint64_t w) FORCE_INLINE_LAMBDA {
 		const double c_w = cache.bch_coefficients[w];
 		double* dm = d_memo + w * m * 4;
 		if constexpr (prune_linear) {
@@ -374,10 +403,10 @@ inline void bch_combine_linear_backprop_impl_x4_(
 		else {
 			std::memset(dm, 0, m * 4 * sizeof(double));
 		}
-	}
+	});
 
 	// Reverse BCH (pair-grouped, 4-wide)
-	for (uint64_t w = m2 - 1; w >= 2; --w) {
+	for_each_bch_node_reverse_(cache, [&](uint64_t w) FORCE_INLINE_LAMBDA {
 		const uint64_t lf = cache.bch_left_factor[w];
 		const uint64_t rf = cache.bch_right_factor[w];
 		const double* v1 = memo + lf * m * 4;
@@ -398,7 +427,7 @@ inline void bch_combine_linear_backprop_impl_x4_(
 				vec4_bracket_grad(dm_lf, dm_rf, dm_w, v1, v2, ij_i[p], ij_j[p],
 					ij_k, ij_c, ij_ptr[p], ij_ptr[p + 1]);
 		}
-	}
+	});
 
 	// Add the direct gradient to the accumulated BCH leaf gradients.
 	vec4_add(d_ls1, d_out, d_memo, m);
@@ -442,31 +471,32 @@ void bch_combine_backprop_impl_(
 
 	if constexpr (linear_input)
 		bch_combine_linear_impl_(ls1, ls2, d_memo, cache, memo);
-	const uint64_t first_w = linear_input ? m2 : 2;
-	for (uint64_t w = first_w; w < m2; ++w) {
-		const uint64_t lf = cache.bch_left_factor[w];
-		const uint64_t rf = cache.bch_right_factor[w];
-		const T* v1 = memo + lf * m;
-		const T* v2 = memo + rf * m;
-		T* result = memo + w * m;
-		std::memset(result, 0, m * sizeof(T));
+	if constexpr (!linear_input) {
+		for_each_bch_node_(cache, [&](uint64_t w) FORCE_INLINE_LAMBDA {
+			const uint64_t lf = cache.bch_left_factor[w];
+			const uint64_t rf = cache.bch_right_factor[w];
+			const T* v1 = memo + lf * m;
+			const T* v2 = memo + rf * m;
+			T* result = memo + w * m;
+			std::memset(result, 0, m * sizeof(T));
 
-		for (uint32_t p = 0; p < n_pairs; ++p) {
-			const uint32_t i = ij_i[p];
-			const uint32_t j = ij_j[p];
-			const T prod = v1[i] * v2[j] - v1[j] * v2[i];
-			if (prod == T(0)) continue;
-			const uint32_t start = ij_ptr[p];
-			const uint32_t end = ij_ptr[p + 1];
-			for (uint32_t idx = start; idx < end; ++idx) {
-				result[ij_k[idx]] += static_cast<T>(ij_c[idx]) * prod;
+			for (uint32_t p = 0; p < n_pairs; ++p) {
+				const uint32_t i = ij_i[p];
+				const uint32_t j = ij_j[p];
+				const T prod = v1[i] * v2[j] - v1[j] * v2[i];
+				if (prod == T(0)) continue;
+				const uint32_t start = ij_ptr[p];
+				const uint32_t end = ij_ptr[p + 1];
+				for (uint32_t idx = start; idx < end; ++idx) {
+					result[ij_k[idx]] += static_cast<T>(ij_c[idx]) * prod;
+				}
 			}
-		}
+		});
 	}
 
 	// Initialize d_memo: d_memo[w] = c_w * d_out for w >= 2, zero for leaves
 	std::memset(d_memo, 0, 2 * m * sizeof(T));
-	for (uint64_t w = 2; w < m2; ++w) {
+	for_each_bch_node_(cache, [&](uint64_t w) FORCE_INLINE_LAMBDA {
 		const T c_w = static_cast<T>(cache.bch_coefficients[w]);
 		T* RESTRICT dm = d_memo + w * m;
 		if constexpr (linear_input && prune_linear) {
@@ -490,11 +520,11 @@ void bch_combine_backprop_impl_(
 				std::memset(dm, 0, m * sizeof(T));
 			}
 		}
-	}
+	});
 
 	// Reverse BCH loop using pair-grouped table
 	// For each (i,j) pair, compute S = sum_k c * dm_w[k], then scatter 4 updates
-	for (uint64_t w = m2 - 1; w >= 2; --w) {
+	for_each_bch_node_reverse_(cache, [&](uint64_t w) FORCE_INLINE_LAMBDA {
 		const uint64_t lf = cache.bch_left_factor[w];
 		const uint64_t rf = cache.bch_right_factor[w];
 		const T* v1 = memo + lf * m;
@@ -535,7 +565,7 @@ void bch_combine_backprop_impl_(
 				dm_rf[i] -= S * v1[j];
 			}
 		}
-	}
+	});
 
 	// Accumulate leaf gradients
 	for (uint64_t i = 0; i < m; ++i) {

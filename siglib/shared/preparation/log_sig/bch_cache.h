@@ -63,6 +63,8 @@ struct BchCache {
 	std::vector<double> bch_coefficients;
 	std::vector<uint64_t> bch_left_factor;
 	std::vector<uint64_t> bch_right_factor;
+	std::vector<uint32_t> live_bch_nodes;
+	bool all_bch_nodes_live = true;
 };
 
 void remove_zero_entries(TensorElem& element);
@@ -90,6 +92,7 @@ void configure_linear_bch_input(
 	bool prefix);
 bool load_hardcoded_bch_formula(BchCache& cache);
 void build_bch_formula_data(BchCache& cache);
+void build_live_bch_nodes(BchCache& cache);
 std::unique_ptr<BchCache> make_standard_bch_cache(
 	uint64_t dimension,
 	uint64_t degree,

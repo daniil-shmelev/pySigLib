@@ -203,6 +203,21 @@ def test_batch_log_signature_lyndon_basis_random(device, deg, dtype, method):
 
 
 @pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(("dimension", "degree"), [(2, 3), (2, 4), (2, 5), (2, 8), (3, 8)])
+def test_method3_pruned_plan_forward_and_backward(device, dimension, degree):
+    path = torch.randn(6, dimension, dtype=torch.float64, device=device, requires_grad=True)
+    pysiglib.prepare_log_sig(dimension, degree, 2, device=device)
+    pysiglib.prepare_log_sig(dimension, degree, 3, device=device)
+    expected = pysiglib.log_sig(path, degree, method=2)
+    actual = pysiglib.log_sig(path, degree, method=3)
+    check_close(expected, actual)
+    d_out = torch.randn_like(actual)
+    expected_grad, = torch.autograd.grad(expected, path, d_out, retain_graph=True)
+    actual_grad, = torch.autograd.grad(actual, path, d_out)
+    check_close(expected_grad, actual_grad)
+
+
+@pytest.mark.parametrize("device", DEVICES)
 def test_log_signature_method0_correction_matches_sig_to_log_sig(device):
     X = torch.tensor([[0.0], [3.0]], dtype=torch.float64, device=device)
     correction = torch.tensor([[2.0]], dtype=torch.float64, device=device)

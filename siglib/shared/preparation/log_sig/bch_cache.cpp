@@ -449,6 +449,40 @@ void build_bch_formula_data(BchCache& cache) {
 #endif
 }
 
+void build_live_bch_nodes(BchCache& cache) {
+	const uint64_t formula_size = cache.bch_coefficients.size();
+	std::vector<uint8_t> live(formula_size, 0);
+	// Hardcoded and upstream coefficients preserve exact rational zeroes. The
+	// legacy floating-point generator does not, so keep its nodes conservatively.
+	bool exact_zero_metadata = cache.degree <= BCH_MAX_HARDCODED_DEGREE;
+#ifdef PYSIGLIB_USE_UPSTREAM_BCH
+	exact_zero_metadata = true;
+#endif
+	for (uint64_t node = 2; node < formula_size; ++node)
+		live[node] = !exact_zero_metadata
+			|| cache.bch_coefficients[node] != 0.0;
+
+	for (uint64_t node = formula_size; node-- > 2;) {
+		const uint64_t left = cache.bch_left_factor[node];
+		const uint64_t right = cache.bch_right_factor[node];
+		if (!live[node])
+			continue;
+		if (left >= 2)
+			live[left] = 1;
+		if (right >= 2)
+			live[right] = 1;
+	}
+
+	cache.live_bch_nodes.clear();
+	cache.live_bch_nodes.reserve(formula_size > 2 ? formula_size - 2 : 0);
+	for (uint32_t node = 2; node < formula_size; ++node) {
+		if (live[node])
+			cache.live_bch_nodes.push_back(node);
+	}
+	cache.all_bch_nodes_live = cache.live_bch_nodes.size()
+		== (formula_size > 2 ? formula_size - 2 : 0);
+}
+
 std::unique_ptr<BchCache> make_standard_bch_cache(
 	uint64_t dimension,
 	uint64_t degree,
@@ -458,6 +492,7 @@ std::unique_ptr<BchCache> make_standard_bch_cache(
 	cache->dimension = dimension;
 	cache->degree = degree;
 	build_bch_formula_data(*cache);
+	build_live_bch_nodes(*cache);
 	build_standard_commutator_table(*cache, basis);
 	if (dimension > UINT32_MAX)
 		throw std::overflow_error("BCH linear input is too large");

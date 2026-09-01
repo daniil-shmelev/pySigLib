@@ -43,9 +43,12 @@ inline CUDABchCache upload_bch_cache_to_device_(const BchCache& host) {
 	CUDABchCache device;
 	device.m = host.m;
 	device.m2 = host.bch_coefficients.size();
+	device.bch_plan.size = host.live_bch_nodes.size();
 	upload_bch_vector_(device.d_bch_coefficients, host.bch_coefficients);
 	upload_bch_vector_(device.d_bch_left_factor, host.bch_left_factor);
 	upload_bch_vector_(device.d_bch_right_factor, host.bch_right_factor);
+	if (!host.all_bch_nodes_live)
+		upload_bch_vector_(device.bch_plan.nodes, host.live_bch_nodes);
 	upload_bch_vector_(device.d_comm_k_ptr, host.comm_k_ptr);
 	upload_bch_vector_(device.d_comm_k_i, host.comm_k_i);
 	upload_bch_vector_(device.d_comm_k_j, host.comm_k_j);
@@ -94,10 +97,10 @@ inline CUDABchCache upload_bch_cache_to_device_(const BchCache& host) {
 	upload_bch_vector_(device.d_linear_a_ptr, linear_a_ptr);
 	upload_bch_vector_(device.d_linear_a_idx, linear_a_idx);
 
-	const uint64_t nodes = device.m2 > 2 ? device.m2 - 2 : 0;
+	const uint64_t nodes = device.bch_plan.size;
 	device.linear_dense_forward_work = nodes
 		* (device.m + host.comm_k_i.size());
-	for (uint64_t node = 2; node < device.m2; ++node) {
+	for (uint32_t node : host.live_bch_nodes) {
 		const auto [begin, end] = host.linear_range[node];
 		device.linear_active_forward_work += end - begin;
 		device.linear_zero_work += begin + device.m - end;

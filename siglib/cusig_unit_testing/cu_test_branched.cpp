@@ -362,7 +362,7 @@ TEST(branchedLogSigFromPathCudaTest, ForwardAndBackwardMatchMethodTwo) {
     const uint64_t batch_size = 2;
     const uint64_t length = 5;
     const uint64_t dimension = 2;
-    const uint64_t max_nodes = 3;
+    const uint64_t max_nodes = 4;
     const uint64_t full_length = compute_branched_sig_length(
         dimension, max_nodes, true);
     const uint64_t log_length = compute_branched_log_sig_length(
