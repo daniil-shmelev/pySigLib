@@ -60,11 +60,21 @@ struct CUDACommutatorView {
 #endif
 };
 
+struct CUDACommutatorPlan {
+	CudaBuf<uint32_t> storage;
+	CUDACommutatorView balanced_view;
+	bool use_for_dense = false;
+	bool use_for_linear = false;
+
+	explicit operator bool() const noexcept { return storage.get() != nullptr; }
+};
+
 struct CUDABchCache {
 	double* d_bch_coefficients = nullptr;
 	uint64_t* d_bch_left_factor = nullptr;
 	uint64_t* d_bch_right_factor = nullptr;
 	CUDABchPlan bch_plan;
+	CUDACommutatorPlan commutator_plan;
 	uint64_t* d_linear_range = nullptr;
 	uint64_t m2 = 0;
 	uint64_t m = 0;
@@ -91,6 +101,7 @@ struct CUDABchCache {
 		d_bch_right_factor(std::exchange(other.d_bch_right_factor, nullptr)),
 		bch_plan{ std::exchange(other.bch_plan.nodes, nullptr),
 			std::exchange(other.bch_plan.size, 0) },
+		commutator_plan(std::move(other.commutator_plan)),
 		d_linear_range(std::exchange(other.d_linear_range, nullptr)),
 		m2(std::exchange(other.m2, 0)),
 		m(std::exchange(other.m, 0)),
@@ -129,6 +140,22 @@ struct CUDABchCache {
 	CUDACommutatorView commutator_view() const noexcept {
 		return { nullptr, d_comm_k_ptr, d_comm_k_i, d_comm_k_j,
 			d_comm_k_val };
+	}
+
+	CUDACommutatorView commutator_view_(bool use_balanced) const noexcept {
+		if (use_balanced)
+			return commutator_plan.balanced_view;
+		return commutator_view();
+	}
+
+	CUDACommutatorView dense_commutator_view() const noexcept {
+		return commutator_view_(
+			commutator_plan && commutator_plan.use_for_dense);
+	}
+
+	CUDACommutatorView linear_commutator_view() const noexcept {
+		return commutator_view_(
+			commutator_plan && commutator_plan.use_for_linear);
 	}
 };
 

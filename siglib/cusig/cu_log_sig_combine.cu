@@ -213,7 +213,7 @@ void log_sig_combine_cuda_(
 	// Decide whether shared memory kernel fits (2 vectors of size m)
 	size_t shared_size = 2 * m * sizeof(T);
 	bool use_shmem = (shared_size <= CUDA_BASE_DYNAMIC_SMEM);
-	const CUDACommutatorView commutator = cache.commutator_view();
+	const CUDACommutatorView commutator = cache.dense_commutator_view();
 	dispatch_commutator_view_(commutator, [&]<bool use_balanced_rows>() {
 		for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
 			const uint64_t current_batch = std::min(
@@ -786,7 +786,9 @@ void log_sig_from_path_cuda_(
 		+ cache.linear_zero_work;
 	const uint64_t* linear_range = pruned_forward_work < dense_forward_work
 		? cache.d_linear_range : nullptr;
-	const CUDACommutatorView commutator = cache.commutator_view();
+	const CUDACommutatorView commutator = linear_range
+		? cache.linear_commutator_view()
+		: cache.dense_commutator_view();
 	const uint64_t path_stride = length * dimension;
 
 	dispatch_commutator_view_(commutator, [&]<bool use_balanced_rows>() {
