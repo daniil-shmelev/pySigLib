@@ -3,6 +3,19 @@ if(NOT DEFINED CUSIG_INSTALL_DESTINATION)
     set(CUSIG_INSTALL_DESTINATION "pysiglib")
 endif()
 
+option(PYSIGLIB_CUDA_LINEINFO "Generate CUDA device line information" ON)
+option(PYSIGLIB_CUDA_SEPARABLE_COMPILATION
+    "Enable CUDA separable compilation" ON)
+set(PYSIGLIB_CUDA_COMPRESS_MODE "default" CACHE STRING
+    "CUDA fatbin compression mode")
+set_property(CACHE PYSIGLIB_CUDA_COMPRESS_MODE PROPERTY STRINGS
+    default size speed balance none)
+set(_pysiglib_cuda_compress_modes default size speed balance none)
+if(NOT PYSIGLIB_CUDA_COMPRESS_MODE IN_LIST _pysiglib_cuda_compress_modes)
+    message(FATAL_ERROR
+        "Invalid PYSIGLIB_CUDA_COMPRESS_MODE: ${PYSIGLIB_CUDA_COMPRESS_MODE}")
+endif()
+
 if(NOT TARGET pysiglib_preparation)
     add_subdirectory(
         "${CMAKE_CURRENT_SOURCE_DIR}/../shared/preparation"
@@ -75,7 +88,7 @@ set_target_properties(cusig PROPERTIES
     CUDA_STANDARD          20
     CUDA_STANDARD_REQUIRED ON
     CXX_STANDARD           20
-    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_SEPARABLE_COMPILATION ${PYSIGLIB_CUDA_SEPARABLE_COMPILATION}
     CUDA_ARCHITECTURES         "${PYSIGLIB_CUDA_ARCH}"
 )
 
@@ -96,10 +109,22 @@ target_include_directories(cusig PRIVATE
 )
 target_compile_definitions(cusig PRIVATE CUSIG_EXPORTS NDEBUG)
 
-# nvcc flags: -lineinfo (device-code line info), --dopt=on (device optimizer).
+# nvcc flags: optional device line info and the device optimizer.
 target_compile_options(cusig PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo;--dopt=on>
+    $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<BOOL:${PYSIGLIB_CUDA_LINEINFO}>>:-lineinfo>
+    $<$<COMPILE_LANGUAGE:CUDA>:--dopt=on>
 )
+
+if(NOT PYSIGLIB_CUDA_COMPRESS_MODE STREQUAL "default")
+    target_compile_options(cusig PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:--compress-mode=${PYSIGLIB_CUDA_COMPRESS_MODE}>
+    )
+    if(PYSIGLIB_CUDA_SEPARABLE_COMPILATION)
+        target_link_options(cusig PRIVATE
+            "$<DEVICE_LINK:--compress-mode=${PYSIGLIB_CUDA_COMPRESS_MODE}>"
+        )
+    endif()
+endif()
 
 if(MSVC)
     target_compile_definitions(cusig PRIVATE _USRDLL _UNICODE UNICODE)
@@ -108,12 +133,14 @@ endif()
 target_link_libraries(cusig PRIVATE CUDA::cudart pysiglib_preparation)
 
 # cudadevrt is needed for separable compilation (device linking).
-if(TARGET CUDA::cudadevrt)
-    target_link_libraries(cusig PRIVATE CUDA::cudadevrt)
-else()
-    find_library(_cudadevrt cudadevrt PATHS "${CUDAToolkit_LIBRARY_DIR}")
-    if(_cudadevrt)
-        target_link_libraries(cusig PRIVATE "${_cudadevrt}")
+if(PYSIGLIB_CUDA_SEPARABLE_COMPILATION)
+    if(TARGET CUDA::cudadevrt)
+        target_link_libraries(cusig PRIVATE CUDA::cudadevrt)
+    else()
+        find_library(_cudadevrt cudadevrt PATHS "${CUDAToolkit_LIBRARY_DIR}")
+        if(_cudadevrt)
+            target_link_libraries(cusig PRIVATE "${_cudadevrt}")
+        endif()
     endif()
 endif()
 

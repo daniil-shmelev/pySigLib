@@ -44,7 +44,7 @@ on:
 
 env:
   # Shared CUDA arch list for Linux and Windows plugin builds.
-  CUDA_ARCH: "50;60;70;75;80;86;89;90;100;120"
+  CUDA_ARCH: "50-real;60-real;70-real;75-real;80-real;86-real;89-real;90-real;100-real;120"
   # Pre-built CUDA build image from build-cuda-images.yml.
   MANYLINUX_CUDA_IMAGE: ghcr.io/daniil-shmelev/pysiglib-manylinux-cuda12:cuda-12.9.1
   # Pre-built CUDA test image from build-cuda-images.yml.

@@ -63,6 +63,9 @@ provider-path = "."
 
 [tool.scikit-build.cmake.define]
 PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
+PYSIGLIB_CUDA_LINEINFO = {env = "CUDA_LINEINFO", default = "OFF"}
+PYSIGLIB_CUDA_COMPRESS_MODE = {env = "CUDA_COMPRESS_MODE", default = "size"}
+PYSIGLIB_CUDA_SEPARABLE_COMPILATION = {env = "CUDA_SEPARABLE_COMPILATION", default = "OFF"}
 
 [tool.cibuildwheel]
 build = "cp311-*"
