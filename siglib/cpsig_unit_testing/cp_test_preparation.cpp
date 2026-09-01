@@ -32,6 +32,21 @@ std::filesystem::path test_cache_directory_() {
 	return std::filesystem::temp_directory_path()
 		/ ("pysiglib_preparation_" + std::to_string(stamp));
 }
+
+#ifndef _MSC_VER
+TEST(preparationCacheTest, UpstreamBchHasExpectedPrefix) {
+	BchCache cache;
+	cache.degree = 13;
+	build_bch_formula_data(cache);
+	ASSERT_EQ(cache.bch_coefficients.size(), 1377);
+	EXPECT_DOUBLE_EQ(cache.bch_coefficients[0], 1.0);
+	EXPECT_DOUBLE_EQ(cache.bch_coefficients[1], 1.0);
+	EXPECT_DOUBLE_EQ(cache.bch_coefficients[2], 0.5);
+	EXPECT_DOUBLE_EQ(cache.bch_coefficients[3], 1.0 / 12.0);
+	EXPECT_DOUBLE_EQ(cache.bch_coefficients[4], 1.0 / 12.0);
+	EXPECT_DOUBLE_EQ(cache.bch_coefficients[5], 0.0);
+}
+#endif
 }
 
 TEST(preparationCacheTest, StandardLogMethodsUpgradeInPlace) {

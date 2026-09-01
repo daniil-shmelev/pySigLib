@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(pysiglib_cuda LANGUAGES CXX CUDA)
+project(pysiglib_cuda LANGUAGES C CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

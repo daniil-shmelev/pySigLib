@@ -16,6 +16,9 @@
 #include "bch_cache.h"
 
 #include "bch_data.h"
+#ifdef PYSIGLIB_USE_UPSTREAM_BCH
+#include "bch_formula.h"
+#endif
 #include "tensor_basis.h"
 #include "lyndon_words.h"
 
@@ -377,6 +380,12 @@ bool load_hardcoded_bch_formula(BchCache& cache) {
 void build_bch_formula_data(BchCache& cache) {
 	if (load_hardcoded_bch_formula(cache))
 		return;
+#ifdef PYSIGLIB_USE_UPSTREAM_BCH
+	LyndonBchFormula formula = compute_lyndon_bch_formula(cache.degree);
+	cache.bch_coefficients = std::move(formula.coefficients);
+	cache.bch_left_factor = std::move(formula.left_factor);
+	cache.bch_right_factor = std::move(formula.right_factor);
+#else
 	const uint64_t degree = cache.degree;
 	std::vector<uint64_t> offsets(degree + 2, 0);
 	for (uint64_t level = 0; level <= degree; ++level)
@@ -437,6 +446,7 @@ void build_bch_formula_data(BchCache& cache) {
 		basis.inv_proj_mat.mul_vec_inplace_lower(cache.bch_coefficients.data());
 	compute_factorization_indices(
 		2, degree, cache.bch_left_factor, cache.bch_right_factor);
+#endif
 }
 
 std::unique_ptr<BchCache> make_standard_bch_cache(
