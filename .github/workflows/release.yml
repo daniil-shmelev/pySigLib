@@ -346,7 +346,6 @@ jobs:
       - gate-cuda-tests
     if: github.event_name == 'workflow_dispatch' && github.repository == 'daniil-shmelev/pysiglib' && github.event.inputs.run_gpu_tests == 'true'
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 30
     permissions:
       contents: read
       packages: read
@@ -435,7 +434,6 @@ jobs:
       - gate-cuda-tests
     if: github.event_name == 'workflow_dispatch' && github.repository == 'daniil-shmelev/pysiglib' && github.event.inputs.run_gpu_tests == 'true'
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 45
     defaults:
       run:
         shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
@@ -880,7 +878,6 @@ jobs:
       - gate-cuda-tests
     if: ${{ inputs.publish_to_pypi && inputs.run_gpu_tests }}
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 30
     permissions:
       contents: read
       packages: read
@@ -947,7 +944,6 @@ jobs:
       - gate-cuda-tests
     if: ${{ inputs.publish_to_pypi && inputs.run_gpu_tests }}
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 30
     defaults:
       run:
         shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
