@@ -27,14 +27,38 @@ set(PYSIGLIB_CUDA_ARCH "native" CACHE STRING
     "CUDA architectures (native, all, all-major, or semicolon-separated list)")
 option(PYSIGLIB_TESTS "Build CUDA C++ unit tests (Google Test)" OFF)
 option(PYSIGLIB_JAX_FFI "Build CUDA JAX FFI support when headers are available" ON)
+set(PYSIGLIB_CUSIG_PREBUILT_LIBRARY "" CACHE FILEPATH
+    "Path to a prebuilt cusig shared library")
+set(PYSIGLIB_CUSIG_PREBUILT_IMPLIB "" CACHE FILEPATH
+    "Path to the prebuilt cusig import library on Windows")
 
 set(CUSIG_INSTALL_DESTINATION "pysiglib_cuda" CACHE INTERNAL "")
 
-# Binary dir override is required because siglib/cusig is outside this project.
-add_subdirectory(
-    "${PYSIGLIB_REPO_ROOT}/siglib/cusig"
-    "${CMAKE_BINARY_DIR}/cusig_build"
-)
+if(PYSIGLIB_CUSIG_PREBUILT_LIBRARY)
+    if(NOT EXISTS "${PYSIGLIB_CUSIG_PREBUILT_LIBRARY}")
+        message(FATAL_ERROR
+            "Prebuilt cusig library not found: ${PYSIGLIB_CUSIG_PREBUILT_LIBRARY}")
+    endif()
+    add_library(cusig SHARED IMPORTED GLOBAL)
+    set_target_properties(cusig PROPERTIES
+        IMPORTED_LOCATION "${PYSIGLIB_CUSIG_PREBUILT_LIBRARY}"
+    )
+    if(WIN32)
+        if(NOT EXISTS "${PYSIGLIB_CUSIG_PREBUILT_IMPLIB}")
+            message(FATAL_ERROR
+                "Prebuilt cusig import library not found: ${PYSIGLIB_CUSIG_PREBUILT_IMPLIB}")
+        endif()
+        set_target_properties(cusig PROPERTIES
+            IMPORTED_IMPLIB "${PYSIGLIB_CUSIG_PREBUILT_IMPLIB}"
+        )
+    endif()
+else()
+    # Binary dir override is required because siglib/cusig is outside this project.
+    add_subdirectory(
+        "${PYSIGLIB_REPO_ROOT}/siglib/cusig"
+        "${CMAKE_BINARY_DIR}/cusig_build"
+    )
+endif()
 
 if(PYSIGLIB_TESTS)
     enable_testing()

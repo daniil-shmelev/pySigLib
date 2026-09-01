@@ -33,6 +33,14 @@ option(PYSIGLIB_BENCHMARKS "Build CodSpeed / Google Benchmark harness" OFF)
 option(PYSIGLIB_TESTS "Build C++ unit tests (Google Test)" OFF)
 option(PYSIGLIB_CUDA "Build CUDA plugin targets" OFF)
 option(PYSIGLIB_TEST_APP "Build the legacy manual C++ test app (requires CUDA)" OFF)
+set(PYSIGLIB_CPSIG_PREBUILT_LIBRARY "" CACHE FILEPATH
+    "Path to a prebuilt cpsig shared library")
+set(PYSIGLIB_CPSIG_PREBUILT_IMPLIB "" CACHE FILEPATH
+    "Path to the prebuilt cpsig import library on Windows")
+set(PYSIGLIB_CPSIG_PREBUILT_TBB_LIBRARY "" CACHE FILEPATH
+    "Path to the TBB shared library used by a prebuilt cpsig library")
+set(PYSIGLIB_CPSIG_PREBUILT_TBB_IMPLIB "" CACHE FILEPATH
+    "Path to the prebuilt TBB import library on Windows")
 
 # Static CRT (/MT) on MSVC, to match the original B2 build.
 if(MSVC)
@@ -160,7 +168,46 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_config.py" DESTINATION pysiglib)
 # ---------------------------------------------------------------------------
 # Sub-projects
 # ---------------------------------------------------------------------------
-add_subdirectory(siglib/cpsig)
+if(PYSIGLIB_CPSIG_PREBUILT_LIBRARY)
+    if(NOT EXISTS "${PYSIGLIB_CPSIG_PREBUILT_LIBRARY}")
+        message(FATAL_ERROR
+            "Prebuilt cpsig library not found: ${PYSIGLIB_CPSIG_PREBUILT_LIBRARY}")
+    endif()
+    if(NOT EXISTS "${PYSIGLIB_CPSIG_PREBUILT_TBB_LIBRARY}")
+        message(FATAL_ERROR
+            "Prebuilt TBB shared library not found: ${PYSIGLIB_CPSIG_PREBUILT_TBB_LIBRARY}")
+    endif()
+    add_library(pysiglib_prebuilt_tbb SHARED IMPORTED GLOBAL)
+    set_target_properties(pysiglib_prebuilt_tbb PROPERTIES
+        IMPORTED_LOCATION "${PYSIGLIB_CPSIG_PREBUILT_TBB_LIBRARY}"
+    )
+    if(WIN32)
+        if(NOT EXISTS "${PYSIGLIB_CPSIG_PREBUILT_IMPLIB}")
+            message(FATAL_ERROR
+                "Prebuilt cpsig import library not found: ${PYSIGLIB_CPSIG_PREBUILT_IMPLIB}")
+        endif()
+        if(NOT EXISTS "${PYSIGLIB_CPSIG_PREBUILT_TBB_IMPLIB}")
+            message(FATAL_ERROR
+                "Prebuilt TBB import library not found: ${PYSIGLIB_CPSIG_PREBUILT_TBB_IMPLIB}")
+        endif()
+        set_target_properties(pysiglib_prebuilt_tbb PROPERTIES
+            IMPORTED_IMPLIB "${PYSIGLIB_CPSIG_PREBUILT_TBB_IMPLIB}"
+        )
+    endif()
+    add_library(cpsig SHARED IMPORTED GLOBAL)
+    set_target_properties(cpsig PROPERTIES
+        IMPORTED_LOCATION "${PYSIGLIB_CPSIG_PREBUILT_LIBRARY}"
+        INTERFACE_LINK_LIBRARIES pysiglib_prebuilt_tbb
+    )
+    if(WIN32)
+        set_target_properties(cpsig PROPERTIES
+            IMPORTED_IMPLIB "${PYSIGLIB_CPSIG_PREBUILT_IMPLIB}"
+        )
+    endif()
+    add_subdirectory(siglib/shared/preparation)
+else()
+    add_subdirectory(siglib/cpsig)
+endif()
 
 if(JAXLIB_FOUND)
     add_subdirectory(siglib/jax_ffi)
@@ -185,7 +232,10 @@ if(PYSIGLIB_TESTS)
     add_subdirectory(siglib/cpsig_unit_testing)
 endif()
 
-set(_pysiglib_cpp_solution_targets cpsig)
+set(_pysiglib_cpp_solution_targets)
+if(NOT PYSIGLIB_CPSIG_PREBUILT_LIBRARY)
+    list(APPEND _pysiglib_cpp_solution_targets cpsig)
+endif()
 if(PYSIGLIB_CUDA AND TARGET cusig)
     list(APPEND _pysiglib_cpp_solution_targets cusig)
 endif()

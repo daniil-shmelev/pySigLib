@@ -136,6 +136,13 @@ jobs:
         with:
           name: wheels-windows-cpu
           path: wheelhouse/*.whl
+      - uses: actions/upload-artifact@v7
+        with:
+          name: link-library-windows-cpu
+          path: |
+            build/**/siglib/cpsig/Release/cpsig.lib
+            build/**/msvc_*_release/tbb12.lib
+          if-no-files-found: error
 
   # ============================================================
   # Windows CUDA wheel
@@ -186,6 +193,11 @@ jobs:
         with:
           name: wheels-windows-cuda
           path: wheelhouse/*.whl
+      - uses: actions/upload-artifact@v7
+        with:
+          name: link-library-windows-cuda
+          path: plugins/cuda/build/**/cusig_build/Release/cusig.lib
+          if-no-files-found: error
 
   # ============================================================
   # macOS wheel
@@ -246,7 +258,11 @@ jobs:
       - name: Run C++ CPU tests
         if: matrix.python-version == '3.13'
         run: |
-          cmake -S . -B build_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_BENCHMARKS=OFF -DPYSIGLIB_JAX_FFI=OFF -DCMAKE_BUILD_TYPE=Release
+          cpsig_library=$(python -c "import importlib.metadata as m; print(m.distribution('pysiglib').locate_file('pysiglib/libcpsig.so'))")
+          tbb_library=$(python -c "import importlib.metadata as m; d=m.distribution('pysiglib'); print(next(d.locate_file(f) for f in d.files if f.name.startswith('libtbb') and '.so' in f.name))")
+          test -f "$cpsig_library"
+          test -f "$tbb_library"
+          cmake -S . -B build_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_BENCHMARKS=OFF -DPYSIGLIB_JAX_FFI=OFF -DPYSIGLIB_CPSIG_PREBUILT_LIBRARY="$cpsig_library" -DPYSIGLIB_CPSIG_PREBUILT_TBB_LIBRARY="$tbb_library" -DCMAKE_BUILD_TYPE=Release
           cmake --build build_cpp_tests --target cpsig_tests --config Release --parallel 4
           ctest --test-dir build_cpp_tests --output-on-failure -C Release
   # ============================================================
@@ -411,9 +427,15 @@ jobs:
         run: |
           $scriptBody = @'
           set -e
-          cmake -S /workspace/plugins/cuda -B /workspace/build_cuda_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_CUDA_ARCH="${CUDA_ARCH}" -DCMAKE_BUILD_TYPE=Release
-          cmake --build /workspace/build_cuda_cpp_tests --target cusig_tests --config Release --parallel 4
-          ctest --test-dir /workspace/build_cuda_cpp_tests --output-on-failure -C Release -L cuda
+          cuda_wheel=$(find /workspace/dist -maxdepth 1 -name 'pysiglib_cuda-*.whl' -print -quit)
+          test -n "$cuda_wheel"
+          wheel_root=$(mktemp -d)
+          python3 -m zipfile -e "$cuda_wheel" "$wheel_root"
+          cusig_library="$wheel_root/pysiglib_cuda/libcusig.so"
+          test -f "$cusig_library"
+          cmake -S /workspace/plugins/cuda -B /tmp/build_cuda_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_JAX_FFI=OFF -DPYSIGLIB_CUSIG_PREBUILT_LIBRARY="$cusig_library" -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/build_cuda_cpp_tests --target cusig_tests --config Release --parallel 4
+          ctest --test-dir /tmp/build_cuda_cpp_tests --output-on-failure -C Release -L cuda
           '@
           $ws = $env:GITHUB_WORKSPACE
           $scriptPath = Join-Path $ws "run-cuda-cpp-tests.sh"
@@ -422,7 +444,6 @@ jobs:
           docker run --rm --gpus all `
             -v "${ws}:/workspace" `
             -w /workspace `
-            -e CUDA_ARCH="$env:CUDA_ARCH" `
             ${{ env.MANYLINUX_CUDA_IMAGE }} `
             bash /workspace/run-cuda-cpp-tests.sh
 
@@ -450,8 +471,12 @@ jobs:
         with:
           name: wheels-windows-cuda
           path: dist
-      # The CUDA C++ tests build from source on this GPU runner, so make sure
-      # nvcc and the Visual Studio CUDA integration are available here too.
+      - uses: actions/download-artifact@v8
+        with:
+          name: link-library-windows-cuda
+          path: cusig-import-library
+      # The CUDA C++ test executable still needs the CUDA toolkit to compile
+      # and links to cusig.dll from the installed wheel through cusig.lib.
       - name: Cache CUDA toolkit
         id: cuda-cache
         uses: actions/cache@v5
@@ -541,7 +566,16 @@ jobs:
         run: |
           $sourceDir = Join-Path $env:GITHUB_WORKSPACE "plugins/cuda"
           $buildDir = Join-Path $env:GITHUB_WORKSPACE "build_cuda_cpp_tests"
-          cmake -S $sourceDir -B $buildDir -DPYSIGLIB_TESTS=ON "-DPYSIGLIB_CUDA_ARCH=$env:CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release
+          $cusigDll = (& python -c "import importlib.metadata as m; print(m.distribution('pysiglib-cuda').locate_file('pysiglib_cuda/cusig.dll'))").Trim()
+          $cusigImportLib = (Get-ChildItem cusig-import-library -Recurse -File -Filter cusig.lib | Select-Object -First 1).FullName
+          if (-not (Test-Path -LiteralPath $cusigDll)) { throw "cusig.dll not found: $cusigDll" }
+          if (-not (Test-Path -LiteralPath $cusigImportLib)) { throw "cusig.lib not found: $cusigImportLib" }
+          cmake -S $sourceDir -B $buildDir `
+            -DPYSIGLIB_TESTS=ON `
+            -DPYSIGLIB_JAX_FFI=OFF `
+            "-DPYSIGLIB_CUSIG_PREBUILT_LIBRARY=$cusigDll" `
+            "-DPYSIGLIB_CUSIG_PREBUILT_IMPLIB=$cusigImportLib" `
+            -DCMAKE_BUILD_TYPE=Release
           cmake --build $buildDir --target cusig_tests --config Release --parallel 4
           ctest --test-dir $buildDir --output-on-failure -C Release -L cuda
       - name: Remove ephemeral venv
@@ -566,6 +600,11 @@ jobs:
         with:
           name: wheels-windows-cpu
           path: dist
+      - uses: actions/download-artifact@v8
+        if: matrix.python-version == '3.13'
+        with:
+          name: link-library-windows-cpu
+          path: cpsig-import-library
       - name: Install wheel + test deps
         shell: pwsh
         run: |
@@ -587,7 +626,23 @@ jobs:
         if: matrix.python-version == '3.13'
         shell: pwsh
         run: |
-          cmake -S . -B build_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_BENCHMARKS=OFF -DPYSIGLIB_JAX_FFI=OFF -DCMAKE_BUILD_TYPE=Release
+          $cpsigDll = (& python -c "import importlib.metadata as m; print(m.distribution('pysiglib').locate_file('pysiglib/cpsig.dll'))").Trim()
+          $tbbDll = (& python -c "import importlib.metadata as m; print(m.distribution('pysiglib').locate_file('pysiglib/tbb12.dll'))").Trim()
+          $cpsigImportLib = (Get-ChildItem cpsig-import-library -Recurse -File -Filter cpsig.lib | Select-Object -First 1).FullName
+          $tbbImportLib = (Get-ChildItem cpsig-import-library -Recurse -File -Filter tbb12.lib | Select-Object -First 1).FullName
+          if (-not (Test-Path -LiteralPath $cpsigDll)) { throw "cpsig.dll not found: $cpsigDll" }
+          if (-not (Test-Path -LiteralPath $tbbDll)) { throw "tbb12.dll not found: $tbbDll" }
+          if (-not (Test-Path -LiteralPath $cpsigImportLib)) { throw "cpsig.lib not found: $cpsigImportLib" }
+          if (-not (Test-Path -LiteralPath $tbbImportLib)) { throw "tbb12.lib not found: $tbbImportLib" }
+          cmake -S . -B build_cpp_tests `
+            -DPYSIGLIB_TESTS=ON `
+            -DPYSIGLIB_BENCHMARKS=OFF `
+            -DPYSIGLIB_JAX_FFI=OFF `
+            "-DPYSIGLIB_CPSIG_PREBUILT_LIBRARY=$cpsigDll" `
+            "-DPYSIGLIB_CPSIG_PREBUILT_IMPLIB=$cpsigImportLib" `
+            "-DPYSIGLIB_CPSIG_PREBUILT_TBB_LIBRARY=$tbbDll" `
+            "-DPYSIGLIB_CPSIG_PREBUILT_TBB_IMPLIB=$tbbImportLib" `
+            -DCMAKE_BUILD_TYPE=Release
           cmake --build build_cpp_tests --target cpsig_tests --config Release --parallel 4
           ctest --test-dir build_cpp_tests --output-on-failure -C Release
   test-macos:
@@ -623,7 +678,11 @@ jobs:
       - name: Run C++ CPU tests
         if: matrix.python-version == '3.13'
         run: |
-          cmake -S . -B build_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_BENCHMARKS=OFF -DPYSIGLIB_JAX_FFI=OFF -DCMAKE_BUILD_TYPE=Release
+          cpsig_library=$(python -c "import importlib.metadata as m; print(m.distribution('pysiglib').locate_file('pysiglib/libcpsig.dylib'))")
+          tbb_library=$(python -c "import importlib.metadata as m; d=m.distribution('pysiglib'); print(next(d.locate_file(f) for f in d.files if f.name.startswith('libtbb') and f.name.endswith('.dylib')))")
+          test -f "$cpsig_library"
+          test -f "$tbb_library"
+          cmake -S . -B build_cpp_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_BENCHMARKS=OFF -DPYSIGLIB_JAX_FFI=OFF -DPYSIGLIB_CPSIG_PREBUILT_LIBRARY="$cpsig_library" -DPYSIGLIB_CPSIG_PREBUILT_TBB_LIBRARY="$tbb_library" -DCMAKE_BUILD_TYPE=Release
           cmake --build build_cpp_tests --target cpsig_tests --config Release --parallel 4
           ctest --test-dir build_cpp_tests --output-on-failure -C Release
   # ============================================================
