@@ -15,7 +15,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(google_benchmark)
 
 add_executable(bench_cpsig bench_cpsig.cpp)
-target_link_libraries(bench_cpsig PRIVATE benchmark::benchmark cpsig)
+target_link_libraries(bench_cpsig PRIVATE
+    benchmark::benchmark
+    cpsig
+    pysiglib_preparation
+)
 target_include_directories(bench_cpsig PRIVATE
     "${CMAKE_SOURCE_DIR}/siglib/cpsig"
     "${CMAKE_SOURCE_DIR}/siglib/shared"

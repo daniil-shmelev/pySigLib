@@ -5,13 +5,17 @@ on:
     branches: ["main"]
     paths:
       - ".github/workflows/codspeed.yml"
+      - "CMakeLists.txt"
       - "benchmarks/**"
+      - "cmake/**"
       - "siglib/cpsig/**"
       - "siglib/shared/**"
   pull_request:
     paths:
       - ".github/workflows/codspeed.yml"
+      - "CMakeLists.txt"
       - "benchmarks/**"
+      - "cmake/**"
       - "siglib/cpsig/**"
       - "siglib/shared/**"
   workflow_dispatch:
