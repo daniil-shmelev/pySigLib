@@ -471,7 +471,8 @@ static void BM_log_sig_from_path(benchmark::State& state) {
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_log_sig_from_path)->Arg(4)->Arg(5)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_log_sig_from_path)
+    ->Arg(4)->Arg(5)->ArgName("degree")->Unit(benchmark::kMicrosecond);
 
 static void BM_log_sig_from_path_backprop(benchmark::State& state) {
     const uint64_t degree = state.range(0);
@@ -487,7 +488,7 @@ static void BM_log_sig_from_path_backprop(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_log_sig_from_path_backprop)
-    ->Arg(4)->Arg(5)->Unit(benchmark::kMicrosecond);
+    ->Arg(4)->Arg(5)->ArgName("degree")->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Log sig combine / backprop
