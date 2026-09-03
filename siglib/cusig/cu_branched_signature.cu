@@ -2764,9 +2764,9 @@ static void prepare_branched_log_sig_cuda_(
 	if (method < 0 || method > 3)
 		throw std::invalid_argument(
 			"branched log signature method must be 0, 1, 2, or 3");
-	if (method == 3 && max_nodes > 12)
+	if (method == 3 && max_nodes > 20)
 		throw std::runtime_error(
-			"CUDA MKW BCH method supports degree at most 12");
+			"CUDA MKW BCH method supports degree at most 20");
 	if (method != 0 && !planar)
 		throw std::invalid_argument(
 			"compressed branched log signatures require planar=True");

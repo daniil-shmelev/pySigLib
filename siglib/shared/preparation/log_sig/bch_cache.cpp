@@ -16,9 +16,6 @@
 #include "bch_cache.h"
 
 #include "bch_data.h"
-#ifdef PYSIGLIB_USE_UPSTREAM_BCH
-#include "bch_formula.h"
-#endif
 #include "tensor_basis.h"
 #include "lyndon_words.h"
 
@@ -380,87 +377,15 @@ bool load_hardcoded_bch_formula(BchCache& cache) {
 void build_bch_formula_data(BchCache& cache) {
 	if (load_hardcoded_bch_formula(cache))
 		return;
-#ifdef PYSIGLIB_USE_UPSTREAM_BCH
-	LyndonBchFormula formula = compute_lyndon_bch_formula(cache.degree);
-	cache.bch_coefficients = std::move(formula.coefficients);
-	cache.bch_left_factor = std::move(formula.left_factor);
-	cache.bch_right_factor = std::move(formula.right_factor);
-#else
-	const uint64_t degree = cache.degree;
-	std::vector<uint64_t> offsets(degree + 2, 0);
-	for (uint64_t level = 0; level <= degree; ++level)
-		offsets[level + 1] = offsets[level] + tensor_power(2, level);
-	std::vector<double> signature(offsets[degree + 1], 0.0);
-	signature[0] = 1.0;
-	std::vector<double> inverse_factorial(degree + 1, 1.0);
-	for (uint64_t level = 1; level <= degree; ++level)
-		inverse_factorial[level] = inverse_factorial[level - 1]
-			/ static_cast<double>(level);
-	for (uint64_t level = 1; level <= degree; ++level) {
-		for (uint64_t left_degree = 0; left_degree <= level; ++left_degree) {
-			const uint64_t right_degree = level - left_degree;
-			const uint64_t word_index = tensor_power(2, right_degree) - 1;
-			signature[offsets[level] + word_index]
-				= inverse_factorial[left_degree]
-				* inverse_factorial[right_degree];
-		}
-	}
-
-	std::vector<double> x = signature;
-	x[0] = 0.0;
-	std::vector<double> power = x;
-	std::vector<double> tensor_log(signature.size(), 0.0);
-	for (uint64_t term = 1; term <= degree; ++term) {
-		const double coefficient = (term % 2 == 0 ? -1.0 : 1.0)
-			/ static_cast<double>(term);
-		for (uint64_t index = 1; index < tensor_log.size(); ++index)
-			tensor_log[index] += coefficient * power[index];
-		if (term == degree)
-			break;
-		std::vector<double> next(signature.size(), 0.0);
-		for (uint64_t level = 2; level <= degree; ++level) {
-			for (uint64_t left_degree = 1; left_degree < level; ++left_degree) {
-				const uint64_t right_degree = level - left_degree;
-				const uint64_t left_size = tensor_power(2, left_degree);
-				const uint64_t right_size = tensor_power(2, right_degree);
-				for (uint64_t left = 0; left < left_size; ++left) {
-					const double left_value = power[offsets[left_degree] + left];
-					if (left_value == 0.0)
-						continue;
-					for (uint64_t right = 0; right < right_size; ++right) {
-						next[offsets[level] + left * right_size + right]
-							+= left_value * x[offsets[right_degree] + right];
-					}
-				}
-			}
-		}
-		power = std::move(next);
-	}
-
-	LogSigCache basis_cache(2, degree, 2);
-	const BasisCache& basis = basis_cache.basis(2);
-	cache.bch_coefficients.resize(basis.lyndon_idx.size());
-	for (uint64_t i = 0; i < basis.lyndon_idx.size(); ++i)
-		cache.bch_coefficients[i] = tensor_log[basis.lyndon_idx[i]];
-	if (!cache.bch_coefficients.empty())
-		basis.inv_proj_mat.mul_vec_inplace_lower(cache.bch_coefficients.data());
-	compute_factorization_indices(
-		2, degree, cache.bch_left_factor, cache.bch_right_factor);
-#endif
+	throw std::invalid_argument(
+		"BCH methods support truncation degrees at most 20");
 }
 
 void build_live_bch_nodes(BchCache& cache) {
 	const uint64_t formula_size = cache.bch_coefficients.size();
 	std::vector<uint8_t> live(formula_size, 0);
-	// Hardcoded and upstream coefficients preserve exact rational zeroes. The
-	// legacy floating-point generator does not, so keep its nodes conservatively.
-	bool exact_zero_metadata = cache.degree <= BCH_MAX_HARDCODED_DEGREE;
-#ifdef PYSIGLIB_USE_UPSTREAM_BCH
-	exact_zero_metadata = true;
-#endif
 	for (uint64_t node = 2; node < formula_size; ++node)
-		live[node] = !exact_zero_metadata
-			|| cache.bch_coefficients[node] != 0.0;
+		live[node] = cache.bch_coefficients[node] != 0.0;
 
 	for (uint64_t node = formula_size; node-- > 2;) {
 		const uint64_t left = cache.bch_left_factor[node];

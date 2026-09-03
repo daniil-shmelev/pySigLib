@@ -36,6 +36,9 @@
 inline void prepare_bch_cache(
 	uint64_t dimension, uint64_t degree, bool use_disk = false
 ) {
+	if (degree > BCH_MAX_HARDCODED_DEGREE)
+		throw std::invalid_argument(
+			"BCH methods support truncation degrees at most 20");
 	prepare_basis_cache(dimension, degree, 2, use_disk);
 	LogSigCache& log_cache = get_log_sig_cache_mutable(
 		dimension, degree, 2);

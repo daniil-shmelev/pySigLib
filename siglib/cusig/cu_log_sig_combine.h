@@ -239,7 +239,7 @@ inline void prepare_cuda_log_sig_method3_(
 ) {
 	if (degree > BCH_MAX_HARDCODED_DEGREE)
 		throw std::runtime_error(
-			"log_sig_combine_cuda: degree > 12 not supported");
+			"log_sig_combine_cuda: degree > 20 not supported");
 	const auto key = make_cuda_log_sig_cache_key_(dimension, degree);
 	{
 		std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());

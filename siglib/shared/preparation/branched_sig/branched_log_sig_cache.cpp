@@ -397,6 +397,10 @@ void BranchedLogSigCache::upgrade(
 	if (method != 0 && !branched_cache.planar)
 		throw std::invalid_argument(
 			"compressed branched log signatures require planar=True");
+	if (method == 3
+		&& branched_cache.max_nodes > BCH_MAX_HARDCODED_DEGREE)
+		throw std::invalid_argument(
+			"BCH methods support truncation degrees at most 20");
 
 	if (method_ < 0)
 		horner_plan_ = build_branched_log_horner_plan(branched_cache);

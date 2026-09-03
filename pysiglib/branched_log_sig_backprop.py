@@ -180,9 +180,9 @@ def _branched_log_sig_from_path_backprop(
     if data.data_length == 0:
         raise ValueError(
             "branched_log_sig method 3 received an empty path")
-    if data.device != "cpu" and degree > 12:
+    if data.device != "cpu" and degree > 20:
         raise NotImplementedError(
-            "CUDA MKW BCH method supports degree at most 12")
+            "CUDA MKW BCH method supports degree at most 20")
     out_len = branched_log_sig_length(
         data.data_dimension, degree, planar=True)
     derivs_data = SigInputHandler(grad_output, out_len, "grad_output")

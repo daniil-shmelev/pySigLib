@@ -891,10 +891,10 @@ def test_cuda_method_three_degree_zero_returns_empty_output_and_zero_gradient():
 
 
 @skip_no_cuda
-def test_cuda_method_three_rejects_degree_above_twelve():
+def test_cuda_method_three_rejects_degree_above_twenty():
     with pytest.raises(
         NotImplementedError,
-        match="CUDA MKW BCH method supports degree at most 12",
+        match="CUDA MKW BCH method supports degree at most 20",
     ):
         pysiglib.prepare_branched_log_sig(
-            1, 13, 3, planar=True, device="cuda")
+            1, 21, 3, planar=True, device="cuda")

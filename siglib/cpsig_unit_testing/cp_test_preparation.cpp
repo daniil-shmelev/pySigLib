@@ -34,20 +34,40 @@ std::filesystem::path test_cache_directory_() {
 		/ ("pysiglib_preparation_" + std::to_string(stamp));
 }
 
-#ifndef _MSC_VER
-TEST(preparationCacheTest, UpstreamBchHasExpectedPrefix) {
+TEST(preparationCacheTest, HardcodedBchCoversDegreeTwenty) {
 	BchCache cache;
-	cache.degree = 13;
+	cache.degree = 20;
 	build_bch_formula_data(cache);
-	ASSERT_EQ(cache.bch_coefficients.size(), 1377);
+	ASSERT_EQ(cache.bch_coefficients.size(), 111013);
 	EXPECT_DOUBLE_EQ(cache.bch_coefficients[0], 1.0);
 	EXPECT_DOUBLE_EQ(cache.bch_coefficients[1], 1.0);
 	EXPECT_DOUBLE_EQ(cache.bch_coefficients[2], 0.5);
 	EXPECT_DOUBLE_EQ(cache.bch_coefficients[3], 1.0 / 12.0);
 	EXPECT_DOUBLE_EQ(cache.bch_coefficients[4], 1.0 / 12.0);
 	EXPECT_DOUBLE_EQ(cache.bch_coefficients[5], 0.0);
+	EXPECT_DOUBLE_EQ(
+		cache.bch_coefficients[110262],
+		43867.0 / 10218188434341888000.0);
+	EXPECT_EQ(cache.bch_left_factor.back(), 58635);
+	EXPECT_EQ(cache.bch_right_factor.back(), 1);
+	ASSERT_EQ(cache.bch_left_factor.size(), cache.bch_coefficients.size());
+	ASSERT_EQ(cache.bch_right_factor.size(), cache.bch_coefficients.size());
+	for (uint64_t node = 2; node < cache.bch_coefficients.size(); ++node) {
+		EXPECT_LT(cache.bch_left_factor[node], node);
+		EXPECT_LT(cache.bch_right_factor[node], node);
+	}
 }
-#endif
+
+TEST(preparationCacheTest, BchHandlesZeroAndRejectsAboveHardcodedTable) {
+	BchCache empty;
+	empty.degree = 0;
+	EXPECT_NO_THROW(build_bch_formula_data(empty));
+	EXPECT_TRUE(empty.bch_coefficients.empty());
+
+	BchCache too_large;
+	too_large.degree = 21;
+	EXPECT_THROW(build_bch_formula_data(too_large), std::invalid_argument);
+}
 
 TEST(preparationCacheTest, LiveBchPlansAreMinimalAndTopological) {
 	struct ExpectedPlanSize {
@@ -57,7 +77,9 @@ TEST(preparationCacheTest, LiveBchPlansAreMinimalAndTopological) {
 	const ExpectedPlanSize cases[] = {
 		{ 1, 0 }, { 2, 1 }, { 3, 3 }, { 4, 4 }, { 5, 12 },
 		{ 6, 17 }, { 7, 39 }, { 8, 56 }, { 9, 124 }, { 10, 180 },
-		{ 11, 410 }, { 12, 595 }
+		{ 11, 410 }, { 12, 595 }, { 13, 1375 }, { 14, 2004 },
+		{ 15, 4717 }, { 16, 6899 }, { 17, 16508 }, { 18, 24217 },
+		{ 19, 58634 }, { 20, 86227 }
 	};
 	for (const auto& [degree, expected_size] : cases) {
 		SCOPED_TRACE(degree);

@@ -309,7 +309,7 @@ std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
 		throw std::invalid_argument("MKW BCH requires planar=True");
 	if (cache.max_nodes > BCH_MAX_HARDCODED_DEGREE)
 		throw std::runtime_error(
-			"CUDA MKW BCH method supports degree at most 12");
+			"CUDA MKW BCH method supports degree at most 20");
 
 	const BchCache& host_bch = host_cache.bch;
 	const uint64_t m = host_bch.m;
@@ -324,7 +324,7 @@ std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
 	const BchHardcodedData* formula = get_hardcoded_bch_data(cache.max_nodes);
 	if (formula == nullptr)
 		throw std::runtime_error(
-			"CUDA MKW BCH method supports degree at most 12");
+			"CUDA MKW BCH method supports degree at most 20");
 	result->bch.m2 = formula->size;
 	result->bch.bch_plan.size = host_bch.live_bch_nodes.size();
 

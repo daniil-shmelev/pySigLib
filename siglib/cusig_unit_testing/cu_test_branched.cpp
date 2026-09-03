@@ -659,8 +659,8 @@ TEST(branchedLogSigFromPathCudaTest, LengthOneReturnsZeros) {
 }
 
 TEST(branchedLogSigFromPathCudaTest, DegreeLimit) {
-    EXPECT_EQ(0, prepare_branched_log_sig_cuda(0, 12, 3, true, false));
-    EXPECT_NE(0, prepare_branched_log_sig_cuda(0, 13, 3, true, false));
+    EXPECT_EQ(0, prepare_branched_log_sig_cuda(0, 20, 3, true, false));
+    EXPECT_NE(0, prepare_branched_log_sig_cuda(0, 21, 3, true, false));
 }
 
 TEST(branchedLogSigFromPathCudaTest, EmptyPathRejected) {
