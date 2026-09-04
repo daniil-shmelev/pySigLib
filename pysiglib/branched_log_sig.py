@@ -101,10 +101,10 @@ def prepare_branched_log_sig(
                 "Error in pysiglib.prepare_branched_log_sig: "
                 + err_msg(err_code, "cpu"))
 
-    if (method == 3 and degree > 12 and BUILT_WITH_CUDA
+    if (method == 3 and degree > 20 and BUILT_WITH_CUDA
             and device in ("cuda", "both")):
         raise NotImplementedError(
-            "CUDA MKW BCH method supports degree at most 12")
+            "CUDA MKW BCH method supports degree at most 20")
     if BUILT_WITH_CUDA and device in ("cuda", "both"):
         err_code = CUSIG.prepare_branched_log_sig_cuda(
             aug_dimension, degree, method, planar, use_disk)
@@ -395,9 +395,9 @@ def branched_log_sig(
             data = PathInputHandler(path, False, False, 1.0, "path")
         else:
             data = input_data
-        if data.device != "cpu" and degree > 12:
+        if data.device != "cpu" and degree > 20:
             raise NotImplementedError(
-                "CUDA MKW BCH method supports degree at most 12")
+                "CUDA MKW BCH method supports degree at most 20")
         out_len = branched_log_sig_length(
             data.data_dimension, degree, planar=True)
         result = SigOutputHandler(data, out_len)

@@ -37,6 +37,7 @@ struct CuMkwBchDeviceData {
 	const double* bch_coefficients = nullptr;
 	const uint64_t* bch_left_factor = nullptr;
 	const uint64_t* bch_right_factor = nullptr;
+	CUDABchPlan bch_plan;
 	const uint32_t* comm_k_ptr = nullptr;
 	const uint32_t* comm_k_i = nullptr;
 	const uint32_t* comm_k_j = nullptr;
@@ -101,6 +102,7 @@ struct CuMkwBchCache {
 			bch.d_bch_coefficients,
 			bch.d_bch_left_factor,
 			bch.d_bch_right_factor,
+			bch.bch_plan,
 			bch.d_comm_k_ptr,
 			bch.d_comm_k_i,
 			bch.d_comm_k_j,
@@ -176,7 +178,8 @@ HostMkwPruning_ build_mkw_pruning_(
 	const BchHardcodedData& formula,
 	const HostMkwBchTables_& tables,
 	const std::vector<uint64_t>& weights,
-	const std::vector<uint32_t>& segment_idx
+	const std::vector<uint32_t>& segment_idx,
+	const std::vector<uint32_t>& bch_nodes
 ) {
 	// Propagate exact coordinate support through the BCH expression tree.
 	// This selects sparse plans only when they save enough work to justify them.
@@ -267,15 +270,32 @@ HostMkwPruning_ build_mkw_pruning_(
 		pruning.reverse_ptr[w + 1] = pruning.reverse_idx.size();
 	}
 
-	const uint64_t node_count = m2 > 2 ? m2 - 2 : 0;
+	const uint64_t node_count = bch_nodes.size();
 	const uint64_t nnz = tables.k_i.size();
 	pruning.dense_forward_work = node_count * (m + nnz);
-	pruning.exact_forward_work = pruning.output_idx.size() + pruning.op_idx.size();
+	for (uint32_t node : bch_nodes) {
+		const uint64_t output_begin = pruning.output_ptr[node];
+		const uint64_t output_end = pruning.output_ptr[node + 1];
+		pruning.exact_forward_work += output_end - output_begin;
+		pruning.exact_forward_work +=
+			pruning.op_ptr[output_end] - pruning.op_ptr[output_begin];
+	}
 	pruning.exact_zero_work = node_count * m;
 	const uint64_t dense_reverse_work = node_count
 		* (m + tables.a_k.size());
-	const uint64_t exact_reverse_work = pruning.reverse_idx.size()
-		+ pruning.linear_a_idx.size();
+	uint64_t exact_reverse_work = 0;
+	for (uint32_t node : bch_nodes) {
+		const uint64_t reverse_begin = pruning.reverse_ptr[node];
+		const uint64_t reverse_end = pruning.reverse_ptr[node + 1];
+		exact_reverse_work += reverse_end - reverse_begin;
+		for (uint64_t position = reverse_begin;
+			position < reverse_end; ++position) {
+			const uint64_t row = uint64_t(node) * m
+				+ pruning.reverse_idx[position];
+			exact_reverse_work += pruning.linear_a_ptr[row + 1]
+				- pruning.linear_a_ptr[row];
+		}
+	}
 	pruning.prune_reverse = dense_reverse_work > 0
 		&& exact_reverse_work <= dense_reverse_work - dense_reverse_work / 3;
 	return pruning;
@@ -289,7 +309,7 @@ std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
 		throw std::invalid_argument("MKW BCH requires planar=True");
 	if (cache.max_nodes > BCH_MAX_HARDCODED_DEGREE)
 		throw std::runtime_error(
-			"CUDA MKW BCH method supports degree at most 12");
+			"CUDA MKW BCH method supports degree at most 20");
 
 	const BchCache& host_bch = host_cache.bch;
 	const uint64_t m = host_bch.m;
@@ -304,8 +324,9 @@ std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
 	const BchHardcodedData* formula = get_hardcoded_bch_data(cache.max_nodes);
 	if (formula == nullptr)
 		throw std::runtime_error(
-			"CUDA MKW BCH method supports degree at most 12");
+			"CUDA MKW BCH method supports degree at most 20");
 	result->bch.m2 = formula->size;
+	result->bch.bch_plan.size = host_bch.live_bch_nodes.size();
 
 	std::vector<uint32_t> segment_idx;
 	std::vector<double> segment_coefficients;
@@ -339,7 +360,8 @@ std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
 	tables.a_partner = host_bch.comm_a_partner;
 	tables.a_signed_c = host_bch.comm_a_signed_c;
 	const HostMkwPruning_ pruning = build_mkw_pruning_(
-		*formula, tables, host_bch.coordinate_weights, segment_idx);
+		*formula, tables, host_bch.coordinate_weights, segment_idx,
+		host_bch.live_bch_nodes);
 	result->bch.linear_dense_forward_work = pruning.dense_forward_work;
 	result->bch.linear_active_forward_work = pruning.exact_forward_work;
 	result->bch.linear_zero_work = pruning.exact_zero_work;
@@ -356,6 +378,9 @@ std::unique_ptr<CuMkwBchCache> build_cuda_mkw_bch_cache_(
 	upload_mkw_vector_(result->bch.d_bch_coefficients, bch_coefficients);
 	upload_mkw_vector_(result->bch.d_bch_left_factor, bch_left);
 	upload_mkw_vector_(result->bch.d_bch_right_factor, bch_right);
+	if (!host_bch.all_bch_nodes_live)
+		upload_mkw_vector_(
+			result->bch.bch_plan.nodes, host_bch.live_bch_nodes);
 	upload_mkw_vector_(result->bch.d_linear_range, pruning.range);
 	upload_mkw_vector_(result->bch.d_comm_k_ptr, tables.k_ptr);
 	upload_mkw_vector_(result->bch.d_comm_k_i, tables.k_i);
@@ -424,7 +449,9 @@ __device__ __forceinline__ void evaluate_mkw_bch_nodes_(
 ) {
 	const uint64_t tid = threadIdx.x;
 	const uint64_t stride = blockDim.x;
-	for (uint64_t w = 2; w < data.m2; ++w) {
+	for (uint64_t plan_index = 0;
+		plan_index < data.bch_plan.size; ++plan_index) {
+		const uint32_t w = data.bch_plan[plan_index];
 		const T* left_global = memo + data.bch_left_factor[w] * data.m;
 		const T* right_global = memo + data.bch_right_factor[w] * data.m;
 		const T* left = left_global;
@@ -514,9 +541,12 @@ __global__ void branched_log_sig_from_path_kernel_(
 		memo[data.m + k] = T(0);
 	}
 	if constexpr (Sparse) {
-		for (uint64_t index = 2 * data.m + tid;
-			index < data.m2 * data.m; index += stride)
-			memo[index] = T(0);
+		for (uint64_t plan_index = 0;
+			plan_index < data.bch_plan.size; ++plan_index) {
+			T* result = memo + data.bch_plan[plan_index] * data.m;
+			for (uint64_t k = tid; k < data.m; k += stride)
+				result[k] = T(0);
+		}
 	}
 	__syncthreads();
 	if (length == 1)
@@ -644,7 +674,7 @@ void branched_log_sig_from_path_cuda_(
 		* cache.bch.linear_dense_forward_work;
 	const long double exact_work = static_cast<long double>(passes)
 		* cache.exact_forward_work + cache.exact_zero_work;
-	const bool sparse = data.m2 > 2 && exact_work < dense_work;
+	const bool sparse = data.bch_plan.size != 0 && exact_work < dense_work;
 	const uint64_t path_stride = checked_mkw_product_(
 		length, dimension, "MKW BCH path stride overflow");
 	checked_mkw_product_(
@@ -720,8 +750,9 @@ __device__ __forceinline__ void reverse_mkw_bch_nodes_(
 ) {
 	const uint64_t tid = threadIdx.x;
 	const uint64_t stride = blockDim.x;
-	for (uint64_t offset = 0; offset + 2 < data.m2; ++offset) {
-		const uint64_t w = data.m2 - offset - 1;
+	for (uint64_t plan_index = data.bch_plan.size;
+		plan_index-- > 0;) {
+		const uint32_t w = data.bch_plan[plan_index];
 		const uint64_t left_factor = data.bch_left_factor[w];
 		const uint64_t right_factor = data.bch_right_factor[w];
 		const T* left_global = memo + left_factor * data.m;
@@ -829,9 +860,12 @@ __global__ void branched_log_sig_from_path_backprop_kernel_(
 		memo[data.m + k] = T(0);
 	}
 	if constexpr (SparseForward) {
-		for (uint64_t index = 2 * data.m + tid;
-			index < data.m2 * data.m; index += stride)
-			memo[index] = T(0);
+		for (uint64_t plan_index = 0;
+			plan_index < data.bch_plan.size; ++plan_index) {
+			T* result = memo + data.bch_plan[plan_index] * data.m;
+			for (uint64_t k = tid; k < data.m; k += stride)
+				result[k] = T(0);
+		}
 	}
 	__syncthreads();
 
@@ -906,13 +940,19 @@ __global__ void branched_log_sig_from_path_backprop_kernel_(
 			deriv_memo[data.m + k] = T(0);
 		}
 		if constexpr (SparseForward && !SparseReverse) {
-			for (uint64_t index = 2 * data.m + tid;
-				index < data.m2 * data.m; index += stride)
-				deriv_memo[index] = T(0);
+			for (uint64_t plan_index = 0;
+				plan_index < data.bch_plan.size; ++plan_index) {
+				T* node_derivs = deriv_memo
+					+ data.bch_plan[plan_index] * data.m;
+				for (uint64_t k = tid; k < data.m; k += stride)
+					node_derivs[k] = T(0);
+			}
 		}
 		__syncthreads();
 		if constexpr (SparseForward) {
-			for (uint64_t w = 2; w < data.m2; ++w) {
+			for (uint64_t plan_index = 0;
+				plan_index < data.bch_plan.size; ++plan_index) {
+				const uint32_t w = data.bch_plan[plan_index];
 				const T coefficient = static_cast<T>(data.bch_coefficients[w]);
 				for (uint64_t q = data.linear_output_ptr[w] + tid;
 					q < data.linear_output_ptr[w + 1]; q += stride) {
@@ -923,7 +963,9 @@ __global__ void branched_log_sig_from_path_backprop_kernel_(
 			}
 		}
 		else {
-			for (uint64_t w = 2; w < data.m2; ++w) {
+			for (uint64_t plan_index = 0;
+				plan_index < data.bch_plan.size; ++plan_index) {
+				const uint32_t w = data.bch_plan[plan_index];
 				const T coefficient = static_cast<T>(data.bch_coefficients[w]);
 				for (uint64_t k = tid; k < data.m; k += stride)
 					deriv_memo[w * data.m + k]
@@ -1080,8 +1122,10 @@ void branched_log_sig_from_path_backprop_cuda_(
 		* cache.bch.linear_dense_forward_work;
 	const long double exact_work = passes
 		* cache.exact_forward_work + cache.exact_zero_work;
-	const bool sparse_forward = data.m2 > 2 && exact_work < dense_work;
-	const bool sparse_reverse = data.m2 > 2 && cache.prune_reverse;
+	const bool sparse_forward = data.bch_plan.size != 0
+		&& exact_work < dense_work;
+	const bool sparse_reverse = data.bch_plan.size != 0
+		&& cache.prune_reverse;
 
 	for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
 		const uint64_t current_batch = std::min(

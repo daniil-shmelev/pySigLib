@@ -344,6 +344,7 @@ BranchedBchCache::BranchedBchCache(
 	// the MKW commutator table and segment lift are specific to branched paths.
 	build_commutator_views(bch);
 	build_bch_formula_data(bch);
+	build_live_bch_nodes(bch);
 
 	std::vector<double> linear_sig(branched_cache.total_length);
 	linear_coefficients.resize(m);
@@ -396,6 +397,10 @@ void BranchedLogSigCache::upgrade(
 	if (method != 0 && !branched_cache.planar)
 		throw std::invalid_argument(
 			"compressed branched log signatures require planar=True");
+	if (method == 3
+		&& branched_cache.max_nodes > BCH_MAX_HARDCODED_DEGREE)
+		throw std::invalid_argument(
+			"BCH methods support truncation degrees at most 20");
 
 	if (method_ < 0)
 		horner_plan_ = build_branched_log_horner_plan(branched_cache);

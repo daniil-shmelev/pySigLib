@@ -461,30 +461,34 @@ BENCHMARK(BM_logsig_to_sig_backprop)->Unit(benchmark::kMicrosecond);
 // =========================================================================
 
 static void BM_log_sig_from_path(benchmark::State& state) {
-    const uint64_t ls_len = ::log_sig_length(3, 5);
+    const uint64_t degree = state.range(0);
+    const uint64_t ls_len = ::log_sig_length(3, degree);
     auto path = random_data(4 * 3 * 32, 1);
     std::vector<double> out(4 * ls_len);
-    check(::prepare_log_sig(3, 5, 3, false), "prepare_log_sig");
+    check(::prepare_log_sig(3, degree, 3, false), "prepare_log_sig");
     for (auto _ : state) {
-        ::log_sig_from_path_d(path.data(), out.data(), 4, 32, 3, 5);
+        ::log_sig_from_path_d(path.data(), out.data(), 4, 32, 3, degree);
         benchmark::DoNotOptimize(out.data());
     }
 }
-BENCHMARK(BM_log_sig_from_path)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_log_sig_from_path)
+    ->Arg(4)->Arg(5)->ArgName("degree")->Unit(benchmark::kMicrosecond);
 
 static void BM_log_sig_from_path_backprop(benchmark::State& state) {
-    const uint64_t ls_len = ::log_sig_length(3, 5);
+    const uint64_t degree = state.range(0);
+    const uint64_t ls_len = ::log_sig_length(3, degree);
     auto path = random_data(4 * 3 * 32, 1);
     auto d_out_data = random_data(4 * ls_len, 2);
     std::vector<double> d_path(4 * 3 * 32);
-    check(::prepare_log_sig(3, 5, 3, false), "prepare_log_sig");
+    check(::prepare_log_sig(3, degree, 3, false), "prepare_log_sig");
     for (auto _ : state) {
         ::log_sig_from_path_backprop_d(d_out_data.data(), d_path.data(),
-                                       path.data(), 4, 32, 3, 5);
+                                       path.data(), 4, 32, 3, degree);
         benchmark::DoNotOptimize(d_path.data());
     }
 }
-BENCHMARK(BM_log_sig_from_path_backprop)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_log_sig_from_path_backprop)
+    ->Arg(4)->Arg(5)->ArgName("degree")->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Log sig combine / backprop

@@ -362,7 +362,7 @@ TEST(branchedLogSigFromPathCudaTest, ForwardAndBackwardMatchMethodTwo) {
     const uint64_t batch_size = 2;
     const uint64_t length = 5;
     const uint64_t dimension = 2;
-    const uint64_t max_nodes = 3;
+    const uint64_t max_nodes = 4;
     const uint64_t full_length = compute_branched_sig_length(
         dimension, max_nodes, true);
     const uint64_t log_length = compute_branched_log_sig_length(
@@ -659,8 +659,8 @@ TEST(branchedLogSigFromPathCudaTest, LengthOneReturnsZeros) {
 }
 
 TEST(branchedLogSigFromPathCudaTest, DegreeLimit) {
-    EXPECT_EQ(0, prepare_branched_log_sig_cuda(0, 12, 3, true, false));
-    EXPECT_NE(0, prepare_branched_log_sig_cuda(0, 13, 3, true, false));
+    EXPECT_EQ(0, prepare_branched_log_sig_cuda(0, 20, 3, true, false));
+    EXPECT_NE(0, prepare_branched_log_sig_cuda(0, 21, 3, true, false));
 }
 
 TEST(branchedLogSigFromPathCudaTest, EmptyPathRejected) {

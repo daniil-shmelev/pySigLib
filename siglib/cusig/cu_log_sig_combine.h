@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <numeric>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -39,17 +40,140 @@ inline void upload_bch_vector_(T*& device, const std::vector<T>& host) {
 	device = buffer.release();
 }
 
+inline void upload_balanced_commutator_plan_(
+	CUDABchCache& device, const BchCache& host
+) {
+	std::vector<uint32_t> order(host.m);
+	std::iota(order.begin(), order.end(), 0u);
+	const auto row_work = [&host](uint32_t row) {
+		return host.comm_k_ptr[row + 1] - host.comm_k_ptr[row];
+	};
+	std::stable_sort(order.begin(), order.end(),
+		[&](uint32_t left, uint32_t right) {
+			if (host.coordinate_weights[left] != host.coordinate_weights[right])
+				return host.coordinate_weights[left]
+					< host.coordinate_weights[right];
+			return row_work(left) < row_work(right);
+		});
+
+	struct DivergentWork {
+		uint64_t canonical = 0;
+		uint64_t balanced = 0;
+	};
+	const auto divergent_range_work = [&order, &row_work](
+		uint64_t begin, uint64_t end
+	) {
+		DivergentWork work;
+		for (uint64_t base = begin; base < end; base += 32) {
+			DivergentWork longest;
+			for (uint64_t logical = base;
+				logical < (std::min)(base + 32, end); ++logical) {
+				longest.canonical = (std::max)(longest.canonical,
+					static_cast<uint64_t>(row_work(
+						static_cast<uint32_t>(logical))));
+				longest.balanced = (std::max)(longest.balanced,
+					static_cast<uint64_t>(row_work(order[logical])));
+			}
+			work.canonical += longest.canonical;
+			work.balanced += longest.balanced;
+		}
+		return work;
+	};
+	const auto linear_divergent_work = [&] {
+		DivergentWork work;
+		for (uint32_t node : host.live_bch_nodes) {
+			const auto [begin, end] = host.linear_range[node];
+			const auto range_work = divergent_range_work(begin, end);
+			work.canonical += range_work.canonical;
+			work.balanced += range_work.balanced;
+		}
+		return work;
+	};
+	const auto dense_work = host.live_bch_nodes.empty()
+		? DivergentWork{}
+		: divergent_range_work(0, host.m);
+	const auto linear_work = linear_divergent_work();
+	const auto worthwhile = [](const auto& work) {
+		return work.canonical != 0
+			&& static_cast<long double>(work.balanced)
+				<= 0.8L * static_cast<long double>(work.canonical);
+	};
+	const bool use_for_dense = worthwhile(dense_work);
+	const bool use_for_linear = worthwhile(linear_work);
+	if (!use_for_dense && !use_for_linear)
+		return;
+
+	std::vector<uint32_t> ptr(host.m + 1), i, j;
+	std::vector<int> value;
+	i.reserve(host.comm_k_i.size());
+	j.reserve(host.comm_k_j.size());
+	value.reserve(host.comm_k_val.size());
+	for (uint64_t logical = 0; logical < host.m; ++logical) {
+		const uint32_t k = order[logical];
+		const uint32_t begin = host.comm_k_ptr[k];
+		const uint32_t end = host.comm_k_ptr[k + 1];
+		i.insert(i.end(),
+			host.comm_k_i.begin() + begin, host.comm_k_i.begin() + end);
+		j.insert(j.end(),
+			host.comm_k_j.begin() + begin, host.comm_k_j.begin() + end);
+		value.insert(value.end(),
+			host.comm_k_val.begin() + begin, host.comm_k_val.begin() + end);
+		ptr[logical + 1] = static_cast<uint32_t>(i.size());
+	}
+
+	static_assert(sizeof(int) == sizeof(uint32_t));
+	constexpr size_t alignment = 128 / sizeof(uint32_t);
+	const auto padded = [](size_t size) {
+		return (size + alignment - 1) / alignment * alignment;
+	};
+	const size_t ptr_offset = padded(order.size());
+	const size_t i_offset = ptr_offset + padded(ptr.size());
+	const size_t j_offset = i_offset + padded(i.size());
+	const size_t value_offset = j_offset + padded(j.size());
+	const size_t elements = value_offset + value.size();
+	CudaBuf<uint32_t> storage(checked_cuda_size_mul(
+		elements, sizeof(uint32_t), "CUDA balanced commutator plan"));
+	auto* cursor = storage.get();
+	device.commutator_plan = CUDACommutatorPlan{
+		std::move(storage),
+		{
+			cursor,
+			cursor + ptr_offset,
+			cursor + i_offset,
+			cursor + j_offset,
+			reinterpret_cast<int*>(cursor + value_offset)
+		},
+		use_for_dense,
+		use_for_linear
+	};
+	CUDA_CHECK(cudaMemcpy(cursor, order.data(),
+		order.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(cursor + ptr_offset, ptr.data(),
+		ptr.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(cursor + i_offset, i.data(),
+		i.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(cursor + j_offset, j.data(),
+		j.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(
+		reinterpret_cast<int*>(cursor + value_offset), value.data(),
+		value.size() * sizeof(int), cudaMemcpyHostToDevice));
+}
+
 inline CUDABchCache upload_bch_cache_to_device_(const BchCache& host) {
 	CUDABchCache device;
 	device.m = host.m;
 	device.m2 = host.bch_coefficients.size();
+	device.bch_plan.size = host.live_bch_nodes.size();
 	upload_bch_vector_(device.d_bch_coefficients, host.bch_coefficients);
 	upload_bch_vector_(device.d_bch_left_factor, host.bch_left_factor);
 	upload_bch_vector_(device.d_bch_right_factor, host.bch_right_factor);
+	if (!host.all_bch_nodes_live)
+		upload_bch_vector_(device.bch_plan.nodes, host.live_bch_nodes);
 	upload_bch_vector_(device.d_comm_k_ptr, host.comm_k_ptr);
 	upload_bch_vector_(device.d_comm_k_i, host.comm_k_i);
 	upload_bch_vector_(device.d_comm_k_j, host.comm_k_j);
 	upload_bch_vector_(device.d_comm_k_val, host.comm_k_val);
+	upload_balanced_commutator_plan_(device, host);
 	upload_bch_vector_(device.d_comm_a_ptr, host.comm_a_ptr);
 	upload_bch_vector_(device.d_comm_a_k, host.comm_a_k);
 	upload_bch_vector_(device.d_comm_a_partner, host.comm_a_partner);
@@ -94,10 +218,10 @@ inline CUDABchCache upload_bch_cache_to_device_(const BchCache& host) {
 	upload_bch_vector_(device.d_linear_a_ptr, linear_a_ptr);
 	upload_bch_vector_(device.d_linear_a_idx, linear_a_idx);
 
-	const uint64_t nodes = device.m2 > 2 ? device.m2 - 2 : 0;
+	const uint64_t nodes = device.bch_plan.size;
 	device.linear_dense_forward_work = nodes
 		* (device.m + host.comm_k_i.size());
-	for (uint64_t node = 2; node < device.m2; ++node) {
+	for (uint32_t node : host.live_bch_nodes) {
 		const auto [begin, end] = host.linear_range[node];
 		device.linear_active_forward_work += end - begin;
 		device.linear_zero_work += begin + device.m - end;
@@ -115,7 +239,7 @@ inline void prepare_cuda_log_sig_method3_(
 ) {
 	if (degree > BCH_MAX_HARDCODED_DEGREE)
 		throw std::runtime_error(
-			"log_sig_combine_cuda: degree > 12 not supported");
+			"log_sig_combine_cuda: degree > 20 not supported");
 	const auto key = make_cuda_log_sig_cache_key_(dimension, degree);
 	{
 		std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());

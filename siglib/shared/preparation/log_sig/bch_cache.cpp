@@ -377,66 +377,35 @@ bool load_hardcoded_bch_formula(BchCache& cache) {
 void build_bch_formula_data(BchCache& cache) {
 	if (load_hardcoded_bch_formula(cache))
 		return;
-	const uint64_t degree = cache.degree;
-	std::vector<uint64_t> offsets(degree + 2, 0);
-	for (uint64_t level = 0; level <= degree; ++level)
-		offsets[level + 1] = offsets[level] + tensor_power(2, level);
-	std::vector<double> signature(offsets[degree + 1], 0.0);
-	signature[0] = 1.0;
-	std::vector<double> inverse_factorial(degree + 1, 1.0);
-	for (uint64_t level = 1; level <= degree; ++level)
-		inverse_factorial[level] = inverse_factorial[level - 1]
-			/ static_cast<double>(level);
-	for (uint64_t level = 1; level <= degree; ++level) {
-		for (uint64_t left_degree = 0; left_degree <= level; ++left_degree) {
-			const uint64_t right_degree = level - left_degree;
-			const uint64_t word_index = tensor_power(2, right_degree) - 1;
-			signature[offsets[level] + word_index]
-				= inverse_factorial[left_degree]
-				* inverse_factorial[right_degree];
-		}
+	throw std::invalid_argument(
+		"BCH methods support truncation degrees at most 20");
+}
+
+void build_live_bch_nodes(BchCache& cache) {
+	const uint64_t formula_size = cache.bch_coefficients.size();
+	std::vector<uint8_t> live(formula_size, 0);
+	for (uint64_t node = 2; node < formula_size; ++node)
+		live[node] = cache.bch_coefficients[node] != 0.0;
+
+	for (uint64_t node = formula_size; node-- > 2;) {
+		const uint64_t left = cache.bch_left_factor[node];
+		const uint64_t right = cache.bch_right_factor[node];
+		if (!live[node])
+			continue;
+		if (left >= 2)
+			live[left] = 1;
+		if (right >= 2)
+			live[right] = 1;
 	}
 
-	std::vector<double> x = signature;
-	x[0] = 0.0;
-	std::vector<double> power = x;
-	std::vector<double> tensor_log(signature.size(), 0.0);
-	for (uint64_t term = 1; term <= degree; ++term) {
-		const double coefficient = (term % 2 == 0 ? -1.0 : 1.0)
-			/ static_cast<double>(term);
-		for (uint64_t index = 1; index < tensor_log.size(); ++index)
-			tensor_log[index] += coefficient * power[index];
-		if (term == degree)
-			break;
-		std::vector<double> next(signature.size(), 0.0);
-		for (uint64_t level = 2; level <= degree; ++level) {
-			for (uint64_t left_degree = 1; left_degree < level; ++left_degree) {
-				const uint64_t right_degree = level - left_degree;
-				const uint64_t left_size = tensor_power(2, left_degree);
-				const uint64_t right_size = tensor_power(2, right_degree);
-				for (uint64_t left = 0; left < left_size; ++left) {
-					const double left_value = power[offsets[left_degree] + left];
-					if (left_value == 0.0)
-						continue;
-					for (uint64_t right = 0; right < right_size; ++right) {
-						next[offsets[level] + left * right_size + right]
-							+= left_value * x[offsets[right_degree] + right];
-					}
-				}
-			}
-		}
-		power = std::move(next);
+	cache.live_bch_nodes.clear();
+	cache.live_bch_nodes.reserve(formula_size > 2 ? formula_size - 2 : 0);
+	for (uint32_t node = 2; node < formula_size; ++node) {
+		if (live[node])
+			cache.live_bch_nodes.push_back(node);
 	}
-
-	LogSigCache basis_cache(2, degree, 2);
-	const BasisCache& basis = basis_cache.basis(2);
-	cache.bch_coefficients.resize(basis.lyndon_idx.size());
-	for (uint64_t i = 0; i < basis.lyndon_idx.size(); ++i)
-		cache.bch_coefficients[i] = tensor_log[basis.lyndon_idx[i]];
-	if (!cache.bch_coefficients.empty())
-		basis.inv_proj_mat.mul_vec_inplace_lower(cache.bch_coefficients.data());
-	compute_factorization_indices(
-		2, degree, cache.bch_left_factor, cache.bch_right_factor);
+	cache.all_bch_nodes_live = cache.live_bch_nodes.size()
+		== (formula_size > 2 ? formula_size - 2 : 0);
 }
 
 std::unique_ptr<BchCache> make_standard_bch_cache(
@@ -448,6 +417,7 @@ std::unique_ptr<BchCache> make_standard_bch_cache(
 	cache->dimension = dimension;
 	cache->degree = degree;
 	build_bch_formula_data(*cache);
+	build_live_bch_nodes(*cache);
 	build_standard_commutator_table(*cache, basis);
 	if (dimension > UINT32_MAX)
 		throw std::overflow_error("BCH linear input is too large");

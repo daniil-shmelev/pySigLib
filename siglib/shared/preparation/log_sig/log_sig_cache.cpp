@@ -204,6 +204,9 @@ void LogSigCache::upgrade(
 ) {
 	if (method < 1 || method > 3)
 		throw std::invalid_argument("log signature method must be 1, 2, or 3");
+	if (method == 3 && degree_ > BCH_MAX_HARDCODED_DEGREE)
+		throw std::invalid_argument(
+			"BCH methods support truncation degrees at most 20");
 	const int basis_method = (std::min)(method, 2);
 	if (basis_.supports(basis_method)) {
 		if (method == 3 && !bch_)
