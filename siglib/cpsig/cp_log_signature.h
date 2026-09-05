@@ -616,6 +616,15 @@ void batch_log_sig_from_path_(
 	uint64_t scalar_start = 0;
 
 #ifdef VEC
+	if constexpr (std::same_as<T, float>) {
+		constexpr uint64_t width = BchBatchValue<T>::width;
+		auto vector_func = [&](const T* p, T* o) {
+			log_sig_from_path_batch_vec_<T, false>(p, nullptr, o, length, dimension, cache);
+		};
+		multi_threaded_batch(vector_func, batch_size / width, n_jobs,
+			make_batch(path, path_stride * width), make_batch(out, m * width));
+		scalar_start = batch_size / width * width;
+	}
 	if constexpr (std::same_as<T, double>) {
 		const uint64_t x4_batch_size = batch_size / 4;
 		auto x4_func = [&](const double* p, double* o) {
@@ -783,6 +792,16 @@ void batch_log_sig_from_path_backprop_(
 	uint64_t scalar_start = 0;
 
 #ifdef VEC
+	if constexpr (std::same_as<T, float>) {
+		constexpr uint64_t width = BchBatchValue<T>::width;
+		auto vector_func = [&](const T* dout, T* dp, const T* p) {
+			log_sig_from_path_batch_vec_<T, true>(p, dout, dp, length, dimension, cache);
+		};
+		multi_threaded_batch(vector_func, batch_size / width, n_jobs,
+			make_batch(d_out, m * width), make_batch(d_path, path_stride * width),
+			make_batch(path, path_stride * width));
+		scalar_start = batch_size / width * width;
+	}
 	if constexpr (std::same_as<T, double>) {
 		const uint64_t x4_batch_size = batch_size / 4;
 		auto x4_func = [&](const double* dout, double* dp, const double* p) {

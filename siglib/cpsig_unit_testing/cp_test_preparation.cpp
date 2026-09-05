@@ -110,6 +110,12 @@ TEST(preparationCacheTest, CompactAndRangedBchMatchFullFormula) {
 				static_cast<uint32_t>(formula.left_factor[w]),
 				static_cast<uint32_t>(formula.right_factor[w]) });
 		const uint64_t m = compact.m;
+		// The dense preparation table is released after its sparse views are built.
+		std::vector<SparseVec> commutator_table(m * m);
+		for (uint64_t k = 0; k < m; ++k)
+			for (uint32_t q = compact.comm_k_ptr[k]; q < compact.comm_k_ptr[k + 1]; ++q)
+				commutator_table[compact.comm_k_i[q] * m + compact.comm_k_j[q]].push_back(
+					{ k, compact.comm_k_val[q] });
 		std::vector<double> left(m), right(m), derivs(m), expected(m), actual(m);
 		for (uint64_t k = 0; k < m; ++k) {
 			left[k] = 0.03125 * (static_cast<int>(k % 9) - 4);
@@ -141,7 +147,7 @@ TEST(preparationCacheTest, CompactAndRangedBchMatchFullFormula) {
 			ASSERT_LE(end, m);
 			double* result = workspace.data() + w * m;
 			lie_bracket(workspace.data() + op.left * m, workspace.data() + op.right * m,
-				result, m, compact.commutator_table);
+				result, m, commutator_table);
 			std::fill(result, result + begin, 0.0);
 			std::fill(result + end, result + m, 0.0);
 			for (uint64_t k = begin; k < end; ++k)

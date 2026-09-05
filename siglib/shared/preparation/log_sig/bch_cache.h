@@ -38,6 +38,17 @@ struct BchRange {
 	uint32_t end = 0;
 };
 
+struct BchForwardEntry {
+	uint32_t i, j;
+	int coefficient;
+	uint8_t orientation;
+};
+
+struct BchForwardNode {
+	std::vector<uint32_t> row_ptr;
+	std::vector<BchForwardEntry> entries;
+};
+
 struct BchCache {
 	uint64_t dimension = 0;
 	uint64_t degree = 0;
@@ -65,6 +76,7 @@ struct BchCache {
 	std::vector<std::pair<uint64_t, uint64_t>> linear_range;
 	std::vector<uint64_t> linear_pair_ptr;
 	std::vector<uint32_t> linear_pair_idx;
+	std::vector<BchForwardNode> linear_forward;
 	std::vector<uint64_t> coordinate_weights;
 	std::vector<uint32_t> linear_input_idx;
 	std::vector<uint8_t> linear_input_mask;
