@@ -490,6 +490,79 @@ static void BM_log_sig_from_path_backprop(benchmark::State& state) {
 BENCHMARK(BM_log_sig_from_path_backprop)
     ->Arg(4)->Arg(5)->ArgName("degree")->Unit(benchmark::kMicrosecond);
 
+static void BM_log_sig_from_path_float32_simd(benchmark::State& state) {
+    const uint64_t batch = state.range(0);
+    const uint64_t degree = state.range(1);
+    const uint64_t ls_len = ::log_sig_length(2, degree);
+    auto data = random_data(batch * 129 * 2, 1);
+    std::vector<float> path(data.size()), out(batch * ls_len);
+    for (uint64_t i = 0; i < data.size(); ++i) path[i] = static_cast<float>(0.1 * data[i]);
+    check(::prepare_log_sig(2, degree, 3, false), "prepare_log_sig");
+    check(::log_sig_from_path_f(path.data(), out.data(), batch, 129, 2, degree, 1), "log_sig_from_path_f");
+    for (auto _ : state) {
+        ::log_sig_from_path_f(path.data(), out.data(), batch, 129, 2, degree, 1);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_log_sig_from_path_float32_simd)
+    ->Args({32, 6})
+    ->ArgNames({"batch", "degree"})->Unit(benchmark::kMicrosecond);
+
+static void BM_log_sig_from_path_backprop_float32_simd(benchmark::State& state) {
+    const uint64_t batch = state.range(0);
+    const uint64_t degree = state.range(1);
+    const uint64_t ls_len = ::log_sig_length(2, degree);
+    auto data = random_data(batch * 129 * 2, 1);
+    auto derivs = random_data(batch * ls_len, 2);
+    std::vector<float> path(data.size()), d_path(data.size()), d_out(derivs.size());
+    for (uint64_t i = 0; i < data.size(); ++i) path[i] = static_cast<float>(0.1 * data[i]);
+    for (uint64_t i = 0; i < derivs.size(); ++i) d_out[i] = static_cast<float>(derivs[i]);
+    check(::prepare_log_sig(2, degree, 3, false), "prepare_log_sig");
+    check(::log_sig_from_path_backprop_f(d_out.data(), d_path.data(), path.data(), batch, 129, 2, degree, 1),
+          "log_sig_from_path_backprop_f");
+    for (auto _ : state) {
+        ::log_sig_from_path_backprop_f(d_out.data(), d_path.data(), path.data(), batch, 129, 2, degree, 1);
+        benchmark::DoNotOptimize(d_path.data());
+    }
+}
+BENCHMARK(BM_log_sig_from_path_backprop_float32_simd)
+    ->Args({32, 6})
+    ->ArgNames({"batch", "degree"})->Unit(benchmark::kMicrosecond);
+
+static void BM_log_sig_from_path_float64_scalar(benchmark::State& state) {
+    const uint64_t degree = state.range(0);
+    const uint64_t ls_len = ::log_sig_length(2, degree);
+    auto path = random_data(129 * 2, 1);
+    for (auto& value : path) value *= 0.1;
+    std::vector<double> out(ls_len);
+    check(::prepare_log_sig(2, degree, 3, false), "prepare_log_sig");
+    check(::log_sig_from_path_d(path.data(), out.data(), 1, 129, 2, degree, 1), "log_sig_from_path_d");
+    for (auto _ : state) {
+        ::log_sig_from_path_d(path.data(), out.data(), 1, 129, 2, degree, 1);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_log_sig_from_path_float64_scalar)
+    ->Arg(8)->ArgName("degree")->Unit(benchmark::kMicrosecond);
+
+static void BM_log_sig_from_path_backprop_float64_scalar(benchmark::State& state) {
+    const uint64_t degree = state.range(0);
+    const uint64_t ls_len = ::log_sig_length(2, degree);
+    auto path = random_data(129 * 2, 1);
+    for (auto& value : path) value *= 0.1;
+    auto d_out = random_data(ls_len, 2);
+    std::vector<double> d_path(path.size());
+    check(::prepare_log_sig(2, degree, 3, false), "prepare_log_sig");
+    check(::log_sig_from_path_backprop_d(d_out.data(), d_path.data(), path.data(), 1, 129, 2, degree, 1),
+          "log_sig_from_path_backprop_d");
+    for (auto _ : state) {
+        ::log_sig_from_path_backprop_d(d_out.data(), d_path.data(), path.data(), 1, 129, 2, degree, 1);
+        benchmark::DoNotOptimize(d_path.data());
+    }
+}
+BENCHMARK(BM_log_sig_from_path_backprop_float64_scalar)
+    ->Arg(8)->ArgName("degree")->Unit(benchmark::kMicrosecond);
+
 // =========================================================================
 // Log sig combine / backprop
 // =========================================================================
