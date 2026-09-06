@@ -15,6 +15,7 @@
 
 #include "cusig.h"
 #include "../../shared/last_error.h"
+#include "../cu_path_reduction.h"
 #include <cuda_runtime.h>
 
 void release_signature_state();
@@ -39,6 +40,7 @@ extern "C" {
 		try { release_signature_state();        } catch (...) {}
 		try { release_log_sig_state();          } catch (...) {}
 		try { release_log_sig_combine_state();  } catch (...) {}
+		try { release_cuda_path_workspaces();   } catch (...) {}
 		try { release_sig_kernel_poly_state();   } catch (...) {}
 		try { release_exp_sig_state();          } catch (...) {}
 		try { release_sig_combine_state();      } catch (...) {}

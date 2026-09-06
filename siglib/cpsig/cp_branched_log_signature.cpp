@@ -827,7 +827,7 @@ void branched_log_sig_from_path_(
 	if (bch.m == 0)
 		return;
 	const uint64_t path_stride = length * dimension;
-	const uint64_t m2 = bch.bch_coefficients.size();
+	const uint64_t m2 = bch.bch_size();
 
 	auto work_range = [&](uint64_t start, uint64_t end) {
 		std::vector<T> increment(dimension);
@@ -892,7 +892,7 @@ void branched_log_sig_from_path_backprop_(
 		std::fill(path_derivs, path_derivs + batch_size * path_stride, T(0));
 		return;
 	}
-	const uint64_t m2 = bch.bch_coefficients.size();
+	const uint64_t m2 = bch.bch_size();
 	const uint64_t workspace_size = 7 * bch.m + 2 * m2 * bch.m;
 
 	auto work_range = [&](uint64_t start, uint64_t end) {

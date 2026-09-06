@@ -17,11 +17,13 @@
 
 #include "cp_bch.h"
 #include "log_sig/bch_cache.h"
+#include "log_sig/bch_data.h"
 #include "branched_sig/branched_log_sig_cache.h"
 #include "branched_sig/branched_sig_cache_io.h"
 #include "cache_io.h"
 #include "polynomial_sig_kernel/polynomial_sig_kernel_tables.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -35,26 +37,23 @@ std::filesystem::path test_cache_directory_() {
 }
 
 TEST(preparationCacheTest, HardcodedBchCoversDegreeTwenty) {
-	BchCache cache;
-	cache.degree = 20;
-	build_bch_formula_data(cache);
-	ASSERT_EQ(cache.bch_coefficients.size(), 111013);
-	EXPECT_DOUBLE_EQ(cache.bch_coefficients[0], 1.0);
-	EXPECT_DOUBLE_EQ(cache.bch_coefficients[1], 1.0);
-	EXPECT_DOUBLE_EQ(cache.bch_coefficients[2], 0.5);
-	EXPECT_DOUBLE_EQ(cache.bch_coefficients[3], 1.0 / 12.0);
-	EXPECT_DOUBLE_EQ(cache.bch_coefficients[4], 1.0 / 12.0);
-	EXPECT_DOUBLE_EQ(cache.bch_coefficients[5], 0.0);
+	const BchHardcodedData* formula = get_hardcoded_bch_data(20);
+	ASSERT_NE(formula, nullptr);
+	ASSERT_EQ(formula->size, 111013);
+	EXPECT_DOUBLE_EQ(formula->coefficients[0], 1.0);
+	EXPECT_DOUBLE_EQ(formula->coefficients[1], 1.0);
+	EXPECT_DOUBLE_EQ(formula->coefficients[2], 0.5);
+	EXPECT_DOUBLE_EQ(formula->coefficients[3], 1.0 / 12.0);
+	EXPECT_DOUBLE_EQ(formula->coefficients[4], 1.0 / 12.0);
+	EXPECT_DOUBLE_EQ(formula->coefficients[5], 0.0);
 	EXPECT_DOUBLE_EQ(
-		cache.bch_coefficients[110262],
+		formula->coefficients[110262],
 		43867.0 / 10218188434341888000.0);
-	EXPECT_EQ(cache.bch_left_factor.back(), 58635);
-	EXPECT_EQ(cache.bch_right_factor.back(), 1);
-	ASSERT_EQ(cache.bch_left_factor.size(), cache.bch_coefficients.size());
-	ASSERT_EQ(cache.bch_right_factor.size(), cache.bch_coefficients.size());
-	for (uint64_t node = 2; node < cache.bch_coefficients.size(); ++node) {
-		EXPECT_LT(cache.bch_left_factor[node], node);
-		EXPECT_LT(cache.bch_right_factor[node], node);
+	EXPECT_EQ(formula->left_factor[formula->size - 1], 58635);
+	EXPECT_EQ(formula->right_factor[formula->size - 1], 1);
+	for (uint64_t node = 2; node < formula->size; ++node) {
+		EXPECT_LT(formula->left_factor[node], node);
+		EXPECT_LT(formula->right_factor[node], node);
 	}
 }
 
@@ -62,14 +61,14 @@ TEST(preparationCacheTest, BchHandlesZeroAndRejectsAboveHardcodedTable) {
 	BchCache empty;
 	empty.degree = 0;
 	EXPECT_NO_THROW(build_bch_formula_data(empty));
-	EXPECT_TRUE(empty.bch_coefficients.empty());
+	EXPECT_TRUE(empty.bch_operations.empty());
 
 	BchCache too_large;
 	too_large.degree = 21;
 	EXPECT_THROW(build_bch_formula_data(too_large), std::invalid_argument);
 }
 
-TEST(preparationCacheTest, LiveBchPlansAreMinimalAndTopological) {
+TEST(preparationCacheTest, BchOperationsAreCompactAndTopological) {
 	struct ExpectedPlanSize {
 		uint64_t degree;
 		size_t live_nodes;
@@ -86,70 +85,70 @@ TEST(preparationCacheTest, LiveBchPlansAreMinimalAndTopological) {
 		BchCache cache;
 		cache.degree = degree;
 		build_bch_formula_data(cache);
-		build_live_bch_nodes(cache);
-		EXPECT_EQ(cache.live_bch_nodes.size(), expected_size);
-		EXPECT_EQ(cache.all_bch_nodes_live,
-			expected_size + 2 == cache.bch_coefficients.size());
-
-		std::vector<uint8_t> available(cache.bch_coefficients.size(), 0);
-		if (!available.empty())
-			available[0] = 1;
-		if (available.size() > 1)
-			available[1] = 1;
-		for (uint32_t node : cache.live_bch_nodes) {
-			EXPECT_TRUE(available[cache.bch_left_factor[node]]);
-			EXPECT_TRUE(available[cache.bch_right_factor[node]]);
-			available[node] = 1;
-		}
-		for (uint64_t node = 2; node < cache.bch_coefficients.size(); ++node) {
-			if (cache.bch_coefficients[node] != 0.0)
-				EXPECT_TRUE(available[node]);
+		EXPECT_EQ(cache.bch_operations.size(), expected_size);
+		EXPECT_EQ(cache.bch_size(), expected_size + 2);
+		for (uint64_t operation_index = 0;
+			operation_index < cache.bch_operations.size(); ++operation_index) {
+			const BchOperation& operation = cache.bch_operations[operation_index];
+			const uint64_t node = operation_index + 2;
+			EXPECT_LT(operation.left, node);
+			EXPECT_LT(operation.right, node);
 		}
 	}
 }
 
-TEST(preparationCacheTest, PrunedAndFullBchPlansAgree) {
-	const uint64_t degrees[] = { 3, 4, 5, 8 };
-	for (uint64_t degree : degrees) {
+TEST(preparationCacheTest, CompactAndRangedBchMatchFullFormula) {
+	for (uint64_t degree : { 1, 3, 4, 5, 8 }) {
 		SCOPED_TRACE(degree);
-		LogSigCache log_cache(2, degree, 3);
-		const BchCache& pruned = log_cache.bch();
-		BchCache full = pruned;
-		full.live_bch_nodes.clear();
-		for (uint64_t node = 2; node < full.bch_coefficients.size(); ++node)
-			full.live_bch_nodes.push_back(static_cast<uint32_t>(node));
-		full.all_bch_nodes_live = true;
-
-		const uint64_t m = pruned.m;
-		const uint64_t m2 = pruned.bch_coefficients.size();
-		std::vector<double> ls1(m), ls2(m), d_out(m);
-		for (uint64_t index = 0; index < m; ++index) {
-			ls1[index] = 0.03125 * (static_cast<int>(index % 9) - 4);
-			ls2[index] = 0.015625 * (static_cast<int>(index % 7) - 3);
-			d_out[index] = 0.0625 * (static_cast<int>(index % 5) - 2);
+		LogSigCache cache(2, degree, 3);
+		const BchCache& compact = cache.bch();
+		BchCache full = compact;
+		full.bch_operations.clear();
+		const auto& formula = *get_hardcoded_bch_data(degree);
+		for (uint64_t w = 2; w < formula.size; ++w)
+			full.bch_operations.push_back({ formula.coefficients[w],
+				static_cast<uint32_t>(formula.left_factor[w]),
+				static_cast<uint32_t>(formula.right_factor[w]) });
+		const uint64_t m = compact.m;
+		std::vector<double> left(m), right(m), derivs(m), expected(m), actual(m);
+		for (uint64_t k = 0; k < m; ++k) {
+			left[k] = 0.03125 * (static_cast<int>(k % 9) - 4);
+			right[k] = 0.015625 * (static_cast<int>(k % 7) - 3);
+			derivs[k] = 0.0625 * (static_cast<int>(k % 5) - 2);
 		}
-		std::vector<double> pruned_out(m), full_out(m);
-		std::vector<double> pruned_memo(m2 * m), full_memo(m2 * m);
-		bch_combine_impl_(
-			ls1.data(), ls2.data(), pruned_out.data(), pruned,
-			pruned_memo.data());
-		bch_combine_impl_(
-			ls1.data(), ls2.data(), full_out.data(), full,
-			full_memo.data());
-		EXPECT_EQ(pruned_out, full_out);
+		std::vector<double> workspace(2 * full.bch_size() * m);
+		bch_combine_impl_(left.data(), right.data(), expected.data(), full, workspace.data());
+		bch_combine_impl_(left.data(), right.data(), actual.data(), compact, workspace.data());
+		EXPECT_EQ(actual, expected);
+		std::vector<double> expected_left(m), expected_right(m), actual_left(m), actual_right(m);
+		bch_combine_backprop_impl_(derivs.data(), expected_left.data(), expected_right.data(),
+			left.data(), right.data(), full, workspace.data());
+		bch_combine_backprop_impl_(derivs.data(), actual_left.data(), actual_right.data(),
+			left.data(), right.data(), compact, workspace.data());
+		EXPECT_EQ(actual_left, expected_left);
+		EXPECT_EQ(actual_right, expected_right);
 
-		std::vector<double> pruned_d_ls1(m), pruned_d_ls2(m);
-		std::vector<double> full_d_ls1(m), full_d_ls2(m);
-		std::vector<double> pruned_workspace(2 * m2 * m);
-		std::vector<double> full_workspace(2 * m2 * m);
-		bch_combine_backprop_impl_<double>(
-			d_out.data(), pruned_d_ls1.data(), pruned_d_ls2.data(),
-			ls1.data(), ls2.data(), pruned, pruned_workspace.data());
-		bch_combine_backprop_impl_<double>(
-			d_out.data(), full_d_ls1.data(), full_d_ls2.data(),
-			ls1.data(), ls2.data(), full, full_workspace.data());
-		EXPECT_EQ(pruned_d_ls1, full_d_ls1);
-		EXPECT_EQ(pruned_d_ls2, full_d_ls2);
+		// Independently evaluate brackets, discarding coordinates outside the plan.
+		std::copy(left.begin(), left.end(), workspace.begin());
+		std::copy(right.begin(), right.end(), workspace.begin() + m);
+		for (uint64_t k = 0; k < m; ++k)
+			actual[k] = left[k] + right[k];
+		ASSERT_EQ(compact.bch_ranges.size(), compact.bch_operations.size());
+		for (uint64_t w = 2; w < compact.bch_size(); ++w) {
+			const auto& op = compact.bch_operation(w);
+			const auto [begin, end] = compact.bch_ranges[w - 2];
+			ASSERT_LE(begin, end);
+			ASSERT_LE(end, m);
+			double* result = workspace.data() + w * m;
+			lie_bracket(workspace.data() + op.left * m, workspace.data() + op.right * m,
+				result, m, compact.commutator_table);
+			std::fill(result, result + begin, 0.0);
+			std::fill(result + end, result + m, 0.0);
+			for (uint64_t k = begin; k < end; ++k)
+				actual[k] += op.coefficient * result[k];
+		}
+		for (uint64_t k = 0; k < m; ++k)
+			EXPECT_NEAR(actual[k], expected[k], 1e-12);
 	}
 }
 

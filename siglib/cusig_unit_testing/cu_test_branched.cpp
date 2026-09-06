@@ -360,7 +360,7 @@ TEST(branchedSigCoefCudaTest, ForwardAndBackpropMatchFull) {
 
 TEST(branchedLogSigFromPathCudaTest, ForwardAndBackwardMatchMethodTwo) {
     const uint64_t batch_size = 2;
-    const uint64_t length = 5;
+    const uint64_t length = 10;
     const uint64_t dimension = 2;
     const uint64_t max_nodes = 4;
     const uint64_t full_length = compute_branched_sig_length(
@@ -370,10 +370,9 @@ TEST(branchedLogSigFromPathCudaTest, ForwardAndBackwardMatchMethodTwo) {
     ASSERT_EQ(0, prepare_branched_log_sig_cuda(
         dimension, max_nodes, 3, true, false));
 
-    const std::vector<double> path{
-        0.1, -0.2, 0.4, 0.3, 0.4, 0.3, -0.1, 0.8, 0.2, -0.4,
-        -0.3, 0.2, 0.6, -0.5, 0.6, -0.5, 0.9, 0.1, -0.2, 0.7
-    };
+    std::vector<double> path(batch_size * length * dimension);
+    for (uint64_t index = 0; index < path.size(); ++index)
+        path[index] = 0.07 * static_cast<double>((index * 11) % 19) - 0.6;
     std::vector<double> derivs(batch_size * log_length);
     for (uint64_t index = 0; index < derivs.size(); ++index)
         derivs[index] = 0.09 * static_cast<double>(index + 1) - 0.4;

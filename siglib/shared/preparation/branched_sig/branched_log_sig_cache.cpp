@@ -344,7 +344,7 @@ BranchedBchCache::BranchedBchCache(
 	// the MKW commutator table and segment lift are specific to branched paths.
 	build_commutator_views(bch);
 	build_bch_formula_data(bch);
-	build_live_bch_nodes(bch);
+	build_bch_operation_ranges(bch);
 
 	std::vector<double> linear_sig(branched_cache.total_length);
 	linear_coefficients.resize(m);

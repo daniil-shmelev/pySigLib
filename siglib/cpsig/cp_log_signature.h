@@ -229,7 +229,7 @@ void log_sig_combine_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 	std::vector<T> memo(m2 * m);
 	bch_combine_impl_<T>(log_sig1, log_sig2, out, cache, memo.data());
 }
@@ -255,7 +255,7 @@ void log_sig_combine_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 
 	auto func = [&](const T* ls1, const T* ls2, T* o) {
 		thread_local std::vector<T> tl_memo;
@@ -303,7 +303,7 @@ void log_sig_join_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 	std::vector<T> memo(m2 * m);
 	log_sig_join_impl_<T>(log_sig, displacement, out, cache, memo.data());
 }
@@ -329,7 +329,7 @@ void log_sig_join_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 
 	auto func = [&](const T* ls, const T* disp, T* o) {
 		thread_local std::vector<T> tl_memo;
@@ -369,7 +369,7 @@ void log_sig_join_backprop_(
 
 	// Reuse bch_combine_backprop_impl_ - it handles the full BCH backward
 	auto d_ls2 = std::make_unique<T[]>(m);
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 	std::vector<T> workspace(2 * m2 * m);
 	bch_combine_backprop_impl_<T>(d_out, d_logsig, d_ls2.get(), log_sig, linear_ls.get(),
 		cache, workspace.data());
@@ -399,7 +399,7 @@ void log_sig_join_backprop_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 
 	auto func = [&](uint64_t start, uint64_t end) {
 		std::vector<T> workspace(2 * m2 * m);
@@ -483,7 +483,7 @@ inline void log_sig_from_path_x4_(
 	std::memset(seg, 0, m * 4 * sizeof(double));
 
 	double* acc = temp;
-	double* src = memo + cache.bch_coefficients.size() * m * 4;
+	double* src = memo + cache.bch_size() * m * 4;
 
 	for (uint64_t s = 1; s < length - 1; ++s) {
 		for (uint64_t k = 0; k < dimension; ++k) {
@@ -505,7 +505,7 @@ inline void log_sig_from_path_backprop_x4_(
 	const BchCache& cache, double* workspace
 ) {
 	uint64_t m = cache.m;
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 	uint64_t n_segs = length - 1;
 	const bool prune_backprop = cache.prune_linear_backprop;
 
@@ -611,7 +611,7 @@ void batch_log_sig_from_path_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 	uint64_t path_stride = length * dimension;
 	uint64_t scalar_start = 0;
 
@@ -670,7 +670,7 @@ void log_sig_from_path_backprop_(
 	const BchCache& cache, T* workspace
 ) {
 	uint64_t m = cache.m;
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 	uint64_t n_segs = length - 1;
 	const bool prune_backprop = cache.prune_linear_backprop;
 
@@ -777,7 +777,7 @@ void batch_log_sig_from_path_backprop_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 	uint64_t path_stride = length * dimension;
 	uint64_t ws_size = 7 * m + 2 * m2 * m;
 	uint64_t scalar_start = 0;
@@ -837,7 +837,7 @@ void log_sig_combine_backprop_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 	std::vector<T> workspace(2 * m2 * m);
 	bch_combine_backprop_impl_<T>(d_out, d_ls1, d_ls2, ls1, ls2, cache, workspace.data());
 }
@@ -863,7 +863,7 @@ void log_sig_combine_backprop_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_coefficients.size();
+	uint64_t m2 = cache.bch_size();
 
 	auto func = [&](const T* dout, T* dls1, T* dls2, const T* l1, const T* l2) {
 		thread_local std::vector<T> tl_workspace;
