@@ -15,7 +15,7 @@
 
 import torch
 
-import pysiglib
+import native_api as pysiglib
 import pysiglib.torch_api as torch_api
 from conftest import skip_no_cuda
 

@@ -19,7 +19,7 @@ import pytest
 import numpy as np
 import torch
 
-import pysiglib
+import native_api as pysiglib
 
 from functools import partial
 from conftest import DEVICES, check_close as _check_close, assert_device, load_fixtures

@@ -15,7 +15,7 @@
 
 import numpy as np
 import pytest
-import pysiglib
+import native_api as pysiglib
 
 
 PARAMS = [(2, 3), (2, 4), (3, 3), (3, 2), (4, 2)]

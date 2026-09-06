@@ -13,18 +13,25 @@
 # limitations under the License.
 # =========================================================================
 
-from ctypes import POINTER, cast
+from __future__ import annotations
+from array_api_compat import array_namespace, device, size
+from ._array import dtype_name
+from ._storage import check_native_array, pointer
+
 from math import prod
 
 import numpy as np
-import torch
 
-from .param_checks import check_type_multiple, check_dtype, ensure_own_contiguous_storage
-from .dtypes import DTYPES
-from .load_siglib import BUILT_WITH_CUDA
+from .param_checks import (
+    check_dtype,
+    ensure_own_contiguous_storage,
+)
+from ..load_siglib import BUILT_WITH_CUDA
+
 
 def names_str(name_list):
     return ", ".join(name_list)
+
 
 def _check_cuda_available(device):
     if device != "cpu" and not BUILT_WITH_CUDA:
@@ -34,25 +41,23 @@ def _check_cuda_available(device):
             "with the full CUDA toolkit available (ensure CUDA_PATH is set and nvcc is on PATH)."
         )
 
+
 def make_output(obj, data, shape):
     full_shape = (*obj.batch_shape, *shape)
-    if obj.type_ == "numpy":
-        dtype_ = np.float32 if data.dtype == "float32" else np.float64
-        obj.device = "cpu"
-        obj.data = np.empty(shape=full_shape, dtype=dtype_)
-        obj.data_ptr = obj.data.ctypes.data_as(POINTER(DTYPES[obj.dtype]))
-    else:
-        dtype_ = torch.float32 if data.dtype == "float32" else torch.float64
-        obj.device = data.device if hasattr(data, "device") else "cpu"
-        obj.data = torch.empty(size=full_shape, dtype=dtype_, device=obj.device)
-        obj.data_ptr = cast(obj.data.data_ptr(), POINTER(DTYPES[obj.dtype]))
+    xp = data.xp
+    obj.xp = xp
+    obj.device = data.device
+    obj.data = xp.empty(full_shape, dtype=data.array_dtype, device=data.allocation_device)
+    obj.data_ptr = pointer(obj.data)
+
 
 class SigInputHandler:
     """
     Handle input which is (shaped like) a signature or a batch of signatures
     """
+
     def __init__(self, sig_, sig_len, param_name):
-        check_type_multiple(sig_, param_name, (np.ndarray, torch.Tensor))
+        check_native_array(sig_, param_name)
         self.sig = ensure_own_contiguous_storage(sig_)
         check_dtype(self.sig, param_name)
 
@@ -70,22 +75,14 @@ class SigInputHandler:
         if length != sig_len:
             raise ValueError(param_name + " is of incorrect length. Expected " + str(sig_len) + ", got " + str(length))
 
-        if isinstance(self.sig, np.ndarray):
-            self.type_ = "numpy"
-            self.dtype = str(self.sig.dtype)
-            self.device = "cpu"
-            self.data_ptr = self.sig.ctypes.data_as(POINTER(DTYPES[self.dtype]))
-        else:
-            self.type_ = "torch"
-            self.dtype = str(self.sig.dtype)[6:]
-            self.device = self.sig.device.type
-            _check_cuda_available(self.device)
-            self.data_ptr = cast(self.sig.data_ptr(), POINTER(DTYPES[self.dtype]))
+        _set_storage(self, self.sig)
+
 
 class MultipleSigInputHandler:
     """
     Handle multiple inputs which are (shaped like) signatures or batches of signatures
     """
+
     def __init__(self, sig_list, sig_len, sig_name_list):
         self.data = [SigInputHandler(sig_, sig_len, sig_name) for sig_, sig_name in zip(sig_list, sig_name_list)]
         self.sig = [d.sig for d in self.data]
@@ -103,16 +100,16 @@ class MultipleSigInputHandler:
             raise ValueError(names_str(sig_name_list) + " must be on the same device")
 
         self.dtype = self.data[0].dtype
+        self.xp = self.data[0].xp
+        self.array_dtype = self.data[0].array_dtype
+        self.allocation_device = self.data[0].allocation_device
         self.batch_shape = self.data[0].batch_shape
         self.batch_size = self.data[0].batch_size
         self.type_ = self.data[0].type_
         self.sig_ptr = [d.data_ptr for d in self.data]
 
-        # Propagate device info so SigOutputHandler can allocate on the correct device
-        if self.type_ == "torch":
-            self.device = self.data[0].sig.device.type
-        else:
-            self.device = "cpu"
+        self.device = self.data[0].device
+
 
 class SigOutputHandler:
     """
@@ -125,13 +122,15 @@ class SigOutputHandler:
         self.dtype = data.dtype
         make_output(self, data, (sig_len,))
 
+
 class PathInputHandler:
     """
     Handle input which is (shaped like) a path or a batch of paths
     """
+
     def __init__(self, path_, time_aug, lead_lag, end_time, param_name):
         self.param_name = param_name
-        check_type_multiple(path_, param_name, (np.ndarray, torch.Tensor))
+        check_native_array(path_, param_name)
         self.path = ensure_own_contiguous_storage(path_)
         check_dtype(self.path, param_name)
 
@@ -152,17 +151,9 @@ class PathInputHandler:
             raise ValueError(
                 self.param_name + " has 0 channels (dimension). Path dimension must be at least 1.")
 
-        if isinstance(self.path, np.ndarray):
-            self.type_ = "numpy"
-            self.dtype = str(self.path.dtype)
-            self.data_ptr = self.path.ctypes.data_as(POINTER(DTYPES[self.dtype]))
-        elif isinstance(self.path, torch.Tensor):
-            self.type_ = "torch"
-            self.dtype = str(self.path.dtype)[6:]
-            self.data_ptr = cast(self.path.data_ptr(), POINTER(DTYPES[self.dtype]))
+        _set_storage(self, self.path)
 
         self.length, self.dimension = self.transformed_dims()
-        self.device = self.path.device.type if self.type_ == "torch" else "cpu"
         _check_cuda_available(self.device)
 
     def transformed_dims(self):
@@ -175,10 +166,12 @@ class PathInputHandler:
             dimension_ += 1
         return length_, dimension_
 
+
 class CorrectionInputHandler:
     """
     Handle correction levels for signature APIs.
     """
+
     def __init__(self, correction, path_data, degree):
         self.correction = None
         self.length = 0
@@ -189,29 +182,21 @@ class CorrectionInputHandler:
         if correction is None:
             return
 
-        check_type_multiple(correction, "correction", (np.ndarray, torch.Tensor))
+        check_native_array(correction, 'correction')
         if isinstance(correction, np.ndarray) != (path_data.type_ == "numpy"):
             raise ValueError("correction must have the same array type as path")
 
         self.correction = ensure_own_contiguous_storage(correction)
         check_dtype(self.correction, "correction")
 
-        if isinstance(self.correction, np.ndarray):
-            self.dtype = str(self.correction.dtype)
-            self.device = "cpu"
-            self.data_ptr = self.correction.ctypes.data_as(POINTER(DTYPES[self.dtype]))
-        else:
-            self.dtype = str(self.correction.dtype)[6:]
-            self.device = self.correction.device.type
-            _check_cuda_available(self.device)
-            self.data_ptr = cast(self.correction.data_ptr(), POINTER(DTYPES[self.dtype]))
+        _set_storage(self, self.correction)
 
         if self.dtype != path_data.dtype:
             raise ValueError("correction and path must have the same dtype")
         if self.device != path_data.device:
             raise ValueError("correction and path must be on the same device")
 
-        if (self.correction.size if isinstance(self.correction, np.ndarray) else self.correction.numel()) == 0:
+        if size(self.correction) == 0:
             return
 
         if path_data.lead_lag:
@@ -246,6 +231,7 @@ class CorrectionInputHandler:
 
         _infer_correction_degree(path_data.data_dimension, degree, self.length)
 
+
 def _infer_correction_degree(dimension, degree, length):
     if length == 0:
         return 1
@@ -263,12 +249,15 @@ def _infer_correction_degree(dimension, degree, length):
             break
     raise ValueError("correction length must be a prefix of tensor levels 2..degree")
 
+
 class MultiplePathInputHandler:
     """
     Handle multiple inputs which are (shaped like) paths or a batch of paths
     """
-    def __init__(self, path_list, time_aug, lead_lag, end_time, path_names,
-                 check_batch=True):
+
+    def __init__(
+        self, path_list, time_aug, lead_lag, end_time, path_names, check_batch=True
+    ):
         self.data = [PathInputHandler(p, time_aug, lead_lag, end_time, n) for p,n in zip(path_list, path_names)]
         self.path = [d.path for d in self.data]
         self.length = [d.length for d in self.data]
@@ -290,8 +279,11 @@ class MultiplePathInputHandler:
             raise ValueError(names_str(path_names) + " must be on the same device")
 
         self.dtype = self.data[0].dtype
+        self.xp = self.data[0].xp
+        self.array_dtype = self.data[0].array_dtype
+        self.allocation_device = self.data[0].allocation_device
         self.type_ = self.data[0].type_
-        self.device = self.path[0].device.type if self.type_ == "torch" else "cpu"
+        self.device = self.data[0].device
         self.data_dimension = self.data[0].data_dimension
         self.dimension = self.data[0].dimension
 
@@ -299,29 +291,23 @@ class MultiplePathInputHandler:
             self.batch_shape = self.data[0].batch_shape
             self.batch_size = self.data[0].batch_size
 
+
 class ScalarInputHandler:
     """
     Handle input which is (shaped like) a scalar or a batch of scalars
     """
-    def __init__(self, data_, is_batch = False, data_name = "scalars"):
+
+    def __init__(self, data_, is_batch=False, data_name="scalars"):
         self.data_name = data_name
-        check_type_multiple(data_, data_name, (np.ndarray, torch.Tensor))
+        check_native_array(data_, data_name)
         self.data = ensure_own_contiguous_storage(data_)
         check_dtype(self.data, data_name)
 
         self.batch_shape = tuple(self.data.shape) if is_batch else ()
         self.batch_size = prod(self.batch_shape) if self.batch_shape else 1
 
-        if isinstance(self.data, np.ndarray):
-            self.type_ = "numpy"
-            self.dtype = str(self.data.dtype)
-            self.data_ptr = self.data.ctypes.data_as(POINTER(DTYPES[self.dtype]))
-        elif isinstance(self.data, torch.Tensor):
-            self.type_ = "torch"
-            self.dtype = str(self.data.dtype)[6:]
-            self.data_ptr = cast(self.data.data_ptr(), POINTER(DTYPES[self.dtype]))
+        _set_storage(self, self.data)
 
-        self.device = self.data.device.type if self.type_ == "torch" else "cpu"
 
 class ScalarOutputHandler:
     """
@@ -334,10 +320,12 @@ class ScalarOutputHandler:
         self.batch_size = data.batch_size
         make_output(self, data, tuple())
 
+
 class GridOutputHandler:
     """
     Handle output which is (shaped like) a grid or a batch of grids
     """
+
     def __init__(self, x_size, y_size, data):
         self.x_size = x_size
         self.y_size = y_size
@@ -348,10 +336,8 @@ class GridOutputHandler:
         make_output(self, data, (self.x_size, self.y_size))
 
     def transpose(self):
-        if self.type_ == "numpy":
-            self.data = np.swapaxes(self.data, -2, -1)
-        else:
-            self.data = torch.transpose(self.data, -2, -1)
+        self.data = array_namespace(self.data).matrix_transpose(self.data)
+
 
 class PathOutputHandler(GridOutputHandler):
     """
@@ -362,28 +348,13 @@ class PathOutputHandler(GridOutputHandler):
         self.length = length
         self.dimension = dimension
 
-class DeviceToHost:
-    """
-    If data is on GPU, move to CPU
-    """
-    def __init__(self, data, names):
-        self.type = type(data[0])
-        self.device = data[0].device if isinstance(data[0], torch.Tensor) else None
 
-        for i in range(1, len(data)):
-            d_type = type(data[i])
-            d_device = data[i].device if isinstance(data[i], torch.Tensor) else None
-
-            if d_type != self.type:
-                msg = ", ".join(names) + " must all be torch tensors or all be numpy arrays."
-                raise ValueError(msg)
-
-            if d_device != self.device:
-                msg = ", ".join(names) + " must all be on the same device."
-                raise ValueError(msg)
-
-        if self.device is not None:
-            self.data = [d.cpu() for d in data]
-        else:
-            self.data = data
-        self.names = names
+def _set_storage(obj, arr):
+    obj.xp = array_namespace(arr)
+    obj.type_ = "numpy" if isinstance(arr, np.ndarray) else "torch"
+    obj.dtype = dtype_name(arr)
+    obj.array_dtype = arr.dtype
+    obj.allocation_device = device(arr)
+    obj.device = getattr(obj.allocation_device, "type", obj.allocation_device)
+    _check_cuda_available(obj.device)
+    obj.data_ptr = pointer(arr)

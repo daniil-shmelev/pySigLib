@@ -22,10 +22,27 @@ two batched paths ``(B, L, D)`` and returns the double-differenced
 gram matrix ``(B, L-1, L-1)``.
 """
 
+from __future__ import annotations
+
 import math
+import jax
+from typing import Protocol
+from .._core.static_kernels import Context as _Context
+
+
+class Context(_Context[jax.Array]):
+    """Array context retained for utility API consistency."""
+
+
+class StaticKernel(Protocol):
+    """A differentiable JAX static kernel on two batched paths."""
+
+    def __call__(self, x: jax.Array, y: jax.Array) -> jax.Array: ...
+
+
 import jax.numpy as jnp
 
-from ..static_kernels import (
+from .._core.static_kernels import (
     LinearKernel as _BaseLinearKernel,
     ScaledLinearKernel as _BaseScaledLinearKernel,
     RBFKernel as _BaseRBFKernel,
@@ -50,7 +67,7 @@ def _squared_dist(x, y):
 class LinearKernel:
     __doc__ = _BaseLinearKernel.__doc__
 
-    def __call__(self, x, y):
+    def __call__(self, x: jax.Array, y: jax.Array) -> jax.Array:
         dx = jnp.diff(x, axis=1)
         dy = jnp.diff(y, axis=1)
         return jnp.matmul(dx, jnp.swapaxes(dy, -2, -1))
@@ -62,7 +79,7 @@ class ScaledLinearKernel:
     def __init__(self, scale: float = 1.):
         self._scale_sq = scale ** 2
 
-    def __call__(self, x, y):
+    def __call__(self, x: jax.Array, y: jax.Array) -> jax.Array:
         dx = jnp.diff(x, axis=1)
         dy = jnp.diff(y, axis=1)
         return self._scale_sq * jnp.matmul(dx, jnp.swapaxes(dy, -2, -1))
@@ -74,7 +91,7 @@ class RBFKernel:
     def __init__(self, sigma: float):
         self._one_over_sigma = 1. / sigma
 
-    def __call__(self, x, y):
+    def __call__(self, x: jax.Array, y: jax.Array) -> jax.Array:
         dist2 = _squared_dist(x, y)
         K = jnp.exp(-dist2 * self._one_over_sigma)
         return _double_diff(K)
@@ -88,7 +105,7 @@ class PolynomialKernel:
         self.gamma = gamma
         self.scale = scale
 
-    def __call__(self, x, y):
+    def __call__(self, x: jax.Array, y: jax.Array) -> jax.Array:
         inner = jnp.matmul(x, jnp.swapaxes(y, -2, -1))
         base = inner + self.gamma
         K = self.scale * jnp.power(base, self.degree)
@@ -101,7 +118,7 @@ class Matern12Kernel:
     def __init__(self, sigma: float):
         self._one_over_sigma = 1. / sigma
 
-    def __call__(self, x, y):
+    def __call__(self, x: jax.Array, y: jax.Array) -> jax.Array:
         dist = jnp.sqrt(_squared_dist(x, y) + 1e-30)
         K = jnp.exp(-dist * self._one_over_sigma)
         return _double_diff(K)
@@ -113,7 +130,7 @@ class Matern32Kernel:
     def __init__(self, sigma: float):
         self._sqrt3_over_sigma = math.sqrt(3.) / sigma
 
-    def __call__(self, x, y):
+    def __call__(self, x: jax.Array, y: jax.Array) -> jax.Array:
         D_scaled = jnp.sqrt(_squared_dist(x, y) + 1e-30) * self._sqrt3_over_sigma
         K = (1. + D_scaled) * jnp.exp(-D_scaled)
         return _double_diff(K)
@@ -125,7 +142,7 @@ class Matern52Kernel:
     def __init__(self, sigma: float):
         self._sqrt5_over_sigma = math.sqrt(5.) / sigma
 
-    def __call__(self, x, y):
+    def __call__(self, x: jax.Array, y: jax.Array) -> jax.Array:
         u = jnp.sqrt(_squared_dist(x, y) + 1e-30) * self._sqrt5_over_sigma
         K = (1. + u + u * u / 3.) * jnp.exp(-u)
         return _double_diff(K)
@@ -138,7 +155,7 @@ class RationalQuadraticKernel:
         self.alpha = alpha
         self._c = 2. * alpha * sigma ** 2
 
-    def __call__(self, x, y):
+    def __call__(self, x: jax.Array, y: jax.Array) -> jax.Array:
         dist2 = _squared_dist(x, y)
         base = 1. + dist2 / self._c
         K = jnp.power(base, -self.alpha)

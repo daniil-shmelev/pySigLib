@@ -13,6 +13,8 @@
 # limitations under the License.
 # =========================================================================
 
+from __future__ import annotations
+
 CPP_ERR_MSG = {
     1 : "Failed to allocate memory",
     2: "Invalid argument",
@@ -27,8 +29,9 @@ CPP_ERR_MSG = {
     11: "Unknown exception"
 }
 
+
 def _native_error_message(device):
-    from .load_siglib import BUILT_WITH_CUDA, CPSIG, CUSIG
+    from ..load_siglib import BUILT_WITH_CUDA, CPSIG, CUSIG
 
     device_type = getattr(device, "type", device)
     library = CUSIG if device_type == "cuda" and BUILT_WITH_CUDA else CPSIG

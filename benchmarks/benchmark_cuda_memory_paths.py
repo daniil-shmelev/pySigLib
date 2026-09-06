@@ -222,6 +222,25 @@ def make_path(torch, batch, length, dimension, dtype):
 
 def make_matrix_case(name, spec):
     import pysiglib
+    import pysiglib.torch_api
+    from pysiglib._core.branched_log_sig import branched_log_sig as _native_branched_log_sig
+    from pysiglib._core.branched_sig import branched_sig as _native_branched_sig
+    from pysiglib._core.branched_sig_backprop import branched_sig_backprop as _native_branched_sig_backprop
+    from pysiglib._core.branched_sig_coef import branched_sig_coef as _native_branched_sig_coef
+    from pysiglib._core.branched_sig_coef_backprop import branched_sig_coef_backprop as _native_branched_sig_coef_backprop
+    from pysiglib._core.branched_sig import branched_sig_combine as _native_branched_sig_combine
+    from pysiglib._core.branched_sig_backprop import branched_sig_combine_backprop as _native_branched_sig_combine_backprop
+    from pysiglib._core.branched_sig import branched_sig_length as _native_branched_sig_length
+    from pysiglib._core.branched_log_sig import branched_sig_to_log_sig as _native_branched_sig_to_log_sig
+    from pysiglib._core.branched_log_sig_backprop import branched_sig_to_log_sig_backprop as _native_branched_sig_to_log_sig_backprop
+    from pysiglib._core.log_sig import log_sig as _native_log_sig
+    from pysiglib._core.branched_log_sig import prepare_branched_log_sig as _native_prepare_branched_log_sig
+    from pysiglib._core.branched_sig import prepare_branched_sig as _native_prepare_branched_sig
+    from pysiglib._core.branched_sig_coef import prepare_branched_sig_coef as _native_prepare_branched_sig_coef
+    from pysiglib._core.log_sig import prepare_log_sig as _native_prepare_log_sig
+    from pysiglib._core.log_sig import set_cache_dir as _native_set_cache_dir
+    from pysiglib._core.sig import sig as _native_sig
+    from pysiglib._core.sig_backprop import sig_backprop as _native_sig_backprop
     import torch
 
     dtype = getattr(torch, spec["dtype"])
@@ -248,25 +267,25 @@ def make_matrix_case(name, spec):
                 generator=generator, device="cuda", dtype=dtype)
             options["correction"] = correction
         if direction == "backprop":
-            signature = pysiglib.sig(path, degree, **options)
+            signature = _native_sig(path, degree, **options)
             derivs = torch.ones_like(signature)
             backprop_options = {
                 key: value for key, value in options.items()
                 if key not in ("horner",)
             }
-            call = lambda: pysiglib.sig_backprop(
+            call = lambda: _native_sig_backprop(
                 path, signature, derivs, degree, **backprop_options)
         else:
-            call = lambda: pysiglib.sig(path, degree, **options)
+            call = lambda: _native_sig(path, degree, **options)
         return call, batch, path_steps
 
     if kind == "method3":
-        pysiglib.prepare_log_sig(dimension, degree, 3, device="cuda")
+        _native_prepare_log_sig(dimension, degree, 3, device="cuda")
         path = make_path(torch, batch, length, dimension, dtype)
         if spec.get("torch_api"):
             if direction == "backprop":
                 cotangent = torch.ones_like(
-                    pysiglib.log_sig(path, degree, method=3))
+                    _native_log_sig(path, degree, method=3))
 
                 def call():
                     value = path.detach().requires_grad_(True)
@@ -277,18 +296,18 @@ def make_matrix_case(name, spec):
                 call = lambda: pysiglib.torch_api.log_sig(
                     path, degree, method=3)
         elif direction == "backprop":
-            from pysiglib.log_sig_backprop import _log_sig_from_path_backprop
+            from pysiglib._core.log_sig_backprop import _log_sig_from_path_backprop
             derivs = torch.ones_like(
-                pysiglib.log_sig(path, degree, method=3))
+                _native_log_sig(path, degree, method=3))
             call = lambda: _log_sig_from_path_backprop(
                 derivs, path, degree)
         else:
-            call = lambda: pysiglib.log_sig(path, degree, method=3)
+            call = lambda: _native_log_sig(path, degree, method=3)
         return call, batch, path_steps
 
     if kind == "branched_dense":
         planar = spec["planar"]
-        pysiglib.prepare_branched_sig(
+        _native_prepare_branched_sig(
             dimension, degree, planar=planar, device="cuda")
         path = make_path(torch, batch, length, dimension, dtype)
         options = {"planar": planar}
@@ -301,37 +320,37 @@ def make_matrix_case(name, spec):
                 (batch, length - 1, correction_width),
                 generator=generator, device="cuda", dtype=dtype)
         if direction == "backprop":
-            signature = pysiglib.branched_sig(path, degree, **options)
+            signature = _native_branched_sig(path, degree, **options)
             derivs = torch.ones_like(signature)
-            call = lambda: pysiglib.branched_sig_backprop(
+            call = lambda: _native_branched_sig_backprop(
                 path, signature, derivs, degree, **options)
         else:
-            call = lambda: pysiglib.branched_sig(path, degree, **options)
+            call = lambda: _native_branched_sig(path, degree, **options)
         return call, batch, path_steps
 
     if kind == "branched_combine":
         planar = spec["planar"]
-        pysiglib.prepare_branched_sig(
+        _native_prepare_branched_sig(
             dimension, degree, planar=planar, device="cuda")
-        left = pysiglib.branched_sig(
+        left = _native_branched_sig(
             make_path(torch, batch, 3, dimension, dtype), degree,
             planar=planar)
-        right = pysiglib.branched_sig(
+        right = _native_branched_sig(
             make_path(torch, batch, 4, dimension, dtype), degree,
             planar=planar)
         if direction == "backprop":
             derivs = torch.ones_like(left)
-            call = lambda: pysiglib.branched_sig_combine_backprop(
+            call = lambda: _native_branched_sig_combine_backprop(
                 derivs, left, right, dimension, degree, planar=planar)
         else:
-            call = lambda: pysiglib.branched_sig_combine(
+            call = lambda: _native_branched_sig_combine(
                 left, right, dimension, degree, planar=planar)
         return call, batch, batch
 
     if kind == "branched_coef":
         planar = spec["planar"]
         trees = list(pysiglib.trees(dimension, degree, planar=planar)[1:])
-        pysiglib.prepare_branched_sig_coef(
+        _native_prepare_branched_sig_coef(
             dimension, trees, planar=planar, device="cuda")
         path = make_path(torch, batch, length, dimension, dtype)
         options = {"planar": planar}
@@ -344,46 +363,46 @@ def make_matrix_case(name, spec):
                 (batch, length - 1, correction_width),
                 generator=generator, device="cuda", dtype=dtype)
         if direction == "backprop":
-            coefs = pysiglib.branched_sig_coef(path, trees, **options)
+            coefs = _native_branched_sig_coef(path, trees, **options)
             derivs = torch.ones_like(coefs)
-            call = lambda: pysiglib.branched_sig_coef_backprop(
+            call = lambda: _native_branched_sig_coef_backprop(
                 path, trees, coefs, derivs, **options)
         else:
-            call = lambda: pysiglib.branched_sig_coef(
+            call = lambda: _native_branched_sig_coef(
                 path, trees, **options)
         return call, batch, path_steps
 
     if kind == "branched_conversion":
         method = spec["method"]
         planar = spec["planar"]
-        pysiglib.prepare_branched_log_sig(
+        _native_prepare_branched_log_sig(
             dimension, degree, method, planar=planar, device="cuda")
         generator = torch.Generator(device="cuda")
         generator.manual_seed(SEED)
         signature = torch.randn(
-            (batch, pysiglib.branched_sig_length(
+            (batch, _native_branched_sig_length(
                 dimension, degree, planar=planar)),
             generator=generator, device="cuda", dtype=dtype)
         if direction == "backprop":
-            log_signature = pysiglib.branched_sig_to_log_sig(
+            log_signature = _native_branched_sig_to_log_sig(
                 signature, dimension, degree, planar=planar, method=method)
             derivs = torch.ones_like(log_signature)
-            call = lambda: pysiglib.branched_sig_to_log_sig_backprop(
+            call = lambda: _native_branched_sig_to_log_sig_backprop(
                 signature, derivs, dimension, degree,
                 planar=planar, method=method)
         else:
-            call = lambda: pysiglib.branched_sig_to_log_sig(
+            call = lambda: _native_branched_sig_to_log_sig(
                 signature, dimension, degree, planar=planar, method=method)
         return call, batch, batch
 
     if kind == "branched_log":
         method = spec["method"]
         planar = spec["planar"]
-        pysiglib.prepare_branched_log_sig(
+        _native_prepare_branched_log_sig(
             dimension, degree, method, planar=planar, device="cuda")
         path = make_path(torch, batch, length, dimension, dtype)
         if direction == "backprop":
-            cotangent = torch.ones_like(pysiglib.branched_log_sig(
+            cotangent = torch.ones_like(_native_branched_log_sig(
                 path, degree, planar=planar, method=method))
 
             def call():
@@ -392,7 +411,7 @@ def make_matrix_case(name, spec):
                     value, degree, planar=planar, method=method)
                 return torch.autograd.grad(result, value, cotangent)
         else:
-            call = lambda: pysiglib.branched_log_sig(
+            call = lambda: _native_branched_log_sig(
                 path, degree, planar=planar, method=method)
         return call, batch, path_steps
 
@@ -401,12 +420,31 @@ def make_matrix_case(name, spec):
 
 def make_case(name, cache_dir):
     import pysiglib
+    import pysiglib.torch_api
+    from pysiglib._core.branched_log_sig import branched_log_sig as _native_branched_log_sig
+    from pysiglib._core.branched_sig import branched_sig as _native_branched_sig
+    from pysiglib._core.branched_sig_backprop import branched_sig_backprop as _native_branched_sig_backprop
+    from pysiglib._core.branched_sig_coef import branched_sig_coef as _native_branched_sig_coef
+    from pysiglib._core.branched_sig_coef_backprop import branched_sig_coef_backprop as _native_branched_sig_coef_backprop
+    from pysiglib._core.branched_sig import branched_sig_combine as _native_branched_sig_combine
+    from pysiglib._core.branched_sig_backprop import branched_sig_combine_backprop as _native_branched_sig_combine_backprop
+    from pysiglib._core.branched_sig import branched_sig_length as _native_branched_sig_length
+    from pysiglib._core.branched_log_sig import branched_sig_to_log_sig as _native_branched_sig_to_log_sig
+    from pysiglib._core.branched_log_sig_backprop import branched_sig_to_log_sig_backprop as _native_branched_sig_to_log_sig_backprop
+    from pysiglib._core.log_sig import log_sig as _native_log_sig
+    from pysiglib._core.branched_log_sig import prepare_branched_log_sig as _native_prepare_branched_log_sig
+    from pysiglib._core.branched_sig import prepare_branched_sig as _native_prepare_branched_sig
+    from pysiglib._core.branched_sig_coef import prepare_branched_sig_coef as _native_prepare_branched_sig_coef
+    from pysiglib._core.log_sig import prepare_log_sig as _native_prepare_log_sig
+    from pysiglib._core.log_sig import set_cache_dir as _native_set_cache_dir
+    from pysiglib._core.sig import sig as _native_sig
+    from pysiglib._core.sig_backprop import sig_backprop as _native_sig_backprop
     import torch
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available")
     cache_dir.mkdir(parents=True, exist_ok=True)
-    pysiglib.set_cache_dir(str(cache_dir))
+    _native_set_cache_dir(str(cache_dir))
     float32 = torch.float32
 
     if name in MATRIX_CASES:
@@ -415,155 +453,155 @@ def make_case(name, cache_dir):
     if name.startswith("sig_fast"):
         path = make_path(torch, 64, 256, 8, float32)
         degree = 3
-        out = pysiglib.sig(path, degree)
+        out = _native_sig(path, degree)
         deriv = torch.ones_like(out)
         if name.endswith("backprop"):
-            call = lambda: pysiglib.sig_backprop(path, out, deriv, degree)
+            call = lambda: _native_sig_backprop(path, out, deriv, degree)
         else:
-            call = lambda: pysiglib.sig(path, degree)
+            call = lambda: _native_sig(path, degree)
         return call, 64, 64 * 255
 
     if name.startswith("sig_high_dim_fast"):
         path = make_path(torch, 8, 2, 12000, float32)
         degree = 1
-        out = pysiglib.sig(path, degree)
+        out = _native_sig(path, degree)
         deriv = torch.ones_like(out)
         if name.endswith("backprop"):
-            call = lambda: pysiglib.sig_backprop(path, out, deriv, degree)
+            call = lambda: _native_sig_backprop(path, out, deriv, degree)
         else:
-            call = lambda: pysiglib.sig(path, degree)
+            call = lambda: _native_sig(path, degree)
         return call, 8, 8
 
     if name.startswith("log_method3_fast"):
         path = make_path(torch, 8, 16, 16, float32)
         degree = 3
-        pysiglib.prepare_log_sig(16, degree, 3, device="cuda")
+        _native_prepare_log_sig(16, degree, 3, device="cuda")
         if name.endswith("backprop"):
             cotangent = torch.ones_like(
-                pysiglib.log_sig(path, degree, method=3))
+                _native_log_sig(path, degree, method=3))
 
             def call():
                 value = path.detach().requires_grad_(True)
                 result = pysiglib.torch_api.log_sig(value, degree, method=3)
                 return torch.autograd.grad(result, value, cotangent)
         else:
-            call = lambda: pysiglib.log_sig(path, degree, method=3)
+            call = lambda: _native_log_sig(path, degree, method=3)
         return call, 8, 8 * 15
 
     if name.startswith("branched_dense_nonplanar_fast"):
         batch, length, dimension, degree = 16, 64, 3, 4
-        pysiglib.prepare_branched_sig(
+        _native_prepare_branched_sig(
             dimension, degree, planar=False, device="cuda")
         path = make_path(torch, batch, length, dimension, float32)
-        out = pysiglib.branched_sig(path, degree, planar=False)
+        out = _native_branched_sig(path, degree, planar=False)
         deriv = torch.ones_like(out)
         if name.endswith("backprop"):
-            call = lambda: pysiglib.branched_sig_backprop(
+            call = lambda: _native_branched_sig_backprop(
                 path, out, deriv, degree, planar=False)
         else:
-            call = lambda: pysiglib.branched_sig(
+            call = lambda: _native_branched_sig(
                 path, degree, planar=False)
         return call, batch, batch * (length - 1)
 
     if name.startswith("branched_dense_planar_fast"):
         batch, length, dimension, degree = 16, 64, 1, 6
-        pysiglib.prepare_branched_sig(
+        _native_prepare_branched_sig(
             dimension, degree, planar=True, device="cuda")
         path = make_path(torch, batch, length, dimension, float32)
-        out = pysiglib.branched_sig(path, degree, planar=True)
+        out = _native_branched_sig(path, degree, planar=True)
         deriv = torch.ones_like(out)
         if name.endswith("backprop"):
-            call = lambda: pysiglib.branched_sig_backprop(
+            call = lambda: _native_branched_sig_backprop(
                 path, out, deriv, degree, planar=True)
         else:
-            call = lambda: pysiglib.branched_sig(
+            call = lambda: _native_branched_sig(
                 path, degree, planar=True)
         return call, batch, batch * (length - 1)
 
     if name.startswith("branched_combine_fast"):
         batch, dimension, degree = 64, 1, 6
-        pysiglib.prepare_branched_sig(
+        _native_prepare_branched_sig(
             dimension, degree, planar=True, device="cuda")
         path1 = make_path(torch, batch, 3, dimension, float32)
         path2 = make_path(torch, batch, 4, dimension, float32)
-        sig1 = pysiglib.branched_sig(path1, degree, planar=True)
-        sig2 = pysiglib.branched_sig(path2, degree, planar=True)
-        combined = pysiglib.branched_sig_combine(
+        sig1 = _native_branched_sig(path1, degree, planar=True)
+        sig2 = _native_branched_sig(path2, degree, planar=True)
+        combined = _native_branched_sig_combine(
             sig1, sig2, dimension, degree, planar=True)
         deriv = torch.ones_like(combined)
         if name.endswith("backprop"):
-            call = lambda: pysiglib.branched_sig_combine_backprop(
+            call = lambda: _native_branched_sig_combine_backprop(
                 deriv, sig1, sig2, dimension, degree, planar=True)
         else:
-            call = lambda: pysiglib.branched_sig_combine(
+            call = lambda: _native_branched_sig_combine(
                 sig1, sig2, dimension, degree, planar=True)
         return call, batch, batch
 
     if name.startswith("branched_coef_fast"):
         batch, length, dimension, degree = 16, 32, 1, 6
         trees = list(pysiglib.trees(dimension, degree, planar=True))
-        pysiglib.prepare_branched_sig_coef(
+        _native_prepare_branched_sig_coef(
             dimension, trees, planar=True, device="cuda")
         path = make_path(torch, batch, length, dimension, float32)
-        coefs = pysiglib.branched_sig_coef(path, trees, planar=True)
+        coefs = _native_branched_sig_coef(path, trees, planar=True)
         deriv = torch.ones_like(coefs)
         if name.endswith("backprop"):
-            call = lambda: pysiglib.branched_sig_coef_backprop(
+            call = lambda: _native_branched_sig_coef_backprop(
                 path, trees, coefs, deriv, planar=True)
         else:
-            call = lambda: pysiglib.branched_sig_coef(
+            call = lambda: _native_branched_sig_coef(
                 path, trees, planar=True)
         return call, batch, batch * (length - 1)
 
     if name.startswith("branched_conversion_fast"):
         batch, dimension, degree = 8, 8, 3
-        pysiglib.prepare_branched_log_sig(
+        _native_prepare_branched_log_sig(
             dimension, degree, 0, planar=False, device="cuda")
         generator = torch.Generator(device="cuda")
         generator.manual_seed(SEED)
         bsig = torch.randn(
-            (batch, pysiglib.branched_sig_length(
+            (batch, _native_branched_sig_length(
                 dimension, degree, planar=False)),
             generator=generator, device="cuda", dtype=float32)
-        blogsig = pysiglib.branched_sig_to_log_sig(
+        blogsig = _native_branched_sig_to_log_sig(
             bsig, dimension, degree, planar=False, method=0)
         deriv = torch.ones_like(blogsig)
         if name.endswith("backprop"):
-            call = lambda: pysiglib.branched_sig_to_log_sig_backprop(
+            call = lambda: _native_branched_sig_to_log_sig_backprop(
                 bsig, deriv, dimension, degree, planar=False, method=0)
         else:
-            call = lambda: pysiglib.branched_sig_to_log_sig(
+            call = lambda: _native_branched_sig_to_log_sig(
                 bsig, dimension, degree, planar=False, method=0)
         return call, batch, batch
 
     if name.startswith("branched_conversion_near_fast"):
         batch, dimension, degree = 4, 13, 3
-        pysiglib.prepare_branched_log_sig(
+        _native_prepare_branched_log_sig(
             dimension, degree, 0, planar=False, device="cuda")
         generator = torch.Generator(device="cuda")
         generator.manual_seed(SEED)
         bsig = torch.randn(
-            (batch, pysiglib.branched_sig_length(
+            (batch, _native_branched_sig_length(
                 dimension, degree, planar=False)),
             generator=generator, device="cuda", dtype=float32)
-        blogsig = pysiglib.branched_sig_to_log_sig(
+        blogsig = _native_branched_sig_to_log_sig(
             bsig, dimension, degree, planar=False, method=0)
         deriv = torch.ones_like(blogsig)
         if name.endswith("backprop"):
-            call = lambda: pysiglib.branched_sig_to_log_sig_backprop(
+            call = lambda: _native_branched_sig_to_log_sig_backprop(
                 bsig, deriv, dimension, degree, planar=False, method=0)
         else:
-            call = lambda: pysiglib.branched_sig_to_log_sig(
+            call = lambda: _native_branched_sig_to_log_sig(
                 bsig, dimension, degree, planar=False, method=0)
         return call, batch, batch
 
     if name.startswith("branched_log_fast"):
         batch, length, dimension, degree = 8, 8, 8, 3
-        pysiglib.prepare_branched_log_sig(
+        _native_prepare_branched_log_sig(
             dimension, degree, 0, planar=False, device="cuda")
         path = make_path(torch, batch, length, dimension, float32)
         if name.endswith("backprop"):
-            cotangent = torch.ones_like(pysiglib.branched_log_sig(
+            cotangent = torch.ones_like(_native_branched_log_sig(
                 path, degree, planar=False, method=0))
 
             def call():
@@ -572,7 +610,7 @@ def make_case(name, cache_dir):
                     value, degree, planar=False, method=0)
                 return torch.autograd.grad(result, value, cotangent)
         else:
-            call = lambda: pysiglib.branched_log_sig(
+            call = lambda: _native_branched_log_sig(
                 path, degree, planar=False, method=0)
         return call, batch, batch * (length - 1)
 
@@ -658,6 +696,25 @@ def quantiles(values):
 
 def capture(args):
     import pysiglib
+    import pysiglib.torch_api
+    from pysiglib._core.branched_log_sig import branched_log_sig as _native_branched_log_sig
+    from pysiglib._core.branched_sig import branched_sig as _native_branched_sig
+    from pysiglib._core.branched_sig_backprop import branched_sig_backprop as _native_branched_sig_backprop
+    from pysiglib._core.branched_sig_coef import branched_sig_coef as _native_branched_sig_coef
+    from pysiglib._core.branched_sig_coef_backprop import branched_sig_coef_backprop as _native_branched_sig_coef_backprop
+    from pysiglib._core.branched_sig import branched_sig_combine as _native_branched_sig_combine
+    from pysiglib._core.branched_sig_backprop import branched_sig_combine_backprop as _native_branched_sig_combine_backprop
+    from pysiglib._core.branched_sig import branched_sig_length as _native_branched_sig_length
+    from pysiglib._core.branched_log_sig import branched_sig_to_log_sig as _native_branched_sig_to_log_sig
+    from pysiglib._core.branched_log_sig_backprop import branched_sig_to_log_sig_backprop as _native_branched_sig_to_log_sig_backprop
+    from pysiglib._core.log_sig import log_sig as _native_log_sig
+    from pysiglib._core.branched_log_sig import prepare_branched_log_sig as _native_prepare_branched_log_sig
+    from pysiglib._core.branched_sig import prepare_branched_sig as _native_prepare_branched_sig
+    from pysiglib._core.branched_sig_coef import prepare_branched_sig_coef as _native_prepare_branched_sig_coef
+    from pysiglib._core.log_sig import prepare_log_sig as _native_prepare_log_sig
+    from pysiglib._core.log_sig import set_cache_dir as _native_set_cache_dir
+    from pysiglib._core.sig import sig as _native_sig
+    from pysiglib._core.sig_backprop import sig_backprop as _native_sig_backprop
     import torch
 
     call, batch, path_steps = make_case(args.case, args.cache_dir)

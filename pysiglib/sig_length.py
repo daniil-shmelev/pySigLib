@@ -14,7 +14,7 @@
 # =========================================================================
 
 from .load_siglib import CPSIG
-from .param_checks import check_type, check_non_neg, check_pos
+from ._core.param_checks import check_type, check_non_neg, check_pos
 
 
 def aug_dim(dimension: int, time_aug: bool, lead_lag: bool) -> int:

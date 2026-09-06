@@ -19,10 +19,10 @@ import numpy as np
 import pytest
 import torch
 
-import pysiglib
+import native_api as pysiglib
 import pysiglib.torch_api as torch_api
 from conftest import check_close, skip_no_cuda
-from pysiglib.branched_log_sig_backprop import (
+from pysiglib._core.branched_log_sig_backprop import (
     _branched_log_sig_from_path_backprop,
 )
 
