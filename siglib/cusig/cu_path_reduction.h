@@ -78,8 +78,8 @@ __global__ void cuda_path_reduce_kernel(
 	}
 }
 
-template<typename T, typename Segment, typename Combine>
-void cuda_path_reduce(
+template<typename T, typename Launch>
+void cuda_path_reduce_launch(
 	const T* path,
 	T* out,
 	uint64_t batch_size,
@@ -87,10 +87,7 @@ void cuda_path_reduce(
 	uint64_t dimension,
 	uint64_t element_size,
 	uint64_t memo_nodes,
-	unsigned int threads,
-	size_t shared_bytes,
-	Segment segment,
-	Combine combine,
+	Launch launch,
 	const char* op_name
 ) {
 	if (batch_size == 0)
@@ -125,13 +122,37 @@ void cuda_path_reduce(
 		offset += capacity) {
 		const uint64_t count = std::min(
 			capacity, batch_size - offset);
-		const dim3 grid = make_cuda_batch_grid_chunk(1, count, 0).grid;
-		cuda_path_reduce_kernel<T><<<grid, threads, shared_bytes>>>(
+		launch(
 			path + offset * path_stride, out + offset * element_size,
-			reinterpret_cast<T*>(entry.buffer->get()), count, length, dimension, element_size,
-			memo_size, segment, combine);
+			reinterpret_cast<T*>(entry.buffer->get()), count, memo_size);
 	}
 	check_cuda_kernel_launch();
+}
+
+template<typename T, typename Segment, typename Combine>
+void cuda_path_reduce(
+	const T* path,
+	T* out,
+	uint64_t batch_size,
+	uint64_t length,
+	uint64_t dimension,
+	uint64_t element_size,
+	uint64_t memo_nodes,
+	unsigned int threads,
+	size_t shared_bytes,
+	Segment segment,
+	Combine combine,
+	const char* op_name
+) {
+	cuda_path_reduce_launch<T>(
+		path, out, batch_size, length, dimension, element_size, memo_nodes,
+		[&](const T* chunk_path, T* chunk_out, T* workspace,
+			uint64_t count, uint64_t memo_size) {
+			const dim3 grid = make_cuda_batch_grid_chunk(1, count, 0).grid;
+			cuda_path_reduce_kernel<T><<<grid, threads, shared_bytes>>>(
+				chunk_path, chunk_out, workspace, count, length, dimension,
+				element_size, memo_size, segment, combine);
+		}, op_name);
 }
 
 #endif

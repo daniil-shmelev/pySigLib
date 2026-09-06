@@ -196,11 +196,11 @@ TEST(logSignatureExpandedBackpropCudaTest, ManualDim1Test) {
 
 TEST(logSigFromPathCudaTest, MethodThreeMatchesSignatureLog) {
     // Dead nodes, live zero-coefficient nodes, balanced rows and global operands.
-    const std::pair<uint64_t, uint64_t> cases[] = {
-        {2, 3}, {2, 4}, {2, 5}, {2, 8}, {4, 6}, {4, 7}, {2, 3} };
-    for (const auto [dimension, degree] : cases) {
-        SCOPED_TRACE(::testing::Message() << dimension << ", " << degree);
-        constexpr uint64_t batch_size = 2;
+    const struct { uint64_t dimension, degree, batch_size; } cases[] = {
+        {2, 3, 2}, {2, 4, 2}, {2, 5, 2}, {2, 8, 2}, {4, 6, 2},
+        {4, 7, 2}, {2, 6, 4099}, {3, 3, 4099}, {2, 3, 2} };
+    for (const auto [dimension, degree, batch_size] : cases) {
+        SCOPED_TRACE(::testing::Message() << dimension << ", " << degree << ", " << batch_size);
         constexpr uint64_t length = 10;
         std::vector<double> path(batch_size * length * dimension);
         for (uint64_t i = 0; i < path.size(); ++i)
