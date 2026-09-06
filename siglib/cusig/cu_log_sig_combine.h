@@ -81,7 +81,7 @@ inline void upload_balanced_commutator_plan_(
 	};
 	const auto linear_divergent_work = [&] {
 		DivergentWork work;
-		for (uint32_t node : host.live_bch_nodes) {
+		for (uint64_t node = 2; node < host.bch_size(); ++node) {
 			const auto [begin, end] = host.linear_range[node];
 			const auto range_work = divergent_range_work(begin, end);
 			work.canonical += range_work.canonical;
@@ -89,9 +89,16 @@ inline void upload_balanced_commutator_plan_(
 		}
 		return work;
 	};
-	const auto dense_work = host.live_bch_nodes.empty()
-		? DivergentWork{}
-		: divergent_range_work(0, host.m);
+	const auto dense_work = [&] {
+		DivergentWork work;
+		for (const auto& range : host.bch_ranges) {
+			const auto range_work = divergent_range_work(
+				range.begin, range.end);
+			work.canonical += range_work.canonical;
+			work.balanced += range_work.balanced;
+		}
+		return work;
+	}();
 	const auto linear_work = linear_divergent_work();
 	const auto worthwhile = [](const auto& work) {
 		return work.canonical != 0
@@ -162,13 +169,9 @@ inline void upload_balanced_commutator_plan_(
 inline CUDABchCache upload_bch_cache_to_device_(const BchCache& host) {
 	CUDABchCache device;
 	device.m = host.m;
-	device.m2 = host.bch_coefficients.size();
-	device.bch_plan.size = host.live_bch_nodes.size();
-	upload_bch_vector_(device.d_bch_coefficients, host.bch_coefficients);
-	upload_bch_vector_(device.d_bch_left_factor, host.bch_left_factor);
-	upload_bch_vector_(device.d_bch_right_factor, host.bch_right_factor);
-	if (!host.all_bch_nodes_live)
-		upload_bch_vector_(device.bch_plan.nodes, host.live_bch_nodes);
+	device.m2 = host.bch_size();
+	upload_bch_vector_(device.d_bch_operations, host.bch_operations);
+	upload_bch_vector_(device.d_bch_ranges, host.bch_ranges);
 	upload_bch_vector_(device.d_comm_k_ptr, host.comm_k_ptr);
 	upload_bch_vector_(device.d_comm_k_i, host.comm_k_i);
 	upload_bch_vector_(device.d_comm_k_j, host.comm_k_j);
@@ -198,8 +201,9 @@ inline CUDABchCache upload_bch_cache_to_device_(const BchCache& host) {
 			linear_a_ptr[row] = linear_a_idx.size();
 			if (node < 2)
 				continue;
-			const uint64_t left = host.bch_left_factor[node];
-			const uint64_t right = host.bch_right_factor[node];
+			const auto& operation = host.bch_operation(node);
+			const uint64_t left = operation.left;
+			const uint64_t right = operation.right;
 			const auto [left_begin, left_end] = host.linear_range[left];
 			const auto [right_begin, right_end] = host.linear_range[right];
 			const bool active_left = input >= left_begin && input < left_end;
@@ -218,10 +222,10 @@ inline CUDABchCache upload_bch_cache_to_device_(const BchCache& host) {
 	upload_bch_vector_(device.d_linear_a_ptr, linear_a_ptr);
 	upload_bch_vector_(device.d_linear_a_idx, linear_a_idx);
 
-	const uint64_t nodes = device.bch_plan.size;
+	const uint64_t nodes = host.bch_operations.size();
 	device.linear_dense_forward_work = nodes
 		* (device.m + host.comm_k_i.size());
-	for (uint32_t node : host.live_bch_nodes) {
+	for (uint64_t node = 2; node < host.bch_size(); ++node) {
 		const auto [begin, end] = host.linear_range[node];
 		device.linear_active_forward_work += end - begin;
 		device.linear_zero_work += begin + device.m - end;

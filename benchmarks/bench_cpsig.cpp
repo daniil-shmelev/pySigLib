@@ -15,7 +15,6 @@
 
 #include <benchmark/benchmark.h>
 #include "cpsig.h"
-#include "preparation/log_sig/bch_cache.h"
 
 #include <cstdint>
 #include <random>
@@ -96,18 +95,6 @@ static void BM_prepare_log_sig_bch(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_prepare_log_sig_bch)->Unit(benchmark::kMicrosecond);
-
-static void BM_generate_bch_coefficients_degree_14(benchmark::State& state) {
-    constexpr uint64_t degree = 14;
-    for (auto _ : state) {
-        BchCache cache;
-        cache.degree = degree;
-        build_bch_formula_data(cache);
-        benchmark::DoNotOptimize(cache.bch_coefficients.data());
-    }
-}
-BENCHMARK(BM_generate_bch_coefficients_degree_14)
-    ->Unit(benchmark::kMillisecond);
 
 static void BM_prepare_branched_sig_nonplanar(benchmark::State& state) {
     for (auto _ : state) {

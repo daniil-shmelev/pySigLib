@@ -191,6 +191,58 @@ TEST(logSignatureExpandedBackpropCudaTest, ManualDim1Test) {
 }
 
 // =========================================================================
+// Direct method-3 log signature from path
+// =========================================================================
+
+TEST(logSigFromPathCudaTest, MethodThreeMatchesSignatureLog) {
+    // Dead nodes, live zero-coefficient nodes, balanced rows and global operands.
+    const std::pair<uint64_t, uint64_t> cases[] = {
+        {2, 3}, {2, 4}, {2, 5}, {2, 8}, {4, 6}, {4, 7}, {2, 3} };
+    for (const auto [dimension, degree] : cases) {
+        SCOPED_TRACE(::testing::Message() << dimension << ", " << degree);
+        constexpr uint64_t batch_size = 2;
+        constexpr uint64_t length = 10;
+        std::vector<double> path(batch_size * length * dimension);
+        for (uint64_t i = 0; i < path.size(); ++i)
+            path[i] = 0.025 * static_cast<double>(static_cast<int>(i % 17) - 8);
+
+        ASSERT_EQ(0, prepare_log_sig_cuda(dimension, degree, 2));
+        std::vector<double> signature = compute_batch_sig_on_gpu(
+            path, batch_size, dimension, length, degree);
+        const uint64_t log_sig_len = log_sig_length_(dimension, degree);
+        std::vector<double> expected(batch_size * log_sig_len);
+        double* d_signature = nullptr;
+        double* d_expected = nullptr;
+        cudaMalloc(&d_signature, signature.size() * sizeof(double));
+        cudaMalloc(&d_expected, expected.size() * sizeof(double));
+        cudaMemcpy(d_signature, signature.data(), signature.size() * sizeof(double),
+            cudaMemcpyHostToDevice);
+        const int reference_error = sig_to_log_sig_cuda_d(
+            d_signature, d_expected, batch_size, dimension, degree, 2, true);
+        cudaMemcpy(expected.data(), d_expected, expected.size() * sizeof(double),
+            cudaMemcpyDeviceToHost);
+        cudaFree(d_signature);
+        cudaFree(d_expected);
+        ASSERT_EQ(0, reference_error);
+
+        ASSERT_EQ(0, prepare_log_sig_cuda(dimension, degree, 3));
+        check_result_typed(log_sig_from_path_cuda_d, path, expected,
+            batch_size, length, dimension, degree);
+        // Reuse across scalar types, then release and rebuild the workspace.
+        std::vector<float> float_path(path.begin(), path.end());
+        std::vector<float> float_expected(expected.begin(), expected.end());
+        check_result_typed(log_sig_from_path_cuda_f, float_path, float_expected,
+            batch_size, length, dimension, degree);
+        check_result_typed(log_sig_from_path_cuda_d, path, expected,
+            batch_size, length, dimension, degree);
+        cusig_shutdown();
+        ASSERT_EQ(0, prepare_log_sig_cuda(dimension, degree, 3));
+        check_result_typed(log_sig_from_path_cuda_d, path, expected,
+            batch_size, length, dimension, degree);
+    }
+}
+
+// =========================================================================
 // sig_to_log_sig_backprop CUDA tests (Lyndon words / method=1)
 // Ported from CPU logSignatureLyndonWordsBackpropTest
 // =========================================================================

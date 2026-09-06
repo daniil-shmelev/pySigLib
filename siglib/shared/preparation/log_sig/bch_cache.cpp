@@ -116,7 +116,7 @@ void build_tensor_representations_(
 }
 
 void build_linear_bch_ranges_(BchCache& cache) {
-	const uint64_t formula_size = cache.bch_coefficients.size();
+	const uint64_t formula_size = cache.bch_size();
 	if (cache.coordinate_weights.size() != cache.m
 		|| cache.linear_input_mask.size() != cache.m)
 		throw std::runtime_error("BCH cache support data has an invalid size");
@@ -137,8 +137,9 @@ void build_linear_bch_ranges_(BchCache& cache) {
 			min_degree[1] = 1;
 	}
 	for (uint64_t node = 2; node < formula_size; ++node) {
-		const uint64_t left = cache.bch_left_factor[node];
-		const uint64_t right = cache.bch_right_factor[node];
+		const auto& operation = cache.bch_operation(node);
+		const uint64_t left = operation.left;
+		const uint64_t right = operation.right;
 		min_degree[node] = min_degree[left] + min_degree[right];
 		max_degree[node] = (std::min)(
 			cache.degree, max_degree[left] + max_degree[right]);
@@ -158,8 +159,9 @@ void build_linear_bch_ranges_(BchCache& cache) {
 	cache.linear_pair_ptr.assign(formula_size + 1, 0);
 	cache.linear_pair_idx.clear();
 	for (uint64_t node = 2; node < formula_size; ++node) {
-		const uint64_t left = cache.bch_left_factor[node];
-		const uint64_t right = cache.bch_right_factor[node];
+		const auto& operation = cache.bch_operation(node);
+		const uint64_t left = operation.left;
+		const uint64_t right = operation.right;
 		const auto [left_begin, left_end] = cache.linear_range[left];
 		const auto [right_begin, right_end] = cache.linear_range[right];
 		for (uint32_t pair = 0; pair < cache.n_pairs; ++pair) {
@@ -183,7 +185,47 @@ void build_linear_bch_ranges_(BchCache& cache) {
 	cache.prune_linear_backprop = dense_count > 0
 		&& cache.linear_pair_idx.size() <= dense_count - dense_count / 3;
 }
+
 }  // namespace
+
+void build_bch_operation_ranges(BchCache& cache) {
+	const uint64_t size = cache.bch_size();
+	std::vector<uint32_t> minimum_degree(size, 1);
+	for (uint64_t node = 2; node < size; ++node) {
+		const auto& operation = cache.bch_operation(node);
+		minimum_degree[node] = minimum_degree[operation.left]
+			+ minimum_degree[operation.right];
+	}
+
+	std::vector<uint32_t> maximum_degree(size, 0);
+	for (uint64_t node = 2; node < size; ++node) {
+		if (cache.bch_operation(node).coefficient != 0.0)
+			maximum_degree[node] = static_cast<uint32_t>(cache.degree);
+	}
+	for (uint64_t node = size; node-- > 2;) {
+		const auto& operation = cache.bch_operation(node);
+		const uint32_t required = maximum_degree[node];
+		if (required >= minimum_degree[operation.right])
+			maximum_degree[operation.left] = std::max(
+				maximum_degree[operation.left],
+				required - minimum_degree[operation.right]);
+		if (required >= minimum_degree[operation.left])
+			maximum_degree[operation.right] = std::max(
+				maximum_degree[operation.right],
+				required - minimum_degree[operation.left]);
+	}
+
+	cache.bch_ranges.resize(cache.bch_operations.size());
+	for (uint64_t node = 2; node < size; ++node) {
+		auto& range = cache.bch_ranges[node - 2];
+		range.begin = static_cast<uint32_t>(std::lower_bound(
+			cache.coordinate_weights.begin(), cache.coordinate_weights.end(),
+			minimum_degree[node]) - cache.coordinate_weights.begin());
+		range.end = static_cast<uint32_t>(std::upper_bound(
+			cache.coordinate_weights.begin(), cache.coordinate_weights.end(),
+			maximum_degree[node]) - cache.coordinate_weights.begin());
+	}
+}
 
 void build_commutator_views(BchCache& cache) {
 	const uint64_t m = cache.m;
@@ -365,12 +407,35 @@ bool load_hardcoded_bch_formula(BchCache& cache) {
 	const BchHardcodedData* data = get_hardcoded_bch_data(cache.degree);
 	if (data == nullptr)
 		return false;
-	cache.bch_coefficients.assign(
-		data->coefficients, data->coefficients + data->size);
-	cache.bch_left_factor.assign(
-		data->left_factor, data->left_factor + data->size);
-	cache.bch_right_factor.assign(
-		data->right_factor, data->right_factor + data->size);
+	cache.bch_ranges.clear();
+	std::vector<uint8_t> live(data->size, 0);
+	for (uint64_t node = 2; node < data->size; ++node)
+		live[node] = data->coefficients[node] != 0.0;
+	for (uint64_t node = data->size; node-- > 2;) {
+		if (!live[node])
+			continue;
+		if (data->left_factor[node] >= 2)
+			live[data->left_factor[node]] = 1;
+		if (data->right_factor[node] >= 2)
+			live[data->right_factor[node]] = 1;
+	}
+
+	std::vector<uint32_t> slots(data->size, UINT32_MAX);
+	if (data->size > 0)
+		slots[0] = 0;
+	if (data->size > 1)
+		slots[1] = 1;
+	cache.bch_operations.clear();
+	for (uint32_t node = 2; node < data->size; ++node) {
+		if (!live[node])
+			continue;
+		cache.bch_operations.push_back({
+			data->coefficients[node],
+			slots[data->left_factor[node]],
+			slots[data->right_factor[node]]
+		});
+		slots[node] = static_cast<uint32_t>(cache.bch_operations.size() + 1);
+	}
 	return true;
 }
 
@@ -379,33 +444,6 @@ void build_bch_formula_data(BchCache& cache) {
 		return;
 	throw std::invalid_argument(
 		"BCH methods support truncation degrees at most 20");
-}
-
-void build_live_bch_nodes(BchCache& cache) {
-	const uint64_t formula_size = cache.bch_coefficients.size();
-	std::vector<uint8_t> live(formula_size, 0);
-	for (uint64_t node = 2; node < formula_size; ++node)
-		live[node] = cache.bch_coefficients[node] != 0.0;
-
-	for (uint64_t node = formula_size; node-- > 2;) {
-		const uint64_t left = cache.bch_left_factor[node];
-		const uint64_t right = cache.bch_right_factor[node];
-		if (!live[node])
-			continue;
-		if (left >= 2)
-			live[left] = 1;
-		if (right >= 2)
-			live[right] = 1;
-	}
-
-	cache.live_bch_nodes.clear();
-	cache.live_bch_nodes.reserve(formula_size > 2 ? formula_size - 2 : 0);
-	for (uint32_t node = 2; node < formula_size; ++node) {
-		if (live[node])
-			cache.live_bch_nodes.push_back(node);
-	}
-	cache.all_bch_nodes_live = cache.live_bch_nodes.size()
-		== (formula_size > 2 ? formula_size - 2 : 0);
 }
 
 std::unique_ptr<BchCache> make_standard_bch_cache(
@@ -417,8 +455,8 @@ std::unique_ptr<BchCache> make_standard_bch_cache(
 	cache->dimension = dimension;
 	cache->degree = degree;
 	build_bch_formula_data(*cache);
-	build_live_bch_nodes(*cache);
 	build_standard_commutator_table(*cache, basis);
+	build_bch_operation_ranges(*cache);
 	if (dimension > UINT32_MAX)
 		throw std::overflow_error("BCH linear input is too large");
 	const uint64_t input_size = (std::min)(dimension, cache->m);

@@ -27,6 +27,17 @@
 using SparseVec = std::vector<std::pair<uint64_t, int>>;
 using TensorElem = std::unordered_map<uint64_t, int>;
 
+struct BchOperation {
+	double coefficient = 0.0;
+	uint32_t left = 0;
+	uint32_t right = 0;
+};
+
+struct BchRange {
+	uint32_t begin = 0;
+	uint32_t end = 0;
+};
+
 struct BchCache {
 	uint64_t dimension = 0;
 	uint64_t degree = 0;
@@ -50,6 +61,7 @@ struct BchCache {
 	std::vector<uint32_t> comm_ij_ptr;
 	std::vector<uint32_t> comm_ij_k;
 	std::vector<double> comm_ij_c;
+	// Indexed by node, including inputs 0 and 1; support for a linear right input.
 	std::vector<std::pair<uint64_t, uint64_t>> linear_range;
 	std::vector<uint64_t> linear_pair_ptr;
 	std::vector<uint32_t> linear_pair_idx;
@@ -60,11 +72,18 @@ struct BchCache {
 	bool prune_linear_backprop = false;
 	std::vector<uint64_t> left_factor;
 	std::vector<uint64_t> right_factor;
-	std::vector<double> bch_coefficients;
-	std::vector<uint64_t> bch_left_factor;
-	std::vector<uint64_t> bch_right_factor;
-	std::vector<uint32_t> live_bch_nodes;
-	bool all_bch_nodes_live = true;
+	// Operation i produces node i + 2; factors name earlier nodes (0/1 are inputs).
+	std::vector<BchOperation> bch_operations;
+	// Same indexing as operations. Half-open coordinate ranges needed by the
+	// final output, assuming arbitrary inputs; weights must be sorted.
+	std::vector<BchRange> bch_ranges;
+
+	uint64_t bch_size() const noexcept {
+		return degree == 0 ? 0 : bch_operations.size() + 2;
+	}
+	const BchOperation& bch_operation(uint64_t node) const {
+		return bch_operations[node - 2];
+	}
 };
 
 void remove_zero_entries(TensorElem& element);
@@ -86,13 +105,13 @@ void build_commutator_views(BchCache& cache);
 void build_standard_commutator_table(
 	BchCache& cache,
 	const BasisCache& basis);
+void build_bch_operation_ranges(BchCache& cache);
 void configure_linear_bch_input(
 	BchCache& cache,
 	std::vector<uint32_t> input_indices,
 	bool prefix);
 bool load_hardcoded_bch_formula(BchCache& cache);
 void build_bch_formula_data(BchCache& cache);
-void build_live_bch_nodes(BchCache& cache);
 std::unique_ptr<BchCache> make_standard_bch_cache(
 	uint64_t dimension,
 	uint64_t degree,

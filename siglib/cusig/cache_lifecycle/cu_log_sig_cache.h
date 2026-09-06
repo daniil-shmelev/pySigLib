@@ -17,6 +17,7 @@
 
 #include "cu_disk_cache.h"
 #include "cu_utils.h"
+#include "preparation/log_sig/bch_cache.h"
 #include "preparation/log_sig/log_sig_cache.h"
 #include "preparation/log_sig/lyndon_words.h"
 
@@ -27,19 +28,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-
-struct CUDABchPlan {
-	// A null node list is the dense all-nodes-live plan.
-	uint32_t* nodes = nullptr;
-	uint64_t size = 0;
-
-#ifdef __CUDACC__
-	__host__ __device__ __forceinline__
-#endif
-	uint32_t operator[](uint64_t index) const {
-		return nodes ? nodes[index] : static_cast<uint32_t>(index + 2);
-	}
-};
 
 struct CUDACommutatorView {
 	const uint32_t* row_output = nullptr;
@@ -70,10 +58,8 @@ struct CUDACommutatorPlan {
 };
 
 struct CUDABchCache {
-	double* d_bch_coefficients = nullptr;
-	uint64_t* d_bch_left_factor = nullptr;
-	uint64_t* d_bch_right_factor = nullptr;
-	CUDABchPlan bch_plan;
+	BchOperation* d_bch_operations = nullptr;
+	BchRange* d_bch_ranges = nullptr;
 	CUDACommutatorPlan commutator_plan;
 	uint64_t* d_linear_range = nullptr;
 	uint64_t m2 = 0;
@@ -96,11 +82,8 @@ struct CUDABchCache {
 	CUDABchCache(const CUDABchCache&) = delete;
 	CUDABchCache& operator=(const CUDABchCache&) = delete;
 	CUDABchCache(CUDABchCache&& other) noexcept
-		: d_bch_coefficients(std::exchange(other.d_bch_coefficients, nullptr)),
-		d_bch_left_factor(std::exchange(other.d_bch_left_factor, nullptr)),
-		d_bch_right_factor(std::exchange(other.d_bch_right_factor, nullptr)),
-		bch_plan{ std::exchange(other.bch_plan.nodes, nullptr),
-			std::exchange(other.bch_plan.size, 0) },
+		: d_bch_operations(std::exchange(other.d_bch_operations, nullptr)),
+		d_bch_ranges(std::exchange(other.d_bch_ranges, nullptr)),
 		commutator_plan(std::move(other.commutator_plan)),
 		d_linear_range(std::exchange(other.d_linear_range, nullptr)),
 		m2(std::exchange(other.m2, 0)),
@@ -120,10 +103,8 @@ struct CUDABchCache {
 		d_linear_a_idx(std::exchange(other.d_linear_a_idx, nullptr)) {}
 
 	~CUDABchCache() {
-		if (d_bch_coefficients) cudaFree(d_bch_coefficients);
-		if (d_bch_left_factor) cudaFree(d_bch_left_factor);
-		if (d_bch_right_factor) cudaFree(d_bch_right_factor);
-		if (bch_plan.nodes) cudaFree(bch_plan.nodes);
+		if (d_bch_operations) cudaFree(d_bch_operations);
+		if (d_bch_ranges) cudaFree(d_bch_ranges);
 		if (d_linear_range) cudaFree(d_linear_range);
 		if (d_comm_k_ptr) cudaFree(d_comm_k_ptr);
 		if (d_comm_k_i) cudaFree(d_comm_k_i);
