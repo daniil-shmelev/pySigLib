@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import kauri
 
-import pysiglib
+import native_api as pysiglib
 
 np.random.seed(42)
 torch.manual_seed(42)

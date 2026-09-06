@@ -16,7 +16,7 @@
 import pytest
 import torch
 
-import pysiglib
+import native_api as pysiglib
 
 EPSILON = 1e-5
 

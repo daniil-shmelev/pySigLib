@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import torch
 
-import pysiglib
+import native_api as pysiglib
 from conftest import DEVICES, assert_device, skip_no_cuda
 
 
@@ -409,7 +409,7 @@ def test_branched_sig_coef_validation():
         pysiglib.branched_sig_coef(path, (3,))
     pysiglib.prepare_branched_sig_coef(2, (0,))
     expected = pysiglib.branched_sig_coef(path, (0,))
-    actual = pysiglib.torch_api.branched_sig_coef(path, (0,))
+    actual = pysiglib.torch_api.branched_sig_coef(torch.as_tensor(path), (0,))
     np.testing.assert_array_equal(actual, expected)
 
 

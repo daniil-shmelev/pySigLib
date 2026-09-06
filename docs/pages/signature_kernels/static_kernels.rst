@@ -37,8 +37,7 @@ which are documented below. In addition, one may define :ref:`custom kernels <cu
 .. code-block:: python
 
     import torch
-    import pysiglib
-
+    import pysiglib.torch_api as pysiglib
     X = torch.rand((32, 100, 5))
     Y = torch.rand((32, 100, 5))
 

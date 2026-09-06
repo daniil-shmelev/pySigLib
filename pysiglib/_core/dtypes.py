@@ -13,10 +13,12 @@
 # limitations under the License.
 # =========================================================================
 
+from __future__ import annotations
+
+
 from ctypes import c_float, c_double
 import numpy as np
-import torch
-from .load_siglib import CPSIG, CUSIG, BUILT_WITH_CUDA
+from ..load_siglib import CPSIG, CUSIG, BUILT_WITH_CUDA
 
 ######################################################
 # Some dicts to simplify dtype cases
@@ -30,8 +32,6 @@ DTYPES = {
 SUPPORTED_DTYPES = [
     np.float32,
     np.float64,
-    torch.float32,
-    torch.float64
 ]
 
 SUPPORTED_DTYPES_STR = "float or double"

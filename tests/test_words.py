@@ -13,7 +13,7 @@
 # limitations under the License.
 # =========================================================================
 
-import pysiglib
+import native_api as pysiglib
 
 def test_lyndon_words_1():
     dimension, degree = 2, 3

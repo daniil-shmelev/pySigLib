@@ -55,7 +55,9 @@ def dynamic_metadata(field: str, _settings: dict[str, Any] | None) -> dict[str, 
         # jax>=0.9.1 is the first release whose XLA FFI framework version is 0.3,
         # matching what our FFI handlers are compiled against. Older jax versions
         # will fail at handler registration with an API-version-mismatch error.
-        "jax": ["jax>=0.9.1"],
+        # array-api-compat 1.13 recognizes current JAX array classes.
+        "jax": ["jax>=0.9.1", "array-api-compat>=1.13"],
+        "torch": ["torch"],
     }
 
 

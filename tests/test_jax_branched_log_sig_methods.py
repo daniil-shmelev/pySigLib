@@ -16,8 +16,8 @@
 import numpy as np
 import pytest
 
-import pysiglib
-from pysiglib.branched_log_sig_backprop import (
+import native_api as pysiglib
+from pysiglib._core.branched_log_sig_backprop import (
     _branched_log_sig_from_path_backprop,
 )
 

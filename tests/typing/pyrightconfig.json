@@ -1,0 +1,12 @@
+{
+  "include": [
+    "backend_arrays.py",
+    "../../pysiglib/_core/_array.py",
+    "../../pysiglib/_core/_storage.py"
+  ],
+  "extraPaths": [
+    "../.."
+  ],
+  "typeCheckingMode": "standard",
+  "reportUnnecessaryTypeIgnoreComment": "error"
+}

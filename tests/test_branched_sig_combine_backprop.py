@@ -17,7 +17,7 @@ import pytest
 import numpy as np
 import torch
 
-import pysiglib
+import native_api as pysiglib
 from conftest import check_close, skip_no_cuda
 
 

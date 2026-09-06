@@ -35,7 +35,7 @@ readme = "README.md"
 authors = [
     { name = "Daniil Shmelev", email = "daniil.shmelev23@imperial.ac.uk" },
 ]
-dependencies = ["numpy", "torch", "kauri>=2.3.0"]
+dependencies = ["numpy", "array-api-compat>=1.11.2", "kauri>=2.3.0"]
 
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -105,7 +105,7 @@ build = "cp311-*"
 skip = "*-musllinux_* *-win32 *i686"
 build-verbosity = 1
 environment = { SIGLIB_VEC = "ON" }
-test-requires = ["pytest"]
+test-requires = ["pytest", "torch"]
 test-command = 'python -c "import pysiglib, pysiglib.torch_api; print(f\"imports OK: pysiglib {pysiglib.__version__}, BUILT_WITH_CUDA={pysiglib.load_siglib.BUILT_WITH_CUDA}, BUILT_WITH_AVX={pysiglib.load_siglib.BUILT_WITH_AVX}\")"'
 
 [tool.cibuildwheel.linux]

@@ -13,8 +13,11 @@ and macOS (arm64).
 
 .. code-block:: console
 
-    pip install pysiglib              # CPU only
-    pip install pysiglib[cuda]        # with CUDA GPU support
+    pip install pysiglib                 # NumPy, CPU only
+    pip install "pysiglib[torch]"        # PyTorch API
+    pip install "pysiglib[jax]"          # JAX API (Python 3.11+)
+    pip install "pysiglib[torch,jax]"    # Both frameworks
+    pip install "pysiglib[torch,cuda]"   # PyTorch and native CUDA support
 
 The ``[cuda]`` extra installs the companion ``pysiglib-cuda`` plugin, which
 ships the CUDA shared library (``cusig``) and the CUDA JAX FFI bindings as a
@@ -24,18 +27,17 @@ absent, ``pysiglib`` runs CPU-only.
 JAX support
 ++++++++++++++++++++++++++++++
 
-The XLA FFI bindings for JAX are already built into every pySigLib wheel, so
-there is no pySigLib-side extra to install. Just install JAX separately:
+The base NumPy API imports neither Torch nor JAX. The ``[jax]`` extra installs a compatible JAX version; the CPU XLA FFI bindings are included in the wheel. Select the API with ``import pysiglib.jax_api as pysiglib``:
 
 .. code-block:: console
 
-    pip install jax
+    pip install "pysiglib[jax]"
 
 For GPU-accelerated JAX, use its CUDA variant:
 
 .. code-block:: console
 
-    pip install pysiglib[cuda] jax[cuda12]
+    pip install "pysiglib[jax,cuda]" "jax[cuda12]"
 
 To verify the installation:
 
@@ -126,7 +128,7 @@ their respective XLA FFI bindings if JAX is installed. Requires
 
 .. code-block:: console
 
-    pip install jax
+    pip install "pysiglib[jax]"
     pip install pysiglib --no-binary pysiglib
     pip install ./plugins/cuda    # only if you need CUDA
 
