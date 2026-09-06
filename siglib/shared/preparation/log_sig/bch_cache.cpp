@@ -182,16 +182,74 @@ void build_linear_bch_ranges_(BchCache& cache) {
 		? (formula_size - 2) * cache.n_pairs : 0;
 	cache.prune_linear_backprop = dense_count > 0
 		&& cache.linear_pair_idx.size() <= dense_count - dense_count / 3;
+	cache.linear_forward.clear();
+	if (cache.degree < 5 || !cache.linear_input_prefix)
+		return;
+	std::vector<std::vector<uint8_t>> support(formula_size, std::vector<uint8_t>(cache.m));
+	std::fill(support[0].begin(), support[0].end(), 1);
+	for (uint32_t index : cache.linear_input_idx) support[1][index] = 1;
+	cache.linear_forward.resize(formula_size);
+	uint64_t full_entries = 0, active_entries = 0;
+	for (uint64_t node = 2; node < formula_size; ++node) {
+		const uint64_t left = cache.bch_left_factor[node], right = cache.bch_right_factor[node];
+		const auto [begin, end] = cache.linear_range[node];
+		auto& plan = cache.linear_forward[node];
+		plan.row_ptr.reserve(end - begin + 1);
+		plan.row_ptr.push_back(0);
+		for (uint64_t k = begin; k < end; ++k) {
+			const uint32_t stop = left == 1 || right == 1
+				? cache.comm_k_sparse_end[k] : cache.comm_k_ptr[k + 1];
+			full_entries += stop - cache.comm_k_ptr[k];
+			for (uint32_t q = cache.comm_k_ptr[k]; q < stop; ++q) {
+				const uint32_t i = cache.comm_k_i[q], j = cache.comm_k_j[q];
+				const uint8_t orientation = (support[left][i] && support[right][j] ? 1 : 0)
+					| (support[left][j] && support[right][i] ? 2 : 0);
+				if (orientation) {
+					plan.entries.push_back({ i, j, cache.comm_k_val[q], orientation });
+					support[node][k] = 1;
+				}
+			}
+			plan.row_ptr.push_back(static_cast<uint32_t>(plan.entries.size()));
+		}
+		active_entries += plan.entries.size();
+		plan.entries.shrink_to_fit();
+	}
+	if (active_entries > full_entries - full_entries / 5)
+		std::vector<BchForwardNode>().swap(cache.linear_forward);
 }
 }  // namespace
 
 void build_commutator_views(BchCache& cache) {
 	const uint64_t m = cache.m;
+	if (!cache.commutator_table.empty()) {
+		cache.comm_ij_i.clear();
+		cache.comm_ij_j.clear();
+		cache.comm_ij_ptr.assign(1, 0);
+		cache.comm_ij_k.clear();
+		cache.comm_ij_c.clear();
+		for (uint64_t i = 0; i < m; ++i) {
+			for (uint64_t j = i + 1; j < m; ++j) {
+				const auto& entries = cache.commutator_table[i * m + j];
+				if (entries.empty()) continue;
+				cache.comm_ij_i.push_back(static_cast<uint32_t>(i));
+				cache.comm_ij_j.push_back(static_cast<uint32_t>(j));
+				for (const auto& [k, coefficient] : entries) {
+					cache.comm_ij_k.push_back(static_cast<uint32_t>(k));
+					cache.comm_ij_c.push_back(static_cast<double>(coefficient));
+				}
+				if (cache.comm_ij_k.size() > UINT32_MAX)
+					throw std::overflow_error("BCH commutator table is too large");
+				cache.comm_ij_ptr.push_back(static_cast<uint32_t>(cache.comm_ij_k.size()));
+			}
+		}
+		std::vector<SparseVec>().swap(cache.commutator_table);
+	}
+	if (cache.comm_ij_i.size() > UINT32_MAX || cache.comm_ij_k.size() > UINT32_MAX / 2)
+		throw std::overflow_error("BCH commutator table is too large");
+	cache.n_pairs = static_cast<uint32_t>(cache.comm_ij_i.size());
 	std::vector<uint32_t> counts(m, 0);
-	for (uint64_t i = 0; i < m; ++i)
-		for (uint64_t j = i + 1; j < m; ++j)
-			for (const auto& [k, coefficient] : cache.commutator_table[i * m + j])
-				++counts[k];
+	for (uint32_t k : cache.comm_ij_k)
+		++counts[k];
 	cache.comm_k_ptr.assign(m + 1, 0);
 	for (uint64_t k = 0; k < m; ++k)
 		cache.comm_k_ptr[k + 1] = cache.comm_k_ptr[k] + counts[k];
@@ -200,14 +258,15 @@ void build_commutator_views(BchCache& cache) {
 	cache.comm_k_j.resize(nnz);
 	cache.comm_k_val.resize(nnz);
 	std::fill(counts.begin(), counts.end(), 0);
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			for (const auto& [k, coefficient] : cache.commutator_table[i * m + j]) {
-				const uint32_t position = cache.comm_k_ptr[k] + counts[k]++;
-				cache.comm_k_i[position] = static_cast<uint32_t>(i);
-				cache.comm_k_j[position] = static_cast<uint32_t>(j);
-				cache.comm_k_val[position] = coefficient;
-			}
+	for (uint32_t pair = 0; pair < cache.n_pairs; ++pair) {
+		const uint32_t i = cache.comm_ij_i[pair], j = cache.comm_ij_j[pair];
+		for (uint32_t index = cache.comm_ij_ptr[pair]; index < cache.comm_ij_ptr[pair + 1]; ++index) {
+			const uint32_t k = cache.comm_ij_k[index];
+			const int coefficient = static_cast<int>(cache.comm_ij_c[index]);
+			const uint32_t position = cache.comm_k_ptr[k] + counts[k]++;
+			cache.comm_k_i[position] = i;
+			cache.comm_k_j[position] = j;
+			cache.comm_k_val[position] = coefficient;
 		}
 	}
 	cache.comm_k_val_d.resize(nnz);
@@ -225,13 +284,10 @@ void build_commutator_views(BchCache& cache) {
 		cache.comm_k_sparse_end[k] = end;
 	}
 	std::vector<uint32_t> input_counts(m, 0);
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			for (const auto& entry : cache.commutator_table[i * m + j]) {
-				++input_counts[i];
-				++input_counts[j];
-			}
-		}
+	for (uint32_t pair = 0; pair < cache.n_pairs; ++pair) {
+		const uint32_t size = cache.comm_ij_ptr[pair + 1] - cache.comm_ij_ptr[pair];
+		input_counts[cache.comm_ij_i[pair]] += size;
+		input_counts[cache.comm_ij_j[pair]] += size;
 	}
 	cache.comm_a_ptr.assign(m + 1, 0);
 	for (uint64_t index = 0; index < m; ++index)
@@ -241,43 +297,19 @@ void build_commutator_views(BchCache& cache) {
 	cache.comm_a_partner.resize(input_nnz);
 	cache.comm_a_signed_c.resize(input_nnz);
 	std::fill(input_counts.begin(), input_counts.end(), 0);
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			for (const auto& [k, coefficient] : cache.commutator_table[i * m + j]) {
-				const uint32_t left = cache.comm_a_ptr[i] + input_counts[i]++;
-				cache.comm_a_k[left] = static_cast<uint32_t>(k);
-				cache.comm_a_partner[left] = static_cast<uint32_t>(j);
-				cache.comm_a_signed_c[left] = coefficient;
-				const uint32_t right = cache.comm_a_ptr[j] + input_counts[j]++;
-				cache.comm_a_k[right] = static_cast<uint32_t>(k);
-				cache.comm_a_partner[right] = static_cast<uint32_t>(i);
-				cache.comm_a_signed_c[right] = -coefficient;
-			}
-		}
-	}
-	cache.n_pairs = 0;
-	for (uint64_t i = 0; i < m; ++i)
-		for (uint64_t j = i + 1; j < m; ++j)
-			cache.n_pairs += !cache.commutator_table[i * m + j].empty();
-	cache.comm_ij_i.resize(cache.n_pairs);
-	cache.comm_ij_j.resize(cache.n_pairs);
-	cache.comm_ij_ptr.assign(cache.n_pairs + 1, 0);
-	cache.comm_ij_k.resize(nnz);
-	cache.comm_ij_c.resize(nnz);
-	uint32_t pair_index = 0;
-	uint32_t entry_index = 0;
-	for (uint64_t i = 0; i < m; ++i) {
-		for (uint64_t j = i + 1; j < m; ++j) {
-			const SparseVec& entries = cache.commutator_table[i * m + j];
-			if (entries.empty())
-				continue;
-			cache.comm_ij_i[pair_index] = static_cast<uint32_t>(i);
-			cache.comm_ij_j[pair_index] = static_cast<uint32_t>(j);
-			for (const auto& [k, coefficient] : entries) {
-				cache.comm_ij_k[entry_index] = static_cast<uint32_t>(k);
-				cache.comm_ij_c[entry_index++] = static_cast<double>(coefficient);
-			}
-			cache.comm_ij_ptr[++pair_index] = entry_index;
+	for (uint32_t pair = 0; pair < cache.n_pairs; ++pair) {
+		const uint32_t i = cache.comm_ij_i[pair], j = cache.comm_ij_j[pair];
+		for (uint32_t index = cache.comm_ij_ptr[pair]; index < cache.comm_ij_ptr[pair + 1]; ++index) {
+			const uint32_t k = cache.comm_ij_k[index];
+			const int coefficient = static_cast<int>(cache.comm_ij_c[index]);
+			const uint32_t left = cache.comm_a_ptr[i] + input_counts[i]++;
+			cache.comm_a_k[left] = k;
+			cache.comm_a_partner[left] = j;
+			cache.comm_a_signed_c[left] = coefficient;
+			const uint32_t right = cache.comm_a_ptr[j] + input_counts[j]++;
+			cache.comm_a_k[right] = k;
+			cache.comm_a_partner[right] = i;
+			cache.comm_a_signed_c[right] = -coefficient;
 		}
 	}
 }
@@ -296,7 +328,7 @@ void build_standard_commutator_table(
 		words, cache.left_factor, cache.right_factor,
 		cache.dimension, cache.degree,
 		representations, cache.coordinate_weights);
-	cache.commutator_table.assign(cache.m * cache.m, {});
+	cache.comm_ij_ptr.assign(1, 0);
 	std::vector<double> coordinates(cache.m, 0.0);
 	for (uint64_t i = 0; i < cache.m; ++i) {
 		for (uint64_t j = i + 1; j < cache.m; ++j) {
@@ -323,11 +355,20 @@ void build_standard_commutator_table(
 					coordinates[k] = static_cast<double>(found->second);
 			}
 			basis.inv_proj_mat.mul_vec_inplace_lower(coordinates.data());
-			SparseVec& output = cache.commutator_table[i * cache.m + j];
+			const auto start = cache.comm_ij_k.size();
 			for (uint64_t k = 0; k < cache.m; ++k) {
 				const int coefficient = static_cast<int>(std::round(coordinates[k]));
-				if (coefficient != 0)
-					output.push_back({ k, coefficient });
+				if (coefficient != 0) {
+					cache.comm_ij_k.push_back(static_cast<uint32_t>(k));
+					cache.comm_ij_c.push_back(static_cast<double>(coefficient));
+				}
+			}
+			if (cache.comm_ij_k.size() != start) {
+				if (cache.comm_ij_k.size() > UINT32_MAX)
+					throw std::overflow_error("BCH commutator table is too large");
+				cache.comm_ij_i.push_back(static_cast<uint32_t>(i));
+				cache.comm_ij_j.push_back(static_cast<uint32_t>(j));
+				cache.comm_ij_ptr.push_back(static_cast<uint32_t>(cache.comm_ij_k.size()));
 			}
 		}
 	}

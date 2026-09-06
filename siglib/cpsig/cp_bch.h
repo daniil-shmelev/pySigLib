@@ -216,6 +216,32 @@ void bch_combine_linear_impl_(
 	if (ls2 != memo + m)
 		std::memcpy(memo + m, ls2, m * sizeof(T));
 
+	if (!cache.linear_forward.empty()) {
+		for (uint64_t w = 2; w < m2; ++w) {
+			const auto& plan = cache.linear_forward[w];
+			const auto [begin, end] = cache.linear_range[w];
+			const T* v1 = memo + cache.bch_left_factor[w] * m;
+			const T* v2 = memo + cache.bch_right_factor[w] * m;
+			T* result = memo + w * m;
+			std::fill(result, result + begin, T(0));
+			std::fill(result + end, result + m, T(0));
+			const T weight = static_cast<T>(cache.bch_coefficients[w]);
+			for (uint64_t k = begin; k < end; ++k) {
+				T sum = 0;
+				for (uint32_t q = plan.row_ptr[k - begin]; q < plan.row_ptr[k - begin + 1]; ++q) {
+					const auto& entry = plan.entries[q];
+					T term = 0;
+					if (entry.orientation & 1) term = v1[entry.i] * v2[entry.j];
+					if (entry.orientation & 2) term -= v1[entry.j] * v2[entry.i];
+					sum += static_cast<T>(entry.coefficient) * term;
+				}
+				result[k] = sum;
+				if (weight != T(0)) out[k] += weight * sum;
+			}
+		}
+		return;
+	}
+
 	const uint32_t* k_ptr = cache.comm_k_ptr.data();
 	const uint32_t* k_i = cache.comm_k_i.data();
 	const uint32_t* k_j = cache.comm_k_j.data();
@@ -576,3 +602,163 @@ void bch_combine_backprop_impl_(
 		d_ls2[i] += d_memo[m + i];
 	}
 }
+
+#ifdef VEC
+template<std::floating_point T>
+struct alignas(vec_batch_bytes) BchBatchValue {
+	static constexpr uint64_t width = vec_batch_bytes / sizeof(T);
+	T data[width]{};
+};
+
+template<std::floating_point T>
+void bch_combine_linear_batch_(
+	const BchBatchValue<T>* ls1, const BchBatchValue<T>* ls2,
+	BchBatchValue<T>* out, const BchCache& cache, BchBatchValue<T>* memo
+) {
+	const uint64_t m = cache.m;
+	std::copy_n(ls1, m, out);
+	for (uint64_t k = 0; k < cache.dimension; ++k)
+		vec_batch_add_inplace(out[k].data, ls2[k].data);
+	std::copy_n(ls1, m, memo);
+	std::copy_n(ls2, m, memo + m);
+	for (uint64_t w = 2; w < cache.bch_coefficients.size(); ++w) {
+		const uint64_t left = cache.bch_left_factor[w], right = cache.bch_right_factor[w];
+		const auto* v1 = memo + left * m;
+		const auto* v2 = memo + right * m;
+		auto* result = memo + w * m;
+		const auto [begin, end] = cache.linear_range[w];
+		std::fill(result, result + begin, BchBatchValue<T>{});
+		std::fill(result + end, result + m, BchBatchValue<T>{});
+		const T weight = static_cast<T>(cache.bch_coefficients[w]);
+		for (uint64_t k = begin; k < end; ++k) {
+			BchBatchValue<T> sum, term, reverse;
+			const uint32_t stop = left == 1 || right == 1
+				? cache.comm_k_sparse_end[k] : cache.comm_k_ptr[k + 1];
+			for (uint32_t q = cache.comm_k_ptr[k]; q < stop; ++q) {
+				const uint32_t i = cache.comm_k_i[q], j = cache.comm_k_j[q];
+				vec_batch_multiply(term.data, v1[i].data, v2[j].data);
+				vec_batch_multiply(reverse.data, v1[j].data, v2[i].data);
+				vec_batch_subtract_inplace(term.data, reverse.data);
+				vec_batch_scaled_add(sum.data, term.data, static_cast<T>(cache.comm_k_val_d[q]));
+			}
+			result[k] = sum;
+			if (weight != T(0)) vec_batch_scaled_add(out[k].data, sum.data, weight);
+		}
+	}
+}
+
+template<std::floating_point T>
+void bch_linear_batch_backprop_(
+	const BchBatchValue<T>* d_out, BchBatchValue<T>* d_ls1, BchBatchValue<T>* d_ls2,
+	const BchBatchValue<T>* ls1, const BchBatchValue<T>* ls2,
+	const BchCache& cache, BchBatchValue<T>* workspace
+) {
+	const uint64_t m = cache.m, count = cache.bch_coefficients.size();
+	auto* memo = workspace;
+	auto* d_memo = memo + count * m;
+	bch_combine_linear_batch_(ls1, ls2, d_ls1, cache, memo);
+	std::fill(d_memo, d_memo + 2 * m, BchBatchValue<T>{});
+	for (uint64_t w = 2; w < count; ++w) {
+		const T weight = static_cast<T>(cache.bch_coefficients[w]);
+		const auto [begin, end] = cache.linear_range[w];
+		auto* dm = d_memo + w * m;
+		for (uint64_t k = 0; k < m; ++k) {
+			if (weight != T(0) && (!cache.prune_linear_backprop || (k >= begin && k < end)))
+				vec_batch_scale(dm[k].data, d_out[k].data, weight);
+			else dm[k] = {};
+		}
+	}
+	for (uint64_t w = count - 1; w >= 2; --w) {
+		const uint64_t left = cache.bch_left_factor[w], right = cache.bch_right_factor[w];
+		const auto* v1 = memo + left * m;
+		const auto* v2 = memo + right * m;
+		const auto* dm = d_memo + w * m;
+		auto* d1 = d_memo + left * m;
+		auto* d2 = d_memo + right * m;
+		const uint64_t begin = cache.prune_linear_backprop ? cache.linear_pair_ptr[w] : 0;
+		const uint64_t end = cache.prune_linear_backprop ? cache.linear_pair_ptr[w + 1] : cache.n_pairs;
+		for (uint64_t q = begin; q < end; ++q) {
+			const uint32_t p = cache.prune_linear_backprop ? cache.linear_pair_idx[q] : static_cast<uint32_t>(q);
+			const uint32_t i = cache.comm_ij_i[p], j = cache.comm_ij_j[p];
+			BchBatchValue<T> sum;
+			for (uint32_t t = cache.comm_ij_ptr[p]; t < cache.comm_ij_ptr[p + 1]; ++t)
+				vec_batch_scaled_add(sum.data, dm[cache.comm_ij_k[t]].data, static_cast<T>(cache.comm_ij_c[t]));
+			vec_batch_multiply_add(d1[i].data, sum.data, v2[j].data);
+			vec_batch_subtract_product(d1[j].data, sum.data, v2[i].data);
+			vec_batch_multiply_add(d2[j].data, sum.data, v1[i].data);
+			vec_batch_subtract_product(d2[i].data, sum.data, v1[j].data);
+		}
+	}
+	for (uint64_t k = 0; k < m; ++k) {
+		vec_batch_add(d_ls1[k].data, d_out[k].data, d_memo[k].data);
+		vec_batch_add(d_ls2[k].data, d_out[k].data, d_memo[m + k].data);
+	}
+}
+
+template<std::floating_point T, bool backward>
+void log_sig_from_path_batch_vec_(
+	const T* path, const T* cotangent, T* out,
+	uint64_t length, uint64_t dimension, const BchCache& cache
+) {
+	using Value = BchBatchValue<T>;
+	constexpr uint64_t width = Value::width;
+	const uint64_t m = cache.m, count = cache.bch_coefficients.size();
+	thread_local std::vector<Value> scratch;
+	scratch.resize((backward ? 2 * count + 7 : count + 3) * m);
+	auto* curr = scratch.data();
+	auto* prev = curr + m;
+	auto* seg = prev + m;
+	auto* workspace = seg + m;
+	std::fill(curr, curr + m, Value{});
+	std::fill(seg, seg + m, Value{});
+	for (uint64_t k = 0; k < dimension; ++k)
+		for (uint64_t lane = 0; lane < width; ++lane)
+			curr[k].data[lane] = path[lane * length * dimension + dimension + k] - path[lane * length * dimension + k];
+	for (uint64_t s = 1; s < length - 1; ++s) {
+		for (uint64_t k = 0; k < dimension; ++k)
+			for (uint64_t lane = 0; lane < width; ++lane)
+				seg[k].data[lane] = path[(lane * length + s + 1) * dimension + k] - path[(lane * length + s) * dimension + k];
+		bch_combine_linear_batch_(curr, seg, prev, cache, workspace);
+		std::swap(curr, prev);
+	}
+	if constexpr (!backward) {
+		for (uint64_t k = 0; k < m; ++k)
+			for (uint64_t lane = 0; lane < width; ++lane)
+				out[lane * m + k] = curr[k].data[lane];
+	}
+	else {
+		auto* d_acc = workspace + 2 * count * m;
+		auto* d1 = d_acc + m;
+		auto* d2 = d1 + m;
+		auto* neg_seg = d2 + m;
+		std::fill(neg_seg, neg_seg + m, Value{});
+		for (uint64_t k = 0; k < m; ++k)
+			for (uint64_t lane = 0; lane < width; ++lane)
+				d_acc[k].data[lane] = cotangent[lane * m + k];
+		std::fill(out, out + width * length * dimension, T(0));
+		for (uint64_t s = length - 2; s >= 1; --s) {
+			for (uint64_t k = 0; k < dimension; ++k) {
+				for (uint64_t lane = 0; lane < width; ++lane) {
+					const T diff = path[(lane * length + s + 1) * dimension + k] - path[(lane * length + s) * dimension + k];
+					seg[k].data[lane] = diff;
+					neg_seg[k].data[lane] = -diff;
+				}
+			}
+			bch_combine_linear_batch_(curr, neg_seg, prev, cache, workspace);
+			bch_linear_batch_backprop_(d_acc, d1, d2, prev, seg, cache, workspace);
+			for (uint64_t k = 0; k < dimension; ++k)
+				for (uint64_t lane = 0; lane < width; ++lane) {
+					out[(lane * length + s + 1) * dimension + k] += d2[k].data[lane];
+					out[(lane * length + s) * dimension + k] -= d2[k].data[lane];
+				}
+			std::copy_n(d1, m, d_acc);
+			std::swap(curr, prev);
+		}
+		for (uint64_t k = 0; k < dimension; ++k)
+			for (uint64_t lane = 0; lane < width; ++lane) {
+				out[(lane * length + 1) * dimension + k] += d_acc[k].data[lane];
+				out[lane * length * dimension + k] -= d_acc[k].data[lane];
+			}
+	}
+}
+#endif
