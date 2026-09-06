@@ -75,6 +75,8 @@ struct CUDABchCache {
 	uint64_t* d_bch_right_factor = nullptr;
 	CUDABchPlan bch_plan;
 	CUDACommutatorPlan commutator_plan;
+	CudaBuf<uint32_t> linear_forward_storage;
+	CUDACommutatorView linear_forward;
 	uint64_t* d_linear_range = nullptr;
 	uint64_t m2 = 0;
 	uint64_t m = 0;
@@ -90,6 +92,7 @@ struct CUDABchCache {
 	uint32_t* d_comm_a_partner = nullptr;
 	int* d_comm_a_signed_c = nullptr;
 	uint64_t* d_linear_a_ptr = nullptr;
+	uint32_t* d_linear_a_ptr32 = nullptr;
 	uint32_t* d_linear_a_idx = nullptr;
 
 	CUDABchCache() = default;
@@ -102,6 +105,8 @@ struct CUDABchCache {
 		bch_plan{ std::exchange(other.bch_plan.nodes, nullptr),
 			std::exchange(other.bch_plan.size, 0) },
 		commutator_plan(std::move(other.commutator_plan)),
+		linear_forward_storage(std::move(other.linear_forward_storage)),
+		linear_forward(other.linear_forward),
 		d_linear_range(std::exchange(other.d_linear_range, nullptr)),
 		m2(std::exchange(other.m2, 0)),
 		m(std::exchange(other.m, 0)),
@@ -117,6 +122,7 @@ struct CUDABchCache {
 		d_comm_a_partner(std::exchange(other.d_comm_a_partner, nullptr)),
 		d_comm_a_signed_c(std::exchange(other.d_comm_a_signed_c, nullptr)),
 		d_linear_a_ptr(std::exchange(other.d_linear_a_ptr, nullptr)),
+		d_linear_a_ptr32(std::exchange(other.d_linear_a_ptr32, nullptr)),
 		d_linear_a_idx(std::exchange(other.d_linear_a_idx, nullptr)) {}
 
 	~CUDABchCache() {
@@ -134,6 +140,7 @@ struct CUDABchCache {
 		if (d_comm_a_partner) cudaFree(d_comm_a_partner);
 		if (d_comm_a_signed_c) cudaFree(d_comm_a_signed_c);
 		if (d_linear_a_ptr) cudaFree(d_linear_a_ptr);
+		if (d_linear_a_ptr32) cudaFree(d_linear_a_ptr32);
 		if (d_linear_a_idx) cudaFree(d_linear_a_idx);
 	}
 

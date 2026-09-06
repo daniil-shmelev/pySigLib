@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <mutex>
 #include <stdexcept>
+#include <type_traits>
 
 // Type-erased via void* because the hosting functions are templated over
 // float/double - both share one buffer, sized to the larger allocation.
@@ -58,6 +59,24 @@ __device__ __forceinline__ T evaluate_commutator_row_(
 		sum += T(commutator.value[index])
 			* (v1[i] * v2[j] - v1[j] * v2[i]);
 	}
+	return sum;
+}
+
+template<typename T>
+__device__ __forceinline__ T evaluate_linear_commutator_row_(
+	CUDACommutatorView linear_forward,
+	CUDACommutatorView commutator,
+	const T* v1, const T* v2,
+	uint64_t node, uint64_t k, uint64_t row, uint64_t m
+) {
+	if (!linear_forward.ptr)
+		return evaluate_commutator_row_(commutator, v1, v2, row);
+	const uint64_t offset = node * m + k;
+	T sum = T(0);
+	for (uint32_t q = linear_forward.ptr[offset];
+		q < linear_forward.ptr[offset + 1]; ++q)
+		sum += T(linear_forward.value[q])
+			* v1[linear_forward.i[q]] * v2[linear_forward.j[q]];
 	return sum;
 }
 
@@ -588,7 +607,8 @@ template<
 	typename T,
 	bool use_linear_range,
 	bool use_balanced_rows,
-	bool use_shared_operands
+	bool use_shared_operands,
+	bool use_linear_forward
 >
 __global__ void batch_log_sig_from_path_kernel_(
 	const T* __restrict__ path,
@@ -600,6 +620,7 @@ __global__ void batch_log_sig_from_path_kernel_(
 	CUDABchPlan bch_plan,
 	const uint64_t* __restrict__ linear_range,
 	CUDACommutatorView commutator,
+	CUDACommutatorView linear_forward,
 	uint64_t m, uint64_t m2, uint64_t length, uint64_t dimension
 ) {
 	const uint64_t batch_idx = blockIdx.x;
@@ -672,12 +693,79 @@ __global__ void batch_log_sig_from_path_kernel_(
 			const T c_w = T(bch_coefs[w]);
 			for (uint64_t row = begin + tid; row < end; row += stride) {
 				const uint32_t k = commutator.output<use_balanced_rows>(row);
-				const T sum = evaluate_commutator_row_(
-					commutator, v1, v2, row);
+				T sum;
+				if constexpr (use_linear_forward)
+					sum = evaluate_linear_commutator_row_(
+						linear_forward, commutator, v1, v2, w, k, row, m);
+				else
+					sum = evaluate_commutator_row_(commutator, v1, v2, row);
 				result[k] = sum;
 				if (c_w != T(0)) my_out[k] += c_w * sum;
 			}
 			__syncthreads();
+		}
+	}
+}
+
+template<typename T>
+__global__ void batch_log_sig_from_path_grouped_kernel_(
+	const T* path, T* out, T* workspace,
+	const double* bch_coefs, const uint64_t* bch_lf, const uint64_t* bch_rf,
+	CUDABchPlan bch_plan, const uint64_t* linear_range,
+	CUDACommutatorView commutator, CUDACommutatorView linear_forward,
+	uint64_t m, uint64_t m2, uint64_t length, uint64_t dimension, uint64_t batch_size
+) {
+	const uint64_t group = threadIdx.x / 4;
+	const uint64_t batch_idx = blockIdx.x * 8ull + group;
+	if (batch_idx >= batch_size)
+		return;
+	const uint64_t tid = threadIdx.x % 4;
+	const unsigned int mask = 0xfu << (4 * group);
+	extern __shared__ char smem[];
+	T* s_v1 = reinterpret_cast<T*>(smem) + 2 * m * group;
+	T* s_v2 = s_v1 + m;
+	const T* my_path = path + batch_idx * length * dimension;
+	T* my_out = out + batch_idx * m;
+	T* memo = workspace + batch_idx * m2 * m;
+	for (uint64_t k = tid; k < m; k += 4)
+		my_out[k] = k < dimension ? my_path[dimension + k] - my_path[k] : T(0);
+	if (linear_range) {
+		for (uint64_t p = 0; p < bch_plan.size; ++p) {
+			const uint32_t w = bch_plan[p];
+			for (uint64_t k = tid; k < linear_range[2 * w]; k += 4)
+				memo[w * m + k] = T(0);
+			for (uint64_t k = linear_range[2 * w + 1] + tid; k < m; k += 4)
+				memo[w * m + k] = T(0);
+		}
+	}
+	__syncwarp(mask);
+	for (uint64_t seg = 1; seg < length - 1; ++seg) {
+		for (uint64_t k = tid; k < m; k += 4) {
+			memo[k] = my_out[k];
+			const T step = k < dimension
+				? my_path[(seg + 1) * dimension + k] - my_path[seg * dimension + k] : T(0);
+			memo[m + k] = step;
+			my_out[k] += step;
+		}
+		__syncwarp(mask);
+		for (uint64_t p = 0; p < bch_plan.size; ++p) {
+			const uint32_t w = bch_plan[p];
+			const uint64_t left = bch_lf[w], right = bch_rf[w];
+			for (uint64_t k = tid; k < m; k += 4) {
+				s_v1[k] = memo[left * m + k];
+				s_v2[k] = memo[right * m + k];
+			}
+			__syncwarp(mask);
+			const uint64_t begin = linear_range ? linear_range[2 * w] : 0;
+			const uint64_t end = linear_range ? linear_range[2 * w + 1] : m;
+			const T coefficient = T(bch_coefs[w]);
+			for (uint64_t k = begin + tid; k < end; k += 4) {
+				const T sum = evaluate_linear_commutator_row_(
+					linear_forward, commutator, s_v1, s_v2, w, k, k, m);
+				memo[w * m + k] = sum;
+				if (coefficient != T(0)) my_out[k] += coefficient * sum;
+			}
+			__syncwarp(mask);
 		}
 	}
 }
@@ -790,6 +878,23 @@ void log_sig_from_path_cuda_(
 		? cache.linear_commutator_view()
 		: cache.dense_commutator_view();
 	const uint64_t path_stride = length * dimension;
+	const bool use_forward_plan = cache.linear_forward.ptr
+		&& (!std::is_same_v<T, float> || m < 64 || batch_size >= 256);
+
+	// Small path groups need enough blocks to fill the device.
+	if (dimension <= 3 && m <= 23 && batch_size >= 4096) {
+		for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
+			const uint64_t current_batch = std::min(chunk_size, batch_size - offset);
+			batch_log_sig_from_path_grouped_kernel_<T><<<
+				static_cast<unsigned int>((current_batch + 7) / 8), 32, 16 * m * sizeof(T)>>>(
+				path + offset * path_stride, out + offset * m, s_workspace,
+				cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor,
+				cache.bch_plan, linear_range, cache.commutator_view(), cache.linear_forward,
+				m, m2, length, dimension, current_batch);
+			check_cuda_kernel_launch();
+		}
+		return;
+	}
 
 	dispatch_commutator_view_(commutator, [&]<bool use_balanced_rows>() {
 		for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
@@ -797,15 +902,21 @@ void log_sig_from_path_cuda_(
 				chunk_size, batch_size - offset);
 			const auto launch = [&]<
 				bool use_range, bool use_shared_operands>() {
-				batch_log_sig_from_path_kernel_<T, use_range,
-					use_balanced_rows, use_shared_operands><<<
-					static_cast<unsigned int>(current_batch), threads,
-					use_shared_operands ? shared_size : 0>>>(
-					path + offset * path_stride, out + offset * m,
-					s_workspace, cache.d_bch_coefficients,
-					cache.d_bch_left_factor, cache.d_bch_right_factor,
-					cache.bch_plan, use_range ? linear_range : nullptr,
-					commutator, m, m2, length, dimension);
+				const auto run = [&]<bool use_forward>() {
+					batch_log_sig_from_path_kernel_<T, use_range,
+						use_balanced_rows, use_shared_operands, use_forward><<<
+						static_cast<unsigned int>(current_batch), threads,
+						use_shared_operands ? shared_size : 0>>>(
+						path + offset * path_stride, out + offset * m,
+						s_workspace, cache.d_bch_coefficients,
+						cache.d_bch_left_factor, cache.d_bch_right_factor,
+						cache.bch_plan, use_range ? linear_range : nullptr,
+						commutator, cache.linear_forward, m, m2, length, dimension);
+				};
+				if (use_forward_plan)
+					run.template operator()<true>();
+				else
+					run.template operator()<false>();
 			};
 			if (linear_range) {
 				if (use_shmem)
@@ -846,11 +957,12 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 	CUDABchPlan bch_plan,
 	const uint64_t* __restrict__ linear_range,
 	CUDACommutatorView commutator,
+	CUDACommutatorView linear_forward,
 	const uint32_t* __restrict__ comm_a_ptr,
 	const uint32_t* __restrict__ comm_a_k,
 	const uint32_t* __restrict__ comm_a_partner,
 	const int* __restrict__ comm_a_signed_c,
-	const uint64_t* __restrict__ linear_a_ptr,
+	const uint32_t* __restrict__ linear_a_ptr,
 	const uint32_t* __restrict__ linear_a_idx,
 	uint64_t m, uint64_t m2, uint64_t length, uint64_t dimension
 ) {
@@ -941,8 +1053,8 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 			}
 			const T c_w = T(bch_coefs[w]);
 			for (uint64_t k = begin + tid; k < end; k += stride) {
-				const T sum = evaluate_commutator_row_(
-					commutator, v1, v2, k);
+				const T sum = evaluate_linear_commutator_row_(
+					linear_forward, commutator, v1, v2, w, k, k, m);
 				result[k] = sum;
 				if (c_w != T(0)) next[k] += c_w * sum;
 			}
@@ -993,8 +1105,8 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 				}
 				const T c_w = T(bch_coefs[w]);
 				for (uint64_t k = tid; k < m; k += stride) {
-					const T sum = evaluate_commutator_row_(
-						commutator, v1, v2, k);
+					const T sum = evaluate_linear_commutator_row_(
+						linear_forward, commutator, v1, v2, w, k, k, m);
 					result[k] = sum;
 					if (c_w != T(0)) prev[k] += c_w * sum;
 				}
@@ -1033,8 +1145,8 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 				v2 = s_v2;
 			}
 			for (uint64_t k = begin + tid; k < end; k += stride) {
-				result[k] = evaluate_commutator_row_(
-					commutator, v1, v2, k);
+				result[k] = evaluate_linear_commutator_row_(
+					linear_forward, commutator, v1, v2, w, k, k, m);
 			}
 			__syncthreads();
 		}
@@ -1075,7 +1187,7 @@ __global__ void batch_log_sig_from_path_backprop_kernel_(
 				T acc_dv1 = T(0), acc_dv2 = T(0);
 				if constexpr (use_linear_reverse) {
 					const uint64_t row = w * m + a;
-					for (uint64_t q = linear_a_ptr[row]; q < linear_a_ptr[row + 1]; ++q) {
+					for (uint32_t q = linear_a_ptr[row]; q < linear_a_ptr[row + 1]; ++q) {
 						const uint32_t packed = linear_a_idx[q];
 						const uint32_t idx = packed >> 1;
 						const uint32_t k = comm_a_k[idx];
@@ -1186,8 +1298,8 @@ void log_sig_from_path_backprop_cuda_(
 	CUDA_CHECK(cudaMemGetInfo(&free_memory, &total_memory));
 	const bool save_states = prefer_saved_states
 		&& saved_workspace_bytes <= free_memory / 2;
-	const bool use_linear_reverse = save_states
-		&& (4 * cache.bch_plan.size >= m || m >= 512);
+	const bool use_linear_reverse = cache.linear_forward.ptr || (save_states
+		&& (4 * cache.bch_plan.size >= m || m >= 512));
 	const uint64_t node_count = cache.bch_plan.size;
 	const uint64_t bch_passes = 2 * (length - 2);
 	const long double dense_forward_work = bch_passes
@@ -1210,6 +1322,10 @@ void log_sig_from_path_backprop_cuda_(
 	else if (save_states)
 		use_shared_operands = try_configure_dynamic_smem(
 			batch_log_sig_from_path_backprop_kernel_<T, false, true, false, true>,
+			shared_size);
+	else if (use_linear_reverse)
+		use_shared_operands = try_configure_dynamic_smem(
+			batch_log_sig_from_path_backprop_kernel_<T, false, false, true, true>,
 			shared_size);
 	else
 		use_shared_operands = try_configure_dynamic_smem(
@@ -1241,14 +1357,14 @@ void log_sig_from_path_backprop_cuda_(
 		batch_log_sig_from_path_backprop_kernel_<T, USE_RANGE, SAVE_STATES, USE_REVERSE, true><<<static_cast<unsigned int>(current_batch), threads, shared_size>>>( \
 			d_out + offset * m, d_path + offset * path_stride, path + offset * path_stride, workspace.get(), \
 			cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor, \
-			cache.bch_plan, RANGE_PTR, commutator, \
+			cache.bch_plan, RANGE_PTR, commutator, cache.linear_forward, \
 			cache.d_comm_a_ptr, cache.d_comm_a_k, cache.d_comm_a_partner, cache.d_comm_a_signed_c, \
 			A_PTR, A_IDX, m, m2, length, dimension); \
 	} else { \
 		batch_log_sig_from_path_backprop_kernel_<T, USE_RANGE, SAVE_STATES, USE_REVERSE, false><<<static_cast<unsigned int>(current_batch), threads, 0>>>( \
 			d_out + offset * m, d_path + offset * path_stride, path + offset * path_stride, workspace.get(), \
 			cache.d_bch_coefficients, cache.d_bch_left_factor, cache.d_bch_right_factor, \
-			cache.bch_plan, RANGE_PTR, commutator, \
+			cache.bch_plan, RANGE_PTR, commutator, cache.linear_forward, \
 			cache.d_comm_a_ptr, cache.d_comm_a_k, cache.d_comm_a_partner, cache.d_comm_a_signed_c, \
 			A_PTR, A_IDX, m, m2, length, dimension); \
 	} \
@@ -1260,16 +1376,21 @@ void log_sig_from_path_backprop_cuda_(
 		if (linear_range) {
 			LAUNCH_LOG_SIG_PATH_BACKPROP(
 				true, true, true, linear_range,
-				cache.d_linear_a_ptr, cache.d_linear_a_idx);
+				cache.d_linear_a_ptr32, cache.d_linear_a_idx);
 		}
 		else if (save_states && use_linear_reverse) {
 			LAUNCH_LOG_SIG_PATH_BACKPROP(
 				false, true, true, nullptr,
-				cache.d_linear_a_ptr, cache.d_linear_a_idx);
+				cache.d_linear_a_ptr32, cache.d_linear_a_idx);
 		}
 		else if (save_states) {
 			LAUNCH_LOG_SIG_PATH_BACKPROP(
 				false, true, false, nullptr, nullptr, nullptr);
+		}
+		else if (use_linear_reverse) {
+			LAUNCH_LOG_SIG_PATH_BACKPROP(
+				false, false, true, nullptr,
+				cache.d_linear_a_ptr32, cache.d_linear_a_idx);
 		}
 		else {
 			LAUNCH_LOG_SIG_PATH_BACKPROP(

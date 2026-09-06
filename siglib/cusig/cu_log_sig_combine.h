@@ -159,6 +159,60 @@ inline void upload_balanced_commutator_plan_(
 		value.size() * sizeof(int), cudaMemcpyHostToDevice));
 }
 
+inline void upload_linear_forward_plan_(CUDABchCache& device, const BchCache& host) {
+	if (host.linear_forward.empty())
+		return;
+	const size_t rows = checked_cuda_size_mul(
+		static_cast<size_t>(device.m2), static_cast<size_t>(device.m), "CUDA BCH forward plan");
+	std::vector<uint32_t> ptr(checked_cuda_size_add(rows, size_t(1), "CUDA BCH forward plan"), 0);
+	std::vector<uint32_t> i, j;
+	std::vector<int> value;
+	std::vector<uint8_t> live(device.m2, 0);
+	for (uint32_t node : host.live_bch_nodes)
+		live[node] = 1;
+	for (uint64_t node = 0; node < device.m2; ++node) {
+		const auto& plan = host.linear_forward[node];
+		const auto [begin, end] = host.linear_range[node];
+		for (uint64_t k = 0; k < device.m; ++k) {
+			ptr[node * device.m + k] = static_cast<uint32_t>(i.size());
+			if (!live[node] || k < begin || k >= end)
+				continue;
+			for (uint32_t q = plan.row_ptr[k - begin]; q < plan.row_ptr[k - begin + 1]; ++q) {
+				const auto& entry = plan.entries[q];
+				if (entry.orientation & 1) {
+					i.push_back(entry.i);
+					j.push_back(entry.j);
+					value.push_back(entry.coefficient);
+				}
+				if (entry.orientation & 2) {
+					i.push_back(entry.j);
+					j.push_back(entry.i);
+					value.push_back(-entry.coefficient);
+				}
+			}
+			if (i.size() > std::numeric_limits<uint32_t>::max())
+				throw std::overflow_error("CUDA BCH forward plan exceeds uint32 offsets");
+		}
+	}
+	ptr.back() = static_cast<uint32_t>(i.size());
+	const size_t i_offset = ptr.size();
+	const size_t j_offset = checked_cuda_size_add(i_offset, i.size(), "CUDA BCH forward plan");
+	const size_t value_offset = checked_cuda_size_add(j_offset, j.size(), "CUDA BCH forward plan");
+	CudaBuf<uint32_t> storage(checked_cuda_size_mul(
+		checked_cuda_size_add(value_offset, value.size(), "CUDA BCH forward plan"),
+		sizeof(uint32_t), "CUDA BCH forward plan"));
+	auto* cursor = storage.get();
+	CUDA_CHECK(cudaMemcpy(cursor, ptr.data(), ptr.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
+	if (!i.empty()) {
+		CUDA_CHECK(cudaMemcpy(cursor + i_offset, i.data(), i.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
+		CUDA_CHECK(cudaMemcpy(cursor + j_offset, j.data(), j.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
+		CUDA_CHECK(cudaMemcpy(cursor + value_offset, value.data(), value.size() * sizeof(int), cudaMemcpyHostToDevice));
+	}
+	device.linear_forward = { nullptr, cursor, cursor + i_offset, cursor + j_offset,
+		reinterpret_cast<int*>(cursor + value_offset) };
+	device.linear_forward_storage = std::move(storage);
+}
+
 inline CUDABchCache upload_bch_cache_to_device_(const BchCache& host) {
 	CUDABchCache device;
 	device.m = host.m;
@@ -174,6 +228,7 @@ inline CUDABchCache upload_bch_cache_to_device_(const BchCache& host) {
 	upload_bch_vector_(device.d_comm_k_j, host.comm_k_j);
 	upload_bch_vector_(device.d_comm_k_val, host.comm_k_val);
 	upload_balanced_commutator_plan_(device, host);
+	upload_linear_forward_plan_(device, host);
 	upload_bch_vector_(device.d_comm_a_ptr, host.comm_a_ptr);
 	upload_bch_vector_(device.d_comm_a_k, host.comm_a_k);
 	upload_bch_vector_(device.d_comm_a_partner, host.comm_a_partner);
@@ -190,32 +245,41 @@ inline CUDABchCache upload_bch_cache_to_device_(const BchCache& host) {
 		> (std::numeric_limits<uint32_t>::max() >> 1))
 		throw std::overflow_error(
 			"CUDA BCH linear reverse plan exceeds uint32 packing");
-	std::vector<uint64_t> linear_a_ptr(device.m2 * device.m + 1, 0);
+	const auto supported = [&host](uint64_t node, uint64_t input) {
+		const auto [begin, end] = host.linear_range[node];
+		if (input < begin || input >= end)
+			return false;
+		if (node < 2 || host.linear_forward.empty())
+			return true;
+		const auto& ptr = host.linear_forward[node].row_ptr;
+		return ptr[input - begin] != ptr[input - begin + 1];
+	};
+	std::vector<uint32_t> linear_a_ptr(device.m2 * device.m + 1, 0);
 	std::vector<uint32_t> linear_a_idx;
 	for (uint64_t node = 0; node < device.m2; ++node) {
 		for (uint64_t input = 0; input < device.m; ++input) {
 			const uint64_t row = node * device.m + input;
-			linear_a_ptr[row] = linear_a_idx.size();
+			linear_a_ptr[row] = static_cast<uint32_t>(linear_a_idx.size());
 			if (node < 2)
 				continue;
 			const uint64_t left = host.bch_left_factor[node];
 			const uint64_t right = host.bch_right_factor[node];
-			const auto [left_begin, left_end] = host.linear_range[left];
-			const auto [right_begin, right_end] = host.linear_range[right];
-			const bool active_left = input >= left_begin && input < left_end;
-			const bool active_right = input >= right_begin && input < right_end;
+			const bool active_left = supported(left, input);
+			const bool active_right = supported(right, input);
 			for (uint32_t index = host.comm_a_ptr[input];
 				index < host.comm_a_ptr[input + 1]; ++index) {
 				const uint32_t partner = host.comm_a_partner[index];
-				if (active_left && partner >= right_begin && partner < right_end)
+				if (active_left && supported(right, partner))
 					linear_a_idx.push_back(index << 1);
-				if (active_right && partner >= left_begin && partner < left_end)
+				if (active_right && supported(left, partner))
 					linear_a_idx.push_back((index << 1) | 1);
 			}
+			if (linear_a_idx.size() > std::numeric_limits<uint32_t>::max())
+				throw std::overflow_error("CUDA BCH reverse plan exceeds uint32 offsets");
 		}
 	}
-	linear_a_ptr.back() = linear_a_idx.size();
-	upload_bch_vector_(device.d_linear_a_ptr, linear_a_ptr);
+	linear_a_ptr.back() = static_cast<uint32_t>(linear_a_idx.size());
+	upload_bch_vector_(device.d_linear_a_ptr32, linear_a_ptr);
 	upload_bch_vector_(device.d_linear_a_idx, linear_a_idx);
 
 	const uint64_t nodes = device.bch_plan.size;
