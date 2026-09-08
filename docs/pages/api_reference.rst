@@ -1,15 +1,16 @@
 API Reference
 ========================
 
-.. toctree::
-   :maxdepth: 2
+The reference below describes the base ``pysiglib`` API. See :doc:`torch_api` and :doc:`jax_api` for automatic differentiation and framework-specific requirements.
 
-   /pages/path_transformations
-   /pages/words
-   /pages/signatures
-   /pages/signature_coefficients
-   /pages/log_signatures
-   /pages/branched_signatures
-   /pages/signature_kernels
-   /pages/streams
-   /pages/backprop
+* :doc:`path_transformations`
+* :doc:`words`
+* :doc:`trees`
+* :doc:`signatures`
+* :doc:`signature_coefficients`
+* :doc:`log_signatures`
+* :doc:`branched_signatures`
+* :doc:`branched_log_signatures`
+* :doc:`signature_kernels`
+* :doc:`streams`
+* :doc:`backprop`

@@ -52,7 +52,7 @@ class StaticKernel(ABC):
 
         .. math::
 
-            \\{ \\kappa(x_s, y_t) - \\kappa(x_{s-1}, x_t) - \\kappa(x_s, y_{t-1}) + \\kappa(x_{s-1}, y_{t-1}) \\}_{0 \\leq s \\leq L_1, 0 \\leq t \\leq L_2}
+            \\{ \\kappa(x_s, y_t) - \\kappa(x_{s-1}, y_t) - \\kappa(x_s, y_{t-1}) + \\kappa(x_{s-1}, y_{t-1}) \\}_{1 \\leq s < L_1, 1 \\leq t < L_2}
 
         as a tensor of shape ``(batch_size, length_1 - 1, length_2 - 1)``, where
         ``length_1`` is the length of :math:`x` and ``length_2``

@@ -9,14 +9,13 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.13"
-# pip install pysiglib, otherwise readthedocs fails
-  jobs:
-    pre_install:
-      - pip install .
+  apt_packages:
+    - doxygen
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:
    configuration: docs/conf.py
+   fail_on_warning: true
 
 # Optionally, but recommended,
 # declare the Python requirements required to build your documentation
