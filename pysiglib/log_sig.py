@@ -59,7 +59,11 @@ def set_cache_dir(
 
         import pysiglib
 
-        # Set cache dir to a folder "my_cache_dir" in the current working directory
+        from pathlib import Path
+        import torch
+
+        # The cache directory must exist.
+        Path("my_cache_dir").mkdir(exist_ok=True)
         pysiglib.set_cache_dir("./my_cache_dir")
 
         pysiglib.prepare_log_sig(5, 3, lead_lag=True, method=2, use_disk=True)
@@ -139,6 +143,7 @@ def prepare_log_sig(
     .. code-block::
 
         import pysiglib
+        import torch
 
         pysiglib.prepare_log_sig(5, 3, lead_lag=True, method=2, use_disk=True)
 

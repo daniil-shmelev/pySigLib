@@ -79,6 +79,7 @@ The high-performance toolkit for rough path computation.
 
    /pages/installation
    /pages/conventions
+   /pages/api_reference
 
 .. toctree::
    :maxdepth: 2

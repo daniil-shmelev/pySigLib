@@ -258,7 +258,7 @@ def branched_sig_coef(
     same trees and options before first use.
 
     :param path: Path or batch of paths, with shape ``(..., length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
+    :type path: numpy.ndarray | torch.Tensor
     :param trees: A decorated rooted tree, or a list of decorated rooted trees.
         With ``planar=True``, each requested basis element is an ordered forest;
         a bare planar tree is accepted as shorthand for a one-tree forest. See
@@ -275,12 +275,12 @@ def branched_sig_coef(
     :param correction: Optional segment correction with the layout described by
         :func:`branched_sig`. It is supported with time augmentation but not
         with lead-lag.
-    :type correction: numpy.ndarray | torch.tensor | None
+    :type correction: numpy.ndarray | torch.Tensor | None
     :param n_jobs: Number of CPU threads. Ignored for CUDA input. Use 1 for
         serial CPU execution or -1 for all available CPU threads.
     :type n_jobs: int
     :return: Requested coefficients, with shape ``(..., num_trees)``.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     --------

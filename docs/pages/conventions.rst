@@ -45,6 +45,11 @@ For example, for the call ``k = pysiglib.sig_kernel(X, Y, dyadic_order=1)``, if 
 ``torch`` tensor of type ``float`` located on a GPU, then ``Y`` should be the same.
 This will also be the format of the output tensor, ``k``.
 
+Batch dimensions
+----------------
+
+Paths have shape ``(..., length, dimension)``. The leading dimensions identify independent batch items and are preserved by path-to-feature operations. A single path has shape ``(length, dimension)`` and a single signature has shape ``(sig_length,)``. Empty batches are supported. Functions that combine paired inputs require matching batch shapes. Gram-matrix functions use the batch axes for all pairs; see their output-shape documentation.
+
 Non-Contiguous Arrays
 ----------------------
 
