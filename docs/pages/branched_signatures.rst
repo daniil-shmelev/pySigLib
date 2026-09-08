@@ -6,6 +6,8 @@ Branched Signatures
 
 This section covers branched signature computation in pySigLib.
 
+For individual coefficients, see :doc:`branched_signature_coefficients`.
+
 .. toctree::
    :titlesonly:
    :maxdepth: 2
@@ -14,7 +16,4 @@ This section covers branched signature computation in pySigLib.
    /pages/branched_signatures/branched_sig_length
    /pages/branched_signatures/prepare_branched_sig
    /pages/branched_signatures/branched_sig
-   /pages/branched_signatures/extract_branched_sig_coef
-   /pages/branched_signatures/prepare_branched_sig_coef
-   /pages/branched_signatures/branched_sig_coef
    /pages/branched_signatures/branched_sig_combine
