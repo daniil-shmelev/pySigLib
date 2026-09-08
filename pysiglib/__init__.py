@@ -46,7 +46,8 @@ from .branched_sig_coef_backprop import branched_sig_coef_backprop
 from .branched_log_sig import (branched_log_sig, branched_log_sig_length,
                                branched_sig_to_log_sig, prepare_branched_log_sig)
 from .branched_log_sig_backprop import branched_sig_to_log_sig_backprop
-from .streams import SigStream, LogSigStream, SigWindowStream, LogSigWindowStream
+from .streams import (SigStream, LogSigStream, BranchedSigStream,
+                      SigWindowStream, LogSigWindowStream, BranchedSigWindowStream)
 
 signature = sig
 
