@@ -31,6 +31,8 @@ from ..streams import (
     LogSigWindowStream as _LogSigWindowStream,
     BranchedSigStream as _BranchedSigStream,
     BranchedSigWindowStream as _BranchedSigWindowStream,
+    BranchedLogSigStream as _BranchedLogSigStream,
+    BranchedLogSigWindowStream as _BranchedLogSigWindowStream,
 )
 
 class SigStream(_SigStream):
@@ -90,6 +92,31 @@ class BranchedSigWindowStream(_BranchedSigWindowStream):
                  n_jobs: int = 1):
         super().__init__(dimension, degree, window_size, stride=stride, planar=planar,
                          scalar_term=scalar_term, n_jobs=n_jobs, _branched_sig=branched_sig)
+
+
+class BranchedLogSigStream(_BranchedLogSigStream):
+    __doc__ = _BranchedLogSigStream.__doc__
+
+    def __init__(self, dimension: int, degree: int,
+                 *,
+                 planar: bool = False, scalar_term: bool = False,
+                 method=None, n_jobs: int = 1):
+        super().__init__(dimension, degree, planar=planar, scalar_term=scalar_term,
+                         method=method, n_jobs=n_jobs, _branched_sig=branched_sig,
+                         _branched_sig_combine=branched_sig_combine,
+                         _branched_sig_to_log_sig=branched_sig_to_log_sig)
+
+
+class BranchedLogSigWindowStream(_BranchedLogSigWindowStream):
+    __doc__ = _BranchedLogSigWindowStream.__doc__
+
+    def __init__(self, dimension: int, degree: int, window_size: int,
+                 *,
+                 stride: int = 1, planar: bool = False, scalar_term: bool = False,
+                 method=None, n_jobs: int = 1):
+        super().__init__(dimension, degree, window_size, stride=stride, planar=planar,
+                         scalar_term=scalar_term, method=method, n_jobs=n_jobs,
+                         _branched_log_sig=branched_log_sig)
 
 
 signature = sig
