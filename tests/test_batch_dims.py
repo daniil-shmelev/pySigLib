@@ -25,7 +25,7 @@ from math import prod
 import numpy as np
 import torch
 import pytest
-import pysiglib
+import native_api as pysiglib
 
 from conftest import check_close
 

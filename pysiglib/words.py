@@ -15,7 +15,7 @@
 
 import itertools
 from functools import cache
-from .param_checks import check_type, check_non_neg, check_word
+from ._core.param_checks import check_type, check_non_neg, check_word
 
 def words_of_length(
         alphabet_size : int,

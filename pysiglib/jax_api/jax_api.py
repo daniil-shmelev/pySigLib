@@ -1,3 +1,8 @@
+from __future__ import annotations
+from .._core._array import require_array as _require_array
+from .._core._docs import backend_doc as _backend_doc
+from .static_kernels_jax import StaticKernel
+
 # Copyright 2026 Daniil Shmelev
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,10 +18,9 @@
 # limitations under the License.
 # =========================================================================
 
-from __future__ import annotations
 
 from functools import partial
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 
@@ -28,34 +32,38 @@ except ModuleNotFoundError as exc:
         "pysiglib.jax_api requires JAX. Install jax/jaxlib before importing this module."
     ) from exc
 
-from ..sig import sig as sig_forward
-from ..sig import sig_combine as sig_combine_forward
-from ..transform_path import transform_path as transform_path_forward
-from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
-from ..logsig_to_sig import logsig_to_sig as logsig_to_sig_forward
-from ..log_sig import log_sig as log_sig_forward
-from ..log_sig_combine import log_sig_combine as log_sig_combine_forward
-from ..sig_join import sig_join as sig_join_forward
-from ..sig_join_backprop import sig_join_backprop
-from ..log_sig_join import log_sig_join as log_sig_join_forward
-from ..log_sig_join_backprop import log_sig_join_backprop
-from ..linear_sig import linear_sig as linear_sig_forward
-from ..branched_sig import branched_sig as branched_sig_forward
-from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
-from ..branched_sig_coef import _branched_coef_data
-from ..branched_sig_coef import branched_sig_coef as branched_sig_coef_forward
-from ..branched_log_sig import (
+from .._core.sig import sig as sig_forward
+from .._core.sig import sig_combine as sig_combine_forward
+from .._core.transform_path import transform_path as transform_path_forward
+from .._core.log_sig import sig_to_log_sig as sig_to_log_sig_forward
+from .._core.logsig_to_sig import logsig_to_sig as logsig_to_sig_forward
+from .._core.log_sig import log_sig as log_sig_forward
+from .._core.log_sig_combine import log_sig_combine as log_sig_combine_forward
+from .._core.sig_join import sig_join as sig_join_forward
+from .._core.sig_join_backprop import sig_join_backprop
+from .._core.log_sig_join import log_sig_join as log_sig_join_forward
+from .._core.log_sig_join_backprop import log_sig_join_backprop
+from .._core.linear_sig import linear_sig as linear_sig_forward
+from .._core.branched_sig import branched_sig as branched_sig_forward
+from .._core.branched_sig import branched_sig_combine as branched_sig_combine_forward
+from .._core.branched_sig_coef import _branched_coef_data
+from .._core.branched_sig_coef import branched_sig_coef as branched_sig_coef_forward
+from .._core.branched_log_sig import (
     _resolve_branched_log_sig_method,
     branched_sig_to_log_sig as branched_sig_to_log_sig_forward,
     branched_log_sig as branched_log_sig_forward,
 )
-from ..data_handlers import _infer_correction_degree
-from ..sig_coef import sig_coef as sig_coef_forward
-from ..sig_kernel import sig_kernel as sig_kernel_forward
-from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
-from ..sig_kernel import _parse_sig_kernel_method
-from ..branched_sig_kernel import branched_sig_kernel as branched_sig_kernel_forward
-from ..branched_sig_kernel import branched_sig_kernel_gram as branched_sig_kernel_gram_forward
+from .._core.data_handlers import _infer_correction_degree
+from .._core.sig_coef import sig_coef as sig_coef_forward
+from .._core.sig_kernel import sig_kernel as sig_kernel_forward
+from .._core.sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
+from .._core.sig_kernel import _parse_sig_kernel_method
+from .._core.branched_sig_kernel import (
+    branched_sig_kernel as branched_sig_kernel_forward,
+)
+from .._core.branched_sig_kernel import (
+    branched_sig_kernel_gram as branched_sig_kernel_gram_forward,
+)
 
 
 def _ensure_3d(t):
@@ -65,11 +73,19 @@ def _ensure_3d(t):
     if t.ndim > 3:
         return t.reshape(-1, t.shape[-2], t.shape[-1])
     return t
-from ..sig_metrics import sig_score as sig_score_forward
-from ..sig_metrics import expected_sig_score as expected_sig_score_forward
-from ..sig_metrics import sig_mmd as sig_mmd_forward
+
+
+from .._core.sig_metrics import sig_score as sig_score_forward
+from .._core.sig_metrics import expected_sig_score as expected_sig_score_forward
+from .._core.sig_metrics import sig_mmd as sig_mmd_forward
 from ..words import word_to_idx
-from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order, check_n_jobs
+from .._core.param_checks import (
+    check_type,
+    check_non_neg,
+    check_word_or_word_list,
+    parse_dyadic_order,
+    check_n_jobs,
+)
 from ..sig_length import sig_length as _sig_length, log_sig_length as _log_sig_length
 from ._ffi import (
     _augmented_dim,
@@ -142,10 +158,13 @@ def _infer_scalar_term_jax(arr, dimension: int, degree: int, time_aug: bool = Fa
     )
 
 
-def _infer_branched_scalar_term_jax(arr, dimension: int, degree: int, planar: bool = False) -> bool:
+def _infer_branched_scalar_term_jax(
+    arr, dimension: int, degree: int, planar: bool = False
+) -> bool:
     """Return True iff ``arr``'s trailing dimension includes the leading scalar 1.
     JAX-side mirror of ``pysiglib.branched_sig._infer_branched_scalar_term``."""
-    from ..branched_sig import branched_sig_length
+    from .._core.branched_sig import branched_sig_length
+
     full_len = branched_sig_length(dimension, degree, planar=planar, scalar_term=True)
     actual = arr.shape[-1]
     if actual == full_len:
@@ -225,6 +244,7 @@ def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
     _infer_correction_degree(path.shape[-1], degree, length)
     return correction
 
+
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))
 def _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs):
     return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
@@ -246,7 +266,7 @@ _sig.defvjp(_sig_fwd, _sig_bwd)
 
 
 def sig(
-    path,
+    path: jax.Array,
     degree: int,
     *,
     time_aug: bool = False,
@@ -254,9 +274,12 @@ def sig(
     end_time: float = 1.0,
     horner: bool = True,
     scalar_term: bool = False,
-    correction=None,
+    correction: Optional[jax.Array] = None,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(path, jax.Array, "path")
+    if correction is not None:
+        _require_array(correction, jax.Array, "correction")
     ensure_registered()
 
     path = jnp.asarray(path)
@@ -277,12 +300,13 @@ def sig(
     return result
 
 
-sig.__doc__ = sig_forward.__doc__
+sig.__doc__ = _backend_doc(sig_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # sig_combine
 # ---------------------------------------------------------------------------
+
 
 def _validate_sig_shape(arr, name="signature"):
     if arr.ndim < 1:
@@ -311,15 +335,17 @@ _sig_combine.defvjp(_sig_combine_fwd, _sig_combine_bwd)
 
 
 def sig_combine(
-    sig1,
-    sig2,
+    sig1: jax.Array,
+    sig2: jax.Array,
     dimension: int,
     degree: int,
     *,
     time_aug: bool = False,
     lead_lag: bool = False,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(sig1, jax.Array, "sig1")
+    _require_array(sig2, jax.Array, "sig2")
     ensure_registered()
 
     sig1 = jnp.asarray(sig1)
@@ -345,12 +371,13 @@ def sig_combine(
     return result
 
 
-sig_combine.__doc__ = sig_combine_forward.__doc__
+sig_combine.__doc__ = _backend_doc(sig_combine_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # transform_path
 # ---------------------------------------------------------------------------
+
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4))
 def _transform_path(path, time_aug, lead_lag, end_time, n_jobs):
@@ -375,13 +402,14 @@ _transform_path.defvjp(_transform_path_fwd, _transform_path_bwd)
 
 
 def transform_path(
-    path,
+    path: jax.Array,
     *,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(path, jax.Array, "path")
     ensure_registered()
 
     path = jnp.asarray(path)
@@ -395,12 +423,13 @@ def transform_path(
     return _transform_path(path, time_aug, lead_lag, end_time, n_jobs)
 
 
-transform_path.__doc__ = transform_path_forward.__doc__
+transform_path.__doc__ = _backend_doc(transform_path_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # sig_to_log_sig
 # ---------------------------------------------------------------------------
+
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4))
 def _sig_to_log_sig(sig_arr, dimension, degree, method, n_jobs):
@@ -422,7 +451,7 @@ _sig_to_log_sig.defvjp(_sig_to_log_sig_fwd, _sig_to_log_sig_bwd)
 
 
 def sig_to_log_sig(
-    sig,
+    sig: jax.Array,
     dimension: int,
     degree: int,
     *,
@@ -430,7 +459,8 @@ def sig_to_log_sig(
     lead_lag: bool = False,
     method: int = 1,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(sig, jax.Array, "sig")
     ensure_registered()
 
     sig = jnp.asarray(sig)
@@ -454,12 +484,13 @@ def sig_to_log_sig(
     return result
 
 
-sig_to_log_sig.__doc__ = sig_to_log_sig_forward.__doc__
+sig_to_log_sig.__doc__ = _backend_doc(sig_to_log_sig_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # logsig_to_sig (tensor exponential)
 # ---------------------------------------------------------------------------
+
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4))
 def _logsig_to_sig(log_sig_arr, dimension, degree, method, n_jobs):
@@ -481,7 +512,7 @@ _logsig_to_sig.defvjp(_logsig_to_sig_fwd, _logsig_to_sig_bwd)
 
 
 def logsig_to_sig(
-    log_sig,
+    log_sig: jax.Array,
     dimension: int,
     degree: int,
     *,
@@ -490,7 +521,8 @@ def logsig_to_sig(
     method: int = 1,
     scalar_term: bool = False,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(log_sig, jax.Array, "log_sig")
     ensure_registered()
 
     log_sig = jnp.asarray(log_sig)
@@ -517,12 +549,13 @@ def logsig_to_sig(
     return result
 
 
-logsig_to_sig.__doc__ = logsig_to_sig_forward.__doc__
+logsig_to_sig.__doc__ = _backend_doc(logsig_to_sig_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # log_sig
 # ---------------------------------------------------------------------------
+
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3))
 def _log_sig_from_path(path, dimension, degree, n_jobs):
@@ -544,7 +577,7 @@ _log_sig_from_path.defvjp(_log_sig_from_path_fwd, _log_sig_from_path_bwd)
 
 
 def log_sig(
-    path,
+    path: jax.Array,
     degree: int,
     *,
     time_aug: bool = False,
@@ -552,9 +585,12 @@ def log_sig(
     end_time: float = 1.0,
     method: int = 1,
     scalar_term: bool = False,
-    correction=None,
+    correction: Optional[jax.Array] = None,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(path, jax.Array, "path")
+    if correction is not None:
+        _require_array(correction, jax.Array, "correction")
     ensure_registered()
 
     path = jnp.asarray(path)
@@ -577,12 +613,13 @@ def log_sig(
                           lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 
 
-log_sig.__doc__ = log_sig_forward.__doc__
+log_sig.__doc__ = _backend_doc(log_sig_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # log_sig_combine
 # ---------------------------------------------------------------------------
+
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4))
 def _log_sig_combine(ls1, ls2, dimension, degree, n_jobs):
@@ -604,15 +641,17 @@ _log_sig_combine.defvjp(_log_sig_combine_fwd, _log_sig_combine_bwd)
 
 
 def log_sig_combine(
-    log_sig1,
-    log_sig2,
+    log_sig1: jax.Array,
+    log_sig2: jax.Array,
     dimension: int,
     degree: int,
     *,
     time_aug: bool = False,
     lead_lag: bool = False,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(log_sig1, jax.Array, "log_sig1")
+    _require_array(log_sig2, jax.Array, "log_sig2")
     ensure_registered()
 
     log_sig1 = jnp.asarray(log_sig1)
@@ -632,12 +671,13 @@ def log_sig_combine(
     return _log_sig_combine(log_sig1, log_sig2, aug_dim, degree, n_jobs)
 
 
-log_sig_combine.__doc__ = log_sig_combine_forward.__doc__
+log_sig_combine.__doc__ = _backend_doc(log_sig_combine_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # sig_join
 # ---------------------------------------------------------------------------
+
 
 def _sig_join_callback(s, d, dimension, degree, prepend, n_jobs):
     s = np.asarray(s)
@@ -692,14 +732,16 @@ _sig_join.defvjp(_sig_join_fwd, _sig_join_bwd)
 
 
 def sig_join(
-    sig,
-    displacement,
+    sig: jax.Array,
+    displacement: jax.Array,
     dimension: int,
     degree: int,
     *,
     prepend: bool = False,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(sig, jax.Array, "sig")
+    _require_array(displacement, jax.Array, "displacement")
     ensure_registered()
 
     sig = jnp.asarray(sig)
@@ -721,12 +763,13 @@ def sig_join(
     return result
 
 
-sig_join.__doc__ = sig_join_forward.__doc__
+sig_join.__doc__ = _backend_doc(sig_join_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # log_sig_join
 # ---------------------------------------------------------------------------
+
 
 def _log_sig_join_callback(ls, d, dimension, degree, n_jobs):
     ls = np.asarray(ls)
@@ -781,13 +824,15 @@ _log_sig_join.defvjp(_log_sig_join_fwd, _log_sig_join_bwd)
 
 
 def log_sig_join(
-    log_sig,
-    displacement,
+    log_sig: jax.Array,
+    displacement: jax.Array,
     dimension: int,
     degree: int,
     *,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(log_sig, jax.Array, "log_sig")
+    _require_array(displacement, jax.Array, "displacement")
     ensure_registered()
 
     log_sig = jnp.asarray(log_sig)
@@ -803,21 +848,23 @@ def log_sig_join(
     return _log_sig_join(log_sig, displacement, dimension, degree, n_jobs)
 
 
-log_sig_join.__doc__ = log_sig_join_forward.__doc__
+log_sig_join.__doc__ = _backend_doc(log_sig_join_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # linear_sig
 # ---------------------------------------------------------------------------
 
+
 def linear_sig(
-    displacement,
+    displacement: jax.Array,
     dimension: int,
     degree: int,
     *,
     scalar_term: bool = False,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(displacement, jax.Array, "displacement")
     displacement = jnp.asarray(displacement)
     if displacement.shape[-1] != dimension:
         raise ValueError(
@@ -830,12 +877,13 @@ def linear_sig(
     return result
 
 
-linear_sig.__doc__ = linear_sig_forward.__doc__
+linear_sig.__doc__ = _backend_doc(linear_sig_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # sig_kernel PDE solver (FFI)
 # ---------------------------------------------------------------------------
+
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5))
 def _sig_kernel_pde(gram, dimension, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
@@ -893,26 +941,29 @@ _sig_kernel_poly_pde.defvjp(
 # sig_kernel (public API composing static kernel + PDE solve)
 # ---------------------------------------------------------------------------
 
+
 def sig_kernel(
-    path1,
-    path2,
+    path1: jax.Array,
+    path2: jax.Array,
     *,
-    method="finite_difference",
-    dyadic_order=None,
-    order=None,
-    static_kernel=None,
+    method: str = "finite_difference",
+    dyadic_order: Optional[Union[int, tuple[int, int]]] = None,
+    order: Optional[int] = None,
+    static_kernel: Optional[StaticKernel] = None,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     n_jobs: int = 1,
     return_grid: bool = False,
     normalize: bool = False,
-):
+) -> jax.Array:
     """Compute signature kernel between paired paths using JAX.
 
     This composes the static kernel evaluation (pure JAX) with the
     PDE solver. Fully differentiable via JAX autodiff.
     """
+    _require_array(path1, jax.Array, "path1")
+    _require_array(path2, jax.Array, "path2")
     ensure_registered()
 
     path1 = jnp.asarray(path1)
@@ -966,21 +1017,22 @@ def sig_kernel(
     return result
 
 
-sig_kernel.__doc__ = sig_kernel_forward.__doc__
+sig_kernel.__doc__ = _backend_doc(sig_kernel_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # sig_kernel_gram (pure Python composition)
 # ---------------------------------------------------------------------------
 
+
 def sig_kernel_gram(
-    path1,
-    path2,
+    path1: jax.Array,
+    path2: jax.Array,
     *,
-    method="finite_difference",
-    dyadic_order=None,
-    order=None,
-    static_kernel=None,
+    method: str = "finite_difference",
+    dyadic_order: Optional[Union[int, tuple[int, int]]] = None,
+    order: Optional[int] = None,
+    static_kernel: Optional[StaticKernel] = None,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
@@ -988,8 +1040,10 @@ def sig_kernel_gram(
     max_batch: int = -1,
     return_grid: bool = False,
     normalize: bool = False,
-):
+) -> jax.Array:
     """Compute Gram matrix of signature kernels using JAX."""
+    _require_array(path1, jax.Array, "path1")
+    _require_array(path2, jax.Array, "path2")
     ensure_registered()
 
     path1 = jnp.asarray(path1)
@@ -1084,12 +1138,13 @@ def sig_kernel_gram(
     return res
 
 
-sig_kernel_gram.__doc__ = sig_kernel_gram_forward.__doc__
+sig_kernel_gram.__doc__ = _backend_doc(sig_kernel_gram_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # branched_sig_kernel PDE solver (FFI)
 # ---------------------------------------------------------------------------
+
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
 def _branched_sig_kernel_pde(gram, dimension, depth, dyadic_order_1, dyadic_order_2, return_grid, n_jobs):
@@ -1120,19 +1175,21 @@ _branched_sig_kernel_pde.defvjp(_branched_sig_kernel_pde_fwd, _branched_sig_kern
 
 
 def branched_sig_kernel(
-    path1,
-    path2,
+    path1: jax.Array,
+    path2: jax.Array,
     depth: int,
-    dyadic_order,
+    dyadic_order: Optional[Union[int, tuple[int, int]]],
     *,
-    static_kernel=None,
+    static_kernel: Optional[StaticKernel] = None,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     n_jobs: int = 1,
     return_grid: bool = False,
     normalize: bool = False,
-):
+) -> jax.Array:
+    _require_array(path1, jax.Array, "path1")
+    _require_array(path2, jax.Array, "path2")
     ensure_registered()
 
     path1 = jnp.asarray(path1)
@@ -1182,16 +1239,16 @@ def branched_sig_kernel(
     return result
 
 
-branched_sig_kernel.__doc__ = branched_sig_kernel_forward.__doc__
+branched_sig_kernel.__doc__ = _backend_doc(branched_sig_kernel_forward.__doc__, "jax")
 
 
 def branched_sig_kernel_gram(
-    path1,
-    path2,
+    path1: jax.Array,
+    path2: jax.Array,
     depth: int,
-    dyadic_order,
+    dyadic_order: Optional[Union[int, tuple[int, int]]],
     *,
-    static_kernel=None,
+    static_kernel: Optional[StaticKernel] = None,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
@@ -1199,7 +1256,9 @@ def branched_sig_kernel_gram(
     max_batch: int = -1,
     return_grid: bool = False,
     normalize: bool = False,
-):
+) -> jax.Array:
+    _require_array(path1, jax.Array, "path1")
+    _require_array(path2, jax.Array, "path2")
     path1 = jnp.asarray(path1)
     path2 = jnp.asarray(path2)
 
@@ -1247,29 +1306,34 @@ def branched_sig_kernel_gram(
     return res
 
 
-branched_sig_kernel_gram.__doc__ = branched_sig_kernel_gram_forward.__doc__
+branched_sig_kernel_gram.__doc__ = _backend_doc(
+    branched_sig_kernel_gram_forward.__doc__, "jax"
+)
 
 
 # ---------------------------------------------------------------------------
 # Signature kernel metrics (pure Python)
 # ---------------------------------------------------------------------------
 
+
 def sig_score(
-    sample,
-    y,
+    sample: jax.Array,
+    y: jax.Array,
     *,
-    method="finite_difference",
-    dyadic_order=None,
-    order=None,
+    method: str = "finite_difference",
+    dyadic_order: Optional[Union[int, tuple[int, int]]] = None,
+    order: Optional[int] = None,
     lam: float = 1.0,
-    static_kernel=None,
+    static_kernel: Optional[StaticKernel] = None,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     n_jobs: int = 1,
     max_batch: int = -1,
-):
+) -> jax.Array:
     """Compute signature kernel score using JAX."""
+    _require_array(sample, jax.Array, "sample")
+    _require_array(y, jax.Array, "y")
     sample = jnp.asarray(sample)
     y = jnp.asarray(y)
 
@@ -1297,47 +1361,51 @@ def sig_score(
     return res
 
 
-sig_score.__doc__ = sig_score_forward.__doc__
+sig_score.__doc__ = _backend_doc(sig_score_forward.__doc__, "jax")
 
 
 def expected_sig_score(
-    sample1,
-    sample2,
+    sample1: jax.Array,
+    sample2: jax.Array,
     *,
-    method="finite_difference",
-    dyadic_order=None,
-    order=None,
+    method: str = "finite_difference",
+    dyadic_order: Optional[Union[int, tuple[int, int]]] = None,
+    order: Optional[int] = None,
     lam: float = 1.0,
-    static_kernel=None,
+    static_kernel: Optional[StaticKernel] = None,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     n_jobs: int = 1,
     max_batch: int = -1,
-):
+) -> jax.Array:
     """Compute expected signature kernel score using JAX."""
+    _require_array(sample1, jax.Array, "sample1")
+    _require_array(sample2, jax.Array, "sample2")
     res = sig_score(sample1, sample2, dyadic_order=dyadic_order, method=method, order=order, lam=lam, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
     return jnp.mean(res).reshape(1)
 
 
-expected_sig_score.__doc__ = expected_sig_score_forward.__doc__
+expected_sig_score.__doc__ = _backend_doc(expected_sig_score_forward.__doc__, "jax")
 
 
 def sig_mmd(
-    sample1,
-    sample2,
+    sample1: jax.Array,
+    sample2: jax.Array,
     *,
-    method="finite_difference",
-    dyadic_order=None,
-    order=None,
-    static_kernel=None,
+    method: str = "finite_difference",
+    dyadic_order: Optional[Union[int, tuple[int, int]]] = None,
+    order: Optional[int] = None,
+    static_kernel: Optional[StaticKernel] = None,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     n_jobs: int = 1,
     max_batch: int = -1,
-):
+) -> jax.Array:
     """Compute signature kernel MMD using JAX."""
+    _require_array(sample1, jax.Array, "sample1")
+    _require_array(sample2, jax.Array, "sample2")
     sample1 = jnp.asarray(sample1)
     sample2 = jnp.asarray(sample2)
 
@@ -1366,23 +1434,24 @@ def sig_mmd(
     return xx_sum - xy_sum + yy_sum
 
 
-sig_mmd.__doc__ = sig_mmd_forward.__doc__
+sig_mmd.__doc__ = _backend_doc(sig_mmd_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # sig_coef (pure JAX composition - compute sig then index)
 # ---------------------------------------------------------------------------
 
+
 def sig_coef(
-    path,
-    words,
+    path: jax.Array,
+    words: Union[tuple[int, ...], list[tuple[int, ...]]],
     *,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     prefixes: bool = False,
     n_jobs: int = 1,
-):
+) -> jax.Array:
     """Compute signature coefficients at specific words using JAX.
 
     Computes the full signature via ``sig()`` then extracts the requested
@@ -1404,6 +1473,7 @@ def sig_coef(
     :type n_jobs: int
     :return: Signature coefficients at the requested words.
     """
+    _require_array(path, jax.Array, "path")
     ensure_registered()
 
     path = jnp.asarray(path)
@@ -1435,7 +1505,7 @@ def sig_coef(
     return sig_[..., jnp.array(idx)]
 
 
-sig_coef.__doc__ = sig_coef_forward.__doc__
+sig_coef.__doc__ = _backend_doc(sig_coef_forward.__doc__, "jax")
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 3, 4, 5, 6, 7, 8))
@@ -1471,17 +1541,20 @@ _branched_sig_coef.defvjp(
 
 
 def branched_sig_coef(
-    path,
+    path: jax.Array,
     trees,
     *,
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
     planar: bool = False,
-    correction=None,
+    correction: Optional[jax.Array] = None,
     n_jobs: int = 1,
-):
+) -> jax.Array:
     """Compute selected branched-signature coefficients using JAX."""
+    _require_array(path, jax.Array, "path")
+    if correction is not None:
+        _require_array(correction, jax.Array, "correction")
     path = jnp.asarray(path)
     _validate_shape(path)
     check_type(time_aug, "time_aug", bool)
@@ -1495,15 +1568,14 @@ def branched_sig_coef(
     augmented_dimension = _augmented_dim(path.shape[-1], time_aug, lead_lag)
     _, degree, tree_data = _branched_coef_data(
         trees, augmented_dimension, planar)
-    correction = _prepare_correction_jax(
-        correction, path, degree, lead_lag)
+    correction = _prepare_correction_jax(correction, path, degree, lead_lag)
     ensure_registered()
     return _branched_sig_coef(
         path, tuple(tree_data), correction, degree, time_aug, lead_lag,
         end_time, n_jobs, planar)
 
 
-branched_sig_coef.__doc__ = branched_sig_coef_forward.__doc__
+branched_sig_coef.__doc__ = _backend_doc(branched_sig_coef_forward.__doc__, "jax")
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))
@@ -1527,7 +1599,7 @@ _branched_sig.defvjp(_branched_sig_fwd, _branched_sig_bwd)
 
 
 def branched_sig(
-    path,
+    path: jax.Array,
     degree: int,
     *,
     time_aug: bool = False,
@@ -1535,9 +1607,12 @@ def branched_sig(
     end_time: float = 1.0,
     planar: bool = False,
     scalar_term: bool = False,
-    correction = None,
+    correction: Optional[jax.Array] = None,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(path, jax.Array, "path")
+    if correction is not None:
+        _require_array(correction, jax.Array, "correction")
     path = jnp.asarray(path)
     _validate_shape(path)
 
@@ -1557,12 +1632,13 @@ def branched_sig(
     return result
 
 
-branched_sig.__doc__ = branched_sig_forward.__doc__
+branched_sig.__doc__ = _backend_doc(branched_sig_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # branched_sig_combine
 # ---------------------------------------------------------------------------
+
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5))
 def _branched_sig_combine(bsig1, bsig2, dimension, max_nodes, n_jobs, planar):
@@ -1586,14 +1662,16 @@ _branched_sig_combine.defvjp(_branched_sig_combine_fwd, _branched_sig_combine_bw
 
 
 def branched_sig_combine(
-    bsig1,
-    bsig2,
+    bsig1: jax.Array,
+    bsig2: jax.Array,
     dimension: int,
     degree: int,
     *,
     planar: bool = False,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(bsig1, jax.Array, "bsig1")
+    _require_array(bsig2, jax.Array, "bsig2")
     ensure_registered()
 
     bsig1 = jnp.asarray(bsig1)
@@ -1619,12 +1697,13 @@ def branched_sig_combine(
     return result
 
 
-branched_sig_combine.__doc__ = branched_sig_combine_forward.__doc__
+branched_sig_combine.__doc__ = _backend_doc(branched_sig_combine_forward.__doc__, "jax")
 
 
 # ---------------------------------------------------------------------------
 # branched_sig_to_log_sig
 # ---------------------------------------------------------------------------
+
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5))
 def _branched_sig_to_log_sig(bsig, dimension, degree, method, n_jobs, planar):
@@ -1653,7 +1732,7 @@ _branched_sig_to_log_sig.defvjp(_branched_sig_to_log_sig_fwd, _branched_sig_to_l
 
 
 def branched_sig_to_log_sig(
-    bsig,
+    bsig: jax.Array,
     dimension: int,
     degree: int,
     *,
@@ -1662,7 +1741,8 @@ def branched_sig_to_log_sig(
     planar: bool = False,
     method: Optional[int] = None,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(bsig, jax.Array, "bsig")
     ensure_registered()
 
     bsig = jnp.asarray(bsig)
@@ -1693,7 +1773,9 @@ def branched_sig_to_log_sig(
     return result
 
 
-branched_sig_to_log_sig.__doc__ = branched_sig_to_log_sig_forward.__doc__
+branched_sig_to_log_sig.__doc__ = _backend_doc(
+    branched_sig_to_log_sig_forward.__doc__, "jax"
+)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3))
@@ -1723,7 +1805,7 @@ _branched_log_sig_from_path.defvjp(
 
 
 def branched_log_sig(
-    path,
+    path: jax.Array,
     degree: int,
     *,
     time_aug: bool = False,
@@ -1732,9 +1814,12 @@ def branched_log_sig(
     planar: bool = False,
     scalar_term: bool = False,
     method: Optional[int] = None,
-    correction = None,
+    correction: Optional[jax.Array] = None,
     n_jobs: int = 1,
-):
+) -> jax.Array:
+    _require_array(path, jax.Array, "path")
+    if correction is not None:
+        _require_array(correction, jax.Array, "correction")
     ensure_registered()
     path = jnp.asarray(path)
     _validate_shape(path)
@@ -1763,4 +1848,4 @@ def branched_log_sig(
         planar=planar, method=method, n_jobs=n_jobs)
 
 
-branched_log_sig.__doc__ = branched_log_sig_forward.__doc__
+branched_log_sig.__doc__ = _backend_doc(branched_log_sig_forward.__doc__, "jax")

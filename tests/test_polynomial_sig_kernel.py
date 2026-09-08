@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import torch
 
-import pysiglib
+import native_api as pysiglib
 
 
 METHOD = "polynomial"

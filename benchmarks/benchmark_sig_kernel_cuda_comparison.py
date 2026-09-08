@@ -91,6 +91,8 @@ def benchmark(function, synchronize, warmups, samples, min_sample_seconds):
 
 def pysiglib_cases(path1, path2, order, operation):
     import pysiglib
+    import pysiglib.torch_api
+    from pysiglib._core.sig_kernel import sig_kernel as _native_sig_kernel
     import torch
 
     if not torch.cuda.is_available():
@@ -116,9 +118,9 @@ def pysiglib_cases(path1, path2, order, operation):
         polynomial_function = polynomial
         goursat_function = goursat
     else:
-        polynomial_function = lambda: pysiglib.sig_kernel(
+        polynomial_function = lambda: _native_sig_kernel(
             device_path1, device_path2, method="polynomial", order=order)
-        goursat_function = lambda: pysiglib.sig_kernel(
+        goursat_function = lambda: _native_sig_kernel(
             device_path1, device_path2,
             method="finite_difference", dyadic_order=0)
 

@@ -16,7 +16,7 @@
 import numpy as np
 import torch
 import pytest
-import pysiglib
+import native_api as pysiglib
 
 
 # ---- Fixtures ----
@@ -220,7 +220,7 @@ class TestTorchTensors:
         """SigStream should work with torch tensors (forward-only)."""
         dim, deg = 3, 3
         path = torch.randn(*batch_shape, 15, dim, dtype=torch.float64)
-        stream = pysiglib.SigStream(dim, deg)
+        stream = pysiglib.torch_api.SigStream(dim, deg)
         stream.push_batch(path)
         result = stream.sig(0, 1)
         assert isinstance(result, torch.Tensor)
@@ -232,7 +232,7 @@ class TestTorchTensors:
         pysiglib.prepare_log_sig(dim, deg, method=2)
         pysiglib.prepare_log_sig(dim, deg, method=3)
         path = torch.randn(*batch_shape, 15, dim, dtype=torch.float64)
-        stream = pysiglib.LogSigStream(dim, deg)
+        stream = pysiglib.torch_api.LogSigStream(dim, deg)
         stream.push_batch(path)
         result = stream.sig(0, 1)
         assert isinstance(result, torch.Tensor)

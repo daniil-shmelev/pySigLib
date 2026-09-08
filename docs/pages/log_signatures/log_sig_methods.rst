@@ -26,8 +26,7 @@ combination. This call is not thread safe.
 .. code-block:: python
 
     import torch
-    import pysiglib
-
+    import pysiglib.torch_api as pysiglib
     # We know in advance that we will need log signatures
     # for dimensions 5 and 10 with degree 3 and method 2.
     pysiglib.prepare_log_sig(5, 3, method=2)
@@ -50,8 +49,7 @@ Only ``method=0`` does not require a call to
 .. code-block:: python
 
     import torch
-    import pysiglib
-
+    import pysiglib.torch_api as pysiglib
     X = torch.rand((100, 5))
 
     pysiglib.log_sig(X, 3, method=0) # No error: method=0 does not require preparation

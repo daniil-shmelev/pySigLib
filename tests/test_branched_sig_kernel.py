@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 import torch
 
-import pysiglib
+import native_api as pysiglib
 import pysiglib.torch_api as pysiglib_torch
 from conftest import DEVICES, assert_device, check_close as _check_close
 

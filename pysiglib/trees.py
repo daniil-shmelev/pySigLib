@@ -32,7 +32,7 @@ The order is the implementation order used by the native CPU and CUDA caches.
 
 from functools import cache
 
-from .param_checks import check_type, check_non_neg
+from ._core.param_checks import check_type, check_non_neg
 
 
 def _tree_node_count(tree):

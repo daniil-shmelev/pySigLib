@@ -6,8 +6,7 @@ Torch API
 
 .. versionadded:: v0.2
 
-pySigLib provides a torch API which exposes all the same functions, but makes them torch differentiable.
-Just import
+Install ``pysiglib[torch]`` to use this API. Array inputs and outputs are ``torch.Tensor``, and operations participate in Torch autograd. The base ``pysiglib`` API accepts NumPy arrays; select Torch explicitly:
 
 .. code-block:: python
 

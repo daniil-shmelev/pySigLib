@@ -6,8 +6,7 @@ JAX API
 
 .. versionadded:: v3.0.0
 
-pySigLib provides a JAX API which exposes all the same functions, but makes them compatible with JAX transformations
-(``jax.jit``, ``jax.grad``, ``jax.vmap``). Just import
+Install ``pysiglib[jax]`` to use this API without installing Torch. Array inputs and outputs are ``jax.Array``, with annotations for static checking. It supports JAX transformations (``jax.jit``, ``jax.grad``, ``jax.vmap``). Select JAX explicitly:
 
 .. code-block:: python
 
@@ -19,5 +18,7 @@ and ``jax.grad`` differentiation.
 
 .. note::
 
-    pySigLib must be built with JAX FFI support enabled (requires jaxlib >= 0.5.0, Python 3.10+).
+    pySigLib must be built with JAX FFI support enabled (requires jaxlib >= 0.9.1, Python 3.11+).
     Check ``pysiglib.BUILT_WITH_JAX_FFI`` to verify.
+
+Custom static kernels implement ``__call__(x: jax.Array, y: jax.Array) -> jax.Array`` on batched paths and return the double-differenced Gram matrix. JAX differentiates the callable; a manual backward context is unnecessary. Use the kernel and streaming classes exported by this namespace.

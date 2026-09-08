@@ -18,7 +18,7 @@
 import numpy as np
 import torch
 import pytest
-import pysiglib
+import native_api as pysiglib
 
 
 DIM = 3

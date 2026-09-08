@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 import torch
 
-import pysiglib
+import native_api as pysiglib
 import pysiglib.torch_api as torch_api
 from conftest import DEVICES
 from conftest import check_close

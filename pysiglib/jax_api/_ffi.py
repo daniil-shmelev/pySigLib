@@ -29,8 +29,8 @@ from ..load_siglib import (
     native_lib_filename,
 )
 from ..sig_length import sig_length, log_sig_length
-from ..branched_sig import branched_sig_length
-from ..branched_log_sig import branched_log_sig_length
+from .._core.branched_sig import branched_sig_length
+from .._core.branched_log_sig import branched_log_sig_length
 
 import jax
 

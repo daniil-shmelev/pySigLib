@@ -42,6 +42,12 @@ jobs:
       - name: Run Python tests
         run: pytest
 
+      - name: Check public array types
+        if: matrix.python-version == '3.11'
+        run: |
+          python -m pip install basedpyright
+          basedpyright --project tests/typing/pyrightconfig.json --pythonpath python
+
       - name: Build C++ unit tests
         run: |
           cmake -B build_tests -DPYSIGLIB_TESTS=ON -DPYSIGLIB_BENCHMARKS=OFF -DPYSIGLIB_JAX_FFI=OFF -DCMAKE_BUILD_TYPE=Release

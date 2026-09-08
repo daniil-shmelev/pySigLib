@@ -9,40 +9,40 @@
 <h2 align="center">The high-performance toolkit for rough path computation</h2>
 
 <p align="center">
-  <a href="https://pysiglib.readthedocs.io">Documentation</a> |
-  <a href="https://pysiglib.readthedocs.io/en/stable/pages/installation.html">Installation</a> |
-  <a href="https://pysiglib.readthedocs.io/en/stable/pages/api_reference.html">API reference</a> |
-  <a href="https://arxiv.org/abs/2509.10613">Paper</a>
+  <a href="https://pysiglib.readthedocs.io">Documentation</a> |   <a href="https://pysiglib.readthedocs.io/en/stable/pages/installation.html">Installation</a> |   <a href="https://pysiglib.readthedocs.io/en/stable/pages/api_reference.html">API reference</a> |   <a href="https://arxiv.org/abs/2509.10613">Paper</a>
 </p>
 
 <div align="center">
 
-[![PyPI - Version](https://img.shields.io/pypi/v/pysiglib)](https://pypi.org/project/pysiglib/)
-[![PyPI - Downloads](https://static.pepy.tech/badge/pysiglib/month)](https://pepy.tech/projects/pysiglib)
-[![Python Versions](https://img.shields.io/badge/python-%3E%3D3.9-blue)](https://pypi.org/project/pysiglib/)
-[![CI - Test](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml/badge.svg)](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml)
-[![Read the Docs](https://img.shields.io/readthedocs/pysiglib)](https://pysiglib.readthedocs.io)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![PyPI - Version](https://img.shields.io/pypi/v/pysiglib)](https://pypi.org/project/pysiglib/) [![PyPI - Downloads](https://static.pepy.tech/badge/pysiglib/month)](https://pepy.tech/projects/pysiglib) [![Python Versions](https://img.shields.io/badge/python-%3E%3D3.9-blue)](https://pypi.org/project/pysiglib/) [![CI - Test](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml/badge.svg)](https://github.com/daniil-shmelev/pySigLib/actions/workflows/unit_tests.yml) [![Read the Docs](https://img.shields.io/readthedocs/pysiglib)](https://pysiglib.readthedocs.io) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 </div>
 
-pySigLib brings path signatures, log-signatures, branched signatures, and
-signature kernels into one accelerated toolkit. It provides NumPy,
-PyTorch, and JAX support, with automatic differentiation for PyTorch and
-JAX and multithreaded C++ or native CUDA execution.
+pySigLib brings path signatures, log-signatures, branched signatures, and signature kernels into one accelerated toolkit. It provides NumPy, PyTorch, and JAX support, with automatic differentiation for PyTorch and JAX and multithreaded C++ or native CUDA execution.
 
 ## Installation
 
 ```bash
-pip install pysiglib
-
-# Add CUDA support
-pip install "pysiglib[cuda]"
+pip install pysiglib                 # NumPy API
+pip install "pysiglib[torch]"        # Add PyTorch
+pip install "pysiglib[jax]"          # Add JAX (Python 3.11+)
+pip install "pysiglib[torch,jax]"    # Both frameworks
+pip install "pysiglib[torch,cuda]"   # PyTorch with native CUDA support
 ```
 
-The JAX integration is included in the wheel. Install JAX separately with
-`pip install jax` if you want to use it. For source builds and platform-specific
-guidance, see the [installation guide](https://pysiglib.readthedocs.io/en/stable/pages/installation.html).
+The base installation requires neither Torch nor JAX. Extras install dependencies; select the array backend explicitly through its import:
+
+```python
+import pysiglib                       # numpy.ndarray inputs and outputs
+import pysiglib.torch_api as sig_torch # torch.Tensor inputs and outputs
+import pysiglib.jax_api as sig_jax     # jax.Array inputs and outputs
+```
+
+Each API accepts its own array type, including optional correction arrays. Torch provides autograd and JAX provides JIT, autodiff, and vectorization. Function names and mathematical parameters are shared, with backend-specific type annotations for editor completion and static checking. Explicit backpropagation functions in the base API operate on NumPy arrays.
+
+**Migration:** code that passed Torch tensors to `pysiglib` should import `pysiglib.torch_api as pysiglib` and install the `[torch]` extra. Import custom static kernels and streaming classes from the same backend namespace. Code that passed NumPy arrays to `torch_api` should use the base API. Convert arrays explicitly when moving between frameworks.
+
+The `[cuda]` extra installs the native CUDA plugin and can be combined with `[torch]` or `[jax]`. JAX GPU use also requires a GPU-capable JAX installation. For source builds and platform-specific guidance, see the [installation guide](https://pysiglib.readthedocs.io/en/stable/pages/installation.html).
 
 ## Quick start
 
@@ -54,9 +54,7 @@ path = np.random.default_rng().normal(size=(32, 1000, 10))
 signature = pysiglib.sig(path, degree=5)
 ```
 
-Paths have shape `(path length, dimension)` or
-`(batch size, path length, dimension)`. Computation runs on the device where
-the input already lives.
+Paths have shape `(path length, dimension)` or `(batch size, path length, dimension)`. Computation runs on the device where the input already lives.
 
 ## Why pySigLib?
 
@@ -82,8 +80,7 @@ the input already lives.
       <strong><a href="https://pysiglib.readthedocs.io/en/stable/pages/signature_kernels.html">Signature kernels</a></strong><br>
       <sub>Kernels and metrics for sequential data.</sub>
     </td>
-  </tr>
-  <tr>
+  </tr>   <tr>
     <td width="33%" valign="top">
       <strong><a href="https://pysiglib.readthedocs.io/en/stable/pages/branched_signatures.html">Branched signatures</a></strong><br>
       <sub>Branched signatures, branched log signatures and branched signature kernels.</sub>
@@ -147,10 +144,8 @@ If the library supports your research, please consider citing the paper:
 
 ## Contributing
 
-Contributions are welcome. Please open an issue first to discuss a change,
-then submit a pull request.
+Contributions are welcome. Please open an issue first to discuss a change, then submit a pull request.
 
 ## Sponsors
 
-If you'd like to support development, please consider
-[sponsoring the project](https://github.com/sponsors/daniil-shmelev).
+If you'd like to support development, please consider [sponsoring the project](https://github.com/sponsors/daniil-shmelev).

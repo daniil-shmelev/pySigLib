@@ -18,6 +18,7 @@ import numpy as np
 import torch
 
 import pysiglib.torch_api as pysiglib
+import pysiglib as numpy_api
 from conftest import DEVICES, check_close, assert_device, load_fixtures
 
 FIXTURES = load_fixtures("reference_data.npz")
@@ -26,20 +27,20 @@ DIM = 3
 
 def test_prepare_memory():
     X = np.random.uniform(size=(100, 5))
-    pysiglib.clear_cache(use_disk=True)
-    pysiglib.prepare_log_sig(5, 2, 1)
+    numpy_api.clear_cache(use_disk=True)
+    numpy_api.prepare_log_sig(5, 2, 1)
 
     with pytest.raises(Exception):
-        pysiglib.log_sig(X, 2, method=2)
+        numpy_api.log_sig(X, 2, method=2)
 
-    pysiglib.clear_cache()
+    numpy_api.clear_cache()
 
     with pytest.raises(Exception):
-        pysiglib.log_sig(X, 2, method=1)
+        numpy_api.log_sig(X, 2, method=1)
 
-    pysiglib.prepare_log_sig(5, 2, 2)
-    pysiglib.log_sig(X, 2, method=1)
-    pysiglib.clear_cache()
+    numpy_api.prepare_log_sig(5, 2, 2)
+    numpy_api.log_sig(X, 2, method=1)
+    numpy_api.clear_cache()
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -79,22 +80,22 @@ def test_cuda_log_sig_cache_is_per_device():
 
 def test_prepare_disk():
     X = np.random.uniform(size=(100, 5))
-    pysiglib.clear_cache(use_disk=True)
-    pysiglib.prepare_log_sig(5, 2, 1, use_disk=True)
-    pysiglib.clear_cache(use_disk=False)
+    numpy_api.clear_cache(use_disk=True)
+    numpy_api.prepare_log_sig(5, 2, 1, use_disk=True)
+    numpy_api.clear_cache(use_disk=False)
 
     with pytest.raises(Exception):
-        pysiglib.log_sig(X, 2, method=2)
+        numpy_api.log_sig(X, 2, method=2)
 
-    pysiglib.clear_cache(use_disk=True)
+    numpy_api.clear_cache(use_disk=True)
 
     with pytest.raises(Exception):
-        pysiglib.log_sig(X, 2, method=1)
+        numpy_api.log_sig(X, 2, method=1)
 
-    pysiglib.prepare_log_sig(5, 2, 2, use_disk=True)
-    pysiglib.clear_cache(use_disk=False)
-    pysiglib.log_sig(X, 2, method=1)
-    pysiglib.clear_cache(use_disk=True)
+    numpy_api.prepare_log_sig(5, 2, 2, use_disk=True)
+    numpy_api.clear_cache(use_disk=False)
+    numpy_api.log_sig(X, 2, method=1)
+    numpy_api.clear_cache(use_disk=True)
 
 
 @pytest.mark.parametrize("device", DEVICES)

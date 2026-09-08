@@ -16,7 +16,7 @@
 import numpy as np
 import pytest
 
-import pysiglib
+import native_api as pysiglib
 from conftest import check_close
 
 jax = pytest.importorskip("jax")

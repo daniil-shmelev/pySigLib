@@ -22,7 +22,7 @@ import kauri
 import kauri.bck
 import kauri.mkw
 
-import pysiglib
+import native_api as pysiglib
 from conftest import DEVICES, check_close, skip_no_cuda
 
 

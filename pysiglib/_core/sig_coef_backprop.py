@@ -1,0 +1,194 @@
+# Copyright 2026 Daniil Shmelev
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# =========================================================================
+
+from __future__ import annotations
+from array_api_compat import array_namespace, device
+from ._array import NativeArrayT as Array
+from ._storage import pointer
+
+from typing import Union
+from ctypes import c_uint64
+
+import numpy as np
+
+from .param_checks import check_word_or_word_list, check_type, check_n_jobs
+from .error_codes import err_msg
+from .dtypes import CPSIG_SIG_COEF_BACKPROP, CUSIG_SIG_COEF_BACKPROP
+from .data_handlers import PathInputHandler, MultipleSigInputHandler, PathOutputHandler
+
+
+def sig_coef_backprop(
+    path: Array,
+    words: Union[tuple[int, ...], list[tuple[int, ...]]],
+    coefs: Array,
+    derivs: Array,
+    *,
+    time_aug: bool = False,
+    lead_lag: bool = False,
+    end_time: float = 1.0,
+    n_jobs: int = 1,
+) -> Array:
+    """
+    This function is required to backpropagate through signature coefficient computation.
+    Given the derivatives of a scalar function :math:`F` with respect to the
+    signature coefficients, :math:`\\partial F / \\partial S(x)^I`, returns the
+    derivatives of :math:`F` with respect to the underlying path,
+    :math:`\\partial F / \\partial x`. Note that ``coefs`` must be generated using
+    ``pysiglib.sig_coef`` using ``prefixes=True``, and ``derivs`` must be the derivatives
+    with respect to this extended array.
+
+    :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
+    :type path: Array
+    :param words: Multi-indices :math:`I` indexing the signature coefficients, given as a list
+        of lists of integers in :math:`[0, d-1]`, where :math:`d` is the dimension of the path(s).
+    :type words: tuple[int, ...] | list[tuple[int, ...]]
+    :param coefs: Signature coefficients of the path or batch of paths, generated using
+        ``pysiglib.sig_coef`` using ``prefixes=True``.
+    :type coefs: Array
+    :param derivs: Derivatives of the scalar function :math:`F` with respect to the signature coefficients,
+        :math:`\\partial F / \\partial S(x)^I`. This must be an array of the same shape as the
+        provided coefficients. **On CPU, this buffer is modified in-place.**
+    :type derivs: Array
+    :param time_aug: Whether the signature coefficients were computed with ``time_aug=True``.
+    :type time_aug: bool
+    :param lead_lag: Whether the signature coefficients were computed with ``lead_lag=True``.
+    :type lead_lag: bool
+    :param end_time: End time for time-augmentation, :math:`t_L`.
+    :type end_time: float
+    :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
+        If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
+        threads are used. For example if n_jobs = -2, all threads but one are used.
+    :type n_jobs: int
+    :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
+        This is an array of the same shape as the provided path(s).
+    :rtype: Array
+
+    Example:
+    ---------
+
+    .. code-block:: python
+
+        import numpy as np
+        import pysiglib
+
+        path = np.random.random((10, 100, 5))
+        words = [(0,), (1, 0), (1, 2, 3)]
+        # Must generate coefs with prefixes=True for backprop
+        coefs = pysiglib.sig_coef(path, words, prefixes=True)
+        derivs = np.ones_like(coefs)
+        path_derivs = pysiglib.sig_coef_backprop(path, words, coefs, derivs)
+        print(path_derivs)
+
+    .. code-block:: python
+
+        # Backprop with time augmentation and lead-lag
+        import numpy as np
+        import pysiglib
+
+        path = np.random.random((10, 100, 5))
+        words = [(0,), (1, 2)]
+        # Must generate coefs with prefixes=True for backprop
+        coefs = pysiglib.sig_coef(path, words, time_aug=True, lead_lag=True, prefixes=True)
+        derivs = np.ones_like(coefs)
+        path_derivs = pysiglib.sig_coef_backprop(
+            path, words, coefs, derivs, time_aug=True, lead_lag=True,
+        )
+        print(path_derivs)
+
+    """
+    check_type(time_aug, "time_aug", bool)
+    check_type(lead_lag, "lead_lag", bool)
+    check_type(end_time, "end_time", float)
+
+    data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
+
+    # CUDA sig_coef_backprop doesn't support time_aug/lead_lag natively -
+    # transform the path first, backprop, then backprop through the transform.
+    if data.device != "cpu" and (time_aug or lead_lag):
+        from .transform_path import transform_path
+        from .transform_path_backprop import transform_path_backprop
+        transformed = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
+        aug_grad = sig_coef_backprop(transformed, words, coefs, derivs, time_aug=False, lead_lag=False, end_time=1., n_jobs=n_jobs)
+        return transform_path_backprop(aug_grad, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
+
+    words = check_word_or_word_list(words, data.dimension, "word")
+
+    coefs_len = 0
+    for idx in words:
+        coefs_len += len(idx) if idx else 1
+
+    if coefs.shape[-1] != coefs_len:
+        raise ValueError("Expected coefs.shape[-1] == " + str(coefs_len) + ". Please make sure coefs was generated using prefixes=True.")
+
+    # CUDA kernel doesn't handle empty words (degree 0) correctly.
+    # Since S() = 1 is constant, its gradient is always zero - safely skip.
+    if data.device != "cpu" and any(len(w) == 0 for w in words):
+        keep_indices = []
+        pos = 0
+        for w in words:
+            block_len = len(w) if w else 1
+            if w:
+                keep_indices.extend(range(pos, pos + block_len))
+            pos += block_len
+        words = [w for w in words if w]
+        if not words:
+            result = PathOutputHandler(data.data_length, data.data_dimension, data)
+            return result.data
+        coefs = coefs[..., keep_indices].contiguous()
+        derivs = derivs[..., keep_indices].contiguous()
+        coefs_len = sum(len(idx) for idx in words)
+
+    deriv_data = MultipleSigInputHandler([coefs, derivs], coefs_len, ["coef", "deriv"])
+
+    num_multi_indices = len(words)
+    degrees = [len(idx) for idx in words]
+
+    flat_indices = [i for idx in words for i in idx]
+
+    if data.device == "cpu":
+        words_t = np.asarray(flat_indices, dtype=np.uint64)
+        degrees_t = np.asarray(degrees, dtype=np.uint64)
+    else:
+        xp = array_namespace(path)
+        words_t = xp.asarray(flat_indices, dtype=xp.uint64, device=device(path))
+        degrees_t = xp.asarray(degrees, dtype=xp.uint64, device=device(path))
+
+    multi_indices_ptr = pointer(words_t, c_uint64)
+    degrees_ptr = pointer(degrees_t, c_uint64)
+
+    result = PathOutputHandler(data.data_length, data.data_dimension, data)
+
+    if data.batch_size == 0:
+        return result.data
+
+    check_n_jobs(n_jobs)
+    if data.device == "cpu":
+        err_code = CPSIG_SIG_COEF_BACKPROP[data.dtype](
+            data.data_ptr, result.data_ptr,
+            deriv_data.data[0].data_ptr, deriv_data.data[1].data_ptr,
+            multi_indices_ptr, num_multi_indices, degrees_ptr,
+            data.batch_size, data.data_dimension, data.data_length,
+            data.time_aug, data.lead_lag, data.end_time, n_jobs)
+    else:
+        err_code = CUSIG_SIG_COEF_BACKPROP[data.dtype](
+            data.data_ptr, result.data_ptr,
+            deriv_data.data[0].data_ptr, deriv_data.data[1].data_ptr,
+            multi_indices_ptr, num_multi_indices, degrees_ptr,
+            data.batch_size, data.data_dimension, data.data_length)
+    if err_code:
+        raise Exception(
+            "Error in pysiglib.sig_coef_backprop: "
+            + err_msg(err_code, result.device))
+    return result.data
