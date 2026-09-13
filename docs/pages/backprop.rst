@@ -32,3 +32,8 @@ PyTorch and JAX integrations and available for direct use in custom gradient pip
    backprop/branched_sig_coef_backprop
    backprop/branched_sig_to_log_sig_backprop
    backprop/branched_sig_combine_backprop
+   backprop/linear_log_sig_backprop
+   backprop/linear_branched_sig_backprop
+   backprop/linear_branched_log_sig_backprop
+   backprop/branched_sig_join_backprop
+   backprop/branched_log_sig_join_backprop

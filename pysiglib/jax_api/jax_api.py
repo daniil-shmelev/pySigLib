@@ -40,6 +40,12 @@ from ..sig_join_backprop import sig_join_backprop
 from ..log_sig_join import log_sig_join as log_sig_join_forward
 from ..log_sig_join_backprop import log_sig_join_backprop
 from ..linear_sig import linear_sig as linear_sig_forward
+from ..linear_log_sig import linear_log_sig as linear_log_sig_forward, _linear_log_sig_length
+from ..linear_branched_sig import linear_branched_sig as linear_branched_sig_forward
+from ..linear_branched_log_sig import linear_branched_log_sig as linear_branched_log_sig_forward
+from ..branched_sig_join import branched_sig_join as branched_sig_join_forward
+from ..branched_log_sig_join import branched_log_sig_join as branched_log_sig_join_forward
+from ..branched_log_sig import branched_log_sig_length
 from ..branched_sig import branched_sig as branched_sig_forward
 from ..branched_sig import branched_sig_combine as branched_sig_combine_forward
 from ..branched_sig_coef import _branched_coef_data
@@ -99,6 +105,8 @@ from ._ffi import (
     branched_sig_coef_ffi_call,
     branched_sig_coef_backprop_ffi_call,
     branched_sig_combine_ffi_call,
+    branched_log_sig_join_ffi_call,
+    branched_log_sig_join_backprop_ffi_call,
     branched_sig_combine_backprop_ffi_call,
     branched_sig_to_log_sig_ffi_call,
     branched_sig_to_log_sig_backprop_ffi_call,
@@ -831,6 +839,116 @@ def linear_sig(
 
 
 linear_sig.__doc__ = linear_sig_forward.__doc__
+
+
+def _displacement_to_path(displacement, dimension):
+    check_type(dimension, "dimension", int)
+    check_non_neg(dimension, "dimension")
+    displacement = jnp.asarray(displacement)
+    if displacement.ndim < 1 or displacement.shape[-1] != dimension:
+        raise ValueError("displacement must have shape (..., dimension)")
+    if displacement.dtype not in (jnp.float32, jnp.float64):
+        raise TypeError("displacement must have dtype float32 or float64")
+    return jnp.stack([jnp.zeros_like(displacement), displacement], axis=-2)
+
+
+def linear_log_sig(displacement, dimension: int, degree: int, *,
+                   method: int = 1, scalar_term: bool = False, n_jobs: int = 1):
+    length = _linear_log_sig_length(dimension, degree, method, scalar_term, n_jobs)
+    displacement = jnp.asarray(displacement)
+    if displacement.ndim < 1 or displacement.shape[-1] != dimension:
+        raise ValueError("displacement must have shape (..., dimension)")
+    if displacement.dtype not in (jnp.float32, jnp.float64):
+        raise TypeError("displacement must have dtype float32 or float64")
+    offset = int(method == 0 and scalar_term)
+    width = dimension if degree else 0
+    prefix = jnp.zeros((*displacement.shape[:-1], offset), dtype=displacement.dtype)
+    suffix = jnp.zeros((*displacement.shape[:-1], length - offset - width), dtype=displacement.dtype)
+    return jnp.concatenate([prefix, displacement[..., :width], suffix], axis=-1)
+
+
+linear_log_sig.__doc__ = linear_log_sig_forward.__doc__
+
+
+def linear_branched_sig(displacement, dimension: int, degree: int, *,
+                        planar: bool = False, scalar_term: bool = False, n_jobs: int = 1):
+    path = _displacement_to_path(displacement, dimension)
+    return branched_sig(path, degree, planar=planar, scalar_term=scalar_term, n_jobs=n_jobs)
+
+
+linear_branched_sig.__doc__ = linear_branched_sig_forward.__doc__
+
+
+def linear_branched_log_sig(displacement, dimension: int, degree: int, *,
+                            planar: bool = False, scalar_term: bool = False,
+                            method: Optional[int] = None, n_jobs: int = 1):
+    path = _displacement_to_path(displacement, dimension)
+    return branched_log_sig(path, degree, planar=planar, scalar_term=scalar_term, method=method, n_jobs=n_jobs)
+
+
+linear_branched_log_sig.__doc__ = linear_branched_log_sig_forward.__doc__
+
+
+def branched_sig_join(bsig, displacement, dimension: int, degree: int, *,
+                      planar: bool = False, prepend: bool = False, n_jobs: int = 1):
+    check_type(prepend, "prepend", bool)
+    bsig = jnp.asarray(bsig)
+    displacement = jnp.asarray(displacement)
+    _validate_sig_shape(bsig, "bsig")
+    _validate_sig_shape(displacement, "displacement")
+    if bsig.shape[:-1] != displacement.shape[:-1]:
+        raise ValueError("bsig and displacement must have the same batch shape")
+    if bsig.dtype != displacement.dtype:
+        raise ValueError("bsig and displacement must have the same dtype")
+    scalar_term = _infer_branched_scalar_term_jax(bsig, dimension, degree, planar=planar)
+    segment = linear_branched_sig(displacement, dimension, degree, planar=planar, scalar_term=scalar_term, n_jobs=n_jobs)
+    left, right = (segment, bsig) if prepend else (bsig, segment)
+    return branched_sig_combine(left, right, dimension, degree, planar=planar, n_jobs=n_jobs)
+
+
+branched_sig_join.__doc__ = branched_sig_join_forward.__doc__
+
+
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5))
+def _branched_log_sig_join(blogsig, displacement, dimension, degree, prepend, n_jobs):
+    return branched_log_sig_join_ffi_call(blogsig, displacement, dimension, degree, n_jobs, prepend)
+
+
+def _branched_log_sig_join_fwd(blogsig, displacement, dimension, degree, prepend, n_jobs):
+    result = branched_log_sig_join_ffi_call(blogsig, displacement, dimension, degree, n_jobs, prepend)
+    return result, (blogsig, displacement)
+
+
+def _branched_log_sig_join_bwd(dimension, degree, prepend, n_jobs, residual, cotangent):
+    blogsig, displacement = residual
+    return branched_log_sig_join_backprop_ffi_call(cotangent, blogsig, displacement, dimension, degree, n_jobs, prepend)
+
+
+_branched_log_sig_join.defvjp(_branched_log_sig_join_fwd, _branched_log_sig_join_bwd)
+
+
+def branched_log_sig_join(blogsig, displacement, dimension: int, degree: int, *,
+                          prepend: bool = False, n_jobs: int = 1):
+    check_type(dimension, "dimension", int)
+    check_non_neg(dimension, "dimension")
+    check_type(degree, "degree", int)
+    check_non_neg(degree, "degree")
+    check_type(prepend, "prepend", bool)
+    check_n_jobs(n_jobs)
+    blogsig = jnp.asarray(blogsig)
+    displacement = jnp.asarray(displacement)
+    _validate_sig_shape(blogsig, "blogsig")
+    _validate_sig_shape(displacement, "displacement")
+    length = branched_log_sig_length(dimension, degree, planar=True)
+    if blogsig.shape[-1] != length or displacement.shape[-1] != dimension:
+        raise ValueError("incorrect log coordinate or displacement length")
+    if blogsig.shape[:-1] != displacement.shape[:-1]:
+        raise ValueError("blogsig and displacement must have the same batch shape")
+    ensure_registered()
+    return _branched_log_sig_join(blogsig, displacement, dimension, degree, prepend, n_jobs)
+
+
+branched_log_sig_join.__doc__ = branched_log_sig_join_forward.__doc__
 
 
 # ---------------------------------------------------------------------------

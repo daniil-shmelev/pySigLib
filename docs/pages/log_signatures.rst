@@ -24,3 +24,4 @@ For cache directory settings and cache clearing, see :doc:`cache_management`.
    /pages/log_signatures/log_sig
    /pages/log_signatures/log_sig_combine
    /pages/log_signatures/log_sig_join
+   /pages/log_signatures/linear_log_sig

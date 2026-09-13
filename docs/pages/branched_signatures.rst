@@ -17,3 +17,5 @@ For individual coefficients, see :doc:`branched_signature_coefficients`.
    /pages/branched_signatures/prepare_branched_sig
    /pages/branched_signatures/branched_sig
    /pages/branched_signatures/branched_sig_combine
+   /pages/branched_signatures/linear_branched_sig
+   /pages/branched_signatures/branched_sig_join

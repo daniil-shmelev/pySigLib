@@ -1004,6 +1004,39 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int branched_log_sig_from_path_f(const float* path, float* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
+	/**
+	* @brief Append or prepend a linear segment to planar method-2/3 log coordinates.
+	* Requires method-3 preparation.
+	* @param logsig Input log coordinates.
+	* @param displacement Segment displacement.
+	* @param out Output log coordinates.
+	* @param batch_size Number of batch items.
+	* @param dimension Number of channels.
+	* @param max_nodes Truncation degree.
+	* @param prepend If true, prepend the segment.
+	* @param n_jobs Number of CPU threads.
+	* @return Status code, zero on success.
+	*/
+	[[nodiscard]] CPSIG_API int branched_log_sig_join_f(const float* logsig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs = 1) noexcept;
+	/** @copydoc branched_log_sig_join_f */
+	[[nodiscard]] CPSIG_API int branched_log_sig_join_d(const double* logsig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs = 1) noexcept;
+	/**
+	* @brief Backpropagate through a planar branched log signature join.
+	* @param derivs Output derivatives.
+	* @param d_logsig Input log coordinate derivatives.
+	* @param d_displacement Displacement derivatives.
+	* @param logsig Input log coordinates.
+	* @param displacement Segment displacement.
+	* @param batch_size Number of batch items.
+	* @param dimension Number of channels.
+	* @param max_nodes Truncation degree.
+	* @param prepend If true, prepend the segment.
+	* @param n_jobs Number of CPU threads.
+	* @return Status code, zero on success.
+	*/
+	[[nodiscard]] CPSIG_API int branched_log_sig_join_backprop_f(const float* derivs, float* d_logsig, float* d_displacement, const float* logsig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs = 1) noexcept;
+	/** @copydoc branched_log_sig_join_backprop_f */
+	[[nodiscard]] CPSIG_API int branched_log_sig_join_backprop_d(const double* derivs, double* d_logsig, double* d_displacement, const double* logsig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs = 1) noexcept;
 	/** @copydoc branched_log_sig_from_path_f */
 	[[nodiscard]] CPSIG_API int branched_log_sig_from_path_d(const double* path, double* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
 

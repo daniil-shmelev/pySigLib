@@ -55,7 +55,8 @@ def prepare_branched_log_sig(
 ):
     """
     Precomputes data required for branched log signature computations. Must be called before
-    ``branched_log_sig()`` or ``branched_sig_to_log_sig()`` for a given
+    ``branched_log_sig()``, ``linear_branched_log_sig()``,
+    ``branched_log_sig_join()``, or ``branched_sig_to_log_sig()`` for a given
     ``(dimension, degree, planar)`` combination. This also prepares the corresponding
     branched-signature cache.
 
@@ -65,7 +66,8 @@ def prepare_branched_log_sig(
     :type degree: int
     :param method: Method to prepare. Method 0 computes the expanded branched
         log signature. Methods 1, 2, and 3 compute compressed MKW log signatures
-        and require ``planar=True``.
+        and require ``planar=True``. Use method 3 to prepare for
+        ``branched_log_sig_join()``.
     :type method: int
     :param use_disk: If ``True``, load or save the branched-signature cache on disk.
     :type use_disk: bool

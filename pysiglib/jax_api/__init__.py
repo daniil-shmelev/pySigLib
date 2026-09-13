@@ -17,6 +17,8 @@ from .jax_api import (
     sig, sig_combine, transform_path,
     sig_to_log_sig, logsig_to_sig, log_sig, log_sig_combine,
     sig_join, log_sig_join, linear_sig,
+    linear_log_sig, linear_branched_sig, linear_branched_log_sig,
+    branched_sig_join, branched_log_sig_join,
     sig_coef, branched_sig_coef, sig_kernel, sig_kernel_gram,
     branched_sig_kernel, branched_sig_kernel_gram,
     sig_score, expected_sig_score, sig_mmd,
