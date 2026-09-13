@@ -8,7 +8,9 @@ on:
       - "CMakeLists.txt"
       - "benchmarks/**"
       - "cmake/**"
+      - "plugins/cuda/**"
       - "siglib/cpsig/**"
+      - "siglib/cusig/**"
       - "siglib/shared/**"
   pull_request:
     paths:
@@ -16,18 +18,58 @@ on:
       - "CMakeLists.txt"
       - "benchmarks/**"
       - "cmake/**"
+      - "plugins/cuda/**"
       - "siglib/cpsig/**"
+      - "siglib/cusig/**"
       - "siglib/shared/**"
   workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  changes:
+    name: Detect benchmark changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      cpu: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.cpu == 'true' }}
+      cuda: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.cuda == 'true' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          filters: |
+            cpu:
+              - '.github/workflows/codspeed.yml'
+              - 'CMakeLists.txt'
+              - 'benchmarks/**'
+              - 'cmake/**'
+              - 'siglib/cpsig/**'
+              - 'siglib/shared/**'
+            cuda:
+              - '.github/workflows/codspeed.yml'
+              - 'CMakeLists.txt'
+              - 'benchmarks/CMakeLists.txt'
+              - 'benchmarks/bench_cusig.cpp'
+              - 'benchmarks/cuda/**'
+              - 'cmake/**'
+              - 'plugins/cuda/**'
+              - 'siglib/cusig/**'
+              - 'siglib/shared/**'
+
   benchmarks:
     name: Run benchmarks
+    needs: changes
+    if: needs.changes.outputs.cpu == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v6
 
@@ -40,7 +82,7 @@ jobs:
             -DPYSIGLIB_BENCHMARKS=ON \
             -DPYSIGLIB_JAX_FFI=OFF \
             -DCODSPEED_MODE=simulation
-          cmake --build build --target bench_cpsig -j$(nproc)
+          cmake --build build --target bench_cpsig -j"$(nproc)"
 
       - name: Run benchmarks
         uses: CodSpeedHQ/action@v5
@@ -57,10 +99,59 @@ jobs:
             -DPYSIGLIB_BENCHMARKS=ON \
             -DPYSIGLIB_JAX_FFI=OFF \
             -DCODSPEED_MODE=memory
-          cmake --build build-memory --target bench_cpsig -j$(nproc)
+          cmake --build build-memory --target bench_cpsig -j"$(nproc)"
 
       - name: Run memory benchmarks
         uses: CodSpeedHQ/action@v5
         with:
           mode: memory
           run: ./build-memory/benchmarks/bench_cpsig
+
+  benchmarks-cuda:
+    name: Run CUDA benchmarks (approval required)
+    needs: changes
+    if: github.repository == 'daniil-shmelev/pySigLib' && needs.changes.outputs.cuda == 'true'
+    environment: deployment
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 90
+    concurrency:
+      group: codspeed-cuda-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: 'powershell -ExecutionPolicy Bypass -Command ". ''{0}''"'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build CUDA benchmark image
+        run: |
+          docker build --tag pysiglib-codspeed-cuda:12.9.1 benchmarks/cuda
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run CUDA benchmarks in Docker
+        run: |
+          $ErrorActionPreference = "Stop"
+          $containerName = "codspeed-cuda-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          docker run --rm --gpus all --name $containerName `
+            -v "${env:GITHUB_WORKSPACE}:/workspace:ro" `
+            -v "${env:GITHUB_EVENT_PATH}:/github/event.json:ro" `
+            -w /workspace `
+            -e GITHUB_ACTIONS -e GITHUB_REPOSITORY -e GITHUB_REF `
+            -e GITHUB_EVENT_NAME -e GITHUB_RUN_ID -e GITHUB_JOB `
+            -e GITHUB_ACTOR -e GITHUB_ACTOR_ID -e GITHUB_BASE_REF `
+            -e GITHUB_WORKSPACE=/workspace -e GITHUB_EVENT_PATH=/github/event.json `
+            -e ACTIONS_ID_TOKEN_REQUEST_URL -e ACTIONS_ID_TOKEN_REQUEST_TOKEN `
+            pysiglib-codspeed-cuda:12.9.1 bash benchmarks/cuda/run.sh
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Stop benchmark container
+        if: always()
+        run: |
+          $containerId = docker ps -aq --filter "name=^/codspeed-cuda-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT$"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($containerId) {
+            docker rm --force $containerId
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
