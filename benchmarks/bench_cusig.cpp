@@ -173,10 +173,7 @@ static void BM_transform_path_cuda(benchmark::State& state) {
     }
 }
 BENCHMARK_TEMPLATE(BM_transform_path_cuda, float, transform_path_cuda_f, transform_path_backprop_cuda_f)
-    ->Name("CUDA/transform_path/float32")->ArgsProduct({{0, 1}, {0, 1}, {0, 1}})
-    ->ArgNames({"time_aug", "lead_lag", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_transform_path_cuda, double, transform_path_cuda_d, transform_path_backprop_cuda_d)
-    ->Name("CUDA/transform_path/float64")->ArgsProduct({{0, 1}, {0, 1}, {0, 1}})
+    ->Name("CUDA/transform_path/float32")->Args({0, 0, 0})->Args({0, 0, 1})->Args({1, 1, 0})->Args({1, 1, 1})
     ->ArgNames({"time_aug", "lead_lag", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
@@ -213,10 +210,6 @@ static void BM_signature_cuda(benchmark::State& state) {
 
 static void signature_args(benchmark::internal::Benchmark* bench) {
     for (int backprop : {0, 1}) {
-        bench->Args({64, 128, 3, 4, 0, 0, 1, backprop, 1, 0});
-        bench->Args({256, 32, 4, 3, 0, 0, 0, backprop, 1, 0});
-        bench->Args({32, 64, 2, 3, 1, 0, 1, backprop, 1, 0});
-        bench->Args({32, 64, 2, 3, 0, 1, 1, backprop, 1, 0});
         bench->Args({4, 32, 4, 5, 0, 0, 1, backprop, 1, 0});
         bench->Args({4, 32, 3, 4, 0, 0, 1, backprop, 1, 1});
     }
@@ -227,7 +220,10 @@ static void signature_args(benchmark::internal::Benchmark* bench) {
 BENCHMARK_TEMPLATE(BM_signature_cuda, float, signature_cuda_f, sig_backprop_cuda_f)
     ->Name("CUDA/signature/float32")->Apply(signature_args);
 BENCHMARK_TEMPLATE(BM_signature_cuda, double, signature_cuda_d, sig_backprop_cuda_d)
-    ->Name("CUDA/signature/float64")->Apply(signature_args);
+    ->Name("CUDA/signature/float64")
+    ->Args({4, 32, 4, 5, 0, 0, 1, 0, 1, 0})->Args({4, 32, 4, 5, 0, 0, 1, 1, 1, 0})
+    ->ArgNames({"batch", "length", "dim", "degree", "time_aug", "lead_lag", "scalar", "backprop", "horner", "correction"})
+    ->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
 static void BM_sig_combine_cuda(benchmark::State& state) {
@@ -250,10 +246,7 @@ static void BM_sig_combine_cuda(benchmark::State& state) {
     out1.check_finite();
 }
 BENCHMARK_TEMPLATE(BM_sig_combine_cuda, float, sig_combine_cuda_f, sig_combine_backprop_cuda_f)
-    ->Name("CUDA/sig_combine/float32")->ArgsProduct({{64, 1024}, {0, 1}, {0, 1}})
-    ->ArgNames({"batch", "scalar", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_sig_combine_cuda, double, sig_combine_cuda_d, sig_combine_backprop_cuda_d)
-    ->Name("CUDA/sig_combine/float64")->ArgsProduct({{64, 1024}, {0, 1}, {0, 1}})
+    ->Name("CUDA/sig_combine/float32")->ArgsProduct({{64}, {1}, {0, 1}})
     ->ArgNames({"batch", "scalar", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward>
@@ -268,10 +261,7 @@ static void BM_linear_sig_cuda(benchmark::State& state) {
     out.check_finite();
 }
 BENCHMARK_TEMPLATE(BM_linear_sig_cuda, float, linear_sig_cuda_f)
-    ->Name("CUDA/linear_sig/float32")->Arg(0)->Arg(1)
-    ->ArgName("scalar")->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_linear_sig_cuda, double, linear_sig_cuda_d)
-    ->Name("CUDA/linear_sig/float64")->Arg(0)->Arg(1)
+    ->Name("CUDA/linear_sig/float32")->Arg(1)
     ->ArgName("scalar")->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
@@ -295,10 +285,7 @@ static void BM_sig_join_cuda(benchmark::State& state) {
     out.check_finite();
 }
 BENCHMARK_TEMPLATE(BM_sig_join_cuda, float, sig_join_cuda_f, sig_join_backprop_cuda_f)
-    ->Name("CUDA/sig_join/float32")->ArgsProduct({{0, 1}, {0, 1}, {0, 1}})
-    ->ArgNames({"prepend", "scalar", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_sig_join_cuda, double, sig_join_cuda_d, sig_join_backprop_cuda_d)
-    ->Name("CUDA/sig_join/float64")->ArgsProduct({{0, 1}, {0, 1}, {0, 1}})
+    ->Name("CUDA/sig_join/float32")->ArgsProduct({{0, 1}, {1}, {0, 1}})
     ->ArgNames({"prepend", "scalar", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
@@ -329,9 +316,6 @@ static void BM_sig_coef_cuda(benchmark::State& state) {
 BENCHMARK_TEMPLATE(BM_sig_coef_cuda, float, sig_coef_cuda_f, sig_coef_backprop_cuda_f)
     ->Name("CUDA/sig_coef/float32")->Args({0, 0})->Args({1, 0})->Args({1, 1})
     ->ArgNames({"prefixes", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_sig_coef_cuda, double, sig_coef_cuda_d, sig_coef_backprop_cuda_d)
-    ->Name("CUDA/sig_coef/float64")->Args({0, 0})->Args({1, 0})->Args({1, 1})
-    ->ArgNames({"prefixes", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Signature, auto Forward, auto Backward>
 static void BM_sig_to_log_sig_cuda(benchmark::State& state) {
@@ -360,9 +344,6 @@ static void BM_sig_to_log_sig_cuda(benchmark::State& state) {
 BENCHMARK_TEMPLATE(BM_sig_to_log_sig_cuda, float, signature_cuda_f, sig_to_log_sig_cuda_f, sig_to_log_sig_backprop_cuda_f)
     ->Name("CUDA/sig_to_log_sig/float32")->ArgsProduct({{0, 1, 2}, {0, 1}})
     ->ArgNames({"method", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_sig_to_log_sig_cuda, double, signature_cuda_d, sig_to_log_sig_cuda_d, sig_to_log_sig_backprop_cuda_d)
-    ->Name("CUDA/sig_to_log_sig/float64")->ArgsProduct({{0, 1, 2}, {0, 1}})
-    ->ArgNames({"method", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Signature, auto LogSignature, auto Forward, auto Backward>
 static void BM_logsig_to_sig_cuda(benchmark::State& state) {
@@ -389,10 +370,7 @@ static void BM_logsig_to_sig_cuda(benchmark::State& state) {
     out.check_finite();
 }
 BENCHMARK_TEMPLATE(BM_logsig_to_sig_cuda, float, signature_cuda_f, sig_to_log_sig_cuda_f, logsig_to_sig_cuda_f, logsig_to_sig_backprop_cuda_f)
-    ->Name("CUDA/logsig_to_sig/float32")->ArgsProduct({{0, 1, 2}, {0, 1}, {0, 1}})
-    ->ArgNames({"method", "scalar", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_logsig_to_sig_cuda, double, signature_cuda_d, sig_to_log_sig_cuda_d, logsig_to_sig_cuda_d, logsig_to_sig_backprop_cuda_d)
-    ->Name("CUDA/logsig_to_sig/float64")->ArgsProduct({{0, 1, 2}, {0, 1}, {0, 1}})
+    ->Name("CUDA/logsig_to_sig/float32")->ArgsProduct({{0, 1, 2}, {1}, {0, 1}})
     ->ArgNames({"method", "scalar", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
@@ -418,9 +396,6 @@ static void BM_log_sig_from_path_cuda(benchmark::State& state) {
 static void log_sig_from_path_args(benchmark::internal::Benchmark* bench) {
     for (int backprop : {0, 1}) {
         bench->Args({4, 32, 3, 4, backprop});
-        bench->Args({4, 32, 3, 5, backprop});
-        bench->Args({32, 129, 2, 6, backprop});
-        bench->Args({1, 129, 2, 8, backprop});
     }
     bench->ArgNames({"batch", "length", "dim", "degree", "backprop"});
     bench->UseRealTime()->Unit(benchmark::kMicrosecond);
@@ -451,9 +426,6 @@ static void BM_log_sig_combine_cuda(benchmark::State& state) {
 BENCHMARK_TEMPLATE(BM_log_sig_combine_cuda, float, log_sig_combine_cuda_f, log_sig_combine_backprop_cuda_f)
     ->Name("CUDA/log_sig_combine/float32")->Arg(0)->Arg(1)
     ->ArgName("backprop")->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_log_sig_combine_cuda, double, log_sig_combine_cuda_d, log_sig_combine_backprop_cuda_d)
-    ->Name("CUDA/log_sig_combine/float64")->Arg(0)->Arg(1)
-    ->ArgName("backprop")->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
 static void BM_log_sig_join_cuda(benchmark::State& state) {
@@ -476,9 +448,6 @@ static void BM_log_sig_join_cuda(benchmark::State& state) {
 }
 BENCHMARK_TEMPLATE(BM_log_sig_join_cuda, float, log_sig_join_cuda_f, log_sig_join_backprop_cuda_f)
     ->Name("CUDA/log_sig_join/float32")->Arg(0)->Arg(1)
-    ->ArgName("backprop")->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_log_sig_join_cuda, double, log_sig_join_cuda_d, log_sig_join_backprop_cuda_d)
-    ->Name("CUDA/log_sig_join/float64")->Arg(0)->Arg(1)
     ->ArgName("backprop")->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
@@ -511,10 +480,8 @@ static void BM_branched_sig_cuda(benchmark::State& state) {
     }
 }
 BENCHMARK_TEMPLATE(BM_branched_sig_cuda, float, branched_sig_cuda_f, branched_sig_backprop_cuda_f)
-    ->Name("CUDA/branched_sig/float32")->ArgsProduct({{0, 1}, {0, 1}, {0, 1}})
-    ->ArgNames({"planar", "backprop", "correction"})->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_branched_sig_cuda, double, branched_sig_cuda_d, branched_sig_backprop_cuda_d)
-    ->Name("CUDA/branched_sig/float64")->ArgsProduct({{0, 1}, {0, 1}, {0, 1}})
+    ->Name("CUDA/branched_sig/float32")
+    ->Args({0, 0, 0})->Args({0, 1, 0})->Args({1, 0, 0})->Args({1, 1, 0})->Args({0, 0, 1})->Args({0, 1, 1})
     ->ArgNames({"planar", "backprop", "correction"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
@@ -546,9 +513,6 @@ static void BM_branched_sig_coef_cuda(benchmark::State& state) {
 BENCHMARK_TEMPLATE(BM_branched_sig_coef_cuda, float, branched_sig_coef_cuda_f, branched_sig_coef_backprop_cuda_f)
     ->Name("CUDA/branched_sig_coef/float32")->ArgsProduct({{0, 1}, {0, 1}})
     ->ArgNames({"planar", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_branched_sig_coef_cuda, double, branched_sig_coef_cuda_d, branched_sig_coef_backprop_cuda_d)
-    ->Name("CUDA/branched_sig_coef/float64")->ArgsProduct({{0, 1}, {0, 1}})
-    ->ArgNames({"planar", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Signature, auto Forward, auto Backward>
 static void BM_branched_sig_combine_cuda(benchmark::State& state) {
@@ -577,10 +541,7 @@ static void BM_branched_sig_combine_cuda(benchmark::State& state) {
     out1.check_finite();
 }
 BENCHMARK_TEMPLATE(BM_branched_sig_combine_cuda, float, branched_sig_cuda_f, branched_sig_combine_cuda_f, branched_sig_combine_backprop_cuda_f)
-    ->Name("CUDA/branched_sig_combine/float32")->ArgsProduct({{0, 1}, {0, 1}, {0, 1}})
-    ->ArgNames({"planar", "scalar", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_branched_sig_combine_cuda, double, branched_sig_cuda_d, branched_sig_combine_cuda_d, branched_sig_combine_backprop_cuda_d)
-    ->Name("CUDA/branched_sig_combine/float64")->ArgsProduct({{0, 1}, {0, 1}, {0, 1}})
+    ->Name("CUDA/branched_sig_combine/float32")->ArgsProduct({{0, 1}, {1}, {0, 1}})
     ->ArgNames({"planar", "scalar", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Signature, auto Forward, auto Backward>
@@ -617,8 +578,6 @@ static void branched_sig_to_log_sig_args(benchmark::internal::Benchmark* bench) 
 }
 BENCHMARK_TEMPLATE(BM_branched_sig_to_log_sig_cuda, float, branched_sig_cuda_f, branched_sig_to_log_sig_cuda_f, branched_sig_to_log_sig_backprop_cuda_f)
     ->Name("CUDA/branched_sig_to_log_sig/float32")->Apply(branched_sig_to_log_sig_args);
-BENCHMARK_TEMPLATE(BM_branched_sig_to_log_sig_cuda, double, branched_sig_cuda_d, branched_sig_to_log_sig_cuda_d, branched_sig_to_log_sig_backprop_cuda_d)
-    ->Name("CUDA/branched_sig_to_log_sig/float64")->Apply(branched_sig_to_log_sig_args);
 
 template <typename T, auto Forward, auto Backward>
 static void BM_branched_log_sig_from_path_cuda(benchmark::State& state) {
@@ -637,9 +596,6 @@ static void BM_branched_log_sig_from_path_cuda(benchmark::State& state) {
 }
 BENCHMARK_TEMPLATE(BM_branched_log_sig_from_path_cuda, float, branched_log_sig_from_path_cuda_f, branched_log_sig_from_path_backprop_cuda_f)
     ->Name("CUDA/branched_log_sig_from_path/float32")->Arg(0)->Arg(1)
-    ->ArgName("backprop")->UseRealTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_TEMPLATE(BM_branched_log_sig_from_path_cuda, double, branched_log_sig_from_path_cuda_d, branched_log_sig_from_path_backprop_cuda_d)
-    ->Name("CUDA/branched_log_sig_from_path/float64")->Arg(0)->Arg(1)
     ->ArgName("backprop")->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
@@ -665,10 +621,10 @@ static void BM_sig_kernel_cuda(benchmark::State& state) {
     out.check_finite();
 }
 BENCHMARK_TEMPLATE(BM_sig_kernel_cuda, float, sig_kernel_cuda_f, sig_kernel_backprop_cuda_f)
-    ->Name("CUDA/sig_kernel/float32")->ArgsProduct({{0, 1}, {0, 1}})
+    ->Name("CUDA/sig_kernel/float32")->ArgsProduct({{1}, {0, 1}})
     ->ArgNames({"refinement", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_TEMPLATE(BM_sig_kernel_cuda, double, sig_kernel_cuda_d, sig_kernel_backprop_cuda_d)
-    ->Name("CUDA/sig_kernel/float64")->ArgsProduct({{0, 1}, {0, 1}})
+    ->Name("CUDA/sig_kernel/float64")->ArgsProduct({{1}, {0, 1}})
     ->ArgNames({"refinement", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
@@ -694,10 +650,10 @@ static void BM_sig_kernel_poly_cuda(benchmark::State& state) {
     }
 }
 BENCHMARK_TEMPLATE(BM_sig_kernel_poly_cuda, float, sig_kernel_poly_cuda_f, sig_kernel_poly_backprop_cuda_f)
-    ->Name("CUDA/sig_kernel_poly/float32")->ArgsProduct({{64, 256}, {0, 1}})
+    ->Name("CUDA/sig_kernel_poly/float32")->ArgsProduct({{256}, {0, 1}})
     ->ArgNames({"length", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_TEMPLATE(BM_sig_kernel_poly_cuda, double, sig_kernel_poly_cuda_d, sig_kernel_poly_backprop_cuda_d)
-    ->Name("CUDA/sig_kernel_poly/float64")->ArgsProduct({{64, 256}, {0, 1}})
+    ->Name("CUDA/sig_kernel_poly/float64")->ArgsProduct({{256}, {0, 1}})
     ->ArgNames({"length", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 template <typename T, auto Forward, auto Backward>
@@ -720,10 +676,10 @@ static void BM_branched_sig_kernel_cuda(benchmark::State& state) {
     out.check_finite();
 }
 BENCHMARK_TEMPLATE(BM_branched_sig_kernel_cuda, float, branched_sig_kernel_cuda_f, branched_sig_kernel_backprop_cuda_f)
-    ->Name("CUDA/branched_sig_kernel/float32")->ArgsProduct({{2, 3}, {0, 1}})
+    ->Name("CUDA/branched_sig_kernel/float32")->ArgsProduct({{3}, {0, 1}})
     ->ArgNames({"depth", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_TEMPLATE(BM_branched_sig_kernel_cuda, double, branched_sig_kernel_cuda_d, branched_sig_kernel_backprop_cuda_d)
-    ->Name("CUDA/branched_sig_kernel/float64")->ArgsProduct({{2, 3}, {0, 1}})
+    ->Name("CUDA/branched_sig_kernel/float64")->ArgsProduct({{3}, {0, 1}})
     ->ArgNames({"depth", "backprop"})->UseRealTime()->Unit(benchmark::kMicrosecond);
 
 int main(int argc, char** argv) {
