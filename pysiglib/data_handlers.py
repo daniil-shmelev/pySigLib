@@ -19,12 +19,25 @@ from math import prod
 import numpy as np
 import torch
 
-from .param_checks import check_type_multiple, check_dtype, ensure_own_contiguous_storage
+from .param_checks import check_type, check_non_neg, check_type_multiple, check_dtype, ensure_own_contiguous_storage
 from .dtypes import DTYPES
 from .load_siglib import BUILT_WITH_CUDA
 
 def names_str(name_list):
     return ", ".join(name_list)
+
+
+def displacement_to_path(displacement, dimension):
+    check_type(dimension, "dimension", int)
+    check_non_neg(dimension, "dimension")
+    check_type_multiple(displacement, "displacement", (np.ndarray, torch.Tensor))
+    check_dtype(displacement, "displacement")
+    if displacement.ndim < 1 or displacement.shape[-1] != dimension:
+        raise ValueError("displacement must have shape (..., dimension)")
+    if isinstance(displacement, torch.Tensor):
+        return torch.stack([torch.zeros_like(displacement), displacement], dim=-2)
+    return np.stack([np.zeros_like(displacement), displacement], axis=-2)
+
 
 def _check_cuda_available(device):
     if device != "cpu" and not BUILT_WITH_CUDA:

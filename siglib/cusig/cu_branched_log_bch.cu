@@ -413,7 +413,7 @@ __device__ __forceinline__ void evaluate_mkw_segment_(
 		for (uint32_t position = data.segment_label_offsets[q];
 			position < data.segment_label_offsets[q + 1]; ++position) {
 			const uint8_t label = data.segment_labels[position];
-			value *= right[label] - left[label];
+			value *= right[label] - (left ? left[label] : T(0));
 		}
 		target[data.segment_idx[q]] = value;
 	}
@@ -627,13 +627,13 @@ __device__ __forceinline__ void add_mkw_segment_vjp_(
 					if (other == position)
 						continue;
 					const uint8_t other_label = data.segment_labels[other];
-					product *= right[other_label] - left[other_label];
+					product *= right[other_label] - (left ? left[other_label] : T(0));
 				}
 				derivative += product;
 			}
 		}
 		right_derivs[label] += derivative;
-		left_derivs[label] -= derivative;
+		if (left_derivs) left_derivs[label] -= derivative;
 	}
 }
 
@@ -1051,6 +1051,86 @@ void branched_log_sig_from_path_backprop_cuda_(
 	}
 }
 
+template<typename T, bool Backward>
+__global__ void branched_log_sig_join_kernel_(
+	const T* logsig, const T* displacement, T* out, T* displacement_derivs,
+	const T* derivs, T* workspace, uint64_t dimension, bool prepend,
+	CuMkwBchDeviceData data
+) {
+	const uint64_t row = blockIdx.x;
+	const uint64_t memo_size = data.m2 * data.m;
+	T* memo = workspace + row * memo_size * (Backward ? 2 : 1);
+	T* d_memo = memo + memo_size;
+	const T sign = prepend ? T(-1) : T(1);
+	for (uint64_t k = threadIdx.x; k < memo_size; k += blockDim.x) memo[k] = T(0);
+	__syncthreads();
+	for (uint64_t k = threadIdx.x; k < data.m; k += blockDim.x)
+		memo[k] = sign * logsig[row * data.m + k];
+	evaluate_mkw_segment_(static_cast<const T*>(nullptr), displacement + row * dimension,
+		memo + data.m, sign, data);
+	__syncthreads();
+	if constexpr (Backward) {
+		evaluate_mkw_bch_nodes_<T, false, false, false>(memo, nullptr, nullptr, nullptr, data);
+		for (uint64_t w = 0; w < data.m2; ++w) {
+			const T coefficient = w < 2 ? T(1) : static_cast<T>(data.bch_operations[w - 2].coefficient);
+			for (uint64_t k = threadIdx.x; k < data.m; k += blockDim.x)
+				d_memo[w * data.m + k] = coefficient * derivs[row * data.m + k];
+		}
+		__syncthreads();
+		reverse_mkw_bch_nodes_<T, false, false>(memo, d_memo, nullptr, nullptr, data);
+		for (uint64_t k = threadIdx.x; k < data.m; k += blockDim.x)
+			out[row * data.m + k] = d_memo[k];
+		for (uint64_t k = threadIdx.x; k < dimension; k += blockDim.x)
+			displacement_derivs[row * dimension + k] = T(0);
+		__syncthreads();
+		add_mkw_segment_vjp_(static_cast<const T*>(nullptr), displacement + row * dimension,
+			d_memo + data.m, static_cast<const T*>(nullptr), static_cast<T*>(nullptr),
+			displacement_derivs + row * dimension, dimension, data);
+	} else {
+		for (uint64_t k = threadIdx.x; k < data.m; k += blockDim.x)
+			out[row * data.m + k] = memo[k] + memo[data.m + k];
+		__syncthreads();
+		evaluate_mkw_bch_nodes_<T, false, false, true>(memo, out + row * data.m, nullptr, nullptr, data);
+		if (prepend)
+			for (uint64_t k = threadIdx.x; k < data.m; k += blockDim.x) out[row * data.m + k] *= sign;
+	}
+}
+
+template<typename T, bool Backward>
+void branched_log_sig_join_cuda_(
+	const T* logsig, const T* displacement, T* out, T* displacement_derivs,
+	const T* derivs, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend
+) {
+	const auto data = get_cuda_mkw_bch_cache_(dimension, max_nodes).device_data();
+	if (batch_size == 0) return;
+	if (data.m == 0) {
+		if constexpr (Backward) {
+			const uint64_t bytes = checked_mkw_product_(
+				checked_mkw_product_(batch_size, dimension, "MKW join gradient overflow"),
+				sizeof(T), "MKW join gradient byte size overflow");
+			if (bytes) CUDA_CHECK(cudaMemset(displacement_derivs, 0, bytes));
+		}
+		return;
+	}
+	const uint64_t workspace_bytes = checked_mkw_product_(
+		checked_mkw_product_(data.m2, data.m, "MKW join workspace overflow"),
+		(Backward ? 2 : 1) * sizeof(T), "MKW join workspace byte size overflow");
+	size_t free_memory = 0, total_memory = 0;
+	CUDA_CHECK(cudaMemGetInfo(&free_memory, &total_memory));
+	const uint64_t reservation = checked_mkw_product_(2, workspace_bytes, "MKW join reservation overflow");
+	const uint64_t chunk_size = std::min<uint64_t>(std::min<uint64_t>(batch_size, CUDA_GRID_X_LIMIT),
+		std::max<uint64_t>(1, free_memory / reservation));
+	CudaBuf<T> workspace(checked_mkw_product_(chunk_size, workspace_bytes, "MKW join allocation overflow"));
+	for (uint64_t offset = 0; offset < batch_size; offset += chunk_size) {
+		const uint64_t count = std::min(chunk_size, batch_size - offset);
+		branched_log_sig_join_kernel_<T, Backward><<<static_cast<unsigned int>(count), 128>>>(
+			logsig + offset * data.m, displacement + offset * dimension, out + offset * data.m,
+			Backward ? displacement_derivs + offset * dimension : nullptr,
+			Backward ? derivs + offset * data.m : nullptr, workspace.get(), dimension, prepend, data);
+		check_cuda_kernel_launch();
+	}
+}
+
 }  // namespace
 
 void prepare_cuda_branched_bch_cache_(
@@ -1076,6 +1156,18 @@ void prepare_cuda_branched_bch_cache_(
 }
 
 extern "C" {
+	CUSIG_API int branched_log_sig_join_cuda_f(const float* logsig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend) noexcept {
+		CUDA_SAFE_CALL((branched_log_sig_join_cuda_<float, false>(logsig, displacement, out, nullptr, nullptr, batch_size, dimension, max_nodes, prepend)));
+	}
+	CUSIG_API int branched_log_sig_join_cuda_d(const double* logsig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend) noexcept {
+		CUDA_SAFE_CALL((branched_log_sig_join_cuda_<double, false>(logsig, displacement, out, nullptr, nullptr, batch_size, dimension, max_nodes, prepend)));
+	}
+	CUSIG_API int branched_log_sig_join_backprop_cuda_f(const float* derivs, float* d_logsig, float* d_displacement, const float* logsig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend) noexcept {
+		CUDA_SAFE_CALL((branched_log_sig_join_cuda_<float, true>(logsig, displacement, d_logsig, d_displacement, derivs, batch_size, dimension, max_nodes, prepend)));
+	}
+	CUSIG_API int branched_log_sig_join_backprop_cuda_d(const double* derivs, double* d_logsig, double* d_displacement, const double* logsig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend) noexcept {
+		CUDA_SAFE_CALL((branched_log_sig_join_cuda_<double, true>(logsig, displacement, d_logsig, d_displacement, derivs, batch_size, dimension, max_nodes, prepend)));
+	}
 
 	CUSIG_API int branched_log_sig_from_path_cuda_f(
 		const float* path, float* out, uint64_t batch_size, uint64_t length,

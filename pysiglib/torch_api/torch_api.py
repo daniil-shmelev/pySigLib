@@ -44,6 +44,12 @@ from ..transform_path import transform_path as transform_path_forward
 from ..transform_path_backprop import transform_path_backprop
 
 from ..linear_sig import linear_sig as linear_sig_forward
+from ..linear_log_sig import linear_log_sig as linear_log_sig_forward
+from ..linear_branched_sig import linear_branched_sig as linear_branched_sig_forward
+from ..linear_branched_log_sig import linear_branched_log_sig as linear_branched_log_sig_forward
+from ..branched_sig_join import branched_sig_join as branched_sig_join_forward, _branched_join_scalar_term
+from ..branched_log_sig_join import branched_log_sig_join as branched_log_sig_join_forward, branched_log_sig_join_backprop
+from ..data_handlers import displacement_to_path
 from ..sig_join import sig_join as sig_join_forward
 from ..sig_join_backprop import sig_join_backprop
 from ..log_sig_join import log_sig_join as log_sig_join_forward
@@ -1163,3 +1169,77 @@ def log_sig_join(
     return LogSigJoin.apply(log_sig, displacement, dimension, degree, n_jobs)
 
 log_sig_join.__doc__ = log_sig_join_forward.__doc__
+
+
+def linear_log_sig(displacement, dimension: int, degree: int, *,
+                   method: int = 1, scalar_term: bool = False, n_jobs: int = 1):
+    return linear_log_sig_forward(displacement, dimension, degree, method=method, scalar_term=scalar_term, n_jobs=n_jobs)
+
+
+linear_log_sig.__doc__ = linear_log_sig_forward.__doc__
+
+
+def linear_branched_sig(displacement, dimension: int, degree: int, *,
+                        planar: bool = False, scalar_term: bool = False, n_jobs: int = 1):
+    if not isinstance(displacement, torch.Tensor):
+        return linear_branched_sig_forward(displacement, dimension, degree, planar=planar, scalar_term=scalar_term, n_jobs=n_jobs)
+    path = displacement_to_path(displacement, dimension)
+    return branched_sig(path, degree, planar=planar, scalar_term=scalar_term, n_jobs=n_jobs)
+
+
+linear_branched_sig.__doc__ = linear_branched_sig_forward.__doc__
+
+
+def linear_branched_log_sig(displacement, dimension: int, degree: int, *,
+                            planar: bool = False, scalar_term: bool = False,
+                            method: Optional[int] = None, n_jobs: int = 1):
+    if not isinstance(displacement, torch.Tensor):
+        return linear_branched_log_sig_forward(displacement, dimension, degree, planar=planar, scalar_term=scalar_term, method=method, n_jobs=n_jobs)
+    path = displacement_to_path(displacement, dimension)
+    return branched_log_sig(path, degree, planar=planar, scalar_term=scalar_term, method=method, n_jobs=n_jobs)
+
+
+linear_branched_log_sig.__doc__ = linear_branched_log_sig_forward.__doc__
+
+
+def branched_sig_join(bsig, displacement, dimension: int, degree: int, *,
+                      planar: bool = False, prepend: bool = False, n_jobs: int = 1):
+    if not isinstance(bsig, torch.Tensor):
+        return branched_sig_join_forward(bsig, displacement, dimension, degree, planar=planar, prepend=prepend, n_jobs=n_jobs)
+    check_type(prepend, "prepend", bool)
+    scalar_term = _branched_join_scalar_term(bsig, displacement, dimension, degree, planar)
+    segment = linear_branched_sig(displacement, dimension, degree, planar=planar, scalar_term=scalar_term, n_jobs=n_jobs)
+    left, right = (segment, bsig) if prepend else (bsig, segment)
+    return branched_sig_combine(left, right, dimension, degree, planar=planar, n_jobs=n_jobs)
+
+
+branched_sig_join.__doc__ = branched_sig_join_forward.__doc__
+
+
+class BranchedLogSigJoin(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, blogsig, displacement, dimension, degree, prepend, n_jobs):
+        result = branched_log_sig_join_forward(blogsig, displacement, dimension, degree, prepend=prepend, n_jobs=n_jobs)
+        ctx.save_for_backward(blogsig, displacement)
+        ctx.dimension = dimension
+        ctx.degree = degree
+        ctx.prepend = prepend
+        ctx.n_jobs = n_jobs
+        return result
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        blogsig, displacement = ctx.saved_tensors
+        d_logsig, d_displacement = branched_log_sig_join_backprop(
+            grad_output, blogsig, displacement, ctx.dimension, ctx.degree, prepend=ctx.prepend, n_jobs=ctx.n_jobs)
+        return d_logsig, d_displacement, None, None, None, None
+
+
+def branched_log_sig_join(blogsig, displacement, dimension: int, degree: int, *,
+                          prepend: bool = False, n_jobs: int = 1):
+    if not isinstance(blogsig, torch.Tensor):
+        return branched_log_sig_join_forward(blogsig, displacement, dimension, degree, prepend=prepend, n_jobs=n_jobs)
+    return BranchedLogSigJoin.apply(blogsig, displacement, dimension, degree, prepend, n_jobs)
+
+
+branched_log_sig_join.__doc__ = branched_log_sig_join_forward.__doc__
