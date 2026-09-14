@@ -1,7 +1,7 @@
 Computing Log Signatures
 ===========================
 
-For :math:`x \in T(\mathbb{R}^d)`, the logarithm in tensor space is defined by
+For a tensor series :math:`x` with zero scalar component, the formal logarithm is defined by
 
 .. math::
 

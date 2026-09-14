@@ -48,14 +48,14 @@ def branched_sig_coef_backprop(
 
     :param path: Path or batch of paths used in the forward call, with shape
         ``(..., length, dimension)``.
-    :type path: numpy.ndarray | torch.tensor
+    :type path: numpy.ndarray | torch.Tensor
     :param trees: Decorated trees or planar ordered forests requested in the
         forward call. See :func:`branched_sig_coef`.
     :type trees: tuple | None | list[tuple | None]
     :param coefs: Forward output from :func:`branched_sig_coef`.
-    :type coefs: numpy.ndarray | torch.tensor
+    :type coefs: numpy.ndarray | torch.Tensor
     :param derivs: Derivatives of a scalar objective with respect to ``coefs``.
-    :type derivs: numpy.ndarray | torch.tensor
+    :type derivs: numpy.ndarray | torch.Tensor
     :param time_aug: Whether time augmentation was used in the forward call.
     :type time_aug: bool
     :param lead_lag: Whether lead-lag was used in the forward call.
@@ -66,12 +66,12 @@ def branched_sig_coef_backprop(
     :type planar: bool
     :param correction: Correction data passed to the forward call. It is treated
         as constant, so this function returns derivatives only for ``path``.
-    :type correction: numpy.ndarray | torch.tensor | None
+    :type correction: numpy.ndarray | torch.Tensor | None
     :param n_jobs: Number of CPU threads. Ignored for CUDA input. Use 1 for
         serial CPU execution or -1 for all available CPU threads.
     :type n_jobs: int
     :return: Path derivatives with the same shape and container type as ``path``.
-    :rtype: numpy.ndarray | torch.tensor
+    :rtype: numpy.ndarray | torch.Tensor
 
     Example:
     --------

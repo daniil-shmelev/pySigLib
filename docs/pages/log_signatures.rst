@@ -10,17 +10,18 @@ from signatures, and combination via the Baker-Campbell-Hausdorff formula.
 See :doc:`log_signatures/log_sig_methods` for a comparison of the available
 log-signature algorithms and guidance on choosing between them.
 
+For cache directory settings and cache clearing, see :doc:`cache_management`.
+
 .. toctree::
    :titlesonly:
    :maxdepth: 2
 
    /pages/log_signatures/log_sig_methods
-   /pages/log_signatures/set_cache_dir
    /pages/log_signatures/prepare_log_sig
-   /pages/log_signatures/clear_cache
    /pages/log_signatures/log_sig_length
    /pages/log_signatures/sig_to_log_sig
    /pages/log_signatures/logsig_to_sig
    /pages/log_signatures/log_sig
    /pages/log_signatures/log_sig_combine
    /pages/log_signatures/log_sig_join
+   /pages/log_signatures/linear_log_sig

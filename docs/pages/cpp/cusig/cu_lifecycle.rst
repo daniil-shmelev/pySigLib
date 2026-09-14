@@ -1,6 +1,11 @@
 Lifecycle functions
 ====================
 
+cusig_last_error_message
+------------------------
+
+.. doxygenfunction:: cusig_last_error_message
+
 set_cache_dir_cuda
 -------------------
 

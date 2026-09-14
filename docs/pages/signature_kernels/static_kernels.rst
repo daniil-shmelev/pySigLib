@@ -86,33 +86,9 @@ kernels, it is very important to make them as efficient as possible, as computat
 of the static kernel makes up a significant proportion of the overall computational
 cost of signature kernels.
 
-.. code-block:: python
-
-    from pysiglib import StaticKernel
-
-    class LinearKernel(StaticKernel):
-
-    def __call__(self, ctx, x, y):
-        dx = torch.diff(x, dim=1)
-        dy = torch.diff(y, dim=1)
-        ctx.save_for_backward(dx, dy)
-        return torch.bmm(dx, dy.permute(0, 2, 1))
-
-    def grad_x(self, ctx, derivs):
-        dx, dy = ctx.saved_tensors
-        out = torch.empty((dx.shape[0], dx.shape[1] + 1, dy.shape[1]), dtype=torch.float64, device=derivs.device)
-        out[:, 0, :] = 0
-        out[:, 1:, :] = derivs
-        out[:, :-1, :] -= derivs
-        return torch.bmm(out, dy)
-
-    def grad_y(self, ctx, derivs):
-        dx, dy = ctx.saved_tensors
-        out = torch.empty((dx.shape[0], dx.shape[1], dy.shape[1] + 1), dtype=torch.float64, device=derivs.device)
-        out[:, :, 0] = 0
-        out[:, :, 1:] = derivs
-        out[:, :, :-1] -= derivs
-        return torch.bmm(out.permute(0, 2, 1), dx)
+.. literalinclude:: ../../../pysiglib/static_kernels.py
+   :language: python
+   :pyobject: LinearKernel
 
 .. autoclass:: pysiglib.Context
    :members:

@@ -1,6 +1,12 @@
 Sig kernel functions
 =====================
 
+sig_kernel_poly_cuda
+--------------------
+
+.. doxygengroup:: sig_kernel_poly_cuda_functions
+   :content-only:
+
 sig_kernel_cuda
 ----------------
 

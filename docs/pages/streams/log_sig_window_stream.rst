@@ -5,4 +5,5 @@ pysiglib.LogSigWindowStream
 
 .. autoclass:: pysiglib.LogSigWindowStream
    :members:
+   :inherited-members:
    :undoc-members:

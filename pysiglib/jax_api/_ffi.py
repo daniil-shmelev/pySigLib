@@ -171,6 +171,14 @@ _TARGETS = {
         "cpu": ("pysiglib_branched_sig_combine_cpu", "PySigLibBranchedSigCombineCpu"),
         "cuda": ("pysiglib_branched_sig_combine_cuda", "PySigLibBranchedSigCombineCuda"),
     },
+    "branched_log_sig_join": {
+        "cpu": ("pysiglib_branched_log_sig_join_cpu", "PySigLibBranchedLogSigJoinCpu"),
+        "cuda": ("pysiglib_branched_log_sig_join_cuda", "PySigLibBranchedLogSigJoinCuda"),
+    },
+    "branched_log_sig_join_backprop": {
+        "cpu": ("pysiglib_branched_log_sig_join_backprop_cpu", "PySigLibBranchedLogSigJoinBackpropCpu"),
+        "cuda": ("pysiglib_branched_log_sig_join_backprop_cuda", "PySigLibBranchedLogSigJoinBackpropCuda"),
+    },
     "branched_sig_combine_backprop": {
         "cpu": ("pysiglib_branched_sig_combine_backprop_cpu", "PySigLibBranchedSigCombineBackpropCpu"),
         "cuda": ("pysiglib_branched_sig_combine_backprop_cuda", "PySigLibBranchedSigCombineBackpropCuda"),
@@ -698,6 +706,23 @@ def branched_sig_combine_ffi_call(bsig1, bsig2, dimension, max_nodes, n_jobs, pl
     call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
                        n_jobs=np.int64(n_jobs), planar=np.bool_(planar))
     return _make_ffi_call("branched_sig_combine", (bsig1, bsig2), out_type, call_kwargs)
+
+
+def branched_log_sig_join_ffi_call(blogsig, displacement, dimension, max_nodes, n_jobs, prepend):
+    _check_same_dtype(blogsig, displacement)
+    out_type = jax.ShapeDtypeStruct(blogsig.shape, blogsig.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
+                       n_jobs=np.int64(n_jobs), prepend=np.bool_(prepend))
+    return _make_ffi_call("branched_log_sig_join", (blogsig, displacement), out_type, call_kwargs)
+
+
+def branched_log_sig_join_backprop_ffi_call(cotangent, blogsig, displacement, dimension, max_nodes, n_jobs, prepend):
+    _check_same_dtype(cotangent, blogsig, displacement)
+    grad_logsig = jax.ShapeDtypeStruct(blogsig.shape, blogsig.dtype)
+    grad_disp = jax.ShapeDtypeStruct(displacement.shape, displacement.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), max_nodes=np.int64(max_nodes),
+                       n_jobs=np.int64(n_jobs), prepend=np.bool_(prepend))
+    return _make_ffi_call("branched_log_sig_join_backprop", (cotangent, blogsig, displacement), (grad_logsig, grad_disp), call_kwargs)
 
 
 def branched_sig_combine_backprop_ffi_call(cotangent, bsig1, bsig2, dimension, max_nodes, n_jobs, planar):

@@ -1,6 +1,12 @@
 Sig kernel functions
 =====================
 
+polynomial_sig_kernel
+---------------------
+
+.. doxygengroup:: polynomial_sig_kernel_functions
+   :content-only:
+
 sig_kernel
 ------------
 

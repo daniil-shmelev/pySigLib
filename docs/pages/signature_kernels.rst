@@ -5,11 +5,13 @@ Signature Kernels
    :description: Use signature kernels in pySigLib for path comparison, time series kernels, Gram matrices, scoring rules, and MMD.
 
 
-This section covers the signature kernel, the BCK branched signature kernel,
-and their Gram matrices, along with higher-level statistics built on top
-(scoring rules and MMD). It also covers the library of static kernels on
+This section covers the signature kernel and its Gram matrices.
+It also covers the library of static kernels on
 :math:`\mathbb{R}^d` which can be supplied as the base kernel lifted by the
 signature kernel.
+
+For scoring rules and MMD, see :doc:`signature_kernel_metrics`.
+For branched signature kernels, see :doc:`branched_signature_kernels`.
 
 .. toctree::
    :titlesonly:
@@ -18,8 +20,3 @@ signature kernel.
    /pages/signature_kernels/static_kernels
    /pages/signature_kernels/sig_kernel
    /pages/signature_kernels/sig_kernel_gram
-   /pages/signature_kernels/branched_sig_kernel
-   /pages/signature_kernels/branched_sig_kernel_gram
-   /pages/signature_kernels/sig_score
-   /pages/signature_kernels/expected_sig_score
-   /pages/signature_kernels/sig_mmd

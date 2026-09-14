@@ -1054,8 +1054,8 @@ class LogSigWindowStream(_WindowStream):
 
     .. note::
 
-        Before creating a ``LogSigWindowStream``, prepare method 3 for its BCH
-        operations and method 2 for its default log-signature method.
+        Prepare the selected method before use. The default method 2 requires
+        ``prepare_log_sig(dimension, degree, method=2)``.
 
     :param dimension: Dimension of the underlying space, :math:`d`.
     :type dimension: int
@@ -1077,7 +1077,6 @@ class LogSigWindowStream(_WindowStream):
         import numpy as np
 
         pysiglib.prepare_log_sig(3, 4, method=2)
-        pysiglib.prepare_log_sig(3, 4, method=3)
         ws = pysiglib.LogSigWindowStream(dimension=3, degree=4, window_size=20, stride=5)
 
         path = np.random.randn(100, 3)
