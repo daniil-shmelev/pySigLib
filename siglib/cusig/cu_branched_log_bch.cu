@@ -400,7 +400,7 @@ const CuMkwBchCache& get_cuda_mkw_bch_cache_(
 	return *static_cast<const CuMkwBchCache*>(found->second.bch.get());
 }
 
-template<typename T>
+template<typename T, bool Displacement = false>
 __device__ __forceinline__ void evaluate_mkw_segment_(
 	const T* left,
 	const T* right,
@@ -413,7 +413,7 @@ __device__ __forceinline__ void evaluate_mkw_segment_(
 		for (uint32_t position = data.segment_label_offsets[q];
 			position < data.segment_label_offsets[q + 1]; ++position) {
 			const uint8_t label = data.segment_labels[position];
-			value *= right[label] - (left ? left[label] : T(0));
+			value *= right[label] - (Displacement ? T(0) : left[label]);
 		}
 		target[data.segment_idx[q]] = value;
 	}
@@ -598,7 +598,7 @@ void branched_log_sig_from_path_cuda_(
 			"CUDA MKW path reduction");
 }
 
-template<typename T>
+template<typename T, bool Displacement = false>
 __device__ __forceinline__ void add_mkw_segment_vjp_(
 	const T* left,
 	const T* right,
@@ -627,13 +627,13 @@ __device__ __forceinline__ void add_mkw_segment_vjp_(
 					if (other == position)
 						continue;
 					const uint8_t other_label = data.segment_labels[other];
-					product *= right[other_label] - (left ? left[other_label] : T(0));
+					product *= right[other_label] - (Displacement ? T(0) : left[other_label]);
 				}
 				derivative += product;
 			}
 		}
 		right_derivs[label] += derivative;
-		if (left_derivs) left_derivs[label] -= derivative;
+		if constexpr (!Displacement) left_derivs[label] -= derivative;
 	}
 }
 
@@ -1066,7 +1066,7 @@ __global__ void branched_log_sig_join_kernel_(
 	__syncthreads();
 	for (uint64_t k = threadIdx.x; k < data.m; k += blockDim.x)
 		memo[k] = sign * logsig[row * data.m + k];
-	evaluate_mkw_segment_(static_cast<const T*>(nullptr), displacement + row * dimension,
+	evaluate_mkw_segment_<T, true>(nullptr, displacement + row * dimension,
 		memo + data.m, sign, data);
 	__syncthreads();
 	if constexpr (Backward) {
@@ -1083,8 +1083,8 @@ __global__ void branched_log_sig_join_kernel_(
 		for (uint64_t k = threadIdx.x; k < dimension; k += blockDim.x)
 			displacement_derivs[row * dimension + k] = T(0);
 		__syncthreads();
-		add_mkw_segment_vjp_(static_cast<const T*>(nullptr), displacement + row * dimension,
-			d_memo + data.m, static_cast<const T*>(nullptr), static_cast<T*>(nullptr),
+		add_mkw_segment_vjp_<T, true>(nullptr, displacement + row * dimension,
+			d_memo + data.m, nullptr, nullptr,
 			displacement_derivs + row * dimension, dimension, data);
 	} else {
 		for (uint64_t k = threadIdx.x; k < data.m; k += blockDim.x)
