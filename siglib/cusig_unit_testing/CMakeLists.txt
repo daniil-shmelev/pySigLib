@@ -13,6 +13,7 @@ endif()
 add_executable(cusig_tests
     cu_test_batch_grid.cpp
     cu_test_signature.cpp
+    cu_test_prefix_suffix.cpp
     cu_test_sig_backprop.cpp
     cu_test_sig_coef.cpp
     cu_test_log_sig.cpp
@@ -39,6 +40,12 @@ add_custom_command(TARGET cusig_tests POST_BUILD
         $<TARGET_FILE:cusig>
         $<TARGET_FILE_DIR:cusig_tests>
 )
+if(WIN32)
+    foreach(_blas_name cublas cublasLt)
+        add_custom_command(TARGET cusig_tests POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_pysiglib_${_blas_name}_dll}" "$<TARGET_FILE_DIR:cusig_tests>")
+    endforeach()
+endif()
 
 set(_pysiglib_test_cache_root "${CMAKE_CURRENT_BINARY_DIR}/pysiglib_test_cache")
 file(MAKE_DIRECTORY "${_pysiglib_test_cache_root}")

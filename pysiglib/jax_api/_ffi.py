@@ -71,6 +71,10 @@ _CUDA_LIB = None
 _REGISTERED = False
 
 _TARGETS = {
+    "sig_prefix_suffix": {
+        "cpu": ("pysiglib_sig_prefix_suffix_cpu", "PySigLibPrefixSuffixCpu"),
+        "cuda": ("pysiglib_sig_prefix_suffix_cuda", "PySigLibPrefixSuffixCuda"),
+    },
     "sig": {
         "cpu": ("pysiglib_sig_cpu", "PySigLibSigCpu"),
         "cuda": ("pysiglib_sig_cuda", "PySigLibSigCuda"),
@@ -420,6 +424,13 @@ def sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner,
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), horner=np.bool_(horner), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("sig", (path, correction), out_type, call_kwargs)
+
+
+def sig_prefix_suffix_ffi_call(path, degree, time_aug, lead_lag, end_time, n_jobs):
+    out_type = jax.ShapeDtypeStruct(_sig_shape(path.shape, degree, time_aug, lead_lag), path.dtype)
+    call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
+                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("sig_prefix_suffix", (path,), out_type, call_kwargs)
 
 
 def sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs):

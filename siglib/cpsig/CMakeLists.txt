@@ -22,6 +22,7 @@ add_library(cpsig SHARED
     cp_sig_coef.cpp
     cp_sig_kernel.cpp
     cp_signature.cpp
+    cp_prefix_suffix.cpp
     cp_utils.cpp
     cp_sig_combine.cpp
     cp_sig_join.cpp
@@ -32,6 +33,7 @@ add_library(cpsig SHARED
 )
 
 include(FetchContent)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/BLAS.cmake")
 
 set(TBB_TEST OFF CACHE BOOL "" FORCE)
 set(TBB_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -70,6 +72,7 @@ target_compile_definitions(cpsig PRIVATE CPSIG_EXPORTS)
 target_link_libraries(cpsig
     PRIVATE Threads::Threads
     PRIVATE pysiglib_preparation
+    PRIVATE pysiglib_openblas
     PUBLIC TBB::tbb
 )
 

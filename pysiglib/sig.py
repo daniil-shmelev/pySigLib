@@ -22,6 +22,7 @@ import torch
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import CPSIG_SIGNATURE, CPSIG_SIG_COMBINE, CUSIG_SIGNATURE, CUSIG_SIG_COMBINE
+from .dtypes import CPSIG_PREFIX_SUFFIX, CUSIG_PREFIX_SUFFIX
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
 from .data_handlers import PathInputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
 
@@ -125,6 +126,13 @@ def sig_combine(
             + err_msg(err_code, result.device))
     return result.data
 
+def _check_sig_method(method, horner):
+    if method not in (None, "prefix_suffix_gemm"):
+        raise ValueError("method must be None or 'prefix_suffix_gemm'")
+    if method is not None and not horner:
+        raise ValueError("horner=False cannot be combined with a prefix-suffix method")
+
+
 def sig(
         path : Union[np.ndarray, torch.Tensor],
         degree : int,
@@ -135,7 +143,8 @@ def sig(
         horner : bool = True,
         scalar_term : bool = False,
         correction = None,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        method = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated signature of single path or a batch of paths. For
@@ -164,6 +173,12 @@ def sig(
     :type end_time: float
     :param horner: If True, will use Horner's algorithm for polynomial multiplication.
     :type horner: bool
+    :param method: ``None`` preserves the existing ``horner`` selection. Use
+        ``"prefix_suffix_gemm"`` for the
+        forward-only prefix-suffix algorithm. These methods reject non-empty
+        corrections, gradient recording, and ``horner=False``. They store
+        half-depth scans and can require more memory than Horner's algorithm.
+    :type method: str | None
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
     :type scalar_term: bool
@@ -270,15 +285,33 @@ def sig(
     check_type(end_time, "end_time", float)
 
     check_n_jobs(n_jobs)
+    _check_sig_method(method, horner)
+    if method is not None and isinstance(path, torch.Tensor) and path.requires_grad and torch.is_grad_enabled():
+        raise NotImplementedError("Prefix-suffix methods do not support automatic differentiation; use torch.no_grad() for forward-only calls")
+    if method is not None and isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
+        raise NotImplementedError("Prefix-suffix methods do not support automatic differentiation with forward-mode dual tensors")
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, data, degree)
+    if method is not None and correction_data.length:
+        raise ValueError("Prefix-suffix methods do not support non-empty corrections")
     sig_len = sig_length(data.dimension, degree, scalar_term=scalar_term)
     result = SigOutputHandler(data, sig_len)
 
     if data.batch_size == 0:
         return result.data
 
-    if data.device == "cpu":
+    if method is not None:
+        fn = (CPSIG_PREFIX_SUFFIX if data.device == "cpu" else CUSIG_PREFIX_SUFFIX)[data.dtype]
+        args = (data.data_ptr, result.data_ptr, data.batch_size, data.data_dimension,
+                data.data_length, degree, data.time_aug, data.lead_lag,
+                data.end_time, scalar_term)
+        if data.device == "cpu":
+            err_code = fn(*args, n_jobs)
+        else:
+            with torch.cuda.device(data.path.device):
+                stream = torch.cuda.current_stream(data.path.device).cuda_stream
+                err_code = fn(*args, stream)
+    elif data.device == "cpu":
         err_code = CPSIG_SIGNATURE[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             data.data_dimension, data.data_length, degree,

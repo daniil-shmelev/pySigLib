@@ -133,10 +133,10 @@ if(PYSIGLIB_JAX_FFI AND JAXLIB_FOUND)
     # whether to attempt loading the CUDA FFI library.
     configure_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/_config.py.in"
-        "${CMAKE_BINARY_DIR}/_config.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/_config.py"
         @ONLY
     )
-    install(FILES "${CMAKE_BINARY_DIR}/_config.py"
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_config.py"
             DESTINATION ${CUSIG_INSTALL_DESTINATION})
 endif()
 
