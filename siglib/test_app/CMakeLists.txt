@@ -13,6 +13,15 @@ target_include_directories(test_app PRIVATE
 )
 target_link_libraries(test_app PRIVATE CUDA::cudart ${CMAKE_DL_LIBS})
 
+set(PYSIGLIB_PROFILE_ITT_ROOT "" CACHE PATH "Optional VTune SDK for profile capture ranges")
+if(PYSIGLIB_PROFILE_ITT_ROOT)
+    find_library(PYSIGLIB_PROFILE_ITT_LIBRARY NAMES ittnotify libittnotify
+        PATHS "${PYSIGLIB_PROFILE_ITT_ROOT}/lib64" NO_DEFAULT_PATH REQUIRED)
+    target_include_directories(test_app PRIVATE "${PYSIGLIB_PROFILE_ITT_ROOT}/include")
+    target_link_libraries(test_app PRIVATE "${PYSIGLIB_PROFILE_ITT_LIBRARY}")
+    target_compile_definitions(test_app PRIVATE PYSIGLIB_PROFILE_ITT)
+endif()
+
 if(TARGET cpsig)
     add_dependencies(test_app cpsig)
     add_custom_command(TARGET test_app POST_BUILD

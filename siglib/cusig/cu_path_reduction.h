@@ -29,6 +29,7 @@
 struct CudaPathWorkspaces {
 	struct Entry {
 		std::unique_ptr<CudaBatchWorkspace<std::byte>> buffer;
+		std::shared_ptr<void> prefix_suffix_state;
 		size_t requested_bytes = 0;
 	};
 	std::mutex mutex;

@@ -40,6 +40,8 @@ extern "C" {
 	* @brief Returns the CPU error message for the current thread.
 	*/
 	CPSIG_API const char* cpsig_last_error_message() noexcept;
+	CPSIG_API int signature_prefix_suffix_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs) noexcept;
+	CPSIG_API int signature_prefix_suffix_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs) noexcept;
 
 	/** @defgroup transform_path_functions Transform path functions
 	* @{

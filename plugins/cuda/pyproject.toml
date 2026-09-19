@@ -5,6 +5,7 @@
 # JAXLIB_FOUND=FALSE and the plugin falls back to cusig-only (no CUDA FFI).
 requires = [
     "scikit-build-core>=0.10",
+    "ninja>=1.11",
     "jaxlib>=0.9.1; python_version>='3.11'",
 ]
 build-backend = "scikit_build_core.build"
@@ -77,3 +78,7 @@ build-verbosity = 1
 manylinux-x86_64-image = "manylinux_2_28"
 # Exclude system-CUDA libs, base-wheel libs, and the bundled CUDA FFI library.
 repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*' --exclude 'libcpsig.so*' --exclude 'libtbb.so*' --exclude 'libpysiglib_jax_ffi_cuda.so*'"
+
+[tool.cibuildwheel.windows]
+before-build = "python -m pip install delvewheel"
+repair-wheel-command = 'delvewheel repair --ignore-existing --analyze-existing --no-mangle-all --exclude "cpsig.dll;tbb12.dll" -w {dest_dir} {wheel}'

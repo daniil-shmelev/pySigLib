@@ -29,6 +29,7 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 from ..sig import sig as sig_forward
+from ..sig import _check_sig_method
 from ..sig import sig_combine as sig_combine_forward
 from ..transform_path import transform_path as transform_path_forward
 from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
@@ -90,6 +91,7 @@ from ._ffi import (
     ensure_registered,
     sig_backprop_ffi_call,
     sig_ffi_call,
+    sig_prefix_suffix_ffi_call,
     sig_combine_ffi_call,
     sig_combine_backprop_ffi_call,
     transform_path_ffi_call,
@@ -263,6 +265,16 @@ def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, residual, cot
 _sig.defvjp(_sig_fwd, _sig_bwd)
 
 
+@partial(jax.custom_jvp, nondiff_argnums=(1, 2, 3, 4, 5))
+def _sig_prefix_suffix(path, degree, time_aug, lead_lag, end_time, n_jobs):
+    return sig_prefix_suffix_ffi_call(path, degree, time_aug, lead_lag, end_time, n_jobs)
+
+
+@_sig_prefix_suffix.defjvp
+def _sig_prefix_suffix_jvp(*args):
+    raise NotImplementedError("Prefix-suffix methods do not support automatic differentiation")
+
+
 def sig(
     path,
     degree: int,
@@ -274,6 +286,7 @@ def sig(
     scalar_term: bool = False,
     correction=None,
     n_jobs: int = 1,
+    method=None,
 ):
     ensure_registered()
 
@@ -287,9 +300,15 @@ def sig(
     check_type(end_time, "end_time", float)
     check_type(horner, "horner", bool)
     check_n_jobs(n_jobs)
+    _check_sig_method(method, horner)
 
     correction = _prepare_correction_jax(correction, path, degree, lead_lag)
-    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+    if method is not None:
+        if correction.size:
+            raise ValueError("Prefix-suffix methods do not support non-empty corrections")
+        result = _sig_prefix_suffix(path, degree, time_aug, lead_lag, end_time, n_jobs)
+    else:
+        result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
     if not scalar_term:
         result = _strip_scalar(result)
     return result

@@ -15,6 +15,7 @@ set(_pysiglib_cpsig_test_sources
     cp_test_main.cpp
     cp_test_misc.cpp
     cp_test_signature.cpp
+    cp_test_prefix_suffix.cpp
     cp_test_sig_coef.cpp
     cp_test_log_sig.cpp
     cp_test_sig_kernel.cpp

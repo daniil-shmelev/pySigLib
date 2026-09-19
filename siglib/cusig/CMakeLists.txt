@@ -81,6 +81,7 @@ add_library(cusig SHARED
     cu_sig_coef.cu
     cu_sig_kernel.cu
     cu_signature.cu
+    cu_prefix_suffix.cu
     cu_sig_combine.cu
     cache_lifecycle/cusig_lifecycle.cu
 )
@@ -131,7 +132,20 @@ if(MSVC)
     target_compile_definitions(cusig PRIVATE _USRDLL _UNICODE UNICODE)
 endif()
 
-target_link_libraries(cusig PRIVATE CUDA::cudart pysiglib_preparation)
+target_link_libraries(cusig PRIVATE CUDA::cudart CUDA::cublas pysiglib_preparation)
+get_target_property(_pysiglib_cublas_library CUDA::cublas IMPORTED_LOCATION)
+get_filename_component(_pysiglib_cublas_libdir "${_pysiglib_cublas_library}" DIRECTORY)
+find_path(PYSIGLIB_CUBLAS_INCLUDE_DIR cublas_v2.h
+    HINTS ${CUDAToolkit_INCLUDE_DIRS}
+        "${_pysiglib_cublas_libdir}/../../include"
+        "${_pysiglib_cublas_libdir}/../include"
+    REQUIRED)
+set(_pysiglib_cublas_headers "${CMAKE_CURRENT_BINARY_DIR}/cublas-include")
+file(MAKE_DIRECTORY "${_pysiglib_cublas_headers}")
+foreach(_header cublas.h cublas_v2.h cublas_api.h cublasLt.h)
+    configure_file("${PYSIGLIB_CUBLAS_INCLUDE_DIR}/${_header}" "${_pysiglib_cublas_headers}/${_header}" COPYONLY)
+endforeach()
+target_include_directories(cusig PRIVATE "${_pysiglib_cublas_headers}")
 
 # cudadevrt is needed for separable compilation (device linking).
 if(PYSIGLIB_CUDA_SEPARABLE_COMPILATION)
@@ -160,3 +174,19 @@ install(TARGETS cusig
     LIBRARY DESTINATION ${CUSIG_INSTALL_DESTINATION}
     RUNTIME DESTINATION ${CUSIG_INSTALL_DESTINATION}   # .dll on Windows
 )
+find_file(PYSIGLIB_CUDA_LICENSE EULA.txt
+    HINTS "${CUDAToolkit_BIN_DIR}/.." "${CUDAToolkit_LIBRARY_ROOT}" "${CUDAToolkit_TARGET_DIR}/../..")
+if(PYSIGLIB_CUDA_LICENSE)
+    install(FILES "${PYSIGLIB_CUDA_LICENSE}" DESTINATION "${CUSIG_INSTALL_DESTINATION}/licenses" RENAME CUDA-EULA.txt)
+endif()
+
+if(WIN32)
+    foreach(_blas_name cublas cublasLt)
+        find_file(_pysiglib_${_blas_name}_dll
+            NAMES "${_blas_name}64_${CUDAToolkit_VERSION_MAJOR}.dll"
+            HINTS "${CUDAToolkit_BIN_DIR}" REQUIRED)
+        install(FILES "${_pysiglib_${_blas_name}_dll}" DESTINATION ${CUSIG_INSTALL_DESTINATION})
+        add_custom_command(TARGET cusig POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_pysiglib_${_blas_name}_dll}" "$<TARGET_FILE_DIR:cusig>")
+    endforeach()
+endif()

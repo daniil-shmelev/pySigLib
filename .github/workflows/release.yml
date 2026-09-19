@@ -162,14 +162,14 @@ jobs:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
             C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\VC\v170\BuildCustomizations
-          key: cuda-win-12.9.1-nvcc-cudart-thrust-vsint-v2
+          key: cuda-win-12.9.1-nvcc-cudart-cublas-thrust-vsint-v4
       - name: Install CUDA toolkit
         if: steps.cuda-cache.outputs.cache-hit != 'true'
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: '12.9.1'
           method: 'network'
-          sub-packages: '["nvcc", "cudart", "thrust", "visual_studio_integration"]'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
       - name: Expose CUDA env on cache hit
         if: steps.cuda-cache.outputs.cache-hit == 'true'
         shell: pwsh
@@ -484,14 +484,14 @@ jobs:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
             C:\Program Files\Microsoft Visual Studio\2022\*\MSBuild\Microsoft\VC\v170\BuildCustomizations
-          key: cuda-win-selfhosted-${{ runner.name }}-12.9.1-nvcc-cudart-thrust-vsint-v1
+          key: cuda-win-selfhosted-${{ runner.name }}-12.9.1-nvcc-cudart-cublas-thrust-vsint-v3
       - name: Install CUDA toolkit
         if: steps.cuda-cache.outputs.cache-hit != 'true'
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: '12.9.1'
           method: 'network'
-          sub-packages: '["nvcc", "cudart", "thrust", "visual_studio_integration"]'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
       - name: Expose CUDA env on cache hit
         if: steps.cuda-cache.outputs.cache-hit == 'true'
         run: |

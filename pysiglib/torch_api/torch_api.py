@@ -109,11 +109,13 @@ def sig(
         horner: bool = True,
         scalar_term : bool = False,
         correction = None,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        method = None
 ) -> Union[np.ndarray, torch.Tensor]:
-    if not isinstance(path, torch.Tensor):
+    if method is not None or not isinstance(path, torch.Tensor):
         return sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
-                           end_time=end_time, horner=horner, correction=correction, n_jobs=n_jobs)
+                           end_time=end_time, horner=horner, correction=correction, n_jobs=n_jobs,
+                           method=method)
     return Sig.apply(path, correction, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs)
 
 sig.__doc__ = sig_forward.__doc__

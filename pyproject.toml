@@ -4,6 +4,7 @@
 # on Python <3.11 (jax dropped 3.10 in 0.7.0); CMake then disables JAX FFI.
 requires = [
     "scikit-build-core>=0.10",
+    "ninja>=1.11",
     "jaxlib>=0.9.1; python_version>='3.11'",
 ]
 build-backend = "scikit_build_core.build"
@@ -120,6 +121,10 @@ archs = ["arm64"]
 # --ignore-missing-dependencies: our bundled dylibs reference each other
 # (libpysiglib_jax_ffi_cpu -> libcpsig); all in pysiglib/, loaded via ctypes.
 repair-wheel-command = "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} --ignore-missing-dependencies"
+
+[tool.cibuildwheel.windows]
+before-build = "python -m pip install delvewheel"
+repair-wheel-command = "delvewheel repair --ignore-existing --analyze-existing --no-mangle-all -w {dest_dir} {wheel}"
 
 [tool.coverage.run]
 source_pkgs = ["pysiglib"]

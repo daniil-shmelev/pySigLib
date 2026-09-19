@@ -41,6 +41,8 @@ extern "C" {
 	* @brief Returns the CUDA error message for the current thread.
 	*/
 	CUSIG_API const char* cusig_last_error_message() noexcept;
+	CUSIG_API int signature_prefix_suffix_cuda_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream) noexcept;
+	CUSIG_API int signature_prefix_suffix_cuda_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream) noexcept;
 
 	
 	/** @defgroup transform_path_cuda_functions Transform path CUDA functions
