@@ -92,6 +92,7 @@ from ._ffi import (
     sig_backprop_ffi_call,
     sig_ffi_call,
     sig_prefix_suffix_ffi_call,
+    sig_prefix_suffix_backprop_ffi_call,
     sig_combine_ffi_call,
     sig_combine_backprop_ffi_call,
     transform_path_ffi_call,
@@ -265,14 +266,22 @@ def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, residual, cot
 _sig.defvjp(_sig_fwd, _sig_bwd)
 
 
-@partial(jax.custom_jvp, nondiff_argnums=(1, 2, 3, 4, 5))
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5))
 def _sig_prefix_suffix(path, degree, time_aug, lead_lag, end_time, n_jobs):
     return sig_prefix_suffix_ffi_call(path, degree, time_aug, lead_lag, end_time, n_jobs)
 
 
-@_sig_prefix_suffix.defjvp
-def _sig_prefix_suffix_jvp(*args):
-    raise NotImplementedError("Prefix-suffix methods do not support automatic differentiation")
+def _sig_prefix_suffix_fwd(path, degree, time_aug, lead_lag, end_time, n_jobs):
+    result = sig_prefix_suffix_ffi_call(path, degree, time_aug, lead_lag, end_time, n_jobs)
+    return result, path
+
+
+def _sig_prefix_suffix_bwd(degree, time_aug, lead_lag, end_time, n_jobs, path, cotangent):
+    grad = sig_prefix_suffix_backprop_ffi_call(path, cotangent, degree, time_aug, lead_lag, end_time, n_jobs)
+    return (grad,)
+
+
+_sig_prefix_suffix.defvjp(_sig_prefix_suffix_fwd, _sig_prefix_suffix_bwd)
 
 
 def sig(

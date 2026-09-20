@@ -75,6 +75,10 @@ _TARGETS = {
         "cpu": ("pysiglib_sig_prefix_suffix_cpu", "PySigLibPrefixSuffixCpu"),
         "cuda": ("pysiglib_sig_prefix_suffix_cuda", "PySigLibPrefixSuffixCuda"),
     },
+    "sig_prefix_suffix_backprop": {
+        "cpu": ("pysiglib_sig_prefix_suffix_backprop_cpu", "PySigLibPrefixSuffixBackpropCpu"),
+        "cuda": ("pysiglib_sig_prefix_suffix_backprop_cuda", "PySigLibPrefixSuffixBackpropCuda"),
+    },
     "sig": {
         "cpu": ("pysiglib_sig_cpu", "PySigLibSigCpu"),
         "cuda": ("pysiglib_sig_cuda", "PySigLibSigCuda"),
@@ -439,6 +443,14 @@ def sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, l
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("sig_backprop", (path, sig_, cotangent, correction), out_type, call_kwargs)
+
+
+def sig_prefix_suffix_backprop_ffi_call(path, cotangent, degree, time_aug, lead_lag, end_time, n_jobs):
+    _check_same_dtype(path, cotangent)
+    out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
+    call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
+                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("sig_prefix_suffix_backprop", (path, cotangent), out_type, call_kwargs)
 
 
 # ---------------------------------------------------------------------------

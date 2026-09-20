@@ -264,6 +264,12 @@ CPSIG_PREFIX_SUFFIX = _bind_float_pair(
                c_int),
 )
 
+CPSIG_PREFIX_SUFFIX_BACKPROP = _bind_float_pair(
+    CPSIG, "signature_prefix_suffix_backprop",
+    lambda T: (POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool,
+               T, c_bool, c_int),
+)
+
 CPSIG_SIGNATURE = _bind_float_pair(
     CPSIG, "signature",
     lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
@@ -501,6 +507,12 @@ CUSIG_PREFIX_SUFFIX = _bind_float_pair(
     CUSIG, "signature_prefix_suffix_cuda",
     lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
                c_void_p),
+)
+
+CUSIG_PREFIX_SUFFIX_BACKPROP = _bind_float_pair(
+    CUSIG, "signature_prefix_suffix_backprop_cuda",
+    lambda T: (POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool,
+               T, c_bool, c_void_p),
 )
 
 CUSIG_SIGNATURE = _bind_float_pair(
