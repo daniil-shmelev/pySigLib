@@ -175,8 +175,8 @@ def sig(
     :type horner: bool
     :param method: ``None`` preserves the existing ``horner`` selection. Use
         ``"prefix_suffix_gemm"`` for the
-        forward-only prefix-suffix algorithm. These methods reject non-empty
-        corrections, gradient recording, and ``horner=False``. They store
+        prefix-suffix algorithm. This method rejects non-empty
+        corrections and ``horner=False``. It stores
         half-depth scans and can require more memory than Horner's algorithm.
     :type method: str | None
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
@@ -287,7 +287,7 @@ def sig(
     check_n_jobs(n_jobs)
     _check_sig_method(method, horner)
     if method is not None and isinstance(path, torch.Tensor) and path.requires_grad and torch.is_grad_enabled():
-        raise NotImplementedError("Prefix-suffix methods do not support automatic differentiation; use torch.no_grad() for forward-only calls")
+        raise NotImplementedError("Use pysiglib.torch_api.sig for automatic differentiation, or torch.no_grad() for forward-only calls")
     if method is not None and isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
         raise NotImplementedError("Prefix-suffix methods do not support automatic differentiation with forward-mode dual tensors")
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")

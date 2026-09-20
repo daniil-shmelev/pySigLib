@@ -75,11 +75,11 @@ def _has_non_empty_correction(correction):
 
 class Sig(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path, correction, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs):
+    def forward(ctx, path, correction, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs, method):
         sig_ = sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
-                           end_time=end_time, horner=horner, correction=correction, n_jobs=n_jobs)
+                           end_time=end_time, horner=horner, correction=correction, n_jobs=n_jobs, method=method)
 
-        saved_correction = path.new_empty((0,)) if correction is None else correction.detach().clone()
+        saved_correction = path.new_empty((0,)) if correction is None or method is not None else correction.detach().clone()
         ctx.save_for_backward(path, sig_, saved_correction)
         ctx.degree = degree
         ctx.scalar_term = scalar_term
@@ -88,16 +88,19 @@ class Sig(torch.autograd.Function):
         ctx.end_time = end_time
         ctx.horner = horner
         ctx.n_jobs = n_jobs
+        ctx.method = method
 
         return sig_
 
     @staticmethod
     def backward(ctx, grad_output):
+        if ctx.method is not None and torch.is_grad_enabled():
+            raise NotImplementedError("Prefix-suffix methods do not support higher-order differentiation")
         path, sig_, saved_correction = ctx.saved_tensors
         correction = saved_correction if saved_correction.numel() != 0 else None
         grad = sig_backprop(path, sig_, grad_output, ctx.degree, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag,
-                            end_time=ctx.end_time, correction=correction, n_jobs=ctx.n_jobs)
-        return grad, None, None, None, None, None, None, None, None
+                            end_time=ctx.end_time, correction=correction, n_jobs=ctx.n_jobs, method=ctx.method)
+        return grad, None, None, None, None, None, None, None, None, None
 
 def sig(
         path : Union[np.ndarray, torch.Tensor],
@@ -112,11 +115,13 @@ def sig(
         n_jobs : int = 1,
         method = None
 ) -> Union[np.ndarray, torch.Tensor]:
-    if method is not None or not isinstance(path, torch.Tensor):
+    if not isinstance(path, torch.Tensor):
         return sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
                            end_time=end_time, horner=horner, correction=correction, n_jobs=n_jobs,
                            method=method)
-    return Sig.apply(path, correction, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs)
+    if method is not None and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
+        raise NotImplementedError("Prefix-suffix methods do not support forward-mode automatic differentiation")
+    return Sig.apply(path, correction, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs, method)
 
 sig.__doc__ = sig_forward.__doc__
 

@@ -22,7 +22,9 @@ from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler, CorrectionInputHandler
 from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP, CUSIG_SIG_COMBINE_BACKPROP
+from .dtypes import CPSIG_PREFIX_SUFFIX_BACKPROP, CUSIG_PREFIX_SUFFIX_BACKPROP
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
+from .sig import _check_sig_method
 
 def sig_combine_backprop(
         deriv : Union[np.ndarray, torch.Tensor],
@@ -135,7 +137,8 @@ def sig_backprop(
         lead_lag : bool = False,
         end_time : float = 1.,
         correction = None,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        method = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     This function is required to backpropagate through the signature computation.
@@ -171,6 +174,11 @@ def sig_backprop(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
+    :param method: ``None`` uses the existing signature backpropagation. Use
+        ``"prefix_suffix_gemm"`` to differentiate the prefix-suffix factors and
+        scans with BLAS or cuBLAS. Non-empty corrections are not supported by
+        this method.
+    :type method: str | None
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.Tensor
@@ -212,9 +220,13 @@ def sig_backprop(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
+    _check_sig_method(method, True)
+    check_n_jobs(n_jobs)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, path_data, degree)
+    if method is not None and correction_data.length:
+        raise ValueError("Prefix-suffix methods do not support non-empty corrections")
     scalar_term = _infer_scalar_term(sig, path_data.data_dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
     sig_len = sig_length(path_data.dimension, degree, scalar_term=scalar_term)
     sig_data = MultipleSigInputHandler([sig, sig_derivs], sig_len, ["sig", "sig_derivs"])
@@ -223,6 +235,8 @@ def sig_backprop(
         raise ValueError("path, sig and sig_derivs must all be numpy arrays or torch tensors")
     if path_data.dtype != sig_data.dtype:
         raise ValueError("path, sig and sig_derivs must have the same dtype")
+    if method is not None and isinstance(path, torch.Tensor) and any(s.device != path.device for s in sig_data.sig):
+        raise ValueError("path, sig and sig_derivs must be on the same device")
 
     result = PathOutputHandler(path_data.data_length, path_data.data_dimension, path_data)
 
@@ -232,8 +246,18 @@ def sig_backprop(
     if path_data.batch_shape != sig_data.batch_shape:
         raise ValueError("path, sig and sig_derivs must have the same batch shape")
 
-    check_n_jobs(n_jobs)
-    if path_data.device == "cpu":
+    if method is not None:
+        fn = (CPSIG_PREFIX_SUFFIX_BACKPROP if path_data.device == "cpu" else CUSIG_PREFIX_SUFFIX_BACKPROP)[path_data.dtype]
+        args = (path_data.data_ptr, result.data_ptr, sig_data.sig_ptr[1],
+                path_data.batch_size, path_data.data_dimension, path_data.data_length,
+                degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term)
+        if path_data.device == "cpu":
+            err_code = fn(*args, n_jobs)
+        else:
+            with torch.cuda.device(path_data.path.device):
+                stream = torch.cuda.current_stream(path_data.path.device).cuda_stream
+                err_code = fn(*args, stream)
+    elif path_data.device == "cpu":
         err_code = CPSIG_SIG_BACKPROP[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],

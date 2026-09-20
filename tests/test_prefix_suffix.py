@@ -340,10 +340,10 @@ def test_validation():
     for options in (dict(method="bad"), dict(method=METHODS[0], horner=False),
                     dict(method=METHODS[0], correction=np.zeros(4))):
         with pytest.raises(ValueError): pysiglib.sig(path, 3, **options)
-    for api in (pysiglib, torch_api):
-        tensor = torch.zeros((8, 2), requires_grad=True)
-        with pytest.raises(NotImplementedError, match="differentiation"): api.sig(tensor, 3, method=METHODS[0])
-        with torch.no_grad(): assert api.sig(tensor, 3, method=METHODS[0]).shape == (14,)
+    tensor = torch.zeros((8, 2), requires_grad=True)
+    with pytest.raises(NotImplementedError, match="torch_api"): pysiglib.sig(tensor, 3, method=METHODS[0])
+    with torch.no_grad(): assert pysiglib.sig(tensor, 3, method=METHODS[0]).shape == (14,)
+    assert torch_api.sig(tensor, 3, method=METHODS[0]).requires_grad
     assert pysiglib.sig(path, 3, method=METHODS[0], correction=np.empty(0)).shape == (14,)
 
 
@@ -389,7 +389,7 @@ def test_scan_free_batch_boundary(degree):
 
 
 @pytest.mark.parametrize("method", METHODS)
-def test_jax_forward_only(method):
+def test_jax_forward_and_reverse(method):
     jax = pytest.importorskip("jax")
     import pysiglib.jax_api as api
     jax.config.update("jax_enable_x64", True)
@@ -398,9 +398,9 @@ def test_jax_forward_only(method):
     expected = pysiglib.sig(path, 4)
     for value in (run(path), jax.jit(run)(path), jax.vmap(run)(path)):
         np.testing.assert_allclose(value, expected, atol=1e-10, rtol=1e-10)
-    with pytest.raises(NotImplementedError, match="differentiation"):
-        jax.grad(lambda p: run(p).sum())(path)
-    with pytest.raises(NotImplementedError, match="differentiation"):
+    expected_grad = pysiglib.sig_backprop(path, expected, np.ones_like(expected), 4)
+    np.testing.assert_allclose(jax.grad(lambda p: run(p).sum())(path), expected_grad, atol=1e-10, rtol=1e-10)
+    with pytest.raises(TypeError, match="forward-mode"):
         jax.jvp(run, (path,), (np.ones_like(path),))
 
 

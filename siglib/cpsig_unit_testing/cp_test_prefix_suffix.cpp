@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 #include "cp_prefix_suffix_detail.h"
+#include "cp_prefix_suffix_backprop.h"
 #include "cpsig.h"
 #include "prefix_suffix.h"
 
@@ -140,5 +141,76 @@ TEST(PrefixSuffix, BackwardUpdate) {
         for (uint64_t x = 0; x < d; ++x) expected[1 + x] += v[x];
         prefix_suffix::cpu_detail::prepend(actual.data(), v.data(), l, actual_work.data());
         for (size_t x = 0; x < actual.size(); ++x) EXPECT_NEAR(actual[x], expected[x], 1e-14);
+    }
+}
+
+TEST(PrefixSuffix, RightFactorBackprop) {
+    for (uint64_t d : {2, 3, 5}) for (uint64_t b : {1, 2, 3}) for (uint64_t j : {0, 1, 3}) {
+        prefix_suffix::Layout l(d, 2 * b + 2);
+        const uint64_t size = l.offset[b + 1];
+        std::vector<double> suffix(size), v(d), deriv(l.power[b]), dsuffix(size), dv(d);
+        std::vector<double> history(size), work(size), result(l.power[b]);
+        suffix[0] = 1;
+        for (uint64_t x = 1; x < size; ++x) suffix[x] = double(int(x % 11) - 5) / 16;
+        for (uint64_t c = 0; c < d; ++c) v[c] = double(int(c) - 1) / 8;
+        for (uint64_t x = 0; x < deriv.size(); ++x) deriv[x] = double(int(x % 7) - 3) / 8;
+        prefix_suffix::cpu_detail::right_factor_backprop(suffix.data(), v.data(), deriv.data(),
+            dsuffix.data(), dv.data(), j, b, l, history.data(), work.data());
+        auto loss = [&] {
+            prefix_suffix::right_factor(result.data(), suffix.data(), v.data(), j, b, l);
+            double value = 0;
+            for (uint64_t x = 0; x < deriv.size(); ++x) value += deriv[x] * result[x];
+            return value;
+        };
+        auto check = [&](double& parameter, double expected) {
+            const double original = parameter, epsilon = 1e-6;
+            parameter = original + epsilon; const double plus = loss();
+            parameter = original - epsilon; const double minus = loss();
+            parameter = original;
+            EXPECT_NEAR(expected, (plus - minus) / (2 * epsilon), 1e-9);
+        };
+        for (uint64_t x = 1; x < size; ++x) check(suffix[x], dsuffix[x]);
+        for (uint64_t c = 0; c < d; ++c) check(v[c], dv[c]);
+    }
+}
+
+TEST(PrefixSuffix, NativeBackprop) {
+    for (uint64_t dimension : {1, 2, 3}) for (uint64_t degree : {0, 1, 2, 3, 4, 5, 6})
+        for (bool time_aug : {false, true}) for (bool lead_lag : {false, true}) for (bool scalar : {false, true}) {
+            const uint64_t batch = 3, length = 5;
+            const uint64_t d = dimension * (lead_lag ? 2 : 1) + time_aug;
+            const uint64_t size = prefix_suffix::Layout(d, degree).offset.back() - !scalar;
+            std::vector<double> path(batch * length * dimension), sig(batch * size), deriv(batch * size);
+            std::vector<double> actual(path.size()), expected(path.size());
+            for (uint64_t x = 0; x < path.size(); ++x) path[x] = double(int((x * 7) % 19) - 9) / 32;
+            for (uint64_t x = 0; x < deriv.size(); ++x) deriv[x] = double(int((x * 5) % 13) - 6) / 16;
+            ASSERT_EQ(signature_d(path.data(), sig.data(), batch, dimension, length, degree,
+                time_aug, lead_lag, 0.7, true, scalar, 2), 0);
+            ASSERT_EQ(sig_backprop_d(path.data(), expected.data(), deriv.data(), sig.data(), batch,
+                dimension, length, degree, time_aug, lead_lag, 0.7, scalar, 2), 0);
+            ASSERT_EQ(signature_prefix_suffix_backprop_d(path.data(), actual.data(), deriv.data(), batch,
+                dimension, length, degree, time_aug, lead_lag, 0.7, scalar, 2), 0) << cpsig_last_error_message();
+            for (uint64_t x = 0; x < path.size(); ++x)
+                EXPECT_NEAR(actual[x], expected[x], 1e-10) << dimension << "," << degree << "," << time_aug << "," << lead_lag;
+        }
+}
+
+TEST(PrefixSuffix, BackpropFiniteDifference) {
+    const uint64_t d = 3, length = 6, degree = 6, size = prefix_suffix::Layout(d, degree).offset.back();
+    std::vector<double> path(length * d), sig(size), deriv(size), actual(path.size());
+    for (uint64_t x = 0; x < path.size(); ++x) path[x] = double(int((x * 7) % 19) - 9) / 16;
+    for (uint64_t x = 0; x < size; ++x) deriv[x] = double(int(x % 11) - 5) / 8;
+    ASSERT_EQ(signature_prefix_suffix_backprop_d(path.data(), actual.data(), deriv.data(), 1, d, length,
+        degree, false, false, 1., true, 3), 0);
+    for (uint64_t x = 0; x < path.size(); ++x) {
+        const double original = path[x], epsilon = 1e-5;
+        long double values[2]{};
+        for (int side = 0; side < 2; ++side) {
+            path[x] = original + (side ? -epsilon : epsilon);
+            ASSERT_EQ(signature_d(path.data(), sig.data(), 1, d, length, degree, false, false, 1., true, true, 1), 0);
+            for (uint64_t word = 0; word < size; ++word) values[side] += static_cast<long double>(deriv[word]) * sig[word];
+        }
+        path[x] = original;
+        EXPECT_NEAR(actual[x], (values[0] - values[1]) / (2 * epsilon), 2e-9);
     }
 }
