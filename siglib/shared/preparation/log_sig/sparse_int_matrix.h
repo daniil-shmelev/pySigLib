@@ -143,7 +143,7 @@ public:
             throw std::out_of_range("i,j out of range in SparseIntMatrix.insert_entry");
         }
 #endif
-        rows[i].emplace_back(j, v);
+        rows[i].push_back(Entry{j, v});
     }
 
     void drop_row(uint64_t i) {
@@ -191,7 +191,7 @@ public:
             out.rows[i].clear();
             for (const auto& [j, v] : row_i) {
                 if (v != 0) {
-                    out.rows[i].emplace_back(j, v);
+                    out.rows[i].push_back(Entry{j, v});
                 }
             }
         }
@@ -203,7 +203,7 @@ public:
 
         for (uint64_t i = 0; i < n; ++i) {
             for (const auto& e : rows[i]) {
-                out.rows[e.col].emplace_back(i, e.val);
+                out.rows[e.col].push_back(Entry{i, e.val});
             }
         }
     }
@@ -264,7 +264,7 @@ public:
                 return;
             }
         }
-        rows[i].emplace_back(j, v);
+        rows[i].push_back(Entry{j, v});
     }
 
     void serialize(std::ostream& out) const {
