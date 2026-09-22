@@ -32,28 +32,3 @@ if(WIN32)
             $<TARGET_FILE_DIR:bench_cpsig>
     )
 endif()
-
-if(PYSIGLIB_CUDA)
-    find_package(CUDAToolkit REQUIRED)
-    add_executable(bench_cusig bench_cusig.cpp)
-    target_link_libraries(bench_cusig PRIVATE benchmark::benchmark cpsig cusig CUDA::cudart)
-    target_include_directories(bench_cusig PRIVATE
-        "${CMAKE_SOURCE_DIR}/siglib/cpsig"
-        "${CMAKE_SOURCE_DIR}/siglib/cusig"
-    )
-    target_compile_features(bench_cusig PRIVATE cxx_std_20)
-
-    if(WIN32)
-        add_custom_command(TARGET bench_cusig POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:tbb>
-                $<TARGET_FILE_DIR:bench_cusig>
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:cpsig>
-                $<TARGET_FILE_DIR:bench_cusig>
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:cusig>
-                $<TARGET_FILE_DIR:bench_cusig>
-        )
-    endif()
-endif()
