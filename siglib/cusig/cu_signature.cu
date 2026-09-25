@@ -107,17 +107,18 @@ __global__ void signature_naive_ker(
 }
 
 // ---------------------------------------------------------------------------
-// Per-word kernel: each thread computes ONE signature coefficient across all
-// time steps. Launched once per level on separate CUDA streams.
+// Each thread shares prefix states between adjacent coefficients.
 // ---------------------------------------------------------------------------
 
-__constant__ float c_recip_f32[13] = {
+__constant__ float c_recip_f32[17] = {
 	0.f, 1.f, 0.5f, 1.f/3.f, 0.25f, 0.2f, 1.f/6.f, 1.f/7.f,
-	0.125f, 1.f/9.f, 0.1f, 1.f/11.f, 1.f/12.f
+	0.125f, 1.f/9.f, 0.1f, 1.f/11.f, 1.f/12.f,
+	1.f/13.f, 1.f/14.f, 1.f/15.f, 1.f/16.f
 };
-__constant__ double c_recip_f64[13] = {
+__constant__ double c_recip_f64[17] = {
 	0.0, 1.0, 0.5, 1.0/3.0, 0.25, 0.2, 1.0/6.0, 1.0/7.0,
-	0.125, 1.0/9.0, 0.1, 1.0/11.0, 1.0/12.0
+	0.125, 1.0/9.0, 0.1, 1.0/11.0, 1.0/12.0,
+	1.0/13.0, 1.0/14.0, 1.0/15.0, 1.0/16.0
 };
 
 template<typename T> __device__ __forceinline__ T d_recip(int n);
@@ -133,6 +134,38 @@ template<typename T> __device__ __forceinline__ T d_recip_rt(int n) {
 constexpr int SIG_CHUNK = 128;   // forward kernel
 constexpr int BWD_CHUNK = 32;    // backward kernel (needs more shared mem for reduction)
 
+template<typename T>
+struct SignaturePath {
+	uint64_t dimension;
+	uint64_t stride;
+	bool time_aug;
+	bool lead_lag;
+	T time_scale;
+
+	template<bool cached>
+	__device__ __forceinline__ T increment(const T* cache, const T* path, int step, int letter) const {
+		if constexpr (cached) return cache[letter];
+		if (time_aug && letter == (lead_lag ? 2 * dimension : dimension)) {
+			if constexpr (sizeof(T) == sizeof(float))
+				return __fmul_rn(T(step + 1), time_scale) - __fmul_rn(T(step), time_scale);
+			else
+				return __dmul_rn(T(step + 1), time_scale) - __dmul_rn(T(step), time_scale);
+		}
+		if (lead_lag) {
+			if (letter < dimension) {
+				if (step % 2 == 0) return T(0);
+			}
+			else {
+				if (step % 2 != 0) return T(0);
+				letter -= static_cast<int>(dimension);
+			}
+			step /= 2;
+		}
+		const uint64_t position = static_cast<uint64_t>(step) * dimension + letter;
+		return path[position + dimension] - path[position];
+	}
+};
+
 template<bool use_shared_cache, typename T>
 __device__ __forceinline__ T signature_increment_value_(
 	const T* increment,
@@ -147,7 +180,7 @@ __device__ __forceinline__ T signature_increment_value_(
 		- batch_path[step * dim + letter];
 }
 
-template<typename T, int DEGREE, bool use_shared_cache>
+template<typename T, int DEGREE, bool use_shared_cache, int GROUP>
 __global__ void signature_per_word_ker(
 	const T* __restrict__ path,       // [batch, length, dim]
 	T* __restrict__ out,
@@ -157,36 +190,40 @@ __global__ void signature_per_word_ker(
 	const uint64_t sig_size,
 	const uint64_t level_offset,
 	const uint64_t level_size,
-	const uint64_t path_stride,       // length * dim
+	SignaturePath<T> input,
 	const bool scalar_term,
 	const uint64_t batch_offset,
 	const uint64_t batch_chunk_size
 ) {
-	static_assert(DEGREE >= 1 && DEGREE <= 13, "DEGREE must be 1-13");
+	static_assert(DEGREE >= 2 && DEGREE <= 16, "DEGREE must be 2-16");
 
-	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	const uint64_t task_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+	const int groups = (dim + GROUP - 1) / GROUP;
+	const uint64_t word_idx = task_idx / groups;
+	const int last_begin = static_cast<int>(task_idx % groups) * GROUP;
 	const uint64_t local_batch_idx = cuda_batch_index();
 	if (local_batch_idx >= batch_chunk_size) return;
 	const uint64_t batch_idx = batch_offset + local_batch_idx;
-	const bool active = word_idx < level_size;
+	const bool active = word_idx < level_size / dim;
 
 	extern __shared__ char smem[];
 	T* shared_inc = reinterpret_cast<T*>(smem);
 
-	int letters[DEGREE];
+	int letters[DEGREE - 1];
 	if (active) {
 		uint64_t w = word_idx;
-		for (int i = DEGREE - 1; i >= 0; --i) {
+		for (int i = DEGREE - 2; i >= 0; --i) {
 			letters[i] = static_cast<int>(w % dim);
 			w /= dim;
 		}
 	}
 
-	T pref[DEGREE + 1];
-	for (int i = 0; i <= DEGREE; ++i) pref[i] = T(0);
+	T pref[DEGREE];
+	for (int i = 0; i < DEGREE; ++i) pref[i] = T(0);
 	pref[0] = T(1);
+	T top[GROUP] = {};
 
-	const T* batch_path = path + batch_idx * path_stride;
+	const T* batch_path = path + batch_idx * input.stride;
 
 	for (int chunk_start = 0; chunk_start < steps; chunk_start += chunk_size) {
 		const int chunk_end = (chunk_start + chunk_size < steps)
@@ -199,8 +236,8 @@ __global__ void signature_per_word_ker(
 			for (int i = threadIdx.x; i < total_elems; i += blockDim.x) {
 				const int t_local = i / dim;
 				const int d_idx = i - t_local * dim;
-				const int base = (chunk_start + t_local) * dim;
-				shared_inc[i] = batch_path[base + dim + d_idx] - batch_path[base + d_idx];
+				shared_inc[i] = input.template increment<false>(
+					nullptr, batch_path, chunk_start + t_local, d_idx);
 			}
 		}
 		__syncthreads();
@@ -209,12 +246,27 @@ __global__ void signature_per_word_ker(
 
 		for (int t_local = 0; t_local < chunk_len; ++t_local) {
 			const T* increment = shared_inc + t_local * dim;
-			for (int sd = DEGREE; sd > 0; --sd) {
+			T common = T(0);
+			#pragma unroll
+			for (int k = 0; k < DEGREE - 1; ++k) {
+				const T scale = input.template increment<use_shared_cache>(
+					increment, batch_path, chunk_start + t_local, letters[k])
+					* d_recip<T>(DEGREE - k);
+				common = scale * (pref[k] + common);
+			}
+			common += pref[DEGREE - 1];
+			#pragma unroll
+			for (int last = 0; last < GROUP; ++last) {
+				if (last_begin + last < dim)
+					top[last] += common * input.template increment<use_shared_cache>(
+						increment, batch_path, chunk_start + t_local, last_begin + last);
+			}
+			for (int sd = DEGREE - 1; sd > 0; --sd) {
 				T h = T(0);
 				for (int k = 0; k < sd; ++k) {
-					const T scale = signature_increment_value_<use_shared_cache>(
+					const T scale = input.template increment<use_shared_cache>(
 						increment, batch_path, chunk_start + t_local,
-						dim, letters[k])
+						letters[k])
 						* d_recip<T>(sd - k);
 					h = scale * (pref[k] + h);
 				}
@@ -224,17 +276,124 @@ __global__ void signature_per_word_ker(
 	}
 
 	if (active) {
-		out[batch_idx * sig_size + level_offset + word_idx] = pref[DEGREE];
-		// Level-1 kernel also writes the constant term (level 0) when present.
-		if constexpr (DEGREE == 1) {
-			if (word_idx == 0 && scalar_term)
-				out[batch_idx * sig_size] = T(1);
+		#pragma unroll
+		for (int last = 0; last < GROUP; ++last) {
+			if (last_begin + last < dim)
+				out[batch_idx * sig_size + level_offset + word_idx * dim + last_begin + last] = top[last];
 		}
+		if (last_begin != 0) return;
+		uint64_t word = word_idx;
+		uint64_t size = level_size / dim;
+		uint64_t offset = level_offset - size;
+		for (int k = DEGREE - 1; k > 0; --k) {
+			out[batch_idx * sig_size + offset + word] = pref[k];
+			if (k == 1 || word % dim != 0) break;
+			word /= dim;
+			size /= dim;
+			offset -= size;
+		}
+		if (word_idx == 0 && scalar_term)
+			out[batch_idx * sig_size] = T(1);
 	}
 }
 
+template<typename T, int DEGREE>
+__global__ void signature_warp_segments_ker(
+	const T* path,
+	T* out,
+	int dim,
+	int steps,
+	int chunk_size,
+	uint64_t sig_size,
+	SignaturePath<T> input,
+	bool scalar_term,
+	uint64_t batch_offset,
+	uint64_t batch_chunk_size
+) {
+	const uint64_t local_batch = cuda_batch_index();
+	if (local_batch >= batch_chunk_size) return;
+	const uint64_t batch = batch_offset + local_batch;
+	const int word = threadIdx.x % 32;
+	const int warp = threadIdx.x / 32;
+	const int warp_count = blockDim.x / 32;
+	const bool active = word < sig_size + (scalar_term ? 0 : 1);
+	int level = 0;
+	for (int node = active ? word : 0; node != 0; node = (node - 1) / dim)
+		++level;
+	int parents[DEGREE] = {};
+	int letters[DEGREE] = {};
+	int suffixes[DEGREE + 1] = {};
+	T reciprocal[DEGREE] = {};
+	int node = word;
+	#pragma unroll
+	for (int k = DEGREE - 1; k >= 0; --k) {
+		if (k < level) {
+			letters[k] = (node - 1) % dim;
+			node = (node - 1) / dim;
+			parents[k] = node;
+			reciprocal[k] = T(1) / T(level - k);
+		}
+	}
+	#pragma unroll
+	for (int k = 0; k < DEGREE; ++k) {
+		#pragma unroll
+		for (int j = k; j < DEGREE; ++j) {
+			if (j < level)
+				suffixes[k] = suffixes[k] * dim + letters[j] + 1;
+		}
+	}
+	extern __shared__ char smem[];
+	T* state = reinterpret_cast<T*>(smem);
+	T* increments = state + blockDim.x + warp * chunk_size * dim;
+	T value = word == 0 ? T(1) : T(0);
+	const T* batch_path = path + batch * input.stride;
+	const int first_step = static_cast<int>(static_cast<uint64_t>(steps) * warp / warp_count);
+	const int last_step = static_cast<int>(static_cast<uint64_t>(steps) * (warp + 1) / warp_count);
+	for (int chunk_start = first_step; chunk_start < last_step; chunk_start += chunk_size) {
+		const int chunk_len = min(chunk_size, last_step - chunk_start);
+		__syncwarp();
+		for (int i = word; i < chunk_len * dim; i += 32) {
+			increments[i] = input.template increment<false>(
+				nullptr, batch_path, chunk_start + i / dim, i % dim);
+		}
+		__syncwarp();
+		for (int t = 0; t < chunk_len; ++t) {
+			T h = T(0);
+			#pragma unroll
+			for (int k = 0; k < DEGREE; ++k) {
+				const T prefix = __shfl_sync(0xffffffffu, value, parents[k]);
+				if (k < level)
+					h = (prefix + h) * (increments[t * dim + letters[k]] * reciprocal[k]);
+			}
+			value += h;
+		}
+	}
+	state[threadIdx.x] = value;
+	__syncthreads();
+	// Combine adjacent segments with Chen's identity.
+	for (int stride = 1; stride < warp_count; stride *= 2) {
+		if (warp % (2 * stride) == 0) {
+			T combined = T(0);
+			#pragma unroll
+			for (int k = 0; k <= DEGREE; ++k) {
+				if (k <= level) {
+					const int prefix = k == level ? word : parents[k];
+					combined += state[warp * 32 + prefix]
+						* state[(warp + stride) * 32 + suffixes[k]];
+				}
+			}
+			value = combined;
+		}
+		__syncthreads();
+		state[threadIdx.x] = value;
+		__syncthreads();
+	}
+	if (warp == 0 && active && (scalar_term || word != 0))
+		out[batch * sig_size + word - (scalar_term ? 0 : 1)] = value;
+}
+
 // ---------------------------------------------------------------------------
-// Generic (non-template) per-word forward kernel for degree > 13.
+// Generic (non-template) per-word forward kernel for degree > 16.
 // Same algorithm as the template version but with runtime degree parameter.
 // ---------------------------------------------------------------------------
 
@@ -251,8 +410,8 @@ __global__ void signature_per_word_generic_ker(
 	const uint64_t sig_size,
 	const uint64_t level_offset,
 	const uint64_t level_size,
-	const uint64_t path_stride,
-	const bool /*scalar_term*/,  // only relevant for the k==1 scalar write in the templated kernel
+	SignaturePath<T> input,
+	const bool scalar_term,
 	const uint64_t batch_offset,
 	const uint64_t batch_chunk_size
 ) {
@@ -278,7 +437,7 @@ __global__ void signature_per_word_generic_ker(
 	for (int i = 0; i <= degree; ++i) pref[i] = T(0);
 	pref[0] = T(1);
 
-	const T* batch_path = path + batch_idx * path_stride;
+	const T* batch_path = path + batch_idx * input.stride;
 
 	for (int chunk_start = 0; chunk_start < steps; chunk_start += chunk_size) {
 		const int chunk_end = (chunk_start + chunk_size < steps)
@@ -291,8 +450,8 @@ __global__ void signature_per_word_generic_ker(
 			for (int i = threadIdx.x; i < total_elems; i += blockDim.x) {
 				const int t_local = i / dim;
 				const int d_idx = i - t_local * dim;
-				const int base = (chunk_start + t_local) * dim;
-				shared_inc[i] = batch_path[base + dim + d_idx] - batch_path[base + d_idx];
+				shared_inc[i] = input.template increment<false>(
+					nullptr, batch_path, chunk_start + t_local, d_idx);
 			}
 		}
 		__syncthreads();
@@ -304,9 +463,9 @@ __global__ void signature_per_word_generic_ker(
 			for (int sd = degree; sd > 0; --sd) {
 				T h = T(0);
 				for (int k = 0; k < sd; ++k) {
-					const T scale = signature_increment_value_<use_shared_cache>(
+					const T scale = input.template increment<use_shared_cache>(
 						increment, batch_path, chunk_start + t_local,
-						dim, letters[k])
+						letters[k])
 						* d_recip_rt<T>(sd - k);
 					h = scale * (pref[k] + h);
 				}
@@ -316,7 +475,18 @@ __global__ void signature_per_word_generic_ker(
 	}
 
 	if (active) {
-		out[batch_idx * sig_size + level_offset + word_idx] = pref[degree];
+		uint64_t word = word_idx;
+		uint64_t offset = level_offset;
+		uint64_t size = level_size;
+		for (int k = degree; k > 0; --k) {
+			out[batch_idx * sig_size + offset + word] = pref[k];
+			if (word % dim != 0) break;
+			word /= dim;
+			size /= dim;
+			offset -= size;
+		}
+		if (word_idx == 0 && scalar_term)
+			out[batch_idx * sig_size] = T(1);
 	}
 }
 
@@ -1702,20 +1872,6 @@ __global__ void set_sig_level0(T* out, uint64_t sig_size, uint64_t batch_size) {
 	if (b < batch_size) out[b * sig_size] = static_cast<T>(1);
 }
 
-static constexpr int MAX_PER_WORD_STREAMS = 12;
-static cudaStream_t s_per_word_streams[MAX_PER_WORD_STREAMS] = {};
-static bool s_streams_initialized = false;
-static std::mutex s_streams_mu;
-
-static void ensure_streams() {
-	std::lock_guard<std::mutex> lock(s_streams_mu);
-	if (!s_streams_initialized) {
-		for (int i = 0; i < MAX_PER_WORD_STREAMS; ++i)
-			cudaStreamCreate(&s_per_word_streams[i]);
-		s_streams_initialized = true;
-	}
-}
-
 static void* s_inc_grad_buf = nullptr;
 static size_t s_inc_grad_buf_size = 0;
 static std::mutex s_inc_grad_buf_mu;
@@ -1742,18 +1898,6 @@ static void* ensure_inc_grad_buf(size_t needed) {
 
 void release_signature_state() {
 	{
-		std::lock_guard<std::mutex> lock(s_streams_mu);
-		if (s_streams_initialized) {
-			for (int i = 0; i < MAX_PER_WORD_STREAMS; ++i) {
-				if (s_per_word_streams[i]) {
-					cudaStreamDestroy(s_per_word_streams[i]);
-					s_per_word_streams[i] = nullptr;
-				}
-			}
-			s_streams_initialized = false;
-		}
-	}
-	{
 		std::lock_guard<std::mutex> lock(s_inc_grad_buf_mu);
 		if (s_inc_grad_buf) {
 			cudaFree(s_inc_grad_buf);
@@ -1772,12 +1916,19 @@ void signature_per_word_core_(
 	uint64_t dimension,
 	uint64_t length,
 	uint64_t degree,
-	bool scalar_term = true
+	bool scalar_term = true,
+	bool time_aug = false,
+	bool lead_lag = false,
+	T end_time = T(1)
 ) {
+	const uint64_t transformed_length = lead_lag ? 2 * length - 1 : length;
+	const SignaturePath<T> input = {
+		dimension, length * dimension, time_aug, lead_lag, end_time / T(transformed_length - 1)
+	};
+	dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t full_sig_len = host_sig_length(dimension, degree);
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
-	const uint64_t path_stride = length * dimension;
-	const int steps = static_cast<int>(length - 1);
+	const int steps = static_cast<int>(transformed_length - 1);
 	const int dim = static_cast<int>(dimension);
 
 	auto li = std::make_unique<uint64_t[]>(degree + 2);
@@ -1804,104 +1955,96 @@ void signature_per_word_core_(
 			static_cast<size_t>(chunk_size), bytes_per_step, "CUDA signature")
 		: 0;
 
-	// For small total output sizes, skip streams and launch sequentially
-	// on the default stream - avoids event create/destroy and stream sync overhead.
-	const uint64_t top_level = host_power(dimension, degree);
-	const bool use_streams = (top_level > 4096);
+	const uint64_t level_size = host_power(dimension, degree);
+	const uint64_t level_offset = scalar_term ? li[degree] : li[degree] - 1;
+	const bool use_large_group = dimension >= 8 && degree <= 6 && batch_size >= 32;
+	const uint64_t group = use_large_group ? 8 : 4;
+	const uint64_t task_count = degree <= 16
+		? (level_size / dimension) * ((dimension + group - 1) / group) : level_size;
+	const unsigned int block = task_count < 128 ? 32 : 128;
+	const uint64_t grid_x = (task_count + block - 1) / block;
+	const bool use_warp_segments = full_sig_len <= 32 && steps >= 512;
+	const size_t warp_smem = use_warp_segments ? 8 * smem + 256 * sizeof(T) : 0;
 
-	if (use_streams)
-		ensure_streams();
+	#define LAUNCH_GROUP(D, G) \
+		{ \
+			const bool use_shared_cache = shared_cache_candidate \
+				&& (smem <= CUDA_BASE_DYNAMIC_SMEM \
+					|| try_configure_dynamic_smem( \
+						signature_per_word_ker<T, D, true, G>, smem, smem_limits)); \
+			if (use_shared_cache) \
+				signature_per_word_ker<T, D, true, G><<<batch_chunk.grid, block, smem>>>( \
+					path, out, dim, steps, chunk_size, sig_stride, level_offset, \
+					level_size, input, scalar_term, batch_chunk.offset, batch_chunk.size); \
+			else \
+				signature_per_word_ker<T, D, false, G><<<batch_chunk.grid, block>>>( \
+					path, out, dim, steps, 1, sig_stride, level_offset, \
+					level_size, input, scalar_term, batch_chunk.offset, batch_chunk.size); \
+		}
 
-	for (uint64_t k = 1; k <= degree; ++k) {
-		uint64_t level_size = host_power(dimension, k);
-		// In scalar_term=false layout, level offsets shift down by 1.
-		uint64_t level_offset = scalar_term ? li[k] : (li[k] - 1);
-		unsigned int block = 128;
-		if (level_size < 128) block = 32;
-		unsigned int grid_x = (unsigned int)((level_size + block - 1) / block);
-		cudaStream_t stream = (use_streams && k <= MAX_PER_WORD_STREAMS)
-			? s_per_word_streams[k - 1] : nullptr;
-
-		#define LAUNCH_DEGREE(D) \
-			case D: { \
-				const bool use_shared_cache = shared_cache_candidate \
-					&& (smem <= CUDA_BASE_DYNAMIC_SMEM \
-						|| try_configure_dynamic_smem( \
-							signature_per_word_ker<T, D, true>, smem, smem_limits)); \
-				if (use_shared_cache) \
-					signature_per_word_ker<T, D, true><<<batch_chunk.grid, block, smem, stream>>>( \
-						path, out, dim, steps, chunk_size, sig_stride, level_offset, \
-						level_size, path_stride, scalar_term, \
+	#define LAUNCH_DEGREE(D) \
+		case D: { \
+			if constexpr (D <= 4) { \
+				if (use_warp_segments && warp_smem <= CUDA_BASE_DYNAMIC_SMEM) { \
+					dim3 grid = batch_chunk.grid; \
+					grid.x = 1; \
+					signature_warp_segments_ker<T, D><<<grid, 256, warp_smem>>>( \
+						path, out, dim, steps, chunk_size, sig_stride, input, scalar_term, \
 						batch_chunk.offset, batch_chunk.size); \
-				else \
-					signature_per_word_ker<T, D, false><<<batch_chunk.grid, block, 0, stream>>>( \
-						path, out, dim, steps, 1, sig_stride, level_offset, \
-						level_size, path_stride, scalar_term, \
-						batch_chunk.offset, batch_chunk.size); \
-				break; \
-			}
-
-		for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
-			const auto batch_chunk = make_cuda_batch_grid_chunk(
-				grid_x, batch_size, batch_offset);
-			switch (k) {
-				LAUNCH_DEGREE(1)
-				LAUNCH_DEGREE(2)
-				LAUNCH_DEGREE(3)
-				LAUNCH_DEGREE(4)
-				LAUNCH_DEGREE(5)
-				LAUNCH_DEGREE(6)
-				LAUNCH_DEGREE(7)
-				LAUNCH_DEGREE(8)
-				LAUNCH_DEGREE(9)
-				LAUNCH_DEGREE(10)
-				LAUNCH_DEGREE(11)
-				LAUNCH_DEGREE(12)
-				LAUNCH_DEGREE(13)
-				default:
-					if (shared_cache_candidate
-						&& (smem <= CUDA_BASE_DYNAMIC_SMEM
-							|| try_configure_dynamic_smem(
-								signature_per_word_generic_ker<T, true>, smem, smem_limits))) {
-						signature_per_word_generic_ker<T, true><<<
-							batch_chunk.grid, block, smem, stream>>>(
-								path, out, dim, steps, chunk_size, static_cast<int>(k),
-								sig_stride, level_offset, level_size, path_stride, scalar_term,
-								batch_chunk.offset, batch_chunk.size);
-					}
-					else {
-						signature_per_word_generic_ker<T, false><<<
-							batch_chunk.grid, block, 0, stream>>>(
-								path, out, dim, steps, 1, static_cast<int>(k),
-								sig_stride, level_offset, level_size, path_stride, scalar_term,
-								batch_chunk.offset, batch_chunk.size);
-					}
-					break;
-			}
-			batch_offset += batch_chunk.size;
+					break; \
+				} \
+			} \
+			if constexpr (D <= 6) { \
+				if (use_large_group) { \
+					LAUNCH_GROUP(D, 8) \
+					break; \
+				} \
+			} \
+			LAUNCH_GROUP(D, 4) \
+			break; \
 		}
-		#undef LAUNCH_DEGREE
+
+	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
+		const auto batch_chunk = make_cuda_batch_grid_chunk(grid_x, batch_size, batch_offset);
+		switch (degree) {
+			LAUNCH_DEGREE(2)
+			LAUNCH_DEGREE(3)
+			LAUNCH_DEGREE(4)
+			LAUNCH_DEGREE(5)
+			LAUNCH_DEGREE(6)
+			LAUNCH_DEGREE(7)
+			LAUNCH_DEGREE(8)
+			LAUNCH_DEGREE(9)
+			LAUNCH_DEGREE(10)
+			LAUNCH_DEGREE(11)
+			LAUNCH_DEGREE(12)
+			LAUNCH_DEGREE(13)
+			LAUNCH_DEGREE(14)
+			LAUNCH_DEGREE(15)
+			LAUNCH_DEGREE(16)
+			default:
+				if (shared_cache_candidate
+					&& (smem <= CUDA_BASE_DYNAMIC_SMEM
+						|| try_configure_dynamic_smem(
+							signature_per_word_generic_ker<T, true>, smem, smem_limits))) {
+					signature_per_word_generic_ker<T, true><<<batch_chunk.grid, block, smem>>>(
+						path, out, dim, steps, chunk_size, static_cast<int>(degree),
+						sig_stride, level_offset, level_size, input, scalar_term,
+						batch_chunk.offset, batch_chunk.size);
+				}
+				else {
+					signature_per_word_generic_ker<T, false><<<batch_chunk.grid, block>>>(
+						path, out, dim, steps, 1, static_cast<int>(degree),
+						sig_stride, level_offset, level_size, input, scalar_term,
+						batch_chunk.offset, batch_chunk.size);
+				}
+				break;
+		}
+		batch_offset += batch_chunk.size;
 	}
-
-	if (use_streams) {
-		cudaEvent_t done;
-		cudaEventCreateWithFlags(&done, cudaEventDisableTiming);
-		const uint64_t n_custom = std::min<uint64_t>(degree, MAX_PER_WORD_STREAMS);
-		for (uint64_t k = 1; k < n_custom; ++k) {
-			cudaEventRecord(done, s_per_word_streams[k]);
-			cudaStreamWaitEvent(s_per_word_streams[0], done, 0);
-		}
-		if (degree > MAX_PER_WORD_STREAMS) {
-			cudaEventRecord(done, 0);
-			cudaStreamWaitEvent(s_per_word_streams[0], done, 0);
-		}
-		cudaEventDestroy(done);
-		cudaStreamSynchronize(s_per_word_streams[0]);
-	} else {
-		cudaDeviceSynchronize();
-	}
-
-	check_cuda_error();
+	#undef LAUNCH_DEGREE
+	#undef LAUNCH_GROUP
+	check_cuda_kernel_launch();
 }
 
 inline void validate_signature_correction_args_cuda_(
@@ -2306,6 +2449,44 @@ __global__ void signature_correction_ker(
 }
 
 template<typename T>
+__global__ void signature_endpoint_ker(
+	const T* path,
+	T* out,
+	uint64_t dimension,
+	uint64_t length,
+	uint64_t sig_stride,
+	uint64_t output_size,
+	bool scalar_term
+) {
+	for (uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		i < output_size; i += static_cast<uint64_t>(gridDim.x) * blockDim.x) {
+		const uint64_t word = i % sig_stride;
+		if (scalar_term && word == 0) {
+			out[i] = T(1);
+			continue;
+		}
+		if (length <= 1) {
+			out[i] = T(0);
+			continue;
+		}
+		const uint64_t batch = i / sig_stride;
+		const T* batch_path = path + batch * length * dimension;
+		if (dimension == 1) {
+			const T displacement = batch_path[length - 1] - batch_path[0];
+			T value = T(1);
+			const uint64_t level = word + (scalar_term ? 0 : 1);
+			for (uint64_t k = 1; k <= level; ++k)
+				value *= displacement * d_recip_rt<T>(static_cast<int>(k));
+			out[i] = value;
+		}
+		else {
+			const uint64_t letter = word - (scalar_term ? 1 : 0);
+			out[i] = batch_path[(length - 1) * dimension + letter] - batch_path[letter];
+		}
+	}
+}
+
+template<typename T>
 void signature_cuda_core_(
 	const T* path,          // GPU pointer, shape [batch_size, length, dimension] flattened
 	T* out,                 // GPU pointer, shape [batch_size, sig_stride] flattened
@@ -2326,32 +2507,19 @@ void signature_cuda_core_(
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
 	const uint64_t path_flat_len = dimension * length;
 
-	// Handle trivial cases
-	if (length <= 1) {
-		// sig = (1, 0, 0, ..., 0) for each batch element. In scalar_term=false layout
-		// the output is (0, 0, ...). Either way, zero the buffer then optionally write
-		// the leading 1.
-		const size_t out_bytes = checked_cuda_size_mul(
-			checked_cuda_size_mul(
-				static_cast<size_t>(batch_size), static_cast<size_t>(sig_stride),
-				"CUDA signature trivial output"),
-			sizeof(T), "CUDA signature trivial output");
-		CUDA_CHECK(cudaMemset(out, 0, out_bytes));
-		if (scalar_term) {
-			T one = static_cast<T>(1);
-			for (uint64_t i = 0; i < batch_size; ++i)
-				cudaMemcpy(out + i * sig_stride, &one, sizeof(T), cudaMemcpyHostToDevice);
+	if (length <= 1 || degree <= 1 || (dimension == 1 && correction_len == 0)) {
+		const size_t output_size = checked_cuda_size_mul(
+			static_cast<size_t>(batch_size), static_cast<size_t>(sig_stride),
+			"CUDA signature endpoint output");
+		if (output_size == 0) return;
+		if (length <= 1 && !scalar_term) {
+			CUDA_CHECK(cudaMemset(out, 0, checked_cuda_size_mul(
+				output_size, sizeof(T), "CUDA signature trivial output")));
+			return;
 		}
-		return;
-	}
-
-	if (degree == 0) {
-		// degree-0 output is just the scalar 1 (nothing when scalar_term=false).
-		if (scalar_term) {
-			auto ones = std::make_unique<T[]>(batch_size);
-			std::fill(ones.get(), ones.get() + batch_size, static_cast<T>(1));
-			cudaMemcpy(out, ones.get(), batch_size * sizeof(T), cudaMemcpyHostToDevice);
-		}
+		signature_endpoint_ker<T><<<make_cuda_1d_grid(output_size, 128), 128>>>(
+			path, out, dimension, length, sig_stride, output_size, scalar_term);
+		check_cuda_kernel_launch();
 		return;
 	}
 
@@ -2472,6 +2640,12 @@ void signature_cuda_(
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
 
 	if (time_aug || lead_lag) {
+		if (horner && correction_len == 0 && degree > 1 && length > 1) {
+			s_sig_context_valid = false;
+			signature_per_word_core_(path, out, batch_size, dimension, length, degree,
+				scalar_term, time_aug, lead_lag, end_time);
+			return;
+		}
 		const size_t path_stride = checked_cuda_size_mul(
 			static_cast<size_t>(length), static_cast<size_t>(dimension),
 			"CUDA signature transformed path");

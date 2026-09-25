@@ -146,8 +146,8 @@ def sig_kernel(
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
-    :param time_aug: If set to True, will compute the signature of the time-augmented path, :math:`\\hat{x}_t := (t, x_t)`,
-        defined as the original path with an extra channel set to time, :math:`t`. This channel spans :math:`[0, t_L]`,
+    :param time_aug: If set to True, will compute the signature of the time-augmented path, :math:`\\hat{x}_t := (x_t, t)`,
+        defined as the original path with time, :math:`t`, appended as the last channel. This channel spans :math:`[0, t_L]`,
         where :math:`t_L` is given by the parameter ``end_time``.
     :type time_aug: bool
     :param lead_lag: If set to True, will compute the signature of the path after applying the lead-lag transformation.
@@ -394,8 +394,8 @@ def sig_kernel_gram(
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
-    :param time_aug: If set to True, will compute the signature of the time-augmented path, :math:`\\hat{x}_t := (t, x_t)`,
-        defined as the original path with an extra channel set to time, :math:`t`. This channel spans :math:`[0, t_L]`,
+    :param time_aug: If set to True, will compute the signature of the time-augmented path, :math:`\\hat{x}_t := (x_t, t)`,
+        defined as the original path with time, :math:`t`, appended as the last channel. This channel spans :math:`[0, t_L]`,
         where :math:`t_L` is given by the parameter ``end_time``.
     :type time_aug: bool
     :param lead_lag: If set to True, will compute the signature of the path after applying the lead-lag transformation.

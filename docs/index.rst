@@ -79,21 +79,50 @@ The high-performance toolkit for rough path computation.
 
    /pages/installation
    /pages/conventions
+   /pages/api_reference
 
 .. toctree::
    :maxdepth: 2
-   :caption: API Reference
+   :caption: Signatures
    :hidden:
 
-   /pages/path_transformations
-   /pages/words
-   /pages/trees
    /pages/signatures
+   /pages/words
    /pages/signature_coefficients
-   /pages/log_signatures
-   /pages/branched_signatures
-   /pages/branched_log_signatures
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Signature Kernels
+   :hidden:
+
    /pages/signature_kernels
+   /pages/signature_kernel_metrics
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Log Signatures
+   :hidden:
+
+   /pages/log_signatures
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Branched Signatures
+   :hidden:
+
+   /pages/branched_signatures
+   /pages/branched_signature_kernels
+   /pages/branched_log_signatures
+   /pages/trees
+   /pages/branched_signature_coefficients
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Utilities
+   :hidden:
+
+   /pages/cache_management
+   /pages/path_transformations
    /pages/streams
    /pages/backprop
 

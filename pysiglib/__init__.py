@@ -20,6 +20,11 @@ from .sig_length import sig_length, log_sig_length
 from .sig import sig_combine, sig
 from .sig_backprop import sig_backprop, sig_combine_backprop
 from .linear_sig import linear_sig
+from .linear_log_sig import linear_log_sig, linear_log_sig_backprop
+from .linear_branched_sig import linear_branched_sig, linear_branched_sig_backprop
+from .linear_branched_log_sig import linear_branched_log_sig, linear_branched_log_sig_backprop
+from .branched_sig_join import branched_sig_join, branched_sig_join_backprop
+from .branched_log_sig_join import branched_log_sig_join, branched_log_sig_join_backprop
 from .sig_join import sig_join
 from .sig_join_backprop import sig_join_backprop
 from .log_sig_join import log_sig_join

@@ -16,3 +16,7 @@ and O(1) arbitrary interval queries via Chen's identity.
    /pages/streams/log_sig_stream
    /pages/streams/sig_window_stream
    /pages/streams/log_sig_window_stream
+   /pages/streams/branched_sig_stream
+   /pages/streams/branched_sig_window_stream
+   /pages/streams/branched_log_sig_stream
+   /pages/streams/branched_log_sig_window_stream

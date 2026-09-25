@@ -335,6 +335,7 @@ def idx_to_tree(
         scalar 1 at index 0. Must match the format of the bsig the index was taken
         from. Default ``False``.
     :type scalar_term: bool
+
     In the planar case, the returned tuple is an ordered forest, represented as
     ``(tree_1, tree_2, ...)``.
 

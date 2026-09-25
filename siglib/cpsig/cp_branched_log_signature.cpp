@@ -869,6 +869,51 @@ void branched_log_sig_from_path_(
 	spawn_batch_threads(batch_size, n_jobs, work_range);
 }
 
+template<std::floating_point T, bool Backward>
+void branched_log_sig_join_(
+	const T* logsig, const T* displacement, T* out, T* displacement_derivs,
+	const T* derivs, uint64_t batch_size, uint64_t dimension,
+	uint64_t max_nodes, bool prepend, int n_jobs
+) {
+	const auto& cache = get_branched_sig_cache(dimension, max_nodes, true);
+	const auto& branched_bch = get_branched_log_sig_cache_(cache, 3).bch_cache();
+	const auto& bch = branched_bch.bch;
+	if (batch_size == 0) return;
+	if (bch.m == 0) {
+		if constexpr (Backward)
+			std::fill(displacement_derivs, displacement_derivs + batch_size * dimension, T(0));
+		return;
+	}
+	const T sign = prepend ? T(-1) : T(1);
+	auto work_range = [&](uint64_t start, uint64_t end) {
+		std::vector<T> left(bch.m), segment(bch.m), segment_derivs(Backward ? bch.m : 0);
+		std::vector<T> workspace((Backward ? 2 : 1) * bch.bch_size() * bch.m);
+		for (uint64_t row = start; row < end; ++row) {
+			const T* increment = displacement + row * dimension;
+			linear_mkw_log_sig_(increment, segment.data(), cache, branched_bch);
+			for (uint64_t k = 0; k < bch.m; ++k) {
+				left[k] = sign * logsig[row * bch.m + k];
+				segment[k] *= sign;
+			}
+			if constexpr (Backward) {
+				// The two sign changes for prepend cancel in the VJP.
+				bch_combine_backprop_impl_<T, true>(
+					derivs + row * bch.m, out + row * bch.m, segment_derivs.data(),
+					left.data(), segment.data(), bch, workspace.data());
+				linear_mkw_log_sig_backprop_(segment_derivs.data(), increment,
+					displacement_derivs + row * dimension, cache, branched_bch);
+			} else {
+				bch_combine_linear_impl_(left.data(), segment.data(),
+					out + row * bch.m, bch, workspace.data());
+				if (prepend)
+					for (uint64_t k = 0; k < bch.m; ++k) out[row * bch.m + k] *= sign;
+			}
+		}
+	};
+	if (n_jobs == 1 || batch_size == 1) work_range(0, batch_size);
+	else spawn_batch_threads(batch_size, n_jobs, work_range);
+}
+
 template<std::floating_point T>
 void branched_log_sig_from_path_backprop_(
 	const T* derivs,
@@ -1101,6 +1146,19 @@ extern "C" {
 
 	CPSIG_API int branched_log_sig_from_path_f(const float* path, float* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {
 		SAFE_CALL(branched_log_sig_from_path_<float>(path, out, batch_size, length, dimension, max_nodes, n_jobs));
+	}
+
+	CPSIG_API int branched_log_sig_join_f(const float* logsig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs) noexcept {
+		SAFE_CALL((branched_log_sig_join_<float, false>(logsig, displacement, out, nullptr, nullptr, batch_size, dimension, max_nodes, prepend, n_jobs)));
+	}
+	CPSIG_API int branched_log_sig_join_d(const double* logsig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs) noexcept {
+		SAFE_CALL((branched_log_sig_join_<double, false>(logsig, displacement, out, nullptr, nullptr, batch_size, dimension, max_nodes, prepend, n_jobs)));
+	}
+	CPSIG_API int branched_log_sig_join_backprop_f(const float* derivs, float* d_logsig, float* d_displacement, const float* logsig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs) noexcept {
+		SAFE_CALL((branched_log_sig_join_<float, true>(logsig, displacement, d_logsig, d_displacement, derivs, batch_size, dimension, max_nodes, prepend, n_jobs)));
+	}
+	CPSIG_API int branched_log_sig_join_backprop_d(const double* derivs, double* d_logsig, double* d_displacement, const double* logsig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs) noexcept {
+		SAFE_CALL((branched_log_sig_join_<double, true>(logsig, displacement, d_logsig, d_displacement, derivs, batch_size, dimension, max_nodes, prepend, n_jobs)));
 	}
 
 	CPSIG_API int branched_log_sig_from_path_d(const double* path, double* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {

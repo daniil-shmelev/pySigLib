@@ -359,22 +359,23 @@ FORCE_INLINE void linear_signature_(
 ) {
 	if (scalar_term) out[0] = static_cast<T>(1);
 	if (degree == 0) return;
+	const uint64_t offset = scalar_term ? 0 : 1;
 	for (uint64_t i = 0; i < dimension; ++i)
-		out[i + 1] = end_pt[i] - start_pt[i];
+		out[i + 1 - offset] = end_pt[i] - start_pt[i];
 
 	for (uint64_t level = 2; level <= degree; ++level) {
 		T one_over_level = static_cast<T>(1.) / level;
-		T* result_ptr = out + level_index[level];
-		const T* const left_end = out + level_index[level];
+		T* result_ptr = out + level_index[level] - offset;
+		const T* const left_end = out + level_index[level] - offset;
 #ifdef VEC
-		for (const T* left_ptr = out + level_index[level - 1]; left_ptr != left_end; ++left_ptr, result_ptr += dimension) {
-			vec_mult_assign(result_ptr, out + 1, (*left_ptr) * one_over_level, dimension);
+		for (const T* left_ptr = out + level_index[level - 1] - offset; left_ptr != left_end; ++left_ptr, result_ptr += dimension) {
+			vec_mult_assign(result_ptr, out + 1 - offset, (*left_ptr) * one_over_level, dimension);
 		}
 #else
-		for (const T* left_ptr = out + level_index[level - 1]; left_ptr != left_end; ++left_ptr) {
+		for (const T* left_ptr = out + level_index[level - 1] - offset; left_ptr != left_end; ++left_ptr) {
 			T val = (*left_ptr) * one_over_level;
 			for (uint64_t d = 0; d < dimension; ++d)
-				*(result_ptr++) = val * out[1 + d];
+				*(result_ptr++) = val * out[1 + d - offset];
 		}
 #endif
 	}
@@ -421,7 +422,8 @@ FORCE_INLINE void signature_horner_(
 	T* out,
 	uint64_t degree,
 	uint64_t dimension, // path.dimension()
-	T* increments
+	T* increments,
+	bool scalar_term = true
 )
 {
 	Point<T> prev_pt = path.begin();
@@ -432,15 +434,23 @@ FORCE_INLINE void signature_horner_(
 	uint64_t* const level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	linear_signature_(prev_pt, next_pt, out, dimension, degree, level_index);
+	linear_signature_(prev_pt, next_pt, out, dimension, degree, level_index, scalar_term);
 
 	if (path.length() == 2) { return; }
+	if (!scalar_term) {
+		for (uint64_t level = 1; level <= degree + 1; ++level)
+			--level_index[level];
+	}
 
 	++prev_pt;
 	++next_pt;
 
-	auto horner_step_uptr = std::make_unique<T[]>(level_index[degree + 1] - level_index[degree]);
+	const uint64_t work_size = level_index[degree] - level_index[degree - 1];
+	auto horner_step_uptr = std::make_unique<T[]>(work_size + degree + 1);
 	T* const horner_step = horner_step_uptr.get();
+	T* const reciprocals = horner_step + work_size;
+	for (uint64_t level = 1; level <= degree; ++level)
+		reciprocals[level] = static_cast<T>(1) / static_cast<T>(level);
 
 	Point<T> last_pt(path.end());
 
@@ -449,86 +459,50 @@ FORCE_INLINE void signature_horner_(
 			increments[i] = next_pt[i] - prev_pt[i];
 
 		for (int64_t target_level = static_cast<int64_t>(degree); target_level > 1LL; --target_level) {
-
-			T one_over_level = static_cast<T>(1.) / target_level;
-
-			//left_level = 0
-			//assign z / target_level to horner_step
 			for (uint64_t i = 0; i < dimension; ++i)
-				horner_step[i] = increments[i] * one_over_level;
+				horner_step[i] = increments[i] * reciprocals[target_level];
 
 			for (int64_t left_level = 1LL, right_level = target_level - 1LL;
 				left_level < target_level - 1LL;
-				++left_level, --right_level) { //for each, add current left_level and times by z / right_level
-
+				++left_level, --right_level) {
 				const uint64_t left_level_size = level_index[left_level + 1] - level_index[left_level];
-				one_over_level = static_cast<T>(1.) / right_level;
-
-				//Horner stuff
+				const T one_over_level = reciprocals[right_level];
+				T* left_ptr = horner_step + left_level_size;
+				const T* out_ptr = out + level_index[left_level + 1];
+				T* result_ptr = horner_step + left_level_size * dimension;
+				while (left_ptr != horner_step) {
+					const T scalar = (*(--left_ptr) + *(--out_ptr)) * one_over_level;
+					result_ptr -= dimension;
 #ifdef VEC
-				//Add and multiply
-				T left_over_level;
-				T* out_ptr = out + level_index[left_level + 1];
-				T* result_ptr = horner_step + level_index[left_level + 2] - level_index[left_level + 1] - dimension;
-				for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr, result_ptr -= dimension) {
-					left_over_level = (*left_ptr + *(--out_ptr)) * one_over_level;
-					vec_mult_assign(result_ptr, increments, left_over_level, dimension);
-				}
+					vec_mult_assign(result_ptr, increments, scalar, dimension);
 #else
-				//Horner stuff
-				//Add
-				T* left_ptr_1 = out + level_index[left_level];
-				for (uint64_t i = 0; i < left_level_size; ++i) {
-					horner_step[i] += *(left_ptr_1++);
-				}
-
-				//Multiply
-				T left_over_level;
-				T* result_ptr = horner_step + level_index[left_level + 2] - level_index[left_level + 1];
-				for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr) {
-					left_over_level = (*left_ptr) * one_over_level;
-					for (T* right_ptr = increments + dimension - 1; right_ptr != increments - 1; --right_ptr) {
-						*(--result_ptr) = left_over_level * (*right_ptr);
-					}
-				}
+					for (uint64_t d = 0; d < dimension; ++d)
+						result_ptr[d] = scalar * increments[d];
 #endif
+				}
 			}
-
-			//======================= Do last iteration (left_level = target_level - 1) separately for speed, and add result straight into out
 
 			const uint64_t left_level_size = level_index[target_level] - level_index[target_level - 1];
-
-			//Horner stuff
-#ifdef VEC
-			//Add, Multiply and add, writing straight into out
-			T* out_ptr = out + level_index[target_level];
-			T* result_ptr = out + level_index[target_level + 1] - dimension;
-			for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr, result_ptr -= dimension) {
-				const T scalar = *left_ptr + *(--out_ptr);
-				vec_mult_add(result_ptr, increments, scalar, dimension);
-			}
-#else
-			//Add
-			T* left_ptr_1 = out + level_index[target_level - 1];
-			for (uint64_t i = 0; i < left_level_size; ++i) {
-				horner_step[i] += *(left_ptr_1++);
-			}
-
-			//Multiply and add, writing straight into out
+			const T* left_ptr = horner_step + left_level_size;
+			const T* out_ptr = out + level_index[target_level];
 			T* result_ptr = out + level_index[target_level + 1];
-			for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr) {
-				for (T* right_ptr = increments + dimension - 1; right_ptr != increments - 1; --right_ptr) {
-					*(--result_ptr) += (*left_ptr) * (*right_ptr); //no one_over_level here, as right_level = 1
-				}
-			}
+			while (left_ptr != horner_step) {
+				const T scalar = *(--left_ptr) + *(--out_ptr);
+				result_ptr -= dimension;
+#ifdef VEC
+				vec_mult_add(result_ptr, increments, scalar, dimension);
+#else
+				for (uint64_t d = 0; d < dimension; ++d)
+					result_ptr[d] += scalar * increments[d];
 #endif
+			}
 		}
 		//Update target_level == 1
 #ifdef VEC
-		vec_mult_add(out + 1, increments, static_cast<T>(1.), dimension);
+		vec_mult_add(out + (scalar_term ? 1 : 0), increments, static_cast<T>(1.), dimension);
 #else
 		for (uint64_t i = 0; i < dimension; ++i)
-			out[i + 1] += increments[i];
+			out[i + (scalar_term ? 1 : 0)] += increments[i];
 #endif
 	}
 }
@@ -537,44 +511,46 @@ template<std::floating_point T, uint64_t dimension>
 void signature_horner_template_(
 	const Path<T>& path,
 	T* out,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term
 ) {
 	T increments[dimension];
-	signature_horner_(path, out, degree, dimension, increments);
+	signature_horner_(path, out, degree, dimension, increments, scalar_term);
 }
 
 template<std::floating_point T>
 void call_signature_horner_(
 	const Path<T>& path,
 	T* out,
-	uint64_t degree
+	uint64_t degree,
+	bool scalar_term = true
 ) {
 	const uint64_t dimension = path.dimension();
 	switch (dimension) {
-	case 1:  return signature_horner_template_<T, 1>(path, out, degree);
-	case 2:  return signature_horner_template_<T, 2>(path, out, degree);
-	case 3:  return signature_horner_template_<T, 3>(path, out, degree);
-	case 4:  return signature_horner_template_<T, 4>(path, out, degree);
-	case 5:  return signature_horner_template_<T, 5>(path, out, degree);
-	case 6:  return signature_horner_template_<T, 6>(path, out, degree);
-	case 7:  return signature_horner_template_<T, 7>(path, out, degree);
-	case 8:  return signature_horner_template_<T, 8>(path, out, degree);
-	case 9:  return signature_horner_template_<T, 9>(path, out, degree);
-	case 10: return signature_horner_template_<T, 10>(path, out, degree);
-	case 11: return signature_horner_template_<T, 11>(path, out, degree);
-	case 12: return signature_horner_template_<T, 12>(path, out, degree);
-	case 13: return signature_horner_template_<T, 13>(path, out, degree);
-	case 14: return signature_horner_template_<T, 14>(path, out, degree);
-	case 15: return signature_horner_template_<T, 15>(path, out, degree);
-	case 16: return signature_horner_template_<T, 16>(path, out, degree);
-	case 17: return signature_horner_template_<T, 17>(path, out, degree);
-	case 18: return signature_horner_template_<T, 18>(path, out, degree);
-	case 19: return signature_horner_template_<T, 19>(path, out, degree);
-	case 20: return signature_horner_template_<T, 20>(path, out, degree);
+	case 1:  return signature_horner_template_<T, 1>(path, out, degree, scalar_term);
+	case 2:  return signature_horner_template_<T, 2>(path, out, degree, scalar_term);
+	case 3:  return signature_horner_template_<T, 3>(path, out, degree, scalar_term);
+	case 4:  return signature_horner_template_<T, 4>(path, out, degree, scalar_term);
+	case 5:  return signature_horner_template_<T, 5>(path, out, degree, scalar_term);
+	case 6:  return signature_horner_template_<T, 6>(path, out, degree, scalar_term);
+	case 7:  return signature_horner_template_<T, 7>(path, out, degree, scalar_term);
+	case 8:  return signature_horner_template_<T, 8>(path, out, degree, scalar_term);
+	case 9:  return signature_horner_template_<T, 9>(path, out, degree, scalar_term);
+	case 10: return signature_horner_template_<T, 10>(path, out, degree, scalar_term);
+	case 11: return signature_horner_template_<T, 11>(path, out, degree, scalar_term);
+	case 12: return signature_horner_template_<T, 12>(path, out, degree, scalar_term);
+	case 13: return signature_horner_template_<T, 13>(path, out, degree, scalar_term);
+	case 14: return signature_horner_template_<T, 14>(path, out, degree, scalar_term);
+	case 15: return signature_horner_template_<T, 15>(path, out, degree, scalar_term);
+	case 16: return signature_horner_template_<T, 16>(path, out, degree, scalar_term);
+	case 17: return signature_horner_template_<T, 17>(path, out, degree, scalar_term);
+	case 18: return signature_horner_template_<T, 18>(path, out, degree, scalar_term);
+	case 19: return signature_horner_template_<T, 19>(path, out, degree, scalar_term);
+	case 20: return signature_horner_template_<T, 20>(path, out, degree, scalar_term);
 	default:
 		auto increments_uptr = std::make_unique<T[]>(dimension);
 		T* const increments = increments_uptr.get();
-		return signature_horner_<T>(path, out, degree, dimension, increments);
+		return signature_horner_<T>(path, out, degree, dimension, increments, scalar_term);
 	}
 }
 
@@ -673,6 +649,118 @@ void signature_horner_step_(
 #endif
 }
 
+#ifdef VEC
+template<std::floating_point T, uint64_t aug_dim>
+void signature_horner_batch_(
+	const T* path,
+	T* out,
+	uint64_t batch_size,
+	uint64_t dimension,
+	uint64_t length,
+	uint64_t degree,
+	bool time_aug,
+	bool lead_lag,
+	T end_time,
+	bool scalar_term,
+	int n_jobs
+) {
+	constexpr uint64_t lanes = vec_batch_bytes / sizeof(T);
+	// Store the same coefficient from each path in one SIMD vector.
+	struct alignas(vec_batch_bytes) Value { T data[lanes]{}; };
+	const Path<T> shape(nullptr, dimension, length, time_aug, lead_lag, end_time);
+	const uint64_t flat_path_length = dimension * length;
+	const uint64_t group_count = (batch_size + lanes - 1) / lanes;
+	std::vector<uint64_t> level_index_storage(degree + 2);
+	uint64_t* const level_index = level_index_storage.data();
+	populate_level_index(level_index, aug_dim, degree + 2);
+	const uint64_t sig_len = level_index[degree + 1];
+	const uint64_t stride = scalar_term ? sig_len : sig_len - 1;
+	std::vector<T> reciprocals(degree + 1);
+	for (uint64_t level = 1; level <= degree; ++level)
+		reciprocals[level] = static_cast<T>(1) / static_cast<T>(level);
+
+	auto group_func = [&](const T* path_group, T* out_group) {
+		const uint64_t group_start = static_cast<uint64_t>(path_group - path) / flat_path_length;
+		const uint64_t valid_lanes = std::min(lanes, batch_size - group_start);
+		std::vector<Value> sig_storage(sig_len);
+		std::vector<Value> work_storage(level_index[degree]);
+		std::vector<Value> increment_storage(aug_dim * degree);
+		Value* const sig = sig_storage.data();
+		Value* const work = work_storage.data();
+		Value* const increments = increment_storage.data();
+		std::vector<Path<T>> paths;
+		paths.reserve(valid_lanes);
+		std::array<Point<T>, lanes> previous;
+		std::array<Point<T>, lanes> next;
+		for (uint64_t lane = 0; lane < valid_lanes; ++lane) {
+			paths.emplace_back(path_group + lane * flat_path_length, dimension, length, time_aug, lead_lag, end_time);
+			previous[lane] = paths.back().begin();
+			next[lane] = previous[lane];
+			++next[lane];
+		}
+		vec_batch_fill(sig[0].data, static_cast<T>(1));
+
+		for (uint64_t time = 1; time < shape.length(); ++time) {
+			if (!time_aug && !lead_lag) {
+				for (uint64_t d = 0; d < dimension; ++d) {
+					for (uint64_t lane = 0; lane < valid_lanes; ++lane) {
+						const T* const point = path_group + lane * flat_path_length + time * dimension;
+						increments[d].data[lane] = point[d] - (point - dimension)[d];
+					}
+				}
+			}
+			else {
+				for (uint64_t d = 0; d < aug_dim; ++d) {
+					for (uint64_t lane = 0; lane < valid_lanes; ++lane)
+						increments[d].data[lane] = next[lane][d] - previous[lane][d];
+				}
+			}
+			for (uint64_t level = 2; level <= degree; ++level) {
+				for (uint64_t d = 0; d < aug_dim; ++d)
+					vec_batch_scale(increments[(level - 1) * aug_dim + d].data, increments[d].data, reciprocals[level]);
+			}
+
+			for (uint64_t target = degree; target > 1; --target) {
+				for (uint64_t d = 0; d < aug_dim; ++d)
+					vec_batch_copy(work[1 + d].data, increments[(target - 1) * aug_dim + d].data);
+				for (uint64_t level = 1; level + 1 < target; ++level) {
+					const uint64_t count = level_index[level + 1] - level_index[level];
+					const uint64_t increment_offset = (target - level - 1) * aug_dim;
+					for (uint64_t word = 0; word < count; ++word) {
+						Value sum;
+						vec_batch_add(sum.data, work[level_index[level] + word].data, sig[level_index[level] + word].data);
+						for (uint64_t d = 0; d < aug_dim; ++d)
+							vec_batch_multiply(work[level_index[level + 1] + word * aug_dim + d].data, sum.data, increments[increment_offset + d].data);
+					}
+				}
+				const uint64_t count = level_index[target] - level_index[target - 1];
+				for (uint64_t word = 0; word < count; ++word) {
+					Value sum;
+					vec_batch_add(sum.data, work[level_index[target - 1] + word].data, sig[level_index[target - 1] + word].data);
+					for (uint64_t d = 0; d < aug_dim; ++d)
+						vec_batch_multiply_add(sig[level_index[target] + word * aug_dim + d].data, sum.data, increments[d].data);
+				}
+			}
+			for (uint64_t d = 0; d < aug_dim; ++d)
+				vec_batch_add_inplace(sig[1 + d].data, increments[d].data);
+			if (time_aug || lead_lag) {
+				for (uint64_t lane = 0; lane < valid_lanes; ++lane) {
+					++previous[lane];
+					++next[lane];
+				}
+			}
+		}
+		for (uint64_t lane = 0; lane < valid_lanes; ++lane) {
+			T* const result = out_group + lane * stride;
+			for (uint64_t word = 0; word < stride; ++word)
+				result[word] = sig[word + (scalar_term ? 0 : 1)].data[lane];
+		}
+	};
+	multi_threaded_batch(group_func, group_count, n_jobs,
+		make_batch(path, flat_path_length * lanes), make_batch(out, stride * lanes));
+}
+#endif
+
 template<std::floating_point T>
 void signature_(
 	const T* path,
@@ -724,6 +812,41 @@ void signature_(
 	const uint64_t flat_path_length = dimension * length;
 	const uint64_t aug_dim = dummy_path_obj.dimension();
 	const bool has_correction = correction_len != 0;
+	if (aug_dim == 1 && !has_correction) {
+		auto sig_func = [&](const T* path_ptr, T* out_ptr) {
+			const T increment = path_ptr[length - 1] - path_ptr[0];
+			T value = static_cast<T>(1);
+			if (scalar_term)
+				*(out_ptr++) = value;
+			for (uint64_t level = 1; level <= degree; ++level) {
+				value *= increment / static_cast<T>(level);
+				*(out_ptr++) = value;
+			}
+		};
+		multi_threaded_batch(sig_func, batch_size, n_jobs,
+			make_batch(path, flat_path_length), make_batch(out, stride));
+		return;
+	}
+
+#ifdef VEC
+	const int max_threads = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
+	const bool enough_groups = sizeof(T) == 4 || aug_dim <= 2 || n_jobs == 1
+		|| batch_size / (vec_batch_bytes / sizeof(T)) >= static_cast<uint64_t>(max_threads);
+	// Limit the working set and retain enough independent tasks for the thread pool.
+	if (horner && !has_correction && degree > 1 && length >= 16 && aug_dim <= 4
+		&& aug_dim < vec_batch_bytes / sizeof(T)
+		&& batch_size >= vec_batch_bytes / sizeof(T) && full_len <= 8192 && enough_groups) {
+		auto batch_func = [&]<uint64_t dim>() {
+			return signature_horner_batch_<T, dim>(path, out, batch_size, dimension, length, degree,
+				time_aug, lead_lag, end_time, scalar_term, n_jobs);
+		};
+		switch (aug_dim) {
+		case 2: return batch_func.template operator()<2>();
+		case 3: return batch_func.template operator()<3>();
+		case 4: return batch_func.template operator()<4>();
+		}
+	}
+#endif
 
 	if (has_correction) {
 		auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
@@ -782,24 +905,26 @@ void signature_(
 		multi_threaded_batch(sig_func, batch_size, n_jobs,
 			make_batch(path, flat_path_length), make_batch(out, full_len));
 	} else {
-		// scalar_term=false: compute into a per-element temp buffer, then copy without index 0
 		auto sig_func = [&](const T* path_ptr, T* out_ptr) {
-			std::vector<T> buf(full_len);
 			Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
 			if (degree == 1) {
 				Point<T> first_pt = path_obj.begin();
 				Point<T> last_pt = --path_obj.end();
-				buf[0] = 1.;
 				for (uint64_t i = 0; i < aug_dim; ++i)
-					buf[i + 1] = last_pt[i] - first_pt[i];
+					out_ptr[i] = last_pt[i] - first_pt[i];
 			}
-			else if (horner) {
-				call_signature_horner_<T>(path_obj, buf.data(), degree);
+			else if (horner && (n_jobs == 1 || batch_size == 1)) {
+				call_signature_horner_<T>(path_obj, out_ptr, degree, false);
 			}
 			else {
-				signature_naive_<T>(path_obj, buf.data(), degree);
+				// A local buffer keeps parallel workers' repeated updates in cache.
+				std::vector<T> buf(full_len);
+				if (horner)
+					call_signature_horner_<T>(path_obj, buf.data(), degree);
+				else
+					signature_naive_<T>(path_obj, buf.data(), degree);
+				std::memcpy(out_ptr, buf.data() + 1, (full_len - 1) * sizeof(T));
 			}
-			std::memcpy(out_ptr, buf.data() + 1, (full_len - 1) * sizeof(T));
 		};
 
 		multi_threaded_batch(sig_func, batch_size, n_jobs,

@@ -35,6 +35,9 @@
 #endif
 
 extern "C" {
+	/**
+	* @brief Returns the CPU error message for the current thread.
+	*/
 	CPSIG_API const char* cpsig_last_error_message() noexcept;
 
 	/** @defgroup transform_path_functions Transform path functions
@@ -60,7 +63,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int transform_path_f(const float* data_in, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
-	/** @brief */
+	/** @copydoc transform_path_f */
 	[[nodiscard]] CPSIG_API int transform_path_d(const double* data_in, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -87,7 +90,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int transform_path_backprop_f(const float* derivs, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
-	/** @brief */
+	/** @copydoc transform_path_backprop_f */
 	[[nodiscard]] CPSIG_API int transform_path_backprop_d(const double* derivs, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -119,10 +122,11 @@ extern "C" {
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
 	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_combine_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
-	/** @brief */
+	/** @copydoc sig_combine_f */
 	[[nodiscard]] CPSIG_API int sig_combine_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -145,31 +149,74 @@ extern "C" {
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
 	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_combine_backprop_f(const float* sig_combined_derivs, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
-	/** @brief */
+	/** @copydoc sig_combine_backprop_f */
 	[[nodiscard]] CPSIG_API int sig_combine_backprop_d(const double* sig_combined_derivs, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup linear_sig_functions Linear sig functions
 	* @{
 	*/
+	/**
+	* @brief Computes the signature of each straight-line displacement.
+	* @param displacement Row-major segment displacements, size batch_size * dimension.
+	* @param out Preallocated signatures, size batch_size * (sig_length(dimension, degree) - !scalar_term), using the transformed dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int linear_sig_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @copydoc linear_sig_f */
 	[[nodiscard]] CPSIG_API int linear_sig_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_join_functions Sig join functions
 	* @{
 	*/
+	/**
+	* @brief Appends or prepends a straight-line segment to each signature.
+	* @param sig Input signature buffer, size batch_size * (sig_length(dimension, degree) - !scalar_term).
+	* @param displacement Row-major segment displacements, size batch_size * dimension.
+	* @param out Preallocated signatures, size batch_size * (sig_length(dimension, degree) - !scalar_term), using the transformed dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param prepend Whether to prepend the segment; false appends it.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int sig_join_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @copydoc sig_join_f */
 	[[nodiscard]] CPSIG_API int sig_join_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_join_backprop_functions Sig join backprop functions
 	* @{
 	*/
+	/**
+	* @brief Backpropagates through sig_join to signatures and displacements.
+	* @param d_out Input cotangents, with the same layout as the forward output.
+	* @param d_sig Preallocated gradient buffer, size batch_size * (sig_length(dimension, degree) - !scalar_term).
+	* @param d_displacement Preallocated displacement gradients, size batch_size * dimension.
+	* @param sig Input signature buffer, size batch_size * (sig_length(dimension, degree) - !scalar_term).
+	* @param displacement Row-major segment displacements, size batch_size * dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param prepend Whether to prepend the segment; false appends it.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int sig_join_backprop_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @copydoc sig_join_backprop_f */
 	[[nodiscard]] CPSIG_API int sig_join_backprop_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -199,7 +246,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
-	/** @brief */
+	/** @copydoc sig_coef_f */
 	[[nodiscard]] CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -230,7 +277,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
-	/** @brief */
+	/** @copydoc sig_coef_backprop_f */
 	[[nodiscard]] CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -253,10 +300,15 @@ extern "C" {
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
 	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param correction Optional segment corrections, with levels 2 through m concatenated in word order over original path channels. Null means no correction; incompatible with lead_lag.
+	* @param correction_len Number of coefficients per correction row.
+	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
+	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
-	/** @brief */
+	/** @copydoc signature_f */
 	[[nodiscard]] CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
@@ -281,10 +333,15 @@ extern "C" {
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
 	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param correction Optional segment corrections, with levels 2 through m concatenated in word order over original path channels. Null means no correction; incompatible with lead_lag.
+	* @param correction_len Number of coefficients per correction row.
+	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
+	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
-	/** @brief */
+	/** @copydoc sig_backprop_f */
 	[[nodiscard]] CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
@@ -351,10 +408,11 @@ extern "C" {
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
 	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_to_log_sig_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
-	/** @brief */
+	/** @copydoc sig_to_log_sig_f */
 	[[nodiscard]] CPSIG_API int sig_to_log_sig_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -377,10 +435,11 @@ extern "C" {
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
 	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_to_log_sig_backprop_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term = true, int n_jobs = 1) noexcept;
-	/** @brief */
+	/** @copydoc sig_to_log_sig_backprop_f */
 	[[nodiscard]] CPSIG_API int sig_to_log_sig_backprop_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -388,8 +447,20 @@ extern "C" {
 	* @{
 	*/
 
+	/**
+	* @brief Combines two Lyndon-basis log signatures. Prepare method 3 first.
+	* @param log_sig1 Input log signatures, size batch_size * log_sig_length(dimension, degree).
+	* @param log_sig2 Input log signatures, size batch_size * log_sig_length(dimension, degree).
+	* @param out Preallocated Lyndon-basis logarithms, size batch_size * log_sig_length(dimension, degree).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int log_sig_combine_f(const float* log_sig1, const float* log_sig2, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	/** @copydoc log_sig_combine_f */
 	[[nodiscard]] CPSIG_API int log_sig_combine_d(const double* log_sig1, const double* log_sig2, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
@@ -398,8 +469,22 @@ extern "C" {
 	* @{
 	*/
 
+	/**
+	* @brief Backpropagates through log_sig_combine. Prepare method 3 first.
+	* @param d_out Input cotangents, with the same layout as the forward output.
+	* @param d_ls1 Preallocated log-signature gradients, size batch_size * log_sig_length(dimension, degree).
+	* @param d_ls2 Preallocated log-signature gradients, size batch_size * log_sig_length(dimension, degree).
+	* @param ls1 Input log signatures, size batch_size * log_sig_length(dimension, degree).
+	* @param ls2 Input log signatures, size batch_size * log_sig_length(dimension, degree).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int log_sig_combine_backprop_f(const float* d_out, float* d_ls1, float* d_ls2,
 		const float* ls1, const float* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	/** @copydoc log_sig_combine_backprop_f */
 	[[nodiscard]] CPSIG_API int log_sig_combine_backprop_d(const double* d_out, double* d_ls1, double* d_ls2,
 		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
@@ -407,27 +492,78 @@ extern "C" {
 	/** @defgroup log_sig_join_functions Log sig join functions
 	* @{
 	*/
+	/**
+	* @brief Appends a straight-line segment to a Lyndon-basis log signature. Prepare method 3 first.
+	* @param log_sig Input log signatures, size batch_size * log_sig_length(dimension, degree).
+	* @param displacement Row-major segment displacements, size batch_size * dimension.
+	* @param out Preallocated Lyndon-basis logarithms, size batch_size * log_sig_length(dimension, degree).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int log_sig_join_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	/** @copydoc log_sig_join_f */
 	[[nodiscard]] CPSIG_API int log_sig_join_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_join_backprop_functions Log sig join backprop functions
 	* @{
 	*/
+	/**
+	* @brief Backpropagates through log_sig_join. Prepare method 3 first.
+	* @param d_out Input cotangents, with the same layout as the forward output.
+	* @param d_logsig Preallocated log-signature gradients, size batch_size * log_sig_length(dimension, degree).
+	* @param d_displacement Preallocated displacement gradients, size batch_size * dimension.
+	* @param log_sig Input log signatures, size batch_size * log_sig_length(dimension, degree).
+	* @param displacement Row-major segment displacements, size batch_size * dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int log_sig_join_backprop_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	/** @copydoc log_sig_join_backprop_f */
 	[[nodiscard]] CPSIG_API int log_sig_join_backprop_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_from_path_functions Log-signature from path functions
 	* @{
 	*/
+	/**
+	* @brief Computes Lyndon-basis log signatures directly from paths. Prepare method 3 first.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param out Preallocated Lyndon-basis logarithms, size batch_size * log_sig_length(dimension, degree).
+	* @param batch_size Number of independent batch items.
+	* @param length Number of points in each input path.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param degree Truncation degree.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int log_sig_from_path_f(const float* path, float* out,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	/** @copydoc log_sig_from_path_f */
 	[[nodiscard]] CPSIG_API int log_sig_from_path_d(const double* path, double* out,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 
+	/**
+	* @brief Backpropagates through direct BCH path computation. Prepare method 3 first.
+	* @param d_out Input cotangents, with the same layout as the forward output.
+	* @param d_path Preallocated path gradients, size batch_size * length * dimension.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param batch_size Number of independent batch items.
+	* @param length Number of points in each input path.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param degree Truncation degree.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int log_sig_from_path_backprop_f(const float* d_out, float* d_path, const float* path,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
+	/** @copydoc log_sig_from_path_backprop_f */
 	[[nodiscard]] CPSIG_API int log_sig_from_path_backprop_d(const double* d_out, double* d_path, const double* path,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs = 1) noexcept;
 	/** @} */
@@ -436,16 +572,47 @@ extern "C" {
 	* @{
 	*/
 
+	/**
+	* @brief Converts log signatures to signatures. Prepare the selected method first, except method 0.
+	* @param log_sig Input log signatures; per item, method 0 uses sig_length(d, degree) - !scalar_term entries and methods 1 or 2 use log_sig_length(d, degree), where d is the effective dimension.
+	* @param out Preallocated signatures, size batch_size * (sig_length(dimension, degree) - !scalar_term), using the transformed dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Original path dimension; the effective dimension is d = (lead_lag ? 2 * dimension : dimension) + time_aug.
+	* @param degree Truncation degree.
+	* @param time_aug Whether to include time augmentation.
+	* @param lead_lag Whether to include the lead-lag transform.
+	* @param method Log-signature coordinates: 0 expanded, 1 Lyndon-word, 2 Lyndon-basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int logsig_to_sig_f(const float* log_sig, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
 		bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @copydoc logsig_to_sig_f */
 	[[nodiscard]] CPSIG_API int logsig_to_sig_d(const double* log_sig, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
 		bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
 
+	/**
+	* @brief Backpropagates through logsig_to_sig with respect to the log signature.
+	* @param log_sig Input log signatures; per item, method 0 uses sig_length(d, degree) - !scalar_term entries and methods 1 or 2 use log_sig_length(d, degree), where d is the effective dimension.
+	* @param out Preallocated gradients, with the same layout as log_sig.
+	* @param sig_derivs Output cotangents, size batch_size * (sig_length(d, degree) - !scalar_term).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Original path dimension; the effective dimension is d = (lead_lag ? 2 * dimension : dimension) + time_aug.
+	* @param degree Truncation degree.
+	* @param time_aug Whether to include time augmentation.
+	* @param lead_lag Whether to include the lead-lag transform.
+	* @param method Log-signature coordinates: 0 expanded, 1 Lyndon-word, 2 Lyndon-basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int logsig_to_sig_backprop_f(const float* log_sig, float* out, const float* sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
 		bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
+	/** @copydoc logsig_to_sig_backprop_f */
 	[[nodiscard]] CPSIG_API int logsig_to_sig_backprop_d(const double* log_sig, double* out, const double* sig_derivs,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree,
 		bool time_aug = false, bool lead_lag = false, int method = 0, bool scalar_term = true, int n_jobs = 1) noexcept;
@@ -473,7 +640,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_kernel_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
-	/** @brief */
+	/** @copydoc sig_kernel_f */
 	[[nodiscard]] CPSIG_API int sig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -497,11 +664,24 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_kernel_poly_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
-	/** @brief Double-precision variant of sig_kernel_poly_f. */
+	/** @copydoc sig_kernel_poly_f */
 	[[nodiscard]] CPSIG_API int sig_kernel_poly_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
-	/** @brief Backpropagates through sig_kernel_poly_f with respect to gram. */
+	/** @brief Backpropagates through sig_kernel_poly_f with respect to gram.
+	* @param gram Input increment Gram matrices, size batch_size * (length1 - 1) * (length2 - 1).
+	* @param gram_derivs Preallocated gradients with the same shape as gram.
+	* @param output_derivs Output cotangents, with the same shape as the forward result.
+	* @param state Forward cell coefficients, size 2 * batch_size * (length1 - 1) * (length2 - 1) * (order + 1).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param length1 Number of points in the first path.
+	* @param length2 Number of points in the second path.
+	* @param order Polynomial approximation degree, from 2 through 64.
+	* @param return_grid Whether output cotangents include all original path vertices.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int sig_kernel_poly_backprop_f(const float* gram, float* gram_derivs, const float* output_derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
-	/** @brief Double-precision variant of sig_kernel_poly_backprop_f. */
+	/** @copydoc sig_kernel_poly_backprop_f */
 	[[nodiscard]] CPSIG_API int sig_kernel_poly_backprop_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -531,7 +711,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int branched_sig_kernel_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
-	/** @brief Double-precision variant of branched_sig_kernel_f. */
+	/** @copydoc branched_sig_kernel_f */
 	[[nodiscard]] CPSIG_API int branched_sig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -559,7 +739,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_kernel_backprop_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
-	/** @brief */
+	/** @copydoc sig_kernel_backprop_f */
 	[[nodiscard]] CPSIG_API int sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -591,7 +771,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int branched_sig_kernel_backprop_f(const float* gram, float* out, const float* derivs, const float* k_stack, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
-	/** @brief Double-precision variant of branched_sig_kernel_backprop_f. */
+	/** @copydoc branched_sig_kernel_backprop_f */
 	[[nodiscard]] CPSIG_API int branched_sig_kernel_backprop_d(const double* gram, double* out, const double* derivs, const double* k_stack, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
@@ -599,12 +779,53 @@ extern "C" {
 	* @{
 	*/
 
-	/** @brief Prepares the branched-signature cache. */
+	/** @brief Prepares the branched-signature cache.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param use_disk Whether to load and save prepared tables in the disk cache.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int prepare_branched_sig(uint64_t dimension, uint64_t max_nodes, bool use_disk = false, bool planar = false) noexcept;
+	/**
+	* @brief Returns the branched-signature length including the scalar term.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @return Number of coefficients; zero can indicate invalid parameters or overflow.
+	*/
 	CPSIG_API uint64_t branched_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
+	/**
+	* @brief Returns the scalar-free branched-log length, compressed for planar coordinates.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @return Number of coefficients; zero can indicate invalid parameters or overflow.
+	*/
 	CPSIG_API uint64_t branched_log_sig_length(uint64_t dimension, uint64_t max_nodes, bool planar = false) noexcept;
 
+	/**
+	* @brief Computes branched signatures of paths. Call prepare_branched_sig first.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param out Preallocated signatures, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term), using the transformed dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param length Number of points in each input path.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @param time_aug Whether to include time augmentation.
+	* @param lead_lag Whether to include the lead-lag transform.
+	* @param end_time End time for time augmentation.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param correction Optional segment corrections, with levels 2 through m concatenated in word order over original path channels. Null means no correction; incompatible with lead_lag.
+	* @param correction_len Number of coefficients per correction row.
+	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
+	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	/** @copydoc branched_sig_f */
 	[[nodiscard]] CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
@@ -702,10 +923,31 @@ extern "C" {
 	/** @addtogroup branched_sig_functions
 	* @{
 	*/
-	/** @brief Prepares branched-log caches for methods 0, 1, 2, or 3. */
+	/** @brief Prepares branched-log caches for methods 0, 1, 2, or 3.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param method Method to prepare: 0 expanded, 1 or 2 compressed planar MKW, or 3 direct planar BCH.
+	* @param use_disk Whether to load and save prepared tables in the disk cache.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int prepare_branched_log_sig(uint64_t dimension, uint64_t max_nodes, int method, bool use_disk = false, bool planar = false) noexcept;
 
+	/**
+	* @brief Combines branched signatures using the prepared coproduct.
+	* @param bsig1 Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param bsig2 Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param out Preallocated signatures, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term), using the transformed dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
+	/** @copydoc branched_sig_combine_f */
 	[[nodiscard]] CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 
 	/**
@@ -715,9 +957,19 @@ extern "C" {
 	* preserves the scalar-term convention. Methods 1 and 2 return scalar-free
 	* compressed MKW coordinates and require planar=true. Method 3 is available
 	* only through branched_log_sig_from_path_f and branched_log_sig_from_path_d.
+	* @param bsig Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param out Preallocated logarithms; method 0 matches bsig, while methods 1 or 2 use batch_size * branched_log_sig_length(dimension, max_nodes, true) entries.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param method Branched-log method: 0 expanded, 1 or 2 compressed planar MKW. Conversion does not accept method 3.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
-	/** @brief */
+	/** @copydoc branched_sig_to_log_sig_f */
 	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 
 	/**
@@ -725,25 +977,127 @@ extern "C" {
 	*
 	* Computes the vector-Jacobian product from derivatives with respect to the
 	* branched log signature to derivatives with respect to the branched signature.
+	* @param bsig Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param derivs Input cotangents, with the same layout as the forward output.
+	* @param out Preallocated gradients, with the same layout as bsig.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param method Branched-log method: 0 expanded, 1 or 2 compressed planar MKW. Conversion does not accept method 3.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_backprop_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
-	/** @brief */
+	/** @copydoc branched_sig_to_log_sig_backprop_f */
 	[[nodiscard]] CPSIG_API int branched_sig_to_log_sig_backprop_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method = 0, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 
-	/** @brief Computes method 3 for a planar MKW path directly using BCH. */
+	/** @brief Computes method 3 for a planar MKW path directly using BCH.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param out Preallocated compressed planar logarithms, size batch_size * branched_log_sig_length(dimension, max_nodes, true).
+	* @param batch_size Number of independent batch items.
+	* @param length Number of points in each input path.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int branched_log_sig_from_path_f(const float* path, float* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
+	/**
+	* @brief Append or prepend a linear segment to planar method-2/3 log coordinates.
+	* Requires method-3 preparation.
+	* @param logsig Input log coordinates.
+	* @param displacement Segment displacement.
+	* @param out Output log coordinates.
+	* @param batch_size Number of batch items.
+	* @param dimension Number of channels.
+	* @param max_nodes Truncation degree.
+	* @param prepend If true, prepend the segment.
+	* @param n_jobs Number of CPU threads.
+	* @return Status code, zero on success.
+	*/
+	[[nodiscard]] CPSIG_API int branched_log_sig_join_f(const float* logsig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs = 1) noexcept;
+	/** @copydoc branched_log_sig_join_f */
+	[[nodiscard]] CPSIG_API int branched_log_sig_join_d(const double* logsig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs = 1) noexcept;
+	/**
+	* @brief Backpropagate through a planar branched log signature join.
+	* @param derivs Output derivatives.
+	* @param d_logsig Input log coordinate derivatives.
+	* @param d_displacement Displacement derivatives.
+	* @param logsig Input log coordinates.
+	* @param displacement Segment displacement.
+	* @param batch_size Number of batch items.
+	* @param dimension Number of channels.
+	* @param max_nodes Truncation degree.
+	* @param prepend If true, prepend the segment.
+	* @param n_jobs Number of CPU threads.
+	* @return Status code, zero on success.
+	*/
+	[[nodiscard]] CPSIG_API int branched_log_sig_join_backprop_f(const float* derivs, float* d_logsig, float* d_displacement, const float* logsig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs = 1) noexcept;
+	/** @copydoc branched_log_sig_join_backprop_f */
+	[[nodiscard]] CPSIG_API int branched_log_sig_join_backprop_d(const double* derivs, double* d_logsig, double* d_displacement, const double* logsig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend, int n_jobs = 1) noexcept;
 	/** @copydoc branched_log_sig_from_path_f */
 	[[nodiscard]] CPSIG_API int branched_log_sig_from_path_d(const double* path, double* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
 
-	/** @brief Backpropagation through the direct planar MKW BCH computation. */
+	/** @brief Backpropagation through the direct planar MKW BCH computation.
+	* @param derivs Input cotangents, with the same layout as the forward output.
+	* @param path_derivs Preallocated path gradients, size batch_size * length * dimension.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param batch_size Number of independent batch items.
+	* @param length Number of points in each input path.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int branched_log_sig_from_path_backprop_f(const float* derivs, float* path_derivs, const float* path, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
 	/** @copydoc branched_log_sig_from_path_backprop_f */
 	[[nodiscard]] CPSIG_API int branched_log_sig_from_path_backprop_d(const double* derivs, double* path_derivs, const double* path, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1) noexcept;
 
+	/**
+	* @brief Backpropagates through branched_sig_combine to both inputs.
+	* @param bsig1 Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param bsig2 Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param derivs Input cotangents, with the same layout as the forward output.
+	* @param out1 Preallocated gradient buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param out2 Preallocated gradient buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
+	/** @copydoc branched_sig_combine_backprop_f */
 	[[nodiscard]] CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs = 1, bool planar = false, bool scalar_term = true) noexcept;
 
+	/**
+	* @brief Backpropagates through branched_sig with correction data held fixed.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param out Preallocated gradients, with the same layout as path.
+	* @param bsig_derivs Output cotangents, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param bsig Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param length Number of points in each input path.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param n_jobs Number of CPU threads; 1 is serial and -1 uses all available threads.
+	* @param time_aug Whether to include time augmentation.
+	* @param lead_lag Whether to include the lead-lag transform.
+	* @param end_time End time for time augmentation.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param correction Optional segment corrections, with levels 2 through m concatenated in word order over original path channels. Null means no correction; incompatible with lead_lag.
+	* @param correction_len Number of coefficients per correction row.
+	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
+	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	/** @copydoc branched_sig_backprop_f */
 	[[nodiscard]] CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs = 1, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 }

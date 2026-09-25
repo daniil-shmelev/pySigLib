@@ -36,6 +36,9 @@
 #endif
 
 extern "C" {
+	/**
+	* @brief Returns the CUDA error message for the current thread.
+	*/
 	CUSIG_API const char* cusig_last_error_message() noexcept;
 
 	
@@ -49,7 +52,7 @@ extern "C" {
 	*
 	* @param data_in Pointer to input path data (row-major), size = `batch_size * length * dimension`.
 	* @param data_out Pointer to output buffer (row-major, preallocated), size = `batch_size * transformed_length * transformed_dimension`, where
-	*					`transformed_length = lead_lag ? length_ * 2 - 1` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
+	*					`transformed_length = lead_lag ? length * 2 - 1 : length` and `transformed_dimension = (lead_lag ? 2 : 1) * dimension + (time_aug ? 1 : 0)`.
 	* @param batch_size Batch size of the paths.
 	* @param dimension Dimension of the paths.
 	* @param length Length of the paths.
@@ -59,7 +62,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int transform_path_cuda_f(const float* data_in, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time = 1.) noexcept;
-	/** @brief */
+	/** @copydoc transform_path_cuda_f */
 	[[nodiscard]] CUSIG_API int transform_path_cuda_d(const double* data_in, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time = 1.) noexcept;
 	/** @} */
 	
@@ -84,7 +87,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int transform_path_backprop_cuda_f(const float* derivs, float* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time = 1.) noexcept;
-	/** @brief */
+	/** @copydoc transform_path_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int transform_path_backprop_cuda_d(const double* derivs, double* data_out, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time = 1.) noexcept;
 	/** @} */
 
@@ -107,7 +110,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_kernel_cuda_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @brief */
+	/** @copydoc sig_kernel_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_kernel_cuda_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
 
@@ -130,7 +133,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_kernel_poly_cuda_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
-	/** @brief Double-precision variant of sig_kernel_poly_cuda_f. */
+	/** @copydoc sig_kernel_poly_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_kernel_poly_cuda_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
 
 	/**
@@ -149,7 +152,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_kernel_poly_backprop_cuda_f(const float* gram, float* gram_derivs, const float* output_derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
-	/** @brief Double-precision variant of sig_kernel_poly_backprop_cuda_f. */
+	/** @copydoc sig_kernel_poly_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_kernel_poly_backprop_cuda_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
 	/** @} */
 
@@ -176,7 +179,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_cuda_f(const float* gram, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @brief Double-precision variant of branched_sig_kernel_cuda_f. */
+	/** @copydoc branched_sig_kernel_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_cuda_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
 
@@ -201,7 +204,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_kernel_backprop_cuda_f(const float* gram, float* out, const float* derivs, const float* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @brief */
+	/** @copydoc sig_kernel_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_kernel_backprop_cuda_d(const double* gram, double* out, const double* derivs, const double* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
 
@@ -230,7 +233,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_backprop_cuda_f(const float* gram, float* out, const float* derivs, const float* k_stack, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
-	/** @brief Double-precision variant of branched_sig_kernel_backprop_cuda_f. */
+	/** @copydoc branched_sig_kernel_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_backprop_cuda_d(const double* gram, double* out, const double* derivs, const double* k_stack, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @} */
 
@@ -252,10 +255,15 @@ extern "C" {
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
 	* @param horner Whether to use the Horner algorithm (default = true).
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param correction Optional segment corrections, with levels 2 through m concatenated in word order over original path channels. Null means no correction; incompatible with lead_lag.
+	* @param correction_len Number of coefficients per correction row.
+	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
+	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
-	/** @brief */
+	/** @copydoc signature_cuda_f */
 	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
@@ -277,10 +285,15 @@ extern "C" {
 	* @param time_aug Whether time augmentation was applied (default = false).
 	* @param lead_lag Whether the lead-lag transform was applied (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param correction Optional segment corrections, with levels 2 through m concatenated in word order over original path channels. Null means no correction; incompatible with lead_lag.
+	* @param correction_len Number of coefficients per correction row.
+	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
+	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
-	/** @brief */
+	/** @copydoc sig_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
@@ -297,10 +310,11 @@ extern "C" {
 	* @param batch_size Batch size.
 	* @param dimension Dimension of the underlying path space.
 	* @param degree Truncation degree of the signatures.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_combine_cuda_f(const float* sig1, const float* sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
-	/** @brief */
+	/** @copydoc sig_combine_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_combine_cuda_d(const double* sig1, const double* sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
 	/** @} */
 
@@ -319,10 +333,11 @@ extern "C" {
 	* @param batch_size Batch size.
 	* @param dimension Dimension of the underlying path space.
 	* @param degree Truncation degree of the signatures.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_combine_backprop_cuda_f(const float* sig_combined_deriv, float* sig1_deriv, float* sig2_deriv, const float* sig1, const float* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
-	/** @brief */
+	/** @copydoc sig_combine_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_combine_backprop_cuda_d(const double* sig_combined_deriv, double* sig1_deriv, double* sig2_deriv, const double* sig1, const double* sig2, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
 	/** @} */
 
@@ -339,10 +354,11 @@ extern "C" {
 	* @param dimension Dimension of the underlying path space.
 	* @param degree Truncation degree of the signature.
 	* @param method Method for log signature computation (0, 1, or 2).
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_to_log_sig_cuda_f(const float* sig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
-	/** @brief */
+	/** @copydoc sig_to_log_sig_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_to_log_sig_cuda_d(const double* sig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 	/** @} */
 
@@ -360,10 +376,11 @@ extern "C" {
 	* @param dimension Dimension of the underlying path space.
 	* @param degree Truncation degree of the signature.
 	* @param method Method for log signature computation (0, 1, or 2).
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_to_log_sig_backprop_cuda_f(const float* sig, float* out, const float* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
-	/** @brief */
+	/** @copydoc sig_to_log_sig_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_to_log_sig_backprop_cuda_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 	/** @} */
 
@@ -402,7 +419,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
-	/** @brief */
+	/** @copydoc sig_coef_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
 	/** @} */
 
@@ -426,7 +443,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
-	/** @brief */
+	/** @copydoc sig_coef_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
 	/** @} */
 
@@ -446,7 +463,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int log_sig_combine_cuda_f(const float* log_sig1, const float* log_sig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
-	/** @brief */
+	/** @copydoc log_sig_combine_cuda_f */
 	[[nodiscard]] CUSIG_API int log_sig_combine_cuda_d(const double* log_sig1, const double* log_sig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
@@ -454,8 +471,21 @@ extern "C" {
 	* @{
 	*/
 
+	/**
+	* @brief Backpropagates through log_sig_combine. Prepare method 3 first.
+	* @param d_out Input cotangents, with the same layout as the forward output.
+	* @param d_ls1 Preallocated log-signature gradients, size batch_size * log_sig_length(dimension, degree).
+	* @param d_ls2 Preallocated log-signature gradients, size batch_size * log_sig_length(dimension, degree).
+	* @param ls1 Input log signatures, size batch_size * log_sig_length(dimension, degree).
+	* @param ls2 Input log signatures, size batch_size * log_sig_length(dimension, degree).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int log_sig_combine_backprop_cuda_f(const float* d_out, float* d_ls1, float* d_ls2,
 		const float* ls1, const float* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @copydoc log_sig_combine_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int log_sig_combine_backprop_cuda_d(const double* d_out, double* d_ls1, double* d_ls2,
 		const double* ls1, const double* ls2, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
@@ -463,13 +493,38 @@ extern "C" {
 	/** @defgroup logsig_to_sig_cuda_functions Log-signature to signature (tensor exp) CUDA functions
 	* @{
 	*/
+	/**
+	* @brief Converts log signatures to signatures. Prepare the selected method first, except method 0.
+	* @param log_sig Input log signatures; per item, method 0 uses sig_length(dimension, degree) - !scalar_term entries and methods 1 or 2 use log_sig_length(dimension, degree).
+	* @param out Preallocated signatures, size batch_size * (sig_length(dimension, degree) - !scalar_term), using the transformed dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param method Log-signature coordinates: 0 expanded, 1 Lyndon-word, 2 Lyndon-basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int logsig_to_sig_cuda_f(const float* log_sig, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
+	/** @copydoc logsig_to_sig_cuda_f */
 	[[nodiscard]] CUSIG_API int logsig_to_sig_cuda_d(const double* log_sig, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 
+	/**
+	* @brief Backpropagates through logsig_to_sig with respect to the log signature.
+	* @param log_sig Input log signatures; per item, method 0 uses sig_length(dimension, degree) - !scalar_term entries and methods 1 or 2 use log_sig_length(dimension, degree).
+	* @param d_logsig Preallocated log-signature gradients; per item, method 0 uses sig_length(dimension, degree) - !scalar_term entries and methods 1 or 2 use log_sig_length(dimension, degree).
+	* @param d_sig Preallocated gradient buffer, size batch_size * (sig_length(dimension, degree) - !scalar_term).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param method Log-signature coordinates: 0 expanded, 1 Lyndon-word, 2 Lyndon-basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int logsig_to_sig_backprop_cuda_f(const float* log_sig, float* d_logsig, const float* d_sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
+	/** @copydoc logsig_to_sig_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int logsig_to_sig_backprop_cuda_d(const double* log_sig, double* d_logsig, const double* d_sig,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int method, bool scalar_term = true) noexcept;
 	/** @} */
@@ -477,13 +532,36 @@ extern "C" {
 	/** @defgroup log_sig_from_path_cuda_functions Log-signature from path CUDA functions
 	* @{
 	*/
+	/**
+	* @brief Computes Lyndon-basis log signatures directly from paths. Prepare method 3 first.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param out Preallocated Lyndon-basis logarithms, size batch_size * log_sig_length(dimension, degree).
+	* @param batch_size Number of independent batch items.
+	* @param length Number of points in each input path.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param degree Truncation degree.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int log_sig_from_path_cuda_f(const float* path, float* out,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
+	/** @copydoc log_sig_from_path_cuda_f */
 	[[nodiscard]] CUSIG_API int log_sig_from_path_cuda_d(const double* path, double* out,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
 
+	/**
+	* @brief Backpropagates through direct BCH path computation. Prepare method 3 first.
+	* @param d_out Input cotangents, with the same layout as the forward output.
+	* @param d_path Preallocated path gradients, size batch_size * length * dimension.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param batch_size Number of independent batch items.
+	* @param length Number of points in each input path.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param degree Truncation degree.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int log_sig_from_path_backprop_cuda_f(const float* d_out, float* d_path, const float* path,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
+	/** @copydoc log_sig_from_path_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int log_sig_from_path_backprop_cuda_d(const double* d_out, double* d_path, const double* path,
 		uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
@@ -549,7 +627,7 @@ extern "C" {
 	* @param dimension Dimension of the input paths.
 	* @param length Number of points in each input path.
 	* @param max_nodes Maximum number of nodes in the requested basis elements.
-	* @param time_aug Whether to prepend a time channel.
+	* @param time_aug Whether to append time as the last channel.
 	* @param lead_lag Whether to apply the lead-lag transform.
 	* @param end_time Final value of the time channel.
 	* @param planar Whether the data uses the planar MKW basis rather than the non-planar BCK basis.
@@ -560,7 +638,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int branched_sig_coef_cuda_f(const float* path, float* out, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
-	/** @brief Double-precision variant of branched_sig_coef_cuda_f. */
+	/** @copydoc branched_sig_coef_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_coef_cuda_d(const double* path, double* out, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
@@ -581,7 +659,7 @@ extern "C" {
 	* @param dimension Dimension of the input paths.
 	* @param length Number of points in each input path.
 	* @param max_nodes Maximum number of nodes in the requested basis elements.
-	* @param time_aug Whether the forward pass prepended a time channel.
+	* @param time_aug Whether the forward pass appended time as the last channel.
 	* @param lead_lag Whether the forward pass applied the lead-lag transform.
 	* @param end_time Final value of the time channel.
 	* @param planar Whether the data uses the planar MKW basis rather than the non-planar BCK basis.
@@ -592,7 +670,7 @@ extern "C" {
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int branched_sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
-	/** @brief Double-precision variant of branched_sig_coef_backprop_cuda_f. */
+	/** @copydoc branched_sig_coef_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* tree_data, uint64_t tree_data_len, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
@@ -611,16 +689,86 @@ extern "C" {
 	*/
 	[[nodiscard]] CUSIG_API int prepare_branched_sig_cuda(uint64_t dimension, uint64_t max_nodes, bool planar = false, bool use_disk = false) noexcept;
 
+	/**
+	* @brief Computes branched signatures of paths. Call prepare_branched_sig_cuda first.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param out Preallocated signatures, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term), using the transformed dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param length Number of points in each input path.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param time_aug Whether to include time augmentation.
+	* @param lead_lag Whether to include the lead-lag transform.
+	* @param end_time End time for time augmentation.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param correction Optional segment corrections, with levels 2 through m concatenated in word order over original path channels. Null means no correction; incompatible with lead_lag.
+	* @param correction_len Number of coefficients per correction row.
+	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
+	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int branched_sig_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	/** @copydoc branched_sig_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 
+	/**
+	* @brief Combines branched signatures using the prepared coproduct.
+	* @param bsig1 Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param bsig2 Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param out Preallocated signatures, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term), using the transformed dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int branched_sig_combine_cuda_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
+	/** @copydoc branched_sig_combine_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_combine_cuda_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
 
+	/**
+	* @brief Backpropagates through branched_sig_combine to both inputs.
+	* @param bsig1 Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param bsig2 Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param derivs Input cotangents, with the same layout as the forward output.
+	* @param out1 Preallocated gradient buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param out2 Preallocated gradient buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int branched_sig_combine_backprop_cuda_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
+	/** @copydoc branched_sig_combine_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_combine_backprop_cuda_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool planar = false, bool scalar_term = true) noexcept;
 
+	/**
+	* @brief Backpropagates through branched_sig with correction data held fixed.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param out Preallocated gradients, with the same layout as path.
+	* @param bsig_derivs Output cotangents, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param bsig Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param length Number of points in each input path.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param time_aug Whether to include time augmentation.
+	* @param lead_lag Whether to include the lead-lag transform.
+	* @param end_time End time for time augmentation.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @param correction Optional segment corrections, with levels 2 through m concatenated in word order over original path channels. Null means no correction; incompatible with lead_lag.
+	* @param correction_len Number of coefficients per correction row.
+	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
+	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int branched_sig_backprop_cuda_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool planar = false, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	/** @copydoc branched_sig_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_backprop_cuda_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool planar = false, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
 	/** @} */
 
@@ -629,56 +777,203 @@ extern "C" {
 	*/
 	/**
 	* @brief Prepares the branched-signature and derived branched-log caches on the active CUDA device.
-	* @param method Branched log-signature method in the range 0 to 3. Methods 1 to 3 require planar=true. Method 3 supports max_nodes up to 12.
+	* @param method Branched log-signature method in the range 0 to 3. Methods 1 to 3 require planar=true. Method 3 supports max_nodes up to 20.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param use_disk Whether to load and save prepared tables in the disk cache.
+	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int prepare_branched_log_sig_cuda(uint64_t dimension, uint64_t max_nodes, int method, bool planar = false, bool use_disk = false) noexcept;
 
+	/**
+	* @brief Converts branched signatures to expanded or compressed logarithms. Prepare the selected method first.
+	* @param bsig Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param out Preallocated logarithms; method 0 matches bsig, while methods 1 or 2 use batch_size * branched_log_sig_length(dimension, max_nodes, true) entries.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param method Branched-log method: 0 expanded, 1 or 2 compressed planar MKW. Conversion does not accept method 3.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_cuda_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar = false, bool scalar_term = true) noexcept;
+	/** @copydoc branched_sig_to_log_sig_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_cuda_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar = false, bool scalar_term = true) noexcept;
 
+	/**
+	* @brief Backpropagates through branched_sig_to_log_sig to its input.
+	* @param bsig Input signature buffer, size batch_size * (branched_sig_length(dimension, max_nodes, planar) - !scalar_term).
+	* @param derivs Input cotangents, with the same layout as the forward output.
+	* @param out Preallocated gradients, with the same layout as bsig.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @param method Branched-log method: 0 expanded, 1 or 2 compressed planar MKW. Conversion does not accept method 3.
+	* @param planar Whether to use the planar MKW basis instead of the non-planar BCK basis.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_backprop_cuda_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar = false, bool scalar_term = true) noexcept;
+	/** @copydoc branched_sig_to_log_sig_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_to_log_sig_backprop_cuda_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar = false, bool scalar_term = true) noexcept;
 
-	/** @brief Computes planar method 3 directly from a path. */
+	/** @brief Computes planar method 3 directly from a path.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param out Preallocated compressed planar logarithms, size batch_size * branched_log_sig_length(dimension, max_nodes, true).
+	* @param batch_size Number of independent batch items.
+	* @param length Number of points in each input path.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int branched_log_sig_from_path_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes) noexcept;
+	/**
+	* @brief Append or prepend a linear segment to planar method-2/3 log coordinates on CUDA.
+	* Requires method-3 preparation.
+	* @param logsig Input log coordinates.
+	* @param displacement Segment displacement.
+	* @param out Output log coordinates.
+	* @param batch_size Number of batch items.
+	* @param dimension Number of channels.
+	* @param max_nodes Truncation degree.
+	* @param prepend If true, prepend the segment.
+	* @return Status code, zero on success.
+	*/
+	[[nodiscard]] CUSIG_API int branched_log_sig_join_cuda_f(const float* logsig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend) noexcept;
+	/** @copydoc branched_log_sig_join_cuda_f */
+	[[nodiscard]] CUSIG_API int branched_log_sig_join_cuda_d(const double* logsig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend) noexcept;
+	/**
+	* @brief Backpropagate through a planar branched log signature join on CUDA.
+	* @param derivs Output derivatives.
+	* @param d_logsig Input log coordinate derivatives.
+	* @param d_displacement Displacement derivatives.
+	* @param logsig Input log coordinates.
+	* @param displacement Segment displacement.
+	* @param batch_size Number of batch items.
+	* @param dimension Number of channels.
+	* @param max_nodes Truncation degree.
+	* @param prepend If true, prepend the segment.
+	* @return Status code, zero on success.
+	*/
+	[[nodiscard]] CUSIG_API int branched_log_sig_join_backprop_cuda_f(const float* derivs, float* d_logsig, float* d_displacement, const float* logsig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend) noexcept;
+	/** @copydoc branched_log_sig_join_backprop_cuda_f */
+	[[nodiscard]] CUSIG_API int branched_log_sig_join_backprop_cuda_d(const double* derivs, double* d_logsig, double* d_displacement, const double* logsig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, bool prepend) noexcept;
+	/** @copydoc branched_log_sig_from_path_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_log_sig_from_path_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes) noexcept;
 
+	/**
+	* @brief Backpropagates through direct planar MKW BCH path computation.
+	* @param derivs Input cotangents, with the same layout as the forward output.
+	* @param path_derivs Preallocated path gradients, size batch_size * length * dimension.
+	* @param path Row-major input paths, size batch_size * length * dimension.
+	* @param batch_size Number of independent batch items.
+	* @param length Number of points in each input path.
+	* @param dimension Dimension of the input path before transformations requested by this call.
+	* @param max_nodes Maximum number of nodes in the branched basis.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int branched_log_sig_from_path_backprop_cuda_f(const float* derivs, float* path_derivs, const float* path, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes) noexcept;
+	/** @copydoc branched_log_sig_from_path_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_log_sig_from_path_backprop_cuda_d(const double* derivs, double* path_derivs, const double* path, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes) noexcept;
 	/** @} */
 
 	/** @defgroup linear_sig_cuda_functions Linear sig CUDA functions
 	* @{
 	*/
+	/**
+	* @brief Computes the signature of each straight-line displacement.
+	* @param displacement Row-major segment displacements, size batch_size * dimension.
+	* @param out Preallocated signatures, size batch_size * (sig_length(dimension, degree) - !scalar_term), using the transformed dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int linear_sig_cuda_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
+	/** @copydoc linear_sig_cuda_f */
 	[[nodiscard]] CUSIG_API int linear_sig_cuda_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term = true) noexcept;
 	/** @} */
 
 	/** @defgroup sig_join_cuda_functions Sig join CUDA functions
 	* @{
 	*/
+	/**
+	* @brief Appends or prepends a straight-line segment to each signature.
+	* @param sig Input signature buffer, size batch_size * (sig_length(dimension, degree) - !scalar_term).
+	* @param displacement Row-major segment displacements, size batch_size * dimension.
+	* @param out Preallocated signatures, size batch_size * (sig_length(dimension, degree) - !scalar_term), using the transformed dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param prepend Whether to prepend the segment; false appends it.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int sig_join_cuda_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
+	/** @copydoc sig_join_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_join_cuda_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
 	/** @} */
 
 	/** @defgroup sig_join_backprop_cuda_functions Sig join backprop CUDA functions
 	* @{
 	*/
+	/**
+	* @brief Backpropagates through sig_join to signatures and displacements.
+	* @param d_out Input cotangents, with the same layout as the forward output.
+	* @param d_sig Preallocated gradient buffer, size batch_size * (sig_length(dimension, degree) - !scalar_term).
+	* @param d_displacement Preallocated displacement gradients, size batch_size * dimension.
+	* @param sig Input signature buffer, size batch_size * (sig_length(dimension, degree) - !scalar_term).
+	* @param displacement Row-major segment displacements, size batch_size * dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @param prepend Whether to prepend the segment; false appends it.
+	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int sig_join_backprop_cuda_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
+	/** @copydoc sig_join_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_join_backprop_cuda_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend = false, bool scalar_term = true) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_join_cuda_functions Log sig join CUDA functions
 	* @{
 	*/
+	/**
+	* @brief Appends a straight-line segment to a Lyndon-basis log signature. Prepare method 3 first.
+	* @param log_sig Input log signatures, size batch_size * log_sig_length(dimension, degree).
+	* @param displacement Row-major segment displacements, size batch_size * dimension.
+	* @param out Preallocated Lyndon-basis logarithms, size batch_size * log_sig_length(dimension, degree).
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int log_sig_join_cuda_f(const float* log_sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @copydoc log_sig_join_cuda_f */
 	[[nodiscard]] CUSIG_API int log_sig_join_cuda_d(const double* log_sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_join_backprop_cuda_functions Log sig join backprop CUDA functions
 	* @{
 	*/
+	/**
+	* @brief Backpropagates through log_sig_join. Prepare method 3 first.
+	* @param d_out Input cotangents, with the same layout as the forward output.
+	* @param d_logsig Preallocated log-signature gradients, size batch_size * log_sig_length(dimension, degree).
+	* @param d_displacement Preallocated displacement gradients, size batch_size * dimension.
+	* @param log_sig Input log signatures, size batch_size * log_sig_length(dimension, degree).
+	* @param displacement Row-major segment displacements, size batch_size * dimension.
+	* @param batch_size Number of independent batch items.
+	* @param dimension Path dimension; include any augmentation already applied to input features.
+	* @param degree Truncation degree.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int log_sig_join_backprop_cuda_f(const float* d_out, float* d_logsig, float* d_displacement, const float* log_sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
+	/** @copydoc log_sig_join_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int log_sig_join_backprop_cuda_d(const double* d_out, double* d_logsig, double* d_displacement, const double* log_sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree) noexcept;
 	/** @} */
 

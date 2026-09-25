@@ -59,7 +59,11 @@ def set_cache_dir(
 
         import pysiglib
 
-        # Set cache dir to a folder "my_cache_dir" in the current working directory
+        from pathlib import Path
+        import torch
+
+        # The cache directory must exist.
+        Path("my_cache_dir").mkdir(exist_ok=True)
         pysiglib.set_cache_dir("./my_cache_dir")
 
         pysiglib.prepare_log_sig(5, 3, lead_lag=True, method=2, use_disk=True)
@@ -139,6 +143,7 @@ def prepare_log_sig(
     .. code-block::
 
         import pysiglib
+        import torch
 
         pysiglib.prepare_log_sig(5, 3, lead_lag=True, method=2, use_disk=True)
 
@@ -345,8 +350,8 @@ def log_sig(
     :type path: numpy.ndarray | torch.Tensor
     :param degree: Truncation degree of the (log) signature(s).
     :type degree: int
-    :param time_aug: If set to True, will compute the log signature of the time-augmented path, :math:`\\hat{x}_t := (t, x_t)`,
-        defined as the original path with an extra channel set to time, :math:`t`. This channel spans :math:`[0, t_L]`,
+    :param time_aug: If set to True, will compute the log signature of the time-augmented path, :math:`\\hat{x}_t := (x_t, t)`,
+        defined as the original path with time, :math:`t`, appended as the last channel. This channel spans :math:`[0, t_L]`,
         where :math:`t_L` is given by the parameter ``end_time``.
     :type time_aug: bool
     :param lead_lag: If set to True, will compute the log signature of the path after applying the lead-lag transformation.

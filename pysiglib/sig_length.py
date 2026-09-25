@@ -106,7 +106,7 @@ def log_sig_length(
 
     .. math::
 
-        \\sum_{i=0}^N \\frac{1}{i} \\sum_{x | i} \\mu\\left(\\frac{i}{x}\\right) d^x,
+        \\sum_{i=1}^N \\frac{1}{i} \\sum_{x | i} \\mu\\left(\\frac{i}{x}\\right) d^x,
 
     where :math:`d` is the dimension of the underlying path, :math:`N`
     is the truncation level of the log signature and :math:`\\mu` is
@@ -118,11 +118,11 @@ def log_sig_length(
     :type degree: int
     :param time_aug: Whether time augmentation is applied before computing
         the signature. This flag is provided for convenience, and is equivalent
-        to calling ``sig_length(dimension + 1, degree)``.
+        to calling ``log_sig_length(dimension + 1, degree)``.
     :type time_aug: bool
     :param lead_lag: Whether the lead lag transformation is applied before computing
         the signature. This flag is provided for convenience, and is equivalent
-        to calling ``sig_length(2 * dimension, degree)``.
+        to calling ``log_sig_length(2 * dimension, degree)``.
     :type lead_lag: bool
     :return: Length of a truncated log signature
     :rtype: int

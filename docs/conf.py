@@ -3,23 +3,17 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import importlib.util
+import inspect
 import os
+from pathlib import Path
+import subprocess
 import sys
 
-sys.path.insert(0, os.path.abspath(".."))
+DOCS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(DOCS_DIR.parent))
 
-import importlib.util
-import subprocess
-
-
-def run_doxygen():
-    """Run doxygen to generate XML before Sphinx builds."""
-    if not os.path.exists("_build/doxygen/xml"):
-        os.makedirs("_build/doxygen/xml")
-    subprocess.call("doxygen Doxyfile", shell=True)
-
-
-run_doxygen()
+subprocess.run(["doxygen", "Doxyfile"], cwd=DOCS_DIR, check=True)
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -45,12 +39,20 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.viewcode",
     "sphinx.ext.napoleon",
+    "sphinx.ext.intersphinx",
     "sphinx_copybutton",
     "sphinx_design",
     "breathe",  # For C++
 ]
 
 autodoc_typehints = "none"
+nitpicky = True
+nitpick_ignore = [("cpp:identifier", "uint64_t")]
+intersphinx_mapping = {
+    "numpy": ("https://numpy.org/doc/stable/", None),
+    "torch": ("https://docs.pytorch.org/docs/2.14/", None),
+}
+intersphinx_timeout = 20
 
 # Read the Docs has no compiled cpsig.so or _config.py. Mock load_siglib so
 # autodoc can introspect the Python wrappers without trying to load native code.
@@ -115,5 +117,18 @@ If you found this library useful in your research, please consider citing the pa
 
 # -- C++ options -------------------------------------------------
 
-breathe_projects = {"siglib": "_build/doxygen/xml"}
+breathe_projects = {"siglib": str(DOCS_DIR / "_build/doxygen/xml")}
 breathe_default_project = "siglib"
+
+
+def public_class_signature(app, what, name, obj, options, signature, return_annotation):
+    if what == "class" and name.startswith("pysiglib."):
+        parameters = inspect.signature(obj).parameters.values()
+        if any(parameter.name.startswith("_") for parameter in parameters):
+            public = [parameter.replace(annotation=inspect.Parameter.empty) for parameter in parameters if not parameter.name.startswith("_")]
+            return str(inspect.Signature(public)), return_annotation
+    return None
+
+
+def setup(app):
+    app.connect("autodoc-process-signature", public_class_signature)

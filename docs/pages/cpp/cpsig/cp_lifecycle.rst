@@ -1,6 +1,11 @@
 Lifecycle functions
 ====================
 
+cpsig_last_error_message
+------------------------
+
+.. doxygenfunction:: cpsig_last_error_message
+
 set_cache_dir
 ---------------
 

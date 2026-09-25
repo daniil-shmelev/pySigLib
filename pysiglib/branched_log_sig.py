@@ -55,7 +55,8 @@ def prepare_branched_log_sig(
 ):
     """
     Precomputes data required for branched log signature computations. Must be called before
-    ``branched_log_sig()`` or ``branched_sig_to_log_sig()`` for a given
+    ``branched_log_sig()``, ``linear_branched_log_sig()``,
+    ``branched_log_sig_join()``, or ``branched_sig_to_log_sig()`` for a given
     ``(dimension, degree, planar)`` combination. This also prepares the corresponding
     branched-signature cache.
 
@@ -65,7 +66,8 @@ def prepare_branched_log_sig(
     :type degree: int
     :param method: Method to prepare. Method 0 computes the expanded branched
         log signature. Methods 1, 2, and 3 compute compressed MKW log signatures
-        and require ``planar=True``.
+        and require ``planar=True``. Use method 3 to prepare for
+        ``branched_log_sig_join()``.
     :type method: int
     :param use_disk: If ``True``, load or save the branched-signature cache on disk.
     :type use_disk: bool
@@ -274,8 +276,8 @@ def branched_log_sig(
     :param degree: Truncation degree of the branched (log) signature(s).
     :type degree: int
     :param time_aug: If set to True, will compute the branched log signature of the
-        time-augmented path, :math:`\\hat{x}_t := (t, x_t)`, defined as the original path with
-        an extra channel set to time, :math:`t`. This channel spans :math:`[0, t_L]`,
+        time-augmented path, :math:`\\hat{x}_t := (x_t, t)`, defined as the original path with
+        time, :math:`t`, appended as the last channel. This channel spans :math:`[0, t_L]`,
         where :math:`t_L` is given by the parameter ``end_time``.
     :type time_aug: bool
     :param lead_lag: If set to True, will compute the branched log signature of the path after
