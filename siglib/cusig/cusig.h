@@ -627,7 +627,7 @@ extern "C" {
 	* @param dimension Dimension of the input paths.
 	* @param length Number of points in each input path.
 	* @param max_nodes Maximum number of nodes in the requested basis elements.
-	* @param time_aug Whether to prepend a time channel.
+	* @param time_aug Whether to append time as the last channel.
 	* @param lead_lag Whether to apply the lead-lag transform.
 	* @param end_time Final value of the time channel.
 	* @param planar Whether the data uses the planar MKW basis rather than the non-planar BCK basis.
@@ -659,7 +659,7 @@ extern "C" {
 	* @param dimension Dimension of the input paths.
 	* @param length Number of points in each input path.
 	* @param max_nodes Maximum number of nodes in the requested basis elements.
-	* @param time_aug Whether the forward pass prepended a time channel.
+	* @param time_aug Whether the forward pass appended time as the last channel.
 	* @param lead_lag Whether the forward pass applied the lead-lag transform.
 	* @param end_time Final value of the time channel.
 	* @param planar Whether the data uses the planar MKW basis rather than the non-planar BCK basis.

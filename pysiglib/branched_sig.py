@@ -178,7 +178,7 @@ def branched_sig(
     :type path: numpy.ndarray | torch.Tensor
     :param degree: Maximum order (number of nodes).
     :type degree: int
-    :param time_aug: If True, prepend a time channel to the path.
+    :param time_aug: If True, append time as the last channel of the path.
     :type time_aug: bool
     :param lead_lag: If True, apply the lead-lag transformation.
     :type lead_lag: bool

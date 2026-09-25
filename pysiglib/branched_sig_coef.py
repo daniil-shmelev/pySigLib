@@ -264,7 +264,7 @@ def branched_sig_coef(
         a bare planar tree is accepted as shorthand for a one-tree forest. See
         :func:`tree_to_idx` for the tuple convention.
     :type trees: tuple | None | list[tuple | None]
-    :param time_aug: Whether to prepend a time channel to the path.
+    :param time_aug: Whether to append time as the last channel of the path.
     :type time_aug: bool
     :param lead_lag: Whether to apply the lead-lag transformation.
     :type lead_lag: bool

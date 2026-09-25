@@ -130,8 +130,8 @@ def sig_coef(
         for a 2-dimensional path, one could pass ``[(0,), (1,0), (0,1,1)]`` to compute the coefficients at
         the three multi-indices :math:`I = (0), (1,0), (0,1,1)`.
     :type words: tuple[int, ...] | list[tuple[int, ...]]
-    :param time_aug: If set to True, will compute signature coefficients of the time-augmented path, :math:`\\hat{x}_t := (t, x_t)`,
-        defined as the original path with an extra channel set to time, :math:`t`. This channel spans :math:`[0, t_L]`,
+    :param time_aug: If set to True, will compute signature coefficients of the time-augmented path, :math:`\\hat{x}_t := (x_t, t)`,
+        defined as the original path with time, :math:`t`, appended as the last channel. This channel spans :math:`[0, t_L]`,
         where :math:`t_L` is given by the parameter ``end_time``.
     :type time_aug: bool
     :param lead_lag: If set to True, will compute signature coefficients of the path after applying the lead-lag transformation.
