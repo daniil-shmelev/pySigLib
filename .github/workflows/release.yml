@@ -283,7 +283,7 @@ jobs:
       matrix:
         distro:
           - ubuntu:22.04
-          - debian:11
+          - debian:13
           - rockylinux:8
           - rockylinux:9
           - fedora:40
@@ -308,8 +308,9 @@ jobs:
               if [ -f /etc/debian_version ]; then
                 apt-get update -qq
                 apt-get install -y -qq --no-install-recommends \
-                    python3 python3-pip git ca-certificates
-                PY=python3
+                    python3 python3-venv git ca-certificates
+                python3 -m venv /tmp/pysiglib-venv
+                PY=/tmp/pysiglib-venv/bin/python
               elif command -v dnf >/dev/null 2>&1; then
                 dnf install -y -q git ca-certificates python3 python3-pip
                 # Rocky 8 ships python3=3.6, too old for pysiglib. Install
