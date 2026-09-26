@@ -191,8 +191,7 @@ BranchedSigCoefCache build_branched_sig_coef_cache_data_(
 				cache.node_labels_data.end(), labels.begin(), labels.end());
 		}
 		if (planar) {
-			for (uint64_t k = 2; k <= coordinate.size(); ++k)
-				inv_factorial /= static_cast<double>(k);
+			inv_factorial = 1.0 / coordinate.ordered_factorial(trees);
 		}
 		cache.inv_tree_factorial[local] = inv_factorial;
 		cache.node_labels_offsets[local + 1] = cache.node_labels_data.size();
@@ -275,7 +274,7 @@ BranchedSigCoefCache build_branched_sig_coef_cache_data_(
 	return cache;
 }
 
-constexpr const char* branched_sig_coef_cache_version = "v1";
+constexpr const char* branched_sig_coef_cache_version = "v2";
 
 void branched_sig_coef_cache_hash_value_(uint64_t value, uint64_t& hash) {
 	for (int i = 0; i < 8; ++i) {

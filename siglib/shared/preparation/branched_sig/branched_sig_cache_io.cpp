@@ -23,7 +23,7 @@
 #include <system_error>
 
 namespace {
-constexpr const char* branched_cache_version_ = "v4";
+constexpr const char* branched_cache_version_ = "v5";
 }
 
 std::filesystem::path branched_sig_cache_file_path(

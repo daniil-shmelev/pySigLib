@@ -244,13 +244,7 @@ BranchedSigCache build_planar_cache(
 	cache.basis_forest_offsets.resize(basis_size + 1);
 	for (uint64_t index = 0; index < basis_size; ++index) {
 		const Forest& forest = forests[index];
-		double inverse_factorial = 1.0;
-		double forest_factorial = 1.0;
-		for (uint64_t k = 2; k <= forest.size(); ++k)
-			forest_factorial *= static_cast<double>(k);
-		for (TreeId tree_id : forest)
-			inverse_factorial /= trees.tree(tree_id).tree_factorial();
-		cache.inv_tree_factorial[index] = inverse_factorial / forest_factorial;
+		cache.inv_tree_factorial[index] = 1.0 / forest.ordered_factorial(trees);
 
 		cache.node_labels_offsets[index] = cache.node_labels_data.size();
 		cache.basis_forest_offsets[index] = cache.basis_forest_data.size();

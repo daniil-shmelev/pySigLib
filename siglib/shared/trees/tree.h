@@ -68,6 +68,7 @@ public:
 	}
 
 	uint64_t node_count(const TreeTable& table) const;
+	double ordered_factorial(const TreeTable& table) const;
 	std::vector<TreeLabel> node_labels(const TreeTable& table) const;
 
 	bool operator==(const Forest& other) const noexcept = default;
@@ -247,6 +248,19 @@ inline uint64_t Forest::node_count(const TreeTable& table) const {
 		count += tree_nodes;
 	}
 	return count;
+}
+
+inline double Forest::ordered_factorial(const TreeTable& table) const {
+	// (omega B+(tau))! = |omega B+(tau)| omega! tau!, with empty! = 1.
+	double factorial = 1.0;
+	uint64_t nodes = 0;
+	for (TreeId tree_id : trees_) {
+		const Tree& tree = table.tree(tree_id);
+		nodes += tree.node_count();
+		factorial *= static_cast<double>(nodes)
+			* tree.children().ordered_factorial(table);
+	}
+	return factorial;
 }
 
 inline std::vector<TreeLabel> Forest::node_labels(const TreeTable& table) const {
