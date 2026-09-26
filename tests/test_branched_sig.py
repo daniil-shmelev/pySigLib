@@ -1148,98 +1148,51 @@ def test_branched_sig_backprop_cuda_correction_matches_cpu(planar, time_aug):
 # Helpers: kauri MKW-based reference implementation for planar branched sigs
 # ---------------------------------------------------------------------------
 
-def _decorated_planar_trees_from_basis(basis):
-    trees = []
-    seen = set()
-    for forest in basis:
-        for tree in forest.tree_list:
-            key = tree.sorted_list_repr()
-            if key not in seen:
-                seen.add(key)
-                trees.append(tree)
-    return trees
+def _linear_planar_branched_sig_map(z, N):
+    """Compute exp_*(z) from Kauri's MKW coproduct, without forest factorials."""
+    def generator(x):
+        if x.nodes() != 1:
+            return 0.0
+        tree = x.tree_list[0] if hasattr(x, "tree_list") else x
+        return z[tree.list_repr[-1]]
 
+    # Preserve values on ordered forests; the default tree-map extension
+    # imposes a symmetric product/k! which is not the MKW flow exponential.
+    as_map = kauri.mkw.mkw._as_basis_aware_map
+    powers = [kauri.mkw.counit, as_map(generator)]
+    factorials = [1, 1]
+    for k in range(2, N + 1):
+        powers.append(kauri.mkw.map_product(powers[-1], powers[1]))
+        factorials.append(k * factorials[-1])
 
-def _planar_tree_linear_coeffs(z, trees):
-    coeffs = {}
-    for t in trees:
-        decs = []
-        _extract_decs(t.sorted_list_repr(), decs)
-        gamma = t.factorial()
-        num = 1.0
-        for dec in decs:
-            num *= z[dec]
-        coeffs[t.sorted_list_repr()] = num / gamma
-    return coeffs
+    return as_map(lambda x: sum(
+        power(x) / factorial for power, factorial in zip(powers, factorials)))
 
 
 def linear_planar_branched_sig_ref(z, basis):
     """Reference linear planar branched sig on the MKW ordered-forest basis."""
-    trees = _decorated_planar_trees_from_basis(basis)
-    coeffs = _planar_tree_linear_coeffs(z, trees)
-    char = kauri.mkw.mkw.mkw_base_char_func(
-        lambda t: 1.0 if t.nodes() == 0 else coeffs.get(t.sorted_list_repr(), 0.0))
+    char = _linear_planar_branched_sig_map(z, max(f.nodes() for f in basis))
     return {forest: char(forest) for forest in basis}
 
 
 def planar_branched_sig_reference(path, d, N):
-    """Compute planar branched sig using kauri.mkw.map_product as ground truth."""
+    """Compose MKW convolution exponentials of the path increments."""
     basis = tuple(kauri.colored_ordered_forests(d, N)[1:])
-    trees = _decorated_planar_trees_from_basis(basis)
-
-    X = kauri.Map(lambda t: 1.0 if t.nodes() == 0 else 0.0)
-
-    for n in range(len(path) - 1):
-        z = path[n + 1] - path[n]
-        coeffs = _planar_tree_linear_coeffs(z, trees)
-
-        def make_char(c):
-            def char_func(t):
-                if t.nodes() == 0:
-                    return 1.0
-                return c.get(t.sorted_list_repr(), 0.0)
-            return char_func
-
-        Y = kauri.Map(make_char(coeffs))
+    X = kauri.mkw.counit
+    for z in np.diff(path, axis=0):
+        Y = _linear_planar_branched_sig_map(z, N)
         X = kauri.mkw.map_product(X, Y)
-
     return np.array([X(forest) for forest in basis])
 
 
 def compute_kauri_to_pysiglib_planar_permutation(d, N):
-    """Find permutation mapping kauri planar forest order to pysiglib planar forest order.
-
-    Uses a multi-segment path with irrational increments to break all symmetries.
-    """
-    pysiglib.prepare_branched_sig(d, N, planar=True)
-    basis = tuple(kauri.colored_ordered_forests(d, N)[1:])
-    num_trees = len(basis)
-
-    path = np.zeros((3, d))
-    for i in range(d):
-        path[1, i] = np.pi * (i + 1) + np.e * (i + 1)**2
-        path[2, i] = path[1, i] + np.sqrt(2) * (i + 1) + np.log(i + 2)
-
-    pysig_coeffs = np.array(pysiglib.branched_sig(path, N, planar=True), dtype=np.float64)
-    kauri_arr = planar_branched_sig_reference(path, d, N)
-
-    perm = np.zeros(num_trees, dtype=int)
-    used = set()
-    for ki in range(num_trees):
-        best_idx = -1
-        best_diff = float('inf')
-        for pi in range(num_trees):
-            if pi in used:
-                continue
-            diff = abs(kauri_arr[ki] - pysig_coeffs[pi])
-            if diff < best_diff:
-                best_diff = diff
-                best_idx = pi
-        assert best_diff < 1e-8, f"No match for planar kauri tree {ki}: best_diff={best_diff}"
-        perm[ki] = best_idx
-        used.add(best_idx)
-
-    return perm
+    """Match ordered forests by structure, independently of signature values."""
+    indices = {forest: i for i, forest in enumerate(pysiglib.trees(d, N, planar=True)[1:])}
+    basis = kauri.colored_ordered_forests(d, N)[1:]
+    return np.array([
+        indices[tuple(tree.sorted_list_repr() for tree in forest.tree_list)]
+        for forest in basis
+    ])
 
 
 def reorder_kauri_to_pysiglib_planar(kauri_arr, perm):
