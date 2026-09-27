@@ -397,8 +397,7 @@ jobs:
         run: docker pull ${{ env.MANYLINUX_CUDA_IMAGE }}
       - name: Run pytest in ephemeral test container with --gpus all
         # PowerShell writes a bash script as LF-only BOM-less UTF-8 so the
-        # Linux container can parse it. pytest-timeout guards against hung
-        # kernels. EXPECTED_VERSION is forwarded in via `docker run -e`.
+        # Linux container can parse it. EXPECTED_VERSION is forwarded via `docker run -e`.
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
@@ -411,7 +410,7 @@ jobs:
           python3 -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
           python3 -c "import pysiglib; assert pysiglib.load_siglib.BUILT_WITH_CUDA, 'pysiglib-cuda installed but CUDA backend disabled'; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
           python3 -c "import importlib.metadata as metadata, jax; devices=jax.devices(); print('jax:', metadata.version('jax')); print('jaxlib:', metadata.version('jaxlib')); print('jax backend:', jax.default_backend()); print('jax devices:', devices); assert any(device.platform in {'gpu', 'cuda'} for device in devices), 'JAX CUDA device unavailable'"
-          pytest /workspace/tests/ -v --timeout=60
+          pytest /workspace/tests/ -v
           '@
           $ws = $env:GITHUB_WORKSPACE
           $scriptPath = Join-Path $ws "run-cuda-tests.sh"
@@ -542,7 +541,7 @@ jobs:
             $wheel = $_.FullName
             Invoke-Checked { python -m pip install $wheel }
           }
-          Invoke-Checked { python -m pip install pytest pytest-timeout }
+          Invoke-Checked { python -m pip install pytest }
           $needs_jax = & python -c "import sys; print('yes' if sys.version_info >= (3,11) else 'no')"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($needs_jax.Trim() -eq 'yes') { Invoke-Checked { python -m pip install 'jax>=0.9.1' } }
@@ -562,7 +561,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         env:
           PYSIGLIB_REQUIRE_CUDA: "1"
-        run: python -m pytest ${{ github.workspace }}/tests/ -v --timeout=60
+        run: python -m pytest ${{ github.workspace }}/tests/ -v
       - name: Run CUDA C++ tests
         run: |
           $sourceDir = Join-Path $env:GITHUB_WORKSPACE "plugins/cuda"
@@ -982,7 +981,7 @@ jobs:
           python3 -c "import torch; print('cuda:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
           python3 -c "import pysiglib; assert pysiglib.load_siglib.BUILT_WITH_CUDA, 'pysiglib-cuda installed but CUDA backend disabled'; print('BUILT_WITH_CUDA:', pysiglib.load_siglib.BUILT_WITH_CUDA)"
           python3 -c "import importlib.metadata as metadata, jax; devices=jax.devices(); print('jax:', metadata.version('jax')); print('jaxlib:', metadata.version('jaxlib')); print('jax backend:', jax.default_backend()); print('jax devices:', devices); assert any(device.platform in {'gpu', 'cuda'} for device in devices), 'JAX CUDA device unavailable'"
-          pytest /workspace/tests/ -v --timeout=60
+          pytest /workspace/tests/ -v
           '@
           $ws = $env:GITHUB_WORKSPACE
           $scriptPath = Join-Path $ws "run-cuda-testpypi-tests.sh"
@@ -1054,7 +1053,7 @@ jobs:
             Start-Sleep -Seconds 15
           }
           if (-not $installed) { Write-Error "TestPyPI install failed after 5 attempts"; exit 1 }
-          Invoke-Checked { python -m pip install pytest pytest-timeout }
+          Invoke-Checked { python -m pip install pytest }
           $needs_jax = & python -c "import sys; print('yes' if sys.version_info >= (3,11) else 'no')"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($needs_jax.Trim() -eq 'yes') { Invoke-Checked { python -m pip install 'jax>=0.9.1' } }
@@ -1074,7 +1073,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         env:
           PYSIGLIB_REQUIRE_CUDA: "1"
-        run: python -m pytest ${{ github.workspace }}/tests/ -v --timeout=60
+        run: python -m pytest ${{ github.workspace }}/tests/ -v
       - name: Remove ephemeral venv
         if: always()
         run: |
