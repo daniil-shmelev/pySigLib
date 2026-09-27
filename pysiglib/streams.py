@@ -1092,5 +1092,6 @@ class LogSigWindowStream(_WindowStream):
         check_pos(window_size, "window_size")
         check_pos(stride, "stride")
         check_n_jobs(n_jobs)
-        sig_fn = _log_sig or (lambda path, deg: log_sig(path, deg, method=method, n_jobs=n_jobs))
+        raw_log_sig = _log_sig or log_sig
+        sig_fn = lambda path, deg: raw_log_sig(path, deg, method=method, n_jobs=n_jobs)
         super().__init__(sig_fn, dimension, degree, window_size, stride)
