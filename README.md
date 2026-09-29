@@ -44,7 +44,7 @@ The JAX integration is included in the wheel. Install JAX separately with
 `pip install jax` if you want to use it. For source builds and platform-specific
 guidance, see the [installation guide](https://pysiglib.readthedocs.io/en/stable/pages/installation.html).
 
-For Julia wrappers, the [native release artifacts](docs/julia-artifacts.md) provide the CPU library without requiring Python or a compiler.
+For Julia wrappers, the [native release artifacts](docs/julia-artifacts.md) provide CPU and CUDA libraries callable through `ccall`, without requiring Python or a compiler.
 
 ## Quick start
 
