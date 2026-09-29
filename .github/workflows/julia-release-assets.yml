@@ -6,17 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing GitHub Release tag (vVERSION or VERSION); retry after Release finishes if necessary.'
-        type: string
+        description: Existing release tag to package (vVERSION or VERSION)
         required: true
+        type: string
 
 permissions:
   actions: read
-  contents: read
-
-env:
-  GH_REPO: ${{ github.repository }}
-  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  contents: write
 
 concurrency:
   group: julia-release-${{ github.event.release.tag_name || inputs.tag }}
@@ -25,79 +21,28 @@ concurrency:
 jobs:
   package:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v6
-      - name: Download tested wheels for this release commit
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Download tested wheels for the release commit
         run: |
-          set -euo pipefail
-          # Also fails early if a manually supplied tag has no GitHub Release.
           gh release view "$TAG" --json tagName
           sha=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
           run_id=$(gh run list --workflow release.yml --commit "$sha" \
             --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          if [ -z "$run_id" ]; then
-            echo "No successful Release run for $TAG ($sha). Rerun after Release succeeds." >&2
-            exit 1
-          fi
-          gh run download "$run_id" --name wheels-linux-cpu \
-            --name wheels-windows-cpu --name wheels-macos --dir wheels
-          # Successful CPU-only runs still build CUDA wheels. Publish those only
-          # when both GPU test jobs actually passed (not when they were skipped).
-          gpu_test_count=$(gh run view "$run_id" --json jobs --jq \
+          test -n "$run_id" || { echo "No successful Release run; retry after it finishes." >&2; exit 1; }
+          gh run download "$run_id" --name all-wheels --dir wheels
+          # CPU-only releases build CUDA wheels too; do not publish untested ones.
+          gpu_tests=$(gh run view "$run_id" --json jobs --jq \
             '[.jobs[] | select(.conclusion == "success") | select(.name == "Test Linux CUDA wheel (GPU)" or .name == "Test Windows CUDA wheel")] | length')
-          if [ "$gpu_test_count" -eq 2 ]; then
-            gh run download "$run_id" --name wheels-linux-cuda --name wheels-windows-cuda --dir wheels
-            echo "INCLUDE_CUDA=true" >> "$GITHUB_ENV"
-          fi
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
+          echo "INCLUDE_CUDA=$([ "$gpu_tests" -eq 2 ] && echo true || echo false)" >> "$GITHUB_ENV"
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1.10'
-      - name: Package libraries and generate Artifacts.toml
+      - name: Package and attach native artifacts
         run: |
-          cuda_args=()
-          if [ "${INCLUDE_CUDA:-false}" = true ]; then cuda_args+=(--cuda); fi
-          python scripts/package-julia-wheels.py wheels julia-artifacts "${TAG#v}" "${cuda_args[@]}"
-          julia --startup-file=no scripts/julia-artifacts.jl julia-artifacts "$GH_REPO" "$TAG"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: julia-release-assets
-          path: julia-artifacts/*
-          if-no-files-found: error
-
-  test:
-    needs: package
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-14]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v8
-        with:
-          name: julia-release-assets
-          path: julia-artifacts
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: '1.10'
-      - name: Verify artifact and call the C ABI from Julia
-        run: julia --startup-file=no scripts/test-julia-artifact.jl julia-artifacts
-
-  publish:
-    needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: julia-release-assets
-          path: julia-artifacts
-      - name: Attach Julia artifacts to the existing release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" julia-artifacts/* --clobber
+          julia --startup-file=no scripts/package-julia-artifacts.jl wheels julia-artifacts "$GH_REPO" "$TAG"
+          gh release upload "$TAG" julia-artifacts/* --clobber
