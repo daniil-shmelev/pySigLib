@@ -1,0 +1,93 @@
+name: Julia release assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing GitHub Release tag (vVERSION or VERSION); retry after Release finishes if necessary.'
+        type: string
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  GH_REPO: ${{ github.repository }}
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+concurrency:
+  group: julia-release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download tested CPU wheels for this release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Also fails early if a manually supplied tag has no GitHub Release.
+          gh release view "$TAG" --json tagName
+          sha=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
+          run_id=$(gh run list --workflow release.yml --commit "$sha" \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$run_id" ]; then
+            echo "No successful Release run for $TAG ($sha). Rerun after Release succeeds." >&2
+            exit 1
+          fi
+          gh run download "$run_id" --name wheels-linux-cpu \
+            --name wheels-windows-cpu --name wheels-macos --dir wheels
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.10'
+      - name: Package libraries and generate Artifacts.toml
+        run: |
+          python scripts/package-julia-wheels.py wheels julia-artifacts "${TAG#v}"
+          julia --startup-file=no scripts/julia-artifacts.jl julia-artifacts "$GH_REPO" "$TAG"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: julia-release-assets
+          path: julia-artifacts/*
+          if-no-files-found: error
+
+  test:
+    needs: package
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: julia-release-assets
+          path: julia-artifacts
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.10'
+      - name: Verify artifact and call the C ABI from Julia
+        run: julia --startup-file=no scripts/test-julia-artifact.jl julia-artifacts
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: julia-release-assets
+          path: julia-artifacts
+      - name: Attach Julia artifacts to the existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" julia-artifacts/* --clobber
