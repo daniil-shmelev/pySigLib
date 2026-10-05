@@ -1,0 +1,48 @@
+name: Julia release assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to package (vVERSION or VERSION)
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: julia-release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download tested wheels for the release commit
+        run: |
+          gh release view "$TAG" --json tagName
+          sha=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
+          run_id=$(gh run list --workflow release.yml --commit "$sha" \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          test -n "$run_id" || { echo "No successful Release run; retry after it finishes." >&2; exit 1; }
+          gh run download "$run_id" --name all-wheels --dir wheels
+          # CPU-only releases build CUDA wheels too; do not publish untested ones.
+          gpu_tests=$(gh run view "$run_id" --json jobs --jq \
+            '[.jobs[] | select(.conclusion == "success") | select(.name == "Test Linux CUDA wheel (GPU)" or .name == "Test Windows CUDA wheel")] | length')
+          echo "INCLUDE_CUDA=$([ "$gpu_tests" -eq 2 ] && echo true || echo false)" >> "$GITHUB_ENV"
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.10'
+      - name: Package and attach native artifacts
+        run: |
+          julia --startup-file=no scripts/package-julia-artifacts.jl wheels julia-artifacts "$GH_REPO" "$TAG"
+          gh release upload "$TAG" julia-artifacts/* --clobber
