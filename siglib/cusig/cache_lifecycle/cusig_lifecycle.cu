@@ -26,6 +26,7 @@ void release_branched_sig_gpu_state();
 void release_branched_log_sig_gpu_state();
 void release_log_sig_combine_state();
 void release_sig_kernel_poly_state();
+void release_branched_sig_kernel_poly_state();
 
 extern "C" {
 	CUSIG_API const char* cusig_last_error_message() noexcept {
@@ -41,6 +42,7 @@ extern "C" {
 		try { release_log_sig_state();          } catch (...) {}
 		try { release_log_sig_combine_state();  } catch (...) {}
 		try { release_cuda_path_workspaces();   } catch (...) {}
+		try { release_branched_sig_kernel_poly_state(); } catch (...) {}
 		try { release_sig_kernel_poly_state();   } catch (...) {}
 		try { release_exp_sig_state();          } catch (...) {}
 		try { release_sig_combine_state();      } catch (...) {}

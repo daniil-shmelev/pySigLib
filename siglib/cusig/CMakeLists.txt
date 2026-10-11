@@ -66,6 +66,7 @@ if(_pysiglib_broken_cccl_header)
 endif()
 
 add_library(cusig SHARED
+    cu_branched_polynomial_sig_kernel.cu
 	cu_branched_log_bch.cu
     cu_branched_log_signature.cu
     cu_branched_signature.cu

@@ -1,0 +1,78 @@
+\paragraph{Polynomial approximation of branched signature kernels.} Write $k_{x,y}^{(m)}$ for the BCK kernel truncated at rooted-tree depth $m$. For a prescribed depth $D$, the kernel is computed through the recursion
+\begin{equation}
+    k_{x,y}^{(0)}(s,t)=1,\qquad
+    k_{x,y}^{(m)}(s,t)
+    =\exp\!\left(\int_0^s\int_0^t
+        \langle\dot{x}_u,\dot{y}_v\rangle_V
+        k_{x,y}^{(m-1)}(u,v)\,dv\,du\right),
+    \quad 1\leq m\leq D.
+    \label{eq:branched_kernel_depth_recursion}
+\end{equation}
+We introduce a polynomial product-integration scheme for this recursion. On each original grid cell $[a,b]\times[c,d]$, the coefficient $C=\langle\dot{x}_s,\dot{y}_t\rangle_V$ is constant. Let $\mathcal I_N$ denote cellwise tensor-product interpolation of degree $N$ in each variable at $N+1$ Gauss--Legendre nodes per coordinate. Starting from $\widehat{k}_{x,y,N}^{(0)}=1$, we define
+\begin{equation}
+    \widehat{k}_{x,y,N}^{(m)}(s,t)
+    =\exp\!\left(\int_0^s\int_0^t
+        \langle\dot{x}_u,\dot{y}_v\rangle_V
+        \bigl(\mathcal I_N\widehat{k}_{x,y,N}^{(m-1)}\bigr)(u,v)\,dv\,du\right).
+    \label{eq:branched_polynomial_scheme}
+\end{equation}
+The polynomial integrand is integrated exactly using precomputed integrals of the Lagrange basis and cumulative sums between cells. The exponential is then evaluated pointwise at the quadrature nodes. At the final depth, full-cell Gauss quadrature gives the terminal kernel value. After computing the increments $\Delta_{i,j}$, the scheme requires $\mathcal{O}(DL_1L_2(N+1)^3)$ arithmetic. \texttt{pySigLib} caches the integration coefficients and provides CPU and CUDA implementations. Backpropagation applies the transposed integration operators and differentiates the pointwise exponentials, yielding exact derivatives of the discrete solver.
+
+\begin{proposition}[Convergence of polynomial product integration]
+    \label{prop:branched_polynomial_convergence}
+    Fix piecewise linear paths $x,y:[0,1]\to V$, their segment partitions and a depth $D$. For every $\rho>1$, there is a constant $C_{x,y,D,\rho}$, independent of $N$, such that the scheme \eqref{eq:branched_polynomial_scheme}, evaluated in exact arithmetic, satisfies
+    \begin{equation*}
+        \max_{0\leq m\leq D}
+        \bigl\|\widehat{k}_{x,y,N}^{(m)}-k_{x,y}^{(m)}\bigr\|_{\infty}
+        \leq C_{x,y,D,\rho}\,\rho^{-N},
+    \end{equation*}
+    where the norm is taken over $[0,1]^2$.
+\end{proposition}
+
+\begin{proof}
+Write $\mathcal P$ for the fixed grid of segment pairs and $\mathbb Q_N$ for the polynomials of degree at most $N$ in each variable. Define the integration operator and its discrete counterpart by
+\begin{equation*}
+    (\mathcal V f)(s,t)
+    =\int_0^s\int_0^t\langle\dot{x}_u,\dot{y}_v\rangle_V f(u,v)\,dv\,du,
+    \qquad \mathcal V_N=\mathcal V\mathcal I_N,
+\end{equation*}
+and set $M=\sum_{i,j}|\Delta_{i,j}|$. We first bound $\mathcal V_N$ independently of $N$. On the reference cell $[0,1]^2$, let $p=\mathcal I_N f$, with Gauss nodes $z_r$ and positive weights $w_r$, $0\leq r\leq N$. Since $|p|^2$ has degree at most $2N$ in each variable, exactness of Gauss quadrature gives
+\begin{equation*}
+    \|p\|_{L^2([0,1]^2)}^2
+    =\sum_{r,j=0}^N w_r w_j|f(z_r,z_j)|^2
+    \leq\|f\|_\infty^2,
+    \qquad \sum_{r=0}^N w_r=1.
+\end{equation*}
+For any partial rectangle $R\subseteq[0,1]^2$, Cauchy--Schwarz therefore gives $|\int_R p|\leq |R|^{1/2}\|p\|_{L^2}\leq\|f\|_\infty$. Rescaling to each original cell and summing its contribution to $[0,s]\times[0,t]$ yields
+\begin{equation}
+    \|\mathcal V_N f\|_\infty\leq M\|f\|_\infty,
+    \qquad \|\mathcal V f\|_\infty\leq M\|f\|_\infty.
+    \label{eq:branched_polynomial_stability}
+\end{equation}
+For continuous $f$, let $E_N(f)=\max_{Q\in\mathcal P}\inf_{p\in\mathbb Q_N}\|f-p\|_{L^\infty(Q)}$. Both integration operators agree on cellwise polynomials in $\mathbb Q_N$. Applying \eqref{eq:branched_polynomial_stability} to the error of such an approximation and taking the infimum gives
+\begin{equation}
+    \|\mathcal V_N f-\mathcal V f\|_\infty\leq 2M E_N(f).
+    \label{eq:branched_polynomial_consistency}
+\end{equation}
+
+Set $B_0=1$ and $B_m=\exp(MB_{m-1})$. The exact and discrete depth recursions, together with \eqref{eq:branched_polynomial_stability}, imply $\|k_{x,y}^{(m)}\|_\infty,\|\widehat{k}_{x,y,N}^{(m)}\|_\infty\leq B_m$. The exponential is Lipschitz with constant $B_m$ on $[-MB_{m-1},MB_{m-1}]$. Hence, writing $e_{m,N}=\|\widehat{k}_{x,y,N}^{(m)}-k_{x,y}^{(m)}\|_\infty$, we obtain
+\begin{align}
+    e_{m,N}
+    &\leq B_m\bigl\|\mathcal V_N\widehat{k}_{x,y,N}^{(m-1)}
+                    -\mathcal V k_{x,y}^{(m-1)}\bigr\|_\infty\nonumber\\
+    &\leq MB_m\bigl(e_{m-1,N}+2E_N(k_{x,y}^{(m-1)})\bigr),
+    \qquad e_{0,N}=0.
+    \label{eq:branched_polynomial_error_recursion}
+\end{align}
+
+It remains to bound the polynomial approximation errors. Each restriction of $k_{x,y}^{(0)}=1$ to a grid cell extends to an entire function of two complex variables. If this holds at depth $m-1$, then, on a fixed cell, $\mathcal V k_{x,y}^{(m-1)}$ is a sum of integrals over completed cells, strips with one variable endpoint, and the current cell with two variable endpoints. Integrating the corresponding entire extensions gives an entire function on that cell, and exponentiation preserves this property. The claim therefore holds at every finite depth.
+
+Rescale a cell to $[-1,1]^2$ and expand its entire extension as $\sum_{r,j\geq0}a_{rj}u^rv^j$. For a fixed $\rho>1$, let $H_{m,Q,\rho}$ bound this extension on the complex polydisc $|u|,|v|\leq\rho$. Cauchy's coefficient estimates give $|a_{rj}|\leq H_{m,Q,\rho}/\rho^{r+j}$. Truncating to $r,j\leq N$ therefore gives
+\begin{equation*}
+    \inf_{p\in\mathbb Q_N}\|k_{x,y}^{(m)}-p\|_{L^\infty(Q)}
+    \leq H_{m,Q,\rho}
+          \sum_{\substack{r,j\geq0\\r>N\ \mathrm{or}\ j>N}}\frac{1}{\rho^{r+j}}
+    \leq\frac{2H_{m,Q,\rho}}{\rho^{N+1}(1-1/\rho)^2}.
+\end{equation*}
+There are finitely many cells and depths. Taking their maximum and applying \eqref{eq:branched_polynomial_error_recursion} inductively proves the stated bound, with a constant independent of $N$.
+\end{proof}

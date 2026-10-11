@@ -41,6 +41,7 @@ from .sig_kernel_backprop import sig_kernel_backprop, sig_kernel_gram_backprop
 from .branched_sig_kernel import branched_sig_kernel, branched_sig_kernel_gram
 from .branched_sig_kernel_backprop import branched_sig_kernel_backprop, branched_sig_kernel_gram_backprop
 from .sig_metrics import sig_score, expected_sig_score, sig_mmd
+from .branched_sig_metrics import branched_sig_mmd, branched_sig_score, expected_branched_sig_score
 from .transform_path import transform_path
 from .transform_path_backprop import transform_path_backprop
 from .static_kernels import Context, StaticKernel, LinearKernel, ScaledLinearKernel, RBFKernel, PolynomialKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel, RationalQuadraticKernel

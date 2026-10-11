@@ -1,0 +1,308 @@
+{
+  "measurements": [
+    {
+      "case": "float32_pairs_b64_n32_cpu",
+      "before_ms": 25.107580004259944,
+      "after_ms": 26.256999997713137,
+      "speedup": 0.9562242452087709
+    },
+    {
+      "case": "float32_pairs_b64_n32_cuda",
+      "before_ms": 2.6186300019617192,
+      "after_ms": 2.680641999177169,
+      "speedup": 0.976866736686777
+    },
+    {
+      "case": "float32_pairs_b64_n128_cpu",
+      "before_ms": 434.3893180048326,
+      "after_ms": 448.6441830013064,
+      "speedup": 0.9682267918841326
+    },
+    {
+      "case": "float32_pairs_b64_n128_cuda",
+      "before_ms": 16.654723993269727,
+      "after_ms": 15.843062996282242,
+      "speedup": 1.0512313179072728
+    },
+    {
+      "case": "float32_pairs_b64_n512_cpu",
+      "before_ms": 8429.740419000154,
+      "after_ms": 8400.848300996586,
+      "speedup": 1.0034391905398579
+    },
+    {
+      "case": "float32_pairs_b64_n512_cuda",
+      "before_ms": 224.82334799860837,
+      "after_ms": 225.8971190021839,
+      "speedup": 0.9952466370163616
+    },
+    {
+      "case": "float32_mmd_b8_n32_cpu",
+      "before_ms": 112.49072499776958,
+      "after_ms": 110.4194310028106,
+      "speedup": 1.0187584193845942
+    },
+    {
+      "case": "float32_mmd_b8_n32_cuda",
+      "before_ms": 13.640864999615587,
+      "after_ms": 13.43825900403317,
+      "speedup": 1.0150768038866946
+    },
+    {
+      "case": "float32_mmd_b32_n128_cpu",
+      "before_ms": 27755.746025002736,
+      "after_ms": 26986.745754998992,
+      "speedup": 1.0284954798546355
+    },
+    {
+      "case": "float32_mmd_b32_n128_cuda",
+      "before_ms": 1018.3752279990586,
+      "after_ms": 1053.690403001383,
+      "speedup": 0.9664842966190724
+    },
+    {
+      "case": "float32_mmd_b8_n512_cpu",
+      "before_ms": 29608.245953000733,
+      "after_ms": 28907.343140002922,
+      "speedup": 1.0242465317411988
+    },
+    {
+      "case": "float32_mmd_b8_n512_cuda",
+      "before_ms": 2852.394137000374,
+      "after_ms": 2846.036112001457,
+      "speedup": 1.002233993086773
+    },
+    {
+      "case": "float64_pairs_b64_n32_cpu",
+      "before_ms": 24.84445600566687,
+      "after_ms": 25.7883079975727,
+      "speedup": 0.9634000031334096
+    },
+    {
+      "case": "float64_pairs_b64_n32_cuda",
+      "before_ms": 3.111776997684501,
+      "after_ms": 3.1954229998518713,
+      "speedup": 0.9738231832933394
+    },
+    {
+      "case": "float64_pairs_b64_n128_cpu",
+      "before_ms": 421.1645839968696,
+      "after_ms": 443.80801700026495,
+      "speedup": 0.9489792159311493
+    },
+    {
+      "case": "float64_pairs_b64_n128_cuda",
+      "before_ms": 36.972870999306906,
+      "after_ms": 25.459835997025948,
+      "speedup": 1.4522038163806648
+    },
+    {
+      "case": "float64_pairs_b64_n512_cpu",
+      "before_ms": 9046.500812000886,
+      "after_ms": 10250.749250997615,
+      "speedup": 0.8825209348595148
+    },
+    {
+      "case": "float64_pairs_b64_n512_cuda",
+      "before_ms": 553.9095130006899,
+      "after_ms": 536.8351709985291,
+      "speedup": 1.0318055576917624
+    },
+    {
+      "case": "float64_mmd_b8_n32_cpu",
+      "before_ms": 105.08182900230167,
+      "after_ms": 103.91459799575387,
+      "speedup": 1.0112325989712774
+    },
+    {
+      "case": "float64_mmd_b8_n32_cuda",
+      "before_ms": 16.801279998617247,
+      "after_ms": 15.252721997967456,
+      "speedup": 1.101526665263823
+    },
+    {
+      "case": "float64_mmd_b32_n128_cpu",
+      "before_ms": 25720.555988998967,
+      "after_ms": 25999.535779003054,
+      "speedup": 0.9892698164930549
+    },
+    {
+      "case": "float64_mmd_b32_n128_cuda",
+      "before_ms": 1654.7932239991496,
+      "after_ms": 1680.3803780057933,
+      "speedup": 0.9847729988152983
+    },
+    {
+      "case": "float64_mmd_b8_n512_cpu",
+      "before_ms": 30516.52661099797,
+      "after_ms": 31507.303235004656,
+      "speedup": 0.968554064541267
+    },
+    {
+      "case": "float64_mmd_b8_n512_cuda",
+      "before_ms": 5420.016405994829,
+      "after_ms": 5084.992805001093,
+      "speedup": 1.0658847738514479
+    }
+  ],
+  "maximum_absolute_errors": {
+    "float32_pairs_b64_n32_cpu_value": 0.0,
+    "float32_pairs_b64_n32_cpu_dx": 0.0,
+    "float32_pairs_b64_n32_cpu_dy": 0.0,
+    "float32_pairs_b64_n32_cuda_value": 0.0,
+    "float32_pairs_b64_n32_cuda_dx": 0.0,
+    "float32_pairs_b64_n32_cuda_dy": 0.0,
+    "float32_pairs_b64_n128_cpu_value": 0.0,
+    "float32_pairs_b64_n128_cpu_dx": 0.0,
+    "float32_pairs_b64_n128_cpu_dy": 0.0,
+    "float32_pairs_b64_n128_cuda_value": 0.0,
+    "float32_pairs_b64_n128_cuda_dx": 0.0,
+    "float32_pairs_b64_n128_cuda_dy": 0.0,
+    "float32_pairs_b64_n512_cpu_value": 0.0,
+    "float32_pairs_b64_n512_cpu_dx": 0.0,
+    "float32_pairs_b64_n512_cpu_dy": 0.0,
+    "float32_pairs_b64_n512_cuda_value": 0.0,
+    "float32_pairs_b64_n512_cuda_dx": 0.0,
+    "float32_pairs_b64_n512_cuda_dy": 0.0,
+    "float32_mmd_b8_n32_cpu_value": 0.0,
+    "float32_mmd_b8_n32_cpu_dx": 3.725290298461914e-09,
+    "float32_mmd_b8_n32_cpu_dy": 3.725290298461914e-09,
+    "float32_mmd_b8_n32_cuda_value": 0.0,
+    "float32_mmd_b8_n32_cuda_dx": 2.7939677238464355e-09,
+    "float32_mmd_b8_n32_cuda_dy": 1.862645149230957e-09,
+    "float32_mmd_b32_n128_cpu_value": 0.0,
+    "float32_mmd_b32_n128_cpu_dx": 6.984919309616089e-10,
+    "float32_mmd_b32_n128_cpu_dy": 4.656612873077393e-10,
+    "float32_mmd_b32_n128_cuda_value": 0.0,
+    "float32_mmd_b32_n128_cuda_dx": 4.656612873077393e-10,
+    "float32_mmd_b32_n128_cuda_dy": 4.656612873077393e-10,
+    "float32_mmd_b8_n512_cpu_value": 0.0,
+    "float32_mmd_b8_n512_cpu_dx": 3.725290298461914e-09,
+    "float32_mmd_b8_n512_cpu_dy": 3.725290298461914e-09,
+    "float32_mmd_b8_n512_cuda_value": 0.0,
+    "float32_mmd_b8_n512_cuda_dx": 0.0,
+    "float32_mmd_b8_n512_cuda_dy": 0.0,
+    "float64_pairs_b64_n32_cpu_value": 0.0,
+    "float64_pairs_b64_n32_cpu_dx": 0.0,
+    "float64_pairs_b64_n32_cpu_dy": 0.0,
+    "float64_pairs_b64_n32_cuda_value": 0.0,
+    "float64_pairs_b64_n32_cuda_dx": 0.0,
+    "float64_pairs_b64_n32_cuda_dy": 0.0,
+    "float64_pairs_b64_n128_cpu_value": 0.0,
+    "float64_pairs_b64_n128_cpu_dx": 0.0,
+    "float64_pairs_b64_n128_cpu_dy": 0.0,
+    "float64_pairs_b64_n128_cuda_value": 0.0,
+    "float64_pairs_b64_n128_cuda_dx": 0.0,
+    "float64_pairs_b64_n128_cuda_dy": 0.0,
+    "float64_pairs_b64_n512_cpu_value": 0.0,
+    "float64_pairs_b64_n512_cpu_dx": 0.0,
+    "float64_pairs_b64_n512_cpu_dy": 0.0,
+    "float64_pairs_b64_n512_cuda_value": 0.0,
+    "float64_pairs_b64_n512_cuda_dx": 0.0,
+    "float64_pairs_b64_n512_cuda_dy": 0.0,
+    "float64_mmd_b8_n32_cpu_value": 0.0,
+    "float64_mmd_b8_n32_cpu_dx": 0.0,
+    "float64_mmd_b8_n32_cpu_dy": 0.0,
+    "float64_mmd_b8_n32_cuda_value": 0.0,
+    "float64_mmd_b8_n32_cuda_dx": 6.938893903907228e-18,
+    "float64_mmd_b8_n32_cuda_dy": 5.204170427930421e-18,
+    "float64_mmd_b32_n128_cpu_value": 0.0,
+    "float64_mmd_b32_n128_cpu_dx": 0.0,
+    "float64_mmd_b32_n128_cpu_dy": 0.0,
+    "float64_mmd_b32_n128_cuda_value": 0.0,
+    "float64_mmd_b32_n128_cuda_dx": 1.3010426069826053e-18,
+    "float64_mmd_b32_n128_cuda_dy": 6.505213034913027e-19,
+    "float64_mmd_b8_n512_cpu_value": 0.0,
+    "float64_mmd_b8_n512_cpu_dx": 0.0,
+    "float64_mmd_b8_n512_cpu_dy": 0.0,
+    "float64_mmd_b8_n512_cuda_value": 0.0,
+    "float64_mmd_b8_n512_cuda_dx": 0.0,
+    "float64_mmd_b8_n512_cuda_dy": 0.0
+  },
+  "relative_l2_errors": {
+    "float32_pairs_b64_n32_cpu_value": 0.0,
+    "float32_pairs_b64_n32_cpu_dx": 0.0,
+    "float32_pairs_b64_n32_cpu_dy": 0.0,
+    "float32_pairs_b64_n32_cuda_value": 0.0,
+    "float32_pairs_b64_n32_cuda_dx": 0.0,
+    "float32_pairs_b64_n32_cuda_dy": 0.0,
+    "float32_pairs_b64_n128_cpu_value": 0.0,
+    "float32_pairs_b64_n128_cpu_dx": 0.0,
+    "float32_pairs_b64_n128_cpu_dy": 0.0,
+    "float32_pairs_b64_n128_cuda_value": 0.0,
+    "float32_pairs_b64_n128_cuda_dx": 0.0,
+    "float32_pairs_b64_n128_cuda_dy": 0.0,
+    "float32_pairs_b64_n512_cpu_value": 0.0,
+    "float32_pairs_b64_n512_cpu_dx": 0.0,
+    "float32_pairs_b64_n512_cpu_dy": 0.0,
+    "float32_pairs_b64_n512_cuda_value": 0.0,
+    "float32_pairs_b64_n512_cuda_dx": 0.0,
+    "float32_pairs_b64_n512_cuda_dy": 0.0,
+    "float32_mmd_b8_n32_cpu_value": 0.0,
+    "float32_mmd_b8_n32_cpu_dx": 1.5501316201021463e-07,
+    "float32_mmd_b8_n32_cpu_dy": 1.6306364412823437e-07,
+    "float32_mmd_b8_n32_cuda_value": 0.0,
+    "float32_mmd_b8_n32_cuda_dx": 4.932195621989385e-08,
+    "float32_mmd_b8_n32_cuda_dy": 4.4830277338430066e-08,
+    "float32_mmd_b32_n128_cpu_value": 0.0,
+    "float32_mmd_b32_n128_cpu_dx": 2.8544395671150444e-07,
+    "float32_mmd_b32_n128_cpu_dy": 3.008045665497616e-07,
+    "float32_mmd_b32_n128_cuda_value": 0.0,
+    "float32_mmd_b32_n128_cuda_dx": 9.820325380451674e-08,
+    "float32_mmd_b32_n128_cuda_dy": 7.141592897395805e-08,
+    "float32_mmd_b8_n512_cpu_value": 0.0,
+    "float32_mmd_b8_n512_cpu_dx": 5.620513102654843e-07,
+    "float32_mmd_b8_n512_cpu_dy": 4.772236033463236e-07,
+    "float32_mmd_b8_n512_cuda_value": 0.0,
+    "float32_mmd_b8_n512_cuda_dx": 0.0,
+    "float32_mmd_b8_n512_cuda_dy": 0.0,
+    "float64_pairs_b64_n32_cpu_value": 0.0,
+    "float64_pairs_b64_n32_cpu_dx": 0.0,
+    "float64_pairs_b64_n32_cpu_dy": 0.0,
+    "float64_pairs_b64_n32_cuda_value": 0.0,
+    "float64_pairs_b64_n32_cuda_dx": 0.0,
+    "float64_pairs_b64_n32_cuda_dy": 0.0,
+    "float64_pairs_b64_n128_cpu_value": 0.0,
+    "float64_pairs_b64_n128_cpu_dx": 0.0,
+    "float64_pairs_b64_n128_cpu_dy": 0.0,
+    "float64_pairs_b64_n128_cuda_value": 0.0,
+    "float64_pairs_b64_n128_cuda_dx": 0.0,
+    "float64_pairs_b64_n128_cuda_dy": 0.0,
+    "float64_pairs_b64_n512_cpu_value": 0.0,
+    "float64_pairs_b64_n512_cpu_dx": 0.0,
+    "float64_pairs_b64_n512_cpu_dy": 0.0,
+    "float64_pairs_b64_n512_cuda_value": 0.0,
+    "float64_pairs_b64_n512_cuda_dx": 0.0,
+    "float64_pairs_b64_n512_cuda_dy": 0.0,
+    "float64_mmd_b8_n32_cpu_value": 0.0,
+    "float64_mmd_b8_n32_cpu_dx": 0.0,
+    "float64_mmd_b8_n32_cpu_dy": 0.0,
+    "float64_mmd_b8_n32_cuda_value": 0.0,
+    "float64_mmd_b8_n32_cuda_dx": 8.172092818311417e-17,
+    "float64_mmd_b8_n32_cuda_dy": 8.96058880354832e-17,
+    "float64_mmd_b32_n128_cpu_value": 0.0,
+    "float64_mmd_b32_n128_cpu_dx": 0.0,
+    "float64_mmd_b32_n128_cpu_dy": 0.0,
+    "float64_mmd_b32_n128_cuda_value": 0.0,
+    "float64_mmd_b32_n128_cuda_dx": 4.665222708368914e-16,
+    "float64_mmd_b32_n128_cuda_dy": 3.227825302485668e-16,
+    "float64_mmd_b8_n512_cpu_value": 0.0,
+    "float64_mmd_b8_n512_cpu_dx": 0.0,
+    "float64_mmd_b8_n512_cpu_dy": 0.0,
+    "float64_mmd_b8_n512_cuda_value": 0.0,
+    "float64_mmd_b8_n512_cuda_dx": 0.0,
+    "float64_mmd_b8_n512_cuda_dy": 0.0
+  },
+  "isolated_cpu_repeat": {
+    "case": "float64_pairs_b64_n512_cpu",
+    "median_ms": 10575.760795996757,
+    "samples_ms": [
+      12965.637771994807,
+      10575.760795996757,
+      11330.351302000054,
+      9041.327911996632,
+      9183.829615001741
+    ],
+    "scope": "Isolated repeat with the final CPU binary, same input seed and API options as profile_batches.py; two warmups, five samples, one CPU core."
+  }
+}

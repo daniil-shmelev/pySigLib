@@ -1,0 +1,30 @@
+{
+  "git_revision": "0660d1532357c2b64901f55afd04242cbdad9d96",
+  "source_sha256": {
+    "benchmarks/branched_polynomial/compare_native_cpu_cuda.py": "034545f9e65bfe847feb872187e18634bfe527fe7c00d063103f27b10b8d5a85",
+    "benchmarks/branched_polynomial/compare.py": "6ab0f7cad80d9b85eeaf8bfb5752fd8389f4a4fc22410809530295de62ec6ea0",
+    "siglib/shared/branched_polynomial.h": "6e87f269cf5ddecc50d9140406368c747f2321d008f7205b113304d0eb9ad181",
+    "siglib/shared/preparation/polynomial_sig_kernel/branched_polynomial_tables.h": "e6f5d796444181a9e86ef3b8a5f20d5bb8ad95118faaa5ca142b66c5c6a9b10d",
+    "siglib/cpsig/cp_branched_polynomial_sig_kernel.cpp": "157de15a487dfdfc1149a18e08e6a2173f5717e0d2a32a7fc9ed21c0279c7da5",
+    "siglib/cusig/cu_branched_polynomial_sig_kernel.cu": "f1e6b00d94b26450d75b6451e0ef5718712b505519c3b88d83726d91b931691b",
+    "siglib/cpsig/cp_branched_sig_kernel.cpp": "2c82ad57b24153b4764dbe5a47ec6a9894d534ee0082025c8755dc8479f13838",
+    "siglib/cusig/cu_branched_sig_kernel.cu": "7d388101fcbc168c452107f02d0401d88b68e1f7bece4ec9bb82f1e7eaa3bf57"
+  },
+  "cpu": "AMD Ryzen 9 9950X3D 16-Core Processor",
+  "logical_cpu": 0,
+  "gpu": "NVIDIA GeForce RTX 5080",
+  "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+  "torch": "2.12.0+cu130",
+  "cuda": "13.0",
+  "numpy": "2.4.6",
+  "dtype": "float64",
+  "segments": 32,
+  "depth": 3,
+  "seed": 17,
+  "samples": 7,
+  "minimum_sample_ms": 10.0,
+  "elapsed_seconds": 24.126994320999074,
+  "timing_scope": "Median wall time for native scalar-pair forward + backward. Both backward passes reconstruct forward state. Includes native allocation, launches, synchronization and ctypes dispatch. Excludes Gram construction, device transfers and Gram-to-path chain. Cached quadrature tables; CPU scratch is reused, CUDA scratch is allocated per call. CPU pinned to one core, n_jobs=1.",
+  "accuracy": "Maximum of relative kernel error and relative L2 error in concatenated gradients of both input paths. CPU q=20 reference checked against q=16. Plot floors errors at 1e-16.",
+  "parameter": "FD labels are dyadic orders; polynomial labels are q nodes per coordinate, i.e. API order=q-1."
+}

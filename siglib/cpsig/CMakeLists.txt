@@ -6,6 +6,7 @@ if(NOT TARGET pysiglib_preparation)
 endif()
 
 add_library(cpsig SHARED
+    cp_branched_polynomial_sig_kernel.cpp
     cp_bch.cpp
     cache_lifecycle/cp_branched_cache.cpp
     cache_lifecycle/cp_branched_log_cache.cpp

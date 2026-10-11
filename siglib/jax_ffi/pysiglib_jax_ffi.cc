@@ -331,7 +331,9 @@ struct CpuFns<float> {
     static constexpr auto sig_kernel = sig_kernel_f;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_f;
     static constexpr auto sig_kernel_poly = sig_kernel_poly_f;
+    static constexpr auto branched_sig_kernel_poly = branched_sig_kernel_poly_f;
     static constexpr auto sig_kernel_poly_backprop = sig_kernel_poly_backprop_f;
+    static constexpr auto branched_sig_kernel_poly_backprop = branched_sig_kernel_poly_backprop_f;
     static constexpr auto branched_sig_kernel = branched_sig_kernel_f;
     static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_f;
 
@@ -380,7 +382,9 @@ struct CpuFns<double> {
     static constexpr auto sig_kernel = sig_kernel_d;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_d;
     static constexpr auto sig_kernel_poly = sig_kernel_poly_d;
+    static constexpr auto branched_sig_kernel_poly = branched_sig_kernel_poly_d;
     static constexpr auto sig_kernel_poly_backprop = sig_kernel_poly_backprop_d;
+    static constexpr auto branched_sig_kernel_poly_backprop = branched_sig_kernel_poly_backprop_d;
     static constexpr auto branched_sig_kernel = branched_sig_kernel_d;
     static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_d;
 
@@ -439,7 +443,9 @@ struct CudaFns<float> {
     static constexpr auto sig_kernel = sig_kernel_cuda_f;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_cuda_f;
     static constexpr auto sig_kernel_poly = sig_kernel_poly_cuda_f;
+    static constexpr auto branched_sig_kernel_poly = branched_sig_kernel_poly_cuda_f;
     static constexpr auto sig_kernel_poly_backprop = sig_kernel_poly_backprop_cuda_f;
+    static constexpr auto branched_sig_kernel_poly_backprop = branched_sig_kernel_poly_backprop_cuda_f;
     static constexpr auto branched_sig_kernel = branched_sig_kernel_cuda_f;
     static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_cuda_f;
 
@@ -488,7 +494,9 @@ struct CudaFns<double> {
     static constexpr auto sig_kernel = sig_kernel_cuda_d;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_cuda_d;
     static constexpr auto sig_kernel_poly = sig_kernel_poly_cuda_d;
+    static constexpr auto branched_sig_kernel_poly = branched_sig_kernel_poly_cuda_d;
     static constexpr auto sig_kernel_poly_backprop = sig_kernel_poly_backprop_cuda_d;
+    static constexpr auto branched_sig_kernel_poly_backprop = branched_sig_kernel_poly_backprop_cuda_d;
     static constexpr auto branched_sig_kernel = branched_sig_kernel_cuda_d;
     static constexpr auto branched_sig_kernel_backprop = branched_sig_kernel_backprop_cuda_d;
 
@@ -1721,6 +1729,24 @@ ffi::Error SigKernelPolyPdeCpuImpl(
     if (err_code != 0) return NativeCallErrorCpu("sig_kernel_poly", err_code);
     return ffi::Error::Success();
 }
+template <typename T>
+ffi::Error BranchedSigKernelPolyPdeCpuImpl(
+    std::int64_t dimension, std::int64_t depth, std::int64_t order, bool return_grid,
+    std::int64_t n_jobs, ffi::AnyBuffer& gram,
+    ffi::Result<ffi::AnyBuffer>& out, ffi::Result<ffi::AnyBuffer>& state
+) {
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+    const auto length1 = spec.length1 + 1;
+    const auto length2 = spec.length2 + 1;
+    int err_code = CpuFns<T>::branched_sig_kernel_poly(
+        BufferData<T>(gram), BufferData<T>(out), (BufferElementCount(state) == 0 ? nullptr : BufferData<T>(state)),
+        spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), length1, length2,
+        static_cast<std::uint64_t>(depth), static_cast<std::uint64_t>(order), return_grid, static_cast<int>(n_jobs));
+    if (err_code != 0) return NativeCallErrorCpu("branched_sig_kernel_poly", err_code);
+    return ffi::Error::Success();
+}
 
 template <typename T>
 ffi::Error SigKernelPolyPdeBackpropCpuImpl(
@@ -1738,6 +1764,24 @@ ffi::Error SigKernelPolyPdeBackpropCpuImpl(
         static_cast<std::uint64_t>(dimension), length1, length2,
         static_cast<std::uint64_t>(order), return_grid, static_cast<int>(n_jobs));
     if (err_code != 0) return NativeCallErrorCpu("sig_kernel_poly_backprop", err_code);
+    return ffi::Error::Success();
+}
+template <typename T>
+ffi::Error BranchedSigKernelPolyPdeBackpropCpuImpl(
+    std::int64_t dimension, std::int64_t depth, std::int64_t order, bool return_grid,
+    std::int64_t n_jobs, ffi::AnyBuffer& gram, ffi::AnyBuffer& derivs,
+    ffi::AnyBuffer& state, ffi::Result<ffi::AnyBuffer>& out
+) {
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+    const auto length1 = spec.length1 + 1;
+    const auto length2 = spec.length2 + 1;
+    int err_code = CpuFns<T>::branched_sig_kernel_poly_backprop(
+        BufferData<T>(gram), BufferData<T>(out), BufferData<T>(derivs),
+        (BufferElementCount(state) == 0 ? nullptr : BufferData<T>(state)), spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), length1, length2,
+        static_cast<std::uint64_t>(depth), static_cast<std::uint64_t>(order), return_grid, static_cast<int>(n_jobs));
+    if (err_code != 0) return NativeCallErrorCpu("branched_sig_kernel_poly_backprop", err_code);
     return ffi::Error::Success();
 }
 
@@ -1824,6 +1868,17 @@ ffi::Error SigKernelPolyPdeCpu(
             dimension, order, return_grid, n_jobs, gram, out, state);
     });
 }
+ffi::Error BranchedSigKernelPolyPdeCpu(
+    std::int64_t dimension, std::int64_t depth, std::int64_t order, bool return_grid,
+    std::int64_t n_jobs, ffi::AnyBuffer gram,
+    ffi::Result<ffi::AnyBuffer> out, ffi::Result<ffi::AnyBuffer> state
+) {
+    if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        return BranchedSigKernelPolyPdeCpuImpl<T>(
+            dimension, depth, order, return_grid, n_jobs, gram, out, state);
+    });
+}
 
 ffi::Error SigKernelPolyPdeBackpropCpu(
     std::int64_t dimension, std::int64_t order, bool return_grid,
@@ -1835,6 +1890,18 @@ ffi::Error SigKernelPolyPdeBackpropCpu(
     return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
         return SigKernelPolyPdeBackpropCpuImpl<T>(
             dimension, order, return_grid, n_jobs, gram, derivs, state, out);
+    });
+}
+ffi::Error BranchedSigKernelPolyPdeBackpropCpu(
+    std::int64_t dimension, std::int64_t depth, std::int64_t order, bool return_grid,
+    std::int64_t n_jobs, ffi::AnyBuffer gram, ffi::AnyBuffer derivs,
+    ffi::AnyBuffer state, ffi::Result<ffi::AnyBuffer> out
+) {
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "derivs", derivs); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "state", state); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        return BranchedSigKernelPolyPdeBackpropCpuImpl<T>(
+            dimension, depth, order, return_grid, n_jobs, gram, derivs, state, out);
     });
 }
 
@@ -1930,6 +1997,26 @@ ffi::Error SigKernelPolyPdeCudaImpl(
     if (err_code != 0) return NativeCallErrorCuda("sig_kernel_poly_cuda", err_code);
     return ffi::Error::Success();
 }
+template <typename T>
+ffi::Error BranchedSigKernelPolyPdeCudaImpl(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t depth, std::int64_t order,
+    bool return_grid, ffi::AnyBuffer& gram,
+    ffi::Result<ffi::AnyBuffer>& out, ffi::Result<ffi::AnyBuffer>& state
+) {
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+    const auto length1 = spec.length1 + 1;
+    const auto length2 = spec.length2 + 1;
+    int err_code = CudaFns<T>::branched_sig_kernel_poly(
+        BufferData<T>(gram), BufferData<T>(out), (BufferElementCount(state) == 0 ? nullptr : BufferData<T>(state)),
+        spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), length1, length2,
+        static_cast<std::uint64_t>(depth), static_cast<std::uint64_t>(order), return_grid);
+    if (err_code != 0) return NativeCallErrorCuda("branched_sig_kernel_poly_cuda", err_code);
+    return ffi::Error::Success();
+}
 
 template <typename T>
 ffi::Error SigKernelPolyPdeBackpropCudaImpl(
@@ -1950,6 +2037,27 @@ ffi::Error SigKernelPolyPdeBackpropCudaImpl(
         static_cast<std::uint64_t>(order), return_grid);
     if (err_code != 0)
         return NativeCallErrorCuda("sig_kernel_poly_backprop_cuda", err_code);
+    return ffi::Error::Success();
+}
+template <typename T>
+ffi::Error BranchedSigKernelPolyPdeBackpropCudaImpl(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t depth, std::int64_t order,
+    bool return_grid, ffi::AnyBuffer& gram, ffi::AnyBuffer& derivs,
+    ffi::AnyBuffer& state, ffi::Result<ffi::AnyBuffer>& out
+) {
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+    auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+    const auto length1 = spec.length1 + 1;
+    const auto length2 = spec.length2 + 1;
+    int err_code = CudaFns<T>::branched_sig_kernel_poly_backprop(
+        BufferData<T>(gram), BufferData<T>(out), BufferData<T>(derivs),
+        (BufferElementCount(state) == 0 ? nullptr : BufferData<T>(state)), spec.is_batch ? spec.batch_size : 1,
+        static_cast<std::uint64_t>(dimension), length1, length2,
+        static_cast<std::uint64_t>(depth), static_cast<std::uint64_t>(order), return_grid);
+    if (err_code != 0)
+        return NativeCallErrorCuda("branched_sig_kernel_poly_backprop_cuda", err_code);
     return ffi::Error::Success();
 }
 
@@ -2031,6 +2139,18 @@ ffi::Error SigKernelPolyPdeCuda(
             stream, dimension, order, return_grid, gram, out, state);
     });
 }
+ffi::Error BranchedSigKernelPolyPdeCuda(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t depth, std::int64_t order,
+    bool return_grid, std::int64_t /*n_jobs*/, ffi::AnyBuffer gram,
+    ffi::Result<ffi::AnyBuffer> out, ffi::Result<ffi::AnyBuffer> state
+) {
+    if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty())
+        return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        return BranchedSigKernelPolyPdeCudaImpl<T>(
+            stream, dimension, depth, order, return_grid, gram, out, state);
+    });
+}
 
 ffi::Error SigKernelPolyPdeBackpropCuda(
     cudaStream_t stream, std::int64_t dimension, std::int64_t order,
@@ -2045,6 +2165,21 @@ ffi::Error SigKernelPolyPdeBackpropCuda(
     return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
         return SigKernelPolyPdeBackpropCudaImpl<T>(
             stream, dimension, order, return_grid, gram, derivs, state, out);
+    });
+}
+ffi::Error BranchedSigKernelPolyPdeBackpropCuda(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t depth, std::int64_t order,
+    bool return_grid, std::int64_t /*n_jobs*/, ffi::AnyBuffer gram,
+    ffi::AnyBuffer derivs, ffi::AnyBuffer state,
+    ffi::Result<ffi::AnyBuffer> out
+) {
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "derivs", derivs); !msg.empty())
+        return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "state", state); !msg.empty())
+        return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        return BranchedSigKernelPolyPdeBackpropCudaImpl<T>(
+            stream, dimension, depth, order, return_grid, gram, derivs, state, out);
     });
 }
 
@@ -2327,8 +2462,19 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPolyPdeCpu, SigKernelPolyPdeCpu,
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigKernelPolyPdeCpu, BranchedSigKernelPolyPdeCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("depth").Attr<std::int64_t>("order")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPolyPdeBackpropCpu, SigKernelPolyPdeBackpropCpu,
     ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("order")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
+        .Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigKernelPolyPdeBackpropCpu, BranchedSigKernelPolyPdeBackpropCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("depth").Attr<std::int64_t>("order")
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>());
@@ -2366,10 +2512,24 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPolyPdeCuda, SigKernelPolyPdeCuda
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibBranchedSigKernelPolyPdeCuda, BranchedSigKernelPolyPdeCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("depth").Attr<std::int64_t>("order")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     PySigLibSigKernelPolyPdeBackpropCuda, SigKernelPolyPdeBackpropCuda,
     ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
         .Attr<std::int64_t>("dimension").Attr<std::int64_t>("order")
+        .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
+        .Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    PySigLibBranchedSigKernelPolyPdeBackpropCuda, BranchedSigKernelPolyPdeBackpropCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("depth").Attr<std::int64_t>("order")
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>());

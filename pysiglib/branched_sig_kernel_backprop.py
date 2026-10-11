@@ -20,7 +20,7 @@ from math import prod
 import numpy as np
 import torch
 
-from .branched_sig_kernel import branched_sig_kernel
+from .branched_sig_kernel import branched_sig_kernel, _parse_branched_kernel_method, _branched_poly_state_shape
 from .data_handlers import (
     GridOutputHandler,
     MultiplePathInputHandler,
@@ -29,11 +29,13 @@ from .data_handlers import (
 )
 from .dtypes import (
     CPSIG_BRANCHED_SIG_KERNEL_BACKPROP,
+    CPSIG_BRANCHED_SIG_KERNEL_POLY_BACKPROP,
+    CUSIG_BRANCHED_SIG_KERNEL_POLY_BACKPROP,
     CUSIG_BRANCHED_SIG_KERNEL_BACKPROP,
     DTYPES,
 )
 from .error_codes import err_msg
-from .param_checks import check_non_neg, check_n_jobs, check_type, dyadic_grid_length, parse_dyadic_order
+from .param_checks import check_non_neg, check_n_jobs, check_type, dyadic_grid_length
 from .sig_kernel import _ensure_3d
 from .static_kernels import Context, LinearKernel, StaticKernel
 from .transform_path import transform_path
@@ -50,12 +52,19 @@ def branched_gram_deriv(
         dyadic_order_2: int,
         return_grid: bool = False,
         n_jobs: int = 1,
+        method="finite_difference", order=None, state=None,
 ) -> torch.Tensor:
     result = GridOutputHandler(data.length[0] - 1, data.length[1] - 1, derivs_data)
     gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
     k_stack_ptr = None if k_stack_data is None else k_stack_data.data_ptr
 
-    if data.device == "cpu":
+    if method == "polynomial":
+        state_ptr = None if state is None or state.numel() == 0 else cast(state.data_ptr(), POINTER(DTYPES[data.dtype]))
+        functions = CPSIG_BRANCHED_SIG_KERNEL_POLY_BACKPROP if data.device == "cpu" else CUSIG_BRANCHED_SIG_KERNEL_POLY_BACKPROP
+        args = (gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
+                data.batch_size, data.dimension, *data.length, depth, order, return_grid)
+        err_code = functions[data.dtype](*args, n_jobs) if data.device == "cpu" else functions[data.dtype](*args)
+    elif data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG_KERNEL_BACKPROP[data.dtype](
             gram_ptr, result.data_ptr, derivs_data.data_ptr, k_stack_ptr,
             data.batch_size, data.dimension, data.length[0], data.length[1],
@@ -77,8 +86,10 @@ def branched_sig_kernel_backprop(
         path1: Union[np.ndarray, torch.Tensor],
         path2: Union[np.ndarray, torch.Tensor],
         depth: int,
-        dyadic_order: Union[int, tuple],
+        dyadic_order: Optional[Union[int, tuple]] = None,
         *,
+        method: str = "finite_difference",
+        order: Optional[int] = None,
         static_kernel: Optional[StaticKernel] = None,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -88,6 +99,7 @@ def branched_sig_kernel_backprop(
         k_stack: Union[np.ndarray, torch.Tensor] = None,
         n_jobs: int = 1,
         return_grid: bool = False,
+        _state: Optional[torch.Tensor] = None,
 ) -> Union[np.ndarray, torch.Tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.Tensor, torch.Tensor]]:
     """
     Backpropagates through :func:`pysiglib.branched_sig_kernel`.
@@ -101,9 +113,13 @@ def branched_sig_kernel_backprop(
     :type path2: numpy.ndarray | torch.Tensor
     :param depth: Forest depth truncation used in the forward pass.
     :type depth: int
-    :param dyadic_order: Dyadic refinement order, or a pair of orders.
-    :type dyadic_order: int | tuple
-    :param k_stack: Optional internal all-depth grid stack. If omitted, it is
+    :param dyadic_order: Refinement order or pair for the finite-difference method.
+    :type dyadic_order: int | tuple | None
+    :param method: ``"finite_difference"`` or ``"polynomial"``, matching the forward pass.
+    :type method: str
+    :param order: Polynomial degree from 0 to 64, using ``order + 1`` nodes per coordinate.
+    :type order: int | None
+    :param k_stack: Optional internal all-depth grid stack for finite differences. If omitted, it is
         reconstructed from the static-kernel increments.
     :type k_stack: None | numpy.ndarray | torch.Tensor
     :param return_grid: If ``True``, ``derivs`` is interpreted as final-grid derivatives.
@@ -119,7 +135,9 @@ def branched_sig_kernel_backprop(
     if not (left_deriv or right_deriv):
         return None, None
 
-    dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
+    dyadic_order_1, dyadic_order_2 = _parse_branched_kernel_method(method, dyadic_order, order, return_grid)
+    if method == "polynomial" and k_stack is not None:
+        raise ValueError("k_stack is only supported for finite differences")
 
     if path1.ndim > 3 or path2.ndim > 3:
         if tuple(path1.shape[:-2]) != tuple(path2.shape[:-2]):
@@ -137,7 +155,7 @@ def branched_sig_kernel_backprop(
             static_kernel=static_kernel,
             time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
             left_deriv=left_deriv, right_deriv=right_deriv,
-            k_stack=flat_k_stack, n_jobs=n_jobs, return_grid=return_grid,
+            k_stack=flat_k_stack, n_jobs=n_jobs, return_grid=return_grid, method=method, order=order, _state=_state,
         )
         if ld is not None:
             ld = ld.reshape(*leading_shape, *ld.shape[-2:])
@@ -193,9 +211,19 @@ def branched_sig_kernel_backprop(
         if tuple(k_stack.shape) != expected:
             raise ValueError(f"k_stack must have shape {expected}, got {tuple(k_stack.shape)}")
 
+    if _state is not None:
+        if method != "polynomial":
+            raise ValueError("_state is only supported for the polynomial method")
+        expected_state = _branched_poly_state_shape(data.batch_size, *data.length, depth, order)
+        if tuple(_state.shape) != expected_state:
+            raise ValueError("invalid polynomial solver state shape")
+        if _state.dtype != gram.dtype or _state.device != gram.device:
+            raise ValueError("polynomial solver state must match path dtype and device")
+        _state = _state.contiguous()
+
     gram_derivs = branched_gram_deriv(
         derivs_data, data, gram, k_stack_data, depth,
-        dyadic_order_1, dyadic_order_2, return_grid, n_jobs)
+        dyadic_order_1, dyadic_order_2, return_grid, n_jobs, method, order, _state)
 
     ld = static_kernel.grad_x(ctx, gram_derivs) if left_deriv else None
     rd = static_kernel.grad_y(ctx, gram_derivs) if right_deriv else None
@@ -216,8 +244,10 @@ def branched_sig_kernel_gram_backprop(
         path1: Union[np.ndarray, torch.Tensor],
         path2: Union[np.ndarray, torch.Tensor],
         depth: int,
-        dyadic_order: Union[int, tuple],
+        dyadic_order: Optional[Union[int, tuple]] = None,
         *,
+        method: str = "finite_difference",
+        order: Optional[int] = None,
         static_kernel: Optional[StaticKernel] = None,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -231,7 +261,14 @@ def branched_sig_kernel_gram_backprop(
 ) -> Union[np.ndarray, torch.Tensor, Tuple[np.ndarray, np.ndarray], Tuple[torch.Tensor, torch.Tensor]]:
     """
     Backpropagates through :func:`pysiglib.branched_sig_kernel_gram`.
+
+    ``depth``, ``method``, ``order`` and ``dyadic_order`` must match the forward
+    pass. Polynomial grids are evaluated at the original path vertices.
+    ``k_stack`` is supported only for finite differences.
     """
+    _parse_branched_kernel_method(method, dyadic_order, order, return_grid)
+    if method == "polynomial" and k_stack is not None:
+        raise ValueError("k_stack is only supported for finite differences")
     check_type(depth, "depth", int)
     check_non_neg(depth, "depth")
     check_type(time_aug, "time_aug", bool)
@@ -306,7 +343,7 @@ def branched_sig_kernel_gram_backprop(
         k_stack_ = None if k_stack is None else k_stack[ci, cj]
 
         ld_, rd_ = branched_sig_kernel_backprop(
-            derivs_, path1_, path2_, depth, dyadic_order,
+            derivs_, path1_, path2_, depth, dyadic_order, method=method, order=order,
             static_kernel=static_kernel,
             time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
             left_deriv=left_deriv, right_deriv=right_deriv,
@@ -328,7 +365,7 @@ def branched_sig_kernel_gram_backprop(
                 k_stack_t = None if k_stack is None else k_stack[cj_off, ci_off]
 
                 ld_t, rd_t = branched_sig_kernel_backprop(
-                    derivs_t, path1_t, path2_t, depth, dyadic_order,
+                    derivs_t, path1_t, path2_t, depth, dyadic_order, method=method, order=order,
                     static_kernel=static_kernel,
                     time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
                     left_deriv=left_deriv, right_deriv=right_deriv,

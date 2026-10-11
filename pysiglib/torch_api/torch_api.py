@@ -40,6 +40,12 @@ from ..branched_sig_kernel_backprop import branched_sig_kernel_gram_backprop
 from ..sig_metrics import sig_score as sig_score_forward
 from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
+from ..branched_sig_metrics import (
+    _branched_sig_score, _branched_sig_mmd,
+    branched_sig_score as branched_sig_score_forward,
+    expected_branched_sig_score as expected_branched_sig_score_forward,
+    branched_sig_mmd as branched_sig_mmd_forward,
+)
 from ..transform_path import transform_path as transform_path_forward
 from ..transform_path_backprop import transform_path_backprop
 
@@ -513,16 +519,22 @@ sig_kernel_gram.__doc__ = sig_kernel_gram_forward.__doc__
 
 class BranchedSigKernel(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path1, path2, depth, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid):
+    def forward(ctx, path1, path2, depth, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid):
         result = branched_sig_kernel_forward(
-            path1, path2, depth, dyadic_order,
+            path1, path2, depth, dyadic_order, method=method, order=order,
             static_kernel=static_kernel, time_aug=time_aug,
             lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
-            return_grid=return_grid)
+            return_grid=return_grid, _return_state=method == "polynomial")
+        if method == "polynomial":
+            result, solver_state = result
+        else:
+            solver_state = path1.new_empty(0)
 
-        ctx.save_for_backward(path1, path2)
+        ctx.save_for_backward(path1, path2, solver_state)
         ctx.depth = depth
         ctx.dyadic_order = dyadic_order
+        ctx.method = method
+        ctx.order = order
         ctx.static_kernel = static_kernel
         ctx.time_aug = time_aug
         ctx.lead_lag = lead_lag
@@ -537,23 +549,25 @@ class BranchedSigKernel(torch.autograd.Function):
         left_deriv = ctx.needs_input_grad[0]
         right_deriv = ctx.needs_input_grad[1]
 
-        path1, path2 = ctx.saved_tensors
+        path1, path2, solver_state = ctx.saved_tensors
         new_derivs = branched_sig_kernel_backprop(
-            grad_output, path1, path2, ctx.depth, ctx.dyadic_order,
+            grad_output, path1, path2, ctx.depth, ctx.dyadic_order, method=ctx.method, order=ctx.order,
             static_kernel=ctx.static_kernel,
             time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
             left_deriv=left_deriv, right_deriv=right_deriv,
-            k_stack=None, n_jobs=ctx.n_jobs, return_grid=ctx.return_grid)
+            _state=solver_state if ctx.method == "polynomial" else None, k_stack=None, n_jobs=ctx.n_jobs, return_grid=ctx.return_grid)
 
-        return new_derivs[0], new_derivs[1], None, None, None, None, None, None, None, None
+        return (new_derivs[0], new_derivs[1]) + (None,) * 10
 
 
 def branched_sig_kernel(
         path1: Union[np.ndarray, torch.Tensor],
         path2: Union[np.ndarray, torch.Tensor],
         depth: int,
-        dyadic_order: Union[int, tuple],
+        dyadic_order: Optional[Union[int, tuple]] = None,
         *,
+        method: str = "finite_difference",
+        order: Optional[int] = None,
         static_kernel: Optional[StaticKernel] = None,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -564,10 +578,10 @@ def branched_sig_kernel(
 ) -> Union[np.ndarray, torch.Tensor]:
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
-    k = BranchedSigKernel.apply(path1, path2, depth, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
+    k = BranchedSigKernel.apply(path1, path2, depth, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid)
     if normalize:
-        k1 = BranchedSigKernel.apply(path1, path1, depth, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
-        k2 = BranchedSigKernel.apply(path2, path2, depth, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        k1 = BranchedSigKernel.apply(path1, path1, depth, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        k2 = BranchedSigKernel.apply(path2, path2, depth, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
         k = _safe_normalize(k, k1, k2, "branched_sig_kernel(normalize=True)")
     return k
 
@@ -577,9 +591,9 @@ branched_sig_kernel.__doc__ = branched_sig_kernel_forward.__doc__
 
 class BranchedSigKernelGram(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path1, path2, depth, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid):
+    def forward(ctx, path1, path2, depth, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, max_batch, return_grid):
         result = branched_sig_kernel_gram_forward(
-            path1, path2, depth, dyadic_order,
+            path1, path2, depth, dyadic_order, method=method, order=order,
             static_kernel=static_kernel, time_aug=time_aug,
             lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
             max_batch=max_batch, return_grid=return_grid)
@@ -588,6 +602,8 @@ class BranchedSigKernelGram(torch.autograd.Function):
         ctx.symmetric = path1 is path2
         ctx.depth = depth
         ctx.dyadic_order = dyadic_order
+        ctx.method = method
+        ctx.order = order
         ctx.static_kernel = static_kernel
         ctx.time_aug = time_aug
         ctx.lead_lag = lead_lag
@@ -608,22 +624,24 @@ class BranchedSigKernelGram(torch.autograd.Function):
             path2 = path1
 
         new_derivs = branched_sig_kernel_gram_backprop(
-            grad_output, path1, path2, ctx.depth, ctx.dyadic_order,
+            grad_output, path1, path2, ctx.depth, ctx.dyadic_order, method=ctx.method, order=ctx.order,
             static_kernel=ctx.static_kernel,
             time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
             left_deriv=left_deriv, right_deriv=right_deriv,
             k_stack=None, n_jobs=ctx.n_jobs, return_grid=ctx.return_grid,
             max_batch=ctx.max_batch)
 
-        return new_derivs[0], new_derivs[1], None, None, None, None, None, None, None, None, None
+        return (new_derivs[0], new_derivs[1]) + (None,) * 11
 
 
 def branched_sig_kernel_gram(
         path1: Union[np.ndarray, torch.Tensor],
         path2: Union[np.ndarray, torch.Tensor],
         depth: int,
-        dyadic_order: Union[int, tuple],
+        dyadic_order: Optional[Union[int, tuple]] = None,
         *,
+        method: str = "finite_difference",
+        order: Optional[int] = None,
         static_kernel: Optional[StaticKernel] = None,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -636,12 +654,14 @@ def branched_sig_kernel_gram(
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
     gram = BranchedSigKernelGram.apply(
-        path1, path2, depth, dyadic_order, static_kernel, time_aug,
+        path1, path2, depth, dyadic_order, method, order, static_kernel, time_aug,
         lead_lag, end_time, n_jobs, max_batch, return_grid)
     if normalize:
-        d1 = BranchedSigKernel.apply(path1, path1, depth, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
-        d2 = d1 if path1 is path2 else BranchedSigKernel.apply(path2, path2, depth, dyadic_order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
-        gram = _safe_normalize(gram, d1.unsqueeze(1), d2.unsqueeze(0), "branched_sig_kernel_gram(normalize=True)")
+        d1 = BranchedSigKernel.apply(path1, path1, depth, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        d2 = d1 if path1 is path2 else BranchedSigKernel.apply(path2, path2, depth, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, False)
+        d1 = d1.reshape(tuple(path1.shape[:-2]) + (1,) * len(path2.shape[:-2]))
+        d2 = d2.reshape((1,) * len(path1.shape[:-2]) + tuple(path2.shape[:-2]))
+        gram = _safe_normalize(gram, d1, d2, "branched_sig_kernel_gram(normalize=True)")
     return gram
 
 
@@ -741,6 +761,56 @@ def sig_mmd(
     return xx_sum - xy_sum + yy_sum
 
 sig_mmd.__doc__ = sig_mmd_forward.__doc__
+
+
+def branched_sig_score(
+    sample1, sample2, depth, dyadic_order=None, *,
+    method="finite_difference", order=None,
+    lam=1.0,
+    static_kernel=None, time_aug=False, lead_lag=False, end_time=1.0,
+    n_jobs=1, max_batch=-1,
+):
+    return _branched_sig_score(
+        branched_sig_kernel_gram, torch.as_tensor, sample1, sample2, depth,
+        dyadic_order=dyadic_order, method=method, order=order, lam=lam,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
+
+
+branched_sig_score.__doc__ = branched_sig_score_forward.__doc__
+
+
+def expected_branched_sig_score(
+    sample1, sample2, depth, dyadic_order=None, *,
+    method="finite_difference", order=None,
+    lam=1.0,
+    static_kernel=None, time_aug=False, lead_lag=False, end_time=1.0,
+    n_jobs=1, max_batch=-1,
+):
+    return branched_sig_score(
+        sample1, sample2, depth, dyadic_order, method=method, order=order, lam=lam,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch).mean().reshape(1)
+
+
+expected_branched_sig_score.__doc__ = expected_branched_sig_score_forward.__doc__
+
+
+def branched_sig_mmd(
+    sample1, sample2, depth, dyadic_order=None, *,
+    method="finite_difference", order=None,
+    static_kernel=None, time_aug=False, lead_lag=False, end_time=1.0,
+    n_jobs=1, max_batch=-1,
+):
+    return _branched_sig_mmd(
+        branched_sig_kernel_gram, torch.as_tensor, sample1, sample2, depth,
+        dyadic_order=dyadic_order, method=method, order=order,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
+
+
+branched_sig_mmd.__doc__ = branched_sig_mmd_forward.__doc__
+
 
 class LogSigCombine(torch.autograd.Function):
     @staticmethod
