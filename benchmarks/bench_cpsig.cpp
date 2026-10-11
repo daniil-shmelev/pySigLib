@@ -737,6 +737,82 @@ static void BM_branched_sig_kernel_backprop(benchmark::State& state) {
 }
 BENCHMARK(BM_branched_sig_kernel_backprop)->Unit(benchmark::kMicrosecond);
 
+static void BM_branched_sig_kernel_poly(benchmark::State& state) {
+    auto gram = random_data(16 * 31 * 31, 1);
+    for (auto& x : gram) x *= 0.01;
+    std::vector<double> out(16);
+    check(::branched_sig_kernel_poly_d(
+        gram.data(), out.data(), nullptr, 16, 3, 32, 32, 3, 3),
+        "branched_sig_kernel_poly_d");
+    for (auto _ : state) {
+        ::branched_sig_kernel_poly_d(
+            gram.data(), out.data(), nullptr, 16, 3, 32, 32, 3, 3);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_kernel_poly)->Unit(benchmark::kMicrosecond);
+
+static void BM_branched_sig_kernel_poly_float32(benchmark::State& state) {
+    auto gram_d = random_data(16 * 31 * 31, 1);
+    std::vector<float> gram(gram_d.size());
+    for (size_t i = 0; i < gram.size(); ++i)
+        gram[i] = static_cast<float>(0.01 * gram_d[i]);
+    std::vector<float> out(16);
+    check(::branched_sig_kernel_poly_f(
+        gram.data(), out.data(), nullptr, 16, 3, 32, 32, 3, 3),
+        "branched_sig_kernel_poly_f");
+    for (auto _ : state) {
+        ::branched_sig_kernel_poly_f(
+            gram.data(), out.data(), nullptr, 16, 3, 32, 32, 3, 3);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_kernel_poly_float32)->Unit(benchmark::kMicrosecond);
+
+static void BM_branched_sig_kernel_poly_backprop(benchmark::State& state) {
+    auto gram = random_data(16 * 31 * 31, 1);
+    for (auto& x : gram) x *= 0.01;
+    auto deriv = random_data(16, 2);
+    std::vector<double> forward(16), out(16 * 31 * 31);
+    // Saved state: batch * depth * (segments * nodes)^2.
+    std::vector<double> tape(16 * 3 * 31 * 31 * 4 * 4);
+    check(::branched_sig_kernel_poly_d(
+        gram.data(), forward.data(), tape.data(), 16, 3, 32, 32, 3, 3),
+        "branched_sig_kernel_poly_d");
+    check(::branched_sig_kernel_poly_backprop_d(
+        gram.data(), out.data(), deriv.data(), tape.data(), 16, 3, 32, 32, 3, 3),
+        "branched_sig_kernel_poly_backprop_d");
+    for (auto _ : state) {
+        ::branched_sig_kernel_poly_backprop_d(
+            gram.data(), out.data(), deriv.data(), tape.data(), 16, 3, 32, 32, 3, 3);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_kernel_poly_backprop)->Unit(benchmark::kMicrosecond);
+
+static void BM_branched_sig_kernel_poly_backprop_float32(benchmark::State& state) {
+    auto gram_d = random_data(16 * 31 * 31, 1);
+    std::vector<float> gram(gram_d.size());
+    for (size_t i = 0; i < gram.size(); ++i)
+        gram[i] = static_cast<float>(0.01 * gram_d[i]);
+    auto deriv_d = random_data(16, 2);
+    std::vector<float> deriv(deriv_d.begin(), deriv_d.end());
+    std::vector<float> forward(16), out(16 * 31 * 31);
+    std::vector<float> tape(16 * 3 * 31 * 31 * 4 * 4);
+    check(::branched_sig_kernel_poly_f(
+        gram.data(), forward.data(), tape.data(), 16, 3, 32, 32, 3, 3),
+        "branched_sig_kernel_poly_f");
+    check(::branched_sig_kernel_poly_backprop_f(
+        gram.data(), out.data(), deriv.data(), tape.data(), 16, 3, 32, 32, 3, 3),
+        "branched_sig_kernel_poly_backprop_f");
+    for (auto _ : state) {
+        ::branched_sig_kernel_poly_backprop_f(
+            gram.data(), out.data(), deriv.data(), tape.data(), 16, 3, 32, 32, 3, 3);
+        benchmark::DoNotOptimize(out.data());
+    }
+}
+BENCHMARK(BM_branched_sig_kernel_poly_backprop_float32)->Unit(benchmark::kMicrosecond);
+
 // =========================================================================
 // Branched sig / backprop / combine / combine_backprop
 // =========================================================================

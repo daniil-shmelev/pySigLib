@@ -22,6 +22,7 @@ from .jax_api import (
     sig_coef, branched_sig_coef, sig_kernel, sig_kernel_gram,
     branched_sig_kernel, branched_sig_kernel_gram,
     sig_score, expected_sig_score, sig_mmd,
+    branched_sig_score, expected_branched_sig_score, branched_sig_mmd,
     branched_sig, branched_sig_combine,
     branched_sig_to_log_sig, branched_log_sig,
 )
@@ -143,6 +144,7 @@ class BranchedLogSigWindowStream(_BranchedLogSigWindowStream):
 
 
 __all__ = [
+    "branched_sig_score", "expected_branched_sig_score", "branched_sig_mmd",
     "sig", "sig_combine", "transform_path",
     "sig_to_log_sig", "logsig_to_sig", "log_sig", "log_sig_combine",
     "sig_join", "log_sig_join", "linear_sig",

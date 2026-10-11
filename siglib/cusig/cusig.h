@@ -36,6 +36,7 @@
 #endif
 
 extern "C" {
+
 	/**
 	* @brief Returns the CUDA error message for the current thread.
 	*/
@@ -154,6 +155,25 @@ extern "C" {
 	[[nodiscard]] CUSIG_API int sig_kernel_poly_backprop_cuda_f(const float* gram, float* gram_derivs, const float* output_derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
 	/** @copydoc sig_kernel_poly_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int sig_kernel_poly_backprop_cuda_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
+	/** @} */
+
+	/** @defgroup branched_sig_kernel_poly_cuda_functions Polynomial branched kernel functions
+	* @{
+	*/
+
+	/** Polynomial BCK kernel. order is the integrand degree (0..64), q=order+1.
+	* Optional state stores K_0,...,K_(depth-1), shape (batch,depth,(length1-1)*q,(length2-1)*q) for depth>1.
+	* return_grid outputs original path vertices; reverse accepts scalar or full-grid seeds. */
+	[[nodiscard]] CUSIG_API int branched_sig_kernel_poly_cuda_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t order, bool return_grid = false) noexcept;
+	/** @copydoc branched_sig_kernel_poly_cuda_f */
+	[[nodiscard]] CUSIG_API int branched_sig_kernel_poly_cuda_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t order, bool return_grid = false) noexcept;
+
+	/** Backpropagates through the polynomial branched kernel. Required Gram,
+	 * Gram-derivative and output-derivative pointers must be non-null for nonempty
+	 * batches with nonempty Gram matrices. Null state requests recomputation. */
+	[[nodiscard]] CUSIG_API int branched_sig_kernel_poly_backprop_cuda_f(const float* gram, float* grad, const float* derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t order, bool return_grid = false) noexcept;
+	/** @copydoc branched_sig_kernel_poly_backprop_cuda_f */
+	[[nodiscard]] CUSIG_API int branched_sig_kernel_poly_backprop_cuda_d(const double* gram, double* grad, const double* derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t order, bool return_grid = false) noexcept;
 	/** @} */
 
 	/** @defgroup branched_sig_kernel_cuda_functions Branched sig kernel CUDA functions

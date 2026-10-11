@@ -53,6 +53,8 @@ CUSIG_SIG_KERNEL_BACKPROP = None
 CUSIG_SIG_KERNEL_POLY = None
 CUSIG_SIG_KERNEL_POLY_BACKPROP = None
 CUSIG_BRANCHED_SIG_KERNEL = None
+CUSIG_BRANCHED_SIG_KERNEL_POLY = None
+CUSIG_BRANCHED_SIG_KERNEL_POLY_BACKPROP = None
 CUSIG_BRANCHED_SIG_KERNEL_BACKPROP = None
 CUSIG_SIGNATURE = None
 CUSIG_SIG_BACKPROP = None
@@ -114,6 +116,15 @@ if BUILT_WITH_CUDA:
     CUSIG_SIG_KERNEL_BACKPROP = {
         "float32": CUSIG.sig_kernel_backprop_cuda_f,
         "float64": CUSIG.sig_kernel_backprop_cuda_d
+    }
+
+    CUSIG_BRANCHED_SIG_KERNEL_POLY = {
+        "float32": CUSIG.branched_sig_kernel_poly_cuda_f,
+        "float64": CUSIG.branched_sig_kernel_poly_cuda_d,
+    }
+    CUSIG_BRANCHED_SIG_KERNEL_POLY_BACKPROP = {
+        "float32": CUSIG.branched_sig_kernel_poly_backprop_cuda_f,
+        "float64": CUSIG.branched_sig_kernel_poly_backprop_cuda_d,
     }
 
     CUSIG_BRANCHED_SIG_KERNEL = {
@@ -334,6 +345,15 @@ CPSIG_SIG_KERNEL_POLY_BACKPROP = {
 CPSIG_SIG_KERNEL_BACKPROP = {
     "float32": CPSIG.sig_kernel_backprop_f,
     "float64": CPSIG.sig_kernel_backprop_d
+}
+
+CPSIG_BRANCHED_SIG_KERNEL_POLY = {
+    "float32": CPSIG.branched_sig_kernel_poly_f,
+    "float64": CPSIG.branched_sig_kernel_poly_d,
+}
+CPSIG_BRANCHED_SIG_KERNEL_POLY_BACKPROP = {
+    "float32": CPSIG.branched_sig_kernel_poly_backprop_f,
+    "float64": CPSIG.branched_sig_kernel_poly_backprop_d,
 }
 
 CPSIG_BRANCHED_SIG_KERNEL = {

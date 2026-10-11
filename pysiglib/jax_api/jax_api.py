@@ -60,6 +60,7 @@ from ..sig_coef import sig_coef as sig_coef_forward
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
 from ..sig_kernel import _parse_sig_kernel_method
+from ..branched_sig_kernel import _parse_branched_kernel_method
 from ..branched_sig_kernel import branched_sig_kernel as branched_sig_kernel_forward
 from ..branched_sig_kernel import branched_sig_kernel_gram as branched_sig_kernel_gram_forward
 
@@ -74,6 +75,12 @@ def _ensure_3d(t):
 from ..sig_metrics import sig_score as sig_score_forward
 from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
+from ..branched_sig_metrics import (
+    _branched_sig_score, _branched_sig_mmd,
+    branched_sig_score as branched_sig_score_forward,
+    expected_branched_sig_score as expected_branched_sig_score_forward,
+    branched_sig_mmd as branched_sig_mmd_forward,
+)
 from ..words import word_to_idx
 from ..param_checks import check_type, check_non_neg, check_word_or_word_list, parse_dyadic_order, check_n_jobs
 from ..sig_length import sig_length as _sig_length, log_sig_length as _log_sig_length
@@ -93,6 +100,8 @@ from ._ffi import (
     sig_kernel_pde_ffi_call,
     sig_kernel_pde_backprop_ffi_call,
     sig_kernel_poly_pde_ffi_call,
+    branched_sig_kernel_poly_pde_ffi_call,
+    branched_sig_kernel_poly_pde_backprop_ffi_call,
     sig_kernel_poly_pde_backprop_ffi_call,
     branched_sig_kernel_pde_ffi_call,
     branched_sig_kernel_pde_backprop_ffi_call,
@@ -1006,6 +1015,31 @@ def _sig_kernel_poly_pde_bwd(
 _sig_kernel_poly_pde.defvjp(
     _sig_kernel_poly_pde_fwd, _sig_kernel_poly_pde_bwd)
 
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5))
+def _branched_sig_kernel_poly_pde(gram, dimension, depth, order, return_grid, n_jobs):
+    result, _ = branched_sig_kernel_poly_pde_ffi_call(
+        gram, dimension, depth, order, return_grid, n_jobs)
+    return result
+
+
+def _branched_sig_kernel_poly_pde_fwd(gram, dimension, depth, order, return_grid, n_jobs):
+    result, state = branched_sig_kernel_poly_pde_ffi_call(
+        gram, dimension, depth, order, return_grid, n_jobs)
+    return result, (gram, state)
+
+
+def _branched_sig_kernel_poly_pde_bwd(
+    dimension, depth, order, return_grid, n_jobs, residual, cotangent
+):
+    gram, state = residual
+    grad_gram = branched_sig_kernel_poly_pde_backprop_ffi_call(
+        gram, cotangent, state, dimension, depth, order, return_grid, n_jobs)
+    return (grad_gram,)
+
+
+_branched_sig_kernel_poly_pde.defvjp(
+    _branched_sig_kernel_poly_pde_fwd, _branched_sig_kernel_poly_pde_bwd)
+
 
 # ---------------------------------------------------------------------------
 # sig_kernel (public API composing static kernel + PDE solve)
@@ -1241,8 +1275,10 @@ def branched_sig_kernel(
     path1,
     path2,
     depth: int,
-    dyadic_order,
+    dyadic_order=None,
     *,
+    method="finite_difference",
+    order=None,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -1287,12 +1323,15 @@ def branched_sig_kernel(
         gram = static_kernel(path1, path2)
 
     dimension = path1.shape[-1]
-    do1, do2 = parse_dyadic_order(dyadic_order)
-    result = _branched_sig_kernel_pde(gram, dimension, depth, do1, do2, return_grid, n_jobs)
+    do1, do2 = _parse_branched_kernel_method(method, dyadic_order, order, return_grid)
+    if method == "polynomial":
+        result = _branched_sig_kernel_poly_pde(gram, dimension, depth, order, return_grid, n_jobs)
+    else:
+        result = _branched_sig_kernel_pde(gram, dimension, depth, do1, do2, return_grid, n_jobs)
 
     if normalize:
-        k1 = branched_sig_kernel(path1, path1, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
-        k2 = branched_sig_kernel(path2, path2, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        k1 = branched_sig_kernel(path1, path1, depth, dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs)
+        k2 = branched_sig_kernel(path2, path2, depth, dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs)
         result = result / jnp.sqrt(jnp.clip(k1 * k2, 1e-30))
 
     if squeeze:
@@ -1307,8 +1346,10 @@ def branched_sig_kernel_gram(
     path1,
     path2,
     depth: int,
-    dyadic_order,
+    dyadic_order=None,
     *,
+    method="finite_difference",
+    order=None,
     static_kernel=None,
     time_aug: bool = False,
     lead_lag: bool = False,
@@ -1334,6 +1375,7 @@ def branched_sig_kernel_gram(
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
 
+    _parse_branched_kernel_method(method, dyadic_order, order, return_grid)
     batch_shape_1 = tuple(path1.shape[:-2])
     batch_shape_2 = tuple(path2.shape[:-2])
 
@@ -1345,17 +1387,60 @@ def branched_sig_kernel_gram(
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
-    def _row(p1_single):
-        p1_batch = jnp.broadcast_to(p1_single[None], (batch2,) + p1_single.shape)
-        return branched_sig_kernel(
-            p1_batch, path2, depth, dyadic_order, static_kernel=static_kernel,
-            n_jobs=n_jobs, return_grid=return_grid)
+    if max_batch == -1 or max_batch >= batch2:
+        def _row(p1_single):
+            p1_batch = jnp.broadcast_to(p1_single[None], (batch2,) + p1_single.shape)
+            return branched_sig_kernel(p1_batch, path2, depth=depth, dyadic_order=dyadic_order, method=method, order=order,
+                              static_kernel=static_kernel, n_jobs=n_jobs,
+                              return_grid=return_grid)
+    else:
+        padding = (-batch2) % max_batch
+        padded_batch2 = batch2 + padding
+        path2_chunks = jnp.pad(
+            path2, ((0, padding), (0, 0), (0, 0)), mode="edge")
+        path2_chunks = path2_chunks.reshape(
+            (-1, max_batch) + path2.shape[1:])
+
+        def _row(p1_single):
+            def _chunk(p2_chunk):
+                p1_batch = jnp.broadcast_to(
+                    p1_single[None], (max_batch,) + p1_single.shape)
+                return branched_sig_kernel(
+                    p1_batch, p2_chunk, depth=depth, dyadic_order=dyadic_order, method=method, order=order,
+                    static_kernel=static_kernel, n_jobs=n_jobs,
+                    return_grid=return_grid)
+
+            row = jax.lax.map(_chunk, path2_chunks)
+            row = row.reshape((padded_batch2,) + row.shape[2:])
+            return row[:batch2]
 
     res = jax.lax.map(_row, path1)
 
     if normalize:
-        d1 = branched_sig_kernel(path1, path1, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
-        d2 = branched_sig_kernel(path2, path2, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        diagonals = []
+        for path in (path1, path2):
+            batch = path.shape[0]
+            if max_batch == -1 or max_batch >= batch:
+                diagonal = branched_sig_kernel(
+                    path, path, depth=depth, dyadic_order=dyadic_order, method=method, order=order,
+                    static_kernel=static_kernel, n_jobs=n_jobs)
+            else:
+                padding = (-batch) % max_batch
+                padded_batch = batch + padding
+                path_chunks = jnp.pad(
+                    path, ((0, padding), (0, 0), (0, 0)), mode="edge")
+                path_chunks = path_chunks.reshape(
+                    (-1, max_batch) + path.shape[1:])
+
+                def _diagonal(chunk):
+                    return branched_sig_kernel(
+                        chunk, chunk, depth=depth, dyadic_order=dyadic_order, method=method, order=order,
+                        static_kernel=static_kernel, n_jobs=n_jobs)
+
+                diagonal = jax.lax.map(_diagonal, path_chunks)
+                diagonal = diagonal.reshape(padded_batch)[:batch]
+            diagonals.append(diagonal)
+        d1, d2 = diagonals
         res = res / jnp.sqrt(jnp.clip(d1[:, None] * d2[None, :], 1e-30))
 
     out_shape = batch_shape_1 + batch_shape_2
@@ -1485,6 +1570,56 @@ def sig_mmd(
 
 
 sig_mmd.__doc__ = sig_mmd_forward.__doc__
+
+
+def branched_sig_score(
+    sample1, sample2, depth, dyadic_order=None, *,
+    method="finite_difference", order=None,
+    lam=1.0,
+    static_kernel=None, time_aug=False, lead_lag=False, end_time=1.0,
+    n_jobs=1, max_batch=-1,
+):
+    return _branched_sig_score(
+        branched_sig_kernel_gram, jnp.asarray, sample1, sample2, depth,
+        dyadic_order=dyadic_order, method=method, order=order, lam=lam,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
+
+
+branched_sig_score.__doc__ = branched_sig_score_forward.__doc__
+
+
+def expected_branched_sig_score(
+    sample1, sample2, depth, dyadic_order=None, *,
+    method="finite_difference", order=None,
+    lam=1.0,
+    static_kernel=None, time_aug=False, lead_lag=False, end_time=1.0,
+    n_jobs=1, max_batch=-1,
+):
+    return branched_sig_score(
+        sample1, sample2, depth, dyadic_order, method=method, order=order, lam=lam,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch).mean().reshape(1)
+
+
+expected_branched_sig_score.__doc__ = expected_branched_sig_score_forward.__doc__
+
+
+def branched_sig_mmd(
+    sample1, sample2, depth, dyadic_order=None, *,
+    method="finite_difference", order=None,
+    static_kernel=None, time_aug=False, lead_lag=False, end_time=1.0,
+    n_jobs=1, max_batch=-1,
+):
+    return _branched_sig_mmd(
+        branched_sig_kernel_gram, jnp.asarray, sample1, sample2, depth,
+        dyadic_order=dyadic_order, method=method, order=order,
+        static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
+        end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
+
+
+branched_sig_mmd.__doc__ = branched_sig_mmd_forward.__doc__
+
 
 
 # ---------------------------------------------------------------------------

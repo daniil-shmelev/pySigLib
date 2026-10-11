@@ -23,6 +23,8 @@ import torch
 from .data_handlers import MultiplePathInputHandler, ScalarOutputHandler, GridOutputHandler
 from .dtypes import (
     CPSIG_BRANCHED_SIG_KERNEL,
+    CPSIG_BRANCHED_SIG_KERNEL_POLY,
+    CUSIG_BRANCHED_SIG_KERNEL_POLY,
     CUSIG_BRANCHED_SIG_KERNEL,
     DTYPES,
 )
@@ -32,19 +34,37 @@ from .param_checks import (
     check_n_jobs,
     check_type,
     dyadic_grid_length,
-    parse_dyadic_order,
 )
-from .sig_kernel import _ensure_3d, _safe_normalize
+from .sig_kernel import _ensure_3d, _safe_normalize, _parse_sig_kernel_method
 from .static_kernels import Context, LinearKernel, StaticKernel
 from .transform_path import transform_path
+
+
+def _parse_branched_kernel_method(method, dyadic_order, order, return_grid=False):
+    if method != "polynomial":
+        return _parse_sig_kernel_method(method, dyadic_order, order, return_grid)
+    if dyadic_order is not None:
+        raise ValueError("dyadic_order is not supported when method='polynomial'")
+    if type(order) is not int:
+        raise TypeError("order must be an int when method='polynomial'")
+    if not 0 <= order <= 64:
+        raise ValueError("order must be between 0 and 64")
+    return 0, 0
+
+
+def _branched_poly_state_shape(batch_size, length1, length2, depth, order):
+    return (batch_size, depth if depth > 1 else 0,
+            (length1 - 1) * (order + 1), (length2 - 1) * (order + 1))
 
 
 def branched_sig_kernel(
         path1: Union[np.ndarray, torch.Tensor],
         path2: Union[np.ndarray, torch.Tensor],
         depth: int,
-        dyadic_order: Union[int, tuple],
+        dyadic_order: Optional[Union[int, tuple]] = None,
         *,
+        method: str = "finite_difference",
+        order: Optional[int] = None,
         static_kernel: Optional[StaticKernel] = None,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -52,6 +72,7 @@ def branched_sig_kernel(
         n_jobs: int = 1,
         return_grid: bool = False,
         normalize: bool = False,
+        _return_state: bool = False,
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes a single branched signature kernel or a batch of branched
@@ -70,8 +91,10 @@ def branched_sig_kernel(
     :type path2: numpy.ndarray | torch.Tensor
     :param depth: Forest depth truncation for the branched kernel.
     :type depth: int
-    :param dyadic_order: Dyadic refinement order, or a pair of orders.
-    :type dyadic_order: int | tuple
+    :param method: ``"finite_difference"`` or ``"polynomial"``.
+    :param order: Polynomial integrand degree per coordinate, from 0 to 64; uses ``order + 1`` Gauss nodes. Required for the polynomial method.
+    :param dyadic_order: Refinement order or pair, required only for finite differences. Unsupported for the polynomial method.
+    :type dyadic_order: int | tuple | None
     :param static_kernel: Static kernel. If ``None``, the linear kernel is used.
     :type static_kernel: None | pysiglib.StaticKernel
     :param time_aug: Whether to time augment the paths.
@@ -82,7 +105,7 @@ def branched_sig_kernel(
     :type end_time: float
     :param n_jobs: Number of CPU worker threads.
     :type n_jobs: int
-    :param return_grid: If ``True``, returns the final-depth grid.
+    :param return_grid: Return the final-depth grid; polynomial grids use the original transformed path vertices.
     :type return_grid: bool
     :param normalize: If ``True``, normalizes by
         ``sqrt(K(x, x) * K(y, y))``. Cannot be used with ``return_grid=True``.
@@ -98,7 +121,9 @@ def branched_sig_kernel(
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
 
-    dyadic_order_1, dyadic_order_2 = parse_dyadic_order(dyadic_order)
+    dyadic_order_1, dyadic_order_2 = _parse_branched_kernel_method(method, dyadic_order, order, return_grid)
+    if _return_state and (method != "polynomial" or normalize):
+        raise ValueError("_return_state requires polynomial method without normalization")
 
     if time_aug or lead_lag:
         path1 = transform_path(path1, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
@@ -113,8 +138,10 @@ def branched_sig_kernel(
         dyadic_len_2 = dyadic_grid_length(data.length[1], dyadic_order_2)
         result = GridOutputHandler(dyadic_len_1, dyadic_len_2, data)
 
+    state = torch.as_tensor(data.path[0]).new_empty(_branched_poly_state_shape(
+        data.batch_size, *data.length, depth, order)) if _return_state else None
     if data.batch_size == 0:
-        return result.data
+        return (result.data, state) if _return_state else result.data
 
     torch_path1 = _ensure_3d(torch.as_tensor(data.path[0]))
     torch_path2 = _ensure_3d(torch.as_tensor(data.path[1]))
@@ -128,7 +155,13 @@ def branched_sig_kernel(
     gram = static_kernel(ctx, torch_path1, torch_path2)
     gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
 
-    if data.device == "cpu":
+    if method == "polynomial":
+        state_ptr = None if state is None or state.numel() == 0 else cast(state.data_ptr(), POINTER(DTYPES[data.dtype]))
+        functions = CPSIG_BRANCHED_SIG_KERNEL_POLY if data.device == "cpu" else CUSIG_BRANCHED_SIG_KERNEL_POLY
+        args = (gram_ptr, result.data_ptr, state_ptr, data.batch_size, data.dimension,
+                *data.length, depth, order, return_grid)
+        err_code = functions[data.dtype](*args, n_jobs) if data.device == "cpu" else functions[data.dtype](*args)
+    elif data.device == "cpu":
         err_code = CPSIG_BRANCHED_SIG_KERNEL[data.dtype](
             gram_ptr, result.data_ptr, data.batch_size, data.dimension,
             data.length[0], data.length[1], depth,
@@ -158,19 +191,21 @@ def branched_sig_kernel(
         )
 
     if normalize:
-        k1 = branched_sig_kernel(path1, path1, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
-        k2 = branched_sig_kernel(path2, path2, depth, dyadic_order, static_kernel=static_kernel, n_jobs=n_jobs)
+        k1 = branched_sig_kernel(path1, path1, depth, dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs)
+        k2 = branched_sig_kernel(path2, path2, depth, dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs)
         result.data = _safe_normalize(result.data, k1, k2, "branched_sig_kernel(normalize=True)")
 
-    return result.data
+    return (result.data, state) if _return_state else result.data
 
 
 def branched_sig_kernel_gram(
         path1: Union[np.ndarray, torch.Tensor],
         path2: Union[np.ndarray, torch.Tensor],
         depth: int,
-        dyadic_order: Union[int, tuple],
+        dyadic_order: Optional[Union[int, tuple]] = None,
         *,
+        method: str = "finite_difference",
+        order: Optional[int] = None,
         static_kernel: Optional[StaticKernel] = None,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -189,8 +224,10 @@ def branched_sig_kernel_gram(
     :type path2: numpy.ndarray | torch.Tensor
     :param depth: Forest depth truncation for the branched kernel.
     :type depth: int
-    :param dyadic_order: Dyadic refinement order, or a pair of orders.
-    :type dyadic_order: int | tuple
+    :param method: ``"finite_difference"`` or ``"polynomial"``.
+    :param order: Polynomial integrand degree per coordinate, from 0 to 64; uses ``order + 1`` Gauss nodes. Required for the polynomial method.
+    :param dyadic_order: Refinement order or pair, required only for finite differences. Unsupported for the polynomial method.
+    :type dyadic_order: int | tuple | None
     :param max_batch: Maximum side length of pair chunks. ``-1`` uses all pairs.
     :type max_batch: int
     :param return_grid: If ``True``, returns final-depth grids per pair.
@@ -225,7 +262,7 @@ def branched_sig_kernel_gram(
     batch1 = path1.shape[0]
     batch2 = path2.shape[0]
 
-    do1, do2 = parse_dyadic_order(dyadic_order)
+    do1, do2 = _parse_branched_kernel_method(method, dyadic_order, order, return_grid)
 
     if return_grid:
         gl1 = dyadic_grid_length(data.length[0], do1)
@@ -263,7 +300,7 @@ def branched_sig_kernel_gram(
         cj = idx_j[start:end]
 
         k = branched_sig_kernel(
-            src1[ci], src2[cj], depth, dyadic_order,
+            src1[ci], src2[cj], depth, dyadic_order, method=method, order=order,
             static_kernel=static_kernel, time_aug=time_aug,
             lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs,
             return_grid=return_grid)
@@ -278,10 +315,10 @@ def branched_sig_kernel_gram(
                 res[cj[off], ci[off]] = k_mirror
 
     if normalize:
-        d1 = branched_sig_kernel(path1, path1, depth, dyadic_order, static_kernel=static_kernel,
+        d1 = branched_sig_kernel(path1, path1, depth, dyadic_order, method=method, order=order, static_kernel=static_kernel,
                                  time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         d2 = d1 if symmetric else branched_sig_kernel(
-            path2, path2, depth, dyadic_order, static_kernel=static_kernel,
+            path2, path2, depth, dyadic_order, method=method, order=order, static_kernel=static_kernel,
             time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
         res = _safe_normalize(res, d1.unsqueeze(1), d2.unsqueeze(0), "branched_sig_kernel_gram(normalize=True)")
 
