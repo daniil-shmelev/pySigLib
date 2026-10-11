@@ -75,6 +75,7 @@ def _ensure_3d(t):
 from ..sig_metrics import sig_score as sig_score_forward
 from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
+from ..sig_metrics import _off_diagonal_sum
 from ..branched_sig_metrics import (
     _branched_sig_score, _branched_sig_mmd,
     branched_sig_score as branched_sig_score_forward,
@@ -1491,7 +1492,7 @@ def sig_score(
     xx = sig_kernel_gram(sample, sample, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
     xy = sig_kernel_gram(sample, y, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
 
-    xx_sum = (jnp.sum(xx) - jnp.trace(xx)) / (B * (B - 1.))
+    xx_sum = _off_diagonal_sum(xx) / (B * (B - 1.))
     xy_sum = jnp.sum(xy, axis=0) * (2. / B)
 
     res = lam * xx_sum - xy_sum
@@ -1562,9 +1563,9 @@ def sig_mmd(
     xy = sig_kernel_gram(sample1, sample2, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
     yy = sig_kernel_gram(sample2, sample2, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, n_jobs=n_jobs, max_batch=max_batch)
 
-    xx_sum = (jnp.sum(xx) - jnp.trace(xx)) / (m * (m - 1))
+    xx_sum = _off_diagonal_sum(xx) / (m * (m - 1))
     xy_sum = 2. * jnp.mean(xy)
-    yy_sum = (jnp.sum(yy) - jnp.trace(yy)) / (n * (n - 1))
+    yy_sum = _off_diagonal_sum(yy) / (n * (n - 1))
 
     return xx_sum - xy_sum + yy_sum
 

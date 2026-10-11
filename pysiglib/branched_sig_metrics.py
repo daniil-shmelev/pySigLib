@@ -2,9 +2,9 @@
 """Depth-truncated branched kernel scores and unbiased squared MMD."""
 from functools import partial
 import numpy as np
-import torch
 from .branched_sig_kernel import branched_sig_kernel_gram
 from .sig_kernel import _ensure_3d
+from .sig_metrics import _as_tensor_safe, _off_diagonal_sum
 
 
 def _branched_sig_score(kernel_gram, asarray, sample1, sample2, depth, lam=1.0, **kwargs):
@@ -18,7 +18,7 @@ def _branched_sig_score(kernel_gram, asarray, sample1, sample2, depth, lam=1.0, 
         raise ValueError("branched_sig_score requires a nonempty second sample")
     kernel = partial(kernel_gram, depth=depth, **kwargs)
     xx, xy = kernel(sample1, sample1), kernel(sample1, sample2)
-    xx_mean = (xx.sum() - xx.diagonal().sum()) / (m * (m - 1))
+    xx_mean = _off_diagonal_sum(xx) / (m * (m - 1))
     result = lam * xx_mean - 2 * xy.mean(axis=0)
     return result.reshape(target_shape) if target_shape else result.reshape(1)
 
@@ -30,8 +30,8 @@ def _branched_sig_mmd(kernel_gram, asarray, sample1, sample2, depth, **kwargs):
         raise ValueError("branched_sig_mmd requires at least two paths in each sample")
     kernel = partial(kernel_gram, depth=depth, **kwargs)
     xx, xy, yy = kernel(sample1, sample1), kernel(sample1, sample2), kernel(sample2, sample2)
-    xx_mean = (xx.sum() - xx.diagonal().sum()) / (m * (m - 1))
-    yy_mean = (yy.sum() - yy.diagonal().sum()) / (n * (n - 1))
+    xx_mean = _off_diagonal_sum(xx) / (m * (m - 1))
+    yy_mean = _off_diagonal_sum(yy) / (n * (n - 1))
     return xx_mean - 2 * xy.mean() + yy_mean
 
 
@@ -50,7 +50,7 @@ def branched_sig_score(
     The first sample must contain at least two paths.
     """
     result = _branched_sig_score(
-        branched_sig_kernel_gram, torch.as_tensor, sample1, sample2, depth,
+        branched_sig_kernel_gram, _as_tensor_safe, sample1, sample2, depth,
         dyadic_order=dyadic_order, method=method, order=order, lam=lam,
         static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
         end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
@@ -91,7 +91,7 @@ def branched_sig_mmd(
     Both samples must contain at least two paths; the unbiased estimate can be negative.
     """
     result = _branched_sig_mmd(
-        branched_sig_kernel_gram, torch.as_tensor, sample1, sample2, depth,
+        branched_sig_kernel_gram, _as_tensor_safe, sample1, sample2, depth,
         dyadic_order=dyadic_order, method=method, order=order,
         static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
         end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
