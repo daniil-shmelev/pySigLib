@@ -40,6 +40,7 @@ from ..branched_sig_kernel_backprop import branched_sig_kernel_gram_backprop
 from ..sig_metrics import sig_score as sig_score_forward
 from ..sig_metrics import expected_sig_score as expected_sig_score_forward
 from ..sig_metrics import sig_mmd as sig_mmd_forward
+from ..sig_metrics import _as_tensor_safe, _off_diagonal_sum
 from ..branched_sig_metrics import (
     _branched_sig_score, _branched_sig_mmd,
     branched_sig_score as branched_sig_score_forward,
@@ -696,7 +697,7 @@ def sig_score(
     xx = sig_kernel_gram(sample, sample, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
     xy = sig_kernel_gram(sample, y, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
-    xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
+    xx_sum = _off_diagonal_sum(xx) / (B * (B - 1.))
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
 
     res = lam * xx_sum - xy_sum
@@ -754,9 +755,9 @@ def sig_mmd(
     xy = sig_kernel_gram(sample1, sample2, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
     yy = sig_kernel_gram(sample2, sample2, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
-    xx_sum = (torch.sum(xx) - torch.trace(xx)) / (m * (m - 1))
+    xx_sum = _off_diagonal_sum(xx) / (m * (m - 1))
     xy_sum = 2. * torch.mean(xy)
-    yy_sum = (torch.sum(yy) - torch.trace(yy)) / (n * (n - 1))
+    yy_sum = _off_diagonal_sum(yy) / (n * (n - 1))
 
     return xx_sum - xy_sum + yy_sum
 
@@ -771,7 +772,7 @@ def branched_sig_score(
     n_jobs=1, max_batch=-1,
 ):
     return _branched_sig_score(
-        branched_sig_kernel_gram, torch.as_tensor, sample1, sample2, depth,
+        branched_sig_kernel_gram, _as_tensor_safe, sample1, sample2, depth,
         dyadic_order=dyadic_order, method=method, order=order, lam=lam,
         static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
         end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)
@@ -803,7 +804,7 @@ def branched_sig_mmd(
     n_jobs=1, max_batch=-1,
 ):
     return _branched_sig_mmd(
-        branched_sig_kernel_gram, torch.as_tensor, sample1, sample2, depth,
+        branched_sig_kernel_gram, _as_tensor_safe, sample1, sample2, depth,
         dyadic_order=dyadic_order, method=method, order=order,
         static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag,
         end_time=end_time, n_jobs=n_jobs, max_batch=max_batch)

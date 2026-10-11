@@ -2,9 +2,22 @@ from typing import Union, Optional
 import numpy as np
 import torch
 
-from .param_checks import check_type_multiple
+from .param_checks import check_type_multiple, ensure_own_contiguous_storage
 from .static_kernels import StaticKernel
 from .sig_kernel import sig_kernel_gram, _ensure_3d
+
+
+def _as_tensor_safe(data):
+    if isinstance(data, np.ndarray):
+        data = ensure_own_contiguous_storage(data)
+    return torch.as_tensor(data)
+
+
+def _off_diagonal_sum(matrix):
+    size = matrix.shape[0]
+    # Place each remaining diagonal entry at the end of a row, then exclude it.
+    return matrix.reshape(-1)[1:].reshape(size - 1, size + 1)[:, :-1].sum()
+
 
 def sig_score(
         sample : Union[np.ndarray, torch.Tensor],
@@ -132,8 +145,8 @@ def sig_score(
     check_type_multiple(y, "y", (np.ndarray, torch.Tensor))
 
     is_numpy = isinstance(sample, np.ndarray)
-    sample = torch.as_tensor(sample)
-    y = torch.as_tensor(y)
+    sample = _as_tensor_safe(sample)
+    y = _as_tensor_safe(y)
 
     batch_shape_y = tuple(y.shape[:-2])
     sample = _ensure_3d(sample)
@@ -146,7 +159,7 @@ def sig_score(
     xx = sig_kernel_gram(sample, sample, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
     xy = sig_kernel_gram(sample, y, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
-    xx_sum = (torch.sum(xx) - torch.trace(xx)) / (B * (B - 1.))
+    xx_sum = _off_diagonal_sum(xx) / (B * (B - 1.))
     xy_sum = torch.sum(xy, dim=0) * (2. / B)
 
     res = lam * xx_sum - xy_sum
@@ -379,8 +392,8 @@ def sig_mmd(
 
     """
     is_numpy = isinstance(sample1, np.ndarray)
-    sample1 = torch.as_tensor(sample1)
-    sample2 = torch.as_tensor(sample2)
+    sample1 = _as_tensor_safe(sample1)
+    sample2 = _as_tensor_safe(sample2)
 
     sample1 = _ensure_3d(sample1)
     sample2 = _ensure_3d(sample2)
@@ -396,9 +409,9 @@ def sig_mmd(
     xy = sig_kernel_gram(sample1, sample2, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
     yy = sig_kernel_gram(sample2, sample2, dyadic_order=dyadic_order, method=method, order=order, static_kernel=static_kernel, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs, max_batch=max_batch, return_grid=False)
 
-    xx_sum = (torch.sum(xx) - torch.trace(xx)) / (m * (m - 1))
+    xx_sum = _off_diagonal_sum(xx) / (m * (m - 1))
     xy_sum = 2. * torch.mean(xy)
-    yy_sum = (torch.sum(yy) - torch.trace(yy)) / (n * (n - 1))
+    yy_sum = _off_diagonal_sum(yy) / (n * (n - 1))
 
     res = xx_sum - xy_sum + yy_sum
 
