@@ -17,6 +17,7 @@ import pytest
 import numpy as np
 import torch
 import itertools
+from functools import cache
 
 import kauri
 import kauri.bck
@@ -127,6 +128,35 @@ def _pure_branched_product(a, b, d, N, planar=False):
 
 
 def branched_hopf_exp_reference(local_log, d, N, planar=False):
+    if not planar:
+        # Keep the values on forests explicitly: powers of an infinitesimal
+        # character are not multiplicative. Use kauri coproducts, independently
+        # of the native signature/combine implementation.
+        trees = [kauri.Tree(t) for t in pysiglib.trees(d, N)]
+        generator = {t.sorted_list_repr(): value
+                     for t, value in zip(trees, local_log)}
+
+        @cache
+        def power(k, forest):
+            if k == 1:
+                if len(forest.tree_list) != 1:
+                    return 0.0
+                return generator[forest.tree_list[0].sorted_list_repr()]
+            coproduct = kauri.bck.coproduct(kauri.Tree(None))
+            for tree in forest.tree_list:
+                coproduct = coproduct * kauri.bck.coproduct(tree)
+            return sum(c * power(k - 1, left) * power(1, right)
+                       for c, left, right in coproduct)
+
+        out = np.zeros_like(local_log)
+        out[0] = 1.0
+        inverse_factorial = 1.0
+        for k in range(1, N + 1):
+            inverse_factorial /= k
+            for i, tree in enumerate(trees[1:], start=1):
+                out[i] += inverse_factorial * power(k, tree.as_forest())
+        return out
+
     out = np.zeros_like(local_log)
     out[0] = 1.0
     power = local_log.copy()
