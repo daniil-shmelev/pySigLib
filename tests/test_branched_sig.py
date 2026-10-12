@@ -299,6 +299,24 @@ def test_branched_sig_trivial_path():
     assert np.allclose(bsig, 0.0, atol=1e-14)
 
 
+@pytest.mark.parametrize("correction", [None, np.zeros(1)])
+def test_branched_sig_coefficients_with_zero_correction(correction):
+    pysiglib.prepare_branched_sig(1, 3)
+    path = np.array([[0.0], [1.0]])
+    actual = pysiglib.branched_sig(path, 3, correction=correction)
+    np.testing.assert_allclose(actual, [1.0, 1 / 2, 1 / 3, 1 / 6], atol=1e-14, rtol=0)
+
+
+@pytest.mark.parametrize("correction", [None, np.zeros(1)])
+def test_planar_branched_sig_coefficients_with_zero_correction(correction):
+    pysiglib.prepare_branched_sig(1, 3, planar=True)
+    path = np.array([[0.0], [1.0]])
+    actual = pysiglib.branched_sig(path, 3, planar=True, correction=correction)
+    np.testing.assert_allclose(
+        actual, [1.0, 1 / 2, 1 / 2, 1 / 6, 1 / 3, 1 / 6, 1 / 6, 1 / 6],
+        atol=1e-14, rtol=0)
+
+
 def test_branched_sig_empty_correction_matches_default():
     d, N = 2, 4
     pysiglib.prepare_branched_sig(d, N)
