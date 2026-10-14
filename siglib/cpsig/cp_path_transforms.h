@@ -13,12 +13,23 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_PATH_TRANSFORMS_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_PATH_TRANSFORMS_H_
+#undef CPSIG_CP_PATH_TRANSFORMS_H_
+#else
+#define CPSIG_CP_PATH_TRANSFORMS_H_
+#endif
 #include "cppch.h"
 #include "cpsig.h"
 #include "macros.h"
 #include "cp_path.h"
 #include "multithreading.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 template<std::floating_point T>
 void transform_path_(
@@ -39,6 +50,16 @@ void transform_path_(
 
 	if (!(time_aug || lead_lag)) {
 		const uint64_t path_size = dimension * length;
+		if (path_size == 0 || data_in == data_out)
+			return;
+		const uintptr_t input_address = reinterpret_cast<uintptr_t>(data_in);
+		const uintptr_t output_address = reinterpret_cast<uintptr_t>(data_out);
+		const uintptr_t distance = input_address < output_address
+			? output_address - input_address : input_address - output_address;
+		if (distance >= path_size * sizeof(T)) {
+			std::memcpy(data_out, data_in, path_size * sizeof(T));
+			return;
+		}
 		T* out_ptr = data_out;
 		const T* in_ptr = data_in;
 		for (uint64_t i = 0; i < path_size; ++i)
@@ -222,3 +243,8 @@ void batch_transform_path_backprop_(
 		make_batch(derivs, flat_path_length), make_batch(data_out, result_length));
 	return;
 }
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif

@@ -15,31 +15,38 @@
 
 #include "cppch.h"
 #include "cpsig.h"
-#include "cp_polynomial_sig_kernel.h"
 #include "macros.h"
+#include "cp_dispatch.h"
+#include "cache_lifecycle/cp_bch_cache.h"
+#include "cache_lifecycle/cp_poly_cache.h"
+#include "cache_lifecycle/cp_branched_cache.h"
+#include "cache_lifecycle/cp_branched_log_cache.h"
+#include "cache_lifecycle/cp_branched_sig_coef_cache.h"
 
 
-void clear_sig_poly_table_cache() {
-	clear_sig_poly_table_cache_<float>();
-	clear_sig_poly_table_cache_<double>();
-}
-
+namespace cpsig {
+HWY_EXPORT_T(sig_kernel_poly_f, sig_kernel_poly_<float>);
+HWY_EXPORT_T(sig_kernel_poly_d, sig_kernel_poly_<double>);
+HWY_EXPORT_T(sig_kernel_poly_backprop_f, sig_kernel_poly_backprop_<float>);
+HWY_EXPORT_T(sig_kernel_poly_backprop_d, sig_kernel_poly_backprop_<double>);
 
 extern "C" {
 
 	CPSIG_API int sig_kernel_poly_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
-		SAFE_CALL(sig_kernel_poly_<float>(gram, out, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_kernel_poly_f)(gram, out, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
 	}
 
 	CPSIG_API int sig_kernel_poly_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
-		SAFE_CALL(sig_kernel_poly_<double>(gram, out, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_kernel_poly_d)(gram, out, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
 	}
 
 	CPSIG_API int sig_kernel_poly_backprop_f(const float* gram, float* gram_derivs, const float* output_derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
-		SAFE_CALL(sig_kernel_poly_backprop_<float>(gram, gram_derivs, output_derivs, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_kernel_poly_backprop_f)(gram, gram_derivs, output_derivs, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
 	}
 
 	CPSIG_API int sig_kernel_poly_backprop_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid, int n_jobs) noexcept {
-		SAFE_CALL(sig_kernel_poly_backprop_<double>(gram, gram_derivs, output_derivs, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_kernel_poly_backprop_d)(gram, gram_derivs, output_derivs, state, batch_size, dimension, length1, length2, order, return_grid, n_jobs));
 	}
 }
+
+}  // namespace cpsig

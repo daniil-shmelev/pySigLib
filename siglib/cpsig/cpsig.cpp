@@ -17,5 +17,3 @@
 #include "cpsig.h"
 #include <iostream>
 
-#include "cp_path.h"
-

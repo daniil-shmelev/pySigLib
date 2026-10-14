@@ -16,6 +16,9 @@
 #include <gtest/gtest.h>
 
 #include "cp_bch.h"
+using cpsig::HWY_NAMESPACE::bch_combine_impl_;
+using cpsig::HWY_NAMESPACE::bch_combine_backprop_impl_;
+using cpsig::HWY_NAMESPACE::lie_bracket;
 #include "log_sig/bch_cache.h"
 #include "log_sig/bch_data.h"
 #include "branched_sig/branched_log_sig_cache.h"

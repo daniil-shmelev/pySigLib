@@ -13,15 +13,24 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_EXP_SIGNATURE_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_EXP_SIGNATURE_H_
+#undef CPSIG_CP_EXP_SIGNATURE_H_
+#else
+#define CPSIG_CP_EXP_SIGNATURE_H_
+#endif
 #include "cppch.h"
 
 #include "multithreading.h"
 #include "../shared/preparation/log_sig/lyndon_words.h"
 #include "cache_lifecycle/log_sig_cache.h"
-#ifdef VEC
-#include "cp_vector_funcs.h"
-#endif
+#include "cp_simd-inl.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 // ---------------------------------------------------------------------------
 // tensor_exp_: truncated tensor exponential via power series
@@ -62,8 +71,9 @@ void tensor_exp_(
 		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
 
 		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
-			std::fill(P_curr + level_index[target_level],
-				P_curr + level_index[target_level + 1], static_cast<T>(0.));
+			const uint64_t level_begin = level_index[target_level];
+			const uint64_t level_end = level_index[target_level + 1];
+			std::memset(P_curr + level_begin, 0, (level_end - level_begin) * sizeof(T));
 
 			// l1 ranges from 1 to target_level-(n-1), so l2 >= n-1 (P_prev's support)
 			const uint64_t max_left = target_level - (n - 1);
@@ -71,28 +81,18 @@ void tensor_exp_(
 			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
 				uint64_t right_level = target_level - left_level;
 
-				T* res_ptr = P_curr + level_index[target_level];
+				T* res_ptr = P_curr + level_begin;
 				const T* const left_ptr_end = log_sig + level_index[left_level + 1];
-#ifdef VEC
 				const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
 				const T* right_start = P_prev + level_index[right_level];
 				for (const T* left_ptr = log_sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
 					vec_mult_add(res_ptr, right_start, *left_ptr * inv_n, right_level_size);
 					res_ptr += right_level_size;
 				}
-#else
-				const T* const right_ptr_end = P_prev + level_index[right_level + 1];
-				for (const T* left_ptr = log_sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
-					T val = *left_ptr * inv_n;
-					for (const T* right_ptr = P_prev + level_index[right_level]; right_ptr < right_ptr_end; ++right_ptr) {
-						*(res_ptr++) += val * *right_ptr;
-					}
-				}
-#endif
 			}
 
 			// Fuse accumulation into per-level loop (keeps data in cache)
-			for (uint64_t i = level_index[target_level]; i < level_index[target_level + 1]; ++i)
+			for (uint64_t i = level_begin; i < level_end; ++i)
 				out[i] += P_curr[i];
 		}
 
@@ -146,21 +146,12 @@ void tensor_exp_backprop_(
 				uint64_t right_level = target_level - left_level;
 				T* res_ptr = P_curr + level_index[target_level];
 				const T* const left_end = log_sig + level_index[left_level + 1];
-#ifdef VEC
 				const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
 				const T* right_start = P_prev + level_index[right_level];
 				for (const T* lp = log_sig + level_index[left_level]; lp < left_end; ++lp) {
 					vec_mult_add(res_ptr, right_start, *lp * inv_n, right_level_size);
 					res_ptr += right_level_size;
 				}
-#else
-				const T* const right_end = P_prev + level_index[right_level + 1];
-				for (const T* lp = log_sig + level_index[left_level]; lp < left_end; ++lp) {
-					T val = *lp * inv_n;
-					for (const T* rp = P_prev + level_index[right_level]; rp < right_end; ++rp)
-						*(res_ptr++) += val * *rp;
-				}
-#endif
 			}
 		}
 	}
@@ -174,12 +165,10 @@ void tensor_exp_backprop_(
 	T* dP_next = dP2_uptr.get();
 	std::fill(dP, dP + sig_len, static_cast<T>(0.));
 
-#ifdef VEC
 	// Scratch buffer for precomputed upstream values
 	const uint64_t max_right_size = level_index[degree] - level_index[degree - 1];
 	auto upstream_uptr = std::make_unique<T[]>(max_right_size);
 	T* upstream_buf = upstream_uptr.get();
-#endif
 
 	for (int64_t n = static_cast<int64_t>(degree); n >= 2; --n) {
 		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
@@ -201,7 +190,6 @@ void tensor_exp_backprop_(
 				const T* rp_start = P_prev + level_index[right_level];
 				const T* const rp_end = P_prev + level_index[right_level + 1];
 
-#ifdef VEC
 				const uint64_t right_size = rp_end - rp_start;
 				const T* gp = grad_ptr;
 				const T* dp = dP_ptr_base;
@@ -212,20 +200,6 @@ void tensor_exp_backprop_(
 					*(d_left++) += dot_product(upstream_buf, rp_start, right_size);
 					vec_mult_add(d_right, upstream_buf, *lp, right_size);
 				}
-#else
-				const T* gp = grad_ptr;
-				const T* dp = dP_ptr_base;
-				for (const T* lp = lp_start; lp < lp_end; ++lp) {
-					T d_left_acc = static_cast<T>(0.);
-					T* drp = d_right;
-					for (const T* rp = rp_start; rp < rp_end; ++rp) {
-						T upstream = (*(gp++) + *(dp++)) * inv_n;
-						d_left_acc += upstream * *rp;
-						*(drp++) += upstream * *lp;
-					}
-					*(d_left++) += d_left_acc;
-				}
-#endif
 			}
 		}
 
@@ -555,3 +529,8 @@ void logsig_to_sig_backprop_(
 		spawn_batch_threads(batch_size, n_jobs, batch_func);
 	}
 }
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif

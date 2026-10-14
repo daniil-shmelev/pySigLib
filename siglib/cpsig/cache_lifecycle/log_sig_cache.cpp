@@ -15,11 +15,13 @@
 
 #pragma once
 #include "cppch.h"
+#include "cpsig.h"
+#include "macros.h"
 #include "log_sig_cache.h"
 #include "disk_cache.h"
-#include "cp_bch.h"
+#include "cp_bch_cache.h"
 #include "cp_branched_cache.h"
-#include "cp_branched_log_signature.h"
+#include "cp_branched_log_cache.h"
 #include "cp_branched_sig_coef_cache.h"
 
 void clear_sig_poly_table_cache();

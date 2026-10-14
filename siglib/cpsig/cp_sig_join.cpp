@@ -15,30 +15,46 @@
 
 #include "cppch.h"
 #include "cpsig.h"
-#include "cp_sig_join.h"
 #include "macros.h"
+#include "cp_dispatch.h"
+#include "cache_lifecycle/cp_bch_cache.h"
+#include "cache_lifecycle/cp_poly_cache.h"
+#include "cache_lifecycle/cp_branched_cache.h"
+#include "cache_lifecycle/cp_branched_log_cache.h"
+#include "cache_lifecycle/cp_branched_sig_coef_cache.h"
+
+
+namespace cpsig {
+HWY_EXPORT_T(linear_sig_f, batch_linear_sig_<float>);
+HWY_EXPORT_T(linear_sig_d, batch_linear_sig_<double>);
+HWY_EXPORT_T(sig_join_f, sig_join_<float>);
+HWY_EXPORT_T(sig_join_d, sig_join_<double>);
+HWY_EXPORT_T(sig_join_backprop_f, batch_sig_join_backprop_<float>);
+HWY_EXPORT_T(sig_join_backprop_d, batch_sig_join_backprop_<double>);
 
 extern "C" {
 
 	CPSIG_API int linear_sig_f(const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term, int n_jobs) noexcept {
-		SAFE_CALL(batch_linear_sig_<float>(displacement, out, batch_size, dimension, degree, scalar_term, n_jobs));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(linear_sig_f)(displacement, out, batch_size, dimension, degree, scalar_term, n_jobs));
 	}
 	CPSIG_API int linear_sig_d(const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term, int n_jobs) noexcept {
-		SAFE_CALL(batch_linear_sig_<double>(displacement, out, batch_size, dimension, degree, scalar_term, n_jobs));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(linear_sig_d)(displacement, out, batch_size, dimension, degree, scalar_term, n_jobs));
 	}
 
 	CPSIG_API int sig_join_f(const float* sig, const float* displacement, float* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend, bool scalar_term, int n_jobs) noexcept {
-		SAFE_CALL(sig_join_<float>(sig, displacement, out, batch_size, dimension, degree, prepend, scalar_term, n_jobs));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_join_f)(sig, displacement, out, batch_size, dimension, degree, prepend, scalar_term, n_jobs));
 	}
 	CPSIG_API int sig_join_d(const double* sig, const double* displacement, double* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend, bool scalar_term, int n_jobs) noexcept {
-		SAFE_CALL(sig_join_<double>(sig, displacement, out, batch_size, dimension, degree, prepend, scalar_term, n_jobs));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_join_d)(sig, displacement, out, batch_size, dimension, degree, prepend, scalar_term, n_jobs));
 	}
 
 	CPSIG_API int sig_join_backprop_f(const float* d_out, float* d_sig, float* d_displacement, const float* sig, const float* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend, bool scalar_term, int n_jobs) noexcept {
-		SAFE_CALL(batch_sig_join_backprop_<float>(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree, prepend, scalar_term, n_jobs));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_join_backprop_f)(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree, prepend, scalar_term, n_jobs));
 	}
 	CPSIG_API int sig_join_backprop_d(const double* d_out, double* d_sig, double* d_displacement, const double* sig, const double* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool prepend, bool scalar_term, int n_jobs) noexcept {
-		SAFE_CALL(batch_sig_join_backprop_<double>(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree, prepend, scalar_term, n_jobs));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_join_backprop_d)(d_out, d_sig, d_displacement, sig, displacement, batch_size, dimension, degree, prepend, scalar_term, n_jobs));
 	}
 
 }
+
+}  // namespace cpsig

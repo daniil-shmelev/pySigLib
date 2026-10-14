@@ -406,6 +406,21 @@ TEST(transformPathForwardTest, BatchTimeAugTest) {
     check_result(f, input, true_, batch_size, dimension, length, true, false, 1., -1);
 }
 
+TEST(transformPath, OverlappingCopy) {
+    std::vector<double> after = {1., 2., 3., 4., 5., 6., 7., 8., 9., 10.};
+    ASSERT_EQ(0, transform_path_d(after.data(), after.data() + 2, 1, 2, 4, false, false, 1., 1));
+    EXPECT_EQ(after, (std::vector<double>{1., 2., 1., 2., 1., 2., 1., 2., 1., 2.}));
+
+    std::vector<float> before = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f, 10.f};
+    ASSERT_EQ(0, transform_path_f(before.data() + 2, before.data(), 1, 2, 4, false, false, 1.f, 1));
+    EXPECT_EQ(before, (std::vector<float>{3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f, 10.f, 9.f, 10.f}));
+
+    const auto unchanged = before;
+    ASSERT_EQ(0, transform_path_f(before.data(), before.data(), 1, 2, 5, false, false, 1.f, 1));
+    EXPECT_EQ(before, unchanged);
+    EXPECT_EQ(0, transform_path_d(nullptr, nullptr, 1, 2, 0, false, false, 1., 1));
+}
+
 TEST(transformPathBackprop, TimeAugTest) {
     auto f = transform_path_backprop_d;
     uint64_t dimension = 2, length = 3;

@@ -13,12 +13,23 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_SIG_COMBINE_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_SIG_COMBINE_H_
+#undef CPSIG_CP_SIG_COMBINE_H_
+#else
+#define CPSIG_CP_SIG_COMBINE_H_
+#endif
 #include "cppch.h"
 #include "cp_utils.h"
 #include "multithreading.h"
 #include "macros.h"
-#include "cp_vector_funcs.h"
+#include "cp_simd-inl.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 template<std::floating_point T>
 FORCE_INLINE void sig_combine_inplace_(
@@ -37,36 +48,19 @@ FORCE_INLINE void sig_combine_inplace_(
 
 			T* result_ptr = sig1 + level_index[target_level];
 			const T* const left_ptr_upper_bound = sig1 + level_index[left_level + 1];
-#ifdef VEC
 			const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
 			const T* right_start = sig2 + level_index[right_level];
 			for (T* left_ptr = sig1 + level_index[left_level]; left_ptr != left_ptr_upper_bound; ++left_ptr) {
 				vec_mult_add(result_ptr, right_start, *left_ptr, right_level_size);
 				result_ptr += right_level_size;
 			}
-#else
-			for (T* left_ptr = sig1 + level_index[left_level]; left_ptr != left_ptr_upper_bound; ++left_ptr) {
-				const T* const right_ptr_upper_bound = sig2 + level_index[right_level + 1];
-				for (const T* right_ptr = sig2 + level_index[right_level]; right_ptr != right_ptr_upper_bound; ++right_ptr) {
-					*(result_ptr++) += (*left_ptr) * (*right_ptr);
-				}
-			}
-#endif
 		}
 
 		//left_level = 0
-#ifdef VEC
 		{
 			const uint64_t level_size = level_index[target_level + 1] - level_index[target_level];
 			vec_mult_add(sig1 + level_index[target_level], sig2 + level_index[target_level], static_cast<T>(1.), level_size);
 		}
-#else
-		T* result_ptr = sig1 + level_index[target_level];
-		const T* const right_ptr_upper_bound = sig2 + level_index[target_level + 1];
-		for (const T* right_ptr = sig2 + level_index[target_level]; right_ptr != right_ptr_upper_bound; ++right_ptr) {
-			*(result_ptr++) += *right_ptr;
-		}
-#endif
 	}
 
 }
@@ -403,3 +397,8 @@ void batch_sig_combine_backprop_(
 		make_batch(sig2, stride));
 	return;
 }
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif
