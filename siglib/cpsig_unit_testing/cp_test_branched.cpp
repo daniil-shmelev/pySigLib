@@ -223,6 +223,43 @@ TEST(treeEnumerationTest, PreservesBckAndMkwBasisOrdering) {
         check_result_2(branched_sig_combine_d, bsig1, bsig2, true_bsig, batch_size, dimension, max_nodes, 1, false, true);
     }
 
+    TEST(branchedSigCombineTest, PackedBatchMatchesSingleAndInPlace) {
+        constexpr uint64_t dimension = 3, max_nodes = 4, batch_size = 5;
+        ASSERT_EQ(prepare_branched_sig(dimension, max_nodes, false, false), 0);
+        const uint64_t length = branched_sig_length(dimension, max_nodes);
+
+        auto check = [&]<typename T>(auto combine) {
+            std::vector<T> left(batch_size * length);
+            std::vector<T> right(batch_size * length);
+            for (uint64_t b = 0; b < batch_size; ++b) {
+                left[b * length] = static_cast<T>(1);
+                right[b * length] = static_cast<T>(1);
+                for (uint64_t k = 1; k < length; ++k) {
+                    left[b * length + k] = static_cast<T>((b + 2 * k % 11) * 0.003);
+                    right[b * length + k] = static_cast<T>((2 * b + 3 * k % 13) * -0.002);
+                }
+            }
+            std::vector<T> expected(batch_size * length);
+            for (uint64_t b = 0; b < batch_size; ++b) {
+                ASSERT_EQ(combine(left.data() + b * length, right.data() + b * length,
+                    expected.data() + b * length, 1, dimension, max_nodes, 1, false, true), 0);
+            }
+            std::vector<T> actual(batch_size * length);
+            ASSERT_EQ(combine(left.data(), right.data(), actual.data(),
+                batch_size, dimension, max_nodes, 1, false, true), 0);
+            auto in_place = left;
+            ASSERT_EQ(combine(in_place.data(), right.data(), in_place.data(),
+                batch_size, dimension, max_nodes, 1, false, true), 0);
+            for (uint64_t k = 0; k < expected.size(); ++k) {
+                EXPECT_NEAR(actual[k], expected[k], static_cast<T>(1e-5));
+                EXPECT_NEAR(in_place[k], expected[k], static_cast<T>(1e-5));
+            }
+        };
+
+        check.template operator()<double>(branched_sig_combine_d);
+        check.template operator()<float>(branched_sig_combine_f);
+    }
+
     TEST(branchedSigCombineTest, ScalarTermFreeMatchesFullBatch) {
         const uint64_t dimension = 2;
         const uint64_t max_nodes = 3;

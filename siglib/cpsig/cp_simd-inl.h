@@ -313,6 +313,26 @@ FORCE_INLINE void vec4_scale(double* RESTRICT out, const double* RESTRICT a, dou
 }
 FORCE_INLINE void vec4_commutator_accum(double* RESTRICT result, const double* RESTRICT v1, const double* RESTRICT v2, const uint32_t* ki, const uint32_t* kj, const double* kval, uint32_t start, uint32_t end) {
     const Simd<double> d;
+    if constexpr (HWY_ARCH_ARM && vec_batch_lanes<double> == 2) {
+        // Share the sparse-index pass across both halves of the four-lane batch.
+        auto lo = hn::Zero(d);
+        auto hi = hn::Zero(d);
+        for (uint32_t idx = start; idx < end; ++idx) {
+            const uint32_t i = ki[idx] * 4, j = kj[idx] * 4;
+            const auto coefficient = hn::Set(d, kval[idx]);
+            const auto bracket_lo = hn::MulSub(
+                hn::LoadU(d, v1 + i), hn::LoadU(d, v2 + j),
+                hn::Mul(hn::LoadU(d, v1 + j), hn::LoadU(d, v2 + i)));
+            const auto bracket_hi = hn::MulSub(
+                hn::LoadU(d, v1 + i + 2), hn::LoadU(d, v2 + j + 2),
+                hn::Mul(hn::LoadU(d, v1 + j + 2), hn::LoadU(d, v2 + i + 2)));
+            lo = hn::MulAdd(coefficient, bracket_lo, lo);
+            hi = hn::MulAdd(coefficient, bracket_hi, hi);
+        }
+        hn::StoreU(lo, d, result);
+        hn::StoreU(hi, d, result + 2);
+        return;
+    }
     for (size_t k = 0; k < 4; k += hn::Lanes(d)) {
         auto sum = hn::Zero(d);
         for (uint32_t idx = start; idx < end; ++idx) {
@@ -325,6 +345,25 @@ FORCE_INLINE void vec4_commutator_accum(double* RESTRICT result, const double* R
 }
 FORCE_INLINE void vec4_bracket_grad(double* RESTRICT dm_lf, double* RESTRICT dm_rf, const double* RESTRICT dm_w, const double* RESTRICT v1, const double* RESTRICT v2, uint32_t i, uint32_t j, const uint32_t* ij_k, const double* ij_c, uint32_t start, uint32_t end) {
     const Simd<double> d;
+    if constexpr (HWY_ARCH_ARM && vec_batch_lanes<double> == 2) {
+        // Reuse each coefficient and index for the low and high halves.
+        auto lo = hn::Zero(d);
+        auto hi = hn::Zero(d);
+        for (uint32_t idx = start; idx < end; ++idx) {
+            const auto coefficient = hn::Set(d, ij_c[idx]);
+            const uint32_t offset = ij_k[idx] * 4;
+            lo = hn::Add(lo, hn::Mul(coefficient, hn::LoadU(d, dm_w + offset)));
+            hi = hn::Add(hi, hn::Mul(coefficient, hn::LoadU(d, dm_w + offset + 2)));
+        }
+        for (size_t k = 0; k < 4; k += 2) {
+            const auto sum = k == 0 ? lo : hi;
+            hn::StoreU(hn::MulAdd(sum, hn::LoadU(d, v2 + j * 4 + k), hn::LoadU(d, dm_lf + i * 4 + k)), d, dm_lf + i * 4 + k);
+            hn::StoreU(hn::NegMulAdd(sum, hn::LoadU(d, v2 + i * 4 + k), hn::LoadU(d, dm_lf + j * 4 + k)), d, dm_lf + j * 4 + k);
+            hn::StoreU(hn::MulAdd(sum, hn::LoadU(d, v1 + i * 4 + k), hn::LoadU(d, dm_rf + j * 4 + k)), d, dm_rf + j * 4 + k);
+            hn::StoreU(hn::NegMulAdd(sum, hn::LoadU(d, v1 + j * 4 + k), hn::LoadU(d, dm_rf + i * 4 + k)), d, dm_rf + i * 4 + k);
+        }
+        return;
+    }
     for (size_t k = 0; k < 4; k += hn::Lanes(d)) {
         auto s = hn::Zero(d);
         for (uint32_t idx = start; idx < end; ++idx)
