@@ -161,16 +161,43 @@ extern "C" {
 	* @{
 	*/
 
-	/** Polynomial BCK kernel. order is the integrand degree (0..64), q=order+1.
-	* Optional state stores K_0,...,K_(depth-1), shape (batch,depth,(length1-1)*q,(length2-1)*q) for depth>1.
-	* return_grid outputs original path vertices; reverse accepts scalar or full-grid seeds. */
+	/**
+	* @brief Computes the polynomial branched signature kernel from batch gram matrices on the GPU.
+	*
+	* @param gram Pointer to device batch gram matrix data, size = `batch_size * (length1 - 1) * (length2 - 1)`.
+	* @param out Pointer to device output buffer, size = `batch_size * (return_grid ? length1 * length2 : 1)`.
+	* @param state Optional device output buffer for intermediate kernel states, shape = `(batch_size, depth, (length1 - 1) * (order + 1), (length2 - 1) * (order + 1))` for depth > 1; may be null.
+	* @param batch_size Number of path pairs.
+	* @param dimension Dimension of the original paths.
+	* @param length1 Length of the first paths.
+	* @param length2 Length of the second paths.
+	* @param depth Truncation depth of the branched kernel.
+	* @param order Polynomial integrand degree, from 0 through 64.
+	* @param return_grid Whether to return values at all original path vertices.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_poly_cuda_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t order, bool return_grid = false) noexcept;
 	/** @copydoc branched_sig_kernel_poly_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_poly_cuda_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t order, bool return_grid = false) noexcept;
 
-	/** Backpropagates through the polynomial branched kernel. Required Gram,
-	 * Gram-derivative and output-derivative pointers must be non-null for nonempty
-	 * batches with nonempty Gram matrices. Null state requests recomputation. */
+	/**
+	* @brief Backpropagates through the polynomial branched signature kernel on the GPU.
+	*
+	* gram, grad, and derivs must be non-null for nonempty batches with nonempty gram matrices.
+	*
+	* @param gram Pointer to device batch gram matrix data, size = `batch_size * (length1 - 1) * (length2 - 1)`.
+	* @param grad Pointer to device output gradients with respect to gram, with the same size as gram.
+	* @param derivs Pointer to device output derivatives, size = `batch_size * (return_grid ? length1 * length2 : 1)`.
+	* @param state Optional device intermediate states from the forward call; null requests recomputation.
+	* @param batch_size Number of path pairs.
+	* @param dimension Dimension of the original paths.
+	* @param length1 Length of the first paths.
+	* @param length2 Length of the second paths.
+	* @param depth Truncation depth of the branched kernel.
+	* @param order Polynomial integrand degree, from 0 through 64.
+	* @param return_grid Whether derivs contains values at all original path vertices.
+	* @return Status code (0 = success).
+	*/
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_poly_backprop_cuda_f(const float* gram, float* grad, const float* derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t order, bool return_grid = false) noexcept;
 	/** @copydoc branched_sig_kernel_poly_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_poly_backprop_cuda_d(const double* gram, double* grad, const double* derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t order, bool return_grid = false) noexcept;

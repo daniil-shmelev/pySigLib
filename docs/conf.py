@@ -13,6 +13,7 @@ import sys
 DOCS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(DOCS_DIR.parent))
 
+(DOCS_DIR / "_build").mkdir(exist_ok=True)
 subprocess.run(["doxygen", "Doxyfile"], cwd=DOCS_DIR, check=True)
 
 # -- Project information -----------------------------------------------------
