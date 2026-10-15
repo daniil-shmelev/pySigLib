@@ -27,7 +27,7 @@ find_package(Python COMPONENTS Interpreter REQUIRED)
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
-option(PYSIGLIB_AVX  "Enable AVX/NEON vectorization"      ON)
+option(PYSIGLIB_AVX  "Enable runtime CPU SIMD dispatch (SSE2/AVX2/NEON)"      ON)
 option(PYSIGLIB_JAX_FFI "Build JAX FFI support when headers are available" ON)
 option(PYSIGLIB_BENCHMARKS "Build CodSpeed / Google Benchmark harness" OFF)
 option(PYSIGLIB_TESTS "Build C++ unit tests (Google Test)" OFF)
@@ -51,42 +51,12 @@ endif()
 find_package(Threads REQUIRED)
 
 # ---------------------------------------------------------------------------
-# AVX / vectorization detection
+# CPU SIMD configuration
 # ---------------------------------------------------------------------------
-set(_enable_vec FALSE)
-set(_has_avx 0)
-set(_has_avx2 0)
-set(_has_avx512f 0)
+set(_enable_vec ${PYSIGLIB_AVX})
 set(JAXLIB_FOUND FALSE)
 set(JAXLIB_INCLUDE_DIR "")
 set(JAXLIB_PROBE_LOG "")
-
-if(PYSIGLIB_AVX)
-    if(APPLE)
-        # ARM NEON is always available on Apple Silicon; on Intel Macs
-        # -march=native enables whatever the CPU supports.
-        set(_enable_vec TRUE)
-    else()
-        # Compile and run the existing avx_info utility to probe the CPU.
-        try_run(_avx_run_result _avx_compile_result
-            "${CMAKE_CURRENT_BINARY_DIR}/_avx_detect"
-            "${CMAKE_CURRENT_SOURCE_DIR}/avx_info/avx_info.cpp"
-        )
-        if(_avx_compile_result AND NOT _avx_run_result STREQUAL "FAILED_TO_RUN")
-            math(EXPR _has_avx     "${_avx_run_result} & 1")
-            math(EXPR _has_avx2    "${_avx_run_result} & 2")
-            math(EXPR _has_avx512f "${_avx_run_result} & 4")
-            if(_has_avx2)
-                set(_enable_vec TRUE)
-            else()
-                set(PYSIGLIB_AVX OFF)
-            endif()
-        else()
-            message(WARNING "AVX detection failed — disabling vectorization")
-            set(PYSIGLIB_AVX OFF)
-        endif()
-    endif()
-endif()
 
 # ---------------------------------------------------------------------------
 # JAX FFI detection (optional). Probe the Python env for jaxlib's XLA FFI
@@ -122,21 +92,7 @@ if(PYSIGLIB_JAX_FFI AND JAXLIB_PROBE_LOG)
         message(STATUS "  ${_line}")
     endforeach()
 endif()
-message(STATUS "  AVX enabled   : ${_enable_vec}")
-if(_enable_vec AND NOT APPLE)
-    if(_has_avx2)
-        set(_avx2_str "yes")
-    else()
-        set(_avx2_str "no")
-    endif()
-    if(_has_avx512f)
-        set(_avx512_str "yes")
-    else()
-        set(_avx512_str "no")
-    endif()
-    message(STATUS "  AVX2          : ${_avx2_str}")
-    message(STATUS "  AVX-512F      : ${_avx512_str}")
-endif()
+message(STATUS "  CPU SIMD      : ${PYSIGLIB_AVX}")
 message(STATUS "  --------------------------------")
 message(STATUS "")
 

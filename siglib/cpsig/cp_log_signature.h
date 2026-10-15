@@ -13,7 +13,14 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_LOG_SIGNATURE_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_LOG_SIGNATURE_H_
+#undef CPSIG_CP_LOG_SIGNATURE_H_
+#else
+#define CPSIG_CP_LOG_SIGNATURE_H_
+#endif
 #include "cppch.h"
 
 #include "multithreading.h"
@@ -21,6 +28,10 @@
 
 #include "cp_path.h"
 #include "cp_bch.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 template<std::floating_point T>
 void get_log_sig_(
@@ -458,8 +469,6 @@ void log_sig_from_path_(
 }
 
 
-// Shared across AVX2 and NEON - no platform-specific intrinsics needed.
-#ifdef VEC
 inline void log_sig_from_path_x4_(
 	const double* paths[4], double* outs[4],
 	uint64_t length, uint64_t dimension,
@@ -586,7 +595,6 @@ inline void log_sig_from_path_backprop_x4_(
 		}
 	}
 }
-#endif // VEC
 
 template<std::floating_point T>
 void batch_log_sig_from_path_(
@@ -615,7 +623,6 @@ void batch_log_sig_from_path_(
 	uint64_t path_stride = length * dimension;
 	uint64_t scalar_start = 0;
 
-#ifdef VEC
 	if constexpr (std::same_as<T, float>) {
 		constexpr uint64_t width = BchBatchValue<T>::width;
 		auto vector_func = [&](const T* p, T* o) {
@@ -637,6 +644,10 @@ void batch_log_sig_from_path_(
 
 			const double* paths[4];
 			double* outs[4];
+#ifdef _MSC_VER
+			// Avoid an implicit AVX-512 version of the pointer setup loop.
+#pragma loop(no_vector)
+#endif
 			for (uint64_t b = 0; b < 4; ++b) {
 				paths[b] = p + b * path_stride;
 				outs[b] = o + b * m;
@@ -648,7 +659,6 @@ void batch_log_sig_from_path_(
 			make_batch(path, path_stride * 4), make_batch(out, m * 4));
 		scalar_start = x4_batch_size * 4;
 	}
-#endif
 
 	auto func = [&](const T* p, T* o) {
 		thread_local std::vector<T> tl_memo;
@@ -791,7 +801,6 @@ void batch_log_sig_from_path_backprop_(
 	uint64_t ws_size = 7 * m + 2 * m2 * m;
 	uint64_t scalar_start = 0;
 
-#ifdef VEC
 	if constexpr (std::same_as<T, float>) {
 		constexpr uint64_t width = BchBatchValue<T>::width;
 		auto vector_func = [&](const T* dout, T* dp, const T* p) {
@@ -811,6 +820,9 @@ void batch_log_sig_from_path_backprop_(
 			const double* douts[4];
 			double* dpaths[4];
 			const double* paths[4];
+#ifdef _MSC_VER
+#pragma loop(no_vector)
+#endif
 			for (uint64_t b = 0; b < 4; ++b) {
 				douts[b] = dout + b * m;
 				dpaths[b] = dp + b * path_stride;
@@ -824,7 +836,6 @@ void batch_log_sig_from_path_backprop_(
 			make_batch(path, path_stride * 4));
 		scalar_start = x4_batch_size * 4;
 	}
-#endif
 
 	auto func = [&](const T* dout, T* dp, const T* p) {
 		thread_local std::vector<T> tl_ws;
@@ -892,3 +903,8 @@ void log_sig_combine_backprop_(
 	multi_threaded_batch(func, batch_size, n_jobs,
 		make_batch(d_out, m), make_batch(d_ls1, m), make_batch(d_ls2, m), make_batch(ls1, m), make_batch(ls2, m));
 }
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif

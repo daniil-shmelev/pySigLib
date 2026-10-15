@@ -62,6 +62,7 @@ provider = "_pin_provider"
 provider-path = "."
 
 [tool.scikit-build.cmake.define]
+PYSIGLIB_AVX = {env = "SIGLIB_VEC", default = "ON"}
 PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
 PYSIGLIB_CUDA_LINEINFO = {env = "CUDA_LINEINFO", default = "OFF"}
 PYSIGLIB_CUDA_COMPRESS_MODE = {env = "CUDA_COMPRESS_MODE", default = "size"}

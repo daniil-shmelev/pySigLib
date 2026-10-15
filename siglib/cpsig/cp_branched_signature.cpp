@@ -15,9 +15,24 @@
 
 #include "cppch.h"
 #include "cpsig.h"
-#include "cp_branched_signature.h"
-#include "cache_lifecycle/cp_branched_cache.h"
 #include "macros.h"
+#include "cp_dispatch.h"
+#include "cache_lifecycle/cp_bch_cache.h"
+#include "cache_lifecycle/cp_poly_cache.h"
+#include "cache_lifecycle/cp_branched_cache.h"
+#include "cache_lifecycle/cp_branched_log_cache.h"
+#include "cache_lifecycle/cp_branched_sig_coef_cache.h"
+
+
+namespace cpsig {
+HWY_EXPORT_T(branched_sig_f, branched_signature_<float>);
+HWY_EXPORT_T(branched_sig_d, branched_signature_<double>);
+HWY_EXPORT_T(branched_sig_combine_f, branched_sig_combine_<float>);
+HWY_EXPORT_T(branched_sig_combine_d, branched_sig_combine_<double>);
+HWY_EXPORT_T(branched_sig_combine_backprop_f, branched_sig_combine_backprop_<float>);
+HWY_EXPORT_T(branched_sig_combine_backprop_d, branched_sig_combine_backprop_<double>);
+HWY_EXPORT_T(branched_sig_backprop_f, branched_sig_backprop_<float>);
+HWY_EXPORT_T(branched_sig_backprop_d, branched_sig_backprop_<double>);
 
 extern "C" {
 
@@ -26,35 +41,37 @@ extern "C" {
 	}
 
 	CPSIG_API int branched_sig_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		SAFE_CALL(branched_signature_<float>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_f)(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CPSIG_API int branched_sig_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		SAFE_CALL(branched_signature_<double>(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_d)(path, out, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CPSIG_API int branched_sig_combine_f(const float* bsig1, const float* bsig2, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_sig_combine_<float>(bsig1, bsig2, out, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_combine_f)(bsig1, bsig2, out, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
 	}
 
 	CPSIG_API int branched_sig_combine_d(const double* bsig1, const double* bsig2, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_sig_combine_<double>(bsig1, bsig2, out, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_combine_d)(bsig1, bsig2, out, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
 	}
 
 	CPSIG_API int branched_sig_combine_backprop_f(const float* bsig1, const float* bsig2, const float* derivs, float* out1, float* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_sig_combine_backprop_<float>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_combine_backprop_f)(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
 	}
 
 	CPSIG_API int branched_sig_combine_backprop_d(const double* bsig1, const double* bsig2, const double* derivs, double* out1, double* out2, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(branched_sig_combine_backprop_<double>(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_combine_backprop_d)(bsig1, bsig2, derivs, out1, out2, batch_size, dimension, max_nodes, n_jobs, planar, scalar_term));
 	}
 
 	CPSIG_API int branched_sig_backprop_f(const float* path, float* out, const float* bsig_derivs, const float* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, float end_time, bool planar, bool scalar_term, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		SAFE_CALL(branched_sig_backprop_<float>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_backprop_f)(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 	CPSIG_API int branched_sig_backprop_d(const double* path, double* out, const double* bsig_derivs, const double* bsig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t max_nodes, int n_jobs, bool time_aug, bool lead_lag, double end_time, bool planar, bool scalar_term, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride) noexcept {
-		SAFE_CALL(branched_sig_backprop_<double>(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_backprop_d)(path, out, bsig_derivs, bsig, batch_size, dimension, length, max_nodes, n_jobs, time_aug, lead_lag, end_time, planar, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
 	}
 
 }
+
+}  // namespace cpsig

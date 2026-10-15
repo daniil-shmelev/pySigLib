@@ -13,12 +13,25 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_PATH_TRANSFORMS_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_PATH_TRANSFORMS_H_
+#undef CPSIG_CP_PATH_TRANSFORMS_H_
+#else
+#define CPSIG_CP_PATH_TRANSFORMS_H_
+#endif
 #include "cppch.h"
 #include "cpsig.h"
 #include "macros.h"
 #include "cp_path.h"
+#include "cp_simd-inl.h"
+#include "hwy/contrib/algo/copy-inl.h"
 #include "multithreading.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 template<std::floating_point T>
 void transform_path_(
@@ -39,6 +52,37 @@ void transform_path_(
 
 	if (!(time_aug || lead_lag)) {
 		const uint64_t path_size = dimension * length;
+		if (path_size == 0 || data_in == data_out)
+			return;
+		const uintptr_t input_address = reinterpret_cast<uintptr_t>(data_in);
+		const uintptr_t output_address = reinterpret_cast<uintptr_t>(data_out);
+		const uintptr_t distance = input_address < output_address
+			? output_address - input_address : input_address - output_address;
+		if (distance >= path_size * sizeof(T)) {
+#ifdef _MSC_VER
+			std::memcpy(data_out, data_in, path_size * sizeof(T));
+#else
+			const Simd<T> d;
+			constexpr uint64_t lanes = vec_batch_lanes<T>;
+			const uint64_t prefix = std::min(path_size,
+				((uintptr_t(0) - output_address) & (lanes * sizeof(T) - 1)) / sizeof(T));
+			uint64_t i = 0;
+			for (; i < prefix; ++i)
+				data_out[i] = data_in[i];
+			for (; i + 4 * lanes <= path_size; i += 4 * lanes) {
+				const auto v0 = hn::LoadU(d, data_in + i);
+				const auto v1 = hn::LoadU(d, data_in + i + lanes);
+				const auto v2 = hn::LoadU(d, data_in + i + 2 * lanes);
+				const auto v3 = hn::LoadU(d, data_in + i + 3 * lanes);
+				hn::Store(v0, d, data_out + i);
+				hn::Store(v1, d, data_out + i + lanes);
+				hn::Store(v2, d, data_out + i + 2 * lanes);
+				hn::Store(v3, d, data_out + i + 3 * lanes);
+			}
+			hn::Copy(d, data_in + i, path_size - i, data_out + i);
+#endif
+			return;
+		}
 		T* out_ptr = data_out;
 		const T* in_ptr = data_in;
 		for (uint64_t i = 0; i < path_size; ++i)
@@ -120,6 +164,12 @@ void batch_transform_path_(
 	const uint64_t result_length = dummy_path_obj.length() * dummy_path_obj.dimension();
 
 	const uint64_t flat_path_length = dimension * length;
+
+	if (n_jobs == 1 && !(time_aug || lead_lag)) {
+		transform_path_<T>(data_in, data_out, dimension, batch_size * length,
+			false, false, end_time);
+		return;
+	}
 
 	auto transform_func = [&](const T* const path_ptr, T* const out_ptr) {
 		transform_path_<T>(path_ptr, out_ptr, dimension, length, time_aug, lead_lag, end_time);
@@ -222,3 +272,8 @@ void batch_transform_path_backprop_(
 		make_batch(derivs, flat_path_length), make_batch(data_out, result_length));
 	return;
 }
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif

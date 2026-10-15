@@ -9,8 +9,10 @@ if(NOT TARGET GTest::gtest_main)
     set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
 endif()
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/Highway.cmake")
 
 set(_pysiglib_cpsig_test_sources
+    cp_test_main.cpp
     cp_test_misc.cpp
     cp_test_signature.cpp
     cp_test_sig_coef.cpp
@@ -52,21 +54,13 @@ else()
         "${pysiglib_test_onetbb_SOURCE_DIR}/include"
     )
 endif()
-target_link_libraries(cpsig_tests PRIVATE cpsig pysiglib_preparation Threads::Threads GTest::gtest_main)
-
-if(_enable_vec)
-    target_compile_definitions(cpsig_tests PRIVATE VEC)
-    if(MSVC)
-        if(_has_avx2)
-            target_compile_options(cpsig_tests PRIVATE /arch:AVX2)
-        elseif(_has_avx)
-            target_compile_options(cpsig_tests PRIVATE /arch:AVX)
-        endif()
-    elseif(NOT APPLE)
-        target_compile_options(cpsig_tests PRIVATE -march=native -ftree-vectorize)
-    else()
-        target_compile_options(cpsig_tests PRIVATE -ftree-vectorize)
-    endif()
+target_link_libraries(cpsig_tests PRIVATE cpsig pysiglib_preparation Threads::Threads GTest::gtest hwy)
+target_compile_definitions(cpsig_tests PRIVATE CPSIG_STATIC_TARGET)
+if(PYSIGLIB_CPSIG_PREBUILT_LIBRARY)
+    target_compile_definitions(cpsig_tests PRIVATE CPSIG_PREBUILT_TESTS)
+endif()
+if(NOT PYSIGLIB_AVX)
+    target_compile_definitions(cpsig_tests PRIVATE CPSIG_SCALAR_ONLY)
 endif()
 
 if(WIN32)

@@ -13,11 +13,22 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_SIG_COEF_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_SIG_COEF_H_
+#undef CPSIG_CP_SIG_COEF_H_
+#else
+#define CPSIG_CP_SIG_COEF_H_
+#endif
 #include "cppch.h"
 
 #include "multithreading.h"
 #include "macros.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 template<std::floating_point T>
 void sig_coef_(
@@ -50,3 +61,7 @@ void sig_coef_(
 	bool prefixes = false,
 	int n_jobs = 1
 );
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif

@@ -88,7 +88,7 @@ BSK_DEVICE const T* branched_poly_depths(
         ops.sync();
         ops.integrate_x(current, work.integrated, d.nx, d.width, d.q, tables, weights, false);
         ops.integrate_y(work.integrated, current, d.height, d.ny, d.q, tables, weights, false);
-        for (uint64_t k = ops.index(); k < d.nodes; k += ops.stride()) current[k] = exp(current[k]);
+        ops.exp(current, d.nodes);
         ops.sync();
         previous = current;
     }
@@ -126,10 +126,7 @@ BSK_DEVICE void branched_poly_forward_pair(
         gram, previous, work.cell_integrals, d, tables + d.q*d.q, ops);
     if (grid) {
         ops.prefix(work.cell_integrals, d.nx, d.ny, false);
-        for (uint64_t k = ops.index(); k < d.output; k += ops.stride()) {
-            const uint64_t i = k/(d.ny+1), j = k%(d.ny+1);
-            out[k] = i && j ? exp(work.cell_integrals[(i-1)*d.ny+j-1]) : T(1);
-        }
+        ops.exp_grid(work.cell_integrals, out, d.nx, d.ny);
     } else {
         const T value = exp(ops.sum(local));
         if (ops.index() == 0) *out = value;
@@ -153,8 +150,7 @@ BSK_DEVICE void branched_poly_backprop_pair(
     const T local = branched_poly_integrate_cells(gram, previous, cells, d, weights, ops);
     if (grid) {
         ops.prefix(cells, d.nx, d.ny, false);
-        for (uint64_t k = ops.index(); k < d.cells; k += ops.stride())
-            cells[k] = exp(cells[k])*derivs[(k/d.ny+1)*(d.ny+1)+k%d.ny+1];
+        ops.exp_grid_backprop(cells, derivs, d.nx, d.ny);
         ops.sync();
         ops.prefix(cells, d.nx, d.ny, true);
     } else {

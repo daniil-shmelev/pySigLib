@@ -13,7 +13,14 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_BCH_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_BCH_H_
+#undef CPSIG_CP_BCH_H_
+#else
+#define CPSIG_CP_BCH_H_
+#endif
 #include "cppch.h"
 #include "cp_sig_combine.h"
 #include "cp_tensor_log.h"
@@ -21,41 +28,12 @@
 #include "../shared/preparation/log_sig/lyndon_words.h"
 #include "../shared/preparation/log_sig/bch_cache.h"
 #include "macros.h"
-#ifdef VEC
-#include "cp_vector_funcs.h"
-#endif
+#include "cp_simd-inl.h"
+#include "cache_lifecycle/cp_bch_cache.h"
 
-// ========================================================================
-// Commutator table via tensor algebra
-// ========================================================================
-
-// ========================================================================
-// BCH cache management
-// ========================================================================
-
-inline void prepare_bch_cache(
-	uint64_t dimension, uint64_t degree, bool use_disk = false
-) {
-	if (degree > BCH_MAX_HARDCODED_DEGREE)
-		throw std::invalid_argument(
-			"BCH methods support truncation degrees at most 20");
-	prepare_basis_cache(dimension, degree, 2, use_disk);
-	LogSigCache& log_cache = get_log_sig_cache_mutable(
-		dimension, degree, 2);
-	if (log_cache.has_bch())
-		return;
-
-	log_cache.set_bch(make_standard_bch_cache(
-		dimension, degree, log_cache.basis(2)));
-}
-
-inline const BchCache& get_bch_cache(uint64_t dimension, uint64_t degree) {
-	return get_log_sig_cache(dimension, degree, 3).bch();
-}
-
-inline void clear_bch_cache() {
-	// BCH data is owned by the LogSigCache registry.
-}
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 // ========================================================================
 // Lie bracket of two dense vectors using the commutator table
@@ -260,41 +238,6 @@ void bch_combine_linear_impl_(
 	}
 }
 
-// 4-wide BCH combination (works on both AVX2 and NEON).
-#ifdef VEC
-inline void bch_combine_impl_x4_(
-	const double* RESTRICT ls1, const double* RESTRICT ls2, double* RESTRICT out,
-	const BchCache& cache, double* memo
-) {
-	uint64_t m = cache.m;
-	uint64_t m2 = cache.bch_size();
-
-	vec4_add(out, ls1, ls2, m);
-	if (m2 <= 2) return;
-
-	std::memcpy(memo, ls1, m * 4 * sizeof(double));
-	std::memcpy(memo + m * 4, ls2, m * 4 * sizeof(double));
-
-	const uint32_t* k_ptr = cache.comm_k_ptr.data();
-	const uint32_t* k_i = cache.comm_k_i.data();
-	const uint32_t* k_j = cache.comm_k_j.data();
-	const double* k_val_d = cache.comm_k_val_d.data();
-
-	for (uint64_t w = 2; w < m2; ++w) {
-		const uint64_t lf = cache.bch_operation(w).left;
-		const uint64_t rf = cache.bch_operation(w).right;
-		const double* v1 = memo + lf * m * 4;
-		const double* v2 = memo + rf * m * 4;
-		double* result = memo + w * m * 4;
-		const double c_w = cache.bch_operation(w).coefficient;
-
-		for (uint64_t k = 0; k < m; ++k) {
-			vec4_commutator_accum(&result[k * 4], v1, v2, k_i, k_j, k_val_d, k_ptr[k], k_ptr[k + 1]);
-			if (c_w != 0.0)
-				vec4_fmadd(&out[k * 4], &result[k * 4], c_w, 1);
-		}
-	}
-}
 // 4-wide BCH with a degree-one second input.
 inline void bch_combine_linear_impl_x4_(
 	const double* RESTRICT ls1, const double* RESTRICT ls2, double* RESTRICT out,
@@ -433,7 +376,6 @@ inline void bch_combine_linear_backprop_impl_x4_(
 	vec4_add(d_ls1, d_out, d_memo, m);
 	vec4_add(d_ls2, d_out, d_memo + m * 4, m);
 }
-#endif // VEC
 
 // ========================================================================
 // bch_combine_backprop_impl_: backward pass through BCH
@@ -574,10 +516,9 @@ void bch_combine_backprop_impl_(
 	}
 }
 
-#ifdef VEC
 template<std::floating_point T>
 struct alignas(vec_batch_bytes) BchBatchValue {
-	static constexpr uint64_t width = vec_batch_bytes / sizeof(T);
+	static constexpr uint64_t width = vec_batch_lanes<T>;
 	T data[width]{};
 };
 
@@ -734,4 +675,8 @@ void log_sig_from_path_batch_vec_(
 			}
 	}
 }
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
 #endif

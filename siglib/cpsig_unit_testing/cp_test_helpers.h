@@ -17,10 +17,7 @@
 
 #include <gtest/gtest.h>
 #include "cpsig.h"
-#include "cp_sig_combine.h"
 #include "cp_path.h"
-#include "cp_signature.h"
-#include "cp_sig_kernel.h"
 #include "log_sig/sparse_int_matrix.h"
 #include "log_sig/lyndon_words.h"
 #include <algorithm>
@@ -29,6 +26,9 @@
 #include <span>
 #include <cmath>
 #include <type_traits>
+
+using cpsig::HWY_NAMESPACE::Path;
+using cpsig::HWY_NAMESPACE::Point;
 
 #define SINGLE_EPSILON 1e-4
 #define DOUBLE_EPSILON 1e-10

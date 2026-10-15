@@ -16,9 +16,6 @@
 #pragma once
 #include "../shared/last_error.h"
 
-//#ifndef __APPLE__
-//	#define VEC
-//#endif
 
 
 #ifdef _MSC_VER

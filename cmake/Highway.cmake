@@ -1,0 +1,32 @@
+# Copyright 2026 Daniil Shmelev
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# =========================================================================
+
+include(FetchContent)
+if(TARGET hwy)
+    return()
+endif()
+
+set(HWY_FORCE_STATIC_LIBS ON CACHE BOOL "" FORCE)
+set(HWY_ENABLE_CONTRIB OFF CACHE BOOL "" FORCE)
+set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(HWY_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(HWY_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(highway
+    GIT_REPOSITORY https://github.com/google/highway.git
+    GIT_TAG 2607d3b5b0113992fe84d3848859eae13b3b52c1
+)
+FetchContent_MakeAvailable(highway)
+set_target_properties(hwy PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(hwy_test hwy_list_targets PROPERTIES EXCLUDE_FROM_ALL TRUE)

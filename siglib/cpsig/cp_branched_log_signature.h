@@ -13,9 +13,20 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_BRANCHED_LOG_SIGNATURE_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_BRANCHED_LOG_SIGNATURE_H_
+#undef CPSIG_CP_BRANCHED_LOG_SIGNATURE_H_
+#else
+#define CPSIG_CP_BRANCHED_LOG_SIGNATURE_H_
+#endif
 #include "cppch.h"
 #include "cache_lifecycle/cp_branched_log_cache.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 
 template<std::floating_point T>
@@ -45,3 +56,8 @@ void branched_sig_to_log_sig_backprop_(
 	bool planar = false,
 	bool scalar_term = true
 );
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif

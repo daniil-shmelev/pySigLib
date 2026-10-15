@@ -13,15 +13,24 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_EXP_SIGNATURE_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_EXP_SIGNATURE_H_
+#undef CPSIG_CP_EXP_SIGNATURE_H_
+#else
+#define CPSIG_CP_EXP_SIGNATURE_H_
+#endif
 #include "cppch.h"
 
 #include "multithreading.h"
 #include "../shared/preparation/log_sig/lyndon_words.h"
 #include "cache_lifecycle/log_sig_cache.h"
-#ifdef VEC
-#include "cp_vector_funcs.h"
-#endif
+#include "cp_simd-inl.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 // ---------------------------------------------------------------------------
 // tensor_exp_: truncated tensor exponential via power series
@@ -62,8 +71,9 @@ void tensor_exp_(
 		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
 
 		for (uint64_t target_level = n; target_level <= degree; ++target_level) {
-			std::fill(P_curr + level_index[target_level],
-				P_curr + level_index[target_level + 1], static_cast<T>(0.));
+			const uint64_t level_begin = level_index[target_level];
+			const uint64_t level_end = level_index[target_level + 1];
+			std::memset(P_curr + level_begin, 0, (level_end - level_begin) * sizeof(T));
 
 			// l1 ranges from 1 to target_level-(n-1), so l2 >= n-1 (P_prev's support)
 			const uint64_t max_left = target_level - (n - 1);
@@ -71,28 +81,18 @@ void tensor_exp_(
 			for (uint64_t left_level = 1; left_level <= max_left; ++left_level) {
 				uint64_t right_level = target_level - left_level;
 
-				T* res_ptr = P_curr + level_index[target_level];
+				T* res_ptr = P_curr + level_begin;
 				const T* const left_ptr_end = log_sig + level_index[left_level + 1];
-#ifdef VEC
 				const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
 				const T* right_start = P_prev + level_index[right_level];
 				for (const T* left_ptr = log_sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
 					vec_mult_add(res_ptr, right_start, *left_ptr * inv_n, right_level_size);
 					res_ptr += right_level_size;
 				}
-#else
-				const T* const right_ptr_end = P_prev + level_index[right_level + 1];
-				for (const T* left_ptr = log_sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
-					T val = *left_ptr * inv_n;
-					for (const T* right_ptr = P_prev + level_index[right_level]; right_ptr < right_ptr_end; ++right_ptr) {
-						*(res_ptr++) += val * *right_ptr;
-					}
-				}
-#endif
 			}
 
 			// Fuse accumulation into per-level loop (keeps data in cache)
-			for (uint64_t i = level_index[target_level]; i < level_index[target_level + 1]; ++i)
+			for (uint64_t i = level_begin; i < level_end; ++i)
 				out[i] += P_curr[i];
 		}
 
@@ -146,21 +146,12 @@ void tensor_exp_backprop_(
 				uint64_t right_level = target_level - left_level;
 				T* res_ptr = P_curr + level_index[target_level];
 				const T* const left_end = log_sig + level_index[left_level + 1];
-#ifdef VEC
 				const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
 				const T* right_start = P_prev + level_index[right_level];
 				for (const T* lp = log_sig + level_index[left_level]; lp < left_end; ++lp) {
 					vec_mult_add(res_ptr, right_start, *lp * inv_n, right_level_size);
 					res_ptr += right_level_size;
 				}
-#else
-				const T* const right_end = P_prev + level_index[right_level + 1];
-				for (const T* lp = log_sig + level_index[left_level]; lp < left_end; ++lp) {
-					T val = *lp * inv_n;
-					for (const T* rp = P_prev + level_index[right_level]; rp < right_end; ++rp)
-						*(res_ptr++) += val * *rp;
-				}
-#endif
 			}
 		}
 	}
@@ -174,12 +165,10 @@ void tensor_exp_backprop_(
 	T* dP_next = dP2_uptr.get();
 	std::fill(dP, dP + sig_len, static_cast<T>(0.));
 
-#ifdef VEC
 	// Scratch buffer for precomputed upstream values
 	const uint64_t max_right_size = level_index[degree] - level_index[degree - 1];
 	auto upstream_uptr = std::make_unique<T[]>(max_right_size);
 	T* upstream_buf = upstream_uptr.get();
-#endif
 
 	for (int64_t n = static_cast<int64_t>(degree); n >= 2; --n) {
 		T inv_n = static_cast<T>(1.) / static_cast<T>(n);
@@ -201,7 +190,6 @@ void tensor_exp_backprop_(
 				const T* rp_start = P_prev + level_index[right_level];
 				const T* const rp_end = P_prev + level_index[right_level + 1];
 
-#ifdef VEC
 				const uint64_t right_size = rp_end - rp_start;
 				const T* gp = grad_ptr;
 				const T* dp = dP_ptr_base;
@@ -212,20 +200,6 @@ void tensor_exp_backprop_(
 					*(d_left++) += dot_product(upstream_buf, rp_start, right_size);
 					vec_mult_add(d_right, upstream_buf, *lp, right_size);
 				}
-#else
-				const T* gp = grad_ptr;
-				const T* dp = dP_ptr_base;
-				for (const T* lp = lp_start; lp < lp_end; ++lp) {
-					T d_left_acc = static_cast<T>(0.);
-					T* drp = d_right;
-					for (const T* rp = rp_start; rp < rp_end; ++rp) {
-						T upstream = (*(gp++) + *(dp++)) * inv_n;
-						d_left_acc += upstream * *rp;
-						*(drp++) += upstream * *lp;
-					}
-					*(d_left++) += d_left_acc;
-				}
-#endif
 			}
 		}
 
@@ -318,7 +292,8 @@ void expand_lyndon_to_tensor_(
 	T* expanded,
 	uint64_t dimension,
 	uint64_t degree,
-	int method
+	int method,
+	const T* expansions
 ) {
 	const BasisCache& cache = get_basis_cache(dimension, degree, 2);
 	const uint64_t sig_len = ::sig_length(dimension, degree);
@@ -331,14 +306,11 @@ void expand_lyndon_to_tensor_(
 	if (method == 1)
 		cache.inv_proj_mat.mul_vec_inplace_lower(coefs);
 
-	auto expansions = build_bracket_expansions_<T>(dimension, degree);
-
 	std::fill(expanded, expanded + sig_len, static_cast<T>(0.));
 	for (uint64_t i = 0; i < m; ++i) {
 		if (coefs[i] == static_cast<T>(0.)) continue;
-		const T* exp_i = expansions.get() + i * sig_len;
-		for (uint64_t j = 0; j < sig_len; ++j)
-			expanded[j] += coefs[i] * exp_i[j];
+		const T* exp_i = expansions + i * sig_len;
+		vec_mult_add(expanded, exp_i, coefs[i], sig_len);
 	}
 }
 
@@ -348,7 +320,8 @@ void get_logsig_to_sig_(
 	T* out,
 	uint64_t dimension,
 	uint64_t degree,
-	int method = 0
+	int method,
+	const T* expansions
 ) {
 	switch (method) {
 	case 0:
@@ -358,7 +331,7 @@ void get_logsig_to_sig_(
 	case 2: {
 		const uint64_t sig_len = ::sig_length(dimension, degree);
 		auto expanded = std::make_unique<T[]>(sig_len);
-		expand_lyndon_to_tensor_<T>(log_sig, expanded.get(), dimension, degree, method);
+		expand_lyndon_to_tensor_<T>(log_sig, expanded.get(), dimension, degree, method, expansions);
 		tensor_exp_<T>(expanded.get(), out, dimension, degree);
 		break;
 	}
@@ -378,7 +351,8 @@ void get_logsig_to_sig_backprop_(
 	const T* log_sig,
 	uint64_t dimension,
 	uint64_t degree,
-	int method = 0
+	int method,
+	const T* expansions
 ) {
 	switch (method) {
 	case 0:
@@ -391,21 +365,16 @@ void get_logsig_to_sig_backprop_(
 		const uint64_t m = cache.lyndon_idx.size();
 
 		auto expanded = std::make_unique<T[]>(sig_len);
-		expand_lyndon_to_tensor_<T>(log_sig, expanded.get(), dimension, degree, method);
+		expand_lyndon_to_tensor_<T>(log_sig, expanded.get(), dimension, degree, method, expansions);
 
 		auto d_expanded = std::make_unique<T[]>(sig_len);
 		tensor_exp_backprop_<T>(d_expanded.get(), d_sig, expanded.get(), dimension, degree);
 
 		// Backprop through expand (linear map): d_coefs[i] = dot(d_expanded, expansion[i])
-		auto expansions = build_bracket_expansions_<T>(dimension, degree);
-
 		auto d_coefs = std::make_unique<T[]>(m);
 		for (uint64_t i = 0; i < m; ++i) {
-			T acc = static_cast<T>(0.);
-			const T* exp_i = expansions.get() + i * sig_len;
-			for (uint64_t j = 0; j < sig_len; ++j)
-				acc += d_expanded[j] * exp_i[j];
-			d_coefs[i] = acc;
+			const T* exp_i = expansions + i * sig_len;
+			d_coefs[i] = dot_product(d_expanded.get(), exp_i, sig_len);
 		}
 
 		// method=1: forward used P^{-1}, so backward applies (P^{-1})^T
@@ -447,10 +416,12 @@ void logsig_to_sig_(
 	const uint64_t in_stride = (method == 0 && !scalar_term) ? (sig_len - 1) : full_in_len;
 	// Output is always sig-shaped
 	const uint64_t out_stride = scalar_term ? sig_len : sig_len - 1;
+	auto expansions = batch_size && (method == 1 || method == 2)
+		? build_bracket_expansions_<T>(aug_dimension, degree) : nullptr;
 
 	if (scalar_term) {
 		auto func = [&](const T* in_ptr, T* out_ptr) {
-			get_logsig_to_sig_<T>(in_ptr, out_ptr, aug_dimension, degree, method);
+			get_logsig_to_sig_<T>(in_ptr, out_ptr, aug_dimension, degree, method, expansions.get());
 		};
 		multi_threaded_batch(func, batch_size, n_jobs,
 			make_batch(log_sig, full_in_len), make_batch(out, sig_len));
@@ -467,7 +438,7 @@ void logsig_to_sig_(
 			}
 			// Compute into full output, then strip
 			std::vector<T> out_full(sig_len);
-			get_logsig_to_sig_<T>(actual_in, out_full.data(), aug_dimension, degree, method);
+			get_logsig_to_sig_<T>(actual_in, out_full.data(), aug_dimension, degree, method, expansions.get());
 			std::memcpy(out_ptr, out_full.data() + 1, (sig_len - 1) * sizeof(T));
 		};
 		multi_threaded_batch(func, batch_size, n_jobs,
@@ -505,13 +476,15 @@ void logsig_to_sig_backprop_(
 	const uint64_t dsig_stride = scalar_term ? sig_len : sig_len - 1;
 	// d_logsig (output grad) is logsig-shaped (method>0) or sig-shaped (method==0)
 	const uint64_t dout_stride = (method == 0 && !scalar_term) ? (sig_len - 1) : full_in_len;
+	auto expansions = batch_size && (method == 1 || method == 2)
+		? build_bracket_expansions_<T>(aug_dimension, degree) : nullptr;
 
 	if (scalar_term) {
 		auto batch_func = [&](uint64_t start, uint64_t end) {
 			for (uint64_t i = start; i < end; ++i) {
 				get_logsig_to_sig_backprop_<T>(
 					d_logsig + i * full_in_len, d_sig + i * sig_len,
-					log_sig + i * full_in_len, aug_dimension, degree, method);
+					log_sig + i * full_in_len, aug_dimension, degree, method, expansions.get());
 			}
 		};
 
@@ -541,13 +514,13 @@ void logsig_to_sig_backprop_(
 					std::vector<T> dout_full(sig_len);
 					get_logsig_to_sig_backprop_<T>(
 						dout_full.data(), dsig_full.data(),
-						actual_in, aug_dimension, degree, method);
+						actual_in, aug_dimension, degree, method, expansions.get());
 					std::memcpy(d_logsig + i * dout_stride, dout_full.data() + 1, dout_stride * sizeof(T));
 				} else {
 					// Output is logsig-shaped, no stripping
 					get_logsig_to_sig_backprop_<T>(
 						d_logsig + i * dout_stride, dsig_full.data(),
-						actual_in, aug_dimension, degree, method);
+						actual_in, aug_dimension, degree, method, expansions.get());
 				}
 			}
 		};
@@ -555,3 +528,8 @@ void logsig_to_sig_backprop_(
 		spawn_batch_threads(batch_size, n_jobs, batch_func);
 	}
 }
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif

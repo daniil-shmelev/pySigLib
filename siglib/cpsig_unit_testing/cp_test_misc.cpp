@@ -406,6 +406,49 @@ TEST(transformPathForwardTest, BatchTimeAugTest) {
     check_result(f, input, true_, batch_size, dimension, length, true, false, 1., -1);
 }
 
+TEST(transformPath, OverlappingCopy) {
+    std::vector<double> after = {1., 2., 3., 4., 5., 6., 7., 8., 9., 10.};
+    ASSERT_EQ(0, transform_path_d(after.data(), after.data() + 2, 1, 2, 4, false, false, 1., 1));
+    EXPECT_EQ(after, (std::vector<double>{1., 2., 1., 2., 1., 2., 1., 2., 1., 2.}));
+    after = {1., 2., 3., 4., 5., 6., 7., 8., 9., 10.};
+    ASSERT_EQ(0, transform_path_d(after.data(), after.data() + 2, 2, 2, 2, false, false, 1., 1));
+    EXPECT_EQ(after, (std::vector<double>{1., 2., 1., 2., 1., 2., 1., 2., 1., 2.}));
+
+    std::vector<float> before = {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f, 10.f};
+    ASSERT_EQ(0, transform_path_f(before.data() + 2, before.data(), 1, 2, 4, false, false, 1.f, 1));
+    EXPECT_EQ(before, (std::vector<float>{3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f, 10.f, 9.f, 10.f}));
+
+    const auto unchanged = before;
+    ASSERT_EQ(0, transform_path_f(before.data(), before.data(), 1, 2, 5, false, false, 1.f, 1));
+    EXPECT_EQ(before, unchanged);
+    EXPECT_EQ(0, transform_path_d(nullptr, nullptr, 1, 2, 0, false, false, 1., 1));
+}
+
+TEST(transformPath, UnalignedCopyAndTails) {
+    for (uint64_t length : {0, 1, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 4097}) {
+        for (int jobs : {1, 20}) {
+            std::vector<double> source(3 * length + 2), output(source.size(), -1.);
+            std::vector<float> source_f(source.size()), output_f(source.size(), -1.f);
+            for (uint64_t i = 0; i < source.size(); ++i) {
+                source[i] = static_cast<double>(i);
+                source_f[i] = static_cast<float>(i);
+            }
+            ASSERT_EQ(0, transform_path_d(source.data() + 1, output.data() + 1,
+                3, 1, length, false, false, 1., jobs));
+            ASSERT_EQ(0, transform_path_f(source_f.data() + 1, output_f.data() + 1,
+                3, 1, length, false, false, 1.f, jobs));
+            for (uint64_t i = 1; i + 1 < source.size(); ++i) {
+                EXPECT_EQ(output[i], source[i]);
+                EXPECT_EQ(output_f[i], source_f[i]);
+            }
+            EXPECT_EQ(output.front(), -1.);
+            EXPECT_EQ(output.back(), -1.);
+            EXPECT_EQ(output_f.front(), -1.f);
+            EXPECT_EQ(output_f.back(), -1.f);
+        }
+    }
+}
+
 TEST(transformPathBackprop, TimeAugTest) {
     auto f = transform_path_backprop_d;
     uint64_t dimension = 2, length = 3;

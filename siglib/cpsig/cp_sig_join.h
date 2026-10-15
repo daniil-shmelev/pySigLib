@@ -13,9 +13,20 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_SIG_JOIN_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_SIG_JOIN_H_
+#undef CPSIG_CP_SIG_JOIN_H_
+#else
+#define CPSIG_CP_SIG_JOIN_H_
+#endif
 #include "cppch.h"
 #include "cp_sig_combine.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 // ---------------------------------------------------------------------------
 // linear_sig_: signature of a single linear segment from a displacement vector
@@ -39,17 +50,9 @@ FORCE_INLINE void linear_sig_with_level_index_(
 		T one_over_level = static_cast<T>(1.) / level;
 		T* result_ptr = out + level_index[level];
 		const T* const left_end = out + level_index[level];
-#ifdef VEC
 		for (const T* left_ptr = out + level_index[level - 1]; left_ptr != left_end; ++left_ptr, result_ptr += dimension) {
 			vec_mult_assign(result_ptr, out + 1, (*left_ptr) * one_over_level, dimension);
 		}
-#else
-		for (const T* left_ptr = out + level_index[level - 1]; left_ptr != left_end; ++left_ptr) {
-			T val = (*left_ptr) * one_over_level;
-			for (uint64_t d = 0; d < dimension; ++d)
-				*(result_ptr++) = val * out[1 + d];
-		}
-#endif
 	}
 }
 
@@ -269,3 +272,8 @@ void batch_sig_join_backprop_(
 	spawn_batch_threads(batch_size, n_jobs, func);
 }
 
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif

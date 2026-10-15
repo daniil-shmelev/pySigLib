@@ -13,8 +13,19 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_PATH_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_PATH_H_
+#undef CPSIG_CP_PATH_H_
+#else
+#define CPSIG_CP_PATH_H_
+#endif
 #include "cppch.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 template<std::floating_point T>
 class PointImpl;
@@ -490,3 +501,8 @@ private:
 	}
 #endif
 };
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif

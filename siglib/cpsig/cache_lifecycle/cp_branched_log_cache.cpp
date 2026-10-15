@@ -14,9 +14,10 @@
  * ========================================================================= */
 
 #include "cppch.h"
+#include "errors.h"
 #include "cp_branched_log_cache.h"
 
-#include "cp_bch.h"
+#include "cp_bch_cache.h"
 #include "disk_cache.h"
 
 namespace {

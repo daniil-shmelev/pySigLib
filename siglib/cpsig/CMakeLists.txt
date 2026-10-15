@@ -6,6 +6,7 @@ if(NOT TARGET pysiglib_preparation)
 endif()
 
 add_library(cpsig SHARED
+    multithreading.cpp
     cp_branched_polynomial_sig_kernel.cpp
     cp_bch.cpp
     cache_lifecycle/cp_branched_cache.cpp
@@ -25,6 +26,8 @@ add_library(cpsig SHARED
     cp_sig_combine.cpp
     cp_sig_join.cpp
     cpsig.cpp
+    cache_lifecycle/cp_bch_cache.cpp
+    cache_lifecycle/cp_poly_cache.cpp
     cache_lifecycle/log_sig_cache.cpp
 )
 
@@ -83,35 +86,59 @@ if(MSVC)
     target_link_options(cpsig PRIVATE /DEBUG /OPT:REF /OPT:ICF)
 endif()
 
-# ---- Vectorization ----------------------------------------------------------
-# Under cibuildwheel, force a portable AVX2 baseline so wheels don't embed
-# AVX-512 (built on a CPU that has it) and then SIGILL on end-user CPUs that
-# don't. Local source installs get -march=native for max perf.
-if(_enable_vec)
-    target_compile_definitions(cpsig PRIVATE VEC)
-
+# ---- Highway ---------------------------------------------------------------
+option(PYSIGLIB_AVX "Enable runtime CPU SIMD dispatch (SSE2/AVX2/NEON)" ON)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/Highway.cmake")
+target_link_libraries(cpsig PRIVATE hwy)
+if(PYSIGLIB_TESTS)
+    target_sources(cpsig PRIVATE cp_dispatch_test.cpp)
     if(MSVC)
-        if(DEFINED ENV{CIBUILDWHEEL})
-            target_compile_options(cpsig PRIVATE /arch:AVX2)
-        elseif(_has_avx512f)
-            target_compile_options(cpsig PRIVATE /arch:AVX512)
-        elseif(_has_avx2)
-            target_compile_options(cpsig PRIVATE /arch:AVX2)
-        elseif(_has_avx)
-            target_compile_options(cpsig PRIVATE /arch:AVX)
-        endif()
-        target_compile_options(cpsig PRIVATE /Qvec-report:2)
-    elseif(APPLE)
-        # No -march=native: some clang versions don't recognise the newest
-        # apple-mN CPU names and fail with "unknown target CPU".
-        target_compile_options(cpsig PRIVATE -ftree-vectorize)
-    else()
-        if(DEFINED ENV{CIBUILDWHEEL})
-            target_compile_options(cpsig PRIVATE -march=x86-64-v3 -ftree-vectorize)
-        else()
-            target_compile_options(cpsig PRIVATE -march=native -ftree-vectorize)
-        endif()
+        target_link_options(cpsig PRIVATE "/MAP:${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/cpsig.map")
     endif()
+endif()
+
+set(_cpsig_kernels
+    cp_bch_impl.cpp
+    cp_branched_log_signature_impl.cpp
+    cp_branched_polynomial_sig_kernel_impl.cpp
+    cp_branched_sig_coef_impl.cpp
+    cp_branched_sig_kernel_impl.cpp
+    cp_branched_signature_impl.cpp
+    cp_log_signatures_impl.cpp
+    cp_path_transforms_impl.cpp
+    cp_polynomial_sig_kernel_impl.cpp
+    cp_sig_coef_impl.cpp
+    cp_sig_combine_impl.cpp
+    cp_sig_join_impl.cpp
+    cp_sig_kernel_impl.cpp
+    cp_signature_impl.cpp
+)
+if(NOT PYSIGLIB_AVX)
+    target_compile_definitions(cpsig PRIVATE CPSIG_SCALAR_ONLY)
+endif()
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    set(_cpsig_targets baseline)
+    if(PYSIGLIB_AVX AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
+        list(APPEND _cpsig_targets avx2)
+    endif()
+    foreach(_target IN LISTS _cpsig_targets)
+        add_library(cpsig_${_target} OBJECT ${_cpsig_kernels})
+        target_compile_definitions(cpsig_${_target} PRIVATE CPSIG_STATIC_TARGET CPSIG_EXPORTS)
+        if(NOT PYSIGLIB_AVX)
+            target_compile_definitions(cpsig_${_target} PRIVATE CPSIG_SCALAR_ONLY)
+        endif()
+        target_include_directories(cpsig_${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
+        target_link_libraries(cpsig_${_target} PRIVATE hwy TBB::tbb pysiglib_preparation)
+        target_compile_options(cpsig_${_target} PRIVATE /Zi)
+        target_precompile_headers(cpsig_${_target} PRIVATE cppch.h)
+        if(_target STREQUAL "avx2")
+            target_compile_options(cpsig_${_target} PRIVATE /arch:AVX2)
+        endif()
+        target_sources(cpsig PRIVATE $<TARGET_OBJECTS:cpsig_${_target}>)
+    endforeach()
+else()
+    target_sources(cpsig PRIVATE ${_cpsig_kernels})
 endif()
 
 # ---- Install ----------------------------------------------------------------
@@ -122,6 +149,10 @@ if(NOT CPSIG_SKIP_INSTALL)
     install(TARGETS cpsig tbb
         LIBRARY DESTINATION pysiglib
         RUNTIME DESTINATION pysiglib   # .dll on Windows
+    )
+    install(FILES "${highway_SOURCE_DIR}/LICENSE"
+        DESTINATION pysiglib/licenses
+        RENAME Highway-LICENSE.txt
     )
     install(FILES "${onetbb_SOURCE_DIR}/LICENSE.txt"
         DESTINATION pysiglib/licenses

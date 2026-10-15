@@ -13,7 +13,14 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_SIGNATURE_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_SIGNATURE_H_
+#undef CPSIG_CP_SIGNATURE_H_
+#else
+#define CPSIG_CP_SIGNATURE_H_
+#endif
 #include "cppch.h"
 #include <array>
 
@@ -23,9 +30,14 @@
 
 #include "cp_path.h"
 #include "macros.h"
-#ifdef VEC
-#include "cp_vector_funcs.h"
-#endif
+#include "cp_simd-inl.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
+
+template<std::floating_point T>
+void sig_backprop_inplace_(const Path<T>& path, T* out, T* sig_derivs, T* sig, uint64_t degree, uint64_t sig_len);
 
 template<std::floating_point T, uint64_t lanes>
 void sig_backprop_batch_simd_(
@@ -49,17 +61,20 @@ void sig_backprop_batch_simd_(
 	uint64_t* const level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	auto group_func = [&](const T* path_group, T* out_group, const T* deriv_group, const T* sig_group) {
+	auto group_func = [&](const T* path_group, T* out_group, const T* deriv_group, const T* sig_group) HWY_ATTR {
+		const Simd<T> desc;
 		const uint64_t group_start = static_cast<uint64_t>(path_group - path) / flat_path_length;
 		const uint64_t valid_lanes = std::min(lanes, batch_size - group_start);
 		const uint64_t state_size = sig_len * lanes;
 
-		std::vector<T> prefix(state_size, static_cast<T>(0.));
-		std::vector<T> prefix_deriv(state_size, static_cast<T>(0.));
-		std::vector<T> increment_sig_deriv(state_size, static_cast<T>(0.));
-		std::vector<T> increment_sig(state_size, static_cast<T>(0.));
-		std::vector<T> increments(dimension * lanes, static_cast<T>(0.));
-		std::vector<T> increment_deriv(dimension * lanes, static_cast<T>(0.));
+		thread_local std::vector<T> prefix, prefix_deriv, increment_sig_deriv;
+		thread_local std::vector<T> increment_sig, increments, increment_deriv;
+		prefix.assign(state_size, static_cast<T>(0.));
+		prefix_deriv.assign(state_size, static_cast<T>(0.));
+		increment_sig_deriv.resize(state_size);
+		increment_sig.assign(state_size, static_cast<T>(0.));
+		increments.assign(dimension * lanes, static_cast<T>(0.));
+		increment_deriv.resize(dimension * lanes);
 
 		for (uint64_t lane = 0; lane < lanes; ++lane) {
 			prefix[lane] = static_cast<T>(1.);
@@ -95,8 +110,8 @@ void sig_backprop_batch_simd_(
 					for (uint64_t d = 0; d < dimension; ++d) {
 						T* const result = increment_sig.data() + (level_index[level] + j * dimension + d) * lanes;
 						const T* const increment = increments.data() + d * lanes;
-						for (uint64_t lane = 0; lane < lanes; ++lane)
-							result[lane] = -previous[lane] * increment[lane] * one_over_level;
+						hn::StoreU(hn::Mul(hn::Mul(hn::Neg(hn::LoadU(desc, previous)),
+							hn::LoadU(desc, increment)), hn::Set(desc, one_over_level)), desc, result);
 					}
 				}
 			}
@@ -113,12 +128,12 @@ void sig_backprop_batch_simd_(
 							T* const result = prefix.data() + result_word * lanes;
 							const T* const right = increment_sig.data() + (level_index[right_level] + right_word) * lanes;
 							if (right_level % 2) {
-								for (uint64_t lane = 0; lane < lanes; ++lane)
-									result[lane] -= left[lane] * right[lane];
+								hn::StoreU(hn::Sub(hn::LoadU(desc, result),
+									hn::Mul(hn::LoadU(desc, left), hn::LoadU(desc, right))), desc, result);
 							}
 							else {
-								for (uint64_t lane = 0; lane < lanes; ++lane)
-									result[lane] += left[lane] * right[lane];
+								hn::StoreU(hn::Add(hn::LoadU(desc, result),
+									hn::Mul(hn::LoadU(desc, left), hn::LoadU(desc, right))), desc, result);
 							}
 						}
 					}
@@ -129,12 +144,10 @@ void sig_backprop_batch_simd_(
 					T* const result = prefix.data() + (level_index[target_level] + word) * lanes;
 					const T* const right = increment_sig.data() + (level_index[target_level] + word) * lanes;
 					if (target_level % 2) {
-						for (uint64_t lane = 0; lane < lanes; ++lane)
-							result[lane] -= right[lane];
+						hn::StoreU(hn::Sub(hn::LoadU(desc, result), hn::LoadU(desc, right)), desc, result);
 					}
 					else {
-						for (uint64_t lane = 0; lane < lanes; ++lane)
-							result[lane] += right[lane];
+						hn::StoreU(hn::Add(hn::LoadU(desc, result), hn::LoadU(desc, right)), desc, result);
 					}
 				}
 			}
@@ -149,18 +162,18 @@ void sig_backprop_batch_simd_(
 					for (uint64_t left_word = 0; left_word < left_size; ++left_word) {
 						const T* const left = prefix.data() + (level_index[left_level] + left_word) * lanes;
 						T* const left_deriv = prefix_deriv.data() + (level_index[left_level] + left_word) * lanes;
-						std::array<T, lanes> left_accum{};
+						auto left_accum = hn::Zero(desc);
+						const auto left_value = hn::LoadU(desc, left);
 						for (uint64_t right_word = 0; right_word < right_size; ++right_word, ++result_word) {
 							const T* const result_deriv = prefix_deriv.data() + result_word * lanes;
 							T* const right_deriv = increment_sig_deriv.data() + (level_index[right_level] + right_word) * lanes;
 							const T* const right = increment_sig.data() + (level_index[right_level] + right_word) * lanes;
-							for (uint64_t lane = 0; lane < lanes; ++lane) {
-								right_deriv[lane] += result_deriv[lane] * left[lane];
-								left_accum[lane] += result_deriv[lane] * right[lane];
-							}
+							const auto deriv = hn::LoadU(desc, result_deriv);
+							hn::StoreU(hn::Add(hn::LoadU(desc, right_deriv),
+								hn::Mul(deriv, left_value)), desc, right_deriv);
+							left_accum = hn::Add(left_accum, hn::Mul(deriv, hn::LoadU(desc, right)));
 						}
-						for (uint64_t lane = 0; lane < lanes; ++lane)
-							left_deriv[lane] += left_accum[lane];
+						hn::StoreU(hn::Add(hn::LoadU(desc, left_deriv), left_accum), desc, left_deriv);
 					}
 				}
 			}
@@ -172,25 +185,27 @@ void sig_backprop_batch_simd_(
 				for (uint64_t j = 0; j < previous_size; ++j) {
 					T* const previous_deriv = increment_sig_deriv.data() + (level_index[level - 1] + j) * lanes;
 					const T* const previous = increment_sig.data() + (level_index[level - 1] + j) * lanes;
-					std::array<T, lanes> previous_accum{};
+					auto previous_accum = hn::Zero(desc);
+					const auto previous_value = hn::LoadU(desc, previous);
+					const auto scale = hn::Set(desc, one_over_level);
 					for (uint64_t d = 0; d < dimension; ++d) {
 						const T* const level_deriv = increment_sig_deriv.data() + (level_index[level] + j * dimension + d) * lanes;
 						const T* const increment = increments.data() + d * lanes;
 						T* const displacement_deriv = increment_deriv.data() + d * lanes;
-						for (uint64_t lane = 0; lane < lanes; ++lane) {
-							previous_accum[lane] -= level_deriv[lane] * increment[lane] * one_over_level;
-							displacement_deriv[lane] += level_deriv[lane] * previous[lane] * one_over_level;
-						}
+						const auto deriv = hn::LoadU(desc, level_deriv);
+						previous_accum = hn::Sub(previous_accum,
+							hn::Mul(hn::Mul(deriv, hn::LoadU(desc, increment)), scale));
+						hn::StoreU(hn::Add(hn::LoadU(desc, displacement_deriv),
+							hn::Mul(hn::Mul(deriv, previous_value), scale)), desc, displacement_deriv);
 					}
-					for (uint64_t lane = 0; lane < lanes; ++lane)
-						previous_deriv[lane] += previous_accum[lane];
+					hn::StoreU(hn::Add(hn::LoadU(desc, previous_deriv), previous_accum), desc, previous_deriv);
 				}
 			}
 			for (uint64_t d = 0; d < dimension; ++d) {
 				T* const displacement_deriv = increment_deriv.data() + d * lanes;
 				const T* const level_one_deriv = increment_sig_deriv.data() + (1 + d) * lanes;
-				for (uint64_t lane = 0; lane < lanes; ++lane)
-					displacement_deriv[lane] += level_one_deriv[lane];
+				hn::StoreU(hn::Add(hn::LoadU(desc, displacement_deriv),
+					hn::LoadU(desc, level_one_deriv)), desc, displacement_deriv);
 			}
 
 			for (uint64_t lane = 0; lane < valid_lanes; ++lane) {
@@ -367,17 +382,9 @@ FORCE_INLINE void linear_signature_(
 		T one_over_level = static_cast<T>(1.) / level;
 		T* result_ptr = out + level_index[level] - offset;
 		const T* const left_end = out + level_index[level] - offset;
-#ifdef VEC
 		for (const T* left_ptr = out + level_index[level - 1] - offset; left_ptr != left_end; ++left_ptr, result_ptr += dimension) {
 			vec_mult_assign(result_ptr, out + 1 - offset, (*left_ptr) * one_over_level, dimension);
 		}
-#else
-		for (const T* left_ptr = out + level_index[level - 1] - offset; left_ptr != left_end; ++left_ptr) {
-			T val = (*left_ptr) * one_over_level;
-			for (uint64_t d = 0; d < dimension; ++d)
-				*(result_ptr++) = val * out[1 + d - offset];
-		}
-#endif
 	}
 }
 
@@ -473,12 +480,7 @@ FORCE_INLINE void signature_horner_(
 				while (left_ptr != horner_step) {
 					const T scalar = (*(--left_ptr) + *(--out_ptr)) * one_over_level;
 					result_ptr -= dimension;
-#ifdef VEC
 					vec_mult_assign(result_ptr, increments, scalar, dimension);
-#else
-					for (uint64_t d = 0; d < dimension; ++d)
-						result_ptr[d] = scalar * increments[d];
-#endif
 				}
 			}
 
@@ -489,21 +491,11 @@ FORCE_INLINE void signature_horner_(
 			while (left_ptr != horner_step) {
 				const T scalar = *(--left_ptr) + *(--out_ptr);
 				result_ptr -= dimension;
-#ifdef VEC
 				vec_mult_add(result_ptr, increments, scalar, dimension);
-#else
-				for (uint64_t d = 0; d < dimension; ++d)
-					result_ptr[d] += scalar * increments[d];
-#endif
 			}
 		}
 		//Update target_level == 1
-#ifdef VEC
 		vec_mult_add(out + (scalar_term ? 1 : 0), increments, static_cast<T>(1.), dimension);
-#else
-		for (uint64_t i = 0; i < dimension; ++i)
-			out[i + (scalar_term ? 1 : 0)] += increments[i];
-#endif
 	}
 }
 
@@ -583,7 +575,6 @@ void signature_horner_step_(
 			one_over_level = static_cast<T>(1. / right_level);
 
 			//Horner stuff
-#ifdef VEC
 			//Add and multiply (fused)
 			T left_over_level;
 			T* sig_ptr = sig + level_index[left_level + 1];
@@ -592,23 +583,6 @@ void signature_horner_step_(
 				left_over_level = (*left_ptr + *(--sig_ptr)) * one_over_level;
 				vec_mult_assign(result_ptr, increments, left_over_level, dimension);
 			}
-#else
-			//Add
-			T* left_ptr_1 = sig + level_index[left_level];
-			for (uint64_t i = 0; i < left_level_size; ++i) {
-				horner_step[i] += *(left_ptr_1++);
-			}
-
-			//Multiply
-			T left_over_level;
-			T* result_ptr = horner_step + level_index[left_level + 2] - level_index[left_level + 1];
-			for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr) {
-				left_over_level = (*left_ptr) * one_over_level;
-				for (const T* right_ptr = increments + dimension - 1; right_ptr != increments - 1; --right_ptr) {
-					*(--result_ptr) = left_over_level * (*right_ptr);
-				}
-			}
-#endif
 		}
 
 		//======================= Do last iteration (left_level = target_level - 1) separately for speed, and add result straight into out
@@ -616,7 +590,6 @@ void signature_horner_step_(
 		const uint64_t left_level_size = level_index[target_level] - level_index[target_level - 1];
 
 		//Horner stuff
-#ifdef VEC
 		//Add, Multiply and add (fused), writing straight into out
 		T* sig_ptr = sig + level_index[target_level];
 		T* result_ptr = sig + level_index[target_level + 1] - dimension;
@@ -624,32 +597,11 @@ void signature_horner_step_(
 			const T scalar = *left_ptr + *(--sig_ptr);
 			vec_mult_add(result_ptr, increments, scalar, dimension);
 		}
-#else
-		//Add
-		T* left_ptr_1 = sig + level_index[target_level - 1];
-		for (uint64_t i = 0; i < left_level_size; ++i) {
-			horner_step[i] += *(left_ptr_1++);
-		}
-
-		//Multiply and add, writing straight into out
-		T* result_ptr = sig + level_index[target_level + 1];
-		for (T* left_ptr = horner_step + left_level_size - 1; left_ptr != horner_step - 1; --left_ptr) {
-			for (const T* right_ptr = increments + dimension - 1; right_ptr != increments - 1; --right_ptr) {
-				*(--result_ptr) += (*left_ptr) * (*right_ptr); //no one_over_level here, as right_level = 1
-			}
-		}
-#endif
 	}
 	//Update target_level == 1
-#ifdef VEC
 	vec_mult_add(sig + 1, increments, static_cast<T>(1.), dimension);
-#else
-	for (uint64_t i = 0; i < dimension; ++i)
-		sig[i + 1] += increments[i];
-#endif
 }
 
-#ifdef VEC
 template<std::floating_point T, uint64_t aug_dim>
 void signature_horner_batch_(
 	const T* path,
@@ -664,7 +616,7 @@ void signature_horner_batch_(
 	bool scalar_term,
 	int n_jobs
 ) {
-	constexpr uint64_t lanes = vec_batch_bytes / sizeof(T);
+	constexpr uint64_t lanes = vec_batch_lanes<T>;
 	// Store the same coefficient from each path in one SIMD vector.
 	struct alignas(vec_batch_bytes) Value { T data[lanes]{}; };
 	const Path<T> shape(nullptr, dimension, length, time_aug, lead_lag, end_time);
@@ -724,21 +676,25 @@ void signature_horner_batch_(
 				for (uint64_t d = 0; d < aug_dim; ++d)
 					vec_batch_copy(work[1 + d].data, increments[(target - 1) * aug_dim + d].data);
 				for (uint64_t level = 1; level + 1 < target; ++level) {
-					const uint64_t count = level_index[level + 1] - level_index[level];
+					const uint64_t level_start = level_index[level];
+					const uint64_t next_start = level_index[level + 1];
+					const uint64_t count = next_start - level_start;
 					const uint64_t increment_offset = (target - level - 1) * aug_dim;
 					for (uint64_t word = 0; word < count; ++word) {
 						Value sum;
-						vec_batch_add(sum.data, work[level_index[level] + word].data, sig[level_index[level] + word].data);
+						vec_batch_add(sum.data, work[level_start + word].data, sig[level_start + word].data);
 						for (uint64_t d = 0; d < aug_dim; ++d)
-							vec_batch_multiply(work[level_index[level + 1] + word * aug_dim + d].data, sum.data, increments[increment_offset + d].data);
+							vec_batch_multiply(work[next_start + word * aug_dim + d].data, sum.data, increments[increment_offset + d].data);
 					}
 				}
-				const uint64_t count = level_index[target] - level_index[target - 1];
+				const uint64_t target_start = level_index[target];
+				const uint64_t previous_start = level_index[target - 1];
+				const uint64_t count = target_start - previous_start;
 				for (uint64_t word = 0; word < count; ++word) {
 					Value sum;
-					vec_batch_add(sum.data, work[level_index[target - 1] + word].data, sig[level_index[target - 1] + word].data);
+					vec_batch_add(sum.data, work[previous_start + word].data, sig[previous_start + word].data);
 					for (uint64_t d = 0; d < aug_dim; ++d)
-						vec_batch_multiply_add(sig[level_index[target] + word * aug_dim + d].data, sum.data, increments[d].data);
+						vec_batch_multiply_add(sig[target_start + word * aug_dim + d].data, sum.data, increments[d].data);
 				}
 			}
 			for (uint64_t d = 0; d < aug_dim; ++d)
@@ -759,7 +715,6 @@ void signature_horner_batch_(
 	multi_threaded_batch(group_func, group_count, n_jobs,
 		make_batch(path, flat_path_length * lanes), make_batch(out, stride * lanes));
 }
-#endif
 
 template<std::floating_point T>
 void signature_(
@@ -828,14 +783,13 @@ void signature_(
 		return;
 	}
 
-#ifdef VEC
 	const int max_threads = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
 	const bool enough_groups = sizeof(T) == 4 || aug_dim <= 2 || n_jobs == 1
-		|| batch_size / (vec_batch_bytes / sizeof(T)) >= static_cast<uint64_t>(max_threads);
+		|| batch_size / (vec_batch_lanes<T>) >= static_cast<uint64_t>(max_threads);
 	// Limit the working set and retain enough independent tasks for the thread pool.
 	if (horner && !has_correction && degree > 1 && length >= 16 && aug_dim <= 4
-		&& aug_dim < vec_batch_bytes / sizeof(T)
-		&& batch_size >= vec_batch_bytes / sizeof(T) && full_len <= 8192 && enough_groups) {
+		&& aug_dim < vec_batch_lanes<T>
+		&& batch_size >= vec_batch_lanes<T> && full_len <= 8192 && enough_groups) {
 		auto batch_func = [&]<uint64_t dim>() {
 			return signature_horner_batch_<T, dim>(path, out, batch_size, dimension, length, degree,
 				time_aug, lead_lag, end_time, scalar_term, n_jobs);
@@ -846,7 +800,6 @@ void signature_(
 		case 4: return batch_func.template operator()<4>();
 		}
 	}
-#endif
 
 	if (has_correction) {
 		auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
@@ -989,9 +942,8 @@ void sig_backprop_(
 		return;
 	}
 
-#ifdef VEC
 	if (!time_aug && !lead_lag && correction_len == 0 && degree > 1) {
-		constexpr uint64_t simd_lanes = 32 / sizeof(T);
+		constexpr uint64_t simd_lanes = vec_batch_lanes<T>;
 		if (sig_len_ <= 128 && batch_size >= simd_lanes) {
 			sig_backprop_batch_simd_<T, simd_lanes>(
 				path, out, sig_derivs, sig, batch_size, dimension, length,
@@ -999,7 +951,6 @@ void sig_backprop_(
 			return;
 		}
 	}
-#endif
 
 	//General case -- inner function always works on full-size buffers
 	auto sig_derivs_copy_uptr = std::make_unique<T[]>(sig_len_ * batch_size);
@@ -1241,3 +1192,8 @@ void sig_backprop_inplace_(
 		}
 	}
 }
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif

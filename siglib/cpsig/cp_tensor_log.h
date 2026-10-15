@@ -13,7 +13,14 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_TENSOR_LOG_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_TENSOR_LOG_H_
+#undef CPSIG_CP_TENSOR_LOG_H_
+#else
+#define CPSIG_CP_TENSOR_LOG_H_
+#endif
 #include "cppch.h"
 
 #include "cp_sig_combine.h"
@@ -22,9 +29,11 @@
 #include "cache_lifecycle/log_sig_cache.h"
 
 #include "macros.h"
-#ifdef VEC
-#include "cp_vector_funcs.h"
-#endif
+#include "cp_simd-inl.h"
+
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
 
 // ========================================================================
 // tensor_log_: compute the tensor logarithm in-place
@@ -53,38 +62,30 @@ void tensor_log_(
 	uint64_t buff1_size = ::sig_length(dimension, degree - 1);
 	std::unique_ptr<T[]> buff1_uptr = std::make_unique<T[]>(buff1_size);
 	T* buff1 = buff1_uptr.get();
-	std::fill(buff1, buff1 + buff1_size, static_cast<T>(0.));
 
 	uint64_t buff2_size = ::sig_length(dimension, degree);
 	auto buff2_uptr = std::make_unique<T[]>(buff2_size);
 	T* buff2 = buff2_uptr.get();
-	std::fill(buff2, buff2 + buff2_size, static_cast<T>(0.));
 
 	for (int64_t k = degree; k > 0; --k) {
 		T constant = static_cast<T>(1.) / k;
 
 		for (uint64_t target_level = 2; target_level <= 1 + degree - k; ++target_level) {
 
-			std::fill(buff2 + level_index[target_level], buff2 + level_index[target_level + 1], static_cast<T>(0.));
+			std::memset(buff2 + level_index[target_level], 0,
+				(level_index[target_level + 1] - level_index[target_level]) * sizeof(T));
 
 			for (uint64_t left_level = 1; left_level < target_level; ++left_level) {
 				uint64_t right_level = target_level - left_level;
 
 				T* res_ptr = buff2 + level_index[target_level];
 				T* const left_ptr_end = sig + level_index[left_level + 1];
-#ifdef VEC
 				const uint64_t right_level_size = level_index[right_level + 1] - level_index[right_level];
 				const T* right_start = buff1 + level_index[right_level];
 				for (T* left_ptr = sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr) {
 					vec_mult_add(res_ptr, right_start, *left_ptr, right_level_size);
 					res_ptr += right_level_size;
 				}
-#else
-				T* const right_ptr_end = buff1 + level_index[right_level + 1];
-				for (T* left_ptr = sig + level_index[left_level]; left_ptr < left_ptr_end; ++left_ptr)
-					for (T* right_ptr = buff1 + level_index[right_level]; right_ptr < right_ptr_end; ++right_ptr)
-						*(res_ptr++) += *left_ptr * *right_ptr;
-#endif
 			}
 		}
 
@@ -281,3 +282,8 @@ void tensor_log_backprop_lyndon_basis(
 
 	tensor_log_backprop_<T>(out, log_sig_derivs_copy, sig, dimension, degree);
 }
+
+}  // namespace HWY_NAMESPACE
+}  // namespace cpsig
+HWY_AFTER_NAMESPACE();
+#endif
