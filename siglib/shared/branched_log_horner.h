@@ -41,7 +41,10 @@ inline uint64_t branched_log_product_for_flat(
 }
 
 template<std::floating_point T, typename FlatValue>
-void fill_branched_log_horner_products(
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+inline void fill_branched_log_horner_products(
 	const BranchedLogHornerPlan& plan,
 	bool planar,
 	FlatValue flat_value,
@@ -61,7 +64,10 @@ void fill_branched_log_horner_products(
 }
 
 template<std::floating_point T, typename FlatValue, typename SetOutput>
-void branched_log_horner_forward(
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+inline void branched_log_horner_forward(
 	uint64_t total_length,
 	uint64_t max_nodes,
 	bool planar,
