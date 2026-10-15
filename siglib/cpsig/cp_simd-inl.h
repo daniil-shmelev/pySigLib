@@ -154,11 +154,7 @@ FORCE_INLINE T reduce_sum(hn::Vec<Simd<T>> value) {
     else
 #endif
     {
-        T lanes[vec_batch_lanes<T>];
-        hn::StoreU(value, d, lanes);
-        T result = lanes[0];
-        for (size_t k = 1; k < vec_batch_lanes<T>; ++k) result += lanes[k];
-        return result;
+        return hn::ReduceSum(d, value);
     }
 }
 
@@ -168,7 +164,7 @@ FORCE_INLINE T dot_product(const T* a, const T* b, size_t size) {
     constexpr size_t n = vec_batch_lanes<T>;
     auto s0 = hn::Zero(d);
     size_t k = 0;
-    if constexpr (n * sizeof(T) > 16) {
+    if constexpr (n > 1) {
         auto s1 = s0, s2 = s0, s3 = s0;
         for (; k + 4 * n <= size; k += 4 * n) {
             s0 = hn::MulAdd(hn::LoadU(d, a + k), hn::LoadU(d, b + k), s0);
@@ -187,7 +183,7 @@ FORCE_INLINE T dot_product(const T* a, const T* b, size_t size) {
 
 template<typename T>
 FORCE_INLINE void dot_product_pair(const T* weights, const T* a, const T* b, size_t size, T& result_a, T& result_b) {
-    if constexpr (HWY_ARCH_ARM || vec_batch_lanes<T> == 1) {
+    if (vec_batch_lanes<T> == 1 || (HWY_ARCH_ARM && size < 4 * vec_batch_lanes<T>)) {
         result_a = result_b = T(0);
         for (size_t k = 0; k < size; ++k) {
             result_a += weights[k] * a[k];
@@ -218,10 +214,29 @@ FORCE_INLINE T dot_product_mult_add(const T* a, const T* b, T* out, T scalar, si
     constexpr size_t n = vec_batch_lanes<T>;
     auto sum = hn::Zero(d);
     size_t k = 0;
+    const auto scale = hn::Set(d, scalar);
+    if constexpr (n > 1) {
+        auto s1 = sum, s2 = sum, s3 = sum;
+        for (; k + 4 * n <= size; k += 4 * n) {
+            const auto b0 = hn::LoadU(d, b + k);
+            const auto b1 = hn::LoadU(d, b + k + n);
+            const auto b2 = hn::LoadU(d, b + k + 2 * n);
+            const auto b3 = hn::LoadU(d, b + k + 3 * n);
+            sum = hn::MulAdd(hn::LoadU(d, a + k), b0, sum);
+            s1 = hn::MulAdd(hn::LoadU(d, a + k + n), b1, s1);
+            s2 = hn::MulAdd(hn::LoadU(d, a + k + 2 * n), b2, s2);
+            s3 = hn::MulAdd(hn::LoadU(d, a + k + 3 * n), b3, s3);
+            hn::StoreU(hn::MulAdd(b0, scale, hn::LoadU(d, out + k)), d, out + k);
+            hn::StoreU(hn::MulAdd(b1, scale, hn::LoadU(d, out + k + n)), d, out + k + n);
+            hn::StoreU(hn::MulAdd(b2, scale, hn::LoadU(d, out + k + 2 * n)), d, out + k + 2 * n);
+            hn::StoreU(hn::MulAdd(b3, scale, hn::LoadU(d, out + k + 3 * n)), d, out + k + 3 * n);
+        }
+        sum = hn::Add(hn::Add(sum, s1), hn::Add(s2, s3));
+    }
     for (; k + n <= size; k += n) {
         const auto vb = hn::LoadU(d, b + k);
         sum = hn::MulAdd(hn::LoadU(d, a + k), vb, sum);
-        hn::StoreU(hn::MulAdd(vb, hn::Set(d, scalar), hn::LoadU(d, out + k)), d, out + k);
+        hn::StoreU(hn::MulAdd(vb, scale, hn::LoadU(d, out + k)), d, out + k);
     }
     T result = reduce_sum<T>(sum);
     for (; k < size; ++k) {

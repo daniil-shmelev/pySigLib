@@ -61,17 +61,20 @@ void sig_backprop_batch_simd_(
 	uint64_t* const level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	auto group_func = [&](const T* path_group, T* out_group, const T* deriv_group, const T* sig_group) {
+	auto group_func = [&](const T* path_group, T* out_group, const T* deriv_group, const T* sig_group) HWY_ATTR {
+		const Simd<T> desc;
 		const uint64_t group_start = static_cast<uint64_t>(path_group - path) / flat_path_length;
 		const uint64_t valid_lanes = std::min(lanes, batch_size - group_start);
 		const uint64_t state_size = sig_len * lanes;
 
-		std::vector<T> prefix(state_size, static_cast<T>(0.));
-		std::vector<T> prefix_deriv(state_size, static_cast<T>(0.));
-		std::vector<T> increment_sig_deriv(state_size, static_cast<T>(0.));
-		std::vector<T> increment_sig(state_size, static_cast<T>(0.));
-		std::vector<T> increments(dimension * lanes, static_cast<T>(0.));
-		std::vector<T> increment_deriv(dimension * lanes, static_cast<T>(0.));
+		thread_local std::vector<T> prefix, prefix_deriv, increment_sig_deriv;
+		thread_local std::vector<T> increment_sig, increments, increment_deriv;
+		prefix.assign(state_size, static_cast<T>(0.));
+		prefix_deriv.assign(state_size, static_cast<T>(0.));
+		increment_sig_deriv.resize(state_size);
+		increment_sig.assign(state_size, static_cast<T>(0.));
+		increments.assign(dimension * lanes, static_cast<T>(0.));
+		increment_deriv.resize(dimension * lanes);
 
 		for (uint64_t lane = 0; lane < lanes; ++lane) {
 			prefix[lane] = static_cast<T>(1.);
@@ -107,8 +110,8 @@ void sig_backprop_batch_simd_(
 					for (uint64_t d = 0; d < dimension; ++d) {
 						T* const result = increment_sig.data() + (level_index[level] + j * dimension + d) * lanes;
 						const T* const increment = increments.data() + d * lanes;
-						for (uint64_t lane = 0; lane < lanes; ++lane)
-							result[lane] = -previous[lane] * increment[lane] * one_over_level;
+						hn::StoreU(hn::Mul(hn::Mul(hn::Neg(hn::LoadU(desc, previous)),
+							hn::LoadU(desc, increment)), hn::Set(desc, one_over_level)), desc, result);
 					}
 				}
 			}
@@ -125,12 +128,12 @@ void sig_backprop_batch_simd_(
 							T* const result = prefix.data() + result_word * lanes;
 							const T* const right = increment_sig.data() + (level_index[right_level] + right_word) * lanes;
 							if (right_level % 2) {
-								for (uint64_t lane = 0; lane < lanes; ++lane)
-									result[lane] -= left[lane] * right[lane];
+								hn::StoreU(hn::Sub(hn::LoadU(desc, result),
+									hn::Mul(hn::LoadU(desc, left), hn::LoadU(desc, right))), desc, result);
 							}
 							else {
-								for (uint64_t lane = 0; lane < lanes; ++lane)
-									result[lane] += left[lane] * right[lane];
+								hn::StoreU(hn::Add(hn::LoadU(desc, result),
+									hn::Mul(hn::LoadU(desc, left), hn::LoadU(desc, right))), desc, result);
 							}
 						}
 					}
@@ -141,12 +144,10 @@ void sig_backprop_batch_simd_(
 					T* const result = prefix.data() + (level_index[target_level] + word) * lanes;
 					const T* const right = increment_sig.data() + (level_index[target_level] + word) * lanes;
 					if (target_level % 2) {
-						for (uint64_t lane = 0; lane < lanes; ++lane)
-							result[lane] -= right[lane];
+						hn::StoreU(hn::Sub(hn::LoadU(desc, result), hn::LoadU(desc, right)), desc, result);
 					}
 					else {
-						for (uint64_t lane = 0; lane < lanes; ++lane)
-							result[lane] += right[lane];
+						hn::StoreU(hn::Add(hn::LoadU(desc, result), hn::LoadU(desc, right)), desc, result);
 					}
 				}
 			}
@@ -161,18 +162,18 @@ void sig_backprop_batch_simd_(
 					for (uint64_t left_word = 0; left_word < left_size; ++left_word) {
 						const T* const left = prefix.data() + (level_index[left_level] + left_word) * lanes;
 						T* const left_deriv = prefix_deriv.data() + (level_index[left_level] + left_word) * lanes;
-						std::array<T, lanes> left_accum{};
+						auto left_accum = hn::Zero(desc);
+						const auto left_value = hn::LoadU(desc, left);
 						for (uint64_t right_word = 0; right_word < right_size; ++right_word, ++result_word) {
 							const T* const result_deriv = prefix_deriv.data() + result_word * lanes;
 							T* const right_deriv = increment_sig_deriv.data() + (level_index[right_level] + right_word) * lanes;
 							const T* const right = increment_sig.data() + (level_index[right_level] + right_word) * lanes;
-							for (uint64_t lane = 0; lane < lanes; ++lane) {
-								right_deriv[lane] += result_deriv[lane] * left[lane];
-								left_accum[lane] += result_deriv[lane] * right[lane];
-							}
+							const auto deriv = hn::LoadU(desc, result_deriv);
+							hn::StoreU(hn::Add(hn::LoadU(desc, right_deriv),
+								hn::Mul(deriv, left_value)), desc, right_deriv);
+							left_accum = hn::Add(left_accum, hn::Mul(deriv, hn::LoadU(desc, right)));
 						}
-						for (uint64_t lane = 0; lane < lanes; ++lane)
-							left_deriv[lane] += left_accum[lane];
+						hn::StoreU(hn::Add(hn::LoadU(desc, left_deriv), left_accum), desc, left_deriv);
 					}
 				}
 			}
@@ -184,25 +185,27 @@ void sig_backprop_batch_simd_(
 				for (uint64_t j = 0; j < previous_size; ++j) {
 					T* const previous_deriv = increment_sig_deriv.data() + (level_index[level - 1] + j) * lanes;
 					const T* const previous = increment_sig.data() + (level_index[level - 1] + j) * lanes;
-					std::array<T, lanes> previous_accum{};
+					auto previous_accum = hn::Zero(desc);
+					const auto previous_value = hn::LoadU(desc, previous);
+					const auto scale = hn::Set(desc, one_over_level);
 					for (uint64_t d = 0; d < dimension; ++d) {
 						const T* const level_deriv = increment_sig_deriv.data() + (level_index[level] + j * dimension + d) * lanes;
 						const T* const increment = increments.data() + d * lanes;
 						T* const displacement_deriv = increment_deriv.data() + d * lanes;
-						for (uint64_t lane = 0; lane < lanes; ++lane) {
-							previous_accum[lane] -= level_deriv[lane] * increment[lane] * one_over_level;
-							displacement_deriv[lane] += level_deriv[lane] * previous[lane] * one_over_level;
-						}
+						const auto deriv = hn::LoadU(desc, level_deriv);
+						previous_accum = hn::Sub(previous_accum,
+							hn::Mul(hn::Mul(deriv, hn::LoadU(desc, increment)), scale));
+						hn::StoreU(hn::Add(hn::LoadU(desc, displacement_deriv),
+							hn::Mul(hn::Mul(deriv, previous_value), scale)), desc, displacement_deriv);
 					}
-					for (uint64_t lane = 0; lane < lanes; ++lane)
-						previous_deriv[lane] += previous_accum[lane];
+					hn::StoreU(hn::Add(hn::LoadU(desc, previous_deriv), previous_accum), desc, previous_deriv);
 				}
 			}
 			for (uint64_t d = 0; d < dimension; ++d) {
 				T* const displacement_deriv = increment_deriv.data() + d * lanes;
 				const T* const level_one_deriv = increment_sig_deriv.data() + (1 + d) * lanes;
-				for (uint64_t lane = 0; lane < lanes; ++lane)
-					displacement_deriv[lane] += level_one_deriv[lane];
+				hn::StoreU(hn::Add(hn::LoadU(desc, displacement_deriv),
+					hn::LoadU(desc, level_one_deriv)), desc, displacement_deriv);
 			}
 
 			for (uint64_t lane = 0; lane < valid_lanes; ++lane) {

@@ -848,31 +848,35 @@ void butcher_product_inplace_(
 	}
 }
 
-// Pack adjacent signatures so each coproduct term can update one NEON vector.
+// Pack adjacent signatures so each coproduct term updates one SIMD vector.
 template<std::floating_point T>
-void branched_sig_combine_arm_batch_(
+void branched_sig_combine_batch_(
 	const T* bsig1, const T* bsig2, T* out,
-	uint64_t batch_size, const BranchedSigCache& cache
+	uint64_t batch_size, const BranchedSigCache& cache, bool scalar_term
 ) {
 	constexpr uint64_t width = vec_batch_lanes<T>;
 	const Simd<T> d;
 	const uint64_t total_len = cache.total_length;
+	const uint64_t offset = scalar_term ? 0 : 1;
+	const uint64_t stride = total_len - offset;
 	thread_local std::vector<T> packed;
-	packed.resize(2 * total_len * width);
+	packed.assign(2 * total_len * width, T(0));
 	T* x = packed.data();
 	T* y = x + total_len * width;
 	const uint64_t* order_index = cache.order_index.data();
 	const uint64_t* coproduct_offsets = cache.coproduct_offsets.data();
 	const uint64_t* coproduct_data = cache.coproduct_data.data();
-	const uint64_t packed_count = batch_size / width;
+	const uint64_t packed_count = (batch_size + width - 1) / width;
 	for (uint64_t pack = 0; pack < packed_count; ++pack) {
 		const uint64_t batch_start = pack * width;
-		for (uint64_t lane = 0; lane < width; ++lane) {
-			const T* left = bsig1 + (batch_start + lane) * total_len;
-			const T* right = bsig2 + (batch_start + lane) * total_len;
-			for (uint64_t k = 0; k < total_len; ++k) {
-				x[k * width + lane] = left[k];
-				y[k * width + lane] = right[k];
+		const uint64_t count = std::min(width, batch_size - batch_start);
+		for (uint64_t lane = 0; lane < count; ++lane) {
+			const T* left = bsig1 + (batch_start + lane) * stride;
+			const T* right = bsig2 + (batch_start + lane) * stride;
+			x[lane] = y[lane] = T(1);
+			for (uint64_t k = 0; k < stride; ++k) {
+				x[(k + offset) * width + lane] = left[k];
+				y[(k + offset) * width + lane] = right[k];
 			}
 		}
 		for (int64_t order = static_cast<int64_t>(cache.max_nodes); order >= 1; --order) {
@@ -893,16 +897,11 @@ void branched_sig_combine_arm_batch_(
 				hn::StoreU(value, d, x + flat * width);
 			}
 		}
-		for (uint64_t lane = 0; lane < width; ++lane) {
-			T* result = out + (batch_start + lane) * total_len;
-			for (uint64_t k = 0; k < total_len; ++k)
-				result[k] = x[k * width + lane];
+		for (uint64_t lane = 0; lane < count; ++lane) {
+			T* result = out + (batch_start + lane) * stride;
+			for (uint64_t k = 0; k < stride; ++k)
+				result[k] = x[(k + offset) * width + lane];
 		}
-	}
-	for (uint64_t b = packed_count * width; b < batch_size; ++b) {
-		T* result = out + b * total_len;
-		std::memcpy(result, bsig1 + b * total_len, total_len * sizeof(T));
-		butcher_product_inplace_(result, bsig2 + b * total_len, cache);
 	}
 }
 
@@ -1125,17 +1124,16 @@ void branched_sig_combine_(
 	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
 	uint64_t total_len = cache.total_length;
 	uint64_t stride = scalar_term ? total_len : total_len - 1;
-	if constexpr (HWY_ARCH_ARM && vec_batch_lanes<T> > 1) {
-		if (scalar_term && !planar && n_jobs == 1
-			&& batch_size >= vec_batch_lanes<T>) {
-			branched_sig_combine_arm_batch_(bsig1, bsig2, out, batch_size, cache);
-			return;
-		}
-	}
-
 	auto work_range = [&](uint64_t start, uint64_t end) {
 		if (start == end)
 			return;
+		if constexpr (vec_batch_lanes<T> > 1) {
+			if ((HWY_ARCH_ARM || max_nodes >= 2) && end - start >= vec_batch_lanes<T>) {
+				branched_sig_combine_batch_(bsig1 + start * stride, bsig2 + start * stride,
+					out + start * stride, end - start, cache, scalar_term);
+				return;
+			}
+		}
 		if (scalar_term) {
 			for (uint64_t b = start; b < end; ++b) {
 				T* out_ptr = out + b * total_len;

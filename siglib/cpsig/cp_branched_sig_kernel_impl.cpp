@@ -21,6 +21,8 @@
 #include "cpsig.h"
 #include "multithreading.h"
 #include "macros.h"
+#include "cp_simd-inl.h"
+#include "cp_simd_math-inl.h"
 
 HWY_BEFORE_NAMESPACE();
 namespace cpsig {
@@ -69,8 +71,21 @@ struct BranchedSigKernelWorkspace_ {
 
 template<std::floating_point T>
 T branched_sig_kernel_depth_one_scalar_(const T* gram, uint64_t gram_length) {
-	T total = static_cast<T>(0.);
-	for (uint64_t i = 0; i < gram_length; ++i)
+	const Simd<T> d;
+	constexpr uint64_t lanes = vec_batch_lanes<T>;
+	auto s0 = hn::Zero(d), s1 = s0, s2 = s0, s3 = s0;
+	uint64_t i = 0;
+	for (; i + 4 * lanes <= gram_length; i += 4 * lanes) {
+		s0 = hn::Add(s0, hn::LoadU(d, gram + i));
+		s1 = hn::Add(s1, hn::LoadU(d, gram + i + lanes));
+		s2 = hn::Add(s2, hn::LoadU(d, gram + i + 2 * lanes));
+		s3 = hn::Add(s3, hn::LoadU(d, gram + i + 3 * lanes));
+	}
+	s0 = hn::Add(hn::Add(s0, s1), hn::Add(s2, s3));
+	for (; i + lanes <= gram_length; i += lanes)
+		s0 = hn::Add(s0, hn::LoadU(d, gram + i));
+	T total = reduce_sum<T>(s0);
+	for (; i < gram_length; ++i)
 		total += gram[i];
 	return std::exp(total);
 }
@@ -111,8 +126,10 @@ void branched_sig_kernel_depth_step_(
 				row_sum += cell;
 				const T val = prefix[col] + row_sum;
 				prefix[col] = val;
-				curr[idx] = std::exp(val);
+				if constexpr (std::is_same_v<T, double>) curr[idx] = std::exp(val);
+				else curr[idx] = val;
 			}
+			if constexpr (std::is_same_v<T, float>) vec_exp(curr + row_base + 1, dl2 - 1);
 		}
 		return;
 	}
@@ -130,8 +147,10 @@ void branched_sig_kernel_depth_step_(
 			row_sum += cell;
 			const T val = prefix[col] + row_sum;
 			prefix[col] = val;
-			curr[idx] = std::exp(val);
+			if constexpr (std::is_same_v<T, double>) curr[idx] = std::exp(val);
+			else curr[idx] = val;
 		}
+		if constexpr (std::is_same_v<T, float>) vec_exp(curr + row_base + 1, dl2 - 1);
 	}
 }
 
@@ -150,17 +169,29 @@ T branched_sig_kernel_final_integral_(
 	T total = static_cast<T>(0.);
 
 	if (dyadic_order_1 == 0 && dyadic_order_2 == 0) {
+		const Simd<T> d;
+		constexpr uint64_t lanes = vec_batch_lanes<T>;
+		const auto scale = hn::Set(d, quarter_scale);
+		auto sum = hn::Zero(d);
 		for (uint64_t row = 1; row < length1; ++row) {
 			const uint64_t row_base = row * dl2;
 			const uint64_t prev_row_base = row_base - dl2;
 			const T* gram_row = gram + (row - 1) * gram_stride;
-			for (uint64_t col = 1; col < length2; ++col) {
+			uint64_t col = 1;
+			for (; col + lanes <= length2; col += lanes) {
+				auto value = hn::Add(hn::LoadU(d, prev + prev_row_base + col - 1),
+					hn::LoadU(d, prev + row_base + col - 1));
+				value = hn::Add(value, hn::LoadU(d, prev + prev_row_base + col));
+				value = hn::Add(value, hn::LoadU(d, prev + row_base + col));
+				sum = hn::Add(sum, hn::Mul(hn::Mul(hn::LoadU(d, gram_row + col - 1), scale), value));
+			}
+			for (; col < length2; ++col) {
 				total += gram_row[col - 1] * quarter_scale * (
 					prev[prev_row_base + col - 1] + prev[row_base + col - 1] +
 					prev[prev_row_base + col] + prev[row_base + col]);
 			}
 		}
-		return total;
+		return total + reduce_sum<T>(sum);
 	}
 
 	for (uint64_t row = 1; row < ((length1 - 1) << dyadic_order_1) + 1; ++row) {

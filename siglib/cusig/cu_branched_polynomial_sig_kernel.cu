@@ -71,6 +71,19 @@ template<typename T> struct CudaPolyOps {
     __device__ static uint64_t index() { return threadIdx.x; }
     __device__ static uint64_t stride() { return blockDim.x; }
     __device__ static void sync() { __syncthreads(); }
+    __device__ static void exp(T* values, uint64_t count) {
+        for (uint64_t k = index(); k < count; k += stride()) values[k] = ::exp(values[k]);
+    }
+    __device__ static void exp_grid(const T* cells, T* out, uint64_t nx, uint64_t ny) {
+        for (uint64_t k = index(); k < (nx+1)*(ny+1); k += stride()) {
+            const uint64_t i = k/(ny+1), j = k%(ny+1);
+            out[k] = i && j ? ::exp(cells[(i-1)*ny+j-1]) : T(1);
+        }
+    }
+    __device__ static void exp_grid_backprop(T* cells, const T* derivs, uint64_t nx, uint64_t ny) {
+        for (uint64_t k = index(); k < nx*ny; k += stride())
+            cells[k] = ::exp(cells[k])*derivs[(k/ny+1)*(ny+1)+k%ny+1];
+    }
     __device__ T sum(T val) {
         reduction[threadIdx.x] = val; sync();
         for (unsigned s = blockDim.x/2; s; s >>= 1) {

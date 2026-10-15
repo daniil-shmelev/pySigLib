@@ -24,6 +24,8 @@
 #include "macros.h"
 
 #include "cp_path.h"
+#include "cp_simd-inl.h"
+#include <array>
 
 HWY_BEFORE_NAMESPACE();
 namespace cpsig {
@@ -232,6 +234,92 @@ void sig_coef_(
 	}
 	else {
 		result_length = num_multi_idx;
+	}
+
+	constexpr uint64_t lanes = vec_batch_lanes<T>;
+	if constexpr (lanes > 1) {
+		if (batch_size >= lanes && length > 1 && num_multi_idx) {
+			uint64_t max_degree = 0, idx_total = 0;
+			for (uint64_t i = 0; i < num_multi_idx; ++i) {
+				max_degree = std::max(max_degree, degrees[i]);
+				idx_total += degrees[i];
+			}
+			for (uint64_t i = 0; i < idx_total; ++i)
+				if (multi_idx[i] >= dummy_path_obj.dimension())
+					throw std::invalid_argument("sig_coef: multi_idx element out of range");
+			std::vector<T> one_over_fact(max_degree + 1, T(1));
+			for (uint64_t i = 1; i <= max_degree; ++i)
+				one_over_fact[i] = one_over_fact[i - 1] / i;
+			const uint64_t groups = (batch_size + lanes - 1) / lanes;
+			auto work_range = [&](uint64_t start, uint64_t end) HWY_ATTR {
+				const Simd<T> d;
+				std::vector<T> coefs((max_degree + 1) * lanes);
+				std::vector<T> increments(max_degree * lanes, T(0));
+				std::vector<Path<T>> paths;
+				paths.reserve(lanes);
+				for (uint64_t group = start; group < end; ++group) {
+					const uint64_t first = group * lanes;
+					const uint64_t count = std::min(lanes, batch_size - first);
+					paths.clear();
+					for (uint64_t lane = 0; lane < count; ++lane)
+						paths.emplace_back(path + (first + lane) * flat_path_length,
+							dimension, length, time_aug, lead_lag, end_time);
+					const uint64_t* indices = multi_idx;
+					uint64_t out_offset = 0;
+					for (uint64_t word = 0; word < num_multi_idx; ++word) {
+						const uint64_t degree = degrees[word];
+						if (!degree) {
+							for (uint64_t lane = 0; lane < count; ++lane)
+								out[(first + lane) * result_length + out_offset] = T(1);
+							++out_offset;
+							continue;
+						}
+						std::array<Point<T>, lanes> previous, next;
+						for (uint64_t lane = 0; lane < count; ++lane) {
+							previous[lane] = paths[lane].begin();
+							next[lane] = previous[lane];
+							++next[lane];
+						}
+						for (uint64_t time = 1; time < dummy_path_obj.length(); ++time) {
+							for (uint64_t i = 0; i < degree; ++i)
+								for (uint64_t lane = 0; lane < count; ++lane)
+									increments[i * lanes + lane] = next[lane][indices[i]] - previous[lane][indices[i]];
+							if (time == 1) {
+								auto product = hn::Set(d, T(1));
+								for (uint64_t i = 0; i < degree; ++i) {
+									product = hn::Mul(product, hn::LoadU(d, increments.data() + i * lanes));
+									hn::StoreU(hn::Mul(product, hn::Set(d, one_over_fact[i + 1])),
+										d, coefs.data() + (i + 1) * lanes);
+								}
+							} else {
+								for (uint64_t i = degree; i > 0; --i) {
+									auto acc = hn::Set(d, one_over_fact[i]);
+									for (uint64_t j = 0; j + 1 < i; ++j)
+										acc = hn::Add(hn::Mul(acc, hn::LoadU(d, increments.data() + j * lanes)),
+											hn::Mul(hn::LoadU(d, coefs.data() + (j + 1) * lanes), hn::Set(d, one_over_fact[i - j - 1])));
+									T* result = coefs.data() + i * lanes;
+									hn::StoreU(hn::Add(hn::LoadU(d, result),
+										hn::Mul(acc, hn::LoadU(d, increments.data() + (i - 1) * lanes))), d, result);
+								}
+							}
+							for (uint64_t lane = 0; lane < count; ++lane) {
+								++previous[lane];
+								++next[lane];
+							}
+						}
+						const uint64_t output_size = prefixes ? degree : 1;
+						for (uint64_t lane = 0; lane < count; ++lane)
+							for (uint64_t i = 0; i < output_size; ++i)
+								out[(first + lane) * result_length + out_offset + i] =
+									coefs[(prefixes ? i + 1 : degree) * lanes + lane];
+						out_offset += output_size;
+						indices += degree;
+					}
+				}
+			};
+			spawn_batch_threads(groups, n_jobs, work_range);
+			return;
+		}
 	}
 
 	auto sig_func = [&](const T* path_ptr, T* out_ptr) {

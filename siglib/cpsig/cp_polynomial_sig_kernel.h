@@ -239,7 +239,23 @@ FORCE_INLINE T sig_poly_tile_backprop_(
 		T top_opposite = static_cast<T>(0);
 		T right_opposite = static_cast<T>(0);
 		const T* const mat2_row = tables.mat2.data() + n * size;
-		for (uint64_t k = 0; k < size; ++k) {
+		const Simd<T> d;
+		constexpr uint64_t lanes = vec_batch_lanes<T>;
+		auto top_sum = hn::Zero(d), right_sum = top_sum;
+		uint64_t k = 0;
+		for (; k + lanes <= size; k += lanes) {
+			const auto weights = hn::LoadU(d, mat2_row + k);
+			const auto factor = hn::Mul(hn::Set(d, rho_powers[n]), weights);
+			top_sum = hn::Add(top_sum, hn::Mul(weights, hn::LoadU(d, left + k)));
+			right_sum = hn::Add(right_sum, hn::Mul(weights, hn::LoadU(d, bottom + k)));
+			hn::StoreU(hn::Add(hn::LoadU(d, left_derivs + k),
+				hn::Mul(factor, hn::Set(d, top_deriv))), d, left_derivs + k);
+			hn::StoreU(hn::Add(hn::LoadU(d, bottom_derivs + k),
+				hn::Mul(factor, hn::Set(d, right_deriv))), d, bottom_derivs + k);
+		}
+		top_opposite = reduce_sum<T>(top_sum);
+		right_opposite = reduce_sum<T>(right_sum);
+		for (; k < size; ++k) {
 			const T factor = rho_powers[n] * mat2_row[k];
 			top_opposite += mat2_row[k] * left[k];
 			right_opposite += mat2_row[k] * bottom[k];

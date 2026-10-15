@@ -25,6 +25,7 @@
 #include "../shared/branched_polynomial.h"
 #include "../shared/preparation/polynomial_sig_kernel/branched_polynomial_tables.h"
 #include "cache_lifecycle/cp_poly_cache.h"
+#include "cp_simd_math-inl.h"
 
 HWY_BEFORE_NAMESPACE();
 namespace cpsig {
@@ -38,6 +39,39 @@ template<typename T> struct CpuPolyOps {
     static uint64_t stride() { return 1; }
     static void sync() {}
     static T sum(T x) { return x; }
+    static void exp(T* values, uint64_t count) { vec_exp(values, count); }
+    static void exp_grid(const T* cells, T* out, uint64_t nx, uint64_t ny) {
+        std::fill_n(out, ny + 1, T(1));
+        for (uint64_t i = 0; i < nx; ++i) {
+            T* row = out + (i + 1) * (ny + 1);
+            row[0] = T(1);
+            if constexpr (std::is_same_v<T, double>) {
+                for (uint64_t j = 0; j < ny; ++j) row[j + 1] = std::exp(cells[i * ny + j]);
+            } else {
+                std::copy_n(cells + i * ny, ny, row + 1);
+                vec_exp(row + 1, ny);
+            }
+        }
+    }
+    static void exp_grid_backprop(T* cells, const T* derivs, uint64_t nx, uint64_t ny) {
+        if constexpr (std::is_same_v<T, double>) {
+            for (uint64_t i = 0; i < nx; ++i)
+                for (uint64_t j = 0; j < ny; ++j)
+                    cells[i * ny + j] = std::exp(cells[i * ny + j]) * derivs[(i + 1) * (ny + 1) + j + 1];
+            return;
+        }
+        vec_exp(cells, nx * ny);
+        const Simd<T> d;
+        constexpr uint64_t lanes = vec_batch_lanes<T>;
+        for (uint64_t i = 0; i < nx; ++i) {
+            T* row = cells + i * ny;
+            const T* grad = derivs + (i + 1) * (ny + 1) + 1;
+            uint64_t j = 0;
+            for (; j + lanes <= ny; j += lanes)
+                hn::StoreU(hn::Mul(hn::LoadU(d, row + j), hn::LoadU(d, grad + j)), d, row + j);
+            for (; j < ny; ++j) row[j] *= grad[j];
+        }
+    }
     void prefix(T* values, uint64_t nx, uint64_t ny, bool reverse) {
         for (uint64_t j = 0; j < ny; ++j) {
             T val = 0;
