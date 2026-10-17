@@ -156,7 +156,7 @@ static void upload_mkw_projection_(
 	gpu.d_sparse_vals_t = values_t;
 	gpu.d_sparse_cols_t = columns_t;
 	gpu.d_sparse_row_ptr_t = row_offsets_t;
-	gpu.method = 2;
+	gpu.method = BranchedLogSigMethod::MkwBasis;
 }
 
 void prepare_cuda_mkw_basis_cache_(
@@ -171,7 +171,8 @@ void prepare_cuda_mkw_basis_cache_(
 	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
 	auto [found, inserted] = get_cuda_branched_log_sig_cache_map_().try_emplace(key);
 	if (found->second.basis) {
-		if (host.method >= 2 && found->second.basis->method < 2)
+		if (host.method >= LogSigMethod::LyndonBasis
+			&& found->second.basis->method < BranchedLogSigMethod::MkwBasis)
 			upload_mkw_projection_(*found->second.basis, host);
 		return;
 	}
@@ -187,8 +188,8 @@ void prepare_cuda_mkw_basis_cache_(
 		upload_branched_log(
 			gpu->d_lyndon_idx, indices.data(), indices.size());
 	}
-	gpu->method = 1;
-	if (host.method >= 2)
+	gpu->method = BranchedLogSigMethod::MkwWords;
+	if (host.method >= LogSigMethod::LyndonBasis)
 		upload_mkw_projection_(*gpu, host);
 	found->second.basis = std::move(gpu);
 }
@@ -196,9 +197,9 @@ void prepare_cuda_mkw_basis_cache_(
 const CuMkwBasisGpuCache& get_cuda_mkw_basis_gpu_cache_(
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method
+	BranchedLogSigMethod method
 ) {
-	const int basis_method = std::min(method, 2);
+	const BranchedLogSigMethod basis_method = (std::min)(method, BranchedLogSigMethod::MkwBasis);
 	const auto key = make_cuda_branched_log_cache_key_(dimension, max_nodes, true);
 	std::lock_guard<std::mutex> lock(get_cuda_branched_log_sig_cache_mu_());
 	auto found = get_cuda_branched_log_sig_cache_map_().find(key);
@@ -335,7 +336,7 @@ static const BranchedLogHornerPlanGPU& get_branched_log_horner_plan_gpu_(
 		"CUDA branched log sig cache not found - call prepare_branched_log_sig with device='cuda' first");
 }
 
-template<typename T, int Method, bool Planar, bool use_shared_scratch>
+template<typename T, BranchedLogSigMethod Method, bool Planar, bool use_shared_scratch>
 __global__ __launch_bounds__(use_shared_scratch ? 1024 : 256)
 void branched_sig_to_log_sig_horner_ker(
 	const T* __restrict__ bsig,
@@ -365,7 +366,7 @@ void branched_sig_to_log_sig_horner_ker(
 	const uint32_t tid = threadIdx.x;
 	const uint32_t num_trees = total_len - 1;
 	const uint64_t input_stride = scalar_term ? total_len : total_len - 1;
-	const uint64_t output_stride = Method == 0 ? input_stride : compact_len;
+	const uint64_t output_stride = Method == BranchedLogSigMethod::Expanded ? input_stride : compact_len;
 
 	extern __shared__ char smem[];
 	T* h = use_shared_scratch
@@ -445,7 +446,7 @@ void branched_sig_to_log_sig_horner_ker(
 		__syncthreads();
 	}
 
-	if constexpr (Method == 0) {
+	if constexpr (Method == BranchedLogSigMethod::Expanded) {
 		if (scalar_term) {
 			for (uint32_t i = tid; i < total_len; i += blockDim.x)
 				dst[i] = h[i];
@@ -453,7 +454,7 @@ void branched_sig_to_log_sig_horner_ker(
 			for (uint32_t i = tid; i < num_trees; i += blockDim.x)
 				dst[i] = h[i + 1];
 		}
-	} else if constexpr (Method == 1) {
+	} else if constexpr (Method == BranchedLogSigMethod::MkwWords) {
 		for (uint32_t i = tid; i < compact_len; i += blockDim.x)
 			dst[i] = h[g_lyndon_idx[i]];
 	} else {
@@ -472,7 +473,7 @@ void branched_sig_to_log_sig_horner_ker(
 	}
 }
 
-template<typename T, int Method, bool Planar, bool use_shared_scratch>
+template<typename T, BranchedLogSigMethod Method, bool Planar, bool use_shared_scratch>
 __global__ __launch_bounds__(use_shared_scratch ? 1024 : 256)
 void branched_sig_to_log_sig_backprop_horner_ker(
 	const T* __restrict__ bsig,
@@ -503,7 +504,7 @@ void branched_sig_to_log_sig_backprop_horner_ker(
 	const uint32_t tid = threadIdx.x;
 	const uint32_t num_trees = total_len - 1;
 	const uint64_t input_stride = scalar_term ? total_len : total_len - 1;
-	const uint64_t deriv_stride = Method == 0 ? input_stride : compact_len;
+	const uint64_t deriv_stride = Method == BranchedLogSigMethod::Expanded ? input_stride : compact_len;
 
 	extern __shared__ char smem[];
 	const uint64_t state_levels = max_nodes > 1
@@ -542,10 +543,10 @@ void branched_sig_to_log_sig_backprop_horner_ker(
 		const T v = scalar_term ? src[i + 1] : src[i];
 		h[i + 1] = v;
 	}
-	if constexpr (Method == 0) {
+	if constexpr (Method == BranchedLogSigMethod::Expanded) {
 		for (uint32_t i = tid; i < num_trees; i += blockDim.x)
 			full_derivs[i + 1] = scalar_term ? dsrc[i + 1] : dsrc[i];
-	} else if constexpr (Method == 1) {
+	} else if constexpr (Method == BranchedLogSigMethod::MkwWords) {
 		for (uint32_t i = tid; i < compact_len; i += blockDim.x)
 			full_derivs[g_lyndon_idx[i]] = dsrc[i];
 	} else {
@@ -686,7 +687,7 @@ void branched_sig_to_log_sig_backprop_horner_ker(
 	}
 }
 
-template<typename T, int Method, bool Planar>
+template<typename T, BranchedLogSigMethod Method, bool Planar>
 static void branched_sig_to_log_sig_cuda_method_(
 	const T* bsig,
 	T* out,
@@ -696,7 +697,7 @@ static void branched_sig_to_log_sig_cuda_method_(
 	bool scalar_term
 ) {
 	const uint32_t compact_len = basis == nullptr ? 0 : basis->compact_length;
-	if (batch_size == 0 || (Method != 0 && compact_len == 0))
+	if (batch_size == 0 || (Method != BranchedLogSigMethod::Expanded && compact_len == 0))
 		return;
 	const uint32_t work_items = std::max(
 		std::max(plan.num_trees, plan.product_count), compact_len);
@@ -764,41 +765,38 @@ void branched_sig_to_log_sig_cuda_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method,
+	BranchedLogSigMethod method,
 	bool planar,
 	bool scalar_term
 ) {
-	if (method == 3)
+	if (method == BranchedLogSigMethod::DirectBCH)
 		throw std::invalid_argument(
 			"method=3 is not supported in branched_sig_to_log_sig; use branched_log_sig instead");
-	if (method < 0 || method > 2)
-		throw std::invalid_argument(
-			"branched log signature method must be 0, 1, 2, or 3");
-	if (method != 0 && !planar)
+	if (method != BranchedLogSigMethod::Expanded && !planar)
 		throw std::invalid_argument(
 			"compressed branched log signatures require planar=True");
 	const auto& plan = get_branched_log_horner_plan_gpu_(
 		dimension, max_nodes, planar);
-	if (method == 0) {
+	if (method == BranchedLogSigMethod::Expanded) {
 		if (planar)
-			branched_sig_to_log_sig_cuda_method_<T, 0, true>(
+			branched_sig_to_log_sig_cuda_method_<T, BranchedLogSigMethod::Expanded, true>(
 				bsig, out, batch_size, plan, nullptr, scalar_term);
 		else
-			branched_sig_to_log_sig_cuda_method_<T, 0, false>(
+			branched_sig_to_log_sig_cuda_method_<T, BranchedLogSigMethod::Expanded, false>(
 				bsig, out, batch_size, plan, nullptr, scalar_term);
 		return;
 	}
 	const auto& basis = get_cuda_mkw_basis_gpu_cache_(
 		dimension, max_nodes, method);
-	if (method == 1)
-		branched_sig_to_log_sig_cuda_method_<T, 1, true>(
+	if (method == BranchedLogSigMethod::MkwWords)
+		branched_sig_to_log_sig_cuda_method_<T, BranchedLogSigMethod::MkwWords, true>(
 			bsig, out, batch_size, plan, &basis, scalar_term);
 	else
-		branched_sig_to_log_sig_cuda_method_<T, 2, true>(
+		branched_sig_to_log_sig_cuda_method_<T, BranchedLogSigMethod::MkwBasis, true>(
 			bsig, out, batch_size, plan, &basis, scalar_term);
 }
 
-template<typename T, int Method, bool Planar>
+template<typename T, BranchedLogSigMethod Method, bool Planar>
 static void branched_sig_to_log_sig_backprop_cuda_method_(
 	const T* bsig,
 	const T* derivs,
@@ -811,7 +809,7 @@ static void branched_sig_to_log_sig_backprop_cuda_method_(
 	const uint32_t compact_len = basis == nullptr ? 0 : basis->compact_length;
 	if (batch_size == 0)
 		return;
-	if (Method != 0 && compact_len == 0) {
+	if (Method != BranchedLogSigMethod::Expanded && compact_len == 0) {
 		const uint64_t input_stride = scalar_term
 			? plan.total_length : plan.total_length - 1;
 		if (input_stride != 0) {
@@ -899,56 +897,53 @@ void branched_sig_to_log_sig_backprop_cuda_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method,
+	BranchedLogSigMethod method,
 	bool planar,
 	bool scalar_term
 ) {
-	if (method == 3)
+	if (method == BranchedLogSigMethod::DirectBCH)
 		throw std::invalid_argument(
 			"method=3 is not supported in branched_sig_to_log_sig_backprop");
-	if (method < 0 || method > 2)
-		throw std::invalid_argument(
-			"branched log signature method must be 0, 1, 2, or 3");
-	if (method != 0 && !planar)
+	if (method != BranchedLogSigMethod::Expanded && !planar)
 		throw std::invalid_argument(
 			"compressed branched log signatures require planar=True");
 	const auto& plan = get_branched_log_horner_plan_gpu_(
 		dimension, max_nodes, planar);
-	if (method == 0) {
+	if (method == BranchedLogSigMethod::Expanded) {
 		if (planar)
-			branched_sig_to_log_sig_backprop_cuda_method_<T, 0, true>(
+			branched_sig_to_log_sig_backprop_cuda_method_<T, BranchedLogSigMethod::Expanded, true>(
 				bsig, derivs, out, batch_size, plan, nullptr, scalar_term);
 		else
-			branched_sig_to_log_sig_backprop_cuda_method_<T, 0, false>(
+			branched_sig_to_log_sig_backprop_cuda_method_<T, BranchedLogSigMethod::Expanded, false>(
 				bsig, derivs, out, batch_size, plan, nullptr, scalar_term);
 		return;
 	}
 	const auto& basis = get_cuda_mkw_basis_gpu_cache_(
 		dimension, max_nodes, method);
-	if (method == 1)
-		branched_sig_to_log_sig_backprop_cuda_method_<T, 1, true>(
+	if (method == BranchedLogSigMethod::MkwWords)
+		branched_sig_to_log_sig_backprop_cuda_method_<T, BranchedLogSigMethod::MkwWords, true>(
 			bsig, derivs, out, batch_size, plan, &basis, scalar_term);
 	else
-		branched_sig_to_log_sig_backprop_cuda_method_<T, 2, true>(
+		branched_sig_to_log_sig_backprop_cuda_method_<T, BranchedLogSigMethod::MkwBasis, true>(
 			bsig, derivs, out, batch_size, plan, &basis, scalar_term);
 }
 
 extern "C" {
 
 	CUSIG_API int branched_sig_to_log_sig_cuda_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar, bool scalar_term) noexcept {
-		CUDA_SAFE_CALL(branched_sig_to_log_sig_cuda_<float>(bsig, out, batch_size, dimension, max_nodes, method, planar, scalar_term));
+		CUDA_SAFE_CALL(branched_sig_to_log_sig_cuda_<float>(bsig, out, batch_size, dimension, max_nodes, parse_branched_log_sig_method(method), planar, scalar_term));
 	}
 
 	CUSIG_API int branched_sig_to_log_sig_cuda_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar, bool scalar_term) noexcept {
-		CUDA_SAFE_CALL(branched_sig_to_log_sig_cuda_<double>(bsig, out, batch_size, dimension, max_nodes, method, planar, scalar_term));
+		CUDA_SAFE_CALL(branched_sig_to_log_sig_cuda_<double>(bsig, out, batch_size, dimension, max_nodes, parse_branched_log_sig_method(method), planar, scalar_term));
 	}
 
 	CUSIG_API int branched_sig_to_log_sig_backprop_cuda_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar, bool scalar_term) noexcept {
-		CUDA_SAFE_CALL(branched_sig_to_log_sig_backprop_cuda_<float>(bsig, derivs, out, batch_size, dimension, max_nodes, method, planar, scalar_term));
+		CUDA_SAFE_CALL(branched_sig_to_log_sig_backprop_cuda_<float>(bsig, derivs, out, batch_size, dimension, max_nodes, parse_branched_log_sig_method(method), planar, scalar_term));
 	}
 
 	CUSIG_API int branched_sig_to_log_sig_backprop_cuda_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, bool planar, bool scalar_term) noexcept {
-		CUDA_SAFE_CALL(branched_sig_to_log_sig_backprop_cuda_<double>(bsig, derivs, out, batch_size, dimension, max_nodes, method, planar, scalar_term));
+		CUDA_SAFE_CALL(branched_sig_to_log_sig_backprop_cuda_<double>(bsig, derivs, out, batch_size, dimension, max_nodes, parse_branched_log_sig_method(method), planar, scalar_term));
 	}
 
 }

@@ -30,6 +30,7 @@ using cpsig::HWY_NAMESPACE::lie_bracket;
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 namespace {
 std::filesystem::path test_cache_directory_() {
@@ -103,7 +104,7 @@ TEST(preparationCacheTest, BchOperationsAreCompactAndTopological) {
 TEST(preparationCacheTest, CompactAndRangedBchMatchFullFormula) {
 	for (uint64_t degree : { 1, 3, 4, 5, 8 }) {
 		SCOPED_TRACE(degree);
-		LogSigCache cache(2, degree, 3);
+		LogSigCache cache(2, degree, LogSigMethod::DirectBCH);
 		const BchCache& compact = cache.bch();
 		BchCache full = compact;
 		full.bch_operations.clear();
@@ -164,39 +165,79 @@ TEST(preparationCacheTest, CompactAndRangedBchMatchFullFormula) {
 }
 
 TEST(preparationCacheTest, StandardLogMethodsUpgradeInPlace) {
-	LogSigCache cache(2, 4, 1);
-	ASSERT_TRUE(cache.supports(1));
-	ASSERT_FALSE(cache.supports(2));
-	const uint64_t* indices = cache.basis(1).lyndon_idx.data();
+	LogSigCache cache(2, 4, LogSigMethod::LyndonWords);
+	ASSERT_TRUE(cache.supports(LogSigMethod::LyndonWords));
+	ASSERT_FALSE(cache.supports(LogSigMethod::LyndonBasis));
+	const uint64_t* indices = cache.basis(LogSigMethod::LyndonWords).lyndon_idx.data();
 
-	cache.upgrade(2);
-	EXPECT_TRUE(cache.supports(2));
-	EXPECT_EQ(indices, cache.basis(2).lyndon_idx.data());
-	EXPECT_FALSE(cache.basis(2).inv_proj_mat.rows.empty());
+	cache.upgrade(LogSigMethod::LyndonBasis);
+	EXPECT_TRUE(cache.supports(LogSigMethod::LyndonBasis));
+	EXPECT_EQ(indices, cache.basis(LogSigMethod::LyndonBasis).lyndon_idx.data());
+	EXPECT_FALSE(cache.basis(LogSigMethod::LyndonBasis).inv_proj_mat.rows.empty());
 
-	cache.upgrade(3);
-	EXPECT_TRUE(cache.supports(3));
+	cache.upgrade(LogSigMethod::DirectBCH);
+	EXPECT_TRUE(cache.supports(LogSigMethod::DirectBCH));
 	EXPECT_TRUE(cache.has_bch());
-	EXPECT_EQ(cache.bch().m, cache.basis(2).lyndon_idx.size());
+	EXPECT_EQ(cache.bch().m, cache.basis(LogSigMethod::LyndonBasis).lyndon_idx.size());
+}
+
+TEST(preparationCacheTest, StandardBasisKeepsIntegerDiskFormat) {
+	for (int stored_method : { 1, 2 }) {
+		const LogSigMethod method = parse_log_sig_conversion_method(stored_method);
+		const LogSigCache cache(2, 4, method);
+		const BasisCache& expected = cache.basis(method);
+		std::ostringstream encoded(std::ios::binary);
+		expected.serialize(encoded);
+		std::ostringstream legacy(std::ios::binary);
+		legacy.write(reinterpret_cast<const char*>(&stored_method), sizeof(stored_method));
+		serialize_cache_vector(legacy, expected.lyndon_idx);
+		expected.inv_proj_mat.serialize(legacy);
+		expected.inv_proj_mat_transpose.serialize(legacy);
+		EXPECT_EQ(encoded.str(), legacy.str());
+
+		std::istringstream input(legacy.str(), std::ios::binary);
+		BasisCache loaded;
+		loaded.deserialize(input);
+		EXPECT_EQ(loaded.method, method);
+		EXPECT_EQ(loaded.lyndon_idx, expected.lyndon_idx);
+		EXPECT_TRUE(loaded.inv_proj_mat == expected.inv_proj_mat);
+		EXPECT_TRUE(loaded.inv_proj_mat_transpose == expected.inv_proj_mat_transpose);
+	}
+}
+
+TEST(preparationCacheTest, StandardBasisRejectsTruncatedOrInvalidMethod) {
+	const int stored_method = 2;
+	const std::string bytes(reinterpret_cast<const char*>(&stored_method), sizeof(stored_method));
+	for (size_t length = 0; length < bytes.size(); ++length) {
+		std::istringstream input(bytes.substr(0, length), std::ios::binary);
+		BasisCache cache;
+		EXPECT_THROW(cache.deserialize(input), std::runtime_error);
+	}
+	for (int invalid_method : { -1, 3, 4 }) {
+		std::istringstream input(std::string(
+			reinterpret_cast<const char*>(&invalid_method), sizeof(invalid_method)), std::ios::binary);
+		BasisCache cache;
+		EXPECT_THROW(cache.deserialize(input), std::runtime_error);
+	}
 }
 
 TEST(preparationCacheTest, BranchedLogMethodsOwnPreparedData) {
 	const BranchedSigCache nonplanar(2, 3, false);
-	BranchedLogSigCache expanded(nonplanar, 0);
-	EXPECT_TRUE(expanded.supports(0));
+	BranchedLogSigCache expanded(nonplanar, BranchedLogSigMethod::Expanded);
+	EXPECT_TRUE(expanded.supports(BranchedLogSigMethod::Expanded));
 	EXPECT_GT(expanded.horner_plan().product_count, nonplanar.total_length);
 
 	const BranchedSigCache planar(2, 3, true);
-	BranchedLogSigCache compact(planar, 1);
-	const uint64_t* indices = compact.basis_cache(1).lyndon_idx.data();
-	compact.upgrade(planar, 2);
-	EXPECT_EQ(indices, compact.basis_cache(2).lyndon_idx.data());
-	EXPECT_FALSE(compact.basis_cache(2).inv_proj_mat.rows.empty());
-	compact.upgrade(planar, 3);
-	EXPECT_TRUE(compact.supports(3));
+	BranchedLogSigCache compact(planar, BranchedLogSigMethod::MkwWords);
+	const uint64_t* indices = compact.basis_cache(BranchedLogSigMethod::MkwWords).lyndon_idx.data();
+	compact.upgrade(planar, BranchedLogSigMethod::MkwBasis);
+	EXPECT_EQ(indices, compact.basis_cache(BranchedLogSigMethod::MkwBasis).lyndon_idx.data());
+	EXPECT_FALSE(compact.basis_cache(BranchedLogSigMethod::MkwBasis).inv_proj_mat.rows.empty());
+	compact.upgrade(planar, BranchedLogSigMethod::DirectBCH);
+	EXPECT_TRUE(compact.supports(BranchedLogSigMethod::DirectBCH));
 	EXPECT_EQ(
 		compact.bch_cache().bch.m,
-		compact.basis_cache(2).lyndon_idx.size());
+		compact.basis_cache(BranchedLogSigMethod::MkwBasis).lyndon_idx.size());
 	EXPECT_EQ(
 		compact.bch_cache().linear_coefficients.size(),
 		compact.bch_cache().bch.m);

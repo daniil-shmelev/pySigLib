@@ -234,7 +234,7 @@ template<std::floating_point T>
 std::unique_ptr<T[]> build_bracket_expansions_(
 	uint64_t dimension, uint64_t degree
 ) {
-	const BasisCache& cache = get_basis_cache(dimension, degree, 2);
+	const BasisCache& cache = get_basis_cache(dimension, degree, LogSigMethod::LyndonBasis);
 	const uint64_t sig_len = ::sig_length(dimension, degree);
 	const uint64_t m = cache.lyndon_idx.size();
 
@@ -292,10 +292,10 @@ void expand_lyndon_to_tensor_(
 	T* expanded,
 	uint64_t dimension,
 	uint64_t degree,
-	int method,
+	LogSigMethod method,
 	const T* expansions
 ) {
-	const BasisCache& cache = get_basis_cache(dimension, degree, 2);
+	const BasisCache& cache = get_basis_cache(dimension, degree, LogSigMethod::LyndonBasis);
 	const uint64_t sig_len = ::sig_length(dimension, degree);
 	const uint64_t m = cache.lyndon_idx.size();
 
@@ -303,7 +303,7 @@ void expand_lyndon_to_tensor_(
 	auto coefs_uptr = std::make_unique<T[]>(m);
 	T* coefs = coefs_uptr.get();
 	std::memcpy(coefs, lyndon_coefs, m * sizeof(T));
-	if (method == 1)
+	if (method == LogSigMethod::LyndonWords)
 		cache.inv_proj_mat.mul_vec_inplace_lower(coefs);
 
 	std::fill(expanded, expanded + sig_len, static_cast<T>(0.));
@@ -320,15 +320,15 @@ void get_logsig_to_sig_(
 	T* out,
 	uint64_t dimension,
 	uint64_t degree,
-	int method,
+	LogSigMethod method,
 	const T* expansions
 ) {
 	switch (method) {
-	case 0:
+	case LogSigMethod::Expanded:
 		sig_from_logsig_expanded<T>(log_sig, out, dimension, degree);
 		break;
-	case 1:
-	case 2: {
+	case LogSigMethod::LyndonWords:
+	case LogSigMethod::LyndonBasis: {
 		const uint64_t sig_len = ::sig_length(dimension, degree);
 		auto expanded = std::make_unique<T[]>(sig_len);
 		expand_lyndon_to_tensor_<T>(log_sig, expanded.get(), dimension, degree, method, expansions);
@@ -351,17 +351,17 @@ void get_logsig_to_sig_backprop_(
 	const T* log_sig,
 	uint64_t dimension,
 	uint64_t degree,
-	int method,
+	LogSigMethod method,
 	const T* expansions
 ) {
 	switch (method) {
-	case 0:
+	case LogSigMethod::Expanded:
 		tensor_exp_backprop_<T>(d_logsig, d_sig, log_sig, dimension, degree);
 		break;
-	case 1:
-	case 2: {
+	case LogSigMethod::LyndonWords:
+	case LogSigMethod::LyndonBasis: {
 		const uint64_t sig_len = ::sig_length(dimension, degree);
-		const BasisCache& cache = get_basis_cache(dimension, degree, 2);
+		const BasisCache& cache = get_basis_cache(dimension, degree, LogSigMethod::LyndonBasis);
 		const uint64_t m = cache.lyndon_idx.size();
 
 		auto expanded = std::make_unique<T[]>(sig_len);
@@ -378,7 +378,7 @@ void get_logsig_to_sig_backprop_(
 		}
 
 		// method=1: forward used P^{-1}, so backward applies (P^{-1})^T
-		if (method == 1)
+		if (method == LogSigMethod::LyndonWords)
 			cache.inv_proj_mat_transpose.mul_vec_inplace_upper(d_coefs.get());
 
 		std::memcpy(d_logsig, d_coefs.get(), m * sizeof(T));
@@ -402,7 +402,7 @@ void logsig_to_sig_(
 	uint64_t degree,
 	bool time_aug = false,
 	bool lead_lag = false,
-	int method = 0,
+	LogSigMethod method = LogSigMethod::Expanded,
 	bool scalar_term = true,
 	int n_jobs = 1
 ) {
@@ -412,11 +412,11 @@ void logsig_to_sig_(
 	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t sig_len = ::sig_length(aug_dimension, degree);
 	// Input: logsig-shaped (method>0, unaffected by scalar_term) or sig-shaped (method==0)
-	const uint64_t full_in_len = method ? ::log_sig_length(aug_dimension, degree) : sig_len;
-	const uint64_t in_stride = (method == 0 && !scalar_term) ? (sig_len - 1) : full_in_len;
+	const uint64_t full_in_len = method != LogSigMethod::Expanded ? ::log_sig_length(aug_dimension, degree) : sig_len;
+	const uint64_t in_stride = (method == LogSigMethod::Expanded && !scalar_term) ? (sig_len - 1) : full_in_len;
 	// Output is always sig-shaped
 	const uint64_t out_stride = scalar_term ? sig_len : sig_len - 1;
-	auto expansions = batch_size && (method == 1 || method == 2)
+	auto expansions = batch_size && (method == LogSigMethod::LyndonWords || method == LogSigMethod::LyndonBasis)
 		? build_bracket_expansions_<T>(aug_dimension, degree) : nullptr;
 
 	if (scalar_term) {
@@ -430,7 +430,7 @@ void logsig_to_sig_(
 			// Prepare full input if method==0 (sig-shaped, prepend scalar)
 			const T* actual_in = in_ptr;
 			std::vector<T> in_full;
-			if (method == 0) {
+			if (method == LogSigMethod::Expanded) {
 				in_full.resize(sig_len);
 				in_full[0] = static_cast<T>(1);
 				std::memcpy(in_full.data() + 1, in_ptr, (sig_len - 1) * sizeof(T));
@@ -460,7 +460,7 @@ void logsig_to_sig_backprop_(
 	uint64_t degree,
 	bool time_aug = false,
 	bool lead_lag = false,
-	int method = 0,
+	LogSigMethod method = LogSigMethod::Expanded,
 	bool scalar_term = true,
 	int n_jobs = 1
 ) {
@@ -470,13 +470,13 @@ void logsig_to_sig_backprop_(
 	uint64_t aug_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t sig_len = ::sig_length(aug_dimension, degree);
 	// Input log_sig: logsig-shaped (method>0) or sig-shaped (method==0)
-	const uint64_t full_in_len = method ? ::log_sig_length(aug_dimension, degree) : sig_len;
-	const uint64_t in_stride = (method == 0 && !scalar_term) ? (sig_len - 1) : full_in_len;
+	const uint64_t full_in_len = method != LogSigMethod::Expanded ? ::log_sig_length(aug_dimension, degree) : sig_len;
+	const uint64_t in_stride = (method == LogSigMethod::Expanded && !scalar_term) ? (sig_len - 1) : full_in_len;
 	// d_sig (incoming grad) is sig-shaped
 	const uint64_t dsig_stride = scalar_term ? sig_len : sig_len - 1;
 	// d_logsig (output grad) is logsig-shaped (method>0) or sig-shaped (method==0)
-	const uint64_t dout_stride = (method == 0 && !scalar_term) ? (sig_len - 1) : full_in_len;
-	auto expansions = batch_size && (method == 1 || method == 2)
+	const uint64_t dout_stride = (method == LogSigMethod::Expanded && !scalar_term) ? (sig_len - 1) : full_in_len;
+	auto expansions = batch_size && (method == LogSigMethod::LyndonWords || method == LogSigMethod::LyndonBasis)
 		? build_bracket_expansions_<T>(aug_dimension, degree) : nullptr;
 
 	if (scalar_term) {
@@ -500,7 +500,7 @@ void logsig_to_sig_backprop_(
 				// Prepare log_sig input (if method==0, prepend scalar)
 				const T* actual_in;
 				std::vector<T> in_full;
-				if (method == 0) {
+				if (method == LogSigMethod::Expanded) {
 					in_full.resize(sig_len);
 					in_full[0] = static_cast<T>(1);
 					std::memcpy(in_full.data() + 1, log_sig + i * in_stride, in_stride * sizeof(T));
@@ -509,7 +509,7 @@ void logsig_to_sig_backprop_(
 					actual_in = log_sig + i * in_stride;
 				}
 
-				if (method == 0) {
+				if (method == LogSigMethod::Expanded) {
 					// Output is sig-shaped, strip
 					std::vector<T> dout_full(sig_len);
 					get_logsig_to_sig_backprop_<T>(

@@ -310,7 +310,7 @@ inline void prepare_cuda_log_sig_method3_(
 		std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
 		const auto found = get_cuda_log_sig_cache_map_().find(key);
 		if (found != get_cuda_log_sig_cache_map_().end()
-			&& found->second.method >= 2
+			&& found->second.method >= LogSigMethod::LyndonBasis
 			&& found->second.bch)
 			return;
 	}
@@ -318,14 +318,14 @@ inline void prepare_cuda_log_sig_method3_(
 		ensure_cuda_cache_dir_();
 	const auto cache_directory = get_cuda_cache_dir_() / cu_cache_folder_name;
 	LogSigCache host_cache(
-		dimension, degree, 3, cache_directory, use_disk);
+		dimension, degree, LogSigMethod::DirectBCH, cache_directory, use_disk);
 	auto uploaded = std::make_unique<CUDABchCache>(
 		upload_bch_cache_to_device_(host_cache.bch()));
 	std::lock_guard<std::mutex> lock(get_cuda_log_sig_cache_mu_());
 	auto [found, inserted] = get_cuda_log_sig_cache_map_().try_emplace(key);
-	if (found->second.method < 2)
+	if (found->second.method < LogSigMethod::LyndonBasis)
 		upload_log_sig_basis_(
-			found->second, host_cache.basis(2), dimension, degree);
+			found->second, host_cache.basis(LogSigMethod::LyndonBasis), dimension, degree);
 	if (!found->second.bch)
 		found->second.bch = std::move(uploaded);
 }

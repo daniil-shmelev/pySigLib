@@ -616,7 +616,7 @@ void branched_sig_to_log_sig_(
 	uint64_t total_len = cache.total_length;
 	uint64_t stride = ScalarTerm ? total_len : total_len - 1;
 
-	const auto& log_cache = get_branched_log_sig_cache_(cache, 0);
+	const auto& log_cache = get_branched_log_sig_cache_(cache, BranchedLogSigMethod::Expanded);
 	const auto& plan = log_cache.horner_plan();
 	auto work_range = [&](uint64_t start, uint64_t end) {
 		branched_sig_to_log_sig_horner_range_<T, ScalarTerm>(
@@ -645,7 +645,7 @@ void branched_sig_to_log_sig_backprop_(
 	uint64_t total_len = cache.total_length;
 	uint64_t stride = ScalarTerm ? total_len : total_len - 1;
 
-	const auto& log_cache = get_branched_log_sig_cache_(cache, 0);
+	const auto& log_cache = get_branched_log_sig_cache_(cache, BranchedLogSigMethod::Expanded);
 	const auto& plan = log_cache.horner_plan();
 	auto work_range = [&](uint64_t start, uint64_t end) {
 		branched_sig_to_log_sig_backprop_horner_range_<T, ScalarTerm>(
@@ -666,7 +666,7 @@ void branched_sig_to_log_sig_compressed_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method,
+	BranchedLogSigMethod method,
 	int n_jobs
 ) {
 	const auto& cache = get_branched_sig_cache(dimension, max_nodes, true);
@@ -696,7 +696,7 @@ void branched_sig_to_log_sig_compressed_(
 				const uint64_t flat_idx = basis_cache.lyndon_idx[i];
 				out_row[i] = expanded[ScalarTerm ? flat_idx : flat_idx - 1];
 			}
-			if (method == 2)
+			if (method == BranchedLogSigMethod::MkwBasis)
 				basis_cache.inv_proj_mat.mul_vec_inplace_lower(out_row);
 		}
 	};
@@ -716,7 +716,7 @@ void branched_sig_to_log_sig_backprop_compressed_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method,
+	BranchedLogSigMethod method,
 	int n_jobs
 ) {
 	const auto& cache = get_branched_sig_cache(dimension, max_nodes, true);
@@ -745,7 +745,7 @@ void branched_sig_to_log_sig_backprop_compressed_(
 		for (uint64_t row = start; row < end; ++row) {
 			if (deriv_stride != 0)
 				std::copy_n(derivs + row * deriv_stride, deriv_stride, compact.begin());
-			if (method == 2)
+			if (method == BranchedLogSigMethod::MkwBasis)
 				basis_cache.inv_proj_mat_transpose.mul_vec_inplace_upper(compact.data());
 			std::fill(expanded_derivs.begin(), expanded_derivs.end(), static_cast<T>(0));
 			for (uint64_t i = 0; i < deriv_stride; ++i) {
@@ -832,7 +832,7 @@ void branched_log_sig_from_path_(
 		throw std::invalid_argument("branched_log_sig method 3 received an empty path");
 	const BranchedSigCache& branched_cache = get_branched_sig_cache(
 		dimension, max_nodes, true);
-	const auto& log_cache = get_branched_log_sig_cache_(branched_cache, 3);
+	const auto& log_cache = get_branched_log_sig_cache_(branched_cache, BranchedLogSigMethod::DirectBCH);
 	const BranchedBchCache& branched_bch = log_cache.bch_cache();
 	const BchCache& bch = branched_bch.bch;
 	if (bch.m == 0)
@@ -887,7 +887,7 @@ void branched_log_sig_join_(
 	uint64_t max_nodes, bool prepend, int n_jobs
 ) {
 	const auto& cache = get_branched_sig_cache(dimension, max_nodes, true);
-	const auto& branched_bch = get_branched_log_sig_cache_(cache, 3).bch_cache();
+	const auto& branched_bch = get_branched_log_sig_cache_(cache, BranchedLogSigMethod::DirectBCH).bch_cache();
 	const auto& bch = branched_bch.bch;
 	if (batch_size == 0) return;
 	if (bch.m == 0) {
@@ -940,7 +940,7 @@ void branched_log_sig_from_path_backprop_(
 		throw std::invalid_argument("branched_log_sig method 3 received an empty path");
 	const BranchedSigCache& branched_cache = get_branched_sig_cache(
 		dimension, max_nodes, true);
-	const auto& log_cache = get_branched_log_sig_cache_(branched_cache, 3);
+	const auto& log_cache = get_branched_log_sig_cache_(branched_cache, BranchedLogSigMethod::DirectBCH);
 	const BranchedBchCache& branched_bch = log_cache.bch_cache();
 	const BchCache& bch = branched_bch.bch;
 	const uint64_t path_stride = length * dimension;
@@ -1046,19 +1046,17 @@ void branched_sig_to_log_sig_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method,
+	BranchedLogSigMethod method,
 	int n_jobs,
 	bool planar,
 	bool scalar_term
 ) {
-	if (method == 3)
+	if (method == BranchedLogSigMethod::DirectBCH)
 		throw std::invalid_argument(
 			"method=3 is not supported in branched_sig_to_log_sig; use branched_log_sig instead");
-	if (method < 0 || method > 2)
-		throw std::invalid_argument("branched log signature method must be 0, 1, 2, or 3");
-	if (method != 0 && !planar)
+	if (method != BranchedLogSigMethod::Expanded && !planar)
 		throw std::invalid_argument("compressed branched log signatures require planar=True");
-	if (method == 0) {
+	if (method == BranchedLogSigMethod::Expanded) {
 		if (scalar_term) {
 			branched_sig_to_log_sig_<T, true>(
 				bsig, out, batch_size, dimension, max_nodes, n_jobs, planar);
@@ -1084,19 +1082,17 @@ void branched_sig_to_log_sig_backprop_(
 	uint64_t batch_size,
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method,
+	BranchedLogSigMethod method,
 	int n_jobs,
 	bool planar,
 	bool scalar_term
 ) {
-	if (method == 3)
+	if (method == BranchedLogSigMethod::DirectBCH)
 		throw std::invalid_argument(
 			"method=3 is not supported in branched_sig_to_log_sig_backprop");
-	if (method < 0 || method > 2)
-		throw std::invalid_argument("branched log signature method must be 0, 1, 2, or 3");
-	if (method != 0 && !planar)
+	if (method != BranchedLogSigMethod::Expanded && !planar)
 		throw std::invalid_argument("compressed branched log signatures require planar=True");
-	if (method == 0) {
+	if (method == BranchedLogSigMethod::Expanded) {
 		if (scalar_term) {
 			branched_sig_to_log_sig_backprop_<T, true>(
 				bsig, derivs, out, batch_size, dimension, max_nodes, n_jobs, planar);
@@ -1128,13 +1124,13 @@ void batch_branched_log_sig_join_backprop_(const T* derivs, T* d_logsig, T* d_di
 		batch_size, dimension, max_nodes, prepend, n_jobs);
 }
 
-template void branched_sig_to_log_sig_<float>(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term);
+template void branched_sig_to_log_sig_<float>(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, BranchedLogSigMethod method, int n_jobs, bool planar, bool scalar_term);
 
-template void branched_sig_to_log_sig_<double>(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term);
+template void branched_sig_to_log_sig_<double>(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, BranchedLogSigMethod method, int n_jobs, bool planar, bool scalar_term);
 
-template void branched_sig_to_log_sig_backprop_<float>(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term);
+template void branched_sig_to_log_sig_backprop_<float>(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, BranchedLogSigMethod method, int n_jobs, bool planar, bool scalar_term);
 
-template void branched_sig_to_log_sig_backprop_<double>(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term);
+template void branched_sig_to_log_sig_backprop_<double>(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, BranchedLogSigMethod method, int n_jobs, bool planar, bool scalar_term);
 
 template void branched_log_sig_from_path_<float>(const float* path, float* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs);
 

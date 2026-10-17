@@ -16,6 +16,7 @@
 #pragma once
 
 #include "sparse_int_matrix.h"
+#include "../../log_sig_method.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -26,12 +27,12 @@
 struct BchCache;
 
 struct BasisCache {
-	int method = 0;
+	LogSigMethod method = LogSigMethod::Expanded;
 	std::vector<uint64_t> lyndon_idx;
 	SparseIntMatrix inv_proj_mat;
 	SparseIntMatrix inv_proj_mat_transpose;
 
-	bool supports(int requested_method) const noexcept {
+	bool supports(LogSigMethod requested_method) const noexcept {
 		return method >= requested_method;
 	}
 
@@ -44,7 +45,7 @@ public:
 	LogSigCache(
 		uint64_t dimension,
 		uint64_t degree,
-		int method,
+		LogSigMethod method,
 		const std::filesystem::path& cache_directory = {},
 		bool use_disk = false,
 		const std::string& file_prefix = "");
@@ -54,17 +55,17 @@ public:
 	LogSigCache(const LogSigCache&) = delete;
 	LogSigCache& operator=(const LogSigCache&) = delete;
 
-	bool supports(int method) const noexcept;
-	int method() const noexcept;
-	const BasisCache& basis(int method) const;
-	BasisCache& basis(int method);
+	bool supports(LogSigMethod method) const noexcept;
+	LogSigMethod method() const noexcept;
+	const BasisCache& basis(LogSigMethod method) const;
+	BasisCache& basis(LogSigMethod method);
 	bool has_bch() const noexcept;
 	const BchCache& bch() const;
 	BchCache& bch();
 	void set_bch(std::unique_ptr<BchCache> cache);
 
 	void upgrade(
-		int method,
+		LogSigMethod method,
 		const std::filesystem::path& cache_directory = {},
 		bool use_disk = false,
 		const std::string& file_prefix = "");

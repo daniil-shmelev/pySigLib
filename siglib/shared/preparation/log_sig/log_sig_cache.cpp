@@ -41,17 +41,17 @@ void build_basis_projection_(
 		dimension, degree);
 	projection.inverse(basis.inv_proj_mat);
 	basis.inv_proj_mat.transpose(basis.inv_proj_mat_transpose);
-	basis.method = 2;
+	basis.method = LogSigMethod::LyndonBasis;
 }
 
 void build_basis_cache_(
 	BasisCache& result,
 	uint64_t dimension,
 	uint64_t degree,
-	int method
+	LogSigMethod method
 ) {
 	result.method = method;
-	if (method == 1) {
+	if (method == LogSigMethod::LyndonWords) {
 		result.lyndon_idx = all_lyndon_idx(dimension, degree);
 		return;
 	}
@@ -60,23 +60,26 @@ void build_basis_cache_(
 	result.lyndon_idx.reserve(lyndon_words.size());
 	for (const word& value : lyndon_words)
 		result.lyndon_idx.push_back(word_to_idx(value, dimension));
-	if (method >= 2)
+	if (method == LogSigMethod::LyndonBasis)
 		build_basis_projection_(result, lyndon_words, dimension, degree);
 }
 }  // namespace
 
 void BasisCache::serialize(std::ostream& out) const {
-	out.write(reinterpret_cast<const char*>(&method), sizeof(method));
+	const int stored_method = static_cast<int>(method);
+	out.write(reinterpret_cast<const char*>(&stored_method), sizeof(stored_method));
 	serialize_cache_vector(out, lyndon_idx);
 	inv_proj_mat.serialize(out);
 	inv_proj_mat_transpose.serialize(out);
 }
 
 void BasisCache::deserialize(std::istream& in) {
-	in.read(reinterpret_cast<char*>(&method), sizeof(method));
-	if (!in || method < 0 || method > 2)
+	int stored_method = 0;
+	in.read(reinterpret_cast<char*>(&stored_method), sizeof(stored_method));
+	if (!in || stored_method < 0 || stored_method > 2)
 		throw std::runtime_error(
 			"Tried to read an invalid cache file: basis method");
+	method = parse_log_sig_conversion_method(stored_method);
 	deserialize_cache_vector(in, lyndon_idx, "basis Lyndon indices");
 	SparseIntMatrix::deserialize(in, inv_proj_mat);
 	SparseIntMatrix::deserialize(in, inv_proj_mat_transpose);
@@ -143,7 +146,7 @@ void write_log_sig_basis_cache(
 LogSigCache::LogSigCache(
 	uint64_t dimension,
 	uint64_t degree,
-	int method,
+	LogSigMethod method,
 	const std::filesystem::path& cache_directory,
 	bool use_disk,
 	const std::string& file_prefix
@@ -155,22 +158,22 @@ LogSigCache::~LogSigCache() = default;
 LogSigCache::LogSigCache(LogSigCache&&) noexcept = default;
 LogSigCache& LogSigCache::operator=(LogSigCache&&) noexcept = default;
 
-bool LogSigCache::supports(int method) const noexcept {
-	return basis_.supports((std::min)(method, 2))
-		&& (method < 3 || bch_ != nullptr);
+bool LogSigCache::supports(LogSigMethod method) const noexcept {
+	return basis_.supports((std::min)(method, LogSigMethod::LyndonBasis))
+		&& (method != LogSigMethod::DirectBCH || bch_ != nullptr);
 }
 
-int LogSigCache::method() const noexcept {
+LogSigMethod LogSigCache::method() const noexcept {
 	return basis_.method;
 }
 
-const BasisCache& LogSigCache::basis(int method) const {
+const BasisCache& LogSigCache::basis(LogSigMethod method) const {
 	if (!supports(method))
 		throw cache_not_found_error("Could not find basis cache");
 	return basis_;
 }
 
-BasisCache& LogSigCache::basis(int method) {
+BasisCache& LogSigCache::basis(LogSigMethod method) {
 	if (!supports(method))
 		throw cache_not_found_error("Could not find basis cache");
 	return basis_;
@@ -197,19 +200,19 @@ void LogSigCache::set_bch(std::unique_ptr<BchCache> cache) {
 }
 
 void LogSigCache::upgrade(
-	int method,
+	LogSigMethod method,
 	const std::filesystem::path& cache_directory,
 	bool use_disk,
 	const std::string& file_prefix
 ) {
-	if (method < 1 || method > 3)
+	if (method < LogSigMethod::LyndonWords || method > LogSigMethod::DirectBCH)
 		throw std::invalid_argument("log signature method must be 1, 2, or 3");
-	if (method == 3 && degree_ > BCH_MAX_HARDCODED_DEGREE)
+	if (method == LogSigMethod::DirectBCH && degree_ > BCH_MAX_HARDCODED_DEGREE)
 		throw std::invalid_argument(
 			"BCH methods support truncation degrees at most 20");
-	const int basis_method = (std::min)(method, 2);
+	const LogSigMethod basis_method = (std::min)(method, LogSigMethod::LyndonBasis);
 	if (basis_.supports(basis_method)) {
-		if (method == 3 && !bch_)
+		if (method == LogSigMethod::DirectBCH && !bch_)
 			bch_ = make_standard_bch_cache(
 				dimension_, degree_, basis_);
 		return;
@@ -220,13 +223,13 @@ void LogSigCache::upgrade(
 			cache_directory, dimension_, degree_, loaded, file_prefix)
 			&& loaded.supports(basis_method)) {
 			basis_ = std::move(loaded);
-			if (method == 3)
+			if (method == LogSigMethod::DirectBCH)
 				bch_ = make_standard_bch_cache(
 					dimension_, degree_, basis_);
 			return;
 		}
 	}
-	if (basis_.method == 1 && basis_method == 2) {
+	if (basis_.method == LogSigMethod::LyndonWords && basis_method == LogSigMethod::LyndonBasis) {
 		const std::vector<word> lyndon_words = all_lyndon_words(
 			dimension_, degree_);
 		build_basis_projection_(
@@ -235,7 +238,7 @@ void LogSigCache::upgrade(
 			write_log_sig_basis_cache(
 				cache_directory, dimension_, degree_, basis_, file_prefix);
 		}
-		if (method == 3)
+		if (method == LogSigMethod::DirectBCH)
 			bch_ = make_standard_bch_cache(dimension_, degree_, basis_);
 		return;
 	}
@@ -244,6 +247,6 @@ void LogSigCache::upgrade(
 		write_log_sig_basis_cache(
 			cache_directory, dimension_, degree_, basis_, file_prefix);
 	}
-	if (method == 3)
+	if (method == LogSigMethod::DirectBCH)
 		bch_ = make_standard_bch_cache(dimension_, degree_, basis_);
 }

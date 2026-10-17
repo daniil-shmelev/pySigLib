@@ -26,13 +26,11 @@
 static void prepare_branched_log_sig_(
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method,
+	BranchedLogSigMethod method,
 	bool use_disk,
 	bool planar
 ) {
-	if (method < 0 || method > 3)
-		throw std::invalid_argument("branched log signature method must be 0, 1, 2, or 3");
-	if (method != 0 && !planar)
+	if (method != BranchedLogSigMethod::Expanded && !planar)
 		throw std::invalid_argument("compressed branched log signatures are not available for planar=False");
 	prepare_branched_sig_cache(dimension, max_nodes, use_disk, planar);
 	const auto& cache = get_branched_sig_cache(dimension, max_nodes, planar);
@@ -59,23 +57,23 @@ HWY_EXPORT_T(branched_log_sig_from_path_backprop_d, branched_log_sig_from_path_b
 extern "C" {
 
 	CPSIG_API int prepare_branched_log_sig(uint64_t dimension, uint64_t max_nodes, int method, bool use_disk, bool planar) noexcept {
-		SAFE_CALL(prepare_branched_log_sig_(dimension, max_nodes, method, use_disk, planar));
+		SAFE_CALL(prepare_branched_log_sig_(dimension, max_nodes, parse_branched_log_sig_method(method), use_disk, planar));
 	}
 
 	CPSIG_API int branched_sig_to_log_sig_f(const float* bsig, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_to_log_sig_f)(bsig, out, batch_size, dimension, max_nodes, method, n_jobs, planar, scalar_term));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_to_log_sig_f)(bsig, out, batch_size, dimension, max_nodes, parse_branched_log_sig_method(method), n_jobs, planar, scalar_term));
 	}
 
 	CPSIG_API int branched_sig_to_log_sig_d(const double* bsig, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_to_log_sig_d)(bsig, out, batch_size, dimension, max_nodes, method, n_jobs, planar, scalar_term));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_to_log_sig_d)(bsig, out, batch_size, dimension, max_nodes, parse_branched_log_sig_method(method), n_jobs, planar, scalar_term));
 	}
 
 	CPSIG_API int branched_sig_to_log_sig_backprop_f(const float* bsig, const float* derivs, float* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_to_log_sig_backprop_f)(bsig, derivs, out, batch_size, dimension, max_nodes, method, n_jobs, planar, scalar_term));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_to_log_sig_backprop_f)(bsig, derivs, out, batch_size, dimension, max_nodes, parse_branched_log_sig_method(method), n_jobs, planar, scalar_term));
 	}
 
 	CPSIG_API int branched_sig_to_log_sig_backprop_d(const double* bsig, const double* derivs, double* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term) noexcept {
-		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_to_log_sig_backprop_d)(bsig, derivs, out, batch_size, dimension, max_nodes, method, n_jobs, planar, scalar_term));
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(branched_sig_to_log_sig_backprop_d)(bsig, derivs, out, batch_size, dimension, max_nodes, parse_branched_log_sig_method(method), n_jobs, planar, scalar_term));
 	}
 
 	CPSIG_API int branched_log_sig_from_path_f(const float* path, float* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs) noexcept {

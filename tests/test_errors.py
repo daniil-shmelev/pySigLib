@@ -18,11 +18,46 @@ import numpy as np
 import torch
 
 import pysiglib
-from conftest import skip_no_cuda
+from conftest import DEVICES, skip_no_cuda
+from pysiglib.load_siglib import CPSIG, CUSIG
 
 np.random.seed(42)
 torch.manual_seed(42)
 EPSILON = 1e-10
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("suffix", ["f", "d"])
+@pytest.mark.parametrize("operation", [
+    "sig_to_log_sig", "sig_to_log_sig_backprop",
+    "logsig_to_sig", "logsig_to_sig_backprop",
+])
+@pytest.mark.parametrize("method", [-1, 3, 4])
+def test_native_log_conversion_rejects_invalid_method(device, suffix, operation, method):
+    library = CPSIG if device == "cpu" else CUSIG
+    name = operation + ("_cuda" if device == "cuda" else "") + "_" + suffix
+    pointers = [None] * (3 if operation.endswith("backprop") else 2)
+    args = pointers + [0, 2, 3]
+    if device == "cpu":
+        args += [False, False]
+    args += [method, True]
+    if device == "cpu":
+        args += [1]
+    assert getattr(library, name)(*args) == 2
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("method", [-1, 4])
+def test_native_log_preparation_rejects_invalid_method(device, method):
+    prepare = CPSIG.prepare_log_sig if device == "cpu" else CUSIG.prepare_log_sig_cuda
+    assert prepare(2, 3, method, False) == 2
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_native_expanded_log_preparation(device):
+    prepare = CPSIG.prepare_log_sig if device == "cpu" else CUSIG.prepare_log_sig_cuda
+    assert prepare(2, 3, 0, False) == 0
+
 
 @pytest.mark.parametrize("dim, deg", [(-1, 2), (1, -2)])
 def test_sig_length_value_error(dim, deg):

@@ -21,18 +21,18 @@ void prepare_bch_cache(
 	if (degree > BCH_MAX_HARDCODED_DEGREE)
 		throw std::invalid_argument(
 			"BCH methods support truncation degrees at most 20");
-	prepare_basis_cache(dimension, degree, 2, use_disk);
+	prepare_basis_cache(dimension, degree, LogSigMethod::LyndonBasis, use_disk);
 	LogSigCache& log_cache = get_log_sig_cache_mutable(
-		dimension, degree, 2);
+		dimension, degree, LogSigMethod::LyndonBasis);
 	if (log_cache.has_bch())
 		return;
 
 	log_cache.set_bch(make_standard_bch_cache(
-		dimension, degree, log_cache.basis(2)));
+		dimension, degree, log_cache.basis(LogSigMethod::LyndonBasis)));
 }
 
 const BchCache& get_bch_cache(uint64_t dimension, uint64_t degree) {
-	return get_log_sig_cache(dimension, degree, 3).bch();
+	return get_log_sig_cache(dimension, degree, LogSigMethod::DirectBCH).bch();
 }
 
 void clear_bch_cache() {
