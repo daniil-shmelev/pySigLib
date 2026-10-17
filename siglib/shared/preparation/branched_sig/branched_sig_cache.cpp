@@ -415,23 +415,20 @@ void populate_correction_horner_plan_(
 			while (pos < end) {
 				const uint64_t forest_size = cache.coproduct_data[pos++];
 				const uint64_t trunk = cache.coproduct_data[pos++];
-				if (active[trunk] == 0) {
+				// Use alpha * alpha^(k-1): the infinitesimal character alpha
+				// vanishes on forests with more than one tree. Convolution
+				// powers themselves are not characters and cannot be multiplied
+				// across the forest factors.
+				if (forest_size != 1) {
 					pos += forest_size;
 					continue;
 				}
-
-				CorrectionPolynomial term;
-				term.push_back({ CorrectionMonomial{ trunk }, 1.0 });
-				for (uint64_t factor = 0; factor < forest_size; ++factor) {
-					const uint64_t forest_flat = cache.coproduct_data[pos++];
-					if (power[forest_flat].empty()) {
-						term.clear();
-						pos += forest_size - factor - 1;
-						break;
-					}
-					term = multiply_correction_polynomials_(
-						term, power[forest_flat]);
-				}
+				const uint64_t forest_flat = cache.coproduct_data[pos++];
+				if (active[forest_flat] == 0)
+					continue;
+				const auto term = multiply_correction_polynomials_(
+					CorrectionPolynomial{ { CorrectionMonomial{ forest_flat }, 1.0 } },
+					power[trunk]);
 				add_correction_polynomial_(next[flat], term);
 			}
 		}

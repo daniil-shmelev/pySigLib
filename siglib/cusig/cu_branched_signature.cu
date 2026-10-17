@@ -498,6 +498,36 @@ __device__ void branched_hopf_convolution_block_(
 }
 
 template<typename T>
+__device__ void branched_infinitesimal_convolution_block_(
+	const T* X,
+	const T* Y,
+	T* out,
+	uint32_t total_len,
+	const uint32_t* s_coprod_data,
+	const uint32_t* s_coprod_off,
+	uint32_t tid
+) {
+	const uint32_t num_trees = total_len - 1;
+	if (tid == 0) out[0] = X[0] * Y[0];
+	for (uint32_t tree = tid; tree < num_trees; tree += blockDim.x) {
+		const uint32_t fi = tree + 1;
+		T val = X[fi] * Y[0] + X[0] * Y[fi];
+		uint32_t pos = s_coprod_off[tree];
+		const uint32_t pend = s_coprod_off[tree + 1];
+		while (pos < pend) {
+			const uint32_t nf = s_coprod_data[pos++];
+			const uint32_t trunk = s_coprod_data[pos++];
+			// Y is the infinitesimal character; evaluate Y * X.
+			if (nf == 1)
+				val += Y[s_coprod_data[pos]] * X[trunk];
+			pos += nf;
+		}
+		out[fi] = val;
+	}
+	__syncthreads();
+}
+
+template<typename T>
 __device__ void add_correction_block_(
 	T* out,
 	int dim,
@@ -631,7 +661,7 @@ __device__ void local_branched_sig_block_(
 		__syncthreads();
 
 		if (k < max_nodes) {
-			branched_hopf_convolution_block_(cur_power, local_log, cur_next,
+			branched_infinitesimal_convolution_block_(cur_power, local_log, cur_next,
 				total_len, s_coprod_data, s_coprod_off, tid);
 			T* tmp = cur_power;
 			cur_power = cur_next;
@@ -782,7 +812,7 @@ void branched_sig_ker(
 // | inc[dim] | inc_derivs[dim] | increment reduction | coprod tables (same as forward) |
 
 template<typename T>
-__device__ void branched_hopf_convolution_deriv_block_(
+__device__ void branched_infinitesimal_convolution_deriv_block_(
 	const T* X,
 	const T* Y,
 	const T* d_out,
@@ -812,22 +842,12 @@ __device__ void branched_hopf_convolution_deriv_block_(
 			while (pos < pend) {
 				const uint32_t nf = s_coprod_data[pos++];
 				const uint32_t trunk_flat = s_coprod_data[pos++];
-				const uint32_t forest_start = pos;
-				T forest_product = T(1);
-				#pragma unroll 4
-				for (uint32_t j = 0; j < nf; ++j)
-					forest_product *= X[s_coprod_data[pos++]];
-
-				myAtomicAdd(&d_Y[trunk_flat], d * forest_product);
-				for (uint32_t k = 0; k < nf; ++k) {
-					const uint32_t fk = s_coprod_data[forest_start + k];
-					T partial = d * Y[trunk_flat];
-					for (uint32_t j = 0; j < nf; ++j) {
-						if (j != k)
-							partial *= X[s_coprod_data[forest_start + j]];
-					}
-					myAtomicAdd(&d_X[fk], partial);
+				if (nf == 1) {
+					const uint32_t forest = s_coprod_data[pos];
+					myAtomicAdd(&d_X[trunk_flat], d * Y[forest]);
+					myAtomicAdd(&d_Y[forest], d * X[trunk_flat]);
 				}
+				pos += nf;
 			}
 		}
 	}
@@ -979,7 +999,7 @@ __device__ void local_log_bsig_deriv_to_inc_rolling_block_(
 		T* current = power_current;
 		T* next = power_next;
 		for (int power_level = 2; power_level < k; ++power_level) {
-			branched_hopf_convolution_block_(
+			branched_infinitesimal_convolution_block_(
 				current, local_log, next, total_len,
 				s_coprod_data, s_coprod_off, tid);
 			T* swap = current;
@@ -990,7 +1010,7 @@ __device__ void local_log_bsig_deriv_to_inc_rolling_block_(
 		for (uint32_t i = tid; i < total_len; i += blockDim.x)
 			adjoint_next[i] = T(0);
 		__syncthreads();
-		branched_hopf_convolution_deriv_block_(
+		branched_infinitesimal_convolution_deriv_block_(
 			current, local_log, adjoint_current, adjoint_next,
 			d_correction, total_len, s_coprod_data, s_coprod_off, tid);
 		inv_k_factorial *= static_cast<T>(k);
@@ -1065,7 +1085,7 @@ __device__ void local_log_bsig_deriv_to_inc_saved_block_(
 		powers[i] = local_log[i];
 	__syncthreads();
 	for (int k = 2; k <= max_nodes; ++k) {
-		branched_hopf_convolution_block_(
+		branched_infinitesimal_convolution_block_(
 			powers + static_cast<uint32_t>(k - 2) * total_len,
 			local_log,
 			powers + static_cast<uint32_t>(k - 1) * total_len,
@@ -1083,7 +1103,7 @@ __device__ void local_log_bsig_deriv_to_inc_saved_block_(
 	}
 
 	for (int k = max_nodes; k > 1; --k) {
-		branched_hopf_convolution_deriv_block_(
+		branched_infinitesimal_convolution_deriv_block_(
 			powers + static_cast<uint32_t>(k - 2) * total_len,
 			local_log,
 			power_derivs + static_cast<uint32_t>(k - 1) * total_len,

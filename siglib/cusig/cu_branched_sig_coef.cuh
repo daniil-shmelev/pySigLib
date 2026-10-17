@@ -18,7 +18,7 @@
 #include "cu_runtime_utils.h"
 
 template<typename T>
-__device__ void sparse_branched_hopf_convolution_block_(
+__device__ void sparse_branched_infinitesimal_convolution_block_(
 	const T* X,
 	const T* Y,
 	T* out,
@@ -36,11 +36,11 @@ __device__ void sparse_branched_hopf_convolution_block_(
 		const uint32_t end = coprod_offsets[local + 1];
 		while (pos < end) {
 			const uint32_t num_forest = coprod_data[pos++];
-			T term = Y[coprod_data[pos++]];
-			#pragma unroll 4
-			for (uint32_t j = 0; j < num_forest; ++j)
-				term *= X[coprod_data[pos++]];
-			value += term;
+			const uint32_t trunk = coprod_data[pos++];
+			// Y is the infinitesimal character; evaluate Y * X.
+			if (num_forest == 1)
+				value += Y[coprod_data[pos]] * X[trunk];
+			pos += num_forest;
 		}
 		out[local] = value;
 	}
@@ -48,7 +48,7 @@ __device__ void sparse_branched_hopf_convolution_block_(
 }
 
 template<typename T>
-__device__ void sparse_branched_hopf_convolution_deriv_block_(
+__device__ void sparse_branched_infinitesimal_convolution_deriv_block_(
 	const T* X,
 	const T* Y,
 	const T* d_out,
@@ -77,20 +77,12 @@ __device__ void sparse_branched_hopf_convolution_deriv_block_(
 			while (pos < end) {
 				const uint32_t num_forest = coprod_data[pos++];
 				const uint32_t trunk = coprod_data[pos++];
-				const uint32_t forest_start = pos;
-				T forest_product = T(1);
-				for (uint32_t j = 0; j < num_forest; ++j)
-					forest_product *= X[coprod_data[pos++]];
-				myAtomicAdd(&d_Y[trunk], d * forest_product);
-
-				for (uint32_t k = 0; k < num_forest; ++k) {
-					T partial = d * Y[trunk];
-					for (uint32_t j = 0; j < num_forest; ++j) {
-						if (j != k)
-							partial *= X[coprod_data[forest_start + j]];
-					}
-					myAtomicAdd(&d_X[coprod_data[forest_start + k]], partial);
+				if (num_forest == 1) {
+					const uint32_t forest = coprod_data[pos];
+					myAtomicAdd(&d_X[trunk], d * Y[forest]);
+					myAtomicAdd(&d_Y[forest], d * X[trunk]);
 				}
+				pos += num_forest;
 			}
 		}
 	}
@@ -203,7 +195,7 @@ __device__ void sparse_local_branched_sig_block_(
 			out[i] += inv_k_factorial * current[i];
 		__syncthreads();
 		if (k < max_nodes) {
-			sparse_branched_hopf_convolution_block_(current, local_log, next,
+			sparse_branched_infinitesimal_convolution_block_(current, local_log, next,
 				cache_size, coprod_data, coprod_offsets, tid);
 			T* swap = current;
 			current = next;
@@ -312,7 +304,7 @@ __device__ void sparse_local_branched_sig_deriv_rolling_block_(
 		T* current = power_current;
 		T* next = power_next;
 		for (uint32_t power_level = 2; power_level < k; ++power_level) {
-			sparse_branched_hopf_convolution_block_(
+			sparse_branched_infinitesimal_convolution_block_(
 				current, local_log, next, cache_size,
 				coprod_data, coprod_offsets, tid);
 			T* swap = current;
@@ -323,7 +315,7 @@ __device__ void sparse_local_branched_sig_deriv_rolling_block_(
 		for (uint32_t i = tid; i < cache_size; i += blockDim.x)
 			adjoint_next[i] = T(0);
 		__syncthreads();
-		sparse_branched_hopf_convolution_deriv_block_(
+		sparse_branched_infinitesimal_convolution_deriv_block_(
 			current, local_log, adjoint_current, adjoint_next,
 			d_local_log, cache_size, coprod_data, coprod_offsets, tid);
 		inv_k_factorial *= static_cast<T>(k);
@@ -392,7 +384,7 @@ __device__ void sparse_local_branched_sig_deriv_saved_block_(
 		powers[i] = local_log[i];
 	__syncthreads();
 	for (uint32_t k = 2; k <= max_nodes; ++k) {
-		sparse_branched_hopf_convolution_block_(
+		sparse_branched_infinitesimal_convolution_block_(
 			powers + (k - 2) * cache_size, local_log,
 			powers + (k - 1) * cache_size, cache_size,
 			coprod_data, coprod_offsets, tid);
@@ -416,7 +408,7 @@ __device__ void sparse_local_branched_sig_deriv_saved_block_(
 	__syncthreads();
 
 	for (uint32_t k = max_nodes; k > 1; --k) {
-		sparse_branched_hopf_convolution_deriv_block_(
+		sparse_branched_infinitesimal_convolution_deriv_block_(
 			powers + (k - 2) * cache_size, local_log,
 			power_derivs + (k - 1) * cache_size,
 			power_derivs + (k - 2) * cache_size, d_local_log,

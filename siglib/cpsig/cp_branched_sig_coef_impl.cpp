@@ -70,7 +70,7 @@ FORCE_INLINE void sparse_linear_branched_sig_(
 }
 
 template<std::floating_point T>
-FORCE_INLINE void sparse_hopf_convolution_(
+FORCE_INLINE void sparse_infinitesimal_convolution_(
 	const T* X,
 	const T* Y,
 	T* out,
@@ -84,10 +84,10 @@ FORCE_INLINE void sparse_hopf_convolution_(
 		while (pos < pos_end) {
 			const uint64_t num_forest = cache.coproduct_data[pos++];
 			const uint64_t trunk = cache.coproduct_data[pos++];
-			T term = Y[trunk];
-			for (uint64_t j = 0; j < num_forest; ++j)
-				term *= X[cache.coproduct_data[pos++]];
-			value += term;
+			// Y is the infinitesimal character; evaluate Y * X.
+			if (num_forest == 1)
+				value += Y[cache.coproduct_data[pos]] * X[trunk];
+			pos += num_forest;
 		}
 		out[local] = value;
 	}
@@ -196,7 +196,7 @@ FORCE_INLINE void sparse_local_branched_sig_(
 		for (uint64_t local = 1; local < cache_size; ++local)
 			out[local] += inv_factorial * power[local];
 		if (k < cache.max_nodes) {
-			sparse_hopf_convolution_(power, local_log, next_power, cache);
+			sparse_infinitesimal_convolution_(power, local_log, next_power, cache);
 			std::swap(power, next_power);
 		}
 	}
@@ -362,7 +362,7 @@ FORCE_INLINE void sparse_butcher_product_deriv_(
 }
 
 template<std::floating_point T>
-FORCE_INLINE void sparse_hopf_convolution_deriv_(
+FORCE_INLINE void sparse_infinitesimal_convolution_deriv_(
 	const T* X,
 	const T* Y,
 	const T* d_out,
@@ -386,19 +386,12 @@ FORCE_INLINE void sparse_hopf_convolution_deriv_(
 		while (pos < pos_end) {
 			const uint64_t num_forest = cache.coproduct_data[pos++];
 			const uint64_t trunk = cache.coproduct_data[pos++];
-			const uint64_t forest_start = pos;
-			T forest_product = static_cast<T>(1);
-			for (uint64_t j = 0; j < num_forest; ++j)
-				forest_product *= X[cache.coproduct_data[pos++]];
-			d_Y[trunk] += d * forest_product;
-			for (uint64_t k = 0; k < num_forest; ++k) {
-				T partial = d * Y[trunk];
-				for (uint64_t j = 0; j < num_forest; ++j) {
-					if (j != k)
-						partial *= X[cache.coproduct_data[forest_start + j]];
-				}
-				d_X[cache.coproduct_data[forest_start + k]] += partial;
+			if (num_forest == 1) {
+				const uint64_t forest = cache.coproduct_data[pos];
+				d_X[trunk] += d * Y[forest];
+				d_Y[forest] += d * X[trunk];
 			}
+			pos += num_forest;
 		}
 	}
 }
@@ -492,7 +485,7 @@ FORCE_INLINE void sparse_local_bsig_deriv_to_increment_(
 	build_sparse_local_log_(increment, correction, correction_len, local_log, cache);
 	std::copy(local_log, local_log + cache_size, powers);
 	for (uint64_t k = 2; k <= cache.max_nodes; ++k)
-		sparse_hopf_convolution_(powers + (k - 2) * cache_size, local_log,
+		sparse_infinitesimal_convolution_(powers + (k - 2) * cache_size, local_log,
 			powers + (k - 1) * cache_size, cache);
 
 	std::fill(power_derivs, power_derivs + cache.max_nodes * cache_size, static_cast<T>(0));
@@ -506,7 +499,7 @@ FORCE_INLINE void sparse_local_bsig_deriv_to_increment_(
 	}
 
 	for (uint64_t k = cache.max_nodes; k > 1; --k) {
-		sparse_hopf_convolution_deriv_(powers + (k - 2) * cache_size, local_log,
+		sparse_infinitesimal_convolution_deriv_(powers + (k - 2) * cache_size, local_log,
 			power_derivs + (k - 1) * cache_size,
 			power_derivs + (k - 2) * cache_size, d_local_log, cache);
 	}
