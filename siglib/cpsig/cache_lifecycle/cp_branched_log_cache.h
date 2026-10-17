@@ -19,9 +19,9 @@
 
 void prepare_branched_log_sig_cache(
 	const BranchedSigCache& cache,
-	int method,
+	BranchedLogSigMethod method,
 	bool use_disk);
 const BranchedLogSigCache& get_branched_log_sig_cache_(
 	const BranchedSigCache& cache,
-	int method);
+	BranchedLogSigMethod method);
 void clear_branched_log_sig_cache();

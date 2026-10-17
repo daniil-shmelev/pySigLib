@@ -377,35 +377,33 @@ BranchedBchCache::BranchedBchCache(
 
 BranchedLogSigCache::BranchedLogSigCache(
 	const BranchedSigCache& branched_cache,
-	int method,
+	BranchedLogSigMethod method,
 	const std::filesystem::path& cache_directory,
 	bool use_disk
-) : method_{ -1 } {
+) {
 	upgrade(branched_cache, method, cache_directory, use_disk);
 }
 
 
 void BranchedLogSigCache::upgrade(
 	const BranchedSigCache& branched_cache,
-	int method,
+	BranchedLogSigMethod method,
 	const std::filesystem::path& cache_directory,
 	bool use_disk
 ) {
-	if (method < 0 || method > 3)
-		throw std::invalid_argument(
-			"branched log signature method must be 0, 1, 2, or 3");
-	if (method != 0 && !branched_cache.planar)
+	if (method != BranchedLogSigMethod::Expanded && !branched_cache.planar)
 		throw std::invalid_argument(
 			"compressed branched log signatures require planar=True");
-	if (method == 3
+	if (method == BranchedLogSigMethod::DirectBCH
 		&& branched_cache.max_nodes > BCH_MAX_HARDCODED_DEGREE)
 		throw std::invalid_argument(
 			"BCH methods support truncation degrees at most 20");
 
-	if (method_ < 0)
+	if (!method_)
 		horner_plan_ = build_branched_log_horner_plan(branched_cache);
-	if (method >= 1) {
-		const LogSigMethod basis_method = parse_log_sig_conversion_method((std::min)(method, 2));
+	if (method >= BranchedLogSigMethod::MkwWords) {
+		const LogSigMethod basis_method = method >= BranchedLogSigMethod::MkwBasis
+			? LogSigMethod::LyndonBasis : LogSigMethod::LyndonWords;
 		if (!basis_cache_ || !basis_cache_->supports(basis_method)) {
 			if (basis_cache_ && basis_cache_->method == LogSigMethod::LyndonWords
 				&& basis_method == LogSigMethod::LyndonBasis) {
@@ -441,16 +439,17 @@ void BranchedLogSigCache::upgrade(
 			}
 		}
 	}
-	if (method == 3 && !bch_cache_) {
+	if (method == BranchedLogSigMethod::DirectBCH && !bch_cache_) {
 		bch_cache_.emplace(
 			branched_cache, horner_plan_, *basis_cache_);
 	}
-	method_ = (std::max)(method_, method);
+	if (!method_ || *method_ < method)
+		method_ = method;
 }
 
 
-bool BranchedLogSigCache::supports(int method) const noexcept {
-	return method_ >= method;
+bool BranchedLogSigCache::supports(BranchedLogSigMethod method) const noexcept {
+	return method_ && *method_ >= method;
 }
 
 
@@ -459,8 +458,10 @@ const BranchedLogHornerPlan& BranchedLogSigCache::horner_plan() const noexcept {
 }
 
 
-const BasisCache& BranchedLogSigCache::basis_cache(int method) const {
-	if (!basis_cache_ || !basis_cache_->supports(parse_log_sig_conversion_method(method)))
+const BasisCache& BranchedLogSigCache::basis_cache(BranchedLogSigMethod method) const {
+	const LogSigMethod basis_method = method >= BranchedLogSigMethod::MkwBasis
+		? LogSigMethod::LyndonBasis : LogSigMethod::LyndonWords;
+	if (!basis_cache_ || !basis_cache_->supports(basis_method))
 		throw cache_not_found_error(
 			"MKW branched log basis cache not found - call prepare_branched_log_sig first");
 	return *basis_cache_;

@@ -2777,17 +2777,14 @@ void branched_sig_backprop_cuda_(
 static void prepare_branched_log_sig_cuda_(
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method,
+	BranchedLogSigMethod method,
 	bool planar,
 	bool use_disk
 ) {
-	if (method < 0 || method > 3)
-		throw std::invalid_argument(
-			"branched log signature method must be 0, 1, 2, or 3");
-	if (method == 3 && max_nodes > 20)
+	if (method == BranchedLogSigMethod::DirectBCH && max_nodes > 20)
 		throw std::runtime_error(
 			"CUDA MKW BCH method supports degree at most 20");
-	if (method != 0 && !planar)
+	if (method != BranchedLogSigMethod::Expanded && !planar)
 		throw std::invalid_argument(
 			"compressed branched log signatures require planar=True");
 	BranchedSigCache host_cache;
@@ -2800,11 +2797,11 @@ static void prepare_branched_log_sig_cuda_(
 		host_cache, method, cache_directory, use_disk);
 	prepare_cuda_branched_log_horner_plan_(
 		host_cache, host_log_cache.horner_plan());
-	if (method >= 1) {
+	if (method >= BranchedLogSigMethod::MkwWords) {
 		prepare_cuda_mkw_basis_cache_(
 			host_cache,
-			host_log_cache.basis_cache((std::min)(method, 2)));
-		if (method == 3)
+			host_log_cache.basis_cache(method));
+		if (method == BranchedLogSigMethod::DirectBCH)
 			prepare_cuda_branched_bch_cache_(
 				host_cache, host_log_cache.bch_cache());
 	}
@@ -2821,7 +2818,7 @@ extern "C" {
 	}
 
 	CUSIG_API int prepare_branched_log_sig_cuda(uint64_t dimension, uint64_t max_nodes, int method, bool planar, bool use_disk) noexcept {
-		CUDA_SAFE_CALL(prepare_branched_log_sig_cuda_(dimension, max_nodes, method, planar, use_disk));
+		CUDA_SAFE_CALL(prepare_branched_log_sig_cuda_(dimension, max_nodes, parse_branched_log_sig_method(method), planar, use_disk));
 	}
 
 	CUSIG_API int prepare_branched_sig_coef_cuda(const uint64_t* tree_data, uint64_t tree_data_len, uint64_t data_dimension, uint64_t dimension, uint64_t max_nodes, bool planar, bool use_disk) noexcept {

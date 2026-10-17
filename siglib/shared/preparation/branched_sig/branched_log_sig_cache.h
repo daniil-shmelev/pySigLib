@@ -14,6 +14,7 @@
  * ========================================================================= */
 
 #pragma once
+#include "../../branched_log_sig_method.h"
 #include "../log_sig/bch_cache.h"
 #include "branched_log_plan.h"
 #include "branched_sig_cache.h"
@@ -43,23 +44,23 @@ class BranchedLogSigCache {
 public:
 	BranchedLogSigCache(
 		const BranchedSigCache& branched_cache,
-		int method,
+		BranchedLogSigMethod method,
 		const std::filesystem::path& cache_directory = {},
 		bool use_disk = false
 	);
 
-	bool supports(int method) const noexcept;
+	bool supports(BranchedLogSigMethod method) const noexcept;
 	void upgrade(
 		const BranchedSigCache& branched_cache,
-		int method,
+		BranchedLogSigMethod method,
 		const std::filesystem::path& cache_directory = {},
 		bool use_disk = false);
 	const BranchedLogHornerPlan& horner_plan() const noexcept;
-	const BasisCache& basis_cache(int method) const;
+	const BasisCache& basis_cache(BranchedLogSigMethod method) const;
 	const BranchedBchCache& bch_cache() const;
 
 private:
-	int method_ = -1;
+	std::optional<BranchedLogSigMethod> method_;
 	BranchedLogHornerPlan horner_plan_;
 	std::optional<BasisCache> basis_cache_;
 	std::optional<BranchedBchCache> bch_cache_;

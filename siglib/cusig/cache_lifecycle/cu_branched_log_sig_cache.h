@@ -62,7 +62,7 @@ struct CuMkwBasisGpuCache {
 	uint32_t* d_sparse_cols_t = nullptr;
 	uint32_t* d_sparse_row_ptr_t = nullptr;
 	uint32_t compact_length = 0;
-	int method = 0;
+	BranchedLogSigMethod method = BranchedLogSigMethod::Expanded;
 
 	CuMkwBasisGpuCache() = default;
 	CuMkwBasisGpuCache(const CuMkwBasisGpuCache&) = delete;
@@ -141,7 +141,7 @@ void prepare_cuda_mkw_basis_cache_(
 const CuMkwBasisGpuCache& get_cuda_mkw_basis_gpu_cache_(
 	uint64_t dimension,
 	uint64_t max_nodes,
-	int method);
+	BranchedLogSigMethod method);
 
 void prepare_cuda_branched_bch_cache_(
 	const BranchedSigCache& cache,

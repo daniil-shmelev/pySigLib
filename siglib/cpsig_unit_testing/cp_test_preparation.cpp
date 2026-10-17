@@ -223,21 +223,21 @@ TEST(preparationCacheTest, StandardBasisRejectsTruncatedOrInvalidMethod) {
 
 TEST(preparationCacheTest, BranchedLogMethodsOwnPreparedData) {
 	const BranchedSigCache nonplanar(2, 3, false);
-	BranchedLogSigCache expanded(nonplanar, 0);
-	EXPECT_TRUE(expanded.supports(0));
+	BranchedLogSigCache expanded(nonplanar, BranchedLogSigMethod::Expanded);
+	EXPECT_TRUE(expanded.supports(BranchedLogSigMethod::Expanded));
 	EXPECT_GT(expanded.horner_plan().product_count, nonplanar.total_length);
 
 	const BranchedSigCache planar(2, 3, true);
-	BranchedLogSigCache compact(planar, 1);
-	const uint64_t* indices = compact.basis_cache(1).lyndon_idx.data();
-	compact.upgrade(planar, 2);
-	EXPECT_EQ(indices, compact.basis_cache(2).lyndon_idx.data());
-	EXPECT_FALSE(compact.basis_cache(2).inv_proj_mat.rows.empty());
-	compact.upgrade(planar, 3);
-	EXPECT_TRUE(compact.supports(3));
+	BranchedLogSigCache compact(planar, BranchedLogSigMethod::MkwWords);
+	const uint64_t* indices = compact.basis_cache(BranchedLogSigMethod::MkwWords).lyndon_idx.data();
+	compact.upgrade(planar, BranchedLogSigMethod::MkwBasis);
+	EXPECT_EQ(indices, compact.basis_cache(BranchedLogSigMethod::MkwBasis).lyndon_idx.data());
+	EXPECT_FALSE(compact.basis_cache(BranchedLogSigMethod::MkwBasis).inv_proj_mat.rows.empty());
+	compact.upgrade(planar, BranchedLogSigMethod::DirectBCH);
+	EXPECT_TRUE(compact.supports(BranchedLogSigMethod::DirectBCH));
 	EXPECT_EQ(
 		compact.bch_cache().bch.m,
-		compact.basis_cache(2).lyndon_idx.size());
+		compact.basis_cache(BranchedLogSigMethod::MkwBasis).lyndon_idx.size());
 	EXPECT_EQ(
 		compact.bch_cache().linear_coefficients.size(),
 		compact.bch_cache().bch.m);

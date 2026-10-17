@@ -37,7 +37,7 @@ BranchedLogSigCacheRegistry_& branched_log_sig_cache_registry_() {
 
 void prepare_branched_log_sig_cache(
 	const BranchedSigCache& cache,
-	int method,
+	BranchedLogSigMethod method,
 	bool use_disk
 ) {
 	const auto key = make_branched_sig_cache_key(cache.dimension, cache.max_nodes, cache.planar);
@@ -60,7 +60,7 @@ void prepare_branched_log_sig_cache(
 
 const BranchedLogSigCache& get_branched_log_sig_cache_(
 	const BranchedSigCache& cache,
-	int method
+	BranchedLogSigMethod method
 ) {
 	const auto key = make_branched_sig_cache_key(
 		cache.dimension, cache.max_nodes, cache.planar);

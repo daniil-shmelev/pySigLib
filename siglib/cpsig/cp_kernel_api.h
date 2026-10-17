@@ -34,10 +34,10 @@ template<std::floating_point T>
 void log_sig_join_backprop_(const T* d_out, T* d_logsig, T* d_displacement, const T* log_sig, const T* displacement, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs);
 
 template<std::floating_point T>
-void branched_sig_to_log_sig_(const T* bsig, T* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term);
+void branched_sig_to_log_sig_(const T* bsig, T* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, BranchedLogSigMethod method, int n_jobs, bool planar, bool scalar_term);
 
 template<std::floating_point T>
-void branched_sig_to_log_sig_backprop_(const T* bsig, const T* derivs, T* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, int method, int n_jobs, bool planar, bool scalar_term);
+void branched_sig_to_log_sig_backprop_(const T* bsig, const T* derivs, T* out, uint64_t batch_size, uint64_t dimension, uint64_t max_nodes, BranchedLogSigMethod method, int n_jobs, bool planar, bool scalar_term);
 
 template<std::floating_point T>
 void branched_log_sig_from_path_(const T* path, T* out, uint64_t batch_size, uint64_t length, uint64_t dimension, uint64_t max_nodes, int n_jobs);

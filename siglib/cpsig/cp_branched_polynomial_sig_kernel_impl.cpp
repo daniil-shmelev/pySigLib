@@ -21,6 +21,7 @@
 #include "hwy/highway.h"
 #include "cpsig.h"
 #include "log_sig_method.h"
+#include "branched_log_sig_method.h"
 #include "macros.h"
 #include "multithreading.h"
 #include "../shared/branched_polynomial.h"

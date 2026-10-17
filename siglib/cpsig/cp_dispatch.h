@@ -17,6 +17,7 @@
 #include <concepts>
 #include <cstdint>
 #include "log_sig_method.h"
+#include "branched_log_sig_method.h"
 #include "cp_simd_config.h"
 #include "hwy/highway.h"
 
