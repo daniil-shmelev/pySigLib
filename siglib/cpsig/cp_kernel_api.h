@@ -112,6 +112,12 @@ template<std::floating_point T>
 void sig_coef_backprop_(const T* path, T* out, const T* coefs, T* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, int n_jobs);
 
 template<std::floating_point T>
+void sig_coef_dispatch_(const T* path, T* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, bool prefixes, int n_jobs, int method);
+
+template<std::floating_point T>
+void sig_coef_backprop_dispatch_(const T* path, T* out, const T* coefs, const T* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, int n_jobs, int method);
+
+template<std::floating_point T>
 void batch_sig_combine_(const T* sig1, const T* sig2, T* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term, int n_jobs);
 
 template<std::floating_point T>

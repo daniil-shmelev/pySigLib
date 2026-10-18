@@ -113,14 +113,14 @@ __global__ void sig_coef_kernel(
 	T* my_out = out + batch_idx * result_length + out_offset;
 	const T* my_path = path + batch_idx * path_length * dimension;
 
-	if (path_length <= 1) {
-		const uint64_t n_out = (prefixes && degree) ? degree : 1;
-		for (uint64_t i = 0; i < n_out; ++i) my_out[i] = T(0);
+	if (degree == 0) {
+		*my_out = T(1);
 		return;
 	}
 
-	if (degree == 0) {
-		*my_out = T(1);
+	if (path_length <= 1) {
+		const uint64_t n_out = (prefixes && degree) ? degree : 1;
+		for (uint64_t i = 0; i < n_out; ++i) my_out[i] = T(0);
 		return;
 	}
 
@@ -302,11 +302,6 @@ void sig_coef_cuda_(
 	if (max_degree > SIG_COEF_CUDA_MAX_DEGREE)
 		throw std::invalid_argument("sig_coef_cuda: degree > 20 not supported");
 
-	if (length <= 1) {
-		cudaMemset(d_out, 0, sizeof(T) * batch_size * result_length);
-		return;
-	}
-
 	std::lock_guard<std::mutex> ovf_lock(c_one_over_fact_mu);
 	const T* d_one_over_fact = upload_one_over_fact<T>(max_degree);
 
@@ -364,17 +359,27 @@ extern "C" {
 	CUSIG_API int sig_coef_cuda_f(
 		const float* path, float* out, const uint64_t* multi_idx,
 		uint64_t num_multi_idx, const uint64_t* degrees,
-		uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes
+		uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes,
+		bool time_aug, bool lead_lag, float end_time, int method, void* stream
 	) noexcept {
-		CUDA_SAFE_CALL(sig_coef_cuda_<float>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, prefixes));
+		if (method == 0 && !time_aug && !lead_lag) {
+			CUDA_SAFE_CALL(sig_coef_cuda_<float>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, prefixes));
+		} else {
+			CUDA_SAFE_CALL((sig_coef_dispatch_cuda<float, false>(path, out, nullptr, nullptr, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, method, stream)));
+		}
 	}
 
 	CUSIG_API int sig_coef_cuda_d(
 		const double* path, double* out, const uint64_t* multi_idx,
 		uint64_t num_multi_idx, const uint64_t* degrees,
-		uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes
+		uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes,
+		bool time_aug, bool lead_lag, double end_time, int method, void* stream
 	) noexcept {
-		CUDA_SAFE_CALL(sig_coef_cuda_<double>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, prefixes));
+		if (method == 0 && !time_aug && !lead_lag) {
+			CUDA_SAFE_CALL(sig_coef_cuda_<double>(path, out, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, prefixes));
+		} else {
+			CUDA_SAFE_CALL((sig_coef_dispatch_cuda<double, false>(path, out, nullptr, nullptr, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, method, stream)));
+		}
 	}
 }
 
@@ -789,6 +794,65 @@ void sig_coef_backprop_cuda_(
 }
 
 // =========================================================================
+// Stream-aware dispatch for the existing fixed-degree Horner kernels.
+template<class T, bool Backward>
+void sig_coef_fixed_metadata_cuda(const T* path, T* out, const T* coefs, const T* deriv,
+    const uint64_t* metadata, uint64_t words, uint64_t width, uint64_t max_degree,
+    uint64_t batch, uint64_t dimension, uint64_t length, bool prefixes, cudaStream_t stream) {
+    if (!max_degree || max_degree > 10) throw std::invalid_argument("Invalid fixed coefficient degree");
+    std::lock_guard<std::mutex> lock(c_one_over_fact_mu);
+    T host_factors[11];
+    host_factors[0] = T(1);
+    for (uint64_t j = 1; j <= max_degree; ++j) host_factors[j] = host_factors[j - 1] / T(j);
+    try {
+        void* symbol = nullptr;
+        if constexpr (std::is_same_v<T, float>) {
+            CUDA_CHECK(cudaMemcpyToSymbolAsync(c_one_over_fact_f, host_factors, (max_degree + 1) * sizeof(T), 0, cudaMemcpyHostToDevice, stream));
+            CUDA_CHECK(cudaGetSymbolAddress(&symbol, c_one_over_fact_f));
+        } else {
+            CUDA_CHECK(cudaMemcpyToSymbolAsync(c_one_over_fact_d, host_factors, (max_degree + 1) * sizeof(T), 0, cudaMemcpyHostToDevice, stream));
+            CUDA_CHECK(cudaGetSymbolAddress(&symbol, c_one_over_fact_d));
+        }
+        const T* factors = static_cast<const T*>(symbol);
+        if constexpr (Backward) CUDA_CHECK(cudaMemsetAsync(out, 0, batch * length * dimension * sizeof(T), stream));
+        const uint64_t jobs = batch * words;
+        for (uint64_t offset = 0; offset < jobs;) {
+            const uint64_t work = std::min<uint64_t>(jobs - offset, CUDA_GRID_X_LIMIT * 256);
+            const unsigned int blocks = static_cast<unsigned int>((work + 255) / 256);
+            auto run = [&]<uint64_t Degree>() {
+                if constexpr (Backward)
+                    sig_coef_backprop_kernel_fixed_degree<T, Degree><<<blocks, 256, 0, stream>>>(path, out, coefs, deriv,
+                        metadata + 3 * words, factors, metadata + words, metadata + 2 * words,
+                        words, batch, dimension, length, width, offset, work);
+                else
+                    sig_coef_kernel_fixed_degree<T, Degree><<<blocks, 256, 0, stream>>>(path, out,
+                        metadata + 3 * words, factors, metadata + words, metadata + 2 * words,
+                        words, batch, dimension, length, width, prefixes, offset, work);
+            };
+#define FIXED_STREAM_CASE(M) case M: run.template operator()<M>(); break
+            switch (max_degree) {
+                FIXED_STREAM_CASE(1); FIXED_STREAM_CASE(2); FIXED_STREAM_CASE(3); FIXED_STREAM_CASE(4); FIXED_STREAM_CASE(5);
+                FIXED_STREAM_CASE(6); FIXED_STREAM_CASE(7); FIXED_STREAM_CASE(8); FIXED_STREAM_CASE(9); FIXED_STREAM_CASE(10);
+            }
+#undef FIXED_STREAM_CASE
+            CUDA_CHECK(cudaGetLastError());
+            offset += work;
+        }
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+    } catch (...) {
+        (void)cudaStreamSynchronize(stream);
+        throw;
+    }
+}
+
+#define INSTANTIATE_FIXED_METADATA(T, B) \
+template void sig_coef_fixed_metadata_cuda<T, B>(const T*, T*, const T*, const T*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool, cudaStream_t)
+INSTANTIATE_FIXED_METADATA(float, false);
+INSTANTIATE_FIXED_METADATA(float, true);
+INSTANTIATE_FIXED_METADATA(double, false);
+INSTANTIATE_FIXED_METADATA(double, true);
+#undef INSTANTIATE_FIXED_METADATA
+
 // Backprop exported C functions
 // =========================================================================
 
@@ -798,16 +862,26 @@ extern "C" {
 	CUSIG_API int sig_coef_backprop_cuda_f(
 		const float* path, float* out, const float* coefs, const float* derivs,
 		const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees,
-		uint64_t batch_size, uint64_t dimension, uint64_t length
+		uint64_t batch_size, uint64_t dimension, uint64_t length,
+		bool time_aug, bool lead_lag, float end_time, int method, void* stream
 	) noexcept {
-		CUDA_SAFE_CALL(sig_coef_backprop_cuda_<float>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length));
+		if (method == 0 && !time_aug && !lead_lag) {
+			CUDA_SAFE_CALL(sig_coef_backprop_cuda_<float>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length));
+		} else {
+			CUDA_SAFE_CALL((sig_coef_dispatch_cuda<float, true>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, true, method, stream)));
+		}
 	}
 
 	CUSIG_API int sig_coef_backprop_cuda_d(
 		const double* path, double* out, const double* coefs, const double* derivs,
 		const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees,
-		uint64_t batch_size, uint64_t dimension, uint64_t length
+		uint64_t batch_size, uint64_t dimension, uint64_t length,
+		bool time_aug, bool lead_lag, double end_time, int method, void* stream
 	) noexcept {
-		CUDA_SAFE_CALL(sig_coef_backprop_cuda_<double>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length));
+		if (method == 0 && !time_aug && !lead_lag) {
+			CUDA_SAFE_CALL(sig_coef_backprop_cuda_<double>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length));
+		} else {
+			CUDA_SAFE_CALL((sig_coef_dispatch_cuda<double, true>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, true, method, stream)));
+		}
 	}
 }

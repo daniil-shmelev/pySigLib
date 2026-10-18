@@ -68,17 +68,21 @@ using sig_kernel_poly_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, 
 using signature_cuda_f_fn = int(CDECL_*)(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, bool, const float*, uint64_t, uint64_t, uint64_t);
 using signature_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, bool, const double*, uint64_t, uint64_t, uint64_t);
 
-using sig_coef_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int);
+using sig_coef_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int, int);
+using sig_coef_f_fn = int(CDECL_*)(const float*, float*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, int, int);
 
-using sig_coef_backprop_d_fn = int(CDECL_*)(const double*, double*, double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, int);
+using sig_coef_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, int, int);
+using sig_coef_backprop_f_fn = int(CDECL_*)(const float*, float*, const float*, float*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, float, int, int);
 
 using prepare_branched_sig_coef_fn = int(CDECL_*)(const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool);
 using branched_sig_coef_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, int, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
 using branched_sig_coef_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, int, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
 
-using sig_coef_cuda_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool);
+using sig_coef_cuda_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, bool, double, int, void*);
+using sig_coef_cuda_f_fn = int(CDECL_*)(const float*, float*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, bool, float, int, void*);
 
-using sig_coef_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t);
+using sig_coef_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, int, void*);
+using sig_coef_backprop_cuda_f_fn = int(CDECL_*)(const float*, float*, const float*, const float*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, float, int, void*);
 
 using sig_combine_d_fn = int(CDECL_*)(const double*, const double*, double*, uint64_t, uint64_t, uint64_t, int);
 using sig_combine_cuda_d_fn = int(CDECL_*)(const double*, const double*, double*, uint64_t, uint64_t, uint64_t);
@@ -132,15 +136,19 @@ extern signature_cuda_f_fn signature_cuda_f;
 extern signature_cuda_d_fn signature_cuda_d;
 
 extern sig_coef_d_fn sig_coef_d;
+extern sig_coef_f_fn sig_coef_f;
 
 extern sig_coef_backprop_d_fn sig_coef_backprop_d;
+extern sig_coef_backprop_f_fn sig_coef_backprop_f;
 extern prepare_branched_sig_coef_fn prepare_branched_sig_coef;
 extern branched_sig_coef_d_fn branched_sig_coef_d;
 extern branched_sig_coef_backprop_d_fn branched_sig_coef_backprop_d;
 
 extern sig_coef_cuda_d_fn sig_coef_cuda_d;
+extern sig_coef_cuda_f_fn sig_coef_cuda_f;
 
 extern sig_coef_backprop_cuda_d_fn sig_coef_backprop_cuda_d;
+extern sig_coef_backprop_cuda_f_fn sig_coef_backprop_cuda_f;
 
 extern sig_kernel_backprop_d_fn sig_kernel_backprop_d;
 

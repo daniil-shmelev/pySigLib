@@ -176,11 +176,12 @@ def _get_coef_from_prefixes(word, coef, prefixes):
 
 class SigCoef(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path, word, time_aug, lead_lag, end_time, n_jobs):
-        coefs_ = sig_coef_forward(path, word, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, prefixes=True, n_jobs=n_jobs)
+    def forward(ctx, path, word, time_aug, lead_lag, end_time, n_jobs, method):
+        coefs_ = sig_coef_forward(path, word, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, prefixes=True, n_jobs=n_jobs, method=method)
 
         ctx.save_for_backward(coefs_, path)
         ctx.word = word
+        ctx.method = method
         ctx.time_aug = time_aug
         ctx.lead_lag = lead_lag
         ctx.end_time = end_time
@@ -192,8 +193,10 @@ class SigCoef(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         coefs_, path = ctx.saved_tensors
-        grad = sig_coef_backprop(path, ctx.word, coefs_, grad_output, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time, n_jobs=ctx.n_jobs)
-        return grad, None, None, None, None, None
+        if ctx.method is not None and torch.is_grad_enabled():
+            raise NotImplementedError("Coefficient methods support first-order reverse differentiation only")
+        grad = sig_coef_backprop(path, ctx.word, coefs_, grad_output, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time, n_jobs=ctx.n_jobs, method=ctx.method)
+        return grad, None, None, None, None, None, None
 
 def sig_coef(
         path: Union[np.ndarray, torch.Tensor],
@@ -203,9 +206,10 @@ def sig_coef(
         lead_lag: bool = False,
         end_time: float = 1.,
         prefixes: bool = False,
-        n_jobs: int = 1
+        n_jobs: int = 1,
+        method = None
 ) -> Union[np.ndarray, torch.Tensor]:
-    coefs_ = SigCoef.apply(path, words, time_aug, lead_lag, end_time, n_jobs)
+    coefs_ = SigCoef.apply(path, words, time_aug, lead_lag, end_time, n_jobs, method)
     return _get_coef_from_prefixes(words, coefs_, prefixes)
 
 sig_coef.__doc__ = sig_coef_forward.__doc__

@@ -38,6 +38,9 @@ int main(int argc, char* argv[])
         dir_path = argv[1];
     }
 
+    if (argc >= 3 && std::string(argv[2]) == "--coefficient")
+        return run_coefficient_profile(argc, argv, dir_path);
+
     load_cpsig(dir_path);
     get_cpsig_fn_ptrs();
 
