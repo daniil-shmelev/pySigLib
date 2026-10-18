@@ -29,7 +29,7 @@ struct tbb_arena_cache {
 	int threads = 0;
 };
 
-inline oneapi::tbb::task_arena& get_tbb_arena(int threads) {
+oneapi::tbb::task_arena& get_tbb_arena(int threads) {
 	thread_local tbb_arena_cache cache;
 	if (cache.threads != threads || !cache.arena) {
 		cache.arena = std::make_unique<oneapi::tbb::task_arena>(threads);

@@ -13,12 +13,22 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
-
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_PREFIX_SUFFIX_BACKPROP_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_PREFIX_SUFFIX_BACKPROP_H_
+#undef CPSIG_CP_PREFIX_SUFFIX_BACKPROP_H_
+#else
+#define CPSIG_CP_PREFIX_SUFFIX_BACKPROP_H_
+#endif
 #include "prefix_suffix.h"
-#include "cp_vector_funcs.h"
+#include "cp_simd-inl.h"
 
-namespace prefix_suffix::cpu_detail {
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
+namespace cpu_detail {
+using namespace prefix_suffix;
 
 template<typename T>
 void tensor_powers(const T* v, T* powers, uint64_t degree, const Layout& l) {
@@ -125,4 +135,8 @@ void horner_backprop(const T* state, const T* v, T* deriv, T* dv, uint64_t degre
     }
 }
 
-} // namespace prefix_suffix::cpu_detail
+} // namespace cpu_detail
+}
+}
+HWY_AFTER_NAMESPACE();
+#endif

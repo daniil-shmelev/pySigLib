@@ -139,7 +139,7 @@ TEST(PrefixSuffix, BackwardUpdate) {
             }
         }
         for (uint64_t x = 0; x < d; ++x) expected[1 + x] += v[x];
-        prefix_suffix::cpu_detail::prepend(actual.data(), v.data(), l, actual_work.data());
+        cpsig::HWY_NAMESPACE::cpu_detail::prepend(actual.data(), v.data(), l, actual_work.data());
         for (size_t x = 0; x < actual.size(); ++x) EXPECT_NEAR(actual[x], expected[x], 1e-14);
     }
 }
@@ -154,7 +154,7 @@ TEST(PrefixSuffix, RightFactorBackprop) {
         for (uint64_t x = 1; x < size; ++x) suffix[x] = double(int(x % 11) - 5) / 16;
         for (uint64_t c = 0; c < d; ++c) v[c] = double(int(c) - 1) / 8;
         for (uint64_t x = 0; x < deriv.size(); ++x) deriv[x] = double(int(x % 7) - 3) / 8;
-        prefix_suffix::cpu_detail::right_factor_backprop(suffix.data(), v.data(), deriv.data(),
+        cpsig::HWY_NAMESPACE::cpu_detail::right_factor_backprop(suffix.data(), v.data(), deriv.data(),
             dsuffix.data(), dv.data(), j, b, l, history.data(), work.data());
         auto loss = [&] {
             prefix_suffix::right_factor(result.data(), suffix.data(), v.data(), j, b, l);

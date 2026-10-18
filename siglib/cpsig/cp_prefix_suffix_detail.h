@@ -13,14 +13,22 @@
  * limitations under the License.
  * ========================================================================= */
 
-#pragma once
-
-#include "prefix_suffix.h"
-#ifdef VEC
-#include "cp_vector_funcs.h"
+#include "cp_simd_config.h"
+#include "hwy/highway.h"
+#if defined(CPSIG_CP_PREFIX_SUFFIX_DETAIL_H_) == defined(HWY_TARGET_TOGGLE)
+#ifdef CPSIG_CP_PREFIX_SUFFIX_DETAIL_H_
+#undef CPSIG_CP_PREFIX_SUFFIX_DETAIL_H_
+#else
+#define CPSIG_CP_PREFIX_SUFFIX_DETAIL_H_
 #endif
+#include "prefix_suffix.h"
+#include "cp_simd-inl.h"
 
-namespace prefix_suffix::cpu_detail {
+HWY_BEFORE_NAMESPACE();
+namespace cpsig {
+namespace HWY_NAMESPACE {
+namespace cpu_detail {
+using namespace prefix_suffix;
 
 template<typename T, int D, int K, int Level>
 inline void prepend_level(T* state, const T* v, T* work) {
@@ -32,7 +40,7 @@ inline void prepend_level(T* state, const T* v, T* work) {
             ? state + small_offset(D, K) + channel * previous
             : work + channel * previous;
         const T* source = state + small_offset(D, Level);
-#ifdef VEC
+#if HWY_TARGET != HWY_SCALAR
         if constexpr (Level + 1 == K) {
             vec_mult_add(destination, source, multiplier, previous);
             vec_mult_add(destination, work, multiplier, previous);
@@ -83,7 +91,7 @@ inline void prepend_generic(T* state, const T* v, const Layout& layout, T* work)
                     ? state + layout.offset[k] + channel * previous
                     : work + channel * previous;
                 const T* source = state + layout.offset[level];
-#ifdef VEC
+#if HWY_TARGET != HWY_SCALAR
                 if (level + 1 == k) {
                     vec_mult_add(destination, source, multiplier, previous);
                     vec_mult_add(destination, work, multiplier, previous);
@@ -121,4 +129,8 @@ inline void prepend(T* state, const T* v, const Layout& layout, T* work) {
     prepend_generic(state, v, layout, work);
 }
 
-} // namespace prefix_suffix::cpu_detail
+} // namespace cpu_detail
+}
+}
+HWY_AFTER_NAMESPACE();
+#endif
