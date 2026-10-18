@@ -133,6 +133,12 @@ template<std::floating_point T>
 void batch_sig_kernel_backprop_(const T* gram, T* out, const T* derivs, const T* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid, int n_jobs);
 
 template<std::floating_point T>
+void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs);
+
+template<std::floating_point T>
+void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs);
+
+template<std::floating_point T>
 void signature_(const T* path, T* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool horner, bool scalar_term, int n_jobs, const T* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride);
 
 template<std::floating_point T>

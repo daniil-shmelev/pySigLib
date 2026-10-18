@@ -17,8 +17,10 @@
 #include "cppch.h"
 #include <exception>
 #include <memory>
+#include <oneapi/tbb/task_arena.h>
 
 unsigned int get_max_threads();
+oneapi::tbb::task_arena& get_tbb_arena(int threads);
 void run_batch_threads(uint64_t batch_size, int n_jobs, void* context, void (*worker)(void*, uint64_t, uint64_t));
 
 template<typename Worker>
