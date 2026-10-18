@@ -15,4 +15,18 @@
 
 #pragma once
 
+#include <cuda_runtime.h>
+#include <cstdint>
+
 #define SIG_COEF_CUDA_MAX_DEGREE 20
+
+template<class T, bool Backward>
+void sig_coef_fixed_metadata_cuda(const T* path, T* out, const T* coefs, const T* deriv,
+    const uint64_t* metadata, uint64_t words, uint64_t width, uint64_t max_degree,
+    uint64_t batch, uint64_t dimension, uint64_t length, bool prefixes, cudaStream_t stream);
+
+template<class T, bool Backward>
+void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deriv,
+    const uint64_t* indices, uint64_t words, const uint64_t* degrees, uint64_t batch,
+    uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time,
+    bool prefixes, int method, void* stream);

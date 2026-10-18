@@ -57,7 +57,7 @@ from ..branched_log_sig import (
     branched_log_sig as branched_log_sig_forward,
 )
 from ..data_handlers import _infer_correction_degree
-from ..sig_coef import sig_coef as sig_coef_forward
+from ..sig_coef import sig_coef as sig_coef_forward, _check_coef_method
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
 from ..sig_kernel import _parse_sig_kernel_method
@@ -93,6 +93,8 @@ from ._ffi import (
     sig_ffi_call,
     sig_prefix_suffix_ffi_call,
     sig_prefix_suffix_backprop_ffi_call,
+    sig_coef_ffi_call,
+    sig_coef_backprop_ffi_call,
     sig_combine_ffi_call,
     sig_combine_backprop_ffi_call,
     transform_path_ffi_call,
@@ -1652,8 +1654,29 @@ branched_sig_mmd.__doc__ = branched_sig_mmd_forward.__doc__
 
 
 # ---------------------------------------------------------------------------
-# sig_coef (pure JAX composition - compute sig then index)
+# sig_coef
 # ---------------------------------------------------------------------------
+
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
+def _sig_coef(path, words, time_aug, lead_lag, end_time, n_jobs, method):
+    return sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method)
+
+
+def _sig_coef_fwd(path, words, time_aug, lead_lag, end_time, n_jobs, method):
+    coefs = sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method)
+    return coefs, (path, coefs)
+
+
+def _sig_coef_bwd(words, time_aug, lead_lag, end_time, n_jobs, method, residual, cotangent):
+    path, coefs = residual
+    grad = sig_coef_backprop_ffi_call(
+        path, coefs, cotangent, words, time_aug, lead_lag, end_time, n_jobs, method
+    )
+    return (grad,)
+
+
+_sig_coef.defvjp(_sig_coef_fwd, _sig_coef_bwd)
+
 
 def sig_coef(
     path,
@@ -1664,11 +1687,12 @@ def sig_coef(
     end_time: float = 1.0,
     prefixes: bool = False,
     n_jobs: int = 1,
+    method = None,
 ):
     """Compute signature coefficients at specific words using JAX.
 
-    Computes the full signature via ``sig()`` then extracts the requested
-    coefficients. This is fully differentiable through JAX autodiff.
+    The explicit method paths use native coefficient FFI and a custom VJP.
+    Word metadata and method options are static under JIT compilation.
 
     :param path: Path or batch of paths, shape ``(length, dim)`` or ``(batch, length, dim)``.
     :type path: jax.Array
@@ -1701,6 +1725,16 @@ def sig_coef(
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
 
     words = check_word_or_word_list(words, aug_dim, "words")
+    method_code = _check_coef_method(method)
+    if not words:
+        raise ValueError("words must be a non-empty list of multi-indices.")
+    if method is not None or path.shape[-2] <= 1 or any(not w for w in words):
+        words = tuple(tuple(w) for w in words)
+        coefs = _sig_coef(path, words, time_aug, lead_lag, end_time, n_jobs, method_code)
+        if prefixes:
+            return coefs
+        offsets = np.cumsum([max(len(w), 1) for w in words]) - 1
+        return coefs[..., jnp.asarray(offsets)]
 
     degree = max(len(w) for w in words)
 

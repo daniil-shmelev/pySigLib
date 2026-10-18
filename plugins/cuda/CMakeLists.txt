@@ -52,6 +52,8 @@ if(PYSIGLIB_CUSIG_PREBUILT_LIBRARY)
             IMPORTED_IMPLIB "${PYSIGLIB_CUSIG_PREBUILT_IMPLIB}"
         )
     endif()
+    install(FILES "${PYSIGLIB_CUSIG_PREBUILT_LIBRARY}"
+        DESTINATION ${CUSIG_INSTALL_DESTINATION})
 else()
     # Binary dir override is required because siglib/cusig is outside this project.
     add_subdirectory(

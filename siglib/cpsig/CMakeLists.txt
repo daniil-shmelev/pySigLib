@@ -111,6 +111,7 @@ set(_cpsig_kernels
     cp_path_transforms_impl.cpp
     cp_polynomial_sig_kernel_impl.cpp
     cp_sig_coef_impl.cpp
+    cp_pascal_coef_impl.cpp
     cp_sig_combine_impl.cpp
     cp_sig_join_impl.cpp
     cp_sig_kernel_impl.cpp

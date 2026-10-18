@@ -14,11 +14,17 @@
  * ========================================================================= */
 
 #include "dll_funcs.h"
+#include "tests.h"
 #include "utils.h"
+#include "../cusig/cu_runtime_utils.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <map>
+#include <random>
 #include <stdexcept>
+#include <type_traits>
 
 
 void example_batch_signature_d(
@@ -562,7 +568,7 @@ void example_batch_sig_coef(
 
     std::vector<double> out(batch_size * num_idx);
 
-    time_function(num_runs, sig_coef_d, path.data(), out.data(), multi_idx.data(), degrees.size(), degrees.data(), batch_size, dimension, length, time_aug, lead_lag, end_time, false, n_jobs);
+    time_function(num_runs, sig_coef_d, path.data(), out.data(), multi_idx.data(), degrees.size(), degrees.data(), batch_size, dimension, length, time_aug, lead_lag, end_time, false, n_jobs, 0);
 }
 
 void example_batch_sig_coef_backprop(
@@ -593,7 +599,7 @@ void example_batch_sig_coef_backprop(
     std::vector<double> coefs(batch_size * prefix_coef_size);
     std::vector<double> derivs(batch_size * prefix_coef_size);
 
-    time_function(num_runs, sig_coef_backprop_d, path.data(), out.data(), coefs.data(), derivs.data(), multi_idx.data(), degrees.size(), degrees.data(), batch_size, dimension, length, time_aug, lead_lag, end_time, n_jobs);
+    time_function(num_runs, sig_coef_backprop_d, path.data(), out.data(), coefs.data(), derivs.data(), multi_idx.data(), degrees.size(), degrees.data(), batch_size, dimension, length, time_aug, lead_lag, end_time, n_jobs, 0);
 }
 
 static std::vector<uint64_t> branched_sig_coef_tree_data_(
@@ -829,7 +835,7 @@ void example_batch_sig_coef_cuda_d(
     cudaMemcpy(d_multi_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_degrees, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
 
-    time_function(num_runs, sig_coef_cuda_d, d_path, d_out, d_multi_idx, num_idx, d_degrees, batch_size, dimension, length, false);
+    time_function(num_runs, sig_coef_cuda_d, d_path, d_out, d_multi_idx, num_idx, d_degrees, batch_size, dimension, length, false, false, false, 1., 0, nullptr);
 
     cudaFree(d_path);
     cudaFree(d_out);
@@ -882,7 +888,7 @@ void example_batch_sig_coef_backprop_cuda_d(
     cudaMemcpy(d_multi_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_degrees, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
 
-    time_function(num_runs, sig_coef_backprop_cuda_d, d_path, d_out, d_coefs, d_derivs, d_multi_idx, num_idx, d_degrees, batch_size, dimension, length);
+    time_function(num_runs, sig_coef_backprop_cuda_d, d_path, d_out, d_coefs, d_derivs, d_multi_idx, num_idx, d_degrees, batch_size, dimension, length, false, false, 1., 0, nullptr);
 
     cudaFree(d_path);
     cudaFree(d_out);
@@ -1173,4 +1179,120 @@ void example_batch_branched_log_sig_d(
     }
 
     std::cout << "done\n";
+}
+
+namespace {
+
+template<typename T>
+void profile_coefficient(const std::string& directory, const std::map<std::string, std::string>& options) {
+    auto value = [&](const char* key, const char* fallback) {
+        const auto it = options.find(key);
+        return it == options.end() ? std::string(fallback) : it->second;
+    };
+    const bool gpu = value("backend", "cpu") == "cuda";
+    const auto phase = value("phase", "both"), method_name = value("method", "pascal");
+    const std::map<std::string, int> methods{{"horner", 6}, {"horner_legacy", 0}, {"pascal", 1}, {"auto", 2}, {"unscaled", 3}, {"scaled", 4}, {"guarded", 5}};
+    const int method = methods.at(method_name), threads = std::stoi(value("threads", "1"));
+    const uint64_t m = std::stoull(value("degree", "16")), n = std::stoull(value("segments", "256"));
+    const uint64_t batch = std::stoull(value("batch", "32")), words = std::stoull(value("words", "8"));
+    const uint64_t d = std::stoull(value("dimension", "8")), repeats = std::stoull(value("repeats", "20"));
+    if (!m || !n || !batch || !words || !d || !repeats) throw std::invalid_argument("Profile dimensions must be positive");
+    if (gpu) {
+        load_cusig(directory);
+        get_cusig_fn_ptrs();
+    } else {
+        load_cpsig(directory);
+        get_cpsig_fn_ptrs();
+    }
+    std::conditional_t<std::is_same_v<T, float>, sig_coef_f_fn, sig_coef_d_fn> cpu_forward;
+    std::conditional_t<std::is_same_v<T, float>, sig_coef_backprop_f_fn, sig_coef_backprop_d_fn> cpu_backward;
+    std::conditional_t<std::is_same_v<T, float>, sig_coef_cuda_f_fn, sig_coef_cuda_d_fn> cuda_forward;
+    std::conditional_t<std::is_same_v<T, float>, sig_coef_backprop_cuda_f_fn, sig_coef_backprop_cuda_d_fn> cuda_backward;
+    if constexpr (std::is_same_v<T, float>) {
+        cpu_forward = sig_coef_f;
+        cpu_backward = sig_coef_backprop_f;
+        cuda_forward = sig_coef_cuda_f;
+        cuda_backward = sig_coef_backprop_cuda_f;
+    } else {
+        cpu_forward = sig_coef_d;
+        cpu_backward = sig_coef_backprop_d;
+        cuda_forward = sig_coef_cuda_d;
+        cuda_backward = sig_coef_backprop_cuda_d;
+    }
+    std::vector<T> path(batch * (n + 1) * d), out(batch * words * m), seed(out.size(), T(1)), grad(path.size());
+    std::vector<uint64_t> indices(words * m), degrees(words, m);
+    std::mt19937 engine(1729);
+    std::normal_distribution<double> normal(0, .03);
+    for (uint64_t b = 0; b < batch; ++b)
+        for (uint64_t i = 1; i <= n; ++i)
+            for (uint64_t c = 0; c < d; ++c)
+                path[(b * (n + 1) + i) * d + c] = path[(b * (n + 1) + i - 1) * d + c] + T(normal(engine));
+    for (auto& i : indices) i = engine() % d;
+    T *x = path.data(), *y = out.data(), *dy = seed.data(), *dx = grad.data();
+    CudaBuf<T> device_path, device_coefs, device_seeds, device_gradient;
+    CudaBuf<uint64_t> device_indices, device_degrees;
+    cudaEvent_t start = nullptr, stop = nullptr;
+    auto check = [](cudaError_t status) { if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status)); };
+    if (gpu) {
+        device_path = CudaBuf<T>(path.size() * sizeof(T));
+        device_coefs = CudaBuf<T>(out.size() * sizeof(T));
+        device_seeds = CudaBuf<T>(seed.size() * sizeof(T));
+        device_gradient = CudaBuf<T>(grad.size() * sizeof(T));
+        x = device_path.get(); y = device_coefs.get(); dy = device_seeds.get(); dx = device_gradient.get();
+        check(cudaMemcpy(x, path.data(), path.size() * sizeof(T), cudaMemcpyHostToDevice));
+        check(cudaMemcpy(dy, seed.data(), seed.size() * sizeof(T), cudaMemcpyHostToDevice));
+        if (method == 0) {
+            device_indices = CudaBuf<uint64_t>(indices.size() * sizeof(uint64_t));
+            device_degrees = CudaBuf<uint64_t>(degrees.size() * sizeof(uint64_t));
+            check(cudaMemcpy(device_indices.get(), indices.data(), indices.size() * sizeof(uint64_t), cudaMemcpyHostToDevice));
+            check(cudaMemcpy(device_degrees.get(), degrees.data(), degrees.size() * sizeof(uint64_t), cudaMemcpyHostToDevice));
+        }
+        check(cudaEventCreate(&start)); check(cudaEventCreate(&stop));
+    }
+    const uint64_t* word_data = gpu && method == 0 ? device_indices.get() : indices.data();
+    const uint64_t* degree_data = gpu && method == 0 ? device_degrees.get() : degrees.data();
+    auto f = [&] {
+        const int code = gpu ? cuda_forward(x, y, word_data, words, degree_data, batch, d, n + 1, true, false, false, T(1), method, nullptr)
+            : cpu_forward(x, y, indices.data(), words, degrees.data(), batch, d, n + 1, false, false, T(1), true, threads, method);
+        if (code) throw std::runtime_error("Coefficient forward failed: " + std::to_string(code));
+    };
+    auto b = [&] {
+        if (!gpu && method == 0) std::fill(seed.begin(), seed.end(), T(1));
+        const int code = gpu ? cuda_backward(x, dx, y, dy, word_data, words, degree_data, batch, d, n + 1, false, false, T(1), method, nullptr)
+            : cpu_backward(x, dx, y, dy, indices.data(), words, degrees.data(), batch, d, n + 1, false, false, T(1), threads, method);
+        if (code) throw std::runtime_error("Coefficient backward failed: " + std::to_string(code));
+    };
+    f();
+    auto run = [&] { if (phase != "backward") f(); if (phase != "forward") b(); };
+    for (int i = 0; i < 5; ++i) run();
+    if (gpu) check(cudaEventRecord(start));
+    const auto before = std::chrono::steady_clock::now();
+    for (uint64_t i = 0; i < repeats; ++i) run();
+    const double wall = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - before).count() / repeats;
+    float device_ms = 0;
+    if (gpu) { check(cudaEventRecord(stop)); check(cudaEventSynchronize(stop)); check(cudaEventElapsedTime(&device_ms, start, stop)); }
+    std::cout << "{\"wall_ms\":" << wall << ",\"device_interval_ms\":" << device_ms / repeats
+        << ",\"method\":\"" << method_name << "\",\"phase\":\"" << phase << "\"}" << std::endl;
+    if (gpu) {
+        check(cudaEventDestroy(start)); check(cudaEventDestroy(stop));
+        unload_cusig();
+    } else unload_cpsig();
+}
+
+} // namespace
+
+int run_coefficient_profile(int argc, char** argv, const std::string& directory) {
+    try {
+        std::map<std::string, std::string> options;
+        for (int i = 3; i < argc; i += 2) {
+            if (i + 1 >= argc || std::string(argv[i]).rfind("--", 0) != 0) throw std::invalid_argument("Expected --option value");
+            options[std::string(argv[i]).substr(2)] = argv[i + 1];
+        }
+        if (options["dtype"] == "float32") profile_coefficient<float>(directory, options);
+        else profile_coefficient<double>(directory, options);
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << e.what() << std::endl;
+        return 1;
+    }
 }

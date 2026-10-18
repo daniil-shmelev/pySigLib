@@ -23,7 +23,7 @@ TEST(sigCoefDoubleTest, Trivial) {
     std::vector<uint64_t> multi_indices = { 0, 1 };
     std::vector<uint64_t> degrees = { 1, 1 };
 
-    check_result(f, path, true_, multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, 2, 1, false, false, 1., false, 1);
+    check_result(f, path, true_, multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, 2, 1, false, false, 1., false, 1, 0);
 }
 
 TEST(sigCoefDoubleTest, Linear) {
@@ -34,7 +34,7 @@ TEST(sigCoefDoubleTest, Linear) {
     std::vector<uint64_t> multi_indices(15, 0);
     std::vector<uint64_t> degrees = { 1, 2, 3, 4, 5 };
 
-    check_result(f, path, true_, multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, 1, 2, false, false, 1., false, 1);
+    check_result(f, path, true_, multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, 1, 2, false, false, 1., false, 1, 0);
 }
 
 TEST(sigCoefDoubleTest, ManualSigTest) {
@@ -54,7 +54,7 @@ TEST(sigCoefDoubleTest, ManualSigTest) {
 
     std::vector<uint64_t> degrees = { 1, 1, 2, 2, 2, 2 };
 
-    check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., false, 1);
+    check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., false, 1, 0);
 }
 
 TEST(sigCoefDoubleTest, BatchManualSigTest) {
@@ -76,7 +76,7 @@ TEST(sigCoefDoubleTest, BatchManualSigTest) {
 
     std::vector<uint64_t> degrees = { 1, 1, 2, 2, 2, 2 };
 
-    check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., false, 1);
+    check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., false, 1, 0);
 }
 
 TEST(sigCoefDoubleTest, ManualSigTestPrefixes) {
@@ -93,7 +93,7 @@ TEST(sigCoefDoubleTest, ManualSigTestPrefixes) {
 
     std::vector<uint64_t> degrees = { 1, 2, 3 };
 
-    check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., true, 1);
+    check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., true, 1, 0);
 }
 
 TEST(sigCoefDoubleTest, BatchManualSigTestPrefixes) {
@@ -112,7 +112,7 @@ TEST(sigCoefDoubleTest, BatchManualSigTestPrefixes) {
 
     std::vector<uint64_t> degrees = { 1, 2, 3 };
 
-    check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., true, 1);
+    check_result(f, path, true_sig, multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., true, 1, 0);
 }
 
 TEST(sigCoefBackpropTest, ManualTest1) {
@@ -130,7 +130,7 @@ TEST(sigCoefBackpropTest, ManualTest1) {
 
     std::vector<uint64_t> degrees = { 3 };
 
-    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1);
+    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1, 0);
 }
 
 TEST(sigCoefBackpropTest, ManualTest2) {
@@ -148,7 +148,7 @@ TEST(sigCoefBackpropTest, ManualTest2) {
 
     std::vector<uint64_t> degrees = { 3 };
 
-    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1);
+    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1, 0);
 }
 
 TEST(sigCoefBackpropTest, ManualTest3) {
@@ -166,7 +166,7 @@ TEST(sigCoefBackpropTest, ManualTest3) {
 
     std::vector<uint64_t> degrees = { 3 };
 
-    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1);
+    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1, 0);
 }
 
 TEST(sigCoefBackpropTest, ManualTest4) {
@@ -185,7 +185,7 @@ TEST(sigCoefBackpropTest, ManualTest4) {
 
     std::vector<uint64_t> degrees = { 3, 3 };
 
-    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1);
+    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1, 0);
 }
 
 TEST(sigCoefBackpropTest, ManualTestBatch) {
@@ -204,10 +204,10 @@ TEST(sigCoefBackpropTest, ManualTestBatch) {
 
     std::vector<uint64_t> degrees = { 3, 3 };
 
-    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., 1);
+    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., 1, 0);
 
     std::vector<double> derivs2 = { 0., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 1. };
-    check_result(f, path, true_deriv, coefs.data(), derivs2.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., -1);
+    check_result(f, path, true_deriv, coefs.data(), derivs2.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, false, false, 1., -1, 0);
 }
 
 TEST(sigCoefBackpropTest, ManualTest4Empty) {
@@ -226,7 +226,7 @@ TEST(sigCoefBackpropTest, ManualTest4Empty) {
 
     std::vector<uint64_t> degrees = { 0, 3, 3 };
 
-    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1);
+    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1, 0);
 }
 
 TEST(sigCoefBackpropTest, ManualTestTimeAug) {
@@ -245,7 +245,7 @@ TEST(sigCoefBackpropTest, ManualTestTimeAug) {
 
     std::vector<uint64_t> degrees = { 3, 3 };
 
-    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, true, false, 1., 1);
+    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, true, false, 1., 1, 0);
 }
 
 TEST(sigCoefBackpropTest, ManualTestTimeAugBatch) {
@@ -268,11 +268,11 @@ TEST(sigCoefBackpropTest, ManualTestTimeAugBatch) {
 
     std::vector<uint64_t> degrees = { 3, 3 };
 
-    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, true, false, 1., 1);
+    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, true, false, 1., 1, 0);
 
     std::vector<double> derivs2 = { 0., 0., 1., 0., 0., 1.,
     0., 0., 1., 0., 0., 1. };
-    check_result(f, path, true_deriv, coefs.data(), derivs2.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, true, false, 1., -1);
+    check_result(f, path, true_deriv, coefs.data(), derivs2.data(), multi_indices.data(), degrees.size(), degrees.data(), batch_size, dimension, length, true, false, 1., -1, 0);
 }
 
 TEST(sigCoefBackpropTest, ManualTestLeadLag) {
@@ -291,5 +291,5 @@ TEST(sigCoefBackpropTest, ManualTestLeadLag) {
 
     std::vector<uint64_t> degrees = { 3, 3 };
 
-    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, true, 1., 1);
+    check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, true, 1., 1, 0);
 }

@@ -87,6 +87,14 @@ _TARGETS = {
         "cpu": ("pysiglib_sig_backprop_cpu", "PySigLibSigBackpropCpu"),
         "cuda": ("pysiglib_sig_backprop_cuda", "PySigLibSigBackpropCuda"),
     },
+    "sig_coef": {
+        "cpu": ("pysiglib_sig_coef_cpu", "PySigLibSigCoefCpu"),
+        "cuda": ("pysiglib_sig_coef_cuda", "PySigLibSigCoefCuda"),
+    },
+    "sig_coef_backprop": {
+        "cpu": ("pysiglib_sig_coef_backprop_cpu", "PySigLibSigCoefBackpropCpu"),
+        "cuda": ("pysiglib_sig_coef_backprop_cuda", "PySigLibSigCoefBackpropCuda"),
+    },
     "sig_combine": {
         "cpu": ("pysiglib_sig_combine_cpu", "PySigLibSigCombineCpu"),
         "cuda": ("pysiglib_sig_combine_cuda", "PySigLibSigCombineCuda"),
@@ -451,6 +459,35 @@ def sig_prefix_suffix_backprop_ffi_call(path, cotangent, degree, time_aug, lead_
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("sig_prefix_suffix_backprop", (path, cotangent), out_type, call_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# sig_coef
+# ---------------------------------------------------------------------------
+
+def sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method):
+    _normalize_dtype(path.dtype)
+    width = sum(max(len(word), 1) for word in words)
+    out_type = jax.ShapeDtypeStruct((*path.shape[:-2], width), path.dtype)
+    call_kwargs = dict(
+        indices=np.asarray([index for word in words for index in word], dtype=np.uint64),
+        degrees=np.asarray([len(word) for word in words], dtype=np.uint64),
+        time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
+        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), method=np.int64(method),
+    )
+    return _make_ffi_call("sig_coef", (path,), out_type, call_kwargs)
+
+
+def sig_coef_backprop_ffi_call(path, coefs, cotangent, words, time_aug, lead_lag, end_time, n_jobs, method):
+    _check_same_dtype(path, coefs, cotangent)
+    out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
+    call_kwargs = dict(
+        indices=np.asarray([index for word in words for index in word], dtype=np.uint64),
+        degrees=np.asarray([len(word) for word in words], dtype=np.uint64),
+        time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
+        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), method=np.int64(method),
+    )
+    return _make_ffi_call("sig_coef_backprop", (path, coefs, cotangent), out_type, call_kwargs)
 
 
 # ---------------------------------------------------------------------------

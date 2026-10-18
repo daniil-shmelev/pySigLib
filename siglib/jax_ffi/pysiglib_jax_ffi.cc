@@ -19,8 +19,11 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "cpsig.h"
+#include "pascal_coefficient.h"
+#include <climits>
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 #include "cusig.h"
@@ -340,6 +343,8 @@ struct CpuFns<float> {
     static constexpr auto bsig = branched_sig_f;
     static constexpr auto bsig_backprop = branched_sig_backprop_f;
     static constexpr auto bsig_coef = branched_sig_coef_f;
+    static constexpr auto coef = sig_coef_f;
+    static constexpr auto coef_backprop = sig_coef_backprop_f;
     static constexpr auto bsig_coef_backprop = branched_sig_coef_backprop_f;
 
     static constexpr auto blogsig_join = branched_log_sig_join_f;
@@ -391,6 +396,8 @@ struct CpuFns<double> {
     static constexpr auto bsig = branched_sig_d;
     static constexpr auto bsig_backprop = branched_sig_backprop_d;
     static constexpr auto bsig_coef = branched_sig_coef_d;
+    static constexpr auto coef = sig_coef_d;
+    static constexpr auto coef_backprop = sig_coef_backprop_d;
     static constexpr auto bsig_coef_backprop = branched_sig_coef_backprop_d;
 
     static constexpr auto blogsig_join = branched_log_sig_join_d;
@@ -452,6 +459,8 @@ struct CudaFns<float> {
     static constexpr auto bsig = branched_sig_cuda_f;
     static constexpr auto bsig_backprop = branched_sig_backprop_cuda_f;
     static constexpr auto bsig_coef = branched_sig_coef_cuda_f;
+    static constexpr auto coef = sig_coef_cuda_f;
+    static constexpr auto coef_backprop = sig_coef_backprop_cuda_f;
     static constexpr auto bsig_coef_backprop = branched_sig_coef_backprop_cuda_f;
 
     static constexpr auto blogsig_join = branched_log_sig_join_cuda_f;
@@ -503,6 +512,8 @@ struct CudaFns<double> {
     static constexpr auto bsig = branched_sig_cuda_d;
     static constexpr auto bsig_backprop = branched_sig_backprop_cuda_d;
     static constexpr auto bsig_coef = branched_sig_coef_cuda_d;
+    static constexpr auto coef = sig_coef_cuda_d;
+    static constexpr auto coef_backprop = sig_coef_backprop_cuda_d;
     static constexpr auto bsig_coef_backprop = branched_sig_coef_backprop_cuda_d;
 
     static constexpr auto blogsig_join = branched_log_sig_join_cuda_d;
@@ -977,6 +988,112 @@ std::string GetSigSpec(BufferT& buf, SigSpec& spec) {
     }
     return {};
 }
+
+// ---------------------------------------------------------------------------
+// sig_coef
+// ---------------------------------------------------------------------------
+
+template <bool Cuda, bool Backward>
+ffi::Error SigCoefImpl(
+    void* stream, ffi::Span<const std::uint64_t> indices,
+    ffi::Span<const std::uint64_t> degrees, bool time_aug, bool lead_lag,
+    double end_time, std::int64_t n_jobs, std::int64_t method,
+    ffi::AnyBuffer& path, ffi::AnyBuffer* coefs, ffi::AnyBuffer* cotangent,
+    ffi::Result<ffi::AnyBuffer>& out
+) {
+    PathSpec spec;
+    if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
+    if (method < 0 || method > 2 || n_jobs == 0 || n_jobs < INT_MIN || n_jobs > INT_MAX)
+        return InvalidArgument("Invalid coefficient method or n_jobs");
+    try {
+        std::uint64_t size = 0;
+        for (auto degree : degrees) size = pascal_coefficient::add(size, degree);
+        if (size != indices.size()) return InvalidArgument("Coefficient word metadata size mismatch");
+        pascal_coefficient::Words words(indices.begin(), degrees.begin(), degrees.size(),
+            pascal_coefficient::add(pascal_coefficient::mul(spec.dimension, lead_lag ? 2 : 1), time_aug ? 1 : 0), true);
+        if constexpr (Backward) {
+            if (auto msg = CheckGradOutputShape(out, spec); !msg.empty()) return InvalidArgument(msg);
+            if (auto msg = ValidateSameFloatDtype("path", path, "coefs", *coefs); !msg.empty()) return InvalidArgument(msg);
+            if (auto msg = ValidateSameFloatDtype("path", path, "cotangent", *cotangent); !msg.empty()) return InvalidArgument(msg);
+            if (auto msg = CheckSigOutputShape(*coefs, spec, words.width); !msg.empty()) return InvalidArgument(msg);
+            if (auto msg = CheckSigOutputShape(*cotangent, spec, words.width); !msg.empty()) return InvalidArgument(msg);
+        } else if (auto msg = CheckSigOutputShape(out, spec, words.width); !msg.empty()) return InvalidArgument(msg);
+        return DispatchFloatDtype(BufferElementType(path), [&]<typename T>() -> ffi::Error {
+            int err_code = 0;
+            const char* fn_name = Backward ? "sig_coef_backprop" : "sig_coef";
+#ifdef PYSIGLIB_JAX_WITH_CUDA
+            if constexpr (Cuda) {
+                // FFI word metadata is on the host, including default edge cases.
+                const int cuda_method = method == 0 ? 2 : static_cast<int>(method);
+                if constexpr (Backward)
+                    err_code = CudaFns<T>::coef_backprop(BufferData<T>(path), BufferData<T>(out),
+                        BufferData<T>(*coefs), BufferData<T>(*cotangent), indices.begin(), degrees.size(), degrees.begin(),
+                        spec.batch_size, spec.dimension, spec.length, time_aug, lead_lag, static_cast<T>(end_time), cuda_method, stream);
+                else
+                    err_code = CudaFns<T>::coef(BufferData<T>(path), BufferData<T>(out), indices.begin(),
+                        degrees.size(), degrees.begin(), spec.batch_size, spec.dimension, spec.length,
+                        true, time_aug, lead_lag, static_cast<T>(end_time), cuda_method, stream);
+                return err_code ? NativeCallErrorCuda(fn_name, err_code) : ffi::Error::Success();
+            } else
+#endif
+            {
+                if constexpr (Backward) {
+                    T* seeds_data = BufferData<T>(*cotangent);
+                    std::vector<T> seeds;
+                    if (method == 0 && spec.batch_size) {
+                        seeds.assign(seeds_data, seeds_data + pascal_coefficient::mul(spec.batch_size, words.width));
+                        seeds_data = seeds.data();
+                    }
+                    err_code = CpuFns<T>::coef_backprop(BufferData<T>(path), BufferData<T>(out),
+                        BufferData<T>(*coefs), seeds_data, indices.begin(), degrees.size(), degrees.begin(),
+                        spec.batch_size, spec.dimension, spec.length, time_aug, lead_lag, static_cast<T>(end_time),
+                        static_cast<int>(n_jobs), static_cast<int>(method));
+                } else
+                    err_code = CpuFns<T>::coef(BufferData<T>(path), BufferData<T>(out), indices.begin(),
+                        degrees.size(), degrees.begin(), spec.batch_size, spec.dimension, spec.length,
+                        time_aug, lead_lag, static_cast<T>(end_time), true, static_cast<int>(n_jobs), static_cast<int>(method));
+                return err_code ? NativeCallErrorCpu(fn_name, err_code) : ffi::Error::Success();
+            }
+        });
+    } catch (const std::exception& e) {
+        return InvalidArgument(e.what());
+    }
+}
+
+ffi::Error SigCoefCpu(
+    ffi::Span<const std::uint64_t> indices, ffi::Span<const std::uint64_t> degrees,
+    bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, std::int64_t method,
+    ffi::AnyBuffer path, ffi::Result<ffi::AnyBuffer> out
+) {
+    return SigCoefImpl<false, false>(nullptr, indices, degrees, time_aug, lead_lag, end_time, n_jobs, method, path, nullptr, nullptr, out);
+}
+
+ffi::Error SigCoefBackpropCpu(
+    ffi::Span<const std::uint64_t> indices, ffi::Span<const std::uint64_t> degrees,
+    bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, std::int64_t method,
+    ffi::AnyBuffer path, ffi::AnyBuffer coefs, ffi::AnyBuffer cotangent, ffi::Result<ffi::AnyBuffer> out
+) {
+    return SigCoefImpl<false, true>(nullptr, indices, degrees, time_aug, lead_lag, end_time, n_jobs, method, path, &coefs, &cotangent, out);
+}
+
+#ifdef PYSIGLIB_JAX_WITH_CUDA
+ffi::Error SigCoefCuda(
+    cudaStream_t stream, ffi::Span<const std::uint64_t> indices, ffi::Span<const std::uint64_t> degrees,
+    bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, std::int64_t method,
+    ffi::AnyBuffer path, ffi::Result<ffi::AnyBuffer> out
+) {
+    return SigCoefImpl<true, false>(stream, indices, degrees, time_aug, lead_lag, end_time, n_jobs, method, path, nullptr, nullptr, out);
+}
+
+ffi::Error SigCoefBackpropCuda(
+    cudaStream_t stream, ffi::Span<const std::uint64_t> indices, ffi::Span<const std::uint64_t> degrees,
+    bool time_aug, bool lead_lag, double end_time, std::int64_t n_jobs, std::int64_t method,
+    ffi::AnyBuffer path, ffi::AnyBuffer coefs, ffi::AnyBuffer cotangent, ffi::Result<ffi::AnyBuffer> out
+) {
+    return SigCoefImpl<true, true>(stream, indices, degrees, time_aug, lead_lag, end_time, n_jobs, method, path, &coefs, &cotangent, out);
+}
+#endif
 
 template <typename T>
 ffi::Error SigCombineCpuImpl(
@@ -2394,6 +2511,38 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
 );
+#endif
+
+// sig_coef
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigCoefCpu, SigCoefCpu,
+    ffi::Ffi::Bind().Attr<ffi::Span<const std::uint64_t>>("indices")
+        .Attr<ffi::Span<const std::uint64_t>>("degrees")
+        .Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs").Attr<std::int64_t>("method")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigCoefBackpropCpu, SigCoefBackpropCpu,
+    ffi::Ffi::Bind().Attr<ffi::Span<const std::uint64_t>>("indices")
+        .Attr<ffi::Span<const std::uint64_t>>("degrees")
+        .Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs").Attr<std::int64_t>("method")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+#ifdef PYSIGLIB_JAX_WITH_CUDA
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigCoefCuda, SigCoefCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<ffi::Span<const std::uint64_t>>("indices").Attr<ffi::Span<const std::uint64_t>>("degrees")
+        .Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs").Attr<std::int64_t>("method")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigCoefBackpropCuda, SigCoefBackpropCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<ffi::Span<const std::uint64_t>>("indices").Attr<ffi::Span<const std::uint64_t>>("degrees")
+        .Attr<bool>("time_aug").Attr<bool>("lead_lag").Attr<double>("end_time")
+        .Attr<std::int64_t>("n_jobs").Attr<std::int64_t>("method")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 #endif
 
 // sig_combine
