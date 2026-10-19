@@ -105,14 +105,14 @@ struct Words {
 
 struct Checkpoints {
     uint64_t block, blocks, count, state_count;
-    Checkpoints(uint64_t n, uint64_t m, uint64_t cutoff = 64) : block(1), blocks(n), count(0), state_count(add(m, 1)) {
+    Checkpoints(uint64_t n, uint64_t m, uint64_t cutoff = 64) : block(1), blocks(n), count(0), state_count(m ? m - 1 : 0) {
         if (n > cutoff) {
             block = static_cast<uint64_t>(std::sqrt(static_cast<long double>(n)));
             if (!block) block = 1;
             if (n / block > block || n % block) ++block;
             blocks = n / block + (n % block != 0);
         }
-        count = mul(add(blocks, block > 1 ? block : 0), state_count);
+        count = add(mul(add(blocks, block > 1 ? block : 0), state_count), mul(block > 1 ? block : blocks, m));
     }
 };
 

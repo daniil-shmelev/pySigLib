@@ -1196,6 +1196,7 @@ void profile_coefficient(const std::string& directory, const std::map<std::strin
     const uint64_t m = std::stoull(value("degree", "16")), n = std::stoull(value("segments", "256"));
     const uint64_t batch = std::stoull(value("batch", "32")), words = std::stoull(value("words", "8"));
     const uint64_t d = std::stoull(value("dimension", "8")), repeats = std::stoull(value("repeats", "20"));
+    const uint64_t warmup = std::stoull(value("warmup", "5"));
     if (!m || !n || !batch || !words || !d || !repeats) throw std::invalid_argument("Profile dimensions must be positive");
     if (gpu) {
         load_cusig(directory);
@@ -1221,7 +1222,7 @@ void profile_coefficient(const std::string& directory, const std::map<std::strin
     }
     std::vector<T> path(batch * (n + 1) * d), out(batch * words * m), seed(out.size(), T(1)), grad(path.size());
     std::vector<uint64_t> indices(words * m), degrees(words, m);
-    std::mt19937 engine(1729);
+    std::mt19937 engine(static_cast<uint32_t>(std::stoul(value("seed", "1729"))));
     std::normal_distribution<double> normal(0, .03);
     for (uint64_t b = 0; b < batch; ++b)
         for (uint64_t i = 1; i <= n; ++i)
@@ -1264,7 +1265,7 @@ void profile_coefficient(const std::string& directory, const std::map<std::strin
     };
     f();
     auto run = [&] { if (phase != "backward") f(); if (phase != "forward") b(); };
-    for (int i = 0; i < 5; ++i) run();
+    for (uint64_t i = 0; i < warmup; ++i) run();
     if (gpu) check(cudaEventRecord(start));
     const auto before = std::chrono::steady_clock::now();
     for (uint64_t i = 0; i < repeats; ++i) run();

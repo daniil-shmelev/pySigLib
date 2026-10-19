@@ -77,6 +77,13 @@ struct PascalAccess {
         T values[Ops::lanes] = {};
         if (!time_aug && !lead_lag) {
             const uint64_t coordinate = i * dimension + word[j];
+            if (count == Ops::lanes) {
+                for (uint64_t lane = 0; lane < Ops::lanes; ++lane) {
+                    const T* p = path + (first + lane) * dimension * length + coordinate;
+                    values[lane] = p[dimension] - p[0];
+                }
+                return Ops::load(values);
+            }
             for (uint64_t lane = 0; lane < count; ++lane) {
                 const T* p = path + (first + lane) * dimension * length + coordinate;
                 values[lane] = p[dimension] - p[0];
@@ -92,6 +99,11 @@ struct PascalAccess {
     }
     PASCAL_INLINE V seed(uint64_t j) const {
         T values[Ops::lanes] = {};
+        if (count == Ops::lanes) {
+            for (uint64_t lane = 0; lane < Ops::lanes; ++lane)
+                values[lane] = deriv[(first + lane) * seed_stride + seed_offset + j];
+            return Ops::load(values);
+        }
         for (uint64_t lane = 0; lane < count; ++lane)
             values[lane] = deriv[(first + lane) * seed_stride + seed_offset + j];
         return Ops::load(values);
@@ -102,6 +114,14 @@ struct PascalAccess {
                 T values[Ops::lanes];
                 Ops::store(gradient[j], values);
                 const uint64_t coordinate = i * dimension + word[j];
+                if (count == Ops::lanes) {
+                    for (uint64_t lane = 0; lane < Ops::lanes; ++lane) {
+                        T* p = out + (first + lane) * dimension * length + coordinate;
+                        p[dimension] += values[lane];
+                        p[0] -= values[lane];
+                    }
+                    continue;
+                }
                 for (uint64_t lane = 0; lane < count; ++lane) {
                     T* p = out + (first + lane) * dimension * length + coordinate;
                     p[dimension] += values[lane];
@@ -384,24 +404,27 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
     if (method == pc::automatic && pascal_selection::cpu_region<T>(words, batch, dimension,
         length > 1 ? length - 1 : 0, jobs, time_aug, lead_lag,
         HWY_TARGET == HWY_AVX2 && pascal_selection::cpu_hardware())) method = pc::pascal_method;
+    const int mode = pc::variant(method, words.max_degree);
+    if constexpr (Backward) {
+        if (length == 2 && !lead_lag) {
+            std::fill_n(out, batch * length * dimension, T(0));
+            auto work = [&](uint64_t begin, uint64_t end) HWY_ATTR {
+                coefficient_workspace::Allocation allocation(4 * (words.max_degree + 1) * sizeof(T));
+                std::vector<T> scratch(4 * (words.max_degree + 1));
+                for (uint64_t sample = begin; sample < end; ++sample)
+                    for (uint64_t w = 0; w < words.count; ++w) {
+                        PascalAccess<T, PascalScalarOps<T>> access{path, out, deriv, words.word(w), dimension,
+                            length, 1, 1, sample, words.width, words.packed[2 * words.count + w], time_aug, false, end_time};
+                        pc::single_segment_backward<PascalScalarOps<T>>(access, words.packed[w], scratch.data());
+                    }
+            };
+            if (jobs == 1) work(0, batch);
+            else spawn_batch_threads(batch, jobs, work);
+            return;
+        }
+    }
     if ((method == pc::horner || method == pc::automatic || method == pc::benchmark_horner) && length > 1) {
         if constexpr (Backward) {
-            if (length == 2 && !lead_lag) {
-                std::fill_n(out, batch * length * dimension, T(0));
-                auto work = [&](uint64_t begin, uint64_t end) HWY_ATTR {
-                    coefficient_workspace::Allocation allocation(4 * (words.max_degree + 1) * sizeof(T));
-                    std::vector<T> scratch(4 * (words.max_degree + 1));
-                    for (uint64_t sample = begin; sample < end; ++sample)
-                        for (uint64_t w = 0; w < words.count; ++w) {
-                            PascalAccess<T, PascalScalarOps<T>> access{path, out, deriv, words.word(w), dimension,
-                                length, 1, 1, sample, words.width, words.packed[2 * words.count + w], time_aug, false, end_time};
-                            pc::single_segment_backward<PascalScalarOps<T>>(access, words.packed[w], scratch.data());
-                        }
-                };
-                if (jobs == 1) work(0, batch);
-                else spawn_batch_threads(batch, jobs, work);
-                return;
-            }
             coefficient_workspace::Allocation allocation(batch * words.width * sizeof(T));
             std::vector<T> seeds(deriv, deriv + batch * words.width);
             sig_coef_backprop_<T>(path, out, coefs, seeds.data(), indices, num_words, degrees,
@@ -410,7 +433,6 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
             time_aug, lead_lag, end_time, prefixes, jobs);
         return;
     }
-    const int mode = pc::variant(method, words.max_degree);
     const uint64_t cutoff = method >= pc::unscaled ? pc::environment_option("PYSIGLIB_PASCAL_BENCH_CHECKPOINT", 256) : 256;
     if constexpr (Backward) if (method < pc::unscaled || pc::environment_option("PYSIGLIB_PASCAL_BENCH_WORDS", 1)) {
         bool parallel = false;
