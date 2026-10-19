@@ -35,15 +35,15 @@ PASCAL_HD void single_segment_backward(Access& access, uint64_t m, typename Ops:
     access.scatter(0, gradient + 1, m);
 }
 
-template<class Ops, int Mode, int Degree = 0>
-PASCAL_HD bool step(typename Ops::V* u, const typename Ops::V* a, uint64_t degree,
+template<class Ops, int Mode, int Degree = 0, bool Last = true>
+PASCAL_HD PASCAL_INLINE bool step(typename Ops::V* u, const typename Ops::V* a, uint64_t degree,
     bool first, typename Ops::V* tape, typename Ops::V& q) {
     using T = typename Ops::Scalar;
     using V = typename Ops::V;
     const uint64_t m = Degree ? Degree : degree;
     bool valid = true;
     if (first) {
-        for (uint64_t j = 1; j <= m; ++j) {
+        for (uint64_t j = 1; j <= (Last ? m : m - 1); ++j) {
             if constexpr (Mode == guarded) u[j] = Ops::mul_div(a[j], u[j - 1], j);
             else u[j] = a[j] * u[j - 1];
         }
@@ -52,22 +52,22 @@ PASCAL_HD bool step(typename Ops::V* u, const typename Ops::V* a, uint64_t degre
         for (uint64_t s = 1; s <= m; ++s)
             for (uint64_t j = m; j >= s; --j) {
                 if (tape) tape[k++] = u[j - 1];
-                u[j] = u[j] + Ops::mul_div(a[j], u[j - 1], j);
+                if (Last || j < m) u[j] = u[j] + Ops::mul_div(a[j], u[j - 1], j);
             }
     } else {
-        q = u[m - 1];
+        if (Last || tape) q = u[m - 1];
         uint64_t k = 0;
         for (uint64_t s = 1; s < m; ++s) {
             for (uint64_t j = m - 1; j >= s; --j) {
                 if (tape) tape[k++] = u[j - 1];
                 u[j] = Ops::madd(a[j], u[j - 1], u[j]);
             }
-            q = q + u[m - 1];
+            if (Last || tape) q = q + u[m - 1];
         }
-        u[m] = Ops::madd(a[m], q, u[m]);
-        valid = Ops::finite(q);
+        if constexpr (Last) u[m] = Ops::madd(a[m], q, u[m]);
+        if (Last || tape) valid = Ops::finite(q);
     }
-    return Ops::all_finite(u + 1, m) && valid;
+    return Ops::all_finite(u + 1, Last ? m : m - 1) && valid;
 }
 
 template<class Ops, int Mode, class Access>
@@ -107,19 +107,21 @@ PASCAL_HD bool forward(Access& access, uint64_t n, uint64_t degree, typename Ops
     return valid;
 }
 
-template<class Ops, int Mode, int Degree = 0, class Access>
+template<class Ops, int Mode, int Degree = 0, class Access, class Checkpoints>
 PASCAL_HD bool backward(Access& access, uint64_t n, uint64_t degree, uint64_t block,
-    uint64_t blocks, typename Ops::V* checkpoints, typename Ops::V* scratch) {
+    uint64_t blocks, Checkpoints checkpoints, typename Ops::V* scratch) {
     using T = typename Ops::Scalar;
     using V = typename Ops::V;
     const uint64_t m = Degree ? Degree : degree, stride = m + 1;
     if (!m || !n) return true;
+    const uint64_t lower = m - 1;
     V* u = scratch;
     V* a = u + stride;
     V* lambda = a + stride;
     V* grad = lambda + stride;
     V* tape = grad + stride;
-    V* local = checkpoints + blocks * stride;
+    auto local = checkpoints + blocks * lower;
+    auto links = local + (block > 1 ? block * lower : 0);
     u[0] = Ops::set(T(1));
     bool valid = true;
     T factor = 1;
@@ -134,28 +136,36 @@ PASCAL_HD bool backward(Access& access, uint64_t n, uint64_t degree, uint64_t bl
     }
     if (!valid && Mode != guarded) return false;
     V q = Ops::set(T(0));
+    uint64_t next_checkpoint = 0, checkpoint = 0;
     for (uint64_t i = 0; i < n; ++i) {
-        if (i % block == 0)
-            for (uint64_t j = 0; j <= m; ++j) checkpoints[(i / block) * stride + j] = u[j];
+        if (i == next_checkpoint) {
+            for (uint64_t j = 1; j < m; ++j) checkpoints[checkpoint * lower + j - 1] = u[j];
+            ++checkpoint;
+            next_checkpoint += block;
+        }
         valid = increments<Ops, Mode>(access, i, m, a) && valid;
+        if (block == 1)
+            for (uint64_t j = 1; j <= m; ++j) links[i * m + j - 1] = a[j];
         valid = step<Ops, Mode, Degree>(u, a, m, i == 0, nullptr, q) && valid;
     }
     if (!valid && Mode != guarded) return false;
     for (uint64_t b = blocks; b-- > 0;) {
         const uint64_t begin = b * block, end = n < begin + block ? n : begin + block;
         if (block > 1) {
-            for (uint64_t j = 0; j <= m; ++j) u[j] = checkpoints[b * stride + j];
+            for (uint64_t j = 1; j < m; ++j) u[j] = checkpoints[b * lower + j - 1];
             for (uint64_t i = begin; i < end; ++i) {
-                for (uint64_t j = 0; j <= m; ++j) local[(i - begin) * stride + j] = u[j];
+                for (uint64_t j = 1; j < m; ++j) local[(i - begin) * lower + j - 1] = u[j];
                 increments<Ops, Mode>(access, i, m, a);
-                step<Ops, Mode, Degree>(u, a, m, i == 0, nullptr, q);
+                for (uint64_t j = 1; j <= m; ++j) links[(i - begin) * m + j - 1] = a[j];
+                step<Ops, Mode, Degree, false>(u, a, m, i == 0, nullptr, q);
             }
         }
         for (uint64_t i = end; i-- > begin;) {
-            const V* saved = block > 1 ? local + (i - begin) * stride : checkpoints + b * stride;
-            for (uint64_t j = 0; j <= m; ++j) u[j] = saved[j];
-            increments<Ops, Mode>(access, i, m, a);
-            step<Ops, Mode, Degree>(u, a, m, i == 0, tape, q);
+            const auto saved = block > 1 ? local + (i - begin) * lower : checkpoints + b * lower;
+            for (uint64_t j = 1; j < m; ++j) u[j] = saved[j - 1];
+            const uint64_t link_offset = (block > 1 ? i - begin : i) * m;
+            for (uint64_t j = 1; j <= m; ++j) a[j] = links[link_offset + j - 1];
+            step<Ops, Mode, Degree, false>(u, a, m, i == 0, tape, q);
             for (uint64_t j = 1; j <= m; ++j) grad[j] = Ops::set(T(0));
             if (!i) {
                 for (uint64_t j = m; j > 0; --j) {

@@ -127,7 +127,7 @@ def test_pascal_transforms_and_views(device, time_aug, lead_lag):
     x = (torch.randn((2, 3, 10, 4), device=device, dtype=torch.float64) * .1)[..., ::2]
     x.requires_grad_()
     d = (4 if lead_lag else 2) + int(time_aug)
-    words = [(), (d - 1, 0, 1), (1, 1)]
+    words = [(), (d - 1, 0, 1), (1, 1), (d - 1, 0, 1) * 5]
     result = torch_api.sig_coef(x, words, prefixes=True, method="pascal", time_aug=time_aug, lead_lag=lead_lag, end_time=2.)
     transformed = torch_api.transform_path(x, time_aug=time_aug, lead_lag=lead_lag, end_time=2.)
     expected = torch_api.sig_coef(transformed, words, prefixes=True, method="pascal")
@@ -181,7 +181,7 @@ def test_pascal_generic_cpu_and_workspace(monkeypatch):
 
 @pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA required")
 @pytest.mark.parametrize("method", ["pascal", "auto"])
-@pytest.mark.parametrize("words", [[(0, 1, 2), (2, 2)], [(0, 1, 2), (2, 2, 1)]])
+@pytest.mark.parametrize("words", [[(0, 1, 2), (2, 2)], [(0, 1, 2), (2, 2, 1)], [(0, 1) * 8, (2,) * 11]])
 def test_pascal_nondefault_stream_and_limit(method, words):
     stream = torch.cuda.Stream()
     with torch.cuda.stream(stream):
@@ -289,13 +289,14 @@ def test_pascal_partial_chunks_and_word_workers(device, batch, monkeypatch):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-def test_pascal_all_specializations(device, dtype, monkeypatch):
+@pytest.mark.parametrize("segments", [1, 5, 65])
+def test_pascal_all_specializations(device, dtype, segments, monkeypatch):
     rng = np.random.default_rng(914)
-    for degree in range(2, 21):
-        x = torch.tensor(rng.normal(size=(7, 6, 3)) * .15, dtype=dtype, device=device)
+    for degree in range(1, 21):
+        x = torch.tensor(rng.normal(size=(9, segments + 1, 3)) * .15, dtype=dtype, device=device)
         words = [tuple(map(int, rng.integers(3, size=degree)))]
         direction = rng.normal(size=x.shape)
-        seeds = torch.tensor(rng.normal(size=(7, degree)), dtype=dtype, device=device)
+        seeds = torch.tensor(rng.normal(size=(9, degree)), dtype=dtype, device=device)
         reference = np.asarray([chen_prefixes(p, words) for p in x.cpu().numpy()])
         derivative = np.asarray([np.dot(chen_prefixes(p.astype(complex) + 1e-25j * v, words).imag / 1e-25, s)
                                  for p, v, s in zip(x.cpu().numpy(), direction, seeds.cpu().numpy())])
@@ -307,6 +308,42 @@ def test_pascal_all_specializations(device, dtype, monkeypatch):
                 np.testing.assert_allclose(y.cpu(), reference, rtol=tolerance, atol=tolerance)
                 np.testing.assert_allclose(np.sum(dx.cpu().numpy() * direction, axis=(1, 2)), derivative,
                                            rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA required")
+@pytest.mark.parametrize("batch", [32, 33])
+def test_pascal_warp_unrolling_boundary(batch):
+    torch.manual_seed(297)
+    x = torch.randn((batch, 66, 3), dtype=torch.float32) * .1
+    words = [tuple((j + w) % 3 for j in range(20)) for w in range(8)]
+    coefs = pysiglib.sig_coef(x, words, prefixes=True, method="pascal")
+    seeds = torch.randn_like(coefs)
+    reference = pysiglib.sig_coef_backprop(x, words, coefs, seeds, method="pascal")
+    actual = pysiglib.sig_coef_backprop(x.cuda(), words, coefs.cuda(), seeds.cuda(), method="pascal")
+    torch.testing.assert_close(actual.cpu(), reference, rtol=3e-5, atol=3e-6)
+
+
+@pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA required")
+@pytest.mark.parametrize("degree", [2, 3, 4, 7, 8, 15, 16])
+@pytest.mark.parametrize("segments", [7, 65])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("constrained", [False, True])
+def test_pascal_warp_groups(degree, segments, dtype, constrained, monkeypatch):
+    torch.manual_seed(923 + degree)
+    x = torch.randn((3, segments + 1, 3), dtype=dtype) * .1
+    word = tuple(j % 3 for j in range(degree))
+    words = [word, tuple(reversed(word)), (0,) * degree, word, ()]
+    coefs = pysiglib.sig_coef(x.double(), words, prefixes=True, method="pascal")
+    seeds = torch.randn_like(coefs).to(dtype)
+    reference = pysiglib.sig_coef_backprop(x.double(), words, coefs, seeds.double(), method="pascal")
+    monkeypatch.setenv("PYSIGLIB_PASCAL_BENCH_THREADS", "32")
+    monkeypatch.setenv("PYSIGLIB_PASCAL_WORKSPACE_BYTES", str(1024 * x.element_size() if constrained else 256 * 1024 * 1024))
+    for variant in [3, 4]:
+        for warp in [0, 1]:
+            monkeypatch.setenv("PYSIGLIB_PASCAL_BENCH_WARP", str(warp))
+            actual, gradient = native_variant(x.cuda(), words, variant, seeds.cuda())
+            torch.testing.assert_close(actual.cpu().double(), coefs, rtol=3e-5, atol=3e-6)
+            torch.testing.assert_close(gradient.cpu().double(), reference, rtol=3e-5, atol=3e-6)
 
 
 def test_pascal_highway_targets():
@@ -380,12 +417,13 @@ def test_pascal_jax_sparse_large_signature(method, dtype):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-def test_auto_single_segment_all_prefix_seeds(device, dtype):
+@pytest.mark.parametrize("method", ["auto", "pascal"])
+def test_single_segment_all_prefix_seeds(device, dtype, method):
     path = torch.tensor([[0., 0.], [.125, 0.]], dtype=dtype, device=device)
     words = [(0,) * 16, (0, 1, 0), (0,) * 16]
-    coefs = pysiglib.sig_coef(path, words, prefixes=True, method="auto")
+    coefs = pysiglib.sig_coef(path, words, prefixes=True, method=method)
     seeds = torch.arange(1, 36, dtype=dtype, device=device) / 32
-    gradient = pysiglib.sig_coef_backprop(path, words, coefs, seeds, method="auto")
+    gradient = pysiglib.sig_coef_backprop(path, words, coefs, seeds, method=method)
     expected = np.zeros((2, 2))
     for i in range(1, 17):
         expected[1, 0] += (seeds[i - 1].item() + seeds[18 + i].item()) * .125 ** (i - 1) / factorial(i - 1)

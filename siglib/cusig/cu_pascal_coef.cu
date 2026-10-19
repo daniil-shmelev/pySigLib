@@ -31,6 +31,15 @@ namespace pc = pascal_coefficient;
 struct DegreeGroup { uint64_t begin, count, degree; };
 thread_local uint64_t last_workspace_bytes = 0;
 
+// Adjacent jobs store each checkpoint row at adjacent addresses.
+template<class T>
+struct CheckpointView {
+    T* data;
+    uint64_t stride;
+    __device__ T& operator[](uint64_t i) const { return data[i * stride]; }
+    __device__ CheckpointView operator+(uint64_t i) const { return {data + i * stride, stride}; }
+};
+
 bool calibrated_cuda() {
 #if defined(_MSC_VER) && _MSC_VER == 1944 && __CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ == 9
     int device = 0;
@@ -60,12 +69,18 @@ struct Access {
     uint64_t dimension, n;
     bool ta, ll, independent;
     T time;
-    __device__ T increment(uint64_t i, uint64_t j) const {
+    T* previous = nullptr;
+    mutable bool valid = true;
+    __device__ __forceinline__ T increment(uint64_t i, uint64_t j) const {
+        if (!ta && !ll) {
+            const T* p = path + i * dimension + word[j];
+            return p[dimension] - p[0];
+        }
         return pc::point(path, i + 1, word[j], dimension, n, ta, ll, time)
             - pc::point(path, i, word[j], dimension, n, ta, ll, time);
     }
-    __device__ T seed(uint64_t j) const { return deriv[j]; }
-    __device__ void scatter(uint64_t i, const T* grad, uint64_t m) const {
+    __device__ __forceinline__ T seed(uint64_t j) const { return deriv[j]; }
+    __device__ __forceinline__ void scatter(uint64_t i, const T* grad, uint64_t m) const {
         for (uint64_t j = 0; j < m; ++j) {
             const uint64_t c = word[j];
             if (ta && c == dimension * (ll ? 2 : 1)) continue;
@@ -74,6 +89,19 @@ struct Access {
             if (seen) continue;
             T value = grad[j];
             for (uint64_t k = j + 1; k < m; ++k) if (word[k] == c) value += grad[k];
+            if (previous && !ll) {
+                const T update = value - previous[j];
+                valid = pc::ScalarOps<T>::finite(value) && pc::ScalarOps<T>::finite(update) && valid;
+                previous[j] = value;
+                if (independent) {
+                    out[(i + 1) * dimension + c] += update;
+                    if (!i) out[c] -= value;
+                } else {
+                    myAtomicAdd(out + (i + 1) * dimension + c, update);
+                    if (!i) myAtomicAdd(out + c, -value);
+                }
+                continue;
+            }
             const uint64_t before = ll ? i / 2 + ((i % 2) && c >= dimension) : i;
             const uint64_t after = ll ? (i + 1) / 2 + (((i + 1) % 2) && c >= dimension) : i + 1;
             if (before != after) {
@@ -157,10 +185,10 @@ __device__ void horner(Access<T>& access, uint64_t degree, T* u) {
 }
 
 template<class T, int Mode, bool Backward, int Degree = 0>
-__global__ void coefficient_kernel(const T* path, T* out, const T* coefs, const T* deriv,
-    const uint64_t* metadata, uint64_t words, uint64_t width, uint64_t dimension, uint64_t length,
+__global__ void coefficient_kernel(const T* __restrict__ path, T* __restrict__ out, const T* __restrict__ coefs, const T* __restrict__ deriv,
+    const uint64_t* __restrict__ metadata, uint64_t words, uint64_t width, uint64_t dimension, uint64_t length,
     uint64_t n, bool ta, bool ll, T time, bool prefixes, uint64_t offset, uint64_t work,
-    T* checkpoints, uint64_t checkpoint_stride, uint64_t block, uint64_t blocks, int* failed,
+    T* __restrict__ checkpoints, uint64_t checkpoint_stride, uint64_t block, uint64_t blocks, int* __restrict__ failed,
     uint64_t order_offset, uint64_t group_begin, uint64_t group_count) {
     constexpr int capacity = Degree ? Degree : 20;
     const uint64_t local = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -172,19 +200,28 @@ __global__ void coefficient_kernel(const T* path, T* out, const T* coefs, const 
         coefs ? coefs + sample * width + output_offset : nullptr,
         metadata + 3 * words + metadata[words + w], dimension, n, ta, ll, words == 1, time};
     if constexpr (Backward) { if (!m || !n) return; }
+    uint64_t channels[Degree ? Degree : 1];
+    if constexpr (Degree > 0) {
+        #pragma unroll
+        for (unsigned int j = 0; j < Degree; ++j) channels[j] = access.word[j];
+        access.word = channels;
+    }
     T scratch[Backward ? 4 * (capacity + 1) + capacity * (capacity + 1) / 2 : 2 * (capacity + 1)];
+    constexpr bool merge_updates = Backward && Degree > 0 && Degree <= 4 && Mode != pc::guarded && Mode != pc::horner;
+    T previous[merge_updates ? capacity : 1] = {};
+    if constexpr (merge_updates) access.previous = previous;
     bool valid = true;
     if constexpr (Mode == pc::horner) horner<T, Degree, Backward>(access, m, scratch);
     else if constexpr (Backward)
         valid = pc::backward<pc::ScalarOps<T>, Mode, Degree>(access, n, m, block, blocks,
-            checkpoints + local * checkpoint_stride, scratch);
+            CheckpointView<T>{checkpoints + local, work}, scratch);
     else valid = pc::forward<pc::ScalarOps<T>, Mode, Degree>(access, n, m, scratch, scratch + capacity + 1);
     if constexpr (!Backward) {
         const uint64_t count = prefixes && m ? m : 1;
         for (uint64_t j = 0; j < count; ++j)
             out[sample * width + output_offset + j] = scratch[m ? (prefixes ? j + 1 : m) : 0];
     }
-    if (!valid && Mode != pc::guarded) atomicExch(failed, 1);
+    if ((!valid || !access.valid) && Mode != pc::guarded) atomicExch(failed, 1);
 }
 
 template<class T, int Mode, bool Backward>
@@ -209,25 +246,29 @@ void launch(const T* path, T* out, const T* coefs, const T* deriv, const uint64_
     CUDA_CHECK(cudaGetLastError());
 }
 
-template<class T, int Mode>
-__global__ void coefficient_warp_backward(const T* path, T* out, const T* deriv, const uint64_t* metadata,
+template<class T, int Mode, int Degree = 0>
+__global__ void coefficient_warp_backward(const T* __restrict__ path, T* __restrict__ out, const T* __restrict__ deriv, const uint64_t* __restrict__ metadata,
     uint64_t words, uint64_t width, uint64_t dimension, uint64_t length, uint64_t n, bool ta, bool ll, T time,
     uint64_t offset, uint64_t work, T* checkpoints, uint64_t checkpoint_stride, uint64_t block,
     uint64_t blocks, int* failed, uint64_t order_offset, uint64_t group_begin, uint64_t group_count) {
-    const unsigned int lane = threadIdx.x % 32;
-    const uint64_t local = (uint64_t(blockIdx.x) * blockDim.x + threadIdx.x) / 32;
+    constexpr unsigned int lanes = Degree > 0 && Degree < 16 ? (Degree < 4 ? 4 : Degree < 8 ? 8 : 16) : 32;
+    const unsigned int lane = threadIdx.x % lanes, first_lane = threadIdx.x % 32 - lane;
+    const unsigned int mask = (0xffffffffu >> (32 - lanes)) << first_lane;
+    const uint64_t local = (uint64_t(blockIdx.x) * blockDim.x + threadIdx.x) / lanes;
     if (local >= work) return;
     const uint64_t job = offset + local, sample = job / group_count, w = metadata[order_offset + group_begin + job % group_count];
-    const unsigned int m = static_cast<unsigned int>(metadata[w]), stride = m + 1;
+    const unsigned int m = Degree ? Degree : static_cast<unsigned int>(metadata[w]);
     if (!m || !n) return;
+    const unsigned int lower = m - 1;
     const uint64_t c = lane && lane <= m ? metadata[3 * words + metadata[words + w] + lane - 1] : UINT64_MAX;
     const T* x = path + sample * length * dimension;
     T* dx = out + sample * length * dimension;
     T* saved = checkpoints + local * checkpoint_stride;
-    T* replay = saved + blocks * stride;
+    T* replay = saved + blocks * lower;
+    T* links = replay + (block > 1 ? block * lower : 0);
     const T inverse_lane = lane ? T(1) / T(lane) : T(0);
-    T u = lane == 0 ? T(1) : T(0), lambda = 0, a = 0, raw = 0, q = 0;
-    T tape[20];
+    T u = lane == 0 ? T(1) : T(0), lambda = 0, a = 0, raw = 0, q = 0, previous = 0;
+    T tape[Degree ? Degree : 20];
     if (lane && lane <= m) lambda = deriv[sample * width + metadata[2 * words + w] + lane - 1];
     bool valid = true;
     if constexpr (Mode == pc::scaled) {
@@ -244,73 +285,86 @@ __global__ void coefficient_warp_backward(const T* path, T* out, const T* deriv,
             if constexpr (Mode == pc::unscaled) valid = !pc::ScalarOps<T>::tiny(raw, a) && valid;
         }
     };
-    auto step = [&](bool first, bool record) {
+    auto step = [&](bool first, bool record, bool last) {
         if (first) {
-            for (unsigned int j = 1; j <= m; ++j) {
-                const T previous = __shfl_sync(0xffffffff, u, j - 1);
+            #pragma unroll
+            for (unsigned int j = 1; j <= (last ? m : lower); ++j) {
+                const T previous = __shfl_sync(mask, u, j - 1, lanes);
                 if (lane == j) u = previous * a;
             }
         } else {
-            q = lane == m - 1 ? u : T(0);
+            if (last || record) q = lane == lower ? u : T(0);
+            #pragma unroll
             for (unsigned int s = 1; s < m; ++s) {
-                const T previous = __shfl_up_sync(0xffffffff, u, 1);
+                const T previous = __shfl_up_sync(mask, u, 1, lanes);
                 if (lane >= s && lane < m) {
                     if (record) tape[s - 1] = previous;
                     u = a * previous + u;
                 }
-                if (lane == m - 1) q += u;
+                if ((last || record) && lane == lower) q += u;
             }
-            const T sum = __shfl_sync(0xffffffff, q, m - 1);
-            if (lane == m) u = a * sum + u;
-            if (lane == m - 1) valid = pc::ScalarOps<T>::finite(q) && valid;
+            if (last) {
+                const T sum = __shfl_sync(mask, q, lower, lanes);
+                if (lane == m) u = a * sum + u;
+            }
+            if ((last || record) && lane == lower) valid = pc::ScalarOps<T>::finite(q) && valid;
         }
         if (lane <= m) valid = pc::ScalarOps<T>::finite(u) && valid;
     };
+    uint64_t next_checkpoint = 0, checkpoint = 0;
     for (uint64_t i = 0; i < n; ++i) {
-        if (i % block == 0 && lane <= m) saved[(i / block) * stride + lane] = u;
+        if (i == next_checkpoint) {
+            if (lane && lane < m) saved[checkpoint * lower + lane - 1] = u;
+            ++checkpoint;
+            next_checkpoint += block;
+        }
         increment(i);
-        step(i == 0, false);
+        if (block == 1 && lane && lane <= m) links[i * m + lane - 1] = a;
+        step(i == 0, false, true);
     }
-    if (!__all_sync(0xffffffff, valid)) {
+    if (!__all_sync(mask, valid)) {
         if (!lane) atomicExch(failed, 1);
         return;
     }
     unsigned int peers = 0;
 #if __CUDA_ARCH__ >= 700
-    peers = __match_any_sync(0xffffffff, c);
+    peers = __match_any_sync(mask, c);
 #else
-    for (unsigned int k = 0; k < 32; ++k) if (c == __shfl_sync(0xffffffff, c, k)) peers |= 1u << k;
+    for (unsigned int k = 0; k < lanes; ++k) if (c == __shfl_sync(mask, c, k, lanes)) peers |= 1u << (first_lane + k);
 #endif
     for (uint64_t b = blocks; b-- > 0;) {
         const uint64_t begin = b * block, end = n < begin + block ? n : begin + block;
         if (block > 1) {
-            if (lane <= m) u = saved[b * stride + lane];
+            if (lane && lane < m) u = saved[b * lower + lane - 1];
             for (uint64_t i = begin; i < end; ++i) {
-                if (lane <= m) replay[(i - begin) * stride + lane] = u;
+                if (lane && lane < m) replay[(i - begin) * lower + lane - 1] = u;
                 increment(i);
-                step(i == 0, false);
+                if (lane && lane <= m) links[(i - begin) * m + lane - 1] = a;
+                step(i == 0, false, false);
             }
         }
         for (uint64_t i = end; i-- > begin;) {
-            if (lane <= m) u = block > 1 ? replay[(i - begin) * stride + lane] : saved[b * stride + lane];
-            increment(i);
-            step(i == 0, true);
+            if (lane && lane < m) u = block > 1 ? replay[(i - begin) * lower + lane - 1] : saved[b * lower + lane - 1];
+            if (lane && lane <= m) a = links[(block > 1 ? i - begin : i) * m + lane - 1];
+            step(i == 0, true, false);
             T grad = 0;
             if (!i) {
+                #pragma unroll
                 for (unsigned int j = m; j > 0; --j) {
-                    const T previous = __shfl_sync(0xffffffff, u, j - 1);
+                    const T previous = __shfl_sync(mask, u, j - 1, lanes);
                     if (lane == j) grad = previous * lambda;
-                    const T contribution = __shfl_sync(0xffffffff, a * lambda, j);
+                    const T contribution = __shfl_sync(mask, a * lambda, j, lanes);
                     if (lane + 1 == j && lane) lambda += contribution;
                 }
             } else {
-                const T sum = __shfl_sync(0xffffffff, q, m - 1);
+                const T sum = __shfl_sync(mask, q, m - 1, lanes);
                 if (lane == m) grad = lambda * sum;
-                const T dq = __shfl_sync(0xffffffff, a * lambda, m);
+                const T dq = __shfl_sync(mask, a * lambda, m, lanes);
+                #pragma unroll
                 for (unsigned int s = m - 1; s > 0; --s) {
                     if (lane == m - 1) lambda += dq;
                     if (lane >= s && lane < m) grad = tape[s - 1] * lambda + grad;
-                    const T contribution = __shfl_down_sync(0xffffffff, a * lambda, 1);
+                    const T contribution = __shfl_down_sync(mask, a * lambda, 1, lanes);
                     if (lane && lane + 1 >= s && lane + 1 < m) lambda += contribution;
                 }
                 if (m > 1 && lane == m - 1) lambda += dq;
@@ -323,7 +377,20 @@ __global__ void coefficient_warp_backward(const T* path, T* out, const T* deriv,
                     total += __shfl_sync(peers, grad, __ffs(mask) - 1);
                 valid = pc::ScalarOps<T>::finite(total) && valid;
             }
-            if (lane && lane <= m && lane == unsigned(__ffs(peers) - 1) && !(ta && c == dimension * (ll ? 2 : 1))) {
+            if (lane && lane <= m && lane + first_lane == unsigned(__ffs(peers) - 1) && !(ta && c == dimension * (ll ? 2 : 1))) {
+                if (!ll) {
+                    const T update = total - previous;
+                    previous = total;
+                    valid = pc::ScalarOps<T>::finite(update) && valid;
+                    if (words == 1) {
+                        dx[(i + 1) * dimension + c] += update;
+                        if (!i) dx[c] -= total;
+                    } else {
+                        myAtomicAdd(dx + (i + 1) * dimension + c, update);
+                        if (!i) myAtomicAdd(dx + c, -total);
+                    }
+                    continue;
+                }
                 const uint64_t before = ll ? i / 2 + ((i % 2) && c >= dimension) : i;
                 const uint64_t after = ll ? (i + 1) / 2 + (((i + 1) % 2) && c >= dimension) : i + 1;
                 const uint64_t column = ll && c >= dimension ? c - dimension : c;
@@ -334,7 +401,7 @@ __global__ void coefficient_warp_backward(const T* path, T* out, const T* deriv,
             }
         }
     }
-    if (!__all_sync(0xffffffff, valid) && !lane) atomicExch(failed, 1);
+    if (!__all_sync(mask, valid) && !lane) atomicExch(failed, 1);
 }
 
 template<class T, bool Backward>
@@ -353,6 +420,7 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
     int mode = pc::variant(method, words.max_degree);
     if (method == pc::horner || (method == pc::automatic && !(pascal_selection::cuda_region<T>(
         words, batch, dimension, n, jobs, ta, ll, true) && calibrated_cuda()))) mode = pc::horner;
+    if constexpr (Backward) if (n == 1) mode = pc::horner;
     const uint64_t order_offset = words.packed.size();
     words.packed.resize(pc::add(order_offset, count));
     for (uint64_t w = 0; w < count; ++w) words.packed[order_offset + w] = w;
@@ -367,10 +435,10 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
     }
     const uint64_t cutoff = method >= pc::unscaled ? pc::environment_option("PYSIGLIB_PASCAL_BENCH_CHECKPOINT", 64) : 64;
     const pc::Checkpoints plan(n, words.max_degree, cutoff);
-    const uint64_t row = Backward && mode != pc::horner ? plan.count : 0;
+    const uint64_t row = Backward && n > 1 && mode != pc::horner ? plan.count : 0;
     const uint64_t budget = pc::workspace_limit();
     const uint64_t state = words.max_degree + 1;
-    const uint64_t local_count = Backward ? pc::add(pc::mul(4, state), pc::mul(state, words.max_degree) / 2) : pc::mul(2, state);
+    const uint64_t local_count = Backward ? pc::add(pc::mul(5, state), pc::mul(state, words.max_degree) / 2) : pc::mul(2, state);
     const uint64_t job_bytes = pc::mul(pc::add(row, local_count), sizeof(T));
     if (job_bytes > budget) throw std::runtime_error("Pascal workspace limit is too small for one CUDA job");
     const uint64_t capacity = std::min<uint64_t>({jobs, budget / job_bytes, 65535ULL * 64});
@@ -379,9 +447,9 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
     last_workspace_bytes = pc::add(pc::mul(pc::mul(workspace.capacity(), row), sizeof(T)), pc::mul(pc::add(words.packed.size(), 1), sizeof(uint64_t)));
     int* device_failed = reinterpret_cast<int*>(device_words.get() + words.packed.size());
     const unsigned int threads = static_cast<unsigned int>(method >= pc::unscaled ? pc::environment_option("PYSIGLIB_PASCAL_BENCH_THREADS", 64) : 64);
-    if (threads != 64 && threads != 128 && threads != 256) throw std::invalid_argument("Pascal CUDA block size must be 64, 128 or 256");
+    if (threads != 32 && threads != 64 && threads != 128 && threads != 256) throw std::invalid_argument("Pascal CUDA block size must be 32, 64, 128 or 256");
     const bool warp_default = words.max_degree >= 8 && (jobs <= 512 || (sizeof(T) == 4 && words.max_degree >= 16));
-    const bool warp = Backward && mode != pc::horner && (method >= pc::unscaled ? pc::environment_option("PYSIGLIB_PASCAL_BENCH_WARP", warp_default) : warp_default);
+    const bool warp = Backward && n > 1 && mode != pc::horner && (method >= pc::unscaled ? pc::environment_option("PYSIGLIB_PASCAL_BENCH_WARP", warp_default) : warp_default);
     try {
         CUDA_CHECK(cudaMemcpyAsync(device_words.get(), words.packed.data(), words.packed.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
         if (method == pc::automatic && mode == pc::horner && !ta && !ll && n && !(Backward && n == 1) && groups.size() == 1 && words.max_degree && words.max_degree <= 10) {
@@ -396,11 +464,24 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
                 const uint64_t work = std::min<uint64_t>(workspace.capacity(), batch * group.count - offset);
 #define PASCAL_RUN(MODE) launch<T, MODE, Backward>(path, out, coefs, deriv, device_words.get(), words, dimension, length, n, ta, ll, time, prefixes, offset, work, workspace.get(), plan, device_failed, stream, threads, order_offset, group)
                 if (warp && mode != pc::guarded) {
-                    const uint64_t warp_work = std::min<uint64_t>(work, 65535ULL * (threads / 32));
-                    const unsigned int grid = static_cast<unsigned int>((warp_work * 32 + threads - 1) / threads);
-#define PASCAL_WARP(MODE) coefficient_warp_backward<T, MODE><<<grid, threads, 0, stream>>>(path, out, deriv, device_words.get(), words.count, words.width, dimension, length, n, ta, ll, time, offset, warp_work, workspace.get(), plan.count, plan.block, plan.blocks, device_failed, order_offset, group.begin, group.count)
-                    if (mode == pc::scaled) { PASCAL_WARP(pc::scaled); }
-                    else { PASCAL_WARP(pc::unscaled); }
+                    const unsigned int lanes = sizeof(T) == 4 && work <= 256 && group.degree > 0 && group.degree < 16
+                        ? (group.degree < 4 ? 4 : group.degree < 8 ? 8 : 16) : 32;
+                    const uint64_t warp_work = std::min<uint64_t>(work, 65535ULL * (threads / lanes));
+                    const unsigned int grid = static_cast<unsigned int>((warp_work * lanes + threads - 1) / threads);
+#define PASCAL_WARP(MODE, M) coefficient_warp_backward<T, MODE, M><<<grid, threads, 0, stream>>>(path, out, deriv, device_words.get(), words.count, words.width, dimension, length, n, ta, ll, time, offset, warp_work, workspace.get(), plan.count, plan.block, plan.blocks, device_failed, order_offset, group.begin, group.count)
+#define PASCAL_WARP_CASE(M) case M: if (mode == pc::scaled) { PASCAL_WARP(pc::scaled, M); } else { PASCAL_WARP(pc::unscaled, M); } break
+                    if constexpr (sizeof(T) == 4) {
+                        switch (warp_work <= 256 ? group.degree : 0) {
+                            PASCAL_WARP_CASE(1); PASCAL_WARP_CASE(2); PASCAL_WARP_CASE(3); PASCAL_WARP_CASE(4);
+                            PASCAL_WARP_CASE(5); PASCAL_WARP_CASE(6); PASCAL_WARP_CASE(7); PASCAL_WARP_CASE(8);
+                            PASCAL_WARP_CASE(9); PASCAL_WARP_CASE(10); PASCAL_WARP_CASE(11); PASCAL_WARP_CASE(12);
+                            PASCAL_WARP_CASE(13); PASCAL_WARP_CASE(14); PASCAL_WARP_CASE(15); PASCAL_WARP_CASE(16);
+                            PASCAL_WARP_CASE(17); PASCAL_WARP_CASE(18); PASCAL_WARP_CASE(19); PASCAL_WARP_CASE(20);
+                            default: if (mode == pc::scaled) { PASCAL_WARP(pc::scaled, 0); } else { PASCAL_WARP(pc::unscaled, 0); } break;
+                        }
+                    } else if (mode == pc::scaled) { PASCAL_WARP(pc::scaled, 0); }
+                    else { PASCAL_WARP(pc::unscaled, 0); }
+#undef PASCAL_WARP_CASE
 #undef PASCAL_WARP
                     CUDA_CHECK(cudaGetLastError());
                     offset += warp_work;
