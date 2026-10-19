@@ -315,3 +315,66 @@ TEST(sigCoefCudaDoubleTest, MixedDegrees) {
         EXPECT_TRUE(std::abs(true_[i] - out[i]) < DOUBLE_EPSILON) << msg;
     }
 }
+
+TEST(sigCoefCudaTest, FixedDegreesAboveTen) {
+    auto check = []<typename T>() {
+        const std::vector<T> path = { T(0), T(1), T(3) };
+        for (uint64_t degree : { 11ULL, 16ULL, 20ULL }) {
+            const std::vector<uint64_t> indices(degree, 0);
+            std::vector<T> fixed_coefficients, fixed_gradient;
+            for (bool mixed : { false, true }) {
+                const std::vector<uint64_t> degrees = mixed ? std::vector<uint64_t>{ degree, 0 } : std::vector<uint64_t>{ degree };
+                std::vector<T> coefficients(degree + mixed), seeds(degree + mixed, T(0)), gradient(path.size());
+                seeds[degree - 1] = T(1);
+
+                T *d_path = nullptr, *d_coefs = nullptr, *d_seeds = nullptr, *d_gradient = nullptr;
+                uint64_t *d_indices = nullptr, *d_degrees = nullptr;
+                ASSERT_EQ(cudaSuccess, cudaMalloc(&d_path, path.size() * sizeof(T)));
+                ASSERT_EQ(cudaSuccess, cudaMalloc(&d_coefs, coefficients.size() * sizeof(T)));
+                ASSERT_EQ(cudaSuccess, cudaMalloc(&d_seeds, seeds.size() * sizeof(T)));
+                ASSERT_EQ(cudaSuccess, cudaMalloc(&d_gradient, path.size() * sizeof(T)));
+                ASSERT_EQ(cudaSuccess, cudaMalloc(&d_indices, degree * sizeof(uint64_t)));
+                ASSERT_EQ(cudaSuccess, cudaMalloc(&d_degrees, degrees.size() * sizeof(uint64_t)));
+                ASSERT_EQ(cudaSuccess, cudaMemcpy(d_path, path.data(), path.size() * sizeof(T), cudaMemcpyHostToDevice));
+                ASSERT_EQ(cudaSuccess, cudaMemcpy(d_seeds, seeds.data(), seeds.size() * sizeof(T), cudaMemcpyHostToDevice));
+                ASSERT_EQ(cudaSuccess, cudaMemcpy(d_indices, indices.data(), degree * sizeof(uint64_t), cudaMemcpyHostToDevice));
+                ASSERT_EQ(cudaSuccess, cudaMemcpy(d_degrees, degrees.data(), degrees.size() * sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+                if constexpr (std::is_same_v<T, float>) {
+                    ASSERT_EQ(0, sig_coef_cuda_f(d_path, d_coefs, d_indices, degrees.size(), d_degrees, 1, 1, 3, true));
+                    ASSERT_EQ(0, sig_coef_backprop_cuda_f(d_path, d_gradient, d_coefs, d_seeds, d_indices, degrees.size(), d_degrees, 1, 1, 3));
+                } else {
+                    ASSERT_EQ(0, sig_coef_cuda_d(d_path, d_coefs, d_indices, degrees.size(), d_degrees, 1, 1, 3, true));
+                    ASSERT_EQ(0, sig_coef_backprop_cuda_d(d_path, d_gradient, d_coefs, d_seeds, d_indices, degrees.size(), d_degrees, 1, 1, 3));
+                }
+                ASSERT_EQ(cudaSuccess, cudaMemcpy(coefficients.data(), d_coefs, coefficients.size() * sizeof(T), cudaMemcpyDeviceToHost));
+                ASSERT_EQ(cudaSuccess, cudaMemcpy(gradient.data(), d_gradient, path.size() * sizeof(T), cudaMemcpyDeviceToHost));
+                cudaFree(d_path); cudaFree(d_coefs); cudaFree(d_seeds); cudaFree(d_gradient);
+                cudaFree(d_indices); cudaFree(d_degrees);
+
+                T expected = T(1);
+                const T tolerance = std::is_same_v<T, float> ? T(1e-3) : T(1e-10);
+                for (uint64_t j = 1; j <= degree; ++j) {
+                    expected *= T(3) / T(j);
+                    EXPECT_NEAR(coefficients[j - 1], expected, std::abs(expected) * tolerance) << "degree " << degree << ", prefix " << j;
+                }
+                const T endpoint = expected * T(degree) / T(3);
+                const T gradient_tolerance = std::is_same_v<T, float> ? T(3e-2) : T(1e-10);
+                EXPECT_NEAR(gradient[0], -endpoint, std::abs(endpoint) * gradient_tolerance) << "degree " << degree;
+                EXPECT_NEAR(gradient[1], T(0), std::abs(endpoint) * gradient_tolerance) << "degree " << degree;
+                EXPECT_NEAR(gradient[2], endpoint, std::abs(endpoint) * gradient_tolerance) << "degree " << degree;
+                if (mixed) {
+                    for (uint64_t j = 0; j < degree; ++j)
+                        EXPECT_NEAR(coefficients[j], fixed_coefficients[j], std::abs(fixed_coefficients[j]) * tolerance);
+                    for (uint64_t j = 0; j < path.size(); ++j)
+                        EXPECT_NEAR(gradient[j], fixed_gradient[j], std::abs(endpoint) * tolerance) << "degree " << degree;
+                } else {
+                    fixed_coefficients = coefficients;
+                    fixed_gradient = gradient;
+                }
+            }
+        }
+    };
+    check.operator()<float>();
+    check.operator()<double>();
+}

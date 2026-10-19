@@ -55,7 +55,7 @@ const T* upload_one_over_fact(uint64_t max_degree) {
 }
 
 // =========================================================================
-// Fixed-degree kernel dispatch macro (cases 1-10)
+// Fixed-degree kernel dispatch macro (cases 1-20)
 // =========================================================================
 #define CUSIG_DISPATCH_FIXED_DEGREE(KERNEL, NUM_BLOCKS, TPB, ...) \
 	switch (max_degree) { \
@@ -69,6 +69,16 @@ const T* upload_one_over_fact(uint64_t max_degree) {
 	case 8:  KERNEL<T, 8> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
 	case 9:  KERNEL<T, 9> <<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
 	case 10: KERNEL<T, 10><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 11: KERNEL<T, 11><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 12: KERNEL<T, 12><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 13: KERNEL<T, 13><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 14: KERNEL<T, 14><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 15: KERNEL<T, 15><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 16: KERNEL<T, 16><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 17: KERNEL<T, 17><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 18: KERNEL<T, 18><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 19: KERNEL<T, 19><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
+	case 20: KERNEL<T, 20><<<NUM_BLOCKS, TPB>>>(__VA_ARGS__); break; \
 	}
 
 template<typename T>
@@ -317,7 +327,7 @@ void sig_coef_cuda_(
 		const unsigned int num_blocks = static_cast<unsigned int>(
 			work_size / tpb + (work_size % tpb != 0));
 
-		if (all_same_degree && max_degree > 0 && max_degree <= 10) {
+		if (all_same_degree && max_degree > 0) {
 			CUSIG_DISPATCH_FIXED_DEGREE(sig_coef_kernel_fixed_degree, num_blocks, tpb,
 				d_path, d_out, d_multi_idx, d_one_over_fact,
 				d_idx_offsets, d_out_offsets,
@@ -757,7 +767,7 @@ void sig_coef_backprop_cuda_(
 		const unsigned int num_blocks = static_cast<unsigned int>(
 			work_size / tpb + (work_size % tpb != 0));
 
-		if (all_same_degree && max_degree > 0 && max_degree <= 10) {
+		if (all_same_degree && max_degree > 0) {
 			CUSIG_DISPATCH_FIXED_DEGREE(sig_coef_backprop_kernel_fixed_degree, num_blocks, tpb,
 				d_path, d_out, d_coefs, d_derivs, d_multi_idx, d_ovf,
 				d_idx_offsets, d_coef_offsets,
