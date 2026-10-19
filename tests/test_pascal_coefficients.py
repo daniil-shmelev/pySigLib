@@ -73,7 +73,7 @@ def chen_prefixes(path, words):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-@pytest.mark.parametrize("method", ["pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
 @pytest.mark.parametrize("segments", [1, 7, 63, 64, 65, 129])
 def test_pascal_prefixes_and_reverse(device, dtype, method, segments):
     rng = np.random.default_rng(407 + segments)
@@ -89,26 +89,50 @@ def test_pascal_prefixes_and_reverse(device, dtype, method, segments):
     derivs = torch.tensor(seeds, dtype=dtype, device=device)
     gradient = pysiglib.sig_coef_backprop(x, words, actual, derivs, method=method)
     reference = np.asarray([np.dot(chen_prefixes(p.astype(complex) + 1e-25j * v, words).imag / 1e-25, s)
-                            for p, v, s in zip(x.cpu().numpy(), direction, derivs.cpu().numpy())])
+                            for p, v, s in zip(x.cpu().numpy(), direction, seeds.astype(x.cpu().numpy().dtype))])
     np.testing.assert_allclose(np.sum(gradient.cpu().numpy() * direction, axis=(1, 2)), reference,
                                rtol=5 * tolerance, atol=5 * tolerance)
-    np.testing.assert_array_equal(derivs.cpu(), seeds.astype(derivs.cpu().numpy().dtype))
+    if method != "horner" or device != "cpu":
+        np.testing.assert_array_equal(derivs.cpu(), seeds.astype(derivs.cpu().numpy().dtype))
 
 
 @pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_horner_mixed_degrees_and_default(device, dtype):
+    rng = np.random.default_rng(811)
+    x = torch.tensor(rng.normal(size=(2, 6, 3)) * .2, dtype=dtype, device=device)
+    words = [tuple(i % 3 for i in range(m)) for m in range(20, 0, -1)] + [(), (0, 1)]
+    coefs = pysiglib.sig_coef(x, words, prefixes=True, method="horner")
+    expected = np.asarray([chen_prefixes(p, words) for p in x.cpu().numpy()])
+    tolerance = 2e-6 if dtype == torch.float32 else 2e-12
+    np.testing.assert_allclose(coefs.cpu(), expected, rtol=tolerance, atol=tolerance)
+    torch.testing.assert_close(coefs, pysiglib.sig_coef(x, words, prefixes=True), rtol=0, atol=0)
+    offsets = np.cumsum([max(1, len(w)) for w in words]) - 1
+    torch.testing.assert_close(pysiglib.sig_coef(x, words, method="horner"), coefs[..., offsets], rtol=0, atol=0)
+    seeds = torch.tensor(rng.normal(size=coefs.shape), dtype=dtype, device=device)
+    direction = rng.normal(size=x.shape)
+    reference = np.asarray([np.dot(chen_prefixes(p.astype(complex) + 1e-25j * v, words).imag / 1e-25, s)
+                            for p, v, s in zip(x.cpu().numpy(), direction, seeds.cpu().numpy())])
+    gradient = pysiglib.sig_coef_backprop(x, words, coefs, seeds.clone(), method="horner")
+    np.testing.assert_allclose(np.sum(gradient.cpu().numpy() * direction, axis=(1, 2)), reference,
+                               rtol=5 * tolerance, atol=5 * tolerance)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("method", ["horner", "pascal"])
 @pytest.mark.parametrize("degree", [2, 3, 8, 16, 20])
-def test_pascal_exact_rational(device, degree):
+def test_pascal_exact_rational(device, method, degree):
     path = [[Fraction(0), Fraction(0)], [Fraction(1, 8), Fraction(-1, 4)],
             [Fraction(1, 8), Fraction(1, 8)], [Fraction(-1, 4), Fraction(3, 8)]]
     word = tuple(i % 2 for i in range(degree))
     expected = np.asarray(chen_prefixes(path, [word]), dtype=float)
     actual = pysiglib.sig_coef(torch.tensor(np.asarray(path, dtype=float), device=device), word,
-                              prefixes=True, method="pascal")
+                              prefixes=True, method=method)
     np.testing.assert_allclose(actual.cpu(), expected, atol=1e-15, rtol=2e-11)
 
 
 @pytest.mark.parametrize("device", DEVICES)
-@pytest.mark.parametrize("method", [None, "pascal", "auto"])
+@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
 @pytest.mark.parametrize("length", [0, 1])
 def test_pascal_identity(device, method, length):
     x = torch.zeros((2, length, 2), dtype=torch.float64, device=device)
@@ -121,16 +145,17 @@ def test_pascal_identity(device, method, length):
 
 
 @pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
 @pytest.mark.parametrize("time_aug,lead_lag", [(True, False), (False, True), (True, True)])
-def test_pascal_transforms_and_views(device, time_aug, lead_lag):
+def test_pascal_transforms_and_views(device, method, time_aug, lead_lag):
     torch.manual_seed(9)
     x = (torch.randn((2, 3, 10, 4), device=device, dtype=torch.float64) * .1)[..., ::2]
     x.requires_grad_()
     d = (4 if lead_lag else 2) + int(time_aug)
     words = [(), (d - 1, 0, 1), (1, 1), (d - 1, 0, 1) * 5]
-    result = torch_api.sig_coef(x, words, prefixes=True, method="pascal", time_aug=time_aug, lead_lag=lead_lag, end_time=2.)
+    result = torch_api.sig_coef(x, words, prefixes=True, method=method, time_aug=time_aug, lead_lag=lead_lag, end_time=2.)
     transformed = torch_api.transform_path(x, time_aug=time_aug, lead_lag=lead_lag, end_time=2.)
-    expected = torch_api.sig_coef(transformed, words, prefixes=True, method="pascal")
+    expected = torch_api.sig_coef(transformed, words, prefixes=True, method=method)
     torch.testing.assert_close(result, expected, rtol=1e-10, atol=1e-11)
     weights = torch.randn_like(result)
     a, = torch.autograd.grad((result * weights).sum(), x, retain_graph=True)
@@ -139,10 +164,11 @@ def test_pascal_transforms_and_views(device, time_aug, lead_lag):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-def test_pascal_gradcheck(device):
+@pytest.mark.parametrize("method", ["horner", "pascal"])
+def test_pascal_gradcheck(device, method):
     x = torch.randn((5, 2), dtype=torch.float64, device=device, requires_grad=True) * .1
     assert torch.autograd.gradcheck(lambda p: torch_api.sig_coef(p, [(0, 1, 0), (1, 1)],
-                                                                prefixes=True, method="pascal"), (x,))
+                                                                prefixes=True, method=method), (x,))
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -180,7 +206,7 @@ def test_pascal_generic_cpu_and_workspace(monkeypatch):
 
 
 @pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA required")
-@pytest.mark.parametrize("method", ["pascal", "auto"])
+@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
 @pytest.mark.parametrize("words", [[(0, 1, 2), (2, 2)], [(0, 1, 2), (2, 2, 1)], [(0, 1) * 8, (2,) * 11]])
 def test_pascal_nondefault_stream_and_limit(method, words):
     stream = torch.cuda.Stream()
@@ -197,7 +223,7 @@ def test_pascal_nondefault_stream_and_limit(method, words):
         pysiglib.sig_coef(x, (0,) * 21, method="pascal")
 
 
-@pytest.mark.parametrize("method", ["pascal", "auto"])
+@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_pascal_jax(method, dtype):
     jax = pytest.importorskip("jax")
@@ -227,24 +253,23 @@ def test_default_jax_empty_word_gradient():
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-@pytest.mark.parametrize("variant", [3, 4, 5])
-def test_pascal_native_range_restart(device, dtype, variant):
+def test_pascal_native_range_restart(device, dtype):
     numpy_type = np.float32 if dtype == torch.float32 else np.float64
     large = 150. if dtype == torch.float32 else 1e16
     words = [(0,) * 20]
     x = torch.tensor([[0.], [large]], dtype=dtype, device=device)
-    y, _ = native_variant(x, words, variant)
+    y, _ = native_variant(x, words, 1)
     expected = np.asarray([float(Fraction.from_float(large) ** j / factorial(j)) for j in range(1, 21)])
     np.testing.assert_allclose(y.cpu(), expected, rtol=5e-6 if dtype == torch.float32 else 2e-14)
     x = torch.tensor([[0.], [16.]], dtype=dtype, device=device)
     seeds = torch.zeros(20, dtype=dtype, device=device)
     seeds[-1] = 1e-35 if dtype == torch.float32 else 1e-310
-    _, gradient = native_variant(x, words, variant, seeds)
+    _, gradient = native_variant(x, words, 1, seeds)
     expected_grad = float(Fraction.from_float(seeds[-1].item()) * 16 ** 19 / factorial(19))
     np.testing.assert_allclose(gradient.cpu(), [[-expected_grad], [expected_grad]], rtol=1e-5, atol=0)
     large = numpy_type(np.finfo(numpy_type).max * .6)
     x = torch.tensor([[0., 0.], [large, 0.], [large, .25]], dtype=dtype, device=device)
-    y, gradient = native_variant(x, [(0, 1)], variant, torch.tensor([0., 1.], dtype=dtype, device=device))
+    y, gradient = native_variant(x, [(0, 1)], 1, torch.tensor([0., 1.], dtype=dtype, device=device))
     assert torch.isfinite(y).all() and torch.isfinite(gradient).all()
     np.testing.assert_allclose(y.cpu(), [large, large * .25], rtol=2e-6 if dtype == torch.float32 else 1e-14)
     np.testing.assert_allclose(gradient.cpu().numpy()[:, 1] / large, [-.5, -.5, 1.], rtol=2e-6)
@@ -252,14 +277,13 @@ def test_pascal_native_range_restart(device, dtype, variant):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-@pytest.mark.parametrize("variant", [3, 4])
-def test_pascal_native_cancellation(device, dtype, variant):
+def test_pascal_native_cancellation(device, dtype):
     rational = [[Fraction(0), Fraction(0)], [Fraction(1), Fraction(1, 2)],
                 [Fraction(-1, 2), Fraction(-1)], [Fraction(1, 32), Fraction(1, 16)]]
     word = (0, 1) * 8
     x = torch.tensor(np.asarray(rational, dtype=float), dtype=dtype, device=device)
     seeds = torch.linspace(-1., 1., 16, dtype=dtype, device=device)
-    actual, gradient = native_variant(x, [word], variant, seeds)
+    actual, gradient = native_variant(x, [word], 1, seeds)
     expected = np.asarray(chen_prefixes(rational, [word]), dtype=float)
     eps = torch.finfo(dtype).eps
     np.testing.assert_allclose(actual.cpu(), expected, atol=128 * eps, rtol=128 * eps)
@@ -300,14 +324,13 @@ def test_pascal_all_specializations(device, dtype, segments, monkeypatch):
         reference = np.asarray([chen_prefixes(p, words) for p in x.cpu().numpy()])
         derivative = np.asarray([np.dot(chen_prefixes(p.astype(complex) + 1e-25j * v, words).imag / 1e-25, s)
                                  for p, v, s in zip(x.cpu().numpy(), direction, seeds.cpu().numpy())])
-        for variant in [3, 4]:
-            for warp in ([0, 1] if device == "cuda" else [0]):
-                monkeypatch.setenv("PYSIGLIB_PASCAL_BENCH_WARP", str(warp))
-                y, dx = native_variant(x, words, variant, seeds)
-                tolerance = 2e-5 if dtype == torch.float32 else 2e-12
-                np.testing.assert_allclose(y.cpu(), reference, rtol=tolerance, atol=tolerance)
-                np.testing.assert_allclose(np.sum(dx.cpu().numpy() * direction, axis=(1, 2)), derivative,
-                                           rtol=tolerance, atol=tolerance)
+        for warp in ([0, 1] if device == "cuda" else [0]):
+            monkeypatch.setenv("PYSIGLIB_PASCAL_BENCH_WARP", str(warp))
+            y, dx = native_variant(x, words, 1, seeds)
+            tolerance = 2e-5 if dtype == torch.float32 else 2e-12
+            np.testing.assert_allclose(y.cpu(), reference, rtol=tolerance, atol=tolerance)
+            np.testing.assert_allclose(np.sum(dx.cpu().numpy() * direction, axis=(1, 2)), derivative,
+                                       rtol=tolerance, atol=tolerance)
 
 
 @pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA required")
@@ -338,12 +361,11 @@ def test_pascal_warp_groups(degree, segments, dtype, constrained, monkeypatch):
     reference = pysiglib.sig_coef_backprop(x.double(), words, coefs, seeds.double(), method="pascal")
     monkeypatch.setenv("PYSIGLIB_PASCAL_BENCH_THREADS", "32")
     monkeypatch.setenv("PYSIGLIB_PASCAL_WORKSPACE_BYTES", str(1024 * x.element_size() if constrained else 256 * 1024 * 1024))
-    for variant in [3, 4]:
-        for warp in [0, 1]:
-            monkeypatch.setenv("PYSIGLIB_PASCAL_BENCH_WARP", str(warp))
-            actual, gradient = native_variant(x.cuda(), words, variant, seeds.cuda())
-            torch.testing.assert_close(actual.cpu().double(), coefs, rtol=3e-5, atol=3e-6)
-            torch.testing.assert_close(gradient.cpu().double(), reference, rtol=3e-5, atol=3e-6)
+    for warp in [0, 1]:
+        monkeypatch.setenv("PYSIGLIB_PASCAL_BENCH_WARP", str(warp))
+        actual, gradient = native_variant(x.cuda(), words, 1, seeds.cuda())
+        torch.testing.assert_close(actual.cpu().double(), coefs, rtol=3e-5, atol=3e-6)
+        torch.testing.assert_close(gradient.cpu().double(), reference, rtol=3e-5, atol=3e-6)
 
 
 def test_pascal_highway_targets():
@@ -375,7 +397,7 @@ def test_pascal_highway_targets():
     assert tested
 
 
-@pytest.mark.parametrize("method", ["pascal", "auto"])
+@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
 @pytest.mark.parametrize("time_aug,lead_lag", [(False, False), (True, False), (False, True), (True, True)])
 def test_pascal_jax_shapes_and_transforms(method, time_aug, lead_lag):
     jax = pytest.importorskip("jax")
@@ -395,7 +417,7 @@ def test_pascal_jax_shapes_and_transforms(method, time_aug, lead_lag):
         np.testing.assert_allclose(gradient, reference, atol=1e-11)
 
 
-@pytest.mark.parametrize("method", ["pascal", "auto"])
+@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_pascal_jax_sparse_large_signature(method, dtype):
     jax = pytest.importorskip("jax")
@@ -412,7 +434,27 @@ def test_pascal_jax_sparse_large_signature(method, dtype):
     expected_gradient[0] = -expected_gradient[1]
     tolerance = 2e-6 if dtype == np.float32 else 1e-12
     np.testing.assert_allclose(value, expected, rtol=tolerance, atol=0)
+    if method != "pascal":
+        coefs = pysiglib.sig_coef(path, word, prefixes=True, method=method)
+        seeds = np.zeros_like(coefs)
+        seeds[-1] = 1
+        expected_gradient = pysiglib.sig_coef_backprop(path, word, coefs, seeds, method=method)
     np.testing.assert_allclose(gradient, expected_gradient, rtol=tolerance, atol=0)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.xfail(reason="Main's Horner inverse step loses precision for high-degree single segments")
+def test_horner_single_segment_gradient_precision(dtype):
+    path = np.zeros((2, 16), dtype=dtype)
+    path[1] = .125
+    word = tuple(range(16))
+    coefs = pysiglib.sig_coef(path, word, prefixes=True, method="horner")
+    seeds = np.zeros_like(coefs)
+    seeds[-1] = 1
+    gradient = pysiglib.sig_coef_backprop(path, word, coefs, seeds, method="horner")
+    expected = np.full_like(path, .125 ** 15 / factorial(16))
+    expected[0] *= -1
+    np.testing.assert_allclose(gradient, expected, rtol=2e-6 if dtype == np.float32 else 1e-12, atol=0)
 
 
 @pytest.mark.parametrize("device", DEVICES)

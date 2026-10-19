@@ -70,18 +70,9 @@ PASCAL_HD PASCAL_INLINE bool step(typename Ops::V* u, const typename Ops::V* a, 
     return Ops::all_finite(u + 1, Last ? m : m - 1) && valid;
 }
 
-template<class Ops, int Mode, class Access>
-PASCAL_HD PASCAL_INLINE bool increments(Access& access, uint64_t i, uint64_t m, typename Ops::V* a) {
-    using T = typename Ops::Scalar;
-    bool valid = true;
-    for (uint64_t j = 1; j <= m; ++j) {
-        const auto raw = access.increment(i, j - 1);
-        if constexpr (Mode == unscaled) {
-            a[j] = raw * Ops::set(T(1) / T(j));
-            valid = !Ops::tiny(raw, a[j]) && valid;
-        } else a[j] = raw;
-    }
-    return valid;
+template<class Ops, class Access>
+PASCAL_HD PASCAL_INLINE void increments(Access& access, uint64_t i, uint64_t m, typename Ops::V* a) {
+    for (uint64_t j = 1; j <= m; ++j) a[j] = access.increment(i, j - 1);
 }
 
 template<class Ops, int Mode, int Degree = 0, class Access>
@@ -94,7 +85,7 @@ PASCAL_HD bool forward(Access& access, uint64_t n, uint64_t degree, typename Ops
     bool valid = true;
     auto q = Ops::set(T(0));
     for (uint64_t i = 0; i < n; ++i) {
-        valid = increments<Ops, Mode>(access, i, m, a) && valid;
+        increments<Ops>(access, i, m, a);
         valid = step<Ops, Mode, Degree>(u, a, m, i == 0, nullptr, q) && valid;
     }
     if constexpr (Mode == scaled) {
@@ -143,7 +134,7 @@ PASCAL_HD bool backward(Access& access, uint64_t n, uint64_t degree, uint64_t bl
             ++checkpoint;
             next_checkpoint += block;
         }
-        valid = increments<Ops, Mode>(access, i, m, a) && valid;
+        increments<Ops>(access, i, m, a);
         if (block == 1)
             for (uint64_t j = 1; j <= m; ++j) links[i * m + j - 1] = a[j];
         valid = step<Ops, Mode, Degree>(u, a, m, i == 0, nullptr, q) && valid;
@@ -155,7 +146,7 @@ PASCAL_HD bool backward(Access& access, uint64_t n, uint64_t degree, uint64_t bl
             for (uint64_t j = 1; j < m; ++j) u[j] = checkpoints[b * lower + j - 1];
             for (uint64_t i = begin; i < end; ++i) {
                 for (uint64_t j = 1; j < m; ++j) local[(i - begin) * lower + j - 1] = u[j];
-                increments<Ops, Mode>(access, i, m, a);
+                increments<Ops>(access, i, m, a);
                 for (uint64_t j = 1; j <= m; ++j) links[(i - begin) * m + j - 1] = a[j];
                 step<Ops, Mode, Degree, false>(u, a, m, i == 0, nullptr, q);
             }
@@ -196,9 +187,6 @@ PASCAL_HD bool backward(Access& access, uint64_t n, uint64_t degree, uint64_t bl
                     }
                 }
                 if (m > 1) lambda[m - 1] = lambda[m - 1] + dq;
-            }
-            for (uint64_t j = 1; j <= m; ++j) {
-                if constexpr (Mode == unscaled) grad[j] = grad[j] * Ops::set(T(1) / T(j));
             }
             valid = Ops::all_finite(grad + 1, m) && Ops::all_finite(lambda + 1, m) && valid;
             access.scatter(i, grad + 1, m);

@@ -28,9 +28,9 @@ from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler
 
 
 def _check_coef_method(method):
-    if method is not None and (not isinstance(method, str) or method not in ("pascal", "auto")):
-        raise ValueError("method must be None, 'pascal', or 'auto'")
-    return {None: 0, "pascal": 1, "auto": 2}[method]
+    if method is not None and (not isinstance(method, str) or method not in ("horner", "pascal", "auto")):
+        raise ValueError("method must be None, 'horner', 'pascal', or 'auto'")
+    return {None: 0, "horner": 0, "pascal": 1, "auto": 2}[method]
 
 
 def extract_sig_coef(
@@ -155,7 +155,7 @@ def sig_coef(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param method: ``None`` keeps the current default method. ``"pascal"`` uses
+    :param method: ``None`` or ``"horner"`` uses Horner's method. ``"pascal"`` uses
         Pascal factorisation. ``"auto"`` selects a method from measured workload
         regions and otherwise uses Horner. CUDA supports words through length 20.
     :type method: str | None
@@ -216,12 +216,6 @@ def sig_coef(
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
 
-    # The default CUDA kernel needs an explicitly transformed path.
-    if method is None and data.device != "cpu" and data.data_length > 1 and (time_aug or lead_lag):
-        from .transform_path import transform_path
-        transformed = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
-        return sig_coef(transformed, words, time_aug=False, lead_lag=False, end_time=1., prefixes=prefixes, n_jobs=n_jobs)
-
     words = check_word_or_word_list(words, data.dimension, "word")
 
     if len(words) == 0:
@@ -238,7 +232,7 @@ def sig_coef(
 
     flat_indices = [i for idx in words for i in idx]
 
-    if data.device == "cpu" or method is not None:
+    if data.device == "cpu" or method_code != 0 or time_aug or lead_lag:
         words_t = torch.tensor(flat_indices, dtype=torch.uint64)
         degrees_t = torch.tensor(degrees, dtype=torch.uint64)
     else:
@@ -265,12 +259,9 @@ def sig_coef(
                 multi_indices_ptr, num_multi_indices, degrees_ptr,
                 data.batch_size, data.data_dimension, data.data_length, prefixes,
                 data.time_aug, data.lead_lag, data.end_time, method_code)
-        if method is None:
-            err_code = CUSIG_SIG_COEF[data.dtype](*args, None)
-        else:
-            with torch.cuda.device(data.path.device):
-                err_code = CUSIG_SIG_COEF[data.dtype](
-                    *args, torch.cuda.current_stream(data.path.device).cuda_stream)
+        with torch.cuda.device(data.path.device):
+            err_code = CUSIG_SIG_COEF[data.dtype](
+                *args, torch.cuda.current_stream(data.path.device).cuda_stream)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig_coef: "

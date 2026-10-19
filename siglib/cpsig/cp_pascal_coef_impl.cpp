@@ -190,7 +190,7 @@ bool pascal_prefix_simd(Access& access, uint64_t n, uint64_t m, T* u, T* a) {
     bool valid = true;
     T q = 0;
     for (uint64_t i = 0; i < n; ++i) {
-        valid = pc::increments<Ops, Mode>(access, i, m, a) && valid;
+        pc::increments<Ops>(access, i, m, a);
         if (!i) {
             valid = pc::step<Ops, Mode>(u, a, m, true, nullptr, q) && valid;
             continue;
@@ -400,11 +400,22 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
     if (!jobs) throw std::invalid_argument("n_jobs cannot be zero");
     jobs = jobs > 0 ? jobs : int(get_max_threads()) + 1 + jobs;
     if (jobs < 1) throw std::invalid_argument("n_jobs is below the supported range");
+    pc::variant(method, words.max_degree);
     if (!batch) return;
     if (method == pc::automatic && pascal_selection::cpu_region<T>(words, batch, dimension,
         length > 1 ? length - 1 : 0, jobs, time_aug, lead_lag,
         HWY_TARGET == HWY_AVX2 && pascal_selection::cpu_hardware())) method = pc::pascal_method;
     const int mode = pc::variant(method, words.max_degree);
+    if (method == pc::horner || method == pc::automatic) {
+        if constexpr (Backward) {
+            coefficient_workspace::Allocation allocation(batch * words.width * sizeof(T));
+            std::vector<T> seeds(deriv, deriv + batch * words.width);
+            sig_coef_backprop_<T>(path, out, coefs, seeds.data(), indices, num_words, degrees,
+                batch, dimension, length, time_aug, lead_lag, end_time, jobs);
+        } else sig_coef_<T>(path, out, indices, num_words, degrees, batch, dimension, length,
+            time_aug, lead_lag, end_time, prefixes, jobs);
+        return;
+    }
     if constexpr (Backward) {
         if (length == 2 && !lead_lag) {
             std::fill_n(out, batch * length * dimension, T(0));
@@ -423,38 +434,21 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
             return;
         }
     }
-    if ((method == pc::horner || method == pc::automatic || method == pc::benchmark_horner) && length > 1) {
-        if constexpr (Backward) {
-            coefficient_workspace::Allocation allocation(batch * words.width * sizeof(T));
-            std::vector<T> seeds(deriv, deriv + batch * words.width);
-            sig_coef_backprop_<T>(path, out, coefs, seeds.data(), indices, num_words, degrees,
-                batch, dimension, length, time_aug, lead_lag, end_time, jobs);
-        } else sig_coef_<T>(path, out, indices, num_words, degrees, batch, dimension, length,
-            time_aug, lead_lag, end_time, prefixes, jobs);
-        return;
-    }
-    const uint64_t cutoff = method >= pc::unscaled ? pc::environment_option("PYSIGLIB_PASCAL_BENCH_CHECKPOINT", 256) : 256;
-    if constexpr (Backward) if (method < pc::unscaled || pc::environment_option("PYSIGLIB_PASCAL_BENCH_WORDS", 1)) {
+    const uint64_t cutoff = pc::environment_option("PYSIGLIB_PASCAL_BENCH_CHECKPOINT", 256);
+    if constexpr (Backward) if (pc::environment_option("PYSIGLIB_PASCAL_BENCH_WORDS", 1)) {
         bool parallel = false;
         if (mode == pc::guarded) parallel = pascal_word_parallel<T, pc::guarded>(path, out, deriv, words, batch, dimension, length, time_aug, lead_lag, end_time, jobs, cutoff);
         else if (mode == pc::scaled) parallel = pascal_word_parallel<T, pc::scaled>(path, out, deriv, words, batch, dimension, length, time_aug, lead_lag, end_time, jobs, cutoff);
-        else parallel = pascal_word_parallel<T, pc::unscaled>(path, out, deriv, words, batch, dimension, length, time_aug, lead_lag, end_time, jobs, cutoff);
         if (parallel) return;
     }
     if (mode == pc::guarded)
         pascal_cpu<T, PascalScalarOps<T>, pc::guarded, Backward>(path, out, deriv, words, batch, dimension,
             length, time_aug, lead_lag, end_time, prefixes, jobs, false, cutoff);
-    else if (mode == pc::scaled && batch < vec_batch_lanes<T>)
+    else if (batch < vec_batch_lanes<T>)
         pascal_cpu<T, PascalScalarOps<T>, pc::scaled, Backward>(path, out, deriv, words, batch, dimension,
-            length, time_aug, lead_lag, end_time, prefixes, jobs, method >= pc::unscaled && pc::environment_option("PYSIGLIB_PASCAL_BENCH_ROWS", 0), cutoff);
-    else if (mode == pc::unscaled && batch < vec_batch_lanes<T>)
-        pascal_cpu<T, PascalScalarOps<T>, pc::unscaled, Backward>(path, out, deriv, words, batch, dimension,
-            length, time_aug, lead_lag, end_time, prefixes, jobs, method >= pc::unscaled && pc::environment_option("PYSIGLIB_PASCAL_BENCH_ROWS", 0), cutoff);
-    else if (mode == pc::scaled)
-        pascal_cpu<T, PascalSimdOps<T>, pc::scaled, Backward>(path, out, deriv, words, batch, dimension,
-            length, time_aug, lead_lag, end_time, prefixes, jobs, false, cutoff);
+            length, time_aug, lead_lag, end_time, prefixes, jobs, pc::environment_option("PYSIGLIB_PASCAL_BENCH_ROWS", 0), cutoff);
     else
-        pascal_cpu<T, PascalSimdOps<T>, pc::unscaled, Backward>(path, out, deriv, words, batch, dimension,
+        pascal_cpu<T, PascalSimdOps<T>, pc::scaled, Backward>(path, out, deriv, words, batch, dimension,
             length, time_aug, lead_lag, end_time, prefixes, jobs, false, cutoff);
 }
 

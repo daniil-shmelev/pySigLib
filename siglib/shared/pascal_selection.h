@@ -22,7 +22,7 @@
 
 namespace pascal_selection {
 
-// Threshold evidence: benchmarks/pascal_performance.rst.
+// Threshold evidence: benchmarks/pascal_short_words.rst.
 template<class T>
 bool cpu_region(const pascal_coefficient::Words& words, uint64_t batch, uint64_t dimension,
     uint64_t segments, int jobs, bool time_aug, bool lead_lag, bool calibrated) {
@@ -34,13 +34,10 @@ bool cpu_region(const pascal_coefficient::Words& words, uint64_t batch, uint64_t
 }
 
 template<class T>
-bool cuda_region(const pascal_coefficient::Words& words, uint64_t batch, uint64_t dimension,
-    uint64_t segments, uint64_t jobs, bool time_aug, bool lead_lag, bool calibrated) {
-    return calibrated && !time_aug && !lead_lag && batch >= 1 && batch <= 512
-        && dimension >= 2 && dimension <= 32 && segments >= 128 && segments <= 4096
-        && words.count >= 1 && words.count <= 64 && jobs <= 512
-        && words.max_degree >= 11 && words.max_degree <= 20
-        && words.index_count / words.count == words.max_degree;
+bool cuda_region(const pascal_coefficient::Words&, uint64_t, uint64_t,
+    uint64_t, uint64_t, bool, bool, bool) {
+    // No Pascal region is validated against the fully unrolled Horner kernels.
+    return false;
 }
 
 inline bool cpu_hardware() {

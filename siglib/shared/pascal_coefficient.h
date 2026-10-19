@@ -42,8 +42,8 @@
 
 namespace pascal_coefficient {
 
-// Values 3-6 are native benchmark controls, not Python method options.
-enum Method { horner = 0, pascal_method = 1, automatic = 2, unscaled = 3, scaled = 4, guarded = 5, benchmark_horner = 6 };
+enum Method { horner = 0, pascal_method = 1, automatic = 2 };
+enum Variant { scaled = 3, guarded = 4 };
 
 inline uint64_t add(uint64_t a, uint64_t b) {
     if (b > UINT64_MAX - a) throw std::overflow_error("Pascal size addition overflow");
@@ -150,10 +150,10 @@ PASCAL_HD PASCAL_INLINE T point(const T* path, uint64_t vertex, uint64_t channel
 
 
 inline int variant(int method, uint64_t degree) {
-    if (method < horner || method > benchmark_horner) throw std::invalid_argument("Invalid coefficient method");
-    if (method == benchmark_horner) return horner;
-    if (method == guarded || degree > 20) return guarded;
-    return method == unscaled ? unscaled : scaled;
+    if (method < horner || method > automatic) throw std::invalid_argument("Invalid coefficient method");
+    if (method == horner) return horner;
+    if (degree > 20) return guarded;
+    return scaled;
 }
 
 } // namespace pascal_coefficient

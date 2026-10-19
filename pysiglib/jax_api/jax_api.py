@@ -1691,7 +1691,7 @@ def sig_coef(
 ):
     """Compute signature coefficients at specific words using JAX.
 
-    The explicit method paths use native coefficient FFI and a custom VJP.
+    The method paths use native coefficient FFI and a custom VJP.
     Word metadata and method options are static under JIT compilation.
 
     :param path: Path or batch of paths, shape ``(length, dim)`` or ``(batch, length, dim)``.
@@ -1708,6 +1708,9 @@ def sig_coef(
     :type prefixes: bool
     :param n_jobs: Number of threads for CPU computation.
     :type n_jobs: int
+    :param method: ``None`` or ``"horner"`` uses Horner's method. ``"pascal"`` uses Pascal
+        factorisation. ``"auto"`` selects between them for measured workloads.
+    :type method: str | None
     :return: Signature coefficients at the requested words.
     """
     ensure_registered()
@@ -1728,27 +1731,12 @@ def sig_coef(
     method_code = _check_coef_method(method)
     if not words:
         raise ValueError("words must be a non-empty list of multi-indices.")
-    if method is not None or path.shape[-2] <= 1 or any(not w for w in words):
-        words = tuple(tuple(w) for w in words)
-        coefs = _sig_coef(path, words, time_aug, lead_lag, end_time, n_jobs, method_code)
-        if prefixes:
-            return coefs
-        offsets = np.cumsum([max(len(w), 1) for w in words]) - 1
-        return coefs[..., jnp.asarray(offsets)]
-
-    degree = max(len(w) for w in words)
-
-    sig_ = sig(path, degree, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, scalar_term=True, n_jobs=n_jobs)
-
-    idx = []
-    for w in words:
-        if prefixes:
-            for k in range(1, len(w) + 1):
-                idx.append(word_to_idx(w[:k], aug_dim, scalar_term=True))
-        else:
-            idx.append(word_to_idx(w, aug_dim, scalar_term=True))
-    return sig_[..., jnp.array(idx)]
+    words = tuple(tuple(w) for w in words)
+    coefs = _sig_coef(path, words, time_aug, lead_lag, end_time, n_jobs, method_code)
+    if prefixes:
+        return coefs
+    offsets = np.cumsum([max(len(w), 1) for w in words]) - 1
+    return coefs[..., jnp.asarray(offsets)]
 
 
 sig_coef.__doc__ = sig_coef_forward.__doc__
