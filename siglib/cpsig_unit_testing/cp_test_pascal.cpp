@@ -25,8 +25,8 @@ TEST(PascalCoefficient, AllPrefixAdjoints) {
     for (const uint64_t length : {2, 65, 66, 131}) {
         std::vector<double> path(length), grad(length);
         for (uint64_t i = 0; i < length; ++i) path[i] = double(i) / double(length - 1);
-        double seeds[] = {1, 2, 3, 4};
-        for (int method : {1, 2, 3, 4, 5}) {
+        for (int method : {0, 1, 2}) {
+            double seeds[] = {1, 2, 3, 4};
             double result[4];
             ASSERT_EQ(sig_coef_d(path.data(), result, word, 1, &degree, 1, 1, length,
                 false, false, 1., true, 1, method), 0);
@@ -58,6 +58,11 @@ TEST(PascalCoefficient, IdentityAndCheckedSizes) {
         EXPECT_EQ(out[1], 0);
     }
     EXPECT_THROW(pascal_coefficient::mul(UINT64_MAX, 2), std::overflow_error);
+    for (int method : {-1, 3, 4, 5, 6}) {
+        EXPECT_THROW(pascal_coefficient::variant(method, 4), std::invalid_argument);
+        EXPECT_NE(sig_coef_f(&path, out, &word, 2, degrees, 1, 1, 1,
+            false, false, 1.f, true, 1, method), 0);
+    }
     const pascal_coefficient::Checkpoints plan(4096, 16);
     EXPECT_EQ(plan.block, 64);
     EXPECT_LT(plan.count, 4096 * 17);
@@ -68,18 +73,16 @@ TEST(PascalCoefficient, GuardedTinyLink) {
     const double path[] = {0, 0, 1e300, 0, 1e300, 3 * tiny};
     const uint64_t word[] = {0, 1}, degree = 2;
     double result[2];
-    for (int method : {1, 3, 4, 5}) {
-        ASSERT_EQ(sig_coef_d(path, result, word, 1, &degree, 1, 2, 3,
-            false, false, 1., true, 1, method), 0);
-        EXPECT_NEAR(result[1] / (1e300 * (3 * tiny)), 1., 1e-14);
-    }
+    ASSERT_EQ(sig_coef_d(path, result, word, 1, &degree, 1, 2, 3,
+        false, false, 1., true, 1, 1), 0);
+    EXPECT_NEAR(result[1] / (1e300 * (3 * tiny)), 1., 1e-14);
 }
 
 TEST(PascalCoefficient, SimdScratchAlignment) {
     const uint64_t word[] = {0, 1, 1, 1, 0, 1}, degrees[] = {0, 2, 2, 2};
     for (uint64_t batch : {6, 8, 9}) {
         std::vector<double> path(batch * 16, 0), result(batch * 7), seeds(batch * 7, 1), gradient(path.size());
-        for (int method : {3, 4}) {
+        for (int method : {1, 2}) {
             for (int repeat = 0; repeat < 20; ++repeat) {
                 ASSERT_EQ(sig_coef_d(path.data(), result.data(), word, 4, degrees, batch, 2, 8,
                     false, false, 1., true, 1, method), 0);
@@ -106,8 +109,8 @@ TEST(PascalCoefficient, CalibratedSelection) {
     EXPECT_FALSE(pascal_selection::cpu_region<double>(words, 32, 8, 256, 1, false, false, true));
     EXPECT_FALSE(pascal_selection::cpu_region<float>(words, 32, 8, 256, 20, false, false, true));
     EXPECT_FALSE(pascal_selection::cpu_region<float>(words, 32, 8, 256, 1, true, false, true));
-    EXPECT_TRUE(pascal_selection::cuda_region<float>(words, 32, 8, 256, 256, false, false, true));
-    EXPECT_TRUE(pascal_selection::cuda_region<double>(words, 32, 8, 256, 256, false, false, true));
+    EXPECT_FALSE(pascal_selection::cuda_region<float>(words, 32, 8, 256, 256, false, false, true));
+    EXPECT_FALSE(pascal_selection::cuda_region<double>(words, 32, 8, 256, 256, false, false, true));
     EXPECT_FALSE(pascal_selection::cuda_region<float>(words, 32, 8, 256, 256, false, false, false));
     EXPECT_FALSE(pascal_selection::cuda_region<float>(words, 512, 8, 256, 4096, false, false, true));
     degrees[0] = 11;

@@ -118,72 +118,6 @@ struct Access {
     }
 };
 
-// Same Horner and inverse-Chen recurrences as the legacy coefficient kernels.
-template<class T, int Degree, bool Backward>
-__device__ void horner(Access<T>& access, uint64_t degree, T* u) {
-    const uint64_t m = Degree ? Degree : degree;
-    if constexpr (Backward) if (access.n == 1) {
-        pc::single_segment_backward<pc::ScalarOps<T>>(access, m, u);
-        return;
-    }
-    T fact[21], a[21], lambda[21], buffer[21], grad[21];
-    fact[0] = T(1);
-    u[0] = T(1);
-    for (uint64_t j = 1; j <= m; ++j) {
-        fact[j] = fact[j - 1] / T(j);
-        u[j] = Backward ? access.coefs[j - 1] : T(0);
-        if constexpr (Backward) lambda[j] = access.seed(j - 1);
-    }
-    if constexpr (!Backward) {
-        for (uint64_t i = 0; i < access.n; ++i) {
-            for (uint64_t j = 1; j <= m; ++j) a[j] = access.increment(i, j - 1);
-            if (!i) {
-                T product = T(1);
-                for (uint64_t j = 1; j <= m; ++j) { product *= a[j]; u[j] = product * fact[j]; }
-            } else for (uint64_t j = m; j > 0; --j) {
-                T value = fact[j];
-                for (uint64_t k = 1; k < j; ++k) value = value * a[k] + u[k] * fact[j - k];
-                u[j] += a[j] * value;
-            }
-        }
-    } else {
-        for (uint64_t i = access.n; i-- > 0;) {
-            for (uint64_t j = 1; j <= m; ++j) a[j] = access.increment(i, j - 1);
-            T last = T(1);
-            for (uint64_t j = 1; j <= m; ++j) {
-                for (uint64_t k = 1; k < j; ++k) buffer[k] *= a[j];
-                buffer[j] = last * a[j];
-                T value = 0;
-                for (uint64_t k = 1; k <= j; ++k) value += buffer[k] * ((j - k + 1) % 2 ? -fact[j - k + 1] : fact[j - k + 1]);
-                last = u[j];
-                u[j] += value;
-            }
-            for (uint64_t j = 1; j <= m; ++j) {
-                if (j > 1) {
-                    for (uint64_t k = 1; k + 1 < j; ++k) buffer[k] *= a[j - 1];
-                    buffer[j - 1] = u[j - 2] * a[j - 1];
-                }
-                T value = u[j - 1];
-                for (uint64_t k = 1; k < j; ++k) value += buffer[k] * fact[j - k + 1];
-                T g = lambda[j] * value, product = T(1);
-                for (uint64_t k = j + 1; k <= m; ++k) {
-                    product *= a[k];
-                    value = u[j - 1] * fact[k - j + 1];
-                    for (uint64_t h = 1; h < j; ++h) value += buffer[h] * fact[k - h + 1];
-                    g += lambda[k] * product * value;
-                }
-                grad[j - 1] = g;
-            }
-            access.scatter(i, grad, m);
-            for (uint64_t j = 1; j < m; ++j) {
-                T product = T(1), value = 0;
-                for (uint64_t k = j + 1; k <= m; ++k) { product *= a[k]; value += lambda[k] * product * fact[k - j]; }
-                lambda[j] += value;
-            }
-        }
-    }
-}
-
 template<class T, int Mode, bool Backward, int Degree = 0>
 __global__ void coefficient_kernel(const T* __restrict__ path, T* __restrict__ out, const T* __restrict__ coefs, const T* __restrict__ deriv,
     const uint64_t* __restrict__ metadata, uint64_t words, uint64_t width, uint64_t dimension, uint64_t length,
@@ -207,14 +141,15 @@ __global__ void coefficient_kernel(const T* __restrict__ path, T* __restrict__ o
         access.word = channels;
     }
     T scratch[Backward ? 4 * (capacity + 1) + capacity * (capacity + 1) / 2 : 2 * (capacity + 1)];
-    constexpr bool merge_updates = Backward && Degree > 0 && Degree <= 4 && Mode != pc::guarded && Mode != pc::horner;
+    constexpr bool merge_updates = Backward && Degree > 0 && Degree <= 4 && Mode != pc::guarded;
     T previous[merge_updates ? capacity : 1] = {};
     if constexpr (merge_updates) access.previous = previous;
     bool valid = true;
-    if constexpr (Mode == pc::horner) horner<T, Degree, Backward>(access, m, scratch);
-    else if constexpr (Backward)
-        valid = pc::backward<pc::ScalarOps<T>, Mode, Degree>(access, n, m, block, blocks,
+    if constexpr (Backward) {
+        if (n == 1) pc::single_segment_backward<pc::ScalarOps<T>>(access, m, scratch);
+        else valid = pc::backward<pc::ScalarOps<T>, Mode, Degree>(access, n, m, block, blocks,
             CheckpointView<T>{checkpoints + local, work}, scratch);
+    }
     else valid = pc::forward<pc::ScalarOps<T>, Mode, Degree>(access, n, m, scratch, scratch + capacity + 1);
     if constexpr (!Backward) {
         const uint64_t count = prefixes && m ? m : 1;
@@ -232,7 +167,7 @@ void launch(const T* path, T* out, const T* coefs, const T* deriv, const uint64_
     const unsigned int grid = static_cast<unsigned int>((work + threads - 1) / threads);
 #define PASCAL_LAUNCH(M) coefficient_kernel<T, Mode, Backward, M><<<grid, threads, 0, stream>>>(path, out, coefs, deriv, metadata, words.count, words.width, dimension, length, n, ta, ll, time, prefixes, offset, work, checkpoints, plan.count, plan.block, plan.blocks, failed, order_offset, group.begin, group.count)
 #define PASCAL_CUDA_CASE(M) case M: PASCAL_LAUNCH(M); break
-    if constexpr (Mode == pc::guarded || Mode == pc::horner) { PASCAL_LAUNCH(0); }
+    if constexpr (Mode == pc::guarded) { PASCAL_LAUNCH(0); }
     else switch (group.degree) {
         PASCAL_CUDA_CASE(1); PASCAL_CUDA_CASE(2); PASCAL_CUDA_CASE(3); PASCAL_CUDA_CASE(4);
         PASCAL_CUDA_CASE(5); PASCAL_CUDA_CASE(6); PASCAL_CUDA_CASE(7); PASCAL_CUDA_CASE(8);
@@ -246,7 +181,7 @@ void launch(const T* path, T* out, const T* coefs, const T* deriv, const uint64_
     CUDA_CHECK(cudaGetLastError());
 }
 
-template<class T, int Mode, int Degree = 0>
+template<class T, int Degree = 0>
 __global__ void coefficient_warp_backward(const T* __restrict__ path, T* __restrict__ out, const T* __restrict__ deriv, const uint64_t* __restrict__ metadata,
     uint64_t words, uint64_t width, uint64_t dimension, uint64_t length, uint64_t n, bool ta, bool ll, T time,
     uint64_t offset, uint64_t work, T* checkpoints, uint64_t checkpoint_stride, uint64_t block,
@@ -266,23 +201,18 @@ __global__ void coefficient_warp_backward(const T* __restrict__ path, T* __restr
     T* saved = checkpoints + local * checkpoint_stride;
     T* replay = saved + blocks * lower;
     T* links = replay + (block > 1 ? block * lower : 0);
-    const T inverse_lane = lane ? T(1) / T(lane) : T(0);
-    T u = lane == 0 ? T(1) : T(0), lambda = 0, a = 0, raw = 0, q = 0, previous = 0;
+    T u = lane == 0 ? T(1) : T(0), lambda = 0, a = 0, q = 0, previous = 0;
     T tape[Degree ? Degree : 20];
     if (lane && lane <= m) lambda = deriv[sample * width + metadata[2 * words + w] + lane - 1];
     bool valid = true;
-    if constexpr (Mode == pc::scaled) {
-        T factor = 1;
-        for (unsigned int j = 2; j <= lane; ++j) factor /= T(j);
-        const T seed = lambda;
-        lambda *= factor;
-        valid = !pc::ScalarOps<T>::tiny(seed, lambda);
-    }
+    T factor = 1;
+    for (unsigned int j = 2; j <= lane; ++j) factor /= T(j);
+    const T seed = lambda;
+    lambda *= factor;
+    valid = !pc::ScalarOps<T>::tiny(seed, lambda);
     auto increment = [&](uint64_t i) {
         if (lane && lane <= m) {
-            raw = pc::point(x, i + 1, c, dimension, n, ta, ll, time) - pc::point(x, i, c, dimension, n, ta, ll, time);
-            a = Mode == pc::unscaled ? raw * inverse_lane : raw;
-            if constexpr (Mode == pc::unscaled) valid = !pc::ScalarOps<T>::tiny(raw, a) && valid;
+            a = pc::point(x, i + 1, c, dimension, n, ta, ll, time) - pc::point(x, i, c, dimension, n, ta, ll, time);
         }
     };
     auto step = [&](bool first, bool record, bool last) {
@@ -369,7 +299,6 @@ __global__ void coefficient_warp_backward(const T* __restrict__ path, T* __restr
                 }
                 if (m > 1 && lane == m - 1) lambda += dq;
             }
-            if constexpr (Mode == pc::unscaled) grad *= inverse_lane;
             if (lane && lane <= m) valid = pc::ScalarOps<T>::finite(grad) && pc::ScalarOps<T>::finite(lambda) && valid;
             T total = 0;
             if (lane && lane <= m) {
@@ -415,12 +344,17 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
     const uint64_t jobs = pc::mul(batch, count);
     const uint64_t output_elements = Backward ? pc::mul(batch, pc::mul(length, dimension)) : pc::mul(batch, words.width);
     const uint64_t output_bytes = pc::mul(output_elements, sizeof(T));
+    pc::variant(method, words.max_degree);
     if (!batch) return;
     const auto stream = static_cast<cudaStream_t>(stream_ptr);
     int mode = pc::variant(method, words.max_degree);
     if (method == pc::horner || (method == pc::automatic && !(pascal_selection::cuda_region<T>(
         words, batch, dimension, n, jobs, ta, ll, true) && calibrated_cuda()))) mode = pc::horner;
-    if constexpr (Backward) if (n == 1) mode = pc::horner;
+    if (mode == pc::horner) {
+        sig_coef_horner_cuda<T, Backward>(path, out, coefs, deriv, indices, count, degrees, batch,
+            dimension, length, ta, ll, time, prefixes, false, stream_ptr);
+        return;
+    }
     const uint64_t order_offset = words.packed.size();
     words.packed.resize(pc::add(order_offset, count));
     for (uint64_t w = 0; w < count; ++w) words.packed[order_offset + w] = w;
@@ -433,9 +367,9 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
         groups.push_back({begin, end - begin, degree});
         begin = end;
     }
-    const uint64_t cutoff = method >= pc::unscaled ? pc::environment_option("PYSIGLIB_PASCAL_BENCH_CHECKPOINT", 64) : 64;
+    const uint64_t cutoff = pc::environment_option("PYSIGLIB_PASCAL_BENCH_CHECKPOINT", 64);
     const pc::Checkpoints plan(n, words.max_degree, cutoff);
-    const uint64_t row = Backward && n > 1 && mode != pc::horner ? plan.count : 0;
+    const uint64_t row = Backward && n > 1 ? plan.count : 0;
     const uint64_t budget = pc::workspace_limit();
     const uint64_t state = words.max_degree + 1;
     const uint64_t local_count = Backward ? pc::add(pc::mul(5, state), pc::mul(state, words.max_degree) / 2) : pc::mul(2, state);
@@ -446,20 +380,15 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
     CudaBuf<uint64_t> device_words(pc::mul(pc::add(words.packed.size(), 1), sizeof(uint64_t)));
     last_workspace_bytes = pc::add(pc::mul(pc::mul(workspace.capacity(), row), sizeof(T)), pc::mul(pc::add(words.packed.size(), 1), sizeof(uint64_t)));
     int* device_failed = reinterpret_cast<int*>(device_words.get() + words.packed.size());
-    const unsigned int threads = static_cast<unsigned int>(method >= pc::unscaled ? pc::environment_option("PYSIGLIB_PASCAL_BENCH_THREADS", 64) : 64);
+    const unsigned int threads = static_cast<unsigned int>(pc::environment_option("PYSIGLIB_PASCAL_BENCH_THREADS", 64));
     if (threads != 32 && threads != 64 && threads != 128 && threads != 256) throw std::invalid_argument("Pascal CUDA block size must be 32, 64, 128 or 256");
     const bool warp_default = words.max_degree >= 8 && (jobs <= 512 || (sizeof(T) == 4 && words.max_degree >= 16));
-    const bool warp = Backward && n > 1 && mode != pc::horner && (method >= pc::unscaled ? pc::environment_option("PYSIGLIB_PASCAL_BENCH_WARP", warp_default) : warp_default);
+    const bool warp = Backward && n > 1 && pc::environment_option("PYSIGLIB_PASCAL_BENCH_WARP", warp_default);
     try {
         CUDA_CHECK(cudaMemcpyAsync(device_words.get(), words.packed.data(), words.packed.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
-        if (method == pc::automatic && mode == pc::horner && !ta && !ll && n && !(Backward && n == 1) && groups.size() == 1 && words.max_degree && words.max_degree <= 10) {
-            sig_coef_fixed_metadata_cuda<T, Backward>(path, out, coefs, deriv, device_words.get(), words.count,
-                words.width, words.max_degree, batch, dimension, length, prefixes, stream);
-            return;
-        }
         for (;;) {
             if constexpr (Backward) if (output_bytes) CUDA_CHECK(cudaMemsetAsync(out, 0, output_bytes, stream));
-            if (mode != pc::horner) CUDA_CHECK(cudaMemsetAsync(device_failed, 0, sizeof(int), stream));
+            CUDA_CHECK(cudaMemsetAsync(device_failed, 0, sizeof(int), stream));
             for (const auto& group : groups) for (uint64_t offset = 0; offset < batch * group.count;) {
                 const uint64_t work = std::min<uint64_t>(workspace.capacity(), batch * group.count - offset);
 #define PASCAL_RUN(MODE) launch<T, MODE, Backward>(path, out, coefs, deriv, device_words.get(), words, dimension, length, n, ta, ll, time, prefixes, offset, work, workspace.get(), plan, device_failed, stream, threads, order_offset, group)
@@ -468,8 +397,8 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
                         ? (group.degree < 4 ? 4 : group.degree < 8 ? 8 : 16) : 32;
                     const uint64_t warp_work = std::min<uint64_t>(work, 65535ULL * (threads / lanes));
                     const unsigned int grid = static_cast<unsigned int>((warp_work * lanes + threads - 1) / threads);
-#define PASCAL_WARP(MODE, M) coefficient_warp_backward<T, MODE, M><<<grid, threads, 0, stream>>>(path, out, deriv, device_words.get(), words.count, words.width, dimension, length, n, ta, ll, time, offset, warp_work, workspace.get(), plan.count, plan.block, plan.blocks, device_failed, order_offset, group.begin, group.count)
-#define PASCAL_WARP_CASE(M) case M: if (mode == pc::scaled) { PASCAL_WARP(pc::scaled, M); } else { PASCAL_WARP(pc::unscaled, M); } break
+#define PASCAL_WARP(M) coefficient_warp_backward<T, M><<<grid, threads, 0, stream>>>(path, out, deriv, device_words.get(), words.count, words.width, dimension, length, n, ta, ll, time, offset, warp_work, workspace.get(), plan.count, plan.block, plan.blocks, device_failed, order_offset, group.begin, group.count)
+#define PASCAL_WARP_CASE(M) case M: PASCAL_WARP(M); break
                     if constexpr (sizeof(T) == 4) {
                         switch (warp_work <= 256 ? group.degree : 0) {
                             PASCAL_WARP_CASE(1); PASCAL_WARP_CASE(2); PASCAL_WARP_CASE(3); PASCAL_WARP_CASE(4);
@@ -477,25 +406,22 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
                             PASCAL_WARP_CASE(9); PASCAL_WARP_CASE(10); PASCAL_WARP_CASE(11); PASCAL_WARP_CASE(12);
                             PASCAL_WARP_CASE(13); PASCAL_WARP_CASE(14); PASCAL_WARP_CASE(15); PASCAL_WARP_CASE(16);
                             PASCAL_WARP_CASE(17); PASCAL_WARP_CASE(18); PASCAL_WARP_CASE(19); PASCAL_WARP_CASE(20);
-                            default: if (mode == pc::scaled) { PASCAL_WARP(pc::scaled, 0); } else { PASCAL_WARP(pc::unscaled, 0); } break;
+                            default: PASCAL_WARP(0); break;
                         }
-                    } else if (mode == pc::scaled) { PASCAL_WARP(pc::scaled, 0); }
-                    else { PASCAL_WARP(pc::unscaled, 0); }
+                    } else { PASCAL_WARP(0); }
 #undef PASCAL_WARP_CASE
 #undef PASCAL_WARP
                     CUDA_CHECK(cudaGetLastError());
                     offset += warp_work;
                     continue;
                 }
-                if (mode == pc::horner) { PASCAL_RUN(pc::horner); }
-                else if (mode == pc::scaled) { PASCAL_RUN(pc::scaled); }
-                else if (mode == pc::guarded) { PASCAL_RUN(pc::guarded); }
-                else { PASCAL_RUN(pc::unscaled); }
+                if (mode == pc::scaled) { PASCAL_RUN(pc::scaled); }
+                else { PASCAL_RUN(pc::guarded); }
 #undef PASCAL_RUN
                 offset += work;
             }
             int failed = 0;
-            if (mode != pc::horner) CUDA_CHECK(cudaMemcpyAsync(&failed, device_failed, sizeof(int), cudaMemcpyDeviceToHost, stream));
+            CUDA_CHECK(cudaMemcpyAsync(&failed, device_failed, sizeof(int), cudaMemcpyDeviceToHost, stream));
             CUDA_CHECK(cudaStreamSynchronize(stream));
             if (!failed || mode == pc::guarded) break;
             mode = pc::guarded;

@@ -57,7 +57,7 @@ def sig_coef_backprop(
     :type coefs: numpy.ndarray | torch.Tensor
     :param derivs: Derivatives of the scalar function :math:`F` with respect to the signature coefficients,
         :math:`\\partial F / \\partial S(x)^I`. This must be an array of the same shape as the
-        provided coefficients. **On CPU with method=None, this buffer may be modified in-place.**
+        provided coefficients. **On CPU with method=None or method="horner", this buffer may be modified in-place.**
     :type derivs: numpy.ndarray | torch.Tensor
     :param time_aug: Whether the signature coefficients were computed with ``time_aug=True``.
     :type time_aug: bool
@@ -69,8 +69,8 @@ def sig_coef_backprop(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param method: Method used for coefficient computation: ``None``, ``"pascal"``,
-        or ``"auto"``. Pascal uses checkpoints and replay for reverse accumulation.
+    :param method: Method used for coefficient computation: ``None``, ``"horner"``,
+        ``"pascal"``, or ``"auto"``. Pascal uses checkpoints and replay for reverse accumulation.
     :type method: str | None
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
@@ -116,14 +116,6 @@ def sig_coef_backprop(
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
 
-    # The default CUDA kernel needs an explicitly transformed path.
-    if method is None and data.device != "cpu" and data.data_length > 1 and (time_aug or lead_lag):
-        from .transform_path import transform_path
-        from .transform_path_backprop import transform_path_backprop
-        transformed = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
-        aug_grad = sig_coef_backprop(transformed, words, coefs, derivs, time_aug=False, lead_lag=False, end_time=1., n_jobs=n_jobs)
-        return transform_path_backprop(aug_grad, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
-
     words = check_word_or_word_list(words, data.dimension, "word")
     if not words:
         raise ValueError("words must be a non-empty list of multi-indices.")
@@ -134,23 +126,6 @@ def sig_coef_backprop(
 
     if coefs.shape[-1] != coefs_len:
         raise ValueError("Expected coefs.shape[-1] == " + str(coefs_len) + ". Please make sure coefs was generated using prefixes=True.")
-
-    # Skip constant empty words for the default CUDA backprop kernel.
-    if method is None and data.data_length > 1 and data.device != "cpu" and any(len(w) == 0 for w in words):
-        keep_indices = []
-        pos = 0
-        for w in words:
-            block_len = len(w) if w else 1
-            if w:
-                keep_indices.extend(range(pos, pos + block_len))
-            pos += block_len
-        words = [w for w in words if w]
-        if not words:
-            result = PathOutputHandler(data.data_length, data.data_dimension, data)
-            return result.data
-        coefs = coefs[..., keep_indices].contiguous()
-        derivs = derivs[..., keep_indices].contiguous()
-        coefs_len = sum(len(idx) for idx in words)
 
     deriv_data = MultipleSigInputHandler([coefs, derivs], coefs_len, ["coef", "deriv"])
     for item in deriv_data.data:
@@ -164,7 +139,7 @@ def sig_coef_backprop(
 
     flat_indices = [i for idx in words for i in idx]
 
-    if data.device == "cpu" or method is not None:
+    if data.device == "cpu" or method_code != 0 or time_aug or lead_lag:
         words_t = torch.tensor(flat_indices, dtype=torch.uint64)
         degrees_t = torch.tensor(degrees, dtype=torch.uint64)
     else:
@@ -193,12 +168,9 @@ def sig_coef_backprop(
                 multi_indices_ptr, num_multi_indices, degrees_ptr,
                 data.batch_size, data.data_dimension, data.data_length,
                 data.time_aug, data.lead_lag, data.end_time, method_code)
-        if method is None:
-            err_code = CUSIG_SIG_COEF_BACKPROP[data.dtype](*args, None)
-        else:
-            with torch.cuda.device(data.path.device):
-                err_code = CUSIG_SIG_COEF_BACKPROP[data.dtype](
-                    *args, torch.cuda.current_stream(data.path.device).cuda_stream)
+        with torch.cuda.device(data.path.device):
+            err_code = CUSIG_SIG_COEF_BACKPROP[data.dtype](
+                *args, torch.cuda.current_stream(data.path.device).cuda_stream)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig_coef_backprop: "

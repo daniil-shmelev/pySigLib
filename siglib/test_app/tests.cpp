@@ -1191,7 +1191,7 @@ void profile_coefficient(const std::string& directory, const std::map<std::strin
     };
     const bool gpu = value("backend", "cpu") == "cuda";
     const auto phase = value("phase", "both"), method_name = value("method", "pascal");
-    const std::map<std::string, int> methods{{"horner", 6}, {"horner_legacy", 0}, {"pascal", 1}, {"auto", 2}, {"unscaled", 3}, {"scaled", 4}, {"guarded", 5}};
+    const std::map<std::string, int> methods{{"horner", 0}, {"pascal", 1}, {"auto", 2}};
     const int method = methods.at(method_name), threads = std::stoi(value("threads", "1"));
     const uint64_t m = std::stoull(value("degree", "16")), n = std::stoull(value("segments", "256"));
     const uint64_t batch = std::stoull(value("batch", "32")), words = std::stoull(value("words", "8"));

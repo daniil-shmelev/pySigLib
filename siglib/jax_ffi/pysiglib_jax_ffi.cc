@@ -27,6 +27,7 @@
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 #include "cusig.h"
+#include "cu_runtime_utils.h"
 #include <cuda_runtime_api.h>
 #endif
 
@@ -1024,16 +1025,25 @@ ffi::Error SigCoefImpl(
             const char* fn_name = Backward ? "sig_coef_backprop" : "sig_coef";
 #ifdef PYSIGLIB_JAX_WITH_CUDA
             if constexpr (Cuda) {
-                // FFI word metadata is on the host, including default edge cases.
-                const int cuda_method = method == 0 ? 2 : static_cast<int>(method);
+                const std::uint64_t* word_data = indices.begin();
+                const std::uint64_t* degree_data = degrees.begin();
+                CudaBuf<std::uint64_t> device_metadata;
+                if (method == 0 && !time_aug && !lead_lag && spec.batch_size) {
+                    device_metadata = CudaBuf<std::uint64_t>(pascal_coefficient::mul(
+                        pascal_coefficient::add(indices.size(), degrees.size()), sizeof(std::uint64_t)));
+                    word_data = device_metadata.get();
+                    degree_data = word_data + indices.size();
+                    if (indices.size()) CUDA_CHECK(cudaMemcpyAsync(device_metadata.get(), indices.begin(), indices.size() * sizeof(std::uint64_t), cudaMemcpyHostToDevice, static_cast<cudaStream_t>(stream)));
+                    CUDA_CHECK(cudaMemcpyAsync(device_metadata.get() + indices.size(), degrees.begin(), degrees.size() * sizeof(std::uint64_t), cudaMemcpyHostToDevice, static_cast<cudaStream_t>(stream)));
+                }
                 if constexpr (Backward)
                     err_code = CudaFns<T>::coef_backprop(BufferData<T>(path), BufferData<T>(out),
-                        BufferData<T>(*coefs), BufferData<T>(*cotangent), indices.begin(), degrees.size(), degrees.begin(),
-                        spec.batch_size, spec.dimension, spec.length, time_aug, lead_lag, static_cast<T>(end_time), cuda_method, stream);
+                        BufferData<T>(*coefs), BufferData<T>(*cotangent), word_data, degrees.size(), degree_data,
+                        spec.batch_size, spec.dimension, spec.length, time_aug, lead_lag, static_cast<T>(end_time), static_cast<int>(method), stream);
                 else
-                    err_code = CudaFns<T>::coef(BufferData<T>(path), BufferData<T>(out), indices.begin(),
-                        degrees.size(), degrees.begin(), spec.batch_size, spec.dimension, spec.length,
-                        true, time_aug, lead_lag, static_cast<T>(end_time), cuda_method, stream);
+                    err_code = CudaFns<T>::coef(BufferData<T>(path), BufferData<T>(out), word_data,
+                        degrees.size(), degree_data, spec.batch_size, spec.dimension, spec.length,
+                        true, time_aug, lead_lag, static_cast<T>(end_time), static_cast<int>(method), stream);
                 return err_code ? NativeCallErrorCuda(fn_name, err_code) : ffi::Error::Success();
             } else
 #endif
