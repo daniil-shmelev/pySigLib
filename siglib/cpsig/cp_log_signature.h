@@ -269,13 +269,31 @@ void log_sig_combine_(
 
 	uint64_t m2 = cache.bch_size();
 
-	auto func = [&](const T* ls1, const T* ls2, T* o) {
-		thread_local std::vector<T> tl_memo;
-		tl_memo.resize(m2 * m);
-		bch_combine_impl_<T>(ls1, ls2, o, cache, tl_memo.data());
+	auto work_range = [&](uint64_t begin, uint64_t end) {
+		if (begin == end) return;
+		constexpr uint64_t width = BchBatchValue<T>::width;
+		const bool batched = width > 1 && end - begin >= width;
+		const bool tail = !batched || (end - begin) % width != 0;
+		const uint64_t batch_memo_size = cache.bch_memo_nodes * cache.bch_memo_width * width;
+		thread_local std::vector<T> scratch;
+		scratch.resize(std::max(batched ? batch_memo_size : 0, tail ? m2 * m : 0));
+		if constexpr (width > 1) {
+			if (batched) {
+				// Coordinates outside the operation ranges stay zero across tiles.
+				std::fill_n(scratch.data(), batch_memo_size, T(0));
+				for (; end - begin >= width; begin += width)
+					bch_combine_batch_(log_sig1 + begin * m, log_sig2 + begin * m,
+						out + begin * m, cache, scratch.data());
+			}
+		}
+		for (; begin < end; ++begin)
+			bch_combine_impl_<T>(log_sig1 + begin * m, log_sig2 + begin * m,
+				out + begin * m, cache, scratch.data());
 	};
-	multi_threaded_batch(func, batch_size, n_jobs,
-		make_batch(log_sig1, m), make_batch(log_sig2, m), make_batch(out, m));
+	if (batch_size == 0 || n_jobs == 1 || batch_size == 1)
+		work_range(0, batch_size);
+	else
+		spawn_batch_threads(batch_size, n_jobs, work_range);
 }
 
 // ========================================================================

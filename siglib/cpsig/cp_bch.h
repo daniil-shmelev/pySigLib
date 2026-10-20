@@ -522,6 +522,54 @@ struct alignas(vec_batch_bytes) BchBatchValue {
 	T data[width]{};
 };
 
+// Brackets only use lower degrees, so evaluate coordinates in degree order.
+// Highest-degree coordinates go straight to the output instead of the memo.
+template<std::floating_point T>
+void bch_combine_batch_(
+	const T* ls1, const T* ls2, T* out, const BchCache& cache, T* memo
+) {
+	using Value = BchBatchValue<T>;
+	constexpr uint64_t width = Value::width;
+	const Simd<T> d;
+	const uint64_t m = cache.m, stride = cache.bch_memo_width * width;
+	for (uint64_t k = 0; k < m; ++k) {
+		Value left, right;
+		for (uint64_t lane = 0; lane < width; ++lane) {
+			left.data[lane] = ls1[lane * m + k];
+			right.data[lane] = ls2[lane * m + k];
+		}
+		const auto x = hn::Load(d, left.data), y = hn::Load(d, right.data);
+		auto combined = hn::Add(x, y);
+		if (k < cache.bch_memo_width) {
+			hn::StoreU(x, d, memo + k * width);
+			hn::StoreU(y, d, memo + stride + k * width);
+		}
+		for (uint64_t w = 2; w < cache.bch_size(); ++w) {
+			const auto [begin, end] = cache.bch_ranges[w - 2];
+			if (k < begin || k >= end) continue;
+			const auto& operation = cache.bch_operation(w);
+			const auto* v1 = memo + operation.left * stride;
+			const auto* v2 = memo + operation.right * stride;
+			auto sum = hn::Zero(d);
+			for (uint32_t q = cache.comm_k_ptr[k]; q < cache.comm_k_ptr[k + 1]; ++q) {
+				const uint64_t i = cache.comm_k_i[q] * width, j = cache.comm_k_j[q] * width;
+				const auto coefficient = hn::Set(d, static_cast<T>(cache.comm_k_val_d[q]));
+				const auto term = hn::Sub(hn::Mul(hn::LoadU(d, v1 + i), hn::LoadU(d, v2 + j)),
+					hn::Mul(hn::LoadU(d, v1 + j), hn::LoadU(d, v2 + i)));
+				sum = hn::MulAdd(term, coefficient, sum);
+			}
+			if (w < cache.bch_memo_nodes && k < cache.bch_memo_width)
+				hn::StoreU(sum, d, memo + w * stride + k * width);
+			const T weight = static_cast<T>(operation.coefficient);
+			if (weight != T(0)) combined = hn::MulAdd(sum, hn::Set(d, weight), combined);
+		}
+		Value result;
+		hn::Store(combined, d, result.data);
+		for (uint64_t lane = 0; lane < width; ++lane)
+			out[lane * m + k] = result.data[lane];
+	}
+}
+
 template<std::floating_point T>
 void bch_combine_linear_batch_(
 	const BchBatchValue<T>* ls1, const BchBatchValue<T>* ls2,
