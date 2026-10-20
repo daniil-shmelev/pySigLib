@@ -442,7 +442,7 @@ __global__ void sig_coef_backprop_kernel(
 	for (uint64_t i = 0; i < degree; ++i)
 		d[i] = my_derivs[i];
 
-	T buff[SIG_COEF_CUDA_MAX_DEGREE];
+	T states[SIG_COEF_CUDA_MAX_DEGREE];
 	T prev_upd[SIG_COEF_CUDA_MAX_DEGREE];
 	for (uint64_t i = 0; i < degree; ++i)
 		prev_upd[i] = T(0);
@@ -453,55 +453,41 @@ __global__ void sig_coef_backprop_kernel(
 			dx[i] = my_path[t * dimension + ch[i]]
 			      - my_path[(t - 1) * dimension + ch[i]];
 
-		// uncombine_coefs_ (sovf computed inline)
+		// Reconstruct the previous prefixes using Chen's inverse relation.
 		{
 			T last_c = c[0];
 			for (uint64_t i = 1; i <= degree; ++i) {
 				const T inc = dx[i - 1];
 				for (uint64_t j = 0; j + 1 < i; ++j)
-					buff[j] *= inc;
-				buff[i - 1] = last_c * inc;
+					states[j] *= inc;
+				states[i - 1] = last_c * inc;
 				T acc = T(0);
 				for (uint64_t j = 0; j < i; ++j)
-					acc += buff[j] * (((i - j) & 1) ? -one_over_fact[i - j] : one_over_fact[i - j]);
+					acc += states[j] * (((i - j) & 1) ? -one_over_fact[i - j] : one_over_fact[i - j]);
 				last_c = c[i];
 				c[i] += acc;
 			}
 		}
 
-		// update_path_derivs_ -> collect into cur_upd
 		T cur_upd[SIG_COEF_CUDA_MAX_DEGREE];
-		{
-			T upd = d[0];
-			T rp = T(1);
-			for (uint64_t m = 1; m < degree; ++m) {
-				rp *= dx[m];
-				upd += d[m] * rp * one_over_fact[m + 1];
+		for (uint64_t i = 0; i < degree; ++i)
+			cur_upd[i] = T(0);
+
+		// Reverse each Horner row in O(i) work and O(degree) scratch.
+		// Ascending rows consume d[i - 1] before higher rows update it.
+		for (uint64_t i = 1; i <= degree; ++i) {
+			states[0] = one_over_fact[i];
+			for (uint64_t j = 0; j + 1 < i; ++j) {
+				states[j + 1] = states[j] * dx[j]
+					+ c[j + 1] * one_over_fact[i - j - 1];
 			}
-			cur_upd[0] = upd;
-
-			for (uint64_t i = 1; i < degree; ++i) {
-				const T inc = dx[i - 1];
-				for (uint64_t k = 0; k + 1 < i; ++k)
-					buff[k] *= inc;
-				buff[i - 1] = c[i - 1] * inc;
-
-				T s = c[i];
-				for (uint64_t k = 0; k < i; ++k)
-					s += buff[k] * one_over_fact[i - k + 1];
-				upd = d[i] * s;
-
-				rp = T(1);
-				for (uint64_t m = i + 1; m < degree; ++m) {
-					rp *= dx[m];
-					s = c[i] * one_over_fact[m - i + 1];
-					for (uint64_t k = 0; k < i; ++k)
-						s += buff[k] * one_over_fact[m - k + 1];
-					s *= rp;
-					upd += d[m] * s;
-				}
-
-				cur_upd[i] = upd;
+			const T output_deriv = d[i - 1];
+			cur_upd[i - 1] += output_deriv * states[i - 1];
+			T state_deriv = output_deriv * dx[i - 1];
+			for (uint64_t j = i - 1; j-- > 0;) {
+				cur_upd[j] += state_deriv * states[j];
+				d[j] += state_deriv * one_over_fact[i - j - 1];
+				state_deriv *= dx[j];
 			}
 		}
 
@@ -511,19 +497,6 @@ __global__ void sig_coef_backprop_kernel(
 
 		for (uint64_t i = 0; i < degree; ++i)
 			prev_upd[i] = cur_upd[i];
-
-		// update_coef_derivs_
-		{
-			for (uint64_t i = 0; i + 1 < degree; ++i) {
-				T acc = T(0);
-				T rp = T(1);
-				for (uint64_t k = i + 1; k < degree; ++k) {
-					rp *= dx[k];
-					acc += d[k] * rp * one_over_fact[k - i];
-				}
-				d[i] += acc;
-			}
-		}
 	}
 
 	// Final: write -prev_upd to position 0
@@ -592,7 +565,7 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 	for (uint64_t i = 0; i < DEGREE; ++i)
 		d[i] = my_derivs[i];
 
-	T buff[DEGREE];
+	T states[DEGREE];
 	T prev_upd[DEGREE];
 	#pragma unroll
 	for (uint64_t i = 0; i < DEGREE; ++i)
@@ -605,7 +578,7 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 			dx[i] = my_path[t * dimension + ch[i]]
 			      - my_path[(t - 1) * dimension + ch[i]];
 
-		// uncombine_coefs_ (sovf computed inline: (-1)^k * ovf[k])
+		// Reconstruct the previous prefixes using Chen's inverse relation.
 		{
 			T last_c = c[0];
 			#pragma unroll
@@ -613,56 +586,40 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 				const T inc = dx[i - 1];
 				#pragma unroll
 				for (uint64_t j = 0; j + 1 < i; ++j)
-					buff[j] *= inc;
-				buff[i - 1] = last_c * inc;
+					states[j] *= inc;
+				states[i - 1] = last_c * inc;
 				T acc = T(0);
 				#pragma unroll
 				for (uint64_t j = 0; j < i; ++j)
-					acc += buff[j] * (((i - j) & 1) ? -ovf[i - j] : ovf[i - j]);
+					acc += states[j] * (((i - j) & 1) ? -ovf[i - j] : ovf[i - j]);
 				last_c = c[i];
 				c[i] += acc;
 			}
 		}
 
-		// update_path_derivs_ -> collect into cur_upd
 		T cur_upd[DEGREE];
-		{
-			T upd = d[0];
-			T rp = T(1);
+		#pragma unroll
+		for (uint64_t i = 0; i < DEGREE; ++i)
+			cur_upd[i] = T(0);
+
+		// Reverse each Horner row in O(i) work and O(DEGREE) scratch.
+		// Ascending rows consume d[i - 1] before higher rows update it.
+		#pragma unroll
+		for (uint64_t i = 1; i <= DEGREE; ++i) {
+			states[0] = ovf[i];
 			#pragma unroll
-			for (uint64_t m = 1; m < DEGREE; ++m) {
-				rp *= dx[m];
-				upd += d[m] * rp * ovf[m + 1];
+			for (uint64_t j = 0; j + 1 < i; ++j) {
+				states[j + 1] = states[j] * dx[j]
+					+ c[j + 1] * ovf[i - j - 1];
 			}
-			cur_upd[0] = upd;
-
+			const T output_deriv = d[i - 1];
+			cur_upd[i - 1] += output_deriv * states[i - 1];
+			T state_deriv = output_deriv * dx[i - 1];
 			#pragma unroll
-			for (uint64_t i = 1; i < DEGREE; ++i) {
-				const T inc = dx[i - 1];
-				#pragma unroll
-				for (uint64_t k = 0; k + 1 < i; ++k)
-					buff[k] *= inc;
-				buff[i - 1] = c[i - 1] * inc;
-
-				T s = c[i];
-				#pragma unroll
-				for (uint64_t k = 0; k < i; ++k)
-					s += buff[k] * ovf[i - k + 1];
-				upd = d[i] * s;
-
-				rp = T(1);
-				#pragma unroll
-				for (uint64_t m = i + 1; m < DEGREE; ++m) {
-					rp *= dx[m];
-					s = c[i] * ovf[m - i + 1];
-					#pragma unroll
-					for (uint64_t k = 0; k < i; ++k)
-						s += buff[k] * ovf[m - k + 1];
-					s *= rp;
-					upd += d[m] * s;
-				}
-
-				cur_upd[i] = upd;
+			for (uint64_t j = i - 1; j-- > 0;) {
+				cur_upd[j] += state_deriv * states[j];
+				d[j] += state_deriv * ovf[i - j - 1];
+				state_deriv *= dx[j];
 			}
 		}
 
@@ -674,21 +631,6 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 		#pragma unroll
 		for (uint64_t i = 0; i < DEGREE; ++i)
 			prev_upd[i] = cur_upd[i];
-
-		// update_coef_derivs_
-		{
-			#pragma unroll
-			for (uint64_t i = 0; i + 1 < DEGREE; ++i) {
-				T acc = T(0);
-				T rp = T(1);
-				#pragma unroll
-				for (uint64_t k = i + 1; k < DEGREE; ++k) {
-					rp *= dx[k];
-					acc += d[k] * rp * ovf[k - i];
-				}
-				d[i] += acc;
-			}
-		}
 	}
 
 	// Final: write -prev_upd to position 0
