@@ -22,6 +22,105 @@ from functools import partial
 from conftest import DEVICES, check_close as _check_close, assert_device
 check_close = partial(_check_close, atol=1e-5)
 
+def _sig_coef_reference(path, words, time_aug=False, lead_lag=False, end_time=1.):
+    if lead_lag:
+        lag = torch.repeat_interleave(path, 2, dim=-2)[..., :-1, :]
+        lead = torch.repeat_interleave(path, 2, dim=-2)[..., 1:, :]
+        path = torch.cat((lag, lead), dim=-1)
+    if time_aug:
+        times = torch.linspace(0., end_time, path.shape[-2], dtype=path.dtype, device=path.device)
+        times = times.expand(*path.shape[:-1]).unsqueeze(-1)
+        path = torch.cat((path, times), dim=-1)
+    increments = path[..., 1:, :] - path[..., :-1, :]
+    one = torch.ones_like(path[..., 0, 0])
+    result = []
+    for word in words:
+        coefs = [one] + [torch.zeros_like(one) for _ in word]
+        for t in range(increments.shape[-2]):
+            updated = [one]
+            for i in range(1, len(word) + 1):
+                product = one
+                value = coefs[i]
+                for j in range(i - 1, -1, -1):
+                    product = product * increments[..., t, word[j]] / (i - j)
+                    value = value + coefs[j] * product
+                updated.append(value)
+            coefs = updated
+        result.extend(coefs[1:] if word else [one])
+    return torch.stack(result, dim=-1)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("degree", [1, 2, 5, 12, 20, 21])
+@pytest.mark.parametrize("mixed", [False, True])
+def test_sig_coef_backprop_horner_reference(device, dtype, degree, mixed):
+    if device == "cuda" and degree > 20:
+        pytest.skip("CUDA coefficient degree limit is 20")
+    path = torch.tensor(
+        [[0., 0.], [0.7, -0.4], [0.7, 0.3], [-0.2, 0.3], [0.1, -0.1]],
+        dtype=dtype, device=device, requires_grad=True)
+    word = tuple(i % 2 for i in range(degree))
+    words = [word, (1, 0, 1), (), word] if mixed else [word, word]
+    reference = _sig_coef_reference(path, words)
+    weights = torch.linspace(-0.7, 1.1, reference.shape[-1], dtype=dtype, device=device)
+    expected, = torch.autograd.grad(reference, path, weights)
+    coefs = pysiglib.sig_coef(path, words, prefixes=True)
+    actual = pysiglib.sig_coef_backprop(path, words, coefs, weights.clone())
+    tolerance = 2e-5 if dtype == torch.float32 else 1e-11
+    torch.testing.assert_close(coefs, reference, atol=tolerance, rtol=tolerance)
+    torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
+    assert_device(actual, device)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("time_aug,lead_lag", [(False, False), (True, False), (False, True), (True, True)])
+@pytest.mark.parametrize("prefixes", [False, True])
+def test_sig_coef_backprop_horner_batch_views(device, dtype, time_aug, lead_lag, prefixes):
+    rng = np.random.default_rng(721)
+    storage = torch.tensor(rng.normal(scale=0.2, size=(2, 3, 5, 4)), dtype=dtype, device=device)
+    storage[..., 2, :] = storage[..., 1, :]
+    path = storage[..., ::2].detach().requires_grad_(True)
+    dimension = (4 if lead_lag else 2) + int(time_aug)
+    words = [tuple(i % dimension for i in range(8)), (1, 1, 0), ()]
+    options = dict(time_aug=time_aug, lead_lag=lead_lag, end_time=1.7)
+    reference = _sig_coef_reference(path, words, **options)
+    weights_storage = torch.tensor(
+        rng.normal(size=(*reference.shape[:-1], 2 * reference.shape[-1])), dtype=dtype, device=device)
+    weights = weights_storage[..., ::2]
+    expected, = torch.autograd.grad(reference, path, weights, retain_graph=True)
+    coefs = pysiglib.sig_coef(path, words, prefixes=True, **options)
+    actual = pysiglib.sig_coef_backprop(path, words, coefs, weights, n_jobs=-1, **options)
+    tolerance = 2e-5 if dtype == torch.float32 else 1e-11
+    torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
+
+    if not prefixes:
+        indices = np.cumsum([len(word) if word else 1 for word in words]) - 1
+        reference = reference[..., indices]
+    weights = torch.ones_like(reference)
+    expected, = torch.autograd.grad(reference, path, weights)
+    output = pysiglib.torch_api.sig_coef(path, words, prefixes=prefixes, **options)
+    actual, = torch.autograd.grad(output, path, weights)
+    torch.testing.assert_close(output, reference, atol=tolerance, rtol=tolerance)
+    torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
+    assert actual.shape == path.shape
+    assert_device(actual, device)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("shape", [(2, 0, 5, 2), (2, 3, 0, 2), (2, 3, 1, 2)])
+def test_sig_coef_backprop_horner_empty(device, dtype, shape):
+    path = torch.zeros(shape, dtype=dtype, device=device)
+    words = [(0, 1) * 4, (1,)]
+    coefs = pysiglib.sig_coef(path, words, prefixes=True)
+    actual = pysiglib.sig_coef_backprop(path, words, coefs, torch.ones_like(coefs))
+    torch.testing.assert_close(actual, torch.zeros_like(path))
+    assert actual.shape == path.shape
+    assert_device(actual, device)
+
+
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_coef_backprop(device):
     X = torch.rand(size=(100, 3), dtype=torch.float64, device=device)
