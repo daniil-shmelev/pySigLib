@@ -522,55 +522,52 @@ struct alignas(vec_batch_bytes) BchBatchValue {
 	T data[width]{};
 };
 
-// Apply the general BCH table to one SIMD tile of independent input pairs.
-// The public layout stays batch-major; only the reusable scratch is transposed.
-template<std::floating_point T, uint64_t vectors = 1>
+// Brackets only use lower degrees, so evaluate coordinates in degree order.
+// Highest-degree coordinates go straight to the output instead of the memo.
+template<std::floating_point T>
 void bch_combine_batch_(
-	const T* ls1, const T* ls2, T* out, const BchCache& cache, BchBatchValue<T>* memo
+	const T* ls1, const T* ls2, T* out, const BchCache& cache, T* memo
 ) {
 	using Value = BchBatchValue<T>;
 	constexpr uint64_t width = Value::width;
-	const uint64_t m = cache.m, count = cache.bch_size();
-	auto* combined = memo + count * m * vectors;
+	const Simd<T> d;
+	const uint64_t m = cache.m, stride = cache.bch_memo_width * width;
 	for (uint64_t k = 0; k < m; ++k) {
-		for (uint64_t v = 0; v < vectors; ++v) {
-			for (uint64_t lane = 0; lane < width; ++lane) {
-				memo[k * vectors + v].data[lane] = ls1[(v * width + lane) * m + k];
-				memo[(m + k) * vectors + v].data[lane] = ls2[(v * width + lane) * m + k];
-			}
-			vec_batch_add(combined[k * vectors + v].data, memo[k * vectors + v].data,
-				memo[(m + k) * vectors + v].data);
+		Value left, right;
+		for (uint64_t lane = 0; lane < width; ++lane) {
+			left.data[lane] = ls1[lane * m + k];
+			right.data[lane] = ls2[lane * m + k];
 		}
-	}
-	for (uint64_t w = 2; w < count; ++w) {
-		const auto& operation = cache.bch_operation(w);
-		const auto* v1 = memo + operation.left * m * vectors;
-		const auto* v2 = memo + operation.right * m * vectors;
-		auto* result = memo + w * m * vectors;
-		const T weight = static_cast<T>(operation.coefficient);
-		for (uint64_t k = 0; k < m; ++k) {
-			Value sum[vectors], term, reverse;
+		const auto x = hn::Load(d, left.data), y = hn::Load(d, right.data);
+		auto combined = hn::Add(x, y);
+		if (k < cache.bch_memo_width) {
+			hn::StoreU(x, d, memo + k * width);
+			hn::StoreU(y, d, memo + stride + k * width);
+		}
+		for (uint64_t w = 2; w < cache.bch_size(); ++w) {
+			const auto [begin, end] = cache.bch_ranges[w - 2];
+			if (k < begin || k >= end) continue;
+			const auto& operation = cache.bch_operation(w);
+			const auto* v1 = memo + operation.left * stride;
+			const auto* v2 = memo + operation.right * stride;
+			auto sum = hn::Zero(d);
 			for (uint32_t q = cache.comm_k_ptr[k]; q < cache.comm_k_ptr[k + 1]; ++q) {
-				const uint64_t i = cache.comm_k_i[q] * vectors, j = cache.comm_k_j[q] * vectors;
-				const T coefficient = static_cast<T>(cache.comm_k_val_d[q]);
-				for (uint64_t v = 0; v < vectors; ++v) {
-					vec_batch_multiply(term.data, v1[i + v].data, v2[j + v].data);
-					vec_batch_multiply(reverse.data, v1[j + v].data, v2[i + v].data);
-					vec_batch_subtract_inplace(term.data, reverse.data);
-					vec_batch_scaled_add(sum[v].data, term.data, coefficient);
-				}
+				const uint64_t i = cache.comm_k_i[q] * width, j = cache.comm_k_j[q] * width;
+				const auto coefficient = hn::Set(d, static_cast<T>(cache.comm_k_val_d[q]));
+				const auto term = hn::Sub(hn::Mul(hn::LoadU(d, v1 + i), hn::LoadU(d, v2 + j)),
+					hn::Mul(hn::LoadU(d, v1 + j), hn::LoadU(d, v2 + i)));
+				sum = hn::MulAdd(term, coefficient, sum);
 			}
-			for (uint64_t v = 0; v < vectors; ++v) {
-				result[k * vectors + v] = sum[v];
-				if (weight != T(0))
-					vec_batch_scaled_add(combined[k * vectors + v].data, sum[v].data, weight);
-			}
+			if (w < cache.bch_memo_nodes && k < cache.bch_memo_width)
+				hn::StoreU(sum, d, memo + w * stride + k * width);
+			const T weight = static_cast<T>(operation.coefficient);
+			if (weight != T(0)) combined = hn::MulAdd(sum, hn::Set(d, weight), combined);
 		}
+		Value result;
+		hn::Store(combined, d, result.data);
+		for (uint64_t lane = 0; lane < width; ++lane)
+			out[lane * m + k] = result.data[lane];
 	}
-	for (uint64_t k = 0; k < m; ++k)
-		for (uint64_t v = 0; v < vectors; ++v)
-			for (uint64_t lane = 0; lane < width; ++lane)
-				out[(v * width + lane) * m + k] = combined[k * vectors + v].data[lane];
 }
 
 template<std::floating_point T>

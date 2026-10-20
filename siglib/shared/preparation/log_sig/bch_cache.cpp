@@ -250,6 +250,13 @@ void build_bch_operation_ranges(BchCache& cache) {
 				required - minimum_degree[operation.left]);
 	}
 
+	cache.bch_memo_width = std::lower_bound(cache.coordinate_weights.begin(),
+		cache.coordinate_weights.end(), cache.degree) - cache.coordinate_weights.begin();
+	cache.bch_memo_nodes = 0;
+	for (const auto& operation : cache.bch_operations)
+		cache.bch_memo_nodes = std::max<uint64_t>(cache.bch_memo_nodes,
+			std::max(operation.left, operation.right) + 1);
+
 	cache.bch_ranges.resize(cache.bch_operations.size());
 	for (uint64_t node = 2; node < size; ++node) {
 		auto& range = cache.bch_ranges[node - 2];
