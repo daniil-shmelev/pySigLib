@@ -643,6 +643,54 @@
             check_result(logsig_to_sig_d, log_sig, true_, (uint64_t)1, dimension, degree, false, false, 0, true, 1);
         }
 
+namespace {
+
+template<typename T>
+void check_bch_simd_batches() {
+    const auto combine = [] {
+        if constexpr (std::is_same_v<T, float>) return log_sig_combine_f;
+        else return log_sig_combine_d;
+    }();
+    for (const auto [dimension, degree] : std::vector<std::pair<uint64_t, uint64_t>>{
+            {1, 3}, {2, 1}, {2, 2}, {2, 3}, {3, 4}, {3, 5}, {2, 8}, {9, 3}}) {
+        ASSERT_EQ(prepare_log_sig(dimension, degree, 3, false), 0);
+        const uint64_t m = log_sig_length(dimension, degree);
+        for (uint64_t batch : {0, 1, 2, 3, 4, 5, 7, 8, 9, 16, 17, 63, 64, 65}) {
+            std::vector<T> left(m * batch), right(m * batch), expected(m * batch);
+            for (uint64_t i = 0; i < left.size(); ++i) {
+                left[i] = T(0.2 * std::sin(1.1 * (i + 1)));
+                right[i] = T(0.2 * std::cos(0.7 * (i + 1)));
+            }
+            // Single-item calls retain the original evaluator, even on SIMD targets.
+            for (uint64_t b = 0; b < batch; ++b)
+                ASSERT_EQ(combine(left.data() + b * m, right.data() + b * m,
+                    expected.data() + b * m, 1, dimension, degree, 1), 0);
+            for (int jobs : {1, 2, 8}) {
+                SCOPED_TRACE(::testing::Message() << dimension << "/" << degree
+                    << " batch=" << batch << " jobs=" << jobs);
+                std::vector<T> out(m * batch + 2, T(123));
+                ASSERT_EQ(combine(left.data(), right.data(), out.data() + 1,
+                    batch, dimension, degree, jobs), 0);
+                EXPECT_EQ(out.front(), T(123));
+                EXPECT_EQ(out.back(), T(123));
+                for (uint64_t i = 0; i < expected.size(); ++i)
+                    ASSERT_NEAR(out[i + 1], expected[i],
+                        64 * std::numeric_limits<T>::epsilon() * (1 + std::abs(expected[i])));
+            }
+        }
+    }
+}
+
+} // namespace
+
+        TEST(logSigCombineTest, SimdBatchFloat64) {
+            check_bch_simd_batches<double>();
+        }
+
+        TEST(logSigCombineTest, SimdBatchFloat32) {
+            check_bch_simd_batches<float>();
+        }
+
         TEST(logSigCombineTest, ChenIdentity) {
             uint64_t dimension = 2, degree = 3;
             (void)prepare_log_sig(dimension, degree, 2, false);
@@ -757,6 +805,40 @@
 
             check_result_2(log_sig_combine_d, zero_ls, ls1, ls1, (uint64_t)1, dimension, degree, 1);
             check_result_2(log_sig_combine_d, ls1, zero_ls, ls1, (uint64_t)1, dimension, degree, 1);
+        }
+
+        TEST(logSigCombineBackpropTest, SimdBatchDirectionalDerivative) {
+            const uint64_t dimension = 3, degree = 4, batch = 17;
+            ASSERT_EQ(prepare_log_sig(dimension, degree, 3, false), 0);
+            const uint64_t size = batch * log_sig_length(dimension, degree);
+            std::vector<double> left(size), right(size), weight(size), direction(size);
+            std::vector<double> dl(size), dr(size), plus(size), minus(size);
+            for (uint64_t i = 0; i < size; ++i) {
+                left[i] = 0.2 * std::sin(i + 1);
+                right[i] = 0.2 * std::cos(i + 1);
+                weight[i] = std::sin(0.7 * (i + 1));
+                direction[i] = std::cos(1.1 * (i + 1));
+            }
+            ASSERT_EQ(log_sig_combine_backprop_d(weight.data(), dl.data(), dr.data(),
+                left.data(), right.data(), batch, dimension, degree, 8), 0);
+            const double eps = 1e-6;
+            double derivative = 0, numerical = 0;
+            for (uint64_t i = 0; i < size; ++i) {
+                derivative += (dl[i] - 0.5 * dr[i]) * direction[i];
+                left[i] += eps * direction[i];
+                right[i] -= 0.5 * eps * direction[i];
+            }
+            ASSERT_EQ(log_sig_combine_d(left.data(), right.data(), plus.data(),
+                batch, dimension, degree, 1), 0);
+            for (uint64_t i = 0; i < size; ++i) {
+                left[i] -= 2 * eps * direction[i];
+                right[i] += eps * direction[i];
+            }
+            ASSERT_EQ(log_sig_combine_d(left.data(), right.data(), minus.data(),
+                batch, dimension, degree, 1), 0);
+            for (uint64_t i = 0; i < size; ++i)
+                numerical += weight[i] * (plus[i] - minus[i]) / (2 * eps);
+            EXPECT_NEAR(derivative, numerical, 1e-7);
         }
 
         TEST(logSigCombineBackpropTest, FiniteDifference) {

@@ -522,6 +522,57 @@ struct alignas(vec_batch_bytes) BchBatchValue {
 	T data[width]{};
 };
 
+// Apply the general BCH table to one SIMD tile of independent input pairs.
+// The public layout stays batch-major; only the reusable scratch is transposed.
+template<std::floating_point T, uint64_t vectors = 1>
+void bch_combine_batch_(
+	const T* ls1, const T* ls2, T* out, const BchCache& cache, BchBatchValue<T>* memo
+) {
+	using Value = BchBatchValue<T>;
+	constexpr uint64_t width = Value::width;
+	const uint64_t m = cache.m, count = cache.bch_size();
+	auto* combined = memo + count * m * vectors;
+	for (uint64_t k = 0; k < m; ++k) {
+		for (uint64_t v = 0; v < vectors; ++v) {
+			for (uint64_t lane = 0; lane < width; ++lane) {
+				memo[k * vectors + v].data[lane] = ls1[(v * width + lane) * m + k];
+				memo[(m + k) * vectors + v].data[lane] = ls2[(v * width + lane) * m + k];
+			}
+			vec_batch_add(combined[k * vectors + v].data, memo[k * vectors + v].data,
+				memo[(m + k) * vectors + v].data);
+		}
+	}
+	for (uint64_t w = 2; w < count; ++w) {
+		const auto& operation = cache.bch_operation(w);
+		const auto* v1 = memo + operation.left * m * vectors;
+		const auto* v2 = memo + operation.right * m * vectors;
+		auto* result = memo + w * m * vectors;
+		const T weight = static_cast<T>(operation.coefficient);
+		for (uint64_t k = 0; k < m; ++k) {
+			Value sum[vectors], term, reverse;
+			for (uint32_t q = cache.comm_k_ptr[k]; q < cache.comm_k_ptr[k + 1]; ++q) {
+				const uint64_t i = cache.comm_k_i[q] * vectors, j = cache.comm_k_j[q] * vectors;
+				const T coefficient = static_cast<T>(cache.comm_k_val_d[q]);
+				for (uint64_t v = 0; v < vectors; ++v) {
+					vec_batch_multiply(term.data, v1[i + v].data, v2[j + v].data);
+					vec_batch_multiply(reverse.data, v1[j + v].data, v2[i + v].data);
+					vec_batch_subtract_inplace(term.data, reverse.data);
+					vec_batch_scaled_add(sum[v].data, term.data, coefficient);
+				}
+			}
+			for (uint64_t v = 0; v < vectors; ++v) {
+				result[k * vectors + v] = sum[v];
+				if (weight != T(0))
+					vec_batch_scaled_add(combined[k * vectors + v].data, sum[v].data, weight);
+			}
+		}
+	}
+	for (uint64_t k = 0; k < m; ++k)
+		for (uint64_t v = 0; v < vectors; ++v)
+			for (uint64_t lane = 0; lane < width; ++lane)
+				out[(v * width + lane) * m + k] = combined[k * vectors + v].data[lane];
+}
+
 template<std::floating_point T>
 void bch_combine_linear_batch_(
 	const BchBatchValue<T>* ls1, const BchBatchValue<T>* ls2,
