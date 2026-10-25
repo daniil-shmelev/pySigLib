@@ -20,6 +20,7 @@ add_library(cpsig SHARED
     cp_path_transforms.cpp
     cp_polynomial_sig_kernel.cpp
     cp_sig_coef.cpp
+    cp_sig_lasso.cpp
     cp_sig_kernel.cpp
     cp_signature.cpp
     cp_utils.cpp
@@ -108,6 +109,7 @@ set(_cpsig_kernels
     cp_path_transforms_impl.cpp
     cp_polynomial_sig_kernel_impl.cpp
     cp_sig_coef_impl.cpp
+    cp_sig_lasso_impl.cpp
     cp_sig_combine_impl.cpp
     cp_sig_join_impl.cpp
     cp_sig_kernel_impl.cpp

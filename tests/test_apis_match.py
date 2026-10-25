@@ -21,6 +21,7 @@ import pysiglib.torch_api as torch_api
 
 # Backprop functions are intentionally not exposed in the derivable APIs.
 EXCLUDED_SUFFIXES = ("_backprop",)
+BASE_ONLY_MEMBERS = {"sig_lasso"}
 
 
 def get_public_members(module):
@@ -30,6 +31,7 @@ def get_public_members(module):
         for name, obj in inspect.getmembers(module)
         if (
             not name.startswith("_")
+            and name not in BASE_ONLY_MEMBERS
             and not name.endswith(EXCLUDED_SUFFIXES)
             and (inspect.isfunction(obj) or inspect.isclass(obj))
         )
@@ -54,6 +56,13 @@ def _params_fingerprint(obj):
 
 BASE_API_MEMBERS = get_public_members(base_api)
 TORCH_API_MEMBERS = get_public_members(torch_api)
+
+
+def test_base_only_lasso():
+    assert callable(base_api.sig_lasso)
+    assert not hasattr(torch_api, 'sig_lasso')
+    if JAX_AVAILABLE:
+        assert not hasattr(jax_api, 'sig_lasso')
 
 try:
     import pysiglib.jax_api as jax_api

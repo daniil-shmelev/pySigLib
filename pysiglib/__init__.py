@@ -30,6 +30,7 @@ from .sig_join_backprop import sig_join_backprop
 from .log_sig_join import log_sig_join
 from .log_sig_join_backprop import log_sig_join_backprop
 from .sig_coef import extract_sig_coef, sig_coef
+from .sig_lasso import sig_lasso
 from .sig_coef_backprop import sig_coef_backprop
 from .log_sig import set_cache_dir, prepare_log_sig, clear_cache, sig_to_log_sig, log_sig
 from .log_sig_backprop import sig_to_log_sig_backprop

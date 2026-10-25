@@ -21,6 +21,7 @@ import torch
 # Binding and dtype dispatch share the same native function objects.
 from .load_siglib import (
     CPSIG, CUSIG, BUILT_WITH_CUDA,
+    CPSIG_SIG_LASSO, CUSIG_SIG_LASSO,
     CPSIG_TRANSFORM_PATH,
     CPSIG_TRANSFORM_PATH_BACKPROP,
     CPSIG_LOG_SIG_COMBINE,

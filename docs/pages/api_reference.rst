@@ -9,6 +9,7 @@ The reference below describes the base ``pysiglib`` API. See :doc:`torch_api` an
 * :doc:`trees`
 * :doc:`signatures`
 * :doc:`signature_coefficients`
+* :doc:`sig_lasso`
 * :doc:`log_signatures`
 * :doc:`branched_signatures`
 * :doc:`branched_signature_coefficients`

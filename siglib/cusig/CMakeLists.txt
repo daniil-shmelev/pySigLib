@@ -79,6 +79,7 @@ add_library(cusig SHARED
     cu_path_transforms.cu
     cu_polynomial_sig_kernel.cu
     cu_sig_coef.cu
+    cu_sig_lasso.cu
     cu_sig_kernel.cu
     cu_signature.cu
     cu_sig_combine.cu
@@ -131,7 +132,36 @@ if(MSVC)
     target_compile_definitions(cusig PRIVATE _USRDLL _UNICODE UNICODE)
 endif()
 
-target_link_libraries(cusig PRIVATE CUDA::cudart pysiglib_preparation)
+target_link_libraries(cusig PRIVATE CUDA::cudart CUDA::cublas pysiglib_preparation)
+
+get_filename_component(_pysiglib_cublas_lib_dir "${CUDA_cublas_LIBRARY}" DIRECTORY)
+if(WIN32)
+    get_filename_component(_pysiglib_cublas_root "${_pysiglib_cublas_lib_dir}/../.." ABSOLUTE)
+else()
+    get_filename_component(_pysiglib_cublas_root "${_pysiglib_cublas_lib_dir}/.." ABSOLUTE)
+endif()
+find_path(PYSIGLIB_CUBLAS_INCLUDE_DIR cublas_v2.h
+    HINTS "${_pysiglib_cublas_root}/include" ${CUDAToolkit_INCLUDE_DIRS}
+    REQUIRED)
+set_source_files_properties(cu_sig_lasso.cu PROPERTIES
+    INCLUDE_DIRECTORIES "${PYSIGLIB_CUBLAS_INCLUDE_DIR}")
+find_file(PYSIGLIB_CUDA_LICENSE EULA.txt
+    HINTS "${_pysiglib_cublas_root}" "${CUDAToolkit_LIBRARY_ROOT}" "${CUDAToolkit_ROOT}"
+    NO_DEFAULT_PATH)
+if(PYSIGLIB_CUDA_LICENSE)
+    install(FILES "${PYSIGLIB_CUDA_LICENSE}" DESTINATION ${CUSIG_INSTALL_DESTINATION}/licenses RENAME CUDA-EULA.txt)
+endif()
+if(WIN32)
+    foreach(_pysiglib_math_library cublas cublasLt)
+        find_file(_pysiglib_${_pysiglib_math_library}_dll
+            NAMES "${_pysiglib_math_library}64_12.dll" "${_pysiglib_math_library}64_13.dll"
+            HINTS "${_pysiglib_cublas_root}/bin" "${CUDAToolkit_BIN_DIR}"
+            REQUIRED)
+        add_custom_command(TARGET cusig POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_pysiglib_${_pysiglib_math_library}_dll}" "$<TARGET_FILE_DIR:cusig>")
+        install(FILES "${_pysiglib_${_pysiglib_math_library}_dll}" DESTINATION ${CUSIG_INSTALL_DESTINATION})
+    endforeach()
+endif()
 
 # cudadevrt is needed for separable compilation (device linking).
 if(PYSIGLIB_CUDA_SEPARABLE_COMPILATION)

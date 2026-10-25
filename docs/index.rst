@@ -89,6 +89,7 @@ The high-performance toolkit for rough path computation.
    /pages/signatures
    /pages/words
    /pages/signature_coefficients
+   /pages/sig_lasso
 
 .. toctree::
    :maxdepth: 2
