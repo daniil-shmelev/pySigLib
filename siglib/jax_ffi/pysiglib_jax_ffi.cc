@@ -331,6 +331,8 @@ struct CpuFns<float> {
     static constexpr auto sig_kernel = sig_kernel_f;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_f;
     static constexpr auto sig_kernel_poly = sig_kernel_poly_f;
+    static constexpr auto sig_kernel_chebyshev = sig_kernel_chebyshev_f;
+    static constexpr auto sig_kernel_chebyshev_backprop = sig_kernel_chebyshev_backprop_f;
     static constexpr auto branched_sig_kernel_poly = branched_sig_kernel_poly_f;
     static constexpr auto sig_kernel_poly_backprop = sig_kernel_poly_backprop_f;
     static constexpr auto branched_sig_kernel_poly_backprop = branched_sig_kernel_poly_backprop_f;
@@ -382,6 +384,8 @@ struct CpuFns<double> {
     static constexpr auto sig_kernel = sig_kernel_d;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_d;
     static constexpr auto sig_kernel_poly = sig_kernel_poly_d;
+    static constexpr auto sig_kernel_chebyshev = sig_kernel_chebyshev_d;
+    static constexpr auto sig_kernel_chebyshev_backprop = sig_kernel_chebyshev_backprop_d;
     static constexpr auto branched_sig_kernel_poly = branched_sig_kernel_poly_d;
     static constexpr auto sig_kernel_poly_backprop = sig_kernel_poly_backprop_d;
     static constexpr auto branched_sig_kernel_poly_backprop = branched_sig_kernel_poly_backprop_d;
@@ -443,6 +447,8 @@ struct CudaFns<float> {
     static constexpr auto sig_kernel = sig_kernel_cuda_f;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_cuda_f;
     static constexpr auto sig_kernel_poly = sig_kernel_poly_cuda_f;
+    static constexpr auto sig_kernel_chebyshev = sig_kernel_chebyshev_cuda_f;
+    static constexpr auto sig_kernel_chebyshev_backprop = sig_kernel_chebyshev_backprop_cuda_f;
     static constexpr auto branched_sig_kernel_poly = branched_sig_kernel_poly_cuda_f;
     static constexpr auto sig_kernel_poly_backprop = sig_kernel_poly_backprop_cuda_f;
     static constexpr auto branched_sig_kernel_poly_backprop = branched_sig_kernel_poly_backprop_cuda_f;
@@ -494,6 +500,8 @@ struct CudaFns<double> {
     static constexpr auto sig_kernel = sig_kernel_cuda_d;
     static constexpr auto sig_kernel_backprop = sig_kernel_backprop_cuda_d;
     static constexpr auto sig_kernel_poly = sig_kernel_poly_cuda_d;
+    static constexpr auto sig_kernel_chebyshev = sig_kernel_chebyshev_cuda_d;
+    static constexpr auto sig_kernel_chebyshev_backprop = sig_kernel_chebyshev_backprop_cuda_d;
     static constexpr auto branched_sig_kernel_poly = branched_sig_kernel_poly_cuda_d;
     static constexpr auto sig_kernel_poly_backprop = sig_kernel_poly_backprop_cuda_d;
     static constexpr auto branched_sig_kernel_poly_backprop = branched_sig_kernel_poly_backprop_cuda_d;
@@ -1857,6 +1865,47 @@ ffi::Error SigKernelPdeBackpropCpu(
     });
 }
 
+ffi::Error SigKernelChebyshevPdeCpu(
+    std::int64_t dimension, std::int64_t degree, std::int64_t neumann_order,
+    bool return_grid, std::int64_t n_jobs, ffi::AnyBuffer gram,
+    ffi::Result<ffi::AnyBuffer> out, ffi::Result<ffi::AnyBuffer> state
+) {
+    if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty()) return InvalidArgument(msg);
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        const int err_code = CpuFns<T>::sig_kernel_chebyshev(
+            BufferData<T>(gram), BufferData<T>(out), BufferData<T>(state),
+            spec.is_batch ? spec.batch_size : 1,
+            static_cast<std::uint64_t>(dimension), spec.length1 + 1, spec.length2 + 1,
+            static_cast<std::uint64_t>(degree), static_cast<std::uint64_t>(neumann_order),
+            return_grid, static_cast<int>(n_jobs));
+        if (err_code != 0) return NativeCallErrorCpu("sig_kernel_chebyshev", err_code);
+        return ffi::Error::Success();
+    });
+}
+
+ffi::Error SigKernelChebyshevPdeBackpropCpu(
+    std::int64_t dimension, std::int64_t degree, std::int64_t neumann_order,
+    bool return_grid, std::int64_t n_jobs, ffi::AnyBuffer gram,
+    ffi::AnyBuffer derivs, ffi::AnyBuffer state, ffi::Result<ffi::AnyBuffer> out
+) {
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "derivs", derivs); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "state", state); !msg.empty()) return InvalidArgument(msg);
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        const int err_code = CpuFns<T>::sig_kernel_chebyshev_backprop(
+            BufferData<T>(gram), BufferData<T>(out), BufferData<T>(derivs), BufferData<T>(state),
+            spec.is_batch ? spec.batch_size : 1,
+            static_cast<std::uint64_t>(dimension), spec.length1 + 1, spec.length2 + 1,
+            static_cast<std::uint64_t>(degree), static_cast<std::uint64_t>(neumann_order),
+            return_grid, static_cast<int>(n_jobs));
+        if (err_code != 0) return NativeCallErrorCpu("sig_kernel_chebyshev_backprop", err_code);
+        return ffi::Error::Success();
+    });
+}
+
 ffi::Error SigKernelPolyPdeCpu(
     std::int64_t dimension, std::int64_t order, bool return_grid,
     std::int64_t n_jobs, ffi::AnyBuffer gram,
@@ -2124,6 +2173,50 @@ ffi::Error SigKernelPdeBackpropCuda(cudaStream_t stream, std::int64_t dimension,
     if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty()) return InvalidArgument(msg);
     return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
         return SigKernelPdeBackpropCudaImpl<T>(stream, dimension, dyadic_order_1, dyadic_order_2, return_grid, gram, derivs, k_grid, out);
+    });
+}
+
+ffi::Error SigKernelChebyshevPdeCuda(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t degree,
+    std::int64_t neumann_order, bool return_grid, std::int64_t /*n_jobs*/,
+    ffi::AnyBuffer gram, ffi::Result<ffi::AnyBuffer> out, ffi::Result<ffi::AnyBuffer> state
+) {
+    if (auto msg = ValidateFloatBuffer("gram", gram); !msg.empty()) return InvalidArgument(msg);
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+    const auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        const int err_code = CudaFns<T>::sig_kernel_chebyshev(
+            BufferData<T>(gram), BufferData<T>(out), BufferData<T>(state),
+            spec.is_batch ? spec.batch_size : 1,
+            static_cast<std::uint64_t>(dimension), spec.length1 + 1, spec.length2 + 1,
+            static_cast<std::uint64_t>(degree), static_cast<std::uint64_t>(neumann_order), return_grid);
+        if (err_code != 0) return NativeCallErrorCuda("sig_kernel_chebyshev_cuda", err_code);
+        return ffi::Error::Success();
+    });
+}
+
+ffi::Error SigKernelChebyshevPdeBackpropCuda(
+    cudaStream_t stream, std::int64_t dimension, std::int64_t degree,
+    std::int64_t neumann_order, bool return_grid, std::int64_t /*n_jobs*/,
+    ffi::AnyBuffer gram, ffi::AnyBuffer derivs, ffi::AnyBuffer state,
+    ffi::Result<ffi::AnyBuffer> out
+) {
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "derivs", derivs); !msg.empty()) return InvalidArgument(msg);
+    if (auto msg = ValidateSameFloatDtype("gram", gram, "state", state); !msg.empty()) return InvalidArgument(msg);
+    GramSpec spec;
+    if (auto msg = GetGramSpec(gram, spec); !msg.empty()) return InvalidArgument(msg);
+    const auto sync = cudaStreamSynchronize(stream);
+    if (sync != cudaSuccess) return InternalError(cudaGetErrorString(sync));
+    return DispatchFloatDtype(BufferElementType(gram), [&]<typename T>() -> ffi::Error {
+        const int err_code = CudaFns<T>::sig_kernel_chebyshev_backprop(
+            BufferData<T>(gram), BufferData<T>(out), BufferData<T>(derivs), BufferData<T>(state),
+            spec.is_batch ? spec.batch_size : 1,
+            static_cast<std::uint64_t>(dimension), spec.length1 + 1, spec.length2 + 1,
+            static_cast<std::uint64_t>(degree), static_cast<std::uint64_t>(neumann_order), return_grid);
+        if (err_code != 0) return NativeCallErrorCuda("sig_kernel_chebyshev_backprop_cuda", err_code);
+        return ffi::Error::Success();
     });
 }
 
@@ -2457,6 +2550,16 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPdeBackpropCpu, SigKernelPdeBackp
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelChebyshevPdeCpu, SigKernelChebyshevPdeCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("neumann_order").Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelChebyshevPdeBackpropCpu, SigKernelChebyshevPdeBackpropCpu,
+    ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("neumann_order").Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPolyPdeCpu, SigKernelPolyPdeCpu,
     ffi::Ffi::Bind().Attr<std::int64_t>("dimension").Attr<std::int64_t>("order")
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
@@ -2504,6 +2607,18 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPdeBackpropCuda, SigKernelPdeBack
         .Attr<std::int64_t>("dimension")
         .Attr<std::int64_t>("dyadic_order_1").Attr<std::int64_t>("dyadic_order_2")
         .Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelChebyshevPdeCuda, SigKernelChebyshevPdeCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("neumann_order").Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
+        .Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelChebyshevPdeBackpropCuda, SigKernelChebyshevPdeBackpropCuda,
+    ffi::Ffi::Bind().Ctx<ffi::PlatformStream<cudaStream_t>>()
+        .Attr<std::int64_t>("dimension").Attr<std::int64_t>("degree")
+        .Attr<std::int64_t>("neumann_order").Attr<bool>("return_grid").Attr<std::int64_t>("n_jobs")
         .Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Arg<ffi::AnyBuffer>().Ret<ffi::AnyBuffer>());
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(PySigLibSigKernelPolyPdeCuda, SigKernelPolyPdeCuda,

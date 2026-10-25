@@ -71,6 +71,7 @@ add_library(cusig SHARED
     cu_branched_log_signature.cu
     cu_branched_signature.cu
     cu_branched_sig_kernel.cu
+    cu_chebyshev_sig_kernel.cu
     cu_exp_host.cpp
     cu_exp_signature.cu
     cache_lifecycle/cu_log_sig_cache.cu

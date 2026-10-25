@@ -22,10 +22,12 @@ import torch
 
 from .transform_path import transform_path
 from .transform_path_backprop import transform_path_backprop
-from .sig_kernel import sig_kernel, _ensure_3d, _parse_sig_kernel_method
+from .sig_kernel import sig_kernel, _ensure_3d, _parse_sig_kernel_method, _parse_chebyshev_order
 from .param_checks import check_type, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import (
+    CPSIG_SIG_KERNEL_CHEBYSHEV_BACKPROP,
+    CUSIG_SIG_KERNEL_CHEBYSHEV_BACKPROP,
     CPSIG_SIG_KERNEL_POLY_BACKPROP,
     CPSIG_SIG_KERNEL_BACKPROP,
     DTYPES,
@@ -45,14 +47,27 @@ def gram_deriv(
         return_grid : bool = False,
         n_jobs : int = 1,
         method : str = "finite_difference",
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         state : Optional[torch.Tensor] = None
 ) -> Union[np.ndarray, torch.Tensor]:
 
     result = GridOutputHandler(data.length[0] - 1, data.length[1] - 1, derivs_data) #Derivatives with respect to gram matrix
     gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
 
-    if method == "polynomial":
+    if method == "chebyshev":
+        degree, neumann_order = _parse_chebyshev_order(order)
+        state_ptr = None if state is None else cast(state.data_ptr(), POINTER(DTYPES[data.dtype]))
+        if data.device == "cpu":
+            err_code = CPSIG_SIG_KERNEL_CHEBYSHEV_BACKPROP[data.dtype](
+                gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
+                data.batch_size, data.dimension, data.length[0], data.length[1],
+                degree, neumann_order, return_grid, n_jobs)
+        else:
+            err_code = CUSIG_SIG_KERNEL_CHEBYSHEV_BACKPROP[data.dtype](
+                gram_ptr, result.data_ptr, derivs_data.data_ptr, state_ptr,
+                data.batch_size, data.dimension, data.length[0], data.length[1],
+                degree, neumann_order, return_grid)
+    elif method == "polynomial":
         state_ptr = None if state is None else cast(state.data_ptr(), POINTER(DTYPES[data.dtype]))
         if data.device == "cpu":
             err_code = CPSIG_SIG_KERNEL_POLY_BACKPROP[data.dtype](
@@ -87,7 +102,7 @@ def sig_kernel_backprop(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -124,11 +139,12 @@ def sig_kernel_backprop(
         to compute the signature kernels.
     :type dyadic_order: None | int | tuple
     :param method: Solver method used in the forward pass. Must be
-        ``"finite_difference"`` or ``"polynomial"``.
+        ``"finite_difference"``, ``"polynomial"`` or ``"chebyshev"``.
     :type method: str
-    :param order: (``method="polynomial"`` only) Highest retained polynomial degree used
-        in the forward pass. Must be between 2 and 64.
-    :type order: None | int
+    :param order: Solver order used in the forward pass. For ``method="polynomial"``, an integer
+        from 2 to 64. For ``method="chebyshev"``, an integer sets ``p = K``, or a tuple ``(p, K)``
+        sets the boundary degree and Neumann order, with ``p >= 1``, ``K >= 0`` and ``p + K <= 31``.
+    :type order: None | int | tuple
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -154,8 +170,8 @@ def sig_kernel_backprop(
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :param return_grid: If ``True``, backpropagates derivatives with respect to the entire
-        PDE grid. Finite differences use the dyadically refined grid, while the polynomial
-        method uses one value per vertex of each transformed path.
+        PDE grid. Finite differences use the dyadically refined grid, while polynomial and
+        Chebyshev methods use one value per vertex of each transformed path.
     :type return_grid: bool
     :return: Tuple of derivatives of :math:`F` with respect to one or both of the
         underlying paths. If ``left_deriv`` is ``True``, the first element of
@@ -219,7 +235,8 @@ def sig_kernel_backprop(
         lead_size = prod(leading_shape)
         flat_derivs = derivs.reshape(lead_size, *derivs.shape[-2:]) if return_grid else derivs.reshape(lead_size)
         flat_k_grid = None if k_grid is None else k_grid.reshape(lead_size, *k_grid.shape[-2:])
-        flat_state = None if _state is None else _state.reshape(lead_size, *_state.shape[-4:])
+        state_ndim = 3 if method == "chebyshev" else 4
+        flat_state = None if _state is None else _state.reshape(lead_size, *_state.shape[-state_ndim:])
 
         ld, rd = sig_kernel_backprop(
             flat_derivs, _ensure_3d(path1), _ensure_3d(path2), dyadic_order=dyadic_order,
@@ -242,13 +259,14 @@ def sig_kernel_backprop(
 
     data = MultiplePathInputHandler([path1, path2], False, False, end_time, ["path1", "path2"])
 
-    if _state is not None and method != "polynomial":
-        raise ValueError("_state is only supported for method='polynomial'")
+    if _state is not None and method not in ("polynomial", "chebyshev"):
+        raise ValueError("_state is only supported for polynomial and Chebyshev methods")
     if _state is not None:
         if not isinstance(_state, torch.Tensor):
             raise TypeError("_state must be a torch.Tensor")
+        state_width = 2 * _parse_chebyshev_order(order)[0] + 8 if method == "chebyshev" else 2 * (order + 1)
         expected_state_size = (data.batch_size * (data.length[0] - 1)
-                               * (data.length[1] - 1) * 2 * (order + 1))
+                               * (data.length[1] - 1) * state_width)
         if _state.numel() != expected_state_size:
             raise ValueError("_state has an invalid size")
         if str(_state.dtype)[6:] != data.dtype or _state.device.type != data.device:
@@ -292,7 +310,7 @@ def sig_kernel_backprop(
 
     gram = static_kernel(ctx, torch_path1, torch_path2).squeeze()
 
-    k_grid_data = None if method == "polynomial" else PathInputHandler(k_grid, False, False, 0., "k_grid")
+    k_grid_data = None if method in ("polynomial", "chebyshev") else PathInputHandler(k_grid, False, False, 0., "k_grid")
 
     gram_derivs = gram_deriv(
         derivs_data, data, gram, k_grid_data, dyadic_order_1, dyadic_order_2,
@@ -319,7 +337,7 @@ def sig_kernel_gram_backprop(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -345,7 +363,7 @@ def sig_kernel_gram_backprop(
         ``(*batch_shape_1, *batch_shape_2)`` if ``return_grid=False``. With
         ``return_grid=True``, the final two dimensions are the dyadically refined grid
         lengths for finite differences, or the transformed path vertex lengths for the
-        polynomial method.
+        polynomial and Chebyshev methods.
     :type derivs: numpy.ndarray | torch.Tensor
     :param path1: A path or batch of paths, of shape ``(*batch_shape_1, length_1, dimension)``.
     :type path1: numpy.ndarray | torch.Tensor
@@ -356,11 +374,12 @@ def sig_kernel_gram_backprop(
         to compute the signature kernels.
     :type dyadic_order: None | int | tuple
     :param method: Solver method used in the forward pass. Must be
-        ``"finite_difference"`` or ``"polynomial"``.
+        ``"finite_difference"``, ``"polynomial"`` or ``"chebyshev"``.
     :type method: str
-    :param order: (``method="polynomial"`` only) Highest retained polynomial degree used
-        in the forward pass. Must be between 2 and 64.
-    :type order: None | int
+    :param order: Solver order used in the forward pass. For ``method="polynomial"``, an integer
+        from 2 to 64. For ``method="chebyshev"``, an integer sets ``p = K``, or a tuple ``(p, K)``
+        sets the boundary degree and Neumann order, with ``p >= 1``, ``K >= 0`` and ``p + K <= 31``.
+    :type order: None | int | tuple
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -386,8 +405,8 @@ def sig_kernel_gram_backprop(
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :param return_grid: If ``True``, backpropagates derivatives with respect to the entire
-        PDE grid. Finite differences use the dyadically refined grid, while the polynomial
-        method uses one value per vertex of each transformed path.
+        PDE grid. Finite differences use the dyadically refined grid, while polynomial and
+        Chebyshev methods use one value per vertex of each transformed path.
     :type return_grid: bool
     :param max_batch: Maximum batch size to run in parallel. If the computation is failing
         due to insufficient memory, this parameter should be decreased.
@@ -492,7 +511,7 @@ def sig_kernel_gram_backprop(
     batch2 = path2.shape[0]
 
     if max_batch == -1:
-        max_batch = max(batch1, batch2)
+        max_batch = max(1, batch1, batch2)
 
     ld = torch.zeros(path1.shape, dtype=torch.float64, device=path1.device) if left_deriv else None
     rd = torch.zeros(path2.shape, dtype=torch.float64, device=path1.device) if right_deriv else None
@@ -557,7 +576,7 @@ def sig_kernel_gram_backprop(
 
                 if k_grid is not None:
                     k_t = k_grid[cj_off, ci_off]
-                elif method == "polynomial":
+                elif method in ("polynomial", "chebyshev"):
                     k_t = None
                 elif can_transpose_k:
                     k_t = k[off].transpose(-2, -1)

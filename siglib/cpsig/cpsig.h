@@ -645,6 +645,22 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int sig_kernel_d(const double* gram, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false, int n_jobs = 1) noexcept;
 	/** @} */
 
+	/** @defgroup chebyshev_sig_kernel_functions Chebyshev-Neumann signature kernel functions
+	* @{
+	* @brief Computes signature kernels from increment Gram matrices.
+	* @param p Retained boundary degree, at least 1.
+	* @param k Neumann order, at least 0, with p + k <= 31.
+	* @param state Optional saved cell inputs with shape [batch_size, length1-1, length2-1, 2*p+8].
+	*/
+	[[nodiscard]] CPSIG_API int sig_kernel_chebyshev_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t p, uint64_t k, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @copydoc sig_kernel_chebyshev_f */
+	[[nodiscard]] CPSIG_API int sig_kernel_chebyshev_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t p, uint64_t k, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @brief Backpropagates to the increment Gram matrix; null state is recomputed. */
+	[[nodiscard]] CPSIG_API int sig_kernel_chebyshev_backprop_f(const float* gram, float* grad, const float* derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t p, uint64_t k, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @copydoc sig_kernel_chebyshev_backprop_f */
+	[[nodiscard]] CPSIG_API int sig_kernel_chebyshev_backprop_d(const double* gram, double* grad, const double* derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t p, uint64_t k, bool return_grid = false, int n_jobs = 1) noexcept;
+	/** @} */
+
 	/** @defgroup polynomial_sig_kernel_functions Polynomial signature kernel functions
 	* @{
 	*/

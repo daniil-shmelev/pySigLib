@@ -41,6 +41,8 @@ from .transform_path import transform_path
 
 
 def _parse_branched_kernel_method(method, dyadic_order, order, return_grid=False):
+    if method == "chebyshev":
+        raise ValueError("method='chebyshev' is not supported for branched signature kernels")
     if method != "polynomial":
         return _parse_sig_kernel_method(method, dyadic_order, order, return_grid)
     if dyadic_order is not None:

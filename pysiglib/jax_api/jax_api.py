@@ -59,7 +59,7 @@ from ..data_handlers import _infer_correction_degree
 from ..sig_coef import sig_coef as sig_coef_forward
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
-from ..sig_kernel import _parse_sig_kernel_method
+from ..sig_kernel import _parse_sig_kernel_method, _parse_chebyshev_order
 from ..branched_sig_kernel import _parse_branched_kernel_method
 from ..branched_sig_kernel import branched_sig_kernel as branched_sig_kernel_forward
 from ..branched_sig_kernel import branched_sig_kernel_gram as branched_sig_kernel_gram_forward
@@ -100,6 +100,8 @@ from ._ffi import (
     log_sig_combine_backprop_ffi_call,
     sig_kernel_pde_ffi_call,
     sig_kernel_pde_backprop_ffi_call,
+    sig_kernel_chebyshev_pde_ffi_call,
+    sig_kernel_chebyshev_pde_backprop_ffi_call,
     sig_kernel_poly_pde_ffi_call,
     branched_sig_kernel_poly_pde_ffi_call,
     branched_sig_kernel_poly_pde_backprop_ffi_call,
@@ -991,6 +993,30 @@ def _sig_kernel_pde_bwd(dimension, dyadic_order_1, dyadic_order_2, return_grid, 
 _sig_kernel_pde.defvjp(_sig_kernel_pde_fwd, _sig_kernel_pde_bwd)
 
 
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5))
+def _sig_kernel_chebyshev_pde(gram, dimension, degree, neumann_order, return_grid, n_jobs):
+    result, _ = sig_kernel_chebyshev_pde_ffi_call(
+        gram, dimension, degree, neumann_order, return_grid, n_jobs)
+    return result
+
+
+def _sig_kernel_chebyshev_pde_fwd(gram, dimension, degree, neumann_order, return_grid, n_jobs):
+    result, state = sig_kernel_chebyshev_pde_ffi_call(
+        gram, dimension, degree, neumann_order, return_grid, n_jobs)
+    return result, (gram, state)
+
+
+def _sig_kernel_chebyshev_pde_bwd(dimension, degree, neumann_order, return_grid, n_jobs, residuals, cotangent):
+    gram, state = residuals
+    grad_gram = sig_kernel_chebyshev_pde_backprop_ffi_call(
+        gram, cotangent, state, dimension, degree, neumann_order, return_grid, n_jobs)
+    return (grad_gram,)
+
+
+_sig_kernel_chebyshev_pde.defvjp(
+    _sig_kernel_chebyshev_pde_fwd, _sig_kernel_chebyshev_pde_bwd)
+
+
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4))
 def _sig_kernel_poly_pde(gram, dimension, order, return_grid, n_jobs):
     result, _ = sig_kernel_poly_pde_ffi_call(
@@ -1100,7 +1126,11 @@ def sig_kernel(
         gram = static_kernel(path1, path2)
 
     dimension = path1.shape[-1]
-    if method == "polynomial":
+    if method == "chebyshev":
+        degree, neumann_order = _parse_chebyshev_order(order)
+        result = _sig_kernel_chebyshev_pde(
+            gram, dimension, degree, neumann_order, return_grid, n_jobs)
+    elif method == "polynomial":
         result = _sig_kernel_poly_pde(
             gram, dimension, order, return_grid, n_jobs)
     else:

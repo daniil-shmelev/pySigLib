@@ -157,6 +157,32 @@ extern "C" {
 	[[nodiscard]] CUSIG_API int sig_kernel_poly_backprop_cuda_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t order, bool return_grid = false) noexcept;
 	/** @} */
 
+	/** @defgroup sig_kernel_chebyshev_cuda_functions Chebyshev signature kernel CUDA functions
+	* @{
+	*/
+
+	/**
+	* @brief Computes Chebyshev-Neumann signature kernels from device batch gram matrices.
+	* @param state Optional incoming cell state, with `batch_size * (length1 - 1) * (length2 - 1) * (2 * degree + 8)` entries.
+	* @param degree Retained Chebyshev degree, at least one.
+	* @param neumann_order Last retained Neumann term, with `degree + neumann_order <= 31`.
+	* @param return_grid Whether to return the original-vertex grid instead of its final entry.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int sig_kernel_chebyshev_cuda_f(const float* gram, float* out, float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t degree, uint64_t neumann_order, bool return_grid = false) noexcept;
+	/** @copydoc sig_kernel_chebyshev_cuda_f */
+	[[nodiscard]] CUSIG_API int sig_kernel_chebyshev_cuda_d(const double* gram, double* out, double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t degree, uint64_t neumann_order, bool return_grid = false) noexcept;
+
+	/**
+	* @brief Backpropagates through the Chebyshev-Neumann kernel on the GPU.
+	* @param state Optional state from the forward call. If null, it is regenerated in batches.
+	* @return Status code (0 = success).
+	*/
+	[[nodiscard]] CUSIG_API int sig_kernel_chebyshev_backprop_cuda_f(const float* gram, float* gram_derivs, const float* output_derivs, const float* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t degree, uint64_t neumann_order, bool return_grid = false) noexcept;
+	/** @copydoc sig_kernel_chebyshev_backprop_cuda_f */
+	[[nodiscard]] CUSIG_API int sig_kernel_chebyshev_backprop_cuda_d(const double* gram, double* gram_derivs, const double* output_derivs, const double* state, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t degree, uint64_t neumann_order, bool return_grid = false) noexcept;
+	/** @} */
+
 	/** @defgroup branched_sig_kernel_poly_cuda_functions Polynomial branched kernel functions
 	* @{
 	*/

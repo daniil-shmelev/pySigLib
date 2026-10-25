@@ -25,7 +25,7 @@ def sig_score(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -63,11 +63,12 @@ def sig_score(
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
     :type dyadic_order: None | int | tuple
-    :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
+    :param method: Solver method. Must be ``"finite_difference"``, ``"polynomial"`` or ``"chebyshev"``.
     :type method: str
-    :param order: (``method="polynomial"`` only) Highest retained polynomial degree. Must be
-        between 2 and 64. Unsupported for finite differences.
-    :type order: None | int
+    :param order: Polynomial degree from 2 to 64, or Chebyshev orders as an integer ``p = K``
+        or tuple ``(p, K)``, with ``p >= 1``, ``K >= 0`` and ``p + K <= 31``.
+        Unsupported for finite differences.
+    :type order: None | int | tuple
     :param lam: The parameter :math:`\\lambda` of the generalised signature kernel score (default = 1.0).
     :type lam: float
     :param static_kernel: Static kernel passed to the signature kernel computation. If ``None`` (default), the
@@ -176,7 +177,7 @@ def expected_sig_score(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -214,11 +215,12 @@ def expected_sig_score(
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
     :type dyadic_order: None | int | tuple
-    :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
+    :param method: Solver method. Must be ``"finite_difference"``, ``"polynomial"`` or ``"chebyshev"``.
     :type method: str
-    :param order: (``method="polynomial"`` only) Highest retained polynomial degree. Must be
-        between 2 and 64. Unsupported for finite differences.
-    :type order: None | int
+    :param order: Polynomial degree from 2 to 64, or Chebyshev orders as an integer ``p = K``
+        or tuple ``(p, K)``, with ``p >= 1``, ``K >= 0`` and ``p + K <= 31``.
+        Unsupported for finite differences.
+    :type order: None | int | tuple
     :param lam: The parameter :math:`\\lambda` of the generalised signature kernel score (default = 1.0).
     :type lam: float
     :param static_kernel: Static kernel passed to the signature kernel computation. If ``None`` (default), the
@@ -287,7 +289,7 @@ def sig_mmd(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -330,11 +332,12 @@ def sig_mmd(
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
     :type dyadic_order: None | int | tuple
-    :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
+    :param method: Solver method. Must be ``"finite_difference"``, ``"polynomial"`` or ``"chebyshev"``.
     :type method: str
-    :param order: (``method="polynomial"`` only) Highest retained polynomial degree. Must be
-        between 2 and 64. Unsupported for finite differences.
-    :type order: None | int
+    :param order: Polynomial degree from 2 to 64, or Chebyshev orders as an integer ``p = K``
+        or tuple ``(p, K)``, with ``p >= 1``, ``K >= 0`` and ``p + K <= 31``.
+        Unsupported for finite differences.
+    :type order: None | int | tuple
     :param static_kernel: Static kernel passed to the signature kernel computation. If ``None`` (default), the
         linear kernel will be used. For details, see the documentation on
         :doc:`static kernels </pages/signature_kernels/static_kernels>`.

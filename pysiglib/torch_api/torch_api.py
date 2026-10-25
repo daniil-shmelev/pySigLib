@@ -336,7 +336,7 @@ def _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_job
 class SigKernel(torch.autograd.Function):
     @staticmethod
     def forward(ctx, path1, path2, dyadic_order, method, order, static_kernel, time_aug, lead_lag, end_time, n_jobs, return_grid):
-        if method == "polynomial":
+        if method in ("polynomial", "chebyshev"):
             result, solver_state = sig_kernel_forward(
                 path1, path2, dyadic_order=dyadic_order, method=method, order=order,
                 static_kernel=static_kernel, time_aug=time_aug,
@@ -376,9 +376,10 @@ class SigKernel(torch.autograd.Function):
         if len(batch_shape) > 1:
             flat_path1 = path1.reshape(-1, path1.shape[-2], path1.shape[-1])
             flat_path2 = path2.reshape(-1, path2.shape[-2], path2.shape[-1])
-            if ctx.method == "polynomial":
+            if ctx.method in ("polynomial", "chebyshev"):
                 flat_k_grid = None
-                flat_state = solver_state.reshape(-1, *solver_state.shape[-4:])
+                state_ndim = 3 if ctx.method == "chebyshev" else 4
+                flat_state = solver_state.reshape(flat_path1.shape[0], *solver_state.shape[-state_ndim:])
             else:
                 flat_k_grid = solver_state.reshape(-1, solver_state.shape[-2], solver_state.shape[-1])
                 flat_state = None
@@ -388,8 +389,8 @@ class SigKernel(torch.autograd.Function):
                 flat_grad = grad_output.reshape(-1)
         else:
             flat_path1, flat_path2, flat_grad = path1, path2, grad_output
-            flat_k_grid = None if ctx.method == "polynomial" else solver_state
-            flat_state = solver_state if ctx.method == "polynomial" else None
+            flat_k_grid = solver_state if ctx.method == "finite_difference" else None
+            flat_state = None if ctx.method == "finite_difference" else solver_state
 
         new_derivs = sig_kernel_backprop(flat_grad, flat_path1, flat_path2, dyadic_order=ctx.dyadic_order,
                                          method=ctx.method, order=ctx.order,
@@ -411,7 +412,7 @@ def sig_kernel(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -459,7 +460,7 @@ class SigKernelGram(torch.autograd.Function):
         ctx.max_batch = max_batch
         ctx.return_grid = return_grid
 
-        if return_grid or method == "polynomial":
+        if return_grid or method in ("polynomial", "chebyshev"):
             return result
         return result[..., -1, -1]
 
@@ -477,7 +478,7 @@ class SigKernelGram(torch.autograd.Function):
                                          static_kernel=ctx.static_kernel,
                                          time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time,
                                          left_deriv=left_deriv, right_deriv=right_deriv,
-                                         k_grid=None if ctx.method == "polynomial" else solver_grid,
+                                         k_grid=solver_grid if ctx.method == "finite_difference" else None,
                                          n_jobs=ctx.n_jobs, return_grid=ctx.return_grid, max_batch=ctx.max_batch)
 
         return new_derivs[0], new_derivs[1], None, None, None, None, None, None, None, None, None, None
@@ -488,7 +489,7 @@ def sig_kernel_gram(
         *,
         method: str = "finite_difference",
         dyadic_order: Optional[Union[int, tuple]] = None,
-        order: Optional[int] = None,
+        order: Optional[Union[int, tuple]] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug: bool = False,
         lead_lag: bool = False,
@@ -674,7 +675,7 @@ def sig_score(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -713,7 +714,7 @@ def expected_sig_score(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         lam : float = 1.,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
@@ -733,7 +734,7 @@ def sig_mmd(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,

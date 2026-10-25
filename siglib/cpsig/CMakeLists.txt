@@ -7,6 +7,7 @@ endif()
 
 add_library(cpsig SHARED
     multithreading.cpp
+    cp_chebyshev_sig_kernel.cpp
     cp_branched_polynomial_sig_kernel.cpp
     cp_bch.cpp
     cache_lifecycle/cp_branched_cache.cpp

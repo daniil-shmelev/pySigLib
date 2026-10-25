@@ -277,6 +277,18 @@ CPSIG_SIG_KERNEL = _bind_float_pair(
                c_int),
 )
 
+CPSIG_SIG_KERNEL_CHEBYSHEV = _bind_float_pair(
+    CPSIG, "sig_kernel_chebyshev",
+    lambda T: (POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64,
+               c_uint64, c_bool, c_int),
+)
+
+CPSIG_SIG_KERNEL_CHEBYSHEV_BACKPROP = _bind_float_pair(
+    CPSIG, "sig_kernel_chebyshev_backprop",
+    lambda T: (POINTER(T), POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64,
+               c_uint64, c_uint64, c_bool, c_int),
+)
+
 CPSIG_SIG_KERNEL_POLY = _bind_float_pair(
     CPSIG, "sig_kernel_poly",
     lambda T: (POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_bool,
@@ -506,6 +518,18 @@ CUSIG_SIG_TO_LOG_SIG_BACKPROP = _bind_float_pair(
 CUSIG_SIG_KERNEL = _bind_float_pair(
     CUSIG, "sig_kernel_cuda",
     lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_uint64, c_bool),
+)
+
+CUSIG_SIG_KERNEL_CHEBYSHEV = _bind_float_pair(
+    CUSIG, "sig_kernel_chebyshev_cuda",
+    lambda T: (POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_uint64,
+               c_uint64, c_bool),
+)
+
+CUSIG_SIG_KERNEL_CHEBYSHEV_BACKPROP = _bind_float_pair(
+    CUSIG, "sig_kernel_chebyshev_backprop_cuda",
+    lambda T: (POINTER(T), POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64,
+               c_uint64, c_uint64, c_bool),
 )
 
 CUSIG_SIG_KERNEL_POLY = _bind_float_pair(

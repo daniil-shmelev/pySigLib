@@ -119,6 +119,14 @@ _TARGETS = {
         "cpu": ("pysiglib_sig_kernel_pde_backprop_cpu", "PySigLibSigKernelPdeBackpropCpu"),
         "cuda": ("pysiglib_sig_kernel_pde_backprop_cuda", "PySigLibSigKernelPdeBackpropCuda"),
     },
+    "sig_kernel_chebyshev_pde": {
+        "cpu": ("pysiglib_sig_kernel_chebyshev_pde_cpu", "PySigLibSigKernelChebyshevPdeCpu"),
+        "cuda": ("pysiglib_sig_kernel_chebyshev_pde_cuda", "PySigLibSigKernelChebyshevPdeCuda"),
+    },
+    "sig_kernel_chebyshev_pde_backprop": {
+        "cpu": ("pysiglib_sig_kernel_chebyshev_pde_backprop_cpu", "PySigLibSigKernelChebyshevPdeBackpropCpu"),
+        "cuda": ("pysiglib_sig_kernel_chebyshev_pde_backprop_cuda", "PySigLibSigKernelChebyshevPdeBackpropCuda"),
+    },
     "sig_kernel_poly_pde": {
         "cpu": ("pysiglib_sig_kernel_poly_pde_cpu", "PySigLibSigKernelPolyPdeCpu"),
         "cuda": ("pysiglib_sig_kernel_poly_pde_cuda", "PySigLibSigKernelPolyPdeCuda"),
@@ -549,6 +557,30 @@ def sig_kernel_pde_backprop_ffi_call(gram, derivs, k_grid, dimension, dyadic_ord
                        dyadic_order_2=np.int64(dyadic_order_2),
                        return_grid=np.bool_(return_grid), n_jobs=np.int64(n_jobs))
     return _make_ffi_call("sig_kernel_pde_backprop", (gram, derivs, k_grid), out_type, call_kwargs)
+
+
+def sig_kernel_chebyshev_pde_ffi_call(gram, dimension, degree, neumann_order, return_grid, n_jobs):
+    _normalize_dtype(gram.dtype)
+    length1 = gram.shape[-2] + 1
+    length2 = gram.shape[-1] + 1
+    out_shape = (*gram.shape[:-2], length1, length2) if return_grid else gram.shape[:-2]
+    state_shape = (*gram.shape[:-2], gram.shape[-2], gram.shape[-1], 2 * degree + 8)
+    out_type = jax.ShapeDtypeStruct(out_shape, gram.dtype)
+    state_type = jax.ShapeDtypeStruct(state_shape, gram.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree),
+                       neumann_order=np.int64(neumann_order), return_grid=np.bool_(return_grid),
+                       n_jobs=np.int64(n_jobs))
+    return _make_ffi_call("sig_kernel_chebyshev_pde", (gram,), (out_type, state_type), call_kwargs)
+
+
+def sig_kernel_chebyshev_pde_backprop_ffi_call(gram, derivs, state, dimension, degree, neumann_order, return_grid, n_jobs):
+    _check_same_dtype(gram, derivs, state)
+    out_type = jax.ShapeDtypeStruct(gram.shape, gram.dtype)
+    call_kwargs = dict(dimension=np.int64(dimension), degree=np.int64(degree),
+                       neumann_order=np.int64(neumann_order), return_grid=np.bool_(return_grid),
+                       n_jobs=np.int64(n_jobs))
+    return _make_ffi_call(
+        "sig_kernel_chebyshev_pde_backprop", (gram, derivs, state), out_type, call_kwargs)
 
 
 def sig_kernel_poly_pde_ffi_call(gram, dimension, order, return_grid, n_jobs):

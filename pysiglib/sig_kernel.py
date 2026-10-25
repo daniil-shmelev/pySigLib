@@ -40,7 +40,19 @@ _NORMALIZE_WARNING = (
     "Affected entries will be set to NaN."
 )
 
-_SIG_KERNEL_METHODS = ("finite_difference", "polynomial")
+_SIG_KERNEL_METHODS = ("finite_difference", "polynomial", "chebyshev")
+
+
+def _parse_chebyshev_order(order):
+    if type(order) is int:
+        degree, neumann_order = order, order
+    elif type(order) is tuple and len(order) == 2 and all(type(value) is int for value in order):
+        degree, neumann_order = order
+    else:
+        raise TypeError("order must be an int or a tuple of two ints when method='chebyshev'")
+    if degree < 1 or neumann_order < 0 or degree + neumann_order > 31:
+        raise ValueError("Chebyshev orders must satisfy p >= 1, K >= 0 and p + K <= 31")
+    return degree, neumann_order
 
 
 def _parse_sig_kernel_method(method, dyadic_order, order, return_grid):
@@ -59,6 +71,9 @@ def _parse_sig_kernel_method(method, dyadic_order, order, return_grid):
         raise ValueError("dyadic_order is not supported when method='" + method + "'")
     if order is None:
         raise ValueError("order is required when method='" + method + "'")
+    if method == "chebyshev":
+        _parse_chebyshev_order(order)
+        return 0, 0
     if type(order) is not int:
         raise TypeError("order must be of type int")
     if order < 2 or order > 64:
@@ -80,8 +95,10 @@ def _safe_normalize(result, k1, k2, func_name, stacklevel=2):
     safe = torch.sqrt(torch.clamp(denom, min=1e-30))
     return torch.where(bad, float('nan'), result / safe)
 from .dtypes import (
+    CPSIG_SIG_KERNEL_CHEBYSHEV,
     CPSIG_SIG_KERNEL_POLY,
     CPSIG_SIG_KERNEL,
+    CUSIG_SIG_KERNEL_CHEBYSHEV,
     CUSIG_SIG_KERNEL_POLY,
     CUSIG_SIG_KERNEL,
     DTYPES,
@@ -95,7 +112,7 @@ def sig_kernel(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -138,11 +155,13 @@ def sig_kernel(
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
     :type dyadic_order: None | int | tuple
-    :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
+    :param method: Solver method. Must be ``"finite_difference"``, ``"polynomial"`` or ``"chebyshev"``.
     :type method: str
-    :param order: (``method="polynomial"`` only) Highest retained polynomial degree. Must be
-        between 2 and 64. Unsupported for finite differences.
-    :type order: None | int
+    :param order: For ``method="polynomial"``, the highest retained polynomial degree, from 2 to 64.
+        For ``method="chebyshev"``, an integer sets both the boundary degree and Neumann order,
+        or a tuple ``(p, K)`` sets them separately. These must satisfy ``p >= 1``, ``K >= 0``
+        and ``p + K <= 31``. Unsupported for finite differences.
+    :type order: None | int | tuple
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -160,7 +179,7 @@ def sig_kernel(
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :param return_grid: If ``True``, returns the entire PDE grid. Finite differences
-        return the dyadically refined grid, while the polynomial method returns one
+        return the dyadically refined grid, while polynomial and Chebyshev methods return one
         value per vertex of each transformed path.
     :type return_grid: bool
     :param normalize: If ``True``, normalizes the signature kernel so that :math:`k(x, x) = 1`
@@ -222,8 +241,8 @@ def sig_kernel(
         method, dyadic_order, order, return_grid)
     if normalize and return_grid:
         raise ValueError("normalize=True cannot be used with return_grid=True")
-    if _return_state and method != "polynomial":
-        raise ValueError("_return_state is only supported for method='polynomial'")
+    if _return_state and method not in ("polynomial", "chebyshev"):
+        raise ValueError("_return_state is only supported for polynomial and Chebyshev methods")
     if _return_state and normalize:
         raise ValueError("_return_state cannot be used with normalize=True")
 
@@ -232,7 +251,11 @@ def sig_kernel(
         path2 = transform_path(path2, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
     data = MultiplePathInputHandler([path1, path2], False, False, 0., ["path1", "path2"])
-
+    if method == "chebyshev":
+        degree, neumann_order = _parse_chebyshev_order(order)
+        state_shape = (data.batch_size, data.length[0] - 1, data.length[1] - 1, 2 * degree + 8)
+    elif method == "polynomial":
+        state_shape = (data.batch_size, data.length[0] - 1, data.length[1] - 1, 2, order + 1)
 
     if not return_grid:
         result = ScalarOutputHandler(data)
@@ -243,8 +266,7 @@ def sig_kernel(
 
     if data.batch_size == 0:
         if _return_state:
-            state = torch.as_tensor(data.path[0]).new_empty(
-                (0, data.length[0] - 1, data.length[1] - 1, 2, order + 1))
+            state = torch.as_tensor(data.path[0]).new_empty(state_shape)
             return result.data, state
         return result.data
 
@@ -261,14 +283,20 @@ def sig_kernel(
     gram = static_kernel(ctx, torch_path1, torch_path2)
     gram_ptr = cast(gram.data_ptr(), POINTER(DTYPES[str(gram.dtype)[6:]]))
 
-    if method == "polynomial":
-        state = gram.new_empty(
-            (data.batch_size, data.length[0] - 1, data.length[1] - 1, 2, order + 1)
-        ) if _return_state else None
+    if method in ("polynomial", "chebyshev"):
+        state = gram.new_empty(state_shape) if _return_state else None
         state_ptr = None if state is None else cast(
             state.data_ptr(), POINTER(DTYPES[data.dtype]))
 
-    if method == "polynomial" and data.device == "cpu":
+    if method == "chebyshev" and data.device == "cpu":
+        err_code = CPSIG_SIG_KERNEL_CHEBYSHEV[data.dtype](
+            gram_ptr, result.data_ptr, state_ptr, data.batch_size, data.dimension,
+            data.length[0], data.length[1], degree, neumann_order, return_grid, n_jobs)
+    elif method == "chebyshev":
+        err_code = CUSIG_SIG_KERNEL_CHEBYSHEV[data.dtype](
+            gram_ptr, result.data_ptr, state_ptr, data.batch_size, data.dimension,
+            data.length[0], data.length[1], degree, neumann_order, return_grid)
+    elif method == "polynomial" and data.device == "cpu":
         err_code = CPSIG_SIG_KERNEL_POLY[data.dtype](
             gram_ptr, result.data_ptr, state_ptr, data.batch_size, data.dimension,
             data.length[0], data.length[1], order, return_grid, n_jobs)
@@ -340,7 +368,7 @@ def sig_kernel_gram(
         *,
         method : str = "finite_difference",
         dyadic_order : Optional[Union[int, tuple]] = None,
-        order : Optional[int] = None,
+        order : Optional[Union[int, tuple]] = None,
         static_kernel : Optional[StaticKernel] = None,
         time_aug : bool = False,
         lead_lag : bool = False,
@@ -386,11 +414,13 @@ def sig_kernel_gram(
         :math:`(\\lambda_1, \\lambda_2)`, will refine the first path by :math:`2^{\\lambda_1}`
         and the second path by :math:`2^{\\lambda_2}`.
     :type dyadic_order: None | int | tuple
-    :param method: Solver method. Must be ``"finite_difference"`` or ``"polynomial"``.
+    :param method: Solver method. Must be ``"finite_difference"``, ``"polynomial"`` or ``"chebyshev"``.
     :type method: str
-    :param order: (``method="polynomial"`` only) Highest retained polynomial degree. Must be
-        between 2 and 64. Unsupported for finite differences.
-    :type order: None | int
+    :param order: For ``method="polynomial"``, the highest retained polynomial degree, from 2 to 64.
+        For ``method="chebyshev"``, an integer sets both the boundary degree and Neumann order,
+        or a tuple ``(p, K)`` sets them separately. These must satisfy ``p >= 1``, ``K >= 0``
+        and ``p + K <= 31``. Unsupported for finite differences.
+    :type order: None | int | tuple
     :param static_kernel: Static kernel. If ``None`` (default), the linear kernel will be used.
         For details, see the documentation on :doc:`static kernels </pages/signature_kernels/static_kernels>`.
     :type static_kernel: None | pysiglib.StaticKernel
@@ -413,7 +443,7 @@ def sig_kernel_gram(
         If set to -1, no explicit batch limit is applied.
     :type max_batch: int
     :param return_grid: If ``True``, returns the entire PDE grid. Finite differences
-        return the dyadically refined grid, while the polynomial method returns one
+        return the dyadically refined grid, while polynomial and Chebyshev methods return one
         value per vertex of each transformed path.
     :type return_grid: bool
     :param normalize: If ``True``, normalizes the gram matrix so that :math:`K(x, x) = 1` by
@@ -422,7 +452,7 @@ def sig_kernel_gram(
     :return: Gram matrix of signature kernels, of shape ``(*batch_shape_1, *batch_shape_2)``.
         With ``return_grid=True``, the final two dimensions are the dyadically refined
         grid lengths for finite differences, or the transformed path vertex lengths for
-        the polynomial method.
+        polynomial and Chebyshev methods.
     :rtype: numpy.ndarray | torch.Tensor
 
     .. note::
@@ -509,7 +539,7 @@ def sig_kernel_gram(
     batch2 = path2.shape[0]
 
     if max_batch == -1:
-        max_batch = max(batch1, batch2)
+        max_batch = max(1, batch1, batch2)
 
     ####################################
     # Now run computation in batches

@@ -19,6 +19,7 @@ set(_pysiglib_cpsig_test_sources
     cp_test_log_sig.cpp
     cp_test_sig_kernel.cpp
     cp_test_polynomial_sig_kernel.cpp
+    cp_test_chebyshev_sig_kernel.cpp
     cp_test_preparation.cpp
     cp_test_branched.cpp
     cp_test_branched_sig_coef.cpp
