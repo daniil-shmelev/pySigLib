@@ -228,27 +228,6 @@ void sig_to_log_sig_backprop_(
 template<std::floating_point T>
 void log_sig_combine_(
 	const T* log_sig1, const T* log_sig2, T* out,
-	uint64_t dimension, uint64_t degree
-) {
-	if (dimension == 0) throw std::invalid_argument("log_sig_combine received dimension 0");
-	if (degree == 0) throw std::invalid_argument("log_sig_combine received degree 0");
-
-	const BchCache& cache = get_bch_cache(dimension, degree);
-	uint64_t m = cache.m;
-
-	if (degree < 2) {
-		for (uint64_t i = 0; i < m; ++i) out[i] = log_sig1[i] + log_sig2[i];
-		return;
-	}
-
-	uint64_t m2 = cache.bch_size();
-	std::vector<T> memo(m2 * m);
-	bch_combine_impl_<T>(log_sig1, log_sig2, out, cache, memo.data());
-}
-
-template<std::floating_point T>
-void log_sig_combine_(
-	const T* log_sig1, const T* log_sig2, T* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree,
 	int n_jobs = 1
 ) {
@@ -267,33 +246,40 @@ void log_sig_combine_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_size();
-
 	auto work_range = [&](uint64_t begin, uint64_t end) {
-		if (begin == end) return;
-		constexpr uint64_t width = BchBatchValue<T>::width;
-		const bool batched = width > 1 && end - begin >= width;
-		const bool tail = !batched || (end - begin) % width != 0;
-		const uint64_t batch_memo_size = cache.bch_memo_nodes * cache.bch_memo_width * width;
 		thread_local std::vector<T> scratch;
-		scratch.resize(std::max(batched ? batch_memo_size : 0, tail ? m2 * m : 0));
-		if constexpr (width > 1) {
-			if (batched) {
-				// Coordinates outside the operation ranges stay zero across tiles.
-				std::fill_n(scratch.data(), batch_memo_size, T(0));
-				for (; end - begin >= width; begin += width)
-					bch_combine_batch_(log_sig1 + begin * m, log_sig2 + begin * m,
-						out + begin * m, cache, scratch.data());
-			}
-		}
-		for (; begin < end; ++begin)
-			bch_combine_impl_<T>(log_sig1 + begin * m, log_sig2 + begin * m,
-				out + begin * m, cache, scratch.data());
+		scratch.resize(cache.bch_memo_nodes * cache.bch_memo_width * bch_tile);
+		std::fill(scratch.begin(), scratch.end(), T(0));
+		for (; begin < end; begin += bch_tile)
+			bch_combine_batch_(log_sig1 + begin * m, log_sig2 + begin * m,
+				out + begin * m, cache, scratch.data(), std::min(bch_tile, end - begin));
 	};
 	if (batch_size == 0 || n_jobs == 1 || batch_size == 1)
 		work_range(0, batch_size);
 	else
 		spawn_batch_threads(batch_size, n_jobs, work_range);
+}
+
+// Reduce arbitrary log-signature sequences; the same schedule computes prefixes.
+template<std::floating_point T>
+void log_sig_reduce_(const T* inputs, T* out, uint64_t batch, uint64_t length,
+	uint64_t dimension, uint64_t degree, int n_jobs) {
+	if (!dimension || !degree) throw std::invalid_argument("invalid BCH shape");
+	const auto& cache = get_bch_cache(dimension, degree);
+	const uint64_t m = cache.m;
+	auto work = [&](uint64_t begin, uint64_t end) {
+		thread_local std::vector<T> scratch;
+		scratch.assign(cache.bch_memo_nodes * cache.bch_memo_width * bch_tile, T(0));
+		for (uint64_t b = begin; b < end; ++b) {
+			T* result = out + b * m;
+			std::fill_n(result, m, T(0));
+			for (uint64_t start = 0; start < length; start += bch_tile)
+				bch_combine_batch_<T, true>(nullptr, inputs + b * length * m + start,
+					result, cache, scratch.data(), std::min(bch_tile, length - start), length);
+		}
+	};
+	if (n_jobs == 1 || batch < 2) work(0, batch);
+	else spawn_batch_threads(batch, n_jobs, work);
 }
 
 // ========================================================================
@@ -488,133 +474,6 @@ void log_sig_from_path_(
 }
 
 
-inline void log_sig_from_path_x4_(
-	const double* paths[4], double* outs[4],
-	uint64_t length, uint64_t dimension,
-	const BchCache& cache, double* memo, double* seg, double* temp
-) {
-	uint64_t m = cache.m;
-
-	for (uint64_t k = 0; k < dimension; ++k) {
-		for (int b = 0; b < 4; ++b)
-			temp[k * 4 + b] = paths[b][dimension + k] - paths[b][k];
-	}
-	std::memset(&temp[dimension * 4], 0, (m - dimension) * 4 * sizeof(double));
-
-	if (length <= 2) {
-		for (uint64_t k = 0; k < m; ++k)
-			for (int b = 0; b < 4; ++b)
-				outs[b][k] = temp[k * 4 + b];
-		return;
-	}
-
-	std::memset(seg, 0, m * 4 * sizeof(double));
-
-	double* acc = temp;
-	double* src = memo + cache.bch_size() * m * 4;
-
-	for (uint64_t s = 1; s < length - 1; ++s) {
-		for (uint64_t k = 0; k < dimension; ++k) {
-			for (int b = 0; b < 4; ++b)
-				seg[k * 4 + b] = paths[b][(s + 1) * dimension + k] - paths[b][s * dimension + k];
-		}
-
-		std::swap(acc, src);
-		bch_combine_linear_impl_x4_(src, seg, acc, cache, memo);
-	}
-
-	for (uint64_t k = 0; k < m; ++k)
-		for (int b = 0; b < 4; ++b)
-			outs[b][k] = acc[k * 4 + b];
-}
-inline void log_sig_from_path_backprop_x4_(
-	const double* d_outs[4], double* d_paths[4], const double* paths[4],
-	uint64_t length, uint64_t dimension,
-	const BchCache& cache, double* workspace
-) {
-	uint64_t m = cache.m;
-	uint64_t m2 = cache.bch_size();
-	uint64_t n_segs = length - 1;
-	const bool prune_backprop = cache.prune_linear_backprop;
-
-	// The forward memo reuses the first half of the backprop workspace.
-	double* curr = workspace;
-	double* prev = curr + m * 4;
-	double* seg = prev + m * 4;
-	double* neg_seg = seg + m * 4;
-	double* bch_bp_ws = neg_seg + m * 4;
-	double* d_acc = bch_bp_ws + 2 * m2 * m * 4;
-	double* d_ls1 = d_acc + m * 4;
-	double* d_ls2 = d_ls1 + m * 4;
-
-	// Forward into curr
-	for (uint64_t k = 0; k < dimension; ++k)
-		for (int b = 0; b < 4; ++b)
-			curr[k * 4 + b] = paths[b][dimension + k] - paths[b][k];
-	std::memset(&curr[dimension * 4], 0, (m - dimension) * 4 * sizeof(double));
-
-	std::memset(seg, 0, m * 4 * sizeof(double));
-	for (uint64_t s = 1; s < n_segs; ++s) {
-		for (uint64_t k = 0; k < dimension; ++k)
-			for (int b = 0; b < 4; ++b)
-				seg[k * 4 + b] = paths[b][(s + 1) * dimension + k] - paths[b][s * dimension + k];
-
-		bch_combine_linear_impl_x4_(curr, seg, prev, cache, bch_bp_ws);
-		std::swap(curr, prev);
-	}
-
-	// Init d_acc from d_out (interleaved)
-	for (uint64_t k = 0; k < m; ++k)
-		for (int b = 0; b < 4; ++b)
-			d_acc[k * 4 + b] = d_outs[b][k];
-
-	// Zero d_paths
-	for (int b = 0; b < 4; ++b)
-		std::memset(d_paths[b], 0, length * dimension * sizeof(double));
-
-	// Backward with uncombination
-	std::memset(neg_seg, 0, m * 4 * sizeof(double));
-	for (uint64_t s = n_segs - 1; s >= 1; --s) {
-		for (uint64_t k = 0; k < dimension; ++k) {
-			for (int b = 0; b < 4; ++b) {
-				double dx = paths[b][(s + 1) * dimension + k] - paths[b][s * dimension + k];
-				seg[k * 4 + b] = dx;
-				neg_seg[k * 4 + b] = -dx;
-			}
-		}
-
-		// Uncombine: prev = BCH(curr, -seg)
-		bch_combine_linear_impl_x4_(curr, neg_seg, prev, cache, bch_bp_ws);
-
-		// Backprop through BCH(prev, seg) -> curr
-		if (prune_backprop)
-			bch_combine_linear_backprop_impl_x4_<true>(
-				d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
-		else
-			bch_combine_linear_backprop_impl_x4_<false>(
-				d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
-
-		// Scatter d_ls2 to path gradients
-		for (uint64_t k = 0; k < dimension; ++k) {
-			for (int b = 0; b < 4; ++b) {
-				d_paths[b][(s + 1) * dimension + k] += d_ls2[k * 4 + b];
-				d_paths[b][s * dimension + k] -= d_ls2[k * 4 + b];
-			}
-		}
-
-		std::memcpy(d_acc, d_ls1, m * 4 * sizeof(double));
-		std::swap(curr, prev);
-	}
-
-	// Final step
-	for (uint64_t k = 0; k < dimension; ++k) {
-		for (int b = 0; b < 4; ++b) {
-			d_paths[b][dimension + k] += d_acc[k * 4 + b];
-			d_paths[b][k] -= d_acc[k * 4 + b];
-		}
-	}
-}
-
 template<std::floating_point T>
 void batch_log_sig_from_path_(
 	const T* path, T* out,
@@ -640,44 +499,14 @@ void batch_log_sig_from_path_(
 
 	uint64_t m2 = cache.bch_size();
 	uint64_t path_stride = length * dimension;
-	uint64_t scalar_start = 0;
 
-	if constexpr (std::same_as<T, float>) {
-		constexpr uint64_t width = BchBatchValue<T>::width;
-		auto vector_func = [&](const T* p, T* o) {
-			log_sig_from_path_batch_vec_<T, false>(p, nullptr, o, length, dimension, cache);
-		};
-		multi_threaded_batch(vector_func, batch_size / width, n_jobs,
-			make_batch(path, path_stride * width), make_batch(out, m * width));
-		scalar_start = batch_size / width * width;
-	}
-	if constexpr (std::same_as<T, double>) {
-		const uint64_t x4_batch_size = batch_size / 4;
-		auto x4_func = [&](const double* p, double* o) {
-			thread_local std::vector<double> tl_memo;
-			thread_local std::vector<double> tl_seg;
-			thread_local std::vector<double> tl_temp;
-			tl_memo.resize((m2 + 1) * m * 4);
-			tl_seg.resize(m * 4);
-			tl_temp.resize(m * 4);
-
-			const double* paths[4];
-			double* outs[4];
-#ifdef _MSC_VER
-			// Avoid an implicit AVX-512 version of the pointer setup loop.
-#pragma loop(no_vector)
-#endif
-			for (uint64_t b = 0; b < 4; ++b) {
-				paths[b] = p + b * path_stride;
-				outs[b] = o + b * m;
-			}
-			log_sig_from_path_x4_(paths, outs, length, dimension, cache,
-				tl_memo.data(), tl_seg.data(), tl_temp.data());
-		};
-		multi_threaded_batch(x4_func, x4_batch_size, n_jobs,
-			make_batch(path, path_stride * 4), make_batch(out, m * 4));
-		scalar_start = x4_batch_size * 4;
-	}
+	constexpr uint64_t width = BchBatchValue<T>::width;
+	auto vector_func = [&](const T* p, T* o) {
+		log_sig_from_path_batch_vec_<T, false>(p, nullptr, o, length, dimension, cache);
+	};
+	multi_threaded_batch(vector_func, batch_size / width, n_jobs,
+		make_batch(path, path_stride * width), make_batch(out, m * width));
+	const uint64_t scalar_start = batch_size / width * width;
 
 	auto func = [&](const T* p, T* o) {
 		thread_local std::vector<T> tl_memo;
@@ -818,43 +647,15 @@ void batch_log_sig_from_path_backprop_(
 	uint64_t m2 = cache.bch_size();
 	uint64_t path_stride = length * dimension;
 	uint64_t ws_size = 7 * m + 2 * m2 * m;
-	uint64_t scalar_start = 0;
 
-	if constexpr (std::same_as<T, float>) {
-		constexpr uint64_t width = BchBatchValue<T>::width;
-		auto vector_func = [&](const T* dout, T* dp, const T* p) {
-			log_sig_from_path_batch_vec_<T, true>(p, dout, dp, length, dimension, cache);
-		};
-		multi_threaded_batch(vector_func, batch_size / width, n_jobs,
-			make_batch(d_out, m * width), make_batch(d_path, path_stride * width),
-			make_batch(path, path_stride * width));
-		scalar_start = batch_size / width * width;
-	}
-	if constexpr (std::same_as<T, double>) {
-		const uint64_t x4_batch_size = batch_size / 4;
-		auto x4_func = [&](const double* dout, double* dp, const double* p) {
-			thread_local std::vector<double> tl_ws;
-			tl_ws.resize(ws_size * 4);
-
-			const double* douts[4];
-			double* dpaths[4];
-			const double* paths[4];
-#ifdef _MSC_VER
-#pragma loop(no_vector)
-#endif
-			for (uint64_t b = 0; b < 4; ++b) {
-				douts[b] = dout + b * m;
-				dpaths[b] = dp + b * path_stride;
-				paths[b] = p + b * path_stride;
-			}
-			log_sig_from_path_backprop_x4_(douts, dpaths, paths,
-				length, dimension, cache, tl_ws.data());
-		};
-		multi_threaded_batch(x4_func, x4_batch_size, n_jobs,
-			make_batch(d_out, m * 4), make_batch(d_path, path_stride * 4),
-			make_batch(path, path_stride * 4));
-		scalar_start = x4_batch_size * 4;
-	}
+	constexpr uint64_t width = BchBatchValue<T>::width;
+	auto vector_func = [&](const T* dout, T* dp, const T* p) {
+		log_sig_from_path_batch_vec_<T, true>(p, dout, dp, length, dimension, cache);
+	};
+	multi_threaded_batch(vector_func, batch_size / width, n_jobs,
+		make_batch(d_out, m * width), make_batch(d_path, path_stride * width),
+		make_batch(path, path_stride * width));
+	const uint64_t scalar_start = batch_size / width * width;
 
 	auto func = [&](const T* dout, T* dp, const T* p) {
 		thread_local std::vector<T> tl_ws;

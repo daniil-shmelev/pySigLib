@@ -267,6 +267,41 @@ void build_bch_operation_ranges(BchCache& cache) {
 			cache.coordinate_weights.begin(), cache.coordinate_weights.end(),
 			maximum_degree[node]) - cache.coordinate_weights.begin());
 	}
+	// Resolve structural zeros and node offsets once, for every degree.
+	cache.products.clear();
+	cache.sums.clear();
+	const uint64_t stride = cache.bch_memo_width;
+	for (uint64_t k = 0; k < cache.m; ++k) {
+		auto append = [&](uint64_t node, double weight) {
+			const auto& op = cache.bch_operation(node);
+			auto valid = [&](uint64_t w, uint64_t c) {
+				return w < 2 || (c >= cache.bch_ranges[w - 2].begin
+					&& c < cache.bch_ranges[w - 2].end);
+			};
+			for (uint32_t q = cache.comm_k_ptr[k]; q < cache.comm_k_ptr[k + 1]; ++q) {
+				const auto i = cache.comm_k_i[q], j = cache.comm_k_j[q];
+				const double c = weight * cache.comm_k_val_d[q];
+				if (valid(op.left, i) && valid(op.right, j))
+					cache.products.push_back({op.left * stride + i, op.right * stride + j, c});
+				if (valid(op.left, j) && valid(op.right, i))
+					cache.products.push_back({op.left * stride + j, op.right * stride + i, -c});
+			}
+		};
+		for (uint64_t w = 2; w < cache.bch_memo_nodes && k < stride; ++w) {
+			const auto [begin, end] = cache.bch_ranges[w - 2];
+			if (k < begin || k >= end) continue;
+			const auto start = cache.products.size();
+			append(w, 1.0);
+			cache.sums.push_back({k, w * stride + k, start, cache.products.size()});
+		}
+		const auto start = cache.products.size();
+		for (uint64_t w = 2; w < size; ++w) {
+			const auto [begin, end] = cache.bch_ranges[w - 2];
+			const double weight = cache.bch_operation(w).coefficient;
+			if (k >= begin && k < end && weight != 0.0) append(w, weight);
+		}
+		cache.sums.push_back({k, UINT64_MAX, start, cache.products.size()});
+	}
 }
 
 void build_commutator_views(BchCache& cache) {

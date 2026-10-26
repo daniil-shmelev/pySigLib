@@ -238,145 +238,6 @@ void bch_combine_linear_impl_(
 	}
 }
 
-// 4-wide BCH with a degree-one second input.
-inline void bch_combine_linear_impl_x4_(
-	const double* RESTRICT ls1, const double* RESTRICT ls2, double* RESTRICT out,
-	const BchCache& cache, double* memo
-) {
-	uint64_t m = cache.m;
-	uint64_t dim = cache.dimension;
-	uint64_t m2 = cache.bch_size();
-
-	vec4_add(out, ls1, ls2, dim);
-	std::memcpy(&out[dim * 4], &ls1[dim * 4], (m - dim) * 4 * sizeof(double));
-	if (m2 <= 2) return;
-
-	std::memcpy(memo, ls1, m * 4 * sizeof(double));
-	std::memcpy(memo + m * 4, ls2, m * 4 * sizeof(double));
-
-	const uint32_t* k_ptr = cache.comm_k_ptr.data();
-	const uint32_t* k_i = cache.comm_k_i.data();
-	const uint32_t* k_j = cache.comm_k_j.data();
-	const double* k_val_d = cache.comm_k_val_d.data();
-
-	for (uint64_t w = 2; w < m2; ++w) {
-		const uint64_t lf = cache.bch_operation(w).left;
-		const uint64_t rf = cache.bch_operation(w).right;
-		const double* v1 = memo + lf * m * 4;
-		const double* v2 = memo + rf * m * 4;
-		double* result = memo + w * m * 4;
-		const double c_w = cache.bch_operation(w).coefficient;
-		const auto [begin, end] = cache.linear_range[w];
-		std::memset(result, 0, begin * 4 * sizeof(double));
-		std::memset(result + end * 4, 0, (m - end) * 4 * sizeof(double));
-
-		for (uint64_t k = begin; k < end; ++k) {
-			vec4_commutator_accum(&result[k * 4], v1, v2, k_i, k_j, k_val_d,
-				k_ptr[k], k_ptr[k + 1]);
-			if (c_w != 0.0)
-				vec4_fmadd(&out[k * 4], &result[k * 4], c_w, 1);
-		}
-	}
-}
-// 4-wide BCH backprop for a degree-one second input.
-template<bool prune_linear>
-inline void bch_combine_linear_backprop_impl_x4_(
-	const double* RESTRICT d_out, double* RESTRICT d_ls1, double* RESTRICT d_ls2,
-	const double* RESTRICT ls1, const double* RESTRICT ls2,
-	const BchCache& cache, double* workspace
-) {
-	uint64_t m = cache.m;
-	uint64_t m2 = cache.bch_size();
-
-	if (m2 <= 2) {
-		std::memcpy(d_ls1, d_out, m * 4 * sizeof(double));
-		std::memcpy(d_ls2, d_out, m * 4 * sizeof(double));
-		return;
-	}
-
-	double* memo = workspace;
-	double* d_memo = workspace + m2 * m * 4;
-
-	std::memcpy(memo, ls1, m * 4 * sizeof(double));
-	std::memcpy(memo + m * 4, ls2, m * 4 * sizeof(double));
-
-	const uint32_t* k_ptr = cache.comm_k_ptr.data();
-	const uint32_t* k_i = cache.comm_k_i.data();
-	const uint32_t* k_j = cache.comm_k_j.data();
-	const double* k_c = cache.comm_k_val_d.data();
-	const uint32_t* ij_i = cache.comm_ij_i.data();
-	const uint32_t* ij_j = cache.comm_ij_j.data();
-	const uint32_t* ij_ptr = cache.comm_ij_ptr.data();
-	const uint32_t* ij_k = cache.comm_ij_k.data();
-	const double* ij_c = cache.comm_ij_c.data();
-	const uint32_t n_pairs = cache.n_pairs;
-
-	// Forward recompute (output-grouped, 4-wide)
-	for (uint64_t w = 2; w < m2; ++w) {
-		const uint64_t lf = cache.bch_operation(w).left;
-		const uint64_t rf = cache.bch_operation(w).right;
-		const double* v1 = memo + lf * m * 4;
-		const double* v2 = memo + rf * m * 4;
-		double* result = memo + w * m * 4;
-		const auto [begin, end] = cache.linear_range[w];
-		std::memset(result, 0, begin * 4 * sizeof(double));
-		std::memset(result + end * 4, 0, (m - end) * 4 * sizeof(double));
-		for (uint64_t k = begin; k < end; ++k)
-			vec4_commutator_accum(&result[k * 4], v1, v2, k_i, k_j, k_c,
-				k_ptr[k], k_ptr[k + 1]);
-	}
-
-	// d_memo init
-	std::memset(d_memo, 0, 2 * m * 4 * sizeof(double));
-	for (uint64_t w = 2; w < m2; ++w) {
-		const double c_w = cache.bch_operation(w).coefficient;
-		double* dm = d_memo + w * m * 4;
-		if constexpr (prune_linear) {
-			const auto [begin, end] = cache.linear_range[w];
-			std::memset(dm, 0, begin * 4 * sizeof(double));
-			if (c_w != 0.0)
-				vec4_scale(dm + begin * 4, d_out + begin * 4, c_w, end - begin);
-			else
-				std::memset(dm + begin * 4, 0, (end - begin) * 4 * sizeof(double));
-			std::memset(dm + end * 4, 0, (m - end) * 4 * sizeof(double));
-		}
-		else if (c_w != 0.0) {
-			vec4_scale(dm, d_out, c_w, m);
-		}
-		else {
-			std::memset(dm, 0, m * 4 * sizeof(double));
-		}
-	}
-
-	// Reverse BCH (pair-grouped, 4-wide)
-	for (uint64_t w = m2; w-- > 2;) {
-		const uint64_t lf = cache.bch_operation(w).left;
-		const uint64_t rf = cache.bch_operation(w).right;
-		const double* v1 = memo + lf * m * 4;
-		const double* v2 = memo + rf * m * 4;
-		const double* dm_w = d_memo + w * m * 4;
-		double* dm_lf = d_memo + lf * m * 4;
-		double* dm_rf = d_memo + rf * m * 4;
-
-		if constexpr (prune_linear) {
-			for (uint64_t q = cache.linear_pair_ptr[w]; q < cache.linear_pair_ptr[w + 1]; ++q) {
-				const uint32_t p = cache.linear_pair_idx[q];
-				vec4_bracket_grad(dm_lf, dm_rf, dm_w, v1, v2, ij_i[p], ij_j[p],
-					ij_k, ij_c, ij_ptr[p], ij_ptr[p + 1]);
-			}
-		}
-		else {
-			for (uint32_t p = 0; p < n_pairs; ++p)
-				vec4_bracket_grad(dm_lf, dm_rf, dm_w, v1, v2, ij_i[p], ij_j[p],
-					ij_k, ij_c, ij_ptr[p], ij_ptr[p + 1]);
-		}
-	}
-
-	// Add the direct gradient to the accumulated BCH leaf gradients.
-	vec4_add(d_ls1, d_out, d_memo, m);
-	vec4_add(d_ls2, d_out, d_memo + m * 4, m);
-}
-
 // ========================================================================
 // bch_combine_backprop_impl_: backward pass through BCH
 // ========================================================================
@@ -522,51 +383,54 @@ struct alignas(vec_batch_bytes) BchBatchValue {
 	T data[width]{};
 };
 
-// Brackets only use lower degrees, so evaluate coordinates in degree order.
-// Highest-degree coordinates go straight to the output instead of the memo.
-template<std::floating_point T>
+// One prepared arithmetic schedule for all dimensions and degrees.
+inline constexpr uint64_t bch_tile = 16;
+template<std::floating_point T, bool scan = false>
 void bch_combine_batch_(
-	const T* ls1, const T* ls2, T* out, const BchCache& cache, T* memo
+	const T* ls1, const T* ls2, T* out, const BchCache& cache, T* memo, uint64_t count, uint64_t input_stride = 0
 ) {
-	using Value = BchBatchValue<T>;
-	constexpr uint64_t width = Value::width;
-	const Simd<T> d;
-	const uint64_t m = cache.m, stride = cache.bch_memo_width * width;
-	for (uint64_t k = 0; k < m; ++k) {
-		Value left, right;
-		for (uint64_t lane = 0; lane < width; ++lane) {
-			left.data[lane] = ls1[lane * m + k];
-			right.data[lane] = ls2[lane * m + k];
+	const hn::CappedTag<T, 64 / sizeof(T)> d;
+	constexpr uint64_t lanes = hn::MaxLanes(decltype(d)());
+	const uint64_t m = cache.m, stride = cache.bch_memo_width;
+	for (uint64_t k = 0; k < stride; ++k)
+		for (uint64_t lane = 0; lane < count; ++lane) {
+			if constexpr (!scan) memo[k * bch_tile + lane] = ls1[lane * m + k];
+			memo[(stride + k) * bch_tile + lane] = ls2[scan ? k * input_stride + lane : lane * m + k];
 		}
-		const auto x = hn::Load(d, left.data), y = hn::Load(d, right.data);
-		auto combined = hn::Add(x, y);
-		if (k < cache.bch_memo_width) {
-			hn::StoreU(x, d, memo + k * width);
-			hn::StoreU(y, d, memo + stride + k * width);
+	for (const auto& row : cache.sums) {
+		alignas(64) T sum[bch_tile]{};
+		for (uint64_t q = row.begin; q < row.end; ++q) {
+			const auto& term = cache.products[q];
+			const auto coefficient = hn::Set(d, static_cast<T>(term.coefficient));
+			const T* a = memo + term.left * bch_tile;
+			const T* b = memo + term.right * bch_tile;
+			for (uint64_t lane = 0; lane < bch_tile; lane += lanes)
+				hn::Store(hn::MulAdd(hn::Mul(hn::LoadU(d, a + lane), hn::LoadU(d, b + lane)),
+					coefficient, hn::Load(d, sum + lane)), d, sum + lane);
 		}
-		for (uint64_t w = 2; w < cache.bch_size(); ++w) {
-			const auto [begin, end] = cache.bch_ranges[w - 2];
-			if (k < begin || k >= end) continue;
-			const auto& operation = cache.bch_operation(w);
-			const auto* v1 = memo + operation.left * stride;
-			const auto* v2 = memo + operation.right * stride;
-			auto sum = hn::Zero(d);
-			for (uint32_t q = cache.comm_k_ptr[k]; q < cache.comm_k_ptr[k + 1]; ++q) {
-				const uint64_t i = cache.comm_k_i[q] * width, j = cache.comm_k_j[q] * width;
-				const auto coefficient = hn::Set(d, static_cast<T>(cache.comm_k_val_d[q]));
-				const auto term = hn::Sub(hn::Mul(hn::LoadU(d, v1 + i), hn::LoadU(d, v2 + j)),
-					hn::Mul(hn::LoadU(d, v1 + j), hn::LoadU(d, v2 + i)));
-				sum = hn::MulAdd(term, coefficient, sum);
+		if (row.destination != UINT64_MAX)
+			std::copy_n(sum, bch_tile, memo + row.destination * bch_tile);
+		else if constexpr (scan) {
+			if (row.coordinate >= stride) {
+				for (uint64_t lane = 0; lane < count; ++lane) sum[lane] += ls2[row.coordinate * input_stride + lane];
+				std::fill(sum + count, sum + bch_tile, T(0));
+				auto total = hn::Zero(d);
+				for (uint64_t lane = 0; lane < bch_tile; lane += lanes) total = hn::Add(total, hn::Load(d, sum + lane));
+				out[row.coordinate] += hn::ReduceSum(d, total);
+				continue;
 			}
-			if (w < cache.bch_memo_nodes && k < cache.bch_memo_width)
-				hn::StoreU(sum, d, memo + w * stride + k * width);
-			const T weight = static_cast<T>(operation.coefficient);
-			if (weight != T(0)) combined = hn::MulAdd(sum, hn::Set(d, weight), combined);
+			T prefix = out[row.coordinate];
+			for (uint64_t lane = 0; lane < count; ++lane) {
+				if (row.coordinate < stride) memo[row.coordinate * bch_tile + lane] = prefix;
+				prefix += ls2[row.coordinate * input_stride + lane] + sum[lane];
+			}
+			out[row.coordinate] = prefix;
 		}
-		Value result;
-		hn::Store(combined, d, result.data);
-		for (uint64_t lane = 0; lane < width; ++lane)
-			out[lane * m + k] = result.data[lane];
+		else
+			for (uint64_t lane = 0; lane < count; ++lane) {
+				const uint64_t i = lane * m + row.coordinate;
+				out[i] = ls1[i] + ls2[i] + sum[lane];
+			}
 	}
 }
 
@@ -576,9 +440,11 @@ void bch_combine_linear_batch_(
 	BchBatchValue<T>* out, const BchCache& cache, BchBatchValue<T>* memo
 ) {
 	const uint64_t m = cache.m;
-	std::copy_n(ls1, m, out);
-	for (uint64_t k = 0; k < cache.dimension; ++k)
-		vec_batch_add_inplace(out[k].data, ls2[k].data);
+	const Simd<T> d;
+	if (out) {
+		std::copy_n(ls1, m, out);
+		for (uint64_t k = 0; k < cache.dimension; ++k) vec_batch_add_inplace(out[k].data, ls2[k].data);
+	}
 	std::copy_n(ls1, m, memo);
 	std::copy_n(ls2, m, memo + m);
 	for (uint64_t w = 2; w < cache.bch_size(); ++w) {
@@ -592,18 +458,17 @@ void bch_combine_linear_batch_(
 		std::fill(result + end, result + m, BchBatchValue<T>{});
 		const T weight = static_cast<T>(operation.coefficient);
 		for (uint64_t k = begin; k < end; ++k) {
-			BchBatchValue<T> sum, term, reverse;
+			auto sum = hn::Zero(d);
 			const uint32_t stop = left == 1 || right == 1
 				? cache.comm_k_sparse_end[k] : cache.comm_k_ptr[k + 1];
 			for (uint32_t q = cache.comm_k_ptr[k]; q < stop; ++q) {
 				const uint32_t i = cache.comm_k_i[q], j = cache.comm_k_j[q];
-				vec_batch_multiply(term.data, v1[i].data, v2[j].data);
-				vec_batch_multiply(reverse.data, v1[j].data, v2[i].data);
-				vec_batch_subtract_inplace(term.data, reverse.data);
-				vec_batch_scaled_add(sum.data, term.data, static_cast<T>(cache.comm_k_val_d[q]));
+				const auto term = hn::MulSub(hn::Load(d, v1[i].data), hn::Load(d, v2[j].data),
+					hn::Mul(hn::Load(d, v1[j].data), hn::Load(d, v2[i].data)));
+				sum = hn::MulAdd(term, hn::Set(d, static_cast<T>(cache.comm_k_val_d[q])), sum);
 			}
-			result[k] = sum;
-			if (weight != T(0)) vec_batch_scaled_add(out[k].data, sum.data, weight);
+			hn::Store(sum, d, result[k].data);
+			if (out && weight != T(0)) hn::Store(hn::MulAdd(sum, hn::Set(d, weight), hn::Load(d, out[k].data)), d, out[k].data);
 		}
 	}
 }
@@ -617,17 +482,17 @@ void bch_linear_batch_backprop_(
 	const uint64_t m = cache.m, count = cache.bch_size();
 	auto* memo = workspace;
 	auto* d_memo = memo + count * m;
-	bch_combine_linear_batch_(ls1, ls2, d_ls1, cache, memo);
+	bch_combine_linear_batch_<T>(ls1, ls2, nullptr, cache, memo); // Recompute brackets only.
 	std::fill(d_memo, d_memo + 2 * m, BchBatchValue<T>{});
 	for (uint64_t w = 2; w < count; ++w) {
 		const T weight = static_cast<T>(cache.bch_operation(w).coefficient);
-		const auto [begin, end] = cache.linear_range[w];
+		const auto [begin, end] = cache.prune_linear_backprop ? cache.linear_range[w] : std::pair<uint64_t, uint64_t>{0, m};
 		auto* dm = d_memo + w * m;
-		for (uint64_t k = 0; k < m; ++k) {
-			if (weight != T(0) && (!cache.prune_linear_backprop || (k >= begin && k < end)))
-				vec_batch_scale(dm[k].data, d_out[k].data, weight);
-			else dm[k] = {};
-		}
+		std::fill(dm, dm + begin, BchBatchValue<T>{});
+		std::fill(dm + end, dm + m, BchBatchValue<T>{});
+		if (weight != T(0))
+			for (uint64_t k = begin; k < end; ++k) vec_batch_scale(dm[k].data, d_out[k].data, weight);
+		else std::fill(dm + begin, dm + end, BchBatchValue<T>{});
 	}
 	for (uint64_t w = count - 1; w >= 2; --w) {
 		const auto& operation = cache.bch_operation(w);

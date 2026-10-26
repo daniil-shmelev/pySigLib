@@ -444,6 +444,10 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int sig_to_log_sig_backprop_d(const double* sig, double* out, const double* log_sig_derivs, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool time_aug, bool lead_lag, int method, bool scalar_term = true, int n_jobs = 1) noexcept;
 	/** @} */
 
+	// Inputs have shape [batch, log_sig_length, length]; output [batch, log_sig_length].
+	[[nodiscard]] CPSIG_API int log_sig_reduce_f(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, int) noexcept;
+	[[nodiscard]] CPSIG_API int log_sig_reduce_d(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, int) noexcept;
+
 	/** @defgroup log_sig_combine_functions Log sig combine functions
 	* @{
 	*/

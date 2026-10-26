@@ -49,6 +49,14 @@ struct BchForwardNode {
 	std::vector<BchForwardEntry> entries;
 };
 
+struct BchProduct {
+	uint64_t left, right;
+	double coefficient;
+};
+struct BchSum {
+	uint64_t coordinate, destination, begin, end;
+};
+
 struct BchCache {
 	uint64_t dimension = 0;
 	uint64_t degree = 0;
@@ -92,6 +100,8 @@ struct BchCache {
 	// Memo omits the highest degree and nodes after the last bracket operand.
 	uint64_t bch_memo_width = 0;
 	uint64_t bch_memo_nodes = 0;
+	std::vector<BchProduct> products;
+	std::vector<BchSum> sums;
 
 	uint64_t bch_size() const noexcept {
 		return degree == 0 ? 0 : bch_operations.size() + 2;
