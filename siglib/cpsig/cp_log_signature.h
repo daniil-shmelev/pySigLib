@@ -287,44 +287,6 @@ void log_sig_reduce_(const T* inputs, T* out, uint64_t batch, uint64_t length,
 // ========================================================================
 
 template<std::floating_point T>
-void log_sig_join_impl_(
-	const T* RESTRICT log_sig, const T* RESTRICT displacement, T* RESTRICT out,
-	const BchCache& cache, T* memo
-) {
-	uint64_t m = cache.m;
-	uint64_t dim = cache.dimension;
-
-	// Build the linear log-sig in memo[1]: zero-fill + copy dim entries
-	std::fill(memo + m, memo + 2 * m, static_cast<T>(0));
-	std::memcpy(memo + m, displacement, dim * sizeof(T));
-
-	// Delegate to the sparse-aware BCH
-	bch_combine_linear_impl_<T>(log_sig, memo + m, out, cache, memo);
-}
-
-template<std::floating_point T>
-void log_sig_join_(
-	const T* log_sig, const T* displacement, T* out,
-	uint64_t dimension, uint64_t degree
-) {
-	if (dimension == 0) throw std::invalid_argument("log_sig_join received dimension 0");
-	if (degree == 0) throw std::invalid_argument("log_sig_join received degree 0");
-
-	const BchCache& cache = get_bch_cache(dimension, degree);
-	uint64_t m = cache.m;
-
-	if (degree < 2) {
-		std::memcpy(out, log_sig, m * sizeof(T));
-		for (uint64_t i = 0; i < dimension; ++i) out[i] += displacement[i];
-		return;
-	}
-
-	uint64_t m2 = cache.bch_size();
-	std::vector<T> memo(m2 * m);
-	log_sig_join_impl_<T>(log_sig, displacement, out, cache, memo.data());
-}
-
-template<std::floating_point T>
 void log_sig_join_(
 	const T* log_sig, const T* displacement, T* out,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree,
@@ -367,40 +329,6 @@ template<std::floating_point T>
 void log_sig_join_backprop_(
 	const T* d_out, T* d_logsig, T* d_displacement,
 	const T* log_sig, const T* displacement,
-	uint64_t dimension, uint64_t degree
-) {
-	if (dimension == 0) throw std::invalid_argument("log_sig_join_backprop received dimension 0");
-	if (degree == 0) throw std::invalid_argument("log_sig_join_backprop received degree 0");
-
-	const BchCache& cache = get_bch_cache(dimension, degree);
-	uint64_t m = cache.m;
-
-	if (degree < 2) {
-		std::memcpy(d_logsig, d_out, m * sizeof(T));
-		std::memcpy(d_displacement, d_out, dimension * sizeof(T));
-		return;
-	}
-
-	// Construct the linear log-sig for the backprop
-	auto linear_ls = std::make_unique<T[]>(m);
-	std::fill(linear_ls.get(), linear_ls.get() + m, static_cast<T>(0));
-	std::memcpy(linear_ls.get(), displacement, dimension * sizeof(T));
-
-	// Reuse bch_combine_backprop_impl_ - it handles the full BCH backward
-	auto d_ls2 = std::make_unique<T[]>(m);
-	uint64_t m2 = cache.bch_size();
-	std::vector<T> workspace(2 * m2 * m);
-	bch_combine_backprop_impl_<T>(d_out, d_logsig, d_ls2.get(), log_sig, linear_ls.get(),
-		cache, workspace.data());
-
-	// d_displacement = first dim elements of d_ls2
-	std::memcpy(d_displacement, d_ls2.get(), dimension * sizeof(T));
-}
-
-template<std::floating_point T>
-void log_sig_join_backprop_(
-	const T* d_out, T* d_logsig, T* d_displacement,
-	const T* log_sig, const T* displacement,
 	uint64_t batch_size, uint64_t dimension, uint64_t degree,
 	int n_jobs = 1
 ) {
@@ -418,64 +346,13 @@ void log_sig_join_backprop_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_size();
-
-	auto func = [&](uint64_t start, uint64_t end) {
-		std::vector<T> workspace(2 * m2 * m);
-		auto linear_ls = std::make_unique<T[]>(m);
-		auto d_ls2 = std::make_unique<T[]>(m);
-		for (uint64_t b = start; b < end; ++b) {
-			std::fill(linear_ls.get(), linear_ls.get() + m, static_cast<T>(0));
-			std::memcpy(linear_ls.get(), displacement + b * dimension, dimension * sizeof(T));
-			bch_combine_backprop_impl_<T>(
-				d_out + b * m, d_logsig + b * m, d_ls2.get(),
-				log_sig + b * m, linear_ls.get(),
-				cache, workspace.data());
-			std::memcpy(d_displacement + b * dimension, d_ls2.get(), dimension * sizeof(T));
-		}
-	};
-
-	spawn_batch_threads(batch_size, n_jobs, func);
+	batch_bch_backprop_(d_out, d_logsig, d_displacement, log_sig, displacement,
+		batch_size, cache.linear_schedule, dimension, n_jobs);
 }
 
 // ========================================================================
-// log_sig_from_path_: compute log-signature directly via sequential BCH
+// batch_log_sig_from_path_: fused BCH scan of path increments
 // ========================================================================
-
-template<std::floating_point T>
-void log_sig_from_path_(
-	const T* path, T* out,
-	uint64_t length, uint64_t dimension,
-	const BchCache& cache, T* memo, T* seg, T* temp
-) {
-	uint64_t m = cache.m;
-
-	const T* p0 = path;
-	const T* p1 = path + dimension;
-	for (uint64_t k = 0; k < dimension; ++k)
-		out[k] = p1[k] - p0[k];
-	for (uint64_t k = dimension; k < m; ++k)
-		out[k] = T(0);
-
-	if (length <= 2) return;
-
-	std::memset(seg, 0, m * sizeof(T));
-
-	T* acc = out;
-	T* src = temp;
-	for (uint64_t s = 1; s < length - 1; ++s) {
-		const T* pa = path + s * dimension;
-		const T* pb = path + (s + 1) * dimension;
-		for (uint64_t k = 0; k < dimension; ++k)
-			seg[k] = pb[k] - pa[k];
-
-		std::swap(acc, src);
-		bch_combine_linear_impl_<T>(src, seg, acc, cache, memo);
-	}
-
-	if (acc != out) std::memcpy(out, acc, m * sizeof(T));
-}
-
 
 template<std::floating_point T>
 void batch_log_sig_from_path_(
@@ -525,101 +402,10 @@ void batch_log_sig_from_path_(
 }
 
 // ========================================================================
-// log_sig_from_path_backprop_: backward pass through sequential BCH chain
+// batch_log_sig_from_path_backprop_: pull back the fused BCH scan
 // ========================================================================
 
-// Backward pass using BCH uncombination: recovers each intermediate on the fly
-// via BCH(curr, -seg) = prev, avoiding O(N*m) storage of all intermediates.
-// Uses O(m) memory instead, same total compute.
-template<std::floating_point T>
-void log_sig_from_path_backprop_(
-	const T* d_out, T* d_path,
-	const T* path,
-	uint64_t length, uint64_t dimension,
-	const BchCache& cache, T* workspace
-) {
-	uint64_t m = cache.m;
-	uint64_t m2 = cache.bch_size();
-	uint64_t n_segs = length - 1;
-	const bool prune_backprop = cache.prune_linear_backprop;
-
-	// Workspace layout:
-	// curr: m (current accumulator, recovered via uncombination)
-	// prev: m (previous accumulator, recovered via BCH(curr, -seg))
-	// seg: m (segment log-sig buffer)
-	// neg_seg: m (negated segment for uncombination)
-	// bch_bp_ws: 2 * m2 * m (forward memo, then backprop memo + d_memo)
-	// d_acc: m (gradient flowing backward)
-	// d_ls1: m, d_ls2: m
-	T* curr = workspace;
-	T* prev = curr + m;
-	T* seg = prev + m;
-	T* neg_seg = seg + m;
-	T* bch_bp_ws = neg_seg + m;
-	T* d_acc = bch_bp_ws + 2 * m2 * m;
-	T* d_ls1 = d_acc + m;
-	T* d_ls2 = d_ls1 + m;
-
-	// Recompute the forward output into curr
-	const T* p0 = path;
-	const T* p1 = path + dimension;
-	for (uint64_t k = 0; k < dimension; ++k)
-		curr[k] = p1[k] - p0[k];
-	for (uint64_t k = dimension; k < m; ++k)
-		curr[k] = T(0);
-
-	std::memset(seg, 0, m * sizeof(T));
-	for (uint64_t s = 1; s < n_segs; ++s) {
-		const T* pa = path + s * dimension;
-		const T* pb = path + (s + 1) * dimension;
-		for (uint64_t k = 0; k < dimension; ++k)
-			seg[k] = pb[k] - pa[k];
-
-		// curr = BCH(curr, seg) - reuse prev as temp output, then swap
-		bch_combine_linear_impl_<T>(curr, seg, prev, cache, bch_bp_ws);
-		std::swap(curr, prev);
-	}
-
-	// curr now holds the final forward output (= intermediates[n_segs-1])
-	std::memcpy(d_acc, d_out, m * sizeof(T));
-	std::memset(d_path, 0, length * dimension * sizeof(T));
-
-	// Backward: reverse through segments, recovering prev via uncombination
-	std::memset(neg_seg, 0, m * sizeof(T));
-	for (uint64_t s = n_segs - 1; s >= 1; --s) {
-		const T* pa = path + s * dimension;
-		const T* pb = path + (s + 1) * dimension;
-		for (uint64_t k = 0; k < dimension; ++k) {
-			seg[k] = pb[k] - pa[k];
-			neg_seg[k] = -(pb[k] - pa[k]);
-		}
-
-		// Recover prev = BCH(curr, -seg) - the "uncombine" step
-		bch_combine_linear_impl_<T>(curr, neg_seg, prev, cache, bch_bp_ws);
-
-		// Backprop through BCH(prev, seg) -> curr
-		if (prune_backprop)
-			bch_combine_backprop_impl_<T, true, true>(
-				d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
-		else
-			bch_combine_backprop_impl_<T, true, false>(
-				d_acc, d_ls1, d_ls2, prev, seg, cache, bch_bp_ws);
-
-		for (uint64_t k = 0; k < dimension; ++k) {
-			d_path[(s + 1) * dimension + k] += d_ls2[k];
-			d_path[s * dimension + k] -= d_ls2[k];
-		}
-
-		std::memcpy(d_acc, d_ls1, m * sizeof(T));
-		std::swap(curr, prev); // curr = prev for next iteration
-	}
-
-	for (uint64_t k = 0; k < dimension; ++k) {
-		d_path[dimension + k] += d_acc[k];
-		d_path[k] -= d_acc[k];
-	}
-}
-
+// Reconstruct tile starts via BCH inversion; storage is independent of path length.
 template<std::floating_point T>
 void batch_log_sig_from_path_backprop_(
 	const T* d_out, T* d_path,
@@ -646,53 +432,22 @@ void batch_log_sig_from_path_backprop_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_size();
-	uint64_t path_stride = length * dimension;
-	uint64_t ws_size = 7 * m + 2 * m2 * m;
-
-	constexpr uint64_t width = BchBatchValue<T>::width;
-	auto vector_func = [&](const T* dout, T* dp, const T* p) {
-		log_sig_from_path_batch_vec_<T, true>(p, dout, dp, length, dimension, cache);
+	auto lift = [&](const T* increment, T* out, uint64_t stride) {
+		for (uint64_t k = 0; k < dimension; ++k) out[k * stride] = increment[k];
 	};
-	multi_threaded_batch(vector_func, batch_size / width, n_jobs,
-		make_batch(d_out, m * width), make_batch(d_path, path_stride * width),
-		make_batch(path, path_stride * width));
-	const uint64_t scalar_start = batch_size / width * width;
-
-	auto func = [&](const T* dout, T* dp, const T* p) {
-		thread_local std::vector<T> tl_ws;
-		tl_ws.resize(ws_size);
-		log_sig_from_path_backprop_<T>(dout, dp, p, length, dimension, cache, tl_ws.data());
+	auto pullback = [&](const T* gradient, const T*, T* out, uint64_t stride) {
+		for (uint64_t k = 0; k < dimension; ++k) out[k] = gradient[k * stride];
 	};
-	multi_threaded_batch(func, batch_size - scalar_start, n_jobs,
-		make_batch(d_out + scalar_start * m, m),
-		make_batch(d_path + scalar_start * path_stride, path_stride),
-		make_batch(path + scalar_start * path_stride, path_stride));
+	auto work = [&](uint64_t begin, uint64_t end) {
+		for (uint64_t b = begin; b < end; ++b)
+			bch_path_backprop_(d_out + b * m, d_path + b * length * dimension,
+				path + b * length * dimension, length, dimension, cache.linear_schedule,
+				dimension, lift, pullback);
+	};
+	if (n_jobs == 1 || batch_size < 2) work(0, batch_size);
+	else spawn_batch_threads(batch_size, n_jobs, work);
 }
 
-
-template<std::floating_point T>
-void log_sig_combine_backprop_(
-	const T* d_out, T* d_ls1, T* d_ls2,
-	const T* ls1, const T* ls2,
-	uint64_t dimension, uint64_t degree
-) {
-	if (dimension == 0) throw std::invalid_argument("log_sig_combine_backprop received dimension 0");
-	if (degree == 0) throw std::invalid_argument("log_sig_combine_backprop received degree 0");
-
-	const BchCache& cache = get_bch_cache(dimension, degree);
-	uint64_t m = cache.m;
-
-	if (degree < 2) {
-		std::memcpy(d_ls1, d_out, m * sizeof(T));
-		std::memcpy(d_ls2, d_out, m * sizeof(T));
-		return;
-	}
-
-	uint64_t m2 = cache.bch_size();
-	std::vector<T> workspace(2 * m2 * m);
-	bch_combine_backprop_impl_<T>(d_out, d_ls1, d_ls2, ls1, ls2, cache, workspace.data());
-}
 
 template<std::floating_point T>
 void log_sig_combine_backprop_(
@@ -715,15 +470,8 @@ void log_sig_combine_backprop_(
 		return;
 	}
 
-	uint64_t m2 = cache.bch_size();
-
-	auto func = [&](const T* dout, T* dls1, T* dls2, const T* l1, const T* l2) {
-		thread_local std::vector<T> tl_workspace;
-		tl_workspace.resize(2 * m2 * m);
-		bch_combine_backprop_impl_<T>(dout, dls1, dls2, l1, l2, cache, tl_workspace.data());
-	};
-	multi_threaded_batch(func, batch_size, n_jobs,
-		make_batch(d_out, m), make_batch(d_ls1, m), make_batch(d_ls2, m), make_batch(ls1, m), make_batch(ls2, m));
+	batch_bch_backprop_(d_out, d_ls1, d_ls2, ls1, ls2,
+		batch_size, cache.general_schedule, m, n_jobs);
 }
 
 }  // namespace HWY_NAMESPACE

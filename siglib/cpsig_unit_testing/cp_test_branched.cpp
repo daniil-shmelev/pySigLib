@@ -519,7 +519,7 @@ TEST(treeEnumerationTest, PreservesBckAndMkwBasisOrdering) {
     TEST(branchedLogSigMethodsTest, BchForwardAndBackward) {
         const uint64_t dimension = 2;
         const uint64_t max_nodes = 3;
-        const uint64_t length = 4;
+        const uint64_t length = 18;
         ASSERT_EQ(prepare_branched_log_sig(
             dimension, max_nodes, 2, false, true), 0);
         ASSERT_EQ(prepare_branched_log_sig(
@@ -529,9 +529,9 @@ TEST(treeEnumerationTest, PreservesBckAndMkwBasisOrdering) {
             dimension, max_nodes, true);
         const uint64_t logsig_len = branched_log_sig_length(
             dimension, max_nodes, true);
-        std::vector<double> path = {
-            0., 0., 0.2, -0.3, 0.7, 0.4, 0.5, 0.8
-        };
+        std::vector<double> path(length * dimension);
+        for (uint64_t i = 0; i < path.size(); ++i)
+            path[i] = 0.2 * std::sin(0.7 * i);
         std::vector<double> bsig(bsig_len);
         std::vector<double> expected(logsig_len);
         std::vector<double> actual(logsig_len);

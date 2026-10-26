@@ -64,6 +64,9 @@ struct BchSchedule {
 	uint64_t bch_memo_size = 0;
 	std::vector<BchProduct> products;
 	std::vector<BchSum> sums;
+	// Pullbacks gather contributions by destination, grouped by primal factor.
+	std::vector<BchProduct> reverse_products;
+	std::vector<BchSum> reverse_sums;
 };
 
 struct BchCache {

@@ -23,6 +23,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <tuple>
 #include <unordered_set>
 
 void remove_zero_entries(TensorElem& element) {
@@ -286,6 +287,45 @@ static void build_bch_schedule(const BchCache& cache, BchSchedule& schedule, boo
 			if (k >= begin && k < end && weight != 0.0) append(w, weight);
 		}
 		schedule.sums.push_back({k, UINT64_MAX, start, schedule.products.size()});
+	}
+	std::vector<uint64_t> pointers(schedule.bch_memo_size + 1);
+	for (const auto& term : schedule.products) {
+		++pointers[term.left + 1];
+		++pointers[term.right + 1];
+	}
+	for (uint64_t i = 1; i < pointers.size(); ++i) pointers[i] += pointers[i - 1];
+	auto cursor = pointers;
+	std::vector<BchProduct> derivatives(2 * schedule.products.size());
+	for (const auto& row : schedule.sums) {
+		const uint64_t source = row.destination == UINT64_MAX
+			? schedule.bch_memo_size + row.coordinate : row.destination;
+		for (uint64_t q = row.begin; q < row.end; ++q) {
+			const auto& term = schedule.products[q];
+			derivatives[cursor[term.left]++] = {source, term.right, term.coefficient};
+			derivatives[cursor[term.right]++] = {source, term.left, term.coefficient};
+		}
+	}
+	schedule.reverse_products.clear();
+	schedule.reverse_products.reserve(derivatives.size());
+	schedule.reverse_sums.clear();
+	schedule.reverse_sums.reserve(schedule.bch_memo_size + cache.m);
+	auto reverse_row = [&](uint64_t destination) {
+		const auto begin = pointers[destination], end = pointers[destination + 1];
+		std::sort(derivatives.begin() + begin, derivatives.begin() + end,
+			[](const auto& a, const auto& b) { return std::tie(a.right, a.left) < std::tie(b.right, b.left); });
+		const auto start = schedule.reverse_products.size();
+		schedule.reverse_products.insert(schedule.reverse_products.end(), derivatives.begin() + begin, derivatives.begin() + end);
+		schedule.reverse_sums.push_back({0, destination, start, schedule.reverse_products.size()});
+	};
+	uint64_t row = schedule.sums.size();
+	for (uint64_t k = cache.m; k-- > 0;) {
+		while (row && schedule.sums[row - 1].coordinate == k) {
+			const auto& forward = schedule.sums[--row];
+			if (forward.destination != UINT64_MAX) reverse_row(forward.destination);
+		}
+		if (k < stride) { reverse_row(k); reverse_row(stride + k); }
+		// A reverse prefix sum supplies this coordinate's output cotangents.
+		schedule.reverse_sums.push_back({k, UINT64_MAX, 0, 0});
 	}
 }
 

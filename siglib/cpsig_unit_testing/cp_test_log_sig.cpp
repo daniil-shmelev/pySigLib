@@ -979,3 +979,29 @@ void check_bch_reduction_tail() {
 
 TEST(logSigReduceTest, Float32) { check_bch_reduction_tail<float>(); }
 TEST(logSigReduceTest, Float64) { check_bch_reduction_tail<double>(); }
+
+TEST(logSigPathBackpropTest, FusedTileTailDirectionalDerivative) {
+    constexpr uint64_t dimension = 3, degree = 4, length = 18;
+    ASSERT_EQ(prepare_log_sig(dimension, degree, 3, false), 0);
+    const uint64_t m = log_sig_length(dimension, degree);
+    std::vector<double> path(length * dimension), direction(path.size()), gradient(path.size());
+    std::vector<double> weight(m), plus(m), minus(m);
+    for (uint64_t i = 0; i < path.size(); ++i) {
+        path[i] = 0.2 * std::sin(0.7 * i);
+        direction[i] = std::cos(0.3 * i);
+    }
+    for (uint64_t i = 0; i < m; ++i) weight[i] = std::sin(0.4 * i);
+    ASSERT_EQ(log_sig_from_path_backprop_d(weight.data(), gradient.data(), path.data(),
+        1, length, dimension, degree, 1), 0);
+    const double eps = 1e-6;
+    double derivative = 0, numerical = 0;
+    for (uint64_t i = 0; i < path.size(); ++i) {
+        derivative += gradient[i] * direction[i];
+        path[i] += eps * direction[i];
+    }
+    ASSERT_EQ(log_sig_from_path_d(path.data(), plus.data(), 1, length, dimension, degree, 1), 0);
+    for (uint64_t i = 0; i < path.size(); ++i) path[i] -= 2 * eps * direction[i];
+    ASSERT_EQ(log_sig_from_path_d(path.data(), minus.data(), 1, length, dimension, degree, 1), 0);
+    for (uint64_t i = 0; i < m; ++i) numerical += weight[i] * (plus[i] - minus[i]) / (2 * eps);
+    EXPECT_NEAR(derivative, numerical, 1e-8);
+}
