@@ -57,3 +57,12 @@ Ideally, any array passed to ``pysiglib`` functions should be both contiguous an
 If this is not the case, ``pysiglib`` will internally create a contiguous copy, which may be
 inefficient in some cases. When this happens, ``pysiglib`` will issue a one-time warning.
 
+
+Combinatorial coordinate labels
+------------------------------
+
+The five coordinate families are ``words``, ``lyndon_words``, ``trees``, ``forests``, and ``lyndon_forests``. Their enumerators and index helpers consistently take ``dimension`` and ``degree``. Enumerations return tuples in numerical output order, and full enumerations default to ``scalar_term=False``, matching signatures and indexing. Lyndon families always exclude the scalar. See :doc:`words` and :doc:`trees` for ordering, representations, and the distinction between full and compressed indices.
+
+The combinatorics API intentionally changes the earlier conventions: word helpers use ``dimension`` and ``degree`` instead of ``alphabet_size`` and ``max_length``; word index helpers now require the truncation degree; word enumerations return tuples; and full enumeration requires ``scalar_term=True`` to include the empty element. Replace ``trees(..., planar=True)`` and the corresponding index calls with ``forests``, ``forest_to_idx``, and ``idx_to_forest``. Tree helpers now exclusively describe nonplanar BCK coordinates. Forest index helpers require an explicit tuple of component trees and represent the empty forest as ``()``.
+
+When passing a whole enumeration to coefficient-selection methods, convert it to a list to distinguish the collection from a single word, tree, or forest tuple. For example, use ``sig_coef(path, list(words(dimension, degree)))``.

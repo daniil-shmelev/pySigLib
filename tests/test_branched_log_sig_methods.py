@@ -35,7 +35,7 @@ def _path():
 
 
 def _planar_forest_words(dimension, degree):
-    basis = pysiglib.trees(dimension, degree, planar=True)[1:]
+    basis = pysiglib.forests(dimension, degree)
     letters = {
         forest[0]: letter
         for letter, forest in enumerate(

@@ -132,7 +132,7 @@ def branched_hopf_exp_reference(local_log, d, N, planar=False):
         # Keep the values on forests explicitly: powers of an infinitesimal
         # character are not multiplicative. Use kauri coproducts, independently
         # of the native signature/combine implementation.
-        trees = [kauri.Tree(t) for t in pysiglib.trees(d, N)]
+        trees = [kauri.Tree(t) for t in pysiglib.trees(d, N, scalar_term=True)]
         generator = {t.sorted_list_repr(): value
                      for t, value in zip(trees, local_log)}
 
@@ -176,13 +176,9 @@ def ito_local_log_reference(increment, data_dim, N, dt, planar=False):
     local_log = np.zeros(pysiglib.branched_sig_length(aug_dim, N, planar=planar, scalar_term=True))
     local_log[1:1 + aug_dim] = increment
     for d in range(data_dim):
-        idx = pysiglib.tree_to_idx(
-            ((d,), d),
-            aug_dim,
-            N,
-            planar=planar,
-            scalar_term=True,
-        )
+        tree = ((d,), d)
+        idx = (pysiglib.forest_to_idx if planar else pysiglib.tree_to_idx)(
+            (tree,) if planar else tree, aug_dim, N, scalar_term=True)
         local_log[idx] += dt
     return local_log
 
@@ -1235,7 +1231,7 @@ def planar_branched_sig_reference(path, d, N):
 
 def compute_kauri_to_pysiglib_planar_permutation(d, N):
     """Match ordered forests by structure, independently of signature values."""
-    indices = {forest: i for i, forest in enumerate(pysiglib.trees(d, N, planar=True)[1:])}
+    indices = {forest: i for i, forest in enumerate(pysiglib.forests(d, N))}
     basis = kauri.colored_ordered_forests(d, N)[1:]
     return np.array([
         indices[tuple(tree.sorted_list_repr() for tree in forest.tree_list)]

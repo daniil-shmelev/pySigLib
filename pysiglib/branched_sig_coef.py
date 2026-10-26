@@ -25,7 +25,7 @@ from .error_codes import err_msg
 from .load_siglib import BUILT_WITH_CUDA, CPSIG, CUSIG
 from .param_checks import check_n_jobs, check_non_neg, check_type
 from .sig_length import aug_dim
-from .trees import _as_planar_forest_tuple, tree_to_idx
+from .trees import _as_planar_forest_tuple, forest_to_idx, tree_to_idx
 
 
 def _encode_branched_tree(tree, dimension, planar):
@@ -98,7 +98,7 @@ def extract_branched_sig_coef(
     :param trees: A decorated rooted tree, or a list of decorated rooted trees.
         With ``planar=True``, each requested basis element is an ordered forest;
         a bare planar tree is accepted as shorthand for a one-tree forest. See
-        :func:`tree_to_idx` for the tuple convention.
+        :func:`forest_to_idx` for the forest tuple convention.
     :type trees: tuple | None | list[tuple | None]
     :param dimension: Dimension of the underlying path.
     :type dimension: int
@@ -149,11 +149,10 @@ def extract_branched_sig_coef(
     SigInputHandler(bsig, sig_length, "bsig")
 
     indices = [
-        tree_to_idx(
-            basis_element,
+        (forest_to_idx if planar else tree_to_idx)(
+            _as_planar_forest_tuple(basis_element) if planar else basis_element,
             augmented_dimension,
             degree,
-            planar=planar,
             scalar_term=scalar_term,
         )
         for basis_element in basis_elements

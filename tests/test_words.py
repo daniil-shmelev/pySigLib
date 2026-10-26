@@ -13,20 +13,23 @@
 # limitations under the License.
 # =========================================================================
 
+import pytest
+
 import pysiglib
+
 
 def test_lyndon_words_1():
     dimension, degree = 2, 3
     true_ = [(0,), (1,), (0,1), (0,0,1), (0,1,1)]
     res = pysiglib.lyndon_words(dimension, degree)
-    assert true_ == res
+    assert tuple(true_) == res
 
 def test_lyndon_words_2():
     dimension, degree = 5, 2
     true_ = [(0,), (1,), (2,), (3,), (4,), (0,1), (0,2), (0,3), (0,4),
              (1,2), (1,3), (1,4), (2,3), (2,4), (3,4)]
     res = pysiglib.lyndon_words(dimension, degree)
-    assert true_ == res
+    assert tuple(true_) == res
 
 def test_lyndon_words_3():
     dimension, degree = 3, 4
@@ -37,15 +40,15 @@ def test_lyndon_words_3():
     (0, 1, 0, 2), (0, 1, 1, 1), (0, 1, 1, 2), (0, 1, 2, 1), (0, 1, 2, 2), (0, 2, 1, 1),
     (0, 2, 1, 2), (0, 2, 2, 1), (0, 2, 2, 2), (1, 1, 1, 2), (1, 1, 2, 2), (1, 2, 2, 2)]
     res = pysiglib.lyndon_words(dimension, degree)
-    assert true_ == res
+    assert tuple(true_) == res
 
 def test_idx_to_word():
     dimension, degree = 3, 4
     m = pysiglib.sig_length(dimension, degree)
 
     for idx in range(m):
-        w = pysiglib.idx_to_word(idx, dimension)
-        i = pysiglib.word_to_idx(w, dimension)
+        w = pysiglib.idx_to_word(idx, dimension, degree)
+        i = pysiglib.word_to_idx(w, dimension, degree)
         assert idx == i
 
 
@@ -53,25 +56,24 @@ def test_word_idx_round_trip_scalar_term_true():
     dimension, degree = 3, 4
     m = pysiglib.sig_length(dimension, degree, scalar_term=True)
     for idx in range(m):
-        w = pysiglib.idx_to_word(idx, dimension, scalar_term=True)
-        assert pysiglib.word_to_idx(w, dimension, scalar_term=True) == idx
+        w = pysiglib.idx_to_word(idx, dimension, degree, scalar_term=True)
+        assert pysiglib.word_to_idx(w, dimension, degree, scalar_term=True) == idx
 
 
 def test_word_idx_shift_between_scalar_term_formats():
     # For scalar_term=True, () is at 0 and non-empty words shift up by 1
     # relative to scalar_term=False indices.
-    dimension = 4
+    dimension, degree = 4, 4
     for w in [(0,), (1,), (3,), (0, 1), (3, 2, 1), (0, 1, 2, 3)]:
-        idx_false = pysiglib.word_to_idx(w, dimension, scalar_term=False)
-        idx_true = pysiglib.word_to_idx(w, dimension, scalar_term=True)
+        idx_false = pysiglib.word_to_idx(w, dimension, degree, scalar_term=False)
+        idx_true = pysiglib.word_to_idx(w, dimension, degree, scalar_term=True)
         assert idx_true == idx_false + 1
 
 
 def test_empty_word_requires_scalar_term():
-    assert pysiglib.word_to_idx((), 3, scalar_term=True) == 0
-    import pytest
+    assert pysiglib.word_to_idx((), 3, 0, scalar_term=True) == 0
     with pytest.raises(ValueError):
-        pysiglib.word_to_idx((), 3, scalar_term=False)
+        pysiglib.word_to_idx((), 3, 0, scalar_term=False)
 
 
 def test_is_lyndon():
@@ -81,4 +83,17 @@ def test_is_lyndon():
 
     for w in words:
         assert pysiglib.is_lyndon(w) == (w in lyndon_words)
+
+
+@pytest.mark.parametrize("word", [(1, 0), (0, 0), (0, 1, 0, 1)])
+def test_compressed_word_index_rejects_non_lyndon(word):
+    with pytest.raises(ValueError):
+        pysiglib.lyndon_word_to_idx(word, 2, 4)
+
+
+@pytest.mark.parametrize("word,error", [((-1,), ValueError), ((2,), ValueError), ((0.5,), TypeError)])
+def test_word_index_checks_letters(word, error):
+    for index in (pysiglib.word_to_idx, pysiglib.lyndon_word_to_idx):
+        with pytest.raises(error):
+            index(word, 2, 3)
 
