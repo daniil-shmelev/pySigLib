@@ -771,10 +771,11 @@ void linear_mkw_log_sig_(
 	const T* increment,
 	T* out,
 	const BranchedSigCache& branched_cache,
-	const BranchedBchCache& branched_bch
+	const BranchedBchCache& branched_bch,
+	uint64_t output_stride = 1
 ) {
 	const BchCache& bch = branched_bch.bch;
-	std::fill(out, out + bch.m, T(0));
+	for (uint64_t k = 0; k < bch.m; ++k) out[k * output_stride] = T(0);
 	for (uint32_t coordinate : bch.linear_input_idx) {
 		const uint64_t basis_idx = branched_bch.linear_basis_idx[coordinate];
 		T value = static_cast<T>(
@@ -782,7 +783,7 @@ void linear_mkw_log_sig_(
 		for (uint64_t j = branched_cache.node_labels_offsets[basis_idx];
 			j < branched_cache.node_labels_offsets[basis_idx + 1]; ++j)
 			value *= increment[branched_cache.node_labels_data[j]];
-		out[coordinate] = value;
+		out[coordinate * output_stride] = value;
 	}
 }
 
@@ -838,39 +839,30 @@ void branched_log_sig_from_path_(
 	if (bch.m == 0)
 		return;
 	const uint64_t path_stride = length * dimension;
-	const uint64_t m2 = bch.bch_size();
+	const auto& schedule = bch.linear_schedule;
+	const uint64_t input_stride = std::min(bch_tile, length - 1);
 
 	auto work_range = [&](uint64_t start, uint64_t end) {
-		std::vector<T> increment(dimension);
-		std::vector<T> segment(bch.m);
-		std::vector<T> temporary(bch.m);
-		std::vector<T> memo(m2 * bch.m);
+		thread_local std::vector<T> scratch;
+		scratch.resize(schedule.bch_memo_size * bch_tile + bch.m * input_stride + dimension);
+		T* segments = scratch.data() + schedule.bch_memo_size * bch_tile;
+		T* increment = segments + bch.m * input_stride;
 		for (uint64_t row = start; row < end; ++row) {
 			const T* path_row = path + row * path_stride;
 			T* out_row = out + row * bch.m;
-			if (length == 1) {
-				std::fill(out_row, out_row + bch.m, T(0));
-				continue;
+			std::fill_n(out_row, bch.m, T(0));
+			for (uint64_t first = 0; first < length - 1; first += bch_tile) {
+				const uint64_t count = std::min(bch_tile, length - 1 - first);
+				for (uint64_t lane = 0; lane < count; ++lane) {
+					const T* left = path_row + (first + lane) * dimension;
+					for (uint64_t k = 0; k < dimension; ++k)
+						increment[k] = left[dimension + k] - left[k];
+					linear_mkw_log_sig_(increment, segments + lane,
+						branched_cache, branched_bch, input_stride);
+				}
+				bch_combine_batch_<T, true>(nullptr, segments, out_row,
+					schedule, scratch.data(), count, input_stride);
 			}
-			for (uint64_t k = 0; k < dimension; ++k)
-				increment[k] = path_row[dimension + k] - path_row[k];
-			linear_mkw_log_sig_(
-				increment.data(), out_row, branched_cache, branched_bch);
-			T* accumulator = out_row;
-			T* target = temporary.data();
-			for (uint64_t segment_idx = 1; segment_idx + 1 < length; ++segment_idx) {
-				const T* left = path_row + segment_idx * dimension;
-				const T* right = left + dimension;
-				for (uint64_t k = 0; k < dimension; ++k)
-					increment[k] = right[k] - left[k];
-				linear_mkw_log_sig_(
-					increment.data(), segment.data(), branched_cache, branched_bch);
-				std::swap(accumulator, target);
-				bch_combine_linear_impl_<T>(
-					target, segment.data(), accumulator, bch, memo.data());
-			}
-			if (accumulator != out_row)
-				std::copy_n(accumulator, bch.m, out_row);
 		}
 	};
 	if (batch_size == 0 || n_jobs == 1 || batch_size == 1) {
@@ -897,27 +889,44 @@ void branched_log_sig_join_(
 	}
 	const T sign = prepend ? T(-1) : T(1);
 	auto work_range = [&](uint64_t start, uint64_t end) {
-		std::vector<T> left(bch.m), segment(bch.m), segment_derivs(Backward ? bch.m : 0);
-		std::vector<T> workspace((Backward ? 2 : 1) * bch.bch_size() * bch.m);
-		for (uint64_t row = start; row < end; ++row) {
-			const T* increment = displacement + row * dimension;
-			linear_mkw_log_sig_(increment, segment.data(), cache, branched_bch);
-			for (uint64_t k = 0; k < bch.m; ++k) {
-				left[k] = sign * logsig[row * bch.m + k];
-				segment[k] *= sign;
-			}
-			if constexpr (Backward) {
+		if constexpr (Backward) {
+			std::vector<T> left(bch.m), segment(bch.m), segment_derivs(bch.m);
+			std::vector<T> workspace(2 * bch.bch_size() * bch.m);
+			for (uint64_t row = start; row < end; ++row) {
+				const T* increment = displacement + row * dimension;
+				linear_mkw_log_sig_(increment, segment.data(), cache, branched_bch);
+				for (uint64_t k = 0; k < bch.m; ++k) {
+					left[k] = sign * logsig[row * bch.m + k];
+					segment[k] *= sign;
+				}
 				// The two sign changes for prepend cancel in the VJP.
 				bch_combine_backprop_impl_<T, true>(
 					derivs + row * bch.m, out + row * bch.m, segment_derivs.data(),
 					left.data(), segment.data(), bch, workspace.data());
 				linear_mkw_log_sig_backprop_(segment_derivs.data(), increment,
 					displacement_derivs + row * dimension, cache, branched_bch);
-			} else {
-				bch_combine_linear_impl_(left.data(), segment.data(),
-					out + row * bch.m, bch, workspace.data());
+			}
+		} else {
+			const auto& schedule = bch.linear_schedule;
+			const uint64_t capacity = std::min(bch_tile, end - start);
+			thread_local std::vector<T> scratch;
+			scratch.resize(schedule.bch_memo_size * bch_tile + 2 * bch.m * capacity);
+			T* left = scratch.data() + schedule.bch_memo_size * bch_tile;
+			T* segments = left + bch.m * capacity;
+			for (uint64_t first = start; first < end; first += bch_tile) {
+				const uint64_t count = std::min(bch_tile, end - first);
+				for (uint64_t lane = 0; lane < count; ++lane) {
+					linear_mkw_log_sig_(displacement + (first + lane) * dimension,
+						segments + lane * bch.m, cache, branched_bch);
+					for (uint64_t k = 0; k < bch.m; ++k) {
+						left[lane * bch.m + k] = sign * logsig[(first + lane) * bch.m + k];
+						segments[lane * bch.m + k] *= sign;
+					}
+				}
+				bch_combine_batch_(left, segments, out + first * bch.m,
+					schedule, scratch.data(), count);
 				if (prepend)
-					for (uint64_t k = 0; k < bch.m; ++k) out[row * bch.m + k] *= sign;
+					for (uint64_t k = 0; k < count * bch.m; ++k) out[first * bch.m + k] *= sign;
 			}
 		}
 	};

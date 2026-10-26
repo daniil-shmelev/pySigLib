@@ -387,49 +387,61 @@ struct alignas(vec_batch_bytes) BchBatchValue {
 inline constexpr uint64_t bch_tile = 16;
 template<std::floating_point T, bool scan = false>
 void bch_combine_batch_(
-	const T* ls1, const T* ls2, T* out, const BchCache& cache, T* memo, uint64_t count, uint64_t input_stride = 0
+	const T* ls1, const T* ls2, T* out, const BchSchedule& cache, T* memo, uint64_t count, uint64_t input_stride = 0, uint64_t right_width = 0
 ) {
 	const hn::CappedTag<T, 64 / sizeof(T)> d;
 	constexpr uint64_t lanes = hn::MaxLanes(decltype(d)());
 	const uint64_t m = cache.m, stride = cache.bch_memo_width;
+	if (!right_width) right_width = m;
+	const uint64_t active_lanes = (count + lanes - 1) / lanes * lanes;
 	for (uint64_t k = 0; k < stride; ++k)
 		for (uint64_t lane = 0; lane < count; ++lane) {
 			if constexpr (!scan) memo[k * bch_tile + lane] = ls1[lane * m + k];
-			memo[(stride + k) * bch_tile + lane] = ls2[scan ? k * input_stride + lane : lane * m + k];
+			memo[(stride + k) * bch_tile + lane] = k < right_width
+				? ls2[scan ? k * input_stride + lane : lane * right_width + k] : T(0);
 		}
 	for (const auto& row : cache.sums) {
-		alignas(64) T sum[bch_tile]{};
+		alignas(64) T sum[bch_tile];
+		T* destination = row.destination != UINT64_MAX
+			? memo + row.destination * bch_tile : sum;
+		decltype(hn::Zero(d)) totals[bch_tile / lanes];
+		for (auto& total : totals) total = hn::Zero(d);
 		for (uint64_t q = row.begin; q < row.end; ++q) {
 			const auto& term = cache.products[q];
 			const auto coefficient = hn::Set(d, static_cast<T>(term.coefficient));
 			const T* a = memo + term.left * bch_tile;
 			const T* b = memo + term.right * bch_tile;
-			for (uint64_t lane = 0; lane < bch_tile; lane += lanes)
-				hn::Store(hn::MulAdd(hn::Mul(hn::LoadU(d, a + lane), hn::LoadU(d, b + lane)),
-					coefficient, hn::Load(d, sum + lane)), d, sum + lane);
+			HWY_UNROLL(16)
+			for (uint64_t block = 0; block < bch_tile / lanes; ++block)
+				if (block * lanes < count)
+					totals[block] = hn::MulAdd(hn::Mul(hn::LoadU(d, a + block * lanes),
+						hn::LoadU(d, b + block * lanes)), coefficient, totals[block]);
 		}
-		if (row.destination != UINT64_MAX)
-			std::copy_n(sum, bch_tile, memo + row.destination * bch_tile);
-		else if constexpr (scan) {
+		HWY_UNROLL(16)
+		for (uint64_t block = 0; block < bch_tile / lanes; ++block)
+			if (block * lanes < count) hn::StoreU(totals[block], d, destination + block * lanes);
+		if (row.destination != UINT64_MAX) continue;
+		if constexpr (scan) {
 			if (row.coordinate >= stride) {
-				for (uint64_t lane = 0; lane < count; ++lane) sum[lane] += ls2[row.coordinate * input_stride + lane];
-				std::fill(sum + count, sum + bch_tile, T(0));
+				if (row.coordinate < right_width)
+					for (uint64_t lane = 0; lane < count; ++lane) sum[lane] += ls2[row.coordinate * input_stride + lane];
+				std::fill(sum + count, sum + active_lanes, T(0));
 				auto total = hn::Zero(d);
-				for (uint64_t lane = 0; lane < bch_tile; lane += lanes) total = hn::Add(total, hn::Load(d, sum + lane));
+				for (uint64_t lane = 0; lane < active_lanes; lane += lanes) total = hn::Add(total, hn::Load(d, sum + lane));
 				out[row.coordinate] += hn::ReduceSum(d, total);
 				continue;
 			}
 			T prefix = out[row.coordinate];
 			for (uint64_t lane = 0; lane < count; ++lane) {
 				if (row.coordinate < stride) memo[row.coordinate * bch_tile + lane] = prefix;
-				prefix += ls2[row.coordinate * input_stride + lane] + sum[lane];
+				prefix += (row.coordinate < right_width ? ls2[row.coordinate * input_stride + lane] : T(0)) + sum[lane];
 			}
 			out[row.coordinate] = prefix;
 		}
 		else
 			for (uint64_t lane = 0; lane < count; ++lane) {
 				const uint64_t i = lane * m + row.coordinate;
-				out[i] = ls1[i] + ls2[i] + sum[lane];
+				out[i] = ls1[i] + (row.coordinate < right_width ? ls2[lane * right_width + row.coordinate] : T(0)) + sum[lane];
 			}
 	}
 }

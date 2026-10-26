@@ -57,6 +57,15 @@ struct BchSum {
 	uint64_t coordinate, destination, begin, end;
 };
 
+struct BchSchedule {
+	uint64_t m = 0;
+	// Memo packs live node coordinates and omits the highest degree.
+	uint64_t bch_memo_width = 0;
+	uint64_t bch_memo_size = 0;
+	std::vector<BchProduct> products;
+	std::vector<BchSum> sums;
+};
+
 struct BchCache {
 	uint64_t dimension = 0;
 	uint64_t degree = 0;
@@ -97,11 +106,8 @@ struct BchCache {
 	// Same indexing as operations. Half-open coordinate ranges needed by the
 	// final output, assuming arbitrary inputs; weights must be sorted.
 	std::vector<BchRange> bch_ranges;
-	// Memo packs live node coordinates and omits the highest degree.
-	uint64_t bch_memo_width = 0;
-	uint64_t bch_memo_size = 0;
-	std::vector<BchProduct> products;
-	std::vector<BchSum> sums;
+	BchSchedule general_schedule;
+	BchSchedule linear_schedule;
 
 	uint64_t bch_size() const noexcept {
 		return degree == 0 ? 0 : bch_operations.size() + 2;

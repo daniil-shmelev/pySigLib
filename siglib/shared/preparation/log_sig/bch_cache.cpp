@@ -223,6 +223,72 @@ void build_linear_bch_ranges_(BchCache& cache) {
 
 }  // namespace
 
+static void build_bch_schedule(const BchCache& cache, BchSchedule& schedule, bool linear) {
+	schedule.m = cache.m;
+	const uint64_t size = cache.bch_size();
+	schedule.bch_memo_width = std::lower_bound(cache.coordinate_weights.begin(),
+		cache.coordinate_weights.end(), cache.degree) - cache.coordinate_weights.begin();
+	uint64_t memo_nodes = 0;
+	for (const auto& operation : cache.bch_operations)
+		memo_nodes = std::max<uint64_t>(memo_nodes,
+			std::max(operation.left, operation.right) + 1);
+	// Resolve structural zeros and node offsets once, for every degree.
+	schedule.products.clear();
+	schedule.sums.clear();
+	const uint64_t stride = schedule.bch_memo_width;
+	std::vector<std::vector<uint8_t>> support(linear ? size : 0,
+		std::vector<uint8_t>(cache.m));
+	if (linear && size > 1) {
+		std::fill(support[0].begin(), support[0].end(), 1);
+		for (uint32_t i : cache.linear_input_idx) support[1][i] = 1;
+	}
+	// Pack each node's live coordinate range; structural zeros need no storage.
+	std::vector<uint64_t> offsets(std::max<uint64_t>(2, memo_nodes));
+	offsets[1] = stride;
+	schedule.bch_memo_size = 2 * stride;
+	for (uint64_t w = 2; w < memo_nodes; ++w) {
+		const auto [begin, end] = cache.bch_ranges[w - 2];
+		offsets[w] = schedule.bch_memo_size - std::min<uint64_t>(begin, stride);
+		schedule.bch_memo_size += std::min<uint64_t>(end, stride) - std::min<uint64_t>(begin, stride);
+	}
+	for (uint64_t k = 0; k < cache.m; ++k) {
+		auto append = [&](uint64_t node, double weight) {
+			const auto& op = cache.bch_operation(node);
+			auto valid = [&](uint64_t w, uint64_t c) {
+				return (w < 2 || (c >= cache.bch_ranges[w - 2].begin
+					&& c < cache.bch_ranges[w - 2].end))
+					&& (!linear || support[w][c]);
+			};
+			for (uint32_t q = cache.comm_k_ptr[k]; q < cache.comm_k_ptr[k + 1]; ++q) {
+				const auto i = cache.comm_k_i[q], j = cache.comm_k_j[q];
+				const double c = weight * cache.comm_k_val_d[q];
+				if (valid(op.left, i) && valid(op.right, j)) {
+					schedule.products.push_back({offsets[op.left] + i, offsets[op.right] + j, c});
+					if (linear) support[node][k] = 1;
+				}
+				if (valid(op.left, j) && valid(op.right, i)) {
+					schedule.products.push_back({offsets[op.left] + j, offsets[op.right] + i, -c});
+					if (linear) support[node][k] = 1;
+				}
+			}
+		};
+		for (uint64_t w = 2; w < memo_nodes && k < stride; ++w) {
+			const auto [begin, end] = cache.bch_ranges[w - 2];
+			if (k < begin || k >= end) continue;
+			const auto start = schedule.products.size();
+			append(w, 1.0);
+			schedule.sums.push_back({k, offsets[w] + k, start, schedule.products.size()});
+		}
+		const auto start = schedule.products.size();
+		for (uint64_t w = 2; w < size; ++w) {
+			const auto [begin, end] = cache.bch_ranges[w - 2];
+			const double weight = cache.bch_operation(w).coefficient;
+			if (k >= begin && k < end && weight != 0.0) append(w, weight);
+		}
+		schedule.sums.push_back({k, UINT64_MAX, start, schedule.products.size()});
+	}
+}
+
 void build_bch_operation_ranges(BchCache& cache) {
 	const uint64_t size = cache.bch_size();
 	std::vector<uint32_t> minimum_degree(size, 1);
@@ -250,13 +316,6 @@ void build_bch_operation_ranges(BchCache& cache) {
 				required - minimum_degree[operation.left]);
 	}
 
-	cache.bch_memo_width = std::lower_bound(cache.coordinate_weights.begin(),
-		cache.coordinate_weights.end(), cache.degree) - cache.coordinate_weights.begin();
-	uint64_t memo_nodes = 0;
-	for (const auto& operation : cache.bch_operations)
-		memo_nodes = std::max<uint64_t>(memo_nodes,
-			std::max(operation.left, operation.right) + 1);
-
 	cache.bch_ranges.resize(cache.bch_operations.size());
 	for (uint64_t node = 2; node < size; ++node) {
 		auto& range = cache.bch_ranges[node - 2];
@@ -267,50 +326,7 @@ void build_bch_operation_ranges(BchCache& cache) {
 			cache.coordinate_weights.begin(), cache.coordinate_weights.end(),
 			maximum_degree[node]) - cache.coordinate_weights.begin());
 	}
-	// Resolve structural zeros and node offsets once, for every degree.
-	cache.products.clear();
-	cache.sums.clear();
-	const uint64_t stride = cache.bch_memo_width;
-	// Pack each node's live coordinate range; structural zeros need no storage.
-	std::vector<uint64_t> offsets(std::max<uint64_t>(2, memo_nodes));
-	offsets[1] = stride;
-	cache.bch_memo_size = 2 * stride;
-	for (uint64_t w = 2; w < memo_nodes; ++w) {
-		const auto [begin, end] = cache.bch_ranges[w - 2];
-		offsets[w] = cache.bch_memo_size - std::min<uint64_t>(begin, stride);
-		cache.bch_memo_size += std::min<uint64_t>(end, stride) - std::min<uint64_t>(begin, stride);
-	}
-	for (uint64_t k = 0; k < cache.m; ++k) {
-		auto append = [&](uint64_t node, double weight) {
-			const auto& op = cache.bch_operation(node);
-			auto valid = [&](uint64_t w, uint64_t c) {
-				return w < 2 || (c >= cache.bch_ranges[w - 2].begin
-					&& c < cache.bch_ranges[w - 2].end);
-			};
-			for (uint32_t q = cache.comm_k_ptr[k]; q < cache.comm_k_ptr[k + 1]; ++q) {
-				const auto i = cache.comm_k_i[q], j = cache.comm_k_j[q];
-				const double c = weight * cache.comm_k_val_d[q];
-				if (valid(op.left, i) && valid(op.right, j))
-					cache.products.push_back({offsets[op.left] + i, offsets[op.right] + j, c});
-				if (valid(op.left, j) && valid(op.right, i))
-					cache.products.push_back({offsets[op.left] + j, offsets[op.right] + i, -c});
-			}
-		};
-		for (uint64_t w = 2; w < memo_nodes && k < stride; ++w) {
-			const auto [begin, end] = cache.bch_ranges[w - 2];
-			if (k < begin || k >= end) continue;
-			const auto start = cache.products.size();
-			append(w, 1.0);
-			cache.sums.push_back({k, offsets[w] + k, start, cache.products.size()});
-		}
-		const auto start = cache.products.size();
-		for (uint64_t w = 2; w < size; ++w) {
-			const auto [begin, end] = cache.bch_ranges[w - 2];
-			const double weight = cache.bch_operation(w).coefficient;
-			if (k >= begin && k < end && weight != 0.0) append(w, weight);
-		}
-		cache.sums.push_back({k, UINT64_MAX, start, cache.products.size()});
-	}
+	build_bch_schedule(cache, cache.general_schedule, false);
 }
 
 void build_commutator_views(BchCache& cache) {
@@ -494,6 +510,7 @@ void configure_linear_bch_input(
 		cache.comm_k_sparse_ptr[k + 1] = cache.comm_k_sparse_idx.size();
 	}
 	build_linear_bch_ranges_(cache);
+	build_bch_schedule(cache, cache.linear_schedule, true);
 }
 
 bool load_hardcoded_bch_formula(BchCache& cache) {

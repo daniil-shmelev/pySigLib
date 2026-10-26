@@ -576,3 +576,8 @@ TEST(treeEnumerationTest, PreservesBckAndMkwBasisOrdering) {
             EXPECT_NEAR(path_derivs[i], numerical, 1e-8);
         }
     }
+
+TEST(branchedLogSigMethodsTest, BchEmptyBasisPreparation) {
+    EXPECT_EQ(prepare_branched_log_sig(2, 0, 3, false, true), 0);
+    EXPECT_EQ(prepare_branched_log_sig(0, 3, 3, false, true), 0);
+}
