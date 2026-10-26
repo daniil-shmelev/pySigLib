@@ -246,18 +246,7 @@ void log_sig_combine_(
 		return;
 	}
 
-	auto work_range = [&](uint64_t begin, uint64_t end) {
-		thread_local std::vector<T> scratch;
-		scratch.resize(cache.general_schedule.bch_memo_size * bch_tile);
-		std::fill(scratch.begin(), scratch.end(), T(0));
-		for (; begin < end; begin += bch_tile)
-			bch_combine_batch_(log_sig1 + begin * m, log_sig2 + begin * m,
-				out + begin * m, cache.general_schedule, scratch.data(), std::min(bch_tile, end - begin));
-	};
-	if (batch_size == 0 || n_jobs == 1 || batch_size == 1)
-		work_range(0, batch_size);
-	else
-		spawn_batch_threads(batch_size, n_jobs, work_range);
+	batch_bch_combine_(log_sig1, log_sig2, out, batch_size, cache.general_schedule, m, n_jobs);
 }
 
 // Reduce arbitrary log-signature sequences; the same schedule computes prefixes.
@@ -307,18 +296,7 @@ void log_sig_join_(
 		return;
 	}
 
-	const auto& schedule = cache.linear_schedule;
-	auto work = [&](uint64_t begin, uint64_t end) {
-		thread_local std::vector<T> scratch;
-		scratch.resize(schedule.bch_memo_size * bch_tile);
-		for (; begin < end; begin += bch_tile) {
-			const uint64_t count = std::min(bch_tile, end - begin);
-			bch_combine_batch_(log_sig + begin * m, displacement + begin * dimension, out + begin * m,
-				schedule, scratch.data(), count, 0, dimension);
-		}
-	};
-	if (n_jobs == 1 || batch_size < 2) work(0, batch_size);
-	else spawn_batch_threads(batch_size, n_jobs, work);
+	batch_bch_combine_(log_sig, displacement, out, batch_size, cache.linear_schedule, dimension, n_jobs);
 }
 
 // ========================================================================

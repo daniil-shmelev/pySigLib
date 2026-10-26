@@ -99,8 +99,24 @@ void bch_combine_batch_(
 	}
 }
 
+template<std::floating_point T>
+void batch_bch_combine_(
+	const T* left, const T* right, T* out, uint64_t batch,
+	const BchSchedule& cache, uint64_t right_width, int n_jobs
+) {
+	auto work = [&](uint64_t begin, uint64_t end) {
+		thread_local std::vector<T> scratch;
+		scratch.resize(cache.bch_memo_size * bch_tile);
+		for (; begin < end; begin += bch_tile)
+			bch_combine_batch_(left + begin * cache.m, right + begin * right_width,
+				out + begin * cache.m, cache, scratch.data(), std::min(bch_tile, end - begin), 0, right_width);
+	};
+	if (n_jobs == 1 || batch < 2) work(0, batch);
+	else spawn_batch_threads(batch, n_jobs, work);
+}
+
 inline uint64_t bch_backward_workspace_size(const BchSchedule& cache) {
-	return (2 * cache.bch_memo_size + cache.m) * bch_tile + cache.m;
+	return (cache.bch_memo_size + cache.bch_gradient_size + cache.m) * bch_tile + cache.m;
 }
 
 // Reverse the same arithmetic program. Contributions with a common primal
@@ -117,7 +133,7 @@ void bch_combine_backprop_batch_(
 	if (!right_width) right_width = m;
 	T* memo = workspace;
 	T* gradient = memo + cache.bch_memo_size * bch_tile;
-	T* output_gradient = gradient + cache.bch_memo_size * bch_tile;
+	T* output_gradient = gradient + cache.bch_gradient_size * bch_tile;
 	T* result = output_gradient + m * bch_tile;
 	if constexpr (scan) std::copy_n(left, m, result);
 	bch_combine_batch_<T, scan>(left, right, scan ? result : nullptr,
@@ -129,8 +145,8 @@ void bch_combine_backprop_batch_(
 			for (uint64_t lane = count; lane-- > 0;) {
 				const T value = scan ? prefix : d_out[lane * m + k];
 				output_gradient[k * bch_tile + lane] = value;
-				const T dl = k < stride ? gradient[k * bch_tile + lane] : T(0);
-				const T dr = k < stride ? gradient[(stride + k) * bch_tile + lane] : T(0);
+				const T dl = k < stride ? gradient[lane] : T(0);
+				const T dr = k < stride ? gradient[bch_tile + lane] : T(0);
 				if constexpr (scan) prefix += dl;
 				else d_left[lane * m + k] = value + dl;
 				if (k < right_width)

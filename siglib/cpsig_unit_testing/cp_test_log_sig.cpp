@@ -661,7 +661,7 @@ void check_bch_simd_batches() {
                 left[i] = T(0.2 * std::sin(1.1 * (i + 1)));
                 right[i] = T(0.2 * std::cos(0.7 * (i + 1)));
             }
-            // Single-item calls retain the original evaluator, even on SIMD targets.
+            // Compare batching and thread partitioning with single-item calls.
             for (uint64_t b = 0; b < batch; ++b)
                 ASSERT_EQ(combine(left.data() + b * m, right.data() + b * m,
                     expected.data() + b * m, 1, dimension, degree, 1), 0);

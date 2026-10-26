@@ -157,34 +157,6 @@ void build_linear_bch_ranges_(BchCache& cache) {
 			static_cast<uint64_t>(begin - cache.coordinate_weights.begin()),
 			static_cast<uint64_t>(end - cache.coordinate_weights.begin()) };
 	}
-	cache.linear_pair_ptr.assign(formula_size + 1, 0);
-	cache.linear_pair_idx.clear();
-	for (uint64_t node = 2; node < formula_size; ++node) {
-		const auto& operation = cache.bch_operation(node);
-		const uint64_t left = operation.left;
-		const uint64_t right = operation.right;
-		const auto [left_begin, left_end] = cache.linear_range[left];
-		const auto [right_begin, right_end] = cache.linear_range[right];
-		for (uint32_t pair = 0; pair < cache.n_pairs; ++pair) {
-			const uint32_t i = cache.comm_ij_i[pair];
-			const uint32_t j = cache.comm_ij_j[pair];
-			const bool i_left = left == 1 ? cache.linear_input_mask[i]
-				: i >= left_begin && i < left_end;
-			const bool j_left = left == 1 ? cache.linear_input_mask[j]
-				: j >= left_begin && j < left_end;
-			const bool i_right = right == 1 ? cache.linear_input_mask[i]
-				: i >= right_begin && i < right_end;
-			const bool j_right = right == 1 ? cache.linear_input_mask[j]
-				: j >= right_begin && j < right_end;
-			if ((i_left && j_right) || (j_left && i_right))
-				cache.linear_pair_idx.push_back(pair);
-		}
-		cache.linear_pair_ptr[node + 1] = cache.linear_pair_idx.size();
-	}
-	const uint64_t dense_count = formula_size > 2
-		? (formula_size - 2) * cache.n_pairs : 0;
-	cache.prune_linear_backprop = dense_count > 0
-		&& cache.linear_pair_idx.size() <= dense_count - dense_count / 3;
 	cache.linear_forward.clear();
 	if (cache.degree < 5 || !cache.linear_input_prefix)
 		return;
@@ -262,7 +234,7 @@ static void build_bch_schedule(const BchCache& cache, BchSchedule& schedule, boo
 			};
 			for (uint32_t q = cache.comm_k_ptr[k]; q < cache.comm_k_ptr[k + 1]; ++q) {
 				const auto i = cache.comm_k_i[q], j = cache.comm_k_j[q];
-				const double c = weight * cache.comm_k_val_d[q];
+				const double c = weight * cache.comm_k_val[q];
 				if (valid(op.left, i) && valid(op.right, j)) {
 					schedule.products.push_back({offsets[op.left] + i, offsets[op.right] + j, c});
 					if (linear) support[node][k] = 1;
@@ -288,34 +260,27 @@ static void build_bch_schedule(const BchCache& cache, BchSchedule& schedule, boo
 		}
 		schedule.sums.push_back({k, UINT64_MAX, start, schedule.products.size()});
 	}
-	std::vector<uint64_t> pointers(schedule.bch_memo_size + 1);
+	schedule.products.shrink_to_fit();
+	schedule.sums.shrink_to_fit();
+	// Leaf gradients are consumed immediately, so all coordinates share two slots.
+	const uint64_t gradient_offset = 2 * stride - (stride ? 2 : 0);
+	schedule.bch_gradient_size = schedule.bch_memo_size - gradient_offset;
+	std::vector<uint64_t> cursor(schedule.bch_memo_size);
 	for (const auto& term : schedule.products) {
-		++pointers[term.left + 1];
-		++pointers[term.right + 1];
+		++cursor[term.left];
+		++cursor[term.right];
 	}
-	for (uint64_t i = 1; i < pointers.size(); ++i) pointers[i] += pointers[i - 1];
-	auto cursor = pointers;
-	std::vector<BchProduct> derivatives(2 * schedule.products.size());
-	for (const auto& row : schedule.sums) {
-		const uint64_t source = row.destination == UINT64_MAX
-			? schedule.bch_memo_size + row.coordinate : row.destination;
-		for (uint64_t q = row.begin; q < row.end; ++q) {
-			const auto& term = schedule.products[q];
-			derivatives[cursor[term.left]++] = {source, term.right, term.coefficient};
-			derivatives[cursor[term.right]++] = {source, term.left, term.coefficient};
-		}
-	}
-	schedule.reverse_products.clear();
-	schedule.reverse_products.reserve(derivatives.size());
+	schedule.reverse_products.resize(2 * schedule.products.size());
 	schedule.reverse_sums.clear();
 	schedule.reverse_sums.reserve(schedule.bch_memo_size + cache.m);
+	uint64_t end = 0;
 	auto reverse_row = [&](uint64_t destination) {
-		const auto begin = pointers[destination], end = pointers[destination + 1];
-		std::sort(derivatives.begin() + begin, derivatives.begin() + end,
-			[](const auto& a, const auto& b) { return std::tie(a.right, a.left) < std::tie(b.right, b.left); });
-		const auto start = schedule.reverse_products.size();
-		schedule.reverse_products.insert(schedule.reverse_products.end(), derivatives.begin() + begin, derivatives.begin() + end);
-		schedule.reverse_sums.push_back({0, destination, start, schedule.reverse_products.size()});
+		const auto begin = end;
+		end += cursor[destination];
+		cursor[destination] = begin;
+		const uint64_t slot = destination < 2 * stride
+			? destination / stride : destination - gradient_offset;
+		schedule.reverse_sums.push_back({0, slot, begin, end});
 	};
 	uint64_t row = schedule.sums.size();
 	for (uint64_t k = cache.m; k-- > 0;) {
@@ -327,6 +292,19 @@ static void build_bch_schedule(const BchCache& cache, BchSchedule& schedule, boo
 		// A reverse prefix sum supplies this coordinate's output cotangents.
 		schedule.reverse_sums.push_back({k, UINT64_MAX, 0, 0});
 	}
+	// Scatter directly into execution order, without a second derivative table.
+	for (const auto& row : schedule.sums) {
+		const uint64_t source = row.destination == UINT64_MAX
+			? schedule.bch_gradient_size + row.coordinate : row.destination - gradient_offset;
+		for (uint64_t q = row.begin; q < row.end; ++q) {
+			const auto& term = schedule.products[q];
+			schedule.reverse_products[cursor[term.left]++] = {source, term.right, term.coefficient};
+			schedule.reverse_products[cursor[term.right]++] = {source, term.left, term.coefficient};
+		}
+	}
+	for (const auto& row : schedule.reverse_sums)
+		std::sort(schedule.reverse_products.begin() + row.begin, schedule.reverse_products.begin() + row.end,
+			[](const auto& a, const auto& b) { return std::tie(a.right, a.left) < std::tie(b.right, b.left); });
 }
 
 void build_bch_operation_ranges(BchCache& cache) {
@@ -419,9 +397,6 @@ void build_commutator_views(BchCache& cache) {
 			cache.comm_k_val[position] = coefficient;
 		}
 	}
-	cache.comm_k_val_d.resize(nnz);
-	for (uint32_t index = 0; index < nnz; ++index)
-		cache.comm_k_val_d[index] = static_cast<double>(cache.comm_k_val[index]);
 	cache.comm_k_sparse_end.resize(m);
 	for (uint64_t k = 0; k < m; ++k) {
 		uint32_t end = cache.comm_k_ptr[k];
@@ -537,17 +512,6 @@ void configure_linear_bch_input(
 		if (index >= cache.m)
 			throw std::out_of_range("BCH linear input index out of range");
 		cache.linear_input_mask[index] = 1;
-	}
-	cache.comm_k_sparse_ptr.assign(cache.m + 1, 0);
-	cache.comm_k_sparse_idx.clear();
-	for (uint64_t k = 0; k < cache.m; ++k) {
-		for (uint32_t index = cache.comm_k_ptr[k];
-			index < cache.comm_k_ptr[k + 1]; ++index) {
-			if (cache.linear_input_mask[cache.comm_k_i[index]]
-				|| cache.linear_input_mask[cache.comm_k_j[index]])
-				cache.comm_k_sparse_idx.push_back(index);
-		}
-		cache.comm_k_sparse_ptr[k + 1] = cache.comm_k_sparse_idx.size();
 	}
 	build_linear_bch_ranges_(cache);
 	build_bch_schedule(cache, cache.linear_schedule, true);

@@ -62,6 +62,7 @@ struct BchSchedule {
 	// Memo packs live node coordinates and omits the highest degree.
 	uint64_t bch_memo_width = 0;
 	uint64_t bch_memo_size = 0;
+	uint64_t bch_gradient_size = 0;
 	std::vector<BchProduct> products;
 	std::vector<BchSum> sums;
 	// Pullbacks gather contributions by destination, grouped by primal factor.
@@ -78,10 +79,7 @@ struct BchCache {
 	std::vector<uint32_t> comm_k_i;
 	std::vector<uint32_t> comm_k_j;
 	std::vector<int> comm_k_val;
-	std::vector<double> comm_k_val_d;
 	std::vector<uint32_t> comm_k_sparse_end;
-	std::vector<uint32_t> comm_k_sparse_ptr;
-	std::vector<uint32_t> comm_k_sparse_idx;
 	std::vector<uint32_t> comm_a_ptr;
 	std::vector<uint32_t> comm_a_k;
 	std::vector<uint32_t> comm_a_partner;
@@ -94,14 +92,11 @@ struct BchCache {
 	std::vector<double> comm_ij_c;
 	// Indexed by node, including inputs 0 and 1; support for a linear right input.
 	std::vector<std::pair<uint64_t, uint64_t>> linear_range;
-	std::vector<uint64_t> linear_pair_ptr;
-	std::vector<uint32_t> linear_pair_idx;
 	std::vector<BchForwardNode> linear_forward;
 	std::vector<uint64_t> coordinate_weights;
 	std::vector<uint32_t> linear_input_idx;
 	std::vector<uint8_t> linear_input_mask;
 	bool linear_input_prefix = true;
-	bool prune_linear_backprop = false;
 	std::vector<uint64_t> left_factor;
 	std::vector<uint64_t> right_factor;
 	// Operation i produces node i + 2; factors name earlier nodes (0/1 are inputs).
