@@ -88,15 +88,8 @@ TEST(sigLassoTest, BernsteinColumnsAndDescendantBounds) {
     }
 }
 
-TEST(sigLassoTest, SingularExtrapolationRejected) {
-    std::array<double, 25> singular{};
-    std::array<double, 5> rhs{1, 1, 1, 1, 1};
-    EXPECT_FALSE(siglasso::solve_five(singular, rhs));
-    singular.fill(1);
-    EXPECT_FALSE(siglasso::solve_five(singular, rhs));
-    singular.fill(0);
-    for (size_t j = 0; j < 5; ++j) singular[j * 5 + j] = 1;
-    EXPECT_TRUE(siglasso::solve_five(singular, rhs));
+TEST(sigLassoTest, VersionedABI) {
+    EXPECT_EQ(sig_lasso_abi_version(), 2);
 }
 
 TEST(sigLassoTest, NativeFitAndReleasedHandle) {
@@ -104,15 +97,15 @@ TEST(sigLassoTest, NativeFitAndReleasedHandle) {
     const double weights[]{1, 1}, alpha = .1;
     SigLassoOptions options{};
     options.samples = 4; options.length = 2; options.dimension = options.degree = options.targets = 1;
-    options.max_iter = 100; options.max_epochs = 1000; options.batch_size = 4; options.tolerance = 1e-10; options.n_jobs = 1; options.intercept = 1;
+    options.max_iter = 100; options.batch_size = 4; options.tolerance = 1e-10; options.n_jobs = 1; options.intercept = 1;
     for (uint32_t full : {0U, 1U}) {
         options.full = full; uint64_t handle = 0;
-        ASSERT_EQ(sig_lasso_d(paths.data(), response.data(), weights, &alpha, nullptr, nullptr, 0, &options, &handle), 0);
-        SigLassoShape shape{}; ASSERT_EQ(sig_lasso_shape(handle, &shape), 0); ASSERT_EQ(shape.words, 1);
+        ASSERT_EQ(sig_lasso_v2_d(paths.data(), response.data(), weights, &alpha, nullptr, nullptr, 0, &options, &handle), 0);
+        SigLassoShape shape{}; ASSERT_EQ(sig_lasso_shape_v2(handle, &shape), 0); ASSERT_EQ(shape.words, 1);
         uint64_t letters[1], offsets[2], converged[1], iterations[1];
         double coefficient, intercept, objective, gap;
-        ASSERT_EQ(sig_lasso_result_d(handle, letters, offsets, &coefficient, &intercept, &objective, &gap, converged, iterations), 0);
+        ASSERT_EQ(sig_lasso_result_v2_d(handle, letters, offsets, &coefficient, &intercept, &objective, &gap, converged, iterations), 0);
         EXPECT_NEAR(coefficient, .96, 1e-10); EXPECT_NEAR(intercept, 0, 1e-12); EXPECT_LE(gap, 1e-10); EXPECT_TRUE(converged[0]);
-        EXPECT_EQ(sig_lasso_release(handle), 0); EXPECT_NE(sig_lasso_shape(handle, &shape), 0);
+        EXPECT_EQ(sig_lasso_release_v2(handle), 0); EXPECT_NE(sig_lasso_shape_v2(handle, &shape), 0);
     }
 }

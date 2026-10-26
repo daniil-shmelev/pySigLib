@@ -19,17 +19,20 @@ namespace siglasso { struct Result; }
 
 struct SigLassoOptions {
     uint64_t samples, length, dimension, degree, targets;
-    uint64_t max_iter, max_epochs, batch_size, cache_bytes, memory_limit;
+    uint64_t max_iter, batch_size, cache_bytes, memory_limit;
     double tolerance;
     int n_jobs;
-    uint32_t full, intercept, single_precision, solver_flags;
+    uint32_t full, intercept, single_precision;
 };
 
 struct SigLassoStats {
     uint64_t columns, evaluated, pruned, block_queries, cache_hits, cache_misses;
-    uint64_t peak_bytes, coordinate_sweeps, screening_count, search_passes;
+    uint64_t peak_bytes, search_passes;
     uint64_t constructed;
+    uint64_t activations, drops, qr_appends, qr_deletions, qr_rebuilds, singular_steps, certificate_passes;
     double preparation_seconds, search_seconds, insertion_seconds, solve_seconds, total_seconds;
+    double factorization_seconds, certification_seconds;
+    uint64_t numerical_failures, full_transform_calls;
 };
 
 struct SigLassoShape {

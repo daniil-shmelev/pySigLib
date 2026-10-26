@@ -34,6 +34,27 @@ add_library(cpsig SHARED
 
 include(FetchContent)
 
+FetchContent_Declare(pysiglib_eigen
+    URL https://gitlab.com/libeigen/eigen/-/archive/5.0.1/eigen-5.0.1.tar.gz
+    URL_HASH SHA256=e9c326dc8c05cd1e044c71f30f1b2e34a6161a3b6ecf445d56b53ff1669e3dec
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR pysiglib_headers_only
+)
+FetchContent_MakeAvailable(pysiglib_eigen)
+add_library(pysiglib_lasso_cpu OBJECT cp_sig_lasso_active.cpp)
+target_include_directories(pysiglib_lasso_cpu PRIVATE "${pysiglib_eigen_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
+target_compile_definitions(pysiglib_lasso_cpu PRIVATE EIGEN_DONT_PARALLELIZE EIGEN_MPL2_ONLY)
+target_compile_features(pysiglib_lasso_cpu PRIVATE cxx_std_20)
+set_target_properties(pysiglib_lasso_cpu PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(pysiglib_lasso_cpu PRIVATE /Zi)
+endif()
+target_sources(cpsig PRIVATE $<TARGET_OBJECTS:pysiglib_lasso_cpu>)
+if(NOT CPSIG_SKIP_INSTALL)
+    install(FILES "${pysiglib_eigen_SOURCE_DIR}/COPYING.MPL2"
+        DESTINATION pysiglib/licenses RENAME Eigen-MPL2.txt)
+endif()
+
 set(TBB_TEST OFF CACHE BOOL "" FORCE)
 set(TBB_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(TBB_STRICT OFF CACHE BOOL "" FORCE)

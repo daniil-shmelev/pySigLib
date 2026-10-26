@@ -21,7 +21,10 @@
 #include "cu_sig_lasso_search.cuh"
 #include <cublas_v2.h>
 #include <cub/block/block_scan.cuh>
-#include <map>
+#include <cub/device/device_select.cuh>
+#include <cub/device/device_reduce.cuh>
+#include <cub/iterator/counting_input_iterator.cuh>
+#include "cu_sig_lasso_active.cuh"
 
 namespace {
 using siglasso::Array;
@@ -47,8 +50,7 @@ __global__ void vector_op(const double* x, double* y, size_t n, double a, double
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += static_cast<size_t>(gridDim.x) * blockDim.x) {
         if (operation == 0) y[i] = a;
         else if (operation == 1) y[i] = a * y[i] + c;
-        else if (operation == 2) y[i] += a * x[i];
-        else y[i] = static_cast<float>(y[i]);
+        else y[i] += a * x[i];
     }
 }
 __global__ void extract_response(const double* y, double* out, size_t n, size_t targets, size_t target) {
@@ -183,43 +185,64 @@ __global__ void column_correlations(const double* const* columns, const double* 
         __syncthreads();
     }
 }
-__global__ void residual_from_support(const double* y, const double* const* columns, const double* beta, double* residual, size_t n, size_t p) {
-    for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += static_cast<size_t>(gridDim.x) * blockDim.x) {
-        double value = y[i];
-        for (size_t j = 0; j < p; ++j) value -= columns[j][i] * beta[j];
-        residual[i] = value;
-    }
-}
-__global__ void pack_columns(const double* const* columns, double* out, size_t n, size_t p) {
-    for (size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < n * p; index += static_cast<size_t>(gridDim.x) * blockDim.x)
-        out[index] = columns[index / n][index % n];
-}
-__global__ void inverse_diagonal(const double* gram, double* inverse, size_t p) {
-    const size_t i = threadIdx.x;
-    if (i < p) inverse[i] = gram[i * p + i] > 0 ? 1.0 / gram[i * p + i] : 0;
-}
-template<bool CachedInverse>
-__global__ void coordinate_block(const double* gram, const double* inverse, double* gradient, const uint64_t* indices, double* beta, double* delta, size_t p, double alpha) {
-    __shared__ double g[128], values[128], changes[128], step;
-    const size_t i = threadIdx.x;
-    const double reciprocal = i < p && CachedInverse ? inverse[i] : 0;
-    if (i < p) { g[i] = gradient[i]; values[i] = beta[indices[i]]; changes[i] = 0; }
-    __syncthreads();
-    for (size_t j = 0; j < p; ++j) {
-        if (i == j) {
-            const double norm = gram[j * p + j];
-            double next = 0;
-            if (norm > 0) {
-                const double x = values[j] - (CachedInverse ? g[j] * reciprocal : g[j] / norm);
-                next = copysign(fmax(0.0, fabs(x) - (CachedInverse ? alpha * reciprocal : alpha / norm)), x);
+__global__ void certified_correlations(const double* const* columns, const double* vector, double* out, size_t p, size_t n) {
+    __shared__ double sums[128], errors[128], magnitudes[128];
+    for (size_t j = blockIdx.x; j < p; j += gridDim.x) {
+        double value = 0, error = 0, magnitude = 0;
+        for (size_t i = threadIdx.x; i < n; i += blockDim.x) {
+            const double product = columns[j][i] * vector[i], next = value + product;
+            error += fma(columns[j][i], vector[i], -product);
+            error += fabs(value) >= fabs(product) ? (value - next) + product : (product - next) + value;
+            value = next; magnitude += fabs(product);
+        }
+        sums[threadIdx.x] = value; errors[threadIdx.x] = error; magnitudes[threadIdx.x] = magnitude; __syncthreads();
+        for (unsigned int step = blockDim.x / 2; step; step /= 2) {
+            if (threadIdx.x < step) {
+                const double a = sums[threadIdx.x], b = sums[threadIdx.x + step], next = a + b;
+                errors[threadIdx.x] += errors[threadIdx.x + step] + (fabs(a) >= fabs(b) ? (a - next) + b : (b - next) + a);
+                sums[threadIdx.x] = next; magnitudes[threadIdx.x] += magnitudes[threadIdx.x + step];
             }
-            step = next - values[j]; values[j] = next; changes[j] += step;
+            __syncthreads();
+        }
+        if (!threadIdx.x) {
+            const double total = fabs(sums[0] + errors[0]);
+            out[j] = nextafter((total + 8 * DBL_EPSILON * total + 8 * n * DBL_EPSILON * DBL_EPSILON * magnitudes[0]) / n, CUDART_INF);
         }
         __syncthreads();
-        if (i < p && step) g[i] += gram[j * p + i] * step;
+    }
+}
+struct EligibleColumn {
+    const double* scores;
+    const uint64_t* excluded;
+    size_t excluded_count;
+    double alpha;
+    __device__ bool operator()(uint64_t slot) const {
+        if (!(fabs(scores[slot]) > alpha)) return false;
+        size_t low = 0, high = excluded_count;
+        while (low < high) { const size_t middle = (low + high) / 2; if (excluded[middle] < slot) low = middle + 1; else high = middle; }
+        return low == excluded_count || excluded[low] != slot;
+    }
+};
+__global__ void select_dense_candidates(double* scores, const uint64_t* eligible, size_t count, uint64_t* selected, size_t capacity) {
+    __shared__ double values[128];
+    __shared__ uint64_t indices[128];
+    for (size_t k = 0; k < capacity; ++k) {
+        double value = -1; uint64_t best = UINT64_MAX;
+        for (size_t j = threadIdx.x; j < count; j += blockDim.x) {
+            const uint64_t slot = eligible[j]; const double score = fabs(scores[slot]);
+            if (score > value || (score == value && slot < best)) { value = score; best = slot; }
+        }
+        values[threadIdx.x] = value; indices[threadIdx.x] = best; __syncthreads();
+        for (unsigned int step = blockDim.x / 2; step; step /= 2) {
+            if (threadIdx.x < step && (values[threadIdx.x + step] > values[threadIdx.x]
+                || (values[threadIdx.x + step] == values[threadIdx.x] && indices[threadIdx.x + step] < indices[threadIdx.x]))) {
+                values[threadIdx.x] = values[threadIdx.x + step]; indices[threadIdx.x] = indices[threadIdx.x + step];
+            }
+            __syncthreads();
+        }
+        if (!threadIdx.x) { selected[k] = indices[0]; scores[indices[0]] = 0; }
         __syncthreads();
     }
-    if (i < p) { beta[indices[i]] = values[i]; delta[i] = changes[i]; }
 }
 __global__ void insert_full(const double* source, double* out, const double* weights, const uint64_t* degrees,
     size_t rows, size_t p, size_t n, size_t begin) {
@@ -244,21 +267,21 @@ __global__ void centre_columns(double* matrix, double* means, double* norms, siz
 
 class LassoCUDA final : public siglasso::Backend {
     cudaStream_t stream_;
-    cudaStream_t capture_stream_ = nullptr;
     int device_;
     cublasHandle_t blas_ = nullptr;
-    std::shared_ptr<void> blas_owner_;
-    Array paths_, responses_, device_weights_, ones_, pointers_, correlations_, blas_workspace_, residual_coefficients_;
-    struct Block { Array matrix, gram, indices, gradient, delta, inverse; size_t size; };
-    std::map<std::vector<size_t>, std::shared_ptr<Block>> block_cache_;
-    size_t cached_bytes_ = 0;
-    std::vector<std::shared_ptr<Block>> blocks_;
-    cudaGraph_t graph_ = nullptr;
-    cudaGraphExec_t executable_ = nullptr;
+    std::shared_ptr<void> blas_owner_, blas_account_;
+    Array paths_, responses_, device_weights_, ones_, pointers_, correlations_, blas_workspace_;
+    Array stored_pointers_, stored_scores_, selection_scratch_, eligible_, excluded_, selected_, selected_count_, maximum_;
+    std::vector<const double*> stored_addresses_;
     std::vector<Array> search_factors_, search_grams_;
+    Array factor_addresses_, gram_addresses_, search_intervals_;
+    Array exclusion_hashes_, exclusion_lengths_, exclusion_words_, exclusion_count_;
+    lasso_device::Seen exclusions_{};
+    size_t excluded_count_ = 0;
+    bool search_running_ = false;
     Array seen_hashes_, seen_lengths_, seen_words_, seen_count_;
     lasso_device::Seen seen_{};
-    std::array<Array, 12> traversal_buffers_;
+    std::array<Array, 22> traversal_buffers_;
     Array prefix_cache_, prefix_words_, prefix_lengths_, prefix_ticks_, prefix_clocks_;
     size_t prefix_slots_ = 0;
 
@@ -273,19 +296,6 @@ class LassoCUDA final : public siglasso::Backend {
         if (!values.empty()) CUDA_CHECK(cudaMemcpyAsync(buffer.data, values.data(), values.size() * sizeof(T), cudaMemcpyHostToDevice, stream_));
         return buffer;
     }
-    void launch_sweep(Array& beta, Array& residual, double alpha) {
-        const double minus_inverse = -1.0 / options.samples, one = 1, zero = 0, minus_one = -1;
-        for (auto& block : blocks_) {
-            blas_check(cublasDgemv(blas_, CUBLAS_OP_T, static_cast<int>(options.samples), static_cast<int>(block->size), &minus_inverse,
-                block->matrix.data, static_cast<int>(options.samples), residual.data, 1, &zero, block->gradient.data, 1));
-            if (options.solver_flags & 256) coordinate_block<false><<<1, 128, 0, stream_>>>(block->gram.data, block->inverse.data,
-                block->gradient.data, reinterpret_cast<const uint64_t*>(block->indices.data), beta.data, block->delta.data, block->size, alpha);
-            else coordinate_block<true><<<1, 128, 0, stream_>>>(block->gram.data, block->inverse.data,
-                block->gradient.data, reinterpret_cast<const uint64_t*>(block->indices.data), beta.data, block->delta.data, block->size, alpha);
-            blas_check(cublasDgemv(blas_, CUBLAS_OP_N, static_cast<int>(options.samples), static_cast<int>(block->size), &minus_one,
-                block->matrix.data, static_cast<int>(options.samples), block->delta.data, 1, &one, residual.data, 1));
-        }
-    }
     void grow_seen(size_t capacity) {
         auto hashes = alloc(capacity), lengths = alloc(capacity), words = alloc(siglasso::multiply(capacity, options.degree)), count = alloc(1);
         fill(hashes, 0); fill(lengths, 0); fill(count, 0);
@@ -299,11 +309,20 @@ class LassoCUDA final : public siglasso::Backend {
         const auto& buffer = traversal_buffers_[slot];
         return {buffer.data, size, buffer.owner};
     }
+    void stored_columns(const std::vector<Column>& columns) {
+        if (stored_addresses_.size() != columns.size()) {
+            stored_addresses_.clear(); stored_addresses_.reserve(columns.size());
+            for (const auto& column : columns) stored_addresses_.push_back(column.values.data);
+            stored_pointers_ = descriptors(stored_addresses_); stored_scores_ = alloc(columns.size());
+        }
+    }
 public:
     template<typename T>
     LassoCUDA(const SigLassoOptions& o, const T* path, const T* y, const double* w, cudaStream_t stream, int device)
         : Backend(o), stream_(stream), device_(device) {
         if (o.samples > INT_MAX) throw std::out_of_range("sig_lasso CUDA sample count exceeds cuBLAS limits");
+        int major = 0; CUDA_CHECK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device));
+        blas_account_ = account((major >= 9 ? 32 : 4) * 1024 * 1024);
         blas_check(cublasCreate(&blas_));
         blas_owner_ = std::shared_ptr<void>(blas_, [](void* handle) { cublasDestroy(static_cast<cublasHandle_t>(handle)); });
         blas_workspace_ = alloc(std::min<size_t>(512 * 1024, std::max<size_t>(2048, budget->available() / 64)));
@@ -314,10 +333,6 @@ public:
         convert_input<<<grid(paths_.size), 128, 0, stream_>>>(path, paths_.data, paths_.size);
         convert_input<<<grid(responses_.size), 128, 0, stream_>>>(y, responses_.data, responses_.size);
         ones_ = alloc(o.samples); fill(ones_, 1); check();
-    }
-    ~LassoCUDA() override {
-        reset_solver(); block_cache_.clear();
-        if (capture_stream_) cudaStreamDestroy(capture_stream_);
     }
     Array alloc(size_t n) override {
         if (!n) return {};
@@ -347,32 +362,11 @@ public:
     void axpy(double alpha, const double* x, double* y, size_t n) override {
         if (n) { vector_op<<<grid(n), 128, 0, stream_>>>(x, y, n, alpha, 0, 2); check(); }
     }
-    void recompute_residual(const Array& y, const std::vector<Column>& columns, const std::vector<double>& beta, Array& residual) override {
-        if (options.solver_flags & 128) { Backend::recompute_residual(y, columns, beta, residual); return; }
-        std::vector<const double*> pointers;
-        std::vector<double> values;
-        for (size_t j = 0; j < beta.size(); ++j) if (beta[j]) { pointers.push_back(columns[j].values.data); values.push_back(beta[j]); }
-        if (values.empty()) { copy(y.data, residual.data, y.size); return; }
-        if (pointers_.size < values.size()) pointers_ = alloc(values.size());
-        if (residual_coefficients_.size < values.size()) residual_coefficients_ = alloc(values.size());
-        CUDA_CHECK(cudaMemcpyAsync(pointers_.data, pointers.data(), pointers.size() * sizeof(double*), cudaMemcpyHostToDevice, stream_));
-        upload(values.data(), residual_coefficients_.data, values.size());
-        residual_from_support<<<grid(y.size), 128, 0, stream_>>>(y.data, reinterpret_cast<const double* const*>(pointers_.data),
-            residual_coefficients_.data, residual.data, y.size, values.size()); check();
-    }
     double absolute_sum(const Array& values) override {
         double result = 0;
         if (values.size > INT_MAX) throw std::out_of_range("CUDA Lasso coefficient count exceeds cuBLAS limits");
         if (values.size) blas_check(cublasDasum(blas_, static_cast<int>(values.size), values.data, 1, &result));
         return siglasso::finite(result);
-    }
-    void small_gram(const std::array<Array, 5>& vectors, std::array<double, 25>& gram) override {
-        auto matrix = alloc(options.samples * 5), result = alloc(25);
-        for (size_t j = 0; j < 5; ++j) copy(vectors[j].data, matrix.data + j * options.samples, options.samples);
-        const double one = 1, zero = 0;
-        blas_check(cublasDgemm(blas_, CUBLAS_OP_T, CUBLAS_OP_N, 5, 5, static_cast<int>(options.samples), &one,
-            matrix.data, static_cast<int>(options.samples), matrix.data, static_cast<int>(options.samples), &zero, result.data, 5));
-        download(result.data, gram.data(), 25);
     }
     void scale(double alpha, double* y, size_t n) override {
         if (n) { vector_op<<<grid(n), 128, 0, stream_>>>(nullptr, y, n, alpha, 0, 1); check(); }
@@ -383,7 +377,6 @@ public:
         vector_op<<<grid(n), 128, 0, stream_>>>(nullptr, data, n, 1, -mean, 1); check();
         return mean;
     }
-    void round(double* data, size_t n) override { if (n) { vector_op<<<grid(n), 128, 0, stream_>>>(nullptr, data, n, 0, 0, 3); check(); } }
     void correlations(const std::vector<Column>& columns, const Array& vector, std::vector<double>& out, const std::vector<size_t>* selected = nullptr) override {
         out.resize(selected ? selected->size() : columns.size()); if (out.empty()) return;
         std::vector<const double*> pointers; pointers.reserve(out.size());
@@ -394,66 +387,57 @@ public:
         column_correlations<<<std::min<size_t>(65535, out.size()), 128, 0, stream_>>>(reinterpret_cast<const double* const*>(pointers_.data), vector.data, correlations_.data, out.size(), vector.size);
         check(); download(correlations_.data, out.data(), out.size());
     }
-    void reset_solver() override {
-        if (executable_) { cudaGraphExecDestroy(executable_); executable_ = nullptr; }
-        if (graph_) { cudaGraphDestroy(graph_); graph_ = nullptr; }
-        blocks_.clear();
-    }
     void trim_caches() override {
-        Backend::trim_caches(); block_cache_.clear(); cached_bytes_ = 0;
+        Backend::trim_caches();
         prefix_cache_ = {}; prefix_words_ = {}; prefix_lengths_ = {}; prefix_ticks_ = {}; prefix_clocks_ = {}; prefix_slots_ = 0;
+        if (!search_running_) {
+            search_factors_.clear(); search_grams_.clear(); gram_addresses_ = {};
+            for (auto& buffer : traversal_buffers_) buffer = {};
+        }
     }
-    void sweeps(const std::vector<Column>& columns, const std::vector<size_t>& selected, Array& beta, Array& residual, double alpha, size_t count,
-        std::array<Array, 6>* history, size_t& next_snapshot) override {
-        if (!executable_) {
-            for (size_t begin = 0; begin < selected.size(); begin += 128) {
-                const size_t end = std::min(begin + 128, selected.size());
-                std::vector<size_t> key(selected.begin() + begin, selected.begin() + end);
-                auto found = block_cache_.find(key);
-                std::shared_ptr<Block> block;
-                if (found != block_cache_.end()) block = found->second;
-                else {
-                    block = std::make_shared<Block>(); block->size = key.size();
-                    block->matrix = alloc(options.samples * key.size()); block->gram = alloc(key.size() * key.size());
-                    block->gradient = alloc(key.size()); block->delta = alloc(key.size()); block->inverse = alloc(key.size());
-                    std::vector<uint64_t> indices(key.begin(), key.end()); block->indices = descriptors(indices);
-                    std::vector<const double*> pointers;
-                    for (auto j : key) pointers.push_back(columns[j].values.data);
-                    auto addresses = descriptors(pointers);
-                    pack_columns<<<grid(options.samples * key.size()), 128, 0, stream_>>>(reinterpret_cast<const double* const*>(addresses.data), block->matrix.data, options.samples, key.size());
-                    const double inverse = 1.0 / options.samples, zero = 0;
-                    blas_check(cublasDgemm(blas_, CUBLAS_OP_T, CUBLAS_OP_N, static_cast<int>(key.size()), static_cast<int>(key.size()), static_cast<int>(options.samples),
-                        &inverse, block->matrix.data, static_cast<int>(options.samples), block->matrix.data, static_cast<int>(options.samples), &zero, block->gram.data, static_cast<int>(key.size())));
-                    inverse_diagonal<<<1, 128, 0, stream_>>>(block->gram.data, block->inverse.data, key.size()); check();
-                    const size_t bytes = block->matrix.bytes() + block->gram.bytes() + block->indices.bytes() + block->gradient.bytes() + block->delta.bytes() + block->inverse.bytes();
-                    if (bytes <= options.cache_bytes / 4) {
-                        if (cached_bytes_ + bytes > options.cache_bytes / 4) { block_cache_.clear(); cached_bytes_ = 0; }
-                        block_cache_.emplace(key, block); cached_bytes_ += bytes;
-                    }
-                }
-                blocks_.push_back(std::move(block));
-            }
-            CUDA_CHECK(cudaStreamSynchronize(stream_));
-            if (!capture_stream_) CUDA_CHECK(cudaStreamCreateWithFlags(&capture_stream_, cudaStreamNonBlocking));
-            const auto caller_stream = stream_;
-            CUDA_CHECK(cudaStreamBeginCapture(capture_stream_, cudaStreamCaptureModeThreadLocal));
-            try {
-                set_blas_stream(capture_stream_);
-                launch_sweep(beta, residual, alpha);
-                CUDA_CHECK(cudaStreamEndCapture(stream_, &graph_));
-            } catch (...) {
-                cudaStreamEndCapture(capture_stream_, &graph_);
-                stream_ = caller_stream; cublasSetStream(blas_, stream_); cublasSetWorkspace(blas_, blas_workspace_.data, blas_workspace_.bytes());
-                throw;
-            }
-            set_blas_stream(caller_stream);
-            CUDA_CHECK(cudaGraphInstantiate(&executable_, graph_, nullptr, nullptr, 0));
+    std::unique_ptr<siglasso::ActiveSet> active_set(const Array& y, double alpha) override {
+        return siglasso::make_cuda_active(*this, y, alpha, stream_, blas_, device_);
+    }
+    double correlation_max(const std::vector<Column>& columns, const Array& vector) override {
+        if (columns.empty()) return 0;
+        stored_columns(columns);
+        if (!maximum_.owner) maximum_ = alloc(1);
+        certified_correlations<<<static_cast<unsigned>(std::min<size_t>(65535, columns.size())), 128, 0, stream_>>>(
+            reinterpret_cast<const double* const*>(stored_pointers_.data), vector.data, stored_scores_.data, columns.size(), vector.size);
+        size_t bytes = 0;
+        CUDA_CHECK(cub::DeviceReduce::Max(nullptr, bytes, stored_scores_.data, maximum_.data, columns.size(), stream_));
+        if (selection_scratch_.bytes() < bytes) selection_scratch_ = alloc((bytes + 7) / 8);
+        CUDA_CHECK(cub::DeviceReduce::Max(selection_scratch_.data, bytes, stored_scores_.data, maximum_.data, columns.size(), stream_));
+        double value = 0; download(maximum_.data, &value, 1); return siglasso::finite(value);
+    }
+    std::vector<size_t> dense_candidates(const std::vector<Column>& columns, const Array& vector,
+        const std::unordered_set<size_t>& offered, double alpha, size_t capacity) override {
+        stored_columns(columns);
+        if (columns.empty()) return {};
+        column_correlations<<<static_cast<unsigned>(std::min<size_t>(65535, columns.size())), 128, 0, stream_>>>(
+            reinterpret_cast<const double* const*>(stored_pointers_.data), vector.data, stored_scores_.data, columns.size(), vector.size);
+        std::vector<uint64_t> excluded(offered.begin(), offered.end()); std::sort(excluded.begin(), excluded.end());
+        excluded_ = descriptors(excluded);
+        if (eligible_.size < columns.size()) eligible_ = alloc(columns.size());
+        if (selected_.size < capacity) selected_ = alloc(capacity);
+        if (!selected_count_.owner) selected_count_ = alloc(1);
+        EligibleColumn predicate{stored_scores_.data, reinterpret_cast<const uint64_t*>(excluded_.data), excluded.size(), alpha};
+        cub::CountingInputIterator<uint64_t> indices(0);
+        size_t bytes = 0;
+        CUDA_CHECK(cub::DeviceSelect::If(nullptr, bytes, indices, reinterpret_cast<uint64_t*>(eligible_.data),
+            reinterpret_cast<uint64_t*>(selected_count_.data), columns.size(), predicate, stream_));
+        if (selection_scratch_.bytes() < bytes) selection_scratch_ = alloc((bytes + 7) / 8);
+        CUDA_CHECK(cub::DeviceSelect::If(selection_scratch_.data, bytes, indices, reinterpret_cast<uint64_t*>(eligible_.data),
+            reinterpret_cast<uint64_t*>(selected_count_.data), columns.size(), predicate, stream_));
+        uint64_t count = 0; download(selected_count_.data, reinterpret_cast<double*>(&count), 1);
+        capacity = std::min<size_t>(capacity, count);
+        std::vector<size_t> result(capacity);
+        if (capacity) {
+            select_dense_candidates<<<1, 128, 0, stream_>>>(stored_scores_.data, reinterpret_cast<const uint64_t*>(eligible_.data),
+                count, reinterpret_cast<uint64_t*>(selected_.data), capacity);
+            download(selected_.data, reinterpret_cast<double*>(result.data()), capacity);
         }
-        for (size_t epoch = 0; epoch < count; ++epoch) {
-            CUDA_CHECK(cudaGraphLaunch(executable_, stream_));
-            if (history && epoch + 6 >= count) { copy(residual.data, (*history)[next_snapshot].data, residual.size); next_snapshot = (next_snapshot + 1) % 6; }
-        }
-        check();
+        check(); return result;
     }
     void prepare() override {
         const size_t n = options.samples, l = options.length - 1, d = options.dimension, m = options.degree;
@@ -527,7 +511,7 @@ public:
         for (size_t k = 1; k <= m; ++k) {
             siglasso::Word word(k, 0);
             do {
-                columns.push_back({word, Array{matrix.data + columns.size() * n, n, matrix.owner}, 0, 0, 0, column_metadata}); degrees.push_back(k);
+                columns.push_back({word, Array{matrix.data + columns.size() * n, n, matrix.owner}, 0, 0, column_metadata}); degrees.push_back(k);
                 size_t j = k;
                 while (j && ++word[j - 1] == d) { word[j - 1] = 0; --j; }
                 if (!j) break;
@@ -540,6 +524,7 @@ public:
         for (size_t begin = 0; begin < n; begin += tile) {
             const size_t rows = std::min(tile, n - begin);
             CUDA_CHECK(cudaStreamSynchronize(stream_));
+            ++stats.full_transform_calls;
             const int status = signature_cuda_d(paths_.data + begin * options.length * d, temporary.data, rows, d, options.length, m, false, false, 1.0, true, false);
             if (status == 1) throw std::bad_alloc();
             if (status) throw std::runtime_error("Full CUDA signature kernel failed in sig_lasso");
@@ -559,7 +544,14 @@ public:
     bool native_search(const Array& residual, double alpha, const std::unordered_map<siglasso::Word, size_t, siglasso::WordHash>& active,
         size_t capacity, siglasso::SearchResult& result) override {
         const size_t n = options.samples, l = options.length - 1, d = options.dimension, m = options.degree, nl = n * l;
-        if (search_factors_.empty()) for (size_t k = 0; k < m; ++k) search_factors_.push_back(factors(k));
+        struct SearchPin { bool& flag; ~SearchPin() { flag = false; } } pin{search_running_};
+        search_running_ = true;
+        search_factors_.resize(m);
+        if (!factor_addresses_.owner) factor_addresses_ = alloc(m);
+        if (!search_factors_[0].owner) search_factors_[0] = factors(0);
+        std::vector<const double*> factors_host(m);
+        for (size_t k = 0; k < m; ++k) factors_host[k] = search_factors_[k].data;
+        CUDA_CHECK(cudaMemcpyAsync(factor_addresses_.data, factors_host.data(), m * sizeof(double*), cudaMemcpyHostToDevice, stream_));
         if (search_grams_.empty()) {
             search_grams_.resize(alphabet.size()); size_t bytes = 0;
             for (size_t block = 0; block < alphabet.size(); ++block) {
@@ -569,23 +561,38 @@ public:
                 }
             }
         }
-        std::vector<const double*> factors_host, grams_host;
-        for (const auto& value : search_factors_) factors_host.push_back(value.data);
-        for (const auto& value : search_grams_) grams_host.push_back(value.data);
-        auto factor_addresses = descriptors(factors_host), gram_addresses = descriptors(grams_host);
-        std::vector<lasso_device::Interval> intervals;
-        for (size_t block = 0; block < alphabet.size(); ++block) {
-            const auto [low, high] = alphabet[block]; intervals.push_back({low, high, block + 2 * (high - low) - 1});
+        if (!gram_addresses_.owner) {
+            std::vector<const double*> grams_host;
+            for (const auto& value : search_grams_) grams_host.push_back(value.data);
+            gram_addresses_ = descriptors(grams_host);
         }
-        auto device_intervals = descriptors(intervals);
-        std::vector<lasso_device::Active> active_records;
-        std::vector<uint64_t> active_letters;
-        for (const auto& [word, index] : active) {
-            active_records.push_back({siglasso::WordHash{}(word), word.size(), active_letters.size()});
-            active_letters.insert(active_letters.end(), word.begin(), word.end());
+        if (!search_intervals_.owner) {
+            std::vector<lasso_device::Interval> intervals;
+            for (size_t block = 0; block < alphabet.size(); ++block) {
+                const auto [low, high] = alphabet[block]; intervals.push_back({low, high, block + 2 * (high - low) - 1});
+            }
+            search_intervals_ = descriptors(intervals);
         }
-        std::sort(active_records.begin(), active_records.end(), [](const auto& a, const auto& b) { return a.hash < b.hash; });
-        auto device_active = descriptors(active_records), device_letters = descriptors(active_letters);
+        if (excluded_count_ != active.size()) {
+            if (exclusions_.capacity < 2 * active.size()) {
+                size_t capacity = 256; while (capacity < 2 * active.size()) capacity *= 2;
+                auto hashes = alloc(capacity), lengths = alloc(capacity), words = alloc(siglasso::multiply(capacity, m)), count = alloc(1);
+                fill(hashes, 0); fill(lengths, 0); fill(count, 0);
+                lasso_device::Seen next{reinterpret_cast<uint64_t*>(hashes.data), reinterpret_cast<uint64_t*>(lengths.data), reinterpret_cast<uint64_t*>(words.data),
+                    reinterpret_cast<unsigned long long*>(count.data), capacity, m};
+                if (exclusions_.capacity) lasso_device::rehash<<<grid(exclusions_.capacity), 128, 0, stream_>>>(exclusions_, next);
+                exclusion_hashes_ = std::move(hashes); exclusion_lengths_ = std::move(lengths); exclusion_words_ = std::move(words);
+                exclusion_count_ = std::move(count); exclusions_ = next;
+            }
+            std::vector<lasso_device::Active> records; std::vector<uint64_t> letters;
+            for (const auto& [word, index] : active) if (index >= excluded_count_) {
+                records.push_back({0, word.size(), letters.size()}); letters.insert(letters.end(), word.begin(), word.end());
+            }
+            auto device_records = descriptors(records), device_letters = descriptors(letters);
+            lasso_device::seed_seen<<<grid(records.size()), 128, 0, stream_>>>(exclusions_, reinterpret_cast<const lasso_device::Active*>(device_records.data),
+                reinterpret_cast<const uint64_t*>(device_letters.data), records.size());
+            excluded_count_ = active.size();
+        }
         if (!seen_.capacity) {
             size_t size = 256; while (size < 2 * constructed.size()) size *= 2;
             grow_seen(size);
@@ -596,10 +603,12 @@ public:
                 reinterpret_cast<const uint64_t*>(seed_letters.data), records.size());
         }
         const size_t triangular = siglasso::multiply(m, m + 1) / 2;
-        const size_t per_lane = siglasso::multiply((2 * triangular + m), nl) + (capacity + 1) * n + 2 * m + capacity * (m + 2) + 7;
+        const size_t per_lane = siglasso::multiply((2 * triangular + m), nl) + (capacity + 1) * n + 2 * m + capacity * (m + 2) + 10;
         size_t lanes = std::min<size_t>(32, d);
         const size_t workspace_limit = options.memory_limit ? options.memory_limit - budget->used() : 64 * 1024 * 1024;
-        lanes = std::min(lanes, std::max<size_t>(1, workspace_limit / (per_lane * sizeof(double))));
+        const size_t merge_bytes = capacity ? 2 * (capacity * (n + m + 2) + 1) * sizeof(double) : 0;
+        const size_t lane_budget = workspace_limit > merge_bytes ? workspace_limit - merge_bytes : 0;
+        lanes = std::min(lanes, std::max<size_t>(1, lane_budget / (per_lane * sizeof(double))));
         auto coefficients = traversal_buffer(0, lanes * triangular * nl), moments_buffer = traversal_buffer(1, lanes * triangular * nl);
         auto integrals_buffer = traversal_buffer(2, lanes * m * nl), values = traversal_buffer(3, lanes * n);
         auto candidates = traversal_buffer(4, lanes * capacity * n), scores = traversal_buffer(5, lanes * capacity);
@@ -607,7 +616,15 @@ public:
         auto candidate_words = traversal_buffer(8, lanes * capacity * m), lengths = traversal_buffer(9, lanes * capacity);
         auto states = traversal_buffer(10, lanes * sizeof(lasso_device::Lane) / sizeof(double));
         auto lane_ids = traversal_buffer(11, lanes);
-        auto host_workspace = account(candidate_words.bytes() + lengths.bytes() + scores.bytes() + states.bytes() + 4096);
+        std::array<lasso_device::CandidateBatch, 2> merged;
+        for (size_t j = 0; j < 2 && capacity; ++j) {
+            const size_t start = 12 + j * 5;
+            auto v = traversal_buffer(start, capacity * n), s = traversal_buffer(start + 1, capacity);
+            auto w = traversal_buffer(start + 2, capacity * m), l = traversal_buffer(start + 3, capacity), c = traversal_buffer(start + 4, 1);
+            fill(c, 0); merged[j] = {v.data, s.data, reinterpret_cast<uint64_t*>(w.data), reinterpret_cast<uint64_t*>(l.data), reinterpret_cast<uint64_t*>(c.data)};
+        }
+        size_t merge_index = 0;
+        auto host_workspace = account(capacity * (m + 2) * sizeof(double) + states.bytes() + 4096);
         const size_t cache_stride = (m + 2) * nl + n;
         if (!prefix_slots_ && m > 1) {
             const size_t available = std::min<size_t>(options.cache_bytes / 8 * 3, budget->available() / 2);
@@ -619,14 +636,13 @@ public:
                 prefix_ticks_ = std::move(ticks); prefix_clocks_ = std::move(clocks); prefix_slots_ = slots;
             }
         }
-        lasso_device::SearchData data{n, l, d, m, lanes, capacity, alphabet.size(), active.size(), increments.data, alphabet_ratios.data,
-            device_weights_.data, residual.data, reinterpret_cast<const double* const*>(factor_addresses.data), reinterpret_cast<const double* const*>(gram_addresses.data),
-            reinterpret_cast<const lasso_device::Interval*>(device_intervals.data), reinterpret_cast<const lasso_device::Active*>(device_active.data),
-            reinterpret_cast<const uint64_t*>(device_letters.data), coefficients.data, moments_buffer.data, integrals_buffer.data, values.data, candidates.data, scores.data,
+        lasso_device::SearchData data{n, l, d, m, lanes, capacity, alphabet.size(), increments.data, alphabet_ratios.data,
+            device_weights_.data, residual.data, reinterpret_cast<const double* const*>(factor_addresses_.data), reinterpret_cast<const double* const*>(gram_addresses_.data),
+            reinterpret_cast<const lasso_device::Interval*>(search_intervals_.data), exclusions_, coefficients.data, moments_buffer.data, integrals_buffer.data, values.data, candidates.data, scores.data,
             reinterpret_cast<uint64_t*>(words.data), reinterpret_cast<uint64_t*>(next.data), reinterpret_cast<uint64_t*>(candidate_words.data),
             reinterpret_cast<uint64_t*>(lengths.data), reinterpret_cast<lasso_device::Lane*>(states.data), seen_};
         data.lane_ids = reinterpret_cast<uint64_t*>(lane_ids.data);
-        data.segment_scan = n <= 16 && l >= 64 && !(options.solver_flags & 64);
+        data.segment_scan = n <= 16 && l >= 64;
         std::vector<lasso_device::Lane> host_states(lanes);
         for (size_t first = 0; first < d; first += lanes) {
             const size_t current = std::min(lanes, d - first);
@@ -642,31 +658,38 @@ public:
                 stats.constructed = seen_count;
                 const size_t previous = running;
                 running = 0;
-                for (size_t lane = 0; lane < current; ++lane) running += host_states[lane].depth != 0;
+                bool added = false;
+                for (size_t lane = 0; lane < current; ++lane) {
+                    running += host_states[lane].depth != 0;
+                    const size_t k = host_states[lane].requested;
+                    if (k && !search_factors_[k].owner) { search_factors_[k] = factors(k); factors_host[k] = search_factors_[k].data; added = true; }
+                }
+                if (added) CUDA_CHECK(cudaMemcpyAsync(factor_addresses_.data, factors_host.data(), m * sizeof(double*), cudaMemcpyHostToDevice, stream_));
                 if (running && running < previous) { lasso_device::compact_lanes<<<1, 32, 0, stream_>>>(data, current); check(); }
                 if (running && seen_count > seen_.capacity / 2) { grow_seen(seen_.capacity * 2); data.seen = seen_; }
             } while (running);
-            auto host_scores = host(scores);
-            std::vector<uint64_t> host_words(candidate_words.size), host_lengths(lengths.size);
-            download(candidate_words.data, reinterpret_cast<double*>(host_words.data()), host_words.size());
-            download(lengths.data, reinterpret_cast<double*>(host_lengths.data()), host_lengths.size());
+            if (capacity) {
+                lasso_device::merge_candidates<<<1, 128, 0, stream_>>>(data, current, merged[merge_index], merged[1 - merge_index]); check();
+                merge_index = 1 - merge_index;
+            }
             for (size_t lane = 0; lane < current; ++lane) {
                 result.omitted = std::max(result.omitted, siglasso::finite(host_states[lane].omitted));
                 stats.evaluated += host_states[lane].evaluated; stats.cache_misses += host_states[lane].evaluated;
                 stats.cache_hits += host_states[lane].cache_hits;
                 stats.pruned += host_states[lane].pruned; stats.block_queries += host_states[lane].queries;
-                for (size_t j = 0; j < host_states[lane].count; ++j) {
-                    const size_t slot = lane * capacity + j;
-                    siglasso::Candidate candidate{siglasso::Word(host_words.begin() + slot * m, host_words.begin() + slot * m + host_lengths[slot]), {}, host_scores[slot]};
-                    if (result.candidates.size() == capacity && !siglasso::better(candidate, result.candidates.front())) continue;
-                    if (d <= lanes) candidate.values = {candidates.data + slot * n, n, candidates.owner};
-                    else { candidate.values = alloc(n); copy(candidates.data + slot * n, candidate.values.data, n); }
-                    if (result.candidates.size() == capacity) { std::pop_heap(result.candidates.begin(), result.candidates.end(), siglasso::better); result.candidates.pop_back(); }
-                    result.candidates.push_back(std::move(candidate)); std::push_heap(result.candidates.begin(), result.candidates.end(), siglasso::better);
-                }
             }
         }
-        std::sort(result.candidates.begin(), result.candidates.end(), siglasso::better);
+        if (capacity) {
+            const auto& batch = merged[merge_index]; uint64_t count = 0;
+            download(reinterpret_cast<const double*>(batch.count), reinterpret_cast<double*>(&count), 1);
+            std::vector<double> host_scores(count); std::vector<uint64_t> host_words(count * m), host_lengths(count);
+            download(batch.scores, host_scores.data(), count);
+            download(reinterpret_cast<const double*>(batch.words), reinterpret_cast<double*>(host_words.data()), host_words.size());
+            download(reinterpret_cast<const double*>(batch.lengths), reinterpret_cast<double*>(host_lengths.data()), count);
+            for (size_t j = 0; j < count; ++j) result.candidates.push_back({
+                siglasso::Word(host_words.begin() + j * m, host_words.begin() + j * m + host_lengths[j]),
+                {batch.values + j * n, n, traversal_buffers_[12 + merge_index * 5].owner}, siglasso::finite(host_scores[j])});
+        }
         size_t factor_bytes = 0; for (const auto& value : search_factors_) factor_bytes += value.bytes();
         if (factor_bytes > options.cache_bytes / 4) search_factors_.clear();
         return true;
@@ -708,25 +731,26 @@ void copy_result(uint64_t handle, uint64_t* letters, uint64_t* offsets, T* coeff
 } // namespace
 
 extern "C" {
-CUSIG_API int sig_lasso_cuda_f(const float* path, const float* y, const double* weights, const double* alphas, const uint64_t* letters,
+CUSIG_API uint32_t sig_lasso_abi_version_cuda() noexcept { return 2; }
+CUSIG_API int sig_lasso_v2_cuda_f(const float* path, const float* y, const double* weights, const double* alphas, const uint64_t* letters,
     const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, void* stream, int device, uint64_t* handle) noexcept {
     CUDA_SAFE_CALL(run_lasso(path, y, weights, alphas, letters, offsets, words, options, stream, device, handle));
 }
-CUSIG_API int sig_lasso_cuda_d(const double* path, const double* y, const double* weights, const double* alphas, const uint64_t* letters,
+CUSIG_API int sig_lasso_v2_cuda_d(const double* path, const double* y, const double* weights, const double* alphas, const uint64_t* letters,
     const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, void* stream, int device, uint64_t* handle) noexcept {
     CUDA_SAFE_CALL(run_lasso(path, y, weights, alphas, letters, offsets, words, options, stream, device, handle));
 }
-CUSIG_API int sig_lasso_shape_cuda(uint64_t handle, SigLassoShape* shape) noexcept {
+CUSIG_API int sig_lasso_shape_v2_cuda(uint64_t handle, SigLassoShape* shape) noexcept {
     CUDA_SAFE_CALL(auto result = results.get(handle); shape->words = result->words.size(); shape->targets = result->targets;
         shape->letters = 0; for (const auto& word : result->words) shape->letters += word.size(); shape->stats = result->stats);
 }
-CUSIG_API int sig_lasso_result_cuda_f(uint64_t handle, uint64_t* letters, uint64_t* offsets, float* coefficients,
+CUSIG_API int sig_lasso_result_v2_cuda_f(uint64_t handle, uint64_t* letters, uint64_t* offsets, float* coefficients,
     float* intercepts, float* objectives, float* gaps, uint64_t* converged, uint64_t* iterations) noexcept {
     CUDA_SAFE_CALL(copy_result(handle, letters, offsets, coefficients, intercepts, objectives, gaps, converged, iterations));
 }
-CUSIG_API int sig_lasso_result_cuda_d(uint64_t handle, uint64_t* letters, uint64_t* offsets, double* coefficients,
+CUSIG_API int sig_lasso_result_v2_cuda_d(uint64_t handle, uint64_t* letters, uint64_t* offsets, double* coefficients,
     double* intercepts, double* objectives, double* gaps, uint64_t* converged, uint64_t* iterations) noexcept {
     CUDA_SAFE_CALL(copy_result(handle, letters, offsets, coefficients, intercepts, objectives, gaps, converged, iterations));
 }
-CUSIG_API int sig_lasso_release_cuda(uint64_t handle) noexcept { CUDA_SAFE_CALL(results.erase(handle)); }
+CUSIG_API int sig_lasso_release_v2_cuda(uint64_t handle) noexcept { CUDA_SAFE_CALL(results.erase(handle)); }
 }

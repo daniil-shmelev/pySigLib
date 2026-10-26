@@ -28,6 +28,9 @@ if(NOT PYSIGLIB_CPSIG_PREBUILT_LIBRARY)
     list(APPEND _pysiglib_cpsig_test_sources ../cpsig/cp_utils.cpp)
 endif()
 add_executable(cpsig_tests ${_pysiglib_cpsig_test_sources})
+if(TARGET pysiglib_lasso_cpu)
+    target_sources(cpsig_tests PRIVATE cp_test_lasso_active.cpp $<TARGET_OBJECTS:pysiglib_lasso_cpu>)
+endif()
 
 target_include_directories(cpsig_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../cpsig"

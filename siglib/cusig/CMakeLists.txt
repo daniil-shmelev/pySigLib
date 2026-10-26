@@ -132,7 +132,7 @@ if(MSVC)
     target_compile_definitions(cusig PRIVATE _USRDLL _UNICODE UNICODE)
 endif()
 
-target_link_libraries(cusig PRIVATE CUDA::cudart CUDA::cublas pysiglib_preparation)
+target_link_libraries(cusig PRIVATE CUDA::cudart CUDA::cublas CUDA::cusolver pysiglib_preparation)
 
 get_filename_component(_pysiglib_cublas_lib_dir "${CUDA_cublas_LIBRARY}" DIRECTORY)
 if(WIN32)
@@ -145,6 +145,12 @@ find_path(PYSIGLIB_CUBLAS_INCLUDE_DIR cublas_v2.h
     REQUIRED)
 set_source_files_properties(cu_sig_lasso.cu PROPERTIES
     INCLUDE_DIRECTORIES "${PYSIGLIB_CUBLAS_INCLUDE_DIR}")
+add_library(pysiglib_lasso_cuda OBJECT cu_sig_lasso_active.cu)
+set_target_properties(pysiglib_lasso_cuda PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED ON
+    CUDA_ARCHITECTURES "${PYSIGLIB_CUDA_ARCH}" POSITION_INDEPENDENT_CODE ON)
+target_include_directories(pysiglib_lasso_cuda PRIVATE "${PYSIGLIB_CUBLAS_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
+target_compile_options(pysiglib_lasso_cuda PRIVATE $<$<BOOL:${PYSIGLIB_CUDA_LINEINFO}>:-lineinfo> --dopt=on)
+target_sources(cusig PRIVATE $<TARGET_OBJECTS:pysiglib_lasso_cuda>)
 find_file(PYSIGLIB_CUDA_LICENSE EULA.txt
     HINTS "${_pysiglib_cublas_root}" "${CUDAToolkit_LIBRARY_ROOT}" "${CUDAToolkit_ROOT}"
     NO_DEFAULT_PATH)
@@ -152,10 +158,18 @@ if(PYSIGLIB_CUDA_LICENSE)
     install(FILES "${PYSIGLIB_CUDA_LICENSE}" DESTINATION ${CUSIG_INSTALL_DESTINATION}/licenses RENAME CUDA-EULA.txt)
 endif()
 if(WIN32)
-    foreach(_pysiglib_math_library cublas cublasLt)
+    foreach(_pysiglib_math_library cublas cublasLt cusolver cusparse cudart nvJitLink)
+        set(_pysiglib_runtime_names "${_pysiglib_math_library}64_11.dll" "${_pysiglib_math_library}64_12.dll" "${_pysiglib_math_library}64_13.dll")
+        set(_pysiglib_runtime_dirs "${_pysiglib_cublas_root}/bin" "${CUDAToolkit_BIN_DIR}")
+        if(_pysiglib_math_library STREQUAL "nvJitLink")
+            set(_pysiglib_runtime_names nvJitLink_120_0.dll nvJitLink_130_0.dll)
+        elseif(_pysiglib_math_library STREQUAL "cudart")
+            set(_pysiglib_runtime_dirs "${CUDAToolkit_BIN_DIR}")
+        endif()
         find_file(_pysiglib_${_pysiglib_math_library}_dll
-            NAMES "${_pysiglib_math_library}64_12.dll" "${_pysiglib_math_library}64_13.dll"
-            HINTS "${_pysiglib_cublas_root}/bin" "${CUDAToolkit_BIN_DIR}"
+            NAMES ${_pysiglib_runtime_names}
+            HINTS ${_pysiglib_runtime_dirs}
+            NO_DEFAULT_PATH
             REQUIRED)
         add_custom_command(TARGET cusig POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_pysiglib_${_pysiglib_math_library}_dll}" "$<TARGET_FILE_DIR:cusig>")

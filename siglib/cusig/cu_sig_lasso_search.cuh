@@ -54,17 +54,16 @@ __global__ void seed_seen(Seen table, const Active* words, const uint64_t* lette
         record(table, letters + words[j].offset, words[j].length);
 }
 struct Lane {
-    uint64_t root, depth, count, evaluated, pruned, queries, cache_hits;
+    uint64_t root, depth, count, evaluated, pruned, queries, cache_hits, requested;
     double omitted;
 };
 struct SearchData {
-    size_t n, l, d, m, lanes, capacity, blocks, active_count;
+    size_t n, l, d, m, lanes, capacity, blocks;
     const double *increments, *ratios, *weights, *residual;
     const double* const* factors;
     const double* const* grams;
     const Interval* intervals;
-    const Active* active;
-    const uint64_t* active_letters;
+    Seen exclusions;
     double *coefficients, *moments, *integrals, *values, *candidate_values, *scores;
     uint64_t *words, *next, *candidate_words, *candidate_lengths;
     Lane* states;
@@ -75,6 +74,68 @@ struct SearchData {
     uint64_t* lane_ids;
     bool segment_scan;
 };
+
+struct CandidateBatch { double *values, *scores; uint64_t *words, *lengths, *count; };
+
+__device__ bool word_before(const uint64_t* a, size_t na, const uint64_t* b, size_t nb) {
+    if (na != nb) return na < nb;
+    for (size_t j = 0; j < na; ++j) if (a[j] != b[j]) return a[j] < b[j];
+    return false;
+}
+
+__global__ void merge_candidates(SearchData data, size_t lanes, CandidateBatch previous, CandidateBatch out) {
+    __shared__ double scores[128];
+    __shared__ size_t sources[128];
+    if (!threadIdx.x) *out.count = 0;
+    for (size_t rank = 0; rank < data.capacity; ++rank) {
+        size_t best = SIZE_MAX; double score = -CUDART_INF;
+        for (size_t source = threadIdx.x; source < (lanes + 1) * data.capacity; source += blockDim.x) {
+            const bool old = source < data.capacity;
+            const size_t slot = old ? source : source - data.capacity;
+            if (old ? slot >= *previous.count : slot % data.capacity >= data.states[slot / data.capacity].count) continue;
+            const double value = old ? previous.scores[slot] : data.scores[slot];
+            if (!isfinite(value)) continue;
+            bool better = value > score;
+            if (!better && value == score && best != SIZE_MAX) {
+                const bool old_best = best < data.capacity; const size_t index = old_best ? best : best - data.capacity;
+                better = word_before((old ? previous.words : data.candidate_words) + slot * data.m,
+                    (old ? previous.lengths : data.candidate_lengths)[slot],
+                    (old_best ? previous.words : data.candidate_words) + index * data.m,
+                    (old_best ? previous.lengths : data.candidate_lengths)[index]);
+            }
+            if (better) { best = source; score = value; }
+        }
+        sources[threadIdx.x] = best; scores[threadIdx.x] = score; __syncthreads();
+        for (size_t stride = blockDim.x / 2; stride; stride /= 2) {
+            if (threadIdx.x < stride) {
+                const size_t a = sources[threadIdx.x], b = sources[threadIdx.x + stride];
+                bool better = scores[threadIdx.x + stride] > scores[threadIdx.x];
+                if (!better && b != SIZE_MAX && scores[threadIdx.x + stride] == scores[threadIdx.x]) {
+                    const bool oa = a < data.capacity, ob = b < data.capacity;
+                    const size_t ia = oa ? a : a - data.capacity, ib = ob ? b : b - data.capacity;
+                    better = a == SIZE_MAX || word_before((ob ? previous.words : data.candidate_words) + ib * data.m,
+                        (ob ? previous.lengths : data.candidate_lengths)[ib], (oa ? previous.words : data.candidate_words) + ia * data.m,
+                        (oa ? previous.lengths : data.candidate_lengths)[ia]);
+                }
+                if (better) { sources[threadIdx.x] = b; scores[threadIdx.x] = scores[threadIdx.x + stride]; }
+            }
+            __syncthreads();
+        }
+        const size_t source = sources[0];
+        if (source == SIZE_MAX) break;
+        const bool old = source < data.capacity; const size_t slot = old ? source : source - data.capacity;
+        const size_t length = (old ? previous.lengths : data.candidate_lengths)[slot];
+        for (size_t i = threadIdx.x; i < data.n; i += blockDim.x)
+            out.values[rank * data.n + i] = (old ? previous.values : data.candidate_values)[slot * data.n + i];
+        for (size_t j = threadIdx.x; j < length; j += blockDim.x)
+            out.words[rank * data.m + j] = (old ? previous.words : data.candidate_words)[slot * data.m + j];
+        if (!threadIdx.x) {
+            out.scores[rank] = scores[0]; out.lengths[rank] = length; *out.count = rank + 1;
+            (old ? previous.scores : data.scores)[slot] = -CUDART_INF;
+        }
+        __syncthreads();
+    }
+}
 
 __device__ double sum(double value, double* scratch) {
     scratch[threadIdx.x] = value; __syncthreads();
@@ -87,17 +148,14 @@ __device__ double sum(double value, double* scratch) {
 __device__ bool is_active(const SearchData& data, const uint64_t* word, size_t length) {
     uint64_t hash = 0xcbf29ce484222325ULL;
     for (size_t k = 0; k < length; ++k) hash = (hash ^ word[k]) * 0x100000001b3ULL;
-    size_t low = 0, high = data.active_count;
-    while (low < high) {
-        const size_t middle = (low + high) / 2;
-        if (data.active[middle].hash < hash) low = middle + 1;
-        else high = middle;
-    }
-    for (; low < data.active_count && data.active[low].hash == hash; ++low) {
-        const auto record = data.active[low];
-        if (record.length != length) continue;
+    if (!hash) hash = 1;
+    const auto table = data.exclusions;
+    for (size_t probe = 0; probe < table.capacity; ++probe) {
+        const size_t slot = (hash + probe) & (table.capacity - 1);
+        if (!table.hashes[slot]) return false;
+        if (table.hashes[slot] != hash || table.lengths[slot] != length) continue;
         bool same = true;
-        for (size_t k = 0; k < length; ++k) same = same && word[k] == data.active_letters[record.offset + k];
+        for (size_t k = 0; k < length; ++k) same = same && word[k] == table.words[slot * table.degree + k];
         if (same) return true;
     }
     return false;
@@ -115,7 +173,7 @@ __global__ void initialise(SearchData data, size_t first_root) {
     }
     if (!threadIdx.x) {
         data.lane_ids[lane] = lane;
-        data.states[lane] = {first_root + lane, 1, 0, 0, 0, 0, 0, 0};
+        data.states[lane] = {first_root + lane, 1, 0, 0, 0, 0, 0, 0, 0};
         size_t block = 0;
         while (data.intervals[block].high - data.intervals[block].low > 1) {
             const auto interval = data.intervals[block];
@@ -146,7 +204,7 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
     uint64_t* word = data.words + lane * data.m;
     uint64_t* next = data.next + lane * data.m;
     Lane* state = data.states + lane;
-    if (!threadIdx.x) depth = state->depth;
+    if (!threadIdx.x) { depth = state->depth; state->requested = 0; }
     __syncthreads();
     for (size_t step = 0; step < steps && depth; ++step) {
         if (!threadIdx.x) {
@@ -195,6 +253,10 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
         __syncthreads();
         if (!depth) break;
         if (bound < threshold || interval.high - interval.low > 1) continue;
+        if (depth < data.m && !data.factors[depth]) {
+            if (!threadIdx.x) { next[k] = block; state->requested = depth; }
+            break;
+        }
         if (!threadIdx.x) {
             word[k] = interval.low; cache_hit = false; cache_slot = lane * data.cache_slots;
             if (data.cache_slots && depth < data.m) for (size_t j = lane * data.cache_slots; j < (lane + 1) * data.cache_slots; ++j) {
@@ -250,18 +312,24 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
             else if (!record(data.seen, word, depth)) { next[k] = block; slot = SIZE_MAX; }
             else if (!is_active(data, word, depth)) {
                 state->omitted = fmax(state->omitted, correlation * (1 + 64 * DBL_EPSILON) + 1e-15);
-                if (data.capacity && correlation > threshold) {
+                if (data.capacity && correlation > alpha && correlation >= threshold) {
                     slot = state->count;
+                    const bool fresh = slot < data.capacity;
                     if (slot < data.capacity) ++state->count;
                     else {
                         slot = 0;
-                        for (size_t j = 1; j < data.capacity; ++j)
-                            if (data.scores[lane * data.capacity + j] < data.scores[lane * data.capacity + slot]) slot = j;
+                        for (size_t j = 1; j < data.capacity; ++j) {
+                            const size_t a = lane * data.capacity + j, b = lane * data.capacity + slot;
+                            if (data.scores[a] < data.scores[b] || (data.scores[a] == data.scores[b] && word_before(
+                                data.candidate_words + b * data.m, data.candidate_lengths[b], data.candidate_words + a * data.m, data.candidate_lengths[a]))) slot = j;
+                        }
                     }
-                    data.scores[lane * data.capacity + slot] = correlation;
-                    data.candidate_lengths[lane * data.capacity + slot] = depth;
-                    for (size_t j = 0; j < depth; ++j) data.candidate_words[(lane * data.capacity + slot) * data.m + j] = word[j];
-                    accepted = true;
+                    const size_t index = lane * data.capacity + slot;
+                    if (fresh || correlation > data.scores[index] || word_before(word, depth, data.candidate_words + index * data.m, data.candidate_lengths[index])) {
+                        data.scores[index] = correlation; data.candidate_lengths[index] = depth;
+                        for (size_t j = 0; j < depth; ++j) data.candidate_words[index * data.m + j] = word[j];
+                        accepted = true;
+                    }
                 }
             }
         }

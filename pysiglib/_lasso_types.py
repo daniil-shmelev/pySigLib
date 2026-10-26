@@ -19,17 +19,20 @@ from ctypes import Structure, c_uint64, c_uint32, c_int, c_double
 class LassoOptions(Structure):
     _fields_ = [(name, c_uint64) for name in (
         'samples', 'length', 'dimension', 'degree', 'targets', 'max_iter',
-        'max_epochs', 'batch_size', 'cache_bytes', 'memory_limit')]
+        'batch_size', 'cache_bytes', 'memory_limit')]
     _fields_ += [('tolerance', c_double), ('n_jobs', c_int)]
-    _fields_ += [(name, c_uint32) for name in ('full', 'intercept', 'single_precision', 'solver_flags')]
+    _fields_ += [(name, c_uint32) for name in ('full', 'intercept', 'single_precision')]
 
 
 class LassoStats(Structure):
     _fields_ = [(name, c_uint64) for name in (
         'columns', 'evaluated', 'pruned', 'block_queries', 'cache_hits',
-        'cache_misses', 'peak_bytes', 'coordinate_sweeps', 'screening_count', 'search_passes', 'constructed')]
+        'cache_misses', 'peak_bytes', 'search_passes', 'constructed', 'activations', 'drops',
+        'qr_appends', 'qr_deletions', 'qr_rebuilds', 'singular_steps', 'certificate_passes')]
     _fields_ += [(name, c_double) for name in (
-        'preparation_seconds', 'search_seconds', 'insertion_seconds', 'solve_seconds', 'total_seconds')]
+        'preparation_seconds', 'search_seconds', 'insertion_seconds', 'solve_seconds', 'total_seconds',
+        'factorization_seconds', 'certification_seconds')]
+    _fields_ += [(name, c_uint64) for name in ('numerical_failures', 'full_transform_calls')]
 
 
 class LassoShape(Structure):

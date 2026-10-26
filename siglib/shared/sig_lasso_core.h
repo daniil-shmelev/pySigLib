@@ -14,9 +14,8 @@
  * ========================================================================= */
 
 #pragma once
-// Celer working-set and extrapolation rules: eef3bb5f239cf1a0b3a6d0fc8997a20b5e73e21a.
-// Copyright (c) 2018-2022, celer.
 #include "sig_lasso_types.h"
+#include "sig_lasso_active.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -53,7 +52,6 @@ inline double finite(double x) {
     if (!std::isfinite(x)) throw NonfiniteError("Nonfinite value in sig_lasso; reduce path scale or degree");
     return x;
 }
-inline double soft(double x, double t) { return std::copysign(std::max(0.0, std::abs(x) - t), x); }
 inline double guard(double x) { return finite(x) * (1.0 + 64 * std::numeric_limits<double>::epsilon()) + 1e-15; }
 
 struct WordHash {
@@ -98,7 +96,7 @@ struct Array {
 struct Column {
     Word word;
     Array values;
-    double mean = 0, norm2 = 0, inverse_norm2 = 0;
+    double mean = 0, norm2 = 0;
     std::shared_ptr<void> metadata;
 };
 
@@ -143,20 +141,27 @@ public:
     virtual double dot(const double*, const double*, size_t) = 0;
     virtual double absolute_sum(const Array&) = 0;
     virtual void axpy(double, const double*, double*, size_t) = 0;
-    virtual void recompute_residual(const Array& y, const std::vector<Column>& columns, const std::vector<double>& beta, Array& residual) {
-        copy(y.data, residual.data, y.size);
-        for (size_t j = 0; j < beta.size(); ++j) if (beta[j]) axpy(-beta[j], columns[j].values.data, residual.data, y.size);
-    }
     virtual void scale(double, double*, size_t) = 0;
     virtual double center(double*, size_t, bool) = 0;
-    virtual void round(double*, size_t) = 0;
     virtual void correlations(const std::vector<Column>&, const Array&, std::vector<double>&, const std::vector<size_t>* = nullptr) = 0;
-    virtual void sweeps(const std::vector<Column>&, const std::vector<size_t>&, Array&, Array&, double, size_t, std::array<Array, 6>*, size_t&) = 0;
-    virtual void small_gram(const std::array<Array, 5>& vectors, std::array<double, 25>& gram) {
-        for (size_t j = 0; j < 5; ++j) for (size_t k = 0; k <= j; ++k)
-            gram[j * 5 + k] = gram[k * 5 + j] = dot(vectors[j].data, vectors[k].data, vectors[j].size);
+    virtual std::unique_ptr<ActiveSet> active_set(const Array&, double alpha) = 0;
+    virtual double correlation_max(const std::vector<Column>& columns, const Array& vector) {
+        std::vector<double> scores; correlations(columns, vector, scores);
+        double maximum = 0;
+        for (auto value : scores) maximum = std::max(maximum, guard(std::abs(value)));
+        return maximum;
     }
-    virtual void reset_solver() {}
+    virtual std::vector<size_t> dense_candidates(const std::vector<Column>& columns, const Array& vector,
+        const std::unordered_set<size_t>& offered, double alpha, size_t capacity) {
+        std::vector<double> scores; correlations(columns, vector, scores);
+        std::vector<size_t> selected;
+        for (size_t j = 0; j < columns.size(); ++j) if (columns[j].norm2 && !offered.count(j) && std::abs(scores[j]) > alpha) selected.push_back(j);
+        auto compare = [&](size_t a, size_t b) { return std::abs(scores[a]) == std::abs(scores[b])
+            ? word_less(columns[a].word, columns[b].word) : std::abs(scores[a]) > std::abs(scores[b]); };
+        if (selected.size() > capacity) { std::nth_element(selected.begin(), selected.begin() + capacity, selected.end(), compare); selected.resize(capacity); }
+        std::sort(selected.begin(), selected.end(), compare);
+        return selected;
+    }
     virtual void prepare() = 0;
     virtual Array factors(size_t k) = 0;
     virtual void moments(Node&, const Array&) = 0;
@@ -168,7 +173,8 @@ public:
     virtual bool native_search(const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t, SearchResult&) { return false; }
     virtual bool has_native_search() const { return false; }
     virtual void finish() {}
-    virtual void for_targets(const std::function<void(Backend&, size_t)>& action) { for (size_t j = 0; j < options.targets; ++j) action(*this, j); }
+    virtual std::unique_ptr<Backend> solver_worker() { return {}; }
+    virtual void for_targets(const std::function<void(size_t)>& action) { for (size_t j = 0; j < options.targets; ++j) action(j); }
     virtual void trim_caches() { if (trim_search) trim_search(); }
     std::shared_ptr<void> account(size_t bytes) {
         if (bytes > budget->available()) trim_caches();
@@ -311,13 +317,14 @@ public:
         }
         return node;
     }
-    SearchResult query(const Array& residual, double alpha, const std::unordered_map<Word, size_t, WordHash>& active, size_t capacity) {
+    SearchResult query(const Array& residual, double alpha, const std::unordered_map<Word, size_t, WordHash>& active, size_t capacity,
+        size_t low = 0, size_t high = 0, size_t block = 0) {
         SearchResult result;
         if (b_.has_native_search()) {
             cache_.clear(); factors_.clear(); grams_.clear(); root_.reset(); factor_bytes_ = gram_bytes_ = 0;
             b_.native_search(residual, alpha, active, capacity, result); ++b_.stats.search_passes; return result;
         }
-        std::vector<Probe> stack{{root_, 0, b_.options.dimension}};
+        std::vector<Probe> stack{{root_, low, high ? high : b_.options.dimension, block, {}}};
         while (!stack.empty()) {
             std::vector<Probe> batch;
             const auto k = stack.back().node->word.size();
@@ -403,316 +410,6 @@ public:
     }
 };
 
-struct SolverState {
-    Array y, residual, beta, theta, trial, inner_theta, anchor, difference;
-    std::array<Array, 6> history;
-    std::array<Array, 5> differences;
-    std::vector<size_t> initial;
-    std::vector<double> anchor_correlations;
-    std::vector<uint8_t> screened;
-    size_t history_count = 0, history_next = 0;
-    double best_dual = -std::numeric_limits<double>::infinity();
-    double inner_best_dual = -std::numeric_limits<double>::infinity();
-    double mean = 0, scale = 1, objective = 0, gap = 0;
-    uint64_t epochs = 0;
-};
-
-inline bool solve_five(std::array<double, 25>& a, std::array<double, 5>& rhs) {
-    double largest = 0;
-    for (size_t j = 0; j < 5; ++j) largest = std::max(largest, std::abs(a[j * 5 + j]));
-    if (!(largest > 0)) return false;
-    for (size_t j = 0; j < 5; ++j) {
-        for (size_t k = 0; k <= j; ++k) {
-            double v = a[j * 5 + k];
-            for (size_t h = 0; h < k; ++h) v -= a[j * 5 + h] * a[k * 5 + h];
-            if (j == k) {
-                if (!(v > largest * 1e-12)) return false;
-                a[j * 5 + k] = std::sqrt(v);
-            } else a[j * 5 + k] = v / a[k * 5 + k];
-        }
-    }
-    for (size_t j = 0; j < 5; ++j) {
-        for (size_t k = 0; k < j; ++k) rhs[j] -= a[j * 5 + k] * rhs[k];
-        rhs[j] /= a[j * 5 + j];
-    }
-    for (size_t j = 5; j-- > 0;) {
-        for (size_t k = j + 1; k < 5; ++k) rhs[j] -= a[k * 5 + j] * rhs[k];
-        rhs[j] /= a[j * 5 + j];
-    }
-    return std::all_of(rhs.begin(), rhs.end(), [](double x) { return std::isfinite(x); });
-}
-
-inline void refresh_residual(Backend& b, const std::vector<Column>& columns, SolverState& state, const std::vector<double>& beta) {
-    b.recompute_residual(state.y, columns, beta, state.residual);
-}
-
-inline double dual_value(Backend& b, const SolverState& state, const Array& theta) {
-    return finite(b.dot(state.y.data, theta.data, theta.size) - 0.5 * theta.size * b.dot(theta.data, theta.data, theta.size));
-}
-
-inline void consider_dual(Backend& b, const std::vector<Column>& columns, SolverState& state, const Array& candidate, double alpha, bool inner = false) {
-    if (b.options.intercept) b.center(candidate.data, candidate.size, true);
-    std::vector<double> correlations;
-    std::vector<size_t> checked;
-    bool refresh_anchor = !inner && ((b.options.solver_flags & 16) || state.anchor_correlations.size() != columns.size());
-    if (!inner && !refresh_anchor && state.anchor.owner) {
-        if (!state.difference.owner) state.difference = b.alloc(candidate.size);
-        b.copy(candidate.data, state.difference.data, candidate.size);
-        b.axpy(-1, state.anchor.data, state.difference.data, candidate.size);
-        const double distance = guard(std::sqrt(b.dot(state.difference.data, state.difference.data, candidate.size)));
-        for (size_t j = 0; j < columns.size(); ++j)
-            if (guard(std::abs(state.anchor_correlations[j]) + std::sqrt(columns[j].norm2) * distance) >= alpha) checked.push_back(j);
-        refresh_anchor = checked.size() > columns.size() / 2;
-    } else refresh_anchor = !inner;
-    if (inner || refresh_anchor) b.correlations(columns, candidate, correlations);
-    else {
-        b.correlations(columns, candidate, correlations, &checked);
-    }
-    double largest = alpha;
-    for (double q : correlations) largest = std::max(largest, std::abs(q) * candidate.size);
-    const double scaling = alpha / guard(largest);
-    b.scale(scaling, candidate.data, candidate.size);
-    if (refresh_anchor) {
-        if (!state.anchor.owner) state.anchor = b.alloc(candidate.size);
-        b.copy(candidate.data, state.anchor.data, candidate.size);
-        state.anchor_correlations.resize(columns.size());
-        for (size_t j = 0; j < columns.size(); ++j) state.anchor_correlations[j] = correlations[j] * candidate.size * scaling;
-    }
-    const double value = dual_value(b, state, candidate);
-    auto& best_dual = inner ? state.inner_best_dual : state.best_dual;
-    auto& best_theta = inner ? state.inner_theta : state.theta;
-    if (value > best_dual) {
-        best_dual = value;
-        b.copy(candidate.data, best_theta.data, candidate.size);
-    }
-}
-
-inline void extrapolate(Backend& b, const std::vector<Column>& columns, SolverState& state, double alpha, bool inner = false) try {
-    const size_t n = state.y.size;
-    if (state.history_count < 6) return;
-    for (size_t j = 0; j < 5; ++j) {
-        if (!state.differences[j].owner || (b.options.solver_flags & 8)) state.differences[j] = b.alloc(n);
-        b.copy(state.history[(state.history_next + j + 1) % 6].data, state.differences[j].data, n);
-        b.axpy(-1, state.history[(state.history_next + j) % 6].data, state.differences[j].data, n);
-    }
-    std::array<double, 25> gram{};
-    b.small_gram(state.differences, gram);
-    std::array<double, 5> z{1, 1, 1, 1, 1};
-    if (!solve_five(gram, z)) return;
-    const double total = std::accumulate(z.begin(), z.end(), 0.0);
-    double magnitude = 0; for (auto v : z) magnitude += std::abs(v);
-    if (!std::isfinite(total) || std::abs(total) < 1e-12 * magnitude) return;
-    auto candidate = state.trial; b.fill(candidate, 0);
-    for (size_t j = 0; j < 5; ++j) b.axpy(z[j] / (total * n), state.history[(state.history_next + j) % 6].data, candidate.data, n);
-    consider_dual(b, columns, state, candidate, alpha, inner);
-} catch (const NonfiniteError&) {
-    // A failed extrapolation does not invalidate coordinate descent.
-}
-
-inline void restricted_solve(Backend& b, const std::vector<Column>& columns, SolverState& state, double alpha, double tolerance) {
-    const size_t p = columns.size(), n = state.y.size;
-    if (!p) return;
-    auto beta = b.host(state.beta);
-    if (state.screened.size() != p) state.screened.assign(p, 0);
-    auto& screened = state.screened;
-    std::vector<size_t> working;
-    std::vector<double> priority(p), q;
-    size_t requested = 10;
-    double previous_gap = std::numeric_limits<double>::infinity();
-    for (size_t pass = 0; state.epochs < b.options.max_epochs; ++pass) {
-        beta = b.host(state.beta);
-        refresh_residual(b, columns, state, beta);
-        if (!state.trial.owner || (b.options.solver_flags & 8)) state.trial = b.alloc(n);
-        auto candidate = state.trial; b.copy(state.residual.data, candidate.data, n); b.scale(1.0 / n, candidate.data, n);
-        consider_dual(b, columns, state, std::move(candidate), alpha);
-        const double penalty = std::accumulate(beta.begin(), beta.end(), 0.0, [](double s, double v) { return s + std::abs(v); });
-        state.objective = finite(b.dot(state.residual.data, state.residual.data, n) / (2 * n) + alpha * penalty);
-        state.gap = std::max(0.0, state.objective - state.best_dual);
-        if (state.gap <= tolerance) break;
-        std::vector<size_t> remaining;
-        for (size_t j = 0; j < p; ++j) if (!screened[j] || beta[j]) remaining.push_back(j);
-        b.correlations(columns, state.theta, q, &remaining);
-        const double radius = std::sqrt(2 * state.gap / n);
-        std::vector<size_t> eligible;
-        size_t support = 0;
-        for (size_t position = 0; position < remaining.size(); ++position) {
-            const size_t j = remaining[position];
-            if (!columns[j].norm2) { screened[j] = 1; continue; }
-            const double norm = std::sqrt(columns[j].norm2);
-            priority[j] = (alpha - std::abs(q[position]) * n) / norm;
-            if (!(b.options.solver_flags & 2) && !beta[j] && priority[j] > radius + 1e-12) {
-                if (!screened[j]) ++b.stats.screening_count;
-                screened[j] = 1;
-            }
-            if (beta[j]) { screened[j] = 0; priority[j] = -std::numeric_limits<double>::infinity(); ++support; }
-            if (!screened[j]) eligible.push_back(j);
-        }
-        requested = pass == 0 ? std::max<size_t>(10, support) : std::max<size_t>(10, 2 * support);
-        if (state.gap > previous_gap * 0.9) requested = std::max(requested, 2 * working.size());
-        previous_gap = state.gap;
-        requested = std::min(requested, eligible.size());
-        if (b.options.solver_flags & 1) requested = eligible.size();
-        auto compare = [&](size_t a, size_t c) { return priority[a] == priority[c] ? a < c : priority[a] < priority[c]; };
-        if (requested < eligible.size()) std::nth_element(eligible.begin(), eligible.begin() + requested, eligible.end(), compare);
-        eligible.resize(requested); std::sort(eligible.begin(), eligible.end());
-        if (!state.initial.empty()) {
-            if (!support) {
-                const size_t count = std::min<size_t>(10, state.initial.size());
-                if (count < state.initial.size()) std::nth_element(state.initial.begin(), state.initial.begin() + count, state.initial.end(), compare);
-                eligible.assign(state.initial.begin(), state.initial.begin() + count); std::sort(eligible.begin(), eligible.end());
-            }
-            state.initial.clear();
-        }
-        working = std::move(eligible);
-        if (working.empty()) break;
-        b.reset_solver();
-        std::vector<Column> inner_columns; inner_columns.reserve(working.size());
-        for (auto j : working) inner_columns.push_back(columns[j]);
-        if (!state.inner_theta.owner) state.inner_theta = b.alloc(n);
-        state.inner_best_dual = -std::numeric_limits<double>::infinity();
-        state.history_count = state.history_next = 0;
-        const double target = std::max(tolerance, 0.3 * state.gap);
-        while (state.epochs < b.options.max_epochs) {
-            const size_t sweeps = std::min<uint64_t>(10, b.options.max_epochs - state.epochs);
-            if (!(b.options.solver_flags & 4)) for (auto& snapshot : state.history)
-                if (!snapshot.owner || (b.options.solver_flags & 8)) snapshot = b.alloc(n);
-            b.sweeps(columns, working, state.beta, state.residual, alpha, sweeps, (b.options.solver_flags & 4) ? nullptr : &state.history, state.history_next);
-            state.history_count = std::min<size_t>(6, state.history_count + sweeps);
-            state.epochs += sweeps; b.stats.coordinate_sweeps += sweeps;
-            if (!(b.options.solver_flags & 4)) extrapolate(b, inner_columns, state, alpha, true);
-            if (b.options.solver_flags & 8) state.trial = b.alloc(n);
-            auto trial = state.trial; b.copy(state.residual.data, trial.data, n); b.scale(1.0 / n, trial.data, n);
-            consider_dual(b, inner_columns, state, trial, alpha, true);
-            const double l1 = b.absolute_sum(state.beta);
-            state.objective = finite(b.dot(state.residual.data, state.residual.data, n) / (2 * n) + alpha * l1);
-            const double inner_gap = std::max(0.0, state.objective - state.inner_best_dual);
-            if (inner_gap <= target) break;
-        }
-        b.copy(state.inner_theta.data, state.trial.data, n);
-        consider_dual(b, columns, state, state.trial, alpha);
-    }
-}
-
-inline void append_column(Backend& b, std::vector<Column>& columns, const Word& word, const Array& raw) {
-    auto metadata = b.account(1024 + word.size() * 64 + b.options.targets * 32);
-    Column column{word, b.column_storage()}; column.metadata = std::move(metadata);
-    b.copy(raw.data, column.values.data, raw.size);
-    b.scale(b.weights[word.size()], column.values.data, column.values.size);
-    column.mean = b.center(column.values.data, column.values.size, b.options.intercept != 0);
-    column.norm2 = finite(b.dot(column.values.data, column.values.data, column.values.size));
-    column.inverse_norm2 = column.norm2 ? 1.0 / column.norm2 : 0;
-    columns.push_back(std::move(column));
-}
-
-inline Result fit(Backend& b, const std::vector<double>& alphas, const std::vector<Word>& initial) {
-    auto started = b.started;
-    std::vector<Column> columns;
-    std::unordered_map<Word, size_t, WordHash> active;
-    std::unique_ptr<Search> search;
-    if (b.options.full) b.full_columns(columns);
-    else { b.prepare(); search = std::make_unique<Search>(b); }
-    for (size_t j = 0; j < columns.size(); ++j) active.emplace(columns[j].word, j);
-    if (search) for (const auto& word : initial) if (!active.count(word)) {
-        auto node = search->selected(word);
-        active.emplace(word, columns.size()); append_column(b, columns, word, node->values);
-    }
-    b.finish(); b.stats.preparation_seconds = elapsed(started);
-    std::vector<std::vector<double>> coefficients(b.options.targets);
-    Result result; result.targets = b.options.targets;
-    result.intercepts.resize(result.targets); result.objectives.resize(result.targets); result.gaps.resize(result.targets);
-    result.converged.resize(result.targets); result.iterations.resize(result.targets);
-    b.for_targets([&](Backend& b, size_t target_index) {
-        SolverState state;
-        state.y = b.response(target_index);
-        state.mean = b.center(state.y.data, state.y.size, b.options.intercept != 0);
-        state.residual = b.clone(state.y); state.theta = b.alloc(state.y.size); b.fill(state.theta, 0);
-        state.beta = b.alloc(columns.size()); b.fill(state.beta, 0);
-        for (const auto& word : initial) state.initial.push_back(active.at(word));
-        state.scale = std::max(1.0, b.dot(state.y.data, state.y.data, state.y.size) / state.y.size);
-        const double alpha = alphas[target_index], tolerance = b.options.tolerance * state.scale;
-        double restricted_target = b.options.full ? tolerance * 0.1 : std::max(tolerance * 0.1, std::min(state.scale * 1e-3, alpha * alpha / 2));
-        double final_gap = std::numeric_limits<double>::infinity(), final_objective = 0;
-        bool converged = false;
-        uint64_t iteration = 0;
-        for (; iteration < b.options.max_iter; ++iteration) {
-            if (state.beta.size != columns.size()) {
-                auto enlarged = b.alloc(columns.size()); b.fill(enlarged, 0); b.copy(state.beta.data, enlarged.data, state.beta.size);
-                state.beta = std::move(enlarged); state.best_dual = -std::numeric_limits<double>::infinity();
-                state.history_count = state.history_next = 0; b.reset_solver();
-                consider_dual(b, columns, state, b.clone(state.theta), alpha);
-            }
-            auto solve_started = Clock::now();
-            restricted_solve(b, columns, state, alpha, restricted_target);
-            b.stats.solve_seconds += elapsed(solve_started);
-            auto rounded = b.clone(state.beta); if (b.options.single_precision) b.round(rounded.data, rounded.size);
-            const auto beta = b.host(rounded);
-            refresh_residual(b, columns, state, beta);
-            const double penalty = std::accumulate(beta.begin(), beta.end(), 0.0, [](double s, double v) { return s + std::abs(v); });
-            final_objective = finite(b.dot(state.residual.data, state.residual.data, state.y.size) / (2 * state.y.size) + alpha * penalty);
-            SearchResult found;
-            if (search) {
-                auto t = Clock::now(); found = search->query(state.residual, alpha, active, b.options.batch_size);
-                b.stats.search_seconds += elapsed(t);
-            }
-            std::vector<double> scores; b.correlations(columns, state.residual, scores);
-            double maximum = std::max(alpha, found.omitted);
-            for (auto q : scores) maximum = std::max(maximum, guard(std::abs(q)));
-            auto theta = b.clone(state.residual);
-            if (b.options.intercept) b.center(theta.data, theta.size, true);
-            b.scale(alpha / (maximum * theta.size), theta.data, theta.size);
-            double dual = dual_value(b, state, theta);
-            if (std::isfinite(state.best_dual) && state.best_dual > dual) {
-                auto accelerated = b.clone(state.theta);
-                double dual_max = alpha;
-                if (search) {
-                    auto t = Clock::now();
-                    auto scaled = b.clone(accelerated); b.scale(state.y.size, scaled.data, scaled.size);
-                    dual_max = std::max(dual_max, search->query(scaled, alpha, active, 0).omitted);
-                    b.stats.search_seconds += elapsed(t);
-                }
-                b.correlations(columns, accelerated, scores);
-                for (auto q : scores) dual_max = std::max(dual_max, guard(std::abs(q) * state.y.size));
-                b.scale(alpha / dual_max, accelerated.data, accelerated.size);
-                dual = std::max(dual, dual_value(b, state, accelerated));
-            }
-            final_gap = std::max(0.0, final_objective - dual);
-            if (final_gap <= tolerance) { state.beta = std::move(rounded); converged = true; ++iteration; break; }
-            if (state.epochs >= b.options.max_epochs) { state.beta = std::move(rounded); ++iteration; break; }
-            if (!found.candidates.empty()) {
-                auto t = Clock::now();
-                for (const auto& candidate : found.candidates) if (!active.count(candidate.word)) {
-                    active.emplace(candidate.word, columns.size()); append_column(b, columns, candidate.word, candidate.values);
-                }
-                b.stats.insertion_seconds += elapsed(t);
-            } else restricted_target *= 0.1;
-        }
-        if (b.options.single_precision) b.round(state.beta.data, state.beta.size);
-        coefficients[target_index] = b.host(state.beta);
-        double intercept = state.mean;
-        for (size_t j = 0; j < coefficients[target_index].size(); ++j) intercept -= columns[j].mean * coefficients[target_index][j];
-        if (b.options.single_precision) {
-            const double rounded_intercept = static_cast<float>(intercept);
-            const double loss = 0.5 * (rounded_intercept - intercept) * (rounded_intercept - intercept);
-            final_objective += loss; final_gap += loss; intercept = rounded_intercept;
-            converged = converged && final_gap <= tolerance;
-        }
-        result.intercepts[target_index] = intercept; result.objectives[target_index] = final_objective; result.gaps[target_index] = final_gap;
-        result.converged[target_index] = converged; result.iterations[target_index] = iteration;
-    });
-    std::vector<size_t> selected;
-    for (size_t j = 0; j < columns.size(); ++j) {
-        bool nonzero = false;
-        for (const auto& values : coefficients) nonzero = nonzero || (j < values.size() && values[j] != 0);
-        if (nonzero) selected.push_back(j);
-    }
-    std::sort(selected.begin(), selected.end(), [&](size_t a, size_t c) { return word_less(columns[a].word, columns[c].word); });
-    for (auto j : selected) {
-        result.words.push_back(columns[j].word);
-        for (const auto& values : coefficients) result.coefficients.push_back(j < values.size() ? values[j] : 0);
-    }
-    b.finish(); b.stats.columns = columns.size(); b.stats.peak_bytes = b.budget->peak(); b.stats.total_seconds = elapsed(started);
-    result.stats = b.stats;
-    return result;
-}
-
 } // namespace siglasso
+
+#include "sig_lasso_fit.h"

@@ -50,7 +50,7 @@ def _check_status(status, device):
 
 
 def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
-              fit_intercept=True, tol=None, max_iter=1000, max_epochs=100000,
+              fit_intercept=True, tol=None, max_iter=1000,
               batch_size=128, initial_words=(), cache_bytes=256 * 1024**2,
               memory_limit=None, time_aug=False, lead_lag=False, end_time=1.0,
               n_jobs=1):
@@ -72,14 +72,15 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
 
     ``degree_weights`` is a length-degree vector of finite positive weights.
     ``initial_words`` contains zero-based channel tuples in the transformed
-    alphabet. ``batch_size`` limits words added per sparse search.
-    ``max_iter`` limits outer passes per response, and ``max_epochs`` limits
-    total restricted coordinate sweeps per response. ``tol`` defaults to
+    alphabet and seeds the candidate pool. ``batch_size`` limits candidates
+    added per search. Both methods use feature-sign search with QR updates.
+    ``max_iter`` limits signed correction steps per response. ``tol`` defaults to
     1e-8 for float64 or 1e-5 for float32. Convergence uses a full-dictionary
     primal-dual gap scaled by ``max(1, mean(centered_y**2))``.
 
     ``cache_bytes`` bounds optional caches. ``memory_limit`` optionally
-    limits native fitting allocations, in bytes. Reuse lasts for this call
+    limits owned native fitting allocations, including factors and library
+    workspace allowances, in bytes. Reuse lasts for this call
     only. ``n_jobs`` follows the usual CPU threading convention. CUDA uses
     the current stream on the input device. Transform parameters have the
     same meaning as in :func:`sig`.
@@ -90,13 +91,18 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
     Coefficients have shape ``(n_words,)`` or ``(n_words, n_targets)``.
     Prediction is ``intercept + weighted_signature[:, words] @ coef``.
     Numeric arrays preserve the input type, dtype and device. The result
-    has no autograd connection. Iteration limits give a warning and
+    has no autograd connection. ``n_iter`` counts correction steps and is
+    zero for an empty optimum. ``stats`` includes active-set changes, QR
+    operations, singular steps, certificate passes, phase times, constructed
+    columns and peak accounted memory. Counters sum over responses. Factors
+    need O(n_samples*n_active + n_active**2) memory.
+    Iteration limits and persistent numerical failures give a warning and
     ``converged=False``; invalid inputs and allocation failures raise errors.
 
     This forward-only function is available in the base API only. Numerical
     agreement does not imply a unique or bitwise-identical coefficient vector.
     """
-    for name, value in (('degree', degree), ('max_iter', max_iter), ('max_epochs', max_epochs), ('batch_size', batch_size)):
+    for name, value in (('degree', degree), ('max_iter', max_iter), ('batch_size', batch_size)):
         if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or not 0 < value < 2**31:
             raise ValueError(name + ' must be a positive integer below 2**31')
     for name, value in (('cache_bytes', cache_bytes), ('memory_limit', memory_limit)):
@@ -175,14 +181,14 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
     device = inputs.device
     functions = CUSIG_SIG_LASSO if device == 'cuda' else CPSIG_SIG_LASSO
     if functions is None:
-        raise RuntimeError('The native library does not include sig_lasso; rebuild pysiglib and its CUDA plugin')
+        raise RuntimeError('The native library does not support sig_lasso ABI v2; rebuild pysiglib and its CUDA plugin')
     context = torch.cuda.device(path.device) if device == 'cuda' else nullcontext()
     with context, torch.no_grad():
         transformed = transform_path(inputs.path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if time_aug or lead_lag else inputs.path
         data = PathInputHandler(transformed, False, False, 1.0, 'path')
         response = ensure_own_contiguous_storage(y.detach() if isinstance(y, torch.Tensor) else y)
         options = LassoOptions(data.batch_size, data.length, data.dimension, degree, targets,
-                               max_iter, max_epochs, batch_size, cache_bytes, memory_limit or 0,
+                               max_iter, batch_size, cache_bytes, memory_limit or 0,
                                tol, n_jobs, method == 'full', fit_intercept, inputs.dtype == 'float32')
         scalar = DTYPES[data.dtype]
         library = CUSIG if device == 'cuda' else CPSIG
@@ -196,7 +202,7 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
         _check_status(functions[data.dtype](*args), device)
         try:
             result_shape = LassoShape()
-            _check_status(getattr(library, 'sig_lasso_shape' + suffix)(handle, byref(result_shape)), device)
+            _check_status(getattr(library, 'sig_lasso_shape_v2' + suffix)(handle, byref(result_shape)), device)
             out_letters = np.empty(result_shape.letters, dtype=np.uint64)
             out_offsets = np.empty(result_shape.words + 1, dtype=np.uint64)
             if isinstance(path, np.ndarray):
@@ -214,7 +220,10 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
             selected = [tuple(int(a) for a in out_letters[out_offsets[j]:out_offsets[j + 1]]) for j in range(result_shape.words)]
             converged = converged.astype(bool)
             if not converged.all():
-                warnings.warn('sig_lasso did not reach the requested global gap; inspect converged, dual_gap and the iteration limits', RuntimeWarning, stacklevel=2)
+                reason = 'numerical accuracy limit' if np.any((~converged) & (iterations < max_iter)) else 'max_iter limit'
+                if result_shape.stats.numerical_failures:
+                    reason = 'active-equation or objective-descent accuracy limit after a QR rebuild'
+                warnings.warn('sig_lasso reached the ' + reason + ' before the requested global gap; inspect converged and dual_gap', RuntimeWarning, stacklevel=2)
             stats = {name: getattr(result_shape.stats, name) for name, _ in result_shape.stats._fields_}
             stats['dictionary_size'] = sum(data.dimension**k for k in range(1, degree + 1))
             if isinstance(path, torch.Tensor):
@@ -225,4 +234,4 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
                         dual_gap=values[2][0] if single else values[2], converged=converged[0] if single else converged,
                         n_iter=iterations[0] if single else iterations, stats=stats)
         finally:
-            _check_status(getattr(library, 'sig_lasso_release' + suffix)(handle), device)
+            _check_status(getattr(library, 'sig_lasso_release_v2' + suffix)(handle), device)
