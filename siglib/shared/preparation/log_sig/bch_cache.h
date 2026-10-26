@@ -97,9 +97,9 @@ struct BchCache {
 	// Same indexing as operations. Half-open coordinate ranges needed by the
 	// final output, assuming arbitrary inputs; weights must be sorted.
 	std::vector<BchRange> bch_ranges;
-	// Memo omits the highest degree and nodes after the last bracket operand.
+	// Memo packs live node coordinates and omits the highest degree.
 	uint64_t bch_memo_width = 0;
-	uint64_t bch_memo_nodes = 0;
+	uint64_t bch_memo_size = 0;
 	std::vector<BchProduct> products;
 	std::vector<BchSum> sums;
 

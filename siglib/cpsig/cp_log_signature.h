@@ -248,7 +248,7 @@ void log_sig_combine_(
 
 	auto work_range = [&](uint64_t begin, uint64_t end) {
 		thread_local std::vector<T> scratch;
-		scratch.resize(cache.bch_memo_nodes * cache.bch_memo_width * bch_tile);
+		scratch.resize(cache.bch_memo_size * bch_tile);
 		std::fill(scratch.begin(), scratch.end(), T(0));
 		for (; begin < end; begin += bch_tile)
 			bch_combine_batch_(log_sig1 + begin * m, log_sig2 + begin * m,
@@ -269,7 +269,7 @@ void log_sig_reduce_(const T* inputs, T* out, uint64_t batch, uint64_t length,
 	const uint64_t m = cache.m;
 	auto work = [&](uint64_t begin, uint64_t end) {
 		thread_local std::vector<T> scratch;
-		scratch.assign(cache.bch_memo_nodes * cache.bch_memo_width * bch_tile, T(0));
+		scratch.assign(cache.bch_memo_size * bch_tile, T(0));
 		for (uint64_t b = begin; b < end; ++b) {
 			T* result = out + b * m;
 			std::fill_n(result, m, T(0));

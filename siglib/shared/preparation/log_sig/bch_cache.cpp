@@ -252,9 +252,9 @@ void build_bch_operation_ranges(BchCache& cache) {
 
 	cache.bch_memo_width = std::lower_bound(cache.coordinate_weights.begin(),
 		cache.coordinate_weights.end(), cache.degree) - cache.coordinate_weights.begin();
-	cache.bch_memo_nodes = 0;
+	uint64_t memo_nodes = 0;
 	for (const auto& operation : cache.bch_operations)
-		cache.bch_memo_nodes = std::max<uint64_t>(cache.bch_memo_nodes,
+		memo_nodes = std::max<uint64_t>(memo_nodes,
 			std::max(operation.left, operation.right) + 1);
 
 	cache.bch_ranges.resize(cache.bch_operations.size());
@@ -271,6 +271,15 @@ void build_bch_operation_ranges(BchCache& cache) {
 	cache.products.clear();
 	cache.sums.clear();
 	const uint64_t stride = cache.bch_memo_width;
+	// Pack each node's live coordinate range; structural zeros need no storage.
+	std::vector<uint64_t> offsets(std::max<uint64_t>(2, memo_nodes));
+	offsets[1] = stride;
+	cache.bch_memo_size = 2 * stride;
+	for (uint64_t w = 2; w < memo_nodes; ++w) {
+		const auto [begin, end] = cache.bch_ranges[w - 2];
+		offsets[w] = cache.bch_memo_size - std::min<uint64_t>(begin, stride);
+		cache.bch_memo_size += std::min<uint64_t>(end, stride) - std::min<uint64_t>(begin, stride);
+	}
 	for (uint64_t k = 0; k < cache.m; ++k) {
 		auto append = [&](uint64_t node, double weight) {
 			const auto& op = cache.bch_operation(node);
@@ -282,17 +291,17 @@ void build_bch_operation_ranges(BchCache& cache) {
 				const auto i = cache.comm_k_i[q], j = cache.comm_k_j[q];
 				const double c = weight * cache.comm_k_val_d[q];
 				if (valid(op.left, i) && valid(op.right, j))
-					cache.products.push_back({op.left * stride + i, op.right * stride + j, c});
+					cache.products.push_back({offsets[op.left] + i, offsets[op.right] + j, c});
 				if (valid(op.left, j) && valid(op.right, i))
-					cache.products.push_back({op.left * stride + j, op.right * stride + i, -c});
+					cache.products.push_back({offsets[op.left] + j, offsets[op.right] + i, -c});
 			}
 		};
-		for (uint64_t w = 2; w < cache.bch_memo_nodes && k < stride; ++w) {
+		for (uint64_t w = 2; w < memo_nodes && k < stride; ++w) {
 			const auto [begin, end] = cache.bch_ranges[w - 2];
 			if (k < begin || k >= end) continue;
 			const auto start = cache.products.size();
 			append(w, 1.0);
-			cache.sums.push_back({k, w * stride + k, start, cache.products.size()});
+			cache.sums.push_back({k, offsets[w] + k, start, cache.products.size()});
 		}
 		const auto start = cache.products.size();
 		for (uint64_t w = 2; w < size; ++w) {
