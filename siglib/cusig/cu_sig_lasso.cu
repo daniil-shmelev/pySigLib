@@ -20,6 +20,7 @@
 #include "sig_lasso_math.h"
 #include "cu_sig_lasso_search.cuh"
 #include <cublas_v2.h>
+#include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
 #include <cub/device/device_select.cuh>
 #include <cub/device/device_reduce.cuh>
@@ -45,6 +46,41 @@ public:
 template<typename T>
 __global__ void convert_input(const T* source, double* out, size_t n) {
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += static_cast<size_t>(gridDim.x) * blockDim.x) out[i] = source[i];
+}
+__global__ void normalize_paths(double* paths, int* invalid, size_t n, size_t length, size_t dimension) {
+    using Reduction = cub::BlockReduce<double, 128>;
+    __shared__ typename Reduction::TempStorage storage;
+    __shared__ double total;
+    for (size_t i = blockIdx.x; i < n; i += gridDim.x) {
+        double* sample = paths + i * length * dimension;
+        const unsigned int lane = threadIdx.x % 32, warp = threadIdx.x / 32;
+        double partial = 0;
+        for (size_t a = threadIdx.x; a < dimension; a += blockDim.x)
+            if (!isfinite(sample[a])) atomicExch(invalid, 1);
+        for (size_t j = 1 + warp; j < length; j += 4) {
+            double step = 0;
+            for (size_t a = lane; a < dimension; a += 32) {
+                const double difference = sample[j * dimension + a] - sample[(j - 1) * dimension + a];
+                if (!isfinite(difference)) atomicExch(invalid, 1);
+                step = fmax(step, fabs(difference));
+            }
+            for (int offset = 16; offset; offset /= 2) step = fmax(step, __shfl_down_sync(0xffffffff, step, offset));
+            if (lane == 0) partial += step;
+        }
+        const double variation = Reduction(storage).Sum(partial);
+        if (threadIdx.x == 0) total = variation;
+        __syncthreads();
+        if (!isfinite(total)) {
+            if (threadIdx.x == 0) atomicExch(invalid, 1);
+        } else {
+            for (size_t a = threadIdx.x; a < dimension; a += blockDim.x) {
+                const double origin = sample[a];
+                for (size_t j = length; j-- > 0;)
+                    sample[j * dimension + a] = total ? (sample[j * dimension + a] - origin) / total : 0;
+            }
+        }
+        __syncthreads();
+    }
 }
 __global__ void vector_op(const double* x, double* y, size_t n, double a, double c, int operation) {
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += static_cast<size_t>(gridDim.x) * blockDim.x) {
@@ -284,6 +320,9 @@ class LassoCUDA final : public siglasso::Backend {
     std::array<Array, 22> traversal_buffers_;
     Array prefix_cache_, prefix_words_, prefix_lengths_, prefix_ticks_, prefix_clocks_;
     size_t prefix_slots_ = 0;
+    uint64_t prefix_hits_ = 0, prefix_writes_ = 0;
+    size_t prefix_queries_ = 0;
+    bool prefix_disabled_ = false;
 
     unsigned int grid(size_t n) { return make_cuda_1d_grid(n, 128); }
     void check() { CUDA_CHECK(cudaGetLastError()); }
@@ -318,7 +357,7 @@ class LassoCUDA final : public siglasso::Backend {
     }
 public:
     template<typename T>
-    LassoCUDA(const SigLassoOptions& o, const T* path, const T* y, const double* w, cudaStream_t stream, int device)
+    LassoCUDA(const SigLassoOptions& o, const T* path, const T* y, cudaStream_t stream, int device)
         : Backend(o), stream_(stream), device_(device) {
         if (o.samples > INT_MAX) throw std::out_of_range("sig_lasso CUDA sample count exceeds cuBLAS limits");
         int major = 0; CUDA_CHECK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device));
@@ -327,11 +366,19 @@ public:
         blas_owner_ = std::shared_ptr<void>(blas_, [](void* handle) { cublasDestroy(static_cast<cublasHandle_t>(handle)); });
         blas_workspace_ = alloc(std::min<size_t>(512 * 1024, std::max<size_t>(2048, budget->available() / 64)));
         set_blas_stream(stream_);
-        weights.assign(w, w + o.degree + 1); device_weights_ = from_host(weights);
+        device_weights_ = from_host(weights);
         paths_ = alloc(siglasso::multiply(siglasso::multiply(o.samples, o.length), o.dimension));
         responses_ = alloc(siglasso::multiply(o.samples, o.targets));
         convert_input<<<grid(paths_.size), 128, 0, stream_>>>(path, paths_.data, paths_.size);
         convert_input<<<grid(responses_.size), 128, 0, stream_>>>(y, responses_.data, responses_.size);
+        auto invalid = alloc(1);
+        CUDA_CHECK(cudaMemsetAsync(invalid.data, 0, sizeof(int), stream_));
+        normalize_paths<<<std::min<size_t>(65535, o.samples), 128, 0, stream_>>>(paths_.data, reinterpret_cast<int*>(invalid.data), o.samples, o.length, o.dimension);
+        check();
+        int invalid_host = 0;
+        CUDA_CHECK(cudaMemcpyAsync(&invalid_host, invalid.data, sizeof(int), cudaMemcpyDeviceToHost, stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
+        if (invalid_host) throw std::runtime_error("Nonfinite path variation in sig_lasso");
         ones_ = alloc(o.samples); fill(ones_, 1); check();
     }
     Array alloc(size_t n) override {
@@ -390,6 +437,7 @@ public:
     void trim_caches() override {
         Backend::trim_caches();
         prefix_cache_ = {}; prefix_words_ = {}; prefix_lengths_ = {}; prefix_ticks_ = {}; prefix_clocks_ = {}; prefix_slots_ = 0;
+        prefix_hits_ = prefix_writes_ = 0; prefix_queries_ = 0;
         if (!search_running_) {
             search_factors_.clear(); search_grams_.clear(); gram_addresses_ = {};
             for (auto& buffer : traversal_buffers_) buffer = {};
@@ -454,6 +502,7 @@ public:
     }
     Array factors(size_t k) override {
         const size_t n = options.samples, l = options.length - 1, levels = options.degree - k;
+        if (!l) return {};
         auto result = alloc(siglasso::multiply(n * l, levels * (k + 1)));
         const size_t constant_count = siglasso::multiply(siglasso::multiply(levels, levels + 1), k + 1);
         auto host_constants = account(siglasso::multiply(constant_count, sizeof(double)));
@@ -541,9 +590,11 @@ public:
         extract_response<<<grid(options.samples), 128, 0, stream_>>>(responses_.data, result.data, options.samples, options.targets, target); check(); return result;
     }
     bool has_native_search() const override { return true; }
+    bool reuse_search_bound() const override { return !options.single_precision; }
     bool native_search(const Array& residual, double alpha, const std::unordered_map<siglasso::Word, size_t, siglasso::WordHash>& active,
         size_t capacity, siglasso::SearchResult& result) override {
         const size_t n = options.samples, l = options.length - 1, d = options.dimension, m = options.degree, nl = n * l;
+        if (!l) return true;
         struct SearchPin { bool& flag; ~SearchPin() { flag = false; } } pin{search_running_};
         search_running_ = true;
         search_factors_.resize(m);
@@ -603,7 +654,7 @@ public:
                 reinterpret_cast<const uint64_t*>(seed_letters.data), records.size());
         }
         const size_t triangular = siglasso::multiply(m, m + 1) / 2;
-        const size_t per_lane = siglasso::multiply((2 * triangular + m), nl) + (capacity + 1) * n + 2 * m + capacity * (m + 2) + 10;
+        const size_t per_lane = siglasso::multiply((2 * triangular + m), nl) + (capacity + 1) * n + 2 * m + capacity * (m + 2) + sizeof(lasso_device::Lane) / sizeof(double) + 1;
         size_t lanes = std::min<size_t>(32, d);
         const size_t workspace_limit = options.memory_limit ? options.memory_limit - budget->used() : 64 * 1024 * 1024;
         const size_t merge_bytes = capacity ? 2 * (capacity * (n + m + 2) + 1) * sizeof(double) : 0;
@@ -626,7 +677,7 @@ public:
         size_t merge_index = 0;
         auto host_workspace = account(capacity * (m + 2) * sizeof(double) + states.bytes() + 4096);
         const size_t cache_stride = (m + 2) * nl + n;
-        if (!prefix_slots_ && m > 1) {
+        if (!prefix_slots_ && !prefix_disabled_ && m > 1) {
             const size_t available = std::min<size_t>(options.cache_bytes / 8 * 3, budget->available() / 2);
             const size_t slots = std::min(lanes * 64, available / ((cache_stride + m + 3) * sizeof(double)));
             if (slots >= lanes) {
@@ -644,6 +695,7 @@ public:
         data.lane_ids = reinterpret_cast<uint64_t*>(lane_ids.data);
         data.segment_scan = n <= 16 && l >= 64;
         std::vector<lasso_device::Lane> host_states(lanes);
+        uint64_t cache_hits = 0, cache_writes = 0;
         for (size_t first = 0; first < d; first += lanes) {
             const size_t current = std::min(lanes, d - first);
             lasso_device::initialise<<<static_cast<unsigned int>(current), 128, 0, stream_>>>(data, first);
@@ -677,6 +729,8 @@ public:
                 stats.evaluated += host_states[lane].evaluated; stats.cache_misses += host_states[lane].evaluated;
                 stats.cache_hits += host_states[lane].cache_hits;
                 stats.pruned += host_states[lane].pruned; stats.block_queries += host_states[lane].queries;
+                cache_hits = std::min(UINT64_MAX - host_states[lane].cache_hits, cache_hits) + host_states[lane].cache_hits;
+                cache_writes = std::min(UINT64_MAX - host_states[lane].cache_writes, cache_writes) + host_states[lane].cache_writes;
             }
         }
         if (capacity) {
@@ -690,6 +744,22 @@ public:
                 siglasso::Word(host_words.begin() + j * m, host_words.begin() + j * m + host_lengths[j]),
                 {batch.values + j * n, n, traversal_buffers_[12 + merge_index * 5].owner}, siglasso::finite(host_scores[j])});
         }
+        if (prefix_slots_ && (cache_hits || cache_writes)) {
+            constexpr size_t warm_queries = 5; // Includes the first, cold query.
+            constexpr uint64_t min_opportunities = 1024, misses_per_hit = 199;
+            if (prefix_queries_ < warm_queries) ++prefix_queries_;
+            if (prefix_queries_ > 1) {
+                prefix_hits_ = std::min(UINT64_MAX - cache_hits, prefix_hits_) + cache_hits;
+                prefix_writes_ = std::min(UINT64_MAX - cache_writes, prefix_writes_) + cache_writes;
+            }
+            const bool enough = prefix_hits_ >= min_opportunities || prefix_writes_ >= min_opportunities - prefix_hits_;
+            const bool low_hit_rate = prefix_hits_ < prefix_writes_ / misses_per_hit ||
+                (prefix_hits_ == prefix_writes_ / misses_per_hit && prefix_writes_ % misses_per_hit);
+            if (prefix_queries_ >= warm_queries && enough && low_hit_rate) {
+                prefix_cache_ = {}; prefix_words_ = {}; prefix_lengths_ = {}; prefix_ticks_ = {}; prefix_clocks_ = {};
+                prefix_slots_ = 0; prefix_disabled_ = true;
+            }
+        }
         size_t factor_bytes = 0; for (const auto& value : search_factors_) factor_bytes += value.bytes();
         if (factor_bytes > options.cache_bytes / 4) search_factors_.clear();
         return true;
@@ -699,10 +769,10 @@ public:
 
 siglasso::Results results;
 template<typename T>
-void run_lasso(const T* path, const T* y, const double* weights, const double* alphas, const uint64_t* letters, const uint64_t* offsets,
+void run_lasso(const T* path, const T* y, const double* alphas, const uint64_t* letters, const uint64_t* offsets,
     uint64_t words, const SigLassoOptions* options, void* stream_ptr, int device, uint64_t* handle) {
     DeviceScope scope(device);
-    LassoCUDA backend(*options, path, y, weights, static_cast<cudaStream_t>(stream_ptr), device);
+    LassoCUDA backend(*options, path, y, static_cast<cudaStream_t>(stream_ptr), device);
     std::vector<siglasso::Word> initial;
     for (size_t j = 0; j < words; ++j) initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
     auto result = siglasso::fit(backend, std::vector<double>(alphas, alphas + options->targets), initial);
@@ -731,26 +801,26 @@ void copy_result(uint64_t handle, uint64_t* letters, uint64_t* offsets, T* coeff
 } // namespace
 
 extern "C" {
-CUSIG_API uint32_t sig_lasso_abi_version_cuda() noexcept { return 2; }
-CUSIG_API int sig_lasso_v2_cuda_f(const float* path, const float* y, const double* weights, const double* alphas, const uint64_t* letters,
+CUSIG_API uint32_t sig_lasso_abi_version_cuda() noexcept { return 3; }
+CUSIG_API int sig_lasso_v3_cuda_f(const float* path, const float* y, const double* alphas, const uint64_t* letters,
     const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, void* stream, int device, uint64_t* handle) noexcept {
-    CUDA_SAFE_CALL(run_lasso(path, y, weights, alphas, letters, offsets, words, options, stream, device, handle));
+    CUDA_SAFE_CALL(run_lasso(path, y, alphas, letters, offsets, words, options, stream, device, handle));
 }
-CUSIG_API int sig_lasso_v2_cuda_d(const double* path, const double* y, const double* weights, const double* alphas, const uint64_t* letters,
+CUSIG_API int sig_lasso_v3_cuda_d(const double* path, const double* y, const double* alphas, const uint64_t* letters,
     const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, void* stream, int device, uint64_t* handle) noexcept {
-    CUDA_SAFE_CALL(run_lasso(path, y, weights, alphas, letters, offsets, words, options, stream, device, handle));
+    CUDA_SAFE_CALL(run_lasso(path, y, alphas, letters, offsets, words, options, stream, device, handle));
 }
-CUSIG_API int sig_lasso_shape_v2_cuda(uint64_t handle, SigLassoShape* shape) noexcept {
+CUSIG_API int sig_lasso_shape_v3_cuda(uint64_t handle, SigLassoShape* shape) noexcept {
     CUDA_SAFE_CALL(auto result = results.get(handle); shape->words = result->words.size(); shape->targets = result->targets;
         shape->letters = 0; for (const auto& word : result->words) shape->letters += word.size(); shape->stats = result->stats);
 }
-CUSIG_API int sig_lasso_result_v2_cuda_f(uint64_t handle, uint64_t* letters, uint64_t* offsets, float* coefficients,
+CUSIG_API int sig_lasso_result_v3_cuda_f(uint64_t handle, uint64_t* letters, uint64_t* offsets, float* coefficients,
     float* intercepts, float* objectives, float* gaps, uint64_t* converged, uint64_t* iterations) noexcept {
     CUDA_SAFE_CALL(copy_result(handle, letters, offsets, coefficients, intercepts, objectives, gaps, converged, iterations));
 }
-CUSIG_API int sig_lasso_result_v2_cuda_d(uint64_t handle, uint64_t* letters, uint64_t* offsets, double* coefficients,
+CUSIG_API int sig_lasso_result_v3_cuda_d(uint64_t handle, uint64_t* letters, uint64_t* offsets, double* coefficients,
     double* intercepts, double* objectives, double* gaps, uint64_t* converged, uint64_t* iterations) noexcept {
     CUDA_SAFE_CALL(copy_result(handle, letters, offsets, coefficients, intercepts, objectives, gaps, converged, iterations));
 }
-CUSIG_API int sig_lasso_release_v2_cuda(uint64_t handle) noexcept { CUDA_SAFE_CALL(results.erase(handle)); }
+CUSIG_API int sig_lasso_release_v3_cuda(uint64_t handle) noexcept { CUDA_SAFE_CALL(results.erase(handle)); }
 }

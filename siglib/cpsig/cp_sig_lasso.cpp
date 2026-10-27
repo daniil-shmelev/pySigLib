@@ -20,8 +20,8 @@
 #include "sig_lasso_core.h"
 
 namespace cpsig {
-HWY_EXPORT_T(sig_lasso_v2_f, sig_lasso_<float>);
-HWY_EXPORT_T(sig_lasso_v2_d, sig_lasso_<double>);
+HWY_EXPORT_T(sig_lasso_v3_f, sig_lasso_<float>);
+HWY_EXPORT_T(sig_lasso_v3_d, sig_lasso_<double>);
 static siglasso::Results lasso_results;
 
 template<typename T>
@@ -43,27 +43,27 @@ void copy_lasso_result(uint64_t handle, uint64_t* letters, uint64_t* offsets, T*
 }
 
 extern "C" {
-CPSIG_API uint32_t sig_lasso_abi_version() noexcept { return 2; }
-CPSIG_API int sig_lasso_v2_f(const float* path, const float* y, const double* weights, const double* alphas,
+CPSIG_API uint32_t sig_lasso_abi_version() noexcept { return 3; }
+CPSIG_API int sig_lasso_v3_f(const float* path, const float* y, const double* alphas,
     const uint64_t* letters, const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, uint64_t* handle) noexcept {
-    SAFE_CALL(siglasso::Result result; HWY_DYNAMIC_DISPATCH_T(sig_lasso_v2_f)(path, y, weights, alphas, letters, offsets, words, options, &result); *handle = lasso_results.insert(std::move(result)));
+    SAFE_CALL(siglasso::Result result; HWY_DYNAMIC_DISPATCH_T(sig_lasso_v3_f)(path, y, alphas, letters, offsets, words, options, &result); *handle = lasso_results.insert(std::move(result)));
 }
-CPSIG_API int sig_lasso_v2_d(const double* path, const double* y, const double* weights, const double* alphas,
+CPSIG_API int sig_lasso_v3_d(const double* path, const double* y, const double* alphas,
     const uint64_t* letters, const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, uint64_t* handle) noexcept {
-    SAFE_CALL(siglasso::Result result; HWY_DYNAMIC_DISPATCH_T(sig_lasso_v2_d)(path, y, weights, alphas, letters, offsets, words, options, &result); *handle = lasso_results.insert(std::move(result)));
+    SAFE_CALL(siglasso::Result result; HWY_DYNAMIC_DISPATCH_T(sig_lasso_v3_d)(path, y, alphas, letters, offsets, words, options, &result); *handle = lasso_results.insert(std::move(result)));
 }
-CPSIG_API int sig_lasso_shape_v2(uint64_t handle, SigLassoShape* shape) noexcept {
+CPSIG_API int sig_lasso_shape_v3(uint64_t handle, SigLassoShape* shape) noexcept {
     SAFE_CALL(auto result = lasso_results.get(handle); shape->words = result->words.size(); shape->targets = result->targets;
         shape->letters = 0; for (const auto& word : result->words) shape->letters += word.size(); shape->stats = result->stats);
 }
-CPSIG_API int sig_lasso_result_v2_f(uint64_t handle, uint64_t* letters, uint64_t* offsets, float* coefficients,
+CPSIG_API int sig_lasso_result_v3_f(uint64_t handle, uint64_t* letters, uint64_t* offsets, float* coefficients,
     float* intercepts, float* objectives, float* gaps, uint64_t* converged, uint64_t* iterations) noexcept {
     SAFE_CALL(copy_lasso_result(handle, letters, offsets, coefficients, intercepts, objectives, gaps, converged, iterations));
 }
-CPSIG_API int sig_lasso_result_v2_d(uint64_t handle, uint64_t* letters, uint64_t* offsets, double* coefficients,
+CPSIG_API int sig_lasso_result_v3_d(uint64_t handle, uint64_t* letters, uint64_t* offsets, double* coefficients,
     double* intercepts, double* objectives, double* gaps, uint64_t* converged, uint64_t* iterations) noexcept {
     SAFE_CALL(copy_lasso_result(handle, letters, offsets, coefficients, intercepts, objectives, gaps, converged, iterations));
 }
-CPSIG_API int sig_lasso_release_v2(uint64_t handle) noexcept { SAFE_CALL(lasso_results.erase(handle)); }
+CPSIG_API int sig_lasso_release_v3(uint64_t handle) noexcept { SAFE_CALL(lasso_results.erase(handle)); }
 }
 } // namespace cpsig

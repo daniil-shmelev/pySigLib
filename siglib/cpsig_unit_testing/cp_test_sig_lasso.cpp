@@ -89,23 +89,23 @@ TEST(sigLassoTest, BernsteinColumnsAndDescendantBounds) {
 }
 
 TEST(sigLassoTest, VersionedABI) {
-    EXPECT_EQ(sig_lasso_abi_version(), 2);
+    EXPECT_EQ(sig_lasso_abi_version(), 3);
 }
 
 TEST(sigLassoTest, NativeFitAndReleasedHandle) {
     const std::vector<double> paths{0, -2, 0, -1, 0, 1, 0, 2}, response{-2, -1, 1, 2};
-    const double weights[]{1, 1}, alpha = .1;
+    const double alpha = .1;
     SigLassoOptions options{};
     options.samples = 4; options.length = 2; options.dimension = options.degree = options.targets = 1;
     options.max_iter = 100; options.batch_size = 4; options.tolerance = 1e-10; options.n_jobs = 1; options.intercept = 1;
     for (uint32_t full : {0U, 1U}) {
         options.full = full; uint64_t handle = 0;
-        ASSERT_EQ(sig_lasso_v2_d(paths.data(), response.data(), weights, &alpha, nullptr, nullptr, 0, &options, &handle), 0);
-        SigLassoShape shape{}; ASSERT_EQ(sig_lasso_shape_v2(handle, &shape), 0); ASSERT_EQ(shape.words, 1);
+        ASSERT_EQ(sig_lasso_v3_d(paths.data(), response.data(), &alpha, nullptr, nullptr, 0, &options, &handle), 0);
+        SigLassoShape shape{}; ASSERT_EQ(sig_lasso_shape_v3(handle, &shape), 0); ASSERT_EQ(shape.words, 1);
         uint64_t letters[1], offsets[2], converged[1], iterations[1];
         double coefficient, intercept, objective, gap;
-        ASSERT_EQ(sig_lasso_result_v2_d(handle, letters, offsets, &coefficient, &intercept, &objective, &gap, converged, iterations), 0);
-        EXPECT_NEAR(coefficient, .96, 1e-10); EXPECT_NEAR(intercept, 0, 1e-12); EXPECT_LE(gap, 1e-10); EXPECT_TRUE(converged[0]);
-        EXPECT_EQ(sig_lasso_release_v2(handle), 0); EXPECT_NE(sig_lasso_shape_v2(handle, &shape), 0);
+        ASSERT_EQ(sig_lasso_result_v3_d(handle, letters, offsets, &coefficient, &intercept, &objective, &gap, converged, iterations), 0);
+        EXPECT_NEAR(coefficient, 1.4, 1e-10); EXPECT_NEAR(intercept, 0, 1e-12); EXPECT_LE(gap, 1e-10); EXPECT_TRUE(converged[0]);
+        EXPECT_EQ(sig_lasso_release_v3(handle), 0); EXPECT_NE(sig_lasso_shape_v3(handle, &shape), 0);
     }
 }

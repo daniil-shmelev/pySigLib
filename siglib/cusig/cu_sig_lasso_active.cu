@@ -109,9 +109,35 @@ __global__ void boundary_step(const double* gamma, const double* direction, cons
         for (size_t j = 0; j < p; ++j) if (hits[j]) hits[control->dropped++] = j;
     }
 }
+__global__ void compare_iterates(const double* gamma, const double* candidate, size_t p,
+    const double* residual, const double* trial, size_t n, Control* control) {
+    __shared__ double scratch[128];
+    double changed = 0;
+    for (size_t j = threadIdx.x; j < p; j += blockDim.x) if (gamma[j] != candidate[j]) changed = 1;
+    for (size_t i = threadIdx.x; i < n; i += blockDim.x) if (residual[i] != trial[i]) changed = 1;
+    changed = reduce_sum(changed, scratch);
+    if (!threadIdx.x) control->failed = changed != 0;
+}
 __global__ void scaled_defect(double* defect, const double* scales, const double* candidate, size_t p, double norm, double penalty) {
     for (size_t j = blockIdx.x * blockDim.x + threadIdx.x; j < p; j += static_cast<size_t>(gridDim.x) * blockDim.x)
         defect[j] = candidate[j] ? defect[j] / (1 + norm + penalty / scales[j]) : 0;
+}
+__global__ void stationary_accuracy(const double* residual, const double* defect, const double* scales,
+    size_t n, size_t p, double penalty, Control* control) {
+    __shared__ double scratch[128];
+    double squared = 0;
+    for (size_t i = threadIdx.x; i < n; i += blockDim.x) squared += residual[i] * residual[i];
+    const double norm = sqrt(reduce_sum(squared, scratch));
+    double error = 0;
+    for (size_t j = threadIdx.x; j < p; j += blockDim.x) {
+        const double scaled = defect[j] / (1 + norm + penalty / scales[j]);
+        error += scaled * scaled;
+    }
+    error = reduce_sum(error, scratch);
+    if (!threadIdx.x) {
+        const double limit = 64 * DBL_EPSILON * (n + p);
+        control->failed = !isfinite(norm) || !isfinite(error) || error > p * limit * limit;
+    }
 }
 __global__ void absolute_coefficients(const double* gamma, const double* scales, double* out, size_t p) {
     for (size_t j = blockIdx.x * blockDim.x + threadIdx.x; j < p; j += static_cast<size_t>(gridDim.x) * blockDim.x) out[j] = fabs(gamma[j] / scales[j]);
@@ -123,18 +149,24 @@ __global__ void output_coefficients(const double* gamma, const double* scales, d
     for (size_t j = blockIdx.x * blockDim.x + threadIdx.x; j < p; j += static_cast<size_t>(gridDim.x) * blockDim.x) out[j] = gamma[j] / scales[j];
 }
 __global__ void delete_factor(double* r, double* projected, double* rotations, size_t rows, size_t p, size_t stride, size_t position) {
-    if (threadIdx.x) return;
-    for (size_t j = position; j + 1 < p; ++j) for (size_t i = 0; i < rows; ++i) r[j * stride + i] = r[(j + 1) * stride + i];
+    __shared__ double c, s;
+    for (size_t i = threadIdx.x; i < rows; i += blockDim.x)
+        for (size_t j = position; j + 1 < p; ++j) r[j * stride + i] = r[(j + 1) * stride + i];
+    __syncthreads();
     for (size_t j = position; j + 1 < rows && j + 1 < p; ++j) {
-        const double radius = hypot(r[j * stride + j], r[j * stride + j + 1]);
-        const double c = radius ? r[j * stride + j] / radius : 1, s = radius ? r[j * stride + j + 1] / radius : 0;
-        rotations[2 * j] = c; rotations[2 * j + 1] = s;
-        for (size_t k = j; k + 1 < p; ++k) {
+        if (!threadIdx.x) {
+            const double radius = hypot(r[j * stride + j], r[j * stride + j + 1]);
+            c = radius ? r[j * stride + j] / radius : 1; s = radius ? r[j * stride + j + 1] / radius : 0;
+            rotations[2 * j] = c; rotations[2 * j + 1] = s;
+            const double first = projected[j], second = projected[j + 1];
+            projected[j] = c * first + s * second; projected[j + 1] = -s * first + c * second;
+        }
+        __syncthreads();
+        for (size_t k = j + threadIdx.x; k + 1 < p; k += blockDim.x) {
             const double first = r[k * stride + j], second = r[k * stride + j + 1];
             r[k * stride + j] = c * first + s * second; r[k * stride + j + 1] = -s * first + c * second;
         }
-        const double first = projected[j], second = projected[j + 1];
-        projected[j] = c * first + s * second; projected[j + 1] = -s * first + c * second;
+        __syncthreads();
     }
 }
 __global__ void delete_columns(double* q, double* normalized, const double* rotations, size_t n, size_t rows, size_t p, size_t position) {
@@ -155,6 +187,10 @@ __global__ void triangular_copy(const double* source, double* r, size_t n, size_
         const size_t i = index % rows, j = index / rows;
         r[j * stride + i] = i <= j ? source[j * n + i] : 0;
     }
+}
+__global__ void subtract_identity(double* matrix, size_t rows) {
+    for (size_t j = blockIdx.x * blockDim.x + threadIdx.x; j < rows; j += static_cast<size_t>(gridDim.x) * blockDim.x)
+        matrix[j * rows + j] -= 1;
 }
 __global__ void transpose_matrix(const double* source, double* out, size_t rows, size_t columns, size_t stride) {
     for (size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < rows * columns; index += static_cast<size_t>(gridDim.x) * blockDim.x) {
@@ -216,13 +252,15 @@ class CUDAActive final : public ActiveSet {
     int device_;
     double alpha_;
     size_t capacity_ = 0, rows_ = 0, pool_count_ = 0;
+    bool singular_rebuild_needed_ = true;
     Array y_, residual_, q_, r_, normalized_, projected_, gamma_, signs_, scales_, pointers_, slots_;
     Array temporary_, direction_, candidate_, trial_, rotations_, hits_, control_, selection_;
     Array qr_copy_, tau_, solver_workspace_, solver_info_, svd_copy_, singular_, left_, right_, transpose_, svd_y_, svd_penalty_;
     Array pool_, scores_;
-    std::shared_ptr<void> solver_account_, metadata_, pool_metadata_;
-    std::vector<size_t> host_slots_;
+    std::shared_ptr<void> solver_account_, metadata_, pool_metadata_, deferred_metadata_;
+    std::vector<size_t> host_slots_, deferred_slots_;
     std::vector<PoolColumn> host_pool_;
+    size_t newly_activated_ = static_cast<size_t>(-1);
 
     size_t n() const { return y_.size; }
     size_t stride() const { return std::min(n(), capacity_); }
@@ -252,8 +290,11 @@ class CUDAActive final : public ActiveSet {
     void reserve(size_t count);
     void initialise_solver();
     void rebuild();
+    bool reusable_factor();
     bool direction(bool singular);
     void erase(size_t position);
+    void clear_deferred();
+    void defer(size_t slot);
 public:
     CUDAActive(Backend& b, const Array& y, double alpha, cudaStream_t stream, cublasHandle_t blas, int device)
         : b_(b), stream_(stream), blas_(blas), device_(device), alpha_(alpha), y_(y), residual_(b.clone(y)), trial_(b.alloc(y.size)),
@@ -330,7 +371,31 @@ void CUDAActive::rebuild() {
     std::memcpy(&info, &status, sizeof(info));
     if (info) throw std::runtime_error("cuSOLVER QR basis construction failed");
     gemv(CUBLAS_OP_T, n(), rows_, q_.data, n(), y_.data, projected_.data);
+    singular_rebuild_needed_ = false;
     ++b_.stats.qr_rebuilds; b_.stats.factorization_seconds += elapsed(started); check();
+}
+
+bool CUDAActive::reusable_factor() {
+    auto started = Clock::now();
+    const size_t p = size();
+    const size_t factor_size = multiply(n(), p), gram_size = multiply(rows_, rows_);
+    if (factor_size > INT_MAX || gram_size > INT_MAX) return false;
+    const double one = 1, zero = 0;
+    grow(qr_copy_, factor_size);
+    blas_check(cublasDgemm(blas_, CUBLAS_OP_N, CUBLAS_OP_N, static_cast<int>(n()), static_cast<int>(p), static_cast<int>(rows_),
+        &one, q_.data, static_cast<int>(n()), r_.data, static_cast<int>(stride()), &zero, qr_copy_.data, static_cast<int>(n())));
+    subtract_vectors<<<grid(factor_size), 128, 0, stream_>>>(normalized_.data, qr_copy_.data, qr_copy_.data, factor_size);
+    const double reconstruction = b_.dot(qr_copy_.data, qr_copy_.data, factor_size);
+    grow(transpose_, gram_size);
+    blas_check(cublasDgemm(blas_, CUBLAS_OP_T, CUBLAS_OP_N, static_cast<int>(rows_), static_cast<int>(rows_), static_cast<int>(n()),
+        &one, q_.data, static_cast<int>(n()), q_.data, static_cast<int>(n()), &zero, transpose_.data, static_cast<int>(rows_)));
+    subtract_identity<<<grid(rows_), 128, 0, stream_>>>(transpose_.data, rows_);
+    const double orthogonality = b_.dot(transpose_.data, transpose_.data, gram_size);
+    const double limit = 64 * DBL_EPSILON * (n() + p);
+    const bool reusable = reconstruction <= p * limit * limit && orthogonality <= rows_ * limit * limit;
+    if (reusable) gemv(CUBLAS_OP_T, n(), rows_, q_.data, n(), y_.data, projected_.data);
+    b_.stats.factorization_seconds += elapsed(started); check();
+    return reusable;
 }
 
 bool CUDAActive::direction(bool singular) {
@@ -342,6 +407,8 @@ bool CUDAActive::direction(bool singular) {
         solve(direction_.data, false);
         for (size_t attempt = 0; attempt < 3; ++attempt) {
             residual_for(direction_, trial_); defect(trial_, temporary_);
+            stationary_accuracy<<<1, 128, 0, stream_>>>(trial_.data, temporary_.data, scales_.data, n(), p, n() * alpha_, reinterpret_cast<Control*>(control_.data));
+            if (!control().failed) break;
             solve(temporary_.data, true); solve(temporary_.data, false);
             b_.axpy(1, temporary_.data, direction_.data, p);
         }
@@ -404,13 +471,27 @@ void CUDAActive::activate(const Column& column, size_t slot, double correlation)
         cublasSetPointerMode(blas_, CUBLAS_POINTER_MODE_HOST); blas_check(dot_status);
         ++rows_;
     }
-    host_slots_.push_back(slot); ++b_.stats.activations; ++b_.stats.qr_appends;
+    host_slots_.push_back(slot); newly_activated_ = slot; singular_rebuild_needed_ = true; ++b_.stats.activations; ++b_.stats.qr_appends;
     b_.stats.factorization_seconds += elapsed(started); check();
+}
+
+void CUDAActive::clear_deferred() {
+    if (!deferred_slots_.empty()) { deferred_slots_.clear(); pool_count_ = static_cast<size_t>(-1); }
+}
+
+void CUDAActive::defer(size_t slot) {
+    if (std::find(deferred_slots_.begin(), deferred_slots_.end(), slot) != deferred_slots_.end()) return;
+    if (deferred_slots_.size() == deferred_slots_.capacity()) {
+        const size_t next = std::max<size_t>(8, 2 * deferred_slots_.capacity());
+        auto metadata = b_.account(multiply(next, sizeof(size_t)));
+        deferred_slots_.reserve(next); deferred_metadata_ = std::move(metadata);
+    }
+    deferred_slots_.push_back(slot); pool_count_ = static_cast<size_t>(-1);
 }
 
 void CUDAActive::erase(size_t position) {
     auto started = Clock::now();
-    delete_factor<<<1, 1, 0, stream_>>>(r_.data, projected_.data, rotations_.data, rows_, size(), stride(), position);
+    delete_factor<<<1, size() >= 32 ? 128 : 1, 0, stream_>>>(r_.data, projected_.data, rotations_.data, rows_, size(), stride(), position);
     delete_columns<<<grid(n()), 128, 0, stream_>>>(q_.data, normalized_.data, rotations_.data, n(), rows_, size(), position);
     delete_state<<<1, 1, 0, stream_>>>(reinterpret_cast<const double**>(pointers_.data), reinterpret_cast<uint64_t*>(slots_.data),
         scales_.data, signs_.data, gamma_.data, size(), position);
@@ -419,10 +500,11 @@ void CUDAActive::erase(size_t position) {
 }
 
 Correction CUDAActive::correct(bool force_rebuild) {
+    if (force_rebuild) clear_deferred();
     if (!size()) return Correction::stationary;
     rank_check<<<1, 1, 0, stream_>>>(r_.data, stride(), n(), size(), reinterpret_cast<Control*>(control_.data));
     bool singular = control().failed != 0;
-    if (force_rebuild || singular) {
+    if (force_rebuild || (singular && (singular_rebuild_needed_ || !reusable_factor()))) {
         rebuild();
         rank_check<<<1, 1, 0, stream_>>>(r_.data, stride(), n(), size(), reinterpret_cast<Control*>(control_.data));
         singular = control().failed != 0;
@@ -447,16 +529,26 @@ Correction CUDAActive::correct(bool force_rebuild) {
             accurate = error <= size() * limit * limit;
         }
         if (accurate && objective <= previous + 256 * DBL_EPSILON * std::max(1.0, previous)) {
-            b_.copy(candidate_.data, gamma_.data, size()); b_.copy(trial_.data, residual_.data, n());
-            if (next.dropped) {
-                std::vector<uint64_t> dropped(next.dropped);
-                b_.download(hits_.data, reinterpret_cast<double*>(dropped.data()), dropped.size());
-                for (size_t j = dropped.size(); j-- > 0;) erase(dropped[j]);
+            std::vector<uint64_t> dropped(next.dropped);
+            if (next.dropped) b_.download(hits_.data, reinterpret_cast<double*>(dropped.data()), dropped.size());
+            const bool zero_activation = newly_activated_ != static_cast<size_t>(-1) && next.step == 0 && dropped.size() == 1
+                && dropped[0] == size() - 1 && host_slots_.back() == newly_activated_;
+            bool unchanged = false;
+            if (zero_activation || !deferred_slots_.empty()) {
+                compare_iterates<<<1, 128, 0, stream_>>>(gamma_.data, candidate_.data, size(), residual_.data, trial_.data, n(),
+                    reinterpret_cast<Control*>(control_.data));
+                unchanged = !control().failed;
             }
+            if (!unchanged || (next.dropped && !zero_activation)) clear_deferred();
+            if (zero_activation && unchanged) defer(newly_activated_);
+            newly_activated_ = static_cast<size_t>(-1);
+            b_.copy(candidate_.data, gamma_.data, size()); b_.copy(trial_.data, residual_.data, n());
+            for (size_t j = dropped.size(); j-- > 0;) erase(dropped[j]);
+            if (zero_activation && unchanged) return Correction::stationary; // The previous active solution is unchanged.
             return next.dropped || next.step < 1 || null_step ? Correction::boundary : Correction::stationary;
         }
         if (attempt == 0) {
-            rebuild(); refresh(false);
+            clear_deferred(); rebuild(); refresh(false);
             rank_check<<<1, 1, 0, stream_>>>(r_.data, stride(), n(), size(), reinterpret_cast<Control*>(control_.data));
             singular = control().failed != 0;
         }
@@ -465,8 +557,21 @@ Correction CUDAActive::correct(bool force_rebuild) {
 }
 
 void CUDAActive::refresh(bool rounded) {
-    if (rounded && b_.options.single_precision && size()) round_coefficients<<<grid(size()), 128, 0, stream_>>>(gamma_.data, scales_.data, size());
-    residual_for(gamma_, residual_);
+    const bool round = rounded && b_.options.single_precision && size();
+    if (deferred_slots_.empty()) {
+        if (round) round_coefficients<<<grid(size()), 128, 0, stream_>>>(gamma_.data, scales_.data, size());
+        residual_for(gamma_, residual_);
+    } else {
+        if (round) {
+            b_.copy(gamma_.data, candidate_.data, size());
+            round_coefficients<<<grid(size()), 128, 0, stream_>>>(gamma_.data, scales_.data, size());
+        }
+        residual_for(gamma_, trial_);
+        compare_iterates<<<1, 128, 0, stream_>>>(gamma_.data, round ? candidate_.data : gamma_.data, size(), residual_.data, trial_.data, n(),
+            reinterpret_cast<Control*>(control_.data));
+        if (control().failed) clear_deferred();
+        b_.copy(trial_.data, residual_.data, n());
+    }
 }
 
 double CUDAActive::penalty() {
@@ -494,7 +599,8 @@ Selection CUDAActive::select(const std::vector<Column>& columns, const std::vect
         std::vector<size_t> sorted = pool;
         std::sort(sorted.begin(), sorted.end(), [&](size_t a, size_t b) { return word_less(columns[a].word, columns[b].word); });
         host_pool_.clear(); host_pool_.reserve(sorted.size());
-        for (auto slot : sorted) if (columns[slot].norm2) host_pool_.push_back({columns[slot].values.data, slot});
+        for (auto slot : sorted) if (columns[slot].norm2 && std::find(deferred_slots_.begin(), deferred_slots_.end(), slot) == deferred_slots_.end())
+            host_pool_.push_back({columns[slot].values.data, slot});
         grow(pool_, multiply(host_pool_.size(), sizeof(PoolColumn)) / sizeof(double)); grow(scores_, host_pool_.size());
         if (!host_pool_.empty()) CUDA_CHECK(cudaMemcpyAsync(pool_.data, host_pool_.data(), host_pool_.size() * sizeof(PoolColumn), cudaMemcpyHostToDevice, stream_));
         pool_count_ = pool.size(); pool_metadata_ = std::move(metadata);

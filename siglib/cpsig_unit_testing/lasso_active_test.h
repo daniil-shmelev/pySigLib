@@ -31,7 +31,7 @@ public:
     cudaStream_t stream = nullptr;
     cublasHandle_t blas = nullptr;
 #endif
-    explicit MatrixBackend(size_t n) : Backend([&] { SigLassoOptions o{}; o.samples = n; o.degree = 1; o.n_jobs = 1; return o; }()) {
+    explicit MatrixBackend(size_t n, bool single_precision = false) : Backend([&] { SigLassoOptions o{}; o.samples = n; o.degree = 1; o.n_jobs = 1; o.single_precision = single_precision; return o; }()) {
 #ifdef LASSO_TEST_CUDA
         if (cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking) != cudaSuccess || cublasCreate(&blas) != CUBLAS_STATUS_SUCCESS)
             throw std::runtime_error("CUDA test setup failed");
@@ -210,4 +210,44 @@ TEST(LASSO_SUITE, SimultaneousBoundaryDrops) {
     const auto residual = b.host(active->residual());
     EXPECT_NEAR(residual[0], .005, 1e-11); EXPECT_NEAR(residual[1], .005, 1e-11);
 }
+
+#ifdef LASSO_TEST_CUDA
+TEST(LASSO_SUITE, ZeroStepCandidateIsDeferredUntilProgress) {
+    int count = 0; if (cudaGetDeviceCount(&count) != cudaSuccess || !count) GTEST_SKIP();
+    MatrixBackend b(3); auto y = b.from_host({9.03, 1.03, .12}); auto active = b.active_set(y, .01);
+    std::vector<siglasso::Column> columns;
+    for (const std::vector<double>& values : {std::vector<double>{1, 0, 0}, {0, 1, 0}, {1, -2. - 4e-14, 0}, {0, 0, 1}}) {
+        auto x = b.from_host(values); columns.push_back({{columns.size()}, x, 0, b.dot(x.data, x.data, 3)});
+    }
+    active->activate(columns[0], 0, 1); active->activate(columns[1], 1, 1);
+    ASSERT_EQ(active->correct(), siglasso::Correction::stationary);
+    active->activate(columns[2], 2, -1);
+    ASSERT_EQ(active->correct(), siglasso::Correction::stationary);
+    ASSERT_EQ(active->size(), 2);
+    EXPECT_EQ(active->select(columns, {2}).slot, SIZE_MAX);
+    active->refresh(true);
+    EXPECT_EQ(active->select(columns, {2}).slot, SIZE_MAX);
+    const auto next = active->select(columns, {2, 3});
+    ASSERT_EQ(next.slot, 3);
+    active->activate(columns[3], 3, next.correlation);
+    ASSERT_EQ(active->correct(), siglasso::Correction::stationary);
+    EXPECT_EQ(active->select(columns, {2, 3}).slot, 2);
+}
+
+TEST(LASSO_SUITE, RoundedRefreshReleasesDeferredCandidate) {
+    int count = 0; if (cudaGetDeviceCount(&count) != cudaSuccess || !count) GTEST_SKIP();
+    MatrixBackend b(3, true); auto y = b.from_host({9.0300009, 1.03, .12}); auto active = b.active_set(y, .01);
+    std::vector<siglasso::Column> columns;
+    for (const std::vector<double>& values : {std::vector<double>{1, 0, 0}, {0, 1, 0}, {1, -2. - 4e-14, 0}}) {
+        auto x = b.from_host(values); columns.push_back({{columns.size()}, x, 0, b.dot(x.data, x.data, 3)});
+    }
+    active->activate(columns[0], 0, 1); active->activate(columns[1], 1, 1);
+    ASSERT_EQ(active->correct(), siglasso::Correction::stationary);
+    active->activate(columns[2], 2, -1);
+    ASSERT_EQ(active->correct(), siglasso::Correction::stationary);
+    EXPECT_EQ(active->select(columns, {2}).slot, SIZE_MAX);
+    active->refresh(true);
+    EXPECT_EQ(active->select(columns, {2}).slot, 2);
+}
+#endif
 } // namespace

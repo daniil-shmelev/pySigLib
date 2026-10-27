@@ -24,10 +24,19 @@ from pysiglib.load_siglib import CPSIG, CUSIG, CUSIG_SIG_LASSO, _lasso_abi_match
 
 
 def fit_matrix(matrix, target, alpha, device, **kwargs):
-    paths = np.stack((np.zeros_like(matrix), matrix), axis=1)
+    scale = max(1., np.max(np.abs(matrix)))
+    normalized = matrix / scale
+    extra = (1. - np.max(np.abs(normalized), axis=1)) / 2.
+    excursion = normalized.copy()
+    excursion[:, 0] += extra
+    paths = np.stack((np.zeros_like(matrix), normalized, excursion, normalized), axis=1)
+    target = target / scale
+    alpha = alpha / scale**2
+    if 'tol' in kwargs:
+        kwargs['tol'] /= scale**2
     if device == 'cuda':
         if not torch.cuda.is_available() or CUSIG_SIG_LASSO is None:
-            pytest.skip('CUDA Lasso ABI v2 is unavailable')
+            pytest.skip('CUDA Lasso ABI v3 is unavailable')
         paths = torch.as_tensor(paths, device=device)
         target = torch.as_tensor(target, device=device)
     result = pysiglib.sig_lasso(paths, target, 1, alpha, fit_intercept=False, **kwargs)
@@ -97,6 +106,8 @@ def test_stale_abi_rejected():
     assert not _lasso_abi_matches(Library(), '')
     Library.sig_lasso_abi_version = staticmethod(lambda: 2)
     assert not _lasso_abi_matches(Library(), '')
+    Library.sig_lasso_abi_version = staticmethod(lambda: 3)
+    assert not _lasso_abi_matches(Library(), '')
 
 
 def test_legacy_entrypoints_are_absent():
@@ -105,6 +116,7 @@ def test_legacy_entrypoints_are_absent():
             continue
         assert _lasso_abi_matches(library, suffix)
         assert not hasattr(library, 'sig_lasso' + suffix + '_d')
+        assert not hasattr(library, 'sig_lasso_v2' + suffix + '_d')
         assert not hasattr(library, 'sig_lasso_shape' + suffix)
         assert not hasattr(library, 'sig_lasso_release' + suffix)
 
@@ -140,7 +152,7 @@ def test_large_dictionary_has_no_dense_native_allocation(device):
     paths, target = np.zeros((3, 2, 24)), np.zeros(3)
     if device == 'cuda':
         if not torch.cuda.is_available() or CUSIG_SIG_LASSO is None:
-            pytest.skip('CUDA Lasso ABI v2 is unavailable')
+            pytest.skip('CUDA Lasso ABI v3 is unavailable')
         paths, target = torch.as_tensor(paths, device=device), torch.as_tensor(target, device=device)
     result = pysiglib.sig_lasso(paths, target, 20, 1., memory_limit=32 * 1024**2, cache_bytes=0)
     assert result['converged']

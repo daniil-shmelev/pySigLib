@@ -15,7 +15,6 @@
 
 from contextlib import nullcontext
 from ctypes import POINTER, byref, c_double, c_uint64, c_void_p, cast
-import math
 import warnings
 
 import numpy as np
@@ -49,7 +48,7 @@ def _check_status(status, device):
     raise RuntimeError(message)
 
 
-def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
+def sig_lasso(path, y, degree, alpha, *, method="sparse",
               fit_intercept=True, tol=None, max_iter=1000,
               batch_size=128, initial_words=(), cache_bytes=256 * 1024**2,
               memory_limit=None, time_aug=False, lead_lag=False, end_time=1.0,
@@ -57,9 +56,11 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
     r"""Fit Lasso on weighted signature coordinates on CPU or CUDA.
 
     Minimise ``||y - intercept - Z @ coef||**2 / (2*n) + alpha*||coef||_1``,
-    where ``Z[:, w] = degree_weights[len(w)-1] * S(path)^w``. The default
-    degree-k weight is ``sqrt(k!)``. Columns are centred when fitting an
-    intercept; they are not standardised. ``method='full'`` computes the
+    where ``Z[i, w] = k! * S(path[i])^w / V(path[i])**k`` for ``k=len(w)``.
+    ``V`` is the sum of the infinity norms of the path increments, computed
+    after path transforms. Constant paths have zero nonempty features.
+    Columns are centred when fitting an intercept; they are not standardised.
+    ``method='full'`` computes the
     complete dictionary; ``method='sparse'`` searches it with integral bounds
     and Bernstein prefix coefficients. Both use the same native solver.
 
@@ -68,9 +69,9 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
     ``(*batch, n_targets)`` (also ``(n_samples,)`` or ``(n_samples, n_targets)``).
     Responses are fitted independently. ``alpha`` is positive and scalar
     or has one entry per response. ``y`` must match the array type, dtype
-    and device of ``path``. Only float32 and float64 are supported.
+    and device of ``path``. Only float32 and float64 are supported. ``degree``
+    must be at most 170 so that its factorial is finite in float64.
 
-    ``degree_weights`` is a length-degree vector of finite positive weights.
     ``initial_words`` contains zero-based channel tuples in the transformed
     alphabet and seeds the candidate pool. ``batch_size`` limits candidates
     added per search. Both methods use feature-sign search with QR updates.
@@ -89,7 +90,9 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
     ``dual_gap``, ``converged``, ``n_iter`` and ``stats``. Words are the union
     of nonzero coordinates, sorted by degree then lexicographically.
     Coefficients have shape ``(n_words,)`` or ``(n_words, n_targets)``.
-    Prediction is ``intercept + weighted_signature[:, words] @ coef``.
+    Prediction is ``intercept + normalized_signature[:, words] @ coef``.
+    For new paths, apply the same transforms, divide each path by its
+    variation, and multiply each selected degree-k signature by ``k!``.
     Numeric arrays preserve the input type, dtype and device. The result
     has no autograd connection. ``n_iter`` counts correction steps and is
     zero for an empty optimum. ``stats`` includes active-set changes, QR
@@ -105,6 +108,8 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
     for name, value in (('degree', degree), ('max_iter', max_iter), ('batch_size', batch_size)):
         if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or not 0 < value < 2**31:
             raise ValueError(name + ' must be a positive integer below 2**31')
+    if degree > 170:
+        raise ValueError('degree must be at most 170 because factorial weights must fit in float64')
     for name, value in (('cache_bytes', cache_bytes), ('memory_limit', memory_limit)):
         if value is not None and (isinstance(value, bool) or not isinstance(value, (int, np.integer)) or not 0 <= value < 2**64):
             raise ValueError(name + ' must be a nonnegative integer or None')
@@ -151,20 +156,6 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
     if alphas.shape != (targets,) or not np.all(np.isfinite(alphas)) or np.any(alphas <= 0):
         raise ValueError('alpha must be positive, finite and scalar or have one entry per target')
     alphas = np.ascontiguousarray(alphas)
-    if degree_weights is None:
-        try:
-            weights = np.array([math.exp(math.lgamma(k + 1) / 2) for k in range(degree + 1)])
-        except OverflowError as exc:
-            raise ValueError('Default degree weights overflow; supply finite degree_weights') from exc
-    else:
-        if isinstance(degree_weights, torch.Tensor):
-            degree_weights = degree_weights.detach().cpu().numpy()
-        supplied = np.asarray(degree_weights, dtype=np.float64)
-        if supplied.shape != (degree,):
-            raise ValueError('degree_weights must have length degree')
-        weights = np.concatenate(([1.0], supplied))
-    if not np.all(np.isfinite(weights)) or np.any(weights <= 0):
-        raise ValueError('degree_weights must be finite and positive')
     words = []
     for word in initial_words:
         if not 1 <= len(word) <= degree or any(isinstance(a, bool) or not isinstance(a, (int, np.integer)) or not 0 <= a < inputs.dimension for a in word):
@@ -181,7 +172,7 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
     device = inputs.device
     functions = CUSIG_SIG_LASSO if device == 'cuda' else CPSIG_SIG_LASSO
     if functions is None:
-        raise RuntimeError('The native library does not support sig_lasso ABI v2; rebuild pysiglib and its CUDA plugin')
+        raise RuntimeError('The native library does not support sig_lasso ABI v3; rebuild pysiglib and its CUDA plugin')
     context = torch.cuda.device(path.device) if device == 'cuda' else nullcontext()
     with context, torch.no_grad():
         transformed = transform_path(inputs.path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if time_aug or lead_lag else inputs.path
@@ -194,7 +185,7 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
         library = CUSIG if device == 'cuda' else CPSIG
         suffix = '_cuda' if device == 'cuda' else ''
         handle = c_uint64()
-        args = [data.data_ptr, _pointer(response, scalar), _pointer(weights, c_double), _pointer(alphas, c_double),
+        args = [data.data_ptr, _pointer(response, scalar), _pointer(alphas, c_double),
                 _pointer(letters, c_uint64), _pointer(offsets, c_uint64), len(words), byref(options)]
         if device == 'cuda':
             args.extend((c_void_p(torch.cuda.current_stream(path.device).cuda_stream), path.device.index))
@@ -202,7 +193,7 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
         _check_status(functions[data.dtype](*args), device)
         try:
             result_shape = LassoShape()
-            _check_status(getattr(library, 'sig_lasso_shape_v2' + suffix)(handle, byref(result_shape)), device)
+            _check_status(getattr(library, 'sig_lasso_shape_v3' + suffix)(handle, byref(result_shape)), device)
             out_letters = np.empty(result_shape.letters, dtype=np.uint64)
             out_offsets = np.empty(result_shape.words + 1, dtype=np.uint64)
             if isinstance(path, np.ndarray):
@@ -234,4 +225,4 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", degree_weights=None,
                         dual_gap=values[2][0] if single else values[2], converged=converged[0] if single else converged,
                         n_iter=iterations[0] if single else iterations, stats=stats)
         finally:
-            _check_status(getattr(library, 'sig_lasso_release_v2' + suffix)(handle), device)
+            _check_status(getattr(library, 'sig_lasso_release_v3' + suffix)(handle), device)

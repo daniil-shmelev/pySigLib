@@ -18,12 +18,20 @@ Example
     model = pysiglib.sig_lasso(paths, y, 4, alpha=0.01)
     prediction = np.full(len(paths), model['intercept'])
     if model['words']:
-        features = pysiglib.sig_coef(paths, model['words'])
-        weights = [math.sqrt(math.factorial(len(w))) for w in model['words']]
+        variation = np.max(np.abs(np.diff(paths, axis=1)), axis=2).sum(axis=1)
+        scale = np.where(variation > 0, variation, 1.)
+        normalized = (paths - paths[:, :1]) / scale[:, None, None]
+        features = pysiglib.sig_coef(normalized, model['words'])
+        weights = [math.factorial(len(w)) for w in model['words']]
         prediction += (features * weights) @ model['coef']
 
 The same call accepts CUDA Torch tensors. It returns tensors on the input
 device, with no autograd connection. A fit needs at least one sample.
+The variation and normalization use float64 after time augmentation and
+lead-lag transforms. Apply the same transforms and conversion before
+normalizing paths for prediction. A constant
+path has zero nonempty signature features. The degree is limited to 170,
+because the factorial weights must be finite in float64.
 
 Solver and certificate
 ----------------------

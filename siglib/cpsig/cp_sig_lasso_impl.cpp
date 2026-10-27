@@ -77,12 +77,28 @@ public:
         weights = source.weights;
     }
     template<typename T>
-    LassoCPU(const SigLassoOptions& o, const T* paths, const T* y, const double* w) : Backend(o) {
-        weights.assign(w, w + o.degree + 1);
+    LassoCPU(const SigLassoOptions& o, const T* paths, const T* y) : Backend(o) {
         paths_ = alloc(siglasso::multiply(siglasso::multiply(o.samples, o.length), o.dimension));
         responses_ = alloc(siglasso::multiply(o.samples, o.targets));
         for (size_t j = 0; j < paths_.size; ++j) paths_.data[j] = siglasso::finite(paths[j]);
         for (size_t j = 0; j < responses_.size; ++j) responses_.data[j] = siglasso::finite(y[j]);
+        batch(o.samples, [&](uint64_t begin, uint64_t end) {
+            for (size_t i = begin; i < end; ++i) {
+                double variation = 0;
+                double* sample = paths_.data + i * o.length * o.dimension;
+                for (size_t j = 1; j < o.length; ++j) {
+                    double step = 0;
+                    for (size_t a = 0; a < o.dimension; ++a)
+                        step = std::max(step, std::abs(siglasso::finite(sample[j * o.dimension + a] - sample[(j - 1) * o.dimension + a])));
+                    variation = siglasso::finite(variation + step);
+                }
+                for (size_t a = 0; a < o.dimension; ++a) {
+                    const double origin = sample[a];
+                    for (size_t j = o.length; j-- > 0;)
+                        sample[j * o.dimension + a] = variation ? siglasso::finite((sample[j * o.dimension + a] - origin) / variation) : 0;
+                }
+            }
+        });
     }
     siglasso::Array alloc(size_t size) override {
         const size_t bytes = siglasso::multiply(size, sizeof(double));
@@ -427,15 +443,15 @@ public:
 };
 
 template<typename T>
-void sig_lasso_(const T* path, const T* y, const double* weights, const double* alphas, const uint64_t* letters,
+void sig_lasso_(const T* path, const T* y, const double* alphas, const uint64_t* letters,
     const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, siglasso::Result* result) {
-    LassoCPU backend(*options, path, y, weights);
+    LassoCPU backend(*options, path, y);
     std::vector<siglasso::Word> initial;
     for (size_t j = 0; j < words; ++j) initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
     *result = siglasso::fit(backend, std::vector<double>(alphas, alphas + options->targets), initial);
 }
-template void sig_lasso_<float>(const float*, const float*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, siglasso::Result*);
-template void sig_lasso_<double>(const double*, const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, siglasso::Result*);
+template void sig_lasso_<float>(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, siglasso::Result*);
+template void sig_lasso_<double>(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, siglasso::Result*);
 
 } } // namespace cpsig::HWY_NAMESPACE
 HWY_AFTER_NAMESPACE();

@@ -70,7 +70,7 @@ inline Result fit(Backend& backend, const std::vector<double>& alphas, const std
         if (search) for (size_t j = 0; j < columns.size(); ++j) { response.pool.push_back(j); response.offered.insert(j); }
         else for (const auto& word : initial) if (response.offered.insert(known.at(word)).second) response.pool.push_back(known.at(word));
     }
-    auto certify = [&](Response& response) {
+    auto certify = [&](Response& response, bool reused_search, double search_bound) {
         auto& b = backend;
         auto& [worker, owner, y, dual, best_theta, state, pool, offered, mean, alpha, tolerance, objective, gap,
             iterations, converged, pending, force_rebuild, stopped, done, repairs] = response;
@@ -81,16 +81,24 @@ inline Result fit(Backend& backend, const std::vector<double>& alphas, const std
             return finite(bound);
         };
         auto started = Clock::now();
-        state->refresh(true);
+        if (!reused_search) state->refresh(true);
         const auto& residual = state->residual();
         objective = finite(b.dot(residual.data, residual.data, y.size) / (2 * y.size) + alpha * state->penalty());
         double best_value = 0;
         b.fill(best_theta, 0);
-        for (size_t candidate = 0; candidate < 2; ++candidate) {
-            if (!candidate) b.copy(residual.data, dual.data, y.size);
-            else state->dual_residual(dual);
-            if (b.options.intercept) b.center(dual.data, dual.size, true);
-            double bound = std::max(alpha, maximum(dual, alpha));
+        for (size_t candidate = 0; candidate < (reused_search ? 3 : 2); ++candidate) {
+            const bool cached = reused_search && !candidate;
+            const bool residual_candidate = !candidate || (reused_search && candidate == 1);
+            if (!cached) {
+                if (residual_candidate) b.copy(residual.data, dual.data, y.size);
+                else state->dual_residual(dual);
+                if (b.options.intercept) b.center(dual.data, dual.size, true);
+            }
+            double bound;
+            if (cached) {
+                bound = std::max({alpha, b.correlation_max(columns, dual), finite(search_bound)});
+                ++b.stats.certificate_passes;
+            } else bound = std::max(alpha, maximum(dual, alpha));
             b.scale(alpha / (bound * y.size), dual.data, dual.size);
             bool feasible = false;
             for (size_t attempt = 0; attempt < 3; ++attempt) {
@@ -139,11 +147,20 @@ inline Result fit(Backend& backend, const std::vector<double>& alphas, const std
             if (response.done) continue;
             auto& [worker, owner, y, dual, best_theta, state, pool, offered, mean, alpha, tolerance, objective, gap,
                 iterations, converged, pending, force_rebuild, stopped, done, repairs] = response;
+            bool reused_search = false;
+            double search_bound = 0;
             if (!stopped) {
                 if (state->select(columns, pool).slot != static_cast<size_t>(-1)) continue;
                 auto started = Clock::now();
                 if (search) {
-                    auto found = search->query(state->residual(), alpha, known, backend.options.batch_size);
+                    reused_search = backend.reuse_search_bound() && owner == &backend;
+                    if (reused_search) {
+                        state->refresh(true);
+                        backend.copy(state->residual().data, dual.data, y.size);
+                        if (backend.options.intercept) backend.center(dual.data, dual.size, true);
+                    }
+                    auto found = search->query(reused_search ? dual : state->residual(), alpha, known, backend.options.batch_size);
+                    if (reused_search) search_bound = found.omitted;
                     backend.stats.search_seconds += elapsed(started); started = Clock::now();
                     for (const auto& candidate : found.candidates) if (!known.count(candidate.word)) {
                         const size_t slot = columns.size();
@@ -158,7 +175,7 @@ inline Result fit(Backend& backend, const std::vector<double>& alphas, const std
                 }
                 if (state->select(columns, pool).slot != static_cast<size_t>(-1)) continue;
             }
-            converged = certify(response) && repairs != SIZE_MAX;
+            converged = certify(response, reused_search, search_bound) && repairs != SIZE_MAX;
             if (!stopped && !converged && state->size() && !repairs++ && iterations < backend.options.max_iter) {
                 pending = force_rebuild = true;
                 continue;

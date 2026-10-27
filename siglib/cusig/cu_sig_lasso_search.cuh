@@ -54,7 +54,7 @@ __global__ void seed_seen(Seen table, const Active* words, const uint64_t* lette
         record(table, letters + words[j].offset, words[j].length);
 }
 struct Lane {
-    uint64_t root, depth, count, evaluated, pruned, queries, cache_hits, requested;
+    uint64_t root, depth, count, evaluated, pruned, queries, cache_hits, requested, cache_writes;
     double omitted;
 };
 struct SearchData {
@@ -169,11 +169,12 @@ __global__ void initialise(SearchData data, size_t first_root) {
     double* moments = data.moments + lane * data.m * (data.m + 1) / 2 * nl;
     for (size_t index = threadIdx.x; index < nl; index += blockDim.x) {
         coefficients[index] = 1; integrals[index] = 1;
-        for (size_t q = 0; q < data.m; ++q) moments[q * nl + index] = data.factors[0][q * nl + index];
+        const double residual = fabs(data.residual[index % data.n]);
+        for (size_t q = 0; q < data.m; ++q) moments[q * nl + index] = residual * data.factors[0][q * nl + index];
     }
     if (!threadIdx.x) {
         data.lane_ids[lane] = lane;
-        data.states[lane] = {first_root + lane, 1, 0, 0, 0, 0, 0, 0, 0};
+        data.states[lane] = {first_root + lane, 1, 0, 0, 0, 0, 0, 0, 0, 0};
         size_t block = 0;
         while (data.intervals[block].high - data.intervals[block].low > 1) {
             const auto interval = data.intervals[block];
@@ -229,7 +230,7 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
         for (size_t q = data.m - k; q-- > 0;) {
             double total = 0;
             for (size_t index = threadIdx.x; index < nl; index += blockDim.x)
-                total += fabs(data.residual[index % data.n]) * prefix_moments[q * nl + index] * data.ratios[block * nl + index];
+                total += prefix_moments[q * nl + index] * data.ratios[block * nl + index];
             total = sum(total, scratch);
             if (q == 0 && total >= threshold && interval.high - interval.low > 1) {
                 double energy = 0;
@@ -305,7 +306,8 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
         for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) correlation += values[i] * data.residual[i];
         correlation = fabs(sum(correlation, scratch)) * data.weights[depth] / data.n;
         if (!threadIdx.x) {
-            if (cache_hit) ++state->cache_hits; else ++state->evaluated;
+            if (cache_hit) { if (state->cache_hits != UINT64_MAX) ++state->cache_hits; }
+            else ++state->evaluated;
             accepted = false;
             slot = SIZE_MAX - 1;
             if (!isfinite(correlation)) { state->omitted = CUDART_INF; depth = 0; }
@@ -365,8 +367,11 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
                     data.cache_lengths[cache_slot] = depth;
                     for (size_t j = 0; j < depth; ++j) data.cache_words[cache_slot * data.m + j] = word[j];
                     data.cache_ticks[cache_slot] = ++data.cache_clocks[lane];
+                    if (!cache_hit && state->cache_writes != UINT64_MAX) ++state->cache_writes;
                 }
             }
+            for (size_t index = threadIdx.x; index < (data.m - depth) * nl; index += blockDim.x)
+                child_moments[index] *= fabs(data.residual[index % data.n]);
             __syncthreads();
             if (!threadIdx.x) { next[depth] = 0; ++depth; }
         }

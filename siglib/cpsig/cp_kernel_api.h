@@ -16,7 +16,7 @@
 // Included inside each target namespace.
 
 template<typename T>
-void sig_lasso_(const T*, const T*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, siglasso::Result*);
+void sig_lasso_(const T*, const T*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, siglasso::Result*);
 
 template<std::floating_point T>
 void log_sig_combine_(const T* log_sig1, const T* log_sig2, T* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs);

@@ -130,6 +130,9 @@ public:
     size_t slab_used = 0;
     std::vector<double> weights;
     explicit Backend(const SigLassoOptions& o, std::shared_ptr<Budget> shared_budget = {}) : options(o), budget(shared_budget ? std::move(shared_budget) : std::make_shared<Budget>(o.memory_limit)) {
+        if (o.degree > 170) throw std::out_of_range("sig_lasso degree exceeds the finite factorial range");
+        weights.resize(o.degree + 1, 1.0);
+        for (size_t k = 1; k <= o.degree; ++k) weights[k] = weights[k - 1] * static_cast<double>(k);
         metadata = budget->reserve(multiply(o.samples, 64) + multiply(o.degree + o.dimension + o.targets, 256) + 4096, budget);
     }
     virtual ~Backend() = default;
@@ -172,6 +175,7 @@ public:
     virtual Array response(size_t target) = 0;
     virtual bool native_search(const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t, SearchResult&) { return false; }
     virtual bool has_native_search() const { return false; }
+    virtual bool reuse_search_bound() const { return false; }
     virtual void finish() {}
     virtual std::unique_ptr<Backend> solver_worker() { return {}; }
     virtual void for_targets(const std::function<void(size_t)>& action) { for (size_t j = 0; j < options.targets; ++j) action(j); }
