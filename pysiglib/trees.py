@@ -69,7 +69,7 @@ def _native_tree_basis_cached(dimension, degree, planar):
 
 @cache
 def _native_forest_basis_cached(dimension, degree, lyndon=False):
-    trees = _native_tree_basis_cached(dimension, degree, True)
+    trees = _native_tree_basis_cached(dimension, degree, planar=True)
     # Stream forest words so the compressed enumeration does not retain the full basis.
     return tuple(
         tuple(trees[idx] for idx in word)
@@ -79,15 +79,16 @@ def _native_forest_basis_cached(dimension, degree, lyndon=False):
     )
 
 
-def _basis(dimension, degree, family):
-    if family == "tree":
-        return _native_tree_basis_cached(dimension, degree, False)
-    return _native_forest_basis_cached(dimension, degree, family == "Lyndon forest")
+@cache
+def _tree_indices(dimension, degree):
+    basis = _native_tree_basis_cached(dimension, degree, planar=False)
+    return {tree: idx for idx, tree in enumerate(basis)}
 
 
 @cache
-def _basis_indices(dimension, degree, family):
-    return {element: idx for idx, element in enumerate(_basis(dimension, degree, family))}
+def _forest_indices(dimension, degree, *, lyndon):
+    basis = _native_forest_basis_cached(dimension, degree, lyndon=lyndon)
+    return {forest: idx for idx, forest in enumerate(basis)}
 
 
 def _check_tree(tree, dimension):
@@ -101,33 +102,23 @@ def _check_tree(tree, dimension):
         _check_tree(child, dimension)
 
 
-def _element_to_idx(element, dimension, degree, family, scalar_term=False):
-    _check_basis_parameters(dimension, degree)
-    check_type(scalar_term, "scalar_term", bool)
-    empty = None if family == "tree" else ()
-    if element == empty:
-        if not scalar_term:
-            raise ValueError(f"The empty {family} has no index with scalar_term=False")
-        return 0
-    if family == "tree":
-        _check_tree(element, dimension)
-    else:
-        check_type(element, "forest", tuple)
-        for tree in element:
-            _check_tree(tree, dimension)
-    idx = _basis_indices(dimension, degree, family).get(element)
+def _check_forest(forest, dimension):
+    check_type(forest, "forest", tuple)
+    for tree in forest:
+        _check_tree(tree, dimension)
+
+
+def _element_to_idx(element, indices, *, scalar_term=False):
+    idx = indices.get(element)
     if idx is None:
-        raise ValueError(f"element is not in the requested {family} basis")
+        raise ValueError("element is not in the requested coordinate basis")
     return idx + int(scalar_term)
 
 
-def _idx_to_element(idx, dimension, degree, family, scalar_term=False):
-    _check_basis_parameters(dimension, degree)
-    check_type(scalar_term, "scalar_term", bool)
-    basis = _basis(dimension, degree, family)
+def _idx_to_element(idx, basis, *, scalar_term=False, empty=None):
     _check_basis_index(idx, len(basis) + int(scalar_term))
     if scalar_term and idx == 0:
-        return None if family == "tree" else ()
+        return empty
     return basis[idx - int(scalar_term)]
 
 
@@ -148,7 +139,7 @@ def trees(dimension: int, degree: int, *, scalar_term: bool = False) -> list:
     """
     _check_basis_parameters(dimension, degree)
     check_type(scalar_term, "scalar_term", bool)
-    basis = _native_tree_basis_cached(dimension, degree, False)
+    basis = _native_tree_basis_cached(dimension, degree, planar=False)
     return [None, *basis] if scalar_term else list(basis)
 
 
@@ -175,7 +166,14 @@ def tree_to_idx(tree, dimension: int, degree: int, *, scalar_term: bool = False)
     :param scalar_term: Include the empty element at index zero. Default ``False``.
     :return: Index in :func:`trees` under the same options.
     """
-    return _element_to_idx(tree, dimension, degree, "tree", scalar_term)
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
+    if tree is None:
+        if not scalar_term:
+            raise ValueError("The empty tree has no index with scalar_term=False")
+        return 0
+    _check_tree(tree, dimension)
+    return _element_to_idx(tree, _tree_indices(dimension, degree), scalar_term=scalar_term)
 
 
 def idx_to_tree(idx: int, dimension: int, degree: int, *, scalar_term: bool = False):
@@ -187,7 +185,10 @@ def idx_to_tree(idx: int, dimension: int, degree: int, *, scalar_term: bool = Fa
     :param scalar_term: Include ``None`` at index zero. Default ``False``.
     :return: Tree tuple or ``None``, equal to ``trees(dimension, degree, scalar_term=scalar_term)[idx]``.
     """
-    return _idx_to_element(idx, dimension, degree, "tree", scalar_term)
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
+    basis = _native_tree_basis_cached(dimension, degree, planar=False)
+    return _idx_to_element(idx, basis, scalar_term=scalar_term, empty=None)
 
 
 def forests(dimension: int, degree: int, *, scalar_term: bool = False) -> list[tuple]:
@@ -207,7 +208,7 @@ def forests(dimension: int, degree: int, *, scalar_term: bool = False) -> list[t
     """
     _check_basis_parameters(dimension, degree)
     check_type(scalar_term, "scalar_term", bool)
-    basis = _native_forest_basis_cached(dimension, degree)
+    basis = _native_forest_basis_cached(dimension, degree, lyndon=False)
     return [(), *basis] if scalar_term else list(basis)
 
 
@@ -220,7 +221,15 @@ def forest_to_idx(forest: tuple, dimension: int, degree: int, *, scalar_term: bo
     :param scalar_term: Include the empty forest ``()`` at index zero. Default ``False``.
     :return: Index in :func:`forests`, distinct from the compressed :func:`lyndon_forest_to_idx` index.
     """
-    return _element_to_idx(forest, dimension, degree, "forest", scalar_term)
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
+    _check_forest(forest, dimension)
+    if not forest:
+        if not scalar_term:
+            raise ValueError("The empty forest has no index with scalar_term=False")
+        return 0
+    indices = _forest_indices(dimension, degree, lyndon=False)
+    return _element_to_idx(forest, indices, scalar_term=scalar_term)
 
 
 def idx_to_forest(idx: int, dimension: int, degree: int, *, scalar_term: bool = False) -> tuple:
@@ -232,7 +241,10 @@ def idx_to_forest(idx: int, dimension: int, degree: int, *, scalar_term: bool = 
     :param scalar_term: Include the empty forest at index zero. Default ``False``.
     :return: Forest tuple at ``forests(dimension, degree, scalar_term=scalar_term)[idx]``.
     """
-    return _idx_to_element(idx, dimension, degree, "forest", scalar_term)
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
+    basis = _native_forest_basis_cached(dimension, degree, lyndon=False)
+    return _idx_to_element(idx, basis, scalar_term=scalar_term, empty=())
 
 
 def lyndon_forests(dimension: int, degree: int) -> list[tuple]:
@@ -252,7 +264,7 @@ def lyndon_forests(dimension: int, degree: int) -> list[tuple]:
         [((0,),), (((0,), 0),)]
     """
     _check_basis_parameters(dimension, degree)
-    return list(_native_forest_basis_cached(dimension, degree, True))
+    return list(_native_forest_basis_cached(dimension, degree, lyndon=True))
 
 
 def lyndon_forest_to_idx(forest: tuple, dimension: int, degree: int) -> int:
@@ -263,7 +275,11 @@ def lyndon_forest_to_idx(forest: tuple, dimension: int, degree: int) -> int:
     :param degree: Inclusive maximum total node count.
     :return: Index in :func:`lyndon_forests`. There is no scalar coordinate.
     """
-    return _element_to_idx(forest, dimension, degree, "Lyndon forest")
+    _check_basis_parameters(dimension, degree)
+    _check_forest(forest, dimension)
+    if not forest:
+        raise ValueError("The empty forest has no compressed index")
+    return _element_to_idx(forest, _forest_indices(dimension, degree, lyndon=True))
 
 
 def idx_to_lyndon_forest(idx: int, dimension: int, degree: int) -> tuple:
@@ -274,4 +290,6 @@ def idx_to_lyndon_forest(idx: int, dimension: int, degree: int) -> tuple:
     :param degree: Inclusive maximum total node count.
     :return: Forest tuple at ``lyndon_forests(dimension, degree)[idx]``. There is no scalar coordinate.
     """
-    return _idx_to_element(idx, dimension, degree, "Lyndon forest")
+    _check_basis_parameters(dimension, degree)
+    basis = _native_forest_basis_cached(dimension, degree, lyndon=True)
+    return _idx_to_element(idx, basis)
