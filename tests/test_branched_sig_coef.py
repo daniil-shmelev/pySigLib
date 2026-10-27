@@ -31,8 +31,7 @@ def test_extract_branched_sig_coef_all(device, planar, scalar_term):
     path = torch.rand((2, 5, dimension), dtype=torch.float64, device=device)
     bsig = pysiglib.branched_sig(
         path, degree, planar=planar, scalar_term=scalar_term)
-    basis = (pysiglib.forests if planar else pysiglib.trees)(dimension, degree, scalar_term=scalar_term)
-    requested = list(basis)
+    requested = (pysiglib.forests if planar else pysiglib.trees)(dimension, degree, scalar_term=scalar_term)
 
     actual = pysiglib.extract_branched_sig_coef(
         bsig,

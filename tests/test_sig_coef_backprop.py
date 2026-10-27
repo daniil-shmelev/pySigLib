@@ -249,7 +249,7 @@ def test_sig_coef_backprop_batch_3(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_coef_backprop_full_batch(device):
     X = torch.rand(size=(32, 100, 3), dtype=torch.float64, device=device)
-    words = list(pysiglib.words(3, 3, scalar_term=True))
+    words = pysiglib.words(3, 3, scalar_term=True)
 
     sig = pysiglib.sig(X, 3)
     derivs = torch.ones_like(sig)
@@ -269,7 +269,7 @@ def test_sig_coef_backprop_full_batch(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_coef_backprop_time_aug_full_batch(device):
     X = torch.rand(size=(32, 100, 2), dtype=torch.float64, device=device)
-    words = list(pysiglib.words(3, 3, scalar_term=True))
+    words = pysiglib.words(3, 3, scalar_term=True)
 
     sig = pysiglib.sig(X, 3, time_aug=True)
     derivs = torch.ones_like(sig)
@@ -289,7 +289,7 @@ def test_sig_coef_backprop_time_aug_full_batch(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_coef_backprop_lead_lag_full_batch(device):
     X = torch.rand(size=(32, 100, 2), dtype=torch.float64, device=device)
-    words = list(pysiglib.words(4, 3, scalar_term=True))
+    words = pysiglib.words(4, 3, scalar_term=True)
 
     sig = pysiglib.sig(X, 3, lead_lag=True)
     derivs = torch.ones_like(sig)
@@ -309,7 +309,7 @@ def test_sig_coef_backprop_lead_lag_full_batch(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_coef_backprop_time_aug_lead_lag_full_batch(device):
     X = torch.rand(size=(32, 100, 2), dtype=torch.float64, device=device)
-    words = list(pysiglib.words(5, 3, scalar_term=True))
+    words = pysiglib.words(5, 3, scalar_term=True)
 
     sig = pysiglib.sig(X, 3, time_aug=True, lead_lag=True)
     derivs = torch.ones_like(sig)
@@ -334,7 +334,7 @@ def test_sig_coef_backprop_time_aug_lead_lag_full_batch(device):
 def test_sig_coef_torch_api_full(device):
     X1 = torch.rand(size=(32, 100, 3), dtype=torch.float64, device=device, requires_grad = True)
     X2 = X1.detach().clone().requires_grad_(True)
-    words = list(pysiglib.words(3, 3))
+    words = pysiglib.words(3, 3)
 
     sig = pysiglib.torch_api.sig(X1, 3)
     assert_device(sig, device)
@@ -357,7 +357,7 @@ def test_sig_coef_torch_api_full(device):
 def test_sig_coef_time_aug_torch_api_full(device):
     X1 = torch.rand(size=(32, 100, 3), dtype=torch.float64, device=device, requires_grad = True)
     X2 = X1.detach().clone().requires_grad_(True)
-    words = list(pysiglib.words(4, 3))
+    words = pysiglib.words(4, 3)
 
     sig = pysiglib.torch_api.sig(X1, 3, time_aug=True)
     assert_device(sig, device)
@@ -380,7 +380,7 @@ def test_sig_coef_time_aug_torch_api_full(device):
 def test_sig_coef_lead_lag_torch_api_full(device):
     X1 = torch.rand(size=(32, 100, 2), dtype=torch.float64, device=device, requires_grad = True)
     X2 = X1.detach().clone().requires_grad_(True)
-    words = list(pysiglib.words(4, 3))
+    words = pysiglib.words(4, 3)
 
     sig = pysiglib.torch_api.sig(X1, 3, lead_lag=True)
     assert_device(sig, device)
@@ -403,7 +403,7 @@ def test_sig_coef_lead_lag_torch_api_full(device):
 def test_sig_coef_time_aug_lead_lag_torch_api_full(device):
     X1 = torch.rand(size=(32, 100, 2), dtype=torch.float64, device=device, requires_grad = True)
     X2 = X1.detach().clone().requires_grad_(True)
-    words = list(pysiglib.words(5, 3))
+    words = pysiglib.words(5, 3)
 
     sig = pysiglib.torch_api.sig(X1, 3, time_aug=True, lead_lag=True)
     assert_device(sig, device)
@@ -426,7 +426,7 @@ def test_sig_coef_time_aug_lead_lag_torch_api_full(device):
 def test_extract_sig_coef_torch_api_full(device):
     X1 = torch.rand(size=(32, 100, 3), dtype=torch.float64, device=device, requires_grad = True)
     X2 = X1.detach().clone().requires_grad_(True)
-    words = list(pysiglib.words(3, 2))
+    words = pysiglib.words(3, 2)
 
     sig = pysiglib.torch_api.sig(X1, 3)
     assert_device(sig, device)

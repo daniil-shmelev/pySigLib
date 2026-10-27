@@ -21,27 +21,27 @@ import pysiglib
 
 def test_tree_native_order():
     # Root label is the innermost loop, after the child-ID sequence.
-    assert pysiglib.trees(2, 2) == (
+    assert pysiglib.trees(2, 2) == [
         (0,), (1,), ((0,), 0), ((0,), 1), ((1,), 0), ((1,), 1),
-    )
+    ]
 
 
 def test_forest_native_order():
-    assert pysiglib.forests(2, 2) == (
+    assert pysiglib.forests(2, 2) == [
         ((0,),), ((1,),),
         ((0,), (0,)), ((0,), (1,)),
         ((1,), (0,)), ((1,), (1,)),
         (((0,), 0),), (((0,), 1),), (((1,), 0),), (((1,), 1),),
-    )
+    ]
 
 
 def test_weighted_lyndon_forests():
     a, b = (0,), ((0,), 0)
     # b is a single letter of weight two. ab has weight three; aa is not Lyndon.
-    assert pysiglib.lyndon_forests(1, 2) == ((a,), (b,))
-    assert pysiglib.lyndon_forests(1, 3) == (
+    assert pysiglib.lyndon_forests(1, 2) == [(a,), (b,)]
+    assert pysiglib.lyndon_forests(1, 3) == [
         (a,), (b,), (a, b), (((0,), (0,), 0),), ((((0,), 0), 0),),
-    )
+    ]
     assert pysiglib.forest_to_idx((b,), 1, 2) == 2
     assert pysiglib.lyndon_forest_to_idx((b,), 1, 2) == 1
 
@@ -56,11 +56,11 @@ def test_lyndon_uses_tree_ids_not_nested_tuple_order():
 @pytest.mark.parametrize("dimension,degree", [(1, 4), (2, 4), (3, 3)])
 @pytest.mark.parametrize("scalar_term", [False, True])
 def test_exact_tree_orders(dimension, degree, scalar_term):
-    reconstructed = tuple(
+    reconstructed = [
         tree
         for order in range(degree + 1)
         for tree in pysiglib.trees_of_order(dimension, order, scalar_term=scalar_term)
-    )
+    ]
     assert reconstructed == pysiglib.trees(dimension, degree, scalar_term=scalar_term)
 
 

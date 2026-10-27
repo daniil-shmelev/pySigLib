@@ -40,7 +40,7 @@ COMPRESSED = [
 @pytest.mark.parametrize("dimension,degree", [(0, 0), (0, 3), (2, 0), (1, 5), (2, 4), (3, 3)])
 def test_coordinate_contract(enumerate_, to_idx, from_idx, length, empty, dimension, degree):
     basis = enumerate_(dimension=dimension, degree=degree)
-    assert isinstance(basis, tuple)
+    assert isinstance(basis, list)
     # Ordinary log_sig_length requires positive arguments; enumeration also covers zero.
     expected = length(dimension, degree) if dimension and degree else 0
     assert len(set(basis)) == len(basis) == expected
@@ -59,7 +59,7 @@ def test_coordinate_contract(enumerate_, to_idx, from_idx, length, empty, dimens
 @pytest.mark.parametrize("dimension,degree", [(0, 0), (0, 3), (2, 0), (1, 3), (2, 3)])
 def test_scalar_contract(enumerate_, to_idx, from_idx, length, empty, dimension, degree):
     basis = enumerate_(dimension, degree, scalar_term=True)
-    assert basis == (empty,) + enumerate_(dimension, degree)
+    assert basis == [empty] + enumerate_(dimension, degree)
     assert len(basis) == length(dimension, degree, scalar_term=True)
     for i, element in enumerate(basis):
         assert to_idx(element, dimension, degree, scalar_term=True) == i
@@ -116,13 +116,40 @@ def test_index_type_validation(enumerate_, to_idx, from_idx, length, empty):
 @pytest.mark.parametrize("dimension,degree", [(0, 0), (0, 3), (2, 0), (1, 4), (3, 3)])
 @pytest.mark.parametrize("scalar_term", [False, True])
 def test_exact_word_lengths(dimension, degree, scalar_term):
-    assert ps.words(dimension, degree, scalar_term=scalar_term) == tuple(
+    assert ps.words(dimension, degree, scalar_term=scalar_term) == [
         word for n in range(degree + 1)
         for word in ps.words_of_length(dimension, n, scalar_term=scalar_term)
-    )
-    assert ps.lyndon_words(dimension, degree) == tuple(
+    ]
+    assert ps.lyndon_words(dimension, degree) == [
         word for n in range(degree + 1) for word in ps.lyndon_words_of_length(dimension, n)
-    )
+    ]
+
+
+@pytest.mark.parametrize("enumerate_", [
+    ps.words, ps.lyndon_words, ps.trees, ps.forests, ps.lyndon_forests,
+    ps.words_of_length, ps.lyndon_words_of_length, ps.trees_of_order,
+])
+@pytest.mark.parametrize("dimension,degree", [(0, 0), (2, 0), (2, 3)])
+def test_mutating_enumeration_preserves_future_results(enumerate_, dimension, degree):
+    labels = enumerate_(dimension, degree)
+    expected = labels.copy()
+    labels[:] = [("changed",)]
+    assert enumerate_(dimension, degree) == expected
+
+
+@pytest.mark.parametrize("enumerate_,planar", [
+    (ps.trees, False), (ps.forests, True), (ps.lyndon_forests, True),
+])
+def test_enumerations_feed_branched_coefficient_selection(enumerate_, planar):
+    dimension, degree = 2, 3
+    labels = enumerate_(dimension, degree)
+    path = np.random.default_rng(79).normal(size=(7, dimension))
+    ps.prepare_branched_sig(dimension, degree, planar=planar, device="cpu")
+    signature = ps.branched_sig(path, degree, planar=planar)
+    ps.prepare_branched_sig_coef(dimension, labels, planar=planar, device="cpu")
+    actual = ps.branched_sig_coef(path, labels, planar=planar)
+    expected = ps.extract_branched_sig_coef(signature, labels, dimension, planar=planar)
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
 @pytest.mark.parametrize("branched", [False, True])

@@ -27,7 +27,7 @@ def test_extract_sig_coef_all(device):
     dimension, degree = 3, 4
     x = torch.rand(size=(100, dimension), device=device)
     sig = pysiglib.sig(x, degree)
-    words = list(pysiglib.words(dimension, degree))
+    words = pysiglib.words(dimension, degree)
     coefs = pysiglib.extract_sig_coef(sig, words, dimension)
     assert_device(coefs, device)
     check_close(sig, coefs)
@@ -39,7 +39,7 @@ def test_extract_sig_coef_lyndon(device):
     pysiglib.prepare_log_sig(dimension, degree, method=1)
     log_sig_full = pysiglib.log_sig(x, degree, method=0)
     log_sig = pysiglib.log_sig(x, degree, method=1)
-    words = list(pysiglib.lyndon_words(dimension, degree))
+    words = pysiglib.lyndon_words(dimension, degree)
     coefs = pysiglib.extract_sig_coef(log_sig_full, words, dimension)
     assert_device(coefs, device)
     check_close(log_sig, coefs)
@@ -114,7 +114,7 @@ def test_batch_sig_coef_prefixes(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_sig_coef_full(device):
     X = torch.rand(size=(100, 3), dtype=torch.float64, device=device)
-    multi_indices = list(pysiglib.words(3, 5))
+    multi_indices = pysiglib.words(3, 5)
 
     coeff = pysiglib.sig_coef(X, multi_indices)
     assert_device(coeff, device)
@@ -124,7 +124,7 @@ def test_sig_coef_full(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_batch_sig_coef_full(device):
     X = torch.rand(size=(10, 100, 3), device=device, dtype=torch.float64)
-    multi_indices = list(pysiglib.words(3, 5))
+    multi_indices = pysiglib.words(3, 5)
 
     coeff = pysiglib.sig_coef(X, multi_indices)
     assert_device(coeff, device)
@@ -134,7 +134,7 @@ def test_batch_sig_coef_full(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_batch_sig_coef_full_time_aug(device):
     X = torch.rand(size=(10, 100, 3), device=device, dtype=torch.float64)
-    multi_indices = list(pysiglib.words(4, 5))
+    multi_indices = pysiglib.words(4, 5)
 
     coeff = pysiglib.sig_coef(X, multi_indices, time_aug = True)
     assert_device(coeff, device)
@@ -144,7 +144,7 @@ def test_batch_sig_coef_full_time_aug(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_batch_sig_coef_full_lead_lag(device):
     X = torch.rand(size=(10, 100, 3), device=device, dtype=torch.float64)
-    multi_indices = list(pysiglib.words(6, 5))
+    multi_indices = pysiglib.words(6, 5)
 
     coeff = pysiglib.sig_coef(X, multi_indices, lead_lag = True)
     assert_device(coeff, device)
@@ -154,7 +154,7 @@ def test_batch_sig_coef_full_lead_lag(device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_batch_sig_coef_full_time_aug_lead_lag(device):
     X = torch.rand(size=(10, 100, 3), device=device, dtype=torch.float64)
-    multi_indices = list(pysiglib.words(7, 5))
+    multi_indices = pysiglib.words(7, 5)
 
     coeff = pysiglib.sig_coef(X, multi_indices, time_aug = True, lead_lag = True)
     assert_device(coeff, device)

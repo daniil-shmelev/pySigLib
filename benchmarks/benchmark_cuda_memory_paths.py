@@ -330,7 +330,7 @@ def make_matrix_case(name, spec):
 
     if kind == "branched_coef":
         planar = spec["planar"]
-        trees = list((pysiglib.forests if planar else pysiglib.trees)(dimension, degree))
+        trees = (pysiglib.forests if planar else pysiglib.trees)(dimension, degree)
         pysiglib.prepare_branched_sig_coef(
             dimension, trees, planar=planar, device="cuda")
         path = make_path(torch, batch, length, dimension, dtype)
@@ -501,7 +501,7 @@ def make_case(name, cache_dir):
 
     if name.startswith("branched_coef_fast"):
         batch, length, dimension, degree = 16, 32, 1, 6
-        trees = list(pysiglib.forests(dimension, degree, scalar_term=True))
+        trees = pysiglib.forests(dimension, degree, scalar_term=True)
         pysiglib.prepare_branched_sig_coef(
             dimension, trees, planar=True, device="cuda")
         path = make_path(torch, batch, length, dimension, float32)

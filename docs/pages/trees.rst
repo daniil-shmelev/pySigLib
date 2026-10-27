@@ -1,7 +1,7 @@
 Trees and forests
 =================
 
-These helpers enumerate and index the coordinate families used by branched signatures and log signatures. Every enumeration returns a tuple in numerical output order. ``dimension`` is the number of labels after any path augmentation, and ``degree`` is the inclusive maximum total number of nodes. Increasing ``degree`` appends labels without changing existing indices.
+These helpers enumerate and index the coordinate families used by branched signatures and log signatures. Every enumeration returns a fresh list in numerical output order. Individual trees and forests remain tuples. ``dimension`` is the number of labels after any path augmentation, and ``degree`` is the inclusive maximum total number of nodes. Increasing ``degree`` appends labels without changing existing indices.
 
 .. list-table:: Coordinate families
    :header-rows: 1
@@ -31,7 +31,7 @@ For Lyndon forests, each planar tree is a letter whose weight is its node count.
 
    leaf = (0,)
    chain = ((0,), 0)
-   assert pysiglib.lyndon_forests(1, 2) == ((leaf,), (chain,))
+   assert pysiglib.lyndon_forests(1, 2) == [(leaf,), (chain,)]
    assert (leaf, chain) in pysiglib.lyndon_forests(1, 3)
    assert pysiglib.forest_to_idx((chain,), 1, 2) == 2
    assert pysiglib.lyndon_forest_to_idx((chain,), 1, 2) == 1

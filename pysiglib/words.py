@@ -18,26 +18,30 @@
 import itertools
 from functools import cache
 
-from ._combinatorics import _check_index, _check_parameters, _check_scalar_term
-from .param_checks import check_word
+from .param_checks import (
+    _check_basis_index,
+    _check_basis_parameters,
+    check_type,
+    check_word,
+)
 
 
-def words_of_length(dimension: int, length: int, *, scalar_term: bool = False) -> tuple:
+def words_of_length(dimension: int, length: int, *, scalar_term: bool = False) -> list[tuple[int, ...]]:
     """Return words of exactly ``length`` letters, in lexicographic order.
 
     :param dimension: Alphabet size; letters range from zero to ``dimension - 1``.
     :param length: Exact word length.
     :param scalar_term: Include the empty word when ``length=0``. Default ``False``.
-    :return: Tuple of word tuples.
+    :return: Fresh list of word tuples.
     """
-    _check_parameters(dimension, length)
-    _check_scalar_term(scalar_term)
+    _check_basis_parameters(dimension, length)
+    check_type(scalar_term, "scalar_term", bool)
     if length == 0 and not scalar_term:
-        return ()
-    return tuple(itertools.product(range(dimension), repeat=length))
+        return []
+    return list(itertools.product(range(dimension), repeat=length))
 
 
-def words(dimension: int, degree: int, *, scalar_term: bool = False) -> tuple:
+def words(dimension: int, degree: int, *, scalar_term: bool = False) -> list[tuple[int, ...]]:
     """Return signature coordinate labels through ``degree`` in numerical output order.
 
     Words are ordered by length, then lexicographically. Increasing ``degree`` preserves the existing prefix and indices. The same labels index expanded log signatures (method 0).
@@ -45,22 +49,22 @@ def words(dimension: int, degree: int, *, scalar_term: bool = False) -> tuple:
     :param dimension: Alphabet size; use the effective dimension after any path augmentation.
     :param degree: Inclusive maximum word length.
     :param scalar_term: Include the empty word ``()`` at index zero. Default ``False``.
-    :return: Tuple of word tuples, matching :func:`idx_to_word` under the same options.
+    :return: Fresh list of word tuples, matching :func:`idx_to_word` under the same options.
 
     Example::
 
         >>> words(2, 2)
-        ((0,), (1,), (0, 0), (0, 1), (1, 0), (1, 1))
+        [(0,), (1,), (0, 0), (0, 1), (1, 0), (1, 1)]
         >>> words(2, 0, scalar_term=True)
-        ((),)
+        [()]
     """
-    _check_parameters(dimension, degree)
-    _check_scalar_term(scalar_term)
-    return tuple(
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
+    return [
         word
         for length in range(0 if scalar_term else 1, degree + 1)
         for word in itertools.product(range(dimension), repeat=length)
-    )
+    ]
 
 
 @cache
@@ -82,15 +86,15 @@ def _lyndon_words_of_length(dimension, length):
     return tuple(result)
 
 
-def lyndon_words_of_length(dimension: int, length: int) -> tuple:
+def lyndon_words_of_length(dimension: int, length: int) -> list[tuple[int, ...]]:
     """Return Lyndon words of exactly ``length`` letters, in lexicographic order.
 
     :param dimension: Alphabet size.
-    :param length: Exact word length. Zero returns an empty tuple.
-    :return: Tuple of nonempty Lyndon-word tuples.
+    :param length: Exact word length. Zero returns an empty list.
+    :return: Fresh list of nonempty Lyndon-word tuples.
     """
-    _check_parameters(dimension, length)
-    return _lyndon_words_of_length(dimension, length)
+    _check_basis_parameters(dimension, length)
+    return list(_lyndon_words_of_length(dimension, length))
 
 
 @cache
@@ -102,17 +106,17 @@ def _lyndon_words(dimension, degree):
     )
 
 
-def lyndon_words(dimension: int, degree: int) -> tuple:
+def lyndon_words(dimension: int, degree: int) -> list[tuple[int, ...]]:
     """Return compressed log-signature labels through ``degree`` in numerical output order.
 
     The order is word length, then lexicographic order. Method 1 returns selected expanded word coefficients; methods 2 and 3 return coefficients in the standard Lyndon bracket basis with these same labels. Full and compressed indices are distinct. Increasing ``degree`` preserves the existing prefix and indices.
 
     :param dimension: Alphabet size; use the effective dimension after any path augmentation.
     :param degree: Inclusive maximum word length.
-    :return: Tuple of Lyndon-word tuples. The empty word is always excluded.
+    :return: Fresh list of Lyndon-word tuples. The empty word is always excluded.
     """
-    _check_parameters(dimension, degree)
-    return _lyndon_words(dimension, degree)
+    _check_basis_parameters(dimension, degree)
+    return list(_lyndon_words(dimension, degree))
 
 
 def _is_lyndon(word):
@@ -137,8 +141,8 @@ def word_to_idx(word: tuple[int, ...], dimension: int, degree: int, *, scalar_te
     :param scalar_term: Include the empty word at index zero. Default ``False``.
     :return: Index in :func:`words` with the same options.
     """
-    _check_parameters(dimension, degree)
-    _check_scalar_term(scalar_term)
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
     check_word(word, dimension, "word")
     if len(word) > degree:
         raise ValueError("word exceeds the requested degree")
@@ -159,10 +163,10 @@ def idx_to_word(idx: int, dimension: int, degree: int, *, scalar_term: bool = Fa
     :param scalar_term: Include the empty word at index zero. Default ``False``.
     :return: Word tuple, equal to ``words(dimension, degree, scalar_term=scalar_term)[idx]``.
     """
-    _check_parameters(dimension, degree)
-    _check_scalar_term(scalar_term)
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
     count = degree if dimension == 1 else (dimension ** (degree + 1) - dimension) // (dimension - 1)
-    _check_index(idx, count + int(scalar_term))
+    _check_basis_index(idx, count + int(scalar_term))
     if not scalar_term:
         idx += 1
     word = []
@@ -185,7 +189,7 @@ def lyndon_word_to_idx(word: tuple[int, ...], dimension: int, degree: int) -> in
     :param degree: Inclusive maximum word length.
     :return: Index in :func:`lyndon_words`, distinct from the full :func:`word_to_idx` index.
     """
-    _check_parameters(dimension, degree)
+    _check_basis_parameters(dimension, degree)
     check_word(word, dimension, "word")
     if len(word) > degree or not _is_lyndon(word):
         raise ValueError("word is not in the requested Lyndon-word basis")
@@ -200,6 +204,7 @@ def idx_to_lyndon_word(idx: int, dimension: int, degree: int) -> tuple:
     :param degree: Inclusive maximum word length.
     :return: Word tuple at ``lyndon_words(dimension, degree)[idx]``. There is no scalar coordinate.
     """
-    basis = lyndon_words(dimension, degree)
-    _check_index(idx, len(basis))
+    _check_basis_parameters(dimension, degree)
+    basis = _lyndon_words(dimension, degree)
+    _check_basis_index(idx, len(basis))
     return basis[idx]

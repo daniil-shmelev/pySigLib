@@ -20,8 +20,7 @@ A decorated tree is ``(child_1, ..., child_k, root_label)``; a leaf is ``(label,
 
 from functools import cache
 
-from ._combinatorics import _check_index, _check_parameters, _check_scalar_term
-from .param_checks import check_type
+from .param_checks import _check_basis_index, _check_basis_parameters, check_type
 from .words import _is_lyndon
 
 
@@ -103,8 +102,8 @@ def _check_tree(tree, dimension):
 
 
 def _element_to_idx(element, dimension, degree, family, scalar_term=False):
-    _check_parameters(dimension, degree)
-    _check_scalar_term(scalar_term)
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
     empty = None if family == "tree" else ()
     if element == empty:
         if not scalar_term:
@@ -123,16 +122,16 @@ def _element_to_idx(element, dimension, degree, family, scalar_term=False):
 
 
 def _idx_to_element(idx, dimension, degree, family, scalar_term=False):
-    _check_parameters(dimension, degree)
-    _check_scalar_term(scalar_term)
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
     basis = _basis(dimension, degree, family)
-    _check_index(idx, len(basis) + int(scalar_term))
+    _check_basis_index(idx, len(basis) + int(scalar_term))
     if scalar_term and idx == 0:
         return None if family == "tree" else ()
     return basis[idx - int(scalar_term)]
 
 
-def trees(dimension: int, degree: int, *, scalar_term: bool = False) -> tuple:
+def trees(dimension: int, degree: int, *, scalar_term: bool = False) -> list:
     """Return decorated nonplanar BCK trees through ``degree`` in numerical output order.
 
     The order is node count, native child-ID sequence, then root label. Children are sorted by native tree ID. Increasing ``degree`` preserves existing indices. These labels index both BCK signatures and BCK log signatures. For planar MKW coordinates use :func:`forests`.
@@ -140,31 +139,31 @@ def trees(dimension: int, degree: int, *, scalar_term: bool = False) -> tuple:
     :param dimension: Number of labels; use the effective dimension after any path augmentation.
     :param degree: Inclusive maximum number of nodes.
     :param scalar_term: Include the empty element ``None`` at index zero. Default ``False``.
-    :return: Tuple of tree tuples, matching :func:`idx_to_tree` under the same options.
+    :return: Fresh list of tree tuples, matching :func:`idx_to_tree` under the same options.
 
     Example::
 
         >>> trees(2, 2)
-        ((0,), (1,), ((0,), 0), ((0,), 1), ((1,), 0), ((1,), 1))
+        [(0,), (1,), ((0,), 0), ((0,), 1), ((1,), 0), ((1,), 1)]
     """
-    _check_parameters(dimension, degree)
-    _check_scalar_term(scalar_term)
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
     basis = _native_tree_basis_cached(dimension, degree, False)
-    return (None,) + basis if scalar_term else basis
+    return [None, *basis] if scalar_term else list(basis)
 
 
-def trees_of_order(dimension: int, order: int, *, scalar_term: bool = False) -> tuple:
+def trees_of_order(dimension: int, order: int, *, scalar_term: bool = False) -> list:
     """Return nonplanar BCK trees of exactly ``order`` nodes in native order.
 
     :param dimension: Number of labels.
     :param order: Exact number of nodes.
     :param scalar_term: Include ``None`` when ``order=0``. Default ``False``.
-    :return: Tuple of tree tuples, or ``(None,)`` for order zero with ``scalar_term=True``.
+    :return: Fresh list of tree tuples, or ``[None]`` for order zero with ``scalar_term=True``.
     """
     basis = trees(dimension, order, scalar_term=scalar_term)
     if order == 0:
         return basis
-    return tuple(tree for tree in basis if tree is not None and _tree_node_count(tree) == order)
+    return [tree for tree in basis if tree is not None and _tree_node_count(tree) == order]
 
 
 def tree_to_idx(tree, dimension: int, degree: int, *, scalar_term: bool = False) -> int:
@@ -191,7 +190,7 @@ def idx_to_tree(idx: int, dimension: int, degree: int, *, scalar_term: bool = Fa
     return _idx_to_element(idx, dimension, degree, "tree", scalar_term)
 
 
-def forests(dimension: int, degree: int, *, scalar_term: bool = False) -> tuple:
+def forests(dimension: int, degree: int, *, scalar_term: bool = False) -> list[tuple]:
     """Return ordered planar MKW forests through ``degree`` in numerical output order.
 
     Each forest is a tuple of decorated planar trees. The order is total node count, then lexicographic order of native tree IDs. Increasing ``degree`` preserves existing indices. These labels index MKW signatures and expanded MKW log signatures (method 0).
@@ -199,17 +198,17 @@ def forests(dimension: int, degree: int, *, scalar_term: bool = False) -> tuple:
     :param dimension: Number of labels; use the effective dimension after any path augmentation.
     :param degree: Inclusive maximum total number of nodes across all component trees.
     :param scalar_term: Include the empty forest ``()`` at index zero. Default ``False``.
-    :return: Tuple of forests, matching :func:`idx_to_forest` under the same options.
+    :return: Fresh list of forest tuples, matching :func:`idx_to_forest` under the same options.
 
     Example::
 
         >>> forests(1, 2)
-        (((0,),), ((0,), (0,)), (((0,), 0),))
+        [((0,),), ((0,), (0,)), (((0,), 0),)]
     """
-    _check_parameters(dimension, degree)
-    _check_scalar_term(scalar_term)
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
     basis = _native_forest_basis_cached(dimension, degree)
-    return ((),) + basis if scalar_term else basis
+    return [(), *basis] if scalar_term else list(basis)
 
 
 def forest_to_idx(forest: tuple, dimension: int, degree: int, *, scalar_term: bool = False) -> int:
@@ -236,7 +235,7 @@ def idx_to_forest(idx: int, dimension: int, degree: int, *, scalar_term: bool = 
     return _idx_to_element(idx, dimension, degree, "forest", scalar_term)
 
 
-def lyndon_forests(dimension: int, degree: int) -> tuple:
+def lyndon_forests(dimension: int, degree: int) -> list[tuple]:
     """Return weighted Lyndon-forest labels for compressed MKW log signatures.
 
     Each planar tree is a letter ordered by its native tree ID, with weight equal to its number of nodes. Lyndon forests are the nonempty Lyndon words over this alphabet, ordered by total weight and then lexicographically by tree IDs. Increasing ``degree`` preserves existing indices.
@@ -245,15 +244,15 @@ def lyndon_forests(dimension: int, degree: int) -> tuple:
 
     :param dimension: Number of labels; use the effective dimension after any path augmentation.
     :param degree: Inclusive maximum total node count, regardless of the number of component trees.
-    :return: Tuple of forest tuples. The empty forest is always excluded.
+    :return: Fresh list of forest tuples. The empty forest is always excluded.
 
     Example::
 
         >>> lyndon_forests(1, 2)
-        (((0,),), (((0,), 0),))
+        [((0,),), (((0,), 0),)]
     """
-    _check_parameters(dimension, degree)
-    return _native_forest_basis_cached(dimension, degree, True)
+    _check_basis_parameters(dimension, degree)
+    return list(_native_forest_basis_cached(dimension, degree, True))
 
 
 def lyndon_forest_to_idx(forest: tuple, dimension: int, degree: int) -> int:
