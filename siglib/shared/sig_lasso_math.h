@@ -16,6 +16,8 @@
 #pragma once
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -26,6 +28,40 @@
 #endif
 
 namespace siglasso {
+
+struct TerminalCache {
+    double* data = nullptr;
+    size_t capacity = 0, degree = 0;
+    double generation = 1;
+    SIGLASSO_HD size_t slot(const uint64_t* prefix, size_t k, uint64_t a, uint64_t b, size_t q) const {
+        uint64_t hash = 0xcbf29ce484222325ULL;
+        for (size_t j = 0; j < k; ++j) hash = (hash ^ prefix[j]) * 0x100000001b3ULL;
+        hash = (hash ^ a) * 0x100000001b3ULL;
+        if (q == 2) hash = (hash ^ b) * 0x100000001b3ULL;
+        hash ^= hash >> 32;
+        return hash & (capacity - 1);
+    }
+    SIGLASSO_HD bool get(size_t index, const uint64_t* prefix, size_t k, uint64_t a, uint64_t b, size_t q, double& value) const {
+        const double* entry = data + index * (degree + 3);
+        if (entry[0] != k + q || entry[1] != generation) return false;
+        for (size_t j = 0; j < k + q; ++j) {
+            uint64_t letter;
+            memcpy(&letter, entry + 2 + j, sizeof(letter));
+            if (letter != (j < k ? prefix[j] : j == k ? a : b)) return false;
+        }
+        value = entry[degree + 2];
+        return true;
+    }
+    SIGLASSO_HD void put(size_t index, const uint64_t* prefix, size_t k, uint64_t a, uint64_t b, size_t q, double value) const {
+        double* entry = data + index * (degree + 3);
+        entry[0] = k + q; entry[1] = generation;
+        for (size_t j = 0; j < k + q; ++j) {
+            const uint64_t letter = j < k ? prefix[j] : j == k ? a : b;
+            memcpy(entry + 2 + j, &letter, sizeof(letter));
+        }
+        entry[degree + 2] = value;
+    }
+};
 
 SIGLASSO_HD inline void prepare_sample(const double* increments, double* variation, double* after,
     size_t i, size_t n, size_t segments, size_t dimension) {
@@ -94,16 +130,117 @@ SIGLASSO_HD inline void child_sample(const double* increments, const double* par
     values[i] = carry;
 }
 
-SIGLASSO_HD inline double moment_value(const double* coefficients, const double* factors, size_t k, size_t q,
-    size_t j, size_t i, size_t n, size_t segments) {
-    double value = 0;
-    for (size_t a = 0; a <= k; ++a)
-        value += fabs(coefficients[(j * (k + 1) + a) * n + i]) * factors[((q * (k + 1) + a) * segments + j) * n + i];
-    return value;
+SIGLASSO_HD inline size_t integral_scratch_size(size_t degree) {
+    return 57 * (degree + 1) + 162 + degree;
+}
+
+// A negative moment requests expansion when subdivision cannot resolve the sign.
+// Terminal blocks can use the Bernstein absolute-coefficient envelope before signed checks.
+SIGLASSO_HD inline void absolute_moments(const double* coefficients, const double* factors,
+    double step, double tail, size_t k, size_t levels, size_t j, size_t i, size_t n, size_t segments,
+    double* scratch, double* out, bool envelope = false) {
+    const size_t width = k + 1, nl = n * segments;
+    bool positive = false, negative = false;
+    for (size_t a = 0; a <= k; ++a) {
+        const double value = coefficients[(j * width + a) * n + i];
+        const double c = envelope ? fabs(value) : value;
+        scratch[a] = c; positive |= c > 0; negative |= c < 0;
+    }
+    if (!positive || !negative || !step) {
+        for (size_t q = 0; q < levels; ++q) {
+            double value = 0;
+            for (size_t a = 0; a <= k; ++a)
+                value += scratch[a] * factors[(q * width + a) * nl + j * n + i];
+            out[q * nl] = fabs(value);
+        }
+        return;
+    }
+    if (k == 1) {
+        const double fraction = fabs(scratch[0]) / (fabs(scratch[0]) + fabs(scratch[1]));
+        const double middle = fabs((1 - fraction) * scratch[0] + fraction * scratch[1]);
+        const double left_step = step * fraction, right_step = step * (1 - fraction), left_tail = tail + right_step;
+        const double* constants = factors + levels * width * nl;
+        for (size_t q = 0; q < levels; ++q) {
+            out[q * nl] = (fabs(scratch[0]) * factor_value(&left_step, &left_tail, constants, k, q + 1, 0, 0, 0, 1)
+                + middle * factor_value(&left_step, &left_tail, constants, k, q + 1, 1, 0, 0, 1)
+                + middle * factor_value(&right_step, &tail, constants, k, q + 1, 0, 0, 0, 1)
+                + fabs(scratch[1]) * factor_value(&right_step, &tail, constants, k, q + 1, 1, 0, 0, 1)) / n;
+        }
+        return;
+    }
+    double* left = scratch + 54 * width;
+    double* right = left + 54;
+    double* depth = right + 54;
+    double* work = depth + 54;
+    double* split_left = work + width;
+    double* split_right = split_left + width;
+    double* original = split_right + width;
+    const double* constants = factors + levels * width * nl;
+    for (size_t q = 0; q < levels; ++q) {
+        original[q] = 0; out[q * nl] = 0;
+        for (size_t a = 0; a <= k; ++a)
+            original[q] += fabs(scratch[a]) * factors[(q * width + a) * nl + j * n + i];
+    }
+    left[0] = 0; right[0] = 1; depth[0] = 0;
+    size_t count = 1, visits = 0;
+    while (count) {
+        const size_t slot = --count;
+        double* c = scratch + slot * width;
+        const double low = left[slot], high = right[slot], level = depth[slot];
+        positive = negative = false;
+        for (size_t a = 0; a <= k; ++a) { positive |= c[a] > 0; negative |= c[a] < 0; }
+        const double local_step = step * (high - low), local_tail = tail + step * (1 - high);
+        bool resolved = !positive || !negative;
+        if (!resolved) {
+            resolved = true;
+            for (size_t q = 0; q < levels; ++q) {
+                double upper = 0, signed_value = 0;
+                for (size_t a = 0; a <= k; ++a) {
+                    const double f = factor_value(&local_step, &local_tail, constants, k, q + 1, a, 0, 0, 1) / n;
+                    upper += fabs(c[a]) * f; signed_value += c[a] * f;
+                }
+                if (upper - fabs(signed_value) > 128 * 2.2204460492503131e-16 * original[q] * (high - low)) resolved = false;
+            }
+        }
+        if (resolved) {
+            for (size_t q = 0; q < levels; ++q) {
+                double value = 0;
+                for (size_t a = 0; a <= k; ++a)
+                    value += fabs(c[a]) * factor_value(&local_step, &local_tail, constants, k, q + 1, a, 0, 0, 1) / n;
+                out[q * nl] += value;
+            }
+            continue;
+        }
+        const double middle = (low + high) * .5;
+        if (level >= 52 || middle == low || middle == high || ++visits > 256 * width) {
+            for (size_t q = 0; q < levels; ++q) out[q * nl] = -1;
+            return;
+        }
+        for (size_t a = 0; a <= k; ++a) work[a] = c[a];
+        split_left[0] = work[0]; split_right[k] = work[k];
+        for (size_t h = 1; h <= k; ++h) {
+            for (size_t a = 0; a <= k - h; ++a) work[a] = .5 * work[a] + .5 * work[a + 1];
+            split_left[h] = work[0]; split_right[k - h] = work[k - h];
+        }
+        for (size_t a = 0; a <= k; ++a) { c[a] = split_right[a]; c[width + a] = split_left[a]; }
+        left[slot] = middle; right[slot] = high; depth[slot] = level + 1;
+        left[slot + 1] = low; right[slot + 1] = middle; depth[slot + 1] = level + 1;
+        count += 2;
+    }
+}
+
+SIGLASSO_HD inline void trapezoidal_moments(double start, double end, double step, double tail,
+    double weight, size_t k, size_t levels, size_t stride, double* out, const double* reciprocals = nullptr) {
+    double left = fabs(start) * step * weight * .5, right = fabs(end) * step * weight * .5;
+    for (size_t q = 0; q < levels; ++q) {
+        out[q * stride] = left + right;
+        const double ratio = reciprocals ? (k + q + 2) * reciprocals[q + 1] : static_cast<double>(k + q + 2) / (q + 1);
+        left *= (tail + step) * ratio; right *= tail * ratio;
+    }
 }
 
 // Correlation-only terminal contraction; no descendant feature column is stored.
-SIGLASSO_HD inline double terminal_sample(const double* coefficients, const double* integrals, const double* increments,
+SIGLASSO_HD inline double terminal_sample(const double* integrals, const double* linear_integrals, const double* increments,
     size_t a, size_t b, size_t q, size_t k, size_t i, size_t n, size_t segments, size_t dimension, double& magnitude) {
     double value = 0, correction = 0, tail = 0;
     magnitude = 0;
@@ -114,9 +251,7 @@ SIGLASSO_HD inline double terminal_sample(const double* coefficients, const doub
         if (q == 2) {
             const double other = increments[(j * dimension + b) * n + i];
             tail += other;
-            double linear = 0;
-            for (size_t h = 0; h <= k; ++h) linear += (h + 1) * coefficients[(j * (k + 1) + h) * n + i];
-            linear /= (k + 1) * (k + 2);
+            const double linear = linear_integrals[j * n + i];
             term = step * (integral * tail - linear * other);
             absolute = fabs(step) * (fabs(integral * tail) + fabs(linear * other));
         }

@@ -21,7 +21,7 @@ class LassoOptions(Structure):
         'samples', 'length', 'dimension', 'degree', 'targets', 'max_iter',
         'batch_size', 'cache_bytes', 'memory_limit')]
     _fields_ += [('tolerance', c_double), ('n_jobs', c_int)]
-    _fields_ += [(name, c_uint32) for name in ('full', 'intercept', 'single_precision', 'search_method')]
+    _fields_ += [(name, c_uint32) for name in ('full', 'intercept', 'single_precision', 'search_method', 'bound_method')]
 
 
 class LassoStats(Structure):
@@ -34,6 +34,7 @@ class LassoStats(Structure):
         'factorization_seconds', 'certification_seconds')]
     _fields_ += [(name, c_uint64) for name in ('numerical_failures', 'full_transform_calls')]
     _fields_ += [(name, c_uint64) for name in ('terminal_queries', 'terminal_pruned', 'terminal_correlations')]
+    _fields_ += [('output_bytes', c_uint64), ('output_seconds', c_double)]
 
 
 class LassoShape(Structure):
@@ -42,7 +43,8 @@ class LassoShape(Structure):
 
 class LassoOutput(Structure):
     _fields_ = [(name, POINTER(c_uint64)) for name in ('letters', 'offsets', 'converged', 'iterations')]
-    _fields_ += [(name, c_void_p) for name in ('coefficients', 'intercepts', 'objectives', 'gaps')]
+    _fields_ += [(name, c_void_p) for name in ('coefficients', 'intercepts', 'objectives', 'gaps', 'signatures')]
+    _fields_ += [('stats', POINTER(LassoStats))]
 
 
 LassoAllocator = CFUNCTYPE(c_int, c_void_p, POINTER(LassoShape), POINTER(LassoOutput))

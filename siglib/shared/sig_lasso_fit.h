@@ -208,7 +208,10 @@ inline Result fit(Backend& backend, const std::vector<double>& alphas, const std
     std::sort(selected.begin(), selected.end()); selected.erase(std::unique(selected.begin(), selected.end()), selected.end());
     std::sort(selected.begin(), selected.end(), [&](size_t a, size_t b) { return word_less(columns[a].word, columns[b].word); });
     std::unordered_map<size_t, size_t> positions;
-    for (size_t j = 0; j < selected.size(); ++j) { positions.emplace(selected[j], j); result.words.push_back(columns[selected[j]].word); }
+    for (size_t j = 0; j < selected.size(); ++j) {
+        positions.emplace(selected[j], j); result.words.push_back(columns[selected[j]].word);
+        result.selected_columns.push_back(columns[selected[j]]);
+    }
     result.coefficients.resize(multiply(selected.size(), result.targets));
     for (size_t target = 0; target < result.targets; ++target) for (size_t j = 0; j < selected_slots[target].size(); ++j)
         if (coefficients[target][j]) result.coefficients[positions.at(selected_slots[target][j]) * result.targets + target] = coefficients[target][j];

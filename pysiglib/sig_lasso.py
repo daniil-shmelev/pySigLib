@@ -14,7 +14,7 @@
 # =========================================================================
 
 from contextlib import nullcontext
-from ctypes import POINTER, byref, c_double, c_uint64, c_void_p, cast
+from ctypes import POINTER, byref, c_double, c_uint64, c_void_p, cast, pointer
 import warnings
 
 import numpy as np
@@ -48,6 +48,7 @@ def _check_status(status, device):
 
 
 def sig_lasso(path, y, degree, alpha, *, method="sparse", search_method="grouped",
+              bound_method="approximate",
               fit_intercept=True, tol=None, max_iter=1000,
               batch_size=128, initial_words=(), cache_bytes=256 * 1024**2,
               memory_limit=None, time_aug=False, lead_lag=False, end_time=1.0,
@@ -60,9 +61,16 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", search_method="grouped
     after path transforms. Constant paths have zero nonempty features.
     Columns are centred when fitting an intercept; they are not standardised.
     ``method='full'`` computes the
-    complete dictionary; ``method='sparse'`` searches it with Bernstein prefix
-    coefficients and remaining-variation suffix bounds, integrated on each
-    linear segment. Both use the same native solver.
+    complete dictionary; ``method='sparse'`` searches it using the absolute
+    prefix and remaining variation. Both use the same native solver.
+
+    ``bound_method='approximate'`` uses node-based trapezoidal integration
+    throughout search and stopping. ``dual_gap`` is then an estimate and
+    ``converged`` means that the approximate stopping test passed, without
+    an exact check or repair pass. ``bound_method='exact'`` integrates the
+    absolute Bernstein prefix polynomial with conservative numerical padding.
+    Full fits ignore this option. Both modes compute exact signature columns
+    up to floating-point error, directly in native code.
 
     ``search_method`` selects sparse-search optimisations: ``'plain'`` uses
     individual child bounds, ``'grouped'`` also tests channel groups,
@@ -83,8 +91,8 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", search_method="grouped
     alphabet and seeds the candidate pool. ``batch_size`` limits candidates
     added per search. Both methods use feature-sign search with QR updates.
     ``max_iter`` limits signed correction steps per response. ``tol`` defaults to
-    1e-8 for float64 or 1e-5 for float32. Convergence uses a full-dictionary
-    primal-dual gap scaled by ``max(1, mean(centered_y**2))``.
+    1e-8 for float64 or 1e-5 for float32. The stopping gap is scaled by
+    ``max(1, mean(centered_y**2))`` and is estimated in approximate sparse mode.
 
     ``cache_bytes`` bounds optional caches. ``memory_limit`` optionally
     limits owned native fitting allocations, including factors and library
@@ -93,11 +101,14 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", search_method="grouped
     the current stream on the input device. Transform parameters have the
     same meaning as in :func:`sig`.
 
-    Returns a dictionary with ``words``, ``coef``, ``intercept``, ``objective``,
+    Returns a dictionary with ``words``, ``coef``, ``signatures``, ``intercept``, ``objective``,
     ``dual_gap``, ``converged``, ``n_iter`` and ``stats``. Words are the union
     of nonzero coordinates, sorted by degree then lexicographically.
     Coefficients have shape ``(n_words,)`` or ``(n_words, n_targets)``.
-    Prediction is ``intercept + normalized_signature[:, words] @ coef``.
+    ``signatures`` contains uncentred normalized features for the returned
+    words, with shape ``(*batch, n_words)``. Training prediction is
+    ``intercept + signatures @ coef``. The feature matrix is shared across
+    targets, and its storage is included in ``memory_limit`` and ``peak_bytes``.
     For new paths, apply the same transforms, divide each path by its
     variation, and multiply each selected degree-k signature by ``k!``.
     Numeric arrays preserve the input type, dtype and device. The result
@@ -129,6 +140,8 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", search_method="grouped
     search_methods = {'plain': 0, 'grouped': 1, 'signed': 2, 'grouped_signed': 3}
     if not isinstance(search_method, str) or search_method not in search_methods:
         raise ValueError("search_method must be 'plain', 'grouped', 'signed', or 'grouped_signed'")
+    if not isinstance(bound_method, str) or bound_method not in ('approximate', 'exact'):
+        raise ValueError("bound_method must be 'approximate' or 'exact'")
     for name, value in (('fit_intercept', fit_intercept), ('time_aug', time_aug), ('lead_lag', lead_lag)):
         check_type(value, name, bool)
     check_n_jobs(n_jobs)
@@ -190,32 +203,35 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", search_method="grouped
         response = ensure_own_contiguous_storage(y.detach() if isinstance(y, torch.Tensor) else y)
         options = LassoOptions(data.batch_size, data.length, data.dimension, degree, targets,
                                max_iter, batch_size, cache_bytes, memory_limit or 0,
-                               tol, n_jobs, method == 'full', fit_intercept, inputs.dtype == 'float32', search_methods[search_method])
+                               tol, n_jobs, method == 'full', fit_intercept, inputs.dtype == 'float32', search_methods[search_method], bound_method == 'exact')
         scalar = DTYPES[data.dtype]
         result_shape = None
-        out_letters = out_offsets = coefficients = values = converged = iterations = None
+        out_letters = out_offsets = coefficients = signatures = values = converged = iterations = None
         allocation_error = None
 
         @LassoAllocator
         def allocate_output(context, shape, output):
-            nonlocal result_shape, out_letters, out_offsets, coefficients, values, converged, iterations, allocation_error
+            nonlocal result_shape, out_letters, out_offsets, coefficients, signatures, values, converged, iterations, allocation_error
             try:
                 result_shape = LassoShape.from_buffer_copy(shape.contents)
                 out_letters = np.empty(result_shape.letters, dtype=np.uint64)
                 out_offsets = np.empty(result_shape.words + 1, dtype=np.uint64)
                 if isinstance(path, np.ndarray):
                     coefficients = np.empty((result_shape.words, targets), dtype=path.dtype)
+                    signatures = np.empty((*inputs.batch_shape, result_shape.words), dtype=path.dtype)
                     values = [np.empty(targets, dtype=path.dtype) for _ in range(3)]
                 else:
                     coefficients = torch.empty((result_shape.words, targets), dtype=path.dtype, device=path.device)
+                    signatures = torch.empty((*inputs.batch_shape, result_shape.words), dtype=path.dtype, device=path.device)
                     values = [torch.empty(targets, dtype=path.dtype, device=path.device) for _ in range(3)]
                 converged = np.empty(targets, dtype=np.uint64)
                 iterations = np.empty(targets, dtype=np.uint64)
                 for name, array in zip(('letters', 'offsets', 'converged', 'iterations'),
                                        (out_letters, out_offsets, converged, iterations)):
                     setattr(output.contents, name, _pointer(array, c_uint64))
-                for name, array in zip(('coefficients', 'intercepts', 'objectives', 'gaps'), (coefficients, *values)):
+                for name, array in zip(('coefficients', 'intercepts', 'objectives', 'gaps', 'signatures'), (coefficients, *values, signatures)):
                     setattr(output.contents, name, cast(_pointer(array, scalar), c_void_p).value)
+                output.contents.stats = pointer(result_shape.stats)
                 return 0
             except BaseException as error:
                 allocation_error = error
@@ -236,13 +252,14 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse", search_method="grouped
             reason = 'numerical accuracy limit' if np.any((~converged) & (iterations < max_iter)) else 'max_iter limit'
             if result_shape.stats.numerical_failures:
                 reason = 'active-equation or objective-descent accuracy limit after a QR rebuild'
-            warnings.warn('sig_lasso reached the ' + reason + ' before the requested global gap; inspect converged and dual_gap', RuntimeWarning, stacklevel=2)
+            criterion = 'estimated gap' if method == 'sparse' and bound_method == 'approximate' else 'global gap'
+            warnings.warn('sig_lasso reached the ' + reason + ' before the requested ' + criterion + '; inspect converged and dual_gap', RuntimeWarning, stacklevel=2)
         stats = {name: getattr(result_shape.stats, name) for name, _ in result_shape.stats._fields_}
         stats['dictionary_size'] = sum(data.dimension**k for k in range(1, degree + 1))
         if isinstance(path, torch.Tensor):
             converged = torch.as_tensor(converged, device=path.device)
             iterations = torch.as_tensor(iterations.astype(np.int64), device=path.device)
-        return dict(words=selected, coef=coefficients[:, 0] if single else coefficients,
+        return dict(words=selected, coef=coefficients[:, 0] if single else coefficients, signatures=signatures,
                     intercept=values[0][0] if single else values[0], objective=values[1][0] if single else values[1],
                     dual_gap=values[2][0] if single else values[2], converged=converged[0] if single else converged,
                     n_iter=iterations[0] if single else iterations, stats=stats)

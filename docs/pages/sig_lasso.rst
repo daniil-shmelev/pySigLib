@@ -8,7 +8,6 @@ Example
 
 .. code-block:: python
 
-    import math
     import numpy as np
     import pysiglib
 
@@ -16,14 +15,7 @@ Example
     paths = rng.normal(size=(100, 12, 6)).cumsum(axis=1) * 0.1
     y = paths[:, -1, 0] - paths[:, 0, 0]
     model = pysiglib.sig_lasso(paths, y, 4, alpha=0.01)
-    prediction = np.full(len(paths), model['intercept'])
-    if model['words']:
-        variation = np.max(np.abs(np.diff(paths, axis=1)), axis=2).sum(axis=1)
-        scale = np.where(variation > 0, variation, 1.)
-        normalized = (paths - paths[:, :1]) / scale[:, None, None]
-        features = pysiglib.sig_coef(normalized, model['words'])
-        weights = [math.factorial(len(w)) for w in model['words']]
-        prediction += (features * weights) @ model['coef']
+    prediction = model['signatures'] @ model['coef'] + model['intercept']
 
 The same call accepts CUDA Torch tensors. It returns tensors on the input
 device, with no autograd connection. A fit needs at least one sample.
@@ -54,24 +46,35 @@ zero steps. ``batch_size`` limits the number of candidates returned by one
 search, not the active-set size. ``initial_words`` seeds the candidate pool;
 it does not force their coefficients to be nonzero.
 
-The sparse method bounds all omitted words with Bernstein prefix polynomials
-and the remaining-variation suffix bound
+The sparse method integrates the absolute prefix against the remaining-variation bound
 ``|S(x)_{t,T}^v| <= V(t)**q / q!``, where ``q = len(v)`` and
 ``V(t) = integral_t^T ||dx(s)||_infinity``. A backward sum computes the
-remaining variation at segment endpoints. The bound is integrated exactly
-on each linear segment, up to floating-point error. Factors are computed
-as needed and reused across searches; no table of recursive suffix envelopes
-is stored. Binary alphabet blocks and signed one-letter energy bounds tighten
-the search. It never calls the full
-signature transform. A final search checks the residual formed from the
+remaining variation at segment endpoints. Two integration methods are available:
+
+* ``bound_method="approximate"`` (default) uses the trapezoidal rule at all
+  path nodes. Exact time-prefix values are computed through Chen's relation,
+  without polynomial arrays. The proxy can underestimate a branch score and
+  miss words. It is used throughout search and stopping, with no exact
+  verification or repair pass. ``dual_gap`` is an estimate and ``converged``
+  means that the approximate stopping test passed.
+* ``bound_method="exact"`` integrates the absolute prefix polynomial in
+  Bernstein form. De Casteljau subdivision resolves sign changes. Sign-definite
+  intervals are integrated analytically for all required suffix degrees.
+  Numerically unresolved intervals cause branch expansion.
+
+Full fitting ignores ``bound_method``. Both methods compute exact feature
+columns up to floating-point error. Binary alphabet blocks and signed
+one-letter energy bounds tighten the search. Sparse fitting never calls the
+full signature transform or ``sig_coef``. A final search checks the residual formed from the
 returned coefficients, including float32 rounding. Residual-based and
 active-equality dual candidates receive full-dictionary feasibility checks.
-The actual dual vector is checked again after scaling. ``converged`` requires
+The actual dual vector is checked again after scaling, using the selected
+integral method. ``converged`` requires
 the primal-dual gap to be at most ``tol * max(1, mean(centered_y**2))``.
 An iteration limit or output rounding can prevent a requested tolerance.
 In that case the fit returns ``converged=False`` with a warning.
 
-This is a floating-point certificate with conservative bound padding, not an
+For full and exact sparse fits, this is a floating-point certificate with conservative bound padding, not an
 interval-arithmetic proof. Correlated features can give nonunique coefficients.
 Use predictions, objectives and gaps to compare fits.
 
@@ -151,10 +154,15 @@ Phase times cover preparation, search, column insertion, solves and final
 certification. ``factorization_seconds`` is included in solve time, except
 for factor work during certification. Parallel factor times sum worker time.
 CUDA subphase times measure host calls and can include asynchronous work;
-use a GPU profiler for kernel durations. Total fitting time includes completion.
+use a GPU profiler for kernel durations. Total fitting time includes completion
+and feature export. ``output_seconds`` measures export, and ``output_bytes``
+counts output buffers. ``signatures`` has shape ``(*path_batch_shape, n_words)``
+and contains uncentred ``k! * S(x)^w / V(x)**k`` values in returned-word order.
+It contains one matrix shared across responses, or an empty last axis when
+the support is empty. Values are gathered from stored columns without recomputation.
 ``total_seconds`` is native fitting time; Python validation and transfer costs
 are additional. ``peak_bytes`` is the peak accounted workspace, including
-conservative metadata and existing-kernel scratch allowances. It is not process
+outputs, conservative metadata and existing-kernel scratch allowances. It is not process
 RSS. ``memory_limit`` applies to this accounting, including owned CPU and CUDA
 buffers, factors, candidate metadata, queried library scratch and documented
 handle-workspace allowances. Caller-owned input arrays and the CUDA runtime

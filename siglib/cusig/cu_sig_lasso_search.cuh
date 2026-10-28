@@ -77,6 +77,15 @@ struct SearchData {
     uint32_t search_method;
     bool intercept;
     const double *variation, *after;
+    bool exact;
+    double *time_values, *linear_integrals, *integral_scratch;
+    size_t scratch_size, cache_stride;
+    siglasso::TerminalCache terminal_cache;
+    double* terminal_residual;
+    double* terminal_products;
+    const uint64_t* frontier;
+    size_t root_groups;
+    const double* reciprocals;
 };
 
 struct CandidateBatch { double *values, *scores; uint64_t *words, *lengths, *count; };
@@ -142,12 +151,35 @@ __global__ void merge_candidates(SearchData data, size_t lanes, CandidateBatch p
 }
 
 __device__ double sum(double value, double* scratch) {
-    scratch[threadIdx.x] = value; __syncthreads();
-    for (unsigned int stride = blockDim.x / 2; stride; stride /= 2) {
-        if (threadIdx.x < stride) scratch[threadIdx.x] += scratch[threadIdx.x + stride];
-        __syncthreads();
+    const unsigned int lane = threadIdx.x % 32, warp = threadIdx.x / 32;
+    for (unsigned int stride = 16; stride; stride /= 2) value += __shfl_down_sync(0xffffffffU, value, stride);
+    if (!lane) scratch[warp] = value;
+    __syncthreads();
+    if (!warp) {
+        value = lane < blockDim.x / 32 ? scratch[lane] : 0;
+        for (unsigned int stride = 16; stride; stride /= 2) value += __shfl_down_sync(0xffffffffU, value, stride);
+        if (!lane) scratch[0] = value;
     }
+    __syncthreads();
     const double total = scratch[0]; __syncthreads(); return total;
+}
+__global__ void prepare_terminal_residual(SearchData data) {
+    __shared__ double scratch[128];
+    double mean = 0, lower = 0, upper = 0;
+    if (data.intercept) {
+        for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) mean += data.residual[i];
+        mean = sum(mean, scratch) / data.n;
+    }
+    for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) {
+        const double r = fabs(data.residual[i] - mean), v = data.variation[i] + data.after[i];
+        if (data.m > 1) lower += r * pow(v, static_cast<double>(data.m - 1));
+        upper += r * pow(v, static_cast<double>(data.m));
+    }
+    lower = sum(lower, scratch); upper = sum(upper, scratch);
+    if (!threadIdx.x) {
+        data.terminal_residual[0] = mean;
+        data.terminal_residual[1] = lower; data.terminal_residual[2] = upper;
+    }
 }
 __device__ bool is_active(const SearchData& data, const uint64_t* word, size_t length) {
     uint64_t hash = 0xcbf29ce484222325ULL;
@@ -168,52 +200,78 @@ __device__ bool is_active(const SearchData& data, const uint64_t* word, size_t l
 __global__ void initialise(SearchData data, size_t first_root) {
     const size_t lane = blockIdx.x;
     const size_t nl = data.n * data.l;
-    double* coefficients = data.coefficients + lane * data.m * (data.m + 1) / 2 * nl;
-    double* integrals = data.integrals + lane * data.m * nl;
+    double* coefficients = data.exact ? data.coefficients + lane * data.m * (data.m + 1) / 2 * nl : nullptr;
+    double* endpoints = !data.exact ? data.time_values + lane * data.m * data.n * (data.l + 1) : nullptr;
+    double* integrals = data.integrals ? data.integrals + lane * data.m * nl : nullptr;
     double* moments = data.moments + lane * data.m * (data.m + 1) / 2 * nl;
     for (size_t index = threadIdx.x; index < nl; index += blockDim.x) {
-        coefficients[index] = 1; integrals[index] = 1;
+        if (coefficients) coefficients[index] = 1;
+        if (endpoints) endpoints[index] = 1;
+        if (integrals) integrals[index] = 1;
+        if (data.linear_integrals) data.linear_integrals[lane * data.m * nl + index] = .5;
         const double residual = fabs(data.residual[index % data.n]);
-        for (size_t q = 0; q < data.m; ++q) moments[q * nl + index] = residual * data.factors[0][q * nl + index];
+        if (data.exact) for (size_t q = 0; q < data.m; ++q) moments[q * nl + index] = residual * data.factors[0][q * nl + index];
+        else {
+            siglasso::trapezoidal_moments(1, 1, data.variation[index], data.after[index], data.weights[1] / data.n, 0, data.m, nl, moments + index, data.reciprocals);
+            for (size_t q = 0; q < data.m; ++q) moments[q * nl + index] *= residual;
+        }
     }
+    if (endpoints) for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) endpoints[nl + i] = 1;
     if (!threadIdx.x) {
         data.lane_ids[lane] = lane;
         data.states[lane] = {first_root + lane, 1, 0, 0, 0, 0, 0, 0, 0, 0};
-        size_t block = (data.search_method & 1) ? 0 : first_root + lane;
+        const size_t root = (first_root + lane) / data.root_groups;
+        size_t block = (data.search_method & 1) ? 0 : root;
         while (data.intervals[block].high - data.intervals[block].low > 1) {
             const auto interval = data.intervals[block];
             const size_t middle = (interval.low + interval.high) / 2;
-            block += first_root + lane < middle ? 1 : 2 * (middle - interval.low);
+            block += root < middle ? 1 : 2 * (middle - interval.low);
         }
         data.next[lane * data.m] = block;
     }
 }
 
 __global__ void compact_lanes(SearchData data, size_t count) {
+    __shared__ unsigned int counts[4];
     const unsigned int lane = threadIdx.x;
+    const unsigned int warp = lane / 32;
     const bool active = lane < count && data.states[lane].depth != 0;
     const unsigned int mask = __ballot_sync(0xffffffffU, active);
-    if (active) data.lane_ids[__popc(mask & ((1U << lane) - 1))] = lane;
+    if (lane % 32 == 0) counts[warp] = __popc(mask);
+    __syncthreads();
+    unsigned int offset = 0;
+    for (unsigned int j = 0; j < warp; ++j) offset += counts[j];
+    if (active) data.lane_ids[offset + __popc(mask & ((1U << (lane % 32)) - 1))] = lane;
 }
 
-__global__ void traverse(SearchData data, double alpha, size_t steps) {
+template<bool Exact>
+__global__ __launch_bounds__(128, Exact ? 2 : 4) void traverse(SearchData data, double alpha, size_t steps) {
     __shared__ double scratch[128], threshold;
     __shared__ size_t depth, block, slot, cache_slot;
-    __shared__ bool accepted, cache_hit;
+    __shared__ bool accepted, cache_hit, terminal_hits[4];
+    __shared__ double terminal_bounds[4];
+    __shared__ size_t terminal_slots[4];
     const size_t lane = data.lane_ids[blockIdx.x], nl = data.n * data.l;
     const size_t triangular = data.m * (data.m + 1) / 2;
-    double* coefficients = data.coefficients + lane * triangular * nl;
+    auto terminal_cache = data.terminal_cache;
+    if (terminal_cache.capacity) terminal_cache.data += lane * terminal_cache.capacity * (data.m + 3);
+    double* coefficients = Exact ? data.coefficients + lane * triangular * nl : nullptr;
+    double* endpoints = !Exact ? data.time_values + lane * data.m * data.n * (data.l + 1) : nullptr;
     double* moments = data.moments + lane * triangular * nl;
-    double* integrals = data.integrals + lane * data.m * nl;
+    double* integrals = data.integrals ? data.integrals + lane * data.m * nl : nullptr;
+    double* linears = data.linear_integrals ? data.linear_integrals + lane * data.m * nl : nullptr;
     double* values = data.values + lane * data.n;
+    double* products = data.terminal_products ? data.terminal_products + lane * nl : nullptr;
     uint64_t* word = data.words + lane * data.m;
     uint64_t* next = data.next + lane * data.m;
     Lane* state = data.states + lane;
+    const size_t group_root = data.frontier[state->root % data.root_groups];
+    const size_t group_end = data.root_groups > 1 ? data.intervals[group_root].end : data.blocks;
     if (!threadIdx.x) { depth = state->depth; state->requested = 0; }
     __syncthreads();
     for (size_t step = 0; step < steps && depth; ++step) {
         if (!threadIdx.x) {
-            while (depth && next[depth - 1] >= data.blocks) --depth;
+            while (depth && next[depth - 1] >= (depth == 2 ? group_end : data.blocks)) --depth;
             if (depth) block = next[depth - 1];
             threshold = alpha;
             if (data.capacity && state->count == data.capacity) {
@@ -227,15 +285,22 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
         if (!depth) break;
         const auto interval = data.intervals[block];
         const size_t k = depth - 1;
-        const double* prefix = coefficients + k * (k + 1) / 2 * nl;
-        const double* prefix_integrals = integrals + k * nl;
+        const double* prefix = coefficients ? coefficients + k * (k + 1) / 2 * nl : nullptr;
+        const double* prefix_integrals = integrals ? integrals + k * nl : nullptr;
+        const double* prefix_linear = linears ? linears + k * nl : nullptr;
         const double* prefix_moments = moments + k * (2 * data.m - k + 1) / 2 * nl;
         double bound = 0;
         for (size_t q = data.m - k; q-- > 0;) {
             double total = 0;
-            for (size_t index = threadIdx.x; index < nl; index += blockDim.x)
-                total += prefix_moments[q * nl + index] * data.ratios[block * nl + index];
+            bool uncertain = false;
+            for (size_t index = threadIdx.x; index < nl; index += blockDim.x) {
+                const double moment = prefix_moments[q * nl + index];
+                uncertain |= moment < 0;
+                total += fmax(0.0, moment) * data.ratios[block * nl + index];
+            }
+            const bool expand = __syncthreads_or(uncertain);
             total = sum(total, scratch);
+            if (expand) { bound = threshold; break; }
             if (q == 0 && total >= threshold && interval.high - interval.low > 1) {
                 double energy = 0;
                 for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) energy += fabs(data.residual[i]) * siglasso::energy_sample(
@@ -248,33 +313,85 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
         }
         if ((data.search_method & 2) && data.m - k <= 2 && bound >= threshold) {
             if (!threadIdx.x) ++state->terminal_queries;
-            double mean = 0;
-            if (data.intercept) {
-                for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) mean += data.residual[i];
-                mean = sum(mean, scratch) / data.n;
-            }
+            const double mean = data.terminal_residual[0];
             const double error = siglasso::terminal_roundoff(k, data.n, data.l);
             double signed_bound = 0;
             bool complete = true;
             for (size_t q = 1; q <= data.m - k && complete; ++q) {
-                double cap = 0;
-                for (size_t i = threadIdx.x; i < data.n; i += blockDim.x)
-                    cap += fabs(data.residual[i] - mean) * pow(data.variation[i] + data.after[i], static_cast<double>(k + q));
-                cap = sum(cap, scratch);
-                for (size_t a = interval.low; a < interval.high && complete; ++a) for (size_t b = 0; b < (q == 2 ? data.d : 1); ++b) {
-                    double correlation = 0, magnitude = 0;
-                    for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) {
-                        double absolute;
-                        const double value = siglasso::terminal_sample(prefix, prefix_integrals, data.increments,
-                            a, b, q, k, i, data.n, data.l, data.d, absolute);
-                        correlation += (data.residual[i] - mean) * value;
-                        magnitude += fabs(data.residual[i] - mean) * absolute;
+                const double cap = data.terminal_residual[1 + (k + q == data.m)];
+                const size_t suffixes = q == 2 ? data.d : 1, count = interval.high - interval.low;
+                const unsigned int width = count >= 4 ? 32 : blockDim.x, groups = blockDim.x / width;
+                const unsigned int group = threadIdx.x / width, rank = threadIdx.x % width;
+                const size_t tiles = (count + groups - 1) / groups;
+                const bool reuse = count >= (q == 2 ? 2 : 4);
+                bool prepared = false;
+                double product_magnitude = 0;
+                for (size_t tile = 0; tile < tiles * suffixes && complete; ++tile) {
+                    const size_t start = tile % tiles * groups, index = start + group, a = interval.low + index, b = tile / tiles;
+                    if (start == 0) prepared = false;
+                    if (!rank) {
+                        terminal_hits[group] = false; terminal_bounds[group] = 0;
+                        if (index < count && terminal_cache.capacity) {
+                            terminal_slots[group] = terminal_cache.slot(word, k, a, b, q);
+                            terminal_hits[group] = terminal_cache.get(terminal_slots[group], word, k, a, b, q, terminal_bounds[group]);
+                        }
                     }
-                    correlation = sum(correlation, scratch); magnitude = sum(magnitude, scratch);
-                    if (!threadIdx.x) ++state->terminal_correlations;
-                    const double upper = (fabs(correlation) * data.weights[k + q] + error * (magnitude * data.weights[k + q] + cap)) / data.n + 1e-15;
-                    if (!isfinite(upper) || upper * (1 + 1e-10) >= threshold) { complete = false; break; }
-                    signed_bound = fmax(signed_bound, upper);
+                    __syncthreads();
+                    if (reuse && !prepared && __syncthreads_or(index < count && !terminal_hits[group])) {
+                        // One variation majorant covers all first letters in this block.
+                        double absolute = 0;
+                        for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) {
+                            double tail = 0;
+                            for (size_t j = data.l; j-- > 0;) {
+                                const double other = q == 2 ? data.increments[(j * data.d + b) * data.n + i] : 0; tail += other;
+                                const double integral = prefix_integrals[j * data.n + i];
+                                const double left = q == 2 ? integral * tail : integral;
+                                const double right = q == 2 ? prefix_linear[j * data.n + i] * other : 0;
+                                const double r = data.residual[i] - mean;
+                                products[j * data.n + i] = r * (left - right);
+                                absolute += fabs(r) * (fabs(left) + fabs(right)) * data.variation[j * data.n + i];
+                            }
+                        }
+                        product_magnitude = sum(absolute, scratch) * (1 + siglasso::terminal_roundoff(k, nl, data.l));
+                        __syncthreads(); prepared = true;
+                    }
+                    if (index < count && !terminal_hits[group]) {
+                        double correlation = 0, magnitude = 0;
+                        if (reuse) {
+                            for (size_t j = 0; j < data.l; ++j) for (size_t i = rank; i < data.n; i += width) {
+                                const double step = data.increments[(j * data.d + a) * data.n + i];
+                                correlation += step * products[j * data.n + i];
+                            }
+                        } else for (size_t i = rank; i < data.n; i += width) {
+                            double absolute;
+                            const double value = siglasso::terminal_sample(prefix_integrals, prefix_linear, data.increments,
+                                a, b, q, k, i, data.n, data.l, data.d, absolute);
+                            correlation += (data.residual[i] - mean) * value;
+                            magnitude += fabs(data.residual[i] - mean) * absolute;
+                        }
+                        if (width == 32) {
+                            for (unsigned int stride = 16; stride; stride /= 2) {
+                                correlation += __shfl_down_sync(0xffffffffU, correlation, stride);
+                                if (!reuse) magnitude += __shfl_down_sync(0xffffffffU, magnitude, stride);
+                            }
+                        } else { correlation = sum(correlation, scratch); if (!reuse) magnitude = sum(magnitude, scratch); }
+                        if (reuse) magnitude = product_magnitude;
+                        const double rounding = reuse ? siglasso::terminal_roundoff(k, nl, data.l) : error;
+                        if (!rank) terminal_bounds[group] = (fabs(correlation) * data.weights[k + q]
+                            + rounding * (magnitude * data.weights[k + q] + cap)) / data.n + 1e-15;
+                    }
+                    __syncthreads();
+                    for (size_t j = 0; j < groups && start + j < count; ++j) {
+                        const double upper = terminal_bounds[j];
+                        if (!threadIdx.x && !terminal_hits[j]) {
+                            ++state->terminal_correlations;
+                            if (terminal_cache.capacity && isfinite(upper)) terminal_cache.put(terminal_slots[j], word, k,
+                                interval.low + start + j, b, q, upper);
+                        }
+                        if (!isfinite(upper) || upper * (1 + 1e-10) >= threshold) complete = false;
+                        signed_bound = fmax(signed_bound, upper);
+                    }
+                    __syncthreads();
                 }
             }
             if (complete && signed_bound * (1 + 1e-10) + 1e-15 < threshold) {
@@ -294,7 +411,7 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
         __syncthreads();
         if (!depth) break;
         if (bound < threshold || interval.high - interval.low > 1) continue;
-        if (depth < data.m && !data.factors[depth]) {
+        if (Exact && depth < data.m && !data.factors[depth]) {
             if (!threadIdx.x) { next[k] = block; state->requested = depth; }
             break;
         }
@@ -308,12 +425,77 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
             }
         }
         __syncthreads();
-        double* child = depth < data.m ? coefficients + depth * (depth + 1) / 2 * nl : nullptr;
-        const size_t cache_stride = (data.m + 2) * nl + data.n;
+        double* child = Exact && depth < data.m ? coefficients + depth * (depth + 1) / 2 * nl : nullptr;
+        double* child_times = !Exact && depth < data.m ? endpoints + depth * data.n * (data.l + 1) : nullptr;
+        double* child_integrals = depth < data.m && integrals && (Exact || (data.search_method & 1) || data.m - depth <= 2) ? integrals + depth * nl : nullptr;
+        double* child_linears = depth < data.m && linears && data.m - depth <= 2 ? linears + depth * nl : nullptr;
+        const size_t state_size = Exact ? (depth + 1) * nl : data.n * (data.l + 1);
+        const size_t integral_size = child_integrals ? nl : 0, linear_size = child_linears ? nl : 0;
+        const size_t moment_offset = state_size + integral_size + linear_size;
+        const size_t cache_stride = data.cache_stride;
         double* cached = data.prefix_cache ? data.prefix_cache + cache_slot * cache_stride : nullptr;
         if (cache_hit) {
             for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) values[i] = cached[cache_stride - data.n + i];
-            for (size_t index = threadIdx.x; index < (depth + 1) * nl; index += blockDim.x) child[index] = cached[index];
+            for (size_t index = threadIdx.x; index < state_size; index += blockDim.x) (Exact ? child : child_times)[index] = cached[index];
+        } else if (!Exact && depth == data.m && prefix_integrals) {
+            for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) {
+                double value = 0;
+                for (size_t j = 0; j < data.l; ++j)
+                    value += data.increments[(j * data.d + interval.low) * data.n + i] * prefix_integrals[j * data.n + i];
+                values[i] = value;
+            }
+        } else if (!Exact && data.segment_scan) {
+            const unsigned int warp_lane = threadIdx.x % 32;
+            for (size_t i = threadIdx.x / 32; i < data.n; i += blockDim.x / 32) {
+                double carry = 0;
+                if (child_times && !warp_lane) child_times[i] = 0;
+                for (size_t begin = 0; begin < data.l; begin += 32) {
+                    const size_t j = begin + warp_lane;
+                    double change = 0, integral = 0, linear = 0, product = 1;
+                    if (j < data.l) for (size_t h = 1; h <= depth; ++h) {
+                        product *= data.increments[(j * data.d + word[depth - h]) * data.n + i] * data.reciprocals[h];
+                        const double term = endpoints[((depth - h) * (data.l + 1) + j) * data.n + i] * product;
+                        change += term;
+                        if (child_integrals) integral += term * data.reciprocals[h + 1];
+                        if (child_linears) linear += term * data.reciprocals[h + 2];
+                    }
+                    double inclusive = change;
+                    for (unsigned int offset = 1; offset < 32; offset *= 2) {
+                        const double previous = __shfl_up_sync(0xffffffffU, inclusive, offset);
+                        if (warp_lane >= offset) inclusive += previous;
+                    }
+                    const double previous = __shfl_up_sync(0xffffffffU, inclusive, 1);
+                    const double start = carry + (warp_lane ? previous : 0);
+                    if (child_times && j < data.l) {
+                        child_times[(j + 1) * data.n + i] = carry + inclusive;
+                        if (child_integrals) child_integrals[j * data.n + i] = start + integral;
+                        if (child_linears) child_linears[j * data.n + i] = start / 2 + linear;
+                    }
+                    carry += __shfl_sync(0xffffffffU, inclusive, 31);
+                }
+                if (!warp_lane) values[i] = carry;
+            }
+        } else if (!Exact) {
+            for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) {
+                double value = 0;
+                if (child_times) child_times[i] = 0;
+                for (size_t j = 0; j < data.l; ++j) {
+                    double product = 1, integral = value, linear = value / 2;
+                    for (size_t h = 1; h <= depth; ++h) {
+                        product *= data.increments[(j * data.d + word[depth - h]) * data.n + i] * data.reciprocals[h];
+                        const double term = endpoints[((depth - h) * (data.l + 1) + j) * data.n + i] * product;
+                        value += term;
+                        if (child_integrals) integral += term * data.reciprocals[h + 1];
+                        if (child_linears) linear += term * data.reciprocals[h + 2];
+                    }
+                    if (child_times) {
+                        child_times[(j + 1) * data.n + i] = value;
+                        if (child_integrals) child_integrals[j * data.n + i] = integral;
+                        if (child_linears) child_linears[j * data.n + i] = linear;
+                    }
+                }
+                values[i] = value;
+            }
         } else if (data.segment_scan) {
             const unsigned int warp_lane = threadIdx.x % 32;
             for (size_t i = threadIdx.x / 32; i < data.n; i += blockDim.x / 32) {
@@ -354,7 +536,7 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
             else if (!record(data.seen, word, depth)) { next[k] = block; slot = SIZE_MAX; }
             else if (!is_active(data, word, depth)) {
                 state->omitted = fmax(state->omitted, correlation * (1 + 64 * DBL_EPSILON) + 1e-15);
-                if (data.capacity && correlation > alpha && correlation >= threshold) {
+                if (data.capacity && correlation > alpha && correlation >= threshold && (depth > 1 || state->root % data.root_groups == 0)) {
                     slot = state->count;
                     const bool fresh = slot < data.capacity;
                     if (slot < data.capacity) ++state->count;
@@ -381,25 +563,38 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
         if (accepted) for (size_t i = threadIdx.x; i < data.n; i += blockDim.x)
             data.candidate_values[(lane * data.capacity + slot) * data.n + i] = values[i];
         if (depth < data.m) {
-            double* child_integrals = integrals + depth * nl;
             double* child_moments = moments + depth * (2 * data.m - depth + 1) / 2 * nl;
             if (cache_hit) {
-                for (size_t index = threadIdx.x; index < nl; index += blockDim.x) child_integrals[index] = cached[(depth + 1) * nl + index];
-                for (size_t index = threadIdx.x; index < (data.m - depth) * nl; index += blockDim.x) child_moments[index] = cached[(depth + 2) * nl + index];
+                for (size_t index = threadIdx.x; index < nl; index += blockDim.x) {
+                    if (child_integrals) child_integrals[index] = cached[state_size + index];
+                    if (child_linears) child_linears[index] = cached[state_size + integral_size + index];
+                }
+                for (size_t index = threadIdx.x; index < (data.m - depth) * nl; index += blockDim.x) child_moments[index] = cached[moment_offset + index];
             } else for (size_t index = threadIdx.x; index < nl; index += blockDim.x) {
                 const size_t i = index % data.n, j = index / data.n;
-                double integral = 0;
-                for (size_t a = 0; a <= depth; ++a) integral += child[(j * (depth + 1) + a) * data.n + i];
-                child_integrals[index] = integral / (depth + 1);
-                for (size_t q = 0; q < data.m - depth; ++q) child_moments[q * nl + index] = siglasso::moment_value(
-                    child, data.factors[depth], depth, q, j, i, data.n, data.l);
+                if (Exact) {
+                    double integral = 0, linear = 0;
+                    for (size_t a = 0; a <= depth; ++a) {
+                        const double c = child[(j * (depth + 1) + a) * data.n + i]; integral += c;
+                        if (child_linears) linear += (a + 1) * c;
+                    }
+                    child_integrals[index] = integral / (depth + 1);
+                    if (child_linears) child_linears[index] = linear / ((depth + 1) * (depth + 2));
+                    siglasso::absolute_moments(child, data.factors[depth], data.variation[index], data.after[index], depth, data.m - depth, j, i, data.n, data.l,
+                        data.integral_scratch + (lane * blockDim.x + threadIdx.x) * data.scratch_size, child_moments + index,
+                        (data.search_method & 2) && data.m - depth <= 2);
+                } else siglasso::trapezoidal_moments(child_times[index], child_times[index + data.n], data.variation[index], data.after[index],
+                    data.weights[depth + 1] / data.n, depth, data.m - depth, nl, child_moments + index, data.reciprocals);
             }
             __syncthreads();
             if (data.cache_slots) {
                 if (!cache_hit) {
-                    for (size_t index = threadIdx.x; index < (depth + 1) * nl; index += blockDim.x) cached[index] = child[index];
-                    for (size_t index = threadIdx.x; index < nl; index += blockDim.x) cached[(depth + 1) * nl + index] = child_integrals[index];
-                    for (size_t index = threadIdx.x; index < (data.m - depth) * nl; index += blockDim.x) cached[(depth + 2) * nl + index] = child_moments[index];
+                    for (size_t index = threadIdx.x; index < state_size; index += blockDim.x) cached[index] = (Exact ? child : child_times)[index];
+                    for (size_t index = threadIdx.x; index < nl; index += blockDim.x) {
+                        if (child_integrals) cached[state_size + index] = child_integrals[index];
+                        if (child_linears) cached[state_size + integral_size + index] = child_linears[index];
+                    }
+                    for (size_t index = threadIdx.x; index < (data.m - depth) * nl; index += blockDim.x) cached[moment_offset + index] = child_moments[index];
                     for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) cached[cache_stride - data.n + i] = values[i];
                 }
                 __syncthreads();
@@ -411,9 +606,9 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
                 }
             }
             for (size_t index = threadIdx.x; index < (data.m - depth) * nl; index += blockDim.x)
-                child_moments[index] *= fabs(data.residual[index % data.n]);
+                if (child_moments[index] >= 0) child_moments[index] *= fabs(data.residual[index % data.n]);
             __syncthreads();
-            if (!threadIdx.x) { next[depth] = 0; ++depth; }
+            if (!threadIdx.x) { next[depth] = depth == 1 ? group_root : 0; ++depth; }
         }
         __syncthreads();
     }

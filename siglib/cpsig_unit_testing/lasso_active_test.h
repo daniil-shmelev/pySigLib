@@ -128,7 +128,7 @@ public:
     siglasso::Array factors(size_t) override { throw std::logic_error("unused test operation"); }
     siglasso::Array energy_gram(size_t, size_t) override { throw std::logic_error("unused test operation"); }
     void moments(siglasso::Node&, const siglasso::Array&) override { throw std::logic_error("unused test operation"); }
-    void bounds(const std::vector<siglasso::Probe>&, const siglasso::Array&, double, std::vector<double>&) override { throw std::logic_error("unused test operation"); }
+    void export_result(const siglasso::Result&, const SigLassoOutput&) override { throw std::logic_error("unused test operation"); }
     void children(const std::vector<siglasso::Probe>&, std::vector<siglasso::NodePtr>&) override { throw std::logic_error("unused test operation"); }
     void full_columns(std::vector<siglasso::Column>&) override { throw std::logic_error("unused test operation"); }
     siglasso::Array response(size_t) override { throw std::logic_error("unused test operation"); }

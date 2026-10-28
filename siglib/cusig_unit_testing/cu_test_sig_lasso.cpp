@@ -30,7 +30,7 @@ TEST(sigLassoCudaTest, FitOnCallerStream) {
     double *device_paths = nullptr, *device_y = nullptr, *device_result = nullptr;
     ASSERT_EQ(cudaMalloc(reinterpret_cast<void**>(&device_paths), sizeof(paths)), cudaSuccess);
     ASSERT_EQ(cudaMalloc(reinterpret_cast<void**>(&device_y), sizeof(response)), cudaSuccess);
-    ASSERT_EQ(cudaMalloc(reinterpret_cast<void**>(&device_result), 4 * sizeof(double)), cudaSuccess);
+    ASSERT_EQ(cudaMalloc(reinterpret_cast<void**>(&device_result), 8 * sizeof(double)), cudaSuccess);
     ASSERT_EQ(cudaMemcpyAsync(device_paths, paths.data(), sizeof(paths), cudaMemcpyHostToDevice, stream), cudaSuccess);
     ASSERT_EQ(cudaMemcpyAsync(device_y, response.data(), sizeof(response), cudaMemcpyHostToDevice, stream), cudaSuccess);
     SigLassoOptions options{};
@@ -39,8 +39,9 @@ TEST(sigLassoCudaTest, FitOnCallerStream) {
     for (uint32_t full : {0U, 1U}) {
         options.full = full;
         uint64_t letters[1], offsets[2], converged[1], iterations[1];
+        SigLassoStats stats{};
         struct Output { SigLassoShape shape; SigLassoOutput buffers; size_t calls = 0; } output{
-            {}, {letters, offsets, converged, iterations, device_result, device_result + 1, device_result + 2, device_result + 3}};
+            {}, {letters, offsets, converged, iterations, device_result, device_result + 1, device_result + 2, device_result + 3, device_result + 4, &stats}};
         const auto allocate = [](void* context, const SigLassoShape* shape, SigLassoOutput* buffers) {
             auto& output = *static_cast<Output*>(context);
             output.shape = *shape; ++output.calls;
@@ -51,12 +52,13 @@ TEST(sigLassoCudaTest, FitOnCallerStream) {
         const auto fail = [](void*, const SigLassoShape*, SigLassoOutput*) { return 1; };
         EXPECT_NE(sig_lasso_cuda_d(device_paths, device_y, &alpha, nullptr, nullptr, 0, &options, stream, 0, fail, nullptr), 0);
         ASSERT_EQ(sig_lasso_cuda_d(device_paths, device_y, &alpha, nullptr, nullptr, 0, &options, stream, 0, allocate, &output), 0);
-        std::array<double, 4> values{};
+        std::array<double, 8> values{};
         ASSERT_EQ(cudaMemcpyAsync(values.data(), device_result, sizeof(values), cudaMemcpyDeviceToHost, stream), cudaSuccess);
         ASSERT_EQ(cudaStreamSynchronize(stream), cudaSuccess);
         EXPECT_NEAR(values[0], 1.4, 1e-10); EXPECT_NEAR(values[1], 0, 1e-12); EXPECT_LE(values[3], 1e-10);
         EXPECT_TRUE(converged[0]); EXPECT_EQ(iterations[0], 1); EXPECT_EQ(output.shape.stats.activations, 1); EXPECT_EQ(output.calls, 1);
         EXPECT_EQ(letters[0], 0); EXPECT_EQ(offsets[0], 0); EXPECT_EQ(offsets[1], 1);
+        EXPECT_EQ(values[4], -1); EXPECT_EQ(values[7], 1); EXPECT_GT(stats.output_bytes, 0);
     }
     cudaFree(device_result); cudaFree(device_y); cudaFree(device_paths); cudaStreamDestroy(stream);
 }

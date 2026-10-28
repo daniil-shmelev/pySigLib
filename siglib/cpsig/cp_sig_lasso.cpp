@@ -23,24 +23,14 @@ namespace cpsig {
 HWY_EXPORT_T(sig_lasso_f, sig_lasso_<float>);
 HWY_EXPORT_T(sig_lasso_d, sig_lasso_<double>);
 
-template<typename T>
-void copy_lasso_result(const siglasso::Result& result, SigLassoAllocator allocate, void* context) {
-    const auto output = siglasso::allocate_output(result, allocate, context);
-    const auto convert = [](double value) { return static_cast<T>(siglasso::finite(static_cast<T>(value))); };
-    std::transform(result.coefficients.begin(), result.coefficients.end(), static_cast<T*>(output.coefficients), convert);
-    std::transform(result.intercepts.begin(), result.intercepts.end(), static_cast<T*>(output.intercepts), convert);
-    std::transform(result.objectives.begin(), result.objectives.end(), static_cast<T*>(output.objectives), convert);
-    std::transform(result.gaps.begin(), result.gaps.end(), static_cast<T*>(output.gaps), convert);
-}
-
 extern "C" {
 CPSIG_API int sig_lasso_f(const float* path, const float* y, const double* alphas,
     const uint64_t* letters, const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) noexcept {
-    SAFE_CALL(siglasso::Result result; HWY_DYNAMIC_DISPATCH_T(sig_lasso_f)(path, y, alphas, letters, offsets, words, options, &result); copy_lasso_result<float>(result, allocate, context));
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_lasso_f)(path, y, alphas, letters, offsets, words, options, allocate, context));
 }
 CPSIG_API int sig_lasso_d(const double* path, const double* y, const double* alphas,
     const uint64_t* letters, const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) noexcept {
-    SAFE_CALL(siglasso::Result result; HWY_DYNAMIC_DISPATCH_T(sig_lasso_d)(path, y, alphas, letters, offsets, words, options, &result); copy_lasso_result<double>(result, allocate, context));
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_lasso_d)(path, y, alphas, letters, offsets, words, options, allocate, context));
 }
 }
 } // namespace cpsig

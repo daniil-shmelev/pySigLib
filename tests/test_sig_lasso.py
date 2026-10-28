@@ -32,6 +32,115 @@ def as_numpy(value):
     return value.detach().cpu().numpy() if isinstance(value, torch.Tensor) else np.asarray(value)
 
 
+@pytest.mark.parametrize('value', ['unknown', None, [], 3])
+def test_invalid_bound_method(value):
+    with pytest.raises(ValueError, match='bound_method'):
+        pysiglib.sig_lasso(np.zeros((3, 2, 1)), np.zeros(3), 1, .1, bound_method=value)
+
+
+@pytest.mark.parametrize('device', ['numpy', 'cpu', 'cuda'])
+@pytest.mark.parametrize('dtype', [np.float32, np.float64])
+@pytest.mark.parametrize('bound', ['exact', 'approximate'])
+@pytest.mark.parametrize('method', ['full', 'sparse'])
+def test_returned_signatures(device, dtype, bound, method):
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA unavailable')
+    rng = np.random.default_rng(402)
+    paths = rng.normal(size=(2, 12, 10, 4)).astype(dtype)[:, :, ::2, ::2]
+    paths[0, 0] = 7
+    target = rng.normal(size=(2, 12, 2)).astype(dtype)
+    if device != 'numpy':
+        paths = torch.tensor(paths, device=device, requires_grad=True)
+        target = torch.tensor(target, device=device)
+    result = pysiglib.sig_lasso(paths, target, 3, .01, method=method, bound_method=bound,
+                               time_aug=True, lead_lag=True, initial_words=[(0, 1)], cache_bytes=1024)
+    transformed = pysiglib.transform_path(as_numpy(paths).astype(np.float64), time_aug=True, lead_lag=True)
+    flat = transformed.reshape(-1, *transformed.shape[-2:])
+    variation = np.max(np.abs(np.diff(flat, axis=1)), axis=2).sum(1)
+    normalized = (flat - flat[:, :1]) / np.where(variation > 0, variation, 1)[:, None, None]
+    expected = pysiglib.sig_coef(normalized, result['words'])
+    expected *= [math.factorial(len(word)) for word in result['words']]
+    actual = as_numpy(result['signatures'])
+    assert actual.shape == (2, 12, len(result['words']))
+    assert actual.dtype == dtype
+    np.testing.assert_allclose(actual.reshape(expected.shape), expected, atol=3e-7 if dtype == np.float32 else 5e-13)
+    predicted = actual @ as_numpy(result['coef']) + as_numpy(result['intercept'])
+    residual = as_numpy(target) - predicted
+    objective = .5 * np.mean(residual**2, axis=(0, 1)) + .01 * np.sum(np.abs(as_numpy(result['coef'])), axis=0)
+    np.testing.assert_allclose(objective, as_numpy(result['objective']), atol=2e-7 if dtype == np.float32 else 1e-12)
+    assert result['stats']['output_bytes'] >= actual.nbytes
+    assert result['stats']['peak_bytes'] >= result['stats']['output_bytes']
+    assert result['stats']['total_seconds'] >= result['stats']['output_seconds'] >= 0
+    if device != 'numpy':
+        assert result['signatures'].device == paths.device
+        assert not result['signatures'].requires_grad
+
+
+@pytest.mark.parametrize('device', DEVICES)
+@pytest.mark.parametrize('bound', ['exact', 'approximate'])
+def test_empty_returned_signatures(device, bound):
+    paths = np.ones((2, 4, 3, 2))
+    target = np.ones((2, 4))
+    if device == 'cuda':
+        paths, target = torch.tensor(paths, device=device), torch.tensor(target, device=device)
+    model = pysiglib.sig_lasso(paths, target, 8, .1, bound_method=bound)
+    assert model['signatures'].shape == (2, 4, 0)
+    np.testing.assert_array_equal(as_numpy(model['signatures'] @ model['coef'] + model['intercept']), np.ones((2, 4)))
+
+
+@pytest.mark.parametrize('device', DEVICES)
+@pytest.mark.parametrize('mode', ['plain', 'grouped', 'signed', 'grouped_signed'])
+@pytest.mark.parametrize('samples', [25, 128, 131])
+def test_approximate_cache_and_chen_columns(device, mode, samples):
+    rng = np.random.default_rng(612)
+    paths = rng.normal(size=(samples, 6, 2)).cumsum(1)
+    response = rng.normal(size=samples)
+    if device == 'cuda':
+        paths, response = torch.tensor(paths, device=device), torch.tensor(response, device=device)
+    models = [pysiglib.sig_lasso(paths, response, 5, .002, search_method=mode, bound_method='approximate',
+        cache_bytes=cache, initial_words=[(0, 1, 0, 1), (1, 0)], tol=1e-9) for cache in (0, 1024, 1024**2)]
+    for model in models:
+        x = as_numpy(paths)
+        variation = np.max(np.abs(np.diff(x, axis=1)), axis=2).sum(1)
+        x = (x - x[:, :1]) / variation[:, None, None]
+        expected = pysiglib.sig_coef(x, model['words']) * [math.factorial(len(w)) for w in model['words']]
+        np.testing.assert_allclose(as_numpy(model['signatures']), expected, atol=5e-13)
+        np.testing.assert_allclose(as_numpy(model['objective']), as_numpy(models[0]['objective']), atol=2e-10)
+        assert model['stats']['full_transform_calls'] == 0
+
+
+def test_node_proxy_can_miss_a_word():
+    path = np.array([[[0., 0.], [1., 0.], [-1., 1.]]]) / 3
+    prefix = (0, 1)
+    nodes = np.array([0.] + [pysiglib.sig_coef(path[:, :j], [prefix])[0, 0] for j in (2, 3)])
+    increments = np.diff(path[0], axis=0)
+    proxy = math.factorial(3) * np.sum(np.abs(increments[:, 1]) * (np.abs(nodes[:-1]) + np.abs(nodes[1:]))) / 2
+    feature = abs(6 * pysiglib.sig_coef(path, [(0, 1, 1)])[0, 0])
+    assert proxy < 1e-15
+    assert feature > .03
+    assert proxy < .01 < feature
+
+
+@pytest.mark.parametrize('device', DEVICES)
+def test_signature_output_allocation_failure(device):
+    paths = np.array([[[0.], [-1.]], [[0.], [1.]]])
+    response = np.array([-1., 1.])
+    if device == 'cuda':
+        paths, response = torch.tensor(paths, device=device), torch.tensor(response, device=device)
+    allocator = torch.empty if device == 'cuda' else np.empty
+
+    def fail_features(shape, *args, **kwargs):
+        if shape == (2, 1):
+            raise MemoryError('Feature output allocation failed')
+        return allocator(shape, *args, **kwargs)
+
+    with patch('torch.empty' if device == 'cuda' else 'numpy.empty', side_effect=fail_features):
+        with pytest.raises(MemoryError, match='Feature output'):
+            pysiglib.sig_lasso(paths, response, 1, .1)
+    recovered = pysiglib.sig_lasso(paths, response, 1, .1)
+    np.testing.assert_allclose(as_numpy(recovered['signatures']), [[-1], [1]])
+
+
 def dense_data(paths, degree):
     paths = np.asarray(paths, dtype=np.float64)
     variation = np.max(np.abs(np.diff(paths, axis=1)), axis=2).sum(axis=1)
@@ -73,7 +182,7 @@ def test_variation_normalization_against_dense_signature(device, method, dtype):
     response = (matrix[:, 0] + 2 * matrix[:, 15] + .01 * rng.normal(size=len(paths))).astype(dtype)
     x = torch.as_tensor(paths, device=device) if device == 'cuda' else paths
     y = torch.as_tensor(response, device=device) if device == 'cuda' else response
-    result = pysiglib.sig_lasso(x, y, 3, .002, method=method, tol=1e-5 if dtype == np.float32 else 1e-10)
+    result = pysiglib.sig_lasso(x, y, 3, .002, method=method, bound_method='exact', tol=1e-5 if dtype == np.float32 else 1e-10)
     predicted, gap = audit(result, matrix, words, response, .002)
     reference = Lasso(alpha=.002, tol=1e-13, max_iter=100000).fit(matrix, response)
     np.testing.assert_allclose(predicted, reference.predict(matrix), atol=1e-3 if dtype == np.float32 else 2e-5)
@@ -110,7 +219,7 @@ def test_search_methods_match_full(device, dtype, degree, intercept):
     expected, _ = audit(reference, matrix, words, response, .003, intercept)
     for mode in ('plain', 'grouped', 'signed', 'grouped_signed'):
         result = pysiglib.sig_lasso(x, y, degree, .003, search_method=mode, tol=tolerance, fit_intercept=intercept,
-                                  cache_bytes=0, batch_size=3)
+                                  cache_bytes=0, batch_size=3, bound_method='exact')
         actual, gap = audit(result, matrix, words, response, .003, intercept)
         assert bool(result['converged']) and bool(reference['converged'])
         assert gap < (2e-5 if dtype == np.float32 else 2e-8)
@@ -136,7 +245,7 @@ def test_remaining_variation_closed_paths_and_zero_segments(device, dtype, mode)
     x = torch.as_tensor(paths, device=device) if device == 'cuda' else paths
     y = torch.as_tensor(response, device=device) if device == 'cuda' else response
     reference = pysiglib.sig_lasso(x, y, 5, alpha, method='full', tol=tolerance)
-    result = pysiglib.sig_lasso(x, y, 5, alpha, search_method=mode, tol=tolerance, cache_bytes=0, batch_size=2)
+    result = pysiglib.sig_lasso(x, y, 5, alpha, search_method=mode, tol=tolerance, cache_bytes=0, batch_size=2, bound_method='exact')
     expected, _ = audit(reference, matrix, words, response, alpha)
     actual, gap = audit(result, matrix, words, response, alpha)
     assert bool(result['converged']) and bool(reference['converged'])
@@ -172,7 +281,7 @@ def test_search_modes_transforms_targets_and_threads(device, mode):
     response = rng.normal(size=(20, 2))
     if device == 'cuda':
         paths, response = torch.as_tensor(paths, device=device), torch.as_tensor(response, device=device)
-    settings = dict(time_aug=True, lead_lag=True, tol=1e-9, n_jobs=2)
+    settings = dict(time_aug=True, lead_lag=True, tol=1e-9, n_jobs=2, bound_method='exact')
     result = pysiglib.sig_lasso(paths, response, 3, .02, search_method=mode, **settings)
     reference = pysiglib.sig_lasso(paths, response, 3, .02, method='full', **settings)
     assert as_numpy(result['converged']).all() and as_numpy(reference['converged']).all()
@@ -191,7 +300,7 @@ def test_signed_search_near_threshold(device, ratio):
     y = torch.as_tensor(response, device=device) if device == 'cuda' else response
     for mode in ('signed', 'grouped_signed'):
         result = pysiglib.sig_lasso(x, y, 3, alpha, search_method=mode, tol=1e-12,
-                                  memory_limit=32 * 1024**2, cache_bytes=0)
+                                  memory_limit=32 * 1024**2, cache_bytes=0, bound_method='exact')
         _, gap = audit(result, matrix, words, response, alpha)
         assert bool(result['converged']) and gap < 2e-12
 
@@ -230,7 +339,7 @@ def test_sparse_dense_oracle(device, intercept, cache):
     x = torch.as_tensor(paths, device=device) if device == 'cuda' else paths
     target = torch.as_tensor(y, device=device) if device == 'cuda' else y
     result = pysiglib.sig_lasso(x, target, 3, alpha, fit_intercept=intercept,
-                               cache_bytes=cache, batch_size=4, initial_words=[(0,), (1, 2)], tol=1e-10)
+                               cache_bytes=cache, batch_size=4, initial_words=[(0,), (1, 2)], tol=1e-10, bound_method='exact')
     predicted, gap = audit(result, matrix, words, y, alpha, intercept)
     for j in range(2):
         oracle = Lasso(alpha=alpha[j], fit_intercept=intercept, tol=1e-13, max_iter=100000).fit(matrix, y[:, j])
@@ -241,7 +350,7 @@ def test_sparse_dense_oracle(device, intercept, cache):
 
 
 @pytest.mark.parametrize('device', DEVICES)
-def test_screening_reset_after_growth(device):
+def test_candidate_pool_after_growth(device):
     q, _ = np.linalg.qr(np.array([[1., 1.], [-1., 1.], [0., -2.], [0., 0.]]))
     matrix = 2 * q @ np.linalg.cholesky([[1., .8], [.8, 1.]]).T
     response = matrix @ np.linalg.solve([[1., .8], [.8, 1.]], [0., 2.])

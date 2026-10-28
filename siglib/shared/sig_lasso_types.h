@@ -24,6 +24,7 @@ struct SigLassoOptions {
     int n_jobs;
     uint32_t full, intercept, single_precision;
     uint32_t search_method = 1; // bit 0: grouping; bit 1: signed terminal blocks
+    uint32_t bound_method = 0; // 0: node trapezoids; 1: absolute Bernstein integral
 };
 
 struct SigLassoStats {
@@ -35,6 +36,8 @@ struct SigLassoStats {
     double factorization_seconds, certification_seconds;
     uint64_t numerical_failures, full_transform_calls;
     uint64_t terminal_queries, terminal_pruned, terminal_correlations;
+    uint64_t output_bytes;
+    double output_seconds;
 };
 
 struct SigLassoShape {
@@ -45,6 +48,8 @@ struct SigLassoShape {
 struct SigLassoOutput {
     uint64_t *letters, *offsets, *converged, *iterations;
     void *coefficients, *intercepts, *objectives, *gaps;
+    void* signatures;
+    SigLassoStats* stats;
 };
 
 // Called once after fitting. The caller owns all output buffers.
