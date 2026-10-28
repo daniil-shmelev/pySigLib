@@ -56,6 +56,7 @@ __global__ void seed_seen(Seen table, const Active* words, const uint64_t* lette
 struct Lane {
     uint64_t root, depth, count, evaluated, pruned, queries, cache_hits, requested, cache_writes;
     double omitted;
+    uint64_t terminal_queries, terminal_pruned, terminal_correlations;
 };
 struct SearchData {
     size_t n, l, d, m, lanes, capacity, blocks;
@@ -73,6 +74,9 @@ struct SearchData {
     size_t cache_slots;
     uint64_t* lane_ids;
     bool segment_scan;
+    uint32_t search_method;
+    bool intercept;
+    const double *variation, *after;
 };
 
 struct CandidateBatch { double *values, *scores; uint64_t *words, *lengths, *count; };
@@ -175,7 +179,7 @@ __global__ void initialise(SearchData data, size_t first_root) {
     if (!threadIdx.x) {
         data.lane_ids[lane] = lane;
         data.states[lane] = {first_root + lane, 1, 0, 0, 0, 0, 0, 0, 0, 0};
-        size_t block = 0;
+        size_t block = (data.search_method & 1) ? 0 : first_root + lane;
         while (data.intervals[block].high - data.intervals[block].low > 1) {
             const auto interval = data.intervals[block];
             const size_t middle = (interval.low + interval.high) / 2;
@@ -241,6 +245,42 @@ __global__ void traverse(SearchData data, double alpha, size_t steps) {
             }
             bound = isfinite(total) ? fmax(bound, total) : CUDART_INF;
             if (bound >= threshold) break;
+        }
+        if ((data.search_method & 2) && data.m - k <= 2 && bound >= threshold) {
+            if (!threadIdx.x) ++state->terminal_queries;
+            double mean = 0;
+            if (data.intercept) {
+                for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) mean += data.residual[i];
+                mean = sum(mean, scratch) / data.n;
+            }
+            const double error = siglasso::terminal_roundoff(k, data.n, data.l);
+            double signed_bound = 0;
+            bool complete = true;
+            for (size_t q = 1; q <= data.m - k && complete; ++q) {
+                double cap = 0;
+                for (size_t i = threadIdx.x; i < data.n; i += blockDim.x)
+                    cap += fabs(data.residual[i] - mean) * pow(data.variation[i] + data.after[i], static_cast<double>(k + q));
+                cap = sum(cap, scratch);
+                for (size_t a = interval.low; a < interval.high && complete; ++a) for (size_t b = 0; b < (q == 2 ? data.d : 1); ++b) {
+                    double correlation = 0, magnitude = 0;
+                    for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) {
+                        double absolute;
+                        const double value = siglasso::terminal_sample(prefix, prefix_integrals, data.increments,
+                            a, b, q, k, i, data.n, data.l, data.d, absolute);
+                        correlation += (data.residual[i] - mean) * value;
+                        magnitude += fabs(data.residual[i] - mean) * absolute;
+                    }
+                    correlation = sum(correlation, scratch); magnitude = sum(magnitude, scratch);
+                    if (!threadIdx.x) ++state->terminal_correlations;
+                    const double upper = (fabs(correlation) * data.weights[k + q] + error * (magnitude * data.weights[k + q] + cap)) / data.n + 1e-15;
+                    if (!isfinite(upper) || upper * (1 + 1e-10) >= threshold) { complete = false; break; }
+                    signed_bound = fmax(signed_bound, upper);
+                }
+            }
+            if (complete && signed_bound * (1 + 1e-10) + 1e-15 < threshold) {
+                bound = fmin(bound, signed_bound);
+                if (!threadIdx.x) ++state->terminal_pruned;
+            }
         }
         bound = bound * (1 + 1e-10) + 1e-15;
         if (!threadIdx.x) {

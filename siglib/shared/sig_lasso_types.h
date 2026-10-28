@@ -23,6 +23,7 @@ struct SigLassoOptions {
     double tolerance;
     int n_jobs;
     uint32_t full, intercept, single_precision;
+    uint32_t search_method = 1; // bit 0: grouping; bit 1: signed terminal blocks
 };
 
 struct SigLassoStats {
@@ -33,6 +34,7 @@ struct SigLassoStats {
     double preparation_seconds, search_seconds, insertion_seconds, solve_seconds, total_seconds;
     double factorization_seconds, certification_seconds;
     uint64_t numerical_failures, full_transform_calls;
+    uint64_t terminal_queries, terminal_pruned, terminal_correlations;
 };
 
 struct SigLassoShape {

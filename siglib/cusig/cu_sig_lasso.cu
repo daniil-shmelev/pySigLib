@@ -92,20 +92,20 @@ __global__ void vector_op(const double* x, double* y, size_t n, double a, double
 __global__ void extract_response(const double* y, double* out, size_t n, size_t targets, size_t target) {
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += static_cast<size_t>(gridDim.x) * blockDim.x) out[i] = y[i * targets + target];
 }
-__global__ void prepare_paths(const double* paths, double* increments, double* variation, double* after, double* envelopes,
-    size_t n, size_t l, size_t d, size_t m) {
+__global__ void prepare_paths(const double* paths, double* increments, double* variation, double* after,
+    size_t n, size_t l, size_t d) {
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += static_cast<size_t>(gridDim.x) * blockDim.x) {
         for (size_t j = 0; j < l; ++j) for (size_t a = 0; a < d; ++a)
             increments[(j * d + a) * n + i] = paths[(i * (l + 1) + j + 1) * d + a] - paths[(i * (l + 1) + j) * d + a];
-        siglasso::prepare_sample(increments, variation, after, envelopes, i, n, l, d, m);
+        siglasso::prepare_sample(increments, variation, after, i, n, l, d);
     }
 }
-__global__ void make_factors(const double* variation, const double* after, const double* envelopes, const double* weights, const double* constants,
+__global__ void make_factors(const double* variation, const double* after, const double* constants,
     double* out, size_t n, size_t l, size_t k, size_t levels) {
     const size_t size = n * l * levels * (k + 1);
     for (size_t index = blockIdx.x * blockDim.x + threadIdx.x; index < size; index += static_cast<size_t>(gridDim.x) * blockDim.x) {
         const size_t i = index % n, j = (index / n) % l, a = (index / (n * l)) % (k + 1), q = index / (n * l * (k + 1)) + 1;
-        out[index] = siglasso::factor_value(variation, after, envelopes, constants, k, q, a, j, i, n, l) * weights[k + q] / n;
+        out[index] = siglasso::factor_value(variation, after, constants, k, q, a, j, i, n) / n;
     }
 }
 __global__ void make_moments(const double* coefficients, const double* factors, double* moments, double* integrals,
@@ -488,10 +488,9 @@ public:
         check(); return result;
     }
     void prepare() override {
-        const size_t n = options.samples, l = options.length - 1, d = options.dimension, m = options.degree;
+        const size_t n = options.samples, l = options.length - 1, d = options.dimension;
         increments = alloc(siglasso::multiply(n * l, d)); variation = alloc(n * l); after = alloc(n * l);
-        envelopes = alloc(siglasso::multiply(n * l, m * (m + 1) / 2)); fill(envelopes, 0);
-        prepare_paths<<<grid(n), 128, 0, stream_>>>(paths_.data, increments.data, variation.data, after.data, envelopes.data, n, l, d, m); check();
+        prepare_paths<<<grid(n), 128, 0, stream_>>>(paths_.data, increments.data, variation.data, after.data, n, l, d); check();
         prepare_alphabet();
         std::vector<DeviceInterval> intervals;
         for (auto [low, high] : alphabet) intervals.push_back({low, high});
@@ -504,10 +503,10 @@ public:
         const size_t n = options.samples, l = options.length - 1, levels = options.degree - k;
         if (!l) return {};
         auto result = alloc(siglasso::multiply(n * l, levels * (k + 1)));
-        const size_t constant_count = siglasso::multiply(siglasso::multiply(levels, levels + 1), k + 1);
+        const size_t constant_count = siglasso::multiply(siglasso::multiply(levels, levels + 1) / 2, k + 1);
         auto host_constants = account(siglasso::multiply(constant_count, sizeof(double)));
-        auto constants = from_host(siglasso::integration_coefficients(k, levels));
-        if (result.size) make_factors<<<grid(result.size), 128, 0, stream_>>>(variation.data, after.data, envelopes.data, device_weights_.data, constants.data, result.data, n, l, k, levels);
+        auto constants = from_host(siglasso::integration_coefficients(k, levels, weights));
+        if (result.size) make_factors<<<grid(result.size), 128, 0, stream_>>>(variation.data, after.data, constants.data, result.data, n, l, k, levels);
         check(); return result;
     }
     void moments(siglasso::Node& node, const Array& factors) override {
@@ -694,6 +693,8 @@ public:
             reinterpret_cast<uint64_t*>(lengths.data), reinterpret_cast<lasso_device::Lane*>(states.data), seen_};
         data.lane_ids = reinterpret_cast<uint64_t*>(lane_ids.data);
         data.segment_scan = n <= 16 && l >= 64;
+        data.search_method = options.search_method; data.intercept = options.intercept != 0;
+        data.variation = variation.data; data.after = after.data;
         std::vector<lasso_device::Lane> host_states(lanes);
         uint64_t cache_hits = 0, cache_writes = 0;
         for (size_t first = 0; first < d; first += lanes) {
@@ -729,6 +730,8 @@ public:
                 stats.evaluated += host_states[lane].evaluated; stats.cache_misses += host_states[lane].evaluated;
                 stats.cache_hits += host_states[lane].cache_hits;
                 stats.pruned += host_states[lane].pruned; stats.block_queries += host_states[lane].queries;
+                stats.terminal_queries += host_states[lane].terminal_queries; stats.terminal_pruned += host_states[lane].terminal_pruned;
+                stats.terminal_correlations += host_states[lane].terminal_correlations;
                 cache_hits = std::min(UINT64_MAX - host_states[lane].cache_hits, cache_hits) + host_states[lane].cache_hits;
                 cache_writes = std::min(UINT64_MAX - host_states[lane].cache_writes, cache_writes) + host_states[lane].cache_writes;
             }

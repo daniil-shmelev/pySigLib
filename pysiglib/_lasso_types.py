@@ -21,7 +21,7 @@ class LassoOptions(Structure):
         'samples', 'length', 'dimension', 'degree', 'targets', 'max_iter',
         'batch_size', 'cache_bytes', 'memory_limit')]
     _fields_ += [('tolerance', c_double), ('n_jobs', c_int)]
-    _fields_ += [(name, c_uint32) for name in ('full', 'intercept', 'single_precision')]
+    _fields_ += [(name, c_uint32) for name in ('full', 'intercept', 'single_precision', 'search_method')]
 
 
 class LassoStats(Structure):
@@ -33,6 +33,7 @@ class LassoStats(Structure):
         'preparation_seconds', 'search_seconds', 'insertion_seconds', 'solve_seconds', 'total_seconds',
         'factorization_seconds', 'certification_seconds')]
     _fields_ += [(name, c_uint64) for name in ('numerical_failures', 'full_transform_calls')]
+    _fields_ += [(name, c_uint64) for name in ('terminal_queries', 'terminal_pruned', 'terminal_correlations')]
 
 
 class LassoShape(Structure):

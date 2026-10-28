@@ -47,7 +47,7 @@ def _check_status(status, device):
     raise RuntimeError(message)
 
 
-def sig_lasso(path, y, degree, alpha, *, method="sparse",
+def sig_lasso(path, y, degree, alpha, *, method="sparse", search_method="grouped",
               fit_intercept=True, tol=None, max_iter=1000,
               batch_size=128, initial_words=(), cache_bytes=256 * 1024**2,
               memory_limit=None, time_aug=False, lead_lag=False, end_time=1.0,
@@ -60,8 +60,16 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse",
     after path transforms. Constant paths have zero nonempty features.
     Columns are centred when fitting an intercept; they are not standardised.
     ``method='full'`` computes the
-    complete dictionary; ``method='sparse'`` searches it with integral bounds
-    and Bernstein prefix coefficients. Both use the same native solver.
+    complete dictionary; ``method='sparse'`` searches it with Bernstein prefix
+    coefficients and remaining-variation suffix bounds, integrated on each
+    linear segment. Both use the same native solver.
+
+    ``search_method`` selects sparse-search optimisations: ``'plain'`` uses
+    individual child bounds, ``'grouped'`` also tests channel groups,
+    ``'signed'`` adds signed terminal bounds to plain search, and
+    ``'grouped_signed'`` enables both. Signed checks cover the last two
+    levels and retain cancellation across samples. Full fits ignore this
+    setting. Channel order is unchanged.
 
     ``path`` has shape ``(*batch, length, dimension)``. Leading batch axes
     are flattened into samples. ``y`` has shape ``batch`` or
@@ -118,6 +126,9 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse",
         raise MemoryError('memory_limit must allow the native fitting workspace')
     if method not in ('full', 'sparse'):
         raise ValueError("method must be 'full' or 'sparse'")
+    search_methods = {'plain': 0, 'grouped': 1, 'signed': 2, 'grouped_signed': 3}
+    if not isinstance(search_method, str) or search_method not in search_methods:
+        raise ValueError("search_method must be 'plain', 'grouped', 'signed', or 'grouped_signed'")
     for name, value in (('fit_intercept', fit_intercept), ('time_aug', time_aug), ('lead_lag', lead_lag)):
         check_type(value, name, bool)
     check_n_jobs(n_jobs)
@@ -179,7 +190,7 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse",
         response = ensure_own_contiguous_storage(y.detach() if isinstance(y, torch.Tensor) else y)
         options = LassoOptions(data.batch_size, data.length, data.dimension, degree, targets,
                                max_iter, batch_size, cache_bytes, memory_limit or 0,
-                               tol, n_jobs, method == 'full', fit_intercept, inputs.dtype == 'float32')
+                               tol, n_jobs, method == 'full', fit_intercept, inputs.dtype == 'float32', search_methods[search_method])
         scalar = DTYPES[data.dtype]
         result_shape = None
         out_letters = out_offsets = coefficients = values = converged = iterations = None

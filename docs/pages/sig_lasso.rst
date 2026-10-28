@@ -55,8 +55,14 @@ search, not the active-set size. ``initial_words`` seeds the candidate pool;
 it does not force their coefficients to be nonzero.
 
 The sparse method bounds all omitted words with Bernstein prefix polynomials
-and integral suffix envelopes. Binary alphabet blocks, a variation cap and
-signed one-letter energy bounds tighten the search. It never calls the full
+and the remaining-variation suffix bound
+``|S(x)_{t,T}^v| <= V(t)**q / q!``, where ``q = len(v)`` and
+``V(t) = integral_t^T ||dx(s)||_infinity``. A backward sum computes the
+remaining variation at segment endpoints. The bound is integrated exactly
+on each linear segment, up to floating-point error. Factors are computed
+as needed and reused across searches; no table of recursive suffix envelopes
+is stored. Binary alphabet blocks and signed one-letter energy bounds tighten
+the search. It never calls the full
 signature transform. A final search checks the residual formed from the
 returned coefficients, including float32 rounding. Residual-based and
 active-equality dual candidates receive full-dictionary feasibility checks.
@@ -71,6 +77,46 @@ Use predictions, objectives and gaps to compare fits.
 
 Resources and statistics
 ------------------------
+
+Use ``search_method`` to compare sparse-search optimisations with the same
+paths, penalty and tolerance:
+
+.. list-table:: Sparse search modes
+   :header-rows: 1
+
+   * - Value
+     - Channel grouping
+     - Signed terminal blocks
+   * - ``"plain"``
+     - No
+     - No
+   * - ``"grouped"`` (default)
+     - Yes
+     - No
+   * - ``"signed"``
+     - No
+     - Yes
+   * - ``"grouped_signed"``
+     - Yes
+     - Yes
+
+``method="full"`` ignores this setting. Grouped search includes the existing
+one-letter energy tightening. Channels keep their input order. Signed checks
+evaluate the one- and two-letter suffix correlations in the final two levels,
+without storing descendant columns. They run when the integral bound fails
+to prune. Roundoff padding uses absolute terms and a variation majorant;
+uncertain blocks retain the integral bound. These checks can cost more than
+the work they save, so compare total runtime as well as constructed columns.
+
+``terminal_queries`` counts signed-block checks, ``terminal_pruned`` counts
+successful checks, and ``terminal_correlations`` counts evaluated signed
+correlations. These counters include certification searches. They are zero
+when signed checks are disabled and for full fits.
+
+``benchmarks/benchmark_sig_lasso_search.py --device both`` runs five
+interleaved repetitions after warm-up and checks predictions against a full
+fit outside the timed sections. It reports fit runtime, peak native workspace,
+constructed columns and signed-check counters. Input transfers are excluded.
 
 All fitting state is private to a call. CPU work uses Highway and oneTBB.
 The native entry points are ``sig_lasso_f`` and ``sig_lasso_d`` on CPU,

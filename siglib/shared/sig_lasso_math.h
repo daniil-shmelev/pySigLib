@@ -16,6 +16,7 @@
 #pragma once
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 #ifdef __CUDACC__
@@ -26,12 +27,8 @@
 
 namespace siglasso {
 
-SIGLASSO_HD inline size_t envelope_offset(size_t q, size_t a, size_t j, size_t i, size_t n, size_t segments) {
-    return (q * (q + 1) / 2 + a) * segments * n + j * n + i;
-}
-
-SIGLASSO_HD inline void prepare_sample(const double* increments, double* variation, double* after, double* envelopes,
-    size_t i, size_t n, size_t segments, size_t dimension, size_t degree) {
+SIGLASSO_HD inline void prepare_sample(const double* increments, double* variation, double* after,
+    size_t i, size_t n, size_t segments, size_t dimension) {
     double tail_variation = 0;
     for (size_t j = segments; j-- > 0;) {
         double v = 0;
@@ -39,60 +36,47 @@ SIGLASSO_HD inline void prepare_sample(const double* increments, double* variati
         variation[j * n + i] = v;
         after[j * n + i] = tail_variation;
         tail_variation += v;
-        envelopes[j * n + i] = 1;
-    }
-    if (degree > 1) {
-        for (size_t a = 0; a < dimension; ++a) {
-            double tail = 0;
-            for (size_t j = segments; j-- > 0;) {
-                auto right = envelope_offset(1, 1, j, i, n, segments);
-                envelopes[right] = fmax(envelopes[right], fabs(tail));
-                tail += increments[(j * dimension + a) * n + i];
-                auto left = envelope_offset(1, 0, j, i, n, segments);
-                envelopes[left] = fmax(envelopes[left], fabs(tail));
-            }
-        }
-    }
-    for (size_t q = 2; q < degree; ++q) {
-        double carry = 0;
-        for (size_t j = segments; j-- > 0;) {
-            envelopes[envelope_offset(q, q, j, i, n, segments)] = carry;
-            for (size_t a = q; a-- > 0;) {
-                carry += variation[j * n + i] * envelopes[envelope_offset(q - 1, a, j, i, n, segments)] / q;
-                envelopes[envelope_offset(q, a, j, i, n, segments)] = carry;
-            }
-        }
     }
 }
 
-SIGLASSO_HD inline double binomial_log(size_t n, size_t k) {
-    return lgamma(static_cast<double>(n + 1)) - lgamma(static_cast<double>(k + 1)) - lgamma(static_cast<double>(n - k + 1));
-}
-
-inline std::vector<double> integration_coefficients(size_t k, size_t levels) {
-    std::vector<double> out(levels * (levels + 1) * (k + 1));
-    for (size_t q = 1; q <= levels; ++q) for (size_t b = 0; b < q; ++b) for (size_t a = 0; a <= k; ++a) {
-        const size_t offset = 2 * ((q * (q - 1) / 2 + b) * (k + 1) + a);
-        out[offset] = exp(binomial_log(k, a) + binomial_log(q - 1, b) - binomial_log(k + q - 1, a + b)) / (k + q);
-        out[offset + 1] = exp(lgamma(static_cast<double>(k + 1)) + lgamma(static_cast<double>(k - a + b + 1))
-            - lgamma(static_cast<double>(k - a + 1)) - lgamma(static_cast<double>(k + b + 2))
-            - lgamma(static_cast<double>(b + 1)) - lgamma(static_cast<double>(q - b)));
+// Expand the remaining-variation power and integrate against each Bernstein basis polynomial.
+inline std::vector<double> integration_coefficients(size_t k, size_t levels, const std::vector<double>& weights) {
+    std::vector<double> out(levels * (levels + 1) / 2 * (k + 1));
+    double factorial = 1;
+    for (size_t q = 1; q <= levels; ++q) {
+        if (q > 1) factorial *= q - 1;
+        for (size_t a = 0; a <= k; ++a) {
+            double value = weights[k + q] / (k + 1) / factorial;
+            for (size_t b = 0; b < q; ++b) {
+                out[(q * (q - 1) / 2 + b) * (k + 1) + a] = value;
+                value *= static_cast<double>(k - a + b + 1) / (k + b + 2) * static_cast<double>(q - 1 - b) / (b + 1);
+            }
+        }
     }
     return out;
 }
 
-SIGLASSO_HD inline double factor_value(const double* variation, const double* after, const double* envelopes, const double* constants,
-    size_t k, size_t q, size_t a, size_t j, size_t i, size_t n, size_t segments) {
+// Weighted integral of B_a^k(s) * step * (tail + step * (1-s))^(q-1) / (q-1)!.
+SIGLASSO_HD inline double factor_value(const double* variation, const double* after, const double* constants,
+    size_t k, size_t q, size_t a, size_t j, size_t i, size_t n) {
     const double step = variation[j * n + i], tail = after[j * n + i];
-    double integral = 0, total_variation = 0;
-    for (size_t b = 0; b < q; ++b) {
-        const size_t offset = 2 * ((q * (q - 1) / 2 + b) * (k + 1) + a);
-        const double beta = constants[offset];
-        integral += step * envelopes[envelope_offset(q - 1, b, j, i, n, segments)] * beta;
-        const double coefficient = constants[offset + 1];
-        total_variation += pow(step, static_cast<double>(b + 1)) * pow(tail, static_cast<double>(q - 1 - b)) * coefficient;
+    if (step == 0) return 0;
+    const size_t offset = q * (q - 1) / 2 * (k + 1) + a;
+    if (q == 1) return constants[offset] * step;
+    double value;
+    if (step >= tail) {
+        const double ratio = tail / step;
+        value = constants[offset];
+        for (size_t b = 1; b < q; ++b) value = value * ratio + constants[offset + b * (k + 1)];
+    } else {
+        const double ratio = step / tail;
+        value = constants[offset + (q - 1) * (k + 1)];
+        for (size_t b = q - 1; b-- > 0;) value = value * ratio + constants[offset + b * (k + 1)];
     }
-    return fmin(integral, total_variation);
+    // Scale after Horner evaluation to avoid underflow before degree weighting.
+    const double scale = fmax(step, tail);
+    for (size_t b = 1; b < q; ++b) value *= scale;
+    return value * step;
 }
 
 SIGLASSO_HD inline void child_sample(const double* increments, const double* parent, const double* integrals, double* child, double* values,
@@ -116,6 +100,39 @@ SIGLASSO_HD inline double moment_value(const double* coefficients, const double*
     for (size_t a = 0; a <= k; ++a)
         value += fabs(coefficients[(j * (k + 1) + a) * n + i]) * factors[((q * (k + 1) + a) * segments + j) * n + i];
     return value;
+}
+
+// Correlation-only terminal contraction; no descendant feature column is stored.
+SIGLASSO_HD inline double terminal_sample(const double* coefficients, const double* integrals, const double* increments,
+    size_t a, size_t b, size_t q, size_t k, size_t i, size_t n, size_t segments, size_t dimension, double& magnitude) {
+    double value = 0, correction = 0, tail = 0;
+    magnitude = 0;
+    for (size_t j = segments; j-- > 0;) {
+        const double step = increments[(j * dimension + a) * n + i];
+        const double integral = integrals[j * n + i];
+        double term = step * integral, absolute = fabs(term);
+        if (q == 2) {
+            const double other = increments[(j * dimension + b) * n + i];
+            tail += other;
+            double linear = 0;
+            for (size_t h = 0; h <= k; ++h) linear += (h + 1) * coefficients[(j * (k + 1) + h) * n + i];
+            linear /= (k + 1) * (k + 2);
+            term = step * (integral * tail - linear * other);
+            absolute = fabs(step) * (fabs(integral * tail) + fabs(linear * other));
+        }
+        const double adjusted = term - correction, next = value + adjusted;
+        correction = (next - value) - adjusted;
+        value = next; magnitude += absolute;
+    }
+    return value;
+}
+
+// Gamma_n padding includes prefix recurrence, suffix sums and correlation reduction.
+// The variation majorant also covers cancellation inside computed prefix coefficients.
+SIGLASSO_HD inline double terminal_roundoff(size_t k, size_t n, size_t segments) {
+    const double operations = 32.0 * (k + 2) * (k + 2) * (segments + 1) + 8.0 * n;
+    const double error = operations * 2.2204460492503131e-16;
+    return error < .25 ? error / (1 - error) : std::numeric_limits<double>::infinity();
 }
 
 SIGLASSO_HD inline double energy_sample(const double* integrals, const double* gram, const double* increments,

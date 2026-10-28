@@ -18,6 +18,57 @@
 #include "sig_lasso_math.h"
 #include <random>
 
+TEST(sigLassoTest, RemainingVariationIgnoresCancellation) {
+    constexpr size_t n = 2, l = 4, d = 2;
+    const std::vector<double> increments{1, 0, -2, 0, 0, 0, 0, 0, -1, 0, 2, 0, .25, 0, -.5, 0};
+    std::vector<double> variation(n * l), after(n * l);
+    for (size_t i = 0; i < n; ++i) siglasso::prepare_sample(increments.data(), variation.data(), after.data(), i, n, l, d);
+    EXPECT_EQ(variation, (std::vector<double>{2, 0, 0, 0, 2, 0, .5, 0}));
+    EXPECT_EQ(after, (std::vector<double>{2.5, 0, 2.5, 0, .5, 0, 0, 0}));
+}
+
+TEST(sigLassoTest, RemainingVariationFactorsMatchQuadrature) {
+    const std::array<double, 4> nodes{.18343464249564980494, .52553240991632898582, .79666647741362673959, .96028985649753623168};
+    const std::array<double, 4> quadrature{.36268378337836198297, .31370664587788728734, .22238103445337447054, .10122853629037625915};
+    const std::array<double, 8> steps{0, 0, .2, .7, .2, .5, 1e-12, .5}, tails{0, .2, 0, .1, .6, .5, .5, 1e-12};
+    constexpr size_t levels = 8;
+    for (size_t k = 0; k <= 6; ++k) {
+        std::vector<double> weights(k + levels + 1, 1);
+        for (size_t j = 1; j < weights.size(); ++j) weights[j] = weights[j - 1] * j;
+        const auto constants = siglasso::integration_coefficients(k, levels, weights);
+        for (size_t q = 1; q <= levels; ++q) for (size_t a = 0; a <= k; ++a) for (size_t i = 0; i < steps.size(); ++i) {
+            double expected = 0;
+            const double binomial = std::tgamma(k + 1.) / (std::tgamma(a + 1.) * std::tgamma(k - a + 1.));
+            for (size_t j = 0; j < nodes.size(); ++j) for (double sign : {-1., 1.}) {
+                const double t = (1 + sign * nodes[j]) / 2;
+                expected += quadrature[j] / 2 * binomial * std::pow(t, a) * std::pow(1 - t, k - a)
+                    * steps[i] * std::pow(tails[i] + steps[i] * (1 - t), q - 1) / std::tgamma(static_cast<double>(q));
+            }
+            expected *= weights[k + q];
+            const double actual = siglasso::factor_value(steps.data(), tails.data(), constants.data(), k, q, a, 0, i, steps.size());
+            EXPECT_NEAR(actual, expected, 2e-13 * std::abs(expected) + 1e-300) << "k=" << k << " q=" << q << " a=" << a << " i=" << i;
+        }
+    }
+}
+
+TEST(sigLassoTest, RemainingVariationFactorsAtDegreeLimit) {
+    constexpr size_t degree = 170;
+    std::vector<double> weights(degree + 1, 1);
+    for (size_t j = 1; j <= degree; ++j) weights[j] = weights[j - 1] * j;
+    for (size_t k : {0U, 30U, 100U, 169U}) {
+        const size_t q = degree - k;
+        const auto constants = siglasso::integration_coefficients(k, q, weights);
+        for (size_t a : {size_t(0), k / 2, k}) for (double step : {.02, .7, 1.}) {
+            const double tail = 0;
+            const double expected = std::exp(std::lgamma(k + 1.) + std::lgamma(k - a + q)
+                - std::lgamma(k - a + 1.) - std::lgamma(static_cast<double>(q)) + q * std::log(step));
+            const double actual = siglasso::factor_value(&step, &tail, constants.data(), k, q, a, 0, 0, 1);
+            EXPECT_TRUE(std::isfinite(actual));
+            EXPECT_NEAR(actual, expected, 2e-12 * expected + 1e-300);
+        }
+    }
+}
+
 TEST(sigLassoTest, BernsteinColumnsAndDescendantBounds) {
     constexpr size_t n = 5, l = 6, d = 3, m = 4;
     std::mt19937 generator(712);
@@ -27,8 +78,8 @@ TEST(sigLassoTest, BernsteinColumnsAndDescendantBounds) {
     for (auto& value : residual) value = normal(generator);
     for (size_t i = 0; i < n; ++i) for (size_t j = 0; j < l; ++j) for (size_t a = 0; a < d; ++a)
         increments[(j * d + a) * n + i] = paths[(i * (l + 1) + j + 1) * d + a] - paths[(i * (l + 1) + j) * d + a];
-    std::vector<double> variation(n * l), after(n * l), envelopes(m * (m + 1) / 2 * n * l);
-    for (size_t i = 0; i < n; ++i) siglasso::prepare_sample(increments.data(), variation.data(), after.data(), envelopes.data(), i, n, l, d, m);
+    std::vector<double> variation(n * l), after(n * l);
+    for (size_t i = 0; i < n; ++i) siglasso::prepare_sample(increments.data(), variation.data(), after.data(), i, n, l, d);
     struct Prefix { siglasso::Word word; std::vector<double> coefficients; };
     std::vector<Prefix> pending{{{}, std::vector<double>(n * l, 1)}};
     std::vector<siglasso::Word> words;
@@ -47,13 +98,25 @@ TEST(sigLassoTest, BernsteinColumnsAndDescendantBounds) {
     while (!pending.empty()) {
         auto prefix = std::move(pending.back()); pending.pop_back();
         const size_t k = prefix.word.size();
-        auto constants = siglasso::integration_coefficients(k, m - k);
+        auto constants = siglasso::integration_coefficients(k, m - k, weights);
         std::vector<double> factors((m - k) * (k + 1) * n * l), integrals(n * l);
         for (size_t q = 1; q <= m - k; ++q) for (size_t a = 0; a <= k; ++a) for (size_t j = 0; j < l; ++j) for (size_t i = 0; i < n; ++i)
             factors[(((q - 1) * (k + 1) + a) * l + j) * n + i] = siglasso::factor_value(
-                variation.data(), after.data(), envelopes.data(), constants.data(), k, q, a, j, i, n, l) * weights[k + q] / n;
+                variation.data(), after.data(), constants.data(), k, q, a, j, i, n) / n;
         for (size_t j = 0; j < l; ++j) for (size_t i = 0; i < n; ++i) for (size_t a = 0; a <= k; ++a)
             integrals[j * n + i] += prefix.coefficients[(j * (k + 1) + a) * n + i] / (k + 1);
+        for (size_t q = 1; q <= std::min<size_t>(2, m - k); ++q) for (size_t a = 0; a < d; ++a)
+            for (size_t b = 0; b < (q == 2 ? d : 1); ++b) {
+                auto word = prefix.word; word.push_back(a); if (q == 2) word.push_back(b);
+                const size_t position = std::find(words.begin(), words.end(), word) - words.begin();
+                for (size_t i = 0; i < n; ++i) {
+                    double magnitude;
+                    const double value = siglasso::terminal_sample(prefix.coefficients.data(), integrals.data(), increments.data(),
+                        a, b, q, k, i, n, l, d, magnitude);
+                    EXPECT_NEAR(value, reference[i * words.size() + position], 2e-12);
+                    EXPECT_GE(magnitude + 1e-13, std::abs(value));
+                }
+            }
         for (size_t low = 0; low < d; ++low) for (size_t high = low + 1; high <= d; ++high) {
             double bound = 0;
             for (size_t q = 0; q < m - k; ++q) {

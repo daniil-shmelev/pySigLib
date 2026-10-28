@@ -120,7 +120,7 @@ public:
     const Clock::time_point started = Clock::now();
     std::shared_ptr<Budget> budget;
     SigLassoStats stats{};
-    Array increments, variation, after, envelopes, alphabet_ratios;
+    Array increments, variation, after, alphabet_ratios;
     std::vector<std::pair<size_t, size_t>> alphabet;
     std::unordered_set<Word, WordHash> constructed;
     std::vector<std::shared_ptr<void>> record_storage;
@@ -130,6 +130,7 @@ public:
     size_t slab_used = 0;
     std::vector<double> weights;
     explicit Backend(const SigLassoOptions& o, std::shared_ptr<Budget> shared_budget = {}) : options(o), budget(shared_budget ? std::move(shared_budget) : std::make_shared<Budget>(o.memory_limit)) {
+        if (o.search_method > 3) throw std::invalid_argument("Invalid sig_lasso search method");
         if (o.degree > 170) throw std::out_of_range("sig_lasso degree exceeds the finite factorial range");
         weights.resize(o.degree + 1, 1.0);
         for (size_t k = 1; k <= o.degree; ++k) weights[k] = weights[k - 1] * static_cast<double>(k);
@@ -203,6 +204,11 @@ public:
     Array from_host(const std::vector<double>& source) { auto out = alloc(source.size()); upload(source.data(), out.data, source.size()); return out; }
     std::vector<double> host(const Array& source) { std::vector<double> out(source.size); download(source.data, out.data(), out.size()); return out; }
     void prepare_alphabet() {
+        if (!(options.search_method & 1)) {
+            for (size_t a = 0; a < options.dimension; ++a) alphabet.emplace_back(a, a + 1);
+            alphabet_ratios = alloc(multiply(multiply(options.samples, options.length - 1), alphabet.size()));
+            return;
+        }
         std::vector<std::pair<size_t, size_t>> pending{{0, options.dimension}};
         while (!pending.empty()) {
             auto interval = pending.back(); pending.pop_back(); alphabet.push_back(interval);
@@ -325,7 +331,12 @@ public:
             cache_.clear(); factors_.clear(); grams_.clear(); root_.reset(); factor_bytes_ = gram_bytes_ = 0;
             b_.native_search(residual, alpha, active, capacity, result); ++b_.stats.search_passes; return result;
         }
-        std::vector<Probe> stack{{root_, low, high ? high : b_.options.dimension, block, {}}};
+        std::vector<Probe> stack;
+        const auto push = [&](const NodePtr& node, size_t first, size_t last, size_t index) {
+            if (b_.options.search_method & 1) stack.push_back({node, first, last, index, {}});
+            else for (size_t a = last; a-- > first;) stack.push_back({node, a, a + 1, a, {}});
+        };
+        push(root_, low, high ? high : b_.options.dimension, block);
         while (!stack.empty()) {
             std::vector<Probe> batch;
             const auto k = stack.back().node->word.size();
@@ -402,7 +413,7 @@ public:
                         }
                     }
                 }
-                if (node->word.size() < b_.options.degree) stack.push_back({node, 0, b_.options.dimension});
+                if (node->word.size() < b_.options.degree) push(node, 0, b_.options.dimension, 0);
             }
         }
         std::sort(result.candidates.begin(), result.candidates.end(), better);

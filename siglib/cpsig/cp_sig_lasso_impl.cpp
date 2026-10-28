@@ -179,15 +179,14 @@ public:
         return siglasso::finite(std::nextafter(maximum, std::numeric_limits<double>::infinity()));
     }
     void prepare() override {
-        const size_t n = options.samples, l = options.length - 1, d = options.dimension, m = options.degree;
+        const size_t n = options.samples, l = options.length - 1, d = options.dimension;
         increments = alloc(siglasso::multiply(siglasso::multiply(n, l), d));
         variation = alloc(n * l); after = alloc(n * l);
-        envelopes = alloc(siglasso::multiply(n * l, m * (m + 1) / 2)); fill(envelopes, 0);
         batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t i = begin; i < end; ++i) {
                 for (size_t j = 0; j < l; ++j) for (size_t a = 0; a < d; ++a)
                     increments.data[(j * d + a) * n + i] = paths_.data[(i * (l + 1) + j + 1) * d + a] - paths_.data[(i * (l + 1) + j) * d + a];
-                siglasso::prepare_sample(increments.data, variation.data, after.data, envelopes.data, i, n, l, d, m);
+                siglasso::prepare_sample(increments.data, variation.data, after.data, i, n, l, d);
             }
         });
         prepare_alphabet();
@@ -224,14 +223,14 @@ public:
     siglasso::Array compute_factors(size_t k) {
         const size_t n = options.samples, l = options.length - 1, m = options.degree;
         auto result = alloc(siglasso::multiply((m - k) * (k + 1), n * l));
-        const size_t constant_count = siglasso::multiply(siglasso::multiply(m - k, m - k + 1), k + 1);
+        const size_t constant_count = siglasso::multiply(siglasso::multiply(m - k, m - k + 1) / 2, k + 1);
         auto host_constants = account(siglasso::multiply(constant_count, sizeof(double)));
-        auto constants = from_host(siglasso::integration_coefficients(k, m - k));
+        auto constants = siglasso::integration_coefficients(k, m - k, weights);
         batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t q = 1; q <= m - k; ++q) for (size_t a = 0; a <= k; ++a) for (size_t j = 0; j < l; ++j)
                 for (size_t i = begin; i < end; ++i)
                     result.data[(((q - 1) * (k + 1) + a) * l + j) * n + i] = siglasso::finite(
-                        siglasso::factor_value(variation.data, after.data, envelopes.data, constants.data, k, q, a, j, i, n, l) * weights[k + q] / n);
+                        siglasso::factor_value(variation.data, after.data, constants.data(), k, q, a, j, i, n) / n);
         });
         return result;
     }
@@ -280,6 +279,9 @@ public:
     void bounds(const std::vector<siglasso::Probe>& tasks, const siglasso::Array& residual, double threshold, std::vector<double>& out) override {
         const size_t n = options.samples, l = options.length - 1, d = options.dimension;
         out.assign(tasks.size(), 0);
+        std::atomic<uint64_t> terminal_queries{0}, terminal_pruned{0}, terminal_correlations{0};
+        const double residual_mean = options.intercept && (options.search_method & 2)
+            ? std::accumulate(residual.data, residual.data + n, 0.0) / n : 0;
         batch(tasks.size(), [&](uint64_t begin, uint64_t end) {
             for (size_t t = begin; t < end; ++t) {
                 const auto& task = tasks[t];
@@ -306,9 +308,42 @@ public:
                     best = std::max(best, siglasso::finite(total));
                     if (best >= threshold) break;
                 }
+                if ((options.search_method & 2) && levels <= 2 && best >= threshold && l) {
+                    ++terminal_queries;
+                    const size_t k = task.node->word.size();
+                    const double error = siglasso::terminal_roundoff(k, n, l);
+                    double signed_bound = 0;
+                    bool complete = true;
+                    for (size_t q = 1; q <= levels && complete; ++q) {
+                        double cap = 0;
+                        for (size_t i = 0; i < n; ++i) cap += std::abs(residual.data[i] - residual_mean)
+                            * std::pow(variation.data[i] + after.data[i], static_cast<double>(k + q));
+                        for (size_t a = task.low; a < task.high && complete; ++a) for (size_t b = 0; b < (q == 2 ? d : 1); ++b) {
+                            double sum = 0, correction = 0, magnitude = 0;
+                            for (size_t i = 0; i < n; ++i) {
+                                double absolute;
+                                const double value = siglasso::terminal_sample(task.node->coefficients.data, task.node->integrals.data,
+                                    increments.data, a, b, q, k, i, n, l, d, absolute);
+                                const double r = residual.data[i] - residual_mean;
+                                const double adjusted = r * value - correction, next = sum + adjusted;
+                                correction = (next - sum) - adjusted; sum = next;
+                                magnitude += std::abs(r) * absolute;
+                            }
+                            ++terminal_correlations;
+                            const double bound = (std::abs(sum) * weights[k + q] + error * (magnitude * weights[k + q] + cap)) / n + 1e-15;
+                            if (!std::isfinite(bound) || bound * (1 + 1e-10) >= threshold) { complete = false; break; }
+                            signed_bound = std::max(signed_bound, bound);
+                        }
+                    }
+                    if (complete && siglasso::guard(signed_bound * (1 + 1e-10)) < threshold) {
+                        best = std::min(best, signed_bound); ++terminal_pruned;
+                    }
+                }
                 out[t] = best;
             }
         });
+        stats.terminal_queries += terminal_queries; stats.terminal_pruned += terminal_pruned;
+        stats.terminal_correlations += terminal_correlations;
     }
     void children(const std::vector<siglasso::Probe>& tasks, std::vector<siglasso::NodePtr>& out) override {
         const size_t n = options.samples, l = options.length - 1;
@@ -381,7 +416,9 @@ public:
         const std::unordered_map<siglasso::Word, size_t, siglasso::WordHash>& active, size_t capacity, siglasso::SearchResult& result) override {
         if (searches_.empty()) {
             const size_t threads = options.n_jobs > 0 ? options.n_jobs : get_max_threads() + 1 + options.n_jobs;
-            frontier_.push_back(0);
+            if (!(options.search_method & 1)) {
+                frontier_.resize(options.dimension); std::iota(frontier_.begin(), frontier_.end(), 0);
+            } else frontier_.push_back(0);
             while (frontier_.size() < std::min(threads, static_cast<size_t>(options.dimension))) {
                 auto largest = std::max_element(frontier_.begin(), frontier_.end(), [&](size_t a, size_t b) {
                     return alphabet[a].second - alphabet[a].first < alphabet[b].second - alphabet[b].first;
@@ -395,7 +432,7 @@ public:
             auto single = options; single.n_jobs = 1; single.cache_bytes /= frontier_.size();
             for (size_t j = 0; j < frontier_.size(); ++j) {
                 auto worker = std::make_unique<LassoCPU>(*this, single);
-                worker->increments = increments; worker->variation = variation; worker->after = after; worker->envelopes = envelopes;
+                worker->increments = increments; worker->variation = variation; worker->after = after;
                 worker->alphabet = alphabet; worker->alphabet_ratios = alphabet_ratios;
                 worker->factor_parent_ = this;
                 searches_.push_back(std::make_unique<siglasso::Search>(*worker)); search_workers_.push_back(std::move(worker));
@@ -416,6 +453,8 @@ public:
             for (const auto& word : constructed) if (worker.constructed.count(word)) --stats.constructed;
             stats.evaluated += worker.stats.evaluated; stats.pruned += worker.stats.pruned; stats.block_queries += worker.stats.block_queries;
             stats.cache_hits += worker.stats.cache_hits; stats.cache_misses += worker.stats.cache_misses;
+            stats.terminal_queries += worker.stats.terminal_queries; stats.terminal_pruned += worker.stats.terminal_pruned;
+            stats.terminal_correlations += worker.stats.terminal_correlations;
             result.omitted = std::max(result.omitted, found[j].omitted);
             for (auto& candidate : found[j].candidates) result.candidates.push_back(std::move(candidate));
         }
