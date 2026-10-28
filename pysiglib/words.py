@@ -13,325 +13,198 @@
 # limitations under the License.
 # =========================================================================
 
+"""Word and Lyndon-word coordinates in native numerical output order."""
+
 import itertools
 from functools import cache
-from .param_checks import check_type, check_non_neg, check_word
 
-def words_of_length(
-        alphabet_size : int,
-        length : int
-) -> list[tuple[int, ...]]:
+from .param_checks import (
+    _check_basis_index,
+    _check_basis_parameters,
+    check_type,
+    check_word,
+)
+
+
+def words_of_length(dimension: int, length: int, *, scalar_term: bool = False) -> list[tuple[int, ...]]:
+    """Return words of exactly ``length`` letters, in lexicographic order.
+
+    :param dimension: Alphabet size; letters range from zero to ``dimension - 1``.
+    :param length: Exact word length.
+    :param scalar_term: Include the empty word when ``length=0``. Default ``False``.
+    :return: Fresh list of word tuples.
     """
-    Returns all words of a given length.
-
-    :param alphabet_size: Size of the alphabet.
-    :type alphabet_size: int
-    :param length: Length of words.
-    :type length: int
-    :return: All words of the given length.
-    :rtype: list[tuple[int, ...]]
-
-    Example:
-    ---------
-
-    .. code-block:: python
-
-        import pysiglib
-
-        # All words of length 2 over alphabet {0, 1}
-        w = pysiglib.words_of_length(2, 2)
-        print(w) # [(0, 0), (0, 1), (1, 0), (1, 1)]
-
-    """
-    check_type(alphabet_size, "alphabet_size", int)
-    check_type(length, "length", int)
-    check_non_neg(alphabet_size, "alphabet_size")
-    check_non_neg(length, "length")
-
-    d = list(range(alphabet_size))
-    return list(itertools.product(d, repeat = length))
-
-def words(
-        alphabet_size : int,
-        max_length : int
-) -> list[tuple[int, ...]]:
-    """
-    Returns all words up to a given length.
-
-    :param alphabet_size: Size of the alphabet.
-    :type alphabet_size: int
-    :param max_length: Max length of words.
-    :type max_length: int
-    :return: All words up to the given length.
-    :rtype: list[tuple[int, ...]]
-
-    Example:
-    ---------
-
-    .. code-block:: python
-
-        import pysiglib
-
-        # All words up to length 2 over alphabet {0, 1}
-        w = pysiglib.words(2, 2)
-        print(w) # [(), (0,), (1,), (0, 0), (0, 1), (1, 0), (1, 1)]
-
-    """
-    check_type(alphabet_size, "alphabet_size", int)
-    check_type(max_length, "max_length", int)
-    check_non_neg(alphabet_size, "alphabet_size")
-    check_non_neg(max_length, "max_length")
-
-    d = list(range(alphabet_size))
-    res = [tuple()]
-
-    for level in range(1, max_length + 1):
-        res += list(itertools.product(d, repeat = level))
-    return res
-
-def lyndon_words_of_length(
-        alphabet_size: int,
-        length: int
-) -> list[tuple[int, ...]]:
-    """
-    Returns all Lyndon words of a given length.
-
-    :param alphabet_size: Size of the alphabet.
-    :type alphabet_size: int
-    :param length: Length of words.
-    :type length: int
-    :return: All Lyndon words of the given length.
-    :rtype: list[tuple[int, ...]]
-
-    Example:
-    ---------
-
-    .. code-block:: python
-
-        import pysiglib
-
-        # All Lyndon words of length 3 over alphabet {0, 1}
-        w = pysiglib.lyndon_words_of_length(2, 3)
-        print(w) # [(0, 0, 1), (0, 1, 1)]
-
-    """
-    check_type(alphabet_size, "alphabet_size", int)
-    check_type(length, "length", int)
-    check_non_neg(alphabet_size, "alphabet_size")
-    check_non_neg(length, "length")
-
-    if alphabet_size == 0 or length == 0:
+    _check_basis_parameters(dimension, length)
+    check_type(scalar_term, "scalar_term", bool)
+    if length == 0 and not scalar_term:
         return []
+    return list(itertools.product(range(dimension), repeat=length))
 
-    res = []
+
+def words(dimension: int, degree: int, *, scalar_term: bool = False) -> list[tuple[int, ...]]:
+    """Return signature coordinate labels through ``degree`` in numerical output order.
+
+    Words are ordered by length, then lexicographically. Increasing ``degree`` preserves the existing prefix and indices. The same labels index expanded log signatures (method 0).
+
+    :param dimension: Alphabet size; use the effective dimension after any path augmentation.
+    :param degree: Inclusive maximum word length.
+    :param scalar_term: Include the empty word ``()`` at index zero. Default ``False``.
+    :return: Fresh list of word tuples, matching :func:`idx_to_word` under the same options.
+
+    Example::
+
+        >>> words(2, 2)
+        [(0,), (1,), (0, 0), (0, 1), (1, 0), (1, 1)]
+        >>> words(2, 0, scalar_term=True)
+        [()]
+    """
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
+    return [
+        word
+        for length in range(0 if scalar_term else 1, degree + 1)
+        for word in itertools.product(range(dimension), repeat=length)
+    ]
+
+
+@cache
+def _lyndon_words_of_length(dimension, length):
+    if dimension == 0 or length == 0:
+        return ()
+    result = []
     word = [0]
     while word:
-        m = len(word)
-        if m == length:
-            res.append(tuple(word))
-
+        period = len(word)
+        if period == length:
+            result.append(tuple(word))
         while len(word) < length:
-            word.append(word[-m])
-
-        while word and word[-1] == alphabet_size - 1:
+            word.append(word[-period])
+        while word and word[-1] == dimension - 1:
             word.pop()
-
         if word:
             word[-1] += 1
+    return tuple(result)
 
-    return res
 
+def lyndon_words_of_length(dimension: int, length: int) -> list[tuple[int, ...]]:
+    """Return Lyndon words of exactly ``length`` letters, in lexicographic order.
 
-def lyndon_words(
-        alphabet_size: int,
-        max_length: int
-) -> list[tuple[int, ...]]:
+    :param dimension: Alphabet size.
+    :param length: Exact word length. Zero returns an empty list.
+    :return: Fresh list of nonempty Lyndon-word tuples.
     """
-    Returns all Lyndon words up to a given length.
+    _check_basis_parameters(dimension, length)
+    return list(_lyndon_words_of_length(dimension, length))
 
-    :param alphabet_size: Size of the alphabet.
-    :type alphabet_size: int
-    :param max_length: Max length of words.
-    :type max_length: int
-    :return: All Lyndon words up to the given length.
-    :rtype: list[tuple[int, ...]]
-
-    Example:
-    ---------
-
-    .. code-block:: python
-
-        import pysiglib
-
-        # All Lyndon words up to length 3 over alphabet {0, 1}
-        w = pysiglib.lyndon_words(2, 3)
-        print(w) # [(0,), (1,), (0, 1), (0, 0, 1), (0, 1, 1)]
-
-    """
-    check_type(alphabet_size, "alphabet_size", int)
-    check_type(max_length, "max_length", int)
-    check_non_neg(alphabet_size, "alphabet_size")
-    check_non_neg(max_length, "max_length")
-
-    res = []
-    for level in range(1, max_length + 1):
-        res += lyndon_words_of_length(alphabet_size, level)
-    return res
 
 @cache
-def is_lyndon(
-    word : tuple[int, ...]
-) -> bool:
+def _lyndon_words(dimension, degree):
+    return tuple(
+        word
+        for length in range(1, degree + 1)
+        for word in _lyndon_words_of_length(dimension, length)
+    )
+
+
+def lyndon_words(dimension: int, degree: int) -> list[tuple[int, ...]]:
+    """Return compressed log-signature labels through ``degree`` in numerical output order.
+
+    The order is word length, then lexicographic order. Method 1 returns selected expanded word coefficients; methods 2 and 3 return coefficients in the standard Lyndon bracket basis with these same labels. Full and compressed indices are distinct. Increasing ``degree`` preserves the existing prefix and indices.
+
+    :param dimension: Alphabet size; use the effective dimension after any path augmentation.
+    :param degree: Inclusive maximum word length.
+    :return: Fresh list of Lyndon-word tuples. The empty word is always excluded.
     """
-    Checks if a given word is a Lyndon word.
+    _check_basis_parameters(dimension, degree)
+    return list(_lyndon_words(dimension, degree))
 
-    :param word: Word
-    :type word: tuple[int, ...]
-    :return: Returns ``True`` if ``word`` is a Lyndon word and ``False`` otherwise.
-    :rtype: bool
 
-    Example:
-    ---------
+def _is_lyndon(word):
+    return bool(word) and all(word < word[start:] for start in range(1, len(word)))
 
-    .. code-block:: python
 
-        import pysiglib
+def is_lyndon(word: tuple[int, ...]) -> bool:
+    """Return whether a tuple of nonnegative integer letters is a Lyndon word.
 
-        print(pysiglib.is_lyndon((0, 1)))    # True
-        print(pysiglib.is_lyndon((1, 0)))    # False
-        print(pysiglib.is_lyndon((0, 0, 1))) # True
-
+    The empty word is not Lyndon. Letters are compared by their integer values.
     """
-    check_word(word, float('inf'), "word")
-    n = len(word)
-    if n == 0:
-        return False
-    if n == 1:
-        return True
+    check_word(word, float("inf"), "word")
+    return _is_lyndon(word)
 
-    for i in range(1, n):
-        if not (word < word[i:]):
-            return False
 
-    return True
+def word_to_idx(word: tuple[int, ...], dimension: int, degree: int, *, scalar_term: bool = False) -> int:
+    """Return a word's index in the full signature or expanded log-signature coordinates.
 
-@cache
-def word_to_idx(
-        word : tuple[int, ...],
-        alphabet_size : int,
-        *,
-        scalar_term : bool = False,
-) -> int:
+    :param word: Tuple of integer letters in ``[0, dimension)``.
+    :param dimension: Alphabet size.
+    :param degree: Inclusive maximum word length; words beyond this bound are rejected.
+    :param scalar_term: Include the empty word at index zero. Default ``False``.
+    :return: Index in :func:`words` with the same options.
     """
-    Given a word :math:`(w_0, w_1, \\ldots, w_n)`, returns its flat index into a
-    truncated signature.
-
-    With ``scalar_term=True`` the empty word :math:`()` sits at index 0 and a word
-    of length :math:`n+1` is at
-
-    .. math::
-
-        \\sum_{i=0}^n (w_i + 1) d^i.
-
-    With ``scalar_term=False`` (default) there is no empty-word entry, so all indices
-    shift down by 1: the single-letter word ``(0,)`` is at index 0, and the empty word
-    is invalid.
-
-    :param word: Word
-    :type word: tuple[int, ...]
-    :param alphabet_size: Size of the alphabet
-    :type alphabet_size: int
-    :param scalar_term: Whether the target signature includes the leading scalar 1.
-        Must match the format of the sig you intend to index. Default ``False``.
-    :type scalar_term: bool
-    :return: Flat index corresponding to ``word``
-    :rtype: int
-
-    Example:
-    ---------
-
-    .. code-block:: python
-
-        import torch
-        import pysiglib
-
-        length, dimension, degree = 100, 2, 3
-        x = torch.rand(size=(length, dimension))
-        sig = pysiglib.sig(x, degree)  # scalar_term=False by default
-
-        word = (0, 1)
-        idx = pysiglib.word_to_idx(word, dimension)
-        print(sig[idx])  # coefficient at word (0, 1)
-
-    """
-    check_type(alphabet_size, "alphabet_size", int)
-    check_non_neg(alphabet_size, "alphabet_size")
-    check_word(word, alphabet_size, "word")
-
-    if not word:
-        if not scalar_term:
-            raise ValueError(
-                "The empty word has no index in a signature with scalar_term=False. "
-                "Pass scalar_term=True if your signature includes the leading scalar 1."
-            )
-        return 0
-
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
+    check_word(word, dimension, "word")
+    if len(word) > degree:
+        raise ValueError("word exceeds the requested degree")
+    if not word and not scalar_term:
+        raise ValueError("The empty word has no index with scalar_term=False")
     idx = 0
-    for i in word:
-        idx = idx * alphabet_size + (i+1)
+    for letter in word:
+        idx = idx * dimension + letter + 1
     return idx if scalar_term else idx - 1
 
-@cache
-def idx_to_word(
-        idx : int,
-        alphabet_size : int,
-        *,
-        scalar_term : bool = False,
-) -> tuple[int, ...]:
+
+def idx_to_word(idx: int, dimension: int, degree: int, *, scalar_term: bool = False) -> tuple:
+    """Return the word at ``idx`` in the full coordinates; inverse of :func:`word_to_idx`.
+
+    :param idx: Nonnegative flat coordinate index.
+    :param dimension: Alphabet size.
+    :param degree: Inclusive maximum word length; indices beyond this bound are rejected.
+    :param scalar_term: Include the empty word at index zero. Default ``False``.
+    :return: Word tuple, equal to ``words(dimension, degree, scalar_term=scalar_term)[idx]``.
     """
-    Inverse of :func:`word_to_idx`. Given a flat index into a truncated signature,
-    returns the corresponding word.
-
-    With ``scalar_term=True``, index 0 maps to the empty word :math:`()`.
-    With ``scalar_term=False`` (default), index 0 maps to the single-letter word
-    ``(0,)`` and the empty word is unreachable.
-
-    :param idx: Flat index
-    :type idx: int
-    :param alphabet_size: Size of the alphabet
-    :type alphabet_size: int
-    :param scalar_term: Whether the source signature includes the leading scalar 1.
-        Must match the format of the sig the index was taken from. Default ``False``.
-    :type scalar_term: bool
-    :return: Word at ``idx``
-    :rtype: tuple[int, ...]
-
-    Example:
-    ---------
-
-    .. code-block:: python
-
-        import torch
-        import pysiglib
-
-        length, dimension, degree = 100, 2, 3
-        x = torch.rand(size=(length, dimension))
-        sig = pysiglib.sig(x, degree)  # scalar_term=False by default
-
-        word = pysiglib.idx_to_word(4, dimension)
-        print(word, sig[4])
-
-    """
+    _check_basis_parameters(dimension, degree)
+    check_type(scalar_term, "scalar_term", bool)
+    count = degree if dimension == 1 else (dimension ** (degree + 1) - dimension) // (dimension - 1)
+    _check_basis_index(idx, count + int(scalar_term))
     if not scalar_term:
-        idx = idx + 1
+        idx += 1
     word = []
-
     while idx:
-        idx, r = divmod(idx, alphabet_size)
-        if not r:
-            r = alphabet_size
-            idx -= 1
-        word.append(r - 1)
-
+        idx, letter = divmod(idx - 1, dimension)
+        word.append(letter)
     return tuple(reversed(word))
 
+
+@cache
+def _lyndon_word_indices(dimension, degree):
+    return {word: idx for idx, word in enumerate(_lyndon_words(dimension, degree))}
+
+
+def lyndon_word_to_idx(word: tuple[int, ...], dimension: int, degree: int) -> int:
+    """Return a Lyndon word's compressed log-signature index.
+
+    :param word: Nonempty Lyndon word over ``[0, dimension)``.
+    :param dimension: Alphabet size.
+    :param degree: Inclusive maximum word length.
+    :return: Index in :func:`lyndon_words`, distinct from the full :func:`word_to_idx` index.
+    """
+    _check_basis_parameters(dimension, degree)
+    check_word(word, dimension, "word")
+    if len(word) > degree or not _is_lyndon(word):
+        raise ValueError("word is not in the requested Lyndon-word basis")
+    return _lyndon_word_indices(dimension, degree)[word]
+
+
+def idx_to_lyndon_word(idx: int, dimension: int, degree: int) -> tuple:
+    """Return a compressed log-signature label; inverse of :func:`lyndon_word_to_idx`.
+
+    :param idx: Nonnegative compressed coordinate index.
+    :param dimension: Alphabet size.
+    :param degree: Inclusive maximum word length.
+    :return: Word tuple at ``lyndon_words(dimension, degree)[idx]``. There is no scalar coordinate.
+    """
+    _check_basis_parameters(dimension, degree)
+    basis = _lyndon_words(dimension, degree)
+    _check_basis_index(idx, len(basis))
+    return basis[idx]

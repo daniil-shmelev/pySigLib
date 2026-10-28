@@ -16,8 +16,15 @@
 from ..load_siglib import SYSTEM, BUILT_WITH_CUDA, BUILT_WITH_AVX
 from .torch_api import (linear_log_sig, linear_branched_sig, linear_branched_log_sig,
                         branched_sig_join, branched_log_sig_join)
-from ..words import words_of_length, words, lyndon_words_of_length, lyndon_words, is_lyndon, word_to_idx, idx_to_word
-from ..trees import trees, trees_of_order, tree_to_idx, idx_to_tree
+from ..words import (
+    words_of_length, words, lyndon_words_of_length, lyndon_words, is_lyndon,
+    word_to_idx, idx_to_word, lyndon_word_to_idx, idx_to_lyndon_word,
+)
+from ..trees import (
+    trees, trees_of_order, tree_to_idx, idx_to_tree,
+    forests, forest_to_idx, idx_to_forest,
+    lyndon_forests, lyndon_forest_to_idx, idx_to_lyndon_forest,
+)
 from ..transform_path import transform_path
 from ..sig_length import sig_length, log_sig_length
 from ..sig_coef import extract_sig_coef

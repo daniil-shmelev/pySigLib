@@ -100,7 +100,8 @@ def extract_sig_coef(
     sig_len = sig.shape[-1]
     SigInputHandler(sig, sig_len, "sig")  # validates shape/dtype; return unused
 
-    idx = [word_to_idx(w, aug_dimension, scalar_term=scalar_term) for w in words]
+    degree = max((len(w) for w in words), default=0)
+    idx = [word_to_idx(w, aug_dimension, degree, scalar_term=scalar_term) for w in words]
 
     return sig[..., idx]
 

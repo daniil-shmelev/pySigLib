@@ -145,7 +145,7 @@ def test_branched_dense_cuda_global_fallback(
 def test_branched_more_than_1024_trees_all_paths(
         dimension, degree, planar):
     dtype = torch.float32
-    basis = list(pysiglib.trees(dimension, degree, planar=planar)[1:])
+    basis = (pysiglib.forests if planar else pysiglib.trees)(dimension, degree)
     assert len(basis) > 1024
     pysiglib.prepare_branched_sig(dimension, degree, planar=planar)
     pysiglib.prepare_branched_sig_coef(
@@ -195,7 +195,7 @@ def test_branched_more_than_1024_trees_all_paths(
 def test_branched_correction_rolling_reverse_matches_finite_difference():
     dimension, degree = 1, 4
     planar = True
-    basis = list(pysiglib.trees(dimension, degree, planar=planar)[1:])
+    basis = (pysiglib.forests if planar else pysiglib.trees)(dimension, degree)
     pysiglib.prepare_branched_sig(dimension, degree, planar=planar)
     pysiglib.prepare_branched_sig_coef(dimension, basis, planar=planar)
     rng = np.random.default_rng(20260603)
