@@ -38,13 +38,8 @@
 
 extern "C" {
 
-    CUSIG_API uint32_t sig_lasso_abi_version_cuda() noexcept;
-    CUSIG_API int sig_lasso_v3_cuda_f(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, void*, int, uint64_t*) noexcept;
-    CUSIG_API int sig_lasso_v3_cuda_d(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, void*, int, uint64_t*) noexcept;
-    CUSIG_API int sig_lasso_shape_v3_cuda(uint64_t, SigLassoShape*) noexcept;
-    CUSIG_API int sig_lasso_result_v3_cuda_f(uint64_t, uint64_t*, uint64_t*, float*, float*, float*, float*, uint64_t*, uint64_t*) noexcept;
-    CUSIG_API int sig_lasso_result_v3_cuda_d(uint64_t, uint64_t*, uint64_t*, double*, double*, double*, double*, uint64_t*, uint64_t*) noexcept;
-    CUSIG_API int sig_lasso_release_v3_cuda(uint64_t) noexcept;
+    CUSIG_API int sig_lasso_cuda_f(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, void*, int, SigLassoAllocator, void*) noexcept;
+    CUSIG_API int sig_lasso_cuda_d(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, void*, int, SigLassoAllocator, void*) noexcept;
 
 	/**
 	* @brief Returns the CUDA error message for the current thread.

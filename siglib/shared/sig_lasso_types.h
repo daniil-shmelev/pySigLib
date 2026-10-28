@@ -39,3 +39,13 @@ struct SigLassoShape {
     uint64_t words, letters, targets;
     SigLassoStats stats;
 };
+
+struct SigLassoOutput {
+    uint64_t *letters, *offsets, *converged, *iterations;
+    void *coefficients, *intercepts, *objectives, *gaps;
+};
+
+// Called once after fitting. The caller owns all output buffers.
+// Integer buffers are on the host; scalar buffers use the input dtype and device.
+// Return zero on success. The callback must not throw across the C boundary.
+using SigLassoAllocator = int (*)(void*, const SigLassoShape*, SigLassoOutput*);

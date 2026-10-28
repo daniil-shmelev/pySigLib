@@ -13,7 +13,7 @@
 # limitations under the License.
 # =========================================================================
 
-from ctypes import Structure, c_uint64, c_uint32, c_int, c_double
+from ctypes import CFUNCTYPE, POINTER, Structure, c_uint64, c_uint32, c_int, c_double, c_void_p
 
 
 class LassoOptions(Structure):
@@ -37,3 +37,11 @@ class LassoStats(Structure):
 
 class LassoShape(Structure):
     _fields_ = [('words', c_uint64), ('letters', c_uint64), ('targets', c_uint64), ('stats', LassoStats)]
+
+
+class LassoOutput(Structure):
+    _fields_ = [(name, POINTER(c_uint64)) for name in ('letters', 'offsets', 'converged', 'iterations')]
+    _fields_ += [(name, c_void_p) for name in ('coefficients', 'intercepts', 'objectives', 'gaps')]
+
+
+LassoAllocator = CFUNCTYPE(c_int, c_void_p, POINTER(LassoShape), POINTER(LassoOutput))

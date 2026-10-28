@@ -37,13 +37,8 @@
 
 extern "C" {
 
-    CPSIG_API uint32_t sig_lasso_abi_version() noexcept;
-    CPSIG_API int sig_lasso_v3_f(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, uint64_t*) noexcept;
-    CPSIG_API int sig_lasso_v3_d(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, uint64_t*) noexcept;
-    CPSIG_API int sig_lasso_shape_v3(uint64_t, SigLassoShape*) noexcept;
-    CPSIG_API int sig_lasso_result_v3_f(uint64_t, uint64_t*, uint64_t*, float*, float*, float*, float*, uint64_t*, uint64_t*) noexcept;
-    CPSIG_API int sig_lasso_result_v3_d(uint64_t, uint64_t*, uint64_t*, double*, double*, double*, double*, uint64_t*, uint64_t*) noexcept;
-    CPSIG_API int sig_lasso_release_v3(uint64_t) noexcept;
+    CPSIG_API int sig_lasso_f(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
+    CPSIG_API int sig_lasso_d(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
 
 	/**
 	* @brief Returns the CPU error message for the current thread.

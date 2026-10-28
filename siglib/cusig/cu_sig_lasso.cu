@@ -767,60 +767,38 @@ public:
     void finish() override { CUDA_CHECK(cudaStreamSynchronize(stream_)); }
 };
 
-siglasso::Results results;
 template<typename T>
 void run_lasso(const T* path, const T* y, const double* alphas, const uint64_t* letters, const uint64_t* offsets,
-    uint64_t words, const SigLassoOptions* options, void* stream_ptr, int device, uint64_t* handle) {
+    uint64_t words, const SigLassoOptions* options, void* stream_ptr, int device, SigLassoAllocator allocate, void* context) {
     DeviceScope scope(device);
-    LassoCUDA backend(*options, path, y, static_cast<cudaStream_t>(stream_ptr), device);
-    std::vector<siglasso::Word> initial;
-    for (size_t j = 0; j < words; ++j) initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
-    auto result = siglasso::fit(backend, std::vector<double>(alphas, alphas + options->targets), initial);
-    result.stream = stream_ptr; result.device = device;
-    *handle = results.insert(std::move(result));
-}
-template<typename T>
-void copy_result(uint64_t handle, uint64_t* letters, uint64_t* offsets, T* coefficients, T* intercepts, T* objectives, T* gaps, uint64_t* converged, uint64_t* iterations) {
-    auto result = results.get(handle);
-    DeviceScope scope(result->device);
-    size_t count = 0; offsets[0] = 0;
-    for (size_t j = 0; j < result->words.size(); ++j) { for (auto a : result->words[j]) letters[count++] = a; offsets[j + 1] = count; }
-    const std::vector<double>* inputs[] = {&result->coefficients, &result->intercepts, &result->objectives, &result->gaps};
-    T* outputs[] = {coefficients, intercepts, objectives, gaps};
+    siglasso::Result result;
+    {
+        LassoCUDA backend(*options, path, y, static_cast<cudaStream_t>(stream_ptr), device);
+        std::vector<siglasso::Word> initial;
+        for (size_t j = 0; j < words; ++j) initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
+        result = siglasso::fit(backend, std::vector<double>(alphas, alphas + options->targets), initial);
+    }
+    const auto output = siglasso::allocate_output(result, allocate, context);
+    const std::vector<double>* inputs[] = {&result.coefficients, &result.intercepts, &result.objectives, &result.gaps};
+    void* outputs[] = {output.coefficients, output.intercepts, output.objectives, output.gaps};
     for (size_t j = 0; j < 4; ++j) {
         std::vector<T> converted(inputs[j]->size());
         std::transform(inputs[j]->begin(), inputs[j]->end(), converted.begin(), [](double value) { return static_cast<T>(siglasso::finite(static_cast<T>(value))); });
         if (!converted.empty()) {
-            CUDA_CHECK(cudaMemcpyAsync(outputs[j], converted.data(), converted.size() * sizeof(T), cudaMemcpyHostToDevice, static_cast<cudaStream_t>(result->stream)));
-            CUDA_CHECK(cudaStreamSynchronize(static_cast<cudaStream_t>(result->stream)));
+            CUDA_CHECK(cudaMemcpyAsync(outputs[j], converted.data(), converted.size() * sizeof(T), cudaMemcpyHostToDevice, static_cast<cudaStream_t>(stream_ptr)));
+            CUDA_CHECK(cudaStreamSynchronize(static_cast<cudaStream_t>(stream_ptr)));
         }
     }
-    std::copy(result->converged.begin(), result->converged.end(), converged);
-    std::copy(result->iterations.begin(), result->iterations.end(), iterations);
 }
 } // namespace
 
 extern "C" {
-CUSIG_API uint32_t sig_lasso_abi_version_cuda() noexcept { return 3; }
-CUSIG_API int sig_lasso_v3_cuda_f(const float* path, const float* y, const double* alphas, const uint64_t* letters,
-    const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, void* stream, int device, uint64_t* handle) noexcept {
-    CUDA_SAFE_CALL(run_lasso(path, y, alphas, letters, offsets, words, options, stream, device, handle));
+CUSIG_API int sig_lasso_cuda_f(const float* path, const float* y, const double* alphas, const uint64_t* letters,
+    const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, void* stream, int device, SigLassoAllocator allocate, void* context) noexcept {
+    CUDA_SAFE_CALL(run_lasso(path, y, alphas, letters, offsets, words, options, stream, device, allocate, context));
 }
-CUSIG_API int sig_lasso_v3_cuda_d(const double* path, const double* y, const double* alphas, const uint64_t* letters,
-    const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, void* stream, int device, uint64_t* handle) noexcept {
-    CUDA_SAFE_CALL(run_lasso(path, y, alphas, letters, offsets, words, options, stream, device, handle));
+CUSIG_API int sig_lasso_cuda_d(const double* path, const double* y, const double* alphas, const uint64_t* letters,
+    const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, void* stream, int device, SigLassoAllocator allocate, void* context) noexcept {
+    CUDA_SAFE_CALL(run_lasso(path, y, alphas, letters, offsets, words, options, stream, device, allocate, context));
 }
-CUSIG_API int sig_lasso_shape_v3_cuda(uint64_t handle, SigLassoShape* shape) noexcept {
-    CUDA_SAFE_CALL(auto result = results.get(handle); shape->words = result->words.size(); shape->targets = result->targets;
-        shape->letters = 0; for (const auto& word : result->words) shape->letters += word.size(); shape->stats = result->stats);
-}
-CUSIG_API int sig_lasso_result_v3_cuda_f(uint64_t handle, uint64_t* letters, uint64_t* offsets, float* coefficients,
-    float* intercepts, float* objectives, float* gaps, uint64_t* converged, uint64_t* iterations) noexcept {
-    CUDA_SAFE_CALL(copy_result(handle, letters, offsets, coefficients, intercepts, objectives, gaps, converged, iterations));
-}
-CUSIG_API int sig_lasso_result_v3_cuda_d(uint64_t handle, uint64_t* letters, uint64_t* offsets, double* coefficients,
-    double* intercepts, double* objectives, double* gaps, uint64_t* converged, uint64_t* iterations) noexcept {
-    CUDA_SAFE_CALL(copy_result(handle, letters, offsets, coefficients, intercepts, objectives, gaps, converged, iterations));
-}
-CUSIG_API int sig_lasso_release_v3_cuda(uint64_t handle) noexcept { CUDA_SAFE_CALL(results.erase(handle)); }
 }

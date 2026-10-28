@@ -21,7 +21,7 @@ import platform
 import ctypes
 from ctypes import c_char_p, c_float, c_double, c_int, c_uint64, c_bool, c_void_p, POINTER
 from collections.abc import Callable
-from ._lasso_types import LassoOptions, LassoShape
+from ._lasso_types import LassoOptions, LassoAllocator
 
 ######################################################
 # Figure out how pysiglib was built
@@ -133,33 +133,16 @@ def _bind_float_pair(
 
 # Length queries and cache management use fixed, explicit signatures.
 _lasso_args = lambda scalar: (POINTER(scalar), POINTER(scalar), POINTER(c_double), POINTER(c_uint64), POINTER(c_uint64), c_uint64, POINTER(LassoOptions))
-_lasso_result_args = lambda scalar: (c_uint64, POINTER(c_uint64), POINTER(c_uint64), POINTER(scalar), POINTER(scalar), POINTER(scalar), POINTER(scalar), POINTER(c_uint64), POINTER(c_uint64))
 
 
-def _lasso_abi_matches(library, suffix):
-    if library is None or not hasattr(library, 'sig_lasso_abi_version' + suffix):
-        return False
-    query = getattr(library, 'sig_lasso_abi_version' + suffix)
-    query.argtypes = ()
-    query.restype = c_int
-    required = ['sig_lasso_v3' + suffix + kind for kind in ('_f', '_d')]
-    required += ['sig_lasso_result_v3' + suffix + kind for kind in ('_f', '_d')]
-    required += ['sig_lasso_shape_v3' + suffix, 'sig_lasso_release_v3' + suffix]
-    return query() == 3 and all(hasattr(library, name) for name in required)
+def _lasso_available(library, suffix):
+    return (library is not None
+            and all(hasattr(library, 'sig_lasso' + suffix + kind) for kind in ('_f', '_d'))
+            and not hasattr(library, 'sig_lasso_shape' + suffix))
 
 
-CPSIG_SIG_LASSO = _bind_float_pair(CPSIG, 'sig_lasso_v3', lambda scalar: (*_lasso_args(scalar), POINTER(c_uint64))) if _lasso_abi_matches(CPSIG, '') else None
-CPSIG_SIG_LASSO_RESULT = _bind_float_pair(CPSIG, 'sig_lasso_result_v3', _lasso_result_args) if CPSIG_SIG_LASSO else None
-CUSIG_SIG_LASSO = _bind_float_pair(CUSIG, 'sig_lasso_v3_cuda', lambda scalar: (*_lasso_args(scalar), c_void_p, c_int, POINTER(c_uint64))) if _lasso_abi_matches(CUSIG, '_cuda') else None
-CUSIG_SIG_LASSO_RESULT = _bind_float_pair(CUSIG, 'sig_lasso_result_v3_cuda', _lasso_result_args) if CUSIG_SIG_LASSO else None
-for _lasso_library, _lasso_suffix, _lasso_available in ((CPSIG, '', CPSIG_SIG_LASSO), (CUSIG, '_cuda', CUSIG_SIG_LASSO)):
-    if _lasso_available:
-        _lasso_shape = getattr(_lasso_library, 'sig_lasso_shape_v3' + _lasso_suffix)
-        _lasso_shape.argtypes = (c_uint64, POINTER(LassoShape))
-        _lasso_shape.restype = c_int
-        _lasso_release = getattr(_lasso_library, 'sig_lasso_release_v3' + _lasso_suffix)
-        _lasso_release.argtypes = (c_uint64,)
-        _lasso_release.restype = c_int
+CPSIG_SIG_LASSO = _bind_float_pair(CPSIG, 'sig_lasso', lambda scalar: (*_lasso_args(scalar), LassoAllocator, c_void_p)) if _lasso_available(CPSIG, '') else None
+CUSIG_SIG_LASSO = _bind_float_pair(CUSIG, 'sig_lasso_cuda', lambda scalar: (*_lasso_args(scalar), c_void_p, c_int, LassoAllocator, c_void_p)) if _lasso_available(CUSIG, '_cuda') else None
 
 CPSIG.sig_length.argtypes = (c_uint64, c_uint64)
 CPSIG.sig_length.restype = c_uint64

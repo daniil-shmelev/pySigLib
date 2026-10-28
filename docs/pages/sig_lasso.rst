@@ -73,6 +73,11 @@ Resources and statistics
 ------------------------
 
 All fitting state is private to a call. CPU work uses Highway and oneTBB.
+The native entry points are ``sig_lasso_f`` and ``sig_lasso_d`` on CPU,
+and ``sig_lasso_cuda_f`` and ``sig_lasso_cuda_d`` on CUDA. Each fits and
+copies the complete result in one call. A caller-supplied allocator receives
+the result shape and provides output buffers; no result handle or release
+call is needed. Python supplies this allocator automatically.
 Native fitting buffers use float64, also for float32 inputs.
 CPU factorisation uses incremental thin QR, Givens deletions, and Eigen QR/SVD
 for rebuilds. CUDA uses device buffers, fused updates, cuBLAS and cuSOLVER on

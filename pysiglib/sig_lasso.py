@@ -20,11 +20,10 @@ import warnings
 import numpy as np
 import torch
 
-from ._lasso_types import LassoOptions, LassoShape
+from ._lasso_types import LassoOptions, LassoShape, LassoAllocator
 from .data_handlers import PathInputHandler
 from .dtypes import DTYPES, CPSIG_SIG_LASSO, CUSIG_SIG_LASSO
 from .error_codes import err_msg
-from .load_siglib import CPSIG, CUSIG, CPSIG_SIG_LASSO_RESULT, CUSIG_SIG_LASSO_RESULT
 from .param_checks import check_type, check_dtype, check_n_jobs, ensure_own_contiguous_storage
 from .transform_path import transform_path
 
@@ -172,7 +171,7 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse",
     device = inputs.device
     functions = CUSIG_SIG_LASSO if device == 'cuda' else CPSIG_SIG_LASSO
     if functions is None:
-        raise RuntimeError('The native library does not support sig_lasso ABI v3; rebuild pysiglib and its CUDA plugin')
+        raise RuntimeError('The native library does not support the current sig_lasso interface; rebuild pysiglib and its CUDA plugin')
     context = torch.cuda.device(path.device) if device == 'cuda' else nullcontext()
     with context, torch.no_grad():
         transformed = transform_path(inputs.path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if time_aug or lead_lag else inputs.path
@@ -182,47 +181,57 @@ def sig_lasso(path, y, degree, alpha, *, method="sparse",
                                max_iter, batch_size, cache_bytes, memory_limit or 0,
                                tol, n_jobs, method == 'full', fit_intercept, inputs.dtype == 'float32')
         scalar = DTYPES[data.dtype]
-        library = CUSIG if device == 'cuda' else CPSIG
-        suffix = '_cuda' if device == 'cuda' else ''
-        handle = c_uint64()
+        result_shape = None
+        out_letters = out_offsets = coefficients = values = converged = iterations = None
+        allocation_error = None
+
+        @LassoAllocator
+        def allocate_output(context, shape, output):
+            nonlocal result_shape, out_letters, out_offsets, coefficients, values, converged, iterations, allocation_error
+            try:
+                result_shape = LassoShape.from_buffer_copy(shape.contents)
+                out_letters = np.empty(result_shape.letters, dtype=np.uint64)
+                out_offsets = np.empty(result_shape.words + 1, dtype=np.uint64)
+                if isinstance(path, np.ndarray):
+                    coefficients = np.empty((result_shape.words, targets), dtype=path.dtype)
+                    values = [np.empty(targets, dtype=path.dtype) for _ in range(3)]
+                else:
+                    coefficients = torch.empty((result_shape.words, targets), dtype=path.dtype, device=path.device)
+                    values = [torch.empty(targets, dtype=path.dtype, device=path.device) for _ in range(3)]
+                converged = np.empty(targets, dtype=np.uint64)
+                iterations = np.empty(targets, dtype=np.uint64)
+                for name, array in zip(('letters', 'offsets', 'converged', 'iterations'),
+                                       (out_letters, out_offsets, converged, iterations)):
+                    setattr(output.contents, name, _pointer(array, c_uint64))
+                for name, array in zip(('coefficients', 'intercepts', 'objectives', 'gaps'), (coefficients, *values)):
+                    setattr(output.contents, name, cast(_pointer(array, scalar), c_void_p).value)
+                return 0
+            except BaseException as error:
+                allocation_error = error
+                return 1
+
         args = [data.data_ptr, _pointer(response, scalar), _pointer(alphas, c_double),
                 _pointer(letters, c_uint64), _pointer(offsets, c_uint64), len(words), byref(options)]
         if device == 'cuda':
             args.extend((c_void_p(torch.cuda.current_stream(path.device).cuda_stream), path.device.index))
-        args.append(byref(handle))
-        _check_status(functions[data.dtype](*args), device)
-        try:
-            result_shape = LassoShape()
-            _check_status(getattr(library, 'sig_lasso_shape_v3' + suffix)(handle, byref(result_shape)), device)
-            out_letters = np.empty(result_shape.letters, dtype=np.uint64)
-            out_offsets = np.empty(result_shape.words + 1, dtype=np.uint64)
-            if isinstance(path, np.ndarray):
-                coefficients = np.empty((result_shape.words, targets), dtype=path.dtype)
-                values = [np.empty(targets, dtype=path.dtype) for _ in range(3)]
-            else:
-                coefficients = torch.empty((result_shape.words, targets), dtype=path.dtype, device=path.device)
-                values = [torch.empty(targets, dtype=path.dtype, device=path.device) for _ in range(3)]
-            converged = np.empty(targets, dtype=np.uint64)
-            iterations = np.empty(targets, dtype=np.uint64)
-            result_functions = CUSIG_SIG_LASSO_RESULT if device == 'cuda' else CPSIG_SIG_LASSO_RESULT
-            _check_status(result_functions[data.dtype](handle, _pointer(out_letters, c_uint64), _pointer(out_offsets, c_uint64),
-                _pointer(coefficients, scalar), *[_pointer(v, scalar) for v in values],
-                _pointer(converged, c_uint64), _pointer(iterations, c_uint64)), device)
-            selected = [tuple(int(a) for a in out_letters[out_offsets[j]:out_offsets[j + 1]]) for j in range(result_shape.words)]
-            converged = converged.astype(bool)
-            if not converged.all():
-                reason = 'numerical accuracy limit' if np.any((~converged) & (iterations < max_iter)) else 'max_iter limit'
-                if result_shape.stats.numerical_failures:
-                    reason = 'active-equation or objective-descent accuracy limit after a QR rebuild'
-                warnings.warn('sig_lasso reached the ' + reason + ' before the requested global gap; inspect converged and dual_gap', RuntimeWarning, stacklevel=2)
-            stats = {name: getattr(result_shape.stats, name) for name, _ in result_shape.stats._fields_}
-            stats['dictionary_size'] = sum(data.dimension**k for k in range(1, degree + 1))
-            if isinstance(path, torch.Tensor):
-                converged = torch.as_tensor(converged, device=path.device)
-                iterations = torch.as_tensor(iterations.astype(np.int64), device=path.device)
-            return dict(words=selected, coef=coefficients[:, 0] if single else coefficients,
-                        intercept=values[0][0] if single else values[0], objective=values[1][0] if single else values[1],
-                        dual_gap=values[2][0] if single else values[2], converged=converged[0] if single else converged,
-                        n_iter=iterations[0] if single else iterations, stats=stats)
-        finally:
-            _check_status(getattr(library, 'sig_lasso_release_v3' + suffix)(handle), device)
+        args.extend((allocate_output, None))
+        status = functions[data.dtype](*args)
+        if allocation_error is not None:
+            raise allocation_error
+        _check_status(status, device)
+        selected = [tuple(int(a) for a in out_letters[out_offsets[j]:out_offsets[j + 1]]) for j in range(result_shape.words)]
+        converged = converged.astype(bool)
+        if not converged.all():
+            reason = 'numerical accuracy limit' if np.any((~converged) & (iterations < max_iter)) else 'max_iter limit'
+            if result_shape.stats.numerical_failures:
+                reason = 'active-equation or objective-descent accuracy limit after a QR rebuild'
+            warnings.warn('sig_lasso reached the ' + reason + ' before the requested global gap; inspect converged and dual_gap', RuntimeWarning, stacklevel=2)
+        stats = {name: getattr(result_shape.stats, name) for name, _ in result_shape.stats._fields_}
+        stats['dictionary_size'] = sum(data.dimension**k for k in range(1, degree + 1))
+        if isinstance(path, torch.Tensor):
+            converged = torch.as_tensor(converged, device=path.device)
+            iterations = torch.as_tensor(iterations.astype(np.int64), device=path.device)
+        return dict(words=selected, coef=coefficients[:, 0] if single else coefficients,
+                    intercept=values[0][0] if single else values[0], objective=values[1][0] if single else values[1],
+                    dual_gap=values[2][0] if single else values[2], converged=converged[0] if single else converged,
+                    n_iter=iterations[0] if single else iterations, stats=stats)

@@ -221,29 +221,26 @@ struct Result {
     std::vector<uint64_t> converged, iterations;
     SigLassoStats stats{};
     size_t targets = 0;
-    void* stream = nullptr;
-    int device = 0;
 };
 
-class Results {
-    std::mutex mutex_;
-    uint64_t next_ = 1;
-    std::unordered_map<uint64_t, std::shared_ptr<Result>> values_;
-public:
-    uint64_t insert(Result result) {
-        std::lock_guard lock(mutex_);
-        const auto id = next_++;
-        values_.emplace(id, std::make_shared<Result>(std::move(result)));
-        return id;
+inline SigLassoOutput allocate_output(const Result& result, SigLassoAllocator allocate, void* context) {
+    SigLassoShape shape{result.words.size(), 0, result.targets, result.stats};
+    for (const auto& word : result.words) shape.letters += word.size();
+    SigLassoOutput output{};
+    if (!allocate) throw std::invalid_argument("sig_lasso requires an output allocator");
+    if (allocate(context, &shape, &output)) throw std::runtime_error("sig_lasso output allocation failed");
+    if ((shape.letters && !output.letters) || !output.offsets || !output.converged || !output.iterations ||
+        (shape.words && !output.coefficients) || !output.intercepts || !output.objectives || !output.gaps)
+        throw std::invalid_argument("sig_lasso output allocator returned a null buffer");
+    size_t count = 0; output.offsets[0] = 0;
+    for (size_t j = 0; j < result.words.size(); ++j) {
+        for (auto a : result.words[j]) output.letters[count++] = a;
+        output.offsets[j + 1] = count;
     }
-    std::shared_ptr<Result> get(uint64_t id) {
-        std::lock_guard lock(mutex_);
-        auto it = values_.find(id);
-        if (it == values_.end()) throw std::invalid_argument("Invalid sig_lasso result handle");
-        return it->second;
-    }
-    void erase(uint64_t id) { std::lock_guard lock(mutex_); values_.erase(id); }
-};
+    std::copy(result.converged.begin(), result.converged.end(), output.converged);
+    std::copy(result.iterations.begin(), result.iterations.end(), output.iterations);
+    return output;
+}
 
 class PrefixCache {
     size_t capacity_, used_ = 0;

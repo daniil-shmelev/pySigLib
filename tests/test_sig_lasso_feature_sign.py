@@ -20,7 +20,7 @@ from sklearn.linear_model import LassoLars
 from threadpoolctl import threadpool_limits
 
 import pysiglib
-from pysiglib.load_siglib import CPSIG, CUSIG, CUSIG_SIG_LASSO, _lasso_abi_matches
+from pysiglib.load_siglib import CPSIG, CUSIG, CUSIG_SIG_LASSO, _lasso_available
 
 
 def fit_matrix(matrix, target, alpha, device, **kwargs):
@@ -36,7 +36,7 @@ def fit_matrix(matrix, target, alpha, device, **kwargs):
         kwargs['tol'] /= scale**2
     if device == 'cuda':
         if not torch.cuda.is_available() or CUSIG_SIG_LASSO is None:
-            pytest.skip('CUDA Lasso ABI v3 is unavailable')
+            pytest.skip('CUDA Lasso is unavailable')
         paths = torch.as_tensor(paths, device=device)
         target = torch.as_tensor(target, device=device)
     result = pysiglib.sig_lasso(paths, target, 1, alpha, fit_intercept=False, **kwargs)
@@ -95,30 +95,61 @@ def test_empty_support_and_removed_options():
 
 
 def test_stale_abi_rejected():
-    assert not _lasso_abi_matches(None, '')
-    assert not _lasso_abi_matches(object(), '')
+    assert not _lasso_available(None, '')
+    assert not _lasso_available(object(), '')
 
     class Library:
-        @staticmethod
-        def sig_lasso_abi_version():
-            return 1
+        sig_lasso_f = object()
+        sig_lasso_d = object()
+        sig_lasso_shape = object()
 
-    assert not _lasso_abi_matches(Library(), '')
-    Library.sig_lasso_abi_version = staticmethod(lambda: 2)
-    assert not _lasso_abi_matches(Library(), '')
-    Library.sig_lasso_abi_version = staticmethod(lambda: 3)
-    assert not _lasso_abi_matches(Library(), '')
+    assert not _lasso_available(Library(), '')
+    del Library.sig_lasso_shape
+    assert _lasso_available(Library(), '')
+    del Library.sig_lasso_f
+    assert not _lasso_available(Library(), '')
 
 
 def test_legacy_entrypoints_are_absent():
     for library, suffix in ((CPSIG, ''), (CUSIG, '_cuda')):
         if library is None:
             continue
-        assert _lasso_abi_matches(library, suffix)
-        assert not hasattr(library, 'sig_lasso' + suffix + '_d')
-        assert not hasattr(library, 'sig_lasso_v2' + suffix + '_d')
-        assert not hasattr(library, 'sig_lasso_shape' + suffix)
-        assert not hasattr(library, 'sig_lasso_release' + suffix)
+        assert _lasso_available(library, suffix)
+        for kind in ('_f', '_d'):
+            assert hasattr(library, 'sig_lasso' + suffix + kind)
+            for version in ('_v2', '_v3'):
+                assert not hasattr(library, 'sig_lasso' + version + suffix + kind)
+        for name in ('shape', 'release', 'result'):
+            for version in ('', '_v2', '_v3'):
+                for kind in ('', '_f', '_d'):
+                    assert not hasattr(library, 'sig_lasso_' + name + version + suffix + kind)
+        assert not hasattr(library, 'sig_lasso_abi_version' + suffix)
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_output_allocation_failure_and_retry(device, monkeypatch):
+    paths = np.array([[[0.], [-2.]], [[0.], [-1.]], [[0.], [1.]], [[0.], [2.]]])
+    target = np.array([-2., -1., 1., 2.])
+    if device == 'cuda':
+        if not torch.cuda.is_available() or CUSIG_SIG_LASSO is None:
+            pytest.skip('CUDA Lasso is unavailable')
+        paths, target = torch.as_tensor(paths, device=device), torch.as_tensor(target, device=device)
+    module = np if device == 'cpu' else torch
+    empty = module.empty
+
+    def fail(shape, *args, **kwargs):
+        if shape == (1, 1):
+            raise MemoryError('test output allocation failure')
+        return empty(shape, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module, 'empty', fail)
+        with pytest.raises(MemoryError, match='test output allocation failure'):
+            pysiglib.sig_lasso(paths, target, 1, .1)
+    result = pysiglib.sig_lasso(paths, target, 1, .1)
+    assert bool(result['converged'])
+    coefficient = result['coef'].cpu().numpy() if device == 'cuda' else result['coef']
+    np.testing.assert_allclose(coefficient, [1.4], atol=1e-10)
 
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
@@ -152,7 +183,7 @@ def test_large_dictionary_has_no_dense_native_allocation(device):
     paths, target = np.zeros((3, 2, 24)), np.zeros(3)
     if device == 'cuda':
         if not torch.cuda.is_available() or CUSIG_SIG_LASSO is None:
-            pytest.skip('CUDA Lasso ABI v3 is unavailable')
+            pytest.skip('CUDA Lasso is unavailable')
         paths, target = torch.as_tensor(paths, device=device), torch.as_tensor(target, device=device)
     result = pysiglib.sig_lasso(paths, target, 20, 1., memory_limit=32 * 1024**2, cache_bytes=0)
     assert result['converged']
