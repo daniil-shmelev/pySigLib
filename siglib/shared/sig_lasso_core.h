@@ -340,8 +340,10 @@ class Search {
         return value;
     }
 public:
-    explicit Search(Backend& b) : b_(b), cache_(b.options.cache_bytes / 8 * 3) {
+    explicit Search(Backend& b, NodePtr root = {}) : b_(b),
+        cache_(b.options.cache_bytes / (!b.options.bound_method && b.options.search_method == 3 ? 16 : 8) * 3), root_(std::move(root)) {
         b_.trim_search = [&] { cache_.clear(); factors_.clear(); grams_.clear(); factor_bytes_ = gram_bytes_ = 0; };
+        if (root_) return;
         root_ = std::make_shared<Node>();
         if (b.options.bound_method) {
             root_->coefficients = b_.alloc(multiply(b.options.samples, b.options.length - 1));
@@ -353,6 +355,7 @@ public:
         b_.moments(*root_, get_factors(0));
     }
     ~Search() { b_.trim_search = {}; }
+    const NodePtr& root() const { return root_; }
     NodePtr selected(const Word& word) {
         auto node = root_;
         auto ancestors = extend({}, node);

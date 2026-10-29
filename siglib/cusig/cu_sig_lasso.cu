@@ -522,13 +522,14 @@ public:
         const size_t n = options.samples, l = options.length - 1, d = options.dimension;
         increments = alloc(siglasso::multiply(n * l, d)); variation = alloc(n * l); after = alloc(n * l);
         prepare_paths<<<grid(n), 128, 0, stream_>>>(paths_.data, increments.data, variation.data, after.data, n, l, d); check();
+        paths_ = {};
         prepare_alphabet();
         std::vector<DeviceInterval> intervals;
         for (auto [low, high] : alphabet) intervals.push_back({low, high});
         auto device_intervals = descriptors(intervals);
         if (n * l) make_alphabet<<<grid(n * l), 128, 0, stream_>>>(reinterpret_cast<const DeviceInterval*>(device_intervals.data), increments.data, variation.data,
             alphabet_ratios.data, alphabet.size(), n, l, d);
-        paths_ = {}; check();
+        check();
     }
     Array factors(size_t k) override {
         const size_t n = options.samples, l = options.length - 1, levels = options.degree - k;
@@ -765,13 +766,13 @@ public:
         const size_t roots = d * root_groups;
         lanes = std::min(lanes, roots);
         traversal_lanes_ = lanes;
-        auto coefficients = exact ? traversal_buffer(0, lanes * prefix_size) : Array{};
-        auto time_values = exact ? Array{} : traversal_buffer(22, lanes * prefix_size);
-        auto linear_integrals = signed_blocks ? traversal_buffer(23, lanes * linear_size) : Array{};
+        auto coefficients = exact ? traversal_buffer(0, (1 + lanes * (triangular - 1)) * nl) : Array{};
+        auto time_values = exact ? Array{} : traversal_buffer(22, (1 + lanes * (m - 1)) * n * (l + 1));
+        auto linear_integrals = signed_blocks ? traversal_buffer(23, (1 + lanes * (m - 1)) * nl) : Array{};
         auto terminal_products = product_size ? traversal_buffer(26, lanes * product_size) : Array{};
         auto integral_scratch = exact ? traversal_buffer(24, lanes * 128 * scratch_size) : Array{};
-        auto moments_buffer = traversal_buffer(1, lanes * triangular * nl);
-        auto integrals_buffer = integral_size ? traversal_buffer(2, lanes * integral_size) : Array{};
+        auto moments_buffer = traversal_buffer(1, (m + lanes * (triangular - m)) * nl);
+        auto integrals_buffer = integral_size ? traversal_buffer(2, (1 + lanes * (m - 1)) * nl) : Array{};
         auto values = traversal_buffer(3, lanes * n);
         auto candidates = traversal_buffer(4, lanes * capacity * n), scores = traversal_buffer(5, lanes * capacity);
         auto words = traversal_buffer(6, lanes * m), next = traversal_buffer(7, lanes * m);
@@ -790,8 +791,13 @@ public:
         const size_t cache_stride = exact ? (m + 2 + signed_blocks) * nl + n
             : (m + (options.search_method != 0) + signed_blocks) * nl + 2 * n;
         if (!prefix_slots_ && !prefix_disabled_ && m > 1) {
-            const size_t available = std::min<size_t>(options.cache_bytes / 8 * 3, budget->available() / 2);
-            const size_t slots = std::min(lanes * 64, available / ((cache_stride + m + 3) * sizeof(double)));
+            const size_t divisor = !exact && signed_blocks && (options.search_method & 1) ? 16 : 8;
+            const size_t available = std::min<size_t>(options.cache_bytes / divisor * 3, budget->available() / 2);
+            size_t prefixes = 1;
+            for (size_t k = 1; k + 1 < m && prefixes < 64; ++k)
+                prefixes = d >= 63 / prefixes ? 64 : 1 + d * prefixes;
+            const size_t per_lane_slots = std::min<size_t>(64, prefixes * ((roots + lanes - 1) / lanes));
+            const size_t slots = lanes * std::min(per_lane_slots, available / ((cache_stride + m + 3) * sizeof(double)) / lanes);
             if (slots >= lanes) {
                 auto cache = alloc(slots * cache_stride), keys = alloc(slots * m), lengths = alloc(slots), ticks = alloc(slots), clocks = alloc(128);
                 fill(lengths, 0); fill(ticks, 0); fill(clocks, 0);

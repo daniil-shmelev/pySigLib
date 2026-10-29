@@ -195,6 +195,7 @@ public:
                 siglasso::prepare_sample(increments.data, variation.data, after.data, i, n, l, d);
             }
         });
+        paths_ = {};
         prepare_alphabet();
         batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t block = alphabet.size(); block-- > 0;) {
@@ -208,7 +209,6 @@ public:
                 }
             }
         });
-        paths_ = {};
     }
     siglasso::Array factors(size_t k) override {
         if (!factor_parent_) return compute_factors(k);
@@ -708,7 +708,8 @@ public:
                 worker->increments = increments; worker->variation = variation; worker->after = after;
                 worker->alphabet = alphabet; worker->alphabet_ratios = alphabet_ratios;
                 worker->factor_parent_ = this;
-                searches_.push_back(std::make_unique<siglasso::Search>(*worker)); search_workers_.push_back(std::move(worker));
+                searches_.push_back(std::make_unique<siglasso::Search>(*worker, searches_.empty() ? siglasso::NodePtr{} : searches_.front()->root()));
+                search_workers_.push_back(std::move(worker));
             }
         }
         std::vector<siglasso::SearchResult> found(searches_.size());

@@ -200,15 +200,15 @@ __device__ bool is_active(const SearchData& data, const uint64_t* word, size_t l
 __global__ void initialise(SearchData data, size_t first_root) {
     const size_t lane = blockIdx.x;
     const size_t nl = data.n * data.l;
-    double* coefficients = data.exact ? data.coefficients + lane * data.m * (data.m + 1) / 2 * nl : nullptr;
-    double* endpoints = !data.exact ? data.time_values + lane * data.m * data.n * (data.l + 1) : nullptr;
-    double* integrals = data.integrals ? data.integrals + lane * data.m * nl : nullptr;
-    double* moments = data.moments + lane * data.m * (data.m + 1) / 2 * nl;
-    for (size_t index = threadIdx.x; index < nl; index += blockDim.x) {
+    double* coefficients = data.coefficients;
+    double* endpoints = data.time_values;
+    double* integrals = data.integrals;
+    double* moments = data.moments;
+    for (size_t index = threadIdx.x; lane == 0 && index < nl; index += blockDim.x) {
         if (coefficients) coefficients[index] = 1;
         if (endpoints) endpoints[index] = 1;
         if (integrals) integrals[index] = 1;
-        if (data.linear_integrals) data.linear_integrals[lane * data.m * nl + index] = .5;
+        if (data.linear_integrals) data.linear_integrals[index] = .5;
         const double residual = fabs(data.residual[index % data.n]);
         if (data.exact) for (size_t q = 0; q < data.m; ++q) moments[q * nl + index] = residual * data.factors[0][q * nl + index];
         else {
@@ -216,7 +216,7 @@ __global__ void initialise(SearchData data, size_t first_root) {
             for (size_t q = 0; q < data.m; ++q) moments[q * nl + index] *= residual;
         }
     }
-    if (endpoints) for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) endpoints[nl + i] = 1;
+    if (endpoints && lane == 0) for (size_t i = threadIdx.x; i < data.n; i += blockDim.x) endpoints[nl + i] = 1;
     if (!threadIdx.x) {
         data.lane_ids[lane] = lane;
         data.states[lane] = {first_root + lane, 1, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -255,11 +255,11 @@ __global__ __launch_bounds__(128, Exact ? 2 : 4) void traverse(SearchData data, 
     const size_t triangular = data.m * (data.m + 1) / 2;
     auto terminal_cache = data.terminal_cache;
     if (terminal_cache.capacity) terminal_cache.data += lane * terminal_cache.capacity * (data.m + 3);
-    double* coefficients = Exact ? data.coefficients + lane * triangular * nl : nullptr;
-    double* endpoints = !Exact ? data.time_values + lane * data.m * data.n * (data.l + 1) : nullptr;
-    double* moments = data.moments + lane * triangular * nl;
-    double* integrals = data.integrals ? data.integrals + lane * data.m * nl : nullptr;
-    double* linears = data.linear_integrals ? data.linear_integrals + lane * data.m * nl : nullptr;
+    double* coefficients = Exact ? data.coefficients + lane * (triangular - 1) * nl : nullptr;
+    double* endpoints = !Exact ? data.time_values + lane * (data.m - 1) * data.n * (data.l + 1) : nullptr;
+    double* moments = data.moments + lane * (triangular - data.m) * nl;
+    double* integrals = data.integrals ? data.integrals + lane * (data.m - 1) * nl : nullptr;
+    double* linears = data.linear_integrals ? data.linear_integrals + lane * (data.m - 1) * nl : nullptr;
     double* values = data.values + lane * data.n;
     double* products = data.terminal_products ? data.terminal_products + lane * nl : nullptr;
     uint64_t* word = data.words + lane * data.m;
@@ -285,10 +285,10 @@ __global__ __launch_bounds__(128, Exact ? 2 : 4) void traverse(SearchData data, 
         if (!depth) break;
         const auto interval = data.intervals[block];
         const size_t k = depth - 1;
-        const double* prefix = coefficients ? coefficients + k * (k + 1) / 2 * nl : nullptr;
-        const double* prefix_integrals = integrals ? integrals + k * nl : nullptr;
-        const double* prefix_linear = linears ? linears + k * nl : nullptr;
-        const double* prefix_moments = moments + k * (2 * data.m - k + 1) / 2 * nl;
+        const double* prefix = coefficients ? (k ? coefficients + k * (k + 1) / 2 * nl : data.coefficients) : nullptr;
+        const double* prefix_integrals = integrals ? (k ? integrals + k * nl : data.integrals) : nullptr;
+        const double* prefix_linear = linears ? (k ? linears + k * nl : data.linear_integrals) : nullptr;
+        const double* prefix_moments = k ? moments + k * (2 * data.m - k + 1) / 2 * nl : data.moments;
         double bound = 0;
         for (size_t q = data.m - k; q-- > 0;) {
             double total = 0;
@@ -454,7 +454,7 @@ __global__ __launch_bounds__(128, Exact ? 2 : 4) void traverse(SearchData data, 
                     double change = 0, integral = 0, linear = 0, product = 1;
                     if (j < data.l) for (size_t h = 1; h <= depth; ++h) {
                         product *= data.increments[(j * data.d + word[depth - h]) * data.n + i] * data.reciprocals[h];
-                        const double term = endpoints[((depth - h) * (data.l + 1) + j) * data.n + i] * product;
+                        const double term = (depth == h ? 1 : endpoints[((depth - h) * (data.l + 1) + j) * data.n + i]) * product;
                         change += term;
                         if (child_integrals) integral += term * data.reciprocals[h + 1];
                         if (child_linears) linear += term * data.reciprocals[h + 2];
@@ -483,7 +483,7 @@ __global__ __launch_bounds__(128, Exact ? 2 : 4) void traverse(SearchData data, 
                     double product = 1, integral = value, linear = value / 2;
                     for (size_t h = 1; h <= depth; ++h) {
                         product *= data.increments[(j * data.d + word[depth - h]) * data.n + i] * data.reciprocals[h];
-                        const double term = endpoints[((depth - h) * (data.l + 1) + j) * data.n + i] * product;
+                        const double term = (depth == h ? 1 : endpoints[((depth - h) * (data.l + 1) + j) * data.n + i]) * product;
                         value += term;
                         if (child_integrals) integral += term * data.reciprocals[h + 1];
                         if (child_linears) linear += term * data.reciprocals[h + 2];
