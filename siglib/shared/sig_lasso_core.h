@@ -120,7 +120,7 @@ struct SearchResult { std::vector<Candidate> candidates; double omitted = 0; };
 class HostSearch {
 public:
     virtual ~HostSearch() = default;
-    virtual void begin_query(const Array&) {}
+    virtual void begin_query(const Array&, const std::unordered_map<Word, size_t, WordHash>&) {}
     virtual void bounds(const std::vector<Probe>&, const Array&, double, std::vector<double>&) = 0;
 };
 
@@ -385,7 +385,7 @@ public:
             cache_.clear(); factors_.clear(); grams_.clear(); root_.reset(); factor_bytes_ = gram_bytes_ = 0;
             b_.native_search(residual, alpha, active, capacity, result); ++b_.stats.search_passes; return result;
         }
-        b_.host_search()->begin_query(residual);
+        b_.host_search()->begin_query(residual, active);
         std::vector<Probe> stack;
         const auto push = [&](const NodePtr& node, size_t first, size_t last, size_t index, const AncestorPtr& ancestors) {
             if (b_.options.search_method & 1) stack.push_back({node, first, last, index, {}, ancestors});

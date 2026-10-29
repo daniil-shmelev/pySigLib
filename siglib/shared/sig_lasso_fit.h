@@ -99,16 +99,35 @@ inline Result fit(Backend& backend, const std::vector<double>& alphas, const std
                 bound = std::max({alpha, b.correlation_max(columns, dual), finite(search_bound)});
                 ++b.stats.certificate_passes;
             } else bound = std::max(alpha, maximum(dual, alpha));
-            b.scale(alpha / (bound * y.size), dual.data, dual.size);
-            bool feasible = false;
-            for (size_t attempt = 0; attempt < 3; ++attempt) {
-                bound = maximum(dual, alpha / y.size) * y.size;
-                if (bound <= alpha) { feasible = true; break; }
-                b.scale(alpha / (bound * (1 + 32 * std::numeric_limits<double>::epsilon())), dual.data, dual.size);
+            double dual_scale = 1;
+            double value = 0;
+            bool feasible = false, scalar_certificate = false;
+            if (search && b.reuse_search_bound()) {
+                // Evaluate the exact scalar multiple without rounding each component.
+                dual_scale = std::nextafter((alpha / bound) / y.size / (1 + 64 * std::numeric_limits<double>::epsilon()), 0.0);
+                const double norm2 = b.dot(dual.data, dual.data, y.size);
+                const double linear = dual_scale * b.dot(y.data, dual.data, y.size);
+                const double quadratic = (0.5 * y.size * dual_scale) * (dual_scale * norm2);
+                const double allowance = 64 * y.size * std::numeric_limits<double>::epsilon()
+                    * (std::abs(linear) + quadratic + dual_scale * std::sqrt(b.dot(y.data, y.data, y.size)) * std::sqrt(norm2));
+                scalar_certificate = feasible = allowance <= tolerance / 8;
+                if (feasible) value = finite(linear - quadratic - allowance);
+            }
+            if (!feasible) {
+                dual_scale = 1;
+                b.scale(alpha / (bound * y.size), dual.data, dual.size);
+                for (size_t attempt = 0; attempt < 3; ++attempt) {
+                    bound = maximum(dual, alpha / y.size) * y.size;
+                    if (bound <= alpha) { feasible = true; break; }
+                    b.scale(alpha / (bound * (1 + 32 * std::numeric_limits<double>::epsilon())), dual.data, dual.size);
+                }
             }
             if (feasible) {
-                const double value = finite(b.dot(y.data, dual.data, y.size) - 0.5 * y.size * b.dot(dual.data, dual.data, y.size));
-                if (value > best_value) { best_value = value; b.copy(dual.data, best_theta.data, y.size); }
+                if (!scalar_certificate) value = finite(b.dot(y.data, dual.data, y.size) - 0.5 * y.size * b.dot(dual.data, dual.data, y.size));
+                if (value > best_value) {
+                    best_value = value; b.copy(dual.data, best_theta.data, y.size);
+                    if (dual_scale != 1) b.scale(dual_scale, best_theta.data, best_theta.size);
+                }
             }
             gap = std::max(0.0, objective - best_value) + 16 * std::numeric_limits<double>::epsilon() * (std::abs(objective) + std::abs(best_value));
             if (gap <= tolerance) break;
@@ -153,7 +172,7 @@ inline Result fit(Backend& backend, const std::vector<double>& alphas, const std
                 if (state->select(columns, pool).slot != static_cast<size_t>(-1)) continue;
                 auto started = Clock::now();
                 if (search) {
-                    reused_search = backend.reuse_search_bound() && owner == &backend;
+                    reused_search = backend.reuse_search_bound();
                     if (reused_search) {
                         state->refresh(true);
                         backend.copy(state->residual().data, dual.data, y.size);

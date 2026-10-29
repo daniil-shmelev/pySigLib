@@ -43,6 +43,8 @@ class LassoCPU final : public siglasso::Backend, public siglasso::HostSearch {
     std::atomic<bool> terminal_needed_{false};
     double terminal_mean_ = 0;
     std::array<double, 2> terminal_caps_{};
+    std::unordered_map<siglasso::Word, std::array<std::vector<std::pair<uint64_t, uint64_t>>, 2>, siglasso::WordHash> terminal_active_;
+    std::shared_ptr<void> terminal_active_metadata_;
     std::vector<siglasso::Array> shared_factors_;
     size_t factor_bytes_ = 0;
     template<typename Function> void batch(size_t count, Function action) {
@@ -303,9 +305,25 @@ public:
         return result;
     }
     siglasso::HostSearch* host_search() override { return this; }
-    void begin_query(const siglasso::Array& residual) override {
+    void begin_query(const siglasso::Array& residual, const std::unordered_map<siglasso::Word, size_t, siglasso::WordHash>& active) override {
         if (!(options.search_method & 2)) return;
         const size_t n = options.samples, m = options.degree;
+        terminal_active_ = decltype(terminal_active_){}; terminal_active_metadata_.reset();
+        const size_t active_count = std::count_if(active.begin(), active.end(), [m](const auto& entry) { return entry.first.size() == m; });
+        const size_t active_bytes = siglasso::multiply(active_count, 384 + 16 * m);
+        if (!options.memory_limit && active_bytes <= options.cache_bytes / 8 && active_bytes <= budget->available() / 4) {
+            terminal_active_metadata_ = account(active_bytes);
+            for (const auto& entry : active) {
+                const auto& word = entry.first;
+                if (word.size() != m) continue;
+                for (size_t q = 1; q <= 2 && q <= word.size(); ++q) {
+                    const size_t k = word.size() - q;
+                    siglasso::Word prefix(word.begin(), word.begin() + k);
+                    terminal_active_[prefix][q - 1].emplace_back(q == 2 ? word.back() : 0, word[k]);
+                }
+            }
+            for (auto& entry : terminal_active_) for (auto& suffixes : entry.second) std::sort(suffixes.begin(), suffixes.end());
+        }
         terminal_mean_ = options.intercept ? std::accumulate(residual.data, residual.data + n, 0.0) / n : 0;
         terminal_caps_ = {};
         if (options.length > 1) for (size_t i = 0; i < n; ++i) {
@@ -375,7 +393,10 @@ public:
                     const double error = siglasso::terminal_roundoff(k, n, l);
                     double signed_bound = 0;
                     bool complete = true;
+                    const auto active = terminal_active_.find(task.node->word);
                     for (size_t q = 1; q <= levels && complete; ++q) {
+                        const auto* excluded = active == terminal_active_.end() ? nullptr : &active->second[q - 1];
+                        size_t excluded_index = 0;
                         const double cap = terminal_caps_[k + q == options.degree];
                         const bool reuse = task.high - task.low >= (q == 2 ? 2 : 4)
                             && (terminal_products.owner || n * l * sizeof(double) <= budget->available());
@@ -392,6 +413,12 @@ public:
                         for (size_t index = 0; index < width * (q == 2 ? d : 1); ++index) {
                             const size_t a = task.low + index % width, b = index / width;
                             if (a == task.low) prepared = false;
+                            // Retain the cheap one-letter exit before a two-letter scan.
+                            if (excluded && (q == 2 || levels == 1)) {
+                                const std::pair<uint64_t, uint64_t> suffix{b, a};
+                                while (excluded_index < excluded->size() && (*excluded)[excluded_index] < suffix) ++excluded_index;
+                                if (excluded_index < excluded->size() && (*excluded)[excluded_index] == suffix) continue;
+                            }
                             double cached_bound = 0;
                             size_t cache_slot = 0;
                             bool cached = false;
