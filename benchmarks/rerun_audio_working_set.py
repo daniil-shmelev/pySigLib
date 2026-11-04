@@ -205,6 +205,11 @@ def report(out, tables):
             working, dense = [json.loads((out/f'{prefix}_{kind}.json').read_text()) for kind in ('working', 'dense')]
             assert working['status'] == 'complete' and all(working['certified'])
             assert working['alpha'] == dense['alpha'] and working['library_sha256'] == dense['library_sha256']
+            with np.load(out/f'{prefix}_working.npz') as model:
+                words = [tuple(map(int, w.split(','))) for w in model['words']]
+                training = selected_predictions(train, words, model['coef'], model['intercept'])
+                np.testing.assert_allclose(training, model['training'], rtol=1e-10, atol=1e-10)
+                assert np.count_nonzero(model['scores'].argmax(1)==labels) == working['correct']
             row = dict(dataset=name, degree=degree, dimension=train.shape[-1], engine=working['stats']['engine'],
                        p=working['dictionary_size'], words=working['support'], correct=working['correct'],
                        n_test=len(labels), accuracy=working['correct']/len(labels), seconds=working['fit_seconds'],
@@ -241,7 +246,6 @@ def report(out, tables):
                         corr[code-1, active] = abs(corr[code-1, active]+alpha[active]*np.sign(beta[j, active]))+alpha[active]
                     error = np.maximum(0., np.abs(corr).max(axis=0)-alpha)
                     assert np.all(error <= np.minimum(TOL, 1e-4*alpha)+1e-12)
-                    assert np.count_nonzero(a['scores'].argmax(1)==labels) == working['correct']
                     row.update(max_train_diff=float(abs(a['training']-b['training']).max()),
                                max_test_diff=float(abs(a['scores']-b['scores']).max()),
                                label_disagreements=int((a['scores'].argmax(1)!=b['scores'].argmax(1)).sum()),
