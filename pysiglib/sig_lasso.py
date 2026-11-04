@@ -70,7 +70,8 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
     separately with a scalar or per-target positive penalty. ``initial_words``
     seeds the working set with words in the transformed alphabet.
 
-    The native solver chooses between a packed design, a streamed design and
+    The native solver uses cyclic coordinate descent on each working set.
+    It chooses between a packed design, a streamed design and
     exact tree search. ``memory_limit`` bounds owned native workspace and output
     in bytes. ``n_jobs`` controls CPU workers. ``max_iter`` limits working-set
     updates per response. ``tol`` defaults to 1e-5 for float32 or 1e-8 for

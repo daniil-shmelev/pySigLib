@@ -14,15 +14,13 @@
  * ========================================================================= */
 
 #include "sig_lasso_core.h"
-#include <LBFGSB.h>
 #include <map>
 
 namespace siglasso {
 namespace {
-using Vector = Eigen::VectorXd;
 struct Term {
     Column column;
-    double beta, scale;
+    double beta, max_abs;
 };
 
 struct Restricted {
@@ -40,81 +38,55 @@ struct Restricted {
         b.scale(b.weights[word.size()], values.data, y.size);
         const double mean = b.center(values.data, y.size, has_intercept());
         const double norm2 = finite(b.dot(values.data, values.data, y.size));
-        if (norm2 > 0)
-            terms.push_back({{word, values, mean, norm2, b.account(192 + 16 * word.size())}, 0, std::sqrt(y.size / norm2)});
+        if (norm2 > 0) {
+            double max_abs = 0;
+            if (b.options.loss == 1 || b.options.loss == 2)
+                for (size_t i = 0; i < y.size; ++i)
+                    max_abs = std::max(max_abs, std::abs(values.data[i]));
+            terms.push_back({{word, values, mean, norm2, b.account(192 + 16 * word.size())}, 0, max_abs});
+        }
     }
-    double loss(const double* base = nullptr) {
+    double update_gradient(const Array& curvature, bool objective) {
         double total = 0;
         const double inv = 1. / y.size;
         for (size_t i = 0; i < y.size; ++i) {
-            const double delta = eta.data[i], origin = base ? base[i] : 0., z = origin + delta;
-            const double target = y.data[i], e = z - target;
+            const double z = eta.data[i], target = y.data[i], e = z - target;
             double g;
             switch (b.options.loss) {
             case 0:
-                total += base ? delta * (origin - target + .5 * delta) : .5 * e * e;
                 g = e;
+                if (objective)
+                    total += .5 * e * e;
                 break;
             case 1: {
                 const double t = std::exp(-std::abs(z));
-                if (base && std::abs(delta) < .5) {
-                    const double t0 = std::exp(-std::abs(origin));
-                    const double p0 = origin >= 0 ? 1 / (1 + t0) : t0 / (1 + t0);
-                    total += std::log1p(p0 * std::expm1(delta)) - target * delta;
-                } else {
+                g = target == 0 ? (z >= 0 ? 1. : t) / (1 + t) : -(z >= 0 ? t : 1.) / (1 + t);
+                if (curvature.data)
+                    curvature.data[i] = t / ((1 + t) * (1 + t));
+                if (objective)
                     total += std::max(z, 0.) - target * z + std::log1p(t);
-                    if (base)
-                        total -= std::max(origin, 0.) - target * origin + std::log1p(std::exp(-std::abs(origin)));
-                }
-                g = (z >= 0 ? 1 / (1 + t) : t / (1 + t)) - target;
                 break;
             }
             case 2: {
-                double mu = std::exp(z);
-                total +=
-                    base ? (std::abs(delta) < .5 ? std::exp(origin) * std::expm1(delta) : mu - std::exp(origin)) - target * delta
-                         : mu - target * z;
+                const double mu = std::exp(z);
                 g = mu - target;
+                if (curvature.data)
+                    curvature.data[i] = mu;
+                if (objective)
+                    total += mu - target * z;
                 break;
             }
-            default: {
+            default:
                 g = std::clamp(e, -1., 1.);
-                const double e0 = origin - target, s0 = std::clamp(e0, -1., 1.);
-                if (base && s0 == g)
-                    total += delta * g;
-                else if (base && e0 == s0 && e == g)
-                    total += delta * (e0 + .5 * delta);
-                else
-                    total += g * (e - .5 * g) - (base ? s0 * (e0 - .5 * s0) : 0.);
+                if (objective)
+                    total += g * (e - .5 * g);
                 break;
-            }
             }
             gradient.data[i] = g * inv;
         }
         return total * inv;
     }
-    double evaluate(const Vector& u, Vector& deriv, const Vector& origin, const Array& prediction) {
-        const size_t k = terms.size(), offset = has_intercept();
-        b.fill(eta, offset ? u[0] - origin[0] : 0);
-        double penalty = 0;
-        for (size_t j = 0; j < k; ++j) {
-            auto& t = terms[j];
-            const double plus = u[offset + j] - origin[offset + j], minus = u[offset + k + j] - origin[offset + k + j];
-            b.axpy(t.scale * (plus - minus), t.column.values.data, eta.data, y.size);
-            penalty += t.scale * (plus + minus);
-        }
-        double result = loss(prediction.data) + alpha * penalty;
-        if (offset)
-            deriv[0] = std::accumulate(gradient.data, gradient.data + y.size, 0.);
-        for (size_t j = 0; j < k; ++j) {
-            auto& t = terms[j];
-            double corr = b.dot(t.column.values.data, gradient.data, y.size);
-            deriv[offset + j] = t.scale * (alpha + corr);
-            deriv[offset + k + j] = t.scale * (alpha - corr);
-        }
-        return result;
-    }
-    void refresh(bool rounded) {
+    void refresh(bool rounded, const Array& curvature = {}) {
         double raw_intercept = intercept;
         for (const auto& t : terms)
             raw_intercept -= t.beta * t.column.mean;
@@ -132,7 +104,7 @@ struct Restricted {
         for (size_t i = 0; i < y.size; ++i)
             eta.data[i] += shift;
         intercept = raw_intercept + shift;
-        value = finite(loss() + alpha * penalty);
+        value = finite(update_gradient(curvature, true) + alpha * penalty);
         double sum = std::accumulate(gradient.data, gradient.data + y.size, 0.);
         intercept_error = has_intercept() ? std::abs(sum) : 0;
         active_error = 0;
@@ -144,51 +116,71 @@ struct Restricted {
         for (size_t i = 0; i < y.size; ++i)
             residual.data[i] = -(gradient.data[i] - (has_intercept() ? sum / y.size : 0)) * y.size;
     }
-    bool solve(double tau) {
-        size_t k = terms.size(), offset = has_intercept(), m = 2 * k + offset;
-        refresh(false);
-        if (!m || (intercept_error <= b.options.tolerance * .5 && active_error <= tau * .5))
-            return true;
-        auto workspace = b.account(multiply(160 * m + 4096, sizeof(double)));
-        LBFGSpp::LBFGSBParam<double> param;
-        param.m = 10;
-        param.past = 0;
-        param.epsilon = std::min({1e-9, b.options.tolerance * .05, tau * .1});
-        param.epsilon_rel = 0;
-        param.max_iterations = 2000;
-        param.max_linesearch = 60;
-        LBFGSpp::LBFGSBSolver<double> solver(param);
-        Vector u(m), low = Vector::Zero(m), high = Vector::Constant(m, std::numeric_limits<double>::infinity());
-        if (offset)
-            low[0] = -std::numeric_limits<double>::infinity();
-        auto prediction = b.alloc(y.size);
-        for (size_t attempt = 0; attempt < 3; ++attempt) {
-            if (offset)
-                u[0] = intercept;
-            for (size_t j = 0; j < k; ++j) {
-                u[offset + j] = std::max(0., terms[j].beta) / terms[j].scale;
-                u[offset + k + j] = std::max(0., -terms[j].beta) / terms[j].scale;
-            }
-            refresh(false);
-            if (intercept_error <= b.options.tolerance * .5 && active_error <= tau * .5)
-                return true;
-            b.copy(eta.data, prediction.data, y.size);
-            const Vector origin = u;
-            auto objective = [&](const Vector& x, Vector& g) { return evaluate(x, g, origin, prediction); };
-            double fx = 0;
-            try {
-                solver.minimize(objective, u, fx, low, high);
-            } catch (const std::runtime_error&) { /* Check the last finite iterate before restarting. */
-            }
-            if (!u.allFinite())
-                return false;
-            if (offset)
-                intercept = u[0];
-            for (size_t j = 0; j < k; ++j)
-                terms[j].beta = terms[j].scale * (u[offset + j] - u[offset + k + j]);
+    void coordinate(double& coef, const Column* column, double max_abs, const Array& curvature) {
+        const double* x = column ? column->values.data : nullptr;
+        const double penalty = column ? alpha : 0.;
+        const double g = x ? b.dot(x, gradient.data, y.size) : std::accumulate(gradient.data, gradient.data + y.size, 0.);
+        if (coef == 0 && std::abs(g) <= penalty)
+            return;
+        double h = x ? column->norm2 / y.size : 1.;
+        if (curvature.data) {
+            double sum = 0;
+            for (size_t i = 0; i < y.size; ++i)
+                sum += curvature.data[i] * (x ? x[i] * x[i] : 1.);
+            h = finite(sum / y.size);
         }
-        refresh(false);
-        return intercept_error <= b.options.tolerance * .5 && active_error <= tau * .5;
+        const double limit = curvature.data ? .75 / max_abs : std::numeric_limits<double>::infinity();
+        double next;
+        if (h > 0) {
+            const double u = h * coef - g;
+            next = std::copysign(std::max(0., std::abs(u) - penalty), u) / h;
+        } else {
+            // In the tails the GLM curvature can underflow to zero.
+            next = std::abs(g) <= penalty ? 0. : coef - std::copysign(limit, g);
+        }
+        double delta = next - coef;
+        if (std::abs(delta) > limit) {
+            next = coef + std::copysign(limit, delta);
+            delta = next - coef;
+        }
+        finite(delta);
+        if (!delta)
+            return;
+        coef = next;
+        if (b.options.loss == 0) {
+            // The gradient changes linearly until the next exact refresh.
+            if (x)
+                b.axpy(delta / y.size, x, gradient.data, y.size);
+            else
+                for (size_t i = 0; i < y.size; ++i)
+                    gradient.data[i] += delta / y.size;
+        } else {
+            if (x)
+                b.axpy(delta, x, eta.data, y.size);
+            else
+                for (size_t i = 0; i < y.size; ++i)
+                    eta.data[i] += delta;
+            update_gradient(curvature, false);
+        }
+    }
+    bool solve(double tau) {
+        const auto curvature = b.options.loss == 1 || b.options.loss == 2 ? b.alloc(y.size) : Array{};
+        const double fraction = b.options.single_precision ? .1 : .5;
+        for (size_t sweeps = 0;;) {
+            refresh(false, curvature);
+            if (intercept_error <= b.options.tolerance * fraction && active_error <= tau * fraction)
+                return true;
+            if (sweeps == 5000)
+                return false;
+            const size_t count = sweeps ? std::min<size_t>(4, 5000 - sweeps) : 1;
+            for (size_t k = 0; k < count; ++k) {
+                if (has_intercept())
+                    coordinate(intercept, nullptr, 1., curvature);
+                for (auto& t : terms)
+                    coordinate(t.beta, &t.column, t.max_abs, curvature);
+            }
+            sweeps += count;
+        }
     }
     double initial_intercept() const {
         if (!has_intercept())

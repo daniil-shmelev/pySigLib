@@ -33,7 +33,7 @@ For all four losses, prediction returns the intercept plus the feature matrix
 times the coefficients. Apply the sigmoid or exponential to obtain the fitted
 mean for logistic or Poisson regression respectively.
 
-The CPU solver fits the current columns with L-BFGS-B, drops zeros and searches
+The CPU solver fits the current columns by cyclic coordinate descent, drops zeros and searches
 for violations of the inactive optimality conditions. It admits up to 16
 distinct violation scores per update. A small design fits in memory. Larger
 designs are scanned in sample blocks or searched with exact tree bounds.

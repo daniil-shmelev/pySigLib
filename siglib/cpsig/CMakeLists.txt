@@ -44,16 +44,8 @@ FetchContent_Declare(pysiglib_eigen
 )
 FetchContent_MakeAvailable(pysiglib_eigen)
 target_include_directories(cpsig PRIVATE "${pysiglib_eigen_SOURCE_DIR}")
-FetchContent_Declare(pysiglib_lbfgspp
-    GIT_REPOSITORY https://github.com/yixuan/LBFGSpp.git
-    GIT_TAG c524a407fb85b74807f53de5a3ca2ddbcc164e54
-    SOURCE_SUBDIR pysiglib_headers_only
-)
-FetchContent_MakeAvailable(pysiglib_lbfgspp)
 add_library(pysiglib_lasso_cpu OBJECT cp_working_set.cpp)
-target_include_directories(pysiglib_lasso_cpu PRIVATE "${pysiglib_lbfgspp_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}")
-target_include_directories(pysiglib_lasso_cpu PRIVATE "${pysiglib_eigen_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
-target_compile_definitions(pysiglib_lasso_cpu PRIVATE EIGEN_DONT_PARALLELIZE EIGEN_MPL2_ONLY)
+target_include_directories(pysiglib_lasso_cpu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
 target_compile_features(pysiglib_lasso_cpu PRIVATE cxx_std_20)
 set_target_properties(pysiglib_lasso_cpu PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
@@ -61,7 +53,6 @@ if(MSVC)
 endif()
 target_sources(cpsig PRIVATE $<TARGET_OBJECTS:pysiglib_lasso_cpu>)
 if(NOT CPSIG_SKIP_INSTALL)
-    install(FILES "${pysiglib_lbfgspp_SOURCE_DIR}/LICENSE.md" DESTINATION pysiglib/licenses RENAME LBFGSpp.txt)
     install(FILES "${pysiglib_eigen_SOURCE_DIR}/COPYING.MPL2"
         DESTINATION pysiglib/licenses RENAME Eigen-MPL2.txt)
 endif()
