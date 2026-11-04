@@ -19,20 +19,20 @@ from ctypes import CFUNCTYPE, POINTER, Structure, c_uint64, c_uint32, c_int, c_d
 class LassoOptions(Structure):
     _fields_ = [(name, c_uint64) for name in (
         'samples', 'length', 'dimension', 'degree', 'targets', 'max_iter',
-        'batch_size', 'cache_bytes', 'memory_limit')]
+        'memory_limit')]
     _fields_ += [('tolerance', c_double), ('n_jobs', c_int)]
-    _fields_ += [(name, c_uint32) for name in ('full', 'intercept', 'single_precision', 'search_method', 'bound_method')]
+    _fields_ += [(name, c_uint32) for name in ('intercept', 'single_precision', 'loss')]
 
 
 class LassoStats(Structure):
     _fields_ = [(name, c_uint64) for name in (
         'columns', 'evaluated', 'pruned', 'block_queries', 'cache_hits',
         'cache_misses', 'peak_bytes', 'search_passes', 'constructed', 'activations', 'drops',
-        'qr_appends', 'qr_deletions', 'qr_rebuilds', 'singular_steps', 'certificate_passes')]
+        'certificate_passes')]
     _fields_ += [(name, c_double) for name in (
         'preparation_seconds', 'search_seconds', 'insertion_seconds', 'solve_seconds', 'total_seconds',
-        'factorization_seconds', 'certification_seconds')]
-    _fields_ += [(name, c_uint64) for name in ('numerical_failures', 'full_transform_calls')]
+        'certification_seconds')]
+    _fields_ += [(name, c_uint64) for name in ('engine', 'numerical_failures', 'full_transform_calls')]
     _fields_ += [(name, c_uint64) for name in ('terminal_queries', 'terminal_pruned', 'terminal_correlations')]
     _fields_ += [('output_bytes', c_uint64), ('output_seconds', c_double)]
 
@@ -43,7 +43,7 @@ class LassoShape(Structure):
 
 class LassoOutput(Structure):
     _fields_ = [(name, POINTER(c_uint64)) for name in ('letters', 'offsets', 'converged', 'iterations')]
-    _fields_ += [(name, c_void_p) for name in ('coefficients', 'intercepts', 'objectives', 'gaps', 'signatures')]
+    _fields_ += [(name, c_void_p) for name in ('coefficients', 'intercepts', 'objectives', 'gaps', 'kkt', 'signatures')]
     _fields_ += [('stats', POINTER(LassoStats))]
 
 

@@ -37,9 +37,9 @@ def test_all_coordinates(mode, dimension, degree):
                  feature_convention='reverse_degree_hall_v1' if mode == 'hall' else mode)
     actual = pysiglib.sig_lasso_predict(paths, model, n_jobs=2)
     np.testing.assert_allclose(actual, expected, atol=2e-11, rtol=2e-11)
-    complete = pysiglib.sig_lasso(paths, np.zeros(len(paths)), degree, 1., feature_type=mode, method='full', initial_words=words)
+    complete = pysiglib.sig_lasso(paths, np.zeros(len(paths)), degree, 1., feature_type=mode, initial_words=words)
     assert complete['converged']
-    assert complete['stats']['columns'] == complete['stats']['dictionary_size'] == len(words)
+    assert complete['stats']['dictionary_size'] == len(words)
 
 
 @pytest.mark.parametrize('mode', ['sig', 'log', 'hall'])
@@ -52,22 +52,19 @@ def test_fit_and_prediction(mode, dtype, intercept):
     y = rng.normal(size=(40, 2)).astype(dtype)
     words, design = dictionary(paths, 3, mode)
     options = dict(feature_type=mode, tol=1e-5 if dtype == np.float32 else 1e-9,
-                   fit_intercept=intercept, max_iter=3000, bound_method='exact', n_jobs=2)
-    full = pysiglib.sig_lasso(paths, y, 3, .01, method='full', **options)
-    for search in ('plain', 'grouped', 'signed', 'grouped_signed'):
-        sparse = pysiglib.sig_lasso(paths, y, 3, .01, search_method=search, cache_bytes=0, **options)
-        assert np.all(sparse['converged'])
-        prediction = pysiglib.sig_lasso_predict(paths, sparse)
-        np.testing.assert_allclose(prediction, sparse['signatures'] @ sparse['coef'] + sparse['intercept'], atol=2e-6)
-        np.testing.assert_allclose(prediction, full['signatures'] @ full['coef'] + full['intercept'], atol=2e-4 if dtype == np.float32 else 2e-7)
-        check = audit(sparse, design, words, y, .01, intercept)
-        assert max(check['gap']) < (5e-5 if dtype == np.float32 else 2e-8)
-        np.testing.assert_allclose(sparse['objective'], check['objective'], atol=2e-6 if dtype == np.float32 else 2e-11)
-        selected = design[:, [words.index(w) for w in sparse['words']]]
-        if intercept:
-            selected = selected - selected.mean(0)
-        active_error = selected.T @ (y - prediction) / len(paths) - .01 * np.sign(sparse['coef'])
-        assert np.max(np.abs(active_error)[sparse['coef'] != 0], initial=0.) < (5e-5 if dtype == np.float32 else 2e-8)
+                   fit_intercept=intercept, max_iter=3000, n_jobs=2)
+    sparse = pysiglib.sig_lasso(paths, y, 3, .01, **options)
+    assert np.all(sparse['converged'])
+    prediction = pysiglib.sig_lasso_predict(paths, sparse)
+    np.testing.assert_allclose(prediction, sparse['signatures'] @ sparse['coef'] + sparse['intercept'], atol=2e-6)
+    check = audit(sparse, design, words, y, .01, intercept)
+    assert max(check['gap']) < (5e-5 if dtype == np.float32 else 2e-8)
+    np.testing.assert_allclose(sparse['objective'], check['objective'], atol=2e-6 if dtype == np.float32 else 2e-11)
+    selected = design[:, [words.index(w) for w in sparse['words']]]
+    if intercept:
+        selected = selected - selected.mean(0)
+    active_error = selected.T @ (y - prediction) / len(paths) - .01 * np.sign(sparse['coef'])
+    assert np.max(np.abs(active_error)[sparse['coef'] != 0], initial=0.) < (5e-5 if dtype == np.float32 else 2e-8)
     held_out = rng.normal(size=(7, 9, 3)).cumsum(1).astype(dtype)
     held_words, held_design = dictionary(held_out, 3, mode)
     expected = held_design[:, [held_words.index(w) for w in sparse['words']]] @ sparse['coef'] + sparse['intercept']
@@ -77,19 +74,17 @@ def test_fit_and_prediction(mode, dtype, intercept):
                                atol=2e-6 if dtype == np.float32 else 2e-11, rtol=2e-6 if dtype == np.float32 else 2e-11)
 
 
-@pytest.mark.parametrize('cache_bytes', [0, 8192, 2**20])
 @pytest.mark.parametrize('jobs', [1, 3])
-def test_hall_repeated_search_with_eviction(cache_bytes, jobs):
+def test_hall_repeated_search(jobs):
     rng = np.random.default_rng(7103)
     paths = rng.normal(size=(37, 7, 3)).cumsum(1)
     words, design = dictionary(paths, 5, 'hall')
     y = design[:, [12, 34, 69]] + .02 * rng.normal(size=(37, 3))
-    model = pysiglib.sig_lasso(paths, y, 5, .0005, feature_type='hall', method='sparse',
-        bound_method='exact', search_method='grouped_signed', batch_size=3, n_jobs=jobs,
-        cache_bytes=cache_bytes, tol=1e-10, max_iter=3000)
+    model = pysiglib.sig_lasso(paths, y, 5, .0005, feature_type='hall',
+        n_jobs=jobs,
+        tol=1e-10, max_iter=3000)
     assert np.all(model['converged'])
     assert model['stats']['search_passes'] > 1
-    assert model['stats']['full_transform_calls'] == 0
     check = audit(model, design, words, y, .0005)
     assert max(check['gap']) < 2e-9
     assert check['columns_error'] < 2e-11
@@ -118,7 +113,7 @@ def test_hall_simd_targets():
             actual = pysiglib.sig_lasso_predict(paths, model, n_jobs=3)
             np.testing.assert_allclose(actual, expected, atol=2e-11, rtol=2e-11)
             fitted = pysiglib.sig_lasso(paths, expected[:, [12, 34]], 5, .0005, feature_type='hall',
-                bound_method='exact', search_method='grouped_signed', n_jobs=3, tol=1e-10)
+                n_jobs=3, tol=1e-10)
             assert np.all(fitted['converged'])
             assert max(audit(fitted, expected, words, expected[:, [12, 34]], .0005)['gap']) < 2e-9
     finally:
@@ -130,17 +125,16 @@ def test_transforms_torch_and_empty_prediction(mode):
     rng = np.random.default_rng(52)
     paths = torch.tensor(rng.normal(size=(2, 3, 5, 2)), dtype=torch.float64).transpose(0, 1)
     y = torch.tensor(rng.normal(size=(3, 2)), dtype=torch.float64)
-    model = pysiglib.sig_lasso(paths, y, 2, .02, feature_type=mode, time_aug=True, lead_lag=True, bound_method='exact')
+    model = pysiglib.sig_lasso(paths, y, 2, .02, feature_type=mode, time_aug=True, lead_lag=True)
     prediction = pysiglib.sig_lasso_predict(paths, model)
     torch.testing.assert_close(prediction, (model['signatures'].reshape(6, -1) @ model['coef'] + model['intercept']).reshape(3, 2))
     assert pysiglib.sig_lasso_predict(paths[:0], model).shape == (0, 2)
 
 
 @pytest.mark.parametrize('mode,word', [('log', (1, 0)), ('hall', (1, 0)), ('hall', (0, 0))])
-@pytest.mark.parametrize('method', ['full', 'sparse'])
-def test_invalid_initial_features(mode, word, method):
+def test_invalid_initial_features(mode, word):
     with pytest.raises(ValueError):
-        pysiglib.sig_lasso(np.zeros((4, 3, 2)), np.zeros(4), 3, .1, feature_type=mode, method=method, initial_words=[word])
+        pysiglib.sig_lasso(np.zeros((4, 3, 2)), np.zeros(4), 3, .1, feature_type=mode, initial_words=[word])
 
 
 @pytest.mark.parametrize('mode', ['log', 'hall'])
@@ -196,29 +190,25 @@ def test_resources_and_missing_library(mode, monkeypatch):
     y = np.arange(12, dtype=np.float64)
     with pytest.raises(MemoryError):
         pysiglib.sig_lasso(paths, y, 4, .01, feature_type=mode, memory_limit=128)
-    with pytest.raises(MemoryError, match='full log/Hall dictionary'):
-        pysiglib.sig_lasso(paths, y, 14, .01, feature_type=mode, method='full', memory_limit=4 * 1024**2)
-    with pytest.raises(OverflowError, match='addressable storage'):
-        pysiglib.sig_lasso(paths, y, 170, .01, feature_type=mode, method='full')
-    monkeypatch.setattr(module, 'CPSIG_SIG_LASSO_FEATURES', None)
+    monkeypatch.setattr(module, 'CPSIG_WORKING_SET', None)
     with pytest.raises(RuntimeError, match='rebuild'):
         pysiglib.sig_lasso(paths, y, 3, .01, feature_type=mode)
 
 
 @pytest.mark.parametrize('mode', ['log', 'hall'])
-def test_approximate_columns_and_cuda_rejection(mode, monkeypatch):
+def test_columns_and_cuda_rejection(mode, monkeypatch):
     paths = np.random.default_rng(28).normal(size=(16, 5, 3))
     y = paths[:, -1, 0]
-    model = pysiglib.sig_lasso(paths, y, 3, .01, feature_type=mode, bound_method='approximate')
+    model = pysiglib.sig_lasso(paths, y, 3, .01, feature_type=mode)
     words, design = dictionary(paths, 3, mode)
     for j, word in enumerate(model['words']):
         np.testing.assert_allclose(model['signatures'][:, j], design[:, words.index(word)], atol=1e-12)
     if torch.cuda.is_available():
         import pysiglib.data_handlers as handlers
         monkeypatch.setattr(handlers, 'BUILT_WITH_CUDA', False)
-        with pytest.raises(ValueError, match='CPU only'):
+        with pytest.raises(ValueError, match='CPU'):
             pysiglib.sig_lasso(torch.tensor(paths, device='cuda'), torch.tensor(y, device='cuda'), 3, .01, feature_type=mode)
-        with pytest.raises(ValueError, match='CPU only'):
+        with pytest.raises(ValueError, match='CPU'):
             pysiglib.sig_lasso(paths, y, 3, torch.tensor(.01, device='cuda'), feature_type=mode)
 
 
@@ -236,7 +226,7 @@ def test_degree_one_agreement():
     rng = np.random.default_rng(87)
     paths = rng.normal(size=(20, 5, 3))
     y = rng.normal(size=20)
-    fits = [pysiglib.sig_lasso(paths, y, 1, .01, feature_type=mode, bound_method='exact', tol=1e-10) for mode in ('sig', 'log', 'hall')]
+    fits = [pysiglib.sig_lasso(paths, y, 1, .01, feature_type=mode, tol=1e-10) for mode in ('sig', 'log', 'hall')]
     for model in fits[1:]:
         assert model['words'] == fits[0]['words']
         np.testing.assert_allclose(model['coef'], fits[0]['coef'], atol=1e-10)
@@ -247,11 +237,11 @@ def test_degree_one_agreement():
 def test_one_channel_and_zero_paths(mode, degree):
     paths = np.array([[[0.], [1.]], [[2.], [1.]], [[3.], [3.]], [[0.], [2.]]])
     y = np.array([1., -1., 0., 1.])
-    model = pysiglib.sig_lasso(paths, y, degree, .01, feature_type=mode, bound_method='exact')
+    model = pysiglib.sig_lasso(paths, y, degree, .01, feature_type=mode)
     assert model['stats']['dictionary_size'] == 1
     assert model['words'] == [(0,)]
     assert model['converged']
-    constant = pysiglib.sig_lasso(np.ones((4, 1, 2)), np.ones(4), degree, .01, feature_type=mode, bound_method='exact')
+    constant = pysiglib.sig_lasso(np.ones((4, 1, 2)), np.ones(4), degree, .01, feature_type=mode)
     assert not constant['words'] and constant['converged']
     np.testing.assert_array_equal(pysiglib.sig_lasso_predict(np.ones((4, 1, 2)), constant, memory_limit=128), np.ones(4))
 
@@ -261,7 +251,7 @@ def test_cache_eviction_respects_budget(mode):
     rng = np.random.default_rng(11)
     paths = rng.normal(size=(32, 8, 4)).cumsum(1)
     y = rng.normal(size=32)
-    options = dict(feature_type=mode, bound_method='exact', search_method='grouped_signed', tol=1e-9, cache_bytes=2**24)
+    options = dict(feature_type=mode, tol=1e-9)
     reference = pysiglib.sig_lasso(paths, y, 4, .01, **options)
     limited = pysiglib.sig_lasso(paths, y, 4, .01, memory_limit=512 * 1024, **options)
     assert limited['converged']

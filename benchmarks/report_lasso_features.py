@@ -35,7 +35,7 @@ def main():
     records = []
     for path in args.results.glob('*/*.json'):
         record = json.loads(path.read_text())
-        if isinstance(record, dict) and 'status' in record and record.get('native_sha256') == environment['native_sha256'] and record.get('protocol_version') == 2:
+        if isinstance(record, dict) and 'status' in record and record.get('native_sha256') == environment['native_sha256'] and record.get('protocol_version') == 3:
             record['result_path'] = str(path)
             records.append(record)
     groups = defaultdict(list)
@@ -43,18 +43,18 @@ def main():
         if Path(record['result_path']).stem.startswith(record['mode'] + '_measured_') and not record.get('warmup'):
             groups[(record['case'], record['seed'], record['degree'], record['mode'])].append(record)
     lines = ['CPU Lasso feature comparison', '============================', '',
-        'The three dictionaries use factorial/variation scaling, the same feature-sign solver, and separately selected penalties. '
-        'All primary fits use exact bounds, grouped_signed search, eight CPU workers, float64, tolerance 1e-8, '
-        'max_iter=3000, candidate batch size 128, a 256 MiB optional cache and a 4 GiB native memory limit. '
+        'The three dictionaries use factorial/variation scaling, squared loss, and separately selected penalties. '
+        'All primary fits use the CPU working-set solver with eight workers, float64, tolerance 1e-8, '
+        'max_iter=3000 and a 4 GiB native memory limit. '
         'An equal one-hour worker limit includes warm-up and checks. Validation selects penalties; test labels do not enter selection.', '',
         'Each timed fit runs in an isolated worker after one unmeasured fit in that worker. '
-        'Separate warm-up records are retained. Selected-model tables use five timed fits; tuning and search-setting probes use one fit.', '',
+        'Separate warm-up records are retained. Selected-model tables use five timed fits. Tuning uses one fit per penalty.', '',
         'Synthetic responses are endpoint, signature, tensor-log and Hall targets, in that order. '
         'Arabic uses the saved 600/300/2200 split, all 14 channels and ten one-hot responses. '
         'Training is not repeated on validation data. Nonzero coefficients and union support measure different quantities.', '',
         'The independent Hall reference expands the dual PBW elements using '
         '`Salvi et al., Theorem 5.24 <https://arxiv.org/pdf/2212.00134>`_. '
-        'The production kernel uses the centered polynomial recurrence instead.', '',
+        'The implicit Hall search uses the centred polynomial recurrence.', '',
         f'Host: {environment.get("cpu_name", environment["processor"])}. '
         f'Compiler: {environment.get("compiler", "MSVC Release")}. '
         f'Python {environment["python"].split()[0]}; NumPy {environment.get("numpy", "unknown")}; '
@@ -132,12 +132,12 @@ def main():
                 lines += [''] + [('   * - ' if j == 0 else '     - ') + v for j, v in enumerate(values)]
     lines += ['', 'Additional baseline probes', '--------------------------', '',
         'Each probe below is one fit at baseline seed 7201 with the selected penalties. Main tables use five repetitions. '
-        'Approximate gaps are audited independently with the complete dictionary.', '',
-        '.. list-table:: Separate approximate, thread-count and search-setting probes.', '   :header-rows: 1', '',
+        'Gaps are audited independently with the complete dictionary.', '',
+        '.. list-table:: Single-worker timing.', '   :header-rows: 1', '',
         '   * - Probe', '     - Fit s', '     - Union support', '     - Independent gap', '     - Constructed', '     - Terminal correlations']
     for r in sorted(records, key=lambda r: r['result_path']):
         name = Path(r['result_path']).stem
-        if r['case'] != 'baseline' or r['seed'] != 7201 or r['status'] != 'ok' or '_serial_measured_' in name or not any(tag in name for tag in ('_approximate', '_serial', '_search_')):
+        if r['case'] != 'baseline' or r['seed'] != 7201 or r['status'] != 'ok' or '_serial_measured_' in name or '_serial' not in name:
             continue
         values = [name, f'{r["fit_seconds"]:.5f}', str(r['union_support']), f'{max(r["audit"]["gap"]):.3g}',
             str(r['stats']['constructed']), str(r['stats']['terminal_correlations'])]
@@ -223,8 +223,7 @@ def main():
         'Prediction is measured in separate workers by case using saved selected models, one warm-up call per mode and five timed calls in rotated mode order. '
         'Only selected features and their dependencies are evaluated, with up to 64 MiB of private state reuse. '
         'The prediction process peak in summary.json is shared across modes within a case; fitting process peaks are measured per mode.', '',
-        'Approximate bounds give estimated gaps and can omit features. Their records are separate from the primary comparison. '
-        'There is no general ordering of prediction error or sparsity across these dictionaries.', '',
+        'The fits report a squared-loss duality gap and a global KKT check.', '',
         'The degree limit of 170 is an allocation and arithmetic limit. Independent general-coordinate tests '
         'cover small dictionaries through degree six; degree-170 tests cover one-channel and constant paths. '
         'Conservative floating-point padding is not an interval proof.', '',
@@ -238,7 +237,7 @@ def main():
         '   vtune -collect hotspots -knob sampling-mode=sw -result-dir output/lasso_features_profiles/hall_repeat -- python -m benchmarks.benchmark_lasso_features --worker output/lasso_features_profiles/hall_job.json --native-dir out/build/windows-cpu/siglib/cpsig/Release', '',
         'Correctness commands:', '', '::', '',
         '   python -m pytest tests/test_sig_lasso_features.py -q',
-        '   python -m pytest tests/test_sig_lasso.py tests/test_sig_lasso_feature_sign.py tests/test_apis_match.py -q',
+        '   python -m pytest tests/test_sig_lasso.py tests/test_working_set_losses.py tests/test_apis_match.py -q',
         '   out/build/windows-cpu/siglib/cpsig_unit_testing/Release/cpsig_tests.exe --gtest_filter=LassoFeatures.*:sigLassoTest.*:LassoActiveCPU.*', '']
     args.report.write_text('\n'.join(lines), encoding='ascii', newline='\r\n')
     (args.results / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='ascii', newline='\r\n')

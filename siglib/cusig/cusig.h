@@ -16,7 +16,6 @@
 #pragma once
 
 #include <cstdint>
-#include "../shared/sig_lasso_types.h"
 
 #if defined(CUSIG_EXPORTS)
 	#if defined(_MSC_VER)
@@ -38,8 +37,6 @@
 
 extern "C" {
 
-    CUSIG_API int sig_lasso_cuda_f(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, void*, int, SigLassoAllocator, void*) noexcept;
-    CUSIG_API int sig_lasso_cuda_d(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, void*, int, SigLassoAllocator, void*) noexcept;
 
 	/**
 	* @brief Returns the CUDA error message for the current thread.

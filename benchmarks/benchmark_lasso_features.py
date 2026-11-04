@@ -32,7 +32,7 @@ from threadpoolctl import threadpool_limits
 
 MODES = ('sig', 'log', 'hall')
 RATIOS = (1., .1, .03, .01, .003)
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 CASES = {'baseline': (128, 13, 8, 4), 'samples': (512, 13, 8, 4),
          'length': (128, 65, 8, 4), 'channels': (128, 13, 24, 3),
          'degree': (128, 13, 4, 6), 'anisotropic': (128, 13, 8, 4)}
@@ -82,10 +82,8 @@ def worker(args):
     alpha = np.asarray(specification['alpha'])
     paths, response = data['train'], data['response']
     def fit():
-        return pysiglib.sig_lasso(paths, response, degree, alpha, feature_type=mode, method=specification.get('method', 'sparse'),
-            bound_method=specification.get('bound', 'exact'), search_method=specification.get('search', 'grouped_signed'),
-            n_jobs=specification.get('jobs', 8), tol=1e-8, max_iter=3000, batch_size=128,
-            cache_bytes=specification.get('cache_bytes', 256 * 1024**2), memory_limit=4 * 1024**3)
+        return pysiglib.sig_lasso(paths, response, degree, alpha, feature_type=mode, n_jobs=specification.get('jobs', 8),
+                                 tol=1e-8, max_iter=3000, memory_limit=4 * 1024**3)
     if specification.get('test', False):
         warmup = fit()
         del warmup
@@ -313,9 +311,7 @@ def study(args):
             for mode in MODES:
                 if mode in selected:
                     run_job(args, specification, mode, 'serial', selected[mode], jobs=1, test=True)
-                    run_job(args, specification, mode, 'approximate', selected[mode], bound='approximate', test=True)
-                    for search in ('plain', 'grouped', 'signed', 'grouped_signed'):
-                        run_job(args, specification, mode, f'search_{search}', selected[mode], search=search)
+
 
 
 def signature_regression(args):
@@ -330,7 +326,7 @@ def signature_regression(args):
         response = pysiglib.sig_coef(normalized, [(0,), (0, 1), (0, 1, 2)]) @ np.array([1., 3., 12.])
         for repeat in range(-1, 15):
             started = time.perf_counter()
-            model = pysiglib.sig_lasso(paths, response, degree, .002, bound_method='exact', search_method='grouped_signed', n_jobs=8)
+            model = pysiglib.sig_lasso(paths, response, degree, .002, n_jobs=8)
             seconds = time.perf_counter() - started
             if repeat >= 0:
                 records.append(dict(dimension=dimension, degree=degree, seconds=seconds, objective=float(model['objective']),

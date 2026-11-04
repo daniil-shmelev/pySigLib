@@ -15,6 +15,7 @@
 
 #include "cppch.h"
 #include "cp_lasso_features.h"
+#include "cp_lasso_hall.h"
 #include "cp_dispatch.h"
 #include "multithreading.h"
 #include <Eigen/Eigenvalues>
@@ -38,36 +39,6 @@ namespace siglasso {
 namespace {
 using Complex = std::complex<double>;
 
-bool lyndon(const Word& w) {
-    for (size_t k = 1; k < w.size(); ++k)
-        if (!std::lexicographical_compare(w.begin(), w.end(), w.begin() + k, w.end())) return false;
-    return !w.empty();
-}
-
-struct Hall {
-    Word word;
-    std::shared_ptr<Hall> left, right;
-    size_t run = 0;
-    size_t slot = 0;
-};
-using HallPtr = std::shared_ptr<Hall>;
-int compare(const HallPtr& a, const HallPtr& b) {
-    if (a == b) return 0;
-    if (a->word.size() != b->word.size()) return a->word.size() > b->word.size() ? -1 : 1;
-    if (!a->left) return a->word < b->word ? -1 : a->word == b->word ? 0 : 1;
-    const int first = compare(a->left, b->left);
-    return first ? first : compare(a->right, b->right);
-}
-bool admissible(const HallPtr& u, const HallPtr& v) {
-    return compare(u, v) < 0 && (!u->right || compare(v, u->right) <= 0);
-}
-HallPtr bracket(const HallPtr& u, const HallPtr& v) {
-    auto h = std::make_shared<Hall>(); h->left = u; h->right = v;
-    h->word = u->word; h->word.insert(h->word.end(), v->word.begin(), v->word.end());
-    h->run = u->right && compare(u->right, v) == 0 ? u->run + 1 : 1;
-    return h;
-}
-
 struct State {
     Word word;
     Array polynomial, values, moments, envelope, global;
@@ -80,7 +51,7 @@ class PolynomialSearch final : public FeatureSearch {
     Backend& b_;
     const size_t n_, l_, d_, m_;
     const uint32_t mode_;
-    std::vector<std::vector<double>> choose_, stirling_, time_basis_;
+    std::vector<std::vector<double>> choose_, stirling_;
     std::vector<double> caps_, time_nodes_, time_weights_, gaussian_weights_;
     std::vector<Complex> gaussian_nodes_;
     std::vector<HallPtr> sides_;
@@ -90,7 +61,7 @@ class PolynomialSearch final : public FeatureSearch {
     std::list<Word> cache_order_, summary_order_;
     size_t cache_size_ = 0, summary_bytes_ = 0;
     StatePtr root_;
-    std::shared_ptr<void> tables_metadata_, time_basis_metadata_;
+    std::shared_ptr<void> tables_metadata_;
     size_t auxiliary_bytes_ = 0;
     Array side_maxima_;
     struct ProductTable { Array values; std::shared_ptr<void> metadata; };
@@ -193,7 +164,7 @@ class PolynomialSearch final : public FeatureSearch {
                     for (size_t k = 0; k <= h; ++k) at(out->polynomial, p * (h + 1) + k, j, i) += totals[p + 1];
             }
         });
-        if (lyndon(w)) b_.record_word(w);
+        if (lyndon(w)) ++b_.stats.constructed;
         cache(out); return out;
     }
     HallPtr parse(const Word& w) {
@@ -282,7 +253,7 @@ class PolynomialSearch final : public FeatureSearch {
             };
             if (workers == 1) update(0, 1); else spawn_batch_threads(workers, b_.options.n_jobs, update);
         }
-        b_.record_word(h->word);
+        ++b_.stats.constructed;
         if (required) side_states_.emplace(h->word, out); else cache(out);
         return out;
     }
@@ -321,13 +292,13 @@ class PolynomialSearch final : public FeatureSearch {
                 double v = l_ ? b_.variation.data[i] + b_.after.data[i] : 0;
                 for (size_t j = 0; j < l_; ++j) for (size_t q = 1; q <= levels; ++q) {
                     double sum = 0;
-                    const size_t count = b_.options.bound_method ? time_nodes_.size() : 2;
+                    const size_t count = time_nodes_.size();
                     for (size_t k = 0; k < count; ++k) {
-                        const double t = b_.options.bound_method ? time_nodes_[k] : static_cast<double>(k);
-                        const double w = b_.options.bound_method ? time_weights_[k] : 0.5;
+                        const double t = time_nodes_[k];
+                        const double w = time_weights_[k];
                         const double r = b_.after.data[j * n_ + i] + (1 - t) * b_.variation.data[j * n_ + i];
                         for (size_t p = 1; p <= q; ++p) sum += w * weight(q, p, r, v)
-                            * std::abs(bernstein(u->polynomial, (p - 1) * (h + 1), h, j, i, t, b_.options.bound_method != 0));
+                            * std::abs(bernstein(u->polynomial, (p - 1) * (h + 1), h, j, i, t, true));
                     }
                     const double value = std::abs(sum) * b_.weights[h + q];
                     at(u->moments, q - 1, j, i) = std::isfinite(value) ? value : std::numeric_limits<double>::infinity();
@@ -353,20 +324,6 @@ class PolynomialSearch final : public FeatureSearch {
             best = std::max(best, sum / n_);
         }
         return padded(best, 1e-11 * m_ * m_ * (l_ + 1));
-    }
-    Complex hall_value(const StatePtr& s, size_t j, size_t i, Complex z, size_t point, bool derivative) const {
-        const size_t h = s->word.size(); Complex result = 0, power = 1;
-        for (size_t p = 0; p <= h; ++p) {
-            const size_t degree = h - p, base = offset(h, p);
-            double value = 0;
-            if (!derivative) for (size_t k = 0; k <= degree; ++k)
-                value += at(s->polynomial, base + k, j, i) * time_basis_[degree][point * (degree + 1) + k];
-            else for (size_t k = 0; k < degree; ++k)
-                value += degree * (at(s->polynomial, base + k + 1, j, i) - at(s->polynomial, base + k, j, i))
-                    * time_basis_[degree - 1][point * degree + k];
-            result += value * power; power *= z;
-        }
-        return result;
     }
     double hall_envelope(const StatePtr& s, size_t j, size_t i, Complex z, bool derivative) const {
         const size_t h = s->word.size(), degree = h - (derivative ? 1 : 0);
@@ -398,17 +355,16 @@ class PolynomialSearch final : public FeatureSearch {
         if (cache_.count(u->word)) cache_size_ += u->moments.bytes();
         for (const auto& v : sides_) {
             auto s = side_states_.at(v->word);
-            const size_t points = b_.options.bound_method ? 1 : 2;
+            const size_t points = 1;
             const size_t bytes = multiply(multiply(multiply(gaussian_nodes_.size() * points, n_), l_), sizeof(double));
             if (s->envelope.owner || bytes > b_.options.cache_bytes / 4 - std::min(auxiliary_bytes_, static_cast<size_t>(b_.options.cache_bytes / 4))) continue;
             s->envelope = b_.alloc(bytes / sizeof(double)); auxiliary_bytes_ += bytes;
             samples([&](uint64_t begin, uint64_t end) {
                 for (size_t i = begin; i < end; ++i) for (size_t j = 0; j < l_; ++j) for (size_t g = 0; g < gaussian_nodes_.size(); ++g)
-                    for (size_t p = 0; p < points; ++p) at(s->envelope, g * points + p, j, i) = b_.options.bound_method
-                        ? hall_envelope(s, j, i, gaussian_nodes_[g], false) : std::abs(hall_value(s, j, i, gaussian_nodes_[g], p, false));
+                    for (size_t p = 0; p < points; ++p) at(s->envelope, g * points + p, j, i) = hall_envelope(s, j, i, gaussian_nodes_[g], false);
             });
         }
-        const size_t points = b_.options.bound_method ? 1 : 2;
+        const size_t points = 1;
         Word key{levels, u->hall->run, u->hall->right ? u->hall->right->word.size() : 0};
         if (u->hall->right) key.insert(key.end(), u->hall->right->word.begin(), u->hall->right->word.end());
         Array products;
@@ -425,7 +381,7 @@ class PolynomialSearch final : public FeatureSearch {
         samples([&](uint64_t begin, uint64_t end) {
         std::vector<double> dp(levels + 1), next(levels + 1);
         for (size_t i = begin; i < end; ++i) for (size_t j = 0; j < l_; ++j) for (size_t g = 0; g < gaussian_nodes_.size(); ++g) {
-            const size_t points = b_.options.bound_method ? 1 : 2;
+            const size_t points = 1;
             for (size_t point = 0; point < points; ++point) {
                 if (ready) for (size_t q = 0; q <= levels; ++q) dp[q] = at(products, (g * points + point) * (levels + 1) + q, j, i);
                 else {
@@ -435,7 +391,7 @@ class PolynomialSearch final : public FeatureSearch {
                     const size_t degree = v->word.size(); if (degree > levels) continue;
                     const auto& vs = side_states_.at(v->word);
                     const double a = vs->envelope.owner ? at(vs->envelope, g * points + point, j, i)
-                        : b_.options.bound_method ? hall_envelope(vs, j, i, gaussian_nodes_[g], false) : std::abs(hall_value(vs, j, i, gaussian_nodes_[g], point, false));
+                        : hall_envelope(vs, j, i, gaussian_nodes_[g], false);
                     const size_t inherited = u->hall->right && compare(v, u->hall->right) == 0 ? u->hall->run : 0;
                     next = dp;
                     double power = 1;
@@ -450,8 +406,7 @@ class PolynomialSearch final : public FeatureSearch {
                 }
                 if (products.owner) for (size_t q = 0; q <= levels; ++q) at(products, (g * points + point) * (levels + 1) + q, j, i) = dp[q];
                 }
-                const double derivative = b_.options.bound_method ? hall_envelope(u, j, i, gaussian_nodes_[g], true)
-                    : std::abs(hall_value(u, j, i, gaussian_nodes_[g], point, true)) * 0.5;
+                const double derivative = hall_envelope(u, j, i, gaussian_nodes_[g], true);
                 for (size_t q = 1; q <= levels; ++q) {
                     const double value = gaussian_weights_[g] * derivative * dp[q] * b_.weights[u->word.size() + q];
                     u->moments.data[(q - 1) * n_ + i] += std::isfinite(value) ? value : std::numeric_limits<double>::infinity();
@@ -536,88 +491,52 @@ class PolynomialSearch final : public FeatureSearch {
         }
         return score;
     }
-    void terminals(StatePtr u, const Array& residual, double alpha, size_t capacity,
+    void log_terminals(const StatePtr& u, const Array& residual, double alpha, size_t capacity,
         const std::unordered_map<Word, size_t, WordHash>& active, SearchResult& result) {
         ++b_.stats.terminal_queries;
         const size_t h = u->word.size(), levels = m_ - h;
         double maximum = 0;
-        Array integrals;
-        if (mode_ == 1) {
-            integrals = b_.alloc(multiply(3 * l_, n_));
-            samples([&](uint64_t begin, uint64_t end) {
-                for (size_t j = 0; j < l_; ++j) for (size_t i = begin; i < end; ++i) {
-                    double first = 0, time = 0, second = 0;
-                    for (size_t k = 0; k <= h; ++k) {
-                        const double value = at(u->polynomial, k, j, i) / (h + 1);
-                        first += value; time += (k + 1) * value / (h + 2);
-                        if (levels == 2) second += at(u->polynomial, h + 1 + k, j, i) / (h + 1);
-                    }
-                    at(integrals, 0, j, i) = first; at(integrals, 1, j, i) = time; at(integrals, 2, j, i) = second;
+        Array integrals = b_.alloc(multiply(3 * l_, n_));
+        samples([&](uint64_t begin, uint64_t end) {
+            for (size_t j = 0; j < l_; ++j) for (size_t i = begin; i < end; ++i) {
+                double first = 0, time = 0, second = 0;
+                for (size_t k = 0; k <= h; ++k) {
+                    const double value = at(u->polynomial, k, j, i) / (h + 1);
+                    first += value; time += (k + 1) * value / (h + 2);
+                    if (levels == 2) second += at(u->polynomial, h + 1 + k, j, i) / (h + 1);
                 }
-            });
-        }
-        auto evaluate = [&](const Word& word, const HallPtr& v, const HallPtr& w, size_t a, size_t c) {
-            if (active.count(word)) return;
-            if (mode_ == 2) {
-                StatePtr saved;
-                if (auto it = cache_.find(word); it != cache_.end()) saved = it->second;
-                else if (auto it = summaries_.find(word); it != summaries_.end()) saved = it->second;
-                if (saved) {
-                    ++b_.stats.cache_hits; ++b_.stats.terminal_correlations;
-                    maximum = std::max(maximum, offer(saved, residual, alpha, capacity, active, result));
-                    return;
-                }
-                if (!u->polynomial.owner) u = hall_state(u->hall);
+                at(integrals, 0, j, i) = first; at(integrals, 1, j, i) = time; at(integrals, 2, j, i) = second;
             }
+        });
+        auto evaluate = [&](const Word& word, size_t a, size_t c) {
+            if (active.count(word)) return;
             auto probe = std::make_shared<State>(); probe->word = word; probe->values = b_.alloc(n_);
             const size_t q = word.size() - h;
-            StatePtr vs = v ? side_states_.at(v->word) : StatePtr{};
-            StatePtr ws = w ? side_states_.at(w->word) : StatePtr{};
-            const size_t run = v && u->hall->right && compare(v, u->hall->right) == 0 ? u->hall->run + 1 : 1;
-            const size_t second_run = w && compare(v, w) == 0 ? run + 1 : 1;
             samples([&](uint64_t begin, uint64_t end) {
                 for (size_t i = begin; i < end; ++i) {
                     double total = 0, tail = 0, displacement = 0;
-                    if (mode_ == 1 && q == 2) for (size_t j = 0; j < l_; ++j) displacement += step(j, c, i);
+                    if (q == 2) for (size_t j = 0; j < l_; ++j) displacement += step(j, c, i);
                     tail = displacement;
                     for (size_t j = 0; j < l_; ++j) {
-                        if (mode_ == 1) {
-                            double value = at(integrals, 0, j, i);
-                            if (q == 2) value = value * tail - step(j, c, i) * at(integrals, 1, j, i) + displacement * at(integrals, 2, j, i);
-                            total += step(j, a, i) * value;
-                            if (q == 2) tail -= step(j, c, i);
-                            continue;
-                        }
-                        for (size_t t = 0; t < time_nodes_.size(); ++t) {
-                            for (size_t g = 0; g < gaussian_nodes_.size(); ++g) {
-                                Complex value = hall_value(u, j, i, gaussian_nodes_[g], t + 2, true)
-                                    * hall_value(vs, j, i, gaussian_nodes_[g], t + 2, false) / static_cast<double>(run);
-                                if (ws) value *= hall_value(ws, j, i, gaussian_nodes_[g], t + 2, false) / static_cast<double>(second_run);
-                                total += time_weights_[t] * gaussian_weights_[g] * value.real();
-                            }
-                        }
+                        double value = at(integrals, 0, j, i);
+                        if (q == 2) value = value * tail - step(j, c, i) * at(integrals, 1, j, i) + displacement * at(integrals, 2, j, i);
+                        total += step(j, a, i) * value;
+                        if (q == 2) tail -= step(j, c, i);
                     }
-                    probe->values.data[i] = finite(mode_ == 2 && word.size() % 2 == 0 ? -total : total);
+                    probe->values.data[i] = finite(total);
                 }
             });
             ++b_.stats.terminal_correlations;
-            if (mode_ == 2) remember(probe);
             const size_t previous = result.candidates.size();
             maximum = std::max(maximum, offer(probe, residual, alpha, capacity, active, result));
-            if (result.candidates.size() > previous) b_.record_word(word);
+            if (result.candidates.size() > previous) ++b_.stats.constructed;
         };
-        if (mode_ == 1) {
-            for (size_t a = 0; a < d_; ++a) {
-                Word word = u->word; word.push_back(a);
-                if (lyndon(word)) evaluate(word, {}, {}, a, 0);
-                if (levels == 2) for (size_t c = 0; c < d_; ++c) {
-                    word.push_back(c); if (lyndon(word)) evaluate(word, {}, {}, a, c); word.pop_back();
-                }
+        for (size_t a = 0; a < d_; ++a) {
+            Word word = u->word; word.push_back(a);
+            if (lyndon(word)) evaluate(word, a, 0);
+            if (levels == 2) for (size_t c = 0; c < d_; ++c) {
+                word.push_back(c); if (lyndon(word)) evaluate(word, a, c); word.pop_back();
             }
-        } else for (const auto& v : sides_) if (v->word.size() <= levels && admissible(u->hall, v)) {
-            auto child = bracket(u->hall, v); evaluate(child->word, v, {}, 0, 0);
-            if (v->word.size() == 1 && levels == 2) for (const auto& w : sides_)
-                if (w->word.size() == 1 && admissible(child, w)) evaluate(bracket(child, w)->word, v, w, 0, 0);
         }
         if (maximum <= alpha) ++b_.stats.terminal_pruned;
     }
@@ -637,7 +556,7 @@ public:
         for (size_t h = 0; h <= m_; ++h) {
             choose_[h].resize(h + 1, 1);
             for (size_t k = 1; k < h; ++k) choose_[h][k] = choose_[h - 1][k - 1] + choose_[h - 1][k];
-            if (!h) continue;
+            if (!h || mode_ != 1 || selected_only) continue;
             for (size_t k = 1; k <= h; ++k) stirling_[h][k] = stirling_[h - 1][k - 1] + k * stirling_[h - 1][k];
             if (h > 1) {
                 std::vector<double> next(h);
@@ -646,24 +565,14 @@ public:
             }
             caps_[h] = 0; for (size_t k = 0; k < h; ++k) caps_[h] += euler[k] / choose_[h - 1][k] / h;
         }
-        rule((m_ + 1) / 2, false);
         if (mode_ == 1) {
+            if (!selected_only) rule((m_ + 1) / 2, false);
             root_ = state({}, m_);
             for (size_t p = 0; p < m_; ++p) for (size_t j = 0; j < l_; ++j) for (size_t i = 0; i < n_; ++i)
                 at(root_->polynomial, p, j, i) = (p % 2 ? -1.0 : 1.0) / (p + 1);
         } else {
+            if (selected_only) return;
             rule((m_ + 1) / 2, true);
-            const size_t points = time_nodes_.size() + 2;
-            time_basis_metadata_ = b_.account(multiply(multiply(triangle(m_), points), sizeof(double)) + (m_ + 1) * 32);
-            time_basis_.resize(m_ + 1);
-            for (size_t h = 0; h <= m_; ++h) {
-                time_basis_[h].resize(points * (h + 1));
-                for (size_t point = 0; point < points; ++point) {
-                    const double t = point < 2 ? static_cast<double>(point) : time_nodes_[point - 2];
-                    for (size_t k = 0; k <= h; ++k) time_basis_[h][point * (h + 1) + k] = choose_[h][k]
-                        * std::pow(t, static_cast<int>(k)) * std::pow(1 - t, static_cast<int>(h - k));
-                }
-            }
             std::vector<double> bernoulli(m_, 1);
             for (size_t k = 1; k < m_; ++k) {
                 double sum = 0, magnitude = 0;
@@ -676,8 +585,7 @@ public:
                 if (!std::isfinite(defect) || defect > 1e-10 * std::max(1., std::abs(expected))) gaussian_reliable_ = false;
             }
             if (!gaussian_reliable_ && b_.absolute_sum(b_.increments) > 0) { b_.uncertain_features = true; ++b_.stats.numerical_failures; }
-            if (selected_only) return;
-            zero_path_ = !b_.options.full && (!l_ || b_.absolute_sum(b_.increments) == 0);
+            zero_path_ = (!l_ || b_.absolute_sum(b_.increments) == 0);
             if (zero_path_) return;
             long double power = 1, bytes = 0;
             std::vector<long double> primitive(m_ / 2 + 1);
@@ -717,10 +625,8 @@ public:
         }
         auto node = std::make_shared<Node>(); node->word = word; node->values = s->values; return node;
     }
-    SearchResult query(const Array& input, double alpha, const std::unordered_map<Word, size_t, WordHash>& active,
+    SearchResult query(const Array& residual, double alpha, const std::unordered_map<Word, size_t, WordHash>& active,
         size_t capacity, size_t = 0, size_t = 0, size_t = 0) override {
-        Array residual = input;
-        if (b_.options.intercept) { residual = b_.alloc(n_); b_.copy(input.data, residual.data, n_); b_.center(residual.data, n_, true); }
         SearchResult result;
         if (zero_path_ || !l_ || b_.absolute_sum(b_.increments) == 0) return result;
         std::function<void(const StatePtr&, size_t)> visit_log;
@@ -730,19 +636,12 @@ public:
             if (h == m_) return;
             const size_t first = h ? u->word[h - period] : 0;
             const double threshold = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
-            if (b_.options.search_method & 1) {
-                ++b_.stats.block_queries;
-                const double bound = log_bound(u, first, d_, residual);
-                if (bound < threshold) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; return; }
-            }
-            if ((b_.options.search_method & 2) && m_ - h <= 2) {
-                terminals(u, residual, alpha, capacity, active, result); return;
+            if (m_ - h <= 2) {
+                log_terminals(u, residual, alpha, capacity, active, result); return;
             }
             for (size_t a = first; a < d_; ++a) {
-                if (!(b_.options.search_method & 1)) {
-                    ++b_.stats.block_queries; const double bound = log_bound(u, a, a + 1, residual);
-                    if (bound < threshold) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; continue; }
-                }
+                ++b_.stats.block_queries; const double bound = log_bound(u, a, a + 1, residual);
+                if (bound < threshold) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; continue; }
                 visit_log(log_child(u, a), h && a == first ? period : h + 1);
             }
         };
@@ -758,60 +657,46 @@ public:
                 if (!cache_.count(u->word)) remember(u);
                 return;
             }
-            if ((b_.options.search_method & 2) && gaussian_reliable_ && m_ - u->word.size() <= 2) {
-                size_t count = 0;
-                for (const auto& v : sides_) if (u->word.size() + v->word.size() <= m_ && admissible(u->hall, v)) {
-                    ++count;
-                    if (m_ - u->word.size() == 2 && v->word.size() == 1) {
-                        auto child = bracket(u->hall, v);
-                        for (const auto& w : sides_) if (w->word.size() == 1 && admissible(child, w)) ++count;
-                    }
-                }
-                if (count <= 8) {
-                    terminals(u, residual, alpha, capacity, active, result);
-                    if (!cache_.count(u->word)) remember(u);
-                    return;
-                }
-            }
             if (!u->polynomial.owner && !u->global.owner) u = hall_state(u->hall);
             std::vector<HallPtr> factors;
             for (const auto& v : sides_) if (u->word.size() + v->word.size() <= m_ && admissible(u->hall, v)) factors.push_back(v);
-            std::function<void(size_t, size_t)> group = [&](size_t low, size_t high) {
-                if (low == high) return;
+            for (size_t v = 0; v < factors.size(); ++v) {
                 ++b_.stats.block_queries;
-                const double child_bound = hall_group_bound(u, factors, low, high, residual);
-                if (child_bound < threshold) { result.omitted = std::max(result.omitted, child_bound); ++b_.stats.pruned; return; }
-                if (high - low == 1) visit_hall(hall_state(bracket(u->hall, factors[low]), false, false));
-                else { const size_t middle = (low + high) / 2; group(low, middle); group(middle, high); }
-            };
-            if (b_.options.search_method & 1) group(0, factors.size());
-            else for (size_t v = 0; v < factors.size(); ++v) group(v, v + 1);
+                const double bound = hall_group_bound(u, factors, v, v + 1, residual);
+                if (bound < threshold) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; }
+                else visit_hall(hall_state(bracket(u->hall, factors[v]), false, false));
+            }
             if (!cache_.count(u->word)) remember(u);
         };
         if (mode_ == 1) visit_log(root_, 0);
         else for (size_t a = 0; a < d_; ++a) visit_hall(hall_state(parse(Word{a})));
         std::sort(result.candidates.begin(), result.candidates.end(), better); ++b_.stats.search_passes; return result;
     }
-    void full(std::vector<Column>& columns) {
+    void audit_columns(std::vector<Column>& columns) {
+        auto append = [&](const Word& w, const Array& raw) {
+            auto values = b_.clone(raw);
+            b_.scale(b_.weights[w.size()], values.data, values.size);
+            columns.push_back({w, values});
+        };
         if (zero_path_) return;
         std::function<void(const StatePtr&, size_t)> log_visit;
         log_visit = [&](const StatePtr& u, size_t period) {
             const size_t h = u->word.size();
-            if (h && h == period) append_column(b_, columns, u->word, u->values);
+            if (h && h == period) append(u->word, u->values);
             if (h == m_) return;
             const size_t first = h ? u->word[h - period] : 0;
             for (size_t a = first; a < d_; ++a) log_visit(log_child(u, a), h && a == first ? period : h + 1);
         };
         std::function<void(const StatePtr&)> hall_visit;
         hall_visit = [&](const StatePtr& u) {
-            append_column(b_, columns, u->word, u->values);
+            append(u->word, u->values);
             for (const auto& v : sides_) if (u->word.size() + v->word.size() <= m_ && admissible(u->hall, v)) hall_visit(hall_state(bracket(u->hall, v)));
         };
         if (mode_ == 1) log_visit(root_, 0);
         else for (size_t a = 0; a < d_; ++a) hall_visit(hall_state(parse(Word{a})));
     }
     size_t audit() {
-        std::vector<Column> columns; full(columns);
+        std::vector<Column> columns; audit_columns(columns);
         auto residual = b_.alloc(n_);
         for (size_t i = 0; i < n_; ++i) residual.data[i] = std::sin(1.7 * i) - .3;
         b_.center(residual.data, n_, true);
@@ -881,6 +766,5 @@ public:
 };
 }
 std::unique_ptr<FeatureSearch> make_cpu_feature_search(Backend& b, uint32_t mode, bool selected_only) { return std::make_unique<PolynomialSearch>(b, mode, selected_only); }
-void full_cpu_features(Backend& b, uint32_t mode, std::vector<Column>& columns) { PolynomialSearch search(b, mode); search.full(columns); }
 size_t audit_cpu_feature_bounds(Backend& b, uint32_t mode) { PolynomialSearch search(b, mode); return search.audit(); }
 }

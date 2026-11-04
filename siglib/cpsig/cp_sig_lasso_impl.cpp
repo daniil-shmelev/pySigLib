@@ -43,7 +43,6 @@ class LassoCPU final : public siglasso::Backend, public siglasso::HostSearch {
     siglasso::Array terminal_storage_, terminal_products_;
     siglasso::TerminalCache terminal_cache_;
     std::atomic<bool> terminal_needed_{false};
-    double terminal_mean_ = 0;
     std::array<double, 2> terminal_caps_{};
     std::unordered_map<siglasso::Word, std::array<std::vector<std::pair<uint64_t, uint64_t>>, 2>, siglasso::WordHash> terminal_active_;
     std::shared_ptr<void> terminal_active_metadata_;
@@ -83,15 +82,25 @@ class LassoCPU final : public siglasso::Backend, public siglasso::HostSearch {
         return siglasso::finite(result);
     }
 public:
-    LassoCPU(const LassoCPU& source, const SigLassoOptions& options) : Backend(options, source.budget), paths_(source.paths_), responses_(source.responses_) {
+    siglasso::Array& paths() { return paths_; }
+    LassoCPU(const LassoCPU& source, const siglasso::SearchOptions& options) : Backend(options, source.budget), paths_(source.paths_), responses_(source.responses_) {
         weights = source.weights;
     }
     template<typename T>
-    LassoCPU(const SigLassoOptions& o, const T* paths, const T* y, uint32_t feature_type = 0) : Backend(o), feature_type_(feature_type) {
+    LassoCPU(const siglasso::SearchOptions& o, const T* paths, const T* y, uint32_t feature_type = 0) : Backend(o), feature_type_(feature_type) {
         paths_ = alloc(siglasso::multiply(siglasso::multiply(o.samples, o.length), o.dimension));
-        responses_ = alloc(siglasso::multiply(o.samples, o.targets));
-        for (size_t j = 0; j < paths_.size; ++j) paths_.data[j] = siglasso::finite(paths[j]);
-        for (size_t j = 0; j < responses_.size; ++j) responses_.data[j] = y ? siglasso::finite(y[j]) : 0;
+        if (y) responses_ = alloc(siglasso::multiply(o.samples, o.targets));
+        for (size_t j = 0; j < paths_.size; ++j) {
+            if (!std::isfinite(paths[j])) throw std::invalid_argument("Paths must be finite");
+            paths_.data[j] = paths[j];
+        }
+        for (size_t j = 0; j < responses_.size; ++j) {
+            const double v = y[j];
+            if (!std::isfinite(v)) throw std::invalid_argument("Targets must be finite");
+            if (o.loss == 1 && v != 0 && v != 1) throw std::invalid_argument("Logistic targets must be binary");
+            if (o.loss == 2 && (v < 0 || std::floor(v) != v)) throw std::invalid_argument("Poisson targets must be nonnegative counts");
+            responses_.data[j] = v;
+        }
         batch(o.samples, [&](uint64_t begin, uint64_t end) {
             for (size_t i = begin; i < end; ++i) {
                 double variation = 0;
@@ -121,8 +130,6 @@ public:
     }
     void fill(const siglasso::Array& a, double value) override { std::fill_n(a.data, a.size, value); }
     void copy(const double* from, double* to, size_t n) override { if (n) std::memcpy(to, from, n * sizeof(double)); }
-    void upload(const double* from, double* to, size_t n) override { copy(from, to, n); }
-    void download(const double* from, double* to, size_t n) override { copy(from, to, n); }
     double dot(const double* a, const double* b, size_t n) override {
         const hn::ScalableTag<double> d;
         const auto lanes = hn::Lanes(d);
@@ -171,36 +178,19 @@ public:
         if (options.n_jobs == 1 || out.size() <= 1) compute(0, out.size());
         else spawn_batch_threads(out.size(), options.n_jobs, compute);
     }
-    std::unique_ptr<siglasso::ActiveSet> active_set(const siglasso::Array& y, double alpha) override { return siglasso::make_cpu_active(*this, y, alpha); }
-    double correlation_max(const std::vector<siglasso::Column>& columns, const siglasso::Array& vector) override {
-        double maximum = 0;
-        const double eps = std::numeric_limits<double>::epsilon();
-        for (const auto& column : columns) {
-            double sum = 0, correction = 0, magnitude = 0;
-            for (size_t i = 0; i < vector.size; ++i) {
-                const double product = column.values.data[i] * vector.data[i], next = sum + product;
-                correction += std::fma(column.values.data[i], vector.data[i], -product);
-                correction += std::abs(sum) >= std::abs(product) ? (sum - next) + product : (product - next) + sum;
-                magnitude += std::abs(product); sum = next;
-            }
-            const double value = std::abs(sum + correction);
-            maximum = std::max(maximum, (value + 8 * eps * value + 8 * vector.size * eps * eps * magnitude) / vector.size);
-        }
-        return siglasso::finite(std::nextafter(maximum, std::numeric_limits<double>::infinity()));
-    }
     void prepare() override {
         const size_t n = options.samples, l = options.length - 1, d = options.dimension;
         increments = alloc(siglasso::multiply(siglasso::multiply(n, l), d));
-        variation = alloc(n * l); after = alloc(n * l);
+        if (!options.selected_only) { variation = alloc(n * l); after = alloc(n * l); }
         batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t i = begin; i < end; ++i) {
                 for (size_t j = 0; j < l; ++j) for (size_t a = 0; a < d; ++a)
                     increments.data[(j * d + a) * n + i] = paths_.data[(i * (l + 1) + j + 1) * d + a] - paths_.data[(i * (l + 1) + j) * d + a];
-                siglasso::prepare_sample(increments.data, variation.data, after.data, i, n, l, d);
+                if (!options.selected_only) siglasso::prepare_sample(increments.data, variation.data, after.data, i, n, l, d);
             }
         });
         paths_ = {};
-        if (feature_type_) return;
+        if (feature_type_ || options.selected_only) return;
         prepare_alphabet();
         batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t block = alphabet.size(); block-- > 0;) {
@@ -253,32 +243,6 @@ public:
     void moments(siglasso::Node& node, const siglasso::Array& factors) override {
         const size_t n = options.samples, l = options.length - 1, k = node.word.size(), levels = options.degree - k;
         node.moments = alloc(levels * n * l);
-        if (!options.bound_method) {
-            if (k == 0 && ((options.search_method & 1) || ((options.search_method & 2) && levels <= 2))) {
-                node.integrals = alloc(n * l); fill(node.integrals, 1);
-                if ((options.search_method & 2) && levels <= 2) { node.linear_integrals = alloc(n * l); fill(node.linear_integrals, .5); }
-            }
-            batch(n, [&](uint64_t begin, uint64_t end) {
-                const hn::ScalableTag<double> tag; const size_t lanes = hn::Lanes(tag);
-                for (size_t j = 0; j < l; ++j) {
-                    size_t i = begin;
-                    for (; i + lanes <= end; i += lanes) {
-                        const auto step = hn::LoadU(tag, variation.data + j * n + i), tail = hn::LoadU(tag, after.data + j * n + i);
-                        const auto weight = hn::Set(tag, weights[k + 1] / (2 * n));
-                        auto left = hn::Mul(hn::Mul(hn::Abs(hn::LoadU(tag, node.time_values.data + j * n + i)), step), weight);
-                        auto right = hn::Mul(hn::Mul(hn::Abs(hn::LoadU(tag, node.time_values.data + (j + 1) * n + i)), step), weight);
-                        for (size_t q = 0; q < levels; ++q) {
-                            hn::StoreU(hn::Add(left, right), tag, node.moments.data + (q * l + j) * n + i);
-                            const auto ratio = hn::Set(tag, (k + q + 2) * reciprocals[q + 1]);
-                            left = hn::Mul(left, hn::Mul(hn::Add(tail, step), ratio)); right = hn::Mul(right, hn::Mul(tail, ratio));
-                        }
-                    }
-                    for (; i < end; ++i) siglasso::trapezoidal_moments(node.time_values.data[j * n + i], node.time_values.data[(j + 1) * n + i],
-                        variation.data[j * n + i], after.data[j * n + i], weights[k + 1] / n, k, levels, n * l, node.moments.data + j * n + i, reciprocals.data());
-                }
-            });
-            return;
-        }
         node.integrals = alloc(n * l);
         if ((options.search_method & 2) && levels <= 2) node.linear_integrals = alloc(n * l);
         batch(n, [&](uint64_t begin, uint64_t end) {
@@ -330,10 +294,9 @@ public:
             }
             for (auto& entry : terminal_active_) for (auto& suffixes : entry.second) std::sort(suffixes.begin(), suffixes.end());
         }
-        terminal_mean_ = options.intercept ? std::accumulate(residual.data, residual.data + n, 0.0) / n : 0;
         terminal_caps_ = {};
         if (options.length > 1) for (size_t i = 0; i < n; ++i) {
-            const double r = std::abs(residual.data[i] - terminal_mean_), v = variation.data[i] + after.data[i];
+            const double r = std::abs(residual.data[i]), v = variation.data[i] + after.data[i];
             if (m > 1) terminal_caps_[0] += r * std::pow(v, static_cast<double>(m - 1));
             terminal_caps_[1] += r * std::pow(v, static_cast<double>(m));
         }
@@ -363,7 +326,7 @@ public:
         const size_t n = options.samples, l = options.length - 1, d = options.dimension;
         out.assign(tasks.size(), 0);
         std::atomic<uint64_t> terminal_queries{0}, terminal_pruned{0}, terminal_correlations{0};
-        const double residual_mean = terminal_mean_;
+        constexpr double residual_mean = 0;
         batch(tasks.size(), [&](uint64_t begin, uint64_t end) {
             siglasso::Array terminal_products = options.n_jobs == 1 ? terminal_products_ : siglasso::Array{};
             uint64_t queries = 0, pruned = 0, correlations = 0;
@@ -581,120 +544,17 @@ public:
             auto node = std::make_shared<siglasso::Node>(); node->word = tasks[t].node->word; node->word.push_back(tasks[t].low);
             node->metadata = account(512 + node->word.size() * 64);
             node->values = alloc(n);
-            if (node->word.size() < options.degree) {
-                if (options.bound_method) node->coefficients = alloc((node->word.size() + 1) * n * l);
-                else {
-                    node->time_values = alloc(n * (l + 1));
-                    if ((options.search_method & 1) || ((options.search_method & 2) && options.degree - node->word.size() <= 2)) node->integrals = alloc(n * l);
-                    if ((options.search_method & 2) && options.degree - node->word.size() <= 2) node->linear_integrals = alloc(n * l);
-                }
-            }
+            if (node->word.size() < options.degree) node->coefficients = alloc((node->word.size() + 1) * n * l);
             out[t] = std::move(node);
         }
         batch(tasks.size() * n, [&](uint64_t begin, uint64_t end) {
-            const hn::ScalableTag<double> tag; const size_t lanes = hn::Lanes(tag);
-            for (size_t index = begin; index < end;) {
+            for (size_t index = begin; index < end; ++index) {
                 const size_t t = index / n, i = index % n;
-                if (!options.bound_method && i + lanes <= n && index + lanes <= end) {
-                    auto& node = *out[t]; const size_t k = node.word.size();
-                    const auto& parent = *tasks[t].node;
-                    auto value = hn::Zero(tag);
-                    if (node.time_values.owner) hn::StoreU(value, tag, node.time_values.data + i);
-                    for (size_t j = 0; j < l; ++j) {
-                        if (k == options.degree && parent.integrals.owner) {
-                            value = hn::Add(value, hn::Mul(hn::LoadU(tag, increments.data + (j * options.dimension + tasks[t].low) * n + i),
-                                hn::LoadU(tag, parent.integrals.data + j * n + i)));
-                            continue;
-                        }
-                        auto product = hn::Set(tag, 1), integral = value, linear = hn::Mul(value, hn::Set(tag, .5));
-                        for (size_t h = 1; h <= k; ++h) {
-                            product = hn::Mul(product, hn::Mul(hn::LoadU(tag, increments.data + (j * options.dimension + node.word[k - h]) * n + i), hn::Set(tag, reciprocals[h])));
-                            const auto term = hn::Mul(hn::LoadU(tag, tasks[t].ancestors->nodes[k - h]->time_values.data + j * n + i), product);
-                            value = hn::Add(value, term);
-                            if (node.integrals.owner) integral = hn::Add(integral, hn::Mul(term, hn::Set(tag, reciprocals[h + 1])));
-                            if (node.linear_integrals.owner) linear = hn::Add(linear, hn::Mul(term, hn::Set(tag, reciprocals[h + 2])));
-                        }
-                        if (node.time_values.owner) hn::StoreU(value, tag, node.time_values.data + (j + 1) * n + i);
-                        if (node.integrals.owner) hn::StoreU(integral, tag, node.integrals.data + j * n + i);
-                        if (node.linear_integrals.owner) hn::StoreU(linear, tag, node.linear_integrals.data + j * n + i);
-                    }
-                    hn::StoreU(value, tag, node.values.data + i);
-                    for (size_t lane = 0; lane < lanes; ++lane) siglasso::finite(node.values.data[i + lane]);
-                    index += lanes;
-                    continue;
-                }
-                if (options.bound_method) siglasso::child_sample(increments.data, tasks[t].node->coefficients.data, tasks[t].node->integrals.data, out[t]->coefficients.data, out[t]->values.data,
-                    tasks[t].low, tasks[t].node->word.size(), i, n, l, options.dimension);
-                else {
-                    auto& node = *out[t]; const size_t k = node.word.size();
-                    double value = 0;
-                    if (node.time_values.owner) node.time_values.data[i] = 0;
-                    for (size_t j = 0; j < l; ++j) {
-                        if (k == options.degree && tasks[t].node->integrals.owner) {
-                            value += increments.data[(j * options.dimension + tasks[t].low) * n + i] * tasks[t].node->integrals.data[j * n + i];
-                            continue;
-                        }
-                        double product = 1, integral = value, linear = value / 2;
-                        for (size_t h = 1; h <= k; ++h) {
-                            product *= increments.data[(j * options.dimension + node.word[k - h]) * n + i] * reciprocals[h];
-                            const double term = tasks[t].ancestors->nodes[k - h]->time_values.data[j * n + i] * product;
-                            value += term;
-                            if (node.integrals.owner) integral += term * reciprocals[h + 1];
-                            if (node.linear_integrals.owner) linear += term * reciprocals[h + 2];
-                        }
-                        if (node.time_values.owner) node.time_values.data[(j + 1) * n + i] = value;
-                        if (node.integrals.owner) node.integrals.data[j * n + i] = integral;
-                        if (node.linear_integrals.owner) node.linear_integrals.data[j * n + i] = linear;
-                    }
-                    node.values.data[i] = value;
-                }
+                siglasso::child_sample(increments.data, tasks[t].node->coefficients.data, tasks[t].node->integrals.data,
+                    out[t]->coefficients.data, out[t]->values.data, tasks[t].low, tasks[t].node->word.size(), i, n, l, options.dimension);
                 siglasso::finite(out[t]->values.data[i]);
-                ++index;
             }
         });
-    }
-    void full_columns(std::vector<siglasso::Column>& columns) override {
-        if (feature_type_) { prepare(); siglasso::full_cpu_features(*this, feature_type_, columns); return; }
-        const size_t n = options.samples, d = options.dimension, m = options.degree;
-        size_t count = 0, level = 1;
-        for (size_t k = 1; k <= m; ++k) {
-            level = siglasso::multiply(level, d);
-            if (level > std::numeric_limits<size_t>::max() - count) throw std::out_of_range("Full signature size overflow");
-            count += level;
-        }
-        auto column_metadata = account(siglasso::multiply(count, 1024 + m * 64 + options.targets * 32));
-        auto matrix = alloc(siglasso::multiply(count, n));
-        columns.reserve(count);
-        for (size_t k = 1; k <= m; ++k) {
-            siglasso::Word word(k, 0);
-            do {
-                siglasso::Array values{matrix.data + columns.size() * n, n, matrix.owner};
-                columns.push_back({word, values, 0, 0, column_metadata});
-                size_t j = k;
-                while (j && ++word[j - 1] == d) { word[j - 1] = 0; --j; }
-                if (!j) break;
-            } while (true);
-        }
-        const size_t tile = std::min<size_t>(n, std::max<size_t>(1, (8 * 1024 * 1024) / std::max<size_t>(1, count * sizeof(double))));
-        auto temporary = alloc(tile * count);
-        auto kernel_workspace = account(siglasso::multiply(32 * (count + 1) + 8 * d * m, tile * sizeof(double)));
-        for (size_t begin = 0; begin < n; begin += tile) {
-            const size_t rows = std::min(tile, n - begin);
-            ++stats.full_transform_calls;
-            const int status = ::signature_d(paths_.data + begin * options.length * d, temporary.data, rows, d, options.length, m,
-                false, false, 1.0, true, false, options.n_jobs);
-            if (status == 1) throw std::bad_alloc();
-            if (status) throw std::runtime_error("Full signature kernel failed in sig_lasso");
-            for (size_t j = 0; j < count; ++j) for (size_t i = 0; i < rows; ++i)
-                columns[j].values.data[begin + i] = siglasso::finite(temporary.data[i * count + j] * weights[columns[j].word.size()]);
-        }
-        spawn_batch_threads(count, options.n_jobs, [&](uint64_t begin, uint64_t end) {
-            for (size_t j = begin; j < end; ++j) {
-                columns[j].mean = center(columns[j].values.data, n, options.intercept != 0);
-                columns[j].norm2 = dot(columns[j].values.data, columns[j].values.data, n);
-            }
-        });
-        stats.evaluated = stats.constructed = count;
     }
     siglasso::Array response(size_t target) override {
         auto result = alloc(options.samples);
@@ -703,9 +563,15 @@ public:
     }
     template<typename T> void export_typed(const siglasso::Result& result, const SigLassoOutput& output) {
         const auto convert = [](double value) { return static_cast<T>(siglasso::finite(static_cast<T>(value))); };
-        const std::vector<double>* inputs[] = {&result.coefficients, &result.intercepts, &result.objectives, &result.gaps};
-        void* outputs[] = {output.coefficients, output.intercepts, output.objectives, output.gaps};
-        for (size_t j = 0; j < 4; ++j) std::transform(inputs[j]->begin(), inputs[j]->end(), static_cast<T*>(outputs[j]), convert);
+        const std::vector<double>* inputs[] = {&result.coefficients, &result.intercepts, &result.objectives, &result.gaps, &result.kkt};
+        void* outputs[] = {output.coefficients, output.intercepts, output.objectives, output.gaps, output.kkt};
+        for (size_t j = 0; j < 5; ++j) {
+            std::transform(inputs[j]->begin(), inputs[j]->end(), static_cast<T*>(outputs[j]), [&](double value) {
+                T output = convert(value);
+                if (j >= 3 && output < value) output = std::nextafter(output, std::numeric_limits<T>::infinity());
+                return output;
+            });
+        }
         const size_t p = result.words.size();
         auto* signatures = static_cast<T*>(output.signatures);
         batch(options.samples, [&](uint64_t begin, uint64_t end) {
@@ -718,7 +584,6 @@ public:
         else export_typed<double>(result, output);
     }
     bool has_native_search() const override { return options.n_jobs != 1 && options.dimension > 1 && !options.memory_limit; }
-    bool reuse_search_bound() const override { return !options.single_precision; }
     bool native_search(const siglasso::Array& residual, double alpha,
         const std::unordered_map<siglasso::Word, size_t, siglasso::WordHash>& active, size_t capacity, siglasso::SearchResult& result) override {
         if (searches_.empty()) {
@@ -755,11 +620,9 @@ public:
                 found[j] = searches_[j]->query(residual, alpha, active, capacity, low, high, frontier_[j]);
             }
         });
-        stats.constructed = constructed.size();
         for (size_t j = 0; j < searches_.size(); ++j) {
             const auto& worker = *search_workers_[j];
-            stats.constructed += worker.constructed.size();
-            for (const auto& word : constructed) if (worker.constructed.count(word)) --stats.constructed;
+            stats.constructed += worker.stats.constructed;
             stats.evaluated += worker.stats.evaluated; stats.pruned += worker.stats.pruned; stats.block_queries += worker.stats.block_queries;
             stats.cache_hits += worker.stats.cache_hits; stats.cache_misses += worker.stats.cache_misses;
             stats.terminal_queries += worker.stats.terminal_queries; stats.terminal_pruned += worker.stats.terminal_pruned;
@@ -775,48 +638,36 @@ public:
         std::sort(result.candidates.begin(), result.candidates.end(), siglasso::better);
         return true;
     }
-    std::unique_ptr<Backend> solver_worker() override {
-        if (options.targets == 1 || options.n_jobs == 1) return {};
-        auto single = options; single.n_jobs = 1;
-        auto worker = std::make_unique<LassoCPU>(*this, single);
-        worker->trim_search = [this] { std::lock_guard lock(factor_mutex_); trim_caches(); };
-        return worker;
-    }
-    void for_targets(const std::function<void(size_t)>& action) override {
-        if (options.targets == 1 || options.n_jobs == 1) { Backend::for_targets(action); return; }
-        spawn_batch_threads(options.targets, options.n_jobs, [&](uint64_t begin, uint64_t end) {
-            for (size_t j = begin; j < end; ++j) action(j);
-        });
-    }
 };
 
 template<typename T>
-void sig_lasso_(const T* path, const T* y, const double* alphas, const uint64_t* letters,
-    const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) {
-    LassoCPU backend(*options, path, y);
-    std::vector<siglasso::Word> initial;
-    for (size_t j = 0; j < words; ++j) initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
-    auto result = siglasso::fit(backend, std::vector<double>(alphas, alphas + options->targets), initial);
-    siglasso::export_result(backend, result, allocate, context);
-}
-template void sig_lasso_<float>(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, SigLassoAllocator, void*);
-template void sig_lasso_<double>(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, SigLassoAllocator, void*);
-
-template<typename T>
-void sig_lasso_features_(const T* path, const T* y, const double* alphas, const uint64_t* letters,
+void sig_working_set_(const T* path, const T* y, const double* alphas, const uint64_t* letters,
     const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) {
+    if (!options || !path || !y || !alphas || !allocate || (words && (!letters || !offsets)))
+        throw std::invalid_argument("Missing working-set input or output allocator");
+    if (!options->length || !options->samples || !options->dimension || !options->targets || !options->degree ||
+        !options->max_iter || !std::isfinite(options->tolerance) || options->tolerance <= 0 || options->loss > 3)
+        throw std::invalid_argument("Invalid working-set size, loss or tolerance");
+    for (size_t t = 0; t < options->targets; ++t)
+        if (!std::isfinite(alphas[t]) || alphas[t] <= 0) throw std::invalid_argument("Expected a positive finite penalty");
+    for (size_t j = 0; j < words; ++j) {
+        if (offsets[j+1] <= offsets[j] || offsets[j+1]-offsets[j] > options->degree)
+            throw std::invalid_argument("Invalid initial word length");
+        for (size_t k = offsets[j]; k < offsets[j+1]; ++k)
+            if (letters[k] >= options->dimension) throw std::invalid_argument("Invalid initial word letter");
+    }
     if (feature_type > 2) throw std::invalid_argument("Invalid Lasso feature type");
-    LassoCPU backend(*options, path, y, feature_type);
+    LassoCPU backend(siglasso::SearchOptions(*options, feature_type), path, y, feature_type);
     std::vector<siglasso::Word> initial;
     for (size_t j = 0; j < words; ++j) initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
-    auto result = siglasso::fit(backend, std::vector<double>(alphas, alphas + options->targets), initial);
+    auto result = siglasso::fit(backend, backend.paths(), feature_type, std::vector<double>(alphas, alphas + options->targets), initial);
     siglasso::export_result(backend, result, allocate, context);
 }
 template<typename T>
-void sig_lasso_predict_(const T* path, const T* coefficients, const T* intercept, T* output,
+void sig_working_set_predict_(const T* path, const T* coefficients, const T* intercept, T* output,
     const uint64_t* letters, const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options) {
     if (feature_type > 2) throw std::invalid_argument("Invalid Lasso feature type");
-    LassoCPU backend(*options, path, static_cast<const T*>(nullptr), feature_type);
+    LassoCPU backend(siglasso::SearchOptions(*options, feature_type, true), path, static_cast<const T*>(nullptr), feature_type);
     backend.prepare(); auto search = feature_type ? siglasso::make_cpu_feature_search(backend, feature_type, true) : backend.make_search();
     auto prediction = backend.alloc(siglasso::multiply(options->samples, options->targets));
     for (size_t i = 0; i < options->samples; ++i) for (size_t t = 0; t < options->targets; ++t) prediction.data[i * options->targets + t] = siglasso::finite(intercept[t]);
@@ -828,10 +679,10 @@ void sig_lasso_predict_(const T* path, const T* coefficients, const T* intercept
     }
     for (size_t i = 0; i < prediction.size; ++i) output[i] = static_cast<T>(siglasso::finite(prediction.data[i]));
 }
-template void sig_lasso_features_<float>(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
-template void sig_lasso_features_<double>(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
-template void sig_lasso_predict_<float>(const float*, const float*, const float*, float*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
-template void sig_lasso_predict_<double>(const double*, const double*, const double*, double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
+template void sig_working_set_<float>(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
+template void sig_working_set_<double>(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
+template void sig_working_set_predict_<float>(const float*, const float*, const float*, float*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
+template void sig_working_set_predict_<double>(const double*, const double*, const double*, double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
 
 } } // namespace cpsig::HWY_NAMESPACE
 HWY_AFTER_NAMESPACE();

@@ -32,6 +32,5 @@ struct HallBoundFactor {
     double scale;
 };
 std::unique_ptr<FeatureSearch> make_cpu_feature_search(Backend&, uint32_t, bool selected_only = false);
-void full_cpu_features(Backend&, uint32_t, std::vector<Column>&);
 size_t audit_cpu_feature_bounds(Backend&, uint32_t);
 }

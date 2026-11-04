@@ -19,21 +19,20 @@ namespace siglasso { struct Result; struct HallKernelPlan; struct HallBoundFacto
 
 struct SigLassoOptions {
     uint64_t samples, length, dimension, degree, targets;
-    uint64_t max_iter, batch_size, cache_bytes, memory_limit;
+    uint64_t max_iter, memory_limit;
     double tolerance;
     int n_jobs;
-    uint32_t full, intercept, single_precision;
-    uint32_t search_method = 1; // bit 0: grouping; bit 1: signed terminal blocks
-    uint32_t bound_method = 0; // 0: node trapezoids; 1: absolute Bernstein integral
+    uint32_t intercept, single_precision, loss;
 };
 
 struct SigLassoStats {
     uint64_t columns, evaluated, pruned, block_queries, cache_hits, cache_misses;
     uint64_t peak_bytes, search_passes;
     uint64_t constructed;
-    uint64_t activations, drops, qr_appends, qr_deletions, qr_rebuilds, singular_steps, certificate_passes;
+    uint64_t activations, drops, certificate_passes;
     double preparation_seconds, search_seconds, insertion_seconds, solve_seconds, total_seconds;
-    double factorization_seconds, certification_seconds;
+    double certification_seconds;
+    uint64_t engine;
     uint64_t numerical_failures, full_transform_calls;
     uint64_t terminal_queries, terminal_pruned, terminal_correlations;
     uint64_t output_bytes;
@@ -47,7 +46,7 @@ struct SigLassoShape {
 
 struct SigLassoOutput {
     uint64_t *letters, *offsets, *converged, *iterations;
-    void *coefficients, *intercepts, *objectives, *gaps;
+    void *coefficients, *intercepts, *objectives, *gaps, *kkt;
     void* signatures;
     SigLassoStats* stats;
 };

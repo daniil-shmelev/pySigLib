@@ -23,29 +23,36 @@ import numpy as np
 import pysiglib
 
 
-@lru_cache(None)
-def shuffle(u, v):
-    if not u:
-        return {v: 1}
-    if not v:
-        return {u: 1}
-    result = {}
-    for prefix, terms in ((u[:1], shuffle(u[1:], v)), (v[:1], shuffle(u, v[1:]))):
-        for w, c in terms.items():
-            result[prefix + w] = result.get(prefix + w, 0) + c
-    return result
+def _make_shuffle():
+    @lru_cache(None)
+    def local_shuffle(u, v):
+        if not u or not v:
+            return {u + v: 1}
+        result = {}
+        for letter, tails in ((u[0], local_shuffle(u[1:], v)), (v[0], local_shuffle(u, v[1:]))):
+            for w, count in tails.items():
+                key = (letter,) + w
+                result[key] = result.get(key, 0) + count
+        return result
+
+    return local_shuffle
 
 
-def hall_basis(dimension, degree):
+shuffle = _make_shuffle()
+
+
+def hall_basis(dimension, degree, *, local_cache=False):
+    expand = _make_shuffle() if local_cache else shuffle
     words = [(a,) for a in range(dimension)]
+    levels = {1: words.copy()}
     keys = {w: (-1, w[0]) for w in words}
     factors, runs = {}, {w: 0 for w in words}
     duals = {w: {w: 1.} for w in words}
     for n in range(2, degree + 1):
         additions = []
         for u in words:
-            for v in words:
-                if len(u) + len(v) != n or keys[u] >= keys[v]:
+            for v in levels[n-len(u)]:
+                if keys[u] >= keys[v]:
                     continue
                 if u in factors and keys[v] > keys[factors[u][1]]:
                     continue
@@ -54,16 +61,20 @@ def hall_basis(dimension, degree):
                 terms = {}
                 for a, ca in duals[u].items():
                     for b, cb in duals[v].items():
-                        for tail, count in shuffle(a[1:], b).items():
+                        for tail, count in expand(a[1:], b).items():
                             key = a[:1] + tail
                             terms[key] = terms.get(key, 0.) + ca * cb * count / run
                 additions.append((w, u, v, run, terms))
+        levels[n] = []
         for w, u, v, run, terms in additions:
             if w in keys:
                 raise AssertionError('Hall foliage collision')
             keys[w] = (-n, keys[u], keys[v])
             factors[w], runs[w], duals[w] = (u, v), run, terms
             words.append(w)
+            levels[n].append(w)
+    if local_cache:
+        expand.cache_clear()
     return sorted(words, key=lambda w: (len(w), w)), duals
 
 

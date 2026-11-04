@@ -43,7 +43,7 @@ struct TerminalCache {
     }
     SIGLASSO_HD bool get(size_t index, const uint64_t* prefix, size_t k, uint64_t a, uint64_t b, size_t q, double& value) const {
         const double* entry = data + index * (degree + 3);
-        if (entry[0] != k + q || entry[1] != generation) return false;
+        if (entry[0] != 2 * k + q || entry[1] != generation) return false;
         for (size_t j = 0; j < k + q; ++j) {
             uint64_t letter;
             memcpy(&letter, entry + 2 + j, sizeof(letter));
@@ -54,7 +54,7 @@ struct TerminalCache {
     }
     SIGLASSO_HD void put(size_t index, const uint64_t* prefix, size_t k, uint64_t a, uint64_t b, size_t q, double value) const {
         double* entry = data + index * (degree + 3);
-        entry[0] = k + q; entry[1] = generation;
+        entry[0] = 2 * k + q; entry[1] = generation;
         for (size_t j = 0; j < k + q; ++j) {
             const uint64_t letter = j < k ? prefix[j] : j == k ? a : b;
             memcpy(entry + 2 + j, &letter, sizeof(letter));
@@ -119,7 +119,16 @@ SIGLASSO_HD inline void child_sample(const double* increments, const double* par
     size_t letter, size_t k, size_t i, size_t n, size_t segments, size_t dimension) {
     double carry = 0;
     for (size_t j = 0; j < segments; ++j) {
-        if (!child) { carry += increments[(j * dimension + letter) * n + i] * integrals[j * n + i]; continue; }
+        if (!child) {
+            double integral = 0;
+            if (integrals) integral = integrals[j * n + i];
+            else {
+                for (size_t a = 0; a <= k; ++a) integral += parent[(j * (k + 1) + a) * n + i];
+                integral /= k + 1;
+            }
+            carry += increments[(j * dimension + letter) * n + i] * integral;
+            continue;
+        }
         const double step = increments[(j * dimension + letter) * n + i] / (k + 1);
         if (child) child[(j * (k + 2)) * n + i] = carry;
         for (size_t a = 0; a <= k; ++a) {
@@ -229,15 +238,6 @@ SIGLASSO_HD inline void absolute_moments(const double* coefficients, const doubl
     }
 }
 
-SIGLASSO_HD inline void trapezoidal_moments(double start, double end, double step, double tail,
-    double weight, size_t k, size_t levels, size_t stride, double* out, const double* reciprocals = nullptr) {
-    double left = fabs(start) * step * weight * .5, right = fabs(end) * step * weight * .5;
-    for (size_t q = 0; q < levels; ++q) {
-        out[q * stride] = left + right;
-        const double ratio = reciprocals ? (k + q + 2) * reciprocals[q + 1] : static_cast<double>(k + q + 2) / (q + 1);
-        left *= (tail + step) * ratio; right *= tail * ratio;
-    }
-}
 
 // Correlation-only terminal contraction; no descendant feature column is stored.
 SIGLASSO_HD inline double terminal_sample(const double* integrals, const double* linear_integrals, const double* increments,
