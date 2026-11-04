@@ -163,6 +163,56 @@ struct Restricted {
             update_gradient(curvature, false);
         }
     }
+    bool covariance_sweeps(size_t k, double feature_tol, double intercept_tol) {
+        auto gram = b.alloc(multiply(k, k));
+        auto corr = b.alloc(k);
+        const size_t offset = has_intercept();
+        const double inv = 1. / y.size;
+        for (size_t j = 0; j < k; ++j) {
+            for (size_t l = 0; l <= j; ++l) {
+                double entry;
+                if (l < offset)
+                    entry = j < offset ? 1. : inv * std::accumulate(terms[j-offset].column.values.data,
+                                                                  terms[j-offset].column.values.data+y.size, 0.);
+                else
+                    entry = inv * b.dot(terms[j-offset].column.values.data, terms[l-offset].column.values.data, y.size);
+                gram.data[j*k+l] = gram.data[l*k+j] = entry;
+            }
+        }
+        for (size_t sweep = 0; sweep < 250000;) {
+            corr.data[0] = std::accumulate(gradient.data, gradient.data+y.size, 0.);
+            for (size_t j = offset; j < k; ++j)
+                corr.data[j] = b.dot(terms[j-offset].column.values.data, gradient.data, y.size);
+            for (size_t inner = 0; inner < 256 && sweep < 250000; ++inner) {
+                ++sweep;
+                for (size_t j = 0; j < k; ++j) {
+                    double& coef = j < offset ? intercept : terms[j-offset].beta;
+                    const double penalty = j < offset ? 0. : alpha;
+                    if (coef == 0 && std::abs(corr.data[j]) <= penalty)
+                        continue;
+                    const double h = gram.data[j*k+j];
+                    const double u = h * coef - corr.data[j];
+                    const double next = std::copysign(std::max(0., std::abs(u)-penalty), u)/h;
+                    const double delta = finite(next-coef);
+                    if (delta) {
+                        coef = next;
+                        b.axpy(delta, gram.at(j*k), corr.data, k);
+                    }
+                }
+                bool done = !offset || std::abs(corr.data[0]) <= intercept_tol;
+                for (size_t j = offset; done && j < k; ++j) {
+                    const double coef = terms[j-offset].beta, g = corr.data[j];
+                    done = (coef ? std::abs(g + std::copysign(alpha, coef)) : std::abs(g)-alpha) <= feature_tol;
+                }
+                if (done)
+                    break;
+            }
+            refresh(false);
+            if (intercept_error <= intercept_tol && active_error <= feature_tol)
+                return true;
+        }
+        return false;
+    }
     bool solve(double tau) {
         const auto curvature = b.options.loss == 1 || b.options.loss == 2 ? b.alloc(y.size) : Array{};
         const double fraction = b.options.single_precision ? .1 : .5;
@@ -170,10 +220,14 @@ struct Restricted {
             refresh(false, curvature);
             if (intercept_error <= b.options.tolerance * fraction && active_error <= tau * fraction)
                 return true;
-            if (sweeps == 5000)
+            const size_t k = terms.size() + has_intercept();
+            if (sweeps == 65 && b.options.loss == 0 && k > 0 && k <= y.size &&
+                k + 1 <= b.budget->available() / sizeof(double) / k)
+                return covariance_sweeps(k, tau * fraction, b.options.tolerance * fraction);
+            if (sweeps == 250000)
                 return false;
-            const size_t count = sweeps ? std::min<size_t>(4, 5000 - sweeps) : 1;
-            for (size_t k = 0; k < count; ++k) {
+            const size_t count = sweeps ? std::min<size_t>(4, 250000 - sweeps) : 1;
+            for (size_t pass = 0; pass < count; ++pass) {
                 if (has_intercept())
                     coordinate(intercept, nullptr, 1., curvature);
                 for (auto& t : terms)

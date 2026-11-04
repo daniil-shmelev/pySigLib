@@ -92,6 +92,17 @@ def test_large_dictionary_and_degree_limit():
         pysiglib.sig_lasso(paths, y, 171, 1.)
 
 
+def test_coordinate_descent_on_nearly_collinear_features():
+    u = np.tile([-1., -1., 1., 1.], 16)
+    v = np.tile([-1., 1.], 32)
+    columns = np.column_stack((.4*u+.004*v, .4*u-.004*v, np.ones_like(u)))
+    paths = np.stack((np.zeros_like(columns), columns), axis=1)
+    alpha = .01
+    model = pysiglib.sig_lasso(paths, columns[:, 0]+columns[:, 1], 1, alpha, tol=1e-10)
+    assert model['converged'] and model['words'] == [(0,), (1,)]
+    np.testing.assert_allclose(model['coef'], 1-alpha/.32, rtol=0, atol=2e-6)
+
+
 def test_float32_output_overflow_raises():
     x = np.zeros((4, 2, 1), dtype=np.float32)
     with pytest.raises(RuntimeError, match='[Nn]onfinite'):
