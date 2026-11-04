@@ -39,6 +39,10 @@ extern "C" {
 
     CPSIG_API int sig_lasso_f(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
     CPSIG_API int sig_lasso_d(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
+    CPSIG_API int sig_lasso_features_f(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
+    CPSIG_API int sig_lasso_features_d(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
+    CPSIG_API int sig_lasso_predict_f(const float*, const float*, const float*, float*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*) noexcept;
+    CPSIG_API int sig_lasso_predict_d(const double*, const double*, const double*, double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*) noexcept;
 
 	/**
 	* @brief Returns the CPU error message for the current thread.

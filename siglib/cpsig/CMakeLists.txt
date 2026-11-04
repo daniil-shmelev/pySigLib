@@ -21,6 +21,7 @@ add_library(cpsig SHARED
     cp_polynomial_sig_kernel.cpp
     cp_sig_coef.cpp
     cp_sig_lasso.cpp
+    cp_lasso_features.cpp
     cp_sig_kernel.cpp
     cp_signature.cpp
     cp_utils.cpp
@@ -41,6 +42,7 @@ FetchContent_Declare(pysiglib_eigen
     SOURCE_SUBDIR pysiglib_headers_only
 )
 FetchContent_MakeAvailable(pysiglib_eigen)
+target_include_directories(cpsig PRIVATE "${pysiglib_eigen_SOURCE_DIR}")
 add_library(pysiglib_lasso_cpu OBJECT cp_sig_lasso_active.cpp)
 target_include_directories(pysiglib_lasso_cpu PRIVATE "${pysiglib_eigen_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
 target_compile_definitions(pysiglib_lasso_cpu PRIVATE EIGEN_DONT_PARALLELIZE EIGEN_MPL2_ONLY)
@@ -127,6 +129,7 @@ set(_cpsig_kernels
     cp_branched_sig_kernel_impl.cpp
     cp_branched_signature_impl.cpp
     cp_log_signatures_impl.cpp
+    cp_lasso_features_impl.cpp
     cp_path_transforms_impl.cpp
     cp_polynomial_sig_kernel_impl.cpp
     cp_sig_coef_impl.cpp

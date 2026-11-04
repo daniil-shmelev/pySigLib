@@ -15,8 +15,16 @@
 
 // Included inside each target namespace.
 
+void hall_polynomial_(const siglasso::HallKernelPlan&, const double*, const double*, double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, double, double*);
+double hall_group_bound_(const double*, const double*, const double*, const siglasso::HallBoundFactor*, uint64_t, const double*, uint64_t, uint64_t, uint64_t);
+
 template<typename T>
 void sig_lasso_(const T*, const T*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, SigLassoAllocator, void*);
+
+template<typename T>
+void sig_lasso_features_(const T*, const T*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
+template<typename T>
+void sig_lasso_predict_(const T*, const T*, const T*, T*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
 
 template<std::floating_point T>
 void log_sig_combine_(const T* log_sig1, const T* log_sig2, T* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs);

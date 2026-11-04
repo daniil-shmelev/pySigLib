@@ -117,6 +117,14 @@ inline bool better(const Candidate& a, const Candidate& b) {
 }
 struct SearchResult { std::vector<Candidate> candidates; double omitted = 0; };
 
+class FeatureSearch {
+public:
+    virtual ~FeatureSearch() = default;
+    virtual NodePtr selected(const Word&) = 0;
+    virtual SearchResult query(const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t,
+        size_t = 0, size_t = 0, size_t = 0) = 0;
+};
+
 class HostSearch {
 public:
     virtual ~HostSearch() = default;
@@ -130,6 +138,7 @@ public:
     const Clock::time_point started = Clock::now();
     std::shared_ptr<Budget> budget;
     SigLassoStats stats{};
+    bool uncertain_features = false;
     Array increments, variation, after, alphabet_ratios;
     std::vector<std::pair<size_t, size_t>> alphabet;
     std::unordered_set<Word, WordHash> constructed;
@@ -180,6 +189,7 @@ public:
         return selected;
     }
     virtual void prepare() = 0;
+    virtual std::unique_ptr<FeatureSearch> make_search();
     virtual Array factors(size_t k) = 0;
     virtual void moments(Node&, const Array&) = 0;
     virtual HostSearch* host_search() { return nullptr; }
@@ -308,7 +318,7 @@ public:
     void clear() { positions_.clear(); entries_.clear(); used_ = 0; }
 };
 
-class Search {
+class Search : public FeatureSearch {
     Backend& b_;
     PrefixCache cache_;
     std::unordered_map<size_t, Array> factors_;
@@ -478,6 +488,8 @@ public:
         return result;
     }
 };
+
+inline std::unique_ptr<FeatureSearch> Backend::make_search() { return std::make_unique<Search>(*this); }
 
 } // namespace siglasso
 

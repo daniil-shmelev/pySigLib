@@ -30,10 +30,11 @@ inline void append_column(Backend& b, std::vector<Column>& columns, const Word& 
 inline Result fit(Backend& backend, const std::vector<double>& alphas, const std::vector<Word>& initial) {
     std::vector<Column> columns;
     std::unordered_map<Word, size_t, WordHash> known;
-    std::unique_ptr<Search> search;
+    std::unique_ptr<FeatureSearch> search;
     if (backend.options.full) backend.full_columns(columns);
-    else { backend.prepare(); search = std::make_unique<Search>(backend); }
+    else { backend.prepare(); search = backend.make_search(); }
     for (size_t j = 0; j < columns.size(); ++j) known.emplace(columns[j].word, j);
+    if (!search) for (const auto& word : initial) if (!known.count(word)) throw std::invalid_argument("initial_words contains a word outside the feature dictionary");
     if (search) for (const auto& word : initial) if (!known.count(word)) {
         auto node = search->selected(word);
         known.emplace(word, columns.size()); append_column(backend, columns, word, node->values);
@@ -194,7 +195,7 @@ inline Result fit(Backend& backend, const std::vector<double>& alphas, const std
                 }
                 if (state->select(columns, pool).slot != static_cast<size_t>(-1)) continue;
             }
-            converged = certify(response, reused_search, search_bound) && repairs != SIZE_MAX;
+            converged = certify(response, reused_search, search_bound) && repairs != SIZE_MAX && !backend.uncertain_features;
             if (!stopped && !converged && state->size() && !repairs++ && iterations < backend.options.max_iter) {
                 pending = force_rebuild = true;
                 continue;

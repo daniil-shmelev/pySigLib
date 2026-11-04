@@ -19,7 +19,7 @@ import os
 import sys
 import platform
 import ctypes
-from ctypes import c_char_p, c_float, c_double, c_int, c_uint64, c_bool, c_void_p, POINTER
+from ctypes import c_char_p, c_float, c_double, c_int, c_uint64, c_uint32, c_bool, c_void_p, POINTER
 from collections.abc import Callable
 from ._lasso_types import LassoOptions, LassoAllocator
 
@@ -143,6 +143,8 @@ def _lasso_available(library, suffix):
 
 CPSIG_SIG_LASSO = _bind_float_pair(CPSIG, 'sig_lasso', lambda scalar: (*_lasso_args(scalar), LassoAllocator, c_void_p)) if _lasso_available(CPSIG, '') else None
 CUSIG_SIG_LASSO = _bind_float_pair(CUSIG, 'sig_lasso_cuda', lambda scalar: (*_lasso_args(scalar), c_void_p, c_int, LassoAllocator, c_void_p)) if _lasso_available(CUSIG, '_cuda') else None
+CPSIG_SIG_LASSO_FEATURES = _bind_float_pair(CPSIG, 'sig_lasso_features', lambda scalar: (*_lasso_args(scalar)[:-1], c_uint32, POINTER(LassoOptions), LassoAllocator, c_void_p)) if all(hasattr(CPSIG, 'sig_lasso_features_' + kind) for kind in ('f', 'd')) else None
+CPSIG_SIG_LASSO_PREDICT = _bind_float_pair(CPSIG, 'sig_lasso_predict', lambda scalar: (POINTER(scalar), POINTER(scalar), POINTER(scalar), POINTER(scalar), POINTER(c_uint64), POINTER(c_uint64), c_uint64, c_uint32, POINTER(LassoOptions))) if all(hasattr(CPSIG, 'sig_lasso_predict_' + kind) for kind in ('f', 'd')) else None
 
 CPSIG.sig_length.argtypes = (c_uint64, c_uint64)
 CPSIG.sig_length.restype = c_uint64

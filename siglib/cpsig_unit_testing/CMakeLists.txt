@@ -29,7 +29,10 @@ if(NOT PYSIGLIB_CPSIG_PREBUILT_LIBRARY)
 endif()
 add_executable(cpsig_tests ${_pysiglib_cpsig_test_sources})
 if(TARGET pysiglib_lasso_cpu)
-    target_sources(cpsig_tests PRIVATE cp_test_lasso_active.cpp $<TARGET_OBJECTS:pysiglib_lasso_cpu>)
+    target_sources(cpsig_tests PRIVATE cp_test_lasso_active.cpp cp_test_lasso_features.cpp
+        ../cpsig/cp_lasso_features.cpp ../cpsig/cp_lasso_features_impl.cpp ../cpsig/multithreading.cpp $<TARGET_OBJECTS:pysiglib_lasso_cpu>)
+    FetchContent_GetProperties(pysiglib_eigen SOURCE_DIR _lasso_eigen_source)
+    target_include_directories(cpsig_tests PRIVATE "${_lasso_eigen_source}")
 endif()
 
 target_include_directories(cpsig_tests PRIVATE

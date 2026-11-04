@@ -22,8 +22,28 @@
 namespace cpsig {
 HWY_EXPORT_T(sig_lasso_f, sig_lasso_<float>);
 HWY_EXPORT_T(sig_lasso_d, sig_lasso_<double>);
+HWY_EXPORT_T(sig_lasso_features_f, sig_lasso_features_<float>);
+HWY_EXPORT_T(sig_lasso_features_d, sig_lasso_features_<double>);
+HWY_EXPORT_T(sig_lasso_predict_f, sig_lasso_predict_<float>);
+HWY_EXPORT_T(sig_lasso_predict_d, sig_lasso_predict_<double>);
 
 extern "C" {
+CPSIG_API int sig_lasso_features_f(const float* path, const float* y, const double* alphas, const uint64_t* letters, const uint64_t* offsets,
+    uint64_t words, uint32_t feature_type, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) noexcept {
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_lasso_features_f)(path, y, alphas, letters, offsets, words, feature_type, options, allocate, context));
+}
+CPSIG_API int sig_lasso_features_d(const double* path, const double* y, const double* alphas, const uint64_t* letters, const uint64_t* offsets,
+    uint64_t words, uint32_t feature_type, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) noexcept {
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_lasso_features_d)(path, y, alphas, letters, offsets, words, feature_type, options, allocate, context));
+}
+CPSIG_API int sig_lasso_predict_f(const float* path, const float* coefficients, const float* intercept, float* output, const uint64_t* letters,
+    const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options) noexcept {
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_lasso_predict_f)(path, coefficients, intercept, output, letters, offsets, words, feature_type, options));
+}
+CPSIG_API int sig_lasso_predict_d(const double* path, const double* coefficients, const double* intercept, double* output, const uint64_t* letters,
+    const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options) noexcept {
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_lasso_predict_d)(path, coefficients, intercept, output, letters, offsets, words, feature_type, options));
+}
 CPSIG_API int sig_lasso_f(const float* path, const float* y, const double* alphas,
     const uint64_t* letters, const uint64_t* offsets, uint64_t words, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) noexcept {
     SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_lasso_f)(path, y, alphas, letters, offsets, words, options, allocate, context));

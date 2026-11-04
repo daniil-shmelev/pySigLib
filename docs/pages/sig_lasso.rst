@@ -3,6 +3,40 @@ Signature Lasso
 
 .. autofunction:: pysiglib.sig_lasso
 
+.. autofunction:: pysiglib.sig_lasso_predict
+
+Feature dictionaries
+--------------------
+
+``feature_type="sig"`` is the default and retains the signature dictionary.
+``"log"`` uses tensor log-signature coefficients indexed by Lyndon words,
+as in ``log_sig(method=1)``. ``"hall"`` uses canonical log coefficients in
+the reverse-degree Hall basis: higher degrees precede lower degrees, with
+recursive left-right order within a degree and the original channel order
+on letters. A bracket ``(u,v)`` is admitted when ``u<v`` and either ``u``
+is a letter or ``v<=right(u)``. Returned Hall words are foliage words.
+This Hall basis differs from the Lyndon basis returned by
+``log_sig(method=2)`` and ``log_sig(method=3)``. The dual Hall recursion is
+given in `Salvi et al., Theorem 5.24 <https://arxiv.org/pdf/2212.00134>`_.
+
+Log and Hall modes support NumPy and CPU Torch inputs. CUDA inputs raise an
+error. All modes use ``k!/V**k`` scaling and the same Lasso solver. The
+resulting penalties depend on the dictionary. Normalized log and Hall
+coordinates are not bounded by one.
+
+The default ``bound_method="approximate"`` remains a trapezoidal proxy.
+Use ``"exact"`` for conservative polynomial bounds. Log bounds use signed
+prefix states with endpoint shifts and nonnegative suffix weights. Hall
+bounds use polynomial dual-PBW states, positive Gaussian log extraction,
+and factorial product envelopes over cached right factors. These are
+floating-point bounds with padding, not interval-arithmetic proofs.
+
+``signatures`` holds selected normalized features for every mode. For CPU
+prediction, call ``sig_lasso_predict(new_paths, model)``. The helper uses
+the stored feature convention, transforms and normalization, and evaluates
+only selected coordinates and their dependencies. It accepts a different
+path length and preserves leading batch dimensions.
+
 Example
 -------
 

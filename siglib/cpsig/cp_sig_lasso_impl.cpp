@@ -18,6 +18,7 @@
 #include "cp_simd_config.h"
 #include "sig_lasso_core.h"
 #include "sig_lasso_math.h"
+#include "cp_lasso_features.h"
 #include "multithreading.h"
 #include <cstring>
 
@@ -31,6 +32,7 @@ namespace cpsig { namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 
 class LassoCPU final : public siglasso::Backend, public siglasso::HostSearch {
+    uint32_t feature_type_ = 0;
     siglasso::Array paths_, responses_;
     std::vector<std::unique_ptr<LassoCPU>> search_workers_;
     std::vector<std::unique_ptr<siglasso::Search>> searches_;
@@ -85,11 +87,11 @@ public:
         weights = source.weights;
     }
     template<typename T>
-    LassoCPU(const SigLassoOptions& o, const T* paths, const T* y) : Backend(o) {
+    LassoCPU(const SigLassoOptions& o, const T* paths, const T* y, uint32_t feature_type = 0) : Backend(o), feature_type_(feature_type) {
         paths_ = alloc(siglasso::multiply(siglasso::multiply(o.samples, o.length), o.dimension));
         responses_ = alloc(siglasso::multiply(o.samples, o.targets));
         for (size_t j = 0; j < paths_.size; ++j) paths_.data[j] = siglasso::finite(paths[j]);
-        for (size_t j = 0; j < responses_.size; ++j) responses_.data[j] = siglasso::finite(y[j]);
+        for (size_t j = 0; j < responses_.size; ++j) responses_.data[j] = y ? siglasso::finite(y[j]) : 0;
         batch(o.samples, [&](uint64_t begin, uint64_t end) {
             for (size_t i = begin; i < end; ++i) {
                 double variation = 0;
@@ -198,6 +200,7 @@ public:
             }
         });
         paths_ = {};
+        if (feature_type_) return;
         prepare_alphabet();
         batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t block = alphabet.size(); block-- > 0;) {
@@ -227,6 +230,9 @@ public:
             cached = value; factor_parent_->factor_bytes_ += value.bytes();
         }
         return value;
+    }
+    std::unique_ptr<siglasso::FeatureSearch> make_search() override {
+        return feature_type_ ? siglasso::make_cpu_feature_search(*this, feature_type_) : Backend::make_search();
     }
     siglasso::Array compute_factors(size_t k) {
         const size_t n = options.samples, l = options.length - 1, m = options.degree;
@@ -648,6 +654,7 @@ public:
         });
     }
     void full_columns(std::vector<siglasso::Column>& columns) override {
+        if (feature_type_) { prepare(); siglasso::full_cpu_features(*this, feature_type_, columns); return; }
         const size_t n = options.samples, d = options.dimension, m = options.degree;
         size_t count = 0, level = 1;
         for (size_t k = 1; k <= m; ++k) {
@@ -794,6 +801,37 @@ void sig_lasso_(const T* path, const T* y, const double* alphas, const uint64_t*
 }
 template void sig_lasso_<float>(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, SigLassoAllocator, void*);
 template void sig_lasso_<double>(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, const SigLassoOptions*, SigLassoAllocator, void*);
+
+template<typename T>
+void sig_lasso_features_(const T* path, const T* y, const double* alphas, const uint64_t* letters,
+    const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) {
+    if (feature_type > 2) throw std::invalid_argument("Invalid Lasso feature type");
+    LassoCPU backend(*options, path, y, feature_type);
+    std::vector<siglasso::Word> initial;
+    for (size_t j = 0; j < words; ++j) initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
+    auto result = siglasso::fit(backend, std::vector<double>(alphas, alphas + options->targets), initial);
+    siglasso::export_result(backend, result, allocate, context);
+}
+template<typename T>
+void sig_lasso_predict_(const T* path, const T* coefficients, const T* intercept, T* output,
+    const uint64_t* letters, const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options) {
+    if (feature_type > 2) throw std::invalid_argument("Invalid Lasso feature type");
+    LassoCPU backend(*options, path, static_cast<const T*>(nullptr), feature_type);
+    backend.prepare(); auto search = feature_type ? siglasso::make_cpu_feature_search(backend, feature_type, true) : backend.make_search();
+    auto prediction = backend.alloc(siglasso::multiply(options->samples, options->targets));
+    for (size_t i = 0; i < options->samples; ++i) for (size_t t = 0; t < options->targets; ++t) prediction.data[i * options->targets + t] = siglasso::finite(intercept[t]);
+    for (size_t j = 0; j < words; ++j) {
+        const siglasso::Word word(letters + offsets[j], letters + offsets[j + 1]);
+        const auto node = search->selected(word);
+        for (size_t i = 0; i < options->samples; ++i) for (size_t t = 0; t < options->targets; ++t)
+            prediction.data[i * options->targets + t] += node->values.data[i] * backend.weights[word.size()] * siglasso::finite(coefficients[j * options->targets + t]);
+    }
+    for (size_t i = 0; i < prediction.size; ++i) output[i] = static_cast<T>(siglasso::finite(prediction.data[i]));
+}
+template void sig_lasso_features_<float>(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
+template void sig_lasso_features_<double>(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
+template void sig_lasso_predict_<float>(const float*, const float*, const float*, float*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
+template void sig_lasso_predict_<double>(const double*, const double*, const double*, double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
 
 } } // namespace cpsig::HWY_NAMESPACE
 HWY_AFTER_NAMESPACE();
