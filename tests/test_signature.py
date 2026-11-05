@@ -24,6 +24,25 @@ from conftest import DEVICES, check_close, assert_device, load_fixtures
 FIXTURES = load_fixtures("reference_data.npz")
 
 @pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dimension,degree", [
+    (dimension, degree)
+    for dimension, maximum in [(2, 6), (3, 5), (4, 4), (5, 3), (6, 3), (7, 3), (8, 3)]
+    for degree in range(2, maximum + 1)
+])
+@pytest.mark.parametrize("length,batch,scalar_term", [
+    (2, 1, False), (17, 9, True), (129, 3, False), (1025, 9, False), (4097, 1, True), (8193, 3, True)
+])
+def test_signature_horner_specialisations(device, dtype, dimension, degree, length, batch, scalar_term):
+    rng = np.random.default_rng(4701)
+    path = (rng.standard_normal((batch, length, dimension)).cumsum(axis=1) / np.sqrt(length)).astype(dtype)
+    expected = pysiglib.sig(path, degree, horner=False, scalar_term=scalar_term)
+    actual = pysiglib.sig(torch.tensor(path, device=device), degree, horner=True, scalar_term=scalar_term)
+    tolerance = 3e-5 if dtype == np.float32 else 2e-11
+    np.testing.assert_allclose(actual.cpu().numpy(), expected, rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.parametrize("device", DEVICES)
 def test_signature_trivial(device):
     check_close(pysiglib.sig(torch.tensor([[0., 0.], [1., 1.]], device=device), 1), [1., 1.])
     check_close(pysiglib.sig(torch.tensor([[0., 0.]], device=device), 1), [0., 0.])

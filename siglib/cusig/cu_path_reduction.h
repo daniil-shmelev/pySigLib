@@ -79,23 +79,14 @@ __global__ void cuda_path_reduce_kernel(
 }
 
 template<typename T, typename Launch>
-void cuda_path_reduce_launch(
-	const T* path,
-	T* out,
+void cuda_path_workspace_launch(
 	uint64_t batch_size,
-	uint64_t length,
-	uint64_t dimension,
-	uint64_t element_size,
-	uint64_t memo_nodes,
+	size_t memo_size,
 	Launch launch,
 	const char* op_name
 ) {
 	if (batch_size == 0)
 		return;
-	const size_t memo_size = checked_cuda_size_mul(
-		static_cast<size_t>(memo_nodes), element_size, op_name);
-	const size_t path_stride = checked_cuda_size_mul(
-		static_cast<size_t>(length), dimension, op_name);
 	const size_t row_bytes = checked_cuda_size_mul(memo_size, sizeof(T), op_name);
 	const size_t requested_bytes = checked_cuda_size_mul(
 		std::min(batch_size, CUDA_BATCH_GRID_CAPACITY), row_bytes, op_name);
@@ -122,11 +113,34 @@ void cuda_path_reduce_launch(
 		offset += capacity) {
 		const uint64_t count = std::min(
 			capacity, batch_size - offset);
-		launch(
-			path + offset * path_stride, out + offset * element_size,
-			reinterpret_cast<T*>(entry.buffer->get()), count, memo_size);
+		launch(reinterpret_cast<T*>(entry.buffer->get()), offset, count);
 	}
 	check_cuda_kernel_launch();
+}
+
+template<typename T, typename Launch>
+void cuda_path_reduce_launch(
+	const T* path,
+	T* out,
+	uint64_t batch_size,
+	uint64_t length,
+	uint64_t dimension,
+	uint64_t element_size,
+	uint64_t memo_nodes,
+	Launch launch,
+	const char* op_name
+) {
+	if (batch_size == 0)
+		return;
+	const size_t memo_size = checked_cuda_size_mul(
+		static_cast<size_t>(memo_nodes), element_size, op_name);
+	const size_t path_stride = checked_cuda_size_mul(
+		static_cast<size_t>(length), dimension, op_name);
+	cuda_path_workspace_launch<T>(batch_size, memo_size,
+		[&](T* workspace, uint64_t offset, uint64_t count) {
+			launch(path + offset * path_stride, out + offset * element_size,
+				workspace, count, memo_size);
+		}, op_name);
 }
 
 template<typename T, typename Segment, typename Combine>

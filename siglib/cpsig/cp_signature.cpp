@@ -25,6 +25,28 @@
 
 
 namespace cpsig {
+bool signature_horner_selected_(uint64_t dimension, uint64_t degree, uint64_t length,
+	uint64_t batch_size, uint64_t lanes, bool double_precision, bool transformed, int n_jobs) noexcept {
+	// Keep the general routine where its loops have lower register or memory costs.
+	if (batch_size < lanes || lanes == 1) {
+		if (!transformed && dimension == 4 && degree == 3 && length >= 4096) return false;
+		return !((dimension >= 5 && degree >= 3) || (dimension == 4 && degree >= 4)
+			|| (dimension == 3 && degree >= 5));
+	}
+	if (dimension == 8 && degree == 3 && (n_jobs < 0 || n_jobs > 8)) return false;
+	if (transformed) return true;
+	if (!double_precision && dimension == 4 && degree == 4) return false;
+	if (double_precision && length <= 32 && degree >= 3
+		&& (dimension >= 6 || (dimension == 3 && degree == 5))) return false;
+	if (double_precision && length >= 256
+		&& (dimension == 3 || ((dimension == 6 || dimension == 8) && degree == 2))) return false;
+	if (length >= 8192) {
+		if (!double_precision && (dimension == 4 || (dimension == 3 && degree == 5))) return false;
+		if (double_precision && dimension >= 5 && degree == 2) return false;
+	}
+	return true;
+}
+
 HWY_EXPORT_T(signature_f, signature_<float>);
 HWY_EXPORT_T(signature_d, signature_<double>);
 HWY_EXPORT_T(sig_backprop_f, sig_backprop_<float>);

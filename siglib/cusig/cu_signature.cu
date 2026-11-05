@@ -19,6 +19,7 @@
 #include "cu_sig_combine.h"
 #include "cu_atomic.h"
 #include "cu_path_transforms.h"
+#include "cu_horner_signature.cuh"
 #include <cub/block/block_scan.cuh>
 #include <algorithm>
 #include <atomic>
@@ -2636,6 +2637,11 @@ void signature_cuda_(
 		return;
 
 	// Compute transformed dimensions
+	if (horner && correction_len == 0 && length > 1) {
+		s_sig_context_valid = false;
+		if (horner_path::signature_horner_cuda<T>(path, out, nullptr, batch_size, dimension, length,
+			degree, time_aug, lead_lag, end_time, scalar_term)) return;
+	}
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
 
@@ -3392,6 +3398,8 @@ void sig_backprop_cuda_(
 	validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
 	if (batch_size == 0)
 		return;
+	if (correction_len == 0 && length > 1 && horner_path::signature_horner_cuda<T>(path, out, sig_derivs,
+		batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term)) return;
 
 	const uint64_t t_dimension = (lead_lag ? 2 * dimension : dimension) + (time_aug ? 1 : 0);
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;

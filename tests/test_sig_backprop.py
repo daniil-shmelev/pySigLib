@@ -25,6 +25,71 @@ check_close = partial(_check_close, double_atol=1e-5)
 
 FIXTURES = load_fixtures("reference_data.npz")
 
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("dimension,degree", [
+    (dimension, degree)
+    for dimension, maximum in [(2, 6), (3, 5), (4, 4), (5, 3), (6, 3), (7, 3), (8, 3)]
+    for degree in range(2, maximum + 1)
+])
+@pytest.mark.parametrize("length,batch,scalar_term", [
+    (17, 1, False), (33, 9, True), (129, 3, False), (1025, 1, True), (8193, 16, True)
+])
+def test_sig_backprop_horner_specialisations(device, dtype, dimension, degree, length, batch, scalar_term):
+    rng = np.random.default_rng(4702)
+    path = (rng.normal(size=(batch, length, dimension)).cumsum(axis=1) / np.sqrt(length)).astype(dtype)
+    x = torch.as_tensor(path, device=device)
+    signature = pysiglib.sig(x, degree, scalar_term=scalar_term)
+    weights = rng.normal(size=signature.shape).astype(dtype)
+    actual = pysiglib.sig_backprop(x, signature, torch.as_tensor(weights, device=device), degree)
+    direction = rng.normal(size=path.shape) / np.sqrt(length)
+    epsilon = 1e-5
+    plus = pysiglib.sig(path.astype(np.float64) + epsilon * direction, degree, horner=False, scalar_term=scalar_term)
+    minus = pysiglib.sig(path.astype(np.float64) - epsilon * direction, degree, horner=False, scalar_term=scalar_term)
+    expected = np.sum((plus - minus) * weights) / (2 * epsilon)
+    derivative = np.sum(actual.cpu().numpy() * direction)
+    tolerance = 5e-4 if dtype == np.float32 else 2e-7
+    np.testing.assert_allclose(derivative, expected, rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("time_aug,lead_lag", [(True, False), (False, True), (True, True)])
+@pytest.mark.parametrize("length", [33, 1025])
+def test_sig_backprop_horner_transformed_views(device, dtype, time_aug, lead_lag, length):
+    rng = np.random.default_rng(4703)
+    path = (rng.normal(size=(3, 3, length, 4)).cumsum(axis=-2) / np.sqrt(length)).astype(dtype)[..., ::2]
+    x = torch.as_tensor(path, device=device)
+    options = dict(time_aug=time_aug, lead_lag=lead_lag, end_time=1.7, scalar_term=True)
+    signature = pysiglib.sig(x, 3, **options)
+    weights = rng.normal(size=signature.shape).astype(dtype)
+    actual = pysiglib.sig_backprop(x, signature, torch.as_tensor(weights, device=device), 3,
+                                  time_aug=time_aug, lead_lag=lead_lag, end_time=1.7)
+    direction = rng.normal(size=path.shape) / np.sqrt(length)
+    epsilon = 1e-5
+    plus = pysiglib.sig(path.astype(np.float64) + epsilon * direction, 3, horner=False, **options)
+    minus = pysiglib.sig(path.astype(np.float64) - epsilon * direction, 3, horner=False, **options)
+    expected = np.sum((plus - minus) * weights) / (2 * epsilon)
+    derivative = np.sum(actual.cpu().numpy() * direction)
+    tolerance = 5e-4 if dtype == np.float32 else 2e-7
+    np.testing.assert_allclose(derivative, expected, rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA unavailable")
+@pytest.mark.parametrize("dimension,degree", [(2, 4), (3, 3)])
+def test_sig_backprop_horner_invalidates_cuda_prefix(dimension, degree):
+    rng = np.random.default_rng(4704)
+    path = torch.as_tensor(rng.normal(size=(1, 1025, dimension)).cumsum(axis=1) / 32, device="cuda")
+    signature = pysiglib.sig(path, degree)
+    weights = torch.as_tensor(rng.normal(size=signature.shape), device="cuda")
+    pysiglib.sig_backprop(path, signature, weights, degree)
+    path[:, 513:, 0] += 0.3
+    signature.copy_(pysiglib.sig(path, degree))
+    actual = pysiglib.sig_backprop(path, signature, weights, degree)
+    expected = pysiglib.sig_backprop(path.cpu(), signature.cpu(), weights.cpu(), degree)
+    torch.testing.assert_close(actual.cpu(), expected, rtol=2e-9, atol=2e-9)
+
+
 def lead_lag(x):
     # A backpropagatable version of lead-lag
     lag = torch.repeat_interleave(x[:-1], repeats=2, dim=0)

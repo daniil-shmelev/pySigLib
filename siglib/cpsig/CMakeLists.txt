@@ -66,6 +66,9 @@ target_include_directories(cpsig PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../shared"
 )
 target_compile_definitions(cpsig PRIVATE CPSIG_EXPORTS)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(cpsig PRIVATE -fbracket-depth=1024)
+endif()
 
 target_link_libraries(cpsig
     PRIVATE Threads::Threads

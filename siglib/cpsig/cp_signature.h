@@ -23,6 +23,7 @@
 #endif
 #include "cppch.h"
 #include <array>
+#include <utility>
 
 #include "multithreading.h"
 #include "cp_sig_combine.h"
@@ -34,7 +35,111 @@
 
 HWY_BEFORE_NAMESPACE();
 namespace cpsig {
+bool signature_horner_selected_(uint64_t dimension, uint64_t degree, uint64_t length,
+	uint64_t batch_size, uint64_t lanes, bool double_precision, bool transformed, int n_jobs) noexcept;
+
 namespace HWY_NAMESPACE {
+
+#define HORNER_INLINE HWY_ATTR HWY_INLINE
+#define HORNER_LARGE HWY_ATTR HWY_NOINLINE
+#include "horner_signature.h"
+#include "horner_path.h"
+#undef HORNER_INLINE
+#undef HORNER_LARGE
+
+template<typename T>
+struct alignas(vec_batch_lanes<T> * sizeof(T)) HornerVector {
+	hn::VFromD<Simd<T>> value;
+#if defined(_MSC_VER)
+	HWY_ATTR HWY_INLINE HornerVector() : value(hn::Zero(Simd<T>())) {}
+#else
+	HWY_ATTR HornerVector() : value(hn::Zero(Simd<T>())) {}
+#endif
+	HWY_ATTR HWY_INLINE HornerVector(T scalar) : value(hn::Set(Simd<T>(), scalar)) {}
+	HWY_ATTR HWY_INLINE explicit HornerVector(hn::VFromD<Simd<T>> vector) : value(vector) {}
+	HWY_ATTR HWY_INLINE HornerVector operator+(HornerVector other) const { return HornerVector(hn::Add(value, other.value)); }
+	HWY_ATTR HWY_INLINE HornerVector operator-(HornerVector other) const { return HornerVector(hn::Sub(value, other.value)); }
+	HWY_ATTR HWY_INLINE HornerVector operator*(HornerVector other) const { return HornerVector(hn::Mul(value, other.value)); }
+	HWY_ATTR HWY_INLINE HornerVector& operator+=(HornerVector other) { value = hn::Add(value, other.value); return *this; }
+	HWY_ATTR HWY_INLINE HornerVector& operator-=(HornerVector other) { value = hn::Sub(value, other.value); return *this; }
+};
+
+template<typename Kernel, typename T, bool Vector>
+HWY_ATTR void signature_horner_fixed_(const T* path, T* out, const T* deriv, uint64_t batch_size, uint64_t dimension,
+	uint64_t length, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs) {
+	using Value = std::conditional_t<Vector, HornerVector<T>, T>;
+	constexpr uint64_t lanes = Vector ? vec_batch_lanes<T> : 1;
+	const uint64_t path_size = length * dimension;
+	const uint64_t stride = Kernel::size + scalar_term;
+	const uint64_t output_size = deriv ? path_size : stride;
+	const uint64_t steps = (length - 1) * (lead_lag ? 2 : 1);
+	const T time_scale = end_time / T(steps);
+	auto worker = [&](const T* input, T* output, const T* derivative) HWY_ATTR {
+		const uint64_t first = (input - path) / path_size;
+		const uint64_t count = std::min(lanes, batch_size - first);
+		std::vector<Value> transposed, result, gradient, workspace;
+		T values[lanes] = {};
+		const Value* data;
+		Value* destination;
+		const Value* derivatives;
+		if constexpr (Vector) {
+			transposed.resize(path_size);
+			result.resize(output_size);
+			for (uint64_t i = 0; i < path_size; ++i) {
+				for (uint64_t lane = 0; lane < count; ++lane) values[lane] = input[lane * path_size + i];
+				transposed[i] = Value(hn::LoadU(Simd<T>(), values));
+			}
+			if (deriv) {
+				gradient.resize(Kernel::size);
+				for (int i = 0; i < Kernel::size; ++i) {
+					for (uint64_t lane = 0; lane < count; ++lane) values[lane] = derivative[lane * stride + scalar_term + i];
+					gradient[i] = Value(hn::LoadU(Simd<T>(), values));
+				}
+			}
+			data = transposed.data();
+			destination = result.data();
+			derivatives = gradient.data();
+		}
+		else {
+			data = input;
+			destination = output;
+			derivatives = derivative + scalar_term;
+		}
+		const horner_path::Path<Value> input_path{data, dimension, length, time_aug, lead_lag, Value(time_scale)};
+		if (deriv) {
+			workspace.resize((steps / horner_path::checkpoint_steps + 1 + horner_path::checkpoint_steps) * Kernel::size);
+			horner_path::backward<Kernel>(input_path, derivatives, destination, workspace.data());
+		}
+		else {
+			if (scalar_term) destination[0] = Value(T(1));
+			horner_path::forward<Kernel>(input_path, destination + scalar_term);
+		}
+		if constexpr (Vector) {
+			for (uint64_t i = 0; i < output_size; ++i) {
+				hn::StoreU(result[i].value, Simd<T>(), values);
+				for (uint64_t lane = 0; lane < count; ++lane) output[lane * output_size + i] = values[lane];
+			}
+		}
+	};
+	multi_threaded_batch(worker, batch_size / lanes + (batch_size % lanes != 0), n_jobs,
+		make_batch(path, lanes * path_size), make_batch(out, lanes * output_size),
+		make_batch(deriv ? deriv : path, deriv ? lanes * stride : 0));
+}
+
+template<typename T>
+HWY_ATTR bool signature_horner_dispatch_(const T* path, T* out, const T* deriv, uint64_t batch_size,
+	uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs) {
+	const uint64_t aug_dimension = dimension * (lead_lag ? 2 : 1) + time_aug;
+	if (!deriv && !signature_horner_selected_(aug_dimension, degree, length, batch_size,
+		vec_batch_lanes<T>, sizeof(T) == 8, time_aug || lead_lag, n_jobs)) return false;
+	return dispatch_horner(aug_dimension, degree, [&]<typename Kernel>() {
+		if (batch_size >= vec_batch_lanes<T> && vec_batch_lanes<T> > 1)
+			signature_horner_fixed_<Kernel, T, true>(path, out, deriv, batch_size, dimension, length, time_aug, lead_lag, end_time, scalar_term, n_jobs);
+		else
+			signature_horner_fixed_<Kernel, T, false>(path, out, deriv, batch_size, dimension, length, time_aug, lead_lag, end_time, scalar_term, n_jobs);
+		return true;
+	});
+}
 
 template<std::floating_point T>
 void sig_backprop_inplace_(const Path<T>& path, T* out, T* sig_derivs, T* sig, uint64_t degree, uint64_t sig_len);
@@ -767,6 +872,8 @@ void signature_(
 	const uint64_t flat_path_length = dimension * length;
 	const uint64_t aug_dim = dummy_path_obj.dimension();
 	const bool has_correction = correction_len != 0;
+	if (horner && !has_correction && signature_horner_dispatch_<T>(path, out, nullptr, batch_size,
+		dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs)) return;
 	if (aug_dim == 1 && !has_correction) {
 		auto sig_func = [&](const T* path_ptr, T* out_ptr) {
 			const T increment = path_ptr[length - 1] - path_ptr[0];
@@ -941,6 +1048,9 @@ void sig_backprop_(
 		std::fill(out, out_end, static_cast<T>(0.));
 		return;
 	}
+
+	if (correction_len == 0 && signature_horner_dispatch_<T>(path, out, sig_derivs, batch_size,
+		dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs)) return;
 
 	if (!time_aug && !lead_lag && correction_len == 0 && degree > 1) {
 		constexpr uint64_t simd_lanes = vec_batch_lanes<T>;
