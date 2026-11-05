@@ -270,31 +270,14 @@ struct Restricted {
 };
 } // namespace
 
-Result fit(Backend& b, Array& paths, uint32_t mode, const std::vector<double>& alphas, const std::vector<Word>& initial) {
+Result fit(Backend& b, uint32_t mode, const std::vector<double>& alphas, const std::vector<Word>& initial) {
     const auto& o = b.options;
     if (o.loss > 3 || !o.samples || !o.length || !o.dimension || !o.degree)
         throw std::invalid_argument("Invalid working-set options");
     const size_t degree = (mode && o.dimension == 1) ? 1 : o.degree;
-    bool packed = false;
-    std::unique_ptr<FeatureSearch> full = make_design(b, paths, degree, mode, packed);
-    std::unique_ptr<FeatureSearch> preliminary;
-    if (!packed && degree >= 4 && paths.owner) {
-        const size_t d = o.dimension;
-        size_t stage = d <= (2 << 20) / 8 && d * (1 + d) <= (2 << 20) / 8 / o.samples ? 2 : 1;
-        bool small;
-        if (std::all_of(initial.begin(), initial.end(), [&](const Word& w) { return w.size() <= stage; })) {
-            auto engine = b.stats.engine;
-            preliminary = make_design(b, paths, stage, mode, small, 2u << 20);
-            b.stats.engine = engine;
-        }
-    }
-    if (full)
-        paths = {};
-    else {
-        b.prepare();
-        full = b.make_search();
-        b.stats.engine = 3;
-    }
+    b.prepare();
+    auto search = b.make_search();
+    b.stats.engine = 3;
     b.stats.preparation_seconds = elapsed(b.started);
     Result result;
     result.targets = o.targets;
@@ -306,8 +289,7 @@ Result fit(Backend& b, Array& paths, uint32_t mode, const std::vector<double>& a
         const double tau = std::min(o.tolerance, 1e-4 * s.alpha);
         s.intercept = s.initial_intercept();
         for (const auto& w : initial)
-            s.add(w, full->selected(w)->values);
-        FeatureSearch* search = preliminary ? preliminary.get() : full.get();
+            s.add(w, search->selected(w)->values);
         uint64_t updates = 0;
         size_t capacity = 16;
         bool converged = false;
@@ -323,37 +305,27 @@ Result fit(Backend& b, Array& paths, uint32_t mode, const std::vector<double>& a
             for (size_t j = 0; j < s.terms.size(); ++j)
                 active.emplace(s.terms[j].column.word, j);
             bool last = !solved || updates >= o.max_iter;
-            if (last)
-                search = full.get();
             start = Clock::now();
             auto found = search->query(s.residual, s.alpha + tau * .9, active, capacity);
             double query_seconds = elapsed(start);
-            if (found.candidates.empty() && search != full.get()) {
-                b.stats.search_seconds += query_seconds;
-                search = full.get();
-                if (target + 1 == o.targets)
-                    preliminary.reset();
-                continue;
-            }
             if (last || found.candidates.empty()) {
                 if (o.single_precision) {
                     s.refresh(true);
-                    found = full->query(s.residual, s.alpha + tau * .9, active, capacity);
+                    found = search->query(s.residual, s.alpha + tau * .9, active, capacity);
                 }
                 inactive = found.omitted;
                 for (auto& c : found.candidates)
                     inactive = std::max(inactive, guard(c.score));
                 if (!std::isfinite(inactive))
-                    inactive = full->query(s.residual, s.alpha + tau * .9, active, 0).omitted;
+                    inactive = search->query(s.residual, s.alpha + tau * .9, active, 0).omitted;
                 raw_inactive = inactive;
-                const double mean_bound = mode ? full->mean_bound() : 1.;
-                if (o.intercept && s.intercept_error > 0 && std::isfinite(mean_bound))
-                    raw_inactive += mean_bound * s.intercept_error;
-                if (o.intercept && s.intercept_error > 0 && !std::isfinite(mean_bound)) {
+                if (o.intercept && !mode)
+                    raw_inactive += s.intercept_error;
+                if (o.intercept && mode && s.intercept_error > 0) {
                     auto raw = b.alloc(o.samples);
                     for (size_t i = 0; i < o.samples; ++i)
                         raw.data[i] = -s.gradient.data[i] * o.samples;
-                    raw_inactive = full->query(raw, s.alpha + tau * .9, active, 0).omitted;
+                    raw_inactive = search->query(raw, s.alpha + tau * .9, active, 0).omitted;
                 }
                 double sum = std::accumulate(s.gradient.data, s.gradient.data + o.samples, 0.);
                 for (const auto& t : s.terms) {

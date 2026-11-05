@@ -82,7 +82,6 @@ class LassoCPU final : public siglasso::Backend, public siglasso::HostSearch {
         return siglasso::finite(result);
     }
 public:
-    siglasso::Array& paths() { return paths_; }
     LassoCPU(const LassoCPU& source, const siglasso::SearchOptions& options) : Backend(options, source.budget), paths_(source.paths_), responses_(source.responses_) {
         weights = source.weights;
     }
@@ -660,7 +659,7 @@ void sig_working_set_(const T* path, const T* y, const double* alphas, const uin
     LassoCPU backend(siglasso::SearchOptions(*options, feature_type), path, y, feature_type);
     std::vector<siglasso::Word> initial;
     for (size_t j = 0; j < words; ++j) initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
-    auto result = siglasso::fit(backend, backend.paths(), feature_type, std::vector<double>(alphas, alphas + options->targets), initial);
+    auto result = siglasso::fit(backend, feature_type, std::vector<double>(alphas, alphas + options->targets), initial);
     siglasso::export_result(backend, result, allocate, context);
 }
 template<typename T>

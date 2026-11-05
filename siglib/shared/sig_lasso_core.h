@@ -119,7 +119,6 @@ class FeatureSearch {
 public:
     virtual ~FeatureSearch() = default;
     virtual NodePtr selected(const Word&) = 0;
-    virtual double mean_bound() const { return std::numeric_limits<double>::infinity(); }
     virtual SearchResult query(const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t,
         size_t = 0, size_t = 0, size_t = 0) = 0;
 };
@@ -439,6 +438,5 @@ inline std::unique_ptr<FeatureSearch> Backend::make_search() { return std::make_
 } // namespace siglasso
 
 namespace siglasso {
-Result fit(Backend&, Array& paths, uint32_t mode, const std::vector<double>& alphas, const std::vector<Word>& initial);
-std::unique_ptr<FeatureSearch> make_design(Backend&, const Array&, size_t degree, uint32_t mode, bool& packed, size_t packed_bytes = 256u << 10);
+Result fit(Backend&, uint32_t mode, const std::vector<double>& alphas, const std::vector<Word>& initial);
 }

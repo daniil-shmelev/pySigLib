@@ -37,6 +37,7 @@
 
 extern "C" {
 
+    CPSIG_API int sig_working_set_version() noexcept;
     CPSIG_API int sig_working_set_f(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
     CPSIG_API int sig_working_set_d(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
     CPSIG_API int sig_working_set_predict_f(const float*, const float*, const float*, float*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*) noexcept;

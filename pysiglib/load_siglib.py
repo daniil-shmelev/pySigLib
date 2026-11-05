@@ -135,7 +135,10 @@ def _bind_float_pair(
 _lasso_args = lambda scalar: (POINTER(scalar), POINTER(scalar), POINTER(c_double), POINTER(c_uint64), POINTER(c_uint64), c_uint64, POINTER(LassoOptions))
 
 
-CPSIG_WORKING_SET = _bind_float_pair(CPSIG, 'sig_working_set', lambda scalar: (*_lasso_args(scalar)[:-1], c_uint32, POINTER(LassoOptions), LassoAllocator, c_void_p)) if all(hasattr(CPSIG, 'sig_working_set_' + kind) for kind in ('f', 'd')) else None
+CPSIG_WORKING_SET = None
+if (hasattr(CPSIG, 'sig_working_set_version') and CPSIG.sig_working_set_version() == 2
+        and all(hasattr(CPSIG, 'sig_working_set_' + kind) for kind in ('f', 'd'))):
+    CPSIG_WORKING_SET = _bind_float_pair(CPSIG, 'sig_working_set', lambda scalar: (*_lasso_args(scalar)[:-1], c_uint32, POINTER(LassoOptions), LassoAllocator, c_void_p))
 CPSIG_SIG_LASSO_PREDICT = _bind_float_pair(CPSIG, 'sig_working_set_predict', lambda scalar: (POINTER(scalar), POINTER(scalar), POINTER(scalar), POINTER(scalar), POINTER(c_uint64), POINTER(c_uint64), c_uint64, c_uint32, POINTER(LassoOptions))) if all(hasattr(CPSIG, 'sig_working_set_predict_' + kind) for kind in ('f', 'd')) else None
 
 CPSIG.sig_length.argtypes = (c_uint64, c_uint64)

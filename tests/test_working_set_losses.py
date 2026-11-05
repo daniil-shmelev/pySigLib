@@ -52,6 +52,7 @@ def test_dense_optimum(mode, loss, intercept):
     model = pysiglib.sig_lasso(paths, y, 3, alpha, feature_type=mode, loss=loss,
                                fit_intercept=intercept, initial_words=[(0,)], tol=1e-8)
     assert model["converged"] and model["loss"] == loss
+    assert model["stats"]["engine"] == "tree" and model["stats"]["block_queries"] > 0
     indices = [words.index(w) for w in model["words"]]
     p = len(words)
     def objective(z):
@@ -160,26 +161,28 @@ def test_cpu_abi():
             assert not hasattr(CPSIG,name+kind)
 
 
-def test_small_design_streams_when_packing_exceeds_budget():
+def test_small_tree_with_memory_limit():
     paths = np.random.default_rng(20).normal(size=(256, 2, 3))
     model = pysiglib.sig_lasso(paths, np.ones(256), 3, .01, memory_limit=110 << 10)
     assert model["converged"] and not model["words"]
-    assert model["stats"]["engine"] == "streamed"
+    assert model["stats"]["engine"] == "tree"
+    assert model["stats"]["full_transform_calls"] == 0
+    assert model["stats"]["pruned"] > 0
     assert model["stats"]["peak_bytes"] <= 110 << 10
 
 
 @pytest.mark.parametrize("mode", ["sig", "log", "hall"])
-@pytest.mark.parametrize("engine", ["streamed", "tree"])
-def test_stream_and_tree_against_full_dictionary(mode, engine):
+@pytest.mark.parametrize("n, d, degree", [(24, 3, 4), (270, 8, 3)])
+def test_tree_against_full_dictionary(mode, n, d, degree):
     rng = np.random.default_rng(311)
-    n = 270 if engine == "streamed" else 24
-    paths = rng.normal(size=(n, 5, 8)).cumsum(1)
-    words, design = dictionary(paths, 3, mode)
+    paths = rng.normal(size=(n, 5, d)).cumsum(1)
+    words, design = dictionary(paths, degree, mode)
     y = 8*design[:, 0] - 3*design[:, 1] + rng.normal(size=n)*.1
     alpha = .2*np.max(np.abs((y-y.mean())@design))/n
-    model = pysiglib.sig_lasso(paths, y, 3, alpha, feature_type=mode,
-                               memory_limit=(256 << 10) if engine == "tree" else None)
-    assert model["stats"]["engine"] == engine
+    model = pysiglib.sig_lasso(paths, y, degree, alpha, feature_type=mode, initial_words=[(0,)])
+    assert model["stats"]["engine"] == "tree"
+    assert model["stats"]["full_transform_calls"] == 0
+    assert model["stats"]["search_passes"] > 0
     assert model["converged"]
     support = [words.index(w) for w in model["words"]]
     gradient = (model["intercept"] + design[:, support]@model["coef"]-y)/n

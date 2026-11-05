@@ -35,9 +35,10 @@ mean for logistic or Poisson regression respectively.
 
 The CPU solver fits the current columns by cyclic coordinate descent, drops zeros and searches
 for violations of the inactive optimality conditions. It admits up to 16
-distinct violation scores per update. A small design fits in memory. Larger
-designs are scanned in sample blocks or searched with exact tree bounds.
-The fit checks the whole requested dictionary before it reports convergence.
+distinct violation scores per update. Every search uses branch and bound on
+the tree for the chosen dictionary. A branch can be skipped when its bound
+excludes a violation. Fitting and prediction do not construct a full truncated
+signature. Prediction evaluates the selected coordinates and their dependencies.
 
 ``kkt_violation`` gives the maximum stationarity error or a conservative upper
 bound. Squared fits also return a primal-dual gap. Each target has its own

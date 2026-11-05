@@ -71,8 +71,9 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
     seeds the working set with words in the transformed alphabet.
 
     The native solver uses cyclic coordinate descent on each working set.
-    It chooses between a packed design, a streamed design and
-    exact tree search. ``memory_limit`` bounds owned native workspace and output
+    Every fit searches the feature tree by branch and bound. It evaluates
+    coordinates without constructing a full truncated signature.
+    ``memory_limit`` bounds owned native workspace and output
     in bytes. ``n_jobs`` controls CPU workers. ``max_iter`` limits working-set
     updates per response. ``tol`` defaults to 1e-5 for float32 or 1e-8 for
     float64. Feature stationarity is checked at min(tol, 1e-4 * alpha).
@@ -146,7 +147,7 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
     if not np.isfinite(tol) or tol <= 0:
         raise ValueError('tol must be finite and positive')
     if CPSIG_WORKING_SET is None:
-        raise RuntimeError('The CPU library does not support the working-set Lasso ABI; rebuild pysiglib')
+        raise RuntimeError('The CPU library does not support branch-and-bound Lasso; rebuild pysiglib')
     with torch.no_grad():
         transformed = transform_path(inputs.path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs) if time_aug or lead_lag else inputs.path
         data = PathInputHandler(transformed, False, False, 1.0, 'path')
@@ -200,7 +201,9 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
             warnings.warn('sig_lasso did not pass the global KKT check; inspect n_iter and kkt_violation',
                           RuntimeWarning, stacklevel=2)
         stats = {name: getattr(result_shape.stats, name) for name, _ in result_shape.stats._fields_}
-        stats['engine'] = ('', 'packed', 'streamed', 'tree')[stats['engine']]
+        if stats['engine'] != 3 or stats['full_transform_calls']:
+            raise RuntimeError('The CPU library did not use branch and bound')
+        stats['engine'] = 'tree'
         stats['dictionary_size'] = sum(data.dimension**k for k in range(1, degree + 1))
         if feature_type != 'sig':
             primitive = [0] * (degree + 1)

@@ -21,7 +21,6 @@ add_library(cpsig SHARED
     cp_polynomial_sig_kernel.cpp
     cp_sig_coef.cpp
     cp_sig_lasso.cpp
-    cp_lasso_design.cpp
     cp_lasso_features.cpp
     cp_sig_kernel.cpp
     cp_signature.cpp

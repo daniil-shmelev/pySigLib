@@ -171,6 +171,7 @@ def worker(out, name, degree, method):
             ok &= maximum <= alpha+tau+1e-14
             record['max_correlation'] = maximum.tolist()
         else:
+            assert model['stats']['engine'] == 'tree' and model['stats']['full_transform_calls'] == 0
             ok &= model['converged']
             np.testing.assert_allclose(objective, model['objective'], atol=2e-12, rtol=2e-12)
             record.update(stats=model['stats'], kkt=model['kkt_violation'].tolist(), gap=model['dual_gap'].tolist())
@@ -198,12 +199,14 @@ def report(out, tables):
     summary = []
     for name, dirname in DATASETS.items():
         rows = []
+        estimated_memory = False
         with np.load(ROOT/dirname/'results/normalized/integral_comparison/prepared.npz') as data:
             train, y, labels = data['train'], data['response'], data['test_labels']
         for degree in range(1, 5):
             prefix = f'{name}_d{degree}'
             working, dense = [json.loads((out/f'{prefix}_{kind}.json').read_text()) for kind in ('working', 'dense')]
             assert working['status'] == 'complete' and all(working['certified'])
+            assert working['stats']['engine'] == 'tree' and working['stats']['full_transform_calls'] == 0
             assert working['alpha'] == dense['alpha'] and working['library_sha256'] == dense['library_sha256']
             with np.load(out/f'{prefix}_working.npz') as model:
                 words = [tuple(map(int, w.split(','))) for w in model['words']]
@@ -215,12 +218,16 @@ def report(out, tables):
                        n_test=len(labels), accuracy=working['correct']/len(labels), seconds=working['fit_seconds'],
                        extra_mib=working['extra_peak']/2**20, native_mib=working['stats']['peak_bytes']/2**20,
                        reported_kkt=max(working['kkt']), max_dual_gap=max(working['gap']), dense_status=dense['status'],
+                       dense_design_bytes=dense['design_bytes'],
                        dense_seconds='', dense_extra_mib='', dense_accuracy='', objective_diff='', max_train_diff='',
                        max_test_diff='', label_disagreements='', exhaustive_kkt='')
-            cells = [str(degree), row['engine'].capitalize()]
+            cells = [str(degree)]
             if dense['status'] == 'design_exceeds_4_GiB':
                 assert dense['design_bytes'] > 4 << 30
-                cells += ['--']*3
+                size = dense['design_bytes']
+                estimate = f'{size/2**40:.2f} TiB' if size >= 2**40 else f'{size/2**30:.1f} GiB'
+                cells += ['--', '--', estimate + r'$^{*}$']
+                estimated_memory = True
             else:
                 assert dense['status'] == 'complete' and all(dense['certified'])
                 with np.load(out/f'{prefix}_working.npz') as a, np.load(out/f'{prefix}_dense.npz') as b:
@@ -253,15 +260,18 @@ def report(out, tables):
                 row.update(dense_seconds=dense['fit_seconds'], dense_extra_mib=dense['extra_peak']/2**20,
                            dense_accuracy=dense['correct']/len(labels),
                            objective_diff=float(abs(np.array(working['objective'])-dense['objective']).max()))
-                cells += [f"{row['dense_accuracy']*100:.2f}", f"{row['dense_seconds']:.3f}", f"{row['dense_extra_mib']:.2f}"]
+                cells += [f"{row['dense_accuracy']*100:.2f}", f"{row['dense_seconds']:.3f}", f"{row['dense_extra_mib']:.2f} MiB"]
             cells += [f"{row['accuracy']*100:.2f}", f"{row['seconds']:.3f}", f"{row['extra_mib']:.2f}", str(row['words'])]
             rows.append(' & '.join(cells)+r' \\')
             summary.append(row)
         lines = [r'\begin{center}', r'\small', r'\setlength{\tabcolsep}{3pt}',
-                 r'\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}cl|rrr|rrrr}',
-                 r'& & \multicolumn{3}{c|}{Full coordinate descent} & \multicolumn{4}{c}{Working set} \\',
-                 r'$M$ & Search & Acc. (\%) & Time (s) & MiB & Acc. (\%) & Time (s) & MiB & Words \\',
-                 r'\hline', *rows, r'\end{tabular*}', r'\end{center}']
+                 r'\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}c|rrr|rrrr}',
+                 r'& \multicolumn{3}{c|}{Full coordinate descent} & \multicolumn{4}{c}{Branch and bound} \\',
+                 r'$M$ & Acc. (\%) & Time (s) & Memory & Acc. (\%) & Time (s) & MiB & Words \\',
+                 r'\hline', *rows, r'\end{tabular*}']
+        if estimated_memory:
+            lines.append(r'\par\smallskip{\footnotesize $^{*}$Estimated minimum for the full fit, from the training matrix alone.}')
+        lines.append(r'\end{center}')
         (tables/f'{name}_table.tex').write_text('\n'.join(lines)+'\n', encoding='ascii', newline='\r\n')
     with (out/'summary.csv').open('w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=summary[0])
