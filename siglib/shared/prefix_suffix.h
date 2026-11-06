@@ -83,7 +83,7 @@ constexpr int small_offset(int d, int k) {
 }
 
 struct Layout {
-    uint64_t d, m, h, scan_degree, prefix_degree;
+    uint64_t d, m, h, scan_degree, prefix_degree, split_a = 0;
     std::vector<uint64_t> power, offset;
     Layout(uint64_t dimension, uint64_t degree) : d(dimension), m(degree), h(degree / 2), prefix_degree(degree / 2 + degree % 2 - (degree != 0)) {
         if (!d) throw std::invalid_argument("invalid prefix-suffix dimension");
@@ -100,7 +100,18 @@ struct Layout {
             if (k) power[k] = mul(power[k - 1], d);
             offset[k + 1] = add(offset[k], power[k]);
         }
+        set_split(option("PYSIGLIB_PS_SPLIT_A", 0, true));
     }
+    void set_split(uint64_t a) {
+        if (a > m) throw std::invalid_argument("prefix-suffix split exceeds degree");
+        split_a = a;
+        if (a) {
+            prefix_degree = a - 1;
+            scan_degree = std::max(scan_degree, std::max(a - 1, m - a));
+        }
+    }
+    uint64_t left_degree(uint64_t k) const { return split_a ? split_a : (k + 1) / 2; }
+    uint64_t right_degree(uint64_t k) const { return k - left_degree(k); }
 };
 
 template<typename T>

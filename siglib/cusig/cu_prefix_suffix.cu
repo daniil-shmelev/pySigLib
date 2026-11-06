@@ -17,6 +17,8 @@
 #include "cu_macros.h"
 #include "cu_path_reduction.h"
 #include "prefix_suffix.h"
+#include "prefix_suffix_endpoint.h"
+#include "prefix_suffix_selection.h"
 #include "cu_prefix_suffix_backprop.cuh"
 #include <cublas_v2.h>
 #include <climits>
@@ -24,6 +26,16 @@
 
 namespace {
 using namespace prefix_suffix;
+
+int device_parallelism(int device) {
+    static thread_local int cached_device = -1;
+    static thread_local int processors = 1;
+    if (device != cached_device) {
+        CUDA_CHECK(cudaDeviceGetAttribute(&processors, cudaDevAttrMultiProcessorCount, device));
+        cached_device = device;
+    }
+    return 4 * processors;
+}
 
 void blas_check(cublasStatus_t code) {
     if (code != CUBLAS_STATUS_SUCCESS)
@@ -353,7 +365,7 @@ __global__ void factors_kernel(const T* prefixes, const T* suffixes, const T* in
     const uint64_t* power, const uint64_t* offset, bool shared, uint64_t pitch, FactorCoefficients<T> coefficients) {
     extern __shared__ unsigned char raw[];
     T* first = shared ? reinterpret_cast<T*>(raw) : work + uint64_t(blockIdx.x) / slots * stride + (blockIdx.x % slots) * 2 * maxq;
-    T* second = first + q;
+    T* second = first + max(q, power[a - 1]);
     for (uint64_t task = blockIdx.x; task < batch * rows; task += gridDim.x) {
         const uint64_t sample = task / rows, row = task % rows, i = (base + row) / a, j = (base + row) % a;
         const T* v = increments + sample * stride + i * d;
@@ -432,7 +444,8 @@ template<typename T> struct CudaMatrices {
     }
     void accumulate(Matrix<T> a, Matrix<T> c, T sign) { launch<3>(a, a, c, sign); }
     void gemm(Matrix<T> a, Matrix<T> b, Matrix<T> c, T beta) {
-        const uint64_t lda = a.rs == 1 ? a.cs : a.rs, ldb = b.rs == 1 ? b.cs : b.rs;
+        const uint64_t lda = a.rs == 1 ? std::max(a.cs, a.rows) : a.rs;
+        const uint64_t ldb = b.rs == 1 ? std::max(b.cs, b.rows) : b.rs;
         if (std::max({lda, ldb, c.rs, a.rows, b.cols, a.cols, batch}) > INT_MAX)
             throw std::overflow_error("prefix-suffix cuBLAS dimension exceeds int32 range");
         const auto op_a = a.rs == 1 ? CUBLAS_OP_T : CUBLAS_OP_N;
@@ -448,13 +461,15 @@ template<typename T> struct CudaMatrices {
     }
 };
 
+#include "cu_prefix_suffix_endpoint.cuh"
+
 template<typename T>
 void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv, uint64_t batch,
     uint64_t dimension, uint64_t length, uint64_t degree, bool ta, bool ll, T end_time, bool scalar, cudaStream_t stream) {
     if (!dimension) throw std::invalid_argument("path has zero channels");
     int device = 0; CUDA_CHECK(cudaGetDevice(&device));
     const uint64_t d = add(mul(dimension, ll ? 2 : 1), ta ? 1 : 0), points = ll && length ? add(length, length - 1) : length;
-    const Layout l(d, degree);
+    Layout l(d, degree);
     const uint64_t sig_stride = l.offset[degree + 1] - (scalar ? 0 : 1), path_stride = mul(length, dimension);
     mul(mul(batch, sig_stride), sizeof(T)); mul(mul(batch, path_stride), sizeof(T));
     if (!batch || !path_stride) return;
@@ -464,15 +479,17 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
         CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaStreamSynchronize(stream));
         return;
     }
+    const auto choice = prefix_suffix_selection::select_cuda(true, batch, points - 1, l, 1, ta || ll);
+    if (choice.a) l.set_split(choice.a);
     const uint64_t n = points - 1, qlen = l.offset[l.scan_degree + 1], scan_power = l.power[l.scan_degree];
     const uint64_t chunk_length = option("PYSIGLIB_PS_SCAN_CHUNK", l.scan_degree == 1 ? n : 16), chunks = (n - 1) / chunk_length + 1;
-    const uint64_t maxp = l.power[(degree + 1) / 2], maxq = l.power[l.h];
+    const uint64_t maxp = l.power[l.left_degree(degree)], maxq = l.power[l.right_degree(degree)];
     const uint64_t factor_bytes = option("PYSIGLIB_PS_FACTOR_BYTES", 128ULL << 20);
-    const uint64_t rows = l.scan_degree < l.m ? std::max<uint64_t>(1, std::min(mul(n, (degree + 1) / 2),
+    const uint64_t rows = l.scan_degree < l.m ? std::max<uint64_t>(1, std::min(mul(n, l.left_degree(degree)),
         factor_bytes / mul(mul(2, add(maxp, maxq)), sizeof(T)))) : 0;
     const uint64_t side = tile_side(maxp, maxq, std::max<uint64_t>(1, rows), option("PYSIGLIB_PS_MAX_TILE", 4096));
     const uint64_t matrix_scratch = std::max({maxp, maxq, rows}) > INT_MAX ? mul(3, mul(side, side)) : 0;
-    const uint64_t temporary = l.offset[std::max(l.scan_degree, (degree + 1) / 2) + 1];
+    const uint64_t temporary = l.offset[std::max(l.scan_degree, l.left_degree(degree)) + 1];
     const uint64_t slots = std::max<uint64_t>(1, std::min({n, uint64_t(256), factor_bytes / mul(mul(4, temporary), sizeof(T))}));
     const uint64_t inc_count = mul(n, d), scan_count = mul(add(n, 1), qlen), summary_count = mul(chunks, qlen);
     const uint64_t scan_scratch = mul(chunks, add(qlen, mul(2, scan_power)));
@@ -569,7 +586,7 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
                 }
             }
             for (uint64_t k = l.scan_degree + 1; k <= degree; ++k) {
-                const uint64_t a = (k + 1) / 2, b = k / 2, p = l.power[a], q = l.power[b], total = mul(n, a);
+                const uint64_t a = l.left_degree(k), b = l.right_degree(k), p = l.power[a], q = l.power[b], total = mul(n, a);
                 for (uint64_t base = 0; base < total; base += rows) {
                     const uint64_t nr = std::min(rows, total - base);
                     if (add(p, q) <= INT_MAX) {
@@ -577,10 +594,11 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
                             prefixes, suffixes, inc, left, right, count, unsigned(d), qlen, qlen,
                             unsigned(a), unsigned(b), unsigned(p), unsigned(q), base, nr, stride, q, offset, coefficients);
                     } else {
-                        const bool shared = mul(2, mul(q, sizeof(T))) <= 32768;
+                        const uint64_t width = std::max(q, l.power[a - 1]);
+                        const bool shared = mul(2, mul(width, sizeof(T))) <= 32768;
                         const uint64_t factor_slots = std::min(slots, nr);
-                        factors_kernel<<<make_cuda_1d_grid(mul(count, factor_slots), 1), 128, shared ? 2 * q * sizeof(T) : 0, stream>>>(
-                            prefixes, suffixes, inc, left, right, work, factor_slots, maxq, count, d, qlen, qlen,
+                        factors_kernel<<<make_cuda_1d_grid(mul(count, factor_slots), 1), 128, shared ? 2 * width * sizeof(T) : 0, stream>>>(
+                            prefixes, suffixes, inc, left, right, work, factor_slots, temporary, count, d, qlen, qlen,
                             a, b, p, q, base, nr, stride, power, offset, shared, q, coefficients);
                     }
                     CUDA_CHECK(cudaGetLastError());
@@ -647,16 +665,28 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
         CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaStreamSynchronize(stream));
         return;
     }
+    const auto choice = prefix_suffix_selection::select_cuda(false, batch, points - 1, l, device_parallelism(device), ta || ll);
+    if (choice.a) l.set_split(choice.a);
+    const uint64_t endpoint_block = option("PYSIGLIB_PS_ENDPOINT_BLOCK", choice.block, true);
+    if (endpoint_block) {
+        try {
+            gpu_endpoint::compute(path, out, prefix_suffix_endpoint::Shape(batch, d, points, degree, endpoint_block),
+                stream, dimension, length, ta, ll, end_time, scalar);
+            return;
+        } catch (const std::bad_alloc&) {
+            if (!choice.block) throw;
+        }
+    }
     const uint64_t n = points - 1, plen = l.offset[l.prefix_degree + 1], qlen = l.offset[l.scan_degree + 1];
     const uint64_t scan_power = l.power[l.scan_degree];
     const uint64_t chunk_length = option("PYSIGLIB_PS_SCAN_CHUNK", 64), chunks = (n - 1) / chunk_length + 1;
-    const uint64_t maxp = l.power[(degree + 1) / 2], maxq = l.power[l.h];
-    uint64_t rows = std::max<uint64_t>(1, std::min(mul(n, (degree + 1) / 2), option("PYSIGLIB_PS_FACTOR_BYTES", 128ULL << 20) / mul(add(maxp, maxq), sizeof(T))));
+    const uint64_t maxp = l.power[l.left_degree(degree)], maxq = l.power[l.right_degree(degree)];
+    uint64_t rows = std::max<uint64_t>(1, std::min(mul(n, l.left_degree(degree)), option("PYSIGLIB_PS_FACTOR_BYTES", 128ULL << 20) / mul(add(maxp, maxq), sizeof(T))));
     const uint64_t maxside = tile_side(maxp, maxq, rows, option("PYSIGLIB_PS_MAX_TILE", 4096));
     const bool low = option("PYSIGLIB_PS_LOW_DEPTH", 1, true) != 0 && degree <= 6;
-    const bool specialized = low && (d == 2 || d == 3 || d == 4 || d == 8);
+    const bool specialized = !l.split_a && low && (d == 2 || d == 3 || d == 4 || d == 8);
     const bool fused = specialized && option("PYSIGLIB_PS_FUSION", 1, true) != 0 && l.power[degree] <= 1024;
-    const bool pair_levels = option("PYSIGLIB_PS_PAIR_LEVELS", 1, true) != 0;
+    const bool pair_levels = !l.split_a && option("PYSIGLIB_PS_PAIR_LEVELS", 1, true) != 0;
     const bool coefficient_factors = option("PYSIGLIB_PS_COEFFICIENT_FACTORS", 1, true) != 0;
     const FactorCoefficients<T> coefficients;
     const uint64_t contract_chunks = (n - 1) / 256 + 1;
@@ -664,12 +694,13 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
     if (fused) rows = 0;
     const uint64_t matrix_scratch = std::max({maxp, maxq, rows}) > INT_MAX ? mul(3, mul(maxside, maxside)) : 0;
     const uint64_t inc_count = mul(n, d), p_count = mul(add(n, 1), plen), q_count = mul(add(n, 1), qlen);
-    const uint64_t factor_work = mul(2, mul(maxq, std::min<uint64_t>(rows, 256)));
+    const uint64_t factor_width = std::max(maxq, l.power[l.left_degree(degree) - 1]);
+    const uint64_t factor_work = mul(2, mul(factor_width, std::min<uint64_t>(rows, 256)));
     const bool local_scan = low && mul(add(qlen, mul(2, scan_power)), sizeof(T)) <= 32768;
     const uint64_t scan_shared = local_scan ? mul(add(qlen, mul(2, scan_power)), sizeof(T)) : 0;
     const unsigned scan_threads = low && scan_power <= 64 ? 32 : 128;
     const uint64_t summary_count = low && l.scan_degree == 1 ? 0 : mul(chunks, qlen);
-    const uint64_t scan_work = std::max(local_scan ? 0 : mul(chunks, add(qlen, mul(2, scan_power))), mul(2 * maxq, sizeof(T)) > 32768 ? factor_work : 0);
+    const uint64_t scan_work = std::max(local_scan ? 0 : mul(chunks, add(qlen, mul(2, scan_power))), mul(2 * factor_width, sizeof(T)) > 32768 ? factor_work : 0);
     uint64_t stride = add(add(inc_count, add(p_count, q_count)), add(mul(4, summary_count), add(scan_work, add(mul(rows, add(maxp, maxq)), add(matrix_scratch, partial_count)))));
     const uint64_t metadata_bytes = mul(add(l.power.size(), l.offset.size()), sizeof(uint64_t));
     // Align each sample and the metadata for cuBLAS and uint64_t access.
@@ -736,7 +767,7 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
             }
             CudaMatrices<T> matrices{resources->handle, stream, count, stride};
             for (uint64_t k = l.scan_degree + 1; k <= degree; ++k) {
-                const uint64_t a = (k + 1) / 2, b = k / 2, p = l.power[a], q = l.power[b], total = mul(n, a);
+                const uint64_t a = l.left_degree(k), b = l.right_degree(k), p = l.power[a], q = l.power[b], total = mul(n, a);
                 const bool paired = pair_levels && !fused && k % 2 && k < degree && add(p, q) <= INT_MAX;
                 const uint64_t pitch = paired ? l.power[b + 1] : q;
                 auto dispatch = [&](bool contract, uint64_t base, uint64_t nr) {
@@ -799,9 +830,10 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
                     if (specialized) dispatch(false, base, nr);
                     else if (coefficient_factors && add(p, q) <= INT_MAX) factor_dispatch(false);
                     else {
-                    const bool shared = mul(2 * q, sizeof(T)) <= 32768;
+                    const uint64_t width = std::max(q, l.power[a - 1]);
+                    const bool shared = mul(2 * width, sizeof(T)) <= 32768;
                     const uint64_t slots = std::min<uint64_t>(nr, 256);
-                    factors_kernel<<<make_cuda_1d_grid(mul(count, slots), 1), 128, shared ? 2 * q * sizeof(T) : 0, stream>>>(prefixes, suffixes, inc, left, right, work, slots, maxq, count, d, plen, qlen, a, b, p, q, base, nr, stride, power, offset, shared, pitch, coefficients);
+                    factors_kernel<<<make_cuda_1d_grid(mul(count, slots), 1), 128, shared ? 2 * width * sizeof(T) : 0, stream>>>(prefixes, suffixes, inc, left, right, work, slots, factor_width, count, d, plen, qlen, a, b, p, q, base, nr, stride, power, offset, shared, pitch, coefficients);
                     }
                     CUDA_CHECK(cudaGetLastError());
                     product(matrices, Matrix<T>{left, p, nr, 1, p, stride}, Matrix<T>{right, nr, q, pitch, 1, stride},

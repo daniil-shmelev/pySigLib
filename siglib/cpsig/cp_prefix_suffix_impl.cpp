@@ -23,11 +23,14 @@
 #include "cp_prefix_suffix_detail.h"
 #include "cp_prefix_suffix_backprop.h"
 #include "cp_signature.h"
+#include "cp_prefix_suffix_endpoint.h"
 #include "prefix_suffix.h"
+#include "prefix_suffix_selection.h"
 #include <array>
 #include <climits>
 #include <cblas.h>
 #include <oneapi/tbb/blocked_range.h>
+#include <oneapi/tbb/global_control.h>
 #include <oneapi/tbb/parallel_for.h>
 static_assert(sizeof(blasint) == 4);
 
@@ -54,14 +57,14 @@ struct CpuPlan {
     CpuPlan(const Layout& l, uint64_t segments, uint64_t batch, int jobs, uint64_t itemsize)
         : n(segments) {
         plen = l.offset[l.prefix_degree + 1]; qlen = l.offset[l.scan_degree + 1];
-        maxp = l.power[(l.m + 1) / 2]; maxq = l.power[l.h];
+        maxp = l.power[l.left_degree(l.m)]; maxq = l.power[l.right_degree(l.m)];
         const uint64_t factor_bytes = option("PYSIGLIB_PS_FACTOR_BYTES", 64ULL << 20);
-        rows = std::max<uint64_t>(1, std::min(mul(n, (l.m + 1) / 2), factor_bytes / mul(add(maxp, maxq), itemsize)));
+        rows = std::max<uint64_t>(1, std::min(mul(n, l.left_degree(l.m)), factor_bytes / mul(add(maxp, maxq), itemsize)));
         const uint64_t stored_rows = rows;
         side = tile_side(maxp, maxq, rows, option("PYSIGLIB_PS_MAX_TILE", 4096));
         low = option("PYSIGLIB_PS_LOW_DEPTH", 1, true) != 0 && l.m <= 6;
-        paired = option("PYSIGLIB_PS_PAIR_LEVELS", 1, true) != 0;
-        specialized = low && (l.d == 2 || l.d == 3 || l.d == 4 || l.d == 8);
+        paired = !l.split_a && option("PYSIGLIB_PS_PAIR_LEVELS", 1, true) != 0;
+        specialized = !l.split_a && low && (l.d == 2 || l.d == 3 || l.d == 4 || l.d == 8);
         const uint64_t requested_strategy = option("PYSIGLIB_PS_CPU_STRATEGY", 0, true);
         if (requested_strategy > uint64_t(PreparationStrategy::streamed))
             throw std::invalid_argument("PYSIGLIB_PS_CPU_STRATEGY must be 0, 1, 2, or 3");
@@ -88,7 +91,7 @@ struct CpuPlan {
         scratch = strategy != PreparationStrategy::stored ? 0
             : ((std::max({maxp, maxq, rows}) > INT_MAX) ? mul(3, mul(side, side)) : 0);
         psize = mul(add(n, 1), plen); qsize = mul(add(n, 1), qlen);
-        powers = l.offset[(l.m + 1) / 2 + 1];
+        powers = l.offset[l.left_degree(l.m) + 1];
         if (specialized) powers = add(powers, maxq);
         if (strategy == PreparationStrategy::streamed) {
             for (uint64_t k = l.scan_degree + 1; k <= l.m;) {
@@ -190,11 +193,12 @@ template<typename T> struct CpuMatrices {
     }
     void gemm(Matrix<T> a, Matrix<T> b, Matrix<T> c, T beta) {
         const bool ta = a.rs == 1, tb = b.rs == 1;
-        const uint64_t lda = ta ? a.cs : a.rs, ldb = tb ? b.cs : b.rs;
+        const uint64_t lda = ta ? std::max(a.cs, a.rows) : a.rs, ldb = tb ? std::max(b.cs, b.rows) : b.rs;
         if (lda > INT_MAX || ldb > INT_MAX || c.rs > INT_MAX)
             throw std::overflow_error("prefix-suffix BLAS leading dimension exceeds LP64 range");
+        constexpr uint64_t grain = prefix_suffix_endpoint::gemm_row_grain;
         const uint64_t row_block = jobs == 1 ? std::min<uint64_t>(a.rows, INT_MAX)
-            : std::max<uint64_t>(64, ((a.rows + jobs - 1) / jobs + 63) / 64 * 64);
+            : std::max(grain, ((a.rows + jobs - 1) / jobs + grain - 1) / grain * grain);
         const uint64_t blocks = (a.rows + row_block - 1) / row_block;
         parallel_range(blocks, jobs, [&](uint64_t first, uint64_t end) {
             for (uint64_t block = first; block < end; ++block) {
@@ -574,7 +578,7 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
             if (plan.paired && !plan.fused && k % 2 && k < l.m) ++k;
             continue;
         }
-        const uint64_t a = (k + 1) / 2, b = k / 2, p = l.power[a], q = l.power[b], total = mul(n, a);
+        const uint64_t a = l.left_degree(k), b = l.right_degree(k), p = l.power[a], q = l.power[b], total = mul(n, a);
         const bool paired = plan.paired && k % 2 && k < l.m;
         const uint64_t pitch = paired ? l.power[b + 1] : q;
         for (uint64_t base = 0; base < total; base += row_count) {
@@ -650,13 +654,13 @@ struct CpuBackpropPlan {
     CpuBackpropPlan(const Layout& l, uint64_t segments, int jobs, uint64_t itemsize) : n(segments) {
         qlen = l.offset[l.scan_degree + 1];
         scan_count = mul(add(n, 1), qlen);
-        maxp = l.power[(l.m + 1) / 2]; maxq = l.power[l.h];
+        maxp = l.power[l.left_degree(l.m)]; maxq = l.power[l.right_degree(l.m)];
         const uint64_t factor_bytes = option("PYSIGLIB_PS_FACTOR_BYTES", 64ULL << 20);
-        rows = l.scan_degree < l.m ? std::max<uint64_t>(1, std::min(mul(n, (l.m + 1) / 2),
+        rows = l.scan_degree < l.m ? std::max<uint64_t>(1, std::min(mul(n, l.left_degree(l.m)),
             factor_bytes / mul(mul(2, add(maxp, maxq)), itemsize))) : 0;
         side = tile_side(maxp, maxq, std::max<uint64_t>(1, rows), option("PYSIGLIB_PS_MAX_TILE", 4096));
         scratch = std::max({maxp, maxq, rows}) > INT_MAX ? mul(3, mul(side, side)) : 0;
-        temporary = l.offset[std::max(l.scan_degree, (l.m + 1) / 2) + 1];
+        temporary = l.offset[std::max(l.scan_degree, l.left_degree(l.m)) + 1];
         count = add(mul(4, scan_count), mul(2, mul(n, l.d)));
         count = add(count, add(mul(2, mul(rows, add(maxp, maxq))), scratch));
         count = add(count, add(mul(2, qlen), mul(mul(4, temporary), jobs)));
@@ -703,7 +707,7 @@ void backprop_path(const T* input, T* output, const T* deriv, uint64_t dimension
     std::copy_n(state, qlen, suffixes);
     CpuMatrices<T> matrices{jobs};
     for (uint64_t k = l.scan_degree + 1; k <= l.m; ++k) {
-        const uint64_t a = (k + 1) / 2, b = k / 2, p = l.power[a], q = l.power[b], total = n * a;
+        const uint64_t a = l.left_degree(k), b = l.right_degree(k), p = l.power[a], q = l.power[b], total = n * a;
         for (uint64_t base = 0; base < total; base += plan.rows) {
             const uint64_t count = std::min(plan.rows, total - base);
             const uint64_t first_segment = base / a, segments = (base + count - 1) / a - first_segment + 1;
@@ -862,7 +866,7 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
     if (!dimension) throw std::invalid_argument("path has zero channels");
     const uint64_t d = add(mul(dimension, lead_lag ? 2 : 1), time_aug ? 1 : 0);
     const uint64_t points = lead_lag && length ? add(length, length - 1) : length;
-    Layout l(d, degree);
+    const Layout l(d, degree);
     const uint64_t stride = l.offset[degree + 1] - (scalar ? 0 : 1), path_stride = mul(length, dimension);
     mul(mul(batch, stride), sizeof(T)); mul(mul(batch, path_stride), sizeof(T));
     const int jobs = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
@@ -902,7 +906,23 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
     }
     if (openblas_get_parallel() != 0)
         throw std::runtime_error("prefix-suffix requires sequential OpenBLAS built with USE_THREAD=0 and USE_LOCKING=1");
+    using oneapi::tbb::global_control;
+    const int endpoint_threads = static_cast<int>(std::min<size_t>({static_cast<size_t>(jobs),
+        static_cast<size_t>(oneapi::tbb::this_task_arena::max_concurrency()),
+        global_control::active_value(global_control::max_allowed_parallelism)}));
     const int available_path_jobs = std::max(1, jobs / static_cast<int>(std::min<uint64_t>(batch, jobs)));
+    const uint64_t selected = prefix_suffix_endpoint::select_cpu_block(batch, points - 1, l, endpoint_threads,
+        sizeof(T), time_aug || lead_lag);
+    const uint64_t endpoint_block = option("PYSIGLIB_PS_ENDPOINT_BLOCK", selected, true);
+    if (endpoint_block) {
+        try {
+            cpu_endpoint::compute(path, out, prefix_suffix_endpoint::Shape(batch, d, points, degree, endpoint_block),
+                endpoint_threads, dimension, length, time_aug, lead_lag, end_time, scalar);
+            return;
+        } catch (const std::bad_alloc&) {
+            if (!selected) throw;
+        }
+    }
     const uint64_t work_proxy = mul(points - 1, l.power[degree]);
     const bool internal_threads = option("PYSIGLIB_PS_CPU_INTERNAL_THREADS", 1, true) != 0;
     const uint64_t parallel_threshold = option("PYSIGLIB_PS_CPU_PARALLEL_THRESHOLD", 262144, true);

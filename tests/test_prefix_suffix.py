@@ -16,6 +16,7 @@
 """Forward prefix-suffix methods, including forced native block boundaries."""
 
 from concurrent.futures import ThreadPoolExecutor
+import ctypes
 from fractions import Fraction
 from itertools import product
 
@@ -28,6 +29,111 @@ import pysiglib.torch_api as torch_api
 from conftest import DEVICES, load_fixtures
 
 METHODS = ("prefix_suffix_gemm",)
+
+
+@pytest.mark.parametrize("device,dtype", product(DEVICES, (torch.float32, torch.float64)))
+@pytest.mark.parametrize("time_aug,lead_lag,scalar", product((False, True), repeat=3))
+def test_split_and_endpoint_variants(monkeypatch, device, dtype, time_aug, lead_lag, scalar):
+    path = torch.tensor(np.random.default_rng(712).normal(scale=0.04, size=(2, 14, 2)),
+                        device=device, dtype=dtype)[:, ::2]
+    options = dict(time_aug=time_aug, lead_lag=lead_lag, scalar_term=scalar, n_jobs=2)
+    expected = pysiglib.sig(path, 4, **options)
+    seeds = torch.tensor(np.random.default_rng(713).normal(size=expected.shape), device=device, dtype=dtype)
+    back_options = dict(time_aug=time_aug, lead_lag=lead_lag, n_jobs=2)
+    gradient = pysiglib.sig_backprop(path, expected, seeds, 4, **back_options)
+    tolerance = 2e-5 if dtype == torch.float32 else 2e-11
+    for a in range(5):
+        monkeypatch.setenv("PYSIGLIB_PS_SPLIT_A", str(a))
+        actual = pysiglib.sig(path, 4, method="prefix_suffix_gemm", **options)
+        grad = pysiglib.sig_backprop(path, expected, seeds, 4, method="prefix_suffix_gemm", **back_options)
+        torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
+        torch.testing.assert_close(grad, gradient, atol=tolerance, rtol=tolerance)
+    monkeypatch.setenv("PYSIGLIB_PS_SPLIT_A", "0")
+    for block in (1, 3, 16):
+        monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", str(block))
+        actual = pysiglib.sig(path, 4, method="prefix_suffix_gemm", **options)
+        torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_endpoint_autograd_and_stream(monkeypatch, device):
+    monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "3")
+    path = torch.randn(2, 6, 2, device=device, dtype=torch.float64) * 0.03
+    path.requires_grad_()
+    operation = lambda x: torch_api.sig(x, 4, method="prefix_suffix_gemm")
+    if device == "cuda":
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            assert torch.autograd.gradcheck(operation, (path,))
+        stream.synchronize()
+    else:
+        assert torch.autograd.gradcheck(operation, (path,))
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_generic_unbalanced_split(monkeypatch, device):
+    monkeypatch.setenv("PYSIGLIB_PS_COEFFICIENT_FACTORS", "0")
+    monkeypatch.setenv("PYSIGLIB_PS_SPLIT_A", "5")
+    path = torch.randn(2, 8, 3, device=device, dtype=torch.float64) * 0.03
+    expected = pysiglib.sig(path, 5)
+    actual = pysiglib.sig(path, 5, method="prefix_suffix_gemm")
+    torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-12)
+
+
+@pytest.mark.parametrize("device,dtype", product(DEVICES, (torch.float32, torch.float64)))
+@pytest.mark.parametrize("dimension", (8, 16))
+def test_automatic_prefix_suffix_dispatch(monkeypatch, device, dtype, dimension):
+    path = torch.tensor(np.random.default_rng(714).normal(scale=0.02, size=(32, 257, dimension)),
+                        device=device, dtype=dtype)
+    monkeypatch.setenv("PYSIGLIB_PS_DISPATCH", "0")
+    expected = pysiglib.sig(path, 3, method="prefix_suffix_gemm", n_jobs=20)
+    seeds = torch.ones_like(expected)
+    gradient = pysiglib.sig_backprop(path, expected, seeds, 3, method="prefix_suffix_gemm", n_jobs=20)
+    monkeypatch.delenv("PYSIGLIB_PS_DISPATCH")
+    actual = pysiglib.sig(path, 3, method="prefix_suffix_gemm", n_jobs=20)
+    grad = pysiglib.sig_backprop(path, actual, seeds, 3, method="prefix_suffix_gemm", n_jobs=20)
+    tolerance = 2e-5 if dtype == torch.float32 else 2e-11
+    torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
+    torch.testing.assert_close(grad, gradient, atol=tolerance, rtol=tolerance)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_endpoint_workspace_limit(monkeypatch, device):
+    monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "3")
+    monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", "1")
+    path = torch.ones(2, 8, 3, device=device)
+    with pytest.raises(Exception, match="allocate|workspace"):
+        pysiglib.sig(path, 4, method="prefix_suffix_gemm")
+
+
+@pytest.mark.parametrize("target_name", ("SSE2", "AVX2"))
+def test_endpoint_simd_targets(monkeypatch, target_name):
+    from pysiglib.load_siglib import CPSIG
+    if not hasattr(CPSIG, "cpsig_test_supported_targets"):
+        pytest.skip("Target forcing requires a native test build")
+    CPSIG.cpsig_test_supported_targets.restype = ctypes.c_int64
+    CPSIG.cpsig_test_target_name.argtypes = [ctypes.c_int64]
+    CPSIG.cpsig_test_target_name.restype = ctypes.c_char_p
+    CPSIG.cpsig_test_set_target.argtypes = [ctypes.c_int64]
+    targets = CPSIG.cpsig_test_supported_targets()
+    selected = 0
+    while targets:
+        target = targets & -targets
+        targets &= ~target
+        if CPSIG.cpsig_test_target_name(target).decode() == target_name:
+            selected = target
+    if not selected:
+        pytest.skip(f"{target_name} is unavailable")
+    assert CPSIG.cpsig_test_set_target(selected) == 0
+    try:
+        path = np.random.default_rng(715).normal(scale=0.03, size=(7, 18, 3))
+        expected = pysiglib.sig(path, 5)
+        monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "4")
+        actual = pysiglib.sig(path, 5, method="prefix_suffix_gemm", n_jobs=3)
+        np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-12)
+    finally:
+        assert CPSIG.cpsig_test_set_target(0) == 0
 
 
 @pytest.mark.parametrize("device,method,dtype", product(DEVICES, METHODS, (torch.float32, torch.float64)))

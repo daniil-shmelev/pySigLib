@@ -16,8 +16,13 @@
 #include <gtest/gtest.h>
 #include "cp_prefix_suffix_detail.h"
 #include "cp_prefix_suffix_backprop.h"
+#include "cp_prefix_suffix_endpoint_plan.h"
 #include "cpsig.h"
 #include "prefix_suffix.h"
+#ifndef CPSIG_PREBUILT_TESTS
+#include <oneapi/tbb/global_control.h>
+#include <oneapi/tbb/task_arena.h>
+#endif
 
 TEST(PrefixSuffix, CheckedSizes) {
     EXPECT_THROW(prefix_suffix::Layout(2, 64), std::overflow_error);
@@ -27,6 +32,48 @@ TEST(PrefixSuffix, CheckedSizes) {
     EXPECT_THROW(prefix_suffix::Layout(1, UINT64_MAX), std::overflow_error);
     EXPECT_EQ(prefix_suffix::Layout(1, 65536).offset.back(), 65537);
 }
+
+TEST(PrefixSuffix, EndpointConcurrency) {
+    using prefix_suffix_endpoint::select_cpu_block;
+    const prefix_suffix::Layout cubic(129, 3), quadratic(24, 2);
+    EXPECT_EQ(select_cpu_block(1, 256, cubic, 1, 4, false), 256);
+    EXPECT_EQ(select_cpu_block(1, 256, cubic, 20, 4, false), 0);
+    EXPECT_EQ(select_cpu_block(1, 256, prefix_suffix::Layout(128, 3), 2, 4, false), 128);
+    EXPECT_EQ(select_cpu_block(32, 256, cubic, 1, 4, false), 0);
+    EXPECT_EQ(select_cpu_block(32, 4096, prefix_suffix::Layout(48, 3), 20, 8, false), 1024);
+    EXPECT_EQ(select_cpu_block(8, 513, quadratic, 4, 8, false), 513);
+    EXPECT_EQ(select_cpu_block(8, 513, quadratic, 16, 8, false), 0);
+    EXPECT_EQ(select_cpu_block(8, 513, quadratic, 4, 8, true), 0);
+
+    using prefix_suffix_endpoint::CpuWorkspace;
+    // Two persistent buffers consume 80 elements, each active worker needs 10.
+    EXPECT_EQ(CpuWorkspace(4, 10, 2, 2, 1, 2, 4, 89).workers, 0);
+    EXPECT_EQ(CpuWorkspace(4, 10, 2, 2, 1, 2, 4, 100).workers, 2);
+    EXPECT_EQ(CpuWorkspace(4, UINT64_MAX, 2, 2, 1, 2, 4, 100).workers, 0);
+}
+
+#ifndef CPSIG_PREBUILT_TESTS
+TEST(PrefixSuffix, EndpointRespectsSchedulerLimits) {
+    constexpr uint64_t dimension = 32, points = 257;
+    std::vector<float> path(points * dimension);
+    for (size_t i = 0; i < path.size(); ++i)
+        path[i] = float(int((i * 37 + i / dimension) % 103) - 51) / 79;
+    std::vector<float> expected(prefix_suffix::Layout(dimension, 3).offset.back() - 1), actual(expected.size());
+    auto run = [&](int jobs, std::vector<float>& output) {
+        return signature_prefix_suffix_f(path.data(), output.data(), 1, dimension, points, 3,
+            false, false, 1.f, false, jobs);
+    };
+    ASSERT_EQ(run(1, expected), 0);
+    auto check_serial_split = [&] {
+        ASSERT_EQ(run(20, actual), 0);
+        EXPECT_TRUE(expected == actual);
+    };
+    oneapi::tbb::task_arena(1).execute(check_serial_split);
+    using oneapi::tbb::global_control;
+    global_control limit(global_control::max_allowed_parallelism, 1);
+    check_serial_split();
+}
+#endif
 
 TEST(PrefixSuffix, NativeForward) {
     const double path[] = {0, 0, 0.2, -0.1, 0.1, 0.3, -0.2, 0.1};
