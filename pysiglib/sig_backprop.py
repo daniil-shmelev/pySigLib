@@ -174,15 +174,12 @@ def sig_backprop(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param method: ``"auto"`` (default) uses the selection thresholds in
-        :func:`pysiglib.sig`. Use ``"horner"`` for Horner backpropagation or
-        ``"ps"`` to differentiate the prefix-suffix factors and scans with
-        BLAS or cuBLAS, including fixed corrections.
+    :param method: ``"auto"`` (default) selects the method automatically. Use ``"horner"`` for Horner's backpropagation
+        algorithm or ``"ps"`` for the prefix-suffix backpropagation algorithm.
     :type method: str
     :param ps_split: Maximum degree of a prefix in the prefix-suffix algorithm for
         ``method="ps"``, from 1 to ``degree``. The corresponding suffix has maximum
-        degree ``degree - ps_split``. The default selects the split automatically.
-        With corrections, selection estimates the work of the scans, factors and matrix products.
+        degree ``degree - ps_split``.
     :type ps_split: int | None
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
