@@ -17,12 +17,6 @@
 #include "cpsig.h"
 #include "macros.h"
 #include "cp_dispatch.h"
-#include "cp_coefficient_workspace.h"
-#include "cache_lifecycle/cp_bch_cache.h"
-#include "cache_lifecycle/cp_poly_cache.h"
-#include "cache_lifecycle/cp_branched_cache.h"
-#include "cache_lifecycle/cp_branched_log_cache.h"
-#include "cache_lifecycle/cp_branched_sig_coef_cache.h"
 
 
 namespace cpsig {
@@ -36,17 +30,6 @@ HWY_EXPORT_T(sig_coef_backprop_dispatch_f, sig_coef_backprop_dispatch_<float>);
 HWY_EXPORT_T(sig_coef_backprop_dispatch_d, sig_coef_backprop_dispatch_<double>);
 
 extern "C" {
-
-	CPSIG_API void cpsig_coefficient_workspace_start() noexcept {
-		coefficient_workspace::live = 0;
-		coefficient_workspace::peak = 0;
-		coefficient_workspace::enabled = true;
-	}
-
-	CPSIG_API uint64_t cpsig_coefficient_workspace_stop() noexcept {
-		coefficient_workspace::enabled = false;
-		return coefficient_workspace::peak.load();
-	}
 
 	CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, bool prefixes, int n_jobs, int method) noexcept {
 		if (method == 0 && length > 1) {

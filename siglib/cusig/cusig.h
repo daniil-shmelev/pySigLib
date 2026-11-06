@@ -41,14 +41,6 @@ extern "C" {
 	* @brief Returns the CUDA error message for the current thread.
 	*/
 	CUSIG_API const char* cusig_last_error_message() noexcept;
-	CUSIG_API int signature_prefix_suffix_cuda_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream) noexcept;
-	CUSIG_API int signature_prefix_suffix_cuda_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream) noexcept;
-	CUSIG_API int signature_prefix_suffix_backprop_cuda_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream) noexcept;
-	CUSIG_API int signature_prefix_suffix_backprop_cuda_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream) noexcept;
-	CUSIG_API int signature_prefix_suffix_split_cuda_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept;
-	CUSIG_API int signature_prefix_suffix_split_cuda_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept;
-	CUSIG_API int signature_prefix_suffix_backprop_split_cuda_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept;
-	CUSIG_API int signature_prefix_suffix_backprop_split_cuda_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept;
 
 	
 	/** @defgroup transform_path_cuda_functions Transform path CUDA functions
@@ -290,6 +282,27 @@ extern "C" {
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_backprop_cuda_f(const float* gram, float* out, const float* derivs, const float* k_stack, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
 	/** @copydoc branched_sig_kernel_backprop_cuda_f */
 	[[nodiscard]] CUSIG_API int branched_sig_kernel_backprop_cuda_d(const double* gram, double* out, const double* derivs, const double* k_stack, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t depth, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid = false) noexcept;
+	/** @} */
+
+	/** @defgroup prefix_suffix_cuda_functions Prefix-suffix signatures
+	* @{
+	*/
+	/** @brief Computes the truncated signature by prefix-suffix factorisation. */
+	[[nodiscard]] CUSIG_API int signature_prefix_suffix_cuda_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream) noexcept;
+	/** @copydoc signature_prefix_suffix_cuda_f */
+	[[nodiscard]] CUSIG_API int signature_prefix_suffix_cuda_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream) noexcept;
+	/** @brief Computes the path gradient by prefix-suffix backpropagation. */
+	[[nodiscard]] CUSIG_API int signature_prefix_suffix_backprop_cuda_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream) noexcept;
+	/** @copydoc signature_prefix_suffix_backprop_cuda_f */
+	[[nodiscard]] CUSIG_API int signature_prefix_suffix_backprop_cuda_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream) noexcept;
+	/** @brief Computes the signature with the given top-level prefix length. */
+	[[nodiscard]] CUSIG_API int signature_prefix_suffix_split_cuda_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept;
+	/** @copydoc signature_prefix_suffix_split_cuda_f */
+	[[nodiscard]] CUSIG_API int signature_prefix_suffix_split_cuda_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept;
+	/** @brief Computes the path gradient with the given top-level prefix length. */
+	[[nodiscard]] CUSIG_API int signature_prefix_suffix_backprop_split_cuda_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept;
+	/** @copydoc signature_prefix_suffix_backprop_split_cuda_f */
+	[[nodiscard]] CUSIG_API int signature_prefix_suffix_backprop_split_cuda_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept;
 	/** @} */
 
 	/** @defgroup signature_cuda_functions Signature CUDA functions

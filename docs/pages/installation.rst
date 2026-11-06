@@ -69,14 +69,16 @@ Clone the repository before following the source-build instructions:
 Base package (CPU only)
 +++++++++++++++++++++++++++++++
 
-This requires a C++20 compiler toolchain. The base wheel is CPU-only - it does
-not build CUDA. Use the ``pysiglib-cuda`` plugin for that (next section).
+The base package requires a C++20 toolchain. CMake downloads and builds
+OpenBLAS with Ninja for the prefix-suffix method. Pip installs Ninja in the
+isolated build environment. Install Ninja yourself for a manual CMake build.
 
 .. tab-set::
 
    .. tab-item:: Windows
 
-      Requires MSVC. Once installed, run from the repository root:
+      Install MSVC and LLVM's ``clang-cl`` compiler, which builds OpenBLAS.
+      Then run this command from the repository root:
 
       .. code-block:: console
 
@@ -113,7 +115,8 @@ the ``plugins/cuda`` subdirectory:
 
 Install both packages from the same checkout so their versions match.
 
-This requires a working CUDA toolkit (``nvcc`` on ``PATH`` or
+This requires a CUDA toolkit with the cuBLAS library and development headers
+(``nvcc`` on ``PATH`` or
 ``CUDAToolkit_ROOT`` set to its install prefix; on Linux this is typically
 ``/usr/local/cuda``, and on Windows the ``CUDA_PATH`` environment variable
 set by the NVIDIA installer is also picked up).

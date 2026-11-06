@@ -25,7 +25,6 @@
 
 #include "cp_path.h"
 #include "cp_simd-inl.h"
-#include "cp_coefficient_workspace.h"
 #include <array>
 #include <optional>
 
@@ -181,7 +180,6 @@ void sig_coef_(
 
 	T* out_ptr = out;
 
-	coefficient_workspace::Allocation allocation((3 * max_degree + 2) * sizeof(T));
 	auto workspace = std::make_unique<T[]>(3 * max_degree + 2);
 	T* incr = workspace.get();
 	T* one_over_fact = incr + max_degree;
@@ -256,7 +254,6 @@ void sig_coef_(
 				if (multi_idx[i] >= dummy_path_obj.dimension())
 					throw std::invalid_argument("sig_coef: multi_idx element out of range");
 			constexpr uint64_t stack_degree = 20;
-			coefficient_workspace::Allocation factors_allocation((stack_degree + 1 + (max_degree > stack_degree ? max_degree + 1 : 0)) * sizeof(T));
 			std::array<T, stack_degree + 1> local_one_over_fact;
 			std::vector<T> heap_one_over_fact;
 			if (max_degree > stack_degree)
@@ -269,7 +266,6 @@ void sig_coef_(
 			const uint64_t groups = (batch_size + lanes - 1) / lanes;
 			auto work_range = [&](uint64_t start, uint64_t end) HWY_ATTR {
 				const Simd<T> d;
-				coefficient_workspace::Allocation allocation(((2 * stack_degree + 1) * lanes + (max_degree > stack_degree ? (2 * max_degree + 1) * lanes : 0)) * sizeof(T));
 				std::array<T, (2 * stack_degree + 1) * lanes> local_workspace;
 				std::vector<T> heap_workspace;
 				if (max_degree > stack_degree)
@@ -468,7 +464,10 @@ FORCE_INLINE void single_sig_coef_backprop_(
 			incr[i] = next_pt[idx] - prev_pt[idx];
 		}
 
-		uncombine_coefs_(coefs, incr, degree, signed_one_over_fact);
+		if (prev_pt == first_pt)
+			std::fill_n(coefs + 1, degree, T(0));
+		else
+			uncombine_coefs_(coefs, incr, degree, signed_one_over_fact);
 
 		backprop_horner_(multi_idx, degree, coefs, incr, states, incr_derivs, derivs, one_over_fact,
 			data_dimension, pre_time_aug_dim, lead_lag, parity, pos, neg);
@@ -586,7 +585,6 @@ void sig_coef_backprop_(
 
 	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time);
 
-	coefficient_workspace::Allocation allocation((6 * max_degree + 3) * sizeof(T));
 	auto workspace = std::make_unique<T[]>(6 * max_degree + 3);
 	T* one_over_fact = workspace.get();
 	T* signed_one_over_fact = one_over_fact + max_degree + 1;

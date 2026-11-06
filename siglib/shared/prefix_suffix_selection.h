@@ -22,11 +22,7 @@ struct Choice { uint64_t a = 0, block = 0; };
 
 inline bool automatic() {
     using prefix_suffix::option;
-    return option("PYSIGLIB_PS_DISPATCH", 1, true)
-        && option("PYSIGLIB_PS_SPLIT_A", UINT64_MAX, true) == UINT64_MAX
-        && option("PYSIGLIB_PS_ENDPOINT_BLOCK", UINT64_MAX, true) == UINT64_MAX
-        && option("PYSIGLIB_PS_SCAN_DEGREE", UINT64_MAX, true) == UINT64_MAX
-        && !option("PYSIGLIB_PS_CPU_STRATEGY", 0, true)
+    return option("PYSIGLIB_PS_ENDPOINT_BLOCK", UINT64_MAX, true) == UINT64_MAX
         && !option("PYSIGLIB_PS_WORKSPACE_BYTES", 0, true);
 }
 

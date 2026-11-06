@@ -39,7 +39,8 @@ namespace cpsig {
 namespace HWY_NAMESPACE {
 using namespace prefix_suffix;
 namespace {
-enum class PreparationStrategy : uint64_t { automatic, stored, direct, streamed };
+constexpr uint64_t parallel_threshold = 262144;
+enum class PreparationStrategy { stored, direct, streamed };
 
 struct StreamGroup {
     uint64_t level = 0, a = 0, b = 0, p = 0, q = 0, qnext = 0;
@@ -62,12 +63,9 @@ struct CpuPlan {
         rows = std::max<uint64_t>(1, std::min(mul(n, l.left_degree(l.m)), factor_bytes / mul(add(maxp, maxq), itemsize)));
         const uint64_t stored_rows = rows;
         side = tile_side(maxp, maxq, rows, option("PYSIGLIB_PS_MAX_TILE", 4096));
-        low = option("PYSIGLIB_PS_LOW_DEPTH", 1, true) != 0 && l.m <= 6;
-        paired = !l.split_a && option("PYSIGLIB_PS_PAIR_LEVELS", 1, true) != 0;
+        low = l.m <= 6;
+        paired = !l.split_a;
         specialized = !l.split_a && low && (l.d == 2 || l.d == 3 || l.d == 4 || l.d == 8);
-        const uint64_t requested_strategy = option("PYSIGLIB_PS_CPU_STRATEGY", 0, true);
-        if (requested_strategy > uint64_t(PreparationStrategy::streamed))
-            throw std::invalid_argument("PYSIGLIB_PS_CPU_STRATEGY must be 0, 1, 2, or 3");
         const bool direct_eligible = specialized && l.scan_degree == l.h && l.scan_degree == 1
             && (l.m == 2 || l.m == 3);
         const bool stream_shape_eligible = specialized && l.scan_degree == l.h && l.m >= 4 && l.m <= 6;
@@ -76,16 +74,9 @@ struct CpuPlan {
             || (l.d == 3 && (l.m >= 5 || batch >= 32))
             || (l.d == 4 && (l.m >= 5 || itemsize == sizeof(double) || batch >= 32))
             || (l.d == 8 && (l.m >= 5 || itemsize == sizeof(float) || batch >= 32)));
-        if (requested_strategy == uint64_t(PreparationStrategy::direct) && !direct_eligible)
-            throw std::invalid_argument("forced direct CPU prefix-suffix preparation is not available for this shape");
-        if (requested_strategy == uint64_t(PreparationStrategy::streamed) && !stream_shape_eligible)
-            throw std::invalid_argument("forced streamed CPU prefix-suffix preparation is not available for this shape");
-        if (requested_strategy == uint64_t(PreparationStrategy::stored)) strategy = PreparationStrategy::stored;
-        else if (requested_strategy == uint64_t(PreparationStrategy::streamed)) strategy = PreparationStrategy::streamed;
-        else if (direct_eligible) strategy = PreparationStrategy::direct;
+        if (direct_eligible) strategy = PreparationStrategy::direct;
         else if (automatic_stream) strategy = PreparationStrategy::streamed;
-        const bool fusion_requested = option("PYSIGLIB_PS_FUSION", 1, true) != 0;
-        fused = specialized && fusion_requested && l.power[l.m] <= 1024 && (jobs == 1 || mul(n, l.power[l.m]) < 65536);
+        fused = specialized && l.power[l.m] <= 1024 && (jobs == 1 || mul(n, l.power[l.m]) < 65536);
         if (strategy != PreparationStrategy::stored) { fused = false; rows = 0; }
         if (fused) rows = 0;
         scratch = strategy != PreparationStrategy::stored ? 0
@@ -111,7 +102,7 @@ struct CpuPlan {
                 strategy = PreparationStrategy::stored;
                 stream_group_count = stream_elements_per_segment = 0;
                 rows = stored_rows;
-                fused = specialized && fusion_requested && l.power[l.m] <= 1024
+                fused = specialized && l.power[l.m] <= 1024
                     && (jobs == 1 || mul(n, l.power[l.m]) < 65536);
                 if (fused) rows = 0;
                 scratch = (std::max({maxp, maxq, rows}) > INT_MAX)
@@ -839,8 +830,7 @@ void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, ui
     }
     if (openblas_get_parallel() != 0)
         throw std::runtime_error("prefix-suffix requires sequential OpenBLAS built with USE_THREAD=0 and USE_LOCKING=1");
-    const int path_jobs = option("PYSIGLIB_PS_CPU_INTERNAL_THREADS", 1, true)
-        && mul(points - 1, l.power[degree]) >= option("PYSIGLIB_PS_CPU_PARALLEL_THRESHOLD", 262144, true)
+    const int path_jobs = mul(points - 1, l.power[degree]) >= parallel_threshold
         ? std::max(1, jobs / static_cast<int>(std::min<uint64_t>(batch, jobs))) : 1;
     const CpuBackpropPlan plan(l, points - 1, path_jobs, sizeof(T));
     const uint64_t budget = option("PYSIGLIB_PS_WORKSPACE_BYTES", 2ULL << 30);
@@ -924,10 +914,7 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
         }
     }
     const uint64_t work_proxy = mul(points - 1, l.power[degree]);
-    const bool internal_threads = option("PYSIGLIB_PS_CPU_INTERNAL_THREADS", 1, true) != 0;
-    const uint64_t parallel_threshold = option("PYSIGLIB_PS_CPU_PARALLEL_THRESHOLD", 262144, true);
-    const uint64_t parallel_segments = option("PYSIGLIB_PS_CPU_MIN_PARALLEL_SEGMENTS", 256, true);
-    const int path_jobs = internal_threads && points - 1 >= parallel_segments && work_proxy >= parallel_threshold
+    const int path_jobs = points - 1 >= 256 && work_proxy >= parallel_threshold
         ? available_path_jobs : 1;
     const CpuPlan plan(l, points - 1, batch, path_jobs, sizeof(T));
     const uint64_t bytes = plan.bytes;

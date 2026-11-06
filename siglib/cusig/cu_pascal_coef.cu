@@ -19,7 +19,6 @@
 #include "cu_atomic.h"
 #include "cu_sig_coef.h"
 #include "pascal_coefficient.h"
-#include "pascal_selection.h"
 
 namespace pascal_coefficient {
 #include "pascal_coefficient-inl.h"
@@ -29,7 +28,6 @@ namespace {
 namespace pc = pascal_coefficient;
 
 struct DegreeGroup { uint64_t begin, count, degree; };
-thread_local uint64_t last_workspace_bytes = 0;
 
 // Adjacent jobs store each checkpoint row at adjacent addresses.
 template<class T>
@@ -40,31 +38,11 @@ struct CheckpointView {
     __device__ CheckpointView operator+(uint64_t i) const { return {data + i * stride, stride}; }
 };
 
-bool calibrated_cuda() {
-#if defined(_MSC_VER) && _MSC_VER == 1944 && __CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ == 9
-    int device = 0;
-    CUDA_CHECK(cudaGetDevice(&device));
-    static thread_local int cached_device = -1;
-    static thread_local bool calibrated = false;
-    if (device != cached_device) {
-        cudaDeviceProp properties{};
-        CUDA_CHECK(cudaGetDeviceProperties(&properties, device));
-        calibrated = properties.major == 8 && properties.minor == 9 && properties.multiProcessorCount == 24
-            && std::strcmp(properties.name, "NVIDIA GeForce RTX 4060 Laptop GPU") == 0;
-        cached_device = device;
-    }
-    return calibrated;
-#else
-    return false;
-#endif
-}
-
 template<class T>
 struct Access {
     const T* path;
     T* out;
     const T* deriv;
-    const T* coefs;
     const uint64_t* word;
     uint64_t dimension, n;
     bool ta, ll, independent;
@@ -119,7 +97,7 @@ struct Access {
 };
 
 template<class T, int Mode, bool Backward, int Degree = 0>
-__global__ void coefficient_kernel(const T* __restrict__ path, T* __restrict__ out, const T* __restrict__ coefs, const T* __restrict__ deriv,
+__global__ void coefficient_kernel(const T* __restrict__ path, T* __restrict__ out, const T* __restrict__ deriv,
     const uint64_t* __restrict__ metadata, uint64_t words, uint64_t width, uint64_t dimension, uint64_t length,
     uint64_t n, bool ta, bool ll, T time, bool prefixes, uint64_t offset, uint64_t work,
     T* __restrict__ checkpoints, uint64_t checkpoint_stride, uint64_t block, uint64_t blocks, int* __restrict__ failed,
@@ -129,9 +107,9 @@ __global__ void coefficient_kernel(const T* __restrict__ path, T* __restrict__ o
     if (local >= work) return;
     const uint64_t job = offset + local, sample = job / group_count, w = metadata[order_offset + group_begin + job % group_count];
     const uint64_t m = Degree ? Degree : metadata[w], output_offset = metadata[2 * words + w];
-    Access<T> access{path + sample * length * dimension, out + sample * length * dimension,
+    Access<T> access{length ? path + sample * length * dimension : path,
+        Backward && length ? out + sample * length * dimension : nullptr,
         deriv ? deriv + sample * width + output_offset : nullptr,
-        coefs ? coefs + sample * width + output_offset : nullptr,
         metadata + 3 * words + metadata[words + w], dimension, n, ta, ll, words == 1, time};
     if constexpr (Backward) { if (!m || !n) return; }
     uint64_t channels[Degree ? Degree : 1];
@@ -160,12 +138,12 @@ __global__ void coefficient_kernel(const T* __restrict__ path, T* __restrict__ o
 }
 
 template<class T, int Mode, bool Backward>
-void launch(const T* path, T* out, const T* coefs, const T* deriv, const uint64_t* metadata,
+void launch(const T* path, T* out, const T* deriv, const uint64_t* metadata,
     const pc::Words& words, uint64_t dimension, uint64_t length, uint64_t n, bool ta, bool ll, T time,
     bool prefixes, uint64_t offset, uint64_t work, T* checkpoints, const pc::Checkpoints& plan,
     int* failed, cudaStream_t stream, unsigned int threads, uint64_t order_offset, const DegreeGroup& group) {
     const unsigned int grid = static_cast<unsigned int>((work + threads - 1) / threads);
-#define PASCAL_LAUNCH(M) coefficient_kernel<T, Mode, Backward, M><<<grid, threads, 0, stream>>>(path, out, coefs, deriv, metadata, words.count, words.width, dimension, length, n, ta, ll, time, prefixes, offset, work, checkpoints, plan.count, plan.block, plan.blocks, failed, order_offset, group.begin, group.count)
+#define PASCAL_LAUNCH(M) coefficient_kernel<T, Mode, Backward, M><<<grid, threads, 0, stream>>>(path, out, deriv, metadata, words.count, words.width, dimension, length, n, ta, ll, time, prefixes, offset, work, checkpoints, plan.count, plan.block, plan.blocks, failed, order_offset, group.begin, group.count)
 #define PASCAL_CUDA_CASE(M) case M: PASCAL_LAUNCH(M); break
     if constexpr (Mode == pc::guarded) { PASCAL_LAUNCH(0); }
     else switch (group.degree) {
@@ -333,28 +311,27 @@ __global__ void coefficient_warp_backward(const T* __restrict__ path, T* __restr
     if (!__all_sync(mask, valid) && !lane) atomicExch(failed, 1);
 }
 
+} // namespace
+
 template<class T, bool Backward>
-void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, const uint64_t* indices,
+void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deriv, const uint64_t* indices,
     uint64_t count, const uint64_t* degrees, uint64_t batch, uint64_t dimension, uint64_t length,
     bool ta, bool ll, T time, bool prefixes, int method, void* stream_ptr) {
-    last_workspace_bytes = 0;
+    // Only CPU has a calibrated Pascal region for automatic selection.
+    if (method == pc::horner || method == pc::automatic) {
+        sig_coef_horner_cuda<T, Backward>(path, out, coefs, deriv, indices, count, degrees, batch,
+            dimension, length, ta, ll, time, prefixes, method == pc::horner && !ta && !ll, stream_ptr);
+        return;
+    }
     pc::Words words(indices, degrees, count, pc::add(pc::mul(dimension, ll ? 2 : 1), ta ? 1 : 0), Backward || prefixes);
     if (words.max_degree > 20) throw std::invalid_argument("CUDA coefficients support word lengths through 20");
     const uint64_t n = length > 1 ? pc::mul(length - 1, ll ? 2 : 1) : 0;
     const uint64_t jobs = pc::mul(batch, count);
     const uint64_t output_elements = Backward ? pc::mul(batch, pc::mul(length, dimension)) : pc::mul(batch, words.width);
     const uint64_t output_bytes = pc::mul(output_elements, sizeof(T));
-    pc::variant(method, words.max_degree);
+    int mode = pc::variant(method, words.max_degree);
     if (!batch) return;
     const auto stream = static_cast<cudaStream_t>(stream_ptr);
-    int mode = pc::variant(method, words.max_degree);
-    if (method == pc::horner || (method == pc::automatic && !(pascal_selection::cuda_region<T>(
-        words, batch, dimension, n, jobs, ta, ll, true) && calibrated_cuda()))) mode = pc::horner;
-    if (mode == pc::horner) {
-        sig_coef_horner_cuda<T, Backward>(path, out, coefs, deriv, indices, count, degrees, batch,
-            dimension, length, ta, ll, time, prefixes, false, stream_ptr);
-        return;
-    }
     const uint64_t order_offset = words.packed.size();
     words.packed.resize(pc::add(order_offset, count));
     for (uint64_t w = 0; w < count; ++w) words.packed[order_offset + w] = w;
@@ -367,8 +344,7 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
         groups.push_back({begin, end - begin, degree});
         begin = end;
     }
-    const uint64_t cutoff = pc::environment_option("PYSIGLIB_PASCAL_BENCH_CHECKPOINT", 64);
-    const pc::Checkpoints plan(n, words.max_degree, cutoff);
+    const pc::Checkpoints plan(n, words.max_degree);
     const uint64_t row = Backward && n > 1 ? plan.count : 0;
     const uint64_t budget = pc::workspace_limit();
     const uint64_t state = words.max_degree + 1;
@@ -378,12 +354,9 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
     const uint64_t capacity = std::min<uint64_t>({jobs, budget / job_bytes, 65535ULL * 64});
     CudaBatchWorkspace<T> workspace(capacity, row, "Pascal coefficients");
     CudaBuf<uint64_t> device_words(pc::mul(pc::add(words.packed.size(), 1), sizeof(uint64_t)));
-    last_workspace_bytes = pc::add(pc::mul(pc::mul(workspace.capacity(), row), sizeof(T)), pc::mul(pc::add(words.packed.size(), 1), sizeof(uint64_t)));
     int* device_failed = reinterpret_cast<int*>(device_words.get() + words.packed.size());
-    const unsigned int threads = static_cast<unsigned int>(pc::environment_option("PYSIGLIB_PASCAL_BENCH_THREADS", 64));
-    if (threads != 32 && threads != 64 && threads != 128 && threads != 256) throw std::invalid_argument("Pascal CUDA block size must be 32, 64, 128 or 256");
-    const bool warp_default = words.max_degree >= 8 && (jobs <= 512 || (sizeof(T) == 4 && words.max_degree >= 16));
-    const bool warp = Backward && n > 1 && pc::environment_option("PYSIGLIB_PASCAL_BENCH_WARP", warp_default);
+    constexpr unsigned int threads = 64;
+    const bool warp = Backward && n > 1 && words.max_degree >= 8 && (jobs <= 512 || (sizeof(T) == 4 && words.max_degree >= 16));
     try {
         CUDA_CHECK(cudaMemcpyAsync(device_words.get(), words.packed.data(), words.packed.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
         for (;;) {
@@ -391,7 +364,7 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
             CUDA_CHECK(cudaMemsetAsync(device_failed, 0, sizeof(int), stream));
             for (const auto& group : groups) for (uint64_t offset = 0; offset < batch * group.count;) {
                 const uint64_t work = std::min<uint64_t>(workspace.capacity(), batch * group.count - offset);
-#define PASCAL_RUN(MODE) launch<T, MODE, Backward>(path, out, coefs, deriv, device_words.get(), words, dimension, length, n, ta, ll, time, prefixes, offset, work, workspace.get(), plan, device_failed, stream, threads, order_offset, group)
+#define PASCAL_RUN(MODE) launch<T, MODE, Backward>(path, out, deriv, device_words.get(), words, dimension, length, n, ta, ll, time, prefixes, offset, work, workspace.get(), plan, device_failed, stream, threads, order_offset, group)
                 if (warp && mode != pc::guarded) {
                     const unsigned int lanes = sizeof(T) == 4 && work <= 256 && group.degree > 0 && group.degree < 16
                         ? (group.degree < 4 ? 4 : group.degree < 8 ? 8 : 16) : 32;
@@ -431,16 +404,6 @@ void coefficient_cuda(const T* path, T* out, const T* coefs, const T* deriv, con
         throw;
     }
 }
-} // namespace
-
-template<class T, bool Backward>
-void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deriv,
-    const uint64_t* indices, uint64_t words, const uint64_t* degrees, uint64_t batch,
-    uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time,
-    bool prefixes, int method, void* stream) {
-    coefficient_cuda<T, Backward>(path, out, coefs, deriv, indices, words, degrees,
-        batch, dimension, length, time_aug, lead_lag, end_time, prefixes, method, stream);
-}
 
 #define INSTANTIATE_PASCAL_CUDA(T, B) \
 template void sig_coef_dispatch_cuda<T, B>(const T*, T*, const T*, const T*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, T, bool, int, void*)
@@ -449,7 +412,3 @@ INSTANTIATE_PASCAL_CUDA(float, true);
 INSTANTIATE_PASCAL_CUDA(double, false);
 INSTANTIATE_PASCAL_CUDA(double, true);
 #undef INSTANTIATE_PASCAL_CUDA
-
-extern "C" {
-CUSIG_API uint64_t cusig_coefficient_workspace_bytes() noexcept { return last_workspace_bytes; }
-}

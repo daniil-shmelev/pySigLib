@@ -686,10 +686,10 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
     const uint64_t maxp = l.power[l.left_degree(degree)], maxq = l.power[l.right_degree(degree)];
     uint64_t rows = std::max<uint64_t>(1, std::min(mul(n, l.left_degree(degree)), option("PYSIGLIB_PS_FACTOR_BYTES", 128ULL << 20) / mul(add(maxp, maxq), sizeof(T))));
     const uint64_t maxside = tile_side(maxp, maxq, rows, option("PYSIGLIB_PS_MAX_TILE", 4096));
-    const bool low = option("PYSIGLIB_PS_LOW_DEPTH", 1, true) != 0 && degree <= 6;
+    const bool low = degree <= 6;
     const bool specialized = !l.split_a && low && (d == 2 || d == 3 || d == 4 || d == 8);
-    const bool fused = specialized && option("PYSIGLIB_PS_FUSION", 1, true) != 0 && l.power[degree] <= 1024;
-    const bool pair_levels = !l.split_a && option("PYSIGLIB_PS_PAIR_LEVELS", 1, true) != 0;
+    const bool fused = specialized && l.power[degree] <= 1024;
+    const bool pair_levels = !l.split_a;
     const bool coefficient_factors = option("PYSIGLIB_PS_COEFFICIENT_FACTORS", 1, true) != 0;
     const FactorCoefficients<T> coefficients;
     const uint64_t contract_chunks = (n - 1) / 256 + 1;

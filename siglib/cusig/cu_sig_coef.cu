@@ -191,8 +191,12 @@ __global__ void sig_coef_backprop_kernel_fixed_degree(
 		for (uint64_t i = 0; i < DEGREE; ++i)
 			dx[i] = point(t, ch[i]) - point(t - 1, ch[i]);
 
-		// Reconstruct the previous prefixes using Chen's inverse relation.
-		{
+		// The signature before the first segment is the tensor unit.
+		if (t == 1) {
+			#pragma unroll
+			for (uint64_t i = 1; i <= DEGREE; ++i)
+				c[i] = T(0);
+		} else {
 			T last_c = c[0];
 			#pragma unroll
 			for (uint64_t i = 1; i <= DEGREE; ++i) {
@@ -384,34 +388,18 @@ INSTANTIATE_HORNER(double, true);
 
 extern "C" {
 	CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug, bool lead_lag, float end_time, int method, void* stream) noexcept {
-		if (method == 0) {
-			CUDA_SAFE_CALL((sig_coef_horner_cuda<float, false>(path, out, nullptr, nullptr, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, !time_aug && !lead_lag, stream)));
-		} else {
-			CUDA_SAFE_CALL((sig_coef_dispatch_cuda<float, false>(path, out, nullptr, nullptr, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, method, stream)));
-		}
+		CUDA_SAFE_CALL((sig_coef_dispatch_cuda<float, false>(path, out, nullptr, nullptr, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, method, stream)));
 	}
 
 	CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, int method, void* stream) noexcept {
-		if (method == 0) {
-			CUDA_SAFE_CALL((sig_coef_horner_cuda<float, true>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, true, !time_aug && !lead_lag, stream)));
-		} else {
-			CUDA_SAFE_CALL((sig_coef_dispatch_cuda<float, true>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, true, method, stream)));
-		}
+		CUDA_SAFE_CALL((sig_coef_dispatch_cuda<float, true>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, true, method, stream)));
 	}
 
 	CUSIG_API int sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug, bool lead_lag, double end_time, int method, void* stream) noexcept {
-		if (method == 0) {
-			CUDA_SAFE_CALL((sig_coef_horner_cuda<double, false>(path, out, nullptr, nullptr, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, !time_aug && !lead_lag, stream)));
-		} else {
-			CUDA_SAFE_CALL((sig_coef_dispatch_cuda<double, false>(path, out, nullptr, nullptr, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, method, stream)));
-		}
+		CUDA_SAFE_CALL((sig_coef_dispatch_cuda<double, false>(path, out, nullptr, nullptr, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, method, stream)));
 	}
 
 	CUSIG_API int sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, int method, void* stream) noexcept {
-		if (method == 0) {
-			CUDA_SAFE_CALL((sig_coef_horner_cuda<double, true>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, true, !time_aug && !lead_lag, stream)));
-		} else {
-			CUDA_SAFE_CALL((sig_coef_dispatch_cuda<double, true>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, true, method, stream)));
-		}
+		CUDA_SAFE_CALL((sig_coef_dispatch_cuda<double, true>(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, true, method, stream)));
 	}
 }

@@ -85,12 +85,9 @@ constexpr int small_offset(int d, int k) {
 struct Layout {
     uint64_t d, m, h, scan_degree, prefix_degree, split_a = 0;
     std::vector<uint64_t> power, offset;
-    Layout(uint64_t dimension, uint64_t degree, uint64_t requested_a = 0) : d(dimension), m(degree), h(degree / 2), prefix_degree(degree / 2 + degree % 2 - (degree != 0)) {
+    Layout(uint64_t dimension, uint64_t degree, uint64_t requested_a = 0) : d(dimension), m(degree), h(degree / 2), scan_degree(h), prefix_degree(degree / 2 + degree % 2 - (degree != 0)) {
         if (!d) throw std::invalid_argument("invalid prefix-suffix dimension");
         const uint64_t count = add(m, 2);
-        scan_degree = requested_a ? h : option("PYSIGLIB_PS_SCAN_DEGREE", h, true);
-        if (scan_degree < h || scan_degree > m)
-            throw std::invalid_argument("PYSIGLIB_PS_SCAN_DEGREE must be between floor(depth/2) and depth");
         mul(count, sizeof(uint64_t));
         if (d > 1 && m >= 64) throw std::overflow_error("prefix-suffix tensor power overflow");
         power.resize(count - 1);
@@ -100,8 +97,7 @@ struct Layout {
             if (k) power[k] = mul(power[k - 1], d);
             offset[k + 1] = add(offset[k], power[k]);
         }
-        if (!requested_a) set_split(option("PYSIGLIB_PS_SPLIT_A", 0, true));
-        else if (requested_a != m - h) set_split(requested_a);
+        if (requested_a && requested_a != m - h) set_split(requested_a);
     }
     void set_split(uint64_t a) {
         if (a > m) throw std::invalid_argument("prefix-suffix split exceeds degree");

@@ -40,14 +40,6 @@ extern "C" {
 	* @brief Returns the CPU error message for the current thread.
 	*/
 	CPSIG_API const char* cpsig_last_error_message() noexcept;
-	CPSIG_API int signature_prefix_suffix_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs) noexcept;
-	CPSIG_API int signature_prefix_suffix_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs) noexcept;
-	CPSIG_API int signature_prefix_suffix_backprop_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs) noexcept;
-	CPSIG_API int signature_prefix_suffix_backprop_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs) noexcept;
-	CPSIG_API int signature_prefix_suffix_split_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
-	CPSIG_API int signature_prefix_suffix_split_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
-	CPSIG_API int signature_prefix_suffix_backprop_split_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
-	CPSIG_API int signature_prefix_suffix_backprop_split_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
 
 	/** @defgroup transform_path_functions Transform path functions
 	* @{
@@ -270,8 +262,8 @@ extern "C" {
 	*
 	* @param path Pointer to path data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (preallocated), size = `batch_size * length * dimension`.
-	* @param coefs Pointer to coefficients computed using `sig_coef` with `prefixes=true`, size = `batch_size * sum(degrees[i])`.
-	* @param derivs Pointer to derivatives with respect to coefficients, size = `batch_size * sum(degrees[i])`. Method 0 may modify this buffer in-place.
+	* @param coefs Pointer to coefficients computed using `sig_coef` with `prefixes=true`, size = `batch_size * sum(max(1, degrees[i]))`.
+	* @param derivs Pointer to derivatives with respect to coefficients, size = `batch_size * sum(max(1, degrees[i]))`. Method 0 may modify this buffer in-place.
 	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
 	* @param num_multi_idx Number of multi indices.
 	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.
@@ -290,6 +282,27 @@ extern "C" {
 	[[nodiscard]] CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1, int method = 0) noexcept;
 	/** @copydoc sig_coef_backprop_f */
 	[[nodiscard]] CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1, int method = 0) noexcept;
+	/** @} */
+
+	/** @defgroup prefix_suffix_functions Prefix-suffix signatures
+	* @{
+	*/
+	/** @brief Computes the truncated signature by prefix-suffix factorisation. */
+	[[nodiscard]] CPSIG_API int signature_prefix_suffix_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs) noexcept;
+	/** @copydoc signature_prefix_suffix_f */
+	[[nodiscard]] CPSIG_API int signature_prefix_suffix_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs) noexcept;
+	/** @brief Computes the path gradient by prefix-suffix backpropagation. */
+	[[nodiscard]] CPSIG_API int signature_prefix_suffix_backprop_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs) noexcept;
+	/** @copydoc signature_prefix_suffix_backprop_f */
+	[[nodiscard]] CPSIG_API int signature_prefix_suffix_backprop_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs) noexcept;
+	/** @brief Computes the signature with the given top-level prefix length. */
+	[[nodiscard]] CPSIG_API int signature_prefix_suffix_split_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
+	/** @copydoc signature_prefix_suffix_split_f */
+	[[nodiscard]] CPSIG_API int signature_prefix_suffix_split_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
+	/** @brief Computes the path gradient with the given top-level prefix length. */
+	[[nodiscard]] CPSIG_API int signature_prefix_suffix_backprop_split_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
+	/** @copydoc signature_prefix_suffix_backprop_split_f */
+	[[nodiscard]] CPSIG_API int signature_prefix_suffix_backprop_split_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
 	/** @} */
 
 	/** @defgroup signature_functions Signature functions

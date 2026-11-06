@@ -1697,30 +1697,6 @@ def sig_coef(
     n_jobs: int = 1,
     method = None,
 ):
-    """Compute signature coefficients at specific words using JAX.
-
-    The method paths use native coefficient FFI and a custom VJP.
-    Word metadata and method options are static under JIT compilation.
-
-    :param path: Path or batch of paths, shape ``(length, dim)`` or ``(batch, length, dim)``.
-    :type path: jax.Array
-    :param words: Word or list of words, e.g. ``(1, 2)`` or ``[(0,), (1, 0)]``.
-    :type words: tuple[int, ...] | list[tuple[int, ...]]
-    :param time_aug: Whether to apply time augmentation.
-    :type time_aug: bool
-    :param lead_lag: Whether to apply lead-lag transformation.
-    :type lead_lag: bool
-    :param end_time: End time for time augmentation.
-    :type end_time: float
-    :param prefixes: If True, also return coefficients at all prefixes of each word.
-    :type prefixes: bool
-    :param n_jobs: Number of threads for CPU computation.
-    :type n_jobs: int
-    :param method: ``None`` or ``"horner"`` uses Horner's method. ``"pascal"`` uses Pascal
-        factorisation. ``"auto"`` selects between them for measured workloads.
-    :type method: str | None
-    :return: Signature coefficients at the requested words.
-    """
     ensure_registered()
 
     path = jnp.asarray(path)

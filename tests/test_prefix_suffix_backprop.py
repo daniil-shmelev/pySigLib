@@ -46,7 +46,7 @@ def chen_reference(path, degree, time_aug=False, lead_lag=False, end_time=1.):
     return torch.cat(state)
 
 
-@pytest.mark.parametrize("device,dtype,scalar", product(DEVICES, (torch.float32, torch.float64), (False, True)))
+@pytest.mark.parametrize("device,dtype,scalar", list(product(DEVICES, (torch.float32, torch.float64), (False, True))))
 @pytest.mark.parametrize("dimension,degree", [(1, 12), (2, 2), (3, 3), (4, 4), (3, 5), (2, 8), (8, 6)])
 def test_matches_horner(device, dtype, scalar, dimension, degree):
     rng = np.random.default_rng(701)
@@ -60,7 +60,7 @@ def test_matches_horner(device, dtype, scalar, dimension, degree):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-@pytest.mark.parametrize("time_aug,lead_lag,scalar", product((False, True), repeat=3))
+@pytest.mark.parametrize("time_aug,lead_lag,scalar", list(product((False, True), repeat=3)))
 def test_chen_and_torch_autograd(device, time_aug, lead_lag, scalar):
     rng = np.random.default_rng(702)
     path = torch.tensor(rng.normal(size=(7, 2)) * 0.2, dtype=torch.float64, device=device, requires_grad=True)
@@ -95,17 +95,16 @@ def test_empty_batch(device, batch_shape):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-@pytest.mark.parametrize("rows,scan_degree", [(1, 3), (5, 4), (7, 6)])
-def test_blocks_and_scan_overrides(monkeypatch, device, rows, scan_degree):
+@pytest.mark.parametrize("rows,a", [(1, 3), (5, 2), (7, 6)])
+def test_blocks_and_splits(monkeypatch, device, rows, a):
     rng = np.random.default_rng(703)
     path = torch.tensor(rng.normal(size=(3, 8, 3)) * 0.05, dtype=torch.float64, device=device)
     sig = pysiglib.sig(path, 6)
     deriv = torch.tensor(rng.normal(size=sig.shape), dtype=path.dtype, device=device)
     expected = pysiglib.sig_backprop(path, sig, deriv, 6)
     monkeypatch.setenv("PYSIGLIB_PS_FACTOR_BYTES", str(rows * 2 * (27 + 27) * 8))
-    monkeypatch.setenv("PYSIGLIB_PS_SCAN_DEGREE", str(scan_degree))
     monkeypatch.setenv("PYSIGLIB_PS_SCAN_CHUNK", "3")
-    actual = pysiglib.sig_backprop(path, sig, deriv, 6, method=METHOD, n_jobs=3)
+    actual = pysiglib.sig_backprop(path, sig, deriv, 6, method=METHOD, ps_split=(a, 6 - a), n_jobs=3)
     torch.testing.assert_close(actual, expected, atol=1e-10, rtol=1e-10)
 
 
@@ -127,10 +126,9 @@ def test_noncontiguous_and_workspace(monkeypatch, device):
 
 @pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA is unavailable")
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-@pytest.mark.parametrize("segments,chunk,scan_degree", [(1, 1, 3), (15, 16, 3), (16, 16, 3),
-    (17, 16, 3), (33, 1, 3), (65, 3, 3), (129, 64, 3), (33, 3, 7)])
-def test_cuda_adjoint_scan_chunks(monkeypatch, dtype, segments, chunk, scan_degree):
-    degree = max(6, scan_degree)
+@pytest.mark.parametrize("segments,chunk", [(1, 1), (15, 16), (16, 16), (17, 16), (33, 1), (65, 3), (129, 64)])
+def test_cuda_adjoint_scan_chunks(monkeypatch, dtype, segments, chunk):
+    degree = 6
     rng = np.random.default_rng(708)
     values = rng.normal(size=(2, segments + 1, 3)).cumsum(axis=1) * (0.1 / np.sqrt(segments))
     path = torch.tensor(values, dtype=dtype, device="cuda")
@@ -140,7 +138,6 @@ def test_cuda_adjoint_scan_chunks(monkeypatch, dtype, segments, chunk, scan_degr
     reference_sig = pysiglib.sig(reference_path, degree, scalar_term=True)
     expected = pysiglib.sig_backprop(reference_path, reference_sig, deriv.cpu().double().numpy(), degree)
     monkeypatch.setenv("PYSIGLIB_PS_SCAN_CHUNK", str(chunk))
-    monkeypatch.setenv("PYSIGLIB_PS_SCAN_DEGREE", str(scan_degree))
     actual = pysiglib.sig_backprop(path, sig, deriv, degree, method=METHOD)
     tolerance = 1e-4 if dtype == torch.float32 else 1e-10
     np.testing.assert_allclose(actual.cpu().numpy(), expected, atol=tolerance, rtol=tolerance)
@@ -201,7 +198,7 @@ def test_concurrent_calls_and_cleanup(device):
         torch.testing.assert_close(run(0), expected, atol=1e-10, rtol=1e-10)
 
 
-@pytest.mark.parametrize("time_aug,lead_lag,scalar", product((False, True), repeat=3))
+@pytest.mark.parametrize("time_aug,lead_lag,scalar", list(product((False, True), repeat=3)))
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_jax_grad_jit_vmap(time_aug, lead_lag, scalar, dtype):
     jax = pytest.importorskip("jax")

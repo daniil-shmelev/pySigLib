@@ -149,8 +149,8 @@ def sig_coef(
     :type end_time: float
     :param prefixes: If ``True``, will additionally return all prefixes of signature coefficients.
         These prefixes are extracted for free as a by-product of the computation.
-        For example, passing ``word=[(1,2), (3,2,1)]`` with ``prefixes=True`` returns an
-        output equivalent to passing ``word=[(1,), (1,2), (3,), (3,2), (3,2,1)]`` with ``prefixes=False``.
+        For example, passing ``words=[(1,2), (3,2,1)]`` with ``prefixes=True`` returns an
+        output equivalent to passing ``words=[(1,), (1,2), (3,), (3,2), (3,2,1)]`` with ``prefixes=False``.
     :type prefixes: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
@@ -160,8 +160,9 @@ def sig_coef(
         Pascal factorisation. ``"auto"`` selects a method from measured workload
         regions and otherwise uses Horner. CUDA supports words through length 20.
     :type method: str | None
-    :return: Signature coefficients of shape ``(..., num_words)``, matching the leading
-        batch dimensions of ``path``.
+    :return: Signature coefficients with the leading batch dimensions of ``path``.
+        The last axis has one entry per word, or ``sum(max(1, len(w)) for w in words)``
+        entries when ``prefixes=True``.
     :rtype: numpy.ndarray | torch.Tensor
 
     .. note::

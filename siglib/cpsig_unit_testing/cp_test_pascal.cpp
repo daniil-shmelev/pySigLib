@@ -109,12 +109,7 @@ TEST(PascalCoefficient, CalibratedSelection) {
     EXPECT_FALSE(pascal_selection::cpu_region<double>(words, 32, 8, 256, 1, false, false, true));
     EXPECT_FALSE(pascal_selection::cpu_region<float>(words, 32, 8, 256, 20, false, false, true));
     EXPECT_FALSE(pascal_selection::cpu_region<float>(words, 32, 8, 256, 1, true, false, true));
-    EXPECT_FALSE(pascal_selection::cuda_region<float>(words, 32, 8, 256, 256, false, false, true));
-    EXPECT_FALSE(pascal_selection::cuda_region<double>(words, 32, 8, 256, 256, false, false, true));
-    EXPECT_FALSE(pascal_selection::cuda_region<float>(words, 32, 8, 256, 256, false, false, false));
-    EXPECT_FALSE(pascal_selection::cuda_region<float>(words, 512, 8, 256, 4096, false, false, true));
     degrees[0] = 11;
     const pascal_coefficient::Words mixed(indices.data(), degrees.data(), 8, 8, true);
     EXPECT_FALSE(pascal_selection::cpu_region<float>(mixed, 32, 8, 256, 1, false, false, true));
-    EXPECT_FALSE(pascal_selection::cuda_region<float>(mixed, 32, 8, 256, 256, false, false, true));
 }

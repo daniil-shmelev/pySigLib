@@ -25,7 +25,6 @@
 #include "multithreading.h"
 #include "pascal_coefficient.h"
 #include "pascal_selection.h"
-#include "cp_coefficient_workspace.h"
 
 HWY_BEFORE_NAMESPACE();
 namespace cpsig {
@@ -179,46 +178,9 @@ bool pascal_backward_dispatch(Access& access, uint64_t n, uint64_t m, uint64_t b
     return pc::backward<Ops, Mode>(access, n, m, block, blocks, checkpoints, scratch);
 }
 
-template<class T, int Mode, class Access>
-bool pascal_prefix_simd(Access& access, uint64_t n, uint64_t m, T* u, T* a) {
-    using Ops = PascalScalarOps<T>;
-    const Simd<T> tag;
-    constexpr uint64_t lanes = vec_batch_lanes<T>;
-    std::fill_n(u, m + 1, T(0));
-    u[0] = T(1);
-    if (!m) return true;
-    bool valid = true;
-    T q = 0;
-    for (uint64_t i = 0; i < n; ++i) {
-        pc::increments<Ops>(access, i, m, a);
-        if (!i) {
-            valid = pc::step<Ops, Mode>(u, a, m, true, nullptr, q) && valid;
-            continue;
-        }
-        q = u[m - 1];
-        for (uint64_t s = 1; s < m; ++s) {
-            uint64_t end = m;
-            for (; end >= s + lanes; end -= lanes) {
-                const uint64_t begin = end - lanes;
-                hn::StoreU(hn::MulAdd(hn::LoadU(tag, a + begin), hn::LoadU(tag, u + begin - 1), hn::LoadU(tag, u + begin)), tag, u + begin);
-            }
-            while (end > s) { --end; u[end] += a[end] * u[end - 1]; }
-            q += u[m - 1];
-        }
-        u[m] += a[m] * q;
-        valid = Ops::finite(q) && valid;
-        for (uint64_t j = 1; j <= m; ++j) valid = Ops::finite(u[j]) && valid;
-    }
-    if constexpr (Mode == pc::scaled) {
-        T factor = 1;
-        for (uint64_t j = 1; j <= m; ++j) { factor /= T(j); u[j] *= factor; }
-    }
-    return valid;
-}
-
 template<class T, class Ops, int Mode, bool Backward>
 void pascal_cpu(const T* path, T* out, const T* deriv, const pc::Words& words, uint64_t batch,
-    uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, bool prefixes, int jobs, bool prefix_simd = false, uint64_t cutoff = 64) {
+    uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, bool prefixes, int jobs, uint64_t cutoff) {
     using V = typename Ops::V;
     const uint64_t n = length > 1 ? pc::mul(length - 1, lead_lag ? 2 : 1) : 0;
     const uint64_t mmax = words.max_degree, stride = pc::add(mmax, 1);
@@ -235,7 +197,7 @@ void pascal_cpu(const T* path, T* out, const T* deriv, const pc::Words& words, u
     if constexpr (Ops::lanes > 1) {
         if (per_owner > budget) {
             pascal_cpu<T, PascalScalarOps<T>, Mode, Backward>(path, out, deriv, words, batch, dimension,
-                length, time_aug, lead_lag, end_time, prefixes, jobs, false, cutoff);
+                length, time_aug, lead_lag, end_time, prefixes, jobs, cutoff);
             return;
         }
     }
@@ -244,7 +206,6 @@ void pascal_cpu(const T* path, T* out, const T* deriv, const pc::Words& words, u
     const uint64_t tasks = Backward ? groups : pc::mul(groups, words.count);
     const uint64_t owners = std::min<uint64_t>({tasks, uint64_t(jobs), budget / std::max<uint64_t>(per_owner, 1)});
     auto work = [&](uint64_t start, uint64_t end) HWY_ATTR {
-        coefficient_workspace::Allocation allocation(pc::mul(pc::add(small_count, checkpoint_count), sizeof(V)));
         auto memory = hwy::AllocateAligned<V>(pc::add(small_count, checkpoint_count));
         if (!memory) throw std::bad_alloc();
         V* scratch = memory.get();
@@ -266,10 +227,7 @@ void pascal_cpu(const T* path, T* out, const T* deriv, const pc::Words& words, u
                     if constexpr (Backward) {
                         valid = pascal_backward_dispatch<Ops, Mode>(access, n, m, plan.block, plan.blocks, checkpoints, scratch) && valid;
                     } else {
-                        if constexpr (std::is_same_v<Ops, PascalScalarOps<T>> && Mode != pc::guarded) {
-                            if (prefix_simd) valid = pascal_prefix_simd<T, Mode>(access, n, m, scratch, scratch + stride);
-                            else valid = pascal_forward_dispatch<Ops, Mode>(access, n, m, scratch, scratch + stride);
-                        } else valid = pascal_forward_dispatch<Ops, Mode>(access, n, m, scratch, scratch + stride);
+                        valid = pascal_forward_dispatch<Ops, Mode>(access, n, m, scratch, scratch + stride);
                         if (valid || Mode == pc::guarded) {
                             const uint64_t outputs = prefixes ? std::max<uint64_t>(m, 1) : 1;
                             for (uint64_t j = 0; j < outputs; ++j) {
@@ -286,10 +244,9 @@ void pascal_cpu(const T* path, T* out, const T* deriv, const pc::Words& words, u
                         if constexpr (Backward) {
                             pascal_cpu<T, PascalScalarOps<T>, pc::guarded, true>(path + first * length * dimension,
                                 out + first * length * dimension, deriv + first * words.width, words,
-                                count, dimension, length, time_aug, lead_lag, end_time, true, 1, false, plan.block > 1 ? 0 : cutoff);
+                                count, dimension, length, time_aug, lead_lag, end_time, true, 1, plan.block > 1 ? 0 : cutoff);
                         } else {
                             const uint64_t w = begin_word, m = words.packed[w], offset = words.packed[2 * words.count + w];
-                            coefficient_workspace::Allocation fallback_allocation(2 * (m + 1) * sizeof(T));
                             std::vector<T> fallback(2 * (m + 1));
                             for (uint64_t lane = 0; lane < count; ++lane) {
                                 PascalAccess<T, PascalScalarOps<T>> access{path, out, nullptr, words.word(w), dimension,
@@ -353,7 +310,7 @@ bool pascal_word_parallel(const T* path, T* out, const T* deriv, const pc::Words
     const uint64_t owners = std::min<uint64_t>({uint64_t(jobs) / batch, words.count,
         pc::workspace_limit() / std::max<uint64_t>(pc::mul(pc::mul(row, sizeof(T)), batch), 1)});
     if (owners < 2) return false;
-    coefficient_workspace::Allocation allocation(pc::mul(pc::mul(pc::mul(owners, batch), row), sizeof(T)));
+
     std::vector<T> memory(pc::mul(pc::mul(owners, batch), row));
     auto work = [&](uint64_t start, uint64_t end) HWY_ATTR {
         for (uint64_t task = start; task < end; ++task) {
@@ -400,15 +357,13 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
     if (!jobs) throw std::invalid_argument("n_jobs cannot be zero");
     jobs = jobs > 0 ? jobs : int(get_max_threads()) + 1 + jobs;
     if (jobs < 1) throw std::invalid_argument("n_jobs is below the supported range");
-    pc::variant(method, words.max_degree);
+    const int mode = pc::variant(method, words.max_degree);
     if (!batch) return;
     if (method == pc::automatic && pascal_selection::cpu_region<T>(words, batch, dimension,
         length > 1 ? length - 1 : 0, jobs, time_aug, lead_lag,
         HWY_TARGET == HWY_AVX2 && pascal_selection::cpu_hardware())) method = pc::pascal_method;
-    const int mode = pc::variant(method, words.max_degree);
     if (method == pc::horner || method == pc::automatic) {
         if constexpr (Backward) {
-            coefficient_workspace::Allocation allocation(batch * words.width * sizeof(T));
             std::vector<T> seeds(deriv, deriv + batch * words.width);
             sig_coef_backprop_<T>(path, out, coefs, seeds.data(), indices, num_words, degrees,
                 batch, dimension, length, time_aug, lead_lag, end_time, jobs);
@@ -420,7 +375,6 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
         if (length == 2 && !lead_lag) {
             std::fill_n(out, batch * length * dimension, T(0));
             auto work = [&](uint64_t begin, uint64_t end) HWY_ATTR {
-                coefficient_workspace::Allocation allocation(4 * (words.max_degree + 1) * sizeof(T));
                 std::vector<T> scratch(4 * (words.max_degree + 1));
                 for (uint64_t sample = begin; sample < end; ++sample)
                     for (uint64_t w = 0; w < words.count; ++w) {
@@ -434,22 +388,22 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
             return;
         }
     }
-    const uint64_t cutoff = pc::environment_option("PYSIGLIB_PASCAL_BENCH_CHECKPOINT", 256);
-    if constexpr (Backward) if (pc::environment_option("PYSIGLIB_PASCAL_BENCH_WORDS", 1)) {
+    constexpr uint64_t cutoff = 256;
+    if constexpr (Backward) {
         bool parallel = false;
         if (mode == pc::guarded) parallel = pascal_word_parallel<T, pc::guarded>(path, out, deriv, words, batch, dimension, length, time_aug, lead_lag, end_time, jobs, cutoff);
-        else if (mode == pc::scaled) parallel = pascal_word_parallel<T, pc::scaled>(path, out, deriv, words, batch, dimension, length, time_aug, lead_lag, end_time, jobs, cutoff);
+        else parallel = pascal_word_parallel<T, pc::scaled>(path, out, deriv, words, batch, dimension, length, time_aug, lead_lag, end_time, jobs, cutoff);
         if (parallel) return;
     }
     if (mode == pc::guarded)
         pascal_cpu<T, PascalScalarOps<T>, pc::guarded, Backward>(path, out, deriv, words, batch, dimension,
-            length, time_aug, lead_lag, end_time, prefixes, jobs, false, cutoff);
+            length, time_aug, lead_lag, end_time, prefixes, jobs, cutoff);
     else if (batch < vec_batch_lanes<T>)
         pascal_cpu<T, PascalScalarOps<T>, pc::scaled, Backward>(path, out, deriv, words, batch, dimension,
-            length, time_aug, lead_lag, end_time, prefixes, jobs, pc::environment_option("PYSIGLIB_PASCAL_BENCH_ROWS", 0), cutoff);
+            length, time_aug, lead_lag, end_time, prefixes, jobs, cutoff);
     else
         pascal_cpu<T, PascalSimdOps<T>, pc::scaled, Backward>(path, out, deriv, words, batch, dimension,
-            length, time_aug, lead_lag, end_time, prefixes, jobs, false, cutoff);
+            length, time_aug, lead_lag, end_time, prefixes, jobs, cutoff);
 }
 
 template<std::floating_point T>
