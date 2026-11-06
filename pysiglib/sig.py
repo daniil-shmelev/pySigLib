@@ -14,6 +14,7 @@
 # =========================================================================
 
 import warnings
+from math import prod
 from typing import Union
 
 import numpy as np
@@ -22,7 +23,7 @@ import torch
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import CPSIG_SIGNATURE, CPSIG_SIG_COMBINE, CUSIG_SIGNATURE, CUSIG_SIG_COMBINE
-from .dtypes import CPSIG_PREFIX_SUFFIX, CUSIG_PREFIX_SUFFIX
+from .dtypes import CPSIG_PREFIX_SUFFIX_SPLIT, CUSIG_PREFIX_SUFFIX_SPLIT
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
 from .data_handlers import PathInputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
 
@@ -126,11 +127,42 @@ def sig_combine(
             + err_msg(err_code, result.device))
     return result.data
 
-def _check_sig_method(method, horner):
-    if method not in (None, "prefix_suffix_gemm"):
-        raise ValueError("method must be None or 'prefix_suffix_gemm'")
+def _check_sig_method(method, horner, ps_split, degree):
+    if method not in (None, "ps", "auto"):
+        raise ValueError("method must be None, 'ps', or 'auto'")
     if method is not None and not horner:
-        raise ValueError("horner=False cannot be combined with a prefix-suffix method")
+        raise ValueError("horner=False cannot be combined with method='ps' or 'auto'")
+    if ps_split is None:
+        return 0
+    if method != "ps":
+        raise ValueError("ps_split requires method='ps'")
+    if not isinstance(ps_split, tuple) or len(ps_split) != 2:
+        raise TypeError("ps_split must be a tuple (a, b)")
+    a, b = ps_split
+    if any(isinstance(x, bool) or not isinstance(x, (int, np.integer)) for x in ps_split):
+        raise TypeError("ps_split must contain two integers")
+    a, b = int(a), int(b)
+    if a < 1 or b < 0 or a + b != degree:
+        raise ValueError("ps_split requires a >= 1, b >= 0 and a + b == degree")
+    return a
+
+
+def _auto_sig_method(shape, dtype, device, degree, backward):
+    batch = prod(shape[:-2])
+    segments, dimension = shape[-2] - 1, shape[-1]
+    if (dtype != "float32" or not 1 <= batch <= 32 or not 16 <= segments <= 4096
+            or not 2 <= dimension <= 32 or not 3 <= degree <= 16):
+        return None
+    width = dimension ** degree
+    if width > 2 ** 20 or segments * dimension ** ((degree + 1) // 2) > 2 ** 20:
+        return None
+    if device == "cpu":
+        threshold = 2 ** 11 if backward else 2 ** 17
+    else:
+        if batch * segments < 512:
+            return None
+        threshold = 2 ** 16 if backward else 2 ** 19
+    return "ps" if width >= threshold else None
 
 
 def sig(
@@ -144,7 +176,8 @@ def sig(
         scalar_term : bool = False,
         correction = None,
         n_jobs : int = 1,
-        method = None
+        method = None,
+        ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated signature of single path or a batch of paths. For
@@ -174,11 +207,13 @@ def sig(
     :param horner: If True, will use Horner's algorithm for polynomial multiplication.
     :type horner: bool
     :param method: ``None`` preserves the existing ``horner`` selection. Use
-        ``"prefix_suffix_gemm"`` for the
-        prefix-suffix algorithm. This method rejects non-empty
-        corrections and ``horner=False``. It stores
-        half-depth scans and can require more memory than Horner's algorithm.
+        ``"ps"`` for prefix-suffix or ``"auto"`` to select Horner or prefix-suffix
+        from the backend and path shape. Both require ``horner=True``.
+        Prefix-suffix uses extra workspace and requires an empty correction.
     :type method: str | None
+    :param ps_split: Top-level split ``(a, b)`` for ``method="ps"``, with
+        ``a >= 1``, ``b >= 0``, and ``a + b == degree``. The default selects the split automatically.
+    :type ps_split: tuple[int, int] | None
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
     :type scalar_term: bool
@@ -285,13 +320,16 @@ def sig(
     check_type(end_time, "end_time", float)
 
     check_n_jobs(n_jobs)
-    _check_sig_method(method, horner)
+    split_a = _check_sig_method(method, horner, ps_split, degree)
     if method is not None and isinstance(path, torch.Tensor) and path.requires_grad and torch.is_grad_enabled():
         raise NotImplementedError("Use pysiglib.torch_api.sig for automatic differentiation, or torch.no_grad() for forward-only calls")
     if method is not None and isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
         raise NotImplementedError("Prefix-suffix methods do not support automatic differentiation with forward-mode dual tensors")
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, data, degree)
+    if method == "auto":
+        method = None if time_aug or lead_lag or correction_data.length else _auto_sig_method(
+            data.path.shape, data.dtype, data.device, degree, backward=False)
     if method is not None and correction_data.length:
         raise ValueError("Prefix-suffix methods do not support non-empty corrections")
     sig_len = sig_length(data.dimension, degree, scalar_term=scalar_term)
@@ -301,16 +339,16 @@ def sig(
         return result.data
 
     if method is not None:
-        fn = (CPSIG_PREFIX_SUFFIX if data.device == "cpu" else CUSIG_PREFIX_SUFFIX)[data.dtype]
+        fn = (CPSIG_PREFIX_SUFFIX_SPLIT if data.device == "cpu" else CUSIG_PREFIX_SUFFIX_SPLIT)[data.dtype]
         args = (data.data_ptr, result.data_ptr, data.batch_size, data.data_dimension,
                 data.data_length, degree, data.time_aug, data.lead_lag,
                 data.end_time, scalar_term)
         if data.device == "cpu":
-            err_code = fn(*args, n_jobs)
+            err_code = fn(*args, n_jobs, split_a)
         else:
             with torch.cuda.device(data.path.device):
                 stream = torch.cuda.current_stream(data.path.device).cuda_stream
-                err_code = fn(*args, stream)
+                err_code = fn(*args, stream, split_a)
     elif data.device == "cpu":
         err_code = CPSIG_SIGNATURE[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,

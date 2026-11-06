@@ -25,7 +25,7 @@ import pysiglib.torch_api as torch_api
 from conftest import DEVICES
 
 
-METHOD = "prefix_suffix_gemm"
+METHOD = "ps"
 
 
 def chen_reference(path, degree, time_aug=False, lead_lag=False, end_time=1.):

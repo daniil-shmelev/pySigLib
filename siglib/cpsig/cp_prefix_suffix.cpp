@@ -25,17 +25,29 @@ HWY_EXPORT_T(signature_prefix_suffix_backprop_f, signature_prefix_suffix_backpro
 HWY_EXPORT_T(signature_prefix_suffix_backprop_d, signature_prefix_suffix_backprop_<double>);
 
 extern "C" {
+CPSIG_API int signature_prefix_suffix_backprop_split_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept {
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_prefix_suffix_backprop_f)(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, split_a));
+}
 CPSIG_API int signature_prefix_suffix_backprop_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs) noexcept {
-    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_prefix_suffix_backprop_f)(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs));
+    return signature_prefix_suffix_backprop_split_f(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, 0);
+}
+CPSIG_API int signature_prefix_suffix_backprop_split_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept {
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_prefix_suffix_backprop_d)(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, split_a));
 }
 CPSIG_API int signature_prefix_suffix_backprop_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs) noexcept {
-    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_prefix_suffix_backprop_d)(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs));
+    return signature_prefix_suffix_backprop_split_d(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, 0);
+}
+CPSIG_API int signature_prefix_suffix_split_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept {
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_prefix_suffix_f)(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, split_a));
 }
 CPSIG_API int signature_prefix_suffix_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs) noexcept {
-    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_prefix_suffix_f)(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs));
+    return signature_prefix_suffix_split_f(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, 0);
+}
+CPSIG_API int signature_prefix_suffix_split_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept {
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_prefix_suffix_d)(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, split_a));
 }
 CPSIG_API int signature_prefix_suffix_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs) noexcept {
-    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_prefix_suffix_d)(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs));
+    return signature_prefix_suffix_split_d(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, 0);
 }
 }
 

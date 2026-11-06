@@ -22,9 +22,9 @@ from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler, CorrectionInputHandler
 from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP, CUSIG_SIG_COMBINE_BACKPROP
-from .dtypes import CPSIG_PREFIX_SUFFIX_BACKPROP, CUSIG_PREFIX_SUFFIX_BACKPROP
+from .dtypes import CPSIG_PREFIX_SUFFIX_BACKPROP_SPLIT, CUSIG_PREFIX_SUFFIX_BACKPROP_SPLIT
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
-from .sig import _check_sig_method
+from .sig import _auto_sig_method, _check_sig_method
 
 def sig_combine_backprop(
         deriv : Union[np.ndarray, torch.Tensor],
@@ -138,7 +138,8 @@ def sig_backprop(
         end_time : float = 1.,
         correction = None,
         n_jobs : int = 1,
-        method = None
+        method = None,
+        ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     This function is required to backpropagate through the signature computation.
@@ -175,10 +176,13 @@ def sig_backprop(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :param method: ``None`` uses the existing signature backpropagation. Use
-        ``"prefix_suffix_gemm"`` to differentiate the prefix-suffix factors and
+        ``"ps"`` to differentiate the prefix-suffix factors and
         scans with BLAS or cuBLAS. Non-empty corrections are not supported by
-        this method.
+        this method. Use ``"auto"`` to select the backward method from the backend and path shape.
     :type method: str | None
+    :param ps_split: Top-level split ``(a, b)`` for ``method="ps"``, with
+        ``a >= 1``, ``b >= 0``, and ``a + b == degree``. The default selects the split automatically.
+    :type ps_split: tuple[int, int] | None
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.Tensor
@@ -220,11 +224,14 @@ def sig_backprop(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
-    _check_sig_method(method, True)
+    split_a = _check_sig_method(method, True, ps_split, degree)
     check_n_jobs(n_jobs)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, path_data, degree)
+    if method == "auto":
+        method = None if time_aug or lead_lag or correction_data.length else _auto_sig_method(
+            path_data.path.shape, path_data.dtype, path_data.device, degree, backward=True)
     if method is not None and correction_data.length:
         raise ValueError("Prefix-suffix methods do not support non-empty corrections")
     scalar_term = _infer_scalar_term(sig, path_data.data_dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
@@ -247,16 +254,16 @@ def sig_backprop(
         raise ValueError("path, sig and sig_derivs must have the same batch shape")
 
     if method is not None:
-        fn = (CPSIG_PREFIX_SUFFIX_BACKPROP if path_data.device == "cpu" else CUSIG_PREFIX_SUFFIX_BACKPROP)[path_data.dtype]
+        fn = (CPSIG_PREFIX_SUFFIX_BACKPROP_SPLIT if path_data.device == "cpu" else CUSIG_PREFIX_SUFFIX_BACKPROP_SPLIT)[path_data.dtype]
         args = (path_data.data_ptr, result.data_ptr, sig_data.sig_ptr[1],
                 path_data.batch_size, path_data.data_dimension, path_data.data_length,
                 degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term)
         if path_data.device == "cpu":
-            err_code = fn(*args, n_jobs)
+            err_code = fn(*args, n_jobs, split_a)
         else:
             with torch.cuda.device(path_data.path.device):
                 stream = torch.cuda.current_stream(path_data.path.device).cuda_stream
-                err_code = fn(*args, stream)
+                err_code = fn(*args, stream, split_a)
     elif path_data.device == "cpu":
         err_code = CPSIG_SIG_BACKPROP[path_data.dtype](
             path_data.data_ptr, result.data_ptr,

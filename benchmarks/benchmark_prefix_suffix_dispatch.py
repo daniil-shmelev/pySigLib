@@ -51,9 +51,9 @@ def operations(shape, device, dtype, seed, jobs=None):
     seeds = (rng.normal(size=signature.shape) / np.sqrt(signature.shape[-1])).astype(dtype)
     deriv = torch.as_tensor(seeds, device=device) if device == 'cuda' else seeds
     def forward():
-        return pysiglib.sig(path, m, method='prefix_suffix_gemm', n_jobs=jobs)
+        return pysiglib.sig(path, m, method='ps', n_jobs=jobs)
     def backward():
-        return pysiglib.sig_backprop(path, signature, deriv, m, method='prefix_suffix_gemm', n_jobs=jobs)
+        return pysiglib.sig_backprop(path, signature, deriv, m, method='ps', n_jobs=jobs)
     return {'forward': forward, 'backward': backward}
 
 

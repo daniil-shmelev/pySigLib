@@ -44,6 +44,10 @@ extern "C" {
 	CPSIG_API int signature_prefix_suffix_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs) noexcept;
 	CPSIG_API int signature_prefix_suffix_backprop_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs) noexcept;
 	CPSIG_API int signature_prefix_suffix_backprop_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs) noexcept;
+	CPSIG_API int signature_prefix_suffix_split_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
+	CPSIG_API int signature_prefix_suffix_split_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
+	CPSIG_API int signature_prefix_suffix_backprop_split_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
+	CPSIG_API int signature_prefix_suffix_backprop_split_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, uint64_t split_a) noexcept;
 
 	/** @defgroup transform_path_functions Transform path functions
 	* @{

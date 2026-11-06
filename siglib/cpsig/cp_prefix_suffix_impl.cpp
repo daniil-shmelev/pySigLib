@@ -801,11 +801,11 @@ void backprop_path(const T* input, T* output, const T* deriv, uint64_t dimension
 template<std::floating_point T>
 void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, uint64_t batch,
     uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag,
-    T end_time, bool scalar, int n_jobs) {
+    T end_time, bool scalar, int n_jobs, uint64_t split_a) {
     if (!dimension) throw std::invalid_argument("path has zero channels");
     const uint64_t d = add(mul(dimension, lead_lag ? 2 : 1), time_aug ? 1 : 0);
     const uint64_t points = lead_lag && length ? add(length, length - 1) : length;
-    const Layout l(d, degree);
+    const Layout l(d, degree, split_a);
     const uint64_t stride = l.offset[degree + 1] - (scalar ? 0 : 1), path_stride = mul(length, dimension);
     mul(mul(batch, stride), sizeof(T)); mul(mul(batch, path_stride), sizeof(T));
     const int jobs = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
@@ -862,11 +862,11 @@ void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, ui
 
 template<std::floating_point T>
 void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t dimension, uint64_t length,
-    uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, int n_jobs) {
+    uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, int n_jobs, uint64_t split_a) {
     if (!dimension) throw std::invalid_argument("path has zero channels");
     const uint64_t d = add(mul(dimension, lead_lag ? 2 : 1), time_aug ? 1 : 0);
     const uint64_t points = lead_lag && length ? add(length, length - 1) : length;
-    const Layout l(d, degree);
+    const Layout l(d, degree, split_a);
     const uint64_t stride = l.offset[degree + 1] - (scalar ? 0 : 1), path_stride = mul(length, dimension);
     mul(mul(batch, stride), sizeof(T)); mul(mul(batch, path_stride), sizeof(T));
     const int jobs = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
@@ -911,9 +911,9 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
         static_cast<size_t>(oneapi::tbb::this_task_arena::max_concurrency()),
         global_control::active_value(global_control::max_allowed_parallelism)}));
     const int available_path_jobs = std::max(1, jobs / static_cast<int>(std::min<uint64_t>(batch, jobs)));
-    const uint64_t selected = prefix_suffix_endpoint::select_cpu_block(batch, points - 1, l, endpoint_threads,
-        sizeof(T), time_aug || lead_lag);
-    const uint64_t endpoint_block = option("PYSIGLIB_PS_ENDPOINT_BLOCK", selected, true);
+    const uint64_t selected = !split_a || split_a == degree
+        ? prefix_suffix_endpoint::select_cpu_block(batch, points - 1, l, endpoint_threads, sizeof(T), time_aug || lead_lag) : 0;
+    const uint64_t endpoint_block = split_a ? selected : option("PYSIGLIB_PS_ENDPOINT_BLOCK", selected, true);
     if (endpoint_block) {
         try {
             cpu_endpoint::compute(path, out, prefix_suffix_endpoint::Shape(batch, d, points, degree, endpoint_block),
@@ -946,10 +946,10 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
     }); });
 }
 
-template void signature_prefix_suffix_<float>(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, int);
-template void signature_prefix_suffix_<double>(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int);
-template void signature_prefix_suffix_backprop_<float>(const float*, float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, int);
-template void signature_prefix_suffix_backprop_<double>(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int);
+template void signature_prefix_suffix_<float>(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, int, uint64_t);
+template void signature_prefix_suffix_<double>(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int, uint64_t);
+template void signature_prefix_suffix_backprop_<float>(const float*, float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, int, uint64_t);
+template void signature_prefix_suffix_backprop_<double>(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int, uint64_t);
 
 }
 }

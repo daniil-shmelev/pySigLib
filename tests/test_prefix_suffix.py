@@ -28,7 +28,7 @@ import pysiglib
 import pysiglib.torch_api as torch_api
 from conftest import DEVICES, load_fixtures
 
-METHODS = ("prefix_suffix_gemm",)
+METHODS = ("ps",)
 
 
 @pytest.mark.parametrize("device,dtype", product(DEVICES, (torch.float32, torch.float64)))
@@ -43,15 +43,15 @@ def test_split_and_endpoint_variants(monkeypatch, device, dtype, time_aug, lead_
     gradient = pysiglib.sig_backprop(path, expected, seeds, 4, **back_options)
     tolerance = 2e-5 if dtype == torch.float32 else 2e-11
     for a in range(5):
-        monkeypatch.setenv("PYSIGLIB_PS_SPLIT_A", str(a))
-        actual = pysiglib.sig(path, 4, method="prefix_suffix_gemm", **options)
-        grad = pysiglib.sig_backprop(path, expected, seeds, 4, method="prefix_suffix_gemm", **back_options)
+        split = (a, 4 - a) if a else None
+        actual = pysiglib.sig(path, 4, method="ps", ps_split=split, **options)
+        grad = pysiglib.sig_backprop(path, expected, seeds, 4, method="ps", ps_split=split, **back_options)
         torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
         torch.testing.assert_close(grad, gradient, atol=tolerance, rtol=tolerance)
     monkeypatch.setenv("PYSIGLIB_PS_SPLIT_A", "0")
     for block in (1, 3, 16):
         monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", str(block))
-        actual = pysiglib.sig(path, 4, method="prefix_suffix_gemm", **options)
+        actual = pysiglib.sig(path, 4, method="ps", **options)
         torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
 
 
@@ -60,7 +60,7 @@ def test_endpoint_autograd_and_stream(monkeypatch, device):
     monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "3")
     path = torch.randn(2, 6, 2, device=device, dtype=torch.float64) * 0.03
     path.requires_grad_()
-    operation = lambda x: torch_api.sig(x, 4, method="prefix_suffix_gemm")
+    operation = lambda x: torch_api.sig(x, 4, method="ps")
     if device == "cuda":
         stream = torch.cuda.Stream()
         stream.wait_stream(torch.cuda.current_stream())
@@ -77,7 +77,7 @@ def test_generic_unbalanced_split(monkeypatch, device):
     monkeypatch.setenv("PYSIGLIB_PS_SPLIT_A", "5")
     path = torch.randn(2, 8, 3, device=device, dtype=torch.float64) * 0.03
     expected = pysiglib.sig(path, 5)
-    actual = pysiglib.sig(path, 5, method="prefix_suffix_gemm")
+    actual = pysiglib.sig(path, 5, method="ps")
     torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-12)
 
 
@@ -87,12 +87,12 @@ def test_automatic_prefix_suffix_dispatch(monkeypatch, device, dtype, dimension)
     path = torch.tensor(np.random.default_rng(714).normal(scale=0.02, size=(32, 257, dimension)),
                         device=device, dtype=dtype)
     monkeypatch.setenv("PYSIGLIB_PS_DISPATCH", "0")
-    expected = pysiglib.sig(path, 3, method="prefix_suffix_gemm", n_jobs=20)
+    expected = pysiglib.sig(path, 3, method="ps", n_jobs=20)
     seeds = torch.ones_like(expected)
-    gradient = pysiglib.sig_backprop(path, expected, seeds, 3, method="prefix_suffix_gemm", n_jobs=20)
+    gradient = pysiglib.sig_backprop(path, expected, seeds, 3, method="ps", n_jobs=20)
     monkeypatch.delenv("PYSIGLIB_PS_DISPATCH")
-    actual = pysiglib.sig(path, 3, method="prefix_suffix_gemm", n_jobs=20)
-    grad = pysiglib.sig_backprop(path, actual, seeds, 3, method="prefix_suffix_gemm", n_jobs=20)
+    actual = pysiglib.sig(path, 3, method="ps", n_jobs=20)
+    grad = pysiglib.sig_backprop(path, actual, seeds, 3, method="ps", n_jobs=20)
     tolerance = 2e-5 if dtype == torch.float32 else 2e-11
     torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
     torch.testing.assert_close(grad, gradient, atol=tolerance, rtol=tolerance)
@@ -104,7 +104,7 @@ def test_endpoint_workspace_limit(monkeypatch, device):
     monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", "1")
     path = torch.ones(2, 8, 3, device=device)
     with pytest.raises(Exception, match="allocate|workspace"):
-        pysiglib.sig(path, 4, method="prefix_suffix_gemm")
+        pysiglib.sig(path, 4, method="ps")
 
 
 @pytest.mark.parametrize("target_name", ("SSE2", "AVX2"))
@@ -130,7 +130,7 @@ def test_endpoint_simd_targets(monkeypatch, target_name):
         path = np.random.default_rng(715).normal(scale=0.03, size=(7, 18, 3))
         expected = pysiglib.sig(path, 5)
         monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "4")
-        actual = pysiglib.sig(path, 5, method="prefix_suffix_gemm", n_jobs=3)
+        actual = pysiglib.sig(path, 5, method="ps", n_jobs=3)
         np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-12)
     finally:
         assert CPSIG.cpsig_test_set_target(0) == 0
@@ -453,6 +453,69 @@ def test_validation():
     assert pysiglib.sig(path, 3, method=METHODS[0], correction=np.empty(0)).shape == (14,)
 
 
+@pytest.mark.parametrize("method,split,error", [
+    ("ps", (0, 3), ValueError), ("ps", (4, -1), ValueError), ("ps", (1, 1), ValueError),
+    ("ps", (1,), TypeError), ("ps", (True, 2), TypeError), ("ps", (1, 2.0), TypeError),
+    (None, (2, 1), ValueError), ("auto", (2, 1), ValueError), ("prefix_suffix_gemm", None, ValueError),
+])
+def test_split_validation(method, split, error):
+    path = np.zeros((0, 8, 2))
+    signature = pysiglib.sig(path, 3)
+    with pytest.raises(error):
+        pysiglib.sig(path, 3, method=method, ps_split=split)
+    with pytest.raises(error):
+        pysiglib.sig_backprop(path, signature, signature, 3, method=method, ps_split=split)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_per_call_split_autograd(monkeypatch, device):
+    x = torch.randn(2, 7, 3, device=device, dtype=torch.float64, requires_grad=True)
+    expected = torch_api.sig(x, 4)
+    grad = torch.autograd.grad(expected.sum(), x)[0]
+    monkeypatch.setenv("PYSIGLIB_PS_SPLIT_A", "99")
+    with ThreadPoolExecutor(3) as pool:
+        results = list(pool.map(lambda a: torch_api.sig(x, 4, method="ps", ps_split=(a, 4 - a)), (1, 2, 4)))
+    for result in results:
+        torch.testing.assert_close(result, expected)
+        torch.testing.assert_close(torch.autograd.grad(result.sum(), x)[0], grad)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_auto_different_forward_and_backward_methods(device, monkeypatch):
+    # This shape selects Horner forward and prefix-suffix backward on both backends.
+    path = torch.zeros((32, 17, 4), device=device)
+    monkeypatch.setenv("PYSIGLIB_PS_SPLIT_A", "99")
+    signature = pysiglib.sig(path, 8, method="auto")
+    with pytest.raises(Exception, match="split exceeds degree"):
+        pysiglib.sig_backprop(path, signature, signature, 8, method="auto")
+    path.requires_grad_()
+    with pytest.raises(Exception, match="split exceeds degree"):
+        torch_api.sig(path, 8, method="auto").sum().backward()
+
+
+def test_auto_horner_fallback(monkeypatch):
+    monkeypatch.setenv("PYSIGLIB_PS_SPLIT_A", "99")
+    path = np.zeros((17, 8), dtype=np.float32)
+    for options in (dict(correction=np.ones(64, dtype=np.float32) * 0.01), dict(lead_lag=True), dict(time_aug=True)):
+        expected = pysiglib.sig(path, 4, **options)
+        seeds = np.ones_like(expected)
+        np.testing.assert_array_equal(pysiglib.sig(path, 4, method="auto", **options), expected)
+        np.testing.assert_array_equal(pysiglib.sig_backprop(path, expected, seeds, 4, method="auto", **options),
+                                      pysiglib.sig_backprop(path, expected, seeds, 4, **options))
+
+
+def test_jax_auto_mixed_passes():
+    jax = pytest.importorskip("jax")
+    import pysiglib.jax_api as api
+    path = np.random.default_rng(45).normal(scale=0.02, size=(2, 21, 4)).astype(np.float32)
+    reference_path = path.astype(np.float64)
+    signature = pysiglib.sig(reference_path, 6)
+    seeds = np.random.default_rng(46).normal(size=signature.shape).astype(np.float32)
+    expected = pysiglib.sig_backprop(reference_path, signature, seeds.astype(np.float64), 6)
+    run = lambda x: (api.sig(x, 6, method="auto") * seeds).sum()
+    np.testing.assert_allclose(jax.jit(jax.grad(run))(path), expected, rtol=2e-5, atol=2e-6)
+
+
 @pytest.mark.parametrize("method", METHODS)
 def test_torch_forward_ad_rejected(method):
     path = torch.zeros((8, 2))
@@ -494,13 +557,15 @@ def test_scan_free_batch_boundary(degree):
                                pysiglib.sig(path, degree, scalar_term=True), atol=1e-10, rtol=1e-10)
 
 
-@pytest.mark.parametrize("method", METHODS)
-def test_jax_forward_and_reverse(method):
+@pytest.mark.parametrize("method,split", [("ps", None), ("ps", (1, 3)), ("ps", (4, 0)), ("auto", None)])
+def test_jax_forward_and_reverse(monkeypatch, method, split):
     jax = pytest.importorskip("jax")
     import pysiglib.jax_api as api
     jax.config.update("jax_enable_x64", True)
+    if split is not None:
+        monkeypatch.setenv("PYSIGLIB_PS_SPLIT_A", "99")
     path = np.random.default_rng(10).normal(size=(2, 13, 3)) * 0.05
-    run = lambda p: api.sig(p, 4, method=method)
+    run = lambda p: api.sig(p, 4, method=method, ps_split=split)
     expected = pysiglib.sig(path, 4)
     for value in (run(path), jax.jit(run)(path), jax.vmap(run)(path)):
         np.testing.assert_allclose(value, expected, atol=1e-10, rtol=1e-10)

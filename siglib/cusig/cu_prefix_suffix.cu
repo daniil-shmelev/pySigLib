@@ -465,11 +465,11 @@ template<typename T> struct CudaMatrices {
 
 template<typename T>
 void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv, uint64_t batch,
-    uint64_t dimension, uint64_t length, uint64_t degree, bool ta, bool ll, T end_time, bool scalar, cudaStream_t stream) {
+    uint64_t dimension, uint64_t length, uint64_t degree, bool ta, bool ll, T end_time, bool scalar, cudaStream_t stream, uint64_t split_a) {
     if (!dimension) throw std::invalid_argument("path has zero channels");
     int device = 0; CUDA_CHECK(cudaGetDevice(&device));
     const uint64_t d = add(mul(dimension, ll ? 2 : 1), ta ? 1 : 0), points = ll && length ? add(length, length - 1) : length;
-    Layout l(d, degree);
+    Layout l(d, degree, split_a);
     const uint64_t sig_stride = l.offset[degree + 1] - (scalar ? 0 : 1), path_stride = mul(length, dimension);
     mul(mul(batch, sig_stride), sizeof(T)); mul(mul(batch, path_stride), sizeof(T));
     if (!batch || !path_stride) return;
@@ -479,8 +479,10 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
         CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaStreamSynchronize(stream));
         return;
     }
-    const auto choice = prefix_suffix_selection::select_cuda(true, batch, points - 1, l, 1, ta || ll);
-    if (choice.a) l.set_split(choice.a);
+    if (!split_a) {
+        const auto choice = prefix_suffix_selection::select_cuda(true, batch, points - 1, l, 1, ta || ll);
+        if (choice.a) l.set_split(choice.a);
+    }
     const uint64_t n = points - 1, qlen = l.offset[l.scan_degree + 1], scan_power = l.power[l.scan_degree];
     const uint64_t chunk_length = option("PYSIGLIB_PS_SCAN_CHUNK", l.scan_degree == 1 ? n : 16), chunks = (n - 1) / chunk_length + 1;
     const uint64_t maxp = l.power[l.left_degree(degree)], maxq = l.power[l.right_degree(degree)];
@@ -652,11 +654,11 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
 
 template<typename T>
 void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_t dimension, uint64_t length,
-    uint64_t degree, bool ta, bool ll, T end_time, bool scalar, cudaStream_t stream) {
+    uint64_t degree, bool ta, bool ll, T end_time, bool scalar, cudaStream_t stream, uint64_t split_a) {
     if (!dimension) throw std::invalid_argument("path has zero channels");
     int device = 0; CUDA_CHECK(cudaGetDevice(&device));
     const uint64_t d = add(mul(dimension, ll ? 2 : 1), ta ? 1 : 0), points = ll && length ? add(length, length - 1) : length;
-    Layout l(d, degree);
+    Layout l(d, degree, split_a);
     const uint64_t output_stride = l.offset[degree + 1] - (scalar ? 0 : 1), path_stride = mul(length, dimension);
     mul(mul(batch, output_stride), sizeof(T)); mul(mul(batch, path_stride), sizeof(T));
     if (!batch || !output_stride) return;
@@ -665,9 +667,10 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
         CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaStreamSynchronize(stream));
         return;
     }
-    const auto choice = prefix_suffix_selection::select_cuda(false, batch, points - 1, l, device_parallelism(device), ta || ll);
-    if (choice.a) l.set_split(choice.a);
-    const uint64_t endpoint_block = option("PYSIGLIB_PS_ENDPOINT_BLOCK", choice.block, true);
+    const auto choice = !split_a || split_a == degree
+        ? prefix_suffix_selection::select_cuda(false, batch, points - 1, l, device_parallelism(device), ta || ll)
+        : prefix_suffix_selection::Choice{};
+    const uint64_t endpoint_block = split_a ? choice.block : option("PYSIGLIB_PS_ENDPOINT_BLOCK", choice.block, true);
     if (endpoint_block) {
         try {
             gpu_endpoint::compute(path, out, prefix_suffix_endpoint::Shape(batch, d, points, degree, endpoint_block),
@@ -861,16 +864,28 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
 }
 
 extern "C" {
+CUSIG_API int signature_prefix_suffix_backprop_split_cuda_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept {
+    CUDA_SAFE_CALL(signature_prefix_suffix_backprop_cuda(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream), split_a));
+}
 CUSIG_API int signature_prefix_suffix_backprop_cuda_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream) noexcept {
-    CUDA_SAFE_CALL(signature_prefix_suffix_backprop_cuda(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream)));
+    return signature_prefix_suffix_backprop_split_cuda_f(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, stream, 0);
+}
+CUSIG_API int signature_prefix_suffix_backprop_split_cuda_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept {
+    CUDA_SAFE_CALL(signature_prefix_suffix_backprop_cuda(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream), split_a));
 }
 CUSIG_API int signature_prefix_suffix_backprop_cuda_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream) noexcept {
-    CUDA_SAFE_CALL(signature_prefix_suffix_backprop_cuda(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream)));
+    return signature_prefix_suffix_backprop_split_cuda_d(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, stream, 0);
+}
+CUSIG_API int signature_prefix_suffix_split_cuda_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept {
+    CUDA_SAFE_CALL(signature_prefix_suffix_cuda(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream), split_a));
 }
 CUSIG_API int signature_prefix_suffix_cuda_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream) noexcept {
-    CUDA_SAFE_CALL(signature_prefix_suffix_cuda(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream)));
+    return signature_prefix_suffix_split_cuda_f(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, stream, 0);
+}
+CUSIG_API int signature_prefix_suffix_split_cuda_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept {
+    CUDA_SAFE_CALL(signature_prefix_suffix_cuda(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream), split_a));
 }
 CUSIG_API int signature_prefix_suffix_cuda_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream) noexcept {
-    CUDA_SAFE_CALL(signature_prefix_suffix_cuda(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream)));
+    return signature_prefix_suffix_split_cuda_d(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, stream, 0);
 }
 }
