@@ -155,44 +155,7 @@ template<typename T> struct Matrix {
     T* data;
     uint64_t rows, cols, rs, cs;
     uint64_t bs = 0;
-    Matrix sub(uint64_t i, uint64_t j, uint64_t r, uint64_t c) const {
-        return {data + i * rs + j * cs, r, c, rs, cs, bs};
-    }
+    uint64_t leading_dimension() const { return rs == 1 ? std::max(cs, rows) : rs; }
 };
-
-inline uint64_t tile_side(uint64_t p, uint64_t q, uint64_t k, uint64_t max_side) {
-    uint64_t s = 1, minimum = std::min({p, q, k});
-    while (s <= minimum / 2 && s <= max_side / 2) s *= 2;
-    return s;
-}
-
-template<typename T, typename Ops>
-void product(Ops& ops, Matrix<T> a, Matrix<T> b, Matrix<T> c,
-    uint64_t max_side, T* scratch, bool first) {
-    const bool oversized = std::max({a.rs, a.cs, b.rs, b.cs, c.rs, a.rows, a.cols, b.cols}) > INT_MAX;
-    if (!oversized) {
-        ops.gemm(a, b, c, first ? T(0) : T(1));
-        return;
-    }
-    const uint64_t side = tile_side(a.rows, b.cols, a.cols, max_side);
-    if (first) ops.clear(c);
-    const uint64_t area = side * side;
-    for (uint64_t i = 0; i < a.rows; i += side) {
-        const uint64_t rows = std::min(side, a.rows - i);
-        for (uint64_t j = 0; j < b.cols; j += side) {
-            const uint64_t cols = std::min(side, b.cols - j);
-            for (uint64_t k = 0; k < a.cols; k += side) {
-                const uint64_t inner = std::min(side, a.cols - k);
-                Matrix<T> pa{scratch, rows, inner, side, 1, ops.scratch_stride};
-                Matrix<T> pb{scratch + area, inner, cols, side, 1, ops.scratch_stride};
-                Matrix<T> pc{scratch + 2 * area, rows, cols, side, 1, ops.scratch_stride};
-                ops.pack(a.sub(i, k, rows, inner), pa);
-                ops.pack(b.sub(k, j, inner, cols), pb);
-                ops.gemm(pa, pb, pc, T(0));
-                ops.accumulate(pc, c.sub(i, j, rows, cols), T(1));
-            }
-        }
-    }
-}
 
 } // namespace prefix_suffix

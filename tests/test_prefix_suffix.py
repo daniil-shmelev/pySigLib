@@ -16,7 +16,6 @@
 """Forward prefix-suffix methods, including forced native block boundaries."""
 
 from concurrent.futures import ThreadPoolExecutor
-import ctypes
 from fractions import Fraction
 from itertools import product
 
@@ -26,7 +25,7 @@ import torch
 
 import pysiglib
 import pysiglib.torch_api as torch_api
-from conftest import DEVICES, load_fixtures
+from conftest import DEVICES, check_sig_methods, force_highway_target, highway_targets, load_fixtures
 
 METHOD = "ps"
 
@@ -36,47 +35,12 @@ METHOD = "ps"
 def test_split_and_endpoint_variants(monkeypatch, device, dtype, time_aug, lead_lag, scalar):
     path = torch.tensor(np.random.default_rng(712).normal(scale=0.04, size=(2, 14, 2)),
                         device=device, dtype=dtype)[:, ::2]
-    options = dict(time_aug=time_aug, lead_lag=lead_lag, scalar_term=scalar, n_jobs=2)
-    expected = pysiglib.sig(path, 4, **options)
-    seeds = torch.tensor(np.random.default_rng(713).normal(size=expected.shape), device=device, dtype=dtype)
-    back_options = dict(time_aug=time_aug, lead_lag=lead_lag, n_jobs=2)
-    gradient = pysiglib.sig_backprop(path, expected, seeds, 4, **back_options)
-    tolerance = 2e-5 if dtype == torch.float32 else 2e-11
-    for a in range(5):
-        split = (a, 4 - a) if a else None
-        actual = pysiglib.sig(path, 4, method="ps", ps_split=split, **options)
-        grad = pysiglib.sig_backprop(path, expected, seeds, 4, method="ps", ps_split=split, **back_options)
-        torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
-        torch.testing.assert_close(grad, gradient, atol=tolerance, rtol=tolerance)
+    options = dict(time_aug=time_aug, lead_lag=lead_lag, end_time=.7, scalar_term=scalar, n_jobs=2)
+    variants = [("ps", None)] + [("ps", (a, 4 - a)) for a in range(1, 5)]
+    check_sig_methods(path, 4, variants, **options)
     for block in (1, 3, 16):
         monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", str(block))
-        actual = pysiglib.sig(path, 4, method="ps", **options)
-        torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
-
-
-@pytest.mark.parametrize("device", DEVICES)
-def test_endpoint_autograd_and_stream(monkeypatch, device):
-    monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "3")
-    path = torch.randn(2, 6, 2, device=device, dtype=torch.float64) * 0.03
-    path.requires_grad_()
-    operation = lambda x: torch_api.sig(x, 4, method="ps")
-    if device == "cuda":
-        stream = torch.cuda.Stream()
-        stream.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(stream):
-            assert torch.autograd.gradcheck(operation, (path,))
-        stream.synchronize()
-    else:
-        assert torch.autograd.gradcheck(operation, (path,))
-
-
-@pytest.mark.parametrize("device", DEVICES)
-def test_generic_unbalanced_split(monkeypatch, device):
-    monkeypatch.setenv("PYSIGLIB_PS_COEFFICIENT_FACTORS", "0")
-    path = torch.randn(2, 8, 3, device=device, dtype=torch.float64) * 0.03
-    expected = pysiglib.sig(path, 5)
-    actual = pysiglib.sig(path, 5, method="ps", ps_split=(5, 0))
-    torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-12)
+        check_sig_methods(path, 4, [("ps", None)], backward=False, **options)
 
 
 @pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
@@ -84,15 +48,7 @@ def test_generic_unbalanced_split(monkeypatch, device):
 def test_automatic_prefix_suffix_dispatch(device, dtype, dimension):
     path = torch.tensor(np.random.default_rng(714).normal(scale=0.02, size=(32, 257, dimension)),
                         device=device, dtype=dtype)
-    expected = pysiglib.sig(path, 3, method="ps", ps_split=(2, 1), n_jobs=20)
-    seeds = torch.ones_like(expected)
-    gradient = pysiglib.sig_backprop(path, expected, seeds, 3, method="ps", ps_split=(2, 1), n_jobs=20)
-    actual = pysiglib.sig(path, 3, method="ps", n_jobs=20)
-    grad = pysiglib.sig_backprop(path, actual, seeds, 3, method="ps", n_jobs=20)
-    tolerance = 2e-5 if dtype == torch.float32 else 2e-11
-    torch.testing.assert_close(expected, pysiglib.sig(path, 3), atol=tolerance, rtol=tolerance)
-    torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
-    torch.testing.assert_close(grad, gradient, atol=tolerance, rtol=tolerance)
+    check_sig_methods(path, 3, [("ps", None), ("ps", (2, 1))], n_jobs=20)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -106,35 +62,19 @@ def test_endpoint_workspace_limit(monkeypatch, device):
 
 @pytest.mark.parametrize("target_name", ("SSE2", "AVX2"))
 def test_endpoint_simd_targets(monkeypatch, target_name):
-    from pysiglib.load_siglib import CPSIG
-    if not hasattr(CPSIG, "cpsig_test_supported_targets"):
-        pytest.skip("Target forcing requires a native test build")
-    CPSIG.cpsig_test_supported_targets.restype = ctypes.c_int64
-    CPSIG.cpsig_test_target_name.argtypes = [ctypes.c_int64]
-    CPSIG.cpsig_test_target_name.restype = ctypes.c_char_p
-    CPSIG.cpsig_test_set_target.argtypes = [ctypes.c_int64]
-    targets = CPSIG.cpsig_test_supported_targets()
-    selected = 0
-    while targets:
-        target = targets & -targets
-        targets &= ~target
-        if CPSIG.cpsig_test_target_name(target).decode() == target_name:
-            selected = target
-    if not selected:
+    targets = highway_targets()
+    if target_name not in targets:
         pytest.skip(f"{target_name} is unavailable")
-    assert CPSIG.cpsig_test_set_target(selected) == 0
-    try:
+    with force_highway_target(targets[target_name]):
         path = np.random.default_rng(715).normal(scale=0.03, size=(7, 18, 3))
         expected = pysiglib.sig(path, 5)
         monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "4")
         actual = pysiglib.sig(path, 5, method="ps", n_jobs=3)
         np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-12)
-    finally:
-        assert CPSIG.cpsig_test_set_target(0) == 0
 
 
 @pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
-@pytest.mark.parametrize("dimension,degree,rows", [(2, 8, 1), (3, 8, 5), (5, 6, 7), (11, 4, 3)])
+@pytest.mark.parametrize("dimension,degree,rows", [(2, 8, 1), (3, 8, 5), (5, 6, 7), (11, 4, 3), (4, 6, 1)])
 def test_paired_factor_blocks(monkeypatch, device, dtype, dimension, degree, rows):
     path = torch.tensor(np.random.default_rng(84).normal(size=(3, 19, dimension)).cumsum(axis=1) * 0.03,
                         device=device, dtype=dtype)
@@ -174,70 +114,30 @@ def test_split_exact_reference(device):
 
 @pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
 @pytest.mark.parametrize("dimension,degree,length", [(1, 7, 13), (2, 0, 7), (2, 1, 7), (2, 6, 0),
-    (2, 5, 1), (3, 5, 2), (2, 5, 12), (3, 4, 14), (3, 6, 130), (4, 5, 259)])
+    (2, 5, 1), (3, 5, 2), (2, 5, 12), (3, 4, 14), (3, 6, 130), (4, 5, 259),
+    (2, 2, 258), (3, 3, 258), (4, 3, 66), (8, 3, 18),
+    (16, 2, 66), (5, 3, 18), (2, 4, 514), (3, 5, 258), (4, 5, 66), (4, 6, 18),
+    (8, 4, 18), (8, 5, 10), (8, 6, 6)])
 def test_matches_horner(device, dtype, dimension, degree, length):
     path = torch.tensor(np.random.default_rng(5).normal(size=(2, 3, length, dimension)).cumsum(axis=-2) * 0.03,
                         device=device, dtype=dtype)
     for scalar in (False, True):
-        actual = pysiglib.sig(path, degree, method=METHOD, scalar_term=scalar, n_jobs=2)
-        expected = pysiglib.sig(path, degree, scalar_term=scalar, n_jobs=2)
-        assert actual.shape == expected.shape
-        assert actual.dtype == path.dtype and actual.device == path.device
-        torch.testing.assert_close(actual, expected, atol=1e-4 if dtype == torch.float32 else 1e-10,
-                                   rtol=1e-4 if dtype == torch.float32 else 1e-10)
+        check_sig_methods(path, degree, [("ps", None)], scalar_term=scalar, backward=False, n_jobs=2)
 
 
-@pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
-@pytest.mark.parametrize("dimension,degree,length", [(2, 2, 258), (3, 3, 258), (4, 3, 66), (8, 3, 18),
-    (16, 2, 66), (5, 3, 18), (2, 4, 514), (3, 5, 258), (4, 5, 66), (4, 6, 18),
-    (8, 4, 18), (8, 5, 10), (8, 6, 6)])
-def test_low_depth_kernels(device, dtype, dimension, degree, length):
-    path = torch.tensor(np.random.default_rng(31).normal(size=(2, 1, length, dimension)).cumsum(axis=-2) / length ** 0.5,
-                        dtype=dtype, device=device)
-    options = dict(method=METHOD, scalar_term=True, n_jobs=2)
-    actual = pysiglib.sig(path, degree, **options)
-    expected = pysiglib.sig(path, degree, scalar_term=True, n_jobs=2)
-    tolerance = 1e-4 if dtype == torch.float32 else 1e-10
-    torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
-
-
-@pytest.mark.parametrize("dimension,degree", [(2, 6), (3, 5), (4, 6)])
-@pytest.mark.parametrize("dtype", (np.float32, np.float64))
-@pytest.mark.parametrize("block_bytes", (16 << 10, 64 << 10, 256 << 10))
-def test_cpu_streamed_preparation(monkeypatch, dimension, degree, dtype, block_bytes):
-    path = np.random.default_rng(45).normal(size=(2, 130, dimension)).cumsum(axis=1).astype(dtype) * 0.02
-    expected = pysiglib.sig(path, degree, scalar_term=True)
-    monkeypatch.setenv("PYSIGLIB_PS_CPU_STREAM_BLOCK_BYTES", str(block_bytes))
-    actual = pysiglib.sig(path, degree, method=METHOD, scalar_term=True, n_jobs=4)
-    tolerance = 1e-4 if dtype == np.float32 else 1e-10
-    np.testing.assert_allclose(actual, expected, atol=tolerance, rtol=tolerance)
-
-
-@pytest.mark.parametrize("batch,dimension,degree,dtype", [
-    (2, 3, 3, np.float32),
-    (2, 2, 4, np.float32),
-    (2, 2, 6, np.float32),
-    (2, 3, 4, np.float32),
-    (32, 3, 4, np.float32),
-    (2, 4, 4, np.float32),
-    (2, 4, 4, np.float64),
-    (2, 8, 4, np.float32),
-    (2, 8, 4, np.float64),
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("batch,d,m,block_bytes", [
+    (2, 2, 4, None), (2, 2, 6, 16384), (2, 3, 4, None), (32, 3, 4, None),
+    (2, 3, 5, 65536), (2, 4, 4, None), (2, 4, 6, 262144), (2, 8, 4, None), (2, 8, 6, 1),
 ])
-def test_cpu_automatic_preparation(batch, dimension, degree, dtype):
-    path = np.random.default_rng(47).normal(size=(batch, 17, dimension)).astype(dtype)
-    actual = pysiglib.sig(path, degree, method=METHOD, n_jobs=4)
-    expected = pysiglib.sig(path, degree, n_jobs=4)
-    tolerance = 1e-4 if dtype == np.float32 else 1e-10
-    np.testing.assert_allclose(actual, expected, atol=tolerance, rtol=tolerance)
-
-
-def test_cpu_streamed_one_segment_fallback(monkeypatch):
-    path = np.random.default_rng(48).normal(size=(2, 17, 8))
-    expected = pysiglib.sig(path, 6)
-    monkeypatch.setenv("PYSIGLIB_PS_CPU_STREAM_BLOCK_BYTES", "1")
-    actual = pysiglib.sig(path, 6, method=METHOD)
-    np.testing.assert_allclose(actual, expected, atol=1e-10, rtol=1e-10)
+def test_cpu_preparation(monkeypatch, dtype, batch, d, m, block_bytes):
+    if block_bytes is not None:
+        monkeypatch.setenv("PYSIGLIB_PS_CPU_STREAM_BLOCK_BYTES", str(block_bytes))
+    path = np.random.default_rng(45).normal(scale=.02, size=(batch, 130, d)).cumsum(axis=1).astype(dtype)
+    expected = pysiglib.sig(path, m, scalar_term=True)
+    actual = pysiglib.sig(path, m, method=METHOD, scalar_term=True, n_jobs=4)
+    tol = 1e-4 if dtype == np.float32 else 1e-10
+    np.testing.assert_allclose(actual, expected, rtol=tol, atol=tol)
 
 
 @pytest.mark.parametrize("device,degree,ta,ll,dtype",
@@ -269,16 +169,6 @@ def test_low_depth_rational_cancellation(device, dtype):
             assert delta.max() <= tolerance, (degree, level, delta.max(), relative)
 
 
-@pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
-def test_specialized_factor_blocks(monkeypatch, device, dtype):
-    monkeypatch.setenv("PYSIGLIB_PS_FACTOR_BYTES", "500")
-    path = torch.tensor(np.random.default_rng(32).normal(size=(3, 11, 4)) * 0.1, dtype=dtype, device=device)
-    actual = pysiglib.sig(path, 6, method=METHOD, scalar_term=True, n_jobs=2)
-    expected = pysiglib.sig(path, 6, scalar_term=True)
-    tolerance = 1e-4 if dtype == torch.float32 else 1e-10
-    torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
-
-
 @pytest.mark.parametrize("device", DEVICES)
 def test_exact_reference_and_forced_blocks(monkeypatch, device):
     monkeypatch.setenv("PYSIGLIB_PS_SCAN_CHUNK", "3")
@@ -287,13 +177,6 @@ def test_exact_reference_and_forced_blocks(monkeypatch, device):
     path = np.vstack((np.zeros(3), np.cumsum(np.array(increments, dtype=float), axis=0)))
     actual = pysiglib.sig(torch.tensor(path, device=device), 5, method=METHOD, scalar_term=True)
     np.testing.assert_allclose(actual.cpu(), exact_signature(increments, 5), rtol=1e-11, atol=1e-12)
-
-
-@pytest.mark.parametrize("device,ta,ll", list(product(DEVICES, (False, True), (False, True))))
-def test_transforms_and_views(device, ta, ll):
-    path = torch.tensor(np.random.default_rng(7).normal(size=(3, 34, 4)) * 0.05, device=device)[:, ::2, ::2]
-    opts = dict(time_aug=ta, lead_lag=ll, end_time=0.7, scalar_term=True)
-    torch.testing.assert_close(pysiglib.sig(path, 4, method=METHOD, **opts), pysiglib.sig(path, 4, **opts), atol=1e-10, rtol=1e-10)
 
 
 def test_numpy_fixtures_and_empty():
@@ -306,17 +189,6 @@ def test_numpy_fixtures_and_empty():
         assert pysiglib.sig(path, 4, method=METHOD).shape == shape[:-2] + (30,)
     path = np.arange(24, dtype=float).reshape(8, 3)[::-1]
     np.testing.assert_allclose(pysiglib.sig(path, 3, method=METHOD), pysiglib.sig(path, 3), atol=1e-10)
-
-
-@pytest.mark.parametrize("kind", ("zero", "constant", "alternating", "closed"))
-def test_cancellation(kind):
-    increments = np.random.default_rng(8).normal(size=(12, 2)) * 0.2
-    if kind == "zero": increments[:] = 0
-    if kind == "constant": increments[:] = increments[0]
-    if kind == "alternating": increments[1::2] = -increments[::2]
-    if kind == "closed": increments[-1] = -increments[:-1].sum(axis=0)
-    path = np.vstack((np.zeros(2), increments.cumsum(axis=0)))
-    np.testing.assert_allclose(pysiglib.sig(path, 8, method=METHOD), pysiglib.sig(path, 8), atol=1e-10, rtol=1e-10)
 
 
 def test_validation():
@@ -382,18 +254,6 @@ def test_auto_horner_fallback(monkeypatch):
                                       pysiglib.sig_backprop(path, expected, seeds, 4, **options))
 
 
-def test_jax_auto_mixed_passes():
-    jax = pytest.importorskip("jax")
-    import pysiglib.jax_api as api
-    path = np.random.default_rng(45).normal(scale=0.02, size=(2, 21, 4)).astype(np.float32)
-    reference_path = path.astype(np.float64)
-    signature = pysiglib.sig(reference_path, 6)
-    seeds = np.random.default_rng(46).normal(size=signature.shape).astype(np.float32)
-    expected = pysiglib.sig_backprop(reference_path, signature, seeds.astype(np.float64), 6)
-    run = lambda x: (api.sig(x, 6, method="auto") * seeds).sum()
-    np.testing.assert_allclose(jax.jit(jax.grad(run))(path), expected, rtol=2e-5, atol=2e-6)
-
-
 def test_torch_forward_ad_rejected():
     path = torch.zeros((8, 2))
     for api in (pysiglib, torch_api):
@@ -403,14 +263,6 @@ def test_torch_forward_ad_rejected():
                 api.sig(dual, 3, method=METHOD)
         with pytest.raises(NotImplementedError, match="differentiation"):
             torch.func.jvp(lambda p: api.sig(p, 3, method=METHOD), (path,), (torch.ones_like(path),))
-
-
-def test_threaded_calls():
-    path = np.random.default_rng(9).normal(size=(5, 17, 3)) * 0.05
-    expected = pysiglib.sig(path, 5)
-    with ThreadPoolExecutor(3) as pool:
-        results = list(pool.map(lambda _: pysiglib.sig(path, 5, method=METHOD, n_jobs=2), range(6)))
-    for result in results: np.testing.assert_allclose(result, expected, atol=1e-10)
 
 
 @pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA unavailable")
@@ -432,51 +284,6 @@ def test_scan_free_batch_boundary(degree):
                                pysiglib.sig(path, degree, scalar_term=True), atol=1e-10, rtol=1e-10)
 
 
-@pytest.mark.parametrize("method,split", [("ps", None), ("ps", (1, 3)), ("ps", (4, 0)), ("auto", None)])
-def test_jax_forward_and_reverse(monkeypatch, method, split):
-    jax = pytest.importorskip("jax")
-    import pysiglib.jax_api as api
-    jax.config.update("jax_enable_x64", True)
-    if split is not None:
-        monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "invalid")
-    path = np.random.default_rng(10).normal(size=(2, 13, 3)) * 0.05
-    run = lambda p: api.sig(p, 4, method=method, ps_split=split)
-    expected = pysiglib.sig(path, 4)
-    for value in (run(path), jax.jit(run)(path), jax.vmap(run)(path)):
-        np.testing.assert_allclose(value, expected, atol=1e-10, rtol=1e-10)
-    expected_grad = pysiglib.sig_backprop(path, expected, np.ones_like(expected), 4)
-    np.testing.assert_allclose(jax.grad(lambda p: run(p).sum())(path), expected_grad, atol=1e-10, rtol=1e-10)
-    with pytest.raises(TypeError, match="forward-mode"):
-        jax.jvp(run, (path,), (np.ones_like(path),))
-
-
-@pytest.mark.parametrize("device", DEVICES)
-def test_workspace_limit_and_batch_chunks(monkeypatch, device):
-    path = torch.tensor(np.random.default_rng(12).normal(size=(35, 9, 3)) * 0.03, device=device)
-    expected = pysiglib.sig(path, 5)
-    monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", "65536")
-    torch.testing.assert_close(pysiglib.sig(path, 5, method=METHOD, n_jobs=4), expected, atol=1e-10, rtol=1e-10)
-    monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", "1")
-    with pytest.raises(Exception, match="requires.*workspace bytes"):
-        pysiglib.sig(path, 5, method=METHOD)
-
-
-@pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA unavailable")
-def test_cuda_concurrent_calls_and_cleanup():
-    path = torch.randn((2, 17, 3), device="cuda", dtype=torch.float64) * 0.03
-    expected = pysiglib.sig(path, 5)
-    torch.cuda.synchronize()
-    def run(_):
-        with torch.cuda.stream(torch.cuda.Stream()):
-            return pysiglib.sig(path, 5, method=METHOD)
-    with ThreadPoolExecutor(3) as pool:
-        results = list(pool.map(run, range(6)))
-    for result in results: torch.testing.assert_close(result, expected, atol=1e-10, rtol=1e-10)
-    from pysiglib.load_siglib import CUSIG
-    CUSIG.cusig_shutdown()
-    torch.testing.assert_close(pysiglib.sig(path, 5, method=METHOD), expected, atol=1e-10, rtol=1e-10)
-
-
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="requires two CUDA devices")
 def test_cuda_device_changes():
     path = np.random.default_rng(15).normal(size=(13, 3)) * 0.03
@@ -488,10 +295,11 @@ def test_cuda_device_changes():
 
 @pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA unavailable")
 @pytest.mark.parametrize("coefficients", (0, 1))
-def test_cuda_global_factor_workspace(monkeypatch, coefficients):
+@pytest.mark.parametrize("degree,points,split", [(5, 8, (5, 0)), (14, 3, None)])
+def test_cuda_global_factor_workspace(monkeypatch, coefficients, degree, points, split):
     monkeypatch.setenv("PYSIGLIB_PS_COEFFICIENT_FACTORS", str(coefficients))
-    path = torch.tensor(np.random.default_rng(13).normal(size=(2, 3, 3)) * 0.1, device="cuda")
-    torch.testing.assert_close(pysiglib.sig(path, 14, method=METHOD), pysiglib.sig(path, 14), atol=1e-10, rtol=1e-10)
+    path = torch.tensor(np.random.default_rng(13).normal(size=(2, points, 3)) * 0.1, device="cuda")
+    check_sig_methods(path, degree, [("ps", split)], backward=False)
 
 
 def test_cancellation_higher_precision():

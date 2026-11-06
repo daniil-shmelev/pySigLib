@@ -62,7 +62,7 @@ include(ExternalProject)
 
 set(_blas_root "${CMAKE_BINARY_DIR}/pysiglib-openblas")
 set(_blas_install "${_blas_root}/install")
-file(MAKE_DIRECTORY "${_blas_install}/include/openblas")
+file(MAKE_DIRECTORY "${_blas_install}/include/openblas64")
 set(_blas_cmake "${CMAKE_COMMAND}")
 set(_blas_compiler_args)
 if(MSVC)
@@ -76,11 +76,11 @@ if(MSVC)
     list(APPEND _blas_compiler_args "-DCMAKE_C_COMPILER=${_blas_clang}" "-DMSVC_STATIC_CRT=ON"
         "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW"
         "-DCMAKE_C_FLAGS=/clang:-Wno-unsafe-buffer-usage")
-    set(_blas_library "${_blas_install}/lib/openblas.lib")
+    set(_blas_library "${_blas_install}/lib/openblas_64.lib")
 else()
     enable_language(C)
     list(APPEND _blas_compiler_args "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
-    set(_blas_library "${_blas_install}/lib/libopenblas.a")
+    set(_blas_library "${_blas_install}/lib/libopenblas_64.a")
 endif()
 find_program(_blas_ninja ninja REQUIRED)
 ExternalProject_Add(pysiglib_openblas_build
@@ -92,7 +92,7 @@ ExternalProject_Add(pysiglib_openblas_build
         "-DCMAKE_MAKE_PROGRAM=${_blas_ninja}" ${_blas_compiler_args}
         -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=${_blas_install}"
         -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-        -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DFIXED_LIBNAME=ON
+        -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DFIXED_LIBNAME=ON -DINTERFACE64=ON
         -DBUILD_WITHOUT_LAPACK=ON -DNOFORTRAN=ON -DBUILD_TESTING=OFF -DONLY_CBLAS=ON
         -DBUILD_SINGLE=ON -DBUILD_DOUBLE=ON -DBUILD_COMPLEX=OFF -DBUILD_COMPLEX16=OFF
         -DUSE_THREAD=OFF -DUSE_LOCKING=ON -DNUM_THREADS=256 -DDYNAMIC_ARCH=ON
@@ -111,13 +111,13 @@ if(WIN32)
 endif()
 add_library(pysiglib_openblas STATIC IMPORTED GLOBAL)
 set_target_properties(pysiglib_openblas PROPERTIES IMPORTED_LOCATION "${_blas_library}"
-    INTERFACE_INCLUDE_DIRECTORIES "${_blas_install}/include/openblas")
+    INTERFACE_INCLUDE_DIRECTORIES "${_blas_install}/include/openblas64")
 add_dependencies(pysiglib_openblas pysiglib_openblas_build)
 if(UNIX)
     find_package(Threads REQUIRED)
     target_link_libraries(pysiglib_openblas INTERFACE Threads::Threads m ${CMAKE_DL_LIBS})
     if(NOT APPLE)
-        target_link_options(pysiglib_openblas INTERFACE "LINKER:--exclude-libs,libopenblas.a")
+        target_link_options(pysiglib_openblas INTERFACE "LINKER:--exclude-libs,libopenblas_64.a")
     endif()
 endif()
 if(NOT CPSIG_SKIP_INSTALL)

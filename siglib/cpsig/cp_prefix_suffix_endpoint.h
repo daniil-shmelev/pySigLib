@@ -24,7 +24,7 @@
 #include "prefix_suffix_endpoint.h"
 #include "cp_prefix_suffix_endpoint_plan.h"
 #include "cp_signature.h"
-#include <cblas.h>
+#include "cp_prefix_suffix_gemm.h"
 
 HWY_BEFORE_NAMESPACE();
 namespace cpsig {
@@ -66,14 +66,10 @@ void compute(const T* path, T* out, const Shape& s, int jobs, uint64_t dimension
             }
             T* result = first.data() + task * s.total;
             std::copy_n(state, s.lower, result);
-            if (count) {
-                if constexpr (std::is_same_v<T, float>)
-                    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, int(s.width), int(s.d), int(count),
-                        1, w, int(s.width), v, int(s.d), 0, result + s.lower, int(s.d));
-                else
-                    cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, int(s.width), int(s.d), int(count),
-                        1, w, int(s.width), v, int(s.d), 0, result + s.lower, int(s.d));
-            }
+            if (count)
+                factor_gemm(prefix_suffix::Matrix<T>{w, s.width, count, 1, s.width},
+                    prefix_suffix::Matrix<T>{v, count, s.d, s.d, 1},
+                    prefix_suffix::Matrix<T>{result + s.lower, s.width, s.d, s.d, 1}, true);
         }
     });
     uint64_t count = s.chunks;
@@ -87,13 +83,7 @@ void compute(const T* path, T* out, const Shape& s, int jobs, uint64_t dimension
                 std::copy_n(left, s.total, result);
                 if (2 * pair + 1 == count) continue;
                 const T* right = left + s.total;
-                for (uint64_t k = 1; k <= s.m; ++k) {
-                    for (uint64_t p = 0; p < s.power[k]; ++p) result[s.offset[k] + p] += right[s.offset[k] + p];
-                    for (uint64_t j = 1; j < k; ++j)
-                        for (uint64_t p = 0; p < s.power[j]; ++p)
-                            vec_mult_add(result + s.offset[k] + p * s.power[k - j], right + s.offset[k - j],
-                                left[s.offset[j] + p], s.power[k - j]);
-                }
+                sig_combine_inplace_(result, right, s.m, s.offset.data());
             }
         });
         first.swap(second); count = next;

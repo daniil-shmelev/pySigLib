@@ -109,13 +109,9 @@ void compute(const T* path, T* out, const Shape& s, cudaStream_t stream, uint64_
     const uint64_t tasks = mul(s.batch, s.chunks);
     if (!tasks) return;
     int device; CUDA_CHECK(cudaGetDevice(&device));
-    auto& registry = cuda_path_workspaces();
-    std::lock_guard lock(registry.mutex);
-    auto& entry = registry.devices[device];
-    if (!entry.prefix_suffix_state) entry.prefix_suffix_state = std::make_shared<Resources>(device);
-    auto resource = std::static_pointer_cast<Resources>(entry.prefix_suffix_state);
-    auto& r = *resource;
-    const uint64_t reserved = r.storage ? mul(r.storage->row_elements(), r.storage->capacity()) : 0;
+    std::lock_guard lock(cuda_path_workspaces().mutex);
+    Resources& r = Resources::get(device);
+    const uint64_t reserved = r.reserved();
     const uint64_t work_size = add(s.lower, add(mul(2, s.power[s.m - 2]), s.d));
     const bool shared = work_size * sizeof(T) <= 48 * 1024;
     const uint64_t worker = add(mul(s.block, add(s.width, s.d)), shared ? 0 : work_size);
@@ -125,11 +121,7 @@ void compute(const T* path, T* out, const Shape& s, cudaStream_t stream, uint64_
     if (stored >= budget || worker > budget - stored) throw std::bad_alloc();
     const uint64_t slots = std::min(tasks, (budget - stored) / worker);
     const uint64_t requested = mul(add(stored, mul(slots, worker)), sizeof(T));
-    if (reserved < requested) {
-        r.storage.reset();
-        r.storage = std::make_unique<CudaBatchWorkspace<std::byte>>(1, requested, "endpoint signature factors");
-        r.requested_bytes = requested;
-    }
+    r.reserve(1, requested, UINT64_MAX, "endpoint signature factors");
     T* first = reinterpret_cast<T*>(r.storage->get()); T* second = first + tasks * s.total;
     T* w = second + tasks * s.total; T* v = w + slots * s.block * s.width;
     T* scratch = v + slots * s.block * s.d;
@@ -145,9 +137,9 @@ void compute(const T* path, T* out, const Shape& s, cudaStream_t stream, uint64_
             prepare<<<unsigned(std::min<uint64_t>(count, 65535)), 128, shared ? work_size * sizeof(T) : 0, stream>>>(
                 path, first, w, v, scratch, shape, begin, count, shared, dimension, length, ta, ll, end_time);
             CUDA_CHECK(cudaGetLastError());
-            blas_check(cublasGemmStridedBatchedEx(r.handle, CUBLAS_OP_N, CUBLAS_OP_T, int(s.d), int(s.width), int(s.block),
-                &alpha, v, dtype, int(s.d), s.block * s.d, w, dtype, int(s.width), s.block * s.width,
-                &beta, first + begin * s.total + s.lower, dtype, int(s.d), s.total, int(count), compute_type, CUBLAS_GEMM_DEFAULT));
+            blas_check(cublasGemmStridedBatchedEx_64(r.handle, CUBLAS_OP_N, CUBLAS_OP_T, s.d, s.width, s.block,
+                &alpha, v, dtype, s.d, s.block * s.d, w, dtype, s.width, s.block * s.width,
+                &beta, first + begin * s.total + s.lower, dtype, s.d, s.total, count, compute_type, CUBLAS_GEMM_DEFAULT));
         }
         for (uint64_t count = s.chunks; count > 1; count = (count + 1) / 2) {
             const uint64_t size = s.batch * ((count + 1) / 2) * s.total;

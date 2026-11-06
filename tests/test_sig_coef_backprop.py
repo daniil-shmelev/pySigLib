@@ -77,7 +77,8 @@ def test_sig_coef_backprop_horner_reference(device, dtype, degree, mixed):
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("time_aug,lead_lag", [(False, False), (True, False), (False, True), (True, True)])
 @pytest.mark.parametrize("prefixes", [False, True])
-def test_sig_coef_backprop_horner_batch_views(device, dtype, time_aug, lead_lag, prefixes):
+@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
+def test_sig_coef_backprop_batch_views(device, dtype, time_aug, lead_lag, prefixes, method):
     rng = np.random.default_rng(721)
     storage = torch.tensor(rng.normal(scale=0.2, size=(2, 3, 5, 4)), dtype=dtype, device=device)
     storage[..., 2, :] = storage[..., 1, :]
@@ -90,8 +91,8 @@ def test_sig_coef_backprop_horner_batch_views(device, dtype, time_aug, lead_lag,
         rng.normal(size=(*reference.shape[:-1], 2 * reference.shape[-1])), dtype=dtype, device=device)
     weights = weights_storage[..., ::2]
     expected, = torch.autograd.grad(reference, path, weights, retain_graph=True)
-    coefs = pysiglib.sig_coef(path, words, prefixes=True, **options)
-    actual = pysiglib.sig_coef_backprop(path, words, coefs, weights, n_jobs=-1, **options)
+    coefs = pysiglib.sig_coef(path, words, prefixes=True, method=method, **options)
+    actual = pysiglib.sig_coef_backprop(path, words, coefs, weights, n_jobs=-1, method=method, **options)
     tolerance = 2e-5 if dtype == torch.float32 else 1e-11
     torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
 
@@ -100,7 +101,7 @@ def test_sig_coef_backprop_horner_batch_views(device, dtype, time_aug, lead_lag,
         reference = reference[..., indices]
     weights = torch.ones_like(reference)
     expected, = torch.autograd.grad(reference, path, weights)
-    output = pysiglib.torch_api.sig_coef(path, words, prefixes=prefixes, **options)
+    output = pysiglib.torch_api.sig_coef(path, words, prefixes=prefixes, method=method, **options)
     actual, = torch.autograd.grad(output, path, weights)
     torch.testing.assert_close(output, reference, atol=tolerance, rtol=tolerance)
     torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
@@ -111,11 +112,15 @@ def test_sig_coef_backprop_horner_batch_views(device, dtype, time_aug, lead_lag,
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("shape", [(2, 0, 5, 2), (2, 3, 0, 2), (2, 3, 1, 2)])
-def test_sig_coef_backprop_horner_empty(device, dtype, shape):
+@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
+def test_sig_coef_backprop_empty(device, dtype, shape, method):
     path = torch.zeros(shape, dtype=dtype, device=device)
-    words = [(0, 1) * 4, (1,)]
-    coefs = pysiglib.sig_coef(path, words, prefixes=True)
-    actual = pysiglib.sig_coef_backprop(path, words, coefs, torch.ones_like(coefs))
+    words = [(), (0, 1) * 4, (1,), ()]
+    coefs = pysiglib.sig_coef(path, words, prefixes=True, method=method)
+    expected = torch.zeros_like(coefs)
+    expected[..., [0, -1]] = 1
+    torch.testing.assert_close(coefs, expected)
+    actual = pysiglib.sig_coef_backprop(path, words, coefs, torch.ones_like(coefs), method=method)
     torch.testing.assert_close(actual, torch.zeros_like(path))
     assert actual.shape == path.shape
     assert_device(actual, device)

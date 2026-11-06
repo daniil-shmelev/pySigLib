@@ -29,11 +29,9 @@
 #include <cmath>
 #include <array>
 #include <climits>
-#include <cblas.h>
 #include <oneapi/tbb/blocked_range.h>
 #include <oneapi/tbb/global_control.h>
 #include <oneapi/tbb/parallel_for.h>
-static_assert(sizeof(blasint) == 4);
 
 HWY_BEFORE_NAMESPACE();
 namespace cpsig {
@@ -50,23 +48,24 @@ struct StreamGroup {
 };
 
 struct CpuPlan {
-    uint64_t n, plen, qlen, maxp, maxq, rows, side, scratch, psize, qsize, count, workspace_count, bytes, powers;
+    uint64_t n, plen, qlen, maxp, rows, psize, qsize, count, workspace_count, powers;
     uint64_t stream_segments = 0, stream_factor_count = 0, stream_elements_per_segment = 0;
-    bool low, specialized, fused, paired;
+    bool low, fused, paired;
     PreparationStrategy strategy = PreparationStrategy::stored;
     std::array<StreamGroup, 3> stream_groups{};
     uint64_t stream_group_count = 0;
     CpuPlan(const Layout& l, uint64_t segments, uint64_t batch, int jobs, uint64_t itemsize)
         : n(segments) {
         plen = l.offset[l.prefix_degree + 1]; qlen = l.offset[l.scan_degree + 1];
-        maxp = l.power[l.left_degree(l.m)]; maxq = l.power[l.right_degree(l.m)];
+        maxp = l.power[l.left_degree(l.m)];
+        const uint64_t maxq = l.power[l.right_degree(l.m)];
         const uint64_t factor_bytes = option("PYSIGLIB_PS_FACTOR_BYTES", 64ULL << 20);
         rows = std::max<uint64_t>(1, std::min(mul(n, l.left_degree(l.m)), factor_bytes / mul(add(maxp, maxq), itemsize)));
         const uint64_t stored_rows = rows;
-        side = tile_side(maxp, maxq, rows, option("PYSIGLIB_PS_MAX_TILE", 4096));
+
         low = l.m <= 6;
         paired = !l.split_a;
-        specialized = !l.split_a && low && (l.d == 2 || l.d == 3 || l.d == 4 || l.d == 8);
+        const bool specialized = !l.split_a && low && (l.d == 2 || l.d == 3 || l.d == 4 || l.d == 8);
         const bool direct_eligible = specialized && l.scan_degree == l.h && l.scan_degree == 1
             && (l.m == 2 || l.m == 3);
         const bool stream_shape_eligible = specialized && l.scan_degree == l.h && l.m >= 4 && l.m <= 6;
@@ -80,12 +79,10 @@ struct CpuPlan {
         fused = specialized && l.power[l.m] <= 1024 && (jobs == 1 || mul(n, l.power[l.m]) < 65536);
         if (strategy != PreparationStrategy::stored) { fused = false; rows = 0; }
         if (fused) rows = 0;
-        scratch = strategy != PreparationStrategy::stored ? 0
-            : ((std::max({maxp, maxq, rows}) > INT_MAX) ? mul(3, mul(side, side)) : 0);
         psize = mul(add(n, 1), plen); qsize = mul(add(n, 1), qlen);
         powers = l.offset[l.left_degree(l.m) + 1];
-        if (specialized) powers = add(powers, maxq);
         if (strategy == PreparationStrategy::streamed) {
+            powers = add(powers, maxq);
             for (uint64_t k = l.scan_degree + 1; k <= l.m;) {
                 StreamGroup& group = stream_groups[stream_group_count++];
                 group.level = k; group.a = (k + 1) / 2; group.b = k / 2;
@@ -106,8 +103,6 @@ struct CpuPlan {
                 fused = specialized && l.power[l.m] <= 1024
                     && (jobs == 1 || mul(n, l.power[l.m]) < 65536);
                 if (fused) rows = 0;
-                scratch = (std::max({maxp, maxq, rows}) > INT_MAX)
-                    ? mul(3, mul(side, side)) : 0;
             }
             for (uint64_t index = 0; index < stream_group_count; ++index) {
                 StreamGroup& group = stream_groups[index];
@@ -129,20 +124,8 @@ struct CpuPlan {
             count = add(add(psize, mul(n, l.d)), stream_factor_count);
             workspace_count = add(count, add(add(qlen, l.power[l.scan_degree]), powers));
         } else {
-            count = add(add(psize, qsize), add(mul(n, l.d), add(mul(rows, add(maxp, maxq)), scratch)));
+            count = add(add(psize, qsize), add(mul(n, l.d), mul(rows, add(maxp, maxq))));
             workspace_count = add(count, add(add(qlen, l.power[l.scan_degree]), mul(jobs, powers)));
-        }
-        bytes = mul(workspace_count, itemsize);
-    }
-};
-
-template<typename T> struct CpuWorkspace {
-    std::vector<T> values;
-    void allocate(const CpuPlan& plan) {
-        try { values.resize(plan.workspace_count); }
-        catch (const std::bad_alloc&) {
-            throw std::runtime_error("CPU prefix-suffix requires " + std::to_string(plan.bytes)
-                + " workspace bytes for one path-processing task");
         }
     }
 };
@@ -160,57 +143,35 @@ template<typename F> void parallel_range(uint64_t count, int jobs, F work) {
     }
 }
 
+template<typename T, typename Work>
+void for_paths(uint64_t batch, int jobs, uint64_t elements, const char* name, Work work) {
+    const uint64_t bytes = mul(elements, sizeof(T));
+    const uint64_t budget = option("PYSIGLIB_PS_WORKSPACE_BYTES", 2ULL << 30);
+    if (bytes > budget) throw std::runtime_error(std::string(name) + " requires " + std::to_string(bytes)
+        + " workspace bytes for one path; configured limit is " + std::to_string(budget));
+    const uint64_t owners = std::min({batch, uint64_t(jobs), bytes ? budget / bytes : uint64_t(jobs)});
+    get_tbb_arena(jobs).execute([&] { parallel_range(owners, jobs, [&](uint64_t first, uint64_t end) {
+        std::vector<T> storage;
+        try { storage.resize(elements); }
+        catch (const std::bad_alloc&) { throw std::runtime_error(std::string(name) + " requires "
+            + std::to_string(bytes) + " workspace bytes for one path-processing task"); }
+        for (uint64_t i = batch * first / owners; i < batch * end / owners; ++i)
+            work(i, storage.data());
+    }); });
+}
+
 template<typename T> struct CpuMatrices {
     int jobs;
-    uint64_t scratch_stride = 0;
-    template<typename F> void rows(Matrix<T> c, F f) {
-        parallel_range(c.rows, mul(c.rows, c.cols) >= 65536 ? jobs : 1,
-            [&](uint64_t first, uint64_t end) {
-                for (uint64_t i = first; i < end; ++i)
-                    for (uint64_t j = 0; j < c.cols; ++j) f(i, j, c.data[i * c.rs + j * c.cs]);
-            });
-    }
-    void clear(Matrix<T> c) { rows(c, [](uint64_t, uint64_t, T& x) { x = 0; }); }
-    void pack(Matrix<T> a, Matrix<T> c) {
-        parallel_range((c.rows + 31) / 32, jobs, [&](uint64_t first, uint64_t end) {
-            for (uint64_t tile = first; tile < end; ++tile)
-                for (uint64_t col = 0; col < c.cols; col += 32)
-                    for (uint64_t i = tile * 32; i < std::min(c.rows, (tile + 1) * 32); ++i)
-                        for (uint64_t j = col; j < std::min(c.cols, col + 32); ++j)
-                            c.data[i * c.rs + j * c.cs] = i < a.rows && j < a.cols ? a.data[i * a.rs + j * a.cs] : T(0);
-        });
-    }
-    void accumulate(Matrix<T> a, Matrix<T> c, T sign) {
-        rows(c, [&](uint64_t i, uint64_t j, T& x) { x += sign * a.data[i * a.rs + j * a.cs]; });
-    }
-    void gemm(Matrix<T> a, Matrix<T> b, Matrix<T> c, T beta) {
-        const bool ta = a.rs == 1, tb = b.rs == 1;
-        const uint64_t lda = ta ? std::max(a.cs, a.rows) : a.rs, ldb = tb ? std::max(b.cs, b.rows) : b.rs;
-        if (lda > INT_MAX || ldb > INT_MAX || c.rs > INT_MAX)
-            throw std::overflow_error("prefix-suffix BLAS leading dimension exceeds LP64 range");
+    void gemm(Matrix<T> a, Matrix<T> b, Matrix<T> c, bool first) {
         constexpr uint64_t grain = prefix_suffix_endpoint::gemm_row_grain;
-        const uint64_t row_block = jobs == 1 ? std::min<uint64_t>(a.rows, INT_MAX)
+        const uint64_t row_block = jobs == 1 ? a.rows
             : std::max(grain, ((a.rows + jobs - 1) / jobs + grain - 1) / grain * grain);
         const uint64_t blocks = (a.rows + row_block - 1) / row_block;
-        parallel_range(blocks, jobs, [&](uint64_t first, uint64_t end) {
-            for (uint64_t block = first; block < end; ++block) {
-                const uint64_t i = block * row_block;
-                const int nr = static_cast<int>(std::min(row_block, a.rows - i));
-                for (uint64_t j = 0; j < b.cols; j += INT_MAX) {
-                    const int nc = static_cast<int>(std::min<uint64_t>(INT_MAX, b.cols - j));
-                    for (uint64_t k = 0; k < a.cols; k += INT_MAX) {
-                        const int nk = static_cast<int>(std::min<uint64_t>(INT_MAX, a.cols - k));
-                        const T* ap = a.data + i * a.rs + k * a.cs;
-                        const T* bp = b.data + k * b.rs + j * b.cs;
-                        T* cp = c.data + i * c.rs + j;
-                        if constexpr (std::is_same_v<T, float>)
-                            cblas_sgemm(CblasRowMajor, ta ? CblasTrans : CblasNoTrans, tb ? CblasTrans : CblasNoTrans,
-                                nr, nc, nk, 1, ap, static_cast<int>(lda), bp, static_cast<int>(ldb), k ? T(1) : beta, cp, static_cast<int>(c.rs));
-                        else
-                            cblas_dgemm(CblasRowMajor, ta ? CblasTrans : CblasNoTrans, tb ? CblasTrans : CblasNoTrans,
-                                nr, nc, nk, 1, ap, static_cast<int>(lda), bp, static_cast<int>(ldb), k ? T(1) : beta, cp, static_cast<int>(c.rs));
-                    }
-                }
+        parallel_range(blocks, jobs, [&](uint64_t begin, uint64_t end) {
+            for (uint64_t block = begin; block < end; ++block) {
+                const uint64_t i = block * row_block, nr = std::min(row_block, a.rows - i);
+                factor_gemm(Matrix<T>{a.data + i * a.rs, nr, a.cols, a.rs, a.cs}, b,
+                    Matrix<T>{c.data + i * c.rs, nr, c.cols, c.rs, 1}, first);
             }
         });
     }
@@ -320,11 +281,35 @@ void stream_fill_segment(const T* prefix, const T* suffix, const T* v, const T* 
     }
 }
 
+template<typename T>
+void prefix_scan(const Path<T>& path, uint64_t n, uint64_t d, const Layout& l, uint64_t plen,
+    T* increments, T* prefixes, T* state, T* work) {
+    std::fill_n(state, l.offset[l.scan_degree + 1], T(0)); state[0] = 1;
+    for (uint64_t i = 0; i < n; ++i) {
+        const auto current = path[i], following = path[i + 1];
+        T* v = increments + i * d;
+        for (uint64_t channel = 0; channel < d; ++channel) v[channel] = following[channel] - current[channel];
+        std::copy_n(state, plen, prefixes + i * plen);
+        signature_horner_step_(state, v, d, l.scan_degree, l.offset.data(), work);
+    }
+    std::copy_n(state, plen, prefixes + n * plen);
+}
+
+template<typename T>
+void suffix_scan(uint64_t n, const Layout& l, uint64_t qlen, const T* increments,
+    T* suffixes, T* state, T* work) {
+    std::fill_n(state, qlen, T(0)); state[0] = 1;
+    for (uint64_t i = n; i-- > 0;) {
+        std::copy_n(state, qlen, suffixes + (i + 1) * qlen);
+        cpu_detail::prepend(state, increments + i * l.d, l, work);
+    }
+    std::copy_n(state, qlen, suffixes);
+}
+
 template<typename T, int D, int M>
 void streamed_low_path(const Path<T>& path, T* output, bool scalar, int jobs,
-    const Layout& l, const CpuPlan& plan, CpuWorkspace<T>& workspace) {
+    const Layout& l, const CpuPlan& plan, T* storage) {
     constexpr int Amax = (M + 1) / 2;
-    T* storage = workspace.values.data();
     T* prefixes = storage;
     T* increments = prefixes + plan.psize;
     T* factors = increments + plan.n * D;
@@ -332,15 +317,7 @@ void streamed_low_path(const Path<T>& path, T* output, bool scalar, int jobs,
     T* work = state + plan.qlen;
     T* powers = work + l.power[l.scan_degree];
     T* temporary = powers + small_offset(D, Amax + 1);
-    std::fill_n(state, plan.qlen, T(0)); state[0] = 1;
-    for (uint64_t i = 0; i < plan.n; ++i) {
-        const auto current = path[i], following = path[i + 1];
-        T* v = increments + i * D;
-        for (int channel = 0; channel < D; ++channel) v[channel] = following[channel] - current[channel];
-        std::copy_n(state, plan.plen, prefixes + i * plan.plen);
-        signature_horner_step_(state, v, D, l.scan_degree, l.offset.data(), work);
-    }
-    std::copy_n(state, plan.plen, prefixes + plan.n * plan.plen);
+    prefix_scan(path, plan.n, D, l, plan.plen, increments, prefixes, state, work);
     std::copy(state + (scalar ? 0 : 1), state + plan.qlen, output);
     std::fill_n(state, plan.qlen, T(0)); state[0] = 1;
     CpuMatrices<T> matrices{jobs};
@@ -373,108 +350,53 @@ void streamed_low_path(const Path<T>& path, T* output, bool scalar, int jobs,
         for (uint64_t index = 0; index < plan.stream_group_count; ++index) {
             const StreamGroup& group = plan.stream_groups[index];
             const uint64_t factor_rows = mul(segment_count, group.a);
-            product(matrices,
+            matrices.gemm(
                 Matrix<T>{factors + group.left_offset, group.p, factor_rows, 1, group.p},
                 Matrix<T>{factors + group.right_offset, factor_rows, group.q, group.q, 1},
                 Matrix<T>{output + l.offset[group.level] - (scalar ? 0 : 1), group.p, group.q, group.q, 1},
-                plan.side, static_cast<T*>(nullptr), first_block);
+                first_block);
             if (group.paired)
-                product(matrices,
+                matrices.gemm(
                     Matrix<T>{factors + group.left_offset, group.p, factor_rows, 1, group.p},
                     Matrix<T>{factors + group.next_offset, factor_rows, group.qnext, group.qnext, 1},
                     Matrix<T>{output + l.offset[group.level + 1] - (scalar ? 0 : 1), group.p, group.qnext, group.qnext, 1},
-                    plan.side, static_cast<T*>(nullptr), first_block);
+                    first_block);
         }
         first_block = false;
         end = first;
     }
 }
 
-template<typename T, int D, int K, bool Paired>
-void small_level(const T* increments, const T* prefixes, const T* suffixes, T* output,
-    T* left, T* right, int jobs, const CpuPlan& plan, const Layout& l) {
+template<typename T, int D, int K>
+void fused_level(const T* increments, const T* prefixes, const T* suffixes, T* output,
+    int jobs, const CpuPlan& plan) {
     constexpr int A = (K + 1) / 2, B = K / 2, P = small_power(D, A), Q = small_power(D, B);
     constexpr int powers_size = small_offset(D, A + 1);
-    constexpr bool paired = Paired;
-    const uint64_t pitch = paired ? Q * D : Q;
     const int workers = mul(plan.n, uint64_t(P) * Q) >= 65536 ? jobs : 1;
-    if (plan.fused) {
-        parallel_range(P, workers, [&](uint64_t first, uint64_t end) {
-            std::fill(output + first * Q, output + end * Q, T(0));
-            T powers[powers_size], r[Q];
-            for (uint64_t i = 0; i < plan.n; ++i) {
-                const T* v = increments + i * D;
-                small_powers<T, D, A>(v, powers);
-                auto accumulate = [&]<int J>() {
-                    small_right_values<T, D, B, J>(suffixes + (i + 1) * plan.qlen, v, r);
-                    for (uint64_t x = first; x < end; ++x) {
-                        const T value = small_left_value<T, D, A, J>(prefixes + i * plan.plen, powers, x);
-                        for (int y = 0; y < Q; ++y) output[x * Q + y] += value * r[y];
-                    }
-                };
-                accumulate.template operator()<0>();
-                if constexpr (A >= 2) accumulate.template operator()<1>();
-                if constexpr (A >= 3) accumulate.template operator()<2>();
-            }
-        });
-        return;
-    }
-    CpuMatrices<T> matrices{workers};
-    const uint64_t total = mul(plan.n, A);
-    for (uint64_t base = 0; base < total; base += plan.rows) {
-        const uint64_t count = std::min(plan.rows, total - base);
-        parallel_range(count, workers, [&](uint64_t first, uint64_t end) {
-            T powers[powers_size];
-            uint64_t previous_segment = plan.n;
-            for (uint64_t row = first; row < end; ++row) {
-                const uint64_t i = (base + row) / A;
-                const int j = (base + row) % A;
-                const T* v = increments + i * D;
-                if (i != previous_segment) {
-                    small_powers<T, D, A>(v, powers);
-                    previous_segment = i;
+    parallel_range(P, workers, [&](uint64_t first, uint64_t end) {
+        std::fill(output + first * Q, output + end * Q, T(0));
+        T powers[powers_size], r[Q];
+        for (uint64_t i = 0; i < plan.n; ++i) {
+            const T* v = increments + i * D;
+            small_powers<T, D, A>(v, powers);
+            auto accumulate = [&]<int J>() {
+                small_right_values<T, D, B, J>(suffixes + (i + 1) * plan.qlen, v, r);
+                for (uint64_t x = first; x < end; ++x) {
+                    const T value = small_left_value<T, D, A, J>(prefixes + i * plan.plen, powers, x);
+                    for (int y = 0; y < Q; ++y) output[x * Q + y] += value * r[y];
                 }
-                auto pack = [&]<int J>() {
-                    for (int x = 0; x < P; ++x)
-                        left[row * P + x] = small_left_value<T, D, A, J>(prefixes + i * plan.plen, powers, x);
-                    small_right_values<T, D, B, J>(suffixes + (i + 1) * plan.qlen, v, right + row * pitch);
-                };
-                if (j == 0) pack.template operator()<0>();
-                if constexpr (A >= 2) if (j == 1) pack.template operator()<1>();
-                if constexpr (A >= 3) if (j == 2) pack.template operator()<2>();
-            }
-        });
-        matrices.gemm({left, P, count, 1, P}, {right, count, Q, pitch, 1}, {output, P, Q, Q, 1}, base ? T(1) : T(0));
-        if (paired) {
-            const uint64_t first_segment = base / A, segments = (base + count - 1) / A - first_segment + 1;
-            parallel_range(segments, workers, [&](uint64_t first, uint64_t end) {
-                T temporary[Q];
-                for (uint64_t segment = first; segment < end; ++segment) {
-                    const uint64_t i = first_segment + segment;
-                    const T* v = increments + i * D;
-                    const T* suffix = suffixes + (i + 1) * plan.qlen;
-                    const uint64_t begin = std::max(base, i * A), stop = std::min(base + count, (i + 1) * A);
-                    for (uint64_t t = begin; t < stop; ++t) {
-                        const uint64_t j = t - i * A, row = t - base;
-                        const T* previous = right + (row + 1) * pitch;
-                        if (t + 1 == stop) {
-                            right_factor(temporary, suffix, v, j + 1, B, l);
-                            previous = temporary;
-                        }
-                        extend_right_factor(right + row * pitch, previous, suffix, v, j, B, l);
-                    }
-                }
-            });
-            matrices.gemm({left, P, count, 1, P}, {right, count, pitch, pitch, 1},
-                {output + P * Q, P, pitch, pitch, 1}, base ? T(1) : T(0));
+            };
+            accumulate.template operator()<0>();
+            if constexpr (A >= 2) accumulate.template operator()<1>();
+            if constexpr (A >= 3) accumulate.template operator()<2>();
         }
-    }
+    });
 }
 
 template<typename T>
 void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bool time_aug,
     bool lead_lag, T end_time, bool scalar, int jobs, const Layout& l, const CpuPlan& plan,
-    CpuWorkspace<T>& workspace) {
+    T* storage) {
     Path<T> path(input, dimension, length, time_aug, lead_lag, end_time);
     if (plan.strategy == PreparationStrategy::direct) {
         auto run = [&]<int D>() { direct_low_path<T, D>(path, output, plan.n, l.m, scalar, l); };
@@ -489,9 +411,9 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
     if (plan.strategy == PreparationStrategy::streamed) {
         auto run = [&]<int D>() {
             switch (l.m) {
-            case 4: streamed_low_path<T, D, 4>(path, output, scalar, jobs, l, plan, workspace); break;
-            case 5: streamed_low_path<T, D, 5>(path, output, scalar, jobs, l, plan, workspace); break;
-            case 6: streamed_low_path<T, D, 6>(path, output, scalar, jobs, l, plan, workspace); break;
+            case 4: streamed_low_path<T, D, 4>(path, output, scalar, jobs, l, plan, storage); break;
+            case 5: streamed_low_path<T, D, 5>(path, output, scalar, jobs, l, plan, storage); break;
+            case 6: streamed_low_path<T, D, 6>(path, output, scalar, jobs, l, plan, storage); break;
             }
         };
         switch (l.d) {
@@ -502,16 +424,14 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
         }
         return;
     }
-    const uint64_t n = plan.n, plen = plan.plen, qlen = plan.qlen, maxp = plan.maxp, maxq = plan.maxq;
-    const uint64_t row_count = plan.rows, maxside = plan.side, psize = plan.psize, qsize = plan.qsize;
-    const uint64_t count = plan.count, bytes = plan.bytes;
-    T* storage = workspace.values.data();
+    const uint64_t n = plan.n, plen = plan.plen, qlen = plan.qlen, maxp = plan.maxp;
+    const uint64_t row_count = plan.rows, psize = plan.psize, qsize = plan.qsize;
+    const uint64_t count = plan.count;
     T* prefixes = storage; T* suffixes = prefixes + psize; T* increments = suffixes + qsize;
-    T* left = increments + n * l.d; T* right = left + row_count * maxp; T* scratch = right + row_count * maxq;
+    T* left = increments + n * l.d; T* right = left + row_count * maxp;
     T* state = storage + count;
     T* work = state + qlen;
     T* factor_work = work + l.power[l.scan_degree];
-    std::fill_n(state, qlen, T(0)); state[0] = 1;
     if (plan.low && l.scan_degree == 1) {
         const auto first = path[0], last = path[n];
         for (uint64_t i = 0; i <= n; ++i) {
@@ -527,33 +447,17 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
         if (scalar) output[0] = 1;
         for (uint64_t x = 0; x < l.d; ++x) output[(scalar ? 1 : 0) + x] = last[x] - first[x];
     } else {
-        for (uint64_t i = 0; i < n; ++i) {
-            auto a = path[i], b = path[i + 1];
-            T* v = increments + i * l.d;
-            for (uint64_t x = 0; x < l.d; ++x) v[x] = b[x] - a[x];
-            std::copy_n(state, plen, prefixes + i * plen);
-            signature_horner_step_(state, v, l.d, l.scan_degree, l.offset.data(), work);
-        }
-        std::copy_n(state, plen, prefixes + n * plen);
+        prefix_scan(path, n, l.d, l, plen, increments, prefixes, state, work);
         std::copy(state + (scalar ? 0 : 1), state + qlen, output);
-        std::fill_n(state, qlen, T(0)); state[0] = 1;
-        for (uint64_t i = n; i-- > 0;) {
-            std::copy_n(state, qlen, suffixes + (i + 1) * qlen);
-            cpu_detail::prepend(state, increments + i * l.d, l, work);
-        }
-        std::copy_n(state, qlen, suffixes);
+        suffix_scan(n, l, qlen, increments, suffixes, state, work);
     }
     CpuMatrices<T> matrices{jobs};
     for (uint64_t k = l.scan_degree + 1; k <= l.m; ++k) {
-        if (plan.specialized) {
+        if (plan.fused) {
             auto run = [&]<int D>() {
                 T* result = output + l.offset[k] - (scalar ? 0 : 1);
                 auto level = [&]<int K>() {
-                    if constexpr (K % 2) if (plan.paired && !plan.fused && k < l.m) {
-                        small_level<T, D, K, true>(increments, prefixes, suffixes, result, left, right, jobs, plan, l);
-                        return;
-                    }
-                    small_level<T, D, K, false>(increments, prefixes, suffixes, result, left, right, jobs, plan, l);
+                    fused_level<T, D, K>(increments, prefixes, suffixes, result, jobs, plan);
                 };
                 switch (k) {
                 case 2: level.template operator()<2>(); break;
@@ -569,7 +473,6 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
             case 4: run.template operator()<4>(); break;
             case 8: run.template operator()<8>(); break;
             }
-            if (plan.paired && !plan.fused && k % 2 && k < l.m) ++k;
             continue;
         }
         const uint64_t a = l.left_degree(k), b = l.right_degree(k), p = l.power[a], q = l.power[b], total = mul(n, a);
@@ -586,13 +489,7 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
                     const uint64_t i = (base + t) / a, j = (base + t) % a;
                     const T* v = increments + i * l.d;
                     if (i != previous_segment) {
-                        powers[0] = 1;
-                        for (uint64_t level = 1; level <= a; ++level)
-                            for (uint64_t x = 0; x < l.power[level - 1]; ++x) {
-                                const T value = powers[l.offset[level - 1] + x];
-                                for (uint64_t channel = 0; channel < l.d; ++channel)
-                                    powers[l.offset[level] + x * l.d + channel] = value * v[channel];
-                            }
+                        cpu_detail::tensor_powers(v, powers, a, l);
                         previous_segment = i;
                     }
                     const uint64_t tail = l.power[j + 1];
@@ -609,8 +506,8 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
                 }
                 }
             });
-            product(matrices, Matrix<T>{left, p, count_rows, 1, p}, Matrix<T>{right, count_rows, q, pitch, 1},
-                Matrix<T>{output + l.offset[k] - (scalar ? 0 : 1), p, q, q, 1}, maxside, scratch, base == 0);
+            matrices.gemm(Matrix<T>{left, p, count_rows, 1, p}, Matrix<T>{right, count_rows, q, pitch, 1},
+                Matrix<T>{output + l.offset[k] - (scalar ? 0 : 1), p, q, q, 1}, base == 0);
             if (paired) {
                 const uint64_t first_segment = base / a, segments = (base + count_rows - 1) / a - first_segment + 1;
                 const uint64_t owners = std::min<uint64_t>(jobs, segments);
@@ -635,8 +532,8 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
                         }
                     }
                 });
-                product(matrices, Matrix<T>{left, p, count_rows, 1, p}, Matrix<T>{right, count_rows, pitch, pitch, 1},
-                    Matrix<T>{output + l.offset[k + 1] - (scalar ? 0 : 1), p, pitch, pitch, 1}, maxside, scratch, base == 0);
+                matrices.gemm(Matrix<T>{left, p, count_rows, 1, p}, Matrix<T>{right, count_rows, pitch, pitch, 1},
+                    Matrix<T>{output + l.offset[k + 1] - (scalar ? 0 : 1), p, pitch, pitch, 1}, base == 0);
             }
         }
         if (paired) ++k;
@@ -644,7 +541,7 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
 }
 
 struct CpuBackpropPlan {
-    uint64_t n, qlen, scan_count, maxp, maxq, rows, side, scratch, temporary, count, bytes;
+    uint64_t n, qlen, scan_count, maxp, maxq, rows, temporary, count;
     CpuBackpropPlan(const Layout& l, uint64_t segments, int jobs, uint64_t itemsize) : n(segments) {
         qlen = l.offset[l.scan_degree + 1];
         scan_count = mul(add(n, 1), qlen);
@@ -652,13 +549,11 @@ struct CpuBackpropPlan {
         const uint64_t factor_bytes = option("PYSIGLIB_PS_FACTOR_BYTES", 64ULL << 20);
         rows = l.scan_degree < l.m ? std::max<uint64_t>(1, std::min(mul(n, l.left_degree(l.m)),
             factor_bytes / mul(mul(2, add(maxp, maxq)), itemsize))) : 0;
-        side = tile_side(maxp, maxq, std::max<uint64_t>(1, rows), option("PYSIGLIB_PS_MAX_TILE", 4096));
-        scratch = std::max({maxp, maxq, rows}) > INT_MAX ? mul(3, mul(side, side)) : 0;
+
         temporary = l.offset[std::max(l.scan_degree, l.left_degree(l.m)) + 1];
         count = add(mul(4, scan_count), mul(2, mul(n, l.d)));
-        count = add(count, add(mul(2, mul(rows, add(maxp, maxq))), scratch));
+        count = add(count, mul(2, mul(rows, add(maxp, maxq))));
         count = add(count, add(mul(2, qlen), mul(mul(4, temporary), jobs)));
-        bytes = mul(count, itemsize);
     }
 };
 
@@ -677,28 +572,14 @@ void backprop_path(const T* input, T* output, const T* deriv, uint64_t dimension
     T* right = left + plan.rows * plan.maxp;
     T* dleft = right + plan.rows * plan.maxq;
     T* dright = dleft + plan.rows * plan.maxp;
-    T* scratch = dright + plan.rows * plan.maxq;
-    T* state = scratch + plan.scratch;
+    T* state = dright + plan.rows * plan.maxq;
     T* adjoint = state + qlen;
     T* temporary = adjoint + qlen;
     std::fill_n(dprefix, 2 * plan.scan_count, T(0));
     std::fill_n(dincrements, n * l.d, T(0));
-    std::fill_n(state, qlen, T(0)); state[0] = 1;
     Path<T> path(input, dimension, length, time_aug, lead_lag, end_time);
-    for (uint64_t i = 0; i < n; ++i) {
-        const auto current = path[i], following = path[i + 1];
-        T* v = increments + i * l.d;
-        for (uint64_t c = 0; c < l.d; ++c) v[c] = following[c] - current[c];
-        std::copy_n(state, qlen, prefixes + i * qlen);
-        signature_horner_step_(state, v, l.d, l.scan_degree, l.offset.data(), temporary);
-    }
-    std::copy_n(state, qlen, prefixes + n * qlen);
-    std::fill_n(state, qlen, T(0)); state[0] = 1;
-    for (uint64_t i = n; i-- > 0;) {
-        std::copy_n(state, qlen, suffixes + (i + 1) * qlen);
-        cpu_detail::prepend(state, increments + i * l.d, l, temporary);
-    }
-    std::copy_n(state, qlen, suffixes);
+    prefix_scan(path, n, l.d, l, qlen, increments, prefixes, state, temporary);
+    suffix_scan(n, l, qlen, increments, suffixes, state, temporary);
     CpuMatrices<T> matrices{jobs};
     for (uint64_t k = l.scan_degree + 1; k <= l.m; ++k) {
         const uint64_t a = l.left_degree(k), b = l.right_degree(k), p = l.power[a], q = l.power[b], total = n * a;
@@ -729,10 +610,10 @@ void backprop_path(const T* input, T* output, const T* deriv, uint64_t dimension
                 }
             });
             T* g = const_cast<T*>(deriv + l.offset[k] - (scalar ? 0 : 1));
-            product(matrices, Matrix<T>{right, count, q, q, 1}, Matrix<T>{g, q, p, 1, q},
-                Matrix<T>{dleft, count, p, p, 1}, plan.side, scratch, true);
-            product(matrices, Matrix<T>{left, count, p, p, 1}, Matrix<T>{g, p, q, q, 1},
-                Matrix<T>{dright, count, q, q, 1}, plan.side, scratch, true);
+            matrices.gemm(Matrix<T>{right, count, q, q, 1}, Matrix<T>{g, q, p, 1, q},
+                Matrix<T>{dleft, count, p, p, 1}, true);
+            matrices.gemm(Matrix<T>{left, count, p, p, 1}, Matrix<T>{g, p, q, q, 1},
+                Matrix<T>{dright, count, q, q, 1}, true);
             factor_ranges([&](uint64_t i, uint64_t begin, uint64_t end, T* powers) {
                 T* dpowers = powers + plan.temporary;
                 T* history = dpowers + plan.temporary;
@@ -850,21 +731,10 @@ void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, ui
     const int path_jobs = mul(points - 1, l.power[degree]) >= parallel_threshold
         ? std::max(1, jobs / static_cast<int>(std::min<uint64_t>(batch, jobs))) : 1;
     const CpuBackpropPlan plan(l, points - 1, path_jobs, sizeof(T));
-    const uint64_t budget = option("PYSIGLIB_PS_WORKSPACE_BYTES", 2ULL << 30);
-    if (plan.bytes > budget) throw std::runtime_error("CPU prefix-suffix backprop requires "
-        + std::to_string(plan.bytes) + " workspace bytes for one path; configured limit is " + std::to_string(budget));
-    const uint64_t owners = std::min<uint64_t>({batch, uint64_t(jobs), budget / plan.bytes});
-    get_tbb_arena(jobs).execute([&] { parallel_range(owners, jobs, [&](uint64_t first_owner, uint64_t end_owner) {
-        for (uint64_t owner = first_owner; owner < end_owner; ++owner) {
-            std::vector<T> storage;
-            try { storage.resize(plan.count); }
-            catch (const std::bad_alloc&) { throw std::runtime_error("CPU prefix-suffix backprop requires "
-                + std::to_string(plan.bytes) + " workspace bytes for one path-processing task"); }
-            for (uint64_t i = batch * owner / owners; i < batch * (owner + 1) / owners; ++i)
-                backprop_path(path + i * path_stride, out + i * path_stride, deriv + i * stride,
-                    dimension, length, time_aug, lead_lag, end_time, scalar, path_jobs, l, plan, storage.data());
-        }
-    }); });
+    for_paths<T>(batch, jobs, plan.count, "CPU prefix-suffix backprop", [&](uint64_t i, T* storage) {
+        backprop_path(path + i * path_stride, out + i * path_stride, deriv + i * stride,
+            dimension, length, time_aug, lead_lag, end_time, scalar, path_jobs, l, plan, storage);
+    });
 }
 
 template<std::floating_point T>
@@ -888,25 +758,8 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
                     if (scalar) result[0] = 1;
                     continue;
                 }
-                if (scalar) result[0] = 1;
                 Path<T> p(path + i * path_stride, dimension, length, time_aug, lead_lag, end_time);
-                auto a = p[0], b = p[points - 1];
-                T* increment = result + (scalar ? 1 : 0);
-                for (uint64_t x = 0; x < d; ++x) increment[x] = b[x] - a[x];
-                for (uint64_t k = 2; k <= degree; ++k) {
-                    const T reciprocal = T(1) / T(k);
-                    const T* previous = result + l.offset[k - 1] - (scalar ? 0 : 1);
-                    T* level = result + l.offset[k] - (scalar ? 0 : 1);
-                    for (uint64_t x = 0; x < l.power[k - 1]; ++x) {
-                        const T value = previous[x] * reciprocal;
-#if HWY_TARGET != HWY_SCALAR
-                        vec_mult_assign(level + x * d, increment, value, d);
-#else
-                        for (uint64_t channel = 0; channel < d; ++channel)
-                            level[x * d + channel] = value * increment[channel];
-#endif
-                    }
-                }
+                linear_signature_(p[0], p[points - 1], result, d, degree, l.offset.data(), scalar);
             }
         }); });
         return;
@@ -934,20 +787,10 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
     const int path_jobs = points - 1 >= 256 && work_proxy >= parallel_threshold
         ? available_path_jobs : 1;
     const CpuPlan plan(l, points - 1, batch, path_jobs, sizeof(T));
-    const uint64_t bytes = plan.bytes;
-    const uint64_t budget = option("PYSIGLIB_PS_WORKSPACE_BYTES", 2ULL << 30);
-    if (bytes > budget) throw std::runtime_error("CPU prefix-suffix requires " + std::to_string(bytes) + " workspace bytes for one path; configured limit is " + std::to_string(budget));
-    const uint64_t owners = std::min<uint64_t>({batch, uint64_t(jobs), bytes ? budget / bytes : uint64_t(jobs)});
-    std::vector<CpuWorkspace<T>> workspaces(owners);
-    get_tbb_arena(jobs).execute([&] { parallel_range(owners, jobs, [&](uint64_t first_owner, uint64_t end_owner) {
-        for (uint64_t owner = first_owner; owner < end_owner; ++owner) {
-            workspaces[owner].allocate(plan);
-            const uint64_t first = batch * owner / owners, end = batch * (owner + 1) / owners;
-            for (uint64_t i = first; i < end; ++i)
-                one_path(path + i * path_stride, out + i * stride, dimension, length, time_aug, lead_lag,
-                    end_time, scalar, path_jobs, l, plan, workspaces[owner]);
-        }
-    }); });
+    for_paths<T>(batch, jobs, plan.workspace_count, "CPU prefix-suffix", [&](uint64_t i, T* storage) {
+        one_path(path + i * path_stride, out + i * stride, dimension, length, time_aug, lead_lag,
+            end_time, scalar, path_jobs, l, plan, storage);
+    });
 }
 
 template void signature_prefix_suffix_<float>(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, int, uint64_t);

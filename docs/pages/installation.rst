@@ -115,7 +115,7 @@ the ``plugins/cuda`` subdirectory:
 
 Install both packages from the same checkout so their versions match.
 
-This requires a CUDA toolkit with the cuBLAS library and development headers
+This requires CUDA Toolkit 12 or later with the cuBLAS library and development headers
 (``nvcc`` on ``PATH`` or
 ``CUDAToolkit_ROOT`` set to its install prefix; on Linux this is typically
 ``/usr/local/cuda``, and on Windows the ``CUDA_PATH`` environment variable

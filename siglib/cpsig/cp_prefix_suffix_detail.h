@@ -30,29 +30,32 @@ namespace HWY_NAMESPACE {
 namespace cpu_detail {
 using namespace prefix_suffix;
 
+template<typename T>
+HWY_INLINE void prepend_level_values(T* destination, const T* source, T* work, const T* v,
+    uint64_t d, uint64_t previous, T reciprocal, bool last) {
+    for (uint64_t channel = d; channel-- > 0;) {
+        T* row = destination + channel * previous;
+        const T multiplier = v[channel] * reciprocal;
+#if HWY_TARGET != HWY_SCALAR
+        if (last) {
+            vec_mult_add(row, source, multiplier, previous);
+            vec_mult_add(row, work, multiplier, previous);
+        } else {
+            vec_add_scaled(row, source, work, multiplier, previous);
+        }
+#else
+        for (uint64_t word = previous; word-- > 0;)
+            row[word] = (source[word] + work[word]) * multiplier + (last ? row[word] : T(0));
+#endif
+    }
+}
+
 template<typename T, int D, int K, int Level>
 inline void prepend_level(T* state, const T* v, T* work) {
     constexpr int previous = small_power(D, Level);
     constexpr T reciprocal = T(1) / T(K - Level);
-    for (int channel = D; channel-- > 0;) {
-        const T multiplier = v[channel] * reciprocal;
-        T* destination = Level + 1 == K
-            ? state + small_offset(D, K) + channel * previous
-            : work + channel * previous;
-        const T* source = state + small_offset(D, Level);
-#if HWY_TARGET != HWY_SCALAR
-        if constexpr (Level + 1 == K) {
-            vec_mult_add(destination, source, multiplier, previous);
-            vec_mult_add(destination, work, multiplier, previous);
-        } else {
-            vec_add_scaled(destination, source, work, multiplier, previous);
-        }
-#else
-        for (int word = previous; word-- > 0;)
-            destination[word] = (source[word] + work[word]) * multiplier
-                + (Level + 1 == K ? destination[word] : T(0));
-#endif
-    }
+    prepend_level_values(Level + 1 == K ? state + small_offset(D, K) : work,
+        state + small_offset(D, Level), work, v, D, previous, reciprocal, Level + 1 == K);
     if constexpr (Level + 1 < K)
         prepend_level<T, D, K, Level + 1>(state, v, work);
 }
@@ -85,25 +88,8 @@ inline void prepend_generic(T* state, const T* v, const Layout& layout, T* work)
         for (uint64_t level = 1; level < k; ++level) {
             const uint64_t previous = layout.power[level];
             const T reciprocal = T(1) / T(k - level);
-            for (uint64_t channel = layout.d; channel-- > 0;) {
-                const T multiplier = v[channel] * reciprocal;
-                T* destination = level + 1 == k
-                    ? state + layout.offset[k] + channel * previous
-                    : work + channel * previous;
-                const T* source = state + layout.offset[level];
-#if HWY_TARGET != HWY_SCALAR
-                if (level + 1 == k) {
-                    vec_mult_add(destination, source, multiplier, previous);
-                    vec_mult_add(destination, work, multiplier, previous);
-                } else {
-                    vec_add_scaled(destination, source, work, multiplier, previous);
-                }
-#else
-                for (uint64_t word = previous; word-- > 0;)
-                    destination[word] = (source[word] + work[word]) * multiplier
-                        + (level + 1 == k ? destination[word] : T(0));
-#endif
-            }
+            prepend_level_values(level + 1 == k ? state + layout.offset[k] : work,
+                state + layout.offset[level], work, v, layout.d, previous, reciprocal, level + 1 == k);
         }
     }
     for (uint64_t channel = 0; channel < layout.d; ++channel) state[1 + channel] += v[channel];

@@ -35,7 +35,6 @@ struct Shape {
         }
         chunks = std::max<uint64_t>(1, (n + block - 1) / block);
         width = power[m - 1]; lower = offset[m]; total = offset[m + 1];
-        if (d > INT_MAX || width > INT_MAX) throw std::overflow_error("GEMM dimension exceeds int32");
         mul(mul(batch, chunks), total);
     }
 };

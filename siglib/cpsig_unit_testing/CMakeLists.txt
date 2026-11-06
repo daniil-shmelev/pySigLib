@@ -39,6 +39,7 @@ target_include_directories(cpsig_tests PRIVATE
 target_compile_features(cpsig_tests PRIVATE cxx_std_20)
 if(NOT PYSIGLIB_CPSIG_PREBUILT_LIBRARY)
     target_compile_definitions(cpsig_tests PRIVATE CPSIG_EXPORTS)
+    target_link_libraries(cpsig_tests PRIVATE pysiglib_openblas)
 else()
     set(TBB_TEST OFF CACHE BOOL "" FORCE)
     set(TBB_EXAMPLES OFF CACHE BOOL "" FORCE)

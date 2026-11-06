@@ -43,7 +43,7 @@ struct Plan {
     uint64_t n, correction_degree = 1, size, scan_count, slots, scratch_size;
     uint64_t nodes_count, segments, max_rows = 0, max_left = 0, max_right = 0;
     uint64_t increments, prefixes, suffixes, dprefixes, dsuffixes, gradient;
-    uint64_t left, right, dleft, dright, work, matrix_work, side, count;
+    uint64_t left, right, dleft, dright, work, count;
     std::vector<double> nodes, weights;
 
     Plan(uint64_t d, uint64_t raw_d, uint64_t degree, uint64_t points, uint64_t split,
@@ -123,9 +123,7 @@ struct Plan {
         dleft = add(right, mul(mul(segments, max_rows), max_right));
         dright = backward ? add(dleft, mul(mul(segments, max_rows), max_left)) : dleft;
         work = backward ? add(dright, mul(mul(segments, max_rows), max_right)) : dright;
-        matrix_work = add(work, mul(slots, scratch_size));
-        side = tile_side(max_left, max_right, mul(segments, max_rows), option("PYSIGLIB_PS_MAX_TILE", 4096));
-        count = add(matrix_work, std::max({max_left, max_right, mul(segments, max_rows)}) > INT_MAX ? mul(3, mul(side, side)) : 0);
+        count = add(work, mul(slots, scratch_size));
         mul(count, itemsize);
     }
 
@@ -134,6 +132,35 @@ struct Plan {
             layout.power.data(), layout.offset.data(), raw.offset.data()};
     }
 };
+
+// Each block uses the same factorisation for the forward product and its two adjoints.
+template<bool Backward, typename T, typename Matrices, typename Fill>
+void contract(const Plan& plan, Matrices& matrices, T* memory, uint64_t stride, T* output,
+    const T* deriv, bool scalar, Fill fill) {
+    const auto& l = plan.layout;
+    const uint64_t sig_stride = l.offset.back() - !scalar;
+    for (uint64_t k = l.scan_degree + 1; k <= l.m; ++k) {
+        const uint64_t a = l.left_degree(k), b = k - a, p = l.power[a], q = l.power[b];
+        const uint64_t rows = mul(plan.nodes_count, ranks(plan.algebra(), a, b));
+        for (uint64_t base = 0; base < plan.n; base += plan.segments) {
+            const uint64_t segments = std::min(plan.segments, plan.n - base), total = mul(segments, rows);
+            fill.template operator()<false>(a, b, base, segments, rows);
+            const uint64_t level = l.offset[k] - !scalar;
+            if constexpr (Backward) {
+                T* grad = const_cast<T*>(deriv + level);
+                matrices.gemm(Matrix<T>{memory + plan.right, total, q, q, 1, stride},
+                    Matrix<T>{grad, q, p, 1, q, sig_stride}, Matrix<T>{memory + plan.dleft, total, p, p, 1, stride}, true);
+                matrices.gemm(Matrix<T>{memory + plan.left, total, p, p, 1, stride},
+                    Matrix<T>{grad, p, q, q, 1, sig_stride}, Matrix<T>{memory + plan.dright, total, q, q, 1, stride}, true);
+                fill.template operator()<true>(a, b, base, segments, rows);
+            } else {
+                matrices.gemm(Matrix<T>{memory + plan.left, p, total, 1, p, stride},
+                    Matrix<T>{memory + plan.right, total, q, q, 1, stride},
+                    Matrix<T>{output + level, p, q, q, 1, sig_stride}, base == 0);
+            }
+        }
+    }
+}
 
 template<typename T>
 PS_CORRECTION_HD T component(const Algebra& l, const T* v, const T* c, uint64_t level, uint64_t word) {

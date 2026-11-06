@@ -1,3 +1,5 @@
+find_package(CUDAToolkit 12 REQUIRED)
+
 # Install dest overridden by pysiglib-cuda plugin's CMakeLists.txt.
 if(NOT DEFINED CUSIG_INSTALL_DESTINATION)
     set(CUSIG_INSTALL_DESTINATION "pysiglib")

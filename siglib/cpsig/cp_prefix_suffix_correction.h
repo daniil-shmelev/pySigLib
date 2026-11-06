@@ -66,43 +66,24 @@ void compute(const T* input, T* output, const T* deriv, uint64_t batch, uint64_t
                     zero(out, sig_stride);
                     copy(prefixes + plan.n * l.size + (scalar ? 0 : 1), out, l.size - (scalar ? 0 : 1));
                 }
-                for (uint64_t level = l.h + 1; level <= degree; ++level) {
-                    const uint64_t a = layout.left_degree(level), b = level - a;
-                    const uint64_t p = layout.power[a], q = layout.power[b], rows = plan.nodes_count * ranks(l, a, b);
-                    for (uint64_t base = 0; base < plan.n; base += plan.segments) {
-                        const uint64_t count = std::min(plan.segments, plan.n - base), total = count * rows;
-                        auto fill = [&]<bool Reverse>() {
-                            const uint64_t workers = std::min<uint64_t>(count, path_jobs);
-                            parallel_range(workers, path_jobs, [&](uint64_t begin, uint64_t finish) {
-                                for (uint64_t worker = begin; worker < finish; ++worker)
-                                    for (uint64_t i = worker; i < count; i += workers) {
-                                        const uint64_t segment = base + i;
-                                        factors<Reverse>(l, a, b, increments + segment * l.d, c + segment * segment_stride,
-                                            prefixes + segment * l.size, suffixes + (segment + 1) * l.size,
-                                            plan.nodes_count, plan.nodes.data(), plan.weights.data(),
-                                            left + i * rows * p, right + i * rows * q,
-                                            Backward ? dleft + i * rows * p : work, Backward ? dright + i * rows * q : work,
-                                            Backward ? dprefix + segment * l.size : work, Backward ? dsuffix + (segment + 1) * l.size : work,
-                                            Backward ? dv + segment * l.d : work, work + worker * plan.scratch_size);
-                                    }
-                            });
-                        };
-                        fill.template operator()<false>();
-                        T* matrix_work = memory + plan.matrix_work;
-                        if constexpr (Backward) {
-                            T* grad = const_cast<T*>(g + layout.offset[level] - (scalar ? 0 : 1));
-                            product(matrices, Matrix<T>{right, total, q, q, 1}, Matrix<T>{grad, q, p, 1, q},
-                                Matrix<T>{dleft, total, p, p, 1}, plan.side, matrix_work, true);
-                            product(matrices, Matrix<T>{left, total, p, p, 1}, Matrix<T>{grad, p, q, q, 1},
-                                Matrix<T>{dright, total, q, q, 1}, plan.side, matrix_work, true);
-                            fill.template operator()<true>();
-                        } else {
-                            product(matrices, Matrix<T>{left, p, total, 1, p}, Matrix<T>{right, total, q, q, 1},
-                                Matrix<T>{out + layout.offset[level] - (scalar ? 0 : 1), p, q, q, 1},
-                                plan.side, matrix_work, base == 0);
-                        }
-                    }
-                }
+                auto fill = [&]<bool Reverse>(uint64_t a, uint64_t b, uint64_t base, uint64_t count, uint64_t rows) {
+                    const uint64_t p = l.power[a], q = l.power[b];
+                    const uint64_t workers = std::min<uint64_t>(count, path_jobs);
+                    parallel_range(workers, path_jobs, [&](uint64_t begin, uint64_t finish) {
+                        for (uint64_t worker = begin; worker < finish; ++worker)
+                            for (uint64_t i = worker; i < count; i += workers) {
+                                const uint64_t segment = base + i;
+                                factors<Reverse>(l, a, b, increments + segment * l.d, c + segment * segment_stride,
+                                    prefixes + segment * l.size, suffixes + (segment + 1) * l.size,
+                                    plan.nodes_count, plan.nodes.data(), plan.weights.data(),
+                                    left + i * rows * p, right + i * rows * q,
+                                    Backward ? dleft + i * rows * p : work, Backward ? dright + i * rows * q : work,
+                                    Backward ? dprefix + segment * l.size : work, Backward ? dsuffix + (segment + 1) * l.size : work,
+                                    Backward ? dv + segment * l.d : work, work + worker * plan.scratch_size);
+                            }
+                    });
+                };
+                contract<Backward>(plan, matrices, memory, 0, out, g, scalar, fill);
                 if constexpr (Backward) {
                     reverse_scans(l, plan.n, increments, c, segment_stride, prefixes, suffixes, dprefix, dsuffix, dv, work);
                     for (uint64_t i = 0; i < length; ++i)
