@@ -188,11 +188,12 @@ def sig(
     :type horner: bool
     :param method: ``None`` preserves the existing ``horner`` selection. Use
         ``"ps"`` for prefix-suffix or ``"auto"`` to select Horner or prefix-suffix
-        from the backend and path shape. Both require ``horner=True``.
+        independently for the forward and backward passes. Both require ``horner=True``.
         Prefix-suffix uses extra workspace and requires an empty correction.
     :type method: str | None
     :param ps_split: Top-level split ``(a, b)`` for ``method="ps"``, with
         ``a >= 1``, ``b >= 0``, and ``a + b == degree``. The default selects the split automatically.
+        Torch and JAX reuse an explicit split when computing the gradient.
     :type ps_split: tuple[int, int] | None
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
@@ -231,6 +232,19 @@ def sig(
     :type n_jobs: int
     :return: Truncated signature, or a batch of truncated signatures.
     :rtype: numpy.ndarray | torch.Tensor
+
+    .. note::
+
+        For ``method="auto"``, let :math:`d` be the path dimension, :math:`m` the
+        degree and :math:`n` the number of segments per path. The minimum :math:`d^m`
+        for prefix-suffix is :math:`2^{17}` forward and :math:`2^{11}` backward on CPU,
+        and :math:`2^{19}` forward and :math:`2^{16}` backward on CUDA.
+
+        These thresholds apply to 1 to 32 unaugmented float32 paths with empty corrections,
+        16 to 4096 segments, dimensions 2 to 32 and degrees 3 to 16. Both :math:`d^m`
+        and :math:`n d^{\\lceil m/2\\rceil}` must be at most :math:`2^{20}`.
+        CUDA also requires at least 512 segments across the batch. Other workloads use Horner.
+        These cutoffs come from benchmarks. The fastest method can vary by processor.
 
     .. note::
 

@@ -290,6 +290,7 @@ extern "C" {
 
 	/**
 	* @brief Computes the truncated signatures of a batch of paths on the GPU.
+	* @note When upgrading from the ABI without the `method` argument, recompile native callers and update foreign-function bindings for both passes.
 	*
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated, on device), size = `batch_size * sig_length(transformed_dimension, degree)`,
@@ -308,8 +309,8 @@ extern "C" {
 	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
-	* @param split_a Top-level prefix length for method 1, or zero for the default split.
-	* @param stream CUDA stream that supplies the inputs and receives the result.
+	* @param split_a With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
+	* @param stream CUDA stream that supplies the inputs and receives the result. Pass `nullptr` for the default stream.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t split_a = 0, void* stream = nullptr) noexcept;
@@ -327,7 +328,7 @@ extern "C" {
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as path.
 	* @param sig_derivs Pointer to dF/d(sig) (on device), size = `batch_size * sig_length(transformed_dimension, degree)`.
-	* @param sig Pointer to forward signatures (on device), same size as sig_derivs.
+	* @param sig Pointer to forward signatures (on device), same size as sig_derivs. With `method=1`, this may be `nullptr` because prefix-suffix recomputes its states from the path.
 	* @param batch_size Batch size.
 	* @param dimension Dimension of the paths.
 	* @param length Length of the paths.
@@ -341,8 +342,8 @@ extern "C" {
 	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
-	* @param split_a Top-level prefix length for method 1, or zero for the default split.
-	* @param stream CUDA stream that supplies the inputs and receives the result.
+	* @param split_a With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
+	* @param stream CUDA stream that supplies the inputs and receives the result. Pass `nullptr` for the default stream.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t split_a = 0, void* stream = nullptr) noexcept;
@@ -459,6 +460,7 @@ extern "C" {
 
 	/**
 	* @brief Computes signature coefficients for a batch of paths on the GPU.
+	* @note When upgrading from the ABI without the `method` argument, recompile native callers and update foreign-function bindings for both passes.
 	*
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (on device, preallocated).
@@ -473,7 +475,7 @@ extern "C" {
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
 	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection.
-	* @param stream CUDA stream used for computation.
+	* @param stream CUDA stream used for computation. Pass `nullptr` for the default stream.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 0, void* stream = nullptr) noexcept;
@@ -502,7 +504,7 @@ extern "C" {
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
 	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection.
-	* @param stream CUDA stream used for computation.
+	* @param stream CUDA stream used for computation. Pass `nullptr` for the default stream.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 0, void* stream = nullptr) noexcept;

@@ -149,6 +149,8 @@ def sig_coef(
     :type end_time: float
     :param prefixes: If ``True``, will additionally return all prefixes of signature coefficients.
         These prefixes are extracted for free as a by-product of the computation.
+        Use ``prefixes=True`` for :func:`pysiglib.sig_coef_backprop`. The Torch and JAX
+        APIs handle the prefix derivatives automatically.
         For example, passing ``words=[(1,2), (3,2,1)]`` with ``prefixes=True`` returns an
         output equivalent to passing ``words=[(1,), (1,2), (3,), (3,2), (3,2,1)]`` with ``prefixes=False``.
     :type prefixes: bool
@@ -157,12 +159,15 @@ def sig_coef(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :param method: ``None`` or ``"horner"`` uses Horner's method. ``"pascal"`` uses
-        Pascal factorisation. ``"auto"`` selects a method from measured workload
-        regions and otherwise uses Horner. CUDA supports words through length 20.
+        Pascal factorisation. On CPU, ``"auto"`` selects Pascal for benchmarked
+        single-thread float32 workloads with equal word lengths from 8 to 16, and Horner
+        otherwise. On CUDA, ``"auto"`` uses Horner. Both methods support float32 and
+        float64. CUDA supports words through length 20.
     :type method: str | None
     :return: Signature coefficients with the leading batch dimensions of ``path``.
         The last axis has one entry per word, or ``sum(max(1, len(w)) for w in words)``
-        entries when ``prefixes=True``.
+        entries when ``prefixes=True``. Each requested empty word contributes one entry
+        with value one and zero path derivative.
     :rtype: numpy.ndarray | torch.Tensor
 
     .. note::

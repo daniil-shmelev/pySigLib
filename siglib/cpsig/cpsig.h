@@ -227,6 +227,7 @@ extern "C" {
 
 	/**
 	* @brief For a batch of paths of type float, computes coefficients of their signatures.
+	* @note When upgrading from the ABI without the `method` argument, recompile native callers and update foreign-function bindings for both passes.
 	*
 	*
 	* @param path Pointer to path data (row-major), size = `batch_size * length * dimension`.
@@ -290,6 +291,7 @@ extern "C" {
 
 	/**
 	* @brief Computes the signatures of a batch of paths.
+	* @note When upgrading from the ABI without the `method` argument, recompile native callers and update foreign-function bindings for both passes.
 	* @param path Pointer to path batch data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * sig_length(dimension, degree)`.
 	* @param batch_size Batch size of the paths.
@@ -309,7 +311,7 @@ extern "C" {
 	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
-	* @param split_a Top-level prefix length for method 1, or zero for the default split.
+	* @param split_a With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t split_a = 0) noexcept;
@@ -327,7 +329,7 @@ extern "C" {
 	* @param path Pointer to path batch data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * length * dimension`.
 	* @param sig_derivs Pointer to derivatives with respect to the signatures (row-major), size = `batch_size * sig_length(dimension, degree)`.
-	* @param sig Pointer to signatures of the paths (row-major, precomputed), size = `batch_size * sig_length(dimension, degree)`.
+	* @param sig Pointer to signatures of the paths (row-major, precomputed), size = `batch_size * sig_length(dimension, degree)`. With `method=1`, this may be `nullptr` because prefix-suffix recomputes its states from the path.
 	* @param batch_size Batch size of the paths.
 	* @param dimension Dimension of the path.
 	* @param length Length of the path.
@@ -344,7 +346,7 @@ extern "C" {
 	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
-	* @param split_a Top-level prefix length for method 1, or zero for the default split.
+	* @param split_a With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t split_a = 0) noexcept;

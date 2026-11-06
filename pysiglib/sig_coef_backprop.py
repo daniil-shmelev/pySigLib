@@ -79,17 +79,20 @@ def sig_coef_backprop(
     Example:
     ---------
 
+    To differentiate only the coefficient of the full word, set the derivatives
+    of its shorter prefixes to zero.
+
     .. code-block:: python
 
-        import torch
+        import numpy as np
         import pysiglib
 
-        path = torch.rand((10, 100, 5))
-        words = [(0,), (1, 0), (1, 2, 3)]
-        # Must generate coefs with prefixes=True for backprop
-        coefs = pysiglib.sig_coef(path, words, prefixes=True)
-        derivs = torch.ones_like(coefs)
-        path_derivs = pysiglib.sig_coef_backprop(path, words, coefs, derivs)
+        path = np.random.default_rng(0).normal(size=(10, 100, 2))
+        word = (0, 1, 0)
+        coefs = pysiglib.sig_coef(path, word, prefixes=True, method="pascal")
+        derivs = np.zeros_like(coefs)
+        derivs[..., -1] = 1
+        path_derivs = pysiglib.sig_coef_backprop(path, word, coefs, derivs, method="pascal")
         print(path_derivs)
 
     .. code-block:: python

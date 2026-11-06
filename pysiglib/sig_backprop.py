@@ -177,7 +177,7 @@ def sig_backprop(
     :param method: ``None`` uses the existing signature backpropagation. Use
         ``"ps"`` to differentiate the prefix-suffix factors and
         scans with BLAS or cuBLAS. Non-empty corrections are not supported by
-        this method. Use ``"auto"`` to select the backward method from the backend and path shape.
+        this method. With ``"auto"``, the backward pass uses the thresholds given in :func:`pysiglib.sig`.
     :type method: str | None
     :param ps_split: Top-level split ``(a, b)`` for ``method="ps"``, with
         ``a >= 1``, ``b >= 0``, and ``a + b == degree``. The default selects the split automatically.
@@ -196,9 +196,9 @@ def sig_backprop(
 
         path = torch.rand((10, 100, 5))
         degree = 4
-        sigs = pysiglib.sig(path, degree)
+        sigs = pysiglib.sig(path, degree, method="ps", ps_split=(2, 2))
         sig_derivs = torch.ones_like(sigs)
-        path_derivs = pysiglib.sig_backprop(path, sigs, sig_derivs, degree)
+        path_derivs = pysiglib.sig_backprop(path, sigs, sig_derivs, degree, method="ps", ps_split=(2, 2))
         print(path_derivs)
 
     .. code-block:: python
