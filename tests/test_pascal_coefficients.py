@@ -135,8 +135,22 @@ def test_pascal_ranges(device, dtype):
 def test_pascal_empty_batch_and_invalid_method(device):
     x = torch.empty((2, 0, 5, 2), device=device)
     assert pysiglib.sig_coef(x, [(), (0, 1)], method="pascal").shape == (2, 0, 2)
+    for method in (None, "unknown"):
+        with pytest.raises(ValueError, match="method"):
+            pysiglib.sig_coef(x, (0,), method=method)
+        with pytest.raises(ValueError, match="method"):
+            pysiglib.sig_coef_backprop(x, (0,), torch.empty((2, 0, 1), device=device),
+                                       torch.empty((2, 0, 1), device=device), method=method)
+        with pytest.raises(ValueError, match="method"):
+            torch_api.sig_coef(x, (0,), method=method)
+
+
+def test_pascal_jax_invalid_method():
+    jax = pytest.importorskip("jax")
+    import pysiglib.jax_api as jax_api
+
     with pytest.raises(ValueError, match="method"):
-        pysiglib.sig_coef(x, (0,), method="unknown")
+        jax_api.sig_coef(jax.numpy.zeros((2, 1)), (0,), method=None)
 
 
 def test_pascal_generic_cpu_and_workspace(monkeypatch):
@@ -154,7 +168,7 @@ def test_pascal_generic_cpu_and_workspace(monkeypatch):
 
 
 @pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA required")
-@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
 @pytest.mark.parametrize("words", [[(0, 1, 2), (2, 2)], [(0, 1, 2), (2, 2, 1)], [(0, 1) * 8, (2,) * 11]])
 def test_pascal_nondefault_stream_and_limit(method, words):
     stream = torch.cuda.Stream()
@@ -245,7 +259,7 @@ def test_pascal_highway_targets():
             np.testing.assert_allclose(dx.sum(axis=1), 0., atol=1e-12)
 
 
-@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("time_aug,lead_lag", [(False, False), (True, False), (False, True), (True, True)])
 def test_pascal_jax_shapes_and_transforms(method, dtype, time_aug, lead_lag):
@@ -269,7 +283,7 @@ def test_pascal_jax_shapes_and_transforms(method, dtype, time_aug, lead_lag):
 
 
 @pytest.mark.parametrize("backend", DEVICES + ["jax"])
-@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_sparse_single_segment(backend, method, dtype):
     path = np.zeros((2, 32), dtype=dtype)

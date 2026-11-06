@@ -290,7 +290,6 @@ extern "C" {
 
 	/**
 	* @brief Computes the truncated signatures of a batch of paths on the GPU.
-	* @note When upgrading from the ABI without the `method` argument, recompile native callers and update foreign-function bindings for both passes.
 	*
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated, on device), size = `batch_size * sig_length(transformed_dimension, degree)`,
@@ -457,7 +456,6 @@ extern "C" {
 
 	/**
 	* @brief Computes signature coefficients for a batch of paths on the GPU.
-	* @note When upgrading from the ABI without the `method` argument, recompile native callers and update foreign-function bindings for both passes.
 	*
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (on device, preallocated).

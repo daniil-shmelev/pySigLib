@@ -28,9 +28,9 @@ from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler
 
 
 def _check_coef_method(method):
-    if method is not None and (not isinstance(method, str) or method not in ("horner", "pascal", "auto")):
-        raise ValueError("method must be None, 'horner', 'pascal', or 'auto'")
-    return {None: 0, "horner": 0, "pascal": 1, "auto": 2}[method]
+    if method not in ("horner", "pascal", "auto"):
+        raise ValueError("method must be 'horner', 'pascal', or 'auto'")
+    return {"horner": 0, "pascal": 1, "auto": 2}[method]
 
 
 def extract_sig_coef(
@@ -159,10 +159,10 @@ def sig_coef(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :param method: ``"auto"`` (default) uses Pascal factorisation on CPU and Horner's
-        method on CUDA. ``None`` or ``"horner"`` uses Horner, and ``"pascal"`` uses
+        method on CUDA. ``"horner"`` uses Horner, and ``"pascal"`` uses
         Pascal. Both methods support float32 and float64. CUDA supports words through
         length 20.
-    :type method: str | None
+    :type method: str
     :return: Signature coefficients with the leading batch dimensions of ``path``.
         The last axis has one entry per word, or ``sum(max(1, len(w)) for w in words)``
         entries when ``prefixes=True``. Each requested empty word contributes one entry

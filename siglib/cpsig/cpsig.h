@@ -227,7 +227,6 @@ extern "C" {
 
 	/**
 	* @brief For a batch of paths of type float, computes coefficients of their signatures.
-	* @note When upgrading from the ABI without the `method` argument, recompile native callers and update foreign-function bindings for both passes.
 	*
 	*
 	* @param path Pointer to path data (row-major), size = `batch_size * length * dimension`.
@@ -291,7 +290,6 @@ extern "C" {
 
 	/**
 	* @brief Computes the signatures of a batch of paths.
-	* @note When upgrading from the ABI without the `method` argument, recompile native callers and update foreign-function bindings for both passes.
 	* @param path Pointer to path batch data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * sig_length(dimension, degree)`.
 	* @param batch_size Batch size of the paths.

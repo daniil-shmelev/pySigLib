@@ -57,7 +57,7 @@ def sig_coef_backprop(
     :type coefs: numpy.ndarray | torch.Tensor
     :param derivs: Derivatives of the scalar function :math:`F` with respect to the signature coefficients,
         :math:`\\partial F / \\partial S(x)^I`. This must be an array of the same shape as the
-        provided coefficients. **On CPU with method=None or method="horner", this buffer may be modified in-place.**
+        provided coefficients. **On CPU with method="horner", this buffer may be modified in-place.**
     :type derivs: numpy.ndarray | torch.Tensor
     :param time_aug: Whether the signature coefficients were computed with ``time_aug=True``.
     :type time_aug: bool
@@ -70,9 +70,9 @@ def sig_coef_backprop(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :param method: ``"auto"`` (default) uses Pascal factorisation on CPU and Horner's
-        method on CUDA. ``None`` or ``"horner"`` uses Horner, and ``"pascal"`` uses
+        method on CUDA. ``"horner"`` uses Horner, and ``"pascal"`` uses
         Pascal. Pascal uses checkpoints and replay for reverse accumulation.
-    :type method: str | None
+    :type method: str
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.Tensor
