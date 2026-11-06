@@ -318,10 +318,10 @@ def sig(
 
     check_n_jobs(n_jobs)
     method_code, ps_split = _check_sig_method(method, horner, ps_split, degree)
+    if isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
+        raise NotImplementedError("Signature computation does not support forward-mode automatic differentiation")
     if method is not None and isinstance(path, torch.Tensor) and path.requires_grad and torch.is_grad_enabled():
         raise NotImplementedError("Use pysiglib.torch_api.sig for automatic differentiation, or torch.no_grad() for forward-only calls")
-    if method is not None and isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
-        raise NotImplementedError("Prefix-suffix methods do not support automatic differentiation with forward-mode dual tensors")
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, data, degree)
     sig_len = sig_length(data.dimension, degree, scalar_term=scalar_term)

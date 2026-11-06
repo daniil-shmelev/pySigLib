@@ -123,8 +123,8 @@ def sig(
         return sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
                            end_time=end_time, horner=horner, correction=correction, n_jobs=n_jobs,
                            method=method, ps_split=ps_split)
-    if method is not None and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
-        raise NotImplementedError("Prefix-suffix methods do not support forward-mode automatic differentiation")
+    if torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
+        raise NotImplementedError("Signature computation does not support forward-mode automatic differentiation")
     return Sig.apply(path, correction, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs, method, ps_split)
 
 sig.__doc__ = sig_forward.__doc__

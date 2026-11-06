@@ -254,15 +254,16 @@ def test_auto_horner_fallback(monkeypatch):
                                       pysiglib.sig_backprop(path, expected, seeds, 4, **options))
 
 
-def test_torch_forward_ad_rejected():
+@pytest.mark.parametrize("method", [None, "ps", "auto"])
+def test_torch_forward_ad_rejected(method):
     path = torch.zeros((8, 2))
     for api in (pysiglib, torch_api):
         with torch.autograd.forward_ad.dual_level():
             dual = torch.autograd.forward_ad.make_dual(path, torch.ones_like(path))
-            with pytest.raises(NotImplementedError, match="differentiation"):
-                api.sig(dual, 3, method=METHOD)
-        with pytest.raises(NotImplementedError, match="differentiation"):
-            torch.func.jvp(lambda p: api.sig(p, 3, method=METHOD), (path,), (torch.ones_like(path),))
+            with pytest.raises(NotImplementedError, match="forward-mode"):
+                api.sig(dual, 3, method=method)
+        with pytest.raises(NotImplementedError, match="forward-mode"):
+            torch.func.jvp(lambda p: api.sig(p, 3, method=method), (path,), (torch.ones_like(path),))
 
 
 @pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA unavailable")
