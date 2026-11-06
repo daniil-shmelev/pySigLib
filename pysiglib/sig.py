@@ -125,11 +125,9 @@ def sig_combine(
             + err_msg(err_code, result.device))
     return result.data
 
-def _check_sig_method(method, horner, ps_split, degree):
+def _check_sig_method(method, ps_split, degree):
     if method not in (None, "ps", "auto"):
         raise ValueError("method must be None, 'ps', or 'auto'")
-    if method is not None and not horner:
-        raise ValueError("horner=False cannot be combined with method='ps' or 'auto'")
     if ps_split is None:
         return {None: 0, "ps": 1, "auto": 2}[method], 0
     if method != "ps":
@@ -149,7 +147,6 @@ def sig(
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
-        horner : bool = True,
         scalar_term : bool = False,
         correction = None,
         n_jobs : int = 1,
@@ -181,11 +178,9 @@ def sig(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
-    :param horner: If True, will use Horner's algorithm for polynomial multiplication.
-    :type horner: bool
-    :param method: ``None`` preserves the existing ``horner`` selection. Use
+    :param method: ``None`` uses Horner's algorithm. Use
         ``"ps"`` for prefix-suffix or ``"auto"`` to select Horner or prefix-suffix
-        independently for the forward and backward passes. Both require ``horner=True``.
+        independently for the forward and backward passes.
         Prefix-suffix uses extra workspace. Corrections use a general factor construction.
     :type method: str | None
     :param ps_split: Prefix length ``a`` for ``method="ps"``, from 1 to ``degree``.
@@ -311,13 +306,12 @@ def sig(
     """
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
-    check_type(horner, "horner", bool)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
 
     check_n_jobs(n_jobs)
-    method_code, ps_split = _check_sig_method(method, horner, ps_split, degree)
+    method_code, ps_split = _check_sig_method(method, ps_split, degree)
     if isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
         raise NotImplementedError("Signature computation does not support forward-mode automatic differentiation")
     if method is not None and isinstance(path, torch.Tensor) and path.requires_grad and torch.is_grad_enabled():
@@ -334,7 +328,7 @@ def sig(
         err_code = CPSIG_SIGNATURE[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             data.data_dimension, data.data_length, degree,
-            data.time_aug, data.lead_lag, data.end_time, horner, scalar_term, n_jobs,
+            data.time_aug, data.lead_lag, data.end_time, scalar_term, n_jobs,
             correction_data.data_ptr, correction_data.length,
             correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     else:
@@ -343,7 +337,7 @@ def sig(
             err_code = CUSIG_SIGNATURE[data.dtype](
                 data.data_ptr, result.data_ptr, data.batch_size,
                 data.data_dimension, data.data_length, degree,
-                data.time_aug, data.lead_lag, data.end_time, horner, scalar_term,
+                data.time_aug, data.lead_lag, data.end_time, scalar_term,
                 correction_data.data_ptr, correction_data.length,
                 correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split, stream)
     if err_code:

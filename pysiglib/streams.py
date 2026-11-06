@@ -220,7 +220,7 @@ class SigStream:
                  method=None, ps_split=None,
                  _sig_join=None, _sig_combine=None, _sig=None, _sig_length=None):
         check_n_jobs(n_jobs)
-        _check_sig_method(method, True, ps_split, degree)
+        _check_sig_method(method, ps_split, degree)
         self._dimension = dimension
         self._degree = degree
         self._scalar_term = scalar_term
@@ -614,7 +614,7 @@ class LogSigStream:
                 f"incompatible with log_sig_combine/log_sig_join.")
         check_n_jobs(n_jobs)
         if method != 3:
-            _check_sig_method(sig_method, True, ps_split, degree)
+            _check_sig_method(sig_method, ps_split, degree)
         self._dimension = dimension
         self._degree = degree
         self._ls_len = log_sig_length(dimension, degree)
@@ -942,7 +942,7 @@ class SigWindowStream(_WindowStream):
         check_pos(window_size, "window_size")
         check_pos(stride, "stride")
         check_n_jobs(n_jobs)
-        _check_sig_method(method, True, ps_split, degree)
+        _check_sig_method(method, ps_split, degree)
         raw_sig = _sig or sig
         sig_options = {} if method is None else dict(method=method, ps_split=ps_split)
         sig_fn = lambda path, deg: raw_sig(
@@ -1132,7 +1132,7 @@ class LogSigWindowStream(_WindowStream):
         check_pos(stride, "stride")
         check_n_jobs(n_jobs)
         if method != 3:
-            _check_sig_method(sig_method, True, ps_split, degree)
+            _check_sig_method(sig_method, ps_split, degree)
         raw_log_sig = _log_sig or log_sig
         sig_options = {} if method == 3 else dict(sig_method=sig_method, ps_split=ps_split)
         sig_fn = lambda path, deg: raw_log_sig(path, deg, method=method, n_jobs=n_jobs, **sig_options)

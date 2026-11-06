@@ -224,7 +224,7 @@ def sig_backprop(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
-    method_code, ps_split = _check_sig_method(method, True, ps_split, degree)
+    method_code, ps_split = _check_sig_method(method, ps_split, degree)
     check_n_jobs(n_jobs)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")

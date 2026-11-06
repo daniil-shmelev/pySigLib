@@ -27,7 +27,6 @@ void example_batch_signature_d(
 	uint64_t degree = 5,
 	bool time_aug = false,
 	bool lead_lag = false,
-	bool horner = true,
 	int n_jobs = -1,
 	int num_runs = 50
 );
@@ -39,7 +38,6 @@ void example_batch_signature_cuda_d(
 	uint64_t degree = 5,
 	bool time_aug = false,
 	bool lead_lag = false,
-	bool horner = true,
 	int num_runs = 50
 );
 

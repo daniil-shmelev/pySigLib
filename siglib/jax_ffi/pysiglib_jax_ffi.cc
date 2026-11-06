@@ -306,7 +306,7 @@ std::string GetCorrectionSpec(
 }
 
 template <typename T>
-using CpuSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, int, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t) noexcept;
+using CpuSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t) noexcept;
 
 template <typename T>
 using CpuSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t) noexcept;
@@ -422,7 +422,7 @@ struct CpuFns<double> {
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
-using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t, void*) noexcept;
+using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t, void*) noexcept;
 
 template <typename T>
 using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t, void*) noexcept;
@@ -556,7 +556,6 @@ ffi::Error SigCpuImpl(
     bool time_aug,
     bool lead_lag,
     double end_time,
-    bool horner,
     std::int64_t n_jobs,
     std::int32_t method,
     std::uint64_t ps_split,
@@ -595,7 +594,6 @@ ffi::Error SigCpuImpl(
         time_aug,
         lead_lag,
         static_cast<T>(end_time),
-        horner,
         true,
         static_cast<int>(n_jobs),
         correction_ptr,
@@ -694,7 +692,6 @@ ffi::Error SigCudaImpl(
     bool time_aug,
     bool lead_lag,
     double end_time,
-    bool horner,
     std::int64_t n_jobs,
     std::int32_t method,
     std::uint64_t ps_split,
@@ -733,7 +730,6 @@ ffi::Error SigCudaImpl(
         time_aug,
         lead_lag,
         static_cast<T>(end_time),
-        horner,
         true,
         correction_ptr,
         corr_spec.len,
@@ -830,7 +826,6 @@ ffi::Error SigCpu(
     bool time_aug,
     bool lead_lag,
     double end_time,
-    bool horner,
     std::int64_t n_jobs,
     std::int32_t method,
     std::uint64_t ps_split,
@@ -852,7 +847,6 @@ ffi::Error SigCpu(
             time_aug,
             lead_lag,
             end_time,
-            horner,
             n_jobs,
             method,
             ps_split,
@@ -910,7 +904,6 @@ ffi::Error SigCuda(
     bool time_aug,
     bool lead_lag,
     double end_time,
-    bool horner,
     std::int64_t n_jobs,
     std::int32_t method,
     std::uint64_t ps_split,
@@ -933,7 +926,6 @@ ffi::Error SigCuda(
             time_aug,
             lead_lag,
             end_time,
-            horner,
             n_jobs,
             method,
             ps_split,
@@ -2375,7 +2367,6 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("time_aug")
         .Attr<bool>("lead_lag")
         .Attr<double>("end_time")
-        .Attr<bool>("horner")
         .Attr<std::int64_t>("n_jobs")
         .Attr<std::int32_t>("method")
         .Attr<std::uint64_t>("ps_split")
@@ -2412,7 +2403,6 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("time_aug")
         .Attr<bool>("lead_lag")
         .Attr<double>("end_time")
-        .Attr<bool>("horner")
         .Attr<std::int64_t>("n_jobs")
         .Attr<std::int32_t>("method")
         .Attr<std::uint64_t>("ps_split")

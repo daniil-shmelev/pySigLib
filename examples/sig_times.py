@@ -28,7 +28,7 @@ if __name__ == '__main__':
 
     #print("\nesig (serial): ", time_esig_sig(cfg, True))
     print("\niisignature (serial): ", time_iisig_sig(cfg, True))
-    print("\npysiglib (serial): ", time_pysiglib_sig(cfg, True, 1, True))
+    print("\npysiglib (serial): ", time_pysiglib_sig(cfg, 1, True))
 
     print("\nsignatory (parallel): ", time_signatory_sig(cfg, True))
-    print("\npysiglib (parallel): ", time_pysiglib_sig(cfg, True, -1, True))
+    print("\npysiglib (parallel): ", time_pysiglib_sig(cfg, -1, True))

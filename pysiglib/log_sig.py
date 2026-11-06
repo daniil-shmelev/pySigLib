@@ -465,7 +465,7 @@ def log_sig(
 
     # Methods 0-2: compute sig then project to log sig.
     sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, correction=correction, n_jobs=n_jobs,
+               end_time=end_time, correction=correction, n_jobs=n_jobs,
                method=sig_method, ps_split=ps_split)
     dimension = path.shape[-1]
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)

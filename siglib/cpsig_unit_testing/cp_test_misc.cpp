@@ -20,27 +20,27 @@
 
 TEST(cpuErrorDetailTest, PreservesDetailAndClearsAfterSuccess) {
 	EXPECT_EQ(2, signature_d(
-		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true, true, 1,
+		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true, 1,
 		nullptr, 0, 0, 0));
 	EXPECT_NE(
 		std::string(cpsig_last_error_message()).find("dimension"),
 		std::string::npos);
 
 	EXPECT_EQ(0, signature_d(
-		nullptr, nullptr, 0, 1, 0, 0, false, false, 1., true, true, 1,
+		nullptr, nullptr, 0, 1, 0, 0, false, false, 1., true, 1,
 		nullptr, 0, 0, 0));
 	EXPECT_STREQ(cpsig_last_error_message(), "");
 }
 
 TEST(cpuErrorDetailTest, IsThreadLocal) {
 	EXPECT_EQ(2, signature_d(
-		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true, true, 1,
+		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true, 1,
 		nullptr, 0, 0, 0));
 	const std::string parent_message = cpsig_last_error_message();
 	std::string child_message;
 	std::thread child([&child_message]() {
 		EXPECT_EQ(2, signature_d(
-			nullptr, nullptr, 1, 1, 2, 2, false, false, 1., true, true, 1,
+			nullptr, nullptr, 1, 1, 2, 2, false, false, 1., true, 1,
 			nullptr, 1, 0, 0));
 		child_message = cpsig_last_error_message();
 	});

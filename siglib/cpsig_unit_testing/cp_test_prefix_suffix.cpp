@@ -58,27 +58,27 @@ TEST(PrefixSuffix, CorrectionSelectionAndQuadrature) {
     for (uint64_t a = 1; a <= 6; ++a) {
         const Plan plan(2, 2, 6, 9, a, 4, 2, sizeof(double), false);
         EXPECT_EQ(plan.layout.left_degree(6), a);
-        EXPECT_TRUE(signature_method::use_prefix_suffix<double>(1, a, 2, 2, 9, 6, true, false, 4, false, false));
+        EXPECT_TRUE(signature_method::use_prefix_suffix<double>(1, a, 2, 2, 9, 6, false, 4, false, false));
     }
-    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 2, 257, 19, true, false, 4, false, false));
-    EXPECT_TRUE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, true, false, 16, false, false));
-    EXPECT_TRUE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, true, false, 16, false, true));
-    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, true, false, 80, false, false));
-    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 257, 9, true, false, 16, true, true));
-    EXPECT_FALSE(signature_method::use_prefix_suffix<double>(2, 0, 1, 4, 17, 9, true, false, 16, false, false));
-    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, true, true, 16, false, false));
-    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 8, true, false, 16, false, false));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 2, 257, 19, false, 4, false, false));
+    EXPECT_TRUE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, false, 16, false, false));
+    EXPECT_TRUE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, false, 16, false, true));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, false, 80, false, false));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 257, 9, false, 16, true, true));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<double>(2, 0, 1, 4, 17, 9, false, 16, false, false));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, true, 16, false, false));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 8, false, 16, false, false));
 }
 
 TEST(PrefixSuffix, InvalidSignatureMethod) {
     float path[4]{}, sig[7]{};
-    EXPECT_NE(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, true, 0,
+    EXPECT_NE(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, 0,
         nullptr, 0, 0, 0, 1), 0);
-    EXPECT_EQ(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, true, 1,
+    EXPECT_EQ(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, 1,
         nullptr, 0, 0, 0, 3), 2);
-    EXPECT_EQ(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, true, 1,
+    EXPECT_EQ(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, 1,
         nullptr, 0, 0, 0, 2, 1), 2);
-    EXPECT_EQ(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, true, 1,
+    EXPECT_EQ(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, 1,
         nullptr, 0, 0, 0, 1, 3), 2);
 }
 
@@ -110,7 +110,7 @@ TEST(PrefixSuffix, EndpointRespectsSchedulerLimits) {
     std::vector<float> expected(prefix_suffix::Layout(dimension, 3).offset.back() - 1), actual(expected.size());
     auto run = [&](int jobs, std::vector<float>& output) {
         return signature_f(path.data(), output.data(), 1, dimension, points, 3,
-            false, false, 1.f, true, false, jobs, nullptr, 0, 0, 0, 1);
+            false, false, 1.f, false, jobs, nullptr, 0, 0, 0, 1);
     };
     ASSERT_EQ(run(1, expected), 0);
     auto check_serial_split = [&] {
@@ -236,10 +236,10 @@ TEST(PrefixSuffix, NativeForwardAndBackprop) {
             for (uint64_t x = 0; x < path.size(); ++x) path[x] = double(int((x * 7) % 19) - 9) / 32;
             for (uint64_t x = 0; x < deriv.size(); ++x) deriv[x] = double(int((x * 5) % 13) - 6) / 16;
             ASSERT_EQ(signature_d(path.data(), sig.data(), batch, dimension, length, degree,
-                time_aug, lead_lag, 0.7, true, scalar, 2), 0);
+                time_aug, lead_lag, 0.7, scalar, 2), 0);
             std::vector<double> ps(sig.size());
             ASSERT_EQ(signature_d(path.data(), ps.data(), batch, dimension, length, degree,
-                time_aug, lead_lag, 0.7, true, scalar, 2, nullptr, 0, 0, 0, 1), 0);
+                time_aug, lead_lag, 0.7, scalar, 2, nullptr, 0, 0, 0, 1), 0);
             for (size_t i = 0; i < sig.size(); ++i) EXPECT_NEAR(ps[i], sig[i], 1e-12);
             ASSERT_EQ(sig_backprop_d(path.data(), expected.data(), deriv.data(), sig.data(), batch,
                 dimension, length, degree, time_aug, lead_lag, 0.7, scalar, 2), 0);
@@ -262,7 +262,7 @@ TEST(PrefixSuffix, BackpropFiniteDifference) {
         long double values[2]{};
         for (int side = 0; side < 2; ++side) {
             path[x] = original + (side ? -epsilon : epsilon);
-            ASSERT_EQ(signature_d(path.data(), sig.data(), 1, d, length, degree, false, false, 1., true, true, 1), 0);
+            ASSERT_EQ(signature_d(path.data(), sig.data(), 1, d, length, degree, false, false, 1., true, 1), 0);
             for (uint64_t word = 0; word < size; ++word) values[side] += static_cast<long double>(deriv[word]) * sig[word];
         }
         path[x] = original;

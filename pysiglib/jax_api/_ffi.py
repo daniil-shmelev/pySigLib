@@ -422,11 +422,11 @@ def _make_ffi_call(op_name, inputs, out_type, call_kwargs, vmap_method="broadcas
 # sig
 # ---------------------------------------------------------------------------
 
-def sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split):
+def sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split):
     _check_same_dtype(path, correction)
     out_type = jax.ShapeDtypeStruct(_sig_shape(path.shape, degree, time_aug, lead_lag), path.dtype)
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
-                       end_time=np.float64(end_time), horner=np.bool_(horner), n_jobs=np.int64(n_jobs),
+                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs),
                        method=np.int32(method), ps_split=np.uint64(ps_split))
     return _make_ffi_call("sig", (path, correction), out_type, call_kwargs,
                           vmap_method="sequential" if correction.size else "broadcast_all")

@@ -260,7 +260,7 @@ CPSIG_SIG_COEF_BACKPROP = _bind_float_pair(
 
 CPSIG_SIGNATURE = _bind_float_pair(
     CPSIG, "signature",
-    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
+    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T,
                c_bool, c_int, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64),
 )
 
@@ -493,7 +493,7 @@ CUSIG_SIG_COEF_BACKPROP = _bind_float_pair(
 
 CUSIG_SIGNATURE = _bind_float_pair(
     CUSIG, "signature_cuda",
-    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
+    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T,
                c_bool, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64, c_void_p),
 )
 

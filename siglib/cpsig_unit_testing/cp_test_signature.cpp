@@ -141,21 +141,21 @@ TEST(signatureDoubleTest, TrivialCases) {
     auto f = signature_d;
     std::vector<double> path;
     std::vector<double> true_sig;
-    EXPECT_EQ(2, signature_d(path.data(), true_sig.data(), (uint64_t)1, 0, 0, 0, false, false, 1., true, true, 1, nullptr, 0, 0, 0));
+    EXPECT_EQ(2, signature_d(path.data(), true_sig.data(), (uint64_t)1, 0, 0, 0, false, false, 1., true, 1, nullptr, 0, 0, 0));
 
     true_sig.push_back(1.);
-    check_result(f, path, true_sig, (uint64_t)1, 1, 0, 0, false, false, 1., true, true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, 1, 0, 0, false, false, 1., true, 1);
 
     path.push_back(0.);
-    check_result(f, path, true_sig, (uint64_t)1, 1, 1, 0, false, false, 1., true, true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, 1, 1, 0, false, false, 1., true, 1);
 
     true_sig.push_back(0.);
-    check_result(f, path, true_sig, (uint64_t)1, 1, 0, 1, false, false, 1., true, true, 1);
-    check_result(f, path, true_sig, (uint64_t)1, 1, 1, 1, false, false, 1., true, true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, 1, 0, 1, false, false, 1., true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, 1, 1, 1, false, false, 1., true, 1);
 
     path.push_back(1.);
     true_sig[1] = 1.;
-    check_result(f, path, true_sig, (uint64_t)1, 1, 2, 1, false, false, 1., true, true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, 1, 2, 1, false, false, 1., true, 1);
 }
 
 TEST(signatureDoubleTest, LinearPathTest) {
@@ -170,7 +170,7 @@ TEST(signatureDoubleTest, LinearPathTest) {
     for (uint64_t i = 1; i < dimension + 1; ++i) { true_sig[i] = 1.; }
     for (uint64_t i = dimension + 1; i < level_3_start; ++i) { true_sig[i] = 1 / 2.; }
     for (uint64_t i = level_3_start; i < level_4_start; ++i) { true_sig[i] = 1 / 6.; }
-    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, 1);
 }
 
 TEST(signatureDoubleTest, LinearPathTest2) {
@@ -185,7 +185,7 @@ TEST(signatureDoubleTest, LinearPathTest2) {
     for (uint64_t i = 1; i < dimension + 1; ++i) { true_sig[i] = 1.; }
     for (uint64_t i = dimension + 1; i < level_3_start; ++i) { true_sig[i] = 1 / 2.; }
     for (uint64_t i = level_3_start; i < level_4_start; ++i) { true_sig[i] = 1 / 6.; }
-    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, 1);
 }
 
 TEST(signatureDoubleTest, ManualSigTest) {
@@ -193,7 +193,7 @@ TEST(signatureDoubleTest, ManualSigTest) {
     uint64_t dimension = 2, length = 4, degree = 2;
     std::vector<double> path = { 0., 0., 1., 0.5, 4., 0., 0., 1. };
     std::vector<double> true_sig = { 1., 0., 1., 0., 1., -1., 0.5 };
-    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, 1);
 }
 
 TEST(signatureDoubleTest, ManualSigTest2) {
@@ -213,7 +213,7 @@ TEST(signatureDoubleTest, ManualSigTest2) {
         -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
         -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
     };
-    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, true, true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, true, 1);
 }
 
 TEST(signatureDoubleTest, BatchSigTest) {
@@ -227,8 +227,8 @@ TEST(signatureDoubleTest, BatchSigTest) {
         1., 1., 1., 0.5, 0.5, 0.5, 0.5,
         1., 0., 1., 0., 1., -1., 0.5 };
 
-    check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, true, 1);
-    check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, true, -1);
+    check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, 1);
+    check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, -1);
 }
 
 TEST(signatureDoubleTest, BatchSigTestDegree1) {
@@ -242,8 +242,8 @@ TEST(signatureDoubleTest, BatchSigTestDegree1) {
         1., 1., 1.,
         1., 0., 1. };
 
-    check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, true, 1);
-    check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, true, -1);
+    check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, 1);
+    check_result(f, path, true_sig, 3, dimension, length, degree, false, false, 1., true, -1);
 }
 
 TEST(signatureDoubleTest, ManualTimeAugTest) {
@@ -253,7 +253,7 @@ TEST(signatureDoubleTest, ManualTimeAugTest) {
     std::vector<float> true_sig = { 1.f, 9.f, 4.f, 40.5f, 15.5f, 20.5f, 8.f, 121.5f, 37.5f,
                             64.5f, 24.5f, 60.f, 13.f, 34.5f, 10.f + 2.f/3.f };
     float end_time = length - 1.f;
-    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true, true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true, 1);
 }
 
 TEST(signatureDoubleTest, ManualLeadLagTest) {
@@ -261,7 +261,7 @@ TEST(signatureDoubleTest, ManualLeadLagTest) {
     uint64_t dimension = 1, length = 5, degree = 3;
     std::vector<float> path = { 0.f, 5.f, 2.f, 4.f, 9.f };
     std::vector<float> true_sig = { 1.f, 9.f, 9.f, 40.5f, 9.f, 72.f, 40.5f, 121.5f, 6.5f, 68.f, -8.5f, 290.f, 98.f, 275.f, 121.5f };
-    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1.f, true, true, 1);
+    check_result(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1.f, true, 1);
 }
 
 TEST(signatureDoubleTest, BigLeadLagTest) {
@@ -270,7 +270,7 @@ TEST(signatureDoubleTest, BigLeadLagTest) {
     path.resize(batch * length * dimension);
     std::vector<double> out;
     out.resize(batch * sig_length(dimension * 2, degree));
-    signature_d(path.data(), out.data(), batch, dimension, length, degree, false, true, 1., true, true, 1, nullptr, 0, 0, 0);
+    signature_d(path.data(), out.data(), batch, dimension, length, degree, false, true, 1., true, 1, nullptr, 0, 0, 0);
 }
 
 TEST(sigBackpropTest, LinearPathTest) {

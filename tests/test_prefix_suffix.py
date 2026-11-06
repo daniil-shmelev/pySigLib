@@ -193,7 +193,7 @@ def test_numpy_fixtures_and_empty():
 
 def test_validation():
     path = np.zeros((8, 2))
-    for options in (dict(method="bad"), dict(method=METHOD, horner=False),
+    for options in (dict(method="bad"),
                     dict(method=METHOD, correction=np.zeros(5))):
         with pytest.raises(ValueError): pysiglib.sig(path, 3, **options)
     tensor = torch.zeros((8, 2), requires_grad=True)

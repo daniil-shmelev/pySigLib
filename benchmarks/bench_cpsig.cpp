@@ -170,26 +170,15 @@ static void BM_sig_correction(benchmark::State& state) {
     std::vector<double> out(4 * slen);
     check(::signature_d(
         path.data(), out.data(), 4, 4, 32, 5, false, false, 1.,
-        true, true, 1, correction.data(), correction.size()), "signature_d");
+        true, 1, correction.data(), correction.size()), "signature_d");
     for (auto _ : state) {
         ::signature_d(
             path.data(), out.data(), 4, 4, 32, 5, false, false, 1.,
-            true, true, 1, correction.data(), correction.size());
+            true, 1, correction.data(), correction.size());
         benchmark::DoNotOptimize(out.data());
     }
 }
 BENCHMARK(BM_sig_correction)->Unit(benchmark::kMicrosecond);
-
-static void BM_sig_no_horner(benchmark::State& state) {
-    const uint64_t slen = ::sig_length(4, 5);
-    auto path = random_data(4 * 4 * 32);
-    std::vector<double> out(4 * slen);
-    for (auto _ : state) {
-        ::signature_d(path.data(), out.data(), 4, 4, 32, 5, false, false, 1., false);
-        benchmark::DoNotOptimize(out.data());
-    }
-}
-BENCHMARK(BM_sig_no_horner)->Unit(benchmark::kMicrosecond);
 
 static void BM_sig_backprop(benchmark::State& state) {
     const uint64_t slen = ::sig_length(4, 5);
@@ -216,7 +205,7 @@ static void BM_sig_method(benchmark::State& state, int method) {
     std::vector<float> sig(::sig_length(d, degree));
     for (auto _ : state) {
         check(::signature_f(path.data(), sig.data(), 1, d, points, degree, false, false, 1.f,
-            true, true, 1, nullptr, 0, 0, 0, method), "signature_f");
+            true, 1, nullptr, 0, 0, 0, method), "signature_f");
         benchmark::DoNotOptimize(sig.data());
     }
 }

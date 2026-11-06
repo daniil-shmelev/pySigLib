@@ -302,7 +302,6 @@ extern "C" {
 	* @param time_aug Whether to add time augmentation (default = false).
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
-	* @param horner Whether to use the Horner algorithm (default = true).
 	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
 	* @param correction Optional segment corrections, with levels 2 through m concatenated in word order over original path channels. Null means no correction; incompatible with lead_lag.
 	* @param correction_len Number of coefficients per correction row.
@@ -313,9 +312,9 @@ extern "C" {
 	* @param stream CUDA stream that supplies the inputs and receives the result. Pass `nullptr` for the default stream.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, void* stream = nullptr) noexcept;
+	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, void* stream = nullptr) noexcept;
 	/** @copydoc signature_cuda_f */
-	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, void* stream = nullptr) noexcept;
+	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, void* stream = nullptr) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_cuda_functions Signature backpropagation CUDA functions

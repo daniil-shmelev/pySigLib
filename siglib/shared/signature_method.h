@@ -25,14 +25,13 @@ enum Method { standard = 0, prefix_suffix = 1, automatic = 2 };
 
 template<class T>
 bool use_prefix_suffix(int method, uint64_t ps_split, uint64_t batch, uint64_t dimension,
-    uint64_t length, uint64_t degree, bool horner, bool augmented, uint64_t correction_len,
+    uint64_t length, uint64_t degree, bool augmented, uint64_t correction_len,
     bool cuda, bool backward) {
     if (method < standard || method > automatic)
         throw std::invalid_argument("Invalid signature method");
     if (ps_split && (method != prefix_suffix || ps_split > degree))
         throw std::invalid_argument("A prefix length from 1 to degree requires the prefix-suffix method");
     if (method == standard) return false;
-    if (!horner) throw std::invalid_argument("Prefix-suffix and automatic selection require horner=true");
     if (method == prefix_suffix) return true;
 
     if (!std::is_same_v<T, float> || augmented || !batch || batch > 32 ||

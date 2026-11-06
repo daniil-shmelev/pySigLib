@@ -33,12 +33,12 @@ HWY_EXPORT_T(sig_backprop_d, sig_backprop_<double>);
 extern "C" {
 
 
-	CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool horner, bool scalar_term, int n_jobs, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride, int method, uint64_t ps_split) noexcept {
-		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_f)(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split));
+	CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride, int method, uint64_t ps_split) noexcept {
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_f)(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split));
 	}
 
-	CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool horner, bool scalar_term, int n_jobs, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride, int method, uint64_t ps_split) noexcept {
-		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_d)(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, n_jobs, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split));
+	CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride, int method, uint64_t ps_split) noexcept {
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(signature_d)(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split));
 	}
 
 

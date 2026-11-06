@@ -246,19 +246,18 @@ def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
     _infer_correction_degree(path.shape[-1], degree, length)
     return correction
 
-@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7, 8, 9))
-def _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split):
-    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split)
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7, 8))
+def _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split):
+    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split)
 
 
-def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split):
-    sig_ = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split)
+def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split):
+    sig_ = _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split)
     # Explicit prefix-suffix reconstructs its states from the path.
     return sig_, (path, correction if method == 1 else sig_, correction)
 
 
-def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split, residual, cotangent):
-    del horner
+def _sig_bwd(degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, residual, cotangent):
     path, sig_, correction = residual
     grad = sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split)
     return grad, jnp.zeros_like(correction)
@@ -274,7 +273,6 @@ def sig(
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
-    horner: bool = True,
     scalar_term: bool = False,
     correction=None,
     n_jobs: int = 1,
@@ -291,12 +289,11 @@ def sig(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
-    check_type(horner, "horner", bool)
     check_n_jobs(n_jobs)
-    method_code, ps_split = _check_sig_method(method, horner, ps_split, degree)
+    method_code, ps_split = _check_sig_method(method, ps_split, degree)
 
     correction = _prepare_correction_jax(correction, path, degree, lead_lag)
-    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method_code, ps_split)
+    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method_code, ps_split)
     if not scalar_term:
         result = _strip_scalar(result)
     return result
@@ -599,7 +596,7 @@ def log_sig(
 
     dimension = path.shape[-1]
     sig_ = sig(path, degree, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs,
+               end_time=end_time, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs,
                method=sig_method, ps_split=ps_split)
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug,
                           lead_lag=lead_lag, method=method, n_jobs=n_jobs)
