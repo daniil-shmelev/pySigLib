@@ -317,10 +317,9 @@ template<class T, bool Backward>
 void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deriv, const uint64_t* indices,
     uint64_t count, const uint64_t* degrees, uint64_t batch, uint64_t dimension, uint64_t length,
     bool ta, bool ll, T time, bool prefixes, int method, void* stream_ptr) {
-    // Only CPU has a calibrated Pascal region for automatic selection.
     if (method == pc::horner || method == pc::automatic) {
         sig_coef_horner_cuda<T, Backward>(path, out, coefs, deriv, indices, count, degrees, batch,
-            dimension, length, ta, ll, time, prefixes, method == pc::horner && !ta && !ll, stream_ptr);
+            dimension, length, ta, ll, time, prefixes, !ta && !ll, stream_ptr);
         return;
     }
     pc::Words words(indices, degrees, count, pc::add(pc::mul(dimension, ll ? 2 : 1), ta ? 1 : 0), Backward || prefixes);

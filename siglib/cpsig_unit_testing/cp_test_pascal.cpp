@@ -16,7 +16,6 @@
 #include <gtest/gtest.h>
 #include "cpsig.h"
 #include "pascal_coefficient.h"
-#include "pascal_selection.h"
 #include <cmath>
 #include <vector>
 
@@ -43,7 +42,6 @@ TEST(PascalCoefficient, AllPrefixAdjoints) {
         }
     }
 }
-
 TEST(PascalCoefficient, IdentityAndCheckedSizes) {
     const uint64_t degrees[] = {0, 1}, word = 0;
     float path = 0, out[2];
@@ -99,17 +97,4 @@ TEST(PascalCoefficient, SimdScratchAlignment) {
             }
         }
     }
-}
-
-TEST(PascalCoefficient, CalibratedSelection) {
-    std::vector<uint64_t> indices(96, 0), degrees(8, 12);
-    const pascal_coefficient::Words words(indices.data(), degrees.data(), 8, 8, true);
-    EXPECT_TRUE(pascal_selection::cpu_region<float>(words, 32, 8, 256, 1, false, false, true));
-    EXPECT_FALSE(pascal_selection::cpu_region<float>(words, 32, 8, 256, 1, false, false, false));
-    EXPECT_FALSE(pascal_selection::cpu_region<double>(words, 32, 8, 256, 1, false, false, true));
-    EXPECT_FALSE(pascal_selection::cpu_region<float>(words, 32, 8, 256, 20, false, false, true));
-    EXPECT_FALSE(pascal_selection::cpu_region<float>(words, 32, 8, 256, 1, true, false, true));
-    degrees[0] = 11;
-    const pascal_coefficient::Words mixed(indices.data(), degrees.data(), 8, 8, true);
-    EXPECT_FALSE(pascal_selection::cpu_region<float>(mixed, 32, 8, 256, 1, false, false, true));
 }

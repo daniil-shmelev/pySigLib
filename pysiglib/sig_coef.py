@@ -121,7 +121,7 @@ def sig_coef(
         end_time : float = 1.,
         prefixes : bool = False,
         n_jobs : int = 1,
-        method = None
+        method = "auto"
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes specific signature coefficients for a single path or a batch of paths. For
@@ -158,11 +158,10 @@ def sig_coef(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param method: ``None`` or ``"horner"`` uses Horner's method. ``"pascal"`` uses
-        Pascal factorisation. On CPU, ``"auto"`` selects Pascal for benchmarked
-        single-thread float32 workloads with equal word lengths from 8 to 16, and Horner
-        otherwise. On CUDA, ``"auto"`` uses Horner. Both methods support float32 and
-        float64. CUDA supports words through length 20.
+    :param method: ``"auto"`` (default) uses Pascal factorisation on CPU and Horner's
+        method on CUDA. ``None`` or ``"horner"`` uses Horner, and ``"pascal"`` uses
+        Pascal. Both methods support float32 and float64. CUDA supports words through
+        length 20.
     :type method: str | None
     :return: Signature coefficients with the leading batch dimensions of ``path``.
         The last axis has one entry per word, or ``sum(max(1, len(w)) for w in words)``
@@ -239,7 +238,7 @@ def sig_coef(
 
     flat_indices = [i for idx in words for i in idx]
 
-    if data.device == "cpu" or method_code != 0 or time_aug or lead_lag:
+    if data.device == "cpu" or method_code == 1 or time_aug or lead_lag:
         words_t = torch.tensor(flat_indices, dtype=torch.uint64)
         degrees_t = torch.tensor(degrees, dtype=torch.uint64)
     else:

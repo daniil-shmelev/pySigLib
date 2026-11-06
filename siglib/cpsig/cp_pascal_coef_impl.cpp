@@ -24,7 +24,6 @@
 #include "cp_dispatch.h"
 #include "multithreading.h"
 #include "pascal_coefficient.h"
-#include "pascal_selection.h"
 
 HWY_BEFORE_NAMESPACE();
 namespace cpsig {
@@ -359,10 +358,8 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
     if (jobs < 1) throw std::invalid_argument("n_jobs is below the supported range");
     const int mode = pc::variant(method, words.max_degree);
     if (!batch) return;
-    if (method == pc::automatic && pascal_selection::cpu_region<T>(words, batch, dimension,
-        length > 1 ? length - 1 : 0, jobs, time_aug, lead_lag,
-        HWY_TARGET == HWY_AVX2 && pascal_selection::cpu_hardware())) method = pc::pascal_method;
-    if (method == pc::horner || method == pc::automatic) {
+    if (method == pc::automatic) method = pc::pascal_method;
+    if (method == pc::horner) {
         if constexpr (Backward) {
             std::vector<T> seeds(deriv, deriv + batch * words.width);
             sig_coef_backprop_<T>(path, out, coefs, seeds.data(), indices, num_words, degrees,

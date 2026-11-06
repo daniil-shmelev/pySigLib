@@ -36,7 +36,7 @@ def sig_coef_backprop(
         lead_lag : bool = False,
         end_time : float = 1.,
         n_jobs : int = 1,
-        method = None
+        method = "auto"
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     This function is required to backpropagate through signature coefficient computation.
@@ -69,8 +69,9 @@ def sig_coef_backprop(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param method: Method used for coefficient computation: ``None``, ``"horner"``,
-        ``"pascal"``, or ``"auto"``. Pascal uses checkpoints and replay for reverse accumulation.
+    :param method: ``"auto"`` (default) uses Pascal factorisation on CPU and Horner's
+        method on CUDA. ``None`` or ``"horner"`` uses Horner, and ``"pascal"`` uses
+        Pascal. Pascal uses checkpoints and replay for reverse accumulation.
     :type method: str | None
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
@@ -142,7 +143,7 @@ def sig_coef_backprop(
 
     flat_indices = [i for idx in words for i in idx]
 
-    if data.device == "cpu" or method_code != 0 or time_aug or lead_lag:
+    if data.device == "cpu" or method_code == 1 or time_aug or lead_lag:
         words_t = torch.tensor(flat_indices, dtype=torch.uint64)
         degrees_t = torch.tensor(degrees, dtype=torch.uint64)
     else:

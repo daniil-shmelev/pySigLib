@@ -1057,7 +1057,7 @@ ffi::Error SigCoefImpl(
                 const std::uint64_t* word_data = indices.begin();
                 const std::uint64_t* degree_data = degrees.begin();
                 CudaBuf<std::uint64_t> device_metadata;
-                if (method == 0 && !time_aug && !lead_lag && spec.batch_size) {
+                if (method != 1 && !time_aug && !lead_lag && spec.batch_size) {
                     device_metadata = CudaBuf<std::uint64_t>(pascal_coefficient::mul(
                         pascal_coefficient::add(indices.size(), degrees.size()), sizeof(std::uint64_t)));
                     word_data = device_metadata.get();

@@ -76,10 +76,25 @@ def test_coefficient_dispatch(device, dtype, method, segments):
     np.testing.assert_allclose(y.cpu(), reference.real, atol=tol, rtol=tol)
     np.testing.assert_allclose((gradient.cpu().numpy() * direction).sum(axis=(1, 2)),
                                (seeds.cpu().numpy() * reference.imag).sum(axis=1) / 1e-25, atol=5 * tol, rtol=5 * tol)
-    if method == "horner" and segments == 7:
-        torch.testing.assert_close(y, pysiglib.sig_coef(x, words, prefixes=True), atol=0, rtol=0)
+    if segments == 7:
         last = np.cumsum([max(1, len(w)) for w in words]) - 1
         torch.testing.assert_close(pysiglib.sig_coef(x, words, method=method), y[..., last], atol=0, rtol=0)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_coefficient_auto_default_matches_backend(device, dtype):
+    path = torch.tensor(np.random.default_rng(812).normal(scale=.05, size=(4, 33, 3)).cumsum(axis=1),
+                        device=device, dtype=dtype)
+    words = [(0, 1, 0, 2), (2, 1, 0), ()]
+    selected = "pascal" if device == "cpu" else "horner"
+    actual = pysiglib.sig_coef(path, words, prefixes=True)
+    expected = pysiglib.sig_coef(path, words, prefixes=True, method=selected)
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+    seeds = torch.tensor(np.random.default_rng(813).normal(size=actual.shape), device=device, dtype=dtype)
+    gradient = pysiglib.sig_coef_backprop(path, words, actual, seeds.clone())
+    reference = pysiglib.sig_coef_backprop(path, words, expected, seeds.clone(), method=selected)
+    torch.testing.assert_close(gradient, reference, atol=0, rtol=0)
 
 
 @pytest.mark.parametrize("device", DEVICES)

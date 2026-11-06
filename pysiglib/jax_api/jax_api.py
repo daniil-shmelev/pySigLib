@@ -1667,7 +1667,7 @@ def sig_coef(
     end_time: float = 1.0,
     prefixes: bool = False,
     n_jobs: int = 1,
-    method = None,
+    method = "auto",
 ):
     ensure_registered()
 
