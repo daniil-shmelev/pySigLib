@@ -80,7 +80,7 @@ class LogSigStream(_LogSigStream):
     __doc__ = _LogSigStream.__doc__
 
     def __init__(self, dimension: int, degree: int, *, method: int = 2, n_jobs: int = 1,
-                 sig_method=None, ps_split=None):
+                 sig_method="auto", ps_split=None):
         super().__init__(dimension, degree, method=method, n_jobs=n_jobs,
                          sig_method=sig_method, ps_split=ps_split,
                          _log_sig_join=log_sig_join, _log_sig_combine=log_sig_combine,
@@ -105,7 +105,7 @@ class LogSigWindowStream(_LogSigWindowStream):
     def __init__(self, dimension: int, degree: int, window_size: int,
                  *,
                  stride: int = 1, method: int = 2, n_jobs: int = 1,
-                 sig_method=None, ps_split=None):
+                 sig_method="auto", ps_split=None):
         super().__init__(dimension, degree, window_size, stride=stride,
                          method=method, n_jobs=n_jobs,
                          sig_method=sig_method, ps_split=ps_split, _log_sig=log_sig)

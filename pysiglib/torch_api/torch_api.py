@@ -294,12 +294,10 @@ def log_sig(
         scalar_term : bool = False,
         correction = None,
         n_jobs : int = 1,
-        sig_method = None,
+        sig_method = "auto",
         ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     if method == 3:
-        if sig_method is not None or ps_split is not None:
-            raise ValueError("sig_method and ps_split require log_sig method 0, 1 or 2")
         if not isinstance(path, torch.Tensor) or _has_non_empty_correction(correction):
             return log_sig_forward(
                 path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,

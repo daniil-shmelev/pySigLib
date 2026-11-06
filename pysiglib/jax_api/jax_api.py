@@ -579,7 +579,7 @@ def log_sig(
     scalar_term: bool = False,
     correction=None,
     n_jobs: int = 1,
-    sig_method=None,
+    sig_method="auto",
     ps_split=None,
 ):
     ensure_registered()
@@ -589,8 +589,6 @@ def log_sig(
     correction = _prepare_correction_jax(correction, path, degree, lead_lag)
 
     if method == 3:
-        if sig_method is not None or ps_split is not None:
-            raise ValueError("sig_method and ps_split require log_sig method 0, 1 or 2")
         if correction.shape[0] != 0:
             raise ValueError("correction is not supported with log_sig method=3")
         if time_aug or lead_lag:

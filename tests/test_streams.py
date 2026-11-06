@@ -625,10 +625,18 @@ def test_ps_stream_rejects_invalid_options(kind, method, split):
 
 
 @pytest.mark.parametrize("kind", ["LogSigStream", "LogSigWindowStream"])
-@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), (None, 2)])
-def test_log_stream_method3_rejects_signature_options(kind, sig_method, split):
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), (None, 2), ("invalid", 99)])
+def test_log_stream_method3_ignores_signature_options(kind, sig_method, split):
     options = dict(method=3, sig_method=sig_method, ps_split=split)
     if "Window" in kind:
         options["window_size"] = 4
-    with pytest.raises(ValueError, match="require log_sig method"):
-        getattr(pysiglib, kind)(2, 3, **options)
+    pysiglib.prepare_log_sig(2, 3, 3)
+    path = np.random.default_rng(31).normal(scale=0.05, size=(7, 2))
+    expected = getattr(pysiglib, kind)(2, 3, method=3, **({"window_size": 4} if "Window" in kind else {}))
+    actual = getattr(pysiglib, kind)(2, 3, **options)
+    expected.push_batch(path)
+    actual.push_batch(path)
+    if "Window" in kind:
+        np.testing.assert_allclose(actual.sig(), expected.sig())
+    else:
+        np.testing.assert_allclose(actual.sig(0, 1), expected.sig(0, 1))

@@ -574,11 +574,11 @@ class LogSigStream:
         threads are used.
     :type n_jobs: int
     :param sig_method: Signature algorithm for ``push_batch`` with ``method=2``:
-        ``None`` (Horner), ``"ps"`` (prefix-suffix factorisation), or ``"auto"``.
-        Method ``3`` requires ``None``. Single-point updates use ``log_sig_join``.
+        ``"auto"`` (default), ``None`` (Horner), or ``"ps"`` (prefix-suffix
+        factorisation). Ignored for method ``3``. Single-point updates use ``log_sig_join``.
     :type sig_method: str | None
     :param ps_split: Optional prefix length ``a`` for ``sig_method="ps"``.
-        See :func:`sig`. ``None`` selects the split automatically.
+        See :func:`sig`. ``None`` selects the split automatically. Ignored for method ``3``.
     :type ps_split: int | None
 
     Example::
@@ -605,7 +605,7 @@ class LogSigStream:
     def __init__(self, dimension: int, degree: int,
                  *,
                  method: int = 2, n_jobs: int = 1,
-                 sig_method=None, ps_split=None,
+                 sig_method="auto", ps_split=None,
                  _log_sig_join=None, _log_sig_combine=None, _log_sig=None):
         if method not in (2, 3):
             raise ValueError(
@@ -613,16 +613,15 @@ class LogSigStream:
                 f"got method={method}. Method 1 uses the Hall basis which is "
                 f"incompatible with log_sig_combine/log_sig_join.")
         check_n_jobs(n_jobs)
-        if method == 3 and (sig_method is not None or ps_split is not None):
-            raise ValueError("sig_method and ps_split require log_sig method 0, 1 or 2")
-        _check_sig_method(sig_method, True, ps_split, degree)
+        if method != 3:
+            _check_sig_method(sig_method, True, ps_split, degree)
         self._dimension = dimension
         self._degree = degree
         self._ls_len = log_sig_length(dimension, degree)
         raw_log_sig = _log_sig or log_sig
         raw_log_sig_join = _log_sig_join or log_sig_join
         raw_log_sig_combine = _log_sig_combine or log_sig_combine
-        sig_options = {} if sig_method is None else dict(sig_method=sig_method, ps_split=ps_split)
+        sig_options = {} if method == 3 else dict(sig_method=sig_method, ps_split=ps_split)
         self._log_sig_fn = lambda path, deg: raw_log_sig(
             path, deg, method=method, n_jobs=n_jobs, **sig_options)
         self._log_sig_combine_fn = lambda s1, s2, dim, deg: raw_log_sig_combine(
@@ -1103,11 +1102,11 @@ class LogSigWindowStream(_WindowStream):
         ``log_sig`` calls. ``-1`` uses all available threads.
     :type n_jobs: int
     :param sig_method: Per-window signature algorithm for methods ``0``, ``1``
-        and ``2``: ``None`` (Horner), ``"ps"`` (prefix-suffix factorisation), or
-        ``"auto"``. Method ``3`` requires ``None``.
+        and ``2``: ``"auto"`` (default), ``None`` (Horner), or ``"ps"``
+        (prefix-suffix factorisation). Ignored for method ``3``.
     :type sig_method: str | None
     :param ps_split: Optional prefix length ``a`` for ``sig_method="ps"``.
-        See :func:`sig`. ``None`` selects the split automatically.
+        See :func:`sig`. ``None`` selects the split automatically. Ignored for method ``3``.
     :type ps_split: int | None
 
     Example::
@@ -1126,16 +1125,15 @@ class LogSigWindowStream(_WindowStream):
     def __init__(self, dimension: int, degree: int, window_size: int,
                  *,
                  stride: int = 1, method: int = 2, n_jobs: int = 1,
-                 sig_method=None, ps_split=None, _log_sig=None):
+                 sig_method="auto", ps_split=None, _log_sig=None):
         check_type(window_size, "window_size", int)
         check_type(stride, "stride", int)
         check_pos(window_size, "window_size")
         check_pos(stride, "stride")
         check_n_jobs(n_jobs)
-        if method == 3 and (sig_method is not None or ps_split is not None):
-            raise ValueError("sig_method and ps_split require log_sig method 0, 1 or 2")
-        _check_sig_method(sig_method, True, ps_split, degree)
+        if method != 3:
+            _check_sig_method(sig_method, True, ps_split, degree)
         raw_log_sig = _log_sig or log_sig
-        sig_options = {} if sig_method is None else dict(sig_method=sig_method, ps_split=ps_split)
+        sig_options = {} if method == 3 else dict(sig_method=sig_method, ps_split=ps_split)
         sig_fn = lambda path, deg: raw_log_sig(path, deg, method=method, n_jobs=n_jobs, **sig_options)
         super().__init__(sig_fn, dimension, degree, window_size, stride)

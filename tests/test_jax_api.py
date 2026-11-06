@@ -1160,13 +1160,27 @@ def test_jax_ps_stream_forward_and_grad(kind, sig_method, split):
 
 
 @pytest.mark.parametrize("kind", ["log_sig", "LogSigStream", "LogSigWindowStream"])
-def test_jax_bch_rejects_signature_options(kind):
-    args = (np.zeros((4, 2)), 3) if kind == "log_sig" else (2, 3)
-    options = dict(method=3, sig_method="ps")
+def test_jax_bch_ignores_signature_options(kind):
+    path = np.random.default_rng(31).normal(scale=0.05, size=(7, 2))
+    pysiglib.prepare_log_sig(2, 3, 3)
+    args = (path, 3) if kind == "log_sig" else (2, 3)
+    options = dict(method=3, sig_method="invalid", ps_split=99)
     if kind == "LogSigWindowStream":
         options["window_size"] = 4
-    with pytest.raises(ValueError, match="require log_sig method"):
-        getattr(jax_api, kind)(*args, **options)
+    if kind == "log_sig":
+        expected = jax_api.log_sig(*args, method=3)
+        actual = jax_api.log_sig(*args, **options)
+    else:
+        expected = getattr(jax_api, kind)(*args, method=3,
+                                           **({"window_size": 4} if kind == "LogSigWindowStream" else {}))
+        actual = getattr(jax_api, kind)(*args, **options)
+        expected.push_batch(path)
+        actual.push_batch(path)
+        if kind == "LogSigWindowStream":
+            expected, actual = expected.sig(), actual.sig()
+        else:
+            expected, actual = expected.sig(0, 1), actual.sig(0, 1)
+    np.testing.assert_allclose(actual, expected)
 
 
 @pytest.mark.parametrize("device", _jax_devices())
