@@ -173,8 +173,8 @@ def sig_coef_backprop(
                 data.batch_size, data.data_dimension, data.data_length,
                 data.time_aug, data.lead_lag, data.end_time, method_code)
         with torch.cuda.device(data.path.device):
-            err_code = CUSIG_SIG_COEF_BACKPROP[data.dtype](
-                *args, torch.cuda.current_stream(data.path.device).cuda_stream)
+            torch.cuda.current_stream(data.path.device).synchronize()
+            err_code = CUSIG_SIG_COEF_BACKPROP[data.dtype](*args)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig_coef_backprop: "

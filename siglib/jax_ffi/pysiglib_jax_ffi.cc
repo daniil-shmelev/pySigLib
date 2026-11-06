@@ -422,10 +422,10 @@ struct CpuFns<double> {
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
-using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t, void*) noexcept;
+using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t) noexcept;
 
 template <typename T>
-using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t, void*) noexcept;
+using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t) noexcept;
 
 template <typename T>
 struct CudaFns;
@@ -716,6 +716,9 @@ ffi::Error SigCudaImpl(
     }
     if (auto msg = CheckSigOutputShape(out, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
 
+    const auto sync_status = cudaStreamSynchronize(stream);
+    if (sync_status != cudaSuccess) return InternalError(cudaGetErrorString(sync_status));
+
     const auto* path_ptr = BufferData<T>(path);
     const auto* correction_ptr = BufferData<T>(correction);
     auto* out_ptr = BufferData<T>(out);
@@ -736,8 +739,7 @@ ffi::Error SigCudaImpl(
         corr_spec.batch_stride,
         corr_spec.segment_stride,
         method,
-        ps_split,
-        stream
+        ps_split
     );
 
     if (err_code != 0) {
@@ -785,6 +787,9 @@ ffi::Error SigBackpropCudaImpl(
     if (auto msg = CheckSigOutputShape(cotangent, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = CheckGradOutputShape(out, spec); !msg.empty()) return InvalidArgument(msg);
 
+    const auto sync_status = cudaStreamSynchronize(stream);
+    if (sync_status != cudaSuccess) return InternalError(cudaGetErrorString(sync_status));
+
     const auto* path_ptr = BufferData<T>(path);
     const auto* sig_ptr = BufferData<T>(sig);
     const auto* cotangent_ptr = BufferData<T>(cotangent);
@@ -809,8 +814,7 @@ ffi::Error SigBackpropCudaImpl(
         corr_spec.batch_stride,
         corr_spec.segment_stride,
         method,
-        ps_split,
-        stream
+        ps_split
     );
 
     if (err_code != 0) {
@@ -1046,6 +1050,8 @@ ffi::Error SigCoefImpl(
             const char* fn_name = Backward ? "sig_coef_backprop" : "sig_coef";
 #ifdef PYSIGLIB_JAX_WITH_CUDA
             if constexpr (Cuda) {
+                const auto sync_status = cudaStreamSynchronize(static_cast<cudaStream_t>(stream));
+                if (sync_status != cudaSuccess) return InternalError(cudaGetErrorString(sync_status));
                 const std::uint64_t* word_data = indices.begin();
                 const std::uint64_t* degree_data = degrees.begin();
                 CudaBuf<std::uint64_t> device_metadata;
@@ -1054,17 +1060,17 @@ ffi::Error SigCoefImpl(
                         pascal_coefficient::add(indices.size(), degrees.size()), sizeof(std::uint64_t)));
                     word_data = device_metadata.get();
                     degree_data = word_data + indices.size();
-                    if (indices.size()) CUDA_CHECK(cudaMemcpyAsync(device_metadata.get(), indices.begin(), indices.size() * sizeof(std::uint64_t), cudaMemcpyHostToDevice, static_cast<cudaStream_t>(stream)));
-                    CUDA_CHECK(cudaMemcpyAsync(device_metadata.get() + indices.size(), degrees.begin(), degrees.size() * sizeof(std::uint64_t), cudaMemcpyHostToDevice, static_cast<cudaStream_t>(stream)));
+                    if (indices.size()) CUDA_CHECK(cudaMemcpyAsync(device_metadata.get(), indices.begin(), indices.size() * sizeof(std::uint64_t), cudaMemcpyHostToDevice, nullptr));
+                    CUDA_CHECK(cudaMemcpyAsync(device_metadata.get() + indices.size(), degrees.begin(), degrees.size() * sizeof(std::uint64_t), cudaMemcpyHostToDevice, nullptr));
                 }
                 if constexpr (Backward)
                     err_code = CudaFns<T>::coef_backprop(BufferData<T>(path), BufferData<T>(out),
                         BufferData<T>(*coefs), BufferData<T>(*cotangent), word_data, degrees.size(), degree_data,
-                        spec.batch_size, spec.dimension, spec.length, time_aug, lead_lag, static_cast<T>(end_time), static_cast<int>(method), stream);
+                        spec.batch_size, spec.dimension, spec.length, time_aug, lead_lag, static_cast<T>(end_time), static_cast<int>(method));
                 else
                     err_code = CudaFns<T>::coef(BufferData<T>(path), BufferData<T>(out), word_data,
                         degrees.size(), degree_data, spec.batch_size, spec.dimension, spec.length,
-                        true, time_aug, lead_lag, static_cast<T>(end_time), static_cast<int>(method), stream);
+                        true, time_aug, lead_lag, static_cast<T>(end_time), static_cast<int>(method));
                 return err_code ? NativeCallErrorCuda(fn_name, err_code) : ffi::Error::Success();
             } else
 #endif

@@ -259,14 +259,14 @@ def sig_backprop(
             correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     else:
         with torch.cuda.device(path_data.path.device):
-            stream = torch.cuda.current_stream(path_data.path.device).cuda_stream
+            torch.cuda.current_stream(path_data.path.device).synchronize()
             err_code = CUSIG_SIG_BACKPROP[path_data.dtype](
                 path_data.data_ptr, result.data_ptr,
                 sig_data.sig_ptr[1], sig_data.sig_ptr[0],
                 path_data.batch_size, path_data.data_dimension, path_data.data_length,
                 degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term,
                 correction_data.data_ptr, correction_data.length,
-                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split, stream)
+                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig_backprop: "

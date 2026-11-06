@@ -27,7 +27,8 @@ TEST(PrefixSuffixCuda, NonDefaultStream) {
     ASSERT_EQ(cudaMalloc(&output, 126 * sizeof(double)), cudaSuccess);
     ASSERT_EQ(cudaMalloc(&baseline, 126 * sizeof(double)), cudaSuccess);
     ASSERT_EQ(cudaMemcpyAsync(input, path, sizeof(path), cudaMemcpyHostToDevice, stream), cudaSuccess);
-    ASSERT_EQ(signature_cuda_d(input, output, 1, 2, 4, 6, false, false, 1., false, nullptr, 0, 0, 0, 1, 0, stream), 0);
+    ASSERT_EQ(cudaStreamSynchronize(stream), cudaSuccess);
+    ASSERT_EQ(signature_cuda_d(input, output, 1, 2, 4, 6, false, false, 1., false, nullptr, 0, 0, 0, 1), 0);
     ASSERT_EQ(signature_cuda_d(input, baseline, 1, 2, 4, 6, false, false, 1., false), 0);
     std::vector<double> actual(126), expected(126);
     ASSERT_EQ(cudaMemcpy(actual.data(), output, actual.size() * sizeof(double), cudaMemcpyDeviceToHost), cudaSuccess);
@@ -55,8 +56,9 @@ TEST(PrefixSuffixCuda, BackpropNonDefaultStream) {
         ASSERT_EQ(cudaMalloc(&baseline, path.size() * sizeof(double)), cudaSuccess);
         ASSERT_EQ(cudaMemcpyAsync(input, path.data(), path.size() * sizeof(double), cudaMemcpyHostToDevice, stream), cudaSuccess);
         ASSERT_EQ(cudaMemcpyAsync(cotangent, deriv.data(), deriv.size() * sizeof(double), cudaMemcpyHostToDevice, stream), cudaSuccess);
+        ASSERT_EQ(cudaStreamSynchronize(stream), cudaSuccess);
         ASSERT_EQ(sig_backprop_cuda_d(input, output, cotangent, nullptr, batch, dimension, length,
-            degree, time_aug, lead_lag, 0.7, true, nullptr, 0, 0, 0, 1, 0, stream), 0) << cusig_last_error_message();
+            degree, time_aug, lead_lag, 0.7, true, nullptr, 0, 0, 0, 1), 0) << cusig_last_error_message();
         ASSERT_EQ(signature_cuda_d(input, sig, batch, dimension, length, degree, time_aug, lead_lag, 0.7, true), 0);
         ASSERT_EQ(sig_backprop_cuda_d(input, baseline, cotangent, sig, batch, dimension, length, degree,
             time_aug, lead_lag, 0.7, true), 0);

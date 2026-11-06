@@ -24,10 +24,10 @@ template<class T, bool Backward>
 void sig_coef_horner_cuda(const T* path, T* out, const T* coefs, const T* deriv,
     const uint64_t* indices, uint64_t words, const uint64_t* degrees, uint64_t batch,
     uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time,
-    bool prefixes, bool device_metadata, void* stream);
+    bool prefixes, bool device_metadata);
 
 template<class T, bool Backward>
 void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deriv,
     const uint64_t* indices, uint64_t words, const uint64_t* degrees, uint64_t batch,
     uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time,
-    bool prefixes, int method, void* stream);
+    bool prefixes, int method);

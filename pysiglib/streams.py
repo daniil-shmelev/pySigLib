@@ -219,9 +219,11 @@ class SigStream:
                  *,
                  scalar_term: bool = False, n_jobs: int = 1,
                  method="auto", ps_split=None,
-                 _sig_join=None, _sig_combine=None, _sig=None, _sig_length=None):
+                 _sig_join=None, _sig_combine=None, _sig=None, _sig_length=None,
+                 _use_sig_method=True):
         check_n_jobs(n_jobs)
-        _check_sig_method(method, ps_split, degree)
+        if _use_sig_method:
+            _check_sig_method(method, ps_split, degree)
         self._dimension = dimension
         self._degree = degree
         self._scalar_term = scalar_term
@@ -229,7 +231,7 @@ class SigStream:
         raw_sig = _sig or sig
         raw_sig_join = _sig_join or sig_join
         raw_sig_combine = _sig_combine or sig_combine
-        sig_options = dict(method=method, ps_split=ps_split)
+        sig_options = dict(method=method, ps_split=ps_split) if _use_sig_method else {}
         self._sig_fn = lambda path, deg: raw_sig(
             path, deg, scalar_term=scalar_term, n_jobs=n_jobs, **sig_options)
         self._sig_combine_fn = lambda s1, s2, dim, deg: raw_sig_combine(
@@ -445,7 +447,7 @@ class BranchedSigStream(SigStream):
 
         super().__init__(dimension, degree, scalar_term=scalar_term, n_jobs=n_jobs,
                          _sig_join=join_fn, _sig_combine=combine_fn, _sig=sig_fn,
-                         _sig_length=length_fn)
+                         _sig_length=length_fn, _use_sig_method=False)
 
 
 class BranchedLogSigStream(BranchedSigStream):

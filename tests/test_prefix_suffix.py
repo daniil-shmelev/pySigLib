@@ -197,7 +197,7 @@ def test_validation():
                     dict(method=METHOD, correction=np.zeros(5))):
         with pytest.raises(ValueError): pysiglib.sig(path, 3, **options)
     tensor = torch.zeros((8, 2), requires_grad=True)
-    with pytest.raises(NotImplementedError, match="torch_api"): pysiglib.sig(tensor, 3, method=METHOD)
+    assert not pysiglib.sig(tensor, 3, method=METHOD).requires_grad
     with torch.no_grad(): assert pysiglib.sig(tensor, 3, method=METHOD).shape == (14,)
     assert torch_api.sig(tensor, 3, method=METHOD).requires_grad
     assert pysiglib.sig(path, 3, method=METHOD, correction=np.empty(0)).shape == (14,)

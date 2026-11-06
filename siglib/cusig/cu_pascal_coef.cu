@@ -316,11 +316,10 @@ __global__ void coefficient_warp_backward(const T* __restrict__ path, T* __restr
 template<class T, bool Backward>
 void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deriv, const uint64_t* indices,
     uint64_t count, const uint64_t* degrees, uint64_t batch, uint64_t dimension, uint64_t length,
-    bool ta, bool ll, T time, bool prefixes, int method, void* stream_ptr) {
-    if (stream_ptr) CUDA_CHECK(cudaStreamSynchronize(static_cast<cudaStream_t>(stream_ptr)));
+    bool ta, bool ll, T time, bool prefixes, int method) {
     if (method == pc::horner || method == pc::automatic) {
         sig_coef_horner_cuda<T, Backward>(path, out, coefs, deriv, indices, count, degrees, batch,
-            dimension, length, ta, ll, time, prefixes, !ta && !ll, nullptr);
+            dimension, length, ta, ll, time, prefixes, !ta && !ll);
         return;
     }
     pc::Words words(indices, degrees, count, pc::add(pc::mul(dimension, ll ? 2 : 1), ta ? 1 : 0), Backward || prefixes);
@@ -406,7 +405,7 @@ void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deri
 }
 
 #define INSTANTIATE_PASCAL_CUDA(T, B) \
-template void sig_coef_dispatch_cuda<T, B>(const T*, T*, const T*, const T*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, T, bool, int, void*)
+template void sig_coef_dispatch_cuda<T, B>(const T*, T*, const T*, const T*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, T, bool, int)
 INSTANTIATE_PASCAL_CUDA(float, false);
 INSTANTIATE_PASCAL_CUDA(float, true);
 INSTANTIATE_PASCAL_CUDA(double, false);

@@ -293,8 +293,6 @@ def sig(
     method_code, ps_split = _check_sig_method(method, ps_split, degree)
     if isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
         raise NotImplementedError("Signature computation does not support forward-mode automatic differentiation")
-    if method != "horner" and isinstance(path, torch.Tensor) and path.requires_grad and torch.is_grad_enabled():
-        raise NotImplementedError("Use pysiglib.torch_api.sig for automatic differentiation, or torch.no_grad() for forward-only calls")
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, data, degree)
     sig_len = sig_length(data.dimension, degree, scalar_term=scalar_term)
@@ -312,13 +310,13 @@ def sig(
             correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     else:
         with torch.cuda.device(data.path.device):
-            stream = torch.cuda.current_stream(data.path.device).cuda_stream
+            torch.cuda.current_stream(data.path.device).synchronize()
             err_code = CUSIG_SIGNATURE[data.dtype](
                 data.data_ptr, result.data_ptr, data.batch_size,
                 data.data_dimension, data.data_length, degree,
                 data.time_aug, data.lead_lag, data.end_time, scalar_term,
                 correction_data.data_ptr, correction_data.length,
-                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split, stream)
+                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig: " + err_msg(err_code, result.device))

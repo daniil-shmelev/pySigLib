@@ -482,25 +482,25 @@ CUSIG_SIG_COMBINE_BACKPROP = _bind_float_pair(
 CUSIG_SIG_COEF = _bind_float_pair(
     CUSIG, "sig_coef_cuda",
     lambda T: (POINTER(T), POINTER(T), POINTER(c_uint64), c_uint64, POINTER(c_uint64), c_uint64, c_uint64,
-               c_uint64, c_bool, c_bool, c_bool, T, c_int, c_void_p),
+               c_uint64, c_bool, c_bool, c_bool, T, c_int),
 )
 
 CUSIG_SIG_COEF_BACKPROP = _bind_float_pair(
     CUSIG, "sig_coef_backprop_cuda",
     lambda T: (POINTER(T), POINTER(T), POINTER(T), POINTER(T), POINTER(c_uint64), c_uint64,
-               POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_int, c_void_p),
+               POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_int),
 )
 
 CUSIG_SIGNATURE = _bind_float_pair(
     CUSIG, "signature_cuda",
     lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T,
-               c_bool, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64, c_void_p),
+               c_bool, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64),
 )
 
 CUSIG_SIG_BACKPROP = _bind_float_pair(
     CUSIG, "sig_backprop_cuda",
     lambda T: (POINTER(T), POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64,
-               c_bool, c_bool, T, c_bool, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64, c_void_p),
+               c_bool, c_bool, T, c_bool, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64),
 )
 
 CUSIG_SIG_TO_LOG_SIG = _bind_float_pair(

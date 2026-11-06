@@ -38,7 +38,7 @@ TEST(PascalCoefficientCuda, HornerIdentity) {
     }
 }
 
-TEST(PascalCoefficientCuda, AllPrefixAdjointsAndStream) {
+TEST(PascalCoefficientCuda, AllPrefixAdjoints) {
     int devices = 0;
     if (cudaGetDeviceCount(&devices) != cudaSuccess || !devices) GTEST_SKIP();
     cudaStream_t stream;
@@ -54,13 +54,14 @@ TEST(PascalCoefficientCuda, AllPrefixAdjointsAndStream) {
     CudaBuf<uint64_t> device_word(sizeof(word)), device_degree(sizeof(degree));
     ASSERT_EQ(cudaMemcpyAsync(device_word.get(), word, sizeof(word), cudaMemcpyHostToDevice, stream), cudaSuccess);
     ASSERT_EQ(cudaMemcpyAsync(device_degree.get(), &degree, sizeof(degree), cudaMemcpyHostToDevice, stream), cudaSuccess);
+    ASSERT_EQ(cudaStreamSynchronize(stream), cudaSuccess);
     for (int method : {0, 1, 2}) {
         const uint64_t* word_data = method == 1 ? word : device_word.get();
         const uint64_t* degree_data = method == 1 ? &degree : device_degree.get();
         ASSERT_EQ(sig_coef_cuda_d(x.get(), out.get(), word_data, 1, degree_data, 1, 1, length,
-            true, false, false, 1., method, stream), 0);
+            true, false, false, 1., method), 0);
         ASSERT_EQ(sig_coef_backprop_cuda_d(x.get(), g.get(), out.get(), d.get(), word_data, 1, degree_data,
-            1, 1, length, false, false, 1., method, stream), 0);
+            1, 1, length, false, false, 1., method), 0);
         double coefficients[4];
         ASSERT_EQ(cudaMemcpy(coefficients, out.get(), sizeof(coefficients), cudaMemcpyDeviceToHost), cudaSuccess);
         EXPECT_NEAR(coefficients[3], 1. / 24., 1e-12);
@@ -79,8 +80,8 @@ TEST(PascalCoefficientCuda, InvalidMethod) {
     CudaBuf<float> path(2 * sizeof(float)), out(sizeof(float)), gradient(2 * sizeof(float));
     for (int method : {-1, 3, 4, 5, 6}) {
         EXPECT_NE(sig_coef_cuda_f(path.get(), out.get(), &word, 1, &degree, 1, 1, 2,
-            true, false, false, 1.f, method, nullptr), 0);
+            true, false, false, 1.f, method), 0);
         EXPECT_NE(sig_coef_backprop_cuda_f(path.get(), gradient.get(), out.get(), out.get(), &word, 1, &degree,
-            1, 1, 2, false, false, 1.f, method, nullptr), 0);
+            1, 1, 2, false, false, 1.f, method), 0);
     }
 }

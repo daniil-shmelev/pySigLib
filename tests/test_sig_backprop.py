@@ -297,7 +297,7 @@ def test_torch_sig_correction_autograd_matches_manual_backprop(device):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-@pytest.mark.parametrize("method", [None, "ps"])
+@pytest.mark.parametrize("method", ["auto", "ps"])
 def test_torch_sig_correction_backward_uses_forward_values(device, method):
     X = torch.tensor(
         [[0.2, 0.1], [0.5, -0.2], [0.3, 0.4]],

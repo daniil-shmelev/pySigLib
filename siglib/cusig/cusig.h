@@ -309,12 +309,11 @@ extern "C" {
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
 	* @param ps_split With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
-	* @param stream CUDA stream that supplies the inputs and receives the result. Pass `nullptr` for the default stream.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, void* stream = nullptr) noexcept;
+	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @copydoc signature_cuda_f */
-	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, void* stream = nullptr) noexcept;
+	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_cuda_functions Signature backpropagation CUDA functions
@@ -342,12 +341,11 @@ extern "C" {
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
 	* @param ps_split With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
-	* @param stream CUDA stream that supplies the inputs and receives the result. Pass `nullptr` for the default stream.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, void* stream = nullptr) noexcept;
+	[[nodiscard]] CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @copydoc sig_backprop_cuda_f */
-	[[nodiscard]] CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, void* stream = nullptr) noexcept;
+	[[nodiscard]] CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @} */
 
 	/** @defgroup sig_combine_cuda_functions Signature combine CUDA functions
@@ -474,12 +472,11 @@ extern "C" {
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
 	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection (default). Automatic uses Horner.
-	* @param stream CUDA stream used for computation. Pass `nullptr` for the default stream.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 2, void* stream = nullptr) noexcept;
+	[[nodiscard]] CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 2) noexcept;
 	/** @copydoc sig_coef_cuda_f */
-	[[nodiscard]] CUSIG_API int sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug = false, bool lead_lag = false, double end_time = 1., int method = 2, void* stream = nullptr) noexcept;
+	[[nodiscard]] CUSIG_API int sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug = false, bool lead_lag = false, double end_time = 1., int method = 2) noexcept;
 	/** @} */
 
 	/** @defgroup sig_coef_backprop_cuda_functions Sig coef backprop CUDA functions
@@ -503,12 +500,11 @@ extern "C" {
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
 	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection (default). Automatic uses Horner.
-	* @param stream CUDA stream used for computation. Pass `nullptr` for the default stream.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 2, void* stream = nullptr) noexcept;
+	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 2) noexcept;
 	/** @copydoc sig_coef_backprop_cuda_f */
-	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int method = 2, void* stream = nullptr) noexcept;
+	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int method = 2) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_combine_cuda_functions Log sig combine CUDA functions
