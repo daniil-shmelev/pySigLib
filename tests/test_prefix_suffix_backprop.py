@@ -267,9 +267,10 @@ def test_validation_and_higher_derivatives():
         with pytest.raises(ValueError): pysiglib.sig_backprop(path, sig, sig, 3, **options)
     np.testing.assert_array_equal(pysiglib.sig_backprop(path, sig, sig, 3, correction=np.empty(0), method=METHOD), 0)
     tensor = torch.zeros((8, 2), dtype=torch.float64, requires_grad=True)
-    value = torch_api.sig(tensor, 3, method=METHOD).sum()
-    with pytest.raises(NotImplementedError, match="higher-order"):
-        torch.autograd.grad(value, tensor, create_graph=True)
+    for method in (None, METHOD):
+        value = torch_api.sig(tensor, 3, method=method).sum()
+        with pytest.raises(NotImplementedError, match="first-order"):
+            torch.autograd.grad(value, tensor, create_graph=True)
 
 
 @pytest.mark.parametrize("device", DEVICES)

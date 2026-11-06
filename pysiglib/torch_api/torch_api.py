@@ -96,8 +96,8 @@ class Sig(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        if ctx.method is not None and torch.is_grad_enabled():
-            raise NotImplementedError("Prefix-suffix methods do not support higher-order differentiation")
+        if torch.is_grad_enabled():
+            raise NotImplementedError("Signature computation supports first-order reverse differentiation only")
         path, sig_, saved_correction = ctx.saved_tensors
         correction = saved_correction if saved_correction.numel() != 0 else None
         grad = sig_backprop(path, sig_, grad_output, ctx.degree, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag,
@@ -197,8 +197,8 @@ class SigCoef(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         coefs_, path = ctx.saved_tensors
-        if ctx.method is not None and torch.is_grad_enabled():
-            raise NotImplementedError("Coefficient methods support first-order reverse differentiation only")
+        if torch.is_grad_enabled():
+            raise NotImplementedError("Signature coefficient computation supports first-order reverse differentiation only")
         grad = sig_coef_backprop(path, ctx.word, coefs_, grad_output, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time, n_jobs=ctx.n_jobs, method=ctx.method)
         return grad, None, None, None, None, None, None
 

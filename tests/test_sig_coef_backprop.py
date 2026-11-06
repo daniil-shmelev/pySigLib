@@ -448,3 +448,11 @@ def test_extract_sig_coef_torch_api_full(device):
     d2 = X2.grad
 
     check_close(d1, d2)
+
+
+@pytest.mark.parametrize("method", [None, "horner", "pascal", "auto"])
+def test_sig_coef_higher_order_rejected(method):
+    path = torch.tensor([[0., 0.], [0.1, 0.2], [0.3, 0.4]], requires_grad=True)
+    value = pysiglib.torch_api.sig_coef(path, [(0, 1)], method=method).sum()
+    with pytest.raises(NotImplementedError, match="first-order"):
+        torch.autograd.grad(value, path, create_graph=True)
