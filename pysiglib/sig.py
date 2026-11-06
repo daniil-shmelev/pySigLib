@@ -225,24 +225,6 @@ def sig(
 
     .. note::
 
-        For ``method="auto"``, let :math:`d` be the path dimension, :math:`m` the
-        degree and :math:`n` the number of segments per path. The minimum :math:`d^m`
-        for prefix-suffix is :math:`2^{17}` forward and :math:`2^{11}` backward on CPU,
-        and :math:`2^{19}` forward and :math:`2^{16}` backward on CUDA.
-
-        These thresholds apply to 1 to 32 unaugmented float32 paths with empty corrections,
-        16 to 4096 segments, dimensions 2 to 32 and degrees 3 to 16. Both :math:`d^m`
-        and :math:`n d^{\\lceil m/2\\rceil}` must be at most :math:`2^{20}`.
-        CUDA also requires at least 512 segments across the batch. Other workloads use Horner.
-        These cutoffs come from benchmarks. The fastest method can vary by processor.
-
-        With non-empty corrections, prefix-suffix is selected only on CPU for
-        unaugmented float32 paths with level-2 corrections, :math:`d^m \\geq 2^{17}`
-        and :math:`m \\geq 2d+1`, subject to the same batch, path-length, dimension,
-        degree and size limits above. Other corrected workloads use Horner.
-
-    .. note::
-
         ``pysiglib.signature`` is an alias of ``pysiglib.sig`` included for backward
         compatibility with versions ``< 1.0.0``.
 
