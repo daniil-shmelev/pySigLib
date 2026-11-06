@@ -14,6 +14,7 @@
 # =========================================================================
 
 from concurrent.futures import ThreadPoolExecutor
+from fractions import Fraction
 from itertools import product
 
 import numpy as np
@@ -26,6 +27,184 @@ from conftest import DEVICES
 
 
 METHOD = "ps"
+
+
+@pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
+@pytest.mark.parametrize("dimension,degree,correction_degree", [(1, 6, 2), (2, 2, 2), (2, 5, 2), (2, 6, 3), (3, 4, 4)])
+@pytest.mark.parametrize("time_aug,scalar", list(product((False, True), repeat=2)))
+def test_corrected_splits(device, dtype, dimension, degree, correction_degree, time_aug, scalar):
+    rng = np.random.default_rng(724)
+    path = torch.tensor(rng.normal(scale=0.06, size=(2, 2, 11, dimension)), device=device, dtype=dtype)[..., ::2, :]
+    width = sum(dimension ** k for k in range(2, correction_degree + 1))
+    correction = torch.tensor(rng.normal(scale=0.01, size=(2, 2, 5, width)), device=device, dtype=dtype)
+    options = dict(correction=correction, time_aug=time_aug, n_jobs=2)
+    expected = pysiglib.sig(path, degree, scalar_term=scalar, **options)
+    seeds = torch.tensor(rng.normal(size=expected.shape), device=device, dtype=dtype)
+    gradient = pysiglib.sig_backprop(path, expected, seeds, degree, **options)
+    tolerance = 3e-5 if dtype == torch.float32 else 3e-11
+    for a in range(degree + 1):
+        split = (a, degree - a) if a else None
+        actual = pysiglib.sig(path, degree, method="ps", ps_split=split, scalar_term=scalar, **options)
+        grad = pysiglib.sig_backprop(path, expected, seeds, degree, method="ps", ps_split=split, **options)
+        torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
+        torch.testing.assert_close(grad, gradient, atol=tolerance, rtol=tolerance)
+    torch.testing.assert_close(pysiglib.sig(path, degree, method="auto", scalar_term=scalar, **options), expected, atol=tolerance, rtol=tolerance)
+    torch.testing.assert_close(pysiglib.sig_backprop(path, expected, seeds, degree, method="auto", **options), gradient, atol=tolerance, rtol=tolerance)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("points", (0, 1, 2, 8))
+def test_corrected_layouts_and_empty_paths(monkeypatch, device, points):
+    rng = np.random.default_rng(725)
+    path = torch.tensor(rng.normal(scale=0.04, size=(2, points, 2)), device=device, dtype=torch.float64)
+    value = torch.tensor([0.01, -0.03, 0.02, 0.04], device=device, dtype=torch.float64)
+    n = max(0, points - 1)
+    corrections = (value, value.expand(n, 4), value.expand(2, n, 4))
+    monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "1")
+    monkeypatch.setenv("PYSIGLIB_PS_FACTOR_BYTES", "1")
+    for correction in corrections:
+        expected = pysiglib.sig(path, 4, correction=correction, scalar_term=True)
+        seeds = torch.ones_like(expected)
+        gradient = pysiglib.sig_backprop(path, expected, seeds, 4, correction=correction)
+        for split in (None, (1, 3), (4, 0)):
+            actual = pysiglib.sig(path, 4, correction=correction, method="ps", ps_split=split, scalar_term=True)
+            grad = pysiglib.sig_backprop(path, expected, seeds, 4, correction=correction, method="ps", ps_split=split)
+            torch.testing.assert_close(actual, expected, atol=1e-12, rtol=1e-11)
+            torch.testing.assert_close(grad, gradient, atol=1e-12, rtol=1e-11)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_corrected_autograd_and_stream(device):
+    path = (torch.randn(2, 5, 2, device=device, dtype=torch.float64) * 0.03).requires_grad_()
+    correction = torch.tensor([0.02, -0.03, 0.04, -0.01], device=device, dtype=torch.float64, requires_grad=True)
+    operation = lambda x: torch_api.sig(x, 4, correction=correction, method="ps", ps_split=(1, 3))
+    if device == "cuda":
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            assert torch.autograd.gradcheck(operation, (path,))
+        stream.synchronize()
+    else:
+        assert torch.autograd.gradcheck(operation, (path,))
+    grads = torch.autograd.grad(operation(path).sum(), (path, correction), allow_unused=True)
+    assert grads[1] is None
+
+
+def test_corrected_exact_chen():
+    d, degree = 2, 4
+    path = np.array([[0, 0], [1, -2], [-1, 1]], dtype=np.float64) / 8
+    correction = np.array([[(-1) ** i * (i % 3) for i in range(28)]] * 2, dtype=np.float64) / 32
+
+    def multiply(x, y):
+        return [sum((np.kron(x[j], y[k - j]) for j in range(k + 1)), np.zeros(d ** k, dtype=object))
+                for k in range(degree + 1)]
+
+    identity = [np.array([Fraction(1)])] + [np.full(d ** k, Fraction(0), dtype=object) for k in range(1, degree + 1)]
+    signature = identity
+    for segment, increment in enumerate(np.diff(path, axis=0)):
+        generator = [np.array([Fraction(0)]), np.array([Fraction(x) for x in increment])]
+        offset = 0
+        for k in range(2, degree + 1):
+            generator.append(np.array([Fraction(x) for x in correction[segment, offset:offset + d ** k]]))
+            offset += d ** k
+        exponential = [x.copy() for x in identity]
+        power = identity
+        for p in range(1, degree + 1):
+            power = [x / p for x in multiply(power, generator)]
+            exponential = [x + y for x, y in zip(exponential, power)]
+        signature = multiply(signature, exponential)
+    expected = np.concatenate(signature).astype(np.float64)
+    for a in range(1, degree + 1):
+        actual = pysiglib.sig(path, degree, correction=correction, scalar_term=True, method="ps", ps_split=(a, degree - a))
+        np.testing.assert_allclose(actual, expected, atol=1e-13, rtol=1e-12)
+
+
+@pytest.mark.parametrize("split", (None, (1, 3), (4, 0)))
+def test_corrected_jax(split):
+    jax = pytest.importorskip("jax")
+    import pysiglib.jax_api as api
+    jax.config.update("jax_enable_x64", True)
+    path = np.random.default_rng(726).normal(scale=0.05, size=(2, 5, 2))
+    correction = np.array([0.02, -0.01, 0.03, 0.01])
+    expected = pysiglib.sig(path, 4, correction=correction)
+    gradient = pysiglib.sig_backprop(path, expected, np.ones_like(expected), 4, correction=correction)
+    operation = lambda x: api.sig(x, 4, correction=correction, method="ps", ps_split=split)
+    grad = jax.grad(lambda x: operation(x).sum())
+    for actual in (operation(path), jax.jit(operation)(path), jax.vmap(operation)(path)):
+        np.testing.assert_allclose(actual, expected, atol=1e-12, rtol=1e-11)
+    for actual in (grad(path), jax.jit(grad)(path), jax.vmap(grad)(path)):
+        np.testing.assert_allclose(actual, gradient, atol=1e-11, rtol=1e-10)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_corrected_workspace_and_partial_batches(monkeypatch, device):
+    path = torch.randn(35, 4, 2, dtype=torch.float64, device=device) * 0.02
+    correction = torch.tensor([0.01, -0.02, 0.03, 0.01], dtype=path.dtype, device=device)
+    expected = pysiglib.sig(path, 3, correction=correction)
+    seeds = torch.ones_like(expected)
+    gradient = pysiglib.sig_backprop(path, expected, seeds, 3, correction=correction)
+    monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", "1")
+    with pytest.raises(Exception, match="workspace"):
+        pysiglib.sig(path, 3, correction=correction, method="ps")
+    with pytest.raises(Exception, match="workspace"):
+        pysiglib.sig_backprop(path, expected, seeds, 3, correction=correction, method="ps")
+    torch.testing.assert_close(pysiglib.sig(path, 3, correction=correction, method="auto"), expected)
+    budget = (4 << 20) + 65536 if device == "cuda" else 65536
+    monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", str(budget))
+    actual = pysiglib.sig(path, 3, correction=correction, method="ps", n_jobs=20)
+    grad = pysiglib.sig_backprop(path, expected, seeds, 3, correction=correction, method="ps", n_jobs=20)
+    torch.testing.assert_close(actual, expected, atol=1e-12, rtol=1e-11)
+    torch.testing.assert_close(grad, gradient, atol=1e-12, rtol=1e-11)
+
+
+def test_corrected_auto_cpu_region(monkeypatch):
+    rng = np.random.default_rng(729)
+    path = rng.normal(scale=0.01, size=(1, 17, 4)).astype(np.float32)
+    correction = rng.normal(scale=0.001, size=(16,)).astype(np.float32)
+    expected = pysiglib.sig(path, 9, correction=correction)
+    seeds = rng.normal(scale=0.01, size=expected.shape).astype(np.float32)
+    gradient = pysiglib.sig_backprop(path, expected, seeds, 9, correction=correction)
+    actual = pysiglib.sig(path, 9, correction=correction, method="auto", n_jobs=2)
+    grad = pysiglib.sig_backprop(path, expected, seeds, 9, correction=correction, method="auto", n_jobs=2)
+    np.testing.assert_allclose(actual, expected, atol=1e-6, rtol=1e-4)
+    np.testing.assert_allclose(grad, gradient, atol=1e-6, rtol=1e-4)
+    monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", "1")
+    with pytest.raises(Exception, match="workspace"):
+        pysiglib.sig(path, 9, correction=correction, method="auto")
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_corrected_autograd_keeps_forward_correction(device):
+    path = (torch.randn(5, 2, dtype=torch.float64, device=device) * 0.03).requires_grad_()
+    correction = torch.tensor([0.01, -0.02, 0.03, 0.04], dtype=path.dtype, device=device)
+    original = correction.clone()
+    value = torch_api.sig(path, 4, correction=correction, method="ps")
+    correction.add_(0.5)
+    gradient, = torch.autograd.grad(value.sum(), path)
+    expected = pysiglib.sig(path.detach(), 4, correction=original)
+    reference = pysiglib.sig_backprop(path.detach(), expected, torch.ones_like(expected), 4, correction=original)
+    torch.testing.assert_close(gradient, reference, atol=1e-12, rtol=1e-11)
+
+
+@pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
+def test_corrected_scalar_high_degree(device, dtype):
+    degree = 20
+    path = torch.arange(5, device=device, dtype=dtype).reshape(-1, 1) / 4
+    correction = torch.tensor([0.125], device=device, dtype=dtype)
+    coefficients = [Fraction(1), Fraction(1)]
+    for k in range(2, degree + 1):
+        coefficients.append((coefficients[-1] + coefficients[-2]) / k)
+    expected = torch.tensor([float(x) for x in coefficients], device=device, dtype=dtype)
+    seeds = torch.tensor([(-1.) ** k for k in range(degree + 1)], device=device, dtype=dtype)
+    derivative = float(sum((-1) ** k * coefficients[k - 1] for k in range(1, degree + 1)))
+    gradient = torch.zeros_like(path)
+    gradient[0, 0] = -derivative; gradient[-1, 0] = derivative
+    tolerance = 2e-5 if dtype == torch.float32 else 2e-12
+    for split in (None, (1, 19), (20, 0)):
+        actual = pysiglib.sig(path, degree, correction=correction, method="ps", ps_split=split, scalar_term=True)
+        grad = pysiglib.sig_backprop(path, actual, seeds, degree, correction=correction, method="ps", ps_split=split)
+        torch.testing.assert_close(actual, expected, atol=1e-15, rtol=tolerance)
+        torch.testing.assert_close(grad, gradient, atol=tolerance, rtol=tolerance)
 
 
 def chen_reference(path, degree, time_aug=False, lead_lag=False, end_time=1.):
@@ -168,7 +347,7 @@ def test_stress(device, dtype, kind):
 def test_validation_and_higher_derivatives():
     path = np.zeros((8, 2))
     sig = pysiglib.sig(path, 3)
-    for options in (dict(method="bad"), dict(method=METHOD, correction=np.zeros(4)), dict(method=METHOD, n_jobs=0)):
+    for options in (dict(method="bad"), dict(method=METHOD, correction=np.zeros(5)), dict(method=METHOD, n_jobs=0)):
         with pytest.raises(ValueError): pysiglib.sig_backprop(path, sig, sig, 3, **options)
     np.testing.assert_array_equal(pysiglib.sig_backprop(path, sig, sig, 3, correction=np.empty(0), method=METHOD), 0)
     tensor = torch.zeros((8, 2), dtype=torch.float64, requires_grad=True)

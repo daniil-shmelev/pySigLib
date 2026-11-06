@@ -2636,6 +2636,13 @@ void signature_cuda_(
 ) {
 	if (signature_method::use_prefix_suffix<T>(method, split_a, batch_size, dimension, length, degree,
 		horner, time_aug || lead_lag, correction_len, true, false)) {
+		if (correction_len) {
+			if (!dimension) throw std::invalid_argument("signature_cuda received path of dimension 0");
+			validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
+			signature_prefix_suffix_correction_cuda<false, T>(path, out, nullptr, batch_size, dimension, length, degree,
+				time_aug, end_time, scalar_term, stream, split_a, correction, correction_len, correction_batch_stride, correction_segment_stride);
+			return;
+		}
 		signature_prefix_suffix_cuda(path, out, batch_size, dimension, length, degree,
 			time_aug, lead_lag, end_time, scalar_term, stream, split_a);
 		return;
@@ -2915,7 +2922,9 @@ void sig_backprop_cuda_core_(
 		CudaBatchWorkspace<T> workspace(
 			batch_size, workspace_row,
 			"CUDA signature backprop correction workspace");
-		const unsigned int threads_per_block = host_choose_threads_per_block(full_sig_len);
+		int minimum_grid = 0, occupancy_threads = 0;
+		CUDA_CHECK(cudaOccupancyMaxPotentialBlockSize(&minimum_grid, &occupancy_threads, sig_backprop_correction_ker<T>));
+		const unsigned int threads_per_block = std::min(host_choose_threads_per_block(full_sig_len), static_cast<unsigned int>(occupancy_threads));
 		for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
 			const auto batch_chunk = make_cuda_batch_grid_chunk(
 				1, batch_size, batch_offset, workspace.capacity());
@@ -3406,6 +3415,13 @@ void sig_backprop_cuda_(
 ) {
 	if (signature_method::use_prefix_suffix<T>(method, split_a, batch_size, dimension, length, degree,
 		true, time_aug || lead_lag, correction_len, true, true)) {
+		if (correction_len) {
+			if (!dimension) throw std::invalid_argument("sig_backprop_cuda received path of dimension 0");
+			validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
+			signature_prefix_suffix_correction_cuda<true, T>(path, out, sig_derivs, batch_size, dimension, length, degree,
+				time_aug, end_time, scalar_term, stream, split_a, correction, correction_len, correction_batch_stride, correction_segment_stride);
+			return;
+		}
 		signature_prefix_suffix_backprop_cuda(path, out, sig_derivs, batch_size, dimension, length, degree,
 			time_aug, lead_lag, end_time, scalar_term, stream, split_a);
 		return;

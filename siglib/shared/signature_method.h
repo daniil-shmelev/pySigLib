@@ -33,12 +33,9 @@ bool use_prefix_suffix(int method, uint64_t split_a, uint64_t batch, uint64_t di
         throw std::invalid_argument("A prefix length from 1 to degree requires the prefix-suffix method");
     if (method == standard) return false;
     if (!horner) throw std::invalid_argument("Prefix-suffix and automatic selection require horner=true");
-    if (method == prefix_suffix) {
-        if (correction_len) throw std::invalid_argument("Prefix-suffix does not support non-empty corrections");
-        return true;
-    }
+    if (method == prefix_suffix) return true;
 
-    if (!std::is_same_v<T, float> || augmented || correction_len || !batch || batch > 32 ||
+    if (!std::is_same_v<T, float> || augmented || !batch || batch > 32 ||
         length < 17 || length > 4097 || dimension < 2 || dimension > 32 || degree < 3 || degree > 16)
         return false;
     const uint64_t segments = length - 1;
@@ -50,6 +47,8 @@ bool use_prefix_suffix(int method, uint64_t split_a, uint64_t batch, uint64_t di
         width *= dimension;
         if (width > limit || (k == (degree + 1) / 2 && segments * width > limit)) return false;
     }
+    if (correction_len)
+        return !cuda && correction_len == dimension * dimension && degree >= 2 * dimension + 1 && width >= (1ULL << 17);
     const unsigned exponent = cuda ? (backward ? 16 : 19) : (backward ? 11 : 17);
     return width >= (1ULL << exponent);
 }

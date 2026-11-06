@@ -19,6 +19,7 @@
 #include "prefix_suffix.h"
 #include "prefix_suffix_endpoint.h"
 #include "prefix_suffix_selection.h"
+#include <cmath>
 #include "cu_prefix_suffix_backprop.cuh"
 #include <cublas_v2.h>
 #include <climits>
@@ -462,7 +463,21 @@ template<typename T> struct CudaMatrices {
 };
 
 #include "cu_prefix_suffix_endpoint.cuh"
+#include "cu_prefix_suffix_correction.cuh"
 } // namespace
+
+template<bool Backward, typename T>
+void signature_prefix_suffix_correction_cuda(const T* path, T* out, const T* deriv, uint64_t batch,
+    uint64_t dimension, uint64_t length, uint64_t degree, bool ta, T end_time, bool scalar, cudaStream_t stream,
+    uint64_t split, const T* correction, uint64_t correction_len, uint64_t batch_stride, uint64_t segment_stride) {
+    gpu_correction::compute<Backward>(path, out, deriv, batch, dimension, length, degree, ta, end_time, scalar,
+        stream, split, correction, correction_len, batch_stride, segment_stride);
+}
+
+template void signature_prefix_suffix_correction_cuda<false, float>(const float*, float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, float, bool, cudaStream_t, uint64_t, const float*, uint64_t, uint64_t, uint64_t);
+template void signature_prefix_suffix_correction_cuda<true, float>(const float*, float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, float, bool, cudaStream_t, uint64_t, const float*, uint64_t, uint64_t, uint64_t);
+template void signature_prefix_suffix_correction_cuda<false, double>(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, double, bool, cudaStream_t, uint64_t, const double*, uint64_t, uint64_t, uint64_t);
+template void signature_prefix_suffix_correction_cuda<true, double>(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, double, bool, cudaStream_t, uint64_t, const double*, uint64_t, uint64_t, uint64_t);
 
 template<typename T>
 void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv, uint64_t batch,

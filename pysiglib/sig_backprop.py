@@ -176,11 +176,12 @@ def sig_backprop(
     :type n_jobs: int
     :param method: ``None`` uses the existing signature backpropagation. Use
         ``"ps"`` to differentiate the prefix-suffix factors and
-        scans with BLAS or cuBLAS. Non-empty corrections are not supported by
-        this method. With ``"auto"``, the backward pass uses the thresholds given in :func:`pysiglib.sig`.
+        scans with BLAS or cuBLAS, including fixed corrections. With ``"auto"``,
+        the backward pass uses the thresholds given in :func:`pysiglib.sig`.
     :type method: str | None
     :param ps_split: Top-level split ``(a, b)`` for ``method="ps"``, with
         ``a >= 1``, ``b >= 0``, and ``a + b == degree``. The default selects the split automatically.
+        With corrections, selection estimates the work of the scans, factors and matrix products.
     :type ps_split: tuple[int, int] | None
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
@@ -228,8 +229,6 @@ def sig_backprop(
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, path_data, degree)
-    if method == "ps" and correction_data.length:
-        raise ValueError("Prefix-suffix methods do not support non-empty corrections")
     scalar_term = _infer_scalar_term(sig, path_data.data_dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
     sig_len = sig_length(path_data.dimension, degree, scalar_term=scalar_term)
     sig_data = MultipleSigInputHandler([sig, sig_derivs], sig_len, ["sig", "sig_derivs"])

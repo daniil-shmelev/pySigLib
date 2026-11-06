@@ -19,10 +19,17 @@
 #include "cp_prefix_suffix_endpoint_plan.h"
 #include "cpsig.h"
 #include "prefix_suffix.h"
+#include "signature_method.h"
+#include <cmath>
 #ifndef CPSIG_PREBUILT_TESTS
 #include <oneapi/tbb/global_control.h>
 #include <oneapi/tbb/task_arena.h>
 #endif
+
+namespace corrected_test {
+using namespace prefix_suffix;
+#include "prefix_suffix_correction-inl.h"
+}
 
 TEST(PrefixSuffix, CheckedSizes) {
     EXPECT_THROW(prefix_suffix::Layout(2, 64), std::overflow_error);
@@ -31,6 +38,35 @@ TEST(PrefixSuffix, CheckedSizes) {
     EXPECT_THROW(prefix_suffix::Layout(0, 3), std::invalid_argument);
     EXPECT_THROW(prefix_suffix::Layout(1, UINT64_MAX), std::overflow_error);
     EXPECT_EQ(prefix_suffix::Layout(1, 65536).offset.back(), 65537);
+}
+
+TEST(PrefixSuffix, CorrectionSelectionAndQuadrature) {
+    using corrected_test::Plan;
+    for (uint64_t degree = 2; degree <= 20; ++degree) {
+        const Plan plan(1, 1, degree, 8, 0, 1, 1, sizeof(double), true);
+        for (uint64_t k = 0; k < degree; ++k) {
+            double value = 0;
+            for (uint64_t j = 0; j < plan.nodes_count; ++j) {
+                EXPECT_GT(plan.nodes[j], 0.); EXPECT_LT(plan.nodes[j], 1.);
+                EXPECT_GT(plan.weights[j], 0.);
+                value += plan.weights[j] * std::pow(plan.nodes[j], int(k));
+            }
+            EXPECT_NEAR(value, 1. / double(k + 1), 2e-14);
+        }
+    }
+    for (uint64_t a = 1; a <= 6; ++a) {
+        const Plan plan(2, 2, 6, 9, a, 4, 2, sizeof(double), false);
+        EXPECT_EQ(plan.layout.left_degree(6), a);
+        EXPECT_TRUE(signature_method::use_prefix_suffix<double>(1, a, 2, 2, 9, 6, true, false, 4, false, false));
+    }
+    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 2, 257, 19, true, false, 4, false, false));
+    EXPECT_TRUE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, true, false, 16, false, false));
+    EXPECT_TRUE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, true, false, 16, false, true));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, true, false, 80, false, false));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 257, 9, true, false, 16, true, true));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<double>(2, 0, 1, 4, 17, 9, true, false, 16, false, false));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 9, true, true, 16, false, false));
+    EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 8, true, false, 16, false, false));
 }
 
 TEST(PrefixSuffix, InvalidSignatureMethod) {

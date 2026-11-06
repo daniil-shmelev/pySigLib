@@ -189,10 +189,11 @@ def sig(
     :param method: ``None`` preserves the existing ``horner`` selection. Use
         ``"ps"`` for prefix-suffix or ``"auto"`` to select Horner or prefix-suffix
         independently for the forward and backward passes. Both require ``horner=True``.
-        Prefix-suffix uses extra workspace and requires an empty correction.
+        Prefix-suffix uses extra workspace. Corrections use a general factor construction.
     :type method: str | None
     :param ps_split: Top-level split ``(a, b)`` for ``method="ps"``, with
         ``a >= 1``, ``b >= 0``, and ``a + b == degree``. The default selects the split automatically.
+        With corrections, selection estimates the work of the scans, factors and matrix products.
         Torch and JAX reuse an explicit split when computing the gradient.
     :type ps_split: tuple[int, int] | None
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
@@ -245,6 +246,11 @@ def sig(
         and :math:`n d^{\\lceil m/2\\rceil}` must be at most :math:`2^{20}`.
         CUDA also requires at least 512 segments across the batch. Other workloads use Horner.
         These cutoffs come from benchmarks. The fastest method can vary by processor.
+
+        With non-empty corrections, prefix-suffix is selected only on CPU for
+        unaugmented float32 paths with level-2 corrections, :math:`d^m \\geq 2^{17}`
+        and :math:`m \\geq 2d+1`, subject to the same batch, path-length, dimension,
+        degree and size limits above. Other corrected workloads use Horner.
 
     .. note::
 
@@ -321,8 +327,6 @@ def sig(
         raise NotImplementedError("Prefix-suffix methods do not support automatic differentiation with forward-mode dual tensors")
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, data, degree)
-    if method == "ps" and correction_data.length:
-        raise ValueError("Prefix-suffix methods do not support non-empty corrections")
     sig_len = sig_length(data.dimension, degree, scalar_term=scalar_term)
     result = SigOutputHandler(data, sig_len)
 

@@ -296,8 +296,6 @@ def sig(
     method_code, split_a = _check_sig_method(method, horner, ps_split, degree)
 
     correction = _prepare_correction_jax(correction, path, degree, lead_lag)
-    if method == "ps" and correction.size:
-        raise ValueError("Prefix-suffix methods do not support non-empty corrections")
     result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method_code, split_a)
     if not scalar_term:
         result = _strip_scalar(result)

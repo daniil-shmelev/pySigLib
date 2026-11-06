@@ -26,6 +26,7 @@
 #include "cp_prefix_suffix_endpoint.h"
 #include "prefix_suffix.h"
 #include "prefix_suffix_selection.h"
+#include <cmath>
 #include <array>
 #include <climits>
 #include <cblas.h>
@@ -214,6 +215,8 @@ template<typename T> struct CpuMatrices {
         });
     }
 };
+
+#include "cp_prefix_suffix_correction.h"
 
 template<typename T, int D, int A>
 void small_powers(const T* v, T* powers) {
@@ -788,6 +791,20 @@ void backprop_path(const T* input, T* output, const T* deriv, uint64_t dimension
 }
 
 } // namespace
+
+template<bool Backward, std::floating_point T>
+void signature_prefix_suffix_correction_(const T* path, T* out, const T* deriv, uint64_t batch,
+    uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, T end_time, bool scalar,
+    int n_jobs, uint64_t split_a, const T* correction, uint64_t correction_len,
+    uint64_t batch_stride, uint64_t segment_stride) {
+    corrected::compute<Backward>(path, out, deriv, batch, dimension, length, degree, time_aug,
+        end_time, scalar, n_jobs, split_a, correction, correction_len, batch_stride, segment_stride);
+}
+
+template void signature_prefix_suffix_correction_<false, float>(const float*, float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, float, bool, int, uint64_t, const float*, uint64_t, uint64_t, uint64_t);
+template void signature_prefix_suffix_correction_<true, float>(const float*, float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, float, bool, int, uint64_t, const float*, uint64_t, uint64_t, uint64_t);
+template void signature_prefix_suffix_correction_<false, double>(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, double, bool, int, uint64_t, const double*, uint64_t, uint64_t, uint64_t);
+template void signature_prefix_suffix_correction_<true, double>(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, double, bool, int, uint64_t, const double*, uint64_t, uint64_t, uint64_t);
 
 template<std::floating_point T>
 void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, uint64_t batch,
