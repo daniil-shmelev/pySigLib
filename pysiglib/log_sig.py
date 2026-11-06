@@ -338,7 +338,9 @@ def log_sig(
         method : int = 1,
         scalar_term : bool = False,
         correction = None,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        sig_method = None,
+        ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the log signature using the specified method. For details,
@@ -381,6 +383,14 @@ def log_sig(
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
+    :param sig_method: Signature algorithm for methods ``0``, ``1`` and ``2``.
+        ``None`` uses Horner, ``"ps"`` uses prefix-suffix factorisation, and
+        ``"auto"`` selects automatically. Method ``3`` requires ``None``.
+    :type sig_method: str | None
+    :param ps_split: Optional top-level split ``(a, b)``, with ``a >= 1``,
+        ``b >= 0`` and ``a + b == degree``. Requires ``sig_method="ps"``.
+        ``None`` selects the split automatically.
+    :type ps_split: tuple[int, int] | None
     :return: Log signature or a batch of log signatures.
     :rtype: numpy.ndarray | torch.Tensor
 
@@ -426,6 +436,8 @@ def log_sig(
         print(ito_log_sig)
     """
     if method == 3:
+        if sig_method is not None or ps_split is not None:
+            raise ValueError("sig_method and ps_split require log_sig method 0, 1 or 2")
         if correction is not None:
             correction_data = CorrectionInputHandler(
                 correction, PathInputHandler(path, time_aug, lead_lag, end_time, "path"), degree)
@@ -455,6 +467,7 @@ def log_sig(
 
     # Methods 0-2: compute sig then project to log sig.
     sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, correction=correction, n_jobs=n_jobs)
+               end_time=end_time, horner=True, correction=correction, n_jobs=n_jobs,
+               method=sig_method, ps_split=ps_split)
     dimension = path.shape[-1]
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)

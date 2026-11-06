@@ -293,9 +293,13 @@ def log_sig(
         method : int = 1,
         scalar_term : bool = False,
         correction = None,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        sig_method = None,
+        ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     if method == 3:
+        if sig_method is not None or ps_split is not None:
+            raise ValueError("sig_method and ps_split require log_sig method 0, 1 or 2")
         if not isinstance(path, torch.Tensor) or _has_non_empty_correction(correction):
             return log_sig_forward(
                 path, degree, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
@@ -303,7 +307,8 @@ def log_sig(
         return _log_sig_via_combine_torch(path, degree, time_aug, lead_lag, end_time, n_jobs)
 
     sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, correction=correction, n_jobs=n_jobs)
+               end_time=end_time, horner=True, correction=correction, n_jobs=n_jobs,
+               method=sig_method, ps_split=ps_split)
     dimension = path.shape[-1]
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 

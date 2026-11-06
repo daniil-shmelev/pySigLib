@@ -49,16 +49,20 @@ from ..streams import (
 class SigStream(_SigStream):
     __doc__ = _SigStream.__doc__
 
-    def __init__(self, dimension: int, degree: int, *, scalar_term: bool = False, n_jobs: int = 1):
+    def __init__(self, dimension: int, degree: int, *, scalar_term: bool = False, n_jobs: int = 1,
+                 method=None, ps_split=None):
         super().__init__(dimension, degree, scalar_term=scalar_term, n_jobs=n_jobs,
+                         method=method, ps_split=ps_split,
                          _sig_join=sig_join, _sig_combine=sig_combine, _sig=sig)
 
 
 class LogSigStream(_LogSigStream):
     __doc__ = _LogSigStream.__doc__
 
-    def __init__(self, dimension: int, degree: int, *, method: int = 2, n_jobs: int = 1):
+    def __init__(self, dimension: int, degree: int, *, method: int = 2, n_jobs: int = 1,
+                 sig_method=None, ps_split=None):
         super().__init__(dimension, degree, method=method, n_jobs=n_jobs,
+                         sig_method=sig_method, ps_split=ps_split,
                          _log_sig_join=log_sig_join, _log_sig_combine=log_sig_combine,
                          _log_sig=log_sig)
 
@@ -68,9 +72,11 @@ class SigWindowStream(_SigWindowStream):
 
     def __init__(self, dimension: int, degree: int, window_size: int,
                  *,
-                 stride: int = 1, scalar_term: bool = False, n_jobs: int = 1):
+                 stride: int = 1, scalar_term: bool = False, n_jobs: int = 1,
+                 method=None, ps_split=None):
         super().__init__(dimension, degree, window_size, stride=stride,
-                         scalar_term=scalar_term, n_jobs=n_jobs, _sig=sig)
+                         scalar_term=scalar_term, n_jobs=n_jobs,
+                         method=method, ps_split=ps_split, _sig=sig)
 
 
 class LogSigWindowStream(_LogSigWindowStream):
@@ -78,9 +84,11 @@ class LogSigWindowStream(_LogSigWindowStream):
 
     def __init__(self, dimension: int, degree: int, window_size: int,
                  *,
-                 stride: int = 1, method: int = 2, n_jobs: int = 1):
+                 stride: int = 1, method: int = 2, n_jobs: int = 1,
+                 sig_method=None, ps_split=None):
         super().__init__(dimension, degree, window_size, stride=stride,
-                         method=method, n_jobs=n_jobs, _log_sig=log_sig)
+                         method=method, n_jobs=n_jobs,
+                         sig_method=sig_method, ps_split=ps_split, _log_sig=log_sig)
 
 
 class BranchedSigStream(_BranchedSigStream):

@@ -579,6 +579,8 @@ def log_sig(
     scalar_term: bool = False,
     correction=None,
     n_jobs: int = 1,
+    sig_method=None,
+    ps_split=None,
 ):
     ensure_registered()
 
@@ -587,6 +589,8 @@ def log_sig(
     correction = _prepare_correction_jax(correction, path, degree, lead_lag)
 
     if method == 3:
+        if sig_method is not None or ps_split is not None:
+            raise ValueError("sig_method and ps_split require log_sig method 0, 1 or 2")
         if correction.shape[0] != 0:
             raise ValueError("correction is not supported with log_sig method=3")
         if time_aug or lead_lag:
@@ -597,7 +601,8 @@ def log_sig(
 
     dimension = path.shape[-1]
     sig_ = sig(path, degree, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs)
+               end_time=end_time, horner=True, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs,
+               method=sig_method, ps_split=ps_split)
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug,
                           lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 
