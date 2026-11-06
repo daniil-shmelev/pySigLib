@@ -263,7 +263,7 @@ extern "C" {
 	* @param path Pointer to path data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (preallocated), size = `batch_size * length * dimension`.
 	* @param coefs Pointer to coefficients computed using `sig_coef` with `prefixes=true`, size = `batch_size * sum(max(1, degrees[i]))`.
-	* @param derivs Pointer to derivatives with respect to coefficients, size = `batch_size * sum(max(1, degrees[i]))`. Method 0 may modify this buffer in-place.
+	* @param derivs Pointer to derivatives with respect to coefficients, size = `batch_size * sum(max(1, degrees[i]))`.
 	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
 	* @param num_multi_idx Number of multi indices.
 	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.
@@ -279,9 +279,9 @@ extern "C" {
 	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection (default). Automatic uses Pascal.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1, int method = 2) noexcept;
+	[[nodiscard]] CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1, int method = 2) noexcept;
 	/** @copydoc sig_coef_backprop_f */
-	[[nodiscard]] CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1, int method = 2) noexcept;
+	[[nodiscard]] CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1, int method = 2) noexcept;
 	/** @} */
 
 	/** @defgroup signature_functions Signature functions

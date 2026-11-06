@@ -548,7 +548,7 @@ void sig_coef_backprop_(
 	const T* path,
 	T* out,
 	const T* coefs,
-	T* derivs,
+	const T* derivs,
 	const uint64_t* multi_idx,
 	uint64_t num_multi_idx, // len(multi_idx)
 	const uint64_t* degrees, // [ len(multi_index[i]) for i in 0:num_multi_index ]
@@ -585,13 +585,14 @@ void sig_coef_backprop_(
 
 	Path<T> path_obj(path, dimension, length, time_aug, lead_lag, end_time);
 
-	auto workspace = std::make_unique<T[]>(6 * max_degree + 3);
+	auto workspace = std::make_unique<T[]>(7 * max_degree + 3);
 	T* one_over_fact = workspace.get();
 	T* signed_one_over_fact = one_over_fact + max_degree + 1;
 	T* coefs_copy = signed_one_over_fact + max_degree + 1;
 	T* incr = coefs_copy + max_degree + 1;
 	T* states = incr + max_degree;
 	T* incr_derivs = states + max_degree;
+	T* derivs_copy = incr_derivs + max_degree;
 
 	one_over_fact[0] = static_cast<T>(1.);
 	signed_one_over_fact[0] = static_cast<T>(1.);
@@ -614,8 +615,9 @@ void sig_coef_backprop_(
 
 		coefs_copy[0] = static_cast<T>(1.);
 		std::copy(coefs, coefs + degree, coefs_copy + 1);
+		std::copy(derivs, derivs + degree, derivs_copy);
 
-		call_single_sig_coef_backprop_<T>(path_obj, out, multi_idx_ptr, degree, coefs_copy, incr, states, incr_derivs, derivs, one_over_fact, signed_one_over_fact);
+		call_single_sig_coef_backprop_<T>(path_obj, out, multi_idx_ptr, degree, coefs_copy, incr, states, incr_derivs, derivs_copy, one_over_fact, signed_one_over_fact);
 		coefs += degree;
 		derivs += degree;
 		multi_idx_ptr += degree;
@@ -628,7 +630,7 @@ void sig_coef_backprop_(
 	const T* path,
 	T* out,
 	const T* coefs,
-	T* derivs,
+	const T* derivs,
 	const uint64_t* multi_idx,
 	uint64_t num_multi_idx, // len(multi_idx)
 	const uint64_t* degrees, // [ len(multi_index[i]) for i in 0:num_multi_index ]
@@ -653,7 +655,7 @@ void sig_coef_backprop_(
 		coefs_len += degrees[i] ? degrees[i] : 1;
 	}
 
-	auto sig_func = [&](const T* path_ptr, const T* coefs_ptr, T* derivs_ptr, T* out_ptr) {
+	auto sig_func = [&](const T* path_ptr, const T* coefs_ptr, const T* derivs_ptr, T* out_ptr) {
 		sig_coef_backprop_<T>(path_ptr, out_ptr, coefs_ptr, derivs_ptr, multi_idx, num_multi_idx, degrees, dimension, length, time_aug, lead_lag, end_time);
 	};
 
@@ -665,9 +667,9 @@ template void sig_coef_<float>(const float* path, float* out, const uint64_t* mu
 
 template void sig_coef_<double>(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, bool prefixes, int n_jobs);
 
-template void sig_coef_backprop_<float>(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, int n_jobs);
+template void sig_coef_backprop_<float>(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, int n_jobs);
 
-template void sig_coef_backprop_<double>(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, int n_jobs);
+template void sig_coef_backprop_<double>(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, int n_jobs);
 
 }
 }

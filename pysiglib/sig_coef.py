@@ -160,8 +160,7 @@ def sig_coef(
     :type n_jobs: int
     :param method: ``"auto"`` (default) uses Pascal factorisation on CPU and Horner's
         method on CUDA. ``"horner"`` uses Horner, and ``"pascal"`` uses
-        Pascal. Both methods support float32 and float64. CUDA supports words through
-        length 20.
+        Pascal.
     :type method: str
     :return: Signature coefficients with the leading batch dimensions of ``path``.
         The last axis has one entry per word, or ``sum(max(1, len(w)) for w in words)``

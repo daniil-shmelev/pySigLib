@@ -66,8 +66,7 @@ def test_coefficient_dispatch(device, dtype, method, segments):
     seeds = torch.tensor(rng.normal(size=y.shape), dtype=dtype, device=device)
     derivs = seeds.clone()
     gradient = pysiglib.sig_coef_backprop(x, words, y, derivs, method=method)
-    if method != "horner" or device != "cpu":
-        torch.testing.assert_close(derivs, seeds, atol=0, rtol=0)
+    torch.testing.assert_close(derivs, seeds, atol=0, rtol=0)
     points = x.cpu().double().numpy()
     direction = rng.normal(size=points.shape)
     # The same Chen sum gives the values and the complex-step directional derivative.

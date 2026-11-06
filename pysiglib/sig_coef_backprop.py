@@ -57,7 +57,7 @@ def sig_coef_backprop(
     :type coefs: numpy.ndarray | torch.Tensor
     :param derivs: Derivatives of the scalar function :math:`F` with respect to the signature coefficients,
         :math:`\\partial F / \\partial S(x)^I`. This must be an array of the same shape as the
-        provided coefficients. **On CPU with method="horner", this buffer may be modified in-place.**
+        provided coefficients.
     :type derivs: numpy.ndarray | torch.Tensor
     :param time_aug: Whether the signature coefficients were computed with ``time_aug=True``.
     :type time_aug: bool

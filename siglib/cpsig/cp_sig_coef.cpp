@@ -48,7 +48,7 @@ extern "C" {
 	}
 
 
-	CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, int n_jobs, int method) noexcept {
+	CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, float end_time, int n_jobs, int method) noexcept {
 		if (method == 0 && length > 1) {
 			SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_coef_backprop_f)(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, n_jobs));
 		} else {
@@ -56,7 +56,7 @@ extern "C" {
 		}
 	}
 
-	CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, int n_jobs, int method) noexcept {
+	CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, double end_time, int n_jobs, int method) noexcept {
 		if (method == 0 && length > 1) {
 			SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_coef_backprop_d)(path, out, coefs, derivs, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, n_jobs));
 		} else {

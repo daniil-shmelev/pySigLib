@@ -361,8 +361,7 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
     if (method == pc::automatic) method = pc::pascal_method;
     if (method == pc::horner) {
         if constexpr (Backward) {
-            std::vector<T> seeds(deriv, deriv + batch * words.width);
-            sig_coef_backprop_<T>(path, out, coefs, seeds.data(), indices, num_words, degrees,
+            sig_coef_backprop_<T>(path, out, coefs, deriv, indices, num_words, degrees,
                 batch, dimension, length, time_aug, lead_lag, end_time, jobs);
         } else sig_coef_<T>(path, out, indices, num_words, degrees, batch, dimension, length,
             time_aug, lead_lag, end_time, prefixes, jobs);

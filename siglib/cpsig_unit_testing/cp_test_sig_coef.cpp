@@ -127,10 +127,12 @@ TEST(sigCoefBackpropTest, ManualTest1) {
 
     std::vector<double> coefs = { 1., 0.25, 1./12 };
     std::vector<double> derivs = { 0., 0., 1. };
+    const auto seeds = derivs;
 
     std::vector<uint64_t> degrees = { 3 };
 
     check_result(f, path, true_deriv, coefs.data(), derivs.data(), multi_indices.data(), degrees.size(), degrees.data(), (uint64_t)1, dimension, length, false, false, 1., 1, 0);
+    EXPECT_EQ(derivs, seeds);
 }
 
 TEST(sigCoefBackpropTest, ManualTest2) {
