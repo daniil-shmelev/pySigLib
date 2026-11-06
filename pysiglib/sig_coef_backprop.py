@@ -71,7 +71,7 @@ def sig_coef_backprop(
     :type n_jobs: int
     :param method: ``"auto"`` (default) uses Pascal factorisation on CPU and Horner's
         method on CUDA. ``"horner"`` uses Horner, and ``"pascal"`` uses
-        Pascal. Pascal uses checkpoints and replay for reverse accumulation.
+        Pascal.
     :type method: str
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
