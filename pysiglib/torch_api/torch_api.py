@@ -114,7 +114,7 @@ def sig(
         scalar_term : bool = False,
         correction = None,
         n_jobs : int = 1,
-        method = "horner",
+        method = "auto",
         ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     if not isinstance(path, torch.Tensor):

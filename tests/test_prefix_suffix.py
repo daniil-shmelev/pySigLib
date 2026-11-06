@@ -247,11 +247,11 @@ def test_auto_horner_fallback(monkeypatch):
     monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", "1")
     path = np.zeros((17, 8), dtype=np.float32)
     for options in (dict(correction=np.ones(64, dtype=np.float32) * 0.01), dict(lead_lag=True), dict(time_aug=True)):
-        expected = pysiglib.sig(path, 4, **options)
+        expected = pysiglib.sig(path, 4, method="horner", **options)
         seeds = np.ones_like(expected)
         np.testing.assert_array_equal(pysiglib.sig(path, 4, method="auto", **options), expected)
         np.testing.assert_array_equal(pysiglib.sig_backprop(path, expected, seeds, 4, method="auto", **options),
-                                      pysiglib.sig_backprop(path, expected, seeds, 4, **options))
+                                      pysiglib.sig_backprop(path, expected, seeds, 4, method="horner", **options))
 
 
 @pytest.mark.parametrize("method", ["horner", "ps", "auto"])

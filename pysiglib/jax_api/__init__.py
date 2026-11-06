@@ -70,7 +70,7 @@ class SigStream(_SigStream):
     __doc__ = _SigStream.__doc__
 
     def __init__(self, dimension: int, degree: int, *, scalar_term: bool = False, n_jobs: int = 1,
-                 method="horner", ps_split=None):
+                 method="auto", ps_split=None):
         super().__init__(dimension, degree, scalar_term=scalar_term, n_jobs=n_jobs,
                          method=method, ps_split=ps_split,
                          _sig_join=sig_join, _sig_combine=sig_combine, _sig=sig)
@@ -93,7 +93,7 @@ class SigWindowStream(_SigWindowStream):
     def __init__(self, dimension: int, degree: int, window_size: int,
                  *,
                  stride: int = 1, scalar_term: bool = False, n_jobs: int = 1,
-                 method="horner", ps_split=None):
+                 method="auto", ps_split=None):
         super().__init__(dimension, degree, window_size, stride=stride,
                          scalar_term=scalar_term, n_jobs=n_jobs,
                          method=method, ps_split=ps_split, _sig=sig)

@@ -552,7 +552,7 @@ class TestNJobsFlag:
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("kind", ["SigStream", "LogSigStream", "SigWindowStream", "LogSigWindowStream"])
-@pytest.mark.parametrize("method,split", [("ps", None), ("ps", 1), ("ps", 3), ("auto", None)])
+@pytest.mark.parametrize("method,split", [("horner", None), ("ps", None), ("ps", 1), ("ps", 3), ("auto", None)])
 def test_ps_stream_forward_and_backward(device, dtype, kind, method, split):
     import pysiglib.torch_api as api
 
@@ -572,7 +572,7 @@ def test_ps_stream_forward_and_backward(device, dtype, kind, method, split):
     stream.push(path[..., 4, :])
     stream.push_batch(path[..., 5:, :])
     operation = api.log_sig if is_log else api.sig
-    reference_options = dict(method=2) if is_log else dict(scalar_term=True)
+    reference_options = dict(method=2, sig_method="horner") if is_log else dict(scalar_term=True, method="horner")
     if windowed:
         actual = stream.sig()
         expected = torch.stack([operation(path[..., i:i + 5, :], 3, **reference_options) for i in (0, 3, 6)])

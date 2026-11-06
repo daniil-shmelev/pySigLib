@@ -276,7 +276,7 @@ def sig(
     scalar_term: bool = False,
     correction=None,
     n_jobs: int = 1,
-    method="horner",
+    method="auto",
     ps_split=None,
 ):
     ensure_registered()

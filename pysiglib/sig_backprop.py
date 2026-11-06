@@ -137,7 +137,7 @@ def sig_backprop(
         end_time : float = 1.,
         correction = None,
         n_jobs : int = 1,
-        method = "horner",
+        method = "auto",
         ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -174,10 +174,10 @@ def sig_backprop(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param method: ``"horner"`` (default) uses Horner backpropagation. Use
-        ``"ps"`` to differentiate the prefix-suffix factors and
-        scans with BLAS or cuBLAS, including fixed corrections. With ``"auto"``,
-        the backward pass uses the thresholds given in :func:`pysiglib.sig`.
+    :param method: ``"auto"`` (default) uses the selection thresholds in
+        :func:`pysiglib.sig`. Use ``"horner"`` for Horner backpropagation or
+        ``"ps"`` to differentiate the prefix-suffix factors and scans with
+        BLAS or cuBLAS, including fixed corrections.
     :type method: str
     :param ps_split: Maximum degree of a prefix in the prefix-suffix algorithm for
         ``method="ps"``, from 1 to ``degree``. The corresponding suffix has maximum

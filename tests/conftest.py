@@ -23,13 +23,13 @@ import pytest
 import pysiglib
 
 def check_sig_methods(path, degree, variants, *, scalar_term=False, backward=True, tol=None, **options):
-    expected = pysiglib.sig(path, degree, scalar_term=scalar_term, **options)
+    expected = pysiglib.sig(path, degree, scalar_term=scalar_term, method="horner", **options)
     if tol is None:
         tol = 2e-5 if path.dtype == torch.float32 else 2e-11
     if backward:
         rng = torch.Generator(device=path.device).manual_seed(713)
         seeds = torch.randn(expected.shape, generator=rng, dtype=path.dtype, device=path.device)
-        reference = pysiglib.sig_backprop(path, expected, seeds, degree, **options)
+        reference = pysiglib.sig_backprop(path, expected, seeds, degree, method="horner", **options)
     for method, split in variants:
         args = dict(method=method, ps_split=split, **options)
         actual = pysiglib.sig(path, degree, scalar_term=scalar_term, **args)

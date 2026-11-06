@@ -150,7 +150,7 @@ def sig(
         scalar_term : bool = False,
         correction = None,
         n_jobs : int = 1,
-        method = "horner",
+        method = "auto",
         ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -178,9 +178,9 @@ def sig(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
-    :param method: ``"horner"`` (default) uses Horner's algorithm. Use
-        ``"ps"`` for prefix-suffix or ``"auto"`` to select Horner or prefix-suffix
+    :param method: ``"auto"`` (default) selects Horner or prefix-suffix
         independently for the forward and backward passes.
+        Use ``"horner"`` for Horner's algorithm or ``"ps"`` for prefix-suffix.
         Prefix-suffix uses extra workspace. Corrections use a general factor construction.
     :type method: str
     :param ps_split: Maximum degree of a prefix in the prefix-suffix algorithm for
