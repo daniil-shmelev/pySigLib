@@ -317,9 +317,10 @@ template<class T, bool Backward>
 void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deriv, const uint64_t* indices,
     uint64_t count, const uint64_t* degrees, uint64_t batch, uint64_t dimension, uint64_t length,
     bool ta, bool ll, T time, bool prefixes, int method, void* stream_ptr) {
+    if (stream_ptr) CUDA_CHECK(cudaStreamSynchronize(static_cast<cudaStream_t>(stream_ptr)));
     if (method == pc::horner || method == pc::automatic) {
         sig_coef_horner_cuda<T, Backward>(path, out, coefs, deriv, indices, count, degrees, batch,
-            dimension, length, ta, ll, time, prefixes, !ta && !ll, stream_ptr);
+            dimension, length, ta, ll, time, prefixes, !ta && !ll, nullptr);
         return;
     }
     pc::Words words(indices, degrees, count, pc::add(pc::mul(dimension, ll ? 2 : 1), ta ? 1 : 0), Backward || prefixes);
@@ -330,7 +331,7 @@ void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deri
     const uint64_t output_bytes = pc::mul(output_elements, sizeof(T));
     int mode = pc::variant(method, words.max_degree);
     if (!batch) return;
-    const auto stream = static_cast<cudaStream_t>(stream_ptr);
+    const cudaStream_t stream = nullptr;
     const uint64_t order_offset = words.packed.size();
     words.packed.resize(pc::add(order_offset, count));
     for (uint64_t w = 0; w < count; ++w) words.packed[order_offset + w] = w;
