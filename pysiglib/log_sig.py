@@ -384,11 +384,12 @@ def log_sig(
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :param sig_method: Signature algorithm for methods ``0``, ``1`` and ``2``.
-        ``"auto"`` (default) selects automatically, ``None`` uses Horner, and
+        ``"auto"`` (default) selects automatically, ``"horner"`` uses Horner, and
         ``"ps"`` uses prefix-suffix factorisation. Ignored for method ``3``.
-    :type sig_method: str | None
-    :param ps_split: Optional prefix length ``a``, from 1 to ``degree``.
-        The suffix length is ``degree - a``. Requires ``sig_method="ps"``.
+    :type sig_method: str
+    :param ps_split: Optional maximum degree of a prefix in the prefix-suffix
+        algorithm, from 1 to ``degree``. The corresponding suffix has maximum
+        degree ``degree - ps_split``. Requires ``sig_method="ps"``.
         ``None`` selects the split automatically. Ignored for method ``3``.
     :type ps_split: int | None
     :return: Log signature or a batch of log signatures.

@@ -612,7 +612,7 @@ def test_ps_stream_routes_options(kind):
 
 
 @pytest.mark.parametrize("kind", ["SigStream", "LogSigStream", "SigWindowStream", "LogSigWindowStream"])
-@pytest.mark.parametrize("method,split", [("invalid", None), (None, 2), ("auto", 2), ("ps", 0)])
+@pytest.mark.parametrize("method,split", [("invalid", None), (None, None), ("horner", 2), ("auto", 2), ("ps", 0)])
 def test_ps_stream_rejects_invalid_options(kind, method, split):
     import pysiglib.torch_api as torch_api
 
@@ -625,7 +625,7 @@ def test_ps_stream_rejects_invalid_options(kind, method, split):
 
 
 @pytest.mark.parametrize("kind", ["LogSigStream", "LogSigWindowStream"])
-@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), (None, 2), ("invalid", 99)])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), ("horner", 2), ("invalid", 99)])
 def test_log_stream_method3_ignores_signature_options(kind, sig_method, split):
     options = dict(method=3, sig_method=sig_method, ps_split=split)
     if "Window" in kind:

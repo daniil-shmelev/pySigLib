@@ -126,10 +126,10 @@ def sig_combine(
     return result.data
 
 def _check_sig_method(method, ps_split, degree):
-    if method not in (None, "ps", "auto"):
-        raise ValueError("method must be None, 'ps', or 'auto'")
+    if method not in ("horner", "ps", "auto"):
+        raise ValueError("method must be 'horner', 'ps', or 'auto'")
     if ps_split is None:
-        return {None: 0, "ps": 1, "auto": 2}[method], 0
+        return {"horner": 0, "ps": 1, "auto": 2}[method], 0
     if method != "ps":
         raise ValueError("ps_split requires method='ps'")
     if isinstance(ps_split, bool) or not isinstance(ps_split, (int, np.integer)):
@@ -150,7 +150,7 @@ def sig(
         scalar_term : bool = False,
         correction = None,
         n_jobs : int = 1,
-        method = None,
+        method = "horner",
         ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
@@ -178,13 +178,14 @@ def sig(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
-    :param method: ``None`` uses Horner's algorithm. Use
+    :param method: ``"horner"`` (default) uses Horner's algorithm. Use
         ``"ps"`` for prefix-suffix or ``"auto"`` to select Horner or prefix-suffix
         independently for the forward and backward passes.
         Prefix-suffix uses extra workspace. Corrections use a general factor construction.
-    :type method: str | None
-    :param ps_split: Prefix length ``a`` for ``method="ps"``, from 1 to ``degree``.
-        The suffix length is ``degree - a``. The default selects the split automatically.
+    :type method: str
+    :param ps_split: Maximum degree of a prefix in the prefix-suffix algorithm for
+        ``method="ps"``, from 1 to ``degree``. The corresponding suffix has maximum
+        degree ``degree - ps_split``. The default selects the split automatically.
         With corrections, selection estimates the work of the scans, factors and matrix products.
         Torch and JAX reuse an explicit split when computing the gradient.
     :type ps_split: int | None
@@ -314,7 +315,7 @@ def sig(
     method_code, ps_split = _check_sig_method(method, ps_split, degree)
     if isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
         raise NotImplementedError("Signature computation does not support forward-mode automatic differentiation")
-    if method is not None and isinstance(path, torch.Tensor) and path.requires_grad and torch.is_grad_enabled():
+    if method != "horner" and isinstance(path, torch.Tensor) and path.requires_grad and torch.is_grad_enabled():
         raise NotImplementedError("Use pysiglib.torch_api.sig for automatic differentiation, or torch.no_grad() for forward-only calls")
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, data, degree)

@@ -36,7 +36,7 @@ def test_split_and_endpoint_variants(monkeypatch, device, dtype, time_aug, lead_
     path = torch.tensor(np.random.default_rng(712).normal(scale=0.04, size=(2, 14, 2)),
                         device=device, dtype=dtype)[:, ::2]
     options = dict(time_aug=time_aug, lead_lag=lead_lag, end_time=.7, scalar_term=scalar, n_jobs=2)
-    variants = [("ps", None)] + [("ps", a) for a in range(1, 5)]
+    variants = [("horner", None), ("ps", None)] + [("ps", a) for a in range(1, 5)]
     check_sig_methods(path, 4, variants, **options)
     for block in (1, 3, 16):
         monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", str(block))
@@ -193,7 +193,7 @@ def test_numpy_fixtures_and_empty():
 
 def test_validation():
     path = np.zeros((8, 2))
-    for options in (dict(method="bad"),
+    for options in (dict(method="bad"), dict(method=None),
                     dict(method=METHOD, correction=np.zeros(5))):
         with pytest.raises(ValueError): pysiglib.sig(path, 3, **options)
     tensor = torch.zeros((8, 2), requires_grad=True)
@@ -206,7 +206,7 @@ def test_validation():
 @pytest.mark.parametrize("method,split,error", [
     ("ps", 0, ValueError), ("ps", 4, ValueError), ("ps", -1, ValueError),
     ("ps", (1, 2), TypeError), ("ps", True, TypeError), ("ps", 1.5, TypeError),
-    (None, 2, ValueError), ("auto", 2, ValueError), ("prefix_suffix_gemm", None, ValueError),
+    (None, None, ValueError), ("horner", 2, ValueError), ("auto", 2, ValueError), ("prefix_suffix_gemm", None, ValueError),
 ])
 def test_split_validation(method, split, error):
     path = np.zeros((0, 8, 2))
@@ -254,7 +254,7 @@ def test_auto_horner_fallback(monkeypatch):
                                       pysiglib.sig_backprop(path, expected, seeds, 4, **options))
 
 
-@pytest.mark.parametrize("method", [None, "ps", "auto"])
+@pytest.mark.parametrize("method", ["horner", "ps", "auto"])
 def test_torch_forward_ad_rejected(method):
     path = torch.zeros((8, 2))
     for api in (pysiglib, torch_api):

@@ -272,7 +272,7 @@ def test_log_signature_ps_forward_and_backward(device, dtype, method, sig_method
     options = dict(method=method, time_aug=time_aug, lead_lag=lead_lag,
                    scalar_term=scalar, correction=correction, n_jobs=2)
     pysiglib.prepare_log_sig(2, 3, method, time_aug=time_aug, lead_lag=lead_lag, device=device)
-    expected = pysiglib.log_sig(path, 3, sig_method=None, **options)
+    expected = pysiglib.log_sig(path, 3, sig_method="horner", **options)
     actual = pysiglib.log_sig(path, 3, sig_method=sig_method, ps_split=split, **options)
     seeds = torch.linspace(-0.5, 0.5, actual.numel(), device=device, dtype=dtype).reshape(actual.shape)
     expected_grad, = torch.autograd.grad(expected, path, seeds)
@@ -286,7 +286,7 @@ def test_log_signature_ps_forward_and_backward(device, dtype, method, sig_method
         np.testing.assert_allclose(result, expected.detach().numpy(), rtol=tolerance, atol=tolerance)
 
 
-@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), (None, 2), ("invalid", 99)])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), ("horner", 2), ("invalid", 99)])
 def test_log_signature_method3_ignores_signature_options(sig_method, split):
     import pysiglib as base_api
 
@@ -296,3 +296,15 @@ def test_log_signature_method3_ignores_signature_options(sig_method, split):
         expected = api.log_sig(value, 3, method=3)
         actual = api.log_sig(value, 3, method=3, sig_method=sig_method, ps_split=split)
         np.testing.assert_allclose(actual, expected)
+
+
+def test_log_signature_horner_method_validation():
+    import pysiglib as base_api
+
+    path = np.random.default_rng(40).normal(scale=0.05, size=(4, 2))
+    pysiglib.prepare_log_sig(2, 2, 0)
+    for api, value in ((base_api, path), (pysiglib, torch.tensor(path))):
+        expected = api.log_sig(value, 2, method=0, sig_method="horner")
+        np.testing.assert_allclose(expected, api.log_sig(value, 2, method=0))
+        with pytest.raises(ValueError, match="method"):
+            api.log_sig(value, 2, method=0, sig_method=None)

@@ -188,11 +188,12 @@ class SigStream:
         serial. If ``-1``, all available threads are used. For ``n_jobs < -1``,
         ``max_threads + 1 + n_jobs`` threads are used.
     :type n_jobs: int
-    :param method: Signature algorithm for ``push_batch``: ``None`` (Horner),
+    :param method: Signature algorithm for ``push_batch``: ``"horner"`` (default),
         ``"ps"`` (prefix-suffix factorisation), or ``"auto"``. Single-point
         updates use ``sig_join``.
-    :type method: str | None
-    :param ps_split: Optional prefix length ``a`` for ``method="ps"``.
+    :type method: str
+    :param ps_split: Optional maximum degree of a prefix in the prefix-suffix
+        algorithm for ``method="ps"``.
         See :func:`sig`. ``None`` selects the split automatically.
     :type ps_split: int | None
 
@@ -217,7 +218,7 @@ class SigStream:
     def __init__(self, dimension: int, degree: int,
                  *,
                  scalar_term: bool = False, n_jobs: int = 1,
-                 method=None, ps_split=None,
+                 method="horner", ps_split=None,
                  _sig_join=None, _sig_combine=None, _sig=None, _sig_length=None):
         check_n_jobs(n_jobs)
         _check_sig_method(method, ps_split, degree)
@@ -228,7 +229,7 @@ class SigStream:
         raw_sig = _sig or sig
         raw_sig_join = _sig_join or sig_join
         raw_sig_combine = _sig_combine or sig_combine
-        sig_options = {} if method is None else dict(method=method, ps_split=ps_split)
+        sig_options = {} if method == "horner" else dict(method=method, ps_split=ps_split)
         self._sig_fn = lambda path, deg: raw_sig(
             path, deg, scalar_term=scalar_term, n_jobs=n_jobs, **sig_options)
         self._sig_combine_fn = lambda s1, s2, dim, deg: raw_sig_combine(
@@ -574,10 +575,11 @@ class LogSigStream:
         threads are used.
     :type n_jobs: int
     :param sig_method: Signature algorithm for ``push_batch`` with ``method=2``:
-        ``"auto"`` (default), ``None`` (Horner), or ``"ps"`` (prefix-suffix
+        ``"auto"`` (default), ``"horner"``, or ``"ps"`` (prefix-suffix
         factorisation). Ignored for method ``3``. Single-point updates use ``log_sig_join``.
-    :type sig_method: str | None
-    :param ps_split: Optional prefix length ``a`` for ``sig_method="ps"``.
+    :type sig_method: str
+    :param ps_split: Optional maximum degree of a prefix in the prefix-suffix
+        algorithm for ``sig_method="ps"``.
         See :func:`sig`. ``None`` selects the split automatically. Ignored for method ``3``.
     :type ps_split: int | None
 
@@ -907,10 +909,11 @@ class SigWindowStream(_WindowStream):
     :param n_jobs: Number of threads to run in parallel in the internal per-window
         ``sig`` calls. ``-1`` uses all available threads.
     :type n_jobs: int
-    :param method: Per-window signature algorithm: ``None`` (Horner), ``"ps"``
+    :param method: Per-window signature algorithm: ``"horner"`` (default), ``"ps"``
         (prefix-suffix factorisation), or ``"auto"``.
-    :type method: str | None
-    :param ps_split: Optional prefix length ``a`` for ``method="ps"``.
+    :type method: str
+    :param ps_split: Optional maximum degree of a prefix in the prefix-suffix
+        algorithm for ``method="ps"``.
         See :func:`sig`. ``None`` selects the split automatically.
     :type ps_split: int | None
 
@@ -936,7 +939,7 @@ class SigWindowStream(_WindowStream):
     def __init__(self, dimension: int, degree: int, window_size: int,
                  *,
                  stride: int = 1, scalar_term: bool = False, n_jobs: int = 1,
-                 method=None, ps_split=None, _sig=None):
+                 method="horner", ps_split=None, _sig=None):
         check_type(window_size, "window_size", int)
         check_type(stride, "stride", int)
         check_pos(window_size, "window_size")
@@ -944,7 +947,7 @@ class SigWindowStream(_WindowStream):
         check_n_jobs(n_jobs)
         _check_sig_method(method, ps_split, degree)
         raw_sig = _sig or sig
-        sig_options = {} if method is None else dict(method=method, ps_split=ps_split)
+        sig_options = {} if method == "horner" else dict(method=method, ps_split=ps_split)
         sig_fn = lambda path, deg: raw_sig(
             path, deg, scalar_term=scalar_term, n_jobs=n_jobs, **sig_options)
         super().__init__(sig_fn, dimension, degree, window_size, stride)
@@ -1102,10 +1105,11 @@ class LogSigWindowStream(_WindowStream):
         ``log_sig`` calls. ``-1`` uses all available threads.
     :type n_jobs: int
     :param sig_method: Per-window signature algorithm for methods ``0``, ``1``
-        and ``2``: ``"auto"`` (default), ``None`` (Horner), or ``"ps"``
+        and ``2``: ``"auto"`` (default), ``"horner"``, or ``"ps"``
         (prefix-suffix factorisation). Ignored for method ``3``.
-    :type sig_method: str | None
-    :param ps_split: Optional prefix length ``a`` for ``sig_method="ps"``.
+    :type sig_method: str
+    :param ps_split: Optional maximum degree of a prefix in the prefix-suffix
+        algorithm for ``sig_method="ps"``.
         See :func:`sig`. ``None`` selects the split automatically. Ignored for method ``3``.
     :type ps_split: int | None
 

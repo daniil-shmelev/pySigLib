@@ -198,6 +198,15 @@ def test_jax_sig_rejects_bad_correction_shape():
         jax_api.sig(path, 2, correction=correction)
 
 
+def test_jax_signature_method_validation():
+    path = jnp.zeros((2, 2), dtype=jnp.float64)
+    check_close(jax_api.sig(path, 2, method="horner"), jax_api.sig(path, 2))
+    with pytest.raises(ValueError, match="method"):
+        jax_api.sig(path, 2, method=None)
+    with pytest.raises(ValueError, match="method"):
+        jax_api.log_sig(path, 2, method=0, sig_method=None)
+
+
 # =========================================================================
 # sig_combine - forward
 # =========================================================================
@@ -1139,7 +1148,7 @@ def test_jax_ps_stream_forward_and_grad(kind, sig_method, split):
 
     def run(p, selected):
         options = dict(sig_method=selected, ps_split=split) if is_log else dict(method=selected, ps_split=split)
-        if selected is None:
+        if selected == "horner":
             options["ps_split"] = None
         if windowed:
             options.update(window_size=5, stride=3)
@@ -1149,12 +1158,12 @@ def test_jax_ps_stream_forward_and_grad(kind, sig_method, split):
         stream.push_batch(p[..., 5:, :])
         return stream.sig() if windowed else stream.sig(0, 3)
 
-    expected = run(path, None)
+    expected = run(path, "horner")
     operation = lambda p: run(p, sig_method)
     np.testing.assert_allclose(jax.jit(operation)(path), expected, rtol=2e-11, atol=2e-11)
     np.testing.assert_allclose(jax.vmap(operation)(path), jnp.swapaxes(expected, 0, 1) if windowed else expected,
                                rtol=2e-11, atol=2e-11)
-    reference_grad = jax.grad(lambda p: run(p, None).sum())(path)
+    reference_grad = jax.grad(lambda p: run(p, "horner").sum())(path)
     gradient = jax.jit(jax.grad(lambda p: operation(p).sum()))(path)
     np.testing.assert_allclose(gradient, reference_grad, rtol=2e-11, atol=2e-11)
 
