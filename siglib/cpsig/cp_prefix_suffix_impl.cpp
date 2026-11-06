@@ -64,8 +64,8 @@ struct CpuPlan {
         const uint64_t stored_rows = rows;
 
         low = l.m <= 6;
-        paired = !l.split_a;
-        const bool specialized = !l.split_a && low && (l.d == 2 || l.d == 3 || l.d == 4 || l.d == 8);
+        paired = !l.ps_split;
+        const bool specialized = !l.ps_split && low && (l.d == 2 || l.d == 3 || l.d == 4 || l.d == 8);
         const bool direct_eligible = specialized && l.scan_degree == l.h && l.scan_degree == 1
             && (l.m == 2 || l.m == 3);
         const bool stream_shape_eligible = specialized && l.scan_degree == l.h && l.m >= 4 && l.m <= 6;
@@ -676,10 +676,10 @@ void backprop_path(const T* input, T* output, const T* deriv, uint64_t dimension
 template<bool Backward, std::floating_point T>
 void signature_prefix_suffix_correction_(const T* path, T* out, const T* deriv, uint64_t batch,
     uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, T end_time, bool scalar,
-    int n_jobs, uint64_t split_a, const T* correction, uint64_t correction_len,
+    int n_jobs, uint64_t ps_split, const T* correction, uint64_t correction_len,
     uint64_t batch_stride, uint64_t segment_stride) {
     corrected::compute<Backward>(path, out, deriv, batch, dimension, length, degree, time_aug,
-        end_time, scalar, n_jobs, split_a, correction, correction_len, batch_stride, segment_stride);
+        end_time, scalar, n_jobs, ps_split, correction, correction_len, batch_stride, segment_stride);
 }
 
 template void signature_prefix_suffix_correction_<false, float>(const float*, float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, float, bool, int, uint64_t, const float*, uint64_t, uint64_t, uint64_t);
@@ -690,11 +690,11 @@ template void signature_prefix_suffix_correction_<true, double>(const double*, d
 template<std::floating_point T>
 void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, uint64_t batch,
     uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag,
-    T end_time, bool scalar, int n_jobs, uint64_t split_a) {
+    T end_time, bool scalar, int n_jobs, uint64_t ps_split) {
     if (!dimension) throw std::invalid_argument("path has zero channels");
     const uint64_t d = add(mul(dimension, lead_lag ? 2 : 1), time_aug ? 1 : 0);
     const uint64_t points = lead_lag && length ? add(length, length - 1) : length;
-    const Layout l(d, degree, split_a);
+    const Layout l(d, degree, ps_split);
     const uint64_t stride = l.offset[degree + 1] - (scalar ? 0 : 1), path_stride = mul(length, dimension);
     mul(mul(batch, stride), sizeof(T)); mul(mul(batch, path_stride), sizeof(T));
     const int jobs = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
@@ -739,11 +739,11 @@ void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, ui
 
 template<std::floating_point T>
 void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t dimension, uint64_t length,
-    uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, int n_jobs, uint64_t split_a) {
+    uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, int n_jobs, uint64_t ps_split) {
     if (!dimension) throw std::invalid_argument("path has zero channels");
     const uint64_t d = add(mul(dimension, lead_lag ? 2 : 1), time_aug ? 1 : 0);
     const uint64_t points = lead_lag && length ? add(length, length - 1) : length;
-    const Layout l(d, degree, split_a);
+    const Layout l(d, degree, ps_split);
     const uint64_t stride = l.offset[degree + 1] - (scalar ? 0 : 1), path_stride = mul(length, dimension);
     mul(mul(batch, stride), sizeof(T)); mul(mul(batch, path_stride), sizeof(T));
     const int jobs = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
@@ -771,9 +771,9 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
         static_cast<size_t>(oneapi::tbb::this_task_arena::max_concurrency()),
         global_control::active_value(global_control::max_allowed_parallelism)}));
     const int available_path_jobs = std::max(1, jobs / static_cast<int>(std::min<uint64_t>(batch, jobs)));
-    const uint64_t selected = !split_a || split_a == degree
+    const uint64_t selected = !ps_split || ps_split == degree
         ? prefix_suffix_endpoint::select_cpu_block(batch, points - 1, l, endpoint_threads, sizeof(T), time_aug || lead_lag) : 0;
-    const uint64_t endpoint_block = split_a ? selected : option("PYSIGLIB_PS_ENDPOINT_BLOCK", selected, true);
+    const uint64_t endpoint_block = ps_split ? selected : option("PYSIGLIB_PS_ENDPOINT_BLOCK", selected, true);
     if (endpoint_block) {
         try {
             cpu_endpoint::compute(path, out, prefix_suffix_endpoint::Shape(batch, d, points, degree, endpoint_block),

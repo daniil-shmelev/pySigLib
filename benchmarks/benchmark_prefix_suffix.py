@@ -35,12 +35,12 @@ def main():
     parser.add_argument("--degree", type=int, default=5)
     parser.add_argument("--n-jobs", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=9)
-    parser.add_argument("--split", type=int, nargs=2, metavar=("A", "B"), action="append", default=[])
+    parser.add_argument("--split", type=int, metavar="A", action="append", default=[])
     args = parser.parse_args()
     if min(args.batch, args.segments, args.dimension, args.degree, args.repeats) < 1:
         parser.error("shape parameters and repeats must be positive")
-    if any(a < 1 or b < 0 or a + b != args.degree for a, b in args.split):
-        parser.error("each split requires a >= 1, b >= 0 and a + b == degree")
+    if any(a < 1 or a > args.degree for a in args.split):
+        parser.error("each split must be between 1 and degree")
 
     rng = np.random.default_rng(719)
     increments = rng.normal(size=(args.batch, args.segments, args.dimension)) / np.sqrt(args.segments)
@@ -54,7 +54,7 @@ def main():
         seeds = torch.as_tensor(seeds, device="cuda")
 
     methods = [("horner", None, None), ("ps", "ps", None), ("auto", "auto", None)]
-    methods.extend((f"ps({a},{b})", "ps", (a, b)) for a, b in args.split)
+    methods.extend((f"ps({a},{args.degree - a})", "ps", a) for a in args.split)
     print("pass      method        median ms   speedup vs Horner")
     for phase in ("forward", "backward"):
         samples = {name: [] for name, _, _ in methods}

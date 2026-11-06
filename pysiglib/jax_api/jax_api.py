@@ -247,20 +247,20 @@ def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
     return correction
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7, 8, 9))
-def _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a):
-    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a)
+def _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split):
+    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split)
 
 
-def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a):
-    sig_ = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a)
+def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split):
+    sig_ = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split)
     # Explicit prefix-suffix reconstructs its states from the path.
     return sig_, (path, correction if method == 1 else sig_, correction)
 
 
-def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a, residual, cotangent):
+def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, method, ps_split, residual, cotangent):
     del horner
     path, sig_, correction = residual
-    grad = sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, split_a)
+    grad = sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split)
     return grad, jnp.zeros_like(correction)
 
 
@@ -293,10 +293,10 @@ def sig(
     check_type(end_time, "end_time", float)
     check_type(horner, "horner", bool)
     check_n_jobs(n_jobs)
-    method_code, split_a = _check_sig_method(method, horner, ps_split, degree)
+    method_code, ps_split = _check_sig_method(method, horner, ps_split, degree)
 
     correction = _prepare_correction_jax(correction, path, degree, lead_lag)
-    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method_code, split_a)
+    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method_code, ps_split)
     if not scalar_term:
         result = _strip_scalar(result)
     return result

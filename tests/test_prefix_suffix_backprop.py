@@ -37,7 +37,7 @@ def test_corrected_splits(device, dtype, dimension, degree, correction_degree, t
     path = torch.tensor(rng.normal(scale=0.06, size=(2, 2, 11, dimension)), device=device, dtype=dtype)[..., ::2, :]
     width = sum(dimension ** k for k in range(2, correction_degree + 1))
     correction = torch.tensor(rng.normal(scale=0.01, size=(2, 2, 5, width)), device=device, dtype=dtype)
-    variants = [("ps", (a, degree - a)) for a in range(1, degree + 1)] + [("ps", None), ("auto", None)]
+    variants = [("ps", a) for a in range(1, degree + 1)] + [("ps", None), ("auto", None)]
     check_sig_methods(path, degree, variants, scalar_term=scalar, correction=correction, time_aug=time_aug, n_jobs=2)
 
 
@@ -52,7 +52,7 @@ def test_corrected_layouts_and_empty_paths(monkeypatch, device, points):
     monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "1")
     monkeypatch.setenv("PYSIGLIB_PS_FACTOR_BYTES", "1")
     for correction in corrections:
-        check_sig_methods(path, 4, [("ps", s) for s in (None, (1, 3), (4, 0))],
+        check_sig_methods(path, 4, [("ps", s) for s in (None, 1, 4)],
                           correction=correction, scalar_term=True, tol=1e-12)
 
 
@@ -61,7 +61,7 @@ def test_corrected_layouts_and_empty_paths(monkeypatch, device, points):
 def test_autograd_and_stream(monkeypatch, device, corrected):
     path = (torch.randn(2, 5, 2, device=device, dtype=torch.float64) * 0.03).requires_grad_()
     correction = torch.tensor([0.02, -0.03, 0.04, -0.01], device=device, dtype=torch.float64, requires_grad=True)
-    options = dict(correction=correction, ps_split=(1, 3)) if corrected else {}
+    options = dict(correction=correction, ps_split=1) if corrected else {}
     if not corrected:
         monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "3")
     operation = lambda x: torch_api.sig(x, 4, method="ps", **options)
@@ -103,7 +103,7 @@ def test_corrected_exact_chen():
         signature = multiply(signature, exponential)
     expected = np.concatenate(signature).astype(np.float64)
     for a in range(1, degree + 1):
-        actual = pysiglib.sig(path, degree, correction=correction, scalar_term=True, method="ps", ps_split=(a, degree - a))
+        actual = pysiglib.sig(path, degree, correction=correction, scalar_term=True, method="ps", ps_split=a)
         np.testing.assert_allclose(actual, expected, atol=1e-13, rtol=1e-12)
 
 
@@ -131,7 +131,7 @@ def test_corrected_scalar_high_degree(device, dtype):
     gradient = torch.zeros_like(path)
     gradient[0, 0] = -derivative; gradient[-1, 0] = derivative
     tolerance = 2e-5 if dtype == torch.float32 else 2e-12
-    for split in (None, (1, 19), (20, 0)):
+    for split in (None, 1, 20):
         actual = pysiglib.sig(path, degree, correction=correction, method="ps", ps_split=split, scalar_term=True)
         grad = pysiglib.sig_backprop(path, actual, seeds, degree, correction=correction, method="ps", ps_split=split)
         torch.testing.assert_close(actual, expected, atol=1e-15, rtol=tolerance)
@@ -186,7 +186,7 @@ def test_blocks_and_splits(monkeypatch, device, rows, a):
     path = torch.tensor(rng.normal(size=(3, 8, 3)) * 0.05, dtype=torch.float64, device=device)
     monkeypatch.setenv("PYSIGLIB_PS_FACTOR_BYTES", str(rows * 2 * (27 + 27) * 8))
     monkeypatch.setenv("PYSIGLIB_PS_SCAN_CHUNK", "3")
-    check_sig_methods(path, 6, [("ps", (a, 6 - a))], n_jobs=3)
+    check_sig_methods(path, 6, [("ps", a)], n_jobs=3)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -303,8 +303,8 @@ def test_concurrent_calls_and_cleanup(device, backward):
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("degree,d,method,split,corrected", [
-    (4, 3, "ps", None, False), (4, 3, "ps", (1, 3), False), (4, 3, "ps", (4, 0), False),
-    (4, 2, "ps", None, True), (4, 2, "ps", (1, 3), True), (4, 2, "ps", (4, 0), True),
+    (4, 3, "ps", None, False), (4, 3, "ps", 1, False), (4, 3, "ps", 4, False),
+    (4, 2, "ps", None, True), (4, 2, "ps", 1, True), (4, 2, "ps", 4, True),
     (6, 4, "auto", None, False),
 ])
 def test_jax_forward_and_reverse(monkeypatch, dtype, degree, d, method, split, corrected):
@@ -316,7 +316,7 @@ def test_jax_forward_and_reverse(monkeypatch, dtype, degree, d, method, split, c
     path = np.random.default_rng(726).normal(scale=.02, size=(2, 21, d)).astype(dtype)
     correction = np.array([.02, -.01, .03, .01], dtype=dtype) if corrected else None
     # Exercise augmentation on explicit splits and the original shape for auto dispatch.
-    options = dict(correction=correction, time_aug=split == (1, 3), lead_lag=split == (4, 0) and not corrected)
+    options = dict(correction=correction, time_aug=split == 1, lead_lag=split == 4 and not corrected)
     run = lambda x: api.sig(x, degree, method=method, ps_split=split, scalar_term=corrected, **options)
     expected = pysiglib.sig(path, degree, scalar_term=corrected, **options)
     reference = pysiglib.sig_backprop(path, expected, np.ones_like(expected), degree, **options)

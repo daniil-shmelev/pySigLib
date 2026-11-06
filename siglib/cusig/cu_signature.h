@@ -23,8 +23,8 @@ void signature_prefix_suffix_correction_cuda(const T* path, T* out, const T* der
 
 template<typename T>
 void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_t dimension, uint64_t length,
-    uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, cudaStream_t stream, uint64_t split_a);
+    uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, cudaStream_t stream, uint64_t ps_split);
 
 template<typename T>
 void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension,
-    uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, cudaStream_t stream, uint64_t split_a);
+    uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, cudaStream_t stream, uint64_t ps_split);

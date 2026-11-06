@@ -387,10 +387,10 @@ def log_sig(
         ``None`` uses Horner, ``"ps"`` uses prefix-suffix factorisation, and
         ``"auto"`` selects automatically. Method ``3`` requires ``None``.
     :type sig_method: str | None
-    :param ps_split: Optional top-level split ``(a, b)``, with ``a >= 1``,
-        ``b >= 0`` and ``a + b == degree``. Requires ``sig_method="ps"``.
+    :param ps_split: Optional prefix length ``a``, from 1 to ``degree``.
+        The suffix length is ``degree - a``. Requires ``sig_method="ps"``.
         ``None`` selects the split automatically.
-    :type ps_split: tuple[int, int] | None
+    :type ps_split: int | None
     :return: Log signature or a batch of log signatures.
     :rtype: numpy.ndarray | torch.Tensor
 

@@ -559,7 +559,7 @@ ffi::Error SigCpuImpl(
     bool horner,
     std::int64_t n_jobs,
     std::int32_t method,
-    std::uint64_t split_a,
+    std::uint64_t ps_split,
     PathBuffer& path,
     PathBuffer& correction,
     OutBuffer& out,
@@ -603,7 +603,7 @@ ffi::Error SigCpuImpl(
         corr_spec.batch_stride,
         corr_spec.segment_stride,
         method,
-        split_a
+        ps_split
     );
 
     if (err_code != 0) {
@@ -622,7 +622,7 @@ ffi::Error SigBackpropCpuImpl(
     double end_time,
     std::int64_t n_jobs,
     std::int32_t method,
-    std::uint64_t split_a,
+    std::uint64_t ps_split,
     PathBuffer& path,
     SigBuffer& sig,
     CotangentBuffer& cotangent,
@@ -675,7 +675,7 @@ ffi::Error SigBackpropCpuImpl(
         corr_spec.batch_stride,
         corr_spec.segment_stride,
         method,
-        split_a
+        ps_split
     );
 
     if (err_code != 0) {
@@ -697,7 +697,7 @@ ffi::Error SigCudaImpl(
     bool horner,
     std::int64_t n_jobs,
     std::int32_t method,
-    std::uint64_t split_a,
+    std::uint64_t ps_split,
     PathBuffer& path,
     PathBuffer& correction,
     OutBuffer& out,
@@ -740,7 +740,7 @@ ffi::Error SigCudaImpl(
         corr_spec.batch_stride,
         corr_spec.segment_stride,
         method,
-        split_a,
+        ps_split,
         stream
     );
 
@@ -761,7 +761,7 @@ ffi::Error SigBackpropCudaImpl(
     double end_time,
     std::int64_t n_jobs,
     std::int32_t method,
-    std::uint64_t split_a,
+    std::uint64_t ps_split,
     PathBuffer& path,
     SigBuffer& sig,
     CotangentBuffer& cotangent,
@@ -813,7 +813,7 @@ ffi::Error SigBackpropCudaImpl(
         corr_spec.batch_stride,
         corr_spec.segment_stride,
         method,
-        split_a,
+        ps_split,
         stream
     );
 
@@ -833,7 +833,7 @@ ffi::Error SigCpu(
     bool horner,
     std::int64_t n_jobs,
     std::int32_t method,
-    std::uint64_t split_a,
+    std::uint64_t ps_split,
     ffi::AnyBuffer path,
     ffi::AnyBuffer correction,
     ffi::Result<ffi::AnyBuffer> out
@@ -855,7 +855,7 @@ ffi::Error SigCpu(
             horner,
             n_jobs,
             method,
-            split_a,
+            ps_split,
             path,
             correction,
             out,
@@ -871,7 +871,7 @@ ffi::Error SigBackpropCpu(
     double end_time,
     std::int64_t n_jobs,
     std::int32_t method,
-    std::uint64_t split_a,
+    std::uint64_t ps_split,
     ffi::AnyBuffer path,
     ffi::AnyBuffer sig,
     ffi::AnyBuffer cotangent,
@@ -892,7 +892,7 @@ ffi::Error SigBackpropCpu(
             end_time,
             n_jobs,
             method,
-            split_a,
+            ps_split,
             path,
             sig,
             cotangent,
@@ -913,7 +913,7 @@ ffi::Error SigCuda(
     bool horner,
     std::int64_t n_jobs,
     std::int32_t method,
-    std::uint64_t split_a,
+    std::uint64_t ps_split,
     ffi::AnyBuffer path,
     ffi::AnyBuffer correction,
     ffi::Result<ffi::AnyBuffer> out
@@ -936,7 +936,7 @@ ffi::Error SigCuda(
             horner,
             n_jobs,
             method,
-            split_a,
+            ps_split,
             path,
             correction,
             out,
@@ -953,7 +953,7 @@ ffi::Error SigBackpropCuda(
     double end_time,
     std::int64_t n_jobs,
     std::int32_t method,
-    std::uint64_t split_a,
+    std::uint64_t ps_split,
     ffi::AnyBuffer path,
     ffi::AnyBuffer sig,
     ffi::AnyBuffer cotangent,
@@ -975,7 +975,7 @@ ffi::Error SigBackpropCuda(
             end_time,
             n_jobs,
             method,
-            split_a,
+            ps_split,
             path,
             sig,
             cotangent,
@@ -2378,7 +2378,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("horner")
         .Attr<std::int64_t>("n_jobs")
         .Attr<std::int32_t>("method")
-        .Attr<std::uint64_t>("split_a")
+        .Attr<std::uint64_t>("ps_split")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
@@ -2394,7 +2394,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<double>("end_time")
         .Attr<std::int64_t>("n_jobs")
         .Attr<std::int32_t>("method")
-        .Attr<std::uint64_t>("split_a")
+        .Attr<std::uint64_t>("ps_split")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
@@ -2415,7 +2415,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("horner")
         .Attr<std::int64_t>("n_jobs")
         .Attr<std::int32_t>("method")
-        .Attr<std::uint64_t>("split_a")
+        .Attr<std::uint64_t>("ps_split")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
@@ -2432,7 +2432,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<double>("end_time")
         .Attr<std::int64_t>("n_jobs")
         .Attr<std::int32_t>("method")
-        .Attr<std::uint64_t>("split_a")
+        .Attr<std::uint64_t>("ps_split")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()

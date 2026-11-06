@@ -36,7 +36,7 @@ def test_split_and_endpoint_variants(monkeypatch, device, dtype, time_aug, lead_
     path = torch.tensor(np.random.default_rng(712).normal(scale=0.04, size=(2, 14, 2)),
                         device=device, dtype=dtype)[:, ::2]
     options = dict(time_aug=time_aug, lead_lag=lead_lag, end_time=.7, scalar_term=scalar, n_jobs=2)
-    variants = [("ps", None)] + [("ps", (a, 4 - a)) for a in range(1, 5)]
+    variants = [("ps", None)] + [("ps", a) for a in range(1, 5)]
     check_sig_methods(path, 4, variants, **options)
     for block in (1, 3, 16):
         monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", str(block))
@@ -48,7 +48,7 @@ def test_split_and_endpoint_variants(monkeypatch, device, dtype, time_aug, lead_
 def test_automatic_prefix_suffix_dispatch(device, dtype, dimension):
     path = torch.tensor(np.random.default_rng(714).normal(scale=0.02, size=(32, 257, dimension)),
                         device=device, dtype=dtype)
-    check_sig_methods(path, 3, [("ps", None), ("ps", (2, 1))], n_jobs=20)
+    check_sig_methods(path, 3, [("ps", None), ("ps", 2)], n_jobs=20)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -108,7 +108,7 @@ def test_split_exact_reference(device):
                         device=device, dtype=torch.float64)
     expected = exact_signature(increments, 6)
     for a in range(1, 7):
-        actual = pysiglib.sig(path, 6, method=METHOD, scalar_term=True, ps_split=(a, 6 - a))
+        actual = pysiglib.sig(path, 6, method=METHOD, scalar_term=True, ps_split=a)
         np.testing.assert_allclose(actual.cpu().numpy(), expected, atol=1e-12, rtol=1e-12)
 
 
@@ -204,9 +204,9 @@ def test_validation():
 
 
 @pytest.mark.parametrize("method,split,error", [
-    ("ps", (0, 3), ValueError), ("ps", (4, -1), ValueError), ("ps", (1, 1), ValueError),
-    ("ps", (1,), TypeError), ("ps", (True, 2), TypeError), ("ps", (1, 2.0), TypeError),
-    (None, (2, 1), ValueError), ("auto", (2, 1), ValueError), ("prefix_suffix_gemm", None, ValueError),
+    ("ps", 0, ValueError), ("ps", 4, ValueError), ("ps", -1, ValueError),
+    ("ps", (1, 2), TypeError), ("ps", True, TypeError), ("ps", 1.5, TypeError),
+    (None, 2, ValueError), ("auto", 2, ValueError), ("prefix_suffix_gemm", None, ValueError),
 ])
 def test_split_validation(method, split, error):
     path = np.zeros((0, 8, 2))
@@ -224,7 +224,7 @@ def test_per_call_split_autograd(monkeypatch, device):
     grad = torch.autograd.grad(expected.sum(), x)[0]
     monkeypatch.setenv("PYSIGLIB_PS_ENDPOINT_BLOCK", "invalid")
     with ThreadPoolExecutor(3) as pool:
-        results = list(pool.map(lambda a: torch_api.sig(x, 4, method="ps", ps_split=(a, 4 - a)), (1, 2, 4)))
+        results = list(pool.map(lambda a: torch_api.sig(x, 4, method="ps", ps_split=a), (1, 2, 4)))
     for result in results:
         torch.testing.assert_close(result, expected)
         torch.testing.assert_close(torch.autograd.grad(result.sum(), x)[0], grad)
@@ -295,7 +295,7 @@ def test_cuda_device_changes():
 
 @pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA unavailable")
 @pytest.mark.parametrize("coefficients", (0, 1))
-@pytest.mark.parametrize("degree,points,split", [(5, 8, (5, 0)), (14, 3, None)])
+@pytest.mark.parametrize("degree,points,split", [(5, 8, 5), (14, 3, None)])
 def test_cuda_global_factor_workspace(monkeypatch, coefficients, degree, points, split):
     monkeypatch.setenv("PYSIGLIB_PS_COEFFICIENT_FACTORS", str(coefficients))
     path = torch.tensor(np.random.default_rng(13).normal(size=(2, points, 3)) * 0.1, device="cuda")

@@ -552,7 +552,7 @@ class TestNJobsFlag:
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("kind", ["SigStream", "LogSigStream", "SigWindowStream", "LogSigWindowStream"])
-@pytest.mark.parametrize("method,split", [("ps", None), ("ps", (1, 2)), ("ps", (3, 0)), ("auto", None)])
+@pytest.mark.parametrize("method,split", [("ps", None), ("ps", 1), ("ps", 3), ("auto", None)])
 def test_ps_stream_forward_and_backward(device, dtype, kind, method, split):
     import pysiglib.torch_api as api
 
@@ -597,7 +597,7 @@ def test_ps_stream_routes_options(kind):
         calls.append(kwargs.copy())
         return operation(path, degree, **kwargs)
 
-    options = dict(sig_method="ps", ps_split=(3, 0), _log_sig=record) if is_log else dict(method="ps", ps_split=(3, 0), _sig=record)
+    options = dict(sig_method="ps", ps_split=3, _log_sig=record) if is_log else dict(method="ps", ps_split=3, _sig=record)
     if is_log:
         pysiglib.prepare_log_sig(2, 3, 2)
         pysiglib.prepare_log_sig(2, 3, 3)
@@ -608,11 +608,11 @@ def test_ps_stream_routes_options(kind):
     assert calls
     for call in calls:
         assert call["sig_method" if is_log else "method"] == "ps"
-        assert call["ps_split"] == (3, 0)
+        assert call["ps_split"] == 3
 
 
 @pytest.mark.parametrize("kind", ["SigStream", "LogSigStream", "SigWindowStream", "LogSigWindowStream"])
-@pytest.mark.parametrize("method,split", [("invalid", None), (None, (2, 1)), ("auto", (2, 1)), ("ps", (0, 3))])
+@pytest.mark.parametrize("method,split", [("invalid", None), (None, 2), ("auto", 2), ("ps", 0)])
 def test_ps_stream_rejects_invalid_options(kind, method, split):
     import pysiglib.torch_api as torch_api
 
@@ -625,7 +625,7 @@ def test_ps_stream_rejects_invalid_options(kind, method, split):
 
 
 @pytest.mark.parametrize("kind", ["LogSigStream", "LogSigWindowStream"])
-@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), (None, (2, 1))])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), (None, 2)])
 def test_log_stream_method3_rejects_signature_options(kind, sig_method, split):
     options = dict(method=3, sig_method=sig_method, ps_split=split)
     if "Window" in kind:

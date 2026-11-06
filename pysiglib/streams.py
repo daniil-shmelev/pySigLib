@@ -192,9 +192,9 @@ class SigStream:
         ``"ps"`` (prefix-suffix factorisation), or ``"auto"``. Single-point
         updates use ``sig_join``.
     :type method: str | None
-    :param ps_split: Optional top-level split ``(a, b)`` for ``method="ps"``.
+    :param ps_split: Optional prefix length ``a`` for ``method="ps"``.
         See :func:`sig`. ``None`` selects the split automatically.
-    :type ps_split: tuple[int, int] | None
+    :type ps_split: int | None
 
     Example::
 
@@ -577,9 +577,9 @@ class LogSigStream:
         ``None`` (Horner), ``"ps"`` (prefix-suffix factorisation), or ``"auto"``.
         Method ``3`` requires ``None``. Single-point updates use ``log_sig_join``.
     :type sig_method: str | None
-    :param ps_split: Optional top-level split ``(a, b)`` for ``sig_method="ps"``.
+    :param ps_split: Optional prefix length ``a`` for ``sig_method="ps"``.
         See :func:`sig`. ``None`` selects the split automatically.
-    :type ps_split: tuple[int, int] | None
+    :type ps_split: int | None
 
     Example::
 
@@ -911,9 +911,9 @@ class SigWindowStream(_WindowStream):
     :param method: Per-window signature algorithm: ``None`` (Horner), ``"ps"``
         (prefix-suffix factorisation), or ``"auto"``.
     :type method: str | None
-    :param ps_split: Optional top-level split ``(a, b)`` for ``method="ps"``.
+    :param ps_split: Optional prefix length ``a`` for ``method="ps"``.
         See :func:`sig`. ``None`` selects the split automatically.
-    :type ps_split: tuple[int, int] | None
+    :type ps_split: int | None
 
     Example::
 
@@ -1106,9 +1106,9 @@ class LogSigWindowStream(_WindowStream):
         and ``2``: ``None`` (Horner), ``"ps"`` (prefix-suffix factorisation), or
         ``"auto"``. Method ``3`` requires ``None``.
     :type sig_method: str | None
-    :param ps_split: Optional top-level split ``(a, b)`` for ``sig_method="ps"``.
+    :param ps_split: Optional prefix length ``a`` for ``sig_method="ps"``.
         See :func:`sig`. ``None`` selects the split automatically.
-    :type ps_split: tuple[int, int] | None
+    :type ps_split: int | None
 
     Example::
 

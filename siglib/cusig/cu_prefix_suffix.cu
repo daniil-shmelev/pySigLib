@@ -538,11 +538,11 @@ template void signature_prefix_suffix_correction_cuda<true, double>(const double
 
 template<typename T>
 void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv, uint64_t batch,
-    uint64_t dimension, uint64_t length, uint64_t degree, bool ta, bool ll, T end_time, bool scalar, cudaStream_t stream, uint64_t split_a) {
+    uint64_t dimension, uint64_t length, uint64_t degree, bool ta, bool ll, T end_time, bool scalar, cudaStream_t stream, uint64_t ps_split) {
     if (!dimension) throw std::invalid_argument("path has zero channels");
     int device = 0; CUDA_CHECK(cudaGetDevice(&device));
     const uint64_t d = add(mul(dimension, ll ? 2 : 1), ta ? 1 : 0), points = ll && length ? add(length, length - 1) : length;
-    Layout l(d, degree, split_a);
+    Layout l(d, degree, ps_split);
     const uint64_t sig_stride = l.offset[degree + 1] - (scalar ? 0 : 1), path_stride = mul(length, dimension);
     mul(mul(batch, sig_stride), sizeof(T)); mul(mul(batch, path_stride), sizeof(T));
     if (!batch || !path_stride) return;
@@ -552,7 +552,7 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
         CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaStreamSynchronize(stream));
         return;
     }
-    if (!split_a) {
+    if (!ps_split) {
         const auto choice = prefix_suffix_selection::select_cuda(true, batch, points - 1, l, 1, ta || ll);
         if (choice.a) l.set_split(choice.a);
     }
@@ -668,11 +668,11 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
 
 template<typename T>
 void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_t dimension, uint64_t length,
-    uint64_t degree, bool ta, bool ll, T end_time, bool scalar, cudaStream_t stream, uint64_t split_a) {
+    uint64_t degree, bool ta, bool ll, T end_time, bool scalar, cudaStream_t stream, uint64_t ps_split) {
     if (!dimension) throw std::invalid_argument("path has zero channels");
     int device = 0; CUDA_CHECK(cudaGetDevice(&device));
     const uint64_t d = add(mul(dimension, ll ? 2 : 1), ta ? 1 : 0), points = ll && length ? add(length, length - 1) : length;
-    Layout l(d, degree, split_a);
+    Layout l(d, degree, ps_split);
     const uint64_t output_stride = l.offset[degree + 1] - (scalar ? 0 : 1), path_stride = mul(length, dimension);
     mul(mul(batch, output_stride), sizeof(T)); mul(mul(batch, path_stride), sizeof(T));
     if (!batch || !output_stride) return;
@@ -681,10 +681,10 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
         CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaStreamSynchronize(stream));
         return;
     }
-    const auto choice = !split_a || split_a == degree
+    const auto choice = !ps_split || ps_split == degree
         ? prefix_suffix_selection::select_cuda(false, batch, points - 1, l, device_parallelism(device), ta || ll)
         : prefix_suffix_selection::Choice{};
-    const uint64_t endpoint_block = split_a ? choice.block : option("PYSIGLIB_PS_ENDPOINT_BLOCK", choice.block, true);
+    const uint64_t endpoint_block = ps_split ? choice.block : option("PYSIGLIB_PS_ENDPOINT_BLOCK", choice.block, true);
     if (endpoint_block) {
         try {
             gpu_endpoint::compute(path, out, prefix_suffix_endpoint::Shape(batch, d, points, degree, endpoint_block),
@@ -700,9 +700,9 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
     const uint64_t maxp = l.power[l.left_degree(degree)], maxq = l.power[l.right_degree(degree)];
     uint64_t rows = std::max<uint64_t>(1, std::min(mul(n, l.left_degree(degree)), option("PYSIGLIB_PS_FACTOR_BYTES", 128ULL << 20) / mul(add(maxp, maxq), sizeof(T))));
     const bool low = degree <= 6;
-    const bool specialized = !l.split_a && low && (d == 2 || d == 3 || d == 4 || d == 8);
+    const bool specialized = !l.ps_split && low && (d == 2 || d == 3 || d == 4 || d == 8);
     const bool fused = specialized && l.power[degree] <= 1024;
-    const bool pair_levels = !l.split_a;
+    const bool pair_levels = !l.ps_split;
     const bool coefficient_factors = option("PYSIGLIB_PS_COEFFICIENT_FACTORS", 1, true) != 0;
     const FactorCoefficients<T> coefficients;
     const uint64_t contract_chunks = (n - 1) / 256 + 1;

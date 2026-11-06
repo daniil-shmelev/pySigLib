@@ -179,10 +179,10 @@ def sig_backprop(
         scans with BLAS or cuBLAS, including fixed corrections. With ``"auto"``,
         the backward pass uses the thresholds given in :func:`pysiglib.sig`.
     :type method: str | None
-    :param ps_split: Top-level split ``(a, b)`` for ``method="ps"``, with
-        ``a >= 1``, ``b >= 0``, and ``a + b == degree``. The default selects the split automatically.
+    :param ps_split: Prefix length ``a`` for ``method="ps"``, from 1 to ``degree``.
+        The suffix length is ``degree - a``. The default selects the split automatically.
         With corrections, selection estimates the work of the scans, factors and matrix products.
-    :type ps_split: tuple[int, int] | None
+    :type ps_split: int | None
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.Tensor
@@ -197,9 +197,9 @@ def sig_backprop(
 
         path = torch.rand((10, 100, 5))
         degree = 4
-        sigs = pysiglib.sig(path, degree, method="ps", ps_split=(2, 2))
+        sigs = pysiglib.sig(path, degree, method="ps", ps_split=2)
         sig_derivs = torch.ones_like(sigs)
-        path_derivs = pysiglib.sig_backprop(path, sigs, sig_derivs, degree, method="ps", ps_split=(2, 2))
+        path_derivs = pysiglib.sig_backprop(path, sigs, sig_derivs, degree, method="ps", ps_split=2)
         print(path_derivs)
 
     .. code-block:: python
@@ -224,7 +224,7 @@ def sig_backprop(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
-    method_code, split_a = _check_sig_method(method, True, ps_split, degree)
+    method_code, ps_split = _check_sig_method(method, True, ps_split, degree)
     check_n_jobs(n_jobs)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
@@ -255,7 +255,7 @@ def sig_backprop(
             path_data.batch_size, path_data.data_dimension, path_data.data_length,
             degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term, n_jobs,
             correction_data.data_ptr, correction_data.length,
-            correction_data.batch_stride, correction_data.segment_stride, method_code, split_a)
+            correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     else:
         with torch.cuda.device(path_data.path.device):
             stream = torch.cuda.current_stream(path_data.path.device).cuda_stream
@@ -265,7 +265,7 @@ def sig_backprop(
                 path_data.batch_size, path_data.data_dimension, path_data.data_length,
                 degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term,
                 correction_data.data_ptr, correction_data.length,
-                correction_data.batch_stride, correction_data.segment_stride, method_code, split_a, stream)
+                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split, stream)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig_backprop: "

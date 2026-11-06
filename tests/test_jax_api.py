@@ -1099,7 +1099,7 @@ def test_jax_branched_sig_combine_grad_matches_pysiglib(device, jitted, dtype, c
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("jitted", [False, True])
 @pytest.mark.parametrize("method", [0, 1, 2])
-@pytest.mark.parametrize("sig_method,split", [("ps", None), ("ps", (1, 2)), ("ps", (3, 0)), ("auto", None)])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("ps", 1), ("ps", 3), ("auto", None)])
 @pytest.mark.parametrize("time_aug,lead_lag", [(False, False), (True, True)])
 def test_jax_ps_log_sig_forward_and_grad(device, dtype, jitted, method, sig_method, split, time_aug, lead_lag):
     path = np.random.default_rng(27).normal(scale=0.05, size=(2, 7, 2)).astype(dtype)
@@ -1128,7 +1128,7 @@ def test_jax_ps_log_sig_forward_and_grad(device, dtype, jitted, method, sig_meth
 
 
 @pytest.mark.parametrize("kind", ["SigStream", "LogSigStream", "SigWindowStream", "LogSigWindowStream"])
-@pytest.mark.parametrize("sig_method,split", [("ps", None), ("ps", (1, 2)), ("ps", (3, 0)), ("auto", None)])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("ps", 1), ("ps", 3), ("auto", None)])
 def test_jax_ps_stream_forward_and_grad(kind, sig_method, split):
     path = np.random.default_rng(29).normal(scale=0.05, size=(2, 11, 2))
     is_log = kind.startswith("Log")

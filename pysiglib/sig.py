@@ -134,15 +134,12 @@ def _check_sig_method(method, horner, ps_split, degree):
         return {None: 0, "ps": 1, "auto": 2}[method], 0
     if method != "ps":
         raise ValueError("ps_split requires method='ps'")
-    if not isinstance(ps_split, tuple) or len(ps_split) != 2:
-        raise TypeError("ps_split must be a tuple (a, b)")
-    a, b = ps_split
-    if any(isinstance(x, bool) or not isinstance(x, (int, np.integer)) for x in ps_split):
-        raise TypeError("ps_split must contain two integers")
-    a, b = int(a), int(b)
-    if a < 1 or b < 0 or a + b != degree:
-        raise ValueError("ps_split requires a >= 1, b >= 0 and a + b == degree")
-    return 1, a
+    if isinstance(ps_split, bool) or not isinstance(ps_split, (int, np.integer)):
+        raise TypeError("ps_split must be an integer")
+    ps_split = int(ps_split)
+    if ps_split < 1 or ps_split > degree:
+        raise ValueError("ps_split must be between 1 and degree")
+    return 1, ps_split
 
 
 def sig(
@@ -191,11 +188,11 @@ def sig(
         independently for the forward and backward passes. Both require ``horner=True``.
         Prefix-suffix uses extra workspace. Corrections use a general factor construction.
     :type method: str | None
-    :param ps_split: Top-level split ``(a, b)`` for ``method="ps"``, with
-        ``a >= 1``, ``b >= 0``, and ``a + b == degree``. The default selects the split automatically.
+    :param ps_split: Prefix length ``a`` for ``method="ps"``, from 1 to ``degree``.
+        The suffix length is ``degree - a``. The default selects the split automatically.
         With corrections, selection estimates the work of the scans, factors and matrix products.
         Torch and JAX reuse an explicit split when computing the gradient.
-    :type ps_split: tuple[int, int] | None
+    :type ps_split: int | None
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
     :type scalar_term: bool
@@ -320,7 +317,7 @@ def sig(
     check_type(end_time, "end_time", float)
 
     check_n_jobs(n_jobs)
-    method_code, split_a = _check_sig_method(method, horner, ps_split, degree)
+    method_code, ps_split = _check_sig_method(method, horner, ps_split, degree)
     if method is not None and isinstance(path, torch.Tensor) and path.requires_grad and torch.is_grad_enabled():
         raise NotImplementedError("Use pysiglib.torch_api.sig for automatic differentiation, or torch.no_grad() for forward-only calls")
     if method is not None and isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
@@ -339,7 +336,7 @@ def sig(
             data.data_dimension, data.data_length, degree,
             data.time_aug, data.lead_lag, data.end_time, horner, scalar_term, n_jobs,
             correction_data.data_ptr, correction_data.length,
-            correction_data.batch_stride, correction_data.segment_stride, method_code, split_a)
+            correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     else:
         with torch.cuda.device(data.path.device):
             stream = torch.cuda.current_stream(data.path.device).cuda_stream
@@ -348,7 +345,7 @@ def sig(
                 data.data_dimension, data.data_length, degree,
                 data.time_aug, data.lead_lag, data.end_time, horner, scalar_term,
                 correction_data.data_ptr, correction_data.length,
-                correction_data.batch_stride, correction_data.segment_stride, method_code, split_a, stream)
+                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split, stream)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig: " + err_msg(err_code, result.device))

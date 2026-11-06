@@ -24,12 +24,12 @@ namespace signature_method {
 enum Method { standard = 0, prefix_suffix = 1, automatic = 2 };
 
 template<class T>
-bool use_prefix_suffix(int method, uint64_t split_a, uint64_t batch, uint64_t dimension,
+bool use_prefix_suffix(int method, uint64_t ps_split, uint64_t batch, uint64_t dimension,
     uint64_t length, uint64_t degree, bool horner, bool augmented, uint64_t correction_len,
     bool cuda, bool backward) {
     if (method < standard || method > automatic)
         throw std::invalid_argument("Invalid signature method");
-    if (split_a && (method != prefix_suffix || split_a > degree))
+    if (ps_split && (method != prefix_suffix || ps_split > degree))
         throw std::invalid_argument("A prefix length from 1 to degree requires the prefix-suffix method");
     if (method == standard) return false;
     if (!horner) throw std::invalid_argument("Prefix-suffix and automatic selection require horner=true");

@@ -255,7 +255,7 @@ def test_log_signature_method3_empty_correction_match_default(device):
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("method", [0, 1, 2])
-@pytest.mark.parametrize("sig_method,split", [("ps", None), ("ps", (1, 2)), ("ps", (3, 0)), ("auto", None)])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("ps", 1), ("ps", 3), ("auto", None)])
 @pytest.mark.parametrize("time_aug,lead_lag,scalar,corrected", [
     (False, False, False, False), (True, False, True, True),
     (False, True, True, False), (True, True, False, False),
@@ -286,7 +286,7 @@ def test_log_signature_ps_forward_and_backward(device, dtype, method, sig_method
         np.testing.assert_allclose(result, expected.detach().numpy(), rtol=tolerance, atol=tolerance)
 
 
-@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), (None, (2, 1))])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), (None, 2)])
 def test_log_signature_method3_rejects_signature_options(sig_method, split):
     import pysiglib as base_api
 

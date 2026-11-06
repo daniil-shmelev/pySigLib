@@ -311,12 +311,12 @@ extern "C" {
 	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
-	* @param split_a With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
+	* @param ps_split With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t split_a = 0) noexcept;
+	[[nodiscard]] CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @copydoc signature_f */
-	[[nodiscard]] CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t split_a = 0) noexcept;
+	[[nodiscard]] CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_functions Signature backprop functions
@@ -346,12 +346,12 @@ extern "C" {
 	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
-	* @param split_a With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
+	* @param ps_split With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t split_a = 0) noexcept;
+	[[nodiscard]] CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @copydoc sig_backprop_f */
-	[[nodiscard]] CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t split_a = 0) noexcept;
+	[[nodiscard]] CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @} */
 
 	/**
