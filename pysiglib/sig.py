@@ -178,16 +178,12 @@ def sig(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
-    :param method: ``"auto"`` (default) selects Horner or prefix-suffix
-        independently for the forward and backward passes.
-        Use ``"horner"`` for Horner's algorithm or ``"ps"`` for prefix-suffix.
-        Prefix-suffix uses extra workspace. Corrections use a general factor construction.
+    :param method: ``"auto"`` (default) selects Horner or prefix-suffix independently for the forward and backward
+        passes. Use ``"horner"`` for Horner's algorithm or ``"ps"`` for prefix-suffix.
     :type method: str
     :param ps_split: Maximum degree of a prefix in the prefix-suffix algorithm for
         ``method="ps"``, from 1 to ``degree``. The corresponding suffix has maximum
         degree ``degree - ps_split``. The default selects the split automatically.
-        With corrections, selection estimates the work of the scans, factors and matrix products.
-        Torch and JAX reuse an explicit split when computing the gradient.
     :type ps_split: int | None
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
