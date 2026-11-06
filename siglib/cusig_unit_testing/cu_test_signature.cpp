@@ -54,7 +54,7 @@ TEST(signatureDoubleTest, TrivialCases) {
     auto f = signature_cuda_d;
     std::vector<double> path;
     std::vector<double> true_sig;
-    EXPECT_EQ(2, f(nullptr, nullptr, (uint64_t)1, 0, 0, 0, false, false, 1., true, true, nullptr, 0, 0, 0));
+    EXPECT_EQ(2, signature_cuda_d(nullptr, nullptr, (uint64_t)1, 0, 0, 0, false, false, 1., true, true, nullptr, 0, 0, 0));
 
     true_sig.push_back(1.);
     check_result_typed(f, path, true_sig, (uint64_t)1, 1, 0, 0, false, false, 1., true, true);
@@ -118,7 +118,6 @@ TEST(signatureDoubleTest, ManualSigTestDirect) {
 }
 
 TEST(signatureDoubleTest, CorrectionSingleSegment) {
-    auto f = signature_cuda_d;
     uint64_t dimension = 1, length = 2, degree = 4;
     std::vector<double> path = { 0., 3. };
     std::vector<double> correction = { 2. };
@@ -136,7 +135,7 @@ TEST(signatureDoubleTest, CorrectionSingleSegment) {
     cudaMemcpy(d_out, out.data(), sizeof(double) * out.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_correction, correction.data(), sizeof(double) * correction.size(), cudaMemcpyHostToDevice);
 
-    int err = f(d_path, d_out, (uint64_t)1, dimension, length, degree, false, false, 1., true, true, d_correction, correction.size(), 0, 0);
+    int err = signature_cuda_d(d_path, d_out, (uint64_t)1, dimension, length, degree, false, false, 1., true, true, d_correction, correction.size(), 0, 0);
     cudaDeviceSynchronize();
     cudaMemcpy(out.data(), d_out, sizeof(double) * out.size(), cudaMemcpyDeviceToHost);
     cudaFree(d_path);
@@ -150,7 +149,6 @@ TEST(signatureDoubleTest, CorrectionSingleSegment) {
 }
 
 TEST(signatureDoubleTest, CorrectionTimeAug) {
-    auto f = signature_cuda_d;
     uint64_t dimension = 1, length = 2, degree = 2;
     std::vector<double> path = { 0., 3. };
     std::vector<double> correction = { 2. };
@@ -168,7 +166,7 @@ TEST(signatureDoubleTest, CorrectionTimeAug) {
     cudaMemcpy(d_out, out.data(), sizeof(double) * out.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_correction, correction.data(), sizeof(double) * correction.size(), cudaMemcpyHostToDevice);
 
-    int err = f(d_path, d_out, (uint64_t)1, dimension, length, degree, true, false, 1., true, true, d_correction, correction.size(), 0, 0);
+    int err = signature_cuda_d(d_path, d_out, (uint64_t)1, dimension, length, degree, true, false, 1., true, true, d_correction, correction.size(), 0, 0);
     cudaDeviceSynchronize();
     cudaMemcpy(out.data(), d_out, sizeof(double) * out.size(), cudaMemcpyDeviceToHost);
     cudaFree(d_path);
@@ -300,7 +298,6 @@ TEST(batchSignatureTest, BatchSigTestDegree1) {
 }
 
 TEST(batchSignatureTest, BigLeadLagTest) {
-    auto f = signature_cuda_d;
     uint64_t dimension = 2, length = 10, degree = 2, batch = 1;
     std::vector<double> path;
     path.resize(batch * length * dimension, 0.);
@@ -314,7 +311,7 @@ TEST(batchSignatureTest, BigLeadLagTest) {
     cudaMalloc(&d_out, sizeof(double) * out.size());
     cudaMemcpy(d_path, path.data(), sizeof(double) * path.size(), cudaMemcpyHostToDevice);
 
-    int err = f(d_path, d_out, batch, dimension, length, degree, false, true, 1., true, true, nullptr, 0, 0, 0);
+    int err = signature_cuda_d(d_path, d_out, batch, dimension, length, degree, false, true, 1., true, true, nullptr, 0, 0, 0);
 
     cudaMemcpy(out.data(), d_out, sizeof(double) * out.size(), cudaMemcpyDeviceToHost);
     cudaFree(d_path);

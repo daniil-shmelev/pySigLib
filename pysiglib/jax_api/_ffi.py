@@ -29,7 +29,6 @@ from ..load_siglib import (
     native_lib_filename,
 )
 from ..sig_length import sig_length, log_sig_length
-from ..sig import _auto_sig_method
 from ..branched_sig import branched_sig_length
 from ..branched_log_sig import branched_log_sig_length
 
@@ -72,14 +71,6 @@ _CUDA_LIB = None
 _REGISTERED = False
 
 _TARGETS = {
-    "sig_prefix_suffix": {
-        "cpu": ("pysiglib_sig_prefix_suffix_cpu", "PySigLibPrefixSuffixCpu"),
-        "cuda": ("pysiglib_sig_prefix_suffix_cuda", "PySigLibPrefixSuffixCuda"),
-    },
-    "sig_prefix_suffix_backprop": {
-        "cpu": ("pysiglib_sig_prefix_suffix_backprop_cpu", "PySigLibPrefixSuffixBackpropCpu"),
-        "cuda": ("pysiglib_sig_prefix_suffix_backprop_cuda", "PySigLibPrefixSuffixBackpropCuda"),
-    },
     "sig": {
         "cpu": ("pysiglib_sig_cpu", "PySigLibSigCpu"),
         "cuda": ("pysiglib_sig_cuda", "PySigLibSigCuda"),
@@ -431,56 +422,22 @@ def _make_ffi_call(op_name, inputs, out_type, call_kwargs):
 # sig
 # ---------------------------------------------------------------------------
 
-def sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs):
+def sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a):
     _check_same_dtype(path, correction)
     out_type = jax.ShapeDtypeStruct(_sig_shape(path.shape, degree, time_aug, lead_lag), path.dtype)
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
-                       end_time=np.float64(end_time), horner=np.bool_(horner), n_jobs=np.int64(n_jobs))
+                       end_time=np.float64(end_time), horner=np.bool_(horner), n_jobs=np.int64(n_jobs),
+                       method=np.int32(method), split_a=np.uint64(split_a))
     return _make_ffi_call("sig", (path, correction), out_type, call_kwargs)
 
 
-def sig_prefix_suffix_ffi_call(path, degree, time_aug, lead_lag, end_time, n_jobs, split_a):
-    out_type = jax.ShapeDtypeStruct(_sig_shape(path.shape, degree, time_aug, lead_lag), path.dtype)
-    call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
-                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), split_a=np.int64(split_a))
-    return _make_ffi_call("sig_prefix_suffix", (path,), out_type, call_kwargs)
-
-
-def sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs):
+def sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, split_a):
     _check_same_dtype(path, sig_, cotangent, correction)
     out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
-                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
+                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs),
+                       method=np.int32(method), split_a=np.uint64(split_a))
     return _make_ffi_call("sig_backprop", (path, sig_, cotangent, correction), out_type, call_kwargs)
-
-
-def sig_prefix_suffix_backprop_ffi_call(path, cotangent, degree, time_aug, lead_lag, end_time, n_jobs, split_a):
-    _check_same_dtype(path, cotangent)
-    out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
-    call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
-                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), split_a=np.int64(split_a))
-    return _make_ffi_call("sig_prefix_suffix_backprop", (path, cotangent), out_type, call_kwargs)
-
-
-def _auto_sig_ffi_call(path, correction, degree, n_jobs, sig=None, cotangent=None):
-    backward = cotangent is not None
-
-    def horner():
-        if backward:
-            return sig_backprop_ffi_call(path, sig, cotangent, correction, degree, False, False, 1., n_jobs)
-        return sig_ffi_call(path, correction, degree, False, False, 1., True, n_jobs)
-
-    def ps():
-        if backward:
-            return sig_prefix_suffix_backprop_ffi_call(path, cotangent, degree, False, False, 1., n_jobs, 0)
-        return sig_prefix_suffix_ffi_call(path, degree, False, False, 1., n_jobs, 0)
-
-    cpu = ps if _auto_sig_method(path.shape, path.dtype, "cpu", degree, backward) else horner
-    if BUILT_WITH_CUDA:
-        cuda = ps if _auto_sig_method(path.shape, path.dtype, "cuda", degree, backward) else horner
-        if cuda is not cpu:
-            return jax.lax.platform_dependent(cpu=cpu, cuda=cuda)
-    return cpu()
 
 
 # ---------------------------------------------------------------------------

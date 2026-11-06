@@ -258,40 +258,16 @@ CPSIG_SIG_COEF_BACKPROP = _bind_float_pair(
                POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_int, c_int),
 )
 
-CPSIG_PREFIX_SUFFIX = _bind_float_pair(
-    CPSIG, "signature_prefix_suffix",
-    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
-               c_int),
-)
-
-CPSIG_PREFIX_SUFFIX_SPLIT = _bind_float_pair(
-    CPSIG, "signature_prefix_suffix_split",
-    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
-               c_int, c_uint64),
-)
-
-CPSIG_PREFIX_SUFFIX_BACKPROP = _bind_float_pair(
-    CPSIG, "signature_prefix_suffix_backprop",
-    lambda T: (POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool,
-               T, c_bool, c_int),
-)
-
-CPSIG_PREFIX_SUFFIX_BACKPROP_SPLIT = _bind_float_pair(
-    CPSIG, "signature_prefix_suffix_backprop_split",
-    lambda T: (POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool,
-               T, c_bool, c_int, c_uint64),
-)
-
 CPSIG_SIGNATURE = _bind_float_pair(
     CPSIG, "signature",
     lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
-               c_bool, c_int, POINTER(T), c_uint64, c_uint64, c_uint64),
+               c_bool, c_int, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64),
 )
 
 CPSIG_SIG_BACKPROP = _bind_float_pair(
     CPSIG, "sig_backprop",
     lambda T: (POINTER(T), POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64,
-               c_bool, c_bool, T, c_bool, c_int, POINTER(T), c_uint64, c_uint64, c_uint64),
+               c_bool, c_bool, T, c_bool, c_int, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64),
 )
 
 CPSIG_SIG_TO_LOG_SIG = _bind_float_pair(
@@ -515,40 +491,16 @@ CUSIG_SIG_COEF_BACKPROP = _bind_float_pair(
                POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_int, c_void_p),
 )
 
-CUSIG_PREFIX_SUFFIX = _bind_float_pair(
-    CUSIG, "signature_prefix_suffix_cuda",
-    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
-               c_void_p),
-)
-
-CUSIG_PREFIX_SUFFIX_SPLIT = _bind_float_pair(
-    CUSIG, "signature_prefix_suffix_split_cuda",
-    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
-               c_void_p, c_uint64),
-)
-
-CUSIG_PREFIX_SUFFIX_BACKPROP = _bind_float_pair(
-    CUSIG, "signature_prefix_suffix_backprop_cuda",
-    lambda T: (POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool,
-               T, c_bool, c_void_p),
-)
-
-CUSIG_PREFIX_SUFFIX_BACKPROP_SPLIT = _bind_float_pair(
-    CUSIG, "signature_prefix_suffix_backprop_split_cuda",
-    lambda T: (POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool,
-               T, c_bool, c_void_p, c_uint64),
-)
-
 CUSIG_SIGNATURE = _bind_float_pair(
     CUSIG, "signature_cuda",
     lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
-               c_bool, POINTER(T), c_uint64, c_uint64, c_uint64),
+               c_bool, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64, c_void_p),
 )
 
 CUSIG_SIG_BACKPROP = _bind_float_pair(
     CUSIG, "sig_backprop_cuda",
     lambda T: (POINTER(T), POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64,
-               c_bool, c_bool, T, c_bool, POINTER(T), c_uint64, c_uint64, c_uint64),
+               c_bool, c_bool, T, c_bool, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64, c_void_p),
 )
 
 CUSIG_SIG_TO_LOG_SIG = _bind_float_pair(

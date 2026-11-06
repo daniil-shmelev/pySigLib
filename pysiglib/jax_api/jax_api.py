@@ -91,9 +91,6 @@ from ._ffi import (
     ensure_registered,
     sig_backprop_ffi_call,
     sig_ffi_call,
-    _auto_sig_ffi_call,
-    sig_prefix_suffix_ffi_call,
-    sig_prefix_suffix_backprop_ffi_call,
     sig_coef_ffi_call,
     sig_coef_backprop_ffi_call,
     sig_combine_ffi_call,
@@ -249,47 +246,25 @@ def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
     _infer_correction_degree(path.shape[-1], degree, length)
     return correction
 
-@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7, 8))
-def _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, auto):
-    if auto:
-        return _auto_sig_ffi_call(path, correction, degree, n_jobs)
-    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7, 8, 9))
+def _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a):
+    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a)
 
 
-def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, auto):
-    sig_ = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, auto)
-    return sig_, (path, sig_, correction)
+def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a):
+    sig_ = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a)
+    # Explicit prefix-suffix reconstructs its states from the path.
+    return sig_, (path, correction if method == 1 else sig_, correction)
 
 
-def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, auto, residual, cotangent):
+def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, method, split_a, residual, cotangent):
     del horner
     path, sig_, correction = residual
-    if auto:
-        grad = _auto_sig_ffi_call(path, correction, degree, n_jobs, sig_, cotangent)
-    else:
-        grad = sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs)
-    return (grad, jnp.zeros_like(correction))
+    grad = sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, split_a)
+    return grad, jnp.zeros_like(correction)
 
 
 _sig.defvjp(_sig_fwd, _sig_bwd)
-
-
-@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
-def _sig_prefix_suffix(path, degree, time_aug, lead_lag, end_time, n_jobs, split_a):
-    return sig_prefix_suffix_ffi_call(path, degree, time_aug, lead_lag, end_time, n_jobs, split_a)
-
-
-def _sig_prefix_suffix_fwd(path, degree, time_aug, lead_lag, end_time, n_jobs, split_a):
-    result = sig_prefix_suffix_ffi_call(path, degree, time_aug, lead_lag, end_time, n_jobs, split_a)
-    return result, path
-
-
-def _sig_prefix_suffix_bwd(degree, time_aug, lead_lag, end_time, n_jobs, split_a, path, cotangent):
-    grad = sig_prefix_suffix_backprop_ffi_call(path, cotangent, degree, time_aug, lead_lag, end_time, n_jobs, split_a)
-    return (grad,)
-
-
-_sig_prefix_suffix.defvjp(_sig_prefix_suffix_fwd, _sig_prefix_suffix_bwd)
 
 
 def sig(
@@ -318,16 +293,12 @@ def sig(
     check_type(end_time, "end_time", float)
     check_type(horner, "horner", bool)
     check_n_jobs(n_jobs)
-    split_a = _check_sig_method(method, horner, ps_split, degree)
+    method_code, split_a = _check_sig_method(method, horner, ps_split, degree)
 
     correction = _prepare_correction_jax(correction, path, degree, lead_lag)
-    if method == "ps":
-        if correction.size:
-            raise ValueError("Prefix-suffix methods do not support non-empty corrections")
-        result = _sig_prefix_suffix(path, degree, time_aug, lead_lag, end_time, n_jobs, split_a)
-    else:
-        auto = method == "auto" and not (time_aug or lead_lag or correction.size)
-        result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, auto)
+    if method == "ps" and correction.size:
+        raise ValueError("Prefix-suffix methods do not support non-empty corrections")
+    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs, method_code, split_a)
     if not scalar_term:
         result = _strip_scalar(result)
     return result

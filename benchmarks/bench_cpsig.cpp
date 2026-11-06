@@ -15,6 +15,7 @@
 
 #include <benchmark/benchmark.h>
 #include "cpsig.h"
+#include "signature_method.h"
 
 #include <cstdint>
 #include <random>
@@ -37,10 +38,11 @@ static void check(int rc, const char* fn) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-static std::vector<double> random_data(uint64_t n, unsigned seed = 42) {
+template<typename T = double>
+static std::vector<T> random_data(uint64_t n, unsigned seed = 42) {
     std::mt19937_64 rng(seed);
-    std::uniform_real_distribution<double> dist(-1.0, 1.0);
-    std::vector<double> v(n);
+    std::uniform_real_distribution<T> dist(-1, 1);
+    std::vector<T> v(n);
     for (auto& x : v) x = dist(rng);
     return v;
 }
@@ -201,6 +203,42 @@ static void BM_sig_backprop(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_sig_backprop)->Unit(benchmark::kMicrosecond);
+
+static void signature_method_shapes(benchmark::internal::Benchmark* bench) {
+    bench->ArgNames({"dim", "degree", "segments"})
+        ->Args({12, 3, 256})->Args({4, 6, 32})->Args({3, 11, 16})
+        ->Unit(benchmark::kMicrosecond);
+}
+
+static void BM_sig_method(benchmark::State& state, int method) {
+    const uint64_t d = state.range(0), degree = state.range(1), points = state.range(2) + 1;
+    auto path = random_data<float>(points * d);
+    std::vector<float> sig(::sig_length(d, degree));
+    for (auto _ : state) {
+        check(::signature_f(path.data(), sig.data(), 1, d, points, degree, false, false, 1.f,
+            true, true, 1, nullptr, 0, 0, 0, method), "signature_f");
+        benchmark::DoNotOptimize(sig.data());
+    }
+}
+BENCHMARK_CAPTURE(BM_sig_method, horner, signature_method::standard)->Apply(signature_method_shapes);
+BENCHMARK_CAPTURE(BM_sig_method, ps, signature_method::prefix_suffix)->Apply(signature_method_shapes);
+BENCHMARK_CAPTURE(BM_sig_method, auto, signature_method::automatic)->Apply(signature_method_shapes);
+
+static void BM_sig_backprop_method(benchmark::State& state, int method) {
+    const uint64_t d = state.range(0), degree = state.range(1), points = state.range(2) + 1;
+    auto path = random_data<float>(points * d);
+    std::vector<float> sig(::sig_length(d, degree)), grad(path.size());
+    auto deriv = random_data<float>(sig.size(), 43);
+    check(::signature_f(path.data(), sig.data(), 1, d, points, degree), "signature_f");
+    for (auto _ : state) {
+        check(::sig_backprop_f(path.data(), grad.data(), deriv.data(), sig.data(), 1, d, points,
+            degree, false, false, 1.f, true, 1, nullptr, 0, 0, 0, method), "sig_backprop_f");
+        benchmark::DoNotOptimize(grad.data());
+    }
+}
+BENCHMARK_CAPTURE(BM_sig_backprop_method, horner, signature_method::standard)->Apply(signature_method_shapes);
+BENCHMARK_CAPTURE(BM_sig_backprop_method, ps, signature_method::prefix_suffix)->Apply(signature_method_shapes);
+BENCHMARK_CAPTURE(BM_sig_backprop_method, auto, signature_method::automatic)->Apply(signature_method_shapes);
 
 static void BM_sig_backprop_correction(benchmark::State& state) {
     const uint64_t slen = ::sig_length(4, 5);

@@ -27,13 +27,13 @@ HWY_BEFORE_NAMESPACE();
 namespace cpsig {
 namespace HWY_NAMESPACE {
 
-template void signature_<float>(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool horner, bool scalar_term, int n_jobs, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride);
+template void signature_<float>(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool horner, bool scalar_term, int n_jobs, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride, int method, uint64_t split_a);
 
-template void signature_<double>(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool horner, bool scalar_term, int n_jobs, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride);
+template void signature_<double>(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool horner, bool scalar_term, int n_jobs, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride, int method, uint64_t split_a);
 
-template void sig_backprop_<float>(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride);
+template void sig_backprop_<float>(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, int n_jobs, const float* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride, int method, uint64_t split_a);
 
-template void sig_backprop_<double>(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride);
+template void sig_backprop_<double>(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, int n_jobs, const double* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride, int method, uint64_t split_a);
 
 }
 }

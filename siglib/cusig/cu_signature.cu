@@ -16,6 +16,7 @@
 #include "cusig.h"
 #include "cu_runtime_utils.h"
 #include "cu_signature.h"
+#include "signature_method.h"
 #include "cu_sig_combine.h"
 #include "cu_atomic.h"
 #include "cu_path_transforms.h"
@@ -2624,12 +2625,23 @@ void signature_cuda_(
 	bool lead_lag,
 	T end_time,
 	bool horner,
-	bool scalar_term = true,
-	const T* correction = nullptr,
-	uint64_t correction_len = 0,
-	uint64_t correction_batch_stride = 0,
-	uint64_t correction_segment_stride = 0
+	bool scalar_term,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t correction_batch_stride,
+	uint64_t correction_segment_stride,
+	int method,
+	uint64_t split_a,
+	cudaStream_t stream
 ) {
+	if (signature_method::use_prefix_suffix<T>(method, split_a, batch_size, dimension, length, degree,
+		horner, time_aug || lead_lag, correction_len, true, false)) {
+		signature_prefix_suffix_cuda(path, out, batch_size, dimension, length, degree,
+			time_aug, lead_lag, end_time, scalar_term, stream, split_a);
+		return;
+	}
+	// The standard kernels use the default stream.
+	if (stream) CUDA_CHECK(cudaStreamSynchronize(stream));
 	if (dimension == 0) throw std::invalid_argument("signature_cuda received path of dimension 0");
 	validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
 	if (batch_size == 0)
@@ -2678,6 +2690,7 @@ void signature_cuda_(
 			horner, scalar_term, dimension, correction, correction_len,
 			correction_batch_stride, correction_segment_stride);
 	}
+	if (stream) CUDA_CHECK(cudaStreamSynchronize(nullptr));
 }
 
 template<typename T>
@@ -3382,12 +3395,23 @@ void sig_backprop_cuda_(
 	bool time_aug,
 	bool lead_lag,
 	T end_time,
-	bool scalar_term = true,
-	const T* correction = nullptr,
-	uint64_t correction_len = 0,
-	uint64_t correction_batch_stride = 0,
-	uint64_t correction_segment_stride = 0
+	bool scalar_term,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t correction_batch_stride,
+	uint64_t correction_segment_stride,
+	int method,
+	uint64_t split_a,
+	cudaStream_t stream
 ) {
+	if (signature_method::use_prefix_suffix<T>(method, split_a, batch_size, dimension, length, degree,
+		true, time_aug || lead_lag, correction_len, true, true)) {
+		signature_prefix_suffix_backprop_cuda(path, out, sig_derivs, batch_size, dimension, length, degree,
+			time_aug, lead_lag, end_time, scalar_term, stream, split_a);
+		return;
+	}
+	// The standard kernels use the default stream.
+	if (stream) CUDA_CHECK(cudaStreamSynchronize(stream));
 	if (dimension == 0) throw std::invalid_argument("sig_backprop_cuda received path of dimension 0");
 	validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
 	if (batch_size == 0)
@@ -3440,6 +3464,7 @@ void sig_backprop_cuda_(
 			scalar_term, dimension, correction, correction_len,
 			correction_batch_stride, correction_segment_stride);
 	}
+	if (stream) CUDA_CHECK(cudaStreamSynchronize(nullptr));
 }
 
 
@@ -3455,9 +3480,10 @@ extern "C" {
 		bool time_aug, bool lead_lag, float end_time,
 		bool horner, bool scalar_term,
 		const float* correction, uint64_t correction_len,
-		uint64_t correction_batch_stride, uint64_t correction_segment_stride
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
+		int method, uint64_t split_a, void* stream
 	) noexcept {
-		CUDA_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, split_a, static_cast<cudaStream_t>(stream)));
 	}
 
 	CUSIG_API int signature_cuda_d(
@@ -3466,9 +3492,10 @@ extern "C" {
 		bool time_aug, bool lead_lag, double end_time,
 		bool horner, bool scalar_term,
 		const double* correction, uint64_t correction_len,
-		uint64_t correction_batch_stride, uint64_t correction_segment_stride
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
+		int method, uint64_t split_a, void* stream
 	) noexcept {
-		CUDA_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, split_a, static_cast<cudaStream_t>(stream)));
 	}
 
 	// =====================================================================
@@ -3482,9 +3509,10 @@ extern "C" {
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, float end_time, bool scalar_term,
 		const float* correction, uint64_t correction_len,
-		uint64_t correction_batch_stride, uint64_t correction_segment_stride
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
+		int method, uint64_t split_a, void* stream
 	) noexcept {
-		CUDA_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, split_a, static_cast<cudaStream_t>(stream)));
 	}
 
 	CUSIG_API int sig_backprop_cuda_d(
@@ -3493,8 +3521,9 @@ extern "C" {
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, double end_time, bool scalar_term,
 		const double* correction, uint64_t correction_len,
-		uint64_t correction_batch_stride, uint64_t correction_segment_stride
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
+		int method, uint64_t split_a, void* stream
 	) noexcept {
-		CUDA_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, split_a, static_cast<cudaStream_t>(stream)));
 	}
 }

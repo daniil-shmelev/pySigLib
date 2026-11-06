@@ -14,7 +14,6 @@
 # =========================================================================
 
 import warnings
-from math import prod
 from typing import Union
 
 import numpy as np
@@ -23,7 +22,6 @@ import torch
 from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .dtypes import CPSIG_SIGNATURE, CPSIG_SIG_COMBINE, CUSIG_SIGNATURE, CUSIG_SIG_COMBINE
-from .dtypes import CPSIG_PREFIX_SUFFIX_SPLIT, CUSIG_PREFIX_SUFFIX_SPLIT
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
 from .data_handlers import PathInputHandler, MultipleSigInputHandler, SigOutputHandler, CorrectionInputHandler
 
@@ -133,7 +131,7 @@ def _check_sig_method(method, horner, ps_split, degree):
     if method is not None and not horner:
         raise ValueError("horner=False cannot be combined with method='ps' or 'auto'")
     if ps_split is None:
-        return 0
+        return {None: 0, "ps": 1, "auto": 2}[method], 0
     if method != "ps":
         raise ValueError("ps_split requires method='ps'")
     if not isinstance(ps_split, tuple) or len(ps_split) != 2:
@@ -144,25 +142,7 @@ def _check_sig_method(method, horner, ps_split, degree):
     a, b = int(a), int(b)
     if a < 1 or b < 0 or a + b != degree:
         raise ValueError("ps_split requires a >= 1, b >= 0 and a + b == degree")
-    return a
-
-
-def _auto_sig_method(shape, dtype, device, degree, backward):
-    batch = prod(shape[:-2])
-    segments, dimension = shape[-2] - 1, shape[-1]
-    if (dtype != "float32" or not 1 <= batch <= 32 or not 16 <= segments <= 4096
-            or not 2 <= dimension <= 32 or not 3 <= degree <= 16):
-        return None
-    width = dimension ** degree
-    if width > 2 ** 20 or segments * dimension ** ((degree + 1) // 2) > 2 ** 20:
-        return None
-    if device == "cpu":
-        threshold = 2 ** 11 if backward else 2 ** 17
-    else:
-        if batch * segments < 512:
-            return None
-        threshold = 2 ** 16 if backward else 2 ** 19
-    return "ps" if width >= threshold else None
+    return 1, a
 
 
 def sig(
@@ -320,17 +300,14 @@ def sig(
     check_type(end_time, "end_time", float)
 
     check_n_jobs(n_jobs)
-    split_a = _check_sig_method(method, horner, ps_split, degree)
+    method_code, split_a = _check_sig_method(method, horner, ps_split, degree)
     if method is not None and isinstance(path, torch.Tensor) and path.requires_grad and torch.is_grad_enabled():
         raise NotImplementedError("Use pysiglib.torch_api.sig for automatic differentiation, or torch.no_grad() for forward-only calls")
     if method is not None and isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
         raise NotImplementedError("Prefix-suffix methods do not support automatic differentiation with forward-mode dual tensors")
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, data, degree)
-    if method == "auto":
-        method = None if time_aug or lead_lag or correction_data.length else _auto_sig_method(
-            data.path.shape, data.dtype, data.device, degree, backward=False)
-    if method is not None and correction_data.length:
+    if method == "ps" and correction_data.length:
         raise ValueError("Prefix-suffix methods do not support non-empty corrections")
     sig_len = sig_length(data.dimension, degree, scalar_term=scalar_term)
     result = SigOutputHandler(data, sig_len)
@@ -338,31 +315,22 @@ def sig(
     if data.batch_size == 0:
         return result.data
 
-    if method is not None:
-        fn = (CPSIG_PREFIX_SUFFIX_SPLIT if data.device == "cpu" else CUSIG_PREFIX_SUFFIX_SPLIT)[data.dtype]
-        args = (data.data_ptr, result.data_ptr, data.batch_size, data.data_dimension,
-                data.data_length, degree, data.time_aug, data.lead_lag,
-                data.end_time, scalar_term)
-        if data.device == "cpu":
-            err_code = fn(*args, n_jobs, split_a)
-        else:
-            with torch.cuda.device(data.path.device):
-                stream = torch.cuda.current_stream(data.path.device).cuda_stream
-                err_code = fn(*args, stream, split_a)
-    elif data.device == "cpu":
+    if data.device == "cpu":
         err_code = CPSIG_SIGNATURE[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             data.data_dimension, data.data_length, degree,
             data.time_aug, data.lead_lag, data.end_time, horner, scalar_term, n_jobs,
             correction_data.data_ptr, correction_data.length,
-            correction_data.batch_stride, correction_data.segment_stride)
+            correction_data.batch_stride, correction_data.segment_stride, method_code, split_a)
     else:
-        err_code = CUSIG_SIGNATURE[data.dtype](
-            data.data_ptr, result.data_ptr, data.batch_size,
-            data.data_dimension, data.data_length, degree,
-            data.time_aug, data.lead_lag, data.end_time, horner, scalar_term,
-            correction_data.data_ptr, correction_data.length,
-            correction_data.batch_stride, correction_data.segment_stride)
+        with torch.cuda.device(data.path.device):
+            stream = torch.cuda.current_stream(data.path.device).cuda_stream
+            err_code = CUSIG_SIGNATURE[data.dtype](
+                data.data_ptr, result.data_ptr, data.batch_size,
+                data.data_dimension, data.data_length, degree,
+                data.time_aug, data.lead_lag, data.end_time, horner, scalar_term,
+                correction_data.data_ptr, correction_data.length,
+                correction_data.batch_stride, correction_data.segment_stride, method_code, split_a, stream)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig: " + err_msg(err_code, result.device))

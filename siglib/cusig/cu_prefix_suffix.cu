@@ -13,7 +13,7 @@
  * limitations under the License.
  * ========================================================================= */
 
-#include "cusig.h"
+#include "cu_signature.h"
 #include "cu_macros.h"
 #include "cu_path_reduction.h"
 #include "prefix_suffix.h"
@@ -462,6 +462,7 @@ template<typename T> struct CudaMatrices {
 };
 
 #include "cu_prefix_suffix_endpoint.cuh"
+} // namespace
 
 template<typename T>
 void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv, uint64_t batch,
@@ -861,31 +862,7 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
         CUDA_CHECK(cudaStreamSynchronize(stream));
     } catch (...) { (void)cudaStreamSynchronize(stream); throw; }
 }
-}
-
-extern "C" {
-CUSIG_API int signature_prefix_suffix_backprop_split_cuda_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept {
-    CUDA_SAFE_CALL(signature_prefix_suffix_backprop_cuda(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream), split_a));
-}
-CUSIG_API int signature_prefix_suffix_backprop_cuda_f(const float* path, float* out, const float* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream) noexcept {
-    return signature_prefix_suffix_backprop_split_cuda_f(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, stream, 0);
-}
-CUSIG_API int signature_prefix_suffix_backprop_split_cuda_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept {
-    CUDA_SAFE_CALL(signature_prefix_suffix_backprop_cuda(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream), split_a));
-}
-CUSIG_API int signature_prefix_suffix_backprop_cuda_d(const double* path, double* out, const double* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream) noexcept {
-    return signature_prefix_suffix_backprop_split_cuda_d(path, out, deriv, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, stream, 0);
-}
-CUSIG_API int signature_prefix_suffix_split_cuda_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept {
-    CUDA_SAFE_CALL(signature_prefix_suffix_cuda(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream), split_a));
-}
-CUSIG_API int signature_prefix_suffix_cuda_f(const float* path, float* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, float end_time, bool scalar_term, void* stream) noexcept {
-    return signature_prefix_suffix_split_cuda_f(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, stream, 0);
-}
-CUSIG_API int signature_prefix_suffix_split_cuda_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream, uint64_t split_a) noexcept {
-    CUDA_SAFE_CALL(signature_prefix_suffix_cuda(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, static_cast<cudaStream_t>(stream), split_a));
-}
-CUSIG_API int signature_prefix_suffix_cuda_d(const double* path, double* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, double end_time, bool scalar_term, void* stream) noexcept {
-    return signature_prefix_suffix_split_cuda_d(path, out, batch, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, stream, 0);
-}
-}
+template void signature_prefix_suffix_cuda<float>(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, cudaStream_t, uint64_t);
+template void signature_prefix_suffix_backprop_cuda<float>(const float*, float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, cudaStream_t, uint64_t);
+template void signature_prefix_suffix_cuda<double>(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, cudaStream_t, uint64_t);
+template void signature_prefix_suffix_backprop_cuda<double>(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, cudaStream_t, uint64_t);

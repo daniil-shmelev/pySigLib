@@ -22,9 +22,8 @@ from .param_checks import check_type, check_non_neg, check_n_jobs
 from .error_codes import err_msg
 from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler, CorrectionInputHandler
 from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP, CUSIG_SIG_COMBINE_BACKPROP
-from .dtypes import CPSIG_PREFIX_SUFFIX_BACKPROP_SPLIT, CUSIG_PREFIX_SUFFIX_BACKPROP_SPLIT
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
-from .sig import _auto_sig_method, _check_sig_method
+from .sig import _check_sig_method
 
 def sig_combine_backprop(
         deriv : Union[np.ndarray, torch.Tensor],
@@ -224,15 +223,12 @@ def sig_backprop(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
-    split_a = _check_sig_method(method, True, ps_split, degree)
+    method_code, split_a = _check_sig_method(method, True, ps_split, degree)
     check_n_jobs(n_jobs)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, path_data, degree)
-    if method == "auto":
-        method = None if time_aug or lead_lag or correction_data.length else _auto_sig_method(
-            path_data.path.shape, path_data.dtype, path_data.device, degree, backward=True)
-    if method is not None and correction_data.length:
+    if method == "ps" and correction_data.length:
         raise ValueError("Prefix-suffix methods do not support non-empty corrections")
     scalar_term = _infer_scalar_term(sig, path_data.data_dimension, degree, time_aug=time_aug, lead_lag=lead_lag)
     sig_len = sig_length(path_data.dimension, degree, scalar_term=scalar_term)
@@ -242,7 +238,7 @@ def sig_backprop(
         raise ValueError("path, sig and sig_derivs must all be numpy arrays or torch tensors")
     if path_data.dtype != sig_data.dtype:
         raise ValueError("path, sig and sig_derivs must have the same dtype")
-    if method is not None and isinstance(path, torch.Tensor) and any(s.device != path.device for s in sig_data.sig):
+    if isinstance(path, torch.Tensor) and any(s.device != path.device for s in sig_data.sig):
         raise ValueError("path, sig and sig_derivs must be on the same device")
 
     result = PathOutputHandler(path_data.data_length, path_data.data_dimension, path_data)
@@ -253,33 +249,24 @@ def sig_backprop(
     if path_data.batch_shape != sig_data.batch_shape:
         raise ValueError("path, sig and sig_derivs must have the same batch shape")
 
-    if method is not None:
-        fn = (CPSIG_PREFIX_SUFFIX_BACKPROP_SPLIT if path_data.device == "cpu" else CUSIG_PREFIX_SUFFIX_BACKPROP_SPLIT)[path_data.dtype]
-        args = (path_data.data_ptr, result.data_ptr, sig_data.sig_ptr[1],
-                path_data.batch_size, path_data.data_dimension, path_data.data_length,
-                degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term)
-        if path_data.device == "cpu":
-            err_code = fn(*args, n_jobs, split_a)
-        else:
-            with torch.cuda.device(path_data.path.device):
-                stream = torch.cuda.current_stream(path_data.path.device).cuda_stream
-                err_code = fn(*args, stream, split_a)
-    elif path_data.device == "cpu":
+    if path_data.device == "cpu":
         err_code = CPSIG_SIG_BACKPROP[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
             sig_data.sig_ptr[1], sig_data.sig_ptr[0],
             path_data.batch_size, path_data.data_dimension, path_data.data_length,
             degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term, n_jobs,
             correction_data.data_ptr, correction_data.length,
-            correction_data.batch_stride, correction_data.segment_stride)
+            correction_data.batch_stride, correction_data.segment_stride, method_code, split_a)
     else:
-        err_code = CUSIG_SIG_BACKPROP[path_data.dtype](
-            path_data.data_ptr, result.data_ptr,
-            sig_data.sig_ptr[1], sig_data.sig_ptr[0],
-            path_data.batch_size, path_data.data_dimension, path_data.data_length,
-            degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term,
-            correction_data.data_ptr, correction_data.length,
-            correction_data.batch_stride, correction_data.segment_stride)
+        with torch.cuda.device(path_data.path.device):
+            stream = torch.cuda.current_stream(path_data.path.device).cuda_stream
+            err_code = CUSIG_SIG_BACKPROP[path_data.dtype](
+                path_data.data_ptr, result.data_ptr,
+                sig_data.sig_ptr[1], sig_data.sig_ptr[0],
+                path_data.batch_size, path_data.data_dimension, path_data.data_length,
+                degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term,
+                correction_data.data_ptr, correction_data.length,
+                correction_data.batch_stride, correction_data.segment_stride, method_code, split_a, stream)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig_backprop: "

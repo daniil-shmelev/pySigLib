@@ -1,6 +1,11 @@
 Sig functions
 ==============
 
+For both passes, set ``method`` to 0 for the standard algorithm, 1 for
+prefix-suffix, or 2 for automatic selection. With method 1, set ``split_a``
+to the desired prefix length from 1 to ``degree``, or pass zero to select
+the split automatically. For all other methods, pass zero for ``split_a``.
+
 signature
 ----------
 
@@ -10,18 +15,10 @@ signature
 sig_backprop
 -------------
 
+With explicit prefix-suffix (``method=1``), the backward pass recomputes its
+states from the path. The caller can pass ``nullptr`` for ``sig`` in this case.
+
 .. doxygengroup:: sig_backprop_functions
-   :content-only:
-
-Prefix-suffix signatures
-------------------------
-
-The forward functions write the truncated signature to ``out``. The backward
-functions take signature derivatives in ``deriv`` and write path derivatives
-to ``out``. The split variants take the optional choice as a prefix length
-``split_a`` from 1 to ``degree``. Pass zero for automatic selection.
-
-.. doxygengroup:: prefix_suffix_functions
    :content-only:
 
 linear_sig

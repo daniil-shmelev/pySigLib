@@ -33,6 +33,16 @@ TEST(PrefixSuffix, CheckedSizes) {
     EXPECT_EQ(prefix_suffix::Layout(1, 65536).offset.back(), 65537);
 }
 
+TEST(PrefixSuffix, InvalidSignatureMethod) {
+    float path[4]{}, sig[7]{};
+    EXPECT_EQ(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, true, 1,
+        nullptr, 0, 0, 0, 3), 2);
+    EXPECT_EQ(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, true, 1,
+        nullptr, 0, 0, 0, 2, 1), 2);
+    EXPECT_EQ(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, true, 1,
+        nullptr, 0, 0, 0, 1, 3), 2);
+}
+
 TEST(PrefixSuffix, EndpointConcurrency) {
     using prefix_suffix_endpoint::select_cpu_block;
     const prefix_suffix::Layout cubic(129, 3), quadratic(24, 2);
@@ -60,8 +70,8 @@ TEST(PrefixSuffix, EndpointRespectsSchedulerLimits) {
         path[i] = float(int((i * 37 + i / dimension) % 103) - 51) / 79;
     std::vector<float> expected(prefix_suffix::Layout(dimension, 3).offset.back() - 1), actual(expected.size());
     auto run = [&](int jobs, std::vector<float>& output) {
-        return signature_prefix_suffix_f(path.data(), output.data(), 1, dimension, points, 3,
-            false, false, 1.f, false, jobs);
+        return signature_f(path.data(), output.data(), 1, dimension, points, 3,
+            false, false, 1.f, true, false, jobs, nullptr, 0, 0, 0, 1);
     };
     ASSERT_EQ(run(1, expected), 0);
     auto check_serial_split = [&] {
@@ -79,9 +89,9 @@ TEST(PrefixSuffix, NativeForward) {
     const double path[] = {0, 0, 0.2, -0.1, 0.1, 0.3, -0.2, 0.1};
     std::vector<double> expected(126), result(126);
     ASSERT_EQ(signature_d(path, expected.data(), 1, 2, 4, 6, false, false, 1., true, false, 1), 0);
-    ASSERT_EQ(signature_prefix_suffix_d(path, result.data(), 1, 2, 4, 6, false, false, 1., false, 2), 0);
+    ASSERT_EQ(signature_d(path, result.data(), 1, 2, 4, 6, false, false, 1., true, false, 2, nullptr, 0, 0, 0, 1), 0);
     for (size_t i = 0; i < result.size(); ++i) EXPECT_NEAR(result[i], expected[i], 1e-12);
-    EXPECT_NE(signature_prefix_suffix_d(path, result.data(), 1, 2, 4, 6, false, false, 1., false, 0), 0);
+    EXPECT_NE(signature_d(path, result.data(), 1, 2, 4, 6, false, false, 1., true, false, 0, nullptr, 0, 0, 0, 1), 0);
 }
 
 TEST(PrefixSuffix, NativeDirectLowDepth) {
@@ -92,8 +102,8 @@ TEST(PrefixSuffix, NativeDirectLowDepth) {
             for (uint64_t x = 0; x < d; ++x)
                 path[i * d + x] = double(int((i * 5 + x * 3) % 17) - 8) / 32;
         ASSERT_EQ(signature_d(path.data(), expected.data(), 1, d, length, degree, false, false, 1., true, true, 1), 0);
-        ASSERT_EQ(signature_prefix_suffix_d(path.data(), actual.data(), 1, d, length, degree,
-            false, false, 1., true, 3), 0);
+        ASSERT_EQ(signature_d(path.data(), actual.data(), 1, d, length, degree,
+            false, false, 1., true, true, 3, nullptr, 0, 0, 0, 1), 0);
         for (size_t i = 0; i < actual.size(); ++i) EXPECT_NEAR(actual[i], expected[i], 1e-12);
     }
 }
@@ -235,8 +245,8 @@ TEST(PrefixSuffix, NativeBackprop) {
                 time_aug, lead_lag, 0.7, true, scalar, 2), 0);
             ASSERT_EQ(sig_backprop_d(path.data(), expected.data(), deriv.data(), sig.data(), batch,
                 dimension, length, degree, time_aug, lead_lag, 0.7, scalar, 2), 0);
-            ASSERT_EQ(signature_prefix_suffix_backprop_d(path.data(), actual.data(), deriv.data(), batch,
-                dimension, length, degree, time_aug, lead_lag, 0.7, scalar, 2), 0) << cpsig_last_error_message();
+            ASSERT_EQ(sig_backprop_d(path.data(), actual.data(), deriv.data(), nullptr, batch,
+                dimension, length, degree, time_aug, lead_lag, 0.7, scalar, 2, nullptr, 0, 0, 0, 1), 0) << cpsig_last_error_message();
             for (uint64_t x = 0; x < path.size(); ++x)
                 EXPECT_NEAR(actual[x], expected[x], 1e-10) << dimension << "," << degree << "," << time_aug << "," << lead_lag;
         }
@@ -247,8 +257,8 @@ TEST(PrefixSuffix, BackpropFiniteDifference) {
     std::vector<double> path(length * d), sig(size), deriv(size), actual(path.size());
     for (uint64_t x = 0; x < path.size(); ++x) path[x] = double(int((x * 7) % 19) - 9) / 16;
     for (uint64_t x = 0; x < size; ++x) deriv[x] = double(int(x % 11) - 5) / 8;
-    ASSERT_EQ(signature_prefix_suffix_backprop_d(path.data(), actual.data(), deriv.data(), 1, d, length,
-        degree, false, false, 1., true, 3), 0);
+    ASSERT_EQ(sig_backprop_d(path.data(), actual.data(), deriv.data(), nullptr, 1, d, length,
+        degree, false, false, 1., true, 3, nullptr, 0, 0, 0, 1), 0);
     for (uint64_t x = 0; x < path.size(); ++x) {
         const double original = path[x], epsilon = 1e-5;
         long double values[2]{};
