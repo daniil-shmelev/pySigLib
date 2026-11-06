@@ -90,6 +90,7 @@ def test_automatic_prefix_suffix_dispatch(device, dtype, dimension):
     actual = pysiglib.sig(path, 3, method="ps", n_jobs=20)
     grad = pysiglib.sig_backprop(path, actual, seeds, 3, method="ps", n_jobs=20)
     tolerance = 2e-5 if dtype == torch.float32 else 2e-11
+    torch.testing.assert_close(expected, pysiglib.sig(path, 3), atol=tolerance, rtol=tolerance)
     torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
     torch.testing.assert_close(grad, gradient, atol=tolerance, rtol=tolerance)
 

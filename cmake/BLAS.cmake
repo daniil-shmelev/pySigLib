@@ -57,6 +57,15 @@ ExternalProject_Add(pysiglib_openblas_build
     INSTALL_COMMAND "${_blas_cmake}" --install <BINARY_DIR>
     BUILD_BYPRODUCTS "${_blas_library}"
 )
+if(WIN32)
+    ExternalProject_Add_Step(pysiglib_openblas_build patch_windows_gemm
+        COMMAND "${CMAKE_COMMAND}" "-DOPENBLAS_SOURCE_DIR=<SOURCE_DIR>" -P "${CMAKE_CURRENT_LIST_DIR}/PatchOpenBLAS.cmake"
+        DEPENDS "${CMAKE_CURRENT_LIST_DIR}/PatchOpenBLAS.cmake"
+        DEPENDEES patch
+        DEPENDERS configure
+        INDEPENDENT TRUE
+    )
+endif()
 add_library(pysiglib_openblas STATIC IMPORTED GLOBAL)
 set_target_properties(pysiglib_openblas PROPERTIES IMPORTED_LOCATION "${_blas_library}"
     INTERFACE_INCLUDE_DIRECTORIES "${_blas_install}/include/openblas")

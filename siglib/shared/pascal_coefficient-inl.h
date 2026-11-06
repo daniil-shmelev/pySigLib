@@ -58,7 +58,7 @@ PASCAL_HD PASCAL_INLINE bool step(typename Ops::V* u, const typename Ops::V* a, 
         if (Last || tape) q = u[m - 1];
         uint64_t k = 0;
         for (uint64_t s = 1; s < m; ++s) {
-            for (uint64_t j = m - 1; j >= s; --j) {
+            for (uint64_t j = m; j-- > s;) {
                 if (tape) tape[k++] = u[j - 1];
                 u[j] = Ops::madd(a[j], u[j - 1], u[j]);
             }
