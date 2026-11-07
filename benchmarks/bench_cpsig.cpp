@@ -325,38 +325,56 @@ BENCHMARK(BM_sig_join_backprop)->Unit(benchmark::kMicrosecond);
 // Sig coef / backprop
 // =========================================================================
 
-static void BM_sig_coef(benchmark::State& state) {
+static void BM_sig_coef_method(benchmark::State& state, int method) {
     auto path = random_data(8 * 3 * 32, 1);
     std::vector<uint64_t> degrees(32, 4);
     std::vector<uint64_t> multi_idx(32 * 4, 0);
     std::vector<double> out(8 * 32);
     for (auto _ : state) {
-        ::sig_coef_d(path.data(), out.data(), multi_idx.data(),
+        check(::sig_coef_d(path.data(), out.data(), multi_idx.data(),
                      32, degrees.data(), 8, 3, 32,
-                     false, false, 1.0, false);
+                     false, false, 1.0, false, 1, method), "sig_coef_d");
         benchmark::DoNotOptimize(out.data());
     }
 }
+static void BM_sig_coef(benchmark::State& state) {
+    BM_sig_coef_method(state, 0);
+}
 BENCHMARK(BM_sig_coef)->Unit(benchmark::kMicrosecond);
 
-static void BM_sig_coef_backprop(benchmark::State& state) {
+static void BM_sig_coef_pascal(benchmark::State& state) {
+    BM_sig_coef_method(state, 1);
+}
+BENCHMARK(BM_sig_coef_pascal)->Unit(benchmark::kMicrosecond);
+
+static void BM_sig_coef_backprop_method(benchmark::State& state, int method) {
     auto path = random_data(8 * 3 * 32, 1);
     std::vector<uint64_t> degrees(32, 4);
     std::vector<uint64_t> multi_idx(32 * 4, 0);
     const uint64_t prefix_size = 4 * 32;
-    auto coefs = random_data(8 * prefix_size, 2);
+    std::vector<double> coefs(8 * prefix_size);
     auto derivs = random_data(8 * prefix_size, 3);
     std::vector<double> out(8 * 3 * 32);
+    check(::sig_coef_d(path.data(), coefs.data(), multi_idx.data(),
+                      32, degrees.data(), 8, 3, 32,
+                      false, false, 1.0, true, 1, method), "sig_coef_d");
     for (auto _ : state) {
-        auto derivs_copy = derivs;
-        ::sig_coef_backprop_d(path.data(), out.data(), coefs.data(),
-                              derivs_copy.data(), multi_idx.data(),
+        check(::sig_coef_backprop_d(path.data(), out.data(), coefs.data(),
+                              derivs.data(), multi_idx.data(),
                               32, degrees.data(), 8, 3, 32,
-                              false, false, 1.0);
+                              false, false, 1.0, 1, method), "sig_coef_backprop_d");
         benchmark::DoNotOptimize(out.data());
     }
 }
+static void BM_sig_coef_backprop(benchmark::State& state) {
+    BM_sig_coef_backprop_method(state, 0);
+}
 BENCHMARK(BM_sig_coef_backprop)->Unit(benchmark::kMicrosecond);
+
+static void BM_sig_coef_backprop_pascal(benchmark::State& state) {
+    BM_sig_coef_backprop_method(state, 1);
+}
+BENCHMARK(BM_sig_coef_backprop_pascal)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Sig to log sig / backprop (method 0 = expanded)
