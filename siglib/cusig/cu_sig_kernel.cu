@@ -78,23 +78,15 @@ template<typename T> __device__ inline constexpr T k_twelfth() { return static_c
 template<typename T> __device__ inline constexpr T k_sixth()   { return static_cast<T>(1.0 /  6.0); }
 
 template<typename T>
-inline __device__ void get_a_b(T& a, T& b, const T* gram, uint64_t idx, T dyadic_frac) {
-	const T gram_val = gram[idx] * dyadic_frac;
-	const T gram_val_2 = gram_val * gram_val * k_twelfth<T>();
-	a = static_cast<T>(1.) + static_cast<T>(0.5) * gram_val + gram_val_2;
-	b = static_cast<T>(1.) - gram_val_2;
-}
-
-template<typename T>
-inline __device__ void get_a(T& a, const T* gram, uint64_t idx, T dyadic_frac) {
+inline __device__ void get_a_minus_one(T& a, const T* gram, uint64_t idx, T dyadic_frac) {
 	T gram_val = gram[idx] * dyadic_frac;
-	a = static_cast<T>(1.) + gram_val * (0.5 + gram_val * k_twelfth<T>());
+	a = gram_val * (static_cast<T>(0.5) + gram_val * k_twelfth<T>());
 }
 
 template<typename T>
-inline __device__ void get_b(T& b, const T* gram, uint64_t idx, T dyadic_frac) {
+inline __device__ void get_one_minus_b(T& b, const T* gram, uint64_t idx, T dyadic_frac) {
 	const T gram_val = gram[idx] * dyadic_frac;
-	b = static_cast<T>(1.) - gram_val * gram_val * k_twelfth<T>();
+	b = gram_val * gram_val * k_twelfth<T>();
 }
 
 template<typename T>
@@ -118,10 +110,10 @@ inline __device__ T gram_val(const T* gram, uint64_t ii, uint64_t jj, T dyadic_f
 }
 
 template<typename T>
-inline __device__ T pde_stencil(T prev_j, T prev_jm1, T pprev_jm1, T deriv) {
+inline __device__ T pde_stencil(T& horizontal, T north, T west, T northwest, T deriv) {
 	const T deriv2 = deriv * deriv * k_twelfth<T>();
-	return (prev_j + prev_jm1) * (static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2)
-		- pprev_jm1 * (static_cast<T>(1.) - deriv2);
+	horizontal += (north + west) * (static_cast<T>(0.5) * deriv + deriv2) + northwest * deriv2;
+	return west + horizontal;
 }
 
 template<typename T, bool order> //order is True if dyadic_length_2 <= dyadic_length_1
@@ -149,6 +141,7 @@ __device__ void goursat_pde_32(
 	int prev_prev_diag_idx = 0;
 	int prev_diag_idx = 33;
 	int next_diag_idx = 66;
+	T horizontal = 0;
 
 	if (thread_id == 0) {
 		diagonals[prev_prev_diag_idx] = initial_condition[0];
@@ -165,9 +158,9 @@ __device__ void goursat_pde_32(
 		if (num_threads + 1 > q) endj = q;
 		else endj = num_threads + 1;
 
-		const uint64_t j = startj + thread_id;
+		const uint64_t j = 1 + thread_id;
 
-		if (j < endj) {
+		if (startj <= j && j < endj) {
 
 			// Make sure correct initial condition is filled in for first thread
 			if (thread_id == 0 && q < ord_dyadic_length_1) {
@@ -179,7 +172,7 @@ __device__ void goursat_pde_32(
 			const uint64_t jj = ((j + iteration * 32 - 1) >> ord_dyadic_order_2);
 
 			const T deriv = gram_val<T, order>(gram, ii, jj, dyadic_frac, p.length2 - 1);
-			diagonals[next_diag_idx + j] = pde_stencil(
+			diagonals[next_diag_idx + j] = pde_stencil(horizontal,
 				diagonals[prev_diag_idx + j], diagonals[prev_diag_idx + j - 1],
 				diagonals[prev_prev_diag_idx + j - 1], deriv);
 
@@ -253,6 +246,7 @@ __device__ void goursat_pde_32_full(
 ) {
 	const int thread_id = threadIdx.x;
 	T* const pde_grid_ = order ? pde_grid + iteration * 32 : pde_grid + iteration * 32 * p.dyadic_length_2;
+	T horizontal = 0;
 
 	const uint64_t ord_dyadic_order_1 = order ? p.dyadic_order_1 : p.dyadic_order_2;
 	const uint64_t ord_dyadic_order_2 = order ? p.dyadic_order_2 : p.dyadic_order_1;
@@ -268,9 +262,9 @@ __device__ void goursat_pde_32_full(
 		if (num_threads + 1 > q) endj = q;
 		else endj = num_threads + 1;
 
-		const uint64_t j = startj + thread_id;
+		const uint64_t j = 1 + thread_id;
 
-		if (j < endj) {
+		if (startj <= j && j < endj) {
 
 			const uint64_t i = q - j;  // Calculate corresponding i (since i + j = q)
 			const uint64_t ii = ((i - 1) >> ord_dyadic_order_1);
@@ -279,13 +273,13 @@ __device__ void goursat_pde_32_full(
 			const T deriv = gram_val<T, order>(gram, ii, jj, dyadic_frac, p.length2 - 1);
 
 			if constexpr (order) {
-				pde_grid_[i * p.dyadic_length_2 + j] = pde_stencil(
+				pde_grid_[i * p.dyadic_length_2 + j] = pde_stencil(horizontal,
 					pde_grid_[(i - 1) * p.dyadic_length_2 + j], pde_grid_[i * p.dyadic_length_2 + (j - 1)],
 					pde_grid_[(i - 1) * p.dyadic_length_2 + j - 1], deriv);
 			}
 			else {
-				pde_grid_[j * p.dyadic_length_2 + i] = pde_stencil(
-					pde_grid_[(j - 1) * p.dyadic_length_2 + i], pde_grid_[j * p.dyadic_length_2 + (i - 1)],
+				pde_grid_[j * p.dyadic_length_2 + i] = pde_stencil(horizontal,
+					pde_grid_[j * p.dyadic_length_2 + (i - 1)], pde_grid_[(j - 1) * p.dyadic_length_2 + i],
 					pde_grid_[(j - 1) * p.dyadic_length_2 + i - 1], deriv);
 			}
 
@@ -404,7 +398,6 @@ __device__ void goursat_pde_32_deriv(
 	const int num_threads,
 	T dyadic_frac,
 	bool return_grid,
-	uint64_t derivs_length,
 	const SigKernelParams& p
 ) {
 	// General structure of the grids:
@@ -415,7 +408,7 @@ __device__ void goursat_pde_32_deriv(
 	// has the same dimensions as k_grid.
 	// The resulting grid is what is traversed by 'diagonals' below.
 	//
-	// The grids for A, B, dA and dB are flipped and padded similarly, such that
+	// The grids for A-1, 1-B, dA and dB are flipped and padded similarly, such that
 	// the value at index [1,1] is the value at [-1,-1] in the original grids.
 	// We will only need one diagonal for A and one for B, containing the values
 	// needed to update the leading diagonal of dF / dk. For dA and dB, we don't
@@ -444,34 +437,21 @@ __device__ void goursat_pde_32_deriv(
 	for (int i = 0; i < 3; ++i)
 		diagonals[i * 33 + thread_id + 1] = static_cast<T>(0.);
 
-	a[thread_id + 1] = static_cast<T>(1.);
-	b[thread_id + 1] = static_cast<T>(1.);
+	T horizontal = 0;
+	a[thread_id + 1] = 0;
+	b[thread_id + 1] = 0;
 
 	if (thread_id == 0) {
-		a[0] = static_cast<T>(1.);
-		b[0] = static_cast<T>(1.);
+		a[0] = 0;
+		b[0] = 0;
 
 		*prev_prev_diag = initial_condition[0];
 		*prev_diag = initial_condition[1];
-
-		T last_deriv = derivs[derivs_length - 1];
-
-		if (iteration == 0) {
-			*(prev_diag + 1) = last_deriv;
-			T da, db;
-			get_a_b_deriv(da, db, gram, p.gram_length - 1, dyadic_frac);
-
-			//Update dF / dx for first value
-			k21 = k_grid + p.grid_length - 2;
-			k12 = k_grid + p.grid_length - p.dyadic_length_2 - 1; //NOT ord_dyadic_length_2 here, as we are indexing k_grid
-			k11 = k12 - 1;
-			out[p.gram_length - 1] += last_deriv * (((*k21) + (*k12)) * da - *(k11)*db);
-		}
 	}
 
 	__syncwarp(0xFFFFFFFF);
 
-	for (uint64_t q = (iteration == 0) ? 3 : 2; q < p.num_anti_diag + 2; ++q) {
+	for (uint64_t q = 2; q < p.num_anti_diag + 2; ++q) {
 
 		uint64_t startj, endj;
 		int64_t q_ = q - 2;
@@ -493,7 +473,7 @@ __device__ void goursat_pde_32_deriv(
 			const uint64_t jj = (j_rev >> ord_dyadic_order_2);
 			const uint64_t gram_idx = diag_gram_idx<order>(ii, jj, p.length2 - 1);
 
-			get_b(b[j], gram, gram_idx, dyadic_frac);
+			get_one_minus_b(b[j], gram, gram_idx, dyadic_frac);
 		}
 
 		__syncwarp(0xFFFFFFFF);
@@ -521,7 +501,7 @@ __device__ void goursat_pde_32_deriv(
 			const uint64_t jj = (j_rev >> ord_dyadic_order_2);
 			const uint64_t gram_idx = diag_gram_idx<order>(ii, jj, p.length2 - 1);
 
-			get_a(a[j], gram, gram_idx, dyadic_frac);
+			get_a_minus_one(a[j], gram, gram_idx, dyadic_frac);
 		}
 
 		__syncwarp(0xFFFFFFFF);
@@ -533,14 +513,14 @@ __device__ void goursat_pde_32_deriv(
 		startj = ord_dyadic_length_1 > q ? 1 : q - ord_dyadic_length_1 + 1;
 		endj = num_threads + 1 > q ? q : num_threads + 1;
 
-		j = startj + thread_id;
+		j = 1 + thread_id;
 
 		// Make sure initial condition is filled in for first thread
 		if (thread_id == 0 && q < ord_dyadic_length_1) {
 			*(next_diag) = initial_condition[q];
 		}
 
-		if (j < endj) {
+		if (startj <= j && j < endj) {
 			const uint64_t i = q - j;
 			const uint64_t i_rev = ord_dyadic_length_1 - i - 1;
 			const uint64_t j_rev = ord_dyadic_length_2 - j - 1 - iteration * 32;
@@ -552,10 +532,10 @@ __device__ void goursat_pde_32_deriv(
 			T da, db;
 			get_a_b_deriv(da, db, gram, gram_idx, dyadic_frac);
 
-			*(next_diag + j) = *(prev_diag + j - 1) * a[j - 1] + *(prev_diag + j) * a[j] - *(prev_prev_diag + j - 1) * b[j - 1];
-
-			if (return_grid)
-				*(next_diag + j) += *(derivs + idx);
+			const T source = return_grid ? derivs[idx] : (idx == p.grid_length - 1 ? derivs[0] : T(0));
+			const T east = prev_diag[j - 1];
+			horizontal += source + east * a[j - 1] + prev_diag[j] * a[j] + prev_prev_diag[j - 1] * b[j - 1];
+			next_diag[j] = east + horizontal;
 
 			k12 = k_grid + idx - 1;
 			k21 = k_grid + idx - p.dyadic_length_2; //NOT ord_dyadic_length_2 here as we are indexing k_grid
@@ -616,10 +596,10 @@ __global__ void goursat_pde_deriv(
 		const uint64_t remainder = (p.dyadic_length_2 - 1) % 32;
 
 		for (int i = 0; i < num_full_runs; ++i)
-			goursat_pde_32_deriv<T, true>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, i, 32, dyadic_frac, return_grid, derivs_length, p);
+			goursat_pde_32_deriv<T, true>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, i, 32, dyadic_frac, return_grid, p);
 
 		if (remainder)
-			goursat_pde_32_deriv<T, true>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, num_full_runs, remainder, dyadic_frac, return_grid, derivs_length, p);
+			goursat_pde_32_deriv<T, true>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, num_full_runs, remainder, dyadic_frac, return_grid, p);
 	}
 	else {
 		T* const initial_condition_ = initial_condition + blockId * p.dyadic_length_2;
@@ -630,10 +610,10 @@ __global__ void goursat_pde_deriv(
 		const uint64_t remainder = (p.dyadic_length_1 - 1) % 32;
 
 		for (int i = 0; i < num_full_runs; ++i)
-			goursat_pde_32_deriv<T, false>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, i, 32, dyadic_frac, return_grid, derivs_length, p);
+			goursat_pde_32_deriv<T, false>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, i, 32, dyadic_frac, return_grid, p);
 
 		if (remainder)
-			goursat_pde_32_deriv<T, false>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, num_full_runs, remainder, dyadic_frac, return_grid, derivs_length, p);
+			goursat_pde_32_deriv<T, false>(derivs_, k_grid_, out_, initial_condition_, a_initial_condition_, b_initial_condition_, diagonals, a, b, gram_, num_full_runs, remainder, dyadic_frac, return_grid, p);
 	}
 }
 

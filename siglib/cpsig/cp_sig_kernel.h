@@ -51,6 +51,8 @@ inline void validate_sig_kernel_dims_(
  * Forward recurrence (Day/Wazwaz second-order scheme):
  *   K[i+1, j+1] = (K[i, j+1] + K[i+1, j]) * A(d) - K[i, j] * B(d)
  * where d = <dx_i, dy_j> * dyadic_frac,  A(d) = 1 + d/2 + d^2/12,  B(d) = 1 - d^2/12.
+ * We carry the horizontal difference h = K[i, j+1] - K[i, j] down each column.
+ * Its update uses A(d)-1 and 1-B(d), computed directly to retain small terms.
  *
  * Backward recurrence (arXiv:2509.10613):
  *   d[row, col] += d[row, col+1] * A(D_{row-1, col})
@@ -84,6 +86,7 @@ void get_sig_kernel_grid_(
 	auto b_terms_uptr = std::make_unique<T[]>(length2 - 1);
 	T* const a_terms = a_terms_uptr.get();
 	T* const b_terms = b_terms_uptr.get();
+	auto differences = std::make_unique<T[]>(dyadic_length_2 - 1);
 
 	T* k11 = pde_grid;
 	T* k12 = k11 + 1;
@@ -96,16 +99,18 @@ void get_sig_kernel_grid_(
 		for (uint64_t m = 0; m < length2 - 1; ++m) {
 			const T deriv = gram_ptr[m] * dyadic_frac;
 			const T deriv2 = deriv * deriv * twelth;
-			a_terms[m] = static_cast<T>(1.) + static_cast<T>(0.5) * deriv + deriv2;
-			b_terms[m] = static_cast<T>(1.) - deriv2;
+			a_terms[m] = static_cast<T>(0.5) * deriv + deriv2;
+			b_terms[m] = deriv2;
 		}
 
 		for (uint64_t i = 0; i < grid_size_1; ++i, ++k11, ++k12, ++k21, ++k22) {
+			T* h = differences.get();
 			for (uint64_t jj = 0; jj < length2 - 1; ++jj) {
 				const T a = a_terms[jj];
 				const T b = b_terms[jj];
 				for (uint64_t j = 0; j < grid_size_2; ++j) {
-					*(k22++) = (*(k21++) + *(k12++)) * a - *(k11++) * b;
+					*h += (*k21 + *(k12++)) * a + *(k11++) * b;
+					*(k22++) = *(k21++) + *(h++);
 				}
 			}
 		}
@@ -142,6 +147,7 @@ void get_sig_kernel_diag_internal_(
 	const uint64_t gram_stride = length2 - 1;
 
 	const uint64_t diag_len = short_len;
+	auto differences = std::make_unique<T[]>(diag_len);
 	auto diagonals_uptr = std::make_unique<T[]>(diag_len * 3);
 	T* const diagonals = diagonals_uptr.get();
 
@@ -163,6 +169,7 @@ void get_sig_kernel_diag_internal_(
 			};
 			vec_kernel_diag_step(
 				next_diag + startj,
+				differences.get() + startj,
 				prev_diag + startj,
 				prev_diag + startj - 1,
 				prev_prev_diag + startj - 1,
@@ -191,7 +198,7 @@ void get_sig_kernel_diag_(
 	const uint64_t dyadic_length_2 = ((length2 - 1) << dyadic_order_2) + 1;
 	const uint64_t gram_size = (length1 - 1) * (length2 - 1);
 
-	// Pre-compute A and B for every gram cell once.
+	// Pre-compute A-1 and 1-B for every gram cell once.
 	// Each gram cell is reused 2^(do1+do2) times across dyadic sub-cells.
 	const T dyadic_frac = static_cast<T>(1.) / (1ULL << (dyadic_order_1 + dyadic_order_2));
 	static const T twelth = static_cast<T>(1.) / 12;
@@ -203,8 +210,8 @@ void get_sig_kernel_diag_(
 	for (uint64_t idx = 0; idx < gram_size; ++idx) {
 		const T d = gram[idx] * dyadic_frac;
 		const T d2 = d * d * twelth;
-		gram_a[idx] = static_cast<T>(1.) + static_cast<T>(0.5) * d + d2;
-		gram_b[idx] = static_cast<T>(1.) - d2;
+		gram_a[idx] = static_cast<T>(0.5) * d + d2;
+		gram_b[idx] = d2;
 	}
 
 	if (dyadic_length_2 <= dyadic_length_1)
@@ -276,7 +283,7 @@ void get_sig_kernel_backprop_(
 		return (row >> dyadic_order_1) * gram_stride + (col >> dyadic_order_2);
 	};
 
-	// Pre-compute A, B, dA, dB for every gram cell
+	// Pre-compute A-1, 1-B, dA and dB for every gram cell.
 	auto gram_a_uptr = std::make_unique<T[]>(gram_length);
 	auto gram_b_uptr = std::make_unique<T[]>(gram_length);
 	auto gram_da_uptr = std::make_unique<T[]>(gram_length);
@@ -289,8 +296,8 @@ void get_sig_kernel_backprop_(
 	for (uint64_t idx = 0; idx < gram_length; ++idx) {
 		const T gv = gram[idx] * dyadic_frac;
 		const T gv2 = gv * gv * twelth;
-		gram_a[idx] = static_cast<T>(1.) + static_cast<T>(0.5) * gv + gv2;
-		gram_b[idx] = static_cast<T>(1.) - gv2;
+		gram_a[idx] = static_cast<T>(0.5) * gv + gv2;
+		gram_b[idx] = gv2;
 		gram_db[idx] = -gv * sixth * dyadic_frac;
 		gram_da[idx] = static_cast<T>(0.5) * dyadic_frac - gram_db[idx];
 	}
@@ -307,6 +314,8 @@ void get_sig_kernel_backprop_(
 	}
 
 	std::fill(out, out + gram_length, static_cast<T>(0.));
+	if (gram_length == 0) return;
+	auto differences = std::make_unique<T[]>(dl2);
 
 	auto accum_gram_grad = [&](int64_t row, int64_t col) {
 		const uint64_t gi = gram_at(row - 1, col - 1);
@@ -317,26 +326,29 @@ void get_sig_kernel_backprop_(
 	};
 
 	// 1. Seed
+	differences[dl2 - 1] = d_grid[grid_length - 1];
 	accum_gram_grad(dl1 - 1, dl2 - 1);
 
 	// 2. Last row: horizontal propagation only
 	for (int64_t col = dl2 - 2; col >= 1; --col) {
-		d_grid[at(dl1 - 1, col)] += d_grid[at(dl1 - 1, col + 1)] * gram_a[gram_at(dl1 - 2, col)];
+		const T east = d_grid[at(dl1 - 1, col + 1)];
+		differences[col] = d_grid[at(dl1 - 1, col)] + east * gram_a[gram_at(dl1 - 2, col)];
+		d_grid[at(dl1 - 1, col)] = east + differences[col];
 		accum_gram_grad(dl1 - 1, col);
 	}
 
-	// 3. Last column: vertical propagation only
+	// 3. Sweep each row from right to left, starting with the last column.
 	for (int64_t row = dl1 - 2; row >= 1; --row) {
-		d_grid[at(row, dl2 - 1)] += d_grid[at(row + 1, dl2 - 1)] * gram_a[gram_at(row, dl2 - 2)];
+		differences[dl2 - 1] += d_grid[at(row, dl2 - 1)]
+			+ d_grid[at(row + 1, dl2 - 1)] * gram_a[gram_at(row, dl2 - 2)];
+		d_grid[at(row, dl2 - 1)] = differences[dl2 - 1];
 		accum_gram_grad(row, dl2 - 1);
-	}
-
-	// 4. Interior (row-by-row, cache-friendly for large grids)
-	for (int64_t row = dl1 - 2; row >= 1; --row) {
 		for (int64_t col = dl2 - 2; col >= 1; --col) {
-			d_grid[at(row, col)] += d_grid[at(row, col + 1)] * gram_a[gram_at(row - 1, col)]
+			const T east = d_grid[at(row, col + 1)];
+			differences[col] += d_grid[at(row, col)] + east * gram_a[gram_at(row - 1, col)]
 				+ d_grid[at(row + 1, col)] * gram_a[gram_at(row, col - 1)]
-				- d_grid[at(row + 1, col + 1)] * gram_b[gram_at(row, col)];
+				+ d_grid[at(row + 1, col + 1)] * gram_b[gram_at(row, col)];
+			d_grid[at(row, col)] = east + differences[col];
 
 			accum_gram_grad(row, col);
 		}
