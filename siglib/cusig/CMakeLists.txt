@@ -13,6 +13,11 @@ set(PYSIGLIB_CUDA_SPLIT_COMPILE "1" CACHE STRING
 if(NOT PYSIGLIB_CUDA_SPLIT_COMPILE MATCHES "^[1-9][0-9]*$")
     message(FATAL_ERROR "PYSIGLIB_CUDA_SPLIT_COMPILE must be a positive integer")
 endif()
+set(PYSIGLIB_CUDA_COMPILE_THREADS "1" CACHE STRING
+    "Maximum NVCC threads for parallel compilation steps")
+if(NOT PYSIGLIB_CUDA_COMPILE_THREADS MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "PYSIGLIB_CUDA_COMPILE_THREADS must be a positive integer")
+endif()
 set(PYSIGLIB_CUDA_COMPRESS_MODE "default" CACHE STRING
     "CUDA fatbin compression mode")
 set_property(CACHE PYSIGLIB_CUDA_COMPRESS_MODE PROPERTY STRINGS
@@ -133,6 +138,16 @@ if(NOT PYSIGLIB_CUDA_SPLIT_COMPILE STREQUAL "1")
         )
     else()
         message(WARNING "PYSIGLIB_CUDA_SPLIT_COMPILE requires NVIDIA CUDA >= 12.2; ignoring it")
+    endif()
+endif()
+
+if(NOT PYSIGLIB_CUDA_COMPILE_THREADS STREQUAL "1")
+    if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
+        target_compile_options(cusig PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:--threads=${PYSIGLIB_CUDA_COMPILE_THREADS}>
+        )
+    else()
+        message(WARNING "PYSIGLIB_CUDA_COMPILE_THREADS requires NVIDIA CUDA; ignoring it")
     endif()
 endif()
 

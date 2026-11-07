@@ -163,6 +163,17 @@ Build options
 
 The following environment variables control the source build:
 
+.. list-table:: Both wheel builds
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - Variable
+     - Default
+     - Description
+   * - ``CMAKE_BUILD_PARALLEL_LEVEL``
+     - ``4``
+     - Maximum concurrent build jobs. An existing environment value overrides this default.
+
 .. list-table:: Base ``pysiglib`` build
    :header-rows: 1
    :widths: 25 15 60
@@ -194,6 +205,42 @@ The following environment variables control the source build:
      - CUDA toolkit prefix. On Windows ``CUDA_PATH`` (set by the NVIDIA
        installer) is picked up automatically; set this only if CMake cannot
        locate ``nvcc`` on its own.
+   * - ``CUDA_SPLIT_COMPILE``
+     - ``2``
+     - Maximum NVCC optimization threads per compilation. Requires NVIDIA CUDA >= 12.2. Set to ``1`` to disable.
+   * - ``CUDA_COMPILE_THREADS``
+     - ``2``
+     - Maximum NVCC threads for parallel compilation steps, including different GPU architectures. Set to ``1`` to disable.
+
+These defaults apply to local wheel builds, editable installs, and release
+wheels built with cibuildwheel. The build backend requires
+``scikit-build-core >= 1.0`` to set the default parallel build level.
+Standard isolated builds install this dependency automatically.
+
+Windows Visual Studio builds also use ``/MP4`` for ``cpsig``. To change that
+limit, pass ``-Ccmake.define.PYSIGLIB_MSVC_COMPILE_JOBS=2`` to ``pip install``.
+Compiler threads can run inside each build job, so four jobs is not a
+four-thread limit. Reduce the job and compiler thread counts if the build
+uses too much memory.
+
+Native C++ builds
+++++++++++++++++++++++++++++++
+
+The CMake build presets use four jobs on Windows, Linux, and macOS. Override
+this limit with ``cmake --build --preset <name> --parallel <count>``.
+Linux CUDA presets also enable ``PYSIGLIB_CUDA_SPLIT_COMPILE=2``.
+
+The macOS CPU presets use Ninja. With Ninja installed, run these commands
+from the repository root:
+
+.. code-block:: console
+
+    cmake --preset macos-cpu-release
+    cmake --build --preset macos-cpu-release
+    ctest --preset macos-cpu-release
+
+Use ``macos-cpu-debug`` for a Debug build, or the ``macos-cpsig-release``
+build preset to build only the CPU library and its dependencies.
 
 Editable installs
 ++++++++++++++++++++++++++++++

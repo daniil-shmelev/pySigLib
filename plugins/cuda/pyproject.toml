@@ -4,7 +4,7 @@
 # XLA_FFI_API_MINOR=3). If absent at build time, FindJaxlib.cmake sets
 # JAXLIB_FOUND=FALSE and the plugin falls back to cusig-only (no CUDA FFI).
 requires = [
-    "scikit-build-core>=0.10",
+    "scikit-build-core>=1.0",
     "ninja>=1.11",
     "jaxlib>=0.9.1; python_version>='3.11'",
 ]
@@ -68,6 +68,11 @@ PYSIGLIB_CUDA_ARCH = {env = "CUDA_ARCH", default = "native"}
 PYSIGLIB_CUDA_LINEINFO = {env = "CUDA_LINEINFO", default = "OFF"}
 PYSIGLIB_CUDA_COMPRESS_MODE = {env = "CUDA_COMPRESS_MODE", default = "size"}
 PYSIGLIB_CUDA_SEPARABLE_COMPILATION = {env = "CUDA_SEPARABLE_COMPILATION", default = "OFF"}
+PYSIGLIB_CUDA_SPLIT_COMPILE = {env = "CUDA_SPLIT_COMPILE", default = "2"}
+PYSIGLIB_CUDA_COMPILE_THREADS = {env = "CUDA_COMPILE_THREADS", default = "2"}
+
+[tool.scikit-build.env]
+CMAKE_BUILD_PARALLEL_LEVEL = "4"
 
 [tool.cibuildwheel]
 build = "cp311-*"
