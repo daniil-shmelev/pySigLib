@@ -41,6 +41,7 @@
         "PYSIGLIB_TESTS": "ON",
         "PYSIGLIB_CUDA": "ON",
         "PYSIGLIB_CUDA_ARCH": "native",
+        "PYSIGLIB_CUDA_SPLIT_COMPILE": "2",
         "PYSIGLIB_TEST_APP": "OFF"
       }
     },
@@ -95,6 +96,7 @@
         "PYSIGLIB_TESTS": "ON",
         "PYSIGLIB_CUDA": "ON",
         "PYSIGLIB_CUDA_ARCH": "native",
+        "PYSIGLIB_CUDA_SPLIT_COMPILE": "2",
         "PYSIGLIB_TEST_APP": "OFF"
       }
     },
@@ -124,6 +126,38 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "macos-ninja-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "PYSIGLIB_BENCHMARKS": "OFF",
+        "PYSIGLIB_JAX_FFI": "OFF"
+      }
+    },
+    {
+      "name": "macos-cpu-debug",
+      "displayName": "macOS: CPU Tests Debug",
+      "description": "Build cpsig and the CPU GoogleTest target on macOS.",
+      "inherits": "macos-ninja-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PYSIGLIB_TESTS": "ON",
+        "PYSIGLIB_CUDA": "OFF",
+        "PYSIGLIB_TEST_APP": "OFF"
+      }
+    },
+    {
+      "name": "macos-cpu-release",
+      "displayName": "macOS: CPU Tests Release",
+      "description": "Build cpsig and the CPU GoogleTest target on macOS.",
+      "inherits": "macos-cpu-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
@@ -132,6 +166,7 @@
       "displayName": "Windows: cpsig Debug",
       "configurePreset": "windows-cpu",
       "configuration": "Debug",
+      "jobs": 4,
       "targets": [
         "cpsig"
       ]
@@ -141,6 +176,7 @@
       "displayName": "Windows: cpsig Release",
       "configurePreset": "windows-cpu",
       "configuration": "Release",
+      "jobs": 4,
       "targets": [
         "cpsig"
       ]
@@ -150,7 +186,7 @@
       "displayName": "Windows: cusig Debug",
       "configurePreset": "windows-cuda",
       "configuration": "Debug",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "cusig"
       ]
@@ -160,7 +196,7 @@
       "displayName": "Windows: cusig Release",
       "configurePreset": "windows-cuda",
       "configuration": "Release",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "cusig"
       ]
@@ -170,7 +206,7 @@
       "displayName": "Windows: Test App Debug",
       "configurePreset": "windows-cpp-solution",
       "configuration": "Debug",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "test_app"
       ]
@@ -180,7 +216,7 @@
       "displayName": "Windows: Test App Release",
       "configurePreset": "windows-cpp-solution",
       "configuration": "Release",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "test_app"
       ]
@@ -189,27 +225,29 @@
       "name": "windows-cpu-debug",
       "displayName": "Windows: CPU Tests Debug",
       "configurePreset": "windows-cpu",
-      "configuration": "Debug"
+      "configuration": "Debug",
+      "jobs": 4
     },
     {
       "name": "windows-cpu-release",
       "displayName": "Windows: CPU Tests Release",
       "configurePreset": "windows-cpu",
-      "configuration": "Release"
+      "configuration": "Release",
+      "jobs": 4
     },
     {
       "name": "windows-cuda-debug",
       "displayName": "Windows: CPU + CUDA Tests Debug",
       "configurePreset": "windows-cuda",
       "configuration": "Debug",
-      "jobs": 1
+      "jobs": 4
     },
     {
       "name": "windows-cuda-release",
       "displayName": "Windows: CPU + CUDA Tests Release",
       "configurePreset": "windows-cuda",
       "configuration": "Release",
-      "jobs": 1
+      "jobs": 4
     },
     {
       "name": "windows-cpp-solution-debug",
@@ -217,7 +255,7 @@
       "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and test_app.",
       "configurePreset": "windows-cpp-solution",
       "configuration": "Debug",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "pysiglib_cpp_solution"
       ]
@@ -228,7 +266,7 @@
       "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and test_app.",
       "configurePreset": "windows-cpp-solution",
       "configuration": "Release",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "pysiglib_cpp_solution"
       ]
@@ -236,17 +274,20 @@
     {
       "name": "linux-cpu-debug",
       "displayName": "Linux/WSL: CPU Tests Debug",
-      "configurePreset": "linux-cpu-debug"
+      "configurePreset": "linux-cpu-debug",
+      "jobs": 4
     },
     {
       "name": "linux-cpu-release",
       "displayName": "Linux/WSL: CPU Tests Release",
-      "configurePreset": "linux-cpu-release"
+      "configurePreset": "linux-cpu-release",
+      "jobs": 4
     },
     {
       "name": "linux-cpsig-debug",
       "displayName": "Linux/WSL: cpsig Debug",
       "configurePreset": "linux-cpu-debug",
+      "jobs": 4,
       "targets": [
         "cpsig"
       ]
@@ -255,6 +296,7 @@
       "name": "linux-cpsig-release",
       "displayName": "Linux/WSL: cpsig Release",
       "configurePreset": "linux-cpu-release",
+      "jobs": 4,
       "targets": [
         "cpsig"
       ]
@@ -262,17 +304,20 @@
     {
       "name": "linux-cuda-debug",
       "displayName": "Linux/WSL: CPU + CUDA Tests Debug",
-      "configurePreset": "linux-cuda-debug"
+      "configurePreset": "linux-cuda-debug",
+      "jobs": 4
     },
     {
       "name": "linux-cuda-release",
       "displayName": "Linux/WSL: CPU + CUDA Tests Release",
-      "configurePreset": "linux-cuda-release"
+      "configurePreset": "linux-cuda-release",
+      "jobs": 4
     },
     {
       "name": "linux-cusig-debug",
       "displayName": "Linux/WSL: cusig Debug",
       "configurePreset": "linux-cuda-debug",
+      "jobs": 4,
       "targets": [
         "cusig"
       ]
@@ -281,6 +326,7 @@
       "name": "linux-cusig-release",
       "displayName": "Linux/WSL: cusig Release",
       "configurePreset": "linux-cuda-release",
+      "jobs": 4,
       "targets": [
         "cusig"
       ]
@@ -289,6 +335,7 @@
       "name": "linux-test-app-debug",
       "displayName": "Linux/WSL: Test App Debug",
       "configurePreset": "linux-cpp-solution-debug",
+      "jobs": 4,
       "targets": [
         "test_app"
       ]
@@ -297,6 +344,7 @@
       "name": "linux-test-app-release",
       "displayName": "Linux/WSL: Test App Release",
       "configurePreset": "linux-cpp-solution-release",
+      "jobs": 4,
       "targets": [
         "test_app"
       ]
@@ -306,6 +354,7 @@
       "displayName": "Linux/WSL: Full C++ Solution Debug",
       "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and test_app.",
       "configurePreset": "linux-cpp-solution-debug",
+      "jobs": 4,
       "targets": [
         "pysiglib_cpp_solution"
       ]
@@ -315,8 +364,39 @@
       "displayName": "Linux/WSL: Full C++ Solution Release",
       "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and test_app.",
       "configurePreset": "linux-cpp-solution-release",
+      "jobs": 4,
       "targets": [
         "pysiglib_cpp_solution"
+      ]
+    },
+    {
+      "name": "macos-cpu-debug",
+      "displayName": "macOS: CPU Tests Debug",
+      "configurePreset": "macos-cpu-debug",
+      "jobs": 4
+    },
+    {
+      "name": "macos-cpu-release",
+      "displayName": "macOS: CPU Tests Release",
+      "configurePreset": "macos-cpu-release",
+      "jobs": 4
+    },
+    {
+      "name": "macos-cpsig-debug",
+      "displayName": "macOS: cpsig Debug",
+      "configurePreset": "macos-cpu-debug",
+      "jobs": 4,
+      "targets": [
+        "cpsig"
+      ]
+    },
+    {
+      "name": "macos-cpsig-release",
+      "displayName": "macOS: cpsig Release",
+      "configurePreset": "macos-cpu-release",
+      "jobs": 4,
+      "targets": [
+        "cpsig"
       ]
     }
   ],
@@ -385,6 +465,22 @@
       "name": "linux-cuda-release",
       "displayName": "Linux/WSL: CPU + CUDA Tests Release",
       "configurePreset": "linux-cuda-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "macos-cpu-debug",
+      "displayName": "macOS: CPU Tests Debug",
+      "configurePreset": "macos-cpu-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "macos-cpu-release",
+      "displayName": "macOS: CPU Tests Release",
+      "configurePreset": "macos-cpu-release",
       "output": {
         "outputOnFailure": true
       }

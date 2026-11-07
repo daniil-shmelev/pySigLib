@@ -3,7 +3,7 @@
 # headers expose XLA_FFI_API_MINOR=3 (needed by our compiled handlers). Skipped
 # on Python <3.11 (jax dropped 3.10 in 0.7.0); CMake then disables JAX FFI.
 requires = [
-    "scikit-build-core>=0.10",
+    "scikit-build-core>=1.0",
     "ninja>=1.11",
     "jaxlib>=0.9.1; python_version>='3.11'",
 ]
@@ -99,6 +99,9 @@ provider-path = "."
 [tool.scikit-build.cmake.define]
 PYSIGLIB_JAX_FFI = {env = "PYSIGLIB_JAX_FFI", default = "ON"}
 PYSIGLIB_AVX     = {env = "SIGLIB_VEC", default = "ON"}
+
+[tool.scikit-build.env]
+CMAKE_BUILD_PARALLEL_LEVEL = "4"
 
 # cibuildwheel config (release.yml only). `pip install .` ignores this.
 [tool.cibuildwheel]
