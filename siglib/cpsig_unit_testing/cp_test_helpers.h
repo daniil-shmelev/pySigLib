@@ -106,7 +106,7 @@ void check_result(FN f, std::vector<T>& path, std::vector<T>& true_, Args... arg
     }
     else {
         f(path.data(), out.data(), args..., static_cast<const T*>(nullptr),
-            static_cast<uint64_t>(0), static_cast<uint64_t>(0), static_cast<uint64_t>(0));
+            static_cast<uint64_t>(0), static_cast<uint64_t>(0), static_cast<uint64_t>(0), 0, 0);
     }
 
     for (uint64_t i = 0; i < true_.size(); ++i)

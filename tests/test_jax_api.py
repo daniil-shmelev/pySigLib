@@ -198,6 +198,15 @@ def test_jax_sig_rejects_bad_correction_shape():
         jax_api.sig(path, 2, correction=correction)
 
 
+def test_jax_signature_method_validation():
+    path = jnp.zeros((2, 2), dtype=jnp.float64)
+    check_close(jax_api.sig(path, 2, method="horner"), jax_api.sig(path, 2))
+    with pytest.raises(ValueError, match="method"):
+        jax_api.sig(path, 2, method=None)
+    with pytest.raises(ValueError, match="method"):
+        jax_api.log_sig(path, 2, method=0, sig_method=None)
+
+
 # =========================================================================
 # sig_combine - forward
 # =========================================================================
@@ -1093,6 +1102,94 @@ def test_jax_branched_sig_combine_grad_matches_pysiglib(device, jitted, dtype, c
 
     check_close(grad_bsig1_ref, grad_bsig1, double_atol=1e-8)
     check_close(grad_bsig2_ref, grad_bsig2, double_atol=1e-8)
+
+
+@pytest.mark.parametrize("device", _jax_devices())
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("jitted", [False, True])
+@pytest.mark.parametrize("method", [0, 1, 2])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("ps", 1), ("ps", 3), ("auto", None)])
+@pytest.mark.parametrize("time_aug,lead_lag", [(False, False), (True, True)])
+def test_jax_ps_log_sig_forward_and_grad(device, dtype, jitted, method, sig_method, split, time_aug, lead_lag):
+    path = np.random.default_rng(27).normal(scale=0.05, size=(2, 7, 2)).astype(dtype)
+    correction = None if lead_lag else np.array([0.0, 0.001, -0.001, 0.0], dtype=dtype)
+    options = dict(time_aug=time_aug, lead_lag=lead_lag, correction=correction)
+    pysiglib.prepare_log_sig(2, 3, method, time_aug=time_aug, lead_lag=lead_lag, device=device)
+    signature = pysiglib.sig(path, 3, scalar_term=True, **options)
+    projection_options = dict(time_aug=time_aug, lead_lag=lead_lag, method=method)
+    expected = pysiglib.sig_to_log_sig(signature, 2, 3, **projection_options)
+    seeds = np.random.default_rng(28).normal(size=expected.shape).astype(dtype)
+    sig_derivs = pysiglib.sig_to_log_sig_backprop(signature, seeds, 2, 3, **projection_options)
+    reference_grad = pysiglib.sig_backprop(path, signature, sig_derivs, 3, **options)
+    x = _as_jax_array(path, device, dtype)
+    weights = _as_jax_array(seeds, device, dtype)
+
+    def run(p):
+        return jax_api.log_sig(p, 3, method=method, scalar_term=True,
+                               sig_method=sig_method, ps_split=split, **options)
+
+    forward = jax.jit(run) if jitted else run
+    backward = jax.grad(lambda p: jnp.sum(run(p) * weights))
+    if jitted:
+        backward = jax.jit(backward)
+    check_close(forward(x), expected, double_atol=2e-11)
+    check_close(backward(x), reference_grad, double_atol=2e-11)
+
+
+@pytest.mark.parametrize("kind", ["SigStream", "LogSigStream", "SigWindowStream", "LogSigWindowStream"])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("ps", 1), ("ps", 3), ("auto", None)])
+def test_jax_ps_stream_forward_and_grad(kind, sig_method, split):
+    path = np.random.default_rng(29).normal(scale=0.05, size=(2, 11, 2))
+    is_log = kind.startswith("Log")
+    windowed = "Window" in kind
+    if is_log:
+        pysiglib.prepare_log_sig(2, 3, 2)
+        pysiglib.prepare_log_sig(2, 3, 3)
+
+    def run(p, selected):
+        options = dict(sig_method=selected, ps_split=split) if is_log else dict(method=selected, ps_split=split)
+        if selected == "horner":
+            options["ps_split"] = None
+        if windowed:
+            options.update(window_size=5, stride=3)
+        stream = getattr(jax_api, kind)(2, 3, **options)
+        stream.push_batch(p[..., :4, :])
+        stream.push(p[..., 4, :])
+        stream.push_batch(p[..., 5:, :])
+        return stream.sig() if windowed else stream.sig(0, 3)
+
+    expected = run(path, "horner")
+    operation = lambda p: run(p, sig_method)
+    np.testing.assert_allclose(jax.jit(operation)(path), expected, rtol=2e-11, atol=2e-11)
+    np.testing.assert_allclose(jax.vmap(operation)(path), jnp.swapaxes(expected, 0, 1) if windowed else expected,
+                               rtol=2e-11, atol=2e-11)
+    reference_grad = jax.grad(lambda p: run(p, "horner").sum())(path)
+    gradient = jax.jit(jax.grad(lambda p: operation(p).sum()))(path)
+    np.testing.assert_allclose(gradient, reference_grad, rtol=2e-11, atol=2e-11)
+
+
+@pytest.mark.parametrize("kind", ["log_sig", "LogSigStream", "LogSigWindowStream"])
+def test_jax_bch_ignores_signature_options(kind):
+    path = np.random.default_rng(31).normal(scale=0.05, size=(7, 2))
+    pysiglib.prepare_log_sig(2, 3, 3)
+    args = (path, 3) if kind == "log_sig" else (2, 3)
+    options = dict(method=3, sig_method="invalid", ps_split=99)
+    if kind == "LogSigWindowStream":
+        options["window_size"] = 4
+    if kind == "log_sig":
+        expected = jax_api.log_sig(*args, method=3)
+        actual = jax_api.log_sig(*args, **options)
+    else:
+        expected = getattr(jax_api, kind)(*args, method=3,
+                                           **({"window_size": 4} if kind == "LogSigWindowStream" else {}))
+        actual = getattr(jax_api, kind)(*args, **options)
+        expected.push_batch(path)
+        actual.push_batch(path)
+        if kind == "LogSigWindowStream":
+            expected, actual = expected.sig(), actual.sig()
+        else:
+            expected, actual = expected.sig(0, 1), actual.sig(0, 1)
+    np.testing.assert_allclose(actual, expected)
 
 
 @pytest.mark.parametrize("device", _jax_devices())

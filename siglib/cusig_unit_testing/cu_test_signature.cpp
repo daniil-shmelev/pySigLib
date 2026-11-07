@@ -20,26 +20,26 @@
 
 TEST(cudaErrorDetailTest, PreservesDetailAndClearsAfterSuccess) {
 	EXPECT_EQ(2, signature_cuda_d(
-		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true, true,
+		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true,
 		nullptr, 0, 0, 0));
 	EXPECT_STREQ(
 		cusig_last_error_message(),
 		"signature_cuda received path of dimension 0");
 
 	EXPECT_EQ(0, signature_cuda_d(
-		nullptr, nullptr, 0, 1, 0, 0, false, false, 1., true, true,
+		nullptr, nullptr, 0, 1, 0, 0, false, false, 1., true,
 		nullptr, 0, 0, 0));
 	EXPECT_STREQ(cusig_last_error_message(), "");
 }
 
 TEST(cudaErrorDetailTest, IsThreadLocal) {
 	EXPECT_EQ(2, signature_cuda_d(
-		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true, true,
+		nullptr, nullptr, 1, 0, 0, 0, false, false, 1., true,
 		nullptr, 0, 0, 0));
 	std::string child_message;
 	std::thread child([&child_message]() {
 		EXPECT_EQ(2, signature_cuda_d(
-			nullptr, nullptr, 1, 1, 2, 2, false, false, 1., true, true,
+			nullptr, nullptr, 1, 1, 2, 2, false, false, 1., true,
 			nullptr, 1, 0, 0));
 		child_message = cusig_last_error_message();
 	});
@@ -54,21 +54,21 @@ TEST(signatureDoubleTest, TrivialCases) {
     auto f = signature_cuda_d;
     std::vector<double> path;
     std::vector<double> true_sig;
-    EXPECT_EQ(2, f(nullptr, nullptr, (uint64_t)1, 0, 0, 0, false, false, 1., true, true, nullptr, 0, 0, 0));
+    EXPECT_EQ(2, signature_cuda_d(nullptr, nullptr, (uint64_t)1, 0, 0, 0, false, false, 1., true, nullptr, 0, 0, 0));
 
     true_sig.push_back(1.);
-    check_result_typed(f, path, true_sig, (uint64_t)1, 1, 0, 0, false, false, 1., true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, 1, 0, 0, false, false, 1., true);
 
     path.push_back(0.);
-    check_result_typed(f, path, true_sig, (uint64_t)1, 1, 1, 0, false, false, 1., true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, 1, 1, 0, false, false, 1., true);
 
     true_sig.push_back(0.);
-    check_result_typed(f, path, true_sig, (uint64_t)1, 1, 0, 1, false, false, 1., true, true);
-    check_result_typed(f, path, true_sig, (uint64_t)1, 1, 1, 1, false, false, 1., true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, 1, 0, 1, false, false, 1., true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, 1, 1, 1, false, false, 1., true);
 
     path.push_back(1.);
     true_sig[1] = 1.;
-    check_result_typed(f, path, true_sig, (uint64_t)1, 1, 2, 1, false, false, 1., true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, 1, 2, 1, false, false, 1., true);
 }
 
 TEST(signatureDoubleTest, LinearPathTest) {
@@ -83,7 +83,7 @@ TEST(signatureDoubleTest, LinearPathTest) {
     for (uint64_t i = 1; i < dimension + 1; ++i) { true_sig[i] = 1.; }
     for (uint64_t i = dimension + 1; i < level_3_start; ++i) { true_sig[i] = 1 / 2.; }
     for (uint64_t i = level_3_start; i < level_4_start; ++i) { true_sig[i] = 1 / 6.; }
-    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true);
 }
 
 TEST(signatureDoubleTest, LinearPathTest2) {
@@ -98,7 +98,7 @@ TEST(signatureDoubleTest, LinearPathTest2) {
     for (uint64_t i = 1; i < dimension + 1; ++i) { true_sig[i] = 1.; }
     for (uint64_t i = dimension + 1; i < level_3_start; ++i) { true_sig[i] = 1 / 2.; }
     for (uint64_t i = level_3_start; i < level_4_start; ++i) { true_sig[i] = 1 / 6.; }
-    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true);
 }
 
 TEST(signatureDoubleTest, ManualSigTest) {
@@ -106,19 +106,10 @@ TEST(signatureDoubleTest, ManualSigTest) {
     uint64_t dimension = 2, length = 4, degree = 2;
     std::vector<double> path = { 0., 0., 1., 0.5, 4., 0., 0., 1. };
     std::vector<double> true_sig = { 1., 0., 1., 0., 1., -1., 0.5 };
-    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true, true);
-}
-
-TEST(signatureDoubleTest, ManualSigTestDirect) {
-    auto f = signature_cuda_d;
-    uint64_t dimension = 2, length = 4, degree = 2;
-    std::vector<double> path = { 0., 0., 1., 0.5, 4., 0., 0., 1. };
-    std::vector<double> true_sig = { 1., 0., 1., 0., 1., -1., 0.5 };
-    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., false, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1., true);
 }
 
 TEST(signatureDoubleTest, CorrectionSingleSegment) {
-    auto f = signature_cuda_d;
     uint64_t dimension = 1, length = 2, degree = 4;
     std::vector<double> path = { 0., 3. };
     std::vector<double> correction = { 2. };
@@ -136,7 +127,7 @@ TEST(signatureDoubleTest, CorrectionSingleSegment) {
     cudaMemcpy(d_out, out.data(), sizeof(double) * out.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_correction, correction.data(), sizeof(double) * correction.size(), cudaMemcpyHostToDevice);
 
-    int err = f(d_path, d_out, (uint64_t)1, dimension, length, degree, false, false, 1., true, true, d_correction, correction.size(), 0, 0);
+    int err = signature_cuda_d(d_path, d_out, (uint64_t)1, dimension, length, degree, false, false, 1., true, d_correction, correction.size(), 0, 0);
     cudaDeviceSynchronize();
     cudaMemcpy(out.data(), d_out, sizeof(double) * out.size(), cudaMemcpyDeviceToHost);
     cudaFree(d_path);
@@ -150,7 +141,6 @@ TEST(signatureDoubleTest, CorrectionSingleSegment) {
 }
 
 TEST(signatureDoubleTest, CorrectionTimeAug) {
-    auto f = signature_cuda_d;
     uint64_t dimension = 1, length = 2, degree = 2;
     std::vector<double> path = { 0., 3. };
     std::vector<double> correction = { 2. };
@@ -168,7 +158,7 @@ TEST(signatureDoubleTest, CorrectionTimeAug) {
     cudaMemcpy(d_out, out.data(), sizeof(double) * out.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_correction, correction.data(), sizeof(double) * correction.size(), cudaMemcpyHostToDevice);
 
-    int err = f(d_path, d_out, (uint64_t)1, dimension, length, degree, true, false, 1., true, true, d_correction, correction.size(), 0, 0);
+    int err = signature_cuda_d(d_path, d_out, (uint64_t)1, dimension, length, degree, true, false, 1., true, d_correction, correction.size(), 0, 0);
     cudaDeviceSynchronize();
     cudaMemcpy(out.data(), d_out, sizeof(double) * out.size(), cudaMemcpyDeviceToHost);
     cudaFree(d_path);
@@ -188,7 +178,7 @@ TEST(signatureDoubleTest, ManualTimeAugTest) {
     std::vector<double> true_sig = { 1., 9., 4., 40.5, 15.5, 20.5, 8., 121.5, 37.5,
                         64.5, 24.5, 60., 13., 34.5, 10. + 2. / 3. };
     double end_time = length - 1.;
-    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true);
 }
 
 TEST(signatureDoubleTest, ManualLeadLagTest) {
@@ -196,7 +186,7 @@ TEST(signatureDoubleTest, ManualLeadLagTest) {
     uint64_t dimension = 1, length = 5, degree = 3;
     std::vector<double> path = { 0., 5., 2., 4., 9. };
     std::vector<double> true_sig = { 1., 9., 9., 40.5, 9., 72., 40.5, 121.5, 6.5, 68., -8.5, 290., 98., 275., 121.5 };
-    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1., true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1., true);
 }
 
 TEST(signatureFloatTest, ManualSigTest2) {
@@ -216,27 +206,7 @@ TEST(signatureFloatTest, ManualSigTest2) {
         -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
         -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
     };
-    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, true, true);
-}
-
-TEST(signatureFloatTest, ManualSigTest2Direct) {
-    auto f = signature_cuda_f;
-    uint64_t dimension = 3, length = 4, degree = 3;
-    std::vector<float> path = {
-         9.f, 5.f, 8.f, 5.f, 3.f, 0.f, 0.f, 2.f, 6.f, 4.f, 0.f, 2.f
-    };
-
-    std::vector<float> true_sig = {
-         1.f, -5.f, -5.f, -6.f, 12.5f, 24.5f,
-         5.f, 0.5f, 12.5f, 9.f, 25.f,
-         21.f, 18.f, -20.5f - 1.f / 3.f, -77.5f - 1.f / 3.f, 11.f,
-         33.f + 1.f / 6.f, -45.5f - 1.f / 3.f, -42.f - 1.f / 3.f, -47.f, 5.f + 2.f / 3.f,
-        -18.f, -17.5f - 1.f / 3.f, -30.5f - 1.f / 3.f, 11.f + 2.f / 3.f, 14.f + 1.f / 6.f,
-        -20.5f - 1.f / 3.f, -19.f, -14.f - 1.f / 3.f, -7.f, -16.f - 2.f / 3.f,
-        -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
-        -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
-    };
-    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, false, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, false, 1.f, true);
 }
 
 TEST(signatureFloatTest, ManualTimeAugTest) {
@@ -246,7 +216,7 @@ TEST(signatureFloatTest, ManualTimeAugTest) {
     std::vector<float> true_sig = { 1.f, 9.f, 4.f, 40.5f, 15.5f, 20.5f, 8.f, 121.5f, 37.5f,
                         64.5f, 24.5f, 60.f, 13.f, 34.5f, 10.f + 2.f / 3.f };
     float end_time = static_cast<float>(length - 1);
-    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, true, false, end_time, true);
 }
 
 TEST(signatureFloatTest, ManualLeadLagTest) {
@@ -254,7 +224,7 @@ TEST(signatureFloatTest, ManualLeadLagTest) {
     uint64_t dimension = 1, length = 5, degree = 3;
     std::vector<float> path = { 0.f, 5.f, 2.f, 4.f, 9.f };
     std::vector<float> true_sig = { 1.f, 9.f, 9.f, 40.5f, 9.f, 72.f, 40.5f, 121.5f, 6.5f, 68.f, -8.5f, 290.f, 98.f, 275.f, 121.5f };
-    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1.f, true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)1, dimension, length, degree, false, true, 1.f, true);
 }
 
 TEST(batchSignatureTest, BatchSigTest) {
@@ -268,21 +238,7 @@ TEST(batchSignatureTest, BatchSigTest) {
         1., 1., 1., 0.5, 0.5, 0.5, 0.5,
         1., 0., 1., 0., 1., -1., 0.5 };
 
-    check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., true, true);
-}
-
-TEST(batchSignatureTest, BatchSigTestDirect) {
-    auto f = signature_cuda_d;
-    uint64_t dimension = 2, length = 4, degree = 2;
-    std::vector<double> path = { 0., 0., 0.25, 0.25, 0.5, 0.5, 1., 1.,
-        0., 0., 0.4, 0.4, 0.6, 0.6, 1., 1.,
-        0., 0., 1., 0.5, 4., 0., 0., 1. };
-
-    std::vector<double> true_sig = { 1., 1., 1., 0.5, 0.5, 0.5, 0.5,
-        1., 1., 1., 0.5, 0.5, 0.5, 0.5,
-        1., 0., 1., 0., 1., -1., 0.5 };
-
-    check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., false, true);
+    check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., true);
 }
 
 TEST(batchSignatureTest, BatchSigTestDegree1) {
@@ -296,11 +252,10 @@ TEST(batchSignatureTest, BatchSigTestDegree1) {
         1., 1., 1.,
         1., 0., 1. };
 
-    check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)3, dimension, length, degree, false, false, 1., true);
 }
 
 TEST(batchSignatureTest, BigLeadLagTest) {
-    auto f = signature_cuda_d;
     uint64_t dimension = 2, length = 10, degree = 2, batch = 1;
     std::vector<double> path;
     path.resize(batch * length * dimension, 0.);
@@ -314,7 +269,7 @@ TEST(batchSignatureTest, BigLeadLagTest) {
     cudaMalloc(&d_out, sizeof(double) * out.size());
     cudaMemcpy(d_path, path.data(), sizeof(double) * path.size(), cudaMemcpyHostToDevice);
 
-    int err = f(d_path, d_out, batch, dimension, length, degree, false, true, 1., true, true, nullptr, 0, 0, 0);
+    int err = signature_cuda_d(d_path, d_out, batch, dimension, length, degree, false, true, 1., true, nullptr, 0, 0, 0);
 
     cudaMemcpy(out.data(), d_out, sizeof(double) * out.size(), cudaMemcpyDeviceToHost);
     cudaFree(d_path);
@@ -349,7 +304,7 @@ TEST(batchSignatureTest, BatchSigTestFloat) {
         -39.f, -110.f - 1.f / 3.f, 6.f, -1.f / 3.f, -49.f,
         -20.f - 2.f / 3.f, -78.f, -52.f - 2.f / 3.f, -36.f
     };
-    check_result_typed(f, path, true_sig, (uint64_t)2, dimension, length, degree, false, false, 1.f, true, true);
+    check_result_typed(f, path, true_sig, (uint64_t)2, dimension, length, degree, false, false, 1.f, true);
 }
 
 TEST(sigCombineDoubleTest, SigCombineTestLinear) {

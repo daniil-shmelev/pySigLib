@@ -338,7 +338,9 @@ def log_sig(
         method : int = 1,
         scalar_term : bool = False,
         correction = None,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        sig_method = "auto",
+        ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the log signature using the specified method. For details,
@@ -381,6 +383,15 @@ def log_sig(
         are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example
         if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
+    :param sig_method: Signature algorithm for methods ``0``, ``1`` and ``2``.
+        ``"auto"`` (default) selects automatically, ``"horner"`` uses Horner, and
+        ``"ps"`` uses prefix-suffix factorisation. Ignored for method ``3``.
+    :type sig_method: str
+    :param ps_split: Optional maximum degree of a prefix in the prefix-suffix
+        algorithm, from 1 to ``degree``. The corresponding suffix has maximum
+        degree ``degree - ps_split``. Requires ``sig_method="ps"``.
+        ``None`` selects the split automatically. Ignored for method ``3``.
+    :type ps_split: int | None
     :return: Log signature or a batch of log signatures.
     :rtype: numpy.ndarray | torch.Tensor
 
@@ -455,6 +466,7 @@ def log_sig(
 
     # Methods 0-2: compute sig then project to log sig.
     sig_ = sig(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, correction=correction, n_jobs=n_jobs)
+               end_time=end_time, correction=correction, n_jobs=n_jobs,
+               method=sig_method, ps_split=ps_split)
     dimension = path.shape[-1]
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug, lead_lag=lead_lag, method=method, n_jobs=n_jobs)

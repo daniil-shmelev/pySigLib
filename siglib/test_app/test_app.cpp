@@ -38,14 +38,17 @@ int main(int argc, char* argv[])
         dir_path = argv[1];
     }
 
+    if (argc >= 3 && std::string(argv[2]) == "--coefficient")
+        return run_coefficient_profile(argc, argv, dir_path);
+
     load_cpsig(dir_path);
     get_cpsig_fn_ptrs();
 
     load_cusig(dir_path);
     get_cusig_fn_ptrs();
 
-    //example_batch_signature_d(1000, 6, 100, 6, false, false, true, -1, 10);
-    //example_batch_signature_cuda_d(1000, 6, 100, 6, false, false, true, 10); // Min run time: 156ms
+    //example_batch_signature_d(1000, 6, 100, 6, false, false, -1, 10);
+    //example_batch_signature_cuda_d(1000, 6, 100, 6, false, false, 10); // Min run time: 156ms
 
     //// ---- Forward pass benchmark: single path, dim=5, len=1000, deg=5 ----
     //example_signature_d(5, 1000, 5);

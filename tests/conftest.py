@@ -14,11 +14,58 @@
 # =========================================================================
 
 import os
+import ctypes as ct
+from contextlib import contextmanager
 import functools
 import numpy as np
 import torch
 import pytest
 import pysiglib
+
+def check_sig_methods(path, degree, variants, *, scalar_term=False, backward=True, tol=None, **options):
+    expected = pysiglib.sig(path, degree, scalar_term=scalar_term, method="horner", **options)
+    if tol is None:
+        tol = 2e-5 if path.dtype == torch.float32 else 2e-11
+    if backward:
+        rng = torch.Generator(device=path.device).manual_seed(713)
+        seeds = torch.randn(expected.shape, generator=rng, dtype=path.dtype, device=path.device)
+        reference = pysiglib.sig_backprop(path, expected, seeds, degree, method="horner", **options)
+    for method, split in variants:
+        args = dict(method=method, ps_split=split, **options)
+        actual = pysiglib.sig(path, degree, scalar_term=scalar_term, **args)
+        torch.testing.assert_close(actual, expected, atol=tol, rtol=tol)
+        if backward:
+            grad = pysiglib.sig_backprop(path, actual, seeds, degree, **args)
+            torch.testing.assert_close(grad, reference, atol=tol, rtol=tol)
+
+
+def highway_targets():
+    from pysiglib.load_siglib import CPSIG
+    if not hasattr(CPSIG, "cpsig_test_supported_targets"):
+        pytest.skip("Target forcing requires a native test build")
+    CPSIG.cpsig_test_supported_targets.restype = ct.c_int64
+    CPSIG.cpsig_test_target_name.argtypes = [ct.c_int64]
+    CPSIG.cpsig_test_target_name.restype = ct.c_char_p
+    targets = {}
+    remaining = CPSIG.cpsig_test_supported_targets()
+    while remaining:
+        target = remaining & -remaining
+        targets[CPSIG.cpsig_test_target_name(target).decode()] = target
+        remaining &= ~target
+    assert targets
+    return targets
+
+
+@contextmanager
+def force_highway_target(target):
+    from pysiglib.load_siglib import CPSIG
+    CPSIG.cpsig_test_set_target.argtypes = [ct.c_int64]
+    assert CPSIG.cpsig_test_set_target(target) == 0
+    try:
+        yield
+    finally:
+        assert CPSIG.cpsig_test_set_target(0) == 0
+
 
 REQUIRE_CUDA = os.environ.get("PYSIGLIB_REQUIRE_CUDA") == "1"
 CUDA_AVAILABLE = pysiglib.BUILT_WITH_CUDA and torch.cuda.is_available()

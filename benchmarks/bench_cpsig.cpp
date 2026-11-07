@@ -15,6 +15,7 @@
 
 #include <benchmark/benchmark.h>
 #include "cpsig.h"
+#include "signature_method.h"
 
 #include <cstdint>
 #include <random>
@@ -37,10 +38,11 @@ static void check(int rc, const char* fn) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-static std::vector<double> random_data(uint64_t n, unsigned seed = 42) {
+template<typename T = double>
+static std::vector<T> random_data(uint64_t n, unsigned seed = 42) {
     std::mt19937_64 rng(seed);
-    std::uniform_real_distribution<double> dist(-1.0, 1.0);
-    std::vector<double> v(n);
+    std::uniform_real_distribution<T> dist(-1, 1);
+    std::vector<T> v(n);
     for (auto& x : v) x = dist(rng);
     return v;
 }
@@ -168,26 +170,15 @@ static void BM_sig_correction(benchmark::State& state) {
     std::vector<double> out(4 * slen);
     check(::signature_d(
         path.data(), out.data(), 4, 4, 32, 5, false, false, 1.,
-        true, true, 1, correction.data(), correction.size()), "signature_d");
+        true, 1, correction.data(), correction.size()), "signature_d");
     for (auto _ : state) {
         ::signature_d(
             path.data(), out.data(), 4, 4, 32, 5, false, false, 1.,
-            true, true, 1, correction.data(), correction.size());
+            true, 1, correction.data(), correction.size());
         benchmark::DoNotOptimize(out.data());
     }
 }
 BENCHMARK(BM_sig_correction)->Unit(benchmark::kMicrosecond);
-
-static void BM_sig_no_horner(benchmark::State& state) {
-    const uint64_t slen = ::sig_length(4, 5);
-    auto path = random_data(4 * 4 * 32);
-    std::vector<double> out(4 * slen);
-    for (auto _ : state) {
-        ::signature_d(path.data(), out.data(), 4, 4, 32, 5, false, false, 1., false);
-        benchmark::DoNotOptimize(out.data());
-    }
-}
-BENCHMARK(BM_sig_no_horner)->Unit(benchmark::kMicrosecond);
 
 static void BM_sig_backprop(benchmark::State& state) {
     const uint64_t slen = ::sig_length(4, 5);
@@ -201,6 +192,42 @@ static void BM_sig_backprop(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_sig_backprop)->Unit(benchmark::kMicrosecond);
+
+static void signature_method_shapes(benchmark::internal::Benchmark* bench) {
+    bench->ArgNames({"dim", "degree", "segments"})
+        ->Args({12, 3, 256})->Args({4, 6, 32})->Args({3, 11, 16})
+        ->Unit(benchmark::kMicrosecond);
+}
+
+static void BM_sig_method(benchmark::State& state, int method) {
+    const uint64_t d = state.range(0), degree = state.range(1), points = state.range(2) + 1;
+    auto path = random_data<float>(points * d);
+    std::vector<float> sig(::sig_length(d, degree));
+    for (auto _ : state) {
+        check(::signature_f(path.data(), sig.data(), 1, d, points, degree, false, false, 1.f,
+            true, 1, nullptr, 0, 0, 0, method), "signature_f");
+        benchmark::DoNotOptimize(sig.data());
+    }
+}
+BENCHMARK_CAPTURE(BM_sig_method, horner, signature_method::standard)->Apply(signature_method_shapes);
+BENCHMARK_CAPTURE(BM_sig_method, ps, signature_method::prefix_suffix)->Apply(signature_method_shapes);
+BENCHMARK_CAPTURE(BM_sig_method, auto, signature_method::automatic)->Apply(signature_method_shapes);
+
+static void BM_sig_backprop_method(benchmark::State& state, int method) {
+    const uint64_t d = state.range(0), degree = state.range(1), points = state.range(2) + 1;
+    auto path = random_data<float>(points * d);
+    std::vector<float> sig(::sig_length(d, degree)), grad(path.size());
+    auto deriv = random_data<float>(sig.size(), 43);
+    check(::signature_f(path.data(), sig.data(), 1, d, points, degree), "signature_f");
+    for (auto _ : state) {
+        check(::sig_backprop_f(path.data(), grad.data(), deriv.data(), sig.data(), 1, d, points,
+            degree, false, false, 1.f, true, 1, nullptr, 0, 0, 0, method), "sig_backprop_f");
+        benchmark::DoNotOptimize(grad.data());
+    }
+}
+BENCHMARK_CAPTURE(BM_sig_backprop_method, horner, signature_method::standard)->Apply(signature_method_shapes);
+BENCHMARK_CAPTURE(BM_sig_backprop_method, ps, signature_method::prefix_suffix)->Apply(signature_method_shapes);
+BENCHMARK_CAPTURE(BM_sig_backprop_method, auto, signature_method::automatic)->Apply(signature_method_shapes);
 
 static void BM_sig_backprop_correction(benchmark::State& state) {
     const uint64_t slen = ::sig_length(4, 5);
@@ -298,38 +325,56 @@ BENCHMARK(BM_sig_join_backprop)->Unit(benchmark::kMicrosecond);
 // Sig coef / backprop
 // =========================================================================
 
-static void BM_sig_coef(benchmark::State& state) {
+static void BM_sig_coef_method(benchmark::State& state, int method) {
     auto path = random_data(8 * 3 * 32, 1);
     std::vector<uint64_t> degrees(32, 4);
     std::vector<uint64_t> multi_idx(32 * 4, 0);
     std::vector<double> out(8 * 32);
     for (auto _ : state) {
-        ::sig_coef_d(path.data(), out.data(), multi_idx.data(),
+        check(::sig_coef_d(path.data(), out.data(), multi_idx.data(),
                      32, degrees.data(), 8, 3, 32,
-                     false, false, 1.0, false);
+                     false, false, 1.0, false, 1, method), "sig_coef_d");
         benchmark::DoNotOptimize(out.data());
     }
 }
+static void BM_sig_coef(benchmark::State& state) {
+    BM_sig_coef_method(state, 0);
+}
 BENCHMARK(BM_sig_coef)->Unit(benchmark::kMicrosecond);
 
-static void BM_sig_coef_backprop(benchmark::State& state) {
+static void BM_sig_coef_pascal(benchmark::State& state) {
+    BM_sig_coef_method(state, 1);
+}
+BENCHMARK(BM_sig_coef_pascal)->Unit(benchmark::kMicrosecond);
+
+static void BM_sig_coef_backprop_method(benchmark::State& state, int method) {
     auto path = random_data(8 * 3 * 32, 1);
     std::vector<uint64_t> degrees(32, 4);
     std::vector<uint64_t> multi_idx(32 * 4, 0);
     const uint64_t prefix_size = 4 * 32;
-    auto coefs = random_data(8 * prefix_size, 2);
+    std::vector<double> coefs(8 * prefix_size);
     auto derivs = random_data(8 * prefix_size, 3);
     std::vector<double> out(8 * 3 * 32);
+    check(::sig_coef_d(path.data(), coefs.data(), multi_idx.data(),
+                      32, degrees.data(), 8, 3, 32,
+                      false, false, 1.0, true, 1, method), "sig_coef_d");
     for (auto _ : state) {
-        auto derivs_copy = derivs;
-        ::sig_coef_backprop_d(path.data(), out.data(), coefs.data(),
-                              derivs_copy.data(), multi_idx.data(),
+        check(::sig_coef_backprop_d(path.data(), out.data(), coefs.data(),
+                              derivs.data(), multi_idx.data(),
                               32, degrees.data(), 8, 3, 32,
-                              false, false, 1.0);
+                              false, false, 1.0, 1, method), "sig_coef_backprop_d");
         benchmark::DoNotOptimize(out.data());
     }
 }
+static void BM_sig_coef_backprop(benchmark::State& state) {
+    BM_sig_coef_backprop_method(state, 0);
+}
 BENCHMARK(BM_sig_coef_backprop)->Unit(benchmark::kMicrosecond);
+
+static void BM_sig_coef_backprop_pascal(benchmark::State& state) {
+    BM_sig_coef_backprop_method(state, 1);
+}
+BENCHMARK(BM_sig_coef_backprop_pascal)->Unit(benchmark::kMicrosecond);
 
 // =========================================================================
 // Sig to log sig / backprop (method 0 = expanded)

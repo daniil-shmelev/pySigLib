@@ -35,25 +35,21 @@ def test_signature_cuda_global_fallback_degree_one(dtype, scalar_term):
     assert not path_cpu.is_contiguous()
     path_cuda = path_cpu.cuda().requires_grad_()
 
-    for horner in (True, False):
-        expected = pysiglib.sig(
-            path_cpu, 1, horner=horner, scalar_term=scalar_term)
-        actual = pysiglib.torch_api.signature(
-            path_cuda, 1, horner=horner, scalar_term=scalar_term)
-        weights = torch.linspace(
-            -0.25, 0.5, actual.numel(), dtype=dtype, device="cuda"
-        ).reshape(actual.shape)
-        grad = torch.autograd.grad(
-            (actual * weights).sum(), path_cuda, retain_graph=True)[0]
+    expected = pysiglib.sig(path_cpu, 1, scalar_term=scalar_term)
+    actual = pysiglib.torch_api.signature(path_cuda, 1, scalar_term=scalar_term)
+    weights = torch.linspace(
+        -0.25, 0.5, actual.numel(), dtype=dtype, device="cuda"
+    ).reshape(actual.shape)
+    grad = torch.autograd.grad((actual * weights).sum(), path_cuda)[0]
 
-        torch.testing.assert_close(
-            actual.cpu(), expected, rtol=_tolerance(dtype),
-            atol=_tolerance(dtype))
-        torch.testing.assert_close(
-            grad[0], -weights[..., -100000:], rtol=0, atol=0)
-        torch.testing.assert_close(grad[1], torch.zeros_like(grad[1]))
-        torch.testing.assert_close(
-            grad[2], weights[..., -100000:], rtol=0, atol=0)
+    torch.testing.assert_close(
+        actual.cpu(), expected, rtol=_tolerance(dtype),
+        atol=_tolerance(dtype))
+    torch.testing.assert_close(
+        grad[0], -weights[..., -100000:], rtol=0, atol=0)
+    torch.testing.assert_close(grad[1], torch.zeros_like(grad[1]))
+    torch.testing.assert_close(
+        grad[2], weights[..., -100000:], rtol=0, atol=0)
 
 
 @skip_no_cuda

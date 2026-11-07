@@ -244,11 +244,12 @@ extern "C" {
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
 	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection (default). Automatic uses Pascal.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false, int n_jobs = 1, int method = 2) noexcept;
 	/** @copydoc sig_coef_f */
-	[[nodiscard]] CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false, int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false, int n_jobs = 1, int method = 2) noexcept;
 	/** @} */
 
 	/** @defgroup sig_coef_backprop_functions Signature coefficient backprop functions
@@ -261,8 +262,8 @@ extern "C" {
 	*
 	* @param path Pointer to path data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (preallocated), size = `batch_size * length * dimension`.
-	* @param coefs Pointer to coefficients computed using `sig_coef` with `prefixes=true`, size = `batch_size * sum(degrees[i])`.
-	* @param derivs Pointer to derivatives with respect to coefficients,  size = `batch_size * sum(degrees[i])`. **Modified in-place.**
+	* @param coefs Pointer to coefficients computed using `sig_coef` with `prefixes=true`, size = `batch_size * sum(max(1, degrees[i]))`.
+	* @param derivs Pointer to derivatives with respect to coefficients, size = `batch_size * sum(max(1, degrees[i]))`.
 	* @param multi_idx Pointer to flattened array of multi indices, size = `sum(degrees[i])`.
 	* @param num_multi_idx Number of multi indices.
 	* @param degrees Pointer to array of degrees of the multi indices, size = `num_multi_idx`.
@@ -275,11 +276,12 @@ extern "C" {
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
 	*				if n_jobs = -2, all threads but one are used (default = 1).
+	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection (default). Automatic uses Pascal.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1, int method = 2) noexcept;
 	/** @copydoc sig_coef_backprop_f */
-	[[nodiscard]] CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1) noexcept;
+	[[nodiscard]] CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1, int method = 2) noexcept;
 	/** @} */
 
 	/** @defgroup signature_functions Signature functions
@@ -297,7 +299,6 @@ extern "C" {
 	* @param time_aug Whether to add time augmentation (default = false).
 	* @param lead_lag Whether to apply lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
-	* @param horner Whether to use Horner's scheme (default = true).
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
 	*				if n_jobs = -2, all threads but one are used (default = 1).
@@ -306,11 +307,13 @@ extern "C" {
 	* @param correction_len Number of coefficients per correction row.
 	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
+	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
+	* @param ps_split With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	[[nodiscard]] CPSIG_API int signature_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @copydoc signature_f */
-	[[nodiscard]] CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	[[nodiscard]] CPSIG_API int signature_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_functions Signature backprop functions
@@ -323,7 +326,7 @@ extern "C" {
 	* @param path Pointer to path batch data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * length * dimension`.
 	* @param sig_derivs Pointer to derivatives with respect to the signatures (row-major), size = `batch_size * sig_length(dimension, degree)`.
-	* @param sig Pointer to signatures of the paths (row-major, precomputed), size = `batch_size * sig_length(dimension, degree)`.
+	* @param sig Pointer to signatures of the paths (row-major, precomputed), size = `batch_size * sig_length(dimension, degree)`. With `method=1`, this may be `nullptr` because prefix-suffix recomputes its states from the path.
 	* @param batch_size Batch size of the paths.
 	* @param dimension Dimension of the path.
 	* @param length Length of the path.
@@ -339,11 +342,13 @@ extern "C" {
 	* @param correction_len Number of coefficients per correction row.
 	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
+	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
+	* @param ps_split With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	[[nodiscard]] CPSIG_API int sig_backprop_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool scalar_term = true, int n_jobs = 1, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @copydoc sig_backprop_f */
-	[[nodiscard]] CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	[[nodiscard]] CPSIG_API int sig_backprop_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, int n_jobs = 1, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @} */
 
 	/**

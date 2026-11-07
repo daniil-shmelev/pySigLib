@@ -19,7 +19,7 @@ import os
 import sys
 import platform
 import ctypes
-from ctypes import c_char_p, c_float, c_double, c_int, c_uint64, c_bool, POINTER
+from ctypes import c_char_p, c_float, c_double, c_int, c_uint64, c_bool, c_void_p, POINTER
 from collections.abc import Callable
 
 ######################################################
@@ -58,7 +58,11 @@ def native_lib_filename(base_name):
 def _load_native_lib(directory, base_name):
     path = os.path.join(directory, native_lib_filename(base_name))
     if SYSTEM == 'Windows':
-        return ctypes.CDLL(path, winmode=0)
+        try:
+            return ctypes.CDLL(path, winmode=0)
+        except OSError:
+            # Repaired wheels register dependency directories with Windows.
+            return ctypes.CDLL(path)
     return ctypes.CDLL(path)
 
 
@@ -73,6 +77,7 @@ CPSIG = _load_native_lib(DIR_, 'cpsig')
 CUSIG = None
 BUILT_WITH_CUDA = False
 PYSIGLIB_CUDA_DIR = None
+_CUDA_BLAS_LIBRARIES = []
 try:
     import pysiglib_cuda as _cuda_plugin
 except ImportError:
@@ -97,6 +102,11 @@ if _cuda_plugin is not None:
         )
     PYSIGLIB_CUDA_DIR = os.path.dirname(_cuda_plugin.__file__)
     try:
+        if SYSTEM == 'Windows':
+            for _prefix in ('cublasLt64_', 'cublas64_'):
+                for _name in sorted(os.listdir(PYSIGLIB_CUDA_DIR)):
+                    if _name.startswith(_prefix) and _name.endswith('.dll'):
+                        _CUDA_BLAS_LIBRARIES.append(ctypes.CDLL(os.path.join(PYSIGLIB_CUDA_DIR, _name), winmode=0))
         CUSIG = _load_native_lib(PYSIGLIB_CUDA_DIR, 'cusig')
         BUILT_WITH_CUDA = True
     except OSError:
@@ -239,25 +249,25 @@ CPSIG_SIG_COMBINE_BACKPROP = _bind_float_pair(
 CPSIG_SIG_COEF = _bind_float_pair(
     CPSIG, "sig_coef",
     lambda T: (POINTER(T), POINTER(T), POINTER(c_uint64), c_uint64, POINTER(c_uint64), c_uint64, c_uint64,
-               c_uint64, c_bool, c_bool, T, c_bool, c_int),
+               c_uint64, c_bool, c_bool, T, c_bool, c_int, c_int),
 )
 
 CPSIG_SIG_COEF_BACKPROP = _bind_float_pair(
     CPSIG, "sig_coef_backprop",
     lambda T: (POINTER(T), POINTER(T), POINTER(T), POINTER(T), POINTER(c_uint64), c_uint64,
-               POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_int),
+               POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_int, c_int),
 )
 
 CPSIG_SIGNATURE = _bind_float_pair(
     CPSIG, "signature",
-    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
-               c_bool, c_int, POINTER(T), c_uint64, c_uint64, c_uint64),
+    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T,
+               c_bool, c_int, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64),
 )
 
 CPSIG_SIG_BACKPROP = _bind_float_pair(
     CPSIG, "sig_backprop",
     lambda T: (POINTER(T), POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64,
-               c_bool, c_bool, T, c_bool, c_int, POINTER(T), c_uint64, c_uint64, c_uint64),
+               c_bool, c_bool, T, c_bool, c_int, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64),
 )
 
 CPSIG_SIG_TO_LOG_SIG = _bind_float_pair(
@@ -472,25 +482,25 @@ CUSIG_SIG_COMBINE_BACKPROP = _bind_float_pair(
 CUSIG_SIG_COEF = _bind_float_pair(
     CUSIG, "sig_coef_cuda",
     lambda T: (POINTER(T), POINTER(T), POINTER(c_uint64), c_uint64, POINTER(c_uint64), c_uint64, c_uint64,
-               c_uint64, c_bool),
+               c_uint64, c_bool, c_bool, c_bool, T, c_int),
 )
 
 CUSIG_SIG_COEF_BACKPROP = _bind_float_pair(
     CUSIG, "sig_coef_backprop_cuda",
     lambda T: (POINTER(T), POINTER(T), POINTER(T), POINTER(T), POINTER(c_uint64), c_uint64,
-               POINTER(c_uint64), c_uint64, c_uint64, c_uint64),
+               POINTER(c_uint64), c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_int),
 )
 
 CUSIG_SIGNATURE = _bind_float_pair(
     CUSIG, "signature_cuda",
-    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T, c_bool,
-               c_bool, POINTER(T), c_uint64, c_uint64, c_uint64),
+    lambda T: (POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64, c_bool, c_bool, T,
+               c_bool, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64),
 )
 
 CUSIG_SIG_BACKPROP = _bind_float_pair(
     CUSIG, "sig_backprop_cuda",
     lambda T: (POINTER(T), POINTER(T), POINTER(T), POINTER(T), c_uint64, c_uint64, c_uint64, c_uint64,
-               c_bool, c_bool, T, c_bool, POINTER(T), c_uint64, c_uint64, c_uint64),
+               c_bool, c_bool, T, c_bool, POINTER(T), c_uint64, c_uint64, c_uint64, c_int, c_uint64),
 )
 
 CUSIG_SIG_TO_LOG_SIG = _bind_float_pair(

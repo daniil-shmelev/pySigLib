@@ -32,6 +32,7 @@ add_library(cpsig SHARED
 )
 
 include(FetchContent)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/BLAS.cmake")
 
 set(TBB_TEST OFF CACHE BOOL "" FORCE)
 set(TBB_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -70,6 +71,7 @@ target_compile_definitions(cpsig PRIVATE CPSIG_EXPORTS)
 target_link_libraries(cpsig
     PRIVATE Threads::Threads
     PRIVATE pysiglib_preparation
+    PRIVATE pysiglib_openblas
     PUBLIC TBB::tbb
 )
 
@@ -108,10 +110,12 @@ set(_cpsig_kernels
     cp_path_transforms_impl.cpp
     cp_polynomial_sig_kernel_impl.cpp
     cp_sig_coef_impl.cpp
+    cp_pascal_coef_impl.cpp
     cp_sig_combine_impl.cpp
     cp_sig_join_impl.cpp
     cp_sig_kernel_impl.cpp
     cp_signature_impl.cpp
+    cp_prefix_suffix_impl.cpp
 )
 if(NOT PYSIGLIB_AVX)
     target_compile_definitions(cpsig PRIVATE CPSIG_SCALAR_ONLY)
@@ -129,7 +133,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
             target_compile_definitions(cpsig_${_target} PRIVATE CPSIG_SCALAR_ONLY)
         endif()
         target_include_directories(cpsig_${_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
-        target_link_libraries(cpsig_${_target} PRIVATE hwy TBB::tbb pysiglib_preparation)
+        target_link_libraries(cpsig_${_target} PRIVATE hwy TBB::tbb pysiglib_preparation pysiglib_openblas)
         target_compile_options(cpsig_${_target} PRIVATE /Zi)
         target_precompile_headers(cpsig_${_target} PRIVATE cppch.h)
         if(_target STREQUAL "avx2")

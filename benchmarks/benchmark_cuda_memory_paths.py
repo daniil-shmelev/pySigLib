@@ -44,9 +44,6 @@ add_case_pair(
     "signature_f64_main", kind="signature", dtype="float64",
     batch=64, length=256, dimension=8, degree=3)
 add_case_pair(
-    "signature_f32_naive", kind="signature", dtype="float32",
-    batch=256, length=1024, dimension=8, degree=3, horner=False)
-add_case_pair(
     "signature_f32_correction", kind="signature", dtype="float32",
     batch=256, length=1024, dimension=8, degree=3, correction=True)
 add_case_pair(
@@ -64,10 +61,6 @@ add_case_pair(
 add_case_pair(
     "signature_f64_fallback", kind="signature", dtype="float64",
     batch=8, length=2, dimension=15000, degree=1, fallback=True)
-add_case_pair(
-    "signature_f32_naive_fallback", kind="signature", dtype="float32",
-    batch=16, length=2, dimension=30000, degree=1, horner=False,
-    fallback=True)
 add_case_pair(
     "signature_f32_lead_lag_fallback", kind="signature", dtype="float32",
     batch=16, length=2, dimension=15000, degree=1, lead_lag=True,
@@ -235,10 +228,7 @@ def make_matrix_case(name, spec):
 
     if kind == "signature":
         path = make_path(torch, batch, length, dimension, dtype)
-        options = {
-            "horner": spec.get("horner", True),
-            "lead_lag": spec.get("lead_lag", False),
-        }
+        options = {"lead_lag": spec.get("lead_lag", False)}
         correction = None
         if spec.get("correction"):
             generator = torch.Generator(device="cuda")
@@ -250,12 +240,8 @@ def make_matrix_case(name, spec):
         if direction == "backprop":
             signature = pysiglib.sig(path, degree, **options)
             derivs = torch.ones_like(signature)
-            backprop_options = {
-                key: value for key, value in options.items()
-                if key not in ("horner",)
-            }
             call = lambda: pysiglib.sig_backprop(
-                path, signature, derivs, degree, **backprop_options)
+                path, signature, derivs, degree, **options)
         else:
             call = lambda: pysiglib.sig(path, degree, **options)
         return call, batch, path_steps

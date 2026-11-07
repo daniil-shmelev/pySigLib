@@ -125,6 +125,21 @@ def sig_combine(
             + err_msg(err_code, result.device))
     return result.data
 
+def _check_sig_method(method, ps_split, degree):
+    if method not in ("horner", "ps", "auto"):
+        raise ValueError("method must be 'horner', 'ps', or 'auto'")
+    if ps_split is None:
+        return {"horner": 0, "ps": 1, "auto": 2}[method], 0
+    if method != "ps":
+        raise ValueError("ps_split requires method='ps'")
+    if isinstance(ps_split, bool) or not isinstance(ps_split, (int, np.integer)):
+        raise TypeError("ps_split must be an integer")
+    ps_split = int(ps_split)
+    if ps_split < 1 or ps_split > degree:
+        raise ValueError("ps_split must be between 1 and degree")
+    return 1, ps_split
+
+
 def sig(
         path : Union[np.ndarray, torch.Tensor],
         degree : int,
@@ -132,10 +147,11 @@ def sig(
         time_aug : bool = False,
         lead_lag : bool = False,
         end_time : float = 1.,
-        horner : bool = True,
         scalar_term : bool = False,
         correction = None,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        method = "auto",
+        ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated signature of single path or a batch of paths. For
@@ -162,8 +178,13 @@ def sig(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
-    :param horner: If True, will use Horner's algorithm for polynomial multiplication.
-    :type horner: bool
+    :param method: ``"auto"`` (default) selects Horner or prefix-suffix independently for the forward and backward
+        passes. Use ``"horner"`` for Horner's algorithm or ``"ps"`` for prefix-suffix.
+    :type method: str
+    :param ps_split: Maximum degree of a prefix in the prefix-suffix algorithm for
+        ``method="ps"``, from 1 to ``degree``. The corresponding suffix has maximum
+        degree ``degree - ps_split``. The default selects the split automatically.
+    :type ps_split: int | None
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
     :type scalar_term: bool
@@ -264,12 +285,14 @@ def sig(
     """
     check_type(degree, "degree", int)
     check_non_neg(degree, "degree")
-    check_type(horner, "horner", bool)
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
 
     check_n_jobs(n_jobs)
+    method_code, ps_split = _check_sig_method(method, ps_split, degree)
+    if isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
+        raise NotImplementedError("Signature computation does not support forward-mode automatic differentiation")
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, data, degree)
     sig_len = sig_length(data.dimension, degree, scalar_term=scalar_term)
@@ -282,16 +305,18 @@ def sig(
         err_code = CPSIG_SIGNATURE[data.dtype](
             data.data_ptr, result.data_ptr, data.batch_size,
             data.data_dimension, data.data_length, degree,
-            data.time_aug, data.lead_lag, data.end_time, horner, scalar_term, n_jobs,
+            data.time_aug, data.lead_lag, data.end_time, scalar_term, n_jobs,
             correction_data.data_ptr, correction_data.length,
-            correction_data.batch_stride, correction_data.segment_stride)
+            correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     else:
-        err_code = CUSIG_SIGNATURE[data.dtype](
-            data.data_ptr, result.data_ptr, data.batch_size,
-            data.data_dimension, data.data_length, degree,
-            data.time_aug, data.lead_lag, data.end_time, horner, scalar_term,
-            correction_data.data_ptr, correction_data.length,
-            correction_data.batch_stride, correction_data.segment_stride)
+        with torch.cuda.device(data.path.device):
+            torch.cuda.current_stream(data.path.device).synchronize()
+            err_code = CUSIG_SIGNATURE[data.dtype](
+                data.data_ptr, result.data_ptr, data.batch_size,
+                data.data_dimension, data.data_length, degree,
+                data.time_aug, data.lead_lag, data.end_time, scalar_term,
+                correction_data.data_ptr, correction_data.length,
+                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig: " + err_msg(err_code, result.device))

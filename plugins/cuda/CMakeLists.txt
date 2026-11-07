@@ -52,6 +52,8 @@ if(PYSIGLIB_CUSIG_PREBUILT_LIBRARY)
             IMPORTED_IMPLIB "${PYSIGLIB_CUSIG_PREBUILT_IMPLIB}"
         )
     endif()
+    install(FILES "${PYSIGLIB_CUSIG_PREBUILT_LIBRARY}"
+        DESTINATION ${CUSIG_INSTALL_DESTINATION})
 else()
     # Binary dir override is required because siglib/cusig is outside this project.
     add_subdirectory(
@@ -133,10 +135,10 @@ if(PYSIGLIB_JAX_FFI AND JAXLIB_FOUND)
     # whether to attempt loading the CUDA FFI library.
     configure_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/_config.py.in"
-        "${CMAKE_BINARY_DIR}/_config.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/_config.py"
         @ONLY
     )
-    install(FILES "${CMAKE_BINARY_DIR}/_config.py"
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_config.py"
             DESTINATION ${CUSIG_INSTALL_DESTINATION})
 endif()
 

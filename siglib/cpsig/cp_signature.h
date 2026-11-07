@@ -28,6 +28,7 @@
 #include "cp_sig_combine.h"
 #include "cp_exp_signature.h"
 
+#include "signature_method.h"
 #include "cp_path.h"
 #include "macros.h"
 #include "cp_simd-inl.h"
@@ -35,6 +36,15 @@
 HWY_BEFORE_NAMESPACE();
 namespace cpsig {
 namespace HWY_NAMESPACE {
+
+template<std::floating_point T>
+void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs, uint64_t ps_split);
+
+template<std::floating_point T>
+void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs, uint64_t ps_split);
+
+template<bool Backward, std::floating_point T>
+void signature_prefix_suffix_correction_(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, T end_time, bool scalar, int n_jobs, uint64_t ps_split, const T* correction, uint64_t correction_len, uint64_t batch_stride, uint64_t segment_stride);
 
 template<std::floating_point T>
 void sig_backprop_inplace_(const Path<T>& path, T* out, T* sig_derivs, T* sig, uint64_t degree, uint64_t sig_len);
@@ -389,41 +399,6 @@ FORCE_INLINE void linear_signature_(
 }
 
 template<std::floating_point T>
-void signature_naive_(
-	const Path<T>& path,
-	T* out,
-	uint64_t degree
-)
-{
-	const uint64_t dimension = path.dimension();
-
-	Point<T> prev_pt(path.begin());
-	Point<T> next_pt(path.begin());
-	++next_pt;
-
-	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
-	uint64_t* level_index = level_index_uptr.get();
-	populate_level_index(level_index, dimension, degree + 2);
-
-	linear_signature_(prev_pt, next_pt, out, dimension, degree, level_index);
-
-	if (path.length() == 2) { return; }
-
-	++prev_pt;
-	++next_pt;
-
-	auto linear_signature_uptr = std::make_unique<T[]>(::sig_length(dimension, degree));
-	T* linear_signature = linear_signature_uptr.get();
-
-	Point<T> last_pt(path.end());
-
-	for (; next_pt != last_pt; ++prev_pt, ++next_pt) {
-		linear_signature_(prev_pt, next_pt, linear_signature, dimension, degree, level_index);
-		sig_combine_inplace_(out, linear_signature, degree, level_index);
-	}
-}
-
-template<std::floating_point T>
 FORCE_INLINE void signature_horner_(
 	const Path<T>& path,
 	T* out,
@@ -727,15 +702,28 @@ void signature_(
 	bool time_aug = false,
 	bool lead_lag = false,
 	T end_time = 1.,
-	bool horner = true,
 	bool scalar_term = true,
 	int n_jobs = 1,
 	const T* correction = nullptr,
 	uint64_t correction_len = 0,
 	uint64_t correction_batch_stride = 0,
-	uint64_t correction_segment_stride = 0
+	uint64_t correction_segment_stride = 0,
+	int method = 0,
+	uint64_t ps_split = 0
 )
 {
+	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
+		time_aug || lead_lag, correction_len, false, false)) {
+		if (correction_len) {
+			if (!dimension) throw std::invalid_argument("signature received path of dimension 0");
+			validate_signature_correction_args_(correction, correction_len, dimension, degree, lead_lag);
+			signature_prefix_suffix_correction_<false, T>(path, out, nullptr, batch_size, dimension, length, degree, time_aug,
+				end_time, scalar_term, n_jobs, ps_split, correction, correction_len, correction_batch_stride, correction_segment_stride);
+			return;
+		}
+		signature_prefix_suffix_(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, ps_split);
+		return;
+	}
 	//Deal with trivial cases
 	if (dimension == 0) { throw std::invalid_argument("signature received path of dimension 0"); }
 	validate_signature_correction_args_(correction, correction_len, dimension, degree, lead_lag);
@@ -787,7 +775,7 @@ void signature_(
 	const bool enough_groups = sizeof(T) == 4 || aug_dim <= 2 || n_jobs == 1
 		|| batch_size / (vec_batch_lanes<T>) >= static_cast<uint64_t>(max_threads);
 	// Limit the working set and retain enough independent tasks for the thread pool.
-	if (horner && !has_correction && degree > 1 && length >= 16 && aug_dim <= 4
+	if (!has_correction && degree > 1 && length >= 16 && aug_dim <= 4
 		&& aug_dim < vec_batch_lanes<T>
 		&& batch_size >= vec_batch_lanes<T> && full_len <= 8192 && enough_groups) {
 		auto batch_func = [&]<uint64_t dim>() {
@@ -847,11 +835,8 @@ void signature_(
 				for (uint64_t i = 0; i < aug_dim; ++i)
 					out_ptr[i + 1] = last_pt[i] - first_pt[i];
 			}
-			else if (horner) {
-				call_signature_horner_<T>(path_obj, out_ptr, degree);
-			}
 			else {
-				signature_naive_<T>(path_obj, out_ptr, degree);
+				call_signature_horner_<T>(path_obj, out_ptr, degree);
 			}
 		};
 
@@ -866,16 +851,13 @@ void signature_(
 				for (uint64_t i = 0; i < aug_dim; ++i)
 					out_ptr[i] = last_pt[i] - first_pt[i];
 			}
-			else if (horner && (n_jobs == 1 || batch_size == 1)) {
+			else if (n_jobs == 1 || batch_size == 1) {
 				call_signature_horner_<T>(path_obj, out_ptr, degree, false);
 			}
 			else {
 				// A local buffer keeps parallel workers' repeated updates in cache.
 				std::vector<T> buf(full_len);
-				if (horner)
-					call_signature_horner_<T>(path_obj, buf.data(), degree);
-				else
-					signature_naive_<T>(path_obj, buf.data(), degree);
+				call_signature_horner_<T>(path_obj, buf.data(), degree);
 				std::memcpy(out_ptr, buf.data() + 1, (full_len - 1) * sizeof(T));
 			}
 		};
@@ -922,9 +904,23 @@ void sig_backprop_(
 	const T* correction = nullptr,
 	uint64_t correction_len = 0,
 	uint64_t correction_batch_stride = 0,
-	uint64_t correction_segment_stride = 0
+	uint64_t correction_segment_stride = 0,
+	int method = 0,
+	uint64_t ps_split = 0
 )
 {
+	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
+		time_aug || lead_lag, correction_len, false, true)) {
+		if (correction_len) {
+			if (!dimension) throw std::invalid_argument("sig_backprop received path of dimension 0");
+			validate_signature_correction_args_(correction, correction_len, dimension, degree, lead_lag);
+			signature_prefix_suffix_correction_<true, T>(path, out, sig_derivs, batch_size, dimension, length, degree, time_aug,
+				end_time, scalar_term, n_jobs, ps_split, correction, correction_len, correction_batch_stride, correction_segment_stride);
+			return;
+		}
+		signature_prefix_suffix_backprop_(path, out, sig_derivs, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, ps_split);
+		return;
+	}
 	std::fill(out, out + length * dimension * batch_size, static_cast<T>(0.));
 	//Deal with trivial cases
 	if (dimension == 0) { throw std::invalid_argument("sig_backprop received path of dimension 0"); }

@@ -79,6 +79,14 @@ _TARGETS = {
         "cpu": ("pysiglib_sig_backprop_cpu", "PySigLibSigBackpropCpu"),
         "cuda": ("pysiglib_sig_backprop_cuda", "PySigLibSigBackpropCuda"),
     },
+    "sig_coef": {
+        "cpu": ("pysiglib_sig_coef_cpu", "PySigLibSigCoefCpu"),
+        "cuda": ("pysiglib_sig_coef_cuda", "PySigLibSigCoefCuda"),
+    },
+    "sig_coef_backprop": {
+        "cpu": ("pysiglib_sig_coef_backprop_cpu", "PySigLibSigCoefBackpropCpu"),
+        "cuda": ("pysiglib_sig_coef_backprop_cuda", "PySigLibSigCoefBackpropCuda"),
+    },
     "sig_combine": {
         "cpu": ("pysiglib_sig_combine_cpu", "PySigLibSigCombineCpu"),
         "cuda": ("pysiglib_sig_combine_cuda", "PySigLibSigCombineCuda"),
@@ -398,10 +406,10 @@ def _sig_shape(path_shape, degree: int, time_aug: bool, lead_lag: bool) -> tuple
     return (*path_shape[:-2], out_len)
 
 
-def _make_ffi_call(op_name, inputs, out_type, call_kwargs):
-    cpu_call = _jax_ffi.ffi_call(_target_name(op_name, "cpu"), out_type, vmap_method="broadcast_all")
+def _make_ffi_call(op_name, inputs, out_type, call_kwargs, vmap_method="broadcast_all"):
+    cpu_call = _jax_ffi.ffi_call(_target_name(op_name, "cpu"), out_type, vmap_method=vmap_method)
     if BUILT_WITH_CUDA and "cuda" in _TARGETS[op_name]:
-        cuda_call = _jax_ffi.ffi_call(_target_name(op_name, "cuda"), out_type, vmap_method="broadcast_all")
+        cuda_call = _jax_ffi.ffi_call(_target_name(op_name, "cuda"), out_type, vmap_method=vmap_method)
         return jax.lax.platform_dependent(
             *inputs,
             cpu=lambda *args: cpu_call(*args, **call_kwargs),
@@ -414,20 +422,53 @@ def _make_ffi_call(op_name, inputs, out_type, call_kwargs):
 # sig
 # ---------------------------------------------------------------------------
 
-def sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs):
+def sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split):
     _check_same_dtype(path, correction)
     out_type = jax.ShapeDtypeStruct(_sig_shape(path.shape, degree, time_aug, lead_lag), path.dtype)
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
-                       end_time=np.float64(end_time), horner=np.bool_(horner), n_jobs=np.int64(n_jobs))
-    return _make_ffi_call("sig", (path, correction), out_type, call_kwargs)
+                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs),
+                       method=np.int32(method), ps_split=np.uint64(ps_split))
+    return _make_ffi_call("sig", (path, correction), out_type, call_kwargs,
+                          vmap_method="sequential" if correction.size else "broadcast_all")
 
 
-def sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs):
+def sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split):
     _check_same_dtype(path, sig_, cotangent, correction)
     out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
-                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs))
-    return _make_ffi_call("sig_backprop", (path, sig_, cotangent, correction), out_type, call_kwargs)
+                       end_time=np.float64(end_time), n_jobs=np.int64(n_jobs),
+                       method=np.int32(method), ps_split=np.uint64(ps_split))
+    return _make_ffi_call("sig_backprop", (path, sig_, cotangent, correction), out_type, call_kwargs,
+                          vmap_method="sequential" if correction.size else "broadcast_all")
+
+
+# ---------------------------------------------------------------------------
+# sig_coef
+# ---------------------------------------------------------------------------
+
+def sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method):
+    _normalize_dtype(path.dtype)
+    width = sum(max(len(word), 1) for word in words)
+    out_type = jax.ShapeDtypeStruct((*path.shape[:-2], width), path.dtype)
+    call_kwargs = dict(
+        indices=np.asarray([index for word in words for index in word], dtype=np.uint64),
+        degrees=np.asarray([len(word) for word in words], dtype=np.uint64),
+        time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
+        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), method=np.int64(method),
+    )
+    return _make_ffi_call("sig_coef", (path,), out_type, call_kwargs)
+
+
+def sig_coef_backprop_ffi_call(path, coefs, cotangent, words, time_aug, lead_lag, end_time, n_jobs, method):
+    _check_same_dtype(path, coefs, cotangent)
+    out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
+    call_kwargs = dict(
+        indices=np.asarray([index for word in words for index in word], dtype=np.uint64),
+        degrees=np.asarray([len(word) for word in words], dtype=np.uint64),
+        time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
+        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs), method=np.int64(method),
+    )
+    return _make_ffi_call("sig_coef_backprop", (path, coefs, cotangent), out_type, call_kwargs)
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,13 @@ from .dtypes import CPSIG_SIG_COEF, CUSIG_SIG_COEF
 from .words import word_to_idx
 from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler
 
+
+def _check_coef_method(method):
+    if method not in ("horner", "pascal", "auto"):
+        raise ValueError("method must be 'horner', 'pascal', or 'auto'")
+    return {"horner": 0, "pascal": 1, "auto": 2}[method]
+
+
 def extract_sig_coef(
         sig : Union[np.ndarray, torch.Tensor],
         words: Union[tuple[int, ...], list[tuple[int, ...]]],
@@ -113,7 +120,8 @@ def sig_coef(
         lead_lag : bool = False,
         end_time : float = 1.,
         prefixes : bool = False,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        method = "auto"
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes specific signature coefficients for a single path or a batch of paths. For
@@ -141,15 +149,23 @@ def sig_coef(
     :type end_time: float
     :param prefixes: If ``True``, will additionally return all prefixes of signature coefficients.
         These prefixes are extracted for free as a by-product of the computation.
-        For example, passing ``word=[(1,2), (3,2,1)]`` with ``prefixes=True`` returns an
-        output equivalent to passing ``word=[(1,), (1,2), (3,), (3,2), (3,2,1)]`` with ``prefixes=False``.
+        Use ``prefixes=True`` for :func:`pysiglib.sig_coef_backprop`. The Torch and JAX
+        APIs handle the prefix derivatives automatically.
+        For example, passing ``words=[(1,2), (3,2,1)]`` with ``prefixes=True`` returns an
+        output equivalent to passing ``words=[(1,), (1,2), (3,), (3,2), (3,2,1)]`` with ``prefixes=False``.
     :type prefixes: bool
     :param n_jobs: Number of threads to run in parallel. If n_jobs = 1, the computation is run serially.
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :return: Signature coefficients of shape ``(..., num_words)``, matching the leading
-        batch dimensions of ``path``.
+    :param method: ``"auto"`` (default) uses Pascal factorisation on CPU and Horner's
+        method on CUDA. ``"horner"`` uses Horner, and ``"pascal"`` uses
+        Pascal.
+    :type method: str
+    :return: Signature coefficients with the leading batch dimensions of ``path``.
+        The last axis has one entry per word, or ``sum(max(1, len(w)) for w in words)``
+        entries when ``prefixes=True``. Each requested empty word contributes one entry
+        with value one and zero path derivative.
     :rtype: numpy.ndarray | torch.Tensor
 
     .. note::
@@ -201,15 +217,9 @@ def sig_coef(
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
     check_type(prefixes, "prefixes", bool)
+    method_code = _check_coef_method(method)
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
-
-    # CUDA sig_coef doesn't support time_aug/lead_lag natively -
-    # transform the path first, then recurse with no augmentation flags.
-    if data.device != "cpu" and (time_aug or lead_lag):
-        from .transform_path import transform_path
-        transformed = transform_path(path, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time)
-        return sig_coef(transformed, words, time_aug=False, lead_lag=False, end_time=1., prefixes=prefixes, n_jobs=n_jobs)
 
     words = check_word_or_word_list(words, data.dimension, "word")
 
@@ -227,7 +237,7 @@ def sig_coef(
 
     flat_indices = [i for idx in words for i in idx]
 
-    if data.device == "cpu":
+    if data.device == "cpu" or method_code == 1 or time_aug or lead_lag:
         words_t = torch.tensor(flat_indices, dtype=torch.uint64)
         degrees_t = torch.tensor(degrees, dtype=torch.uint64)
     else:
@@ -248,12 +258,15 @@ def sig_coef(
             data.data_ptr, result.data_ptr,
             multi_indices_ptr, num_multi_indices, degrees_ptr,
             data.batch_size, data.data_dimension, data.data_length,
-            data.time_aug, data.lead_lag, data.end_time, prefixes, n_jobs)
+            data.time_aug, data.lead_lag, data.end_time, prefixes, n_jobs, method_code)
     else:
-        err_code = CUSIG_SIG_COEF[data.dtype](
-            data.data_ptr, result.data_ptr,
-            multi_indices_ptr, num_multi_indices, degrees_ptr,
-            data.batch_size, data.data_dimension, data.data_length, prefixes)
+        args = (data.data_ptr, result.data_ptr,
+                multi_indices_ptr, num_multi_indices, degrees_ptr,
+                data.batch_size, data.data_dimension, data.data_length, prefixes,
+                data.time_aug, data.lead_lag, data.end_time, method_code)
+        with torch.cuda.device(data.path.device):
+            torch.cuda.current_stream(data.path.device).synchronize()
+            err_code = CUSIG_SIG_COEF[data.dtype](*args)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig_coef: "

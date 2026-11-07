@@ -109,7 +109,13 @@ template<std::floating_point T>
 void sig_coef_(const T* path, T* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, bool prefixes, int n_jobs);
 
 template<std::floating_point T>
-void sig_coef_backprop_(const T* path, T* out, const T* coefs, T* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, int n_jobs);
+void sig_coef_backprop_(const T* path, T* out, const T* coefs, const T* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, int n_jobs);
+
+template<std::floating_point T>
+void sig_coef_dispatch_(const T* path, T* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, bool prefixes, int n_jobs, int method);
+
+template<std::floating_point T>
+void sig_coef_backprop_dispatch_(const T* path, T* out, const T* coefs, const T* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, int n_jobs, int method);
 
 template<std::floating_point T>
 void batch_sig_combine_(const T* sig1, const T* sig2, T* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, bool scalar_term, int n_jobs);
@@ -133,10 +139,10 @@ template<std::floating_point T>
 void batch_sig_kernel_backprop_(const T* gram, T* out, const T* derivs, const T* k_grid, uint64_t batch_size, uint64_t dimension, uint64_t length1, uint64_t length2, uint64_t dyadic_order_1, uint64_t dyadic_order_2, bool return_grid, int n_jobs);
 
 template<std::floating_point T>
-void signature_(const T* path, T* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool horner, bool scalar_term, int n_jobs, const T* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride);
+void signature_(const T* path, T* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs, const T* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride, int method, uint64_t ps_split);
 
 template<std::floating_point T>
-void sig_backprop_(const T* path, T* out, const T* sig_derivs, const T* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs, const T* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride);
+void sig_backprop_(const T* path, T* out, const T* sig_derivs, const T* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs, const T* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride, int method, uint64_t ps_split);
 
 template<std::floating_point T>
 void log_sig_reduce_(const T*, T*, uint64_t, uint64_t, uint64_t, uint64_t, int);

@@ -301,17 +301,18 @@ extern "C" {
 	* @param time_aug Whether to add time augmentation (default = false).
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
-	* @param horner Whether to use the Horner algorithm (default = true).
 	* @param scalar_term Whether signature buffers include the leading scalar entry. If false, subtract one from each expanded signature buffer length.
 	* @param correction Optional segment corrections, with levels 2 through m concatenated in word order over original path channels. Null means no correction; incompatible with lead_lag.
 	* @param correction_len Number of coefficients per correction row.
 	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
+	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
+	* @param ps_split With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool horner = true, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @copydoc signature_cuda_f */
-	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool horner = true, bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_cuda_functions Signature backpropagation CUDA functions
@@ -324,7 +325,7 @@ extern "C" {
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated, on device), same size as path.
 	* @param sig_derivs Pointer to dF/d(sig) (on device), size = `batch_size * sig_length(transformed_dimension, degree)`.
-	* @param sig Pointer to forward signatures (on device), same size as sig_derivs.
+	* @param sig Pointer to forward signatures (on device), same size as sig_derivs. With `method=1`, this may be `nullptr` because prefix-suffix recomputes its states from the path.
 	* @param batch_size Batch size.
 	* @param dimension Dimension of the paths.
 	* @param length Length of the paths.
@@ -337,11 +338,13 @@ extern "C" {
 	* @param correction_len Number of coefficients per correction row.
 	* @param correction_batch_stride Stride between correction batch items, in elements; zero broadcasts.
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
+	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
+	* @param ps_split With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	[[nodiscard]] CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @copydoc sig_backprop_cuda_f */
-	[[nodiscard]] CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0) noexcept;
+	[[nodiscard]] CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
 	/** @} */
 
 	/** @defgroup sig_combine_cuda_functions Signature combine CUDA functions
@@ -456,18 +459,22 @@ extern "C" {
 	*
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (on device, preallocated).
-	* @param multi_idx Pointer to flattened multi-indices (on device).
+	* @param multi_idx Pointer to flattened multi-indices (on device for methods 0 and 2 without augmentation, on host otherwise).
 	* @param num_multi_idx Number of multi-indices (words).
-	* @param degrees Pointer to degree of each multi-index (on device), size = `num_multi_idx`.
+	* @param degrees Pointer to degree of each multi-index (on device for methods 0 and 2 without augmentation, on host otherwise), size = `num_multi_idx`.
 	* @param batch_size Batch size.
 	* @param dimension Dimension of the paths.
 	* @param length Length of the paths.
 	* @param prefixes If true, output all prefix coefficients; if false, output only the final coefficient.
+	* @param time_aug Whether to add time augmentation (default = false).
+	* @param lead_lag Whether to apply the lead-lag transform (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection (default). Automatic uses Horner.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	[[nodiscard]] CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 2) noexcept;
 	/** @copydoc sig_coef_cuda_f */
-	[[nodiscard]] CUSIG_API int sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes) noexcept;
+	[[nodiscard]] CUSIG_API int sig_coef_cuda_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug = false, bool lead_lag = false, double end_time = 1., int method = 2) noexcept;
 	/** @} */
 
 	/** @defgroup sig_coef_backprop_cuda_functions Sig coef backprop CUDA functions
@@ -481,17 +488,21 @@ extern "C" {
 	* @param out Pointer to output buffer (on device, preallocated), size = `batch_size * length * dimension`.
 	* @param coefs Pointer to prefix coefficients from forward pass (on device).
 	* @param derivs Pointer to dF/d(coefs) (on device), same size as coefs.
-	* @param multi_idx Pointer to flattened multi-indices (on device).
+	* @param multi_idx Pointer to flattened multi-indices (on device for methods 0 and 2 without augmentation, on host otherwise).
 	* @param num_multi_idx Number of multi-indices (words).
-	* @param degrees Pointer to degree of each multi-index (on device), size = `num_multi_idx`.
+	* @param degrees Pointer to degree of each multi-index (on device for methods 0 and 2 without augmentation, on host otherwise), size = `num_multi_idx`.
 	* @param batch_size Batch size.
 	* @param dimension Dimension of the paths.
 	* @param length Length of the paths.
+	* @param time_aug Whether to add time augmentation (default = false).
+	* @param lead_lag Whether to apply the lead-lag transform (default = false).
+	* @param end_time End time for time augmentation (default = 1.0).
+	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection (default). Automatic uses Horner.
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
+	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 2) noexcept;
 	/** @copydoc sig_coef_backprop_cuda_f */
-	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length) noexcept;
+	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int method = 2) noexcept;
 	/** @} */
 
 	/** @defgroup log_sig_combine_cuda_functions Log sig combine CUDA functions

@@ -23,6 +23,7 @@ from .error_codes import err_msg
 from .data_handlers import PathInputHandler, SigOutputHandler, PathOutputHandler, MultipleSigInputHandler, CorrectionInputHandler
 from .dtypes import CPSIG_SIG_BACKPROP, CPSIG_SIG_COMBINE_BACKPROP, CUSIG_SIG_BACKPROP, CUSIG_SIG_COMBINE_BACKPROP
 from .sig_length import sig_length, aug_dim, _infer_scalar_term
+from .sig import _check_sig_method
 
 def sig_combine_backprop(
         deriv : Union[np.ndarray, torch.Tensor],
@@ -135,7 +136,9 @@ def sig_backprop(
         lead_lag : bool = False,
         end_time : float = 1.,
         correction = None,
-        n_jobs : int = 1
+        n_jobs : int = 1,
+        method = "auto",
+        ps_split = None
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     This function is required to backpropagate through the signature computation.
@@ -171,6 +174,13 @@ def sig_backprop(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
+    :param method: ``"auto"`` (default) selects the method automatically. Use ``"horner"`` for Horner's backpropagation
+        algorithm or ``"ps"`` for the prefix-suffix backpropagation algorithm.
+    :type method: str
+    :param ps_split: Maximum degree of a prefix in the prefix-suffix algorithm for
+        ``method="ps"``, from 1 to ``degree``. The corresponding suffix has maximum
+        degree ``degree - ps_split``.
+    :type ps_split: int | None
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.Tensor
@@ -185,9 +195,9 @@ def sig_backprop(
 
         path = torch.rand((10, 100, 5))
         degree = 4
-        sigs = pysiglib.sig(path, degree)
+        sigs = pysiglib.sig(path, degree, method="ps", ps_split=2)
         sig_derivs = torch.ones_like(sigs)
-        path_derivs = pysiglib.sig_backprop(path, sigs, sig_derivs, degree)
+        path_derivs = pysiglib.sig_backprop(path, sigs, sig_derivs, degree, method="ps", ps_split=2)
         print(path_derivs)
 
     .. code-block:: python
@@ -212,6 +222,8 @@ def sig_backprop(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
+    method_code, ps_split = _check_sig_method(method, ps_split, degree)
+    check_n_jobs(n_jobs)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
     correction_data = CorrectionInputHandler(correction, path_data, degree)
@@ -223,6 +235,8 @@ def sig_backprop(
         raise ValueError("path, sig and sig_derivs must all be numpy arrays or torch tensors")
     if path_data.dtype != sig_data.dtype:
         raise ValueError("path, sig and sig_derivs must have the same dtype")
+    if isinstance(path, torch.Tensor) and any(s.device != path.device for s in sig_data.sig):
+        raise ValueError("path, sig and sig_derivs must be on the same device")
 
     result = PathOutputHandler(path_data.data_length, path_data.data_dimension, path_data)
 
@@ -232,7 +246,6 @@ def sig_backprop(
     if path_data.batch_shape != sig_data.batch_shape:
         raise ValueError("path, sig and sig_derivs must have the same batch shape")
 
-    check_n_jobs(n_jobs)
     if path_data.device == "cpu":
         err_code = CPSIG_SIG_BACKPROP[path_data.dtype](
             path_data.data_ptr, result.data_ptr,
@@ -240,15 +253,17 @@ def sig_backprop(
             path_data.batch_size, path_data.data_dimension, path_data.data_length,
             degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term, n_jobs,
             correction_data.data_ptr, correction_data.length,
-            correction_data.batch_stride, correction_data.segment_stride)
+            correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     else:
-        err_code = CUSIG_SIG_BACKPROP[path_data.dtype](
-            path_data.data_ptr, result.data_ptr,
-            sig_data.sig_ptr[1], sig_data.sig_ptr[0],
-            path_data.batch_size, path_data.data_dimension, path_data.data_length,
-            degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term,
-            correction_data.data_ptr, correction_data.length,
-            correction_data.batch_stride, correction_data.segment_stride)
+        with torch.cuda.device(path_data.path.device):
+            torch.cuda.current_stream(path_data.path.device).synchronize()
+            err_code = CUSIG_SIG_BACKPROP[path_data.dtype](
+                path_data.data_ptr, result.data_ptr,
+                sig_data.sig_ptr[1], sig_data.sig_ptr[0],
+                path_data.batch_size, path_data.data_dimension, path_data.data_length,
+                degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term,
+                correction_data.data_ptr, correction_data.length,
+                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig_backprop: "
