@@ -42,6 +42,17 @@ def check_non_neg(param, param_name):
     if param < 0:
         raise ValueError(param_name + " must be a non-negative integer, got " + param_name + " = " + str(param))
 
+def _check_basis_parameters(dimension, degree):
+    check_type(dimension, "dimension", int)
+    check_type(degree, "degree", int)
+    check_non_neg(dimension, "dimension")
+    check_non_neg(degree, "degree")
+
+def _check_basis_index(idx, size):
+    check_type(idx, "idx", int)
+    if not 0 <= idx < size:
+        raise ValueError("idx is out of range for the requested coordinate family")
+
 def check_pos(param, param_name):
     if param <= 0:
         raise ValueError(param_name + " must be a positive integer, got " + param_name + " = " + str(param))

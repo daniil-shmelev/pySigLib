@@ -1683,9 +1683,9 @@ def sig_coef(
     for w in words:
         if prefixes:
             for k in range(1, len(w) + 1):
-                idx.append(word_to_idx(w[:k], aug_dim, scalar_term=True))
+                idx.append(word_to_idx(w[:k], aug_dim, degree, scalar_term=True))
         else:
-            idx.append(word_to_idx(w, aug_dim, scalar_term=True))
+            idx.append(word_to_idx(w, aug_dim, degree, scalar_term=True))
     return sig_[..., jnp.array(idx)]
 
 

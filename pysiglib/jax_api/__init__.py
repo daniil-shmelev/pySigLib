@@ -34,8 +34,15 @@ from .static_kernels_jax import (
 
 # Re-export non-differentiable utilities from base pysiglib
 from ..sig_length import sig_length, log_sig_length
-from ..words import words_of_length, words, lyndon_words_of_length, lyndon_words, is_lyndon, word_to_idx, idx_to_word
-from ..trees import trees, trees_of_order, tree_to_idx, idx_to_tree
+from ..words import (
+    words_of_length, words, lyndon_words_of_length, lyndon_words, is_lyndon,
+    word_to_idx, idx_to_word, lyndon_word_to_idx, idx_to_lyndon_word,
+)
+from ..trees import (
+    trees, trees_of_order, tree_to_idx, idx_to_tree,
+    forests, forest_to_idx, idx_to_forest,
+    lyndon_forests, lyndon_forest_to_idx, idx_to_lyndon_forest,
+)
 from ..sig_coef import extract_sig_coef
 from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache
 from ..branched_sig import prepare_branched_sig, branched_sig_length

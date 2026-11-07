@@ -31,8 +31,7 @@ def test_extract_branched_sig_coef_all(device, planar, scalar_term):
     path = torch.rand((2, 5, dimension), dtype=torch.float64, device=device)
     bsig = pysiglib.branched_sig(
         path, degree, planar=planar, scalar_term=scalar_term)
-    basis = pysiglib.trees(dimension, degree, planar=planar)
-    requested = list(basis if scalar_term else basis[1:])
+    requested = (pysiglib.forests if planar else pysiglib.trees)(dimension, degree, scalar_term=scalar_term)
 
     actual = pysiglib.extract_branched_sig_coef(
         bsig,
@@ -51,7 +50,7 @@ def test_extract_branched_sig_coef_from_higher_degree():
     pysiglib.prepare_branched_sig(dimension, degree, device="cpu")
     path = np.random.default_rng(100).normal(size=(3, 6, dimension))
     bsig = pysiglib.branched_sig(path, degree)
-    basis = pysiglib.trees(dimension, degree)
+    basis = pysiglib.trees(dimension, degree, scalar_term=True)
     requested = [basis[1], basis[4], basis[1]]
     indices = [
         pysiglib.tree_to_idx(tree, dimension, degree)
@@ -77,11 +76,10 @@ def test_extract_branched_sig_coef_augmentation():
         lead_lag=True,
         scalar_term=True,
     )
-    basis = pysiglib.trees(augmented_dimension, degree)
+    basis = pysiglib.trees(augmented_dimension, degree, scalar_term=True)
     requested = [None, basis[1], basis[augmented_dimension + 2], basis[-1]]
     indices = [
-        pysiglib.tree_to_idx(
-            tree, augmented_dimension, degree, scalar_term=True)
+        pysiglib.tree_to_idx(tree, augmented_dimension, degree, scalar_term=True)
         for tree in requested
     ]
 
@@ -111,7 +109,7 @@ def test_extract_branched_sig_coef_validation():
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_branched_sig_coef_matches_full(planar, dtype):
     dimension, degree = 3, 3
-    basis = pysiglib.trees(dimension, degree, planar=planar)
+    basis = (pysiglib.forests if planar else pysiglib.trees)(dimension, degree, scalar_term=True)
     requested = [basis[0], basis[1], basis[5], basis[-1], basis[5]]
     pysiglib.prepare_branched_sig_coef(dimension, requested, planar=planar)
     path = np.random.default_rng(101).normal(size=(2, 3, 7, dimension)).astype(dtype)
@@ -120,8 +118,7 @@ def test_branched_sig_coef_matches_full(planar, dtype):
     pysiglib.prepare_branched_sig(dimension, degree, planar=planar)
     full = pysiglib.branched_sig(path, degree, planar=planar, scalar_term=True)
     indices = [
-        pysiglib.tree_to_idx(
-            tree, dimension, degree, planar=planar, scalar_term=True)
+        (pysiglib.forest_to_idx if planar else pysiglib.tree_to_idx)(tree, dimension, degree, scalar_term=True)
         for tree in requested
     ]
 
@@ -136,7 +133,7 @@ def test_branched_sig_coef_matches_full(planar, dtype):
 def test_branched_sig_coef_augmentation_matches_full(time_aug, lead_lag):
     dimension, degree = 2, 3
     augmented_dimension = (2 * dimension if lead_lag else dimension) + int(time_aug)
-    basis = pysiglib.trees(augmented_dimension, degree)
+    basis = pysiglib.trees(augmented_dimension, degree, scalar_term=True)
     requested = [basis[0], basis[augmented_dimension], basis[-1]]
     pysiglib.prepare_branched_sig_coef(
         dimension, requested, time_aug=time_aug, lead_lag=lead_lag)
@@ -161,7 +158,7 @@ def test_branched_sig_coef_augmentation_matches_full(time_aug, lead_lag):
 @pytest.mark.parametrize("correction_degree", [2, 3])
 def test_branched_sig_coef_correction_and_backprop_match_full(planar, correction_degree):
     dimension, degree, length = 2, 3, 6
-    basis = pysiglib.trees(dimension, degree, planar=planar)
+    basis = (pysiglib.forests if planar else pysiglib.trees)(dimension, degree, scalar_term=True)
     requested = [basis[0], basis[1], basis[4], basis[-2], basis[4]]
     pysiglib.prepare_branched_sig_coef(dimension, requested, planar=planar)
     rng = np.random.default_rng(103)
@@ -177,8 +174,7 @@ def test_branched_sig_coef_correction_and_backprop_match_full(planar, correction
     full = pysiglib.branched_sig(
         path, degree, planar=planar, correction=correction, scalar_term=True)
     indices = [
-        pysiglib.tree_to_idx(
-            tree, dimension, degree, planar=planar, scalar_term=True)
+        (pysiglib.forest_to_idx if planar else pysiglib.tree_to_idx)(tree, dimension, degree, scalar_term=True)
         for tree in requested
     ]
     np.testing.assert_allclose(coefs, full[..., indices], rtol=1e-12, atol=1e-12)
@@ -198,7 +194,7 @@ def test_branched_sig_coef_correction_and_backprop_match_full(planar, correction
 def test_branched_sig_coef_backprop_augmentation_matches_full(time_aug, lead_lag):
     dimension, degree = 2, 3
     augmented_dimension = (2 * dimension if lead_lag else dimension) + int(time_aug)
-    basis = pysiglib.trees(augmented_dimension, degree)
+    basis = pysiglib.trees(augmented_dimension, degree, scalar_term=True)
     requested = [basis[1], basis[augmented_dimension + 2], basis[-1]]
     pysiglib.prepare_branched_sig_coef(
         dimension, requested, time_aug=time_aug, lead_lag=lead_lag)
@@ -228,7 +224,7 @@ def test_branched_sig_coef_backprop_augmentation_matches_full(time_aug, lead_lag
 
 def test_branched_sig_coef_parallel_matches_serial():
     dimension, degree = 3, 3
-    basis = pysiglib.trees(dimension, degree)
+    basis = pysiglib.trees(dimension, degree, scalar_term=True)
     requested = [basis[1], basis[4], basis[12], basis[-1]]
     pysiglib.prepare_branched_sig_coef(dimension, requested)
     path = np.random.default_rng(105).normal(size=(12, 8, dimension))
@@ -248,7 +244,7 @@ def test_branched_sig_coef_parallel_matches_serial():
 @pytest.mark.parametrize("planar", [False, True])
 def test_torch_branched_sig_coef_value_and_gradient_match_full(planar):
     dimension, degree = 2, 3
-    basis = pysiglib.trees(dimension, degree, planar=planar)
+    basis = (pysiglib.forests if planar else pysiglib.trees)(dimension, degree, scalar_term=True)
     requested = [basis[1], basis[4], basis[-1], basis[4]]
     pysiglib.torch_api.prepare_branched_sig_coef(
         dimension, requested, planar=planar)
@@ -265,8 +261,7 @@ def test_torch_branched_sig_coef_value_and_gradient_match_full(planar):
     full = pysiglib.torch_api.branched_sig(
         path_full, degree, planar=planar, scalar_term=True)
     indices = [
-        pysiglib.tree_to_idx(
-            tree, dimension, degree, planar=planar, scalar_term=True)
+        (pysiglib.forest_to_idx if planar else pysiglib.tree_to_idx)(tree, dimension, degree, scalar_term=True)
         for tree in requested
     ]
     full[..., indices].backward(weights)
@@ -280,7 +275,7 @@ def test_torch_branched_sig_coef_value_and_gradient_match_full(planar):
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 def test_cuda_branched_sig_coef_correction_and_autograd_match_cpu(planar, dtype):
     dimension, degree, length = 2, 3, 6
-    basis = pysiglib.trees(dimension, degree, planar=planar)
+    basis = (pysiglib.forests if planar else pysiglib.trees)(dimension, degree, scalar_term=True)
     requested = [basis[0], basis[3], basis[-2], basis[3]]
     pysiglib.prepare_branched_sig_coef(dimension, requested, planar=planar)
     rng = np.random.default_rng(108)
@@ -322,7 +317,7 @@ def test_cuda_branched_sig_coef_correction_and_autograd_match_cpu(planar, dtype)
 def test_cuda_branched_sig_coef_augmentation_matches_cpu(time_aug, lead_lag):
     dimension, degree = 2, 3
     augmented_dimension = (2 * dimension if lead_lag else dimension) + int(time_aug)
-    basis = pysiglib.trees(augmented_dimension, degree)
+    basis = pysiglib.trees(augmented_dimension, degree, scalar_term=True)
     requested = [basis[1], basis[augmented_dimension + 1], basis[-1]]
     pysiglib.prepare_branched_sig_coef(
         dimension, requested, time_aug=time_aug, lead_lag=lead_lag)
@@ -346,7 +341,7 @@ def test_jax_branched_sig_coef_value_and_gradient_match_cpu():
     jax.config.update("jax_enable_x64", True)
 
     dimension, degree = 2, 3
-    basis = pysiglib.trees(dimension, degree)
+    basis = pysiglib.trees(dimension, degree, scalar_term=True)
     requested = [basis[1], basis[4], basis[-1], basis[4]]
     jax_api.prepare_branched_sig_coef(dimension, requested)
     path = np.random.default_rng(106).normal(size=(2, 6, dimension))
@@ -380,7 +375,7 @@ def test_jax_cuda_branched_sig_coef_value_and_gradient_match_cpu():
     jax.config.update("jax_enable_x64", True)
 
     dimension, degree = 2, 3
-    basis = pysiglib.trees(dimension, degree)
+    basis = pysiglib.trees(dimension, degree, scalar_term=True)
     requested = [basis[1], basis[4], basis[-1], basis[4]]
     jax_api.prepare_branched_sig_coef(dimension, requested)
     path = np.random.default_rng(110).normal(size=(2, 6, dimension))
@@ -513,7 +508,7 @@ def test_branched_sig_coef_cpu_disk_cache(tmp_path):
 def test_branched_sig_coef_requires_preparation():
     pysiglib.clear_cache()
     dimension, degree = 2, 2
-    basis = pysiglib.trees(dimension, degree)
+    basis = pysiglib.trees(dimension, degree, scalar_term=True)
     requested = [basis[-1]]
     path = np.zeros((3, dimension), dtype=np.float64)
 
@@ -530,7 +525,7 @@ def test_branched_sig_coef_requires_preparation():
 def test_cuda_branched_sig_coef_requires_preparation():
     pysiglib.clear_cache()
     dimension, degree = 2, 2
-    basis = pysiglib.trees(dimension, degree)
+    basis = pysiglib.trees(dimension, degree, scalar_term=True)
     requested = [basis[-1]]
     path = torch.zeros((3, dimension), dtype=torch.float64, device="cuda")
 
@@ -545,7 +540,7 @@ def test_cuda_branched_sig_coef_requires_preparation():
 def test_branched_sig_coef_prepare_device_selection():
     pysiglib.clear_cache()
     dimension, degree = 2, 2
-    basis = pysiglib.trees(dimension, degree)
+    basis = pysiglib.trees(dimension, degree, scalar_term=True)
     requested = [basis[-1]]
     cpu_path = np.zeros((3, dimension), dtype=np.float64)
     cuda_path = torch.zeros(
@@ -587,7 +582,7 @@ def test_jax_branched_sig_coef_rejects_empty_lead_lag_path():
 
 def test_branched_sig_coef_backprop_validates_path_metadata():
     dimension, degree = 2, 2
-    basis = pysiglib.trees(dimension, degree)
+    basis = pysiglib.trees(dimension, degree, scalar_term=True)
     requested = [basis[1], basis[-1]]
     pysiglib.prepare_branched_sig_coef(dimension, requested)
     path = np.arange(16, dtype=np.float64).reshape(2, 4, dimension) * 0.01
