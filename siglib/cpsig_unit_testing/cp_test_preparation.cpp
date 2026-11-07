@@ -16,9 +16,9 @@
 #include <gtest/gtest.h>
 
 #include "cp_bch.h"
-using cpsig::HWY_NAMESPACE::bch_combine_impl_;
-using cpsig::HWY_NAMESPACE::bch_combine_backprop_impl_;
-using cpsig::HWY_NAMESPACE::lie_bracket;
+using cpsig::HWY_NAMESPACE::bch_combine_batch_;
+using cpsig::HWY_NAMESPACE::bch_combine_backprop_batch_;
+using cpsig::HWY_NAMESPACE::bch_backward_workspace_size;
 #include "log_sig/bch_cache.h"
 #include "log_sig/bch_data.h"
 #include "branched_sig/branched_log_sig_cache.h"
@@ -113,6 +113,7 @@ TEST(preparationCacheTest, CompactAndRangedBchMatchFullFormula) {
 			full.bch_operations.push_back({ formula.coefficients[w],
 				static_cast<uint32_t>(formula.left_factor[w]),
 				static_cast<uint32_t>(formula.right_factor[w]) });
+		build_bch_operation_ranges(full);
 		const uint64_t m = compact.m;
 		// The dense preparation table is released after its sparse views are built.
 		std::vector<SparseVec> commutator_table(m * m);
@@ -126,15 +127,16 @@ TEST(preparationCacheTest, CompactAndRangedBchMatchFullFormula) {
 			right[k] = 0.015625 * (static_cast<int>(k % 7) - 3);
 			derivs[k] = 0.0625 * (static_cast<int>(k % 5) - 2);
 		}
-		std::vector<double> workspace(2 * full.bch_size() * m);
-		bch_combine_impl_(left.data(), right.data(), expected.data(), full, workspace.data());
-		bch_combine_impl_(left.data(), right.data(), actual.data(), compact, workspace.data());
+		std::vector<double> workspace(std::max(2 * full.bch_size() * m,
+			bch_backward_workspace_size(full.general_schedule)));
+		bch_combine_batch_(left.data(), right.data(), expected.data(), full.general_schedule, workspace.data(), 1);
+		bch_combine_batch_(left.data(), right.data(), actual.data(), compact.general_schedule, workspace.data(), 1);
 		EXPECT_EQ(actual, expected);
 		std::vector<double> expected_left(m), expected_right(m), actual_left(m), actual_right(m);
-		bch_combine_backprop_impl_(derivs.data(), expected_left.data(), expected_right.data(),
-			left.data(), right.data(), full, workspace.data());
-		bch_combine_backprop_impl_(derivs.data(), actual_left.data(), actual_right.data(),
-			left.data(), right.data(), compact, workspace.data());
+		bch_combine_backprop_batch_(derivs.data(), expected_left.data(), expected_right.data(),
+			left.data(), right.data(), full.general_schedule, workspace.data(), 1);
+		bch_combine_backprop_batch_(derivs.data(), actual_left.data(), actual_right.data(),
+			left.data(), right.data(), compact.general_schedule, workspace.data(), 1);
 		EXPECT_EQ(actual_left, expected_left);
 		EXPECT_EQ(actual_right, expected_right);
 
@@ -150,8 +152,13 @@ TEST(preparationCacheTest, CompactAndRangedBchMatchFullFormula) {
 			ASSERT_LE(begin, end);
 			ASSERT_LE(end, m);
 			double* result = workspace.data() + w * m;
-			lie_bracket(workspace.data() + op.left * m, workspace.data() + op.right * m,
-				result, m, commutator_table);
+			const double* a = workspace.data() + op.left * m;
+			const double* b = workspace.data() + op.right * m;
+			std::fill_n(result, m, 0.0);
+			for (uint64_t i = 0; i < m; ++i)
+				for (uint64_t j = i + 1; j < m; ++j)
+					for (const auto& [k, c] : commutator_table[i * m + j])
+						result[k] += c * (a[i] * b[j] - a[j] * b[i]);
 			std::fill(result, result + begin, 0.0);
 			std::fill(result + end, result + m, 0.0);
 			for (uint64_t k = begin; k < end; ++k)

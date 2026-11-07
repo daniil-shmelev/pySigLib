@@ -137,3 +137,6 @@ void signature_(const T* path, T* out, uint64_t batch_size, uint64_t dimension, 
 
 template<std::floating_point T>
 void sig_backprop_(const T* path, T* out, const T* sig_derivs, const T* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs, const T* correction, uint64_t correction_len, uint64_t correction_batch_stride, uint64_t correction_segment_stride);
+
+template<std::floating_point T>
+void log_sig_reduce_(const T*, T*, uint64_t, uint64_t, uint64_t, uint64_t, int);

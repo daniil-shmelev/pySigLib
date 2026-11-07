@@ -17,8 +17,10 @@
 
 #ifdef CPSIG_SCALAR_ONLY
 #define HWY_COMPILE_ONLY_SCALAR
-#else
+#elif defined(_MSC_VER) && !defined(__clang__)
 #define HWY_DISABLED_TARGETS (~(HWY_SSE2 | HWY_AVX2 | HWY_NEON_WITHOUT_AES))
+#else
+#define HWY_DISABLED_TARGETS (~(HWY_SSE2 | HWY_AVX2 | HWY_AVX3 | HWY_NEON_WITHOUT_AES))
 #endif
 
 #if defined(CPSIG_STATIC_TARGET) && !defined(CPSIG_SCALAR_ONLY)

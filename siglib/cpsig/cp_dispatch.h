@@ -32,6 +32,11 @@ namespace N_AVX2 {
 #include "cp_kernel_api.h"
 }
 #endif
+#if HWY_TARGETS & HWY_AVX3
+namespace N_AVX3 {
+#include "cp_kernel_api.h"
+}
+#endif
 #if HWY_TARGETS & HWY_NEON_WITHOUT_AES
 namespace N_NEON_WITHOUT_AES {
 #include "cp_kernel_api.h"

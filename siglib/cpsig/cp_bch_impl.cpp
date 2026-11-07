@@ -26,6 +26,9 @@ HWY_BEFORE_NAMESPACE();
 namespace cpsig {
 namespace HWY_NAMESPACE {
 
+template void log_sig_reduce_<float>(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, int);
+template void log_sig_reduce_<double>(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, int);
+
 template void log_sig_combine_<float>(const float* log_sig1, const float* log_sig2, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs);
 

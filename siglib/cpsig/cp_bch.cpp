@@ -25,6 +25,8 @@
 
 
 namespace cpsig {
+HWY_EXPORT_T(log_sig_reduce_f, log_sig_reduce_<float>);
+HWY_EXPORT_T(log_sig_reduce_d, log_sig_reduce_<double>);
 HWY_EXPORT_T(log_sig_combine_f, log_sig_combine_<float>);
 HWY_EXPORT_T(log_sig_combine_d, log_sig_combine_<double>);
 HWY_EXPORT_T(log_sig_from_path_f, batch_log_sig_from_path_<float>);
@@ -39,6 +41,12 @@ HWY_EXPORT_T(log_sig_join_backprop_f, log_sig_join_backprop_<float>);
 HWY_EXPORT_T(log_sig_join_backprop_d, log_sig_join_backprop_<double>);
 
 extern "C" {
+	CPSIG_API int log_sig_reduce_f(const float* inputs, float* out, uint64_t batch, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(log_sig_reduce_f)(inputs, out, batch, length, dimension, degree, n_jobs));
+	}
+	CPSIG_API int log_sig_reduce_d(const double* inputs, double* out, uint64_t batch, uint64_t length, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
+		SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(log_sig_reduce_d)(inputs, out, batch, length, dimension, degree, n_jobs));
+	}
 
 	CPSIG_API int log_sig_combine_f(const float* log_sig1, const float* log_sig2, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs) noexcept {
