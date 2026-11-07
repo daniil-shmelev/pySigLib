@@ -41,6 +41,7 @@
         "PYSIGLIB_TESTS": "ON",
         "PYSIGLIB_CUDA": "ON",
         "PYSIGLIB_CUDA_ARCH": "native",
+        "PYSIGLIB_CUDA_SPLIT_COMPILE": "2",
         "PYSIGLIB_TEST_APP": "OFF"
       }
     },
@@ -132,6 +133,7 @@
       "displayName": "Windows: cpsig Debug",
       "configurePreset": "windows-cpu",
       "configuration": "Debug",
+      "jobs": 4,
       "targets": [
         "cpsig"
       ]
@@ -141,6 +143,7 @@
       "displayName": "Windows: cpsig Release",
       "configurePreset": "windows-cpu",
       "configuration": "Release",
+      "jobs": 4,
       "targets": [
         "cpsig"
       ]
@@ -150,7 +153,7 @@
       "displayName": "Windows: cusig Debug",
       "configurePreset": "windows-cuda",
       "configuration": "Debug",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "cusig"
       ]
@@ -160,7 +163,7 @@
       "displayName": "Windows: cusig Release",
       "configurePreset": "windows-cuda",
       "configuration": "Release",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "cusig"
       ]
@@ -170,7 +173,7 @@
       "displayName": "Windows: Test App Debug",
       "configurePreset": "windows-cpp-solution",
       "configuration": "Debug",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "test_app"
       ]
@@ -180,7 +183,7 @@
       "displayName": "Windows: Test App Release",
       "configurePreset": "windows-cpp-solution",
       "configuration": "Release",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "test_app"
       ]
@@ -189,27 +192,29 @@
       "name": "windows-cpu-debug",
       "displayName": "Windows: CPU Tests Debug",
       "configurePreset": "windows-cpu",
-      "configuration": "Debug"
+      "configuration": "Debug",
+      "jobs": 4
     },
     {
       "name": "windows-cpu-release",
       "displayName": "Windows: CPU Tests Release",
       "configurePreset": "windows-cpu",
-      "configuration": "Release"
+      "configuration": "Release",
+      "jobs": 4
     },
     {
       "name": "windows-cuda-debug",
       "displayName": "Windows: CPU + CUDA Tests Debug",
       "configurePreset": "windows-cuda",
       "configuration": "Debug",
-      "jobs": 1
+      "jobs": 4
     },
     {
       "name": "windows-cuda-release",
       "displayName": "Windows: CPU + CUDA Tests Release",
       "configurePreset": "windows-cuda",
       "configuration": "Release",
-      "jobs": 1
+      "jobs": 4
     },
     {
       "name": "windows-cpp-solution-debug",
@@ -217,7 +222,7 @@
       "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and test_app.",
       "configurePreset": "windows-cpp-solution",
       "configuration": "Debug",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "pysiglib_cpp_solution"
       ]
@@ -228,7 +233,7 @@
       "description": "Build cpsig, cusig, cpsig_tests, cusig_tests, and test_app.",
       "configurePreset": "windows-cpp-solution",
       "configuration": "Release",
-      "jobs": 1,
+      "jobs": 4,
       "targets": [
         "pysiglib_cpp_solution"
       ]

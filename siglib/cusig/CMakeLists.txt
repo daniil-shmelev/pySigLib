@@ -8,6 +8,11 @@ endif()
 option(PYSIGLIB_CUDA_LINEINFO "Generate CUDA device line information" ON)
 option(PYSIGLIB_CUDA_SEPARABLE_COMPILATION
     "Enable CUDA separable compilation" ON)
+set(PYSIGLIB_CUDA_SPLIT_COMPILE "1" CACHE STRING
+    "Maximum NVCC optimization threads (1 disables split compilation)")
+if(NOT PYSIGLIB_CUDA_SPLIT_COMPILE MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "PYSIGLIB_CUDA_SPLIT_COMPILE must be a positive integer")
+endif()
 set(PYSIGLIB_CUDA_COMPRESS_MODE "default" CACHE STRING
     "CUDA fatbin compression mode")
 set_property(CACHE PYSIGLIB_CUDA_COMPRESS_MODE PROPERTY STRINGS
@@ -119,6 +124,17 @@ target_compile_options(cusig PRIVATE
     $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<BOOL:${PYSIGLIB_CUDA_LINEINFO}>>:-lineinfo>
     $<$<COMPILE_LANGUAGE:CUDA>:--dopt=on>
 )
+
+if(NOT PYSIGLIB_CUDA_SPLIT_COMPILE STREQUAL "1")
+    if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" AND
+       CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.2)
+        target_compile_options(cusig PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:--split-compile=${PYSIGLIB_CUDA_SPLIT_COMPILE}>
+        )
+    else()
+        message(WARNING "PYSIGLIB_CUDA_SPLIT_COMPILE requires NVIDIA CUDA >= 12.2; ignoring it")
+    endif()
+endif()
 
 if(NOT PYSIGLIB_CUDA_COMPRESS_MODE STREQUAL "default")
     target_compile_options(cusig PRIVATE
