@@ -27,6 +27,27 @@ from functools import partial
 from conftest import DEVICES, check_close as _check_close, assert_device
 check_close = partial(_check_close, single_atol=1e-2, double_atol=1e-4)
 
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("return_grid", [False, True])
+def test_fine_grid_roundoff(device, return_grid):
+    x = torch.linspace(0, 1, 257, device=device, dtype=torch.float64)[:, None]
+    y = torch.linspace(0, 1, 513, device=device, dtype=torch.float64)[:, None]
+    grid = pysiglib.sig_kernel(x, y, dyadic_order=0, return_grid=True)
+    result = pysiglib.sig_kernel(x.float(), y.float(), dyadic_order=0, return_grid=return_grid)
+    expected = grid if return_grid else grid[-1, -1].reshape_as(result)
+    torch.testing.assert_close(result, expected.float(), rtol=0, atol=2e-5)
+
+    derivs = torch.ones_like(expected)
+    if return_grid:
+        derivs.zero_()
+        derivs[-1, -1] = 1
+        derivs[130, 260] = -0.5
+    kwargs = dict(dyadic_order=0, return_grid=return_grid, left_deriv=True, right_deriv=True)
+    reference = pysiglib.sig_kernel_backprop(derivs, x, y, k_grid=grid, **kwargs)
+    grads = pysiglib.sig_kernel_backprop(derivs.float(), x.float(), y.float(), k_grid=grid.float(), **kwargs)
+    for grad, ref in zip(grads, reference):
+        torch.testing.assert_close(grad, ref.float(), rtol=0, atol=2e-5)
+
 ################################################
 ## Consistency with return_grid=False
 ################################################

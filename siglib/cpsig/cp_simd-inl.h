@@ -256,7 +256,7 @@ FORCE_INLINE void vec_add_scaled(T* out, const T* a, const T* b, T scalar, uint6
 }
 
 template<typename T, typename IndexFn>
-FORCE_INLINE void vec_kernel_diag_step(T* RESTRICT next, const T* RESTRICT prev, const T* RESTRICT prev_m1, const T* RESTRICT prev_prev_m1, const T* RESTRICT gram_a, const T* RESTRICT gram_b, IndexFn idx, uint64_t count) {
+FORCE_INLINE void vec_kernel_diag_step(T* RESTRICT next, T* RESTRICT h, const T* RESTRICT prev, const T* RESTRICT prev_m1, const T* RESTRICT prev_prev_m1, const T* RESTRICT gram_a, const T* RESTRICT gram_b, IndexFn idx, uint64_t count) {
     const Simd<T> d;
     constexpr size_t n = vec_batch_lanes<T>;
     uint64_t k = 0;
@@ -284,19 +284,17 @@ FORCE_INLINE void vec_kernel_diag_step(T* RESTRICT next, const T* RESTRICT prev,
             va = hn::Load(d, a);
             vb = hn::Load(d, b);
         }
-        if constexpr (HWY_ARCH_ARM) {
-            auto result = hn::Mul(hn::LoadU(d, prev + k), va);
-            result = hn::MulAdd(hn::LoadU(d, prev_m1 + k), va, result);
-            result = hn::NegMulAdd(hn::LoadU(d, prev_prev_m1 + k), vb, result);
-            hn::StoreU(result, d, next + k);
-        }
-        else {
-            hn::StoreU(hn::MulAdd(hn::LoadU(d, prev + k), va, hn::MulSub(hn::LoadU(d, prev_m1 + k), va, hn::Mul(hn::LoadU(d, prev_prev_m1 + k), vb))), d, next + k);
-        }
+        const auto west = hn::LoadU(d, prev_m1 + k);
+        const auto sum = hn::Add(hn::LoadU(d, prev + k), west);
+        const auto delta = hn::MulAdd(sum, va, hn::Mul(hn::LoadU(d, prev_prev_m1 + k), vb));
+        const auto horizontal = hn::Add(hn::LoadU(d, h + k), delta);
+        hn::StoreU(horizontal, d, h + k);
+        hn::StoreU(hn::Add(west, horizontal), d, next + k);
     }
     for (; k < count; ++k) {
         const auto gi = idx(k);
-        next[k] = (prev[k] + prev_m1[k]) * gram_a[gi] - prev_prev_m1[k] * gram_b[gi];
+        h[k] += (prev[k] + prev_m1[k]) * gram_a[gi] + prev_prev_m1[k] * gram_b[gi];
+        next[k] = prev_m1[k] + h[k];
     }
 }
 
