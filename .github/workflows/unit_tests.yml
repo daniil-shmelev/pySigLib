@@ -47,6 +47,10 @@ jobs:
           python3 -m pip install pytest 'jax>=0.9.1; python_version >= "3.11"'
           python3 -m pip install kauri
 
+      - name: Use NumPy compatible with Intel macOS PyTorch
+        if: matrix.os == 'macos-15-intel'
+        run: python -m pip install 'numpy<2'
+
       - name: Install package
         run: python -m pip install .
 
