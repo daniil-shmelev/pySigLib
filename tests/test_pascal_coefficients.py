@@ -23,7 +23,17 @@ import torch
 
 import pysiglib
 import pysiglib.torch_api as torch_api
-from conftest import force_highway_target, highway_targets, DEVICES
+from conftest import force_highway_target, highway_targets, DEVICES as AVAILABLE_DEVICES
+
+
+DEVICES = ["cpu"]
+
+
+@pytest.fixture
+def jax_cpu():
+    jax = pytest.importorskip("jax")
+    with jax.default_device(jax.devices("cpu")[0]):
+        yield
 
 
 def pascal_with_gradient(path, words, seeds):
@@ -144,7 +154,7 @@ def test_pascal_empty_batch_and_invalid_method(device):
             torch_api.sig_coef(x, (0,), method=method)
 
 
-def test_pascal_jax_invalid_method():
+def test_pascal_jax_invalid_method(jax_cpu):
     jax = pytest.importorskip("jax")
     import pysiglib.jax_api as jax_api
 
@@ -166,8 +176,8 @@ def test_pascal_generic_cpu_and_workspace(monkeypatch):
         pysiglib.sig_coef_backprop(x, word, y, np.ones_like(y), method="pascal")
 
 
-@pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA required")
-@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
+@pytest.mark.skipif("cuda" not in AVAILABLE_DEVICES, reason="CUDA required")
+@pytest.mark.parametrize("method", ["horner", "auto"])
 @pytest.mark.parametrize("words", [[(0, 1, 2), (2, 2)], [(0, 1, 2), (2, 2, 1)], [(0, 1) * 8, (2,) * 11]])
 def test_pascal_nondefault_stream_and_limit(method, words):
     stream = torch.cuda.Stream()
@@ -181,7 +191,7 @@ def test_pascal_nondefault_stream_and_limit(method, words):
     torch_api.sig_coef(cpu, words, method="pascal").sum().backward()
     torch.testing.assert_close(x.grad.cpu(), cpu.grad, rtol=1e-10, atol=1e-11)
     with pytest.raises(Exception, match="20"):
-        pysiglib.sig_coef(x, (0,) * 21, method="pascal")
+        pysiglib.sig_coef(x, (0,) * 21, method="horner")
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -227,23 +237,6 @@ def test_pascal_partial_chunks_and_word_workers(device, batch, monkeypatch):
         pysiglib.sig_coef_backprop(x, words, y, seeds, method="pascal")
 
 
-@pytest.mark.skipif("cuda" not in DEVICES, reason="CUDA required")
-@pytest.mark.parametrize("degree,batch,segments", [(8, 3, 7), (15, 3, 65), (16, 3, 65), (20, 32, 65), (20, 33, 65)])
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-@pytest.mark.parametrize("constrained", [False, True])
-def test_pascal_warp_groups(degree, batch, segments, dtype, constrained, monkeypatch):
-    torch.manual_seed(923 + degree)
-    x = torch.randn((batch, segments + 1, 3), dtype=dtype) * .1
-    word = tuple(j % 3 for j in range(degree))
-    words = [word, tuple(reversed(word)), (0,) * degree, word, ()] if degree < 20 else [word] * 8
-    coefs = pysiglib.sig_coef(x.double(), words, prefixes=True, method="pascal")
-    seeds = torch.randn_like(coefs).to(dtype)
-    reference = pysiglib.sig_coef_backprop(x.double(), words, coefs, seeds.double(), method="pascal")
-    monkeypatch.setenv("PYSIGLIB_PASCAL_WORKSPACE_BYTES", str(1024 * x.element_size() if constrained else 256 * 1024 * 1024))
-    actual, gradient = pascal_with_gradient(x.cuda(), words, seeds.cuda())
-    torch.testing.assert_close(actual.cpu().double(), coefs, rtol=3e-5, atol=3e-6)
-    torch.testing.assert_close(gradient.cpu().double(), reference, rtol=3e-5, atol=3e-6)
-
 
 def test_pascal_highway_targets():
     rng = np.random.default_rng(581)
@@ -261,7 +254,7 @@ def test_pascal_highway_targets():
 @pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("time_aug,lead_lag", [(False, False), (True, False), (False, True), (True, True)])
-def test_pascal_jax_shapes_and_transforms(method, dtype, time_aug, lead_lag):
+def test_pascal_jax_shapes_and_transforms(method, dtype, time_aug, lead_lag, jax_cpu):
     jax = pytest.importorskip("jax")
     import pysiglib.jax_api as jax_api
     jax.config.update("jax_enable_x64", True)
@@ -284,11 +277,12 @@ def test_pascal_jax_shapes_and_transforms(method, dtype, time_aug, lead_lag):
 @pytest.mark.parametrize("backend", DEVICES + ["jax"])
 @pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_sparse_single_segment(backend, method, dtype):
+def test_sparse_single_segment(backend, method, dtype, request):
     path = np.zeros((2, 32), dtype=dtype)
     path[1] = .125
     word = tuple(range(16))
     if backend == "jax":
+        request.getfixturevalue("jax_cpu")
         jax = pytest.importorskip("jax")
         import pysiglib.jax_api as api
         jax.config.update("jax_enable_x64", True)

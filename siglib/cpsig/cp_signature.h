@@ -41,7 +41,7 @@ template<std::floating_point T>
 void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs, uint64_t ps_split);
 
 template<std::floating_point T>
-void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs, uint64_t ps_split);
+void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, const T* final, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar_term, int n_jobs, uint64_t ps_split);
 
 template<bool Backward, std::floating_point T>
 void signature_prefix_suffix_correction_(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, T end_time, bool scalar, int n_jobs, uint64_t ps_split, const T* correction, uint64_t correction_len, uint64_t batch_stride, uint64_t segment_stride);
@@ -918,7 +918,7 @@ void sig_backprop_(
 				end_time, scalar_term, n_jobs, ps_split, correction, correction_len, correction_batch_stride, correction_segment_stride);
 			return;
 		}
-		signature_prefix_suffix_backprop_(path, out, sig_derivs, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, ps_split);
+		signature_prefix_suffix_backprop_(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, ps_split);
 		return;
 	}
 	std::fill(out, out + length * dimension * batch_size, static_cast<T>(0.));

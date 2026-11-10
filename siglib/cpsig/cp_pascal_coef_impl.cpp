@@ -14,6 +14,7 @@
  * ========================================================================= */
 
 #include "cppch.h"
+#include <atomic>
 #include "cp_simd_config.h"
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "cp_pascal_coef_impl.cpp"
@@ -71,6 +72,13 @@ struct PascalAccess {
     uint64_t dimension, length, n, count, first, seed_stride, seed_offset;
     bool time_aug, lead_lag;
     T end_time;
+    const T* coefs = nullptr;
+    PASCAL_INLINE V coefficient(uint64_t j) const {
+        T values[Ops::lanes] = {};
+        for (uint64_t lane = 0; lane < count; ++lane)
+            values[lane] = coefs[(first + lane) * seed_stride + seed_offset + j];
+        return Ops::load(values);
+    }
     PASCAL_INLINE V increment(uint64_t i, uint64_t j) const {
         T values[Ops::lanes] = {};
         if (!time_aug && !lead_lag) {
@@ -161,10 +169,9 @@ bool pascal_forward_dispatch(Access& access, uint64_t n, uint64_t m, typename Op
 }
 
 template<class Ops, int Mode, class Access>
-bool pascal_backward_dispatch(Access& access, uint64_t n, uint64_t m, uint64_t block, uint64_t blocks,
-    typename Ops::V* checkpoints, typename Ops::V* scratch) {
+bool pascal_backward_dispatch(Access& access, uint64_t n, uint64_t m, typename Ops::V* scratch) {
     if constexpr (Mode != pc::guarded) {
-#define PASCAL_BACKWARD_CASE(M) case M: return pc::backward<Ops, Mode, M>(access, n, m, block, blocks, checkpoints, scratch)
+#define PASCAL_BACKWARD_CASE(M) case M: return pc::backward<Ops, Mode, M>(access, n, m, scratch)
         switch (m) {
             PASCAL_BACKWARD_CASE(1); PASCAL_BACKWARD_CASE(2); PASCAL_BACKWARD_CASE(3); PASCAL_BACKWARD_CASE(4);
             PASCAL_BACKWARD_CASE(5); PASCAL_BACKWARD_CASE(6); PASCAL_BACKWARD_CASE(7); PASCAL_BACKWARD_CASE(8);
@@ -174,29 +181,22 @@ bool pascal_backward_dispatch(Access& access, uint64_t n, uint64_t m, uint64_t b
         }
 #undef PASCAL_BACKWARD_CASE
     }
-    return pc::backward<Ops, Mode>(access, n, m, block, blocks, checkpoints, scratch);
+    return pc::backward<Ops, Mode>(access, n, m, scratch);
 }
 
 template<class T, class Ops, int Mode, bool Backward>
-void pascal_cpu(const T* path, T* out, const T* deriv, const pc::Words& words, uint64_t batch,
-    uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, bool prefixes, int jobs, uint64_t cutoff) {
+void pascal_cpu(const T* path, T* out, const T* coefs, const T* deriv, const pc::Words& words, uint64_t batch,
+    uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time, bool prefixes, int jobs) {
     using V = typename Ops::V;
     const uint64_t n = length > 1 ? pc::mul(length - 1, lead_lag ? 2 : 1) : 0;
     const uint64_t mmax = words.max_degree, stride = pc::add(mmax, 1);
-    pc::Checkpoints plan(n, mmax, cutoff);
-    const uint64_t small_count = Backward ? pc::add(pc::mul(4, stride), pc::mul(mmax, stride) / 2) : pc::mul(2, stride);
-    uint64_t checkpoint_count = Backward ? plan.count : 0;
-    uint64_t per_owner = pc::mul(pc::mul(pc::add(small_count, checkpoint_count), sizeof(V)), Mode == pc::guarded ? 1 : 2);
+    const uint64_t small_count = pc::mul(Backward ? 4 : 2, stride);
+    const uint64_t per_owner = pc::mul(pc::mul(small_count, sizeof(V)), Mode == pc::guarded ? 1 : 2);
     const uint64_t budget = pc::workspace_limit();
-    if (Backward && per_owner > budget && plan.block == 1 && n > 1) {
-        plan = pc::Checkpoints(n, mmax, 0);
-        checkpoint_count = plan.count;
-        per_owner = pc::mul(pc::mul(pc::add(small_count, checkpoint_count), sizeof(V)), Mode == pc::guarded ? 1 : 2);
-    }
     if constexpr (Ops::lanes > 1) {
         if (per_owner > budget) {
-            pascal_cpu<T, PascalScalarOps<T>, Mode, Backward>(path, out, deriv, words, batch, dimension,
-                length, time_aug, lead_lag, end_time, prefixes, jobs, cutoff);
+            pascal_cpu<T, PascalScalarOps<T>, Mode, Backward>(path, out, coefs, deriv, words, batch, dimension,
+                length, time_aug, lead_lag, end_time, prefixes, jobs);
             return;
         }
     }
@@ -205,10 +205,9 @@ void pascal_cpu(const T* path, T* out, const T* deriv, const pc::Words& words, u
     const uint64_t tasks = Backward ? groups : pc::mul(groups, words.count);
     const uint64_t owners = std::min<uint64_t>({tasks, uint64_t(jobs), budget / std::max<uint64_t>(per_owner, 1)});
     auto work = [&](uint64_t start, uint64_t end) HWY_ATTR {
-        auto memory = hwy::AllocateAligned<V>(pc::add(small_count, checkpoint_count));
+        auto memory = hwy::AllocateAligned<V>(small_count);
         if (!memory) throw std::bad_alloc();
         V* scratch = memory.get();
-        V* checkpoints = scratch + small_count;
         for (uint64_t owner = start; owner < end; ++owner) {
             for (uint64_t task = tasks * owner / owners; task < tasks * (owner + 1) / owners; ++task) {
                 const uint64_t group = Backward ? task : task / words.count;
@@ -222,9 +221,9 @@ void pascal_cpu(const T* path, T* out, const T* deriv, const pc::Words& words, u
                 for (uint64_t w = begin_word; w < end_word; ++w) {
                     const uint64_t m = words.packed[w], offset = words.packed[2 * words.count + w];
                     PascalAccess<T, Ops> access{path, out, deriv, words.word(w), dimension, length, n,
-                        count, first, words.width, offset, time_aug, lead_lag, end_time};
+                        count, first, words.width, offset, time_aug, lead_lag, end_time, coefs};
                     if constexpr (Backward) {
-                        valid = pascal_backward_dispatch<Ops, Mode>(access, n, m, plan.block, plan.blocks, checkpoints, scratch) && valid;
+                        valid = pascal_backward_dispatch<Ops, Mode>(access, n, m, scratch) && valid;
                     } else {
                         valid = pascal_forward_dispatch<Ops, Mode>(access, n, m, scratch, scratch + stride);
                         if (valid || Mode == pc::guarded) {
@@ -242,8 +241,8 @@ void pascal_cpu(const T* path, T* out, const T* deriv, const pc::Words& words, u
                     if (!valid) {
                         if constexpr (Backward) {
                             pascal_cpu<T, PascalScalarOps<T>, pc::guarded, true>(path + first * length * dimension,
-                                out + first * length * dimension, deriv + first * words.width, words,
-                                count, dimension, length, time_aug, lead_lag, end_time, true, 1, plan.block > 1 ? 0 : cutoff);
+                                out + first * length * dimension, coefs + first * words.width, deriv + first * words.width, words,
+                                count, dimension, length, time_aug, lead_lag, end_time, true, 1);
                         } else {
                             const uint64_t w = begin_word, m = words.packed[w], offset = words.packed[2 * words.count + w];
                             std::vector<T> fallback(2 * (m + 1));
@@ -265,83 +264,60 @@ void pascal_cpu(const T* path, T* out, const T* deriv, const pc::Words& words, u
 }
 
 template<class T>
-struct PascalCompactAccess : PascalAccess<T, PascalScalarOps<T>> {
-    const uint64_t* columns;
-    uint64_t width;
+struct PascalAtomicAccess : PascalAccess<T, PascalScalarOps<T>> {
     PASCAL_INLINE void scatter(uint64_t i, const T* gradient, uint64_t m) const {
         for (uint64_t j = 0; j < m; ++j) {
             const uint64_t c = this->word[j];
             if (this->time_aug && c == this->dimension * (this->lead_lag ? 2 : 1)) continue;
+            bool first = true;
+            for (uint64_t k = 0; k < j; ++k) if (this->word[k] == c) first = false;
+            if (!first) continue;
+            T value = gradient[j];
+            for (uint64_t k = j + 1; k < m; ++k) if (this->word[k] == c) value += gradient[k];
             const uint64_t before = this->lead_lag ? i / 2 + ((i % 2) && c >= this->dimension) : i;
             const uint64_t after = this->lead_lag ? (i + 1) / 2 + (((i + 1) % 2) && c >= this->dimension) : i + 1;
             if (before != after) {
-                this->out[after * width + columns[j]] += gradient[j];
-                this->out[before * width + columns[j]] -= gradient[j];
+                const uint64_t column = c % this->dimension;
+                std::atomic_ref<T>(this->out[after * this->dimension + column]).fetch_add(value, std::memory_order_relaxed);
+                std::atomic_ref<T>(this->out[before * this->dimension + column]).fetch_add(-value, std::memory_order_relaxed);
             }
         }
     }
 };
 
 template<class T, int Mode>
-bool pascal_word_parallel(const T* path, T* out, const T* deriv, const pc::Words& words,
-    uint64_t batch, uint64_t dimension, uint64_t length, bool ta, bool ll, T time, int jobs, uint64_t cutoff) {
+bool pascal_word_parallel(const T* path, T* out, const T* coefs, const T* deriv, const pc::Words& words,
+    uint64_t batch, uint64_t dimension, uint64_t length, bool ta, bool ll, T time, int jobs) {
     if (batch > 4 || words.count < 8 || uint64_t(jobs) < 2 * batch || length < 2) return false;
     const uint64_t n = pc::mul(length - 1, ll ? 2 : 1), m = words.max_degree;
     if (words.count < 16 && pc::mul(n, m) < 256) return false;
-    const pc::Checkpoints plan(n, m, cutoff);
-    const uint64_t scratch_count = pc::add(pc::mul(4, m + 1), pc::mul(m, m + 1) / 2);
-    std::vector<uint64_t> coordinates, columns(words.index_count);
-    for (uint64_t k = 0; k < words.index_count; ++k) {
-        uint64_t c = words.packed[3 * words.count + k];
-        if (ta && c == dimension * (ll ? 2 : 1)) continue;
-        if (ll && c >= dimension) c -= dimension;
-        coordinates.push_back(c);
-    }
-    std::sort(coordinates.begin(), coordinates.end());
-    coordinates.erase(std::unique(coordinates.begin(), coordinates.end()), coordinates.end());
-    const uint64_t width = coordinates.size(), partial_count = pc::mul(length, width);
-    for (uint64_t k = 0; k < words.index_count; ++k) {
-        uint64_t c = words.packed[3 * words.count + k];
-        if (ll && c >= dimension) c -= dimension;
-        columns[k] = std::lower_bound(coordinates.begin(), coordinates.end(), c) - coordinates.begin();
-    }
-    const uint64_t row = pc::add(partial_count, pc::add(scratch_count, plan.count));
+    const uint64_t scratch_count = pc::mul(4, m + 1);
     const uint64_t owners = std::min<uint64_t>({uint64_t(jobs) / batch, words.count,
-        pc::workspace_limit() / std::max<uint64_t>(pc::mul(pc::mul(row, sizeof(T)), batch), 1)});
+        pc::workspace_limit() / std::max<uint64_t>(pc::mul(pc::mul(scratch_count, sizeof(T)), batch), 1)});
     if (owners < 2) return false;
 
-    std::vector<T> memory(pc::mul(pc::mul(owners, batch), row));
-    auto work = [&](uint64_t start, uint64_t end) HWY_ATTR {
-        for (uint64_t task = start; task < end; ++task) {
-            const uint64_t sample = task / owners, owner = task % owners;
-            T* partial = memory.data() + task * row;
-            T* scratch = partial + partial_count;
-            T* checkpoints = scratch + scratch_count;
-            auto run = [&]<int CurrentMode>() HWY_ATTR {
-                std::fill_n(partial, partial_count, T(0));
-                bool valid = true;
+    std::vector<T> memory(pc::mul(pc::mul(owners, batch), scratch_count));
+    auto run = [&]<int CurrentMode>() HWY_ATTR {
+        std::fill_n(out, pc::mul(batch, pc::mul(length, dimension)), T(0));
+        std::atomic<bool> valid{true};
+        auto work = [&](uint64_t start, uint64_t end) HWY_ATTR {
+            for (uint64_t task = start; task < end; ++task) {
+                const uint64_t sample = task / owners, owner = task % owners;
+                T* scratch = memory.data() + task * scratch_count;
                 for (uint64_t w = words.count * owner / owners; w < words.count * (owner + 1) / owners; ++w) {
-                    PascalCompactAccess<T> access{{path + sample * length * dimension, partial, deriv + sample * words.width,
-                        words.word(w), dimension, length, n, 1, 0, words.width, words.packed[2 * words.count + w], ta, ll, time},
-                        columns.data() + words.packed[words.count + w], width};
-                    valid = pascal_backward_dispatch<PascalScalarOps<T>, CurrentMode>(access, n, words.packed[w], plan.block,
-                        plan.blocks, checkpoints, scratch) && valid;
+                    PascalAtomicAccess<T> access{{path + sample * length * dimension, out + sample * length * dimension,
+                        deriv + sample * words.width, words.word(w), dimension, length, n, 1, 0, words.width,
+                        words.packed[2 * words.count + w], ta, ll, time, coefs + sample * words.width}};
+                    if (!pascal_backward_dispatch<PascalScalarOps<T>, CurrentMode>(access, n, words.packed[w], scratch))
+                        valid.store(false, std::memory_order_relaxed);
                 }
-                return valid;
-            };
-            const bool valid = run.template operator()<Mode>();
-            if constexpr (Mode != pc::guarded) if (!valid) run.template operator()<pc::guarded>();
-        }
+            }
+        };
+        spawn_batch_threads(owners * batch, jobs, work);
+        return valid.load(std::memory_order_relaxed);
     };
-    spawn_batch_threads(owners * batch, jobs, work);
-    std::fill_n(out, pc::mul(batch, pc::mul(length, dimension)), T(0));
-    for (uint64_t sample = 0; sample < batch; ++sample)
-        for (uint64_t owner = 0; owner < owners; ++owner) {
-            const T* partial = memory.data() + (sample * owners + owner) * row;
-            for (uint64_t i = 0; i < length; ++i)
-                for (uint64_t c = 0; c < width; ++c)
-                    out[(sample * length + i) * dimension + coordinates[c]] += partial[i * width + c];
-        }
+    const bool valid = run.template operator()<Mode>();
+    if constexpr (Mode != pc::guarded) if (!valid) run.template operator()<pc::guarded>();
     return true;
 }
 
@@ -384,22 +360,21 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
             return;
         }
     }
-    constexpr uint64_t cutoff = 256;
     if constexpr (Backward) {
         bool parallel = false;
-        if (mode == pc::guarded) parallel = pascal_word_parallel<T, pc::guarded>(path, out, deriv, words, batch, dimension, length, time_aug, lead_lag, end_time, jobs, cutoff);
-        else parallel = pascal_word_parallel<T, pc::scaled>(path, out, deriv, words, batch, dimension, length, time_aug, lead_lag, end_time, jobs, cutoff);
+        if (mode == pc::guarded) parallel = pascal_word_parallel<T, pc::guarded>(path, out, coefs, deriv, words, batch, dimension, length, time_aug, lead_lag, end_time, jobs);
+        else parallel = pascal_word_parallel<T, pc::scaled>(path, out, coefs, deriv, words, batch, dimension, length, time_aug, lead_lag, end_time, jobs);
         if (parallel) return;
     }
     if (mode == pc::guarded)
-        pascal_cpu<T, PascalScalarOps<T>, pc::guarded, Backward>(path, out, deriv, words, batch, dimension,
-            length, time_aug, lead_lag, end_time, prefixes, jobs, cutoff);
+        pascal_cpu<T, PascalScalarOps<T>, pc::guarded, Backward>(path, out, coefs, deriv, words, batch, dimension,
+            length, time_aug, lead_lag, end_time, prefixes, jobs);
     else if (batch < vec_batch_lanes<T>)
-        pascal_cpu<T, PascalScalarOps<T>, pc::scaled, Backward>(path, out, deriv, words, batch, dimension,
-            length, time_aug, lead_lag, end_time, prefixes, jobs, cutoff);
+        pascal_cpu<T, PascalScalarOps<T>, pc::scaled, Backward>(path, out, coefs, deriv, words, batch, dimension,
+            length, time_aug, lead_lag, end_time, prefixes, jobs);
     else
-        pascal_cpu<T, PascalSimdOps<T>, pc::scaled, Backward>(path, out, deriv, words, batch, dimension,
-            length, time_aug, lead_lag, end_time, prefixes, jobs, cutoff);
+        pascal_cpu<T, PascalSimdOps<T>, pc::scaled, Backward>(path, out, coefs, deriv, words, batch, dimension,
+            length, time_aug, lead_lag, end_time, prefixes, jobs);
 }
 
 template<std::floating_point T>

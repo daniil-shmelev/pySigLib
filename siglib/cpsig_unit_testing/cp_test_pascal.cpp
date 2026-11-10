@@ -61,9 +61,6 @@ TEST(PascalCoefficient, IdentityAndCheckedSizes) {
         EXPECT_NE(sig_coef_f(&path, out, &word, 2, degrees, 1, 1, 1,
             false, false, 1.f, true, 1, method), 0);
     }
-    const pascal_coefficient::Checkpoints plan(4096, 16);
-    EXPECT_EQ(plan.block, 64);
-    EXPECT_LT(plan.count, 4096 * 17);
 }
 
 TEST(PascalCoefficient, GuardedTinyLink) {

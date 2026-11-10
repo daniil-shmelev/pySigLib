@@ -243,7 +243,7 @@ TEST(PrefixSuffix, NativeForwardAndBackprop) {
             for (size_t i = 0; i < sig.size(); ++i) EXPECT_NEAR(ps[i], sig[i], 1e-12);
             ASSERT_EQ(sig_backprop_d(path.data(), expected.data(), deriv.data(), sig.data(), batch,
                 dimension, length, degree, time_aug, lead_lag, 0.7, scalar, 2), 0);
-            ASSERT_EQ(sig_backprop_d(path.data(), actual.data(), deriv.data(), nullptr, batch,
+            ASSERT_EQ(sig_backprop_d(path.data(), actual.data(), deriv.data(), ps.data(), batch,
                 dimension, length, degree, time_aug, lead_lag, 0.7, scalar, 2, nullptr, 0, 0, 0, 1), 0) << cpsig_last_error_message();
             for (uint64_t x = 0; x < path.size(); ++x)
                 EXPECT_NEAR(actual[x], expected[x], 1e-10) << dimension << "," << degree << "," << time_aug << "," << lead_lag;
@@ -255,7 +255,8 @@ TEST(PrefixSuffix, BackpropFiniteDifference) {
     std::vector<double> path(length * d), sig(size), deriv(size), actual(path.size());
     for (uint64_t x = 0; x < path.size(); ++x) path[x] = double(int((x * 7) % 19) - 9) / 16;
     for (uint64_t x = 0; x < size; ++x) deriv[x] = double(int(x % 11) - 5) / 8;
-    ASSERT_EQ(sig_backprop_d(path.data(), actual.data(), deriv.data(), nullptr, 1, d, length,
+    ASSERT_EQ(signature_d(path.data(), sig.data(), 1, d, length, degree, false, false, 1., true, 1), 0);
+    ASSERT_EQ(sig_backprop_d(path.data(), actual.data(), deriv.data(), sig.data(), 1, d, length,
         degree, false, false, 1., true, 3, nullptr, 0, 0, 0, 1), 0);
     for (uint64_t x = 0; x < path.size(); ++x) {
         const double original = path[x], epsilon = 1e-5;
