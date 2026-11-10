@@ -192,6 +192,8 @@ def test_compressed_labels_match_numerical_projection(branched, scalar_term):
 
 @pytest.mark.parametrize("module_name", ["pysiglib.torch_api", "pysiglib.jax_api"])
 def test_frontend_coordinate_helpers(module_name):
+    if module_name == "pysiglib.jax_api":
+        pytest.importorskip("jax")
     api = pytest.importorskip(module_name)
     for name in (
         "words", "word_to_idx", "idx_to_word",
