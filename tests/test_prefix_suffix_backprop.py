@@ -339,3 +339,25 @@ def test_jax_empty_batch_and_higher_derivatives():
         assert actual.shape == path.shape
     with pytest.raises((ValueError, TypeError), match="differentiat|JVP"):
         jax.grad(lambda p: grad(p).sum())(np.zeros((7, 3), dtype=np.float32))
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("segments", [16, 257, 4096])
+@pytest.mark.parametrize("split", [None, 1, 4])
+@pytest.mark.parametrize("scalar", [False, True])
+def test_cpu_reversal_bounded_workspace(monkeypatch, dtype, segments, split, scalar):
+    rng = np.random.default_rng(727)
+    path = rng.normal(scale=.03, size=(2, segments + 1, 2)).astype(dtype)
+    options = dict(n_jobs=2)
+    final = pysiglib.sig(path, 4, method=METHOD, ps_split=split, scalar_term=scalar, **options)
+    seeds = rng.normal(size=final.shape).astype(dtype)
+    saved_final, saved_seeds = final.copy(), seeds.copy()
+    expected = pysiglib.sig_backprop(path, final, seeds, 4, method="horner", **options)
+    monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", "16384")
+    monkeypatch.setenv("PYSIGLIB_PS_FACTOR_BYTES", "4096")
+    tolerance = 1e-4 if dtype == np.float32 else 1e-10
+    for _ in range(2):
+        actual = pysiglib.sig_backprop(path, final, seeds, 4, method=METHOD, ps_split=split, **options)
+        np.testing.assert_allclose(actual, expected, atol=tolerance, rtol=tolerance)
+        np.testing.assert_array_equal(final, saved_final)
+        np.testing.assert_array_equal(seeds, saved_seeds)

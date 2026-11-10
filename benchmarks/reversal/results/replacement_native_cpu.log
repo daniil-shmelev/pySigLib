@@ -1,0 +1,44 @@
+Note: Google Test filter = *Pascal*:*PrefixSuffix*
+[==========] Running 16 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 12 tests from PrefixSuffix
+[ RUN      ] PrefixSuffix.CheckedSizes
+[       OK ] PrefixSuffix.CheckedSizes (0 ms)
+[ RUN      ] PrefixSuffix.CorrectionSelectionAndQuadrature
+[       OK ] PrefixSuffix.CorrectionSelectionAndQuadrature (0 ms)
+[ RUN      ] PrefixSuffix.InvalidSignatureMethod
+[       OK ] PrefixSuffix.InvalidSignatureMethod (0 ms)
+[ RUN      ] PrefixSuffix.EndpointConcurrency
+[       OK ] PrefixSuffix.EndpointConcurrency (0 ms)
+[ RUN      ] PrefixSuffix.EndpointRespectsSchedulerLimits
+[       OK ] PrefixSuffix.EndpointRespectsSchedulerLimits (3 ms)
+[ RUN      ] PrefixSuffix.GemmLargeStrides
+[       OK ] PrefixSuffix.GemmLargeStrides (0 ms)
+[ RUN      ] PrefixSuffix.RightFactorDefiningSum
+[       OK ] PrefixSuffix.RightFactorDefiningSum (0 ms)
+[ RUN      ] PrefixSuffix.RightFactorExtension
+[       OK ] PrefixSuffix.RightFactorExtension (0 ms)
+[ RUN      ] PrefixSuffix.BackwardUpdate
+[       OK ] PrefixSuffix.BackwardUpdate (1 ms)
+[ RUN      ] PrefixSuffix.RightFactorBackprop
+[       OK ] PrefixSuffix.RightFactorBackprop (0 ms)
+[ RUN      ] PrefixSuffix.NativeForwardAndBackprop
+[       OK ] PrefixSuffix.NativeForwardAndBackprop (97 ms)
+[ RUN      ] PrefixSuffix.BackpropFiniteDifference
+[       OK ] PrefixSuffix.BackpropFiniteDifference (0 ms)
+[----------] 12 tests from PrefixSuffix (104 ms total)
+
+[----------] 4 tests from PascalCoefficient
+[ RUN      ] PascalCoefficient.AllPrefixAdjoints
+[       OK ] PascalCoefficient.AllPrefixAdjoints (0 ms)
+[ RUN      ] PascalCoefficient.IdentityAndCheckedSizes
+[       OK ] PascalCoefficient.IdentityAndCheckedSizes (0 ms)
+[ RUN      ] PascalCoefficient.GuardedTinyLink
+[       OK ] PascalCoefficient.GuardedTinyLink (0 ms)
+[ RUN      ] PascalCoefficient.SimdScratchAlignment
+[       OK ] PascalCoefficient.SimdScratchAlignment (0 ms)
+[----------] 4 tests from PascalCoefficient (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 16 tests from 2 test suites ran. (105 ms total)
+[  PASSED  ] 16 tests.

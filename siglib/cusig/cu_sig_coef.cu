@@ -386,6 +386,17 @@ INSTANTIATE_HORNER(double, false);
 INSTANTIATE_HORNER(double, true);
 #undef INSTANTIATE_HORNER
 
+template<class T, bool Backward>
+void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deriv,
+    const uint64_t* indices, uint64_t words, const uint64_t* degrees, uint64_t batch,
+    uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time,
+    bool prefixes, int method) {
+    if (method == 1) throw std::invalid_argument("Pascal coefficients are not supported on CUDA; use horner or auto");
+    if (method != 0 && method != 2) throw std::invalid_argument("Invalid coefficient method");
+    sig_coef_horner_cuda<T, Backward>(path, out, coefs, deriv, indices, words, degrees,
+        batch, dimension, length, time_aug, lead_lag, end_time, prefixes, !time_aug && !lead_lag);
+}
+
 extern "C" {
 	CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug, bool lead_lag, float end_time, int method) noexcept {
 		CUDA_SAFE_CALL((sig_coef_dispatch_cuda<float, false>(path, out, nullptr, nullptr, multi_idx, num_multi_idx, degrees, batch_size, dimension, length, time_aug, lead_lag, end_time, prefixes, method)));

@@ -540,135 +540,117 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
     }
 }
 
-struct CpuBackpropPlan {
-    uint64_t n, qlen, scan_count, maxp, maxq, rows, temporary, count;
-    CpuBackpropPlan(const Layout& l, uint64_t segments, int jobs, uint64_t itemsize) : n(segments) {
+struct CpuReversalPlan {
+    uint64_t block, qlen, temporary, rows, maxp, maxq, count;
+    CpuReversalPlan(const Layout& l, uint64_t n, uint64_t requested, int jobs, uint64_t itemsize) {
+        block = std::min(n, requested);
         qlen = l.offset[l.scan_degree + 1];
-        scan_count = mul(add(n, 1), qlen);
-        maxp = l.power[l.left_degree(l.m)]; maxq = l.power[l.right_degree(l.m)];
-        const uint64_t factor_bytes = option("PYSIGLIB_PS_FACTOR_BYTES", 64ULL << 20);
-        rows = l.scan_degree < l.m ? std::max<uint64_t>(1, std::min(mul(n, l.left_degree(l.m)),
-            factor_bytes / mul(mul(2, add(maxp, maxq)), itemsize))) : 0;
-
         temporary = l.offset[std::max(l.scan_degree, l.left_degree(l.m)) + 1];
-        count = add(mul(4, scan_count), mul(2, mul(n, l.d)));
-        count = add(count, mul(2, mul(rows, add(maxp, maxq))));
-        count = add(count, add(mul(2, qlen), mul(mul(4, temporary), jobs)));
+        maxp = l.power[l.left_degree(l.m)]; maxq = l.power[l.right_degree(l.m)];
+        const uint64_t factor_row = mul(l.left_degree(l.m), add(maxp, maxq));
+        block = std::min(block, std::max<uint64_t>(1, option("PYSIGLIB_PS_FACTOR_BYTES", 64ULL << 20) / mul(factor_row, itemsize)));
+        rows = mul(block, l.left_degree(l.m));
+        count = add(mul(add(mul(3, block), 3), qlen), mul(add(mul(2, block), 1), l.d));
+        count = add(count, add(mul(rows, add(maxp, maxq)), mul(mul(4, temporary), jobs)));
     }
 };
 
 template<typename T>
-void backprop_path(const T* input, T* output, const T* deriv, uint64_t dimension, uint64_t length,
-    bool time_aug, bool lead_lag, T end_time, bool scalar, int jobs, const Layout& l,
-    const CpuBackpropPlan& plan, T* storage) {
-    const uint64_t n = plan.n, qlen = plan.qlen;
-    T* prefixes = storage;
-    T* suffixes = prefixes + plan.scan_count;
-    T* dprefix = suffixes + plan.scan_count;
-    T* dsuffix = dprefix + plan.scan_count;
-    T* increments = dsuffix + plan.scan_count;
-    T* dincrements = increments + n * l.d;
-    T* left = dincrements + n * l.d;
-    T* right = left + plan.rows * plan.maxp;
-    T* dleft = right + plan.rows * plan.maxq;
-    T* dright = dleft + plan.rows * plan.maxp;
-    T* state = dright + plan.rows * plan.maxq;
-    T* adjoint = state + qlen;
-    T* temporary = adjoint + qlen;
-    std::fill_n(dprefix, 2 * plan.scan_count, T(0));
-    std::fill_n(dincrements, n * l.d, T(0));
+void backprop_reversal_path(const T* input, const T* final, const T* deriv, T* out, uint64_t dimension, uint64_t length,
+    bool time_aug, bool lead_lag, T end_time, uint64_t n, bool scalar, int jobs, const Layout& l, const CpuReversalPlan& plan, T* memory) {
+    const uint64_t h = l.scan_degree, qlen = plan.qlen, block = plan.block;
+    T* prefixes = memory; T* suffixes = prefixes + block * qlen;
+    T* sources = suffixes + block * qlen; T* inc = sources + block * qlen;
+    T* dinc = inc + block * l.d; T* negative = dinc + block * l.d;
+    T* prefix = negative + l.d; T* suffix = prefix + qlen; T* adjoint = suffix + qlen;
+    T* left = adjoint + qlen; T* right = left + plan.rows * plan.maxp;
+    T* temporary = right + plan.rows * plan.maxq;
     Path<T> path(input, dimension, length, time_aug, lead_lag, end_time);
-    prefix_scan(path, n, l.d, l, qlen, increments, prefixes, state, temporary);
-    suffix_scan(n, l, qlen, increments, suffixes, state, temporary);
+    std::fill_n(out, length * dimension, T(0));
     CpuMatrices<T> matrices{jobs};
-    for (uint64_t k = l.scan_degree + 1; k <= l.m; ++k) {
-        const uint64_t a = l.left_degree(k), b = l.right_degree(k), p = l.power[a], q = l.power[b], total = n * a;
-        for (uint64_t base = 0; base < total; base += plan.rows) {
-            const uint64_t count = std::min(plan.rows, total - base);
-            const uint64_t first_segment = base / a, segments = (base + count - 1) / a - first_segment + 1;
-            const uint64_t owners = std::min<uint64_t>(segments, jobs);
-            auto factor_ranges = [&](auto process) {
-                parallel_range(owners, jobs, [&](uint64_t first_owner, uint64_t end_owner) {
-                    for (uint64_t owner = first_owner; owner < end_owner; ++owner) {
-                        T* powers = temporary + owner * 4 * plan.temporary;
-                        for (uint64_t i = first_segment + segments * owner / owners;
-                            i < first_segment + segments * (owner + 1) / owners; ++i) {
-                            cpu_detail::tensor_powers(increments + i * l.d, powers, a, l);
-                            process(i, std::max(base, i * a), std::min(base + count, (i + 1) * a), powers);
-                        }
+    for (bool reverse : {true, false}) {
+        std::fill_n(prefix, 3 * qlen, T(0)); prefix[0] = suffix[0] = 1;
+        std::copy_n(final + scalar, qlen - 1, (reverse ? prefix : suffix) + 1);
+        if (reverse) std::copy_n(deriv + scalar, qlen - 1, adjoint + 1);
+        for (uint64_t position = 0; position < n; position += block) {
+            const uint64_t size = std::min(block, n - position);
+            const uint64_t first = reverse ? n - position - size : position;
+            std::fill_n(sources, size * qlen, T(0));
+            std::fill_n(dinc, size * l.d, T(0));
+            for (uint64_t step = 0; step < size; ++step) {
+                const uint64_t slot = reverse ? size - 1 - step : step, i = first + slot;
+                T* v = inc + slot * l.d;
+                for (uint64_t c = 0; c < l.d; ++c) negative[c] = -(v[c] = path[i + 1][c] - path[i][c]);
+                if (reverse) signature_horner_step_(prefix, negative, l.d, h, l.offset.data(), temporary);
+                else cpu_detail::prepend_generic(suffix, negative, l, temporary);
+                std::copy_n(prefix, qlen, prefixes + slot * qlen);
+                std::copy_n(suffix, qlen, suffixes + slot * qlen);
+                if (reverse) cpu_detail::prepend_generic(suffix, v, l, temporary);
+                else signature_horner_step_(prefix, v, l.d, h, l.offset.data(), temporary);
+            }
+            for (uint64_t k = h + 1; k <= l.m; ++k) {
+                const uint64_t a = l.left_degree(k), b = l.right_degree(k), p = l.power[a], q = l.power[b], rows = size * a;
+                const uint64_t owners = std::min<uint64_t>(size, jobs);
+                auto ranges = [&](auto process) {
+                    parallel_range(owners, jobs, [&](uint64_t begin, uint64_t end) {
+                        for (uint64_t owner = begin; owner < end; ++owner)
+                            for (uint64_t i = size * owner / owners; i < size * (owner + 1) / owners; ++i)
+                                process(i, temporary + owner * 4 * plan.temporary);
+                    });
+                };
+                ranges([&](uint64_t i, T* powers) {
+                    const T* v = inc + i * l.d;
+                    if (!reverse) cpu_detail::tensor_powers(v, powers, a, l);
+                    for (uint64_t j = 0; j < a; ++j) {
+                        const uint64_t row = i * a + j, tail = l.power[j + 1];
+                        if (reverse) right_factor(right + row * q, suffixes + i * qlen, v, j, b, l);
+                        else for (uint64_t x = 0; x < l.power[a - 1 - j]; ++x)
+                            for (uint64_t y = 0; y < tail; ++y)
+                                left[row * p + x * tail + y] = prefixes[i * qlen + l.offset[a - 1 - j] + x] * powers[l.offset[j + 1] + y];
                     }
                 });
-            };
-            factor_ranges([&](uint64_t i, uint64_t begin, uint64_t end, T* powers) {
-                for (uint64_t t = begin; t < end; ++t) {
-                    const uint64_t j = t % a, row = t - base, tail = l.power[j + 1];
-                    const T* prefix = prefixes + i * qlen + l.offset[a - 1 - j];
-                    for (uint64_t x = 0; x < l.power[a - 1 - j]; ++x)
-                        for (uint64_t y = 0; y < tail; ++y)
-                            left[row * p + x * tail + y] = prefix[x] * powers[l.offset[j + 1] + y];
-                    right_factor(right + row * q, suffixes + (i + 1) * qlen, increments + i * l.d, j, b, l);
-                }
-            });
-            T* g = const_cast<T*>(deriv + l.offset[k] - (scalar ? 0 : 1));
-            matrices.gemm(Matrix<T>{right, count, q, q, 1}, Matrix<T>{g, q, p, 1, q},
-                Matrix<T>{dleft, count, p, p, 1}, true);
-            matrices.gemm(Matrix<T>{left, count, p, p, 1}, Matrix<T>{g, p, q, q, 1},
-                Matrix<T>{dright, count, q, q, 1}, true);
-            factor_ranges([&](uint64_t i, uint64_t begin, uint64_t end, T* powers) {
-                T* dpowers = powers + plan.temporary;
-                T* history = dpowers + plan.temporary;
-                T* work = history + plan.temporary;
-                std::fill_n(dpowers, l.offset[a + 1], T(0));
-                for (uint64_t t = begin; t < end; ++t) {
-                    const uint64_t j = t % a, row = t - base, tail = l.power[j + 1];
-                    const uint64_t level = l.offset[a - 1 - j];
-                    const T* prefix = prefixes + i * qlen + level;
-                    T* dp = dprefix + i * qlen + level;
-                    for (uint64_t x = 0; x < l.power[a - 1 - j]; ++x) {
-                        if (tail >= 16) {
-                            dp[x] += dot_product_mult_add(powers + l.offset[j + 1], dleft + row * p + x * tail,
-                                dpowers + l.offset[j + 1], prefix[x], tail);
-                        } else {
-                            T value = 0;
-                            for (uint64_t y = 0; y < tail; ++y) {
-                                const T g = dleft[row * p + x * tail + y];
-                                value += g * powers[l.offset[j + 1] + y];
-                                dpowers[l.offset[j + 1] + y] += g * prefix[x];
-                            }
-                            dp[x] += value;
-                        }
+                T* g = const_cast<T*>(deriv + l.offset[k] - !scalar);
+                if (reverse) matrices.gemm(Matrix<T>{right, rows, q, q, 1}, Matrix<T>{g, q, p, 1, q}, Matrix<T>{left, rows, p, p, 1}, true);
+                else matrices.gemm(Matrix<T>{left, rows, p, p, 1}, Matrix<T>{g, p, q, q, 1}, Matrix<T>{right, rows, q, q, 1}, true);
+                ranges([&](uint64_t i, T* powers) {
+                    const T* v = inc + i * l.d; T* dv = dinc + i * l.d;
+                    T* ds = sources + i * qlen; T* dpowers = powers + plan.temporary;
+                    if (reverse) {
+                        cpu_detail::tensor_powers(v, powers, a, l);
+                        std::fill_n(dpowers, l.offset[a + 1], T(0));
                     }
-                    cpu_detail::right_factor_backprop(suffixes + (i + 1) * qlen, increments + i * l.d,
-                        dright + row * q, dsuffix + (i + 1) * qlen, dincrements + i * l.d,
-                        j, b, l, history, work);
+                    for (uint64_t j = 0; j < a; ++j) {
+                        const uint64_t row = i * a + j, tail = l.power[j + 1], level = l.offset[a - 1 - j];
+                        if (reverse) {
+                            for (uint64_t x = 0; x < l.power[a - 1 - j]; ++x) {
+                                if (tail >= 16) ds[level + x] += dot_product_mult_add(powers + l.offset[j + 1], left + row * p + x * tail,
+                                    dpowers + l.offset[j + 1], prefixes[i * qlen + level + x], tail);
+                                else for (uint64_t y = 0; y < tail; ++y) {
+                                    const T value = left[row * p + x * tail + y];
+                                    ds[level + x] += value * powers[l.offset[j + 1] + y];
+                                    dpowers[l.offset[j + 1] + y] += value * prefixes[i * qlen + level + x];
+                                }
+                            }
+                        } else cpu_detail::right_factor_backprop(suffixes + i * qlen, v, right + row * q, ds, dv, j, b, l, powers, dpowers);
+                    }
+                    if (reverse) cpu_detail::tensor_powers_backprop(v, powers, dpowers, dv, a, l);
+                });
+            }
+            for (uint64_t step = 0; step < size; ++step) {
+                const uint64_t slot = reverse ? size - 1 - step : step, i = first + slot;
+                T* dv = dinc + slot * l.d;
+                if (reverse) cpu_detail::horner_backprop<false>(prefixes + slot * qlen, inc + slot * l.d, adjoint, dv, h, l, temporary, temporary + plan.temporary);
+                else cpu_detail::horner_backprop<true>(suffixes + slot * qlen, inc + slot * l.d, adjoint, dv, h, l, temporary, temporary + plan.temporary);
+                for (uint64_t x = 1; x < qlen; ++x) adjoint[x] += sources[slot * qlen + x];
+                for (uint64_t c = 0; c < dimension * (lead_lag ? 2 : 1); ++c) {
+                    const uint64_t before = lead_lag ? i / 2 + (i % 2 && c >= dimension) : i;
+                    const uint64_t after = lead_lag ? (i + 1) / 2 + ((i + 1) % 2 && c >= dimension) : i + 1;
+                    out[before * dimension + c % dimension] -= dv[c];
+                    out[after * dimension + c % dimension] += dv[c];
                 }
-                cpu_detail::tensor_powers_backprop(increments + i * l.d, powers, dpowers,
-                    dincrements + i * l.d, a, l);
-            });
+            }
         }
     }
-    adjoint[0] = 0;
-    for (uint64_t x = 1; x < qlen; ++x) adjoint[x] = deriv[x - (scalar ? 0 : 1)];
-    for (uint64_t i = n; i-- > 0;) {
-        cpu_detail::horner_backprop<false>(prefixes + i * qlen, increments + i * l.d,
-            adjoint, dincrements + i * l.d, l.scan_degree, l, temporary, temporary + plan.temporary);
-        for (uint64_t x = 1; x < qlen; ++x) adjoint[x] += dprefix[i * qlen + x];
-    }
-    std::fill_n(adjoint, qlen, T(0));
-    for (uint64_t i = 0; i < n; ++i) {
-        cpu_detail::horner_backprop<true>(suffixes + (i + 1) * qlen, increments + i * l.d,
-            adjoint, dincrements + i * l.d, l.scan_degree, l, temporary, temporary + plan.temporary);
-        for (uint64_t x = 1; x < qlen; ++x) adjoint[x] += dsuffix[(i + 1) * qlen + x];
-    }
-    std::fill_n(output, length * dimension, T(0));
-    for (uint64_t i = 0; i < n; ++i)
-        for (uint64_t c = 0; c < dimension * (lead_lag ? 2 : 1); ++c) {
-            const uint64_t first = lead_lag ? i / 2 + (i % 2 && c >= dimension) : i;
-            const uint64_t next = lead_lag ? (i + 1) / 2 + ((i + 1) % 2 && c >= dimension) : i + 1;
-            const T value = dincrements[i * l.d + c];
-            output[first * dimension + c % dimension] -= value;
-            output[next * dimension + c % dimension] += value;
-        }
 }
 
 } // namespace
@@ -688,7 +670,7 @@ template void signature_prefix_suffix_correction_<false, double>(const double*, 
 template void signature_prefix_suffix_correction_<true, double>(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, double, bool, int, uint64_t, const double*, uint64_t, uint64_t, uint64_t);
 
 template<std::floating_point T>
-void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, uint64_t batch,
+void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, const T* final, uint64_t batch,
     uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, bool lead_lag,
     T end_time, bool scalar, int n_jobs, uint64_t ps_split) {
     if (!dimension) throw std::invalid_argument("path has zero channels");
@@ -730,10 +712,14 @@ void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, ui
         throw std::runtime_error("prefix-suffix requires sequential OpenBLAS built with USE_THREAD=0 and USE_LOCKING=1");
     const int path_jobs = mul(points - 1, l.power[degree]) >= parallel_threshold
         ? std::max(1, jobs / static_cast<int>(std::min<uint64_t>(batch, jobs))) : 1;
-    const CpuBackpropPlan plan(l, points - 1, path_jobs, sizeof(T));
+    if (!final) throw std::invalid_argument("prefix-suffix backprop requires the final signature");
+    CpuReversalPlan plan(l, points - 1, 128, path_jobs, sizeof(T));
+    const uint64_t budget = option("PYSIGLIB_PS_WORKSPACE_BYTES", 2ULL << 30);
+    while (plan.block > 1 && mul(plan.count, sizeof(T)) > budget)
+        plan = CpuReversalPlan(l, points - 1, plan.block / 2, path_jobs, sizeof(T));
     for_paths<T>(batch, jobs, plan.count, "CPU prefix-suffix backprop", [&](uint64_t i, T* storage) {
-        backprop_path(path + i * path_stride, out + i * path_stride, deriv + i * stride,
-            dimension, length, time_aug, lead_lag, end_time, scalar, path_jobs, l, plan, storage);
+        backprop_reversal_path(path + i * path_stride, final + i * stride, deriv + i * stride, out + i * path_stride,
+            dimension, length, time_aug, lead_lag, end_time, points - 1, scalar, path_jobs, l, plan, storage);
     });
 }
 
@@ -795,8 +781,8 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
 
 template void signature_prefix_suffix_<float>(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, int, uint64_t);
 template void signature_prefix_suffix_<double>(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int, uint64_t);
-template void signature_prefix_suffix_backprop_<float>(const float*, float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, int, uint64_t);
-template void signature_prefix_suffix_backprop_<double>(const double*, double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int, uint64_t);
+template void signature_prefix_suffix_backprop_<float>(const float*, float*, const float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, int, uint64_t);
+template void signature_prefix_suffix_backprop_<double>(const double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int, uint64_t);
 
 }
 }

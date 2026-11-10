@@ -253,8 +253,7 @@ def _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method,
 
 def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split):
     sig_ = _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split)
-    # Explicit prefix-suffix reconstructs its states from the path.
-    return sig_, (path, correction if method == 1 else sig_, correction)
+    return sig_, (path, sig_, correction)
 
 
 def _sig_bwd(degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, residual, cotangent):

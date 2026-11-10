@@ -326,7 +326,7 @@ extern "C" {
 	* @param path Pointer to path batch data (row-major), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (row-major, preallocated), size = `batch_size * length * dimension`.
 	* @param sig_derivs Pointer to derivatives with respect to the signatures (row-major), size = `batch_size * sig_length(dimension, degree)`.
-	* @param sig Pointer to signatures of the paths (row-major, precomputed), size = `batch_size * sig_length(dimension, degree)`. With `method=1`, this may be `nullptr` because prefix-suffix recomputes its states from the path.
+	* @param sig Pointer to signatures of the paths (row-major, precomputed), size = `batch_size * sig_length(dimension, degree)`. Prefix-suffix backward uses these final values to reconstruct intermediate states.
 	* @param batch_size Batch size of the paths.
 	* @param dimension Dimension of the path.
 	* @param length Length of the path.

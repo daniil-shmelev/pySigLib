@@ -91,7 +91,6 @@ add_library(cusig SHARED
     cu_path_transforms.cu
     cu_polynomial_sig_kernel.cu
     cu_sig_coef.cu
-    cu_pascal_coef.cu
     cu_sig_kernel.cu
     cu_signature.cu
     cu_prefix_suffix.cu

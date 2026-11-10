@@ -1,0 +1,263 @@
+{
+  "reference": "Retained old CPU implementation in float64 on identical rounded inputs",
+  "selection": "Every CPU screen case with an accuracy failure in any candidate",
+  "production_sha256": "a1833fde30b265c6693dc1aa62277b304400eff2718f102316a0e597f17e8088",
+  "benchmark_sha256": "a5c4d5c4300ee3864298e11b38a0b229c00714d4db5dabebc9ddfd8e50b8fe03",
+  "cases": [
+    {
+      "dimension": 2,
+      "degree": 8,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 2.5274504560357514e-05,
+        "relative_l2": 6.248045621398541e-06,
+        "gradient_pass": true
+      },
+      "production": {
+        "max_absolute": 0.00021505800747512183,
+        "relative_l2": 1.2637275005249993e-05,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 2,
+      "degree": 10,
+      "segments": 4096,
+      "batch": 1,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 1.7794454354458367e-05,
+        "relative_l2": 4.0078974112013366e-06,
+        "gradient_pass": true
+      },
+      "production": {
+        "max_absolute": 0.0010122765733080463,
+        "relative_l2": 0.00012242501512264864,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 2,
+      "degree": 10,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 6.0108865114649745e-05,
+        "relative_l2": 6.755491412197502e-06,
+        "gradient_pass": true
+      },
+      "production": {
+        "max_absolute": 0.002515502358725996,
+        "relative_l2": 0.00010522061868462351,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 2,
+      "degree": 12,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 2.720056204630339e-05,
+        "relative_l2": 6.314972611671582e-06,
+        "gradient_pass": true
+      },
+      "production": {
+        "max_absolute": 0.00022822678492406823,
+        "relative_l2": 3.326565231955607e-05,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 2,
+      "degree": 14,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 3.434049846440246e-05,
+        "relative_l2": 6.180602418424864e-06,
+        "gradient_pass": true
+      },
+      "production": {
+        "max_absolute": 0.001231334058918454,
+        "relative_l2": 9.414901010842166e-05,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 3,
+      "degree": 6,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 1.693744193431712e-05,
+        "relative_l2": 4.553478414393349e-06,
+        "gradient_pass": true
+      },
+      "production": {
+        "max_absolute": 7.211647578220237e-05,
+        "relative_l2": 5.451495722903393e-06,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 3,
+      "degree": 8,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 0.00030585528583060295,
+        "relative_l2": 5.957781274521184e-06,
+        "gradient_pass": false
+      },
+      "production": {
+        "max_absolute": 0.005959069909756476,
+        "relative_l2": 2.8472549448760782e-05,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 3,
+      "degree": 10,
+      "segments": 4096,
+      "batch": 1,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 7.147830242182351e-05,
+        "relative_l2": 5.28869575009317e-06,
+        "gradient_pass": true
+      },
+      "production": {
+        "max_absolute": 0.0007292804607317294,
+        "relative_l2": 1.9506489504507108e-05,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 3,
+      "degree": 10,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 0.00019626157515517662,
+        "relative_l2": 5.795420598384036e-06,
+        "gradient_pass": false
+      },
+      "production": {
+        "max_absolute": 0.00422571682923234,
+        "relative_l2": 4.988789986733945e-05,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 4,
+      "degree": 6,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 6.012049011872023e-05,
+        "relative_l2": 4.39487767600886e-06,
+        "gradient_pass": true
+      },
+      "production": {
+        "max_absolute": 0.00023012750218143196,
+        "relative_l2": 5.941749647027003e-06,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 4,
+      "degree": 8,
+      "segments": 4096,
+      "batch": 1,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 9.126132522419006e-05,
+        "relative_l2": 6.228937503758362e-06,
+        "gradient_pass": false
+      },
+      "production": {
+        "max_absolute": 0.0005456795408240733,
+        "relative_l2": 1.6250356189985037e-05,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 4,
+      "degree": 8,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 0.0002241020477562472,
+        "relative_l2": 5.963334935097491e-06,
+        "gradient_pass": false
+      },
+      "production": {
+        "max_absolute": 0.005431832387305491,
+        "relative_l2": 2.605277471821951e-05,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 8,
+      "degree": 5,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 0.00010140085476706417,
+        "relative_l2": 4.9299552092490004e-06,
+        "gradient_pass": true
+      },
+      "production": {
+        "max_absolute": 0.00011284494656393917,
+        "relative_l2": 4.915975201118716e-06,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 16,
+      "degree": 4,
+      "segments": 4096,
+      "batch": 32,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 9.479008381418907e-05,
+        "relative_l2": 7.011738300837981e-06,
+        "gradient_pass": false
+      },
+      "production": {
+        "max_absolute": 0.00011553268406139239,
+        "relative_l2": 6.972784298495339e-06,
+        "gradient_pass": false
+      }
+    },
+    {
+      "dimension": 4,
+      "degree": 8,
+      "segments": 1024,
+      "batch": 8,
+      "dtype": "float32",
+      "baseline": {
+        "max_absolute": 1.7075045177367132e-06,
+        "relative_l2": 3.7900802554830527e-06,
+        "gradient_pass": true
+      },
+      "production": {
+        "max_absolute": 3.966951699221899e-05,
+        "relative_l2": 9.897730855445159e-06,
+        "gradient_pass": false
+      }
+    }
+  ]
+}

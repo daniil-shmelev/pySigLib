@@ -70,7 +70,7 @@ def sig_coef_backprop(
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
     :param method: ``"auto"`` (default) uses Pascal factorisation on CPU and Horner's
-        method on CUDA. ``"horner"`` uses Horner, and ``"pascal"`` uses
+        method on CUDA. ``"horner"`` uses Horner, and ``"pascal"`` is CPU-only and uses
         Pascal.
     :type method: str
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
@@ -119,6 +119,8 @@ def sig_coef_backprop(
     method_code = _check_coef_method(method)
 
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
+    if data.device == "cuda" and method_code == 1:
+        raise ValueError("Pascal coefficients are not supported on CUDA; use horner or auto")
 
     words = check_word_or_word_list(words, data.dimension, "word")
     if not words:
@@ -143,7 +145,7 @@ def sig_coef_backprop(
 
     flat_indices = [i for idx in words for i in idx]
 
-    if data.device == "cpu" or method_code == 1 or time_aug or lead_lag:
+    if data.device == "cpu" or time_aug or lead_lag:
         words_t = torch.tensor(flat_indices, dtype=torch.uint64)
         degrees_t = torch.tensor(degrees, dtype=torch.uint64)
     else:

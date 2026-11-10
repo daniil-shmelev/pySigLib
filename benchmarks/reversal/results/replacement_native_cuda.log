@@ -1,0 +1,23 @@
+Running main() from C:\Users\Shmelev\source\repos\pySigLib\out\build\windows-cpu\_deps\googletest-src\googletest\src\gtest_main.cc
+Note: Google Test filter = *Pascal*:*PrefixSuffix*
+[==========] Running 5 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 2 tests from PrefixSuffixCuda
+[ RUN      ] PrefixSuffixCuda.NonDefaultStream
+[       OK ] PrefixSuffixCuda.NonDefaultStream (199 ms)
+[ RUN      ] PrefixSuffixCuda.BackpropNonDefaultStream
+[       OK ] PrefixSuffixCuda.BackpropNonDefaultStream (52 ms)
+[----------] 2 tests from PrefixSuffixCuda (251 ms total)
+
+[----------] 3 tests from PascalCoefficientCuda
+[ RUN      ] PascalCoefficientCuda.HornerIdentity
+[       OK ] PascalCoefficientCuda.HornerIdentity (0 ms)
+[ RUN      ] PascalCoefficientCuda.AllPrefixAdjoints
+[       OK ] PascalCoefficientCuda.AllPrefixAdjoints (1 ms)
+[ RUN      ] PascalCoefficientCuda.InvalidMethod
+[       OK ] PascalCoefficientCuda.InvalidMethod (0 ms)
+[----------] 3 tests from PascalCoefficientCuda (2 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 2 test suites ran. (254 ms total)
+[  PASSED  ] 5 tests.

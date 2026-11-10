@@ -1,0 +1,38 @@
+[
+  {
+    "device": "cuda",
+    "dimension": 3,
+    "degree": 10,
+    "segments": 4096,
+    "batch": 32,
+    "dtype": "float64",
+    "stage": "screen",
+    "block": 32,
+    "reason": "Initial call exceeds 2 seconds",
+    "first_call_ms": 2098.023900000044
+  },
+  {
+    "device": "cuda",
+    "dimension": 3,
+    "degree": 10,
+    "segments": 4096,
+    "batch": 32,
+    "dtype": "float64",
+    "stage": "screen",
+    "block": 128,
+    "reason": "Initial call exceeds 2 seconds",
+    "first_call_ms": 2068.487100000084
+  },
+  {
+    "device": "cuda",
+    "dimension": 3,
+    "degree": 10,
+    "segments": 4096,
+    "batch": 32,
+    "dtype": "float64",
+    "stage": "screen",
+    "block": 512,
+    "reason": "Initial call exceeds 2 seconds",
+    "first_call_ms": 2068.23380000003
+  }
+]

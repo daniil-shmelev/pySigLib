@@ -55,9 +55,9 @@ TEST(PascalCoefficientCuda, AllPrefixAdjoints) {
     ASSERT_EQ(cudaMemcpyAsync(device_word.get(), word, sizeof(word), cudaMemcpyHostToDevice, stream), cudaSuccess);
     ASSERT_EQ(cudaMemcpyAsync(device_degree.get(), &degree, sizeof(degree), cudaMemcpyHostToDevice, stream), cudaSuccess);
     ASSERT_EQ(cudaStreamSynchronize(stream), cudaSuccess);
-    for (int method : {0, 1, 2}) {
-        const uint64_t* word_data = method == 1 ? word : device_word.get();
-        const uint64_t* degree_data = method == 1 ? &degree : device_degree.get();
+    for (int method : {0, 2}) {
+        const uint64_t* word_data = device_word.get();
+        const uint64_t* degree_data = device_degree.get();
         ASSERT_EQ(sig_coef_cuda_d(x.get(), out.get(), word_data, 1, degree_data, 1, 1, length,
             true, false, false, 1., method), 0);
         ASSERT_EQ(sig_coef_backprop_cuda_d(x.get(), g.get(), out.get(), d.get(), word_data, 1, degree_data,
@@ -78,7 +78,7 @@ TEST(PascalCoefficientCuda, InvalidMethod) {
     if (cudaGetDeviceCount(&devices) != cudaSuccess || !devices) GTEST_SKIP();
     const uint64_t word = 0, degree = 1;
     CudaBuf<float> path(2 * sizeof(float)), out(sizeof(float)), gradient(2 * sizeof(float));
-    for (int method : {-1, 3, 4, 5, 6}) {
+    for (int method : {-1, 1, 3, 4, 5, 6}) {
         EXPECT_NE(sig_coef_cuda_f(path.get(), out.get(), &word, 1, &degree, 1, 1, 2,
             true, false, false, 1.f, method), 0);
         EXPECT_NE(sig_coef_backprop_cuda_f(path.get(), gradient.get(), out.get(), out.get(), &word, 1, &degree,
