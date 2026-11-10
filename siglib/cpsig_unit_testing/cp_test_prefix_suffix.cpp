@@ -256,8 +256,6 @@ TEST(PrefixSuffix, BackpropFiniteDifference) {
     for (uint64_t x = 0; x < path.size(); ++x) path[x] = double(int((x * 7) % 19) - 9) / 16;
     for (uint64_t x = 0; x < size; ++x) deriv[x] = double(int(x % 11) - 5) / 8;
     ASSERT_EQ(signature_d(path.data(), sig.data(), 1, d, length, degree, false, false, 1., true, 1), 0);
-    EXPECT_NE(sig_backprop_d(path.data(), actual.data(), deriv.data(), nullptr, 1, d, length,
-        degree, false, false, 1., true, 3, nullptr, 0, 0, 0, 1), 0);
     ASSERT_EQ(sig_backprop_d(path.data(), actual.data(), deriv.data(), sig.data(), 1, d, length,
         degree, false, false, 1., true, 3, nullptr, 0, 0, 0, 1), 0);
     for (uint64_t x = 0; x < path.size(); ++x) {

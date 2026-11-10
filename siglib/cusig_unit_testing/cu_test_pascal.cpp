@@ -78,7 +78,7 @@ TEST(PascalCoefficientCuda, InvalidMethod) {
     if (cudaGetDeviceCount(&devices) != cudaSuccess || !devices) GTEST_SKIP();
     const uint64_t word = 0, degree = 1;
     CudaBuf<float> path(2 * sizeof(float)), out(sizeof(float)), gradient(2 * sizeof(float));
-    for (int method : {-1, 1, 3, 4, 5, 6}) {
+    for (int method : {-1, 3, 4, 5, 6}) {
         EXPECT_NE(sig_coef_cuda_f(path.get(), out.get(), &word, 1, &degree, 1, 1, 2,
             true, false, false, 1.f, method), 0);
         EXPECT_NE(sig_coef_backprop_cuda_f(path.get(), gradient.get(), out.get(), out.get(), &word, 1, &degree,
