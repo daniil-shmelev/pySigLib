@@ -55,7 +55,12 @@ jobs:
         run: python -m pip install .
 
       - name: Run Python tests
-        run: pytest
+        id: python_tests
+        run: pytest --maxfail=1
+
+      - name: Diagnose Intel macOS backward crash
+        if: failure() && matrix.os == 'macos-15-intel' && steps.python_tests.outcome == 'failure'
+        run: lldb --batch -o 'settings set target.disable-aslr false' -o run -o 'thread backtrace all' -- python -m pytest tests/test_log_sig.py -k test_log_signature_ps_forward_and_backward --maxfail=1 -vv
 
       - name: Build C++ unit tests
         run: |
