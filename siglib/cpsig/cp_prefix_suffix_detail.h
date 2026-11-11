@@ -31,6 +31,35 @@ namespace cpu_detail {
 using namespace prefix_suffix;
 
 template<typename T>
+void right_factor(T* result, const T* suffix, const T* v, uint64_t j, uint64_t b, const Layout& l) {
+    const Simd<T> simd;
+    const uint64_t lanes = hn::Lanes(simd);
+    result[0] = 1;
+    T scale = 1;
+    for (uint64_t f = 2; f <= j + 1; ++f) scale /= T(f);
+    for (uint64_t level = 1; level <= b; ++level) {
+        const uint64_t previous = l.power[level - 1];
+        const T reciprocal = T(1) / T(j + b - level + 2);
+        for (uint64_t channel = l.d; channel-- > 0;) {
+            T* destination = result + channel * previous;
+            const T* source = suffix + l.offset[level] + channel * previous;
+            const T multiplier = v[channel] * reciprocal;
+            uint64_t x = 0;
+            for (; x + lanes <= previous; x += lanes) {
+                auto value = hn::Add(hn::LoadU(simd, source + x), hn::Mul(hn::Set(simd, multiplier), hn::LoadU(simd, result + x)));
+                if (level == b) value = hn::Mul(value, hn::Set(simd, scale));
+                hn::StoreU(value, simd, destination + x);
+            }
+            for (; x < previous; ++x) {
+                const T value = source[x] + multiplier * result[x];
+                destination[x] = level == b ? value * scale : value;
+            }
+        }
+    }
+    if (!b) result[0] = scale;
+}
+
+template<typename T>
 HWY_INLINE void prepend_level_values(T* destination, const T* source, T* work, const T* v,
     uint64_t d, uint64_t previous, T reciprocal, bool last) {
     for (uint64_t channel = d; channel-- > 0;) {
@@ -38,8 +67,15 @@ HWY_INLINE void prepend_level_values(T* destination, const T* source, T* work, c
         const T multiplier = v[channel] * reciprocal;
 #if HWY_TARGET != HWY_SCALAR
         if (last) {
-            vec_mult_add(row, source, multiplier, previous);
-            vec_mult_add(row, work, multiplier, previous);
+            const Simd<T> simd;
+            const uint64_t lanes = hn::Lanes(simd);
+            const auto scale = hn::Set(simd, multiplier);
+            uint64_t x = 0;
+            for (; x + lanes <= previous; x += lanes) {
+                const auto value = hn::MulAdd(hn::LoadU(simd, source + x), scale, hn::LoadU(simd, row + x));
+                hn::StoreU(hn::MulAdd(hn::LoadU(simd, work + x), scale, value), simd, row + x);
+            }
+            for (; x < previous; ++x) { row[x] += source[x] * multiplier; row[x] += work[x] * multiplier; }
         } else {
             vec_add_scaled(row, source, work, multiplier, previous);
         }

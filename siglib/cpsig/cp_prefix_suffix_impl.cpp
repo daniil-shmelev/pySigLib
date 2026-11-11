@@ -151,19 +151,19 @@ void for_paths(uint64_t batch, int jobs, uint64_t elements, const char* name, Wo
         + " workspace bytes for one path; configured limit is " + std::to_string(budget));
     const uint64_t owners = std::min({batch, uint64_t(jobs), bytes ? budget / bytes : uint64_t(jobs)});
     get_tbb_arena(jobs).execute([&] { parallel_range(owners, jobs, [&](uint64_t first, uint64_t end) {
-        std::vector<T> storage;
-        try { storage.resize(elements); }
+        std::unique_ptr<T[]> storage;
+        try { storage.reset(new T[elements]); }
         catch (const std::bad_alloc&) { throw std::runtime_error(std::string(name) + " requires "
             + std::to_string(bytes) + " workspace bytes for one path-processing task"); }
         for (uint64_t i = batch * first / owners; i < batch * end / owners; ++i)
-            work(i, storage.data());
+            work(i, storage.get());
     }); });
 }
 
 template<typename T> struct CpuMatrices {
     int jobs;
     void gemm(Matrix<T> a, Matrix<T> b, Matrix<T> c, bool first) {
-        constexpr uint64_t grain = prefix_suffix_endpoint::gemm_row_grain;
+        constexpr uint64_t grain = 16;
         const uint64_t row_block = jobs == 1 ? a.rows
             : std::max(grain, ((a.rows + jobs - 1) / jobs + grain - 1) / grain * grain);
         const uint64_t blocks = (a.rows + row_block - 1) / row_block;
@@ -270,7 +270,7 @@ void stream_fill_segment(const T* prefix, const T* suffix, const T* v, const T* 
             const T* previous;
             if constexpr (J + 1 < A) previous = right + (row + 1) * Q;
             else {
-                right_factor(temporary, suffix, v, A, B, l);
+                cpu_detail::right_factor(temporary, suffix, v, A, B, l);
                 previous = temporary;
             }
             extend_right_factor(next + row * Q * D, previous, suffix, v, J, B, l);
@@ -502,7 +502,7 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
                             left[t * p + x * tail + y] = prefix[x] * powers[l.offset[j + 1] + y];
 #endif
                     }
-                    right_factor(right + t * pitch, suffixes + (i + 1) * qlen, v, j, b, l);
+                    cpu_detail::right_factor(right + t * pitch, suffixes + (i + 1) * qlen, v, j, b, l);
                 }
                 }
             });
@@ -524,7 +524,7 @@ void one_path(const T* input, T* output, uint64_t dimension, uint64_t length, bo
                                 const uint64_t j = t - i * a, row = t - base;
                                 const T* previous = right + (row + 1) * pitch;
                                 if (t + 1 == stop) {
-                                    right_factor(temporary, suffix, v, j + 1, b, l);
+                                    cpu_detail::right_factor(temporary, suffix, v, j + 1, b, l);
                                     previous = temporary;
                                 }
                                 extend_right_factor(right + row * pitch, previous, suffix, v, j, b, l);
@@ -622,6 +622,10 @@ void backprop_reversal_path(const T* input, const T* final, const T* deriv, T* o
                     for (uint64_t j = 0; j < a; ++j) {
                         const uint64_t row = i * a + j, tail = l.power[j + 1], level = l.offset[a - 1 - j];
                         if (reverse) {
+                            if (j + 1 == a) {
+                                vec_mult_add(dpowers + l.offset[j + 1], left + row * p, T(1), tail);
+                                continue;
+                            }
                             for (uint64_t x = 0; x < l.power[a - 1 - j]; ++x) {
                                 if (tail >= 16) ds[level + x] += dot_product_mult_add(powers + l.offset[j + 1], left + row * p + x * tail,
                                     dpowers + l.offset[j + 1], prefixes[i * qlen + level + x], tail);
