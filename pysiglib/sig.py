@@ -13,6 +13,7 @@
 # limitations under the License.
 # =========================================================================
 
+import math
 import warnings
 from typing import Union
 
@@ -151,7 +152,8 @@ def sig(
         correction = None,
         n_jobs : int = 1,
         method = "auto",
-        ps_split = None
+        ps_split = None,
+        fp64_emulation : bool = False
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes the truncated signature of single path or a batch of paths. For
@@ -185,6 +187,10 @@ def sig(
         ``method="ps"``, from 1 to ``degree``. The corresponding suffix has maximum
         degree ``degree - ps_split``. The default selects the split automatically.
     :type ps_split: int | None
+    :param fp64_emulation: Allow FP64 emulation for CUDA float64 prefix-suffix matrix products.
+        Requires cuBLAS 13.1 or later. Uses dynamic precision and a hardware-based batching rule,
+        without timing calibration. Other devices, dtypes and signature methods are unchanged.
+    :type fp64_emulation: bool
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
     :type scalar_term: bool
@@ -291,6 +297,7 @@ def sig(
 
     check_n_jobs(n_jobs)
     method_code, ps_split = _check_sig_method(method, ps_split, degree)
+    check_type(fp64_emulation, "fp64_emulation", bool)
     if isinstance(path, torch.Tensor) and torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
         raise NotImplementedError("Signature computation does not support forward-mode automatic differentiation")
     data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
@@ -316,13 +323,16 @@ def sig(
                 data.data_dimension, data.data_length, degree,
                 data.time_aug, data.lead_lag, data.end_time, scalar_term,
                 correction_data.data_ptr, correction_data.length,
-                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
+                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split, fp64_emulation)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig: " + err_msg(err_code, result.device))
 
     if isinstance(result.data, np.ndarray):
         has_bad = np.isnan(result.data).any() or np.isinf(result.data).any()
+    elif result.data.is_cuda:
+        bounds = torch.stack(torch.aminmax(result.data)).tolist() if result.data.numel() else ()
+        has_bad = not all(math.isfinite(value) for value in bounds)
     else:
         has_bad = torch.isnan(result.data).any().item() or torch.isinf(result.data).any().item()
     if has_bad:

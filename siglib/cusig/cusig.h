@@ -308,11 +308,12 @@ extern "C" {
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
 	* @param ps_split With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
+	* @param fp64_emulation Allow dynamic-precision FP64 emulation in double-precision prefix-suffix matrix products (cuBLAS 13.1 or later).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
+	[[nodiscard]] CUSIG_API int signature_cuda_f(const float* path, float* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, bool fp64_emulation = false) noexcept;
 	/** @copydoc signature_cuda_f */
-	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
+	[[nodiscard]] CUSIG_API int signature_cuda_d(const double* path, double* out, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, bool fp64_emulation = false) noexcept;
 	/** @} */
 
 	/** @defgroup sig_backprop_cuda_functions Signature backpropagation CUDA functions
@@ -340,11 +341,12 @@ extern "C" {
 	* @param correction_segment_stride Stride between correction segments, in elements; zero broadcasts.
 	* @param method 0 for standard evaluation, 1 for prefix-suffix, or 2 for automatic selection.
 	* @param ps_split With `method=1`, pass a prefix length from 1 to `degree`, or zero to select the split automatically. All other methods require zero.
+	* @param fp64_emulation Allow dynamic-precision FP64 emulation in double-precision prefix-suffix matrix products (cuBLAS 13.1 or later).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
+	[[nodiscard]] CUSIG_API int sig_backprop_cuda_f(const float* path, float* out, const float* sig_derivs, const float* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, float end_time = 1.f, bool scalar_term = true, const float* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, bool fp64_emulation = false) noexcept;
 	/** @copydoc sig_backprop_cuda_f */
-	[[nodiscard]] CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0) noexcept;
+	[[nodiscard]] CUSIG_API int sig_backprop_cuda_d(const double* path, double* out, const double* sig_derivs, const double* sig, uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool scalar_term = true, const double* correction = nullptr, uint64_t correction_len = 0, uint64_t correction_batch_stride = 0, uint64_t correction_segment_stride = 0, int method = 0, uint64_t ps_split = 0, bool fp64_emulation = false) noexcept;
 	/** @} */
 
 	/** @defgroup sig_combine_cuda_functions Signature combine CUDA functions

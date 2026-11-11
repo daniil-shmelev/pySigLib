@@ -2496,7 +2496,8 @@ void signature_cuda_(
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride,
 	int method,
-	uint64_t ps_split
+	uint64_t ps_split,
+	bool fp64_emulation
 ) {
 	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
 		time_aug || lead_lag, correction_len, true, false)) {
@@ -2504,11 +2505,11 @@ void signature_cuda_(
 			if (!dimension) throw std::invalid_argument("signature_cuda received path of dimension 0");
 			validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
 			signature_prefix_suffix_correction_cuda<false, T>(path, out, nullptr, batch_size, dimension, length, degree,
-				time_aug, end_time, scalar_term, nullptr, ps_split, correction, correction_len, correction_batch_stride, correction_segment_stride);
+				time_aug, end_time, scalar_term, nullptr, ps_split, correction, correction_len, correction_batch_stride, correction_segment_stride, fp64_emulation);
 			return;
 		}
 		signature_prefix_suffix_cuda(path, out, batch_size, dimension, length, degree,
-			time_aug, lead_lag, end_time, scalar_term, nullptr, ps_split);
+			time_aug, lead_lag, end_time, scalar_term, nullptr, ps_split, fp64_emulation);
 		return;
 	}
 	if (dimension == 0) throw std::invalid_argument("signature_cuda received path of dimension 0");
@@ -3271,7 +3272,8 @@ void sig_backprop_cuda_(
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride,
 	int method,
-	uint64_t ps_split
+	uint64_t ps_split,
+	bool fp64_emulation
 ) {
 	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
 		time_aug || lead_lag, correction_len, true, true)) {
@@ -3279,11 +3281,11 @@ void sig_backprop_cuda_(
 			if (!dimension) throw std::invalid_argument("sig_backprop_cuda received path of dimension 0");
 			validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
 			signature_prefix_suffix_correction_cuda<true, T>(path, out, sig_derivs, batch_size, dimension, length, degree,
-				time_aug, end_time, scalar_term, nullptr, ps_split, correction, correction_len, correction_batch_stride, correction_segment_stride);
+				time_aug, end_time, scalar_term, nullptr, ps_split, correction, correction_len, correction_batch_stride, correction_segment_stride, fp64_emulation);
 			return;
 		}
 		signature_prefix_suffix_backprop_cuda(path, out, sig_derivs, batch_size, dimension, length, degree,
-			time_aug, lead_lag, end_time, scalar_term, nullptr, ps_split);
+			time_aug, lead_lag, end_time, scalar_term, nullptr, ps_split, fp64_emulation);
 		return;
 	}
 	if (dimension == 0) throw std::invalid_argument("sig_backprop_cuda received path of dimension 0");
@@ -3354,9 +3356,9 @@ extern "C" {
 		bool scalar_term,
 		const float* correction, uint64_t correction_len,
 		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
-		int method, uint64_t ps_split
+		int method, uint64_t ps_split, bool fp64_emulation
 	) noexcept {
-		CUDA_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split));
+		CUDA_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split, fp64_emulation));
 	}
 
 	CUSIG_API int signature_cuda_d(
@@ -3366,9 +3368,9 @@ extern "C" {
 		bool scalar_term,
 		const double* correction, uint64_t correction_len,
 		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
-		int method, uint64_t ps_split
+		int method, uint64_t ps_split, bool fp64_emulation
 	) noexcept {
-		CUDA_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split));
+		CUDA_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split, fp64_emulation));
 	}
 
 	// =====================================================================
@@ -3383,9 +3385,9 @@ extern "C" {
 		bool time_aug, bool lead_lag, float end_time, bool scalar_term,
 		const float* correction, uint64_t correction_len,
 		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
-		int method, uint64_t ps_split
+		int method, uint64_t ps_split, bool fp64_emulation
 	) noexcept {
-		CUDA_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split));
+		CUDA_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split, fp64_emulation));
 	}
 
 	CUSIG_API int sig_backprop_cuda_d(
@@ -3395,8 +3397,8 @@ extern "C" {
 		bool time_aug, bool lead_lag, double end_time, bool scalar_term,
 		const double* correction, uint64_t correction_len,
 		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
-		int method, uint64_t ps_split
+		int method, uint64_t ps_split, bool fp64_emulation
 	) noexcept {
-		CUDA_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split));
+		CUDA_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split, fp64_emulation));
 	}
 }

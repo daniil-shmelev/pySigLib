@@ -95,7 +95,7 @@ __global__ void reverse_kernel(const T* correction, T* memory, T* out, Shape s, 
 template<bool Backward, typename T>
 void compute(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension,
     uint64_t length, uint64_t degree, bool ta, T end_time, bool scalar, cudaStream_t stream,
-    uint64_t split, const T* correction, uint64_t correction_len, uint64_t batch_stride, uint64_t segment_stride) {
+    uint64_t split, const T* correction, uint64_t correction_len, uint64_t batch_stride, uint64_t segment_stride, bool fp64_emulation) {
     if (!batch) return;
     const Plan plan(add(dimension, ta ? 1 : 0), dimension, degree, length, split, correction_len, 128, sizeof(T), Backward);
     const auto& l = plan.layout;
@@ -106,8 +106,8 @@ void compute(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dim
     const uint64_t metadata_bytes = mul(add(metadata_count, mul(2, plan.nodes_count)), sizeof(uint64_t));
     int device = 0; CUDA_CHECK(cudaGetDevice(&device));
     with_factor_workspace<T>(l, device, batch, 32, stride, metadata_bytes, 4ULL << 20, true,
-        "corrected prefix-suffix", stream,
-        [&](cublasHandle_t handle, uint64_t capacity, T* memory, uint64_t* power, uint64_t* offset) {
+        "corrected prefix-suffix", stream, fp64_emulation,
+        [&](cublasHandle_t handle, Fp64Emulation* emulation, uint64_t capacity, T* memory, uint64_t* power, uint64_t* offset) {
         auto* raw_offset = offset + l.offset.size();
         auto* nodes = reinterpret_cast<double*>(raw_offset + plan.raw.offset.size());
         auto* weights = nodes + plan.nodes_count;
@@ -126,7 +126,7 @@ void compute(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dim
             scans_kernel<Backward><<<make_cuda_1d_grid(count, 64), 64, 0, stream>>>(path + base_batch * path_stride,
                 corrections, memory, output, g, s, count, dimension, length, ta, end_time, scalar, batch_stride, segment_stride);
             CUDA_CHECK(cudaGetLastError());
-            CudaMatrices<T> matrices{handle, count};
+            CudaMatrices<T> matrices{handle, count, emulation};
             auto fill = [&]<bool Reverse>(uint64_t a, uint64_t b, uint64_t base, uint64_t segments, uint64_t rows) {
                 factors_kernel<Reverse><<<make_cuda_1d_grid(mul(count, s.slots), 128), 128, 0, stream>>>(
                     corrections, memory, s, count, a, b, base, segments, rows, batch_stride, segment_stride);

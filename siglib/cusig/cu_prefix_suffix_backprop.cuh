@@ -71,7 +71,7 @@ __device__ void horner_backprop(const T* state, const T* v, T* deriv, T* dv, uin
 }
 
 template<typename T>
-__global__ void factors_backprop_kernel(const T* prefixes, const T* suffixes, const T* increments,
+__global__ __launch_bounds__(128, 6) void factors_backprop_kernel(const T* prefixes, const T* suffixes, const T* increments,
     const T* dleft, const T* dright, T* dprefix, T* dsuffix, T* dincrements, T* scratch,
     uint64_t batch, uint64_t d, uint64_t qlen, uint64_t a, uint64_t b, uint64_t base, uint64_t rows,
     uint64_t slots, uint64_t temporary, uint64_t stride, const uint64_t* power, const uint64_t* offset) {
@@ -102,15 +102,40 @@ __global__ void factors_backprop_kernel(const T* prefixes, const T* suffixes, co
             const uint64_t level = offset[a - 1 - j];
             const T* gl = dleft + sample * stride + row * p;
             const T* gr = dright + sample * stride + row * q;
-            for (uint64_t x = threadIdx.x; x < head; x += blockDim.x) {
-                T value = 0;
-                for (uint64_t y = 0; y < tail; ++y) value += gl[x * tail + y] * powers[offset[j + 1] + y];
-                dp[level + x] += value;
+            // The degree-zero prefix is constant.
+            if (j + 1 < a) {
+                if (head < blockDim.x && tail >= 32) {
+                    for (uint64_t x = threadIdx.x / 32; x < head; x += blockDim.x / 32) {
+                        T value = 0;
+                        for (uint64_t y = threadIdx.x % 32; y < tail; y += 32)
+                            value += gl[x * tail + y] * powers[offset[j + 1] + y];
+                        value = warp_sum(value);
+                        if (!(threadIdx.x % 32)) dp[level + x] += value;
+                    }
+                }
+                else {
+                    for (uint64_t x = threadIdx.x; x < head; x += blockDim.x) {
+                        T value = 0;
+                        for (uint64_t y = 0; y < tail; ++y) value += gl[x * tail + y] * powers[offset[j + 1] + y];
+                        dp[level + x] += value;
+                    }
+                }
             }
-            for (uint64_t y = threadIdx.x; y < tail; y += blockDim.x) {
-                T value = 0;
-                for (uint64_t x = 0; x < head; ++x) value += gl[x * tail + y] * prefix[level + x];
-                dpowers[offset[j + 1] + y] += value;
+            if (tail < 32 && head >= 32) {
+                for (uint64_t y = threadIdx.x / 32; y < tail; y += blockDim.x / 32) {
+                    T value = 0;
+                    for (uint64_t x = threadIdx.x % 32; x < head; x += 32)
+                        value += gl[x * tail + y] * prefix[level + x];
+                    value = warp_sum(value);
+                    if (!(threadIdx.x % 32)) dpowers[offset[j + 1] + y] += value;
+                }
+            }
+            else {
+                for (uint64_t y = threadIdx.x; y < tail; y += blockDim.x) {
+                    T value = 0;
+                    for (uint64_t x = 0; x < head; ++x) value += gl[x * tail + y] * prefix[level + x];
+                    dpowers[offset[j + 1] + y] += value;
+                }
             }
             if (!threadIdx.x) history[0] = 1;
             __syncthreads();

@@ -65,8 +65,8 @@ using sig_kernel_poly_cuda_d_fn = int(CDECL_*)(const double*, double*, double*, 
 using sig_kernel_poly_backprop_cuda_f_fn = int(CDECL_*)(const float*, float*, const float*, const float*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool);
 using sig_kernel_poly_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool);
 
-using signature_cuda_f_fn = int(CDECL_*)(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, const float*, uint64_t, uint64_t, uint64_t, int, uint64_t, void*);
-using signature_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t, int, uint64_t, void*);
+using signature_cuda_f_fn = int(CDECL_*)(const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, const float*, uint64_t, uint64_t, uint64_t, int, uint64_t, bool);
+using signature_cuda_d_fn = int(CDECL_*)(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t, int, uint64_t, bool);
 
 using sig_coef_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int, int);
 using sig_coef_f_fn = int(CDECL_*)(const float*, float*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, float, bool, int, int);
@@ -90,7 +90,7 @@ using sig_combine_backprop_d_fn = int(CDECL_*)(const double*, double*, double*, 
 using sig_combine_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t);
 using sig_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, int, const double*, uint64_t, uint64_t, uint64_t, int, uint64_t);
 
-using sig_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t, int, uint64_t, void*);
+using sig_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t, int, uint64_t, bool);
 
 using sig_kernel_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, bool, int);
 

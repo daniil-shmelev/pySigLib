@@ -422,10 +422,10 @@ struct CpuFns<double> {
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
-using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t) noexcept;
+using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t, bool) noexcept;
 
 template <typename T>
-using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t) noexcept;
+using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t, bool) noexcept;
 
 template <typename T>
 struct CudaFns;
@@ -695,6 +695,7 @@ ffi::Error SigCudaImpl(
     std::int64_t n_jobs,
     std::int32_t method,
     std::uint64_t ps_split,
+    bool fp64_emulation,
     PathBuffer& path,
     PathBuffer& correction,
     OutBuffer& out,
@@ -739,7 +740,8 @@ ffi::Error SigCudaImpl(
         corr_spec.batch_stride,
         corr_spec.segment_stride,
         method,
-        ps_split
+        ps_split,
+        fp64_emulation
     );
 
     if (err_code != 0) {
@@ -760,6 +762,7 @@ ffi::Error SigBackpropCudaImpl(
     std::int64_t n_jobs,
     std::int32_t method,
     std::uint64_t ps_split,
+    bool fp64_emulation,
     PathBuffer& path,
     SigBuffer& sig,
     CotangentBuffer& cotangent,
@@ -814,7 +817,8 @@ ffi::Error SigBackpropCudaImpl(
         corr_spec.batch_stride,
         corr_spec.segment_stride,
         method,
-        ps_split
+        ps_split,
+        fp64_emulation
     );
 
     if (err_code != 0) {
@@ -833,6 +837,7 @@ ffi::Error SigCpu(
     std::int64_t n_jobs,
     std::int32_t method,
     std::uint64_t ps_split,
+    bool /*fp64_emulation*/,
     ffi::AnyBuffer path,
     ffi::AnyBuffer correction,
     ffi::Result<ffi::AnyBuffer> out
@@ -870,6 +875,7 @@ ffi::Error SigBackpropCpu(
     std::int64_t n_jobs,
     std::int32_t method,
     std::uint64_t ps_split,
+    bool /*fp64_emulation*/,
     ffi::AnyBuffer path,
     ffi::AnyBuffer sig,
     ffi::AnyBuffer cotangent,
@@ -911,6 +917,7 @@ ffi::Error SigCuda(
     std::int64_t n_jobs,
     std::int32_t method,
     std::uint64_t ps_split,
+    bool fp64_emulation,
     ffi::AnyBuffer path,
     ffi::AnyBuffer correction,
     ffi::Result<ffi::AnyBuffer> out
@@ -933,6 +940,7 @@ ffi::Error SigCuda(
             n_jobs,
             method,
             ps_split,
+            fp64_emulation,
             path,
             correction,
             out,
@@ -950,6 +958,7 @@ ffi::Error SigBackpropCuda(
     std::int64_t n_jobs,
     std::int32_t method,
     std::uint64_t ps_split,
+    bool fp64_emulation,
     ffi::AnyBuffer path,
     ffi::AnyBuffer sig,
     ffi::AnyBuffer cotangent,
@@ -972,6 +981,7 @@ ffi::Error SigBackpropCuda(
             n_jobs,
             method,
             ps_split,
+            fp64_emulation,
             path,
             sig,
             cotangent,
@@ -2379,6 +2389,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<std::int64_t>("n_jobs")
         .Attr<std::int32_t>("method")
         .Attr<std::uint64_t>("ps_split")
+        .Attr<bool>("fp64_emulation")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
@@ -2395,6 +2406,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<std::int64_t>("n_jobs")
         .Attr<std::int32_t>("method")
         .Attr<std::uint64_t>("ps_split")
+        .Attr<bool>("fp64_emulation")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
@@ -2415,6 +2427,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<std::int64_t>("n_jobs")
         .Attr<std::int32_t>("method")
         .Attr<std::uint64_t>("ps_split")
+        .Attr<bool>("fp64_emulation")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
@@ -2432,6 +2445,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<std::int64_t>("n_jobs")
         .Attr<std::int32_t>("method")
         .Attr<std::uint64_t>("ps_split")
+        .Attr<bool>("fp64_emulation")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()

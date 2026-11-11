@@ -75,10 +75,10 @@ def _has_non_empty_correction(correction):
 
 class Sig(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path, correction, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, method, ps_split):
+    def forward(ctx, path, correction, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, method, ps_split, fp64_emulation):
         sig_ = sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
                            end_time=end_time, correction=correction, n_jobs=n_jobs, method=method,
-                           ps_split=ps_split)
+                           ps_split=ps_split, fp64_emulation=fp64_emulation)
 
         saved_correction = path.new_empty((0,)) if correction is None else correction.detach().clone()
         ctx.save_for_backward(path, sig_, saved_correction)
@@ -90,6 +90,7 @@ class Sig(torch.autograd.Function):
         ctx.n_jobs = n_jobs
         ctx.method = method
         ctx.ps_split = ps_split
+        ctx.fp64_emulation = fp64_emulation
 
         return sig_
 
@@ -101,8 +102,8 @@ class Sig(torch.autograd.Function):
         correction = saved_correction if saved_correction.numel() != 0 else None
         grad = sig_backprop(path, sig_, grad_output, ctx.degree, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag,
                             end_time=ctx.end_time, correction=correction, n_jobs=ctx.n_jobs, method=ctx.method,
-                            ps_split=ctx.ps_split)
-        return grad, None, None, None, None, None, None, None, None, None
+                            ps_split=ctx.ps_split, fp64_emulation=ctx.fp64_emulation)
+        return grad, None, None, None, None, None, None, None, None, None, None
 
 def sig(
         path : Union[np.ndarray, torch.Tensor],
@@ -115,15 +116,16 @@ def sig(
         correction = None,
         n_jobs : int = 1,
         method = "auto",
-        ps_split = None
+        ps_split = None,
+        fp64_emulation : bool = False
 ) -> Union[np.ndarray, torch.Tensor]:
     if not isinstance(path, torch.Tensor):
         return sig_forward(path, degree, scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag,
                            end_time=end_time, correction=correction, n_jobs=n_jobs,
-                           method=method, ps_split=ps_split)
+                           method=method, ps_split=ps_split, fp64_emulation=fp64_emulation)
     if torch.autograd.forward_ad.unpack_dual(path).tangent is not None:
         raise NotImplementedError("Signature computation does not support forward-mode automatic differentiation")
-    return Sig.apply(path, correction, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, method, ps_split)
+    return Sig.apply(path, correction, degree, time_aug, lead_lag, end_time, scalar_term, n_jobs, method, ps_split, fp64_emulation)
 
 sig.__doc__ = sig_forward.__doc__
 

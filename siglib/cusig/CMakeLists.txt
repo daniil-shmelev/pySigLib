@@ -165,7 +165,7 @@ if(MSVC)
     target_compile_definitions(cusig PRIVATE _USRDLL _UNICODE UNICODE)
 endif()
 
-target_link_libraries(cusig PRIVATE CUDA::cudart CUDA::cublas pysiglib_preparation)
+target_link_libraries(cusig PRIVATE CUDA::cudart CUDA::cublas CUDA::cublasLt pysiglib_preparation)
 get_target_property(_pysiglib_cublas_library CUDA::cublas IMPORTED_LOCATION)
 get_filename_component(_pysiglib_cublas_libdir "${_pysiglib_cublas_library}" DIRECTORY)
 find_path(PYSIGLIB_CUBLAS_INCLUDE_DIR cublas_v2.h
