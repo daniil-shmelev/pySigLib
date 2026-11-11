@@ -19,12 +19,12 @@
 #include <cuda_runtime.h>
 
 template<bool Backward, typename T>
-void signature_prefix_suffix_correction_cuda(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool ta, T end_time, bool scalar, cudaStream_t stream, uint64_t split, const T* correction, uint64_t correction_len, uint64_t batch_stride, uint64_t segment_stride);
+void signature_prefix_suffix_correction_cuda(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool ta, T end_time, bool scalar, cudaStream_t stream, uint64_t split, const T* correction, uint64_t correction_len, uint64_t batch_stride, uint64_t segment_stride, bool fp64_emulation = false);
 
 template<typename T>
 void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_t dimension, uint64_t length,
-    uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, cudaStream_t stream, uint64_t ps_split);
+    uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, cudaStream_t stream, uint64_t ps_split, bool fp64_emulation = false);
 
 template<typename T>
 void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension,
-    uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, cudaStream_t stream, uint64_t ps_split);
+    uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, T end_time, bool scalar, cudaStream_t stream, uint64_t ps_split, bool fp64_emulation = false);

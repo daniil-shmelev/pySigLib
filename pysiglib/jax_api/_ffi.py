@@ -422,22 +422,22 @@ def _make_ffi_call(op_name, inputs, out_type, call_kwargs, vmap_method="broadcas
 # sig
 # ---------------------------------------------------------------------------
 
-def sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split):
+def sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation):
     _check_same_dtype(path, correction)
     out_type = jax.ShapeDtypeStruct(_sig_shape(path.shape, degree, time_aug, lead_lag), path.dtype)
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs),
-                       method=np.int32(method), ps_split=np.uint64(ps_split))
+                       method=np.int32(method), ps_split=np.uint64(ps_split), fp64_emulation=np.bool_(fp64_emulation))
     return _make_ffi_call("sig", (path, correction), out_type, call_kwargs,
                           vmap_method="sequential" if correction.size else "broadcast_all")
 
 
-def sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split):
+def sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation):
     _check_same_dtype(path, sig_, cotangent, correction)
     out_type = jax.ShapeDtypeStruct(path.shape, path.dtype)
     call_kwargs = dict(degree=np.int64(degree), time_aug=np.bool_(time_aug), lead_lag=np.bool_(lead_lag),
                        end_time=np.float64(end_time), n_jobs=np.int64(n_jobs),
-                       method=np.int32(method), ps_split=np.uint64(ps_split))
+                       method=np.int32(method), ps_split=np.uint64(ps_split), fp64_emulation=np.bool_(fp64_emulation))
     return _make_ffi_call("sig_backprop", (path, sig_, cotangent, correction), out_type, call_kwargs,
                           vmap_method="sequential" if correction.size else "broadcast_all")
 

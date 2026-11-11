@@ -41,8 +41,13 @@ void tensor_powers(const T* v, T* powers, uint64_t degree, const Layout& l) {
 
 template<typename T>
 void tensor_powers_backprop(const T* v, const T* powers, T* deriv, T* dv, uint64_t degree, const Layout& l) {
-    for (uint64_t k = degree; k > 0; --k)
+    for (uint64_t k = degree; k > 1; --k)
         for (uint64_t x = 0; x < l.power[k - 1]; ++x) {
+            if (l.d >= 16) {
+                deriv[l.offset[k - 1] + x] += dot_product_mult_add(v, deriv + l.offset[k] + x * l.d,
+                    dv, powers[l.offset[k - 1] + x], l.d);
+                continue;
+            }
             T value = 0;
             for (uint64_t c = 0; c < l.d; ++c) {
                 const T g = deriv[l.offset[k] + x * l.d + c];
@@ -51,6 +56,7 @@ void tensor_powers_backprop(const T* v, const T* powers, T* deriv, T* dv, uint64
             }
             deriv[l.offset[k - 1] + x] += value;
         }
+    if (degree) for (uint64_t c = 0; c < l.d; ++c) dv[c] += deriv[1 + c];
 }
 
 template<typename T>
@@ -71,6 +77,13 @@ void right_factor_backprop(const T* suffix, const T* v, const T* deriv, T* dsuff
     for (uint64_t k = b; k > 0; --k) {
         const uint64_t previous = l.power[k - 1];
         const T reciprocal = T(1) / T(j + b - k + 2);
+        if (k == 1) {
+            for (uint64_t c = 0; c < l.d; ++c) {
+                dsuffix[1 + c] += work[1 + c];
+                dv[c] += work[1 + c] * reciprocal;
+            }
+            break;
+        }
         T* lower = work + l.offset[k - 1];
         std::fill_n(lower, previous, T(0));
         for (uint64_t c = 0; c < l.d; ++c) {

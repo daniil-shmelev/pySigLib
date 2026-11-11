@@ -138,7 +138,8 @@ def sig_backprop(
         correction = None,
         n_jobs : int = 1,
         method = "auto",
-        ps_split = None
+        ps_split = None,
+        fp64_emulation : bool = False
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     This function is required to backpropagate through the signature computation.
@@ -181,6 +182,9 @@ def sig_backprop(
         ``method="ps"``, from 1 to ``degree``. The corresponding suffix has maximum
         degree ``degree - ps_split``.
     :type ps_split: int | None
+    :param fp64_emulation: Allow FP64 emulation for CUDA float64 prefix-suffix matrix products.
+        Uses the same precision and batching rules as the forward ``sig`` option.
+    :type fp64_emulation: bool
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
     :rtype: numpy.ndarray | torch.Tensor
@@ -223,6 +227,7 @@ def sig_backprop(
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
     method_code, ps_split = _check_sig_method(method, ps_split, degree)
+    check_type(fp64_emulation, "fp64_emulation", bool)
     check_n_jobs(n_jobs)
 
     path_data = PathInputHandler(path, time_aug, lead_lag, end_time, "path")
@@ -263,7 +268,7 @@ def sig_backprop(
                 path_data.batch_size, path_data.data_dimension, path_data.data_length,
                 degree, path_data.time_aug, path_data.lead_lag, path_data.end_time, scalar_term,
                 correction_data.data_ptr, correction_data.length,
-                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split)
+                correction_data.batch_stride, correction_data.segment_stride, method_code, ps_split, fp64_emulation)
     if err_code:
         raise Exception(
             "Error in pysiglib.sig_backprop: "
