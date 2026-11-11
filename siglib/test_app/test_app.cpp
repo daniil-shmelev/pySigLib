@@ -28,7 +28,6 @@
 
 #include "dll_funcs.h"
 #include "tests.h"
-#include "ps_profile.h"
 
 
 int main(int argc, char* argv[])
@@ -47,9 +46,6 @@ int main(int argc, char* argv[])
 
     load_cusig(dir_path);
     get_cusig_fn_ptrs();
-
-    if (argc >= 6 && std::string(argv[2]) == "--ps-profile")
-        return std::string(argv[5]) == "float32" ? ps_profile<float>(argc, argv) : ps_profile<double>(argc, argv);
 
     //example_batch_signature_d(1000, 6, 100, 6, false, false, -1, 10);
     //example_batch_signature_cuda_d(1000, 6, 100, 6, false, false, 10); // Min run time: 156ms
