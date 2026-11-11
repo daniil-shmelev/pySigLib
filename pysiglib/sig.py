@@ -187,9 +187,9 @@ def sig(
         ``method="ps"``, from 1 to ``degree``. The corresponding suffix has maximum
         degree ``degree - ps_split``. The default selects the split automatically.
     :type ps_split: int | None
-    :param fp64_emulation: Allow FP64 emulation for CUDA float64 prefix-suffix matrix products.
-        Requires cuBLAS 13.1 or later. Uses dynamic precision and a hardware-based batching rule,
-        without timing calibration. Other devices, dtypes and signature methods are unchanged.
+    :param fp64_emulation: Allow FP64 emulation for eligible CUDA ``float64`` prefix-suffix
+        matrix products (default: False). Requires a CUDA plugin built with cuBLAS 13.1 or later.
+        Uses native FP64 when emulation is unsuitable.
     :type fp64_emulation: bool
     :param scalar_term: If True, the output includes the leading constant 1 at index 0
         (the empty-word term). If False (default), this leading element is stripped from the output.
