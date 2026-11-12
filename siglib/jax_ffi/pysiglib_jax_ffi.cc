@@ -1040,7 +1040,7 @@ ffi::Error SigCoefImpl(
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
-    if (method < 0 || method > 2 || n_jobs == 0 || n_jobs < INT_MIN || n_jobs > INT_MAX)
+    if (method < 0 || method > 1 || n_jobs == 0 || n_jobs < INT_MIN || n_jobs > INT_MAX)
         return InvalidArgument("Invalid coefficient method or n_jobs");
     try {
         std::uint64_t size = 0;

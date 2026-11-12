@@ -38,7 +38,7 @@ TEST(sigCoefCudaDoubleTest, TrivialTest) {
     cudaMemcpy(d_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_deg, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
 
-    int err = sig_coef_cuda_d(d_path, d_out, d_idx, (uint64_t)2, d_deg, (uint64_t)1, dimension, length, false);
+    int err = sig_coef_cuda_d(d_path, d_out, d_idx, (uint64_t)2, d_deg, (uint64_t)1, dimension, length, false, false, false, 1., 0);
     cudaDeviceSynchronize();
 
     std::vector<double> out(true_.size());
@@ -70,7 +70,7 @@ TEST(sigCoefCudaDoubleTest, SinglePointPath) {
     cudaMemcpy(d_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_deg, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
 
-    int err = sig_coef_cuda_d(d_path, d_out, d_idx, (uint64_t)2, d_deg, (uint64_t)1, dimension, length, false);
+    int err = sig_coef_cuda_d(d_path, d_out, d_idx, (uint64_t)2, d_deg, (uint64_t)1, dimension, length, false, false, false, 1., 0);
     cudaDeviceSynchronize();
 
     std::vector<double> out(true_.size());
@@ -128,7 +128,7 @@ TEST(sigCoefCudaDoubleTest, FullSigCompare) {
     cudaMemcpy(d_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_deg, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
 
-    int err = sig_coef_cuda_d(d_path, d_out, d_idx, num_words, d_deg, (uint64_t)1, dimension, length, false);
+    int err = sig_coef_cuda_d(d_path, d_out, d_idx, num_words, d_deg, (uint64_t)1, dimension, length, false, false, false, 1., 0);
     cudaDeviceSynchronize();
 
     cudaMemcpy(out.data(), d_out, sizeof(double) * num_words, cudaMemcpyDeviceToHost);
@@ -180,7 +180,7 @@ TEST(sigCoefCudaDoubleTest, BatchFullSigCompare) {
     cudaMemcpy(d_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_deg, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
 
-    int err = sig_coef_cuda_d(d_path, d_out, d_idx, num_words, d_deg, batch_size, dimension, length, false);
+    int err = sig_coef_cuda_d(d_path, d_out, d_idx, num_words, d_deg, batch_size, dimension, length, false, false, false, 1., 0);
     cudaDeviceSynchronize();
 
     cudaMemcpy(out.data(), d_out, sizeof(double) * total_out, cudaMemcpyDeviceToHost);
@@ -231,7 +231,7 @@ TEST(sigCoefCudaDoubleTest, PrefixesTest) {
     cudaMemcpy(d_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_deg, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
 
-    int err = sig_coef_cuda_d(d_path, d_out, d_idx, num_words, d_deg, (uint64_t)1, dimension, length, true);
+    int err = sig_coef_cuda_d(d_path, d_out, d_idx, num_words, d_deg, (uint64_t)1, dimension, length, true, false, false, 1., 0);
     cudaDeviceSynchronize();
 
     std::vector<double> out(out_size);
@@ -264,7 +264,7 @@ TEST(sigCoefCudaDoubleTest, DegreeZeroWord) {
     cudaMemcpy(d_path, path.data(), sizeof(double) * path.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_deg, degrees.data(), sizeof(uint64_t) * 1, cudaMemcpyHostToDevice);
 
-    int err = sig_coef_cuda_d(d_path, d_out, d_idx, (uint64_t)1, d_deg, (uint64_t)1, dimension, length, false);
+    int err = sig_coef_cuda_d(d_path, d_out, d_idx, (uint64_t)1, d_deg, (uint64_t)1, dimension, length, false, false, false, 1., 0);
     cudaDeviceSynchronize();
 
     std::vector<double> out(1);
@@ -300,7 +300,7 @@ TEST(sigCoefCudaDoubleTest, MixedDegrees) {
     cudaMemcpy(d_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_deg, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
 
-    int err = sig_coef_cuda_d(d_path, d_out, d_idx, (uint64_t)3, d_deg, (uint64_t)1, dimension, length, false);
+    int err = sig_coef_cuda_d(d_path, d_out, d_idx, (uint64_t)3, d_deg, (uint64_t)1, dimension, length, false, false, false, 1., 0);
     cudaDeviceSynchronize();
 
     std::vector<double> out(3);
@@ -341,11 +341,11 @@ TEST(sigCoefCudaTest, FixedDegreesAboveTen) {
                 ASSERT_EQ(cudaSuccess, cudaMemcpy(d_degrees, degrees.data(), degrees.size() * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
                 if constexpr (std::is_same_v<T, float>) {
-                    ASSERT_EQ(0, sig_coef_cuda_f(d_path, d_coefs, d_indices, degrees.size(), d_degrees, 1, 1, 3, true));
-                    ASSERT_EQ(0, sig_coef_backprop_cuda_f(d_path, d_gradient, d_coefs, d_seeds, d_indices, degrees.size(), d_degrees, 1, 1, 3));
+                    ASSERT_EQ(0, sig_coef_cuda_f(d_path, d_coefs, d_indices, degrees.size(), d_degrees, 1, 1, 3, true, false, false, 1.f, 0));
+                    ASSERT_EQ(0, sig_coef_backprop_cuda_f(d_path, d_gradient, d_coefs, d_seeds, d_indices, degrees.size(), d_degrees, 1, 1, 3, false, false, 1.f, 0));
                 } else {
-                    ASSERT_EQ(0, sig_coef_cuda_d(d_path, d_coefs, d_indices, degrees.size(), d_degrees, 1, 1, 3, true));
-                    ASSERT_EQ(0, sig_coef_backprop_cuda_d(d_path, d_gradient, d_coefs, d_seeds, d_indices, degrees.size(), d_degrees, 1, 1, 3));
+                    ASSERT_EQ(0, sig_coef_cuda_d(d_path, d_coefs, d_indices, degrees.size(), d_degrees, 1, 1, 3, true, false, false, 1., 0));
+                    ASSERT_EQ(0, sig_coef_backprop_cuda_d(d_path, d_gradient, d_coefs, d_seeds, d_indices, degrees.size(), d_degrees, 1, 1, 3, false, false, 1., 0));
                 }
                 ASSERT_EQ(cudaSuccess, cudaMemcpy(coefficients.data(), d_coefs, coefficients.size() * sizeof(T), cudaMemcpyDeviceToHost));
                 ASSERT_EQ(cudaSuccess, cudaMemcpy(gradient.data(), d_gradient, path.size() * sizeof(T), cudaMemcpyDeviceToHost));

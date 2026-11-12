@@ -28,9 +28,9 @@ from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler
 
 
 def _check_coef_method(method):
-    if method not in ("horner", "pascal", "auto"):
-        raise ValueError("method must be 'horner', 'pascal', or 'auto'")
-    return {"horner": 0, "pascal": 1, "auto": 2}[method]
+    if method not in ("horner", "pascal"):
+        raise ValueError("method must be 'horner' or 'pascal'")
+    return {"horner": 0, "pascal": 1}[method]
 
 
 def extract_sig_coef(
@@ -121,7 +121,7 @@ def sig_coef(
         end_time : float = 1.,
         prefixes : bool = False,
         n_jobs : int = 1,
-        method = "auto"
+        method = "pascal"
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes specific signature coefficients for a single path or a batch of paths. For
@@ -158,9 +158,8 @@ def sig_coef(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param method: ``"auto"`` (default) uses Pascal factorisation on CPU and Horner's
-        method on CUDA. ``"horner"`` uses Horner. ``"pascal"`` uses Pascal
-        factorisation on CPU and inverse bidiagonal Pascal factors on CUDA.
+    :param method: ``"pascal"`` (default) uses Pascal factorisation on CPU and
+        inverse bidiagonal Pascal factors on CUDA. ``"horner"`` uses Horner's method.
     :type method: str
     :return: Signature coefficients with the leading batch dimensions of ``path``.
         The last axis has one entry per word, or ``sum(max(1, len(w)) for w in words)``

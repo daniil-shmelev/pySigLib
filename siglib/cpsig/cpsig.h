@@ -244,12 +244,12 @@ extern "C" {
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
 	*				if n_jobs = -2, all threads but one are used (default = 1).
-	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection (default). Automatic uses Pascal.
+	* @param method Coefficient algorithm: 0 for Horner or 1 for Pascal (default).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false, int n_jobs = 1, int method = 2) noexcept;
+	[[nodiscard]] CPSIG_API int sig_coef_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., bool prefixes = false, int n_jobs = 1, int method = 1) noexcept;
 	/** @copydoc sig_coef_f */
-	[[nodiscard]] CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false, int n_jobs = 1, int method = 2) noexcept;
+	[[nodiscard]] CPSIG_API int sig_coef_d(const double* path, double* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., bool prefixes = false, int n_jobs = 1, int method = 1) noexcept;
 	/** @} */
 
 	/** @defgroup sig_coef_backprop_functions Signature coefficient backprop functions
@@ -276,12 +276,12 @@ extern "C" {
 	* @param n_jobs Number of threads to run in parallel. If n_jobs = 1, the computation is run serially. If set to -1, all 
 	*				available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs) threads are used. For example 
 	*				if n_jobs = -2, all threads but one are used (default = 1).
-	* @param method Coefficient algorithm: 0 for Horner, 1 for Pascal, or 2 for automatic selection (default). Automatic uses Pascal.
+	* @param method Coefficient algorithm: 0 for Horner or 1 for Pascal (default).
 	* @return Status code (0 = success).
 	*/
-	[[nodiscard]] CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1, int method = 2) noexcept;
+	[[nodiscard]] CPSIG_API int sig_coef_backprop_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int n_jobs = 1, int method = 1) noexcept;
 	/** @copydoc sig_coef_backprop_f */
-	[[nodiscard]] CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1, int method = 2) noexcept;
+	[[nodiscard]] CPSIG_API int sig_coef_backprop_d(const double* path, double* out, const double* coefs, const double* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, double end_time = 1., int n_jobs = 1, int method = 1) noexcept;
 	/** @} */
 
 	/** @defgroup signature_functions Signature functions

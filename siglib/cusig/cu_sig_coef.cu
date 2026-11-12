@@ -436,7 +436,7 @@ void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deri
     const uint64_t* indices, uint64_t words, const uint64_t* degrees, uint64_t batch,
     uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time,
     bool prefixes, int method) {
-    if (method < 0 || method > 2) throw std::invalid_argument("Invalid coefficient method");
+    if (method < 0 || method > 1) throw std::invalid_argument("Invalid coefficient method");
     if (method == 1)
         sig_coef_cuda_impl<T, Backward, true>(path, out, coefs, deriv, indices, words, degrees,
             batch, dimension, length, time_aug, lead_lag, end_time, prefixes, false);

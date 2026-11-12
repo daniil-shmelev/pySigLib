@@ -71,7 +71,7 @@ def chen_prefixes(path, words):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal"])
 @pytest.mark.parametrize("segments", [1, 7, 63, 64, 65, 129, 256, 257])
 def test_coefficient_dispatch(device, dtype, method, segments):
     rng = np.random.default_rng(407 + segments)
@@ -103,18 +103,22 @@ def test_coefficient_dispatch(device, dtype, method, segments):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-def test_coefficient_auto_default_matches_backend(device, dtype):
+def test_coefficient_default_matches_pascal(device, dtype):
     path = torch.tensor(np.random.default_rng(812).normal(scale=.05, size=(4, 33, 3)).cumsum(axis=1),
                         device=device, dtype=dtype)
     words = [(0, 1, 0, 2), (2, 1, 0), ()]
-    selected = "pascal" if device == "cpu" else "horner"
     actual = pysiglib.sig_coef(path, words, prefixes=True)
-    expected = pysiglib.sig_coef(path, words, prefixes=True, method=selected)
+    expected = pysiglib.sig_coef(path, words, prefixes=True, method="pascal")
     torch.testing.assert_close(actual, expected, atol=0, rtol=0)
     seeds = torch.tensor(np.random.default_rng(813).normal(size=actual.shape), device=device, dtype=dtype)
     gradient = pysiglib.sig_coef_backprop(path, words, actual, seeds.clone())
-    reference = pysiglib.sig_coef_backprop(path, words, expected, seeds.clone(), method=selected)
-    torch.testing.assert_close(gradient, reference, atol=0, rtol=0)
+    reference = pysiglib.sig_coef_backprop(path, words, expected, seeds.clone(), method="pascal")
+    torch.testing.assert_close(gradient, reference)
+    path.requires_grad_()
+    output = torch_api.sig_coef(path, words, prefixes=True)
+    torch.testing.assert_close(output, expected, atol=0, rtol=0)
+    output.backward(seeds)
+    torch.testing.assert_close(path.grad, reference)
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -155,7 +159,7 @@ def test_pascal_ranges(device, dtype):
 def test_pascal_empty_batch_and_invalid_method(device):
     x = torch.empty((2, 0, 5, 2), device=device)
     assert pysiglib.sig_coef(x, [(), (0, 1)], method="pascal").shape == (2, 0, 2)
-    for method in (None, "unknown"):
+    for method in (None, "unknown", "auto"):
         with pytest.raises(ValueError, match="method"):
             pysiglib.sig_coef(x, (0,), method=method)
         with pytest.raises(ValueError, match="method"):
@@ -165,12 +169,13 @@ def test_pascal_empty_batch_and_invalid_method(device):
             torch_api.sig_coef(x, (0,), method=method)
 
 
-def test_pascal_jax_invalid_method(jax_cpu):
+@pytest.mark.parametrize("method", [None, "unknown", "auto"])
+def test_pascal_jax_invalid_method(jax_cpu, method):
     jax = pytest.importorskip("jax")
     import pysiglib.jax_api as jax_api
 
     with pytest.raises(ValueError, match="method"):
-        jax_api.sig_coef(jax.numpy.zeros((2, 1)), (0,), method=None)
+        jax_api.sig_coef(jax.numpy.zeros((2, 1)), (0,), method=method)
 
 
 def test_pascal_generic_cpu_and_workspace(monkeypatch):
@@ -188,7 +193,7 @@ def test_pascal_generic_cpu_and_workspace(monkeypatch):
 
 
 @pytest.mark.skipif("cuda" not in AVAILABLE_DEVICES, reason="CUDA required")
-@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal"])
 @pytest.mark.parametrize("words", [[(0, 1, 2), (2, 2)], [(0, 1, 2), (2, 2, 1)], [(0, 1) * 8, (2,) * 11]])
 def test_pascal_nondefault_stream_and_limit(method, words):
     stream = torch.cuda.Stream()
@@ -305,7 +310,7 @@ def test_pascal_highway_targets():
             np.testing.assert_allclose(dx.sum(axis=1), 0., atol=1e-12)
 
 
-@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("time_aug,lead_lag", [(False, False), (True, False), (False, True), (True, True)])
 def test_pascal_jax_shapes_and_transforms(method, dtype, time_aug, lead_lag, jax_device):
@@ -329,7 +334,7 @@ def test_pascal_jax_shapes_and_transforms(method, dtype, time_aug, lead_lag, jax
 
 
 @pytest.mark.parametrize("backend", DEVICES + ["jax"])
-@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_sparse_single_segment(backend, method, dtype, request):
     path = np.zeros((2, 32), dtype=dtype)
