@@ -24,7 +24,7 @@ TEST(PascalCoefficient, AllPrefixAdjoints) {
     for (const uint64_t length : {2, 65, 66, 131}) {
         std::vector<double> path(length), grad(length);
         for (uint64_t i = 0; i < length; ++i) path[i] = double(i) / double(length - 1);
-        for (int method : {0, 1, 2}) {
+        for (int method : {0, 1}) {
             double seeds[] = {1, 2, 3, 4};
             double result[4];
             ASSERT_EQ(sig_coef_d(path.data(), result, word, 1, &degree, 1, 1, length,
@@ -56,10 +56,12 @@ TEST(PascalCoefficient, IdentityAndCheckedSizes) {
         EXPECT_EQ(out[1], 0);
     }
     EXPECT_THROW(pascal_coefficient::mul(UINT64_MAX, 2), std::overflow_error);
-    for (int method : {-1, 3, 4, 5, 6}) {
+    for (int method : {-1, 2, 3, 4, 5, 6}) {
         EXPECT_THROW(pascal_coefficient::variant(method, 4), std::invalid_argument);
         EXPECT_NE(sig_coef_f(&path, out, &word, 2, degrees, 1, 1, 1,
             false, false, 1.f, true, 1, method), 0);
+        EXPECT_NE(sig_coef_backprop_f(&path, out, out, out, &word, 2, degrees, 1, 1, 1,
+            false, false, 1.f, 1, method), 0);
     }
 }
 
@@ -77,20 +79,18 @@ TEST(PascalCoefficient, SimdScratchAlignment) {
     const uint64_t word[] = {0, 1, 1, 1, 0, 1}, degrees[] = {0, 2, 2, 2};
     for (uint64_t batch : {6, 8, 9}) {
         std::vector<double> path(batch * 16, 0), result(batch * 7), seeds(batch * 7, 1), gradient(path.size());
-        for (int method : {1, 2}) {
-            for (int repeat = 0; repeat < 20; ++repeat) {
-                ASSERT_EQ(sig_coef_d(path.data(), result.data(), word, 4, degrees, batch, 2, 8,
-                    false, false, 1., true, 1, method), 0);
-                ASSERT_EQ(sig_coef_backprop_d(path.data(), gradient.data(), result.data(), seeds.data(),
-                    word, 4, degrees, batch, 2, 8, false, false, 1., 1, method), 0);
-                for (uint64_t b = 0; b < batch; ++b) {
-                    EXPECT_EQ(result[b * 7], 1);
-                    for (uint64_t j = 1; j < 7; ++j) EXPECT_EQ(result[b * 7 + j], 0);
-                    EXPECT_EQ(gradient[b * 16], -2);
-                    EXPECT_EQ(gradient[b * 16 + 1], -1);
-                    EXPECT_EQ(gradient[b * 16 + 14], 2);
-                    EXPECT_EQ(gradient[b * 16 + 15], 1);
-                }
+        for (int repeat = 0; repeat < 20; ++repeat) {
+            ASSERT_EQ(sig_coef_d(path.data(), result.data(), word, 4, degrees, batch, 2, 8,
+                false, false, 1., true, 1), 0);
+            ASSERT_EQ(sig_coef_backprop_d(path.data(), gradient.data(), result.data(), seeds.data(),
+                word, 4, degrees, batch, 2, 8, false, false, 1., 1), 0);
+            for (uint64_t b = 0; b < batch; ++b) {
+                EXPECT_EQ(result[b * 7], 1);
+                for (uint64_t j = 1; j < 7; ++j) EXPECT_EQ(result[b * 7 + j], 0);
+                EXPECT_EQ(gradient[b * 16], -2);
+                EXPECT_EQ(gradient[b * 16 + 1], -1);
+                EXPECT_EQ(gradient[b * 16 + 14], 2);
+                EXPECT_EQ(gradient[b * 16 + 15], 1);
             }
         }
     }

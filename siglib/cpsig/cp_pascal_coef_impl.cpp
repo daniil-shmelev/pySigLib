@@ -334,7 +334,6 @@ void pascal_cpu_entry(const T* path, T* out, const T* coefs, const T* deriv, con
     if (jobs < 1) throw std::invalid_argument("n_jobs is below the supported range");
     const int mode = pc::variant(method, words.max_degree);
     if (!batch) return;
-    if (method == pc::automatic) method = pc::pascal_method;
     if (method == pc::horner) {
         if constexpr (Backward) {
             sig_coef_backprop_<T>(path, out, coefs, deriv, indices, num_words, degrees,

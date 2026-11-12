@@ -77,10 +77,8 @@ def test_sig_coef_backprop_horner_reference(device, dtype, degree, mixed):
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("time_aug,lead_lag", [(False, False), (True, False), (False, True), (True, True)])
 @pytest.mark.parametrize("prefixes", [False, True])
-@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal"])
 def test_sig_coef_backprop_batch_views(device, dtype, time_aug, lead_lag, prefixes, method):
-    if device == "cuda" and method == "pascal":
-        pytest.skip("Pascal coefficients are CPU-only")
     rng = np.random.default_rng(721)
     storage = torch.tensor(rng.normal(scale=0.2, size=(2, 3, 5, 4)), dtype=dtype, device=device)
     storage[..., 2, :] = storage[..., 1, :]
@@ -114,10 +112,8 @@ def test_sig_coef_backprop_batch_views(device, dtype, time_aug, lead_lag, prefix
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("shape", [(2, 0, 5, 2), (2, 3, 0, 2), (2, 3, 1, 2)])
-@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal"])
 def test_sig_coef_backprop_empty(device, dtype, shape, method):
-    if device == "cuda" and method == "pascal":
-        pytest.skip("Pascal coefficients are CPU-only")
     path = torch.zeros(shape, dtype=dtype, device=device)
     words = [(), (0, 1) * 4, (1,), ()]
     coefs = pysiglib.sig_coef(path, words, prefixes=True, method=method)
@@ -454,7 +450,7 @@ def test_extract_sig_coef_torch_api_full(device):
     check_close(d1, d2)
 
 
-@pytest.mark.parametrize("method", ["horner", "pascal", "auto"])
+@pytest.mark.parametrize("method", ["horner", "pascal"])
 def test_sig_coef_higher_order_rejected(method):
     path = torch.tensor([[0., 0.], [0.1, 0.2], [0.3, 0.4]], requires_grad=True)
     value = pysiglib.torch_api.sig_coef(path, [(0, 1)], method=method).sum()

@@ -42,7 +42,7 @@
 
 namespace pascal_coefficient {
 
-enum Method { horner = 0, pascal_method = 1, automatic = 2 };
+enum Method { horner = 0, pascal_method = 1 };
 enum Variant { scaled = 3, guarded = 4 };
 
 inline uint64_t add(uint64_t a, uint64_t b) {
@@ -137,7 +137,7 @@ PASCAL_HD PASCAL_INLINE T point(const T* path, uint64_t vertex, uint64_t channel
 
 
 inline int variant(int method, uint64_t degree) {
-    if (method < horner || method > automatic) throw std::invalid_argument("Invalid coefficient method");
+    if (method < horner || method > pascal_method) throw std::invalid_argument("Invalid coefficient method");
     if (method == horner) return horner;
     if (degree > 20) return guarded;
     return scaled;

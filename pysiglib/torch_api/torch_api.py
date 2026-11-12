@@ -211,7 +211,7 @@ def sig_coef(
         end_time: float = 1.,
         prefixes: bool = False,
         n_jobs: int = 1,
-        method = "auto"
+        method = "pascal"
 ) -> Union[np.ndarray, torch.Tensor]:
     coefs_ = SigCoef.apply(path, words, time_aug, lead_lag, end_time, n_jobs, method)
     return _get_coef_from_prefixes(words, coefs_, prefixes)
