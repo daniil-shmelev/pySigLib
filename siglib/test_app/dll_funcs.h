@@ -78,11 +78,11 @@ using prepare_branched_sig_coef_fn = int(CDECL_*)(const uint64_t*, uint64_t, uin
 using branched_sig_coef_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, int, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
 using branched_sig_coef_backprop_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, int, bool, bool, double, bool, const double*, uint64_t, uint64_t, uint64_t);
 
-using sig_coef_cuda_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, bool, double, int, void*);
-using sig_coef_cuda_f_fn = int(CDECL_*)(const float*, float*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, bool, float, int, void*);
+using sig_coef_cuda_d_fn = int(CDECL_*)(const double*, double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, bool, double, int);
+using sig_coef_cuda_f_fn = int(CDECL_*)(const float*, float*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, bool, float, int);
 
-using sig_coef_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, int, void*);
-using sig_coef_backprop_cuda_f_fn = int(CDECL_*)(const float*, float*, const float*, const float*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, float, int, void*);
+using sig_coef_backprop_cuda_d_fn = int(CDECL_*)(const double*, double*, const double*, const double*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, double, int);
+using sig_coef_backprop_cuda_f_fn = int(CDECL_*)(const float*, float*, const float*, const float*, const uint64_t*, uint64_t, const uint64_t*, uint64_t, uint64_t, uint64_t, bool, bool, float, int);
 
 using sig_combine_d_fn = int(CDECL_*)(const double*, const double*, double*, uint64_t, uint64_t, uint64_t, int);
 using sig_combine_cuda_d_fn = int(CDECL_*)(const double*, const double*, double*, uint64_t, uint64_t, uint64_t);

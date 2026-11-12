@@ -471,7 +471,7 @@ extern "C" {
 	* @param time_aug Whether to add time augmentation (default = false).
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
-	* @param method Coefficient algorithm: 0 for Horner or 2 for automatic selection (default). Automatic uses Horner. Pascal (1) is unsupported on CUDA.
+	* @param method Coefficient algorithm: 0 for Horner, 1 for inverse bidiagonal Pascal factors, or 2 for automatic selection (default). Automatic uses Horner.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 2) noexcept;
@@ -499,7 +499,7 @@ extern "C" {
 	* @param time_aug Whether to add time augmentation (default = false).
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
-	* @param method Coefficient algorithm: 0 for Horner or 2 for automatic selection (default). Automatic uses Horner. Pascal (1) is unsupported on CUDA.
+	* @param method Coefficient algorithm: 0 for Horner, 1 for inverse bidiagonal Pascal factors, or 2 for automatic selection (default). Automatic uses Horner.
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 2) noexcept;

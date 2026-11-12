@@ -1042,9 +1042,6 @@ ffi::Error SigCoefImpl(
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
     if (method < 0 || method > 2 || n_jobs == 0 || n_jobs < INT_MIN || n_jobs > INT_MAX)
         return InvalidArgument("Invalid coefficient method or n_jobs");
-    if constexpr (Cuda) {
-        if (method == 1) return InvalidArgument("Pascal coefficients are not supported on CUDA; use horner or auto");
-    }
     try {
         std::uint64_t size = 0;
         for (auto degree : degrees) size = pascal_coefficient::add(size, degree);
@@ -1068,7 +1065,7 @@ ffi::Error SigCoefImpl(
                 const std::uint64_t* word_data = indices.begin();
                 const std::uint64_t* degree_data = degrees.begin();
                 CudaBuf<std::uint64_t> device_metadata;
-                if (!time_aug && !lead_lag && spec.batch_size) {
+                if (method != 1 && !time_aug && !lead_lag && spec.batch_size) {
                     device_metadata = CudaBuf<std::uint64_t>(pascal_coefficient::mul(
                         pascal_coefficient::add(indices.size(), degrees.size()), sizeof(std::uint64_t)));
                     word_data = device_metadata.get();

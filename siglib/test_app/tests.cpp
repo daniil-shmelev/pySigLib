@@ -833,7 +833,7 @@ void example_batch_sig_coef_cuda_d(
     cudaMemcpy(d_multi_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_degrees, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
 
-    time_function(num_runs, sig_coef_cuda_d, d_path, d_out, d_multi_idx, num_idx, d_degrees, batch_size, dimension, length, false, false, false, 1., 0, nullptr);
+    time_function(num_runs, sig_coef_cuda_d, d_path, d_out, d_multi_idx, num_idx, d_degrees, batch_size, dimension, length, false, false, false, 1., 0);
 
     cudaFree(d_path);
     cudaFree(d_out);
@@ -886,7 +886,7 @@ void example_batch_sig_coef_backprop_cuda_d(
     cudaMemcpy(d_multi_idx, multi_idx.data(), sizeof(uint64_t) * multi_idx.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_degrees, degrees.data(), sizeof(uint64_t) * degrees.size(), cudaMemcpyHostToDevice);
 
-    time_function(num_runs, sig_coef_backprop_cuda_d, d_path, d_out, d_coefs, d_derivs, d_multi_idx, num_idx, d_degrees, batch_size, dimension, length, false, false, 1., 0, nullptr);
+    time_function(num_runs, sig_coef_backprop_cuda_d, d_path, d_out, d_coefs, d_derivs, d_multi_idx, num_idx, d_degrees, batch_size, dimension, length, false, false, 1., 0);
 
     cudaFree(d_path);
     cudaFree(d_out);
@@ -1251,13 +1251,13 @@ void profile_coefficient(const std::string& directory, const std::map<std::strin
     const uint64_t* word_data = gpu && method == 0 ? device_indices.get() : indices.data();
     const uint64_t* degree_data = gpu && method == 0 ? device_degrees.get() : degrees.data();
     auto f = [&] {
-        const int code = gpu ? cuda_forward(x, y, word_data, words, degree_data, batch, d, n + 1, true, false, false, T(1), method, nullptr)
+        const int code = gpu ? cuda_forward(x, y, word_data, words, degree_data, batch, d, n + 1, true, false, false, T(1), method)
             : cpu_forward(x, y, indices.data(), words, degrees.data(), batch, d, n + 1, false, false, T(1), true, threads, method);
         if (code) throw std::runtime_error("Coefficient forward failed: " + std::to_string(code));
     };
     auto b = [&] {
         if (!gpu && method == 0) std::fill(seed.begin(), seed.end(), T(1));
-        const int code = gpu ? cuda_backward(x, dx, y, dy, word_data, words, degree_data, batch, d, n + 1, false, false, T(1), method, nullptr)
+        const int code = gpu ? cuda_backward(x, dx, y, dy, word_data, words, degree_data, batch, d, n + 1, false, false, T(1), method)
             : cpu_backward(x, dx, y, dy, indices.data(), words, degrees.data(), batch, d, n + 1, false, false, T(1), threads, method);
         if (code) throw std::runtime_error("Coefficient backward failed: " + std::to_string(code));
     };

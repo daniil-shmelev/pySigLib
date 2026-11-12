@@ -19,6 +19,7 @@
 #include "cu_atomic.h"
 #include "cu_macros.h"
 #include "pascal_coefficient.h"
+#include "cu_pascal_coef.cuh"
 #include <algorithm>
 #include <mutex>
 #include <type_traits>
@@ -274,8 +275,8 @@ __global__ void sig_coef_identity_kernel(T* out, const uint64_t* offsets, const 
     for (uint64_t j = 0; j < count; ++j) result[j] = degree ? T(0) : T(1);
 }
 
-template<class T, bool Backward>
-void sig_coef_horner_cuda(const T* path, T* out, const T* coefs, const T* deriv,
+template<class T, bool Backward, bool Pascal>
+void sig_coef_cuda_impl(const T* path, T* out, const T* coefs, const T* deriv,
     const uint64_t* indices, uint64_t count, const uint64_t* degrees, uint64_t batch,
     uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time,
     bool prefixes, bool device_metadata) {
@@ -311,71 +312,115 @@ void sig_coef_horner_cuda(const T* path, T* out, const T* coefs, const T* deriv,
     }
     const uint64_t output_elements = Backward ? pc::mul(batch, pc::mul(length, dimension)) : pc::mul(batch, width);
     const uint64_t output_bytes = pc::mul(output_elements, sizeof(T));
-    CudaBuf<uint64_t> device_words(pc::mul(metadata.size(), sizeof(uint64_t)));
-    std::lock_guard<std::mutex> lock(c_one_over_fact_mu);
+    const uint64_t workspace = pc::add(pc::mul(metadata.size(), sizeof(uint64_t)), Pascal && Backward ? sizeof(int) : 0);
+    if constexpr (Pascal) {
+        if (workspace > pc::workspace_limit()) throw std::runtime_error("Pascal coefficient workspace limit is too small");
+    }
+    CudaBuf<uint64_t> device_words(workspace);
+    int* retry = nullptr;
+    if constexpr (Pascal && Backward) retry = reinterpret_cast<int*>(device_words.get() + metadata.size());
+    std::unique_lock<std::mutex> lock(c_one_over_fact_mu, std::defer_lock);
+    if constexpr (!Pascal) lock.lock();
     try {
         CUDA_CHECK(cudaMemcpyAsync(device_words.get(), metadata.data(), metadata.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
         const uint64_t* device_indices = device_metadata ? indices : device_words.get() + 3 * count;
-        T factors[SIG_COEF_CUDA_MAX_DEGREE + 1];
-        factors[0] = T(1);
-        for (uint64_t j = 1; j <= max_degree; ++j) factors[j] = factors[j - 1] / T(j);
         void* symbol = nullptr;
-        if constexpr (std::is_same_v<T, float>) {
-            CUDA_CHECK(cudaMemcpyToSymbolAsync(c_one_over_fact_f, factors, (max_degree + 1) * sizeof(T), 0, cudaMemcpyHostToDevice, stream));
-            CUDA_CHECK(cudaGetSymbolAddress(&symbol, c_one_over_fact_f));
-        } else {
-            CUDA_CHECK(cudaMemcpyToSymbolAsync(c_one_over_fact_d, factors, (max_degree + 1) * sizeof(T), 0, cudaMemcpyHostToDevice, stream));
-            CUDA_CHECK(cudaGetSymbolAddress(&symbol, c_one_over_fact_d));
+        if constexpr (!Pascal) {
+            T factors[SIG_COEF_CUDA_MAX_DEGREE + 1];
+            factors[0] = T(1);
+            for (uint64_t j = 1; j <= max_degree; ++j) factors[j] = factors[j - 1] / T(j);
+            if constexpr (std::is_same_v<T, float>) {
+                CUDA_CHECK(cudaMemcpyToSymbolAsync(c_one_over_fact_f, factors, (max_degree + 1) * sizeof(T), 0, cudaMemcpyHostToDevice, stream));
+                CUDA_CHECK(cudaGetSymbolAddress(&symbol, c_one_over_fact_f));
+            } else {
+                CUDA_CHECK(cudaMemcpyToSymbolAsync(c_one_over_fact_d, factors, (max_degree + 1) * sizeof(T), 0, cudaMemcpyHostToDevice, stream));
+                CUDA_CHECK(cudaGetSymbolAddress(&symbol, c_one_over_fact_d));
+            }
         }
         const T* device_factors = static_cast<const T*>(symbol);
-        if constexpr (Backward) if (output_bytes) CUDA_CHECK(cudaMemsetAsync(out, 0, output_bytes, stream));
-        for (uint64_t begin = 0; begin < count;) {
-            uint64_t end = begin + 1;
-            const uint64_t degree = host_degrees[metadata[2 * count + begin]];
-            while (end < count && host_degrees[metadata[2 * count + end]] == degree) ++end;
-            const uint64_t group_count = end - begin;
-            const uint64_t* order = device_words.get() + 2 * count + begin;
-            const uint64_t jobs = Backward && (!degree || length <= 1) ? 0 : pc::mul(batch, group_count);
-            for (uint64_t offset = 0; offset < jobs;) {
-                const uint64_t work = std::min<uint64_t>(jobs - offset, CUDA_GRID_X_LIMIT * 256);
-                const unsigned int blocks = static_cast<unsigned int>((work + 255) / 256);
-                if (!degree || length <= 1) {
-                    sig_coef_identity_kernel<T><<<blocks, 256, 0, stream>>>(out, device_words.get() + count,
-                        order, group_count, width, degree, prefixes, offset, work);
-                } else {
-                    auto run = [&]<uint64_t Degree>() {
-                        auto launch = [&]<bool Augmented>() {
-                            if constexpr (Backward)
-                                sig_coef_backprop_kernel_fixed_degree<T, Degree, Augmented><<<blocks, 256, 0, stream>>>(path, out, coefs, deriv,
-                                    device_indices, device_factors, device_words.get(), device_words.get() + count,
-                                    group_count, batch, dimension, length, width, offset, work, order, time_aug, lead_lag, end_time);
-                            else
-                                sig_coef_kernel_fixed_degree<T, Degree, Augmented><<<blocks, 256, 0, stream>>>(path, out,
-                                    device_indices, device_factors, device_words.get(), device_words.get() + count,
-                                    group_count, batch, dimension, length, width, prefixes, offset, work, order, time_aug, lead_lag, end_time);
+        for (int attempt = 0; attempt < (Pascal && Backward ? 2 : 1); ++attempt) {
+            if constexpr (Pascal && Backward)
+                if (!attempt) CUDA_CHECK(cudaMemsetAsync(retry, 0, sizeof(int), stream));
+            if constexpr (Backward)
+                if (output_bytes) CUDA_CHECK(cudaMemsetAsync(out, 0, output_bytes, stream));
+            for (uint64_t begin = 0; begin < count;) {
+                uint64_t end = begin + 1;
+                const uint64_t degree = host_degrees[metadata[2 * count + begin]];
+                while (end < count && host_degrees[metadata[2 * count + end]] == degree) ++end;
+                const uint64_t group_count = end - begin;
+                const uint64_t* order = device_words.get() + 2 * count + begin;
+                const uint64_t jobs = Backward && (!degree || length <= 1) ? 0 : pc::mul(batch, group_count);
+                for (uint64_t offset = 0; offset < jobs;) {
+                    constexpr unsigned int threads = Pascal ? 32 : 256;
+                    const uint64_t work = std::min<uint64_t>(jobs - offset, CUDA_GRID_X_LIMIT * threads);
+                    const unsigned int blocks = static_cast<unsigned int>((work + threads - 1) / threads);
+                    if (!degree || length <= 1) {
+                        sig_coef_identity_kernel<T><<<blocks, threads, 0, stream>>>(out, device_words.get() + count,
+                                                                                    order, group_count, width, degree, prefixes, offset, work);
+                    } else {
+                        auto run = [&]<uint64_t Degree>() {
+                            auto launch = [&]<bool Augmented>() {
+                                if constexpr (Pascal) {
+                                    auto inverse = [&]<bool Guarded>() {
+                                        auto grouped = [&]<bool Merge>() {
+                                            sig_coef_pascal_kernel_fixed_degree<T, Degree, Backward, Augmented, Guarded, Merge><<<blocks, threads, 0, stream>>>(
+                                                path, out, coefs, deriv, device_indices, device_words.get(), device_words.get() + count,
+                                                group_count, dimension, length, width, prefixes, offset, work, order, time_aug, lead_lag, end_time, retry);
+                                        };
+                                        if constexpr (Backward && !Guarded && !Augmented && std::is_same_v<T, float> && Degree >= 8) {
+                                            if (work >= 4096 && dimension <= 2) grouped.template operator()<true>();
+                                            else grouped.template operator()<false>();
+                                        } else grouped.template operator()<false>();
+                                    };
+                                    if constexpr (Backward) {
+                                        if (attempt) inverse.template operator()<true>();
+                                        else inverse.template operator()<false>();
+                                    } else inverse.template operator()<false>();
+                                } else if constexpr (Backward)
+                                    sig_coef_backprop_kernel_fixed_degree<T, Degree, Augmented><<<blocks, 256, 0, stream>>>(path, out, coefs, deriv,
+                                        device_indices, device_factors, device_words.get(), device_words.get() + count,
+                                        group_count, batch, dimension, length, width, offset, work, order, time_aug, lead_lag, end_time);
+                                else
+                                    sig_coef_kernel_fixed_degree<T, Degree, Augmented><<<blocks, 256, 0, stream>>>(path, out,
+                                        device_indices, device_factors, device_words.get(), device_words.get() + count,
+                                        group_count, batch, dimension, length, width, prefixes, offset, work, order, time_aug, lead_lag, end_time);
+                            };
+                            if (time_aug || lead_lag) launch.template operator()<true>();
+                            else launch.template operator()<false>();
                         };
-                        if (time_aug || lead_lag) launch.template operator()<true>();
-                        else launch.template operator()<false>();
-                    };
-#define HORNER_CASE(M) case M: run.template operator()<M>(); break
-                    switch (degree) {
-                        HORNER_CASE(1); HORNER_CASE(2); HORNER_CASE(3); HORNER_CASE(4); HORNER_CASE(5);
-                        HORNER_CASE(6); HORNER_CASE(7); HORNER_CASE(8); HORNER_CASE(9); HORNER_CASE(10);
-                        HORNER_CASE(11); HORNER_CASE(12); HORNER_CASE(13); HORNER_CASE(14); HORNER_CASE(15);
-                        HORNER_CASE(16); HORNER_CASE(17); HORNER_CASE(18); HORNER_CASE(19); HORNER_CASE(20);
+#define COEFFICIENT_CASE(M) case M: run.template operator()<M>(); break
+                        switch (degree) {
+                            COEFFICIENT_CASE(1); COEFFICIENT_CASE(2); COEFFICIENT_CASE(3); COEFFICIENT_CASE(4); COEFFICIENT_CASE(5);
+                            COEFFICIENT_CASE(6); COEFFICIENT_CASE(7); COEFFICIENT_CASE(8); COEFFICIENT_CASE(9); COEFFICIENT_CASE(10);
+                            COEFFICIENT_CASE(11); COEFFICIENT_CASE(12); COEFFICIENT_CASE(13); COEFFICIENT_CASE(14); COEFFICIENT_CASE(15);
+                            COEFFICIENT_CASE(16); COEFFICIENT_CASE(17); COEFFICIENT_CASE(18); COEFFICIENT_CASE(19); COEFFICIENT_CASE(20);
+                        }
+#undef COEFFICIENT_CASE
                     }
-#undef HORNER_CASE
+                    CUDA_CHECK(cudaGetLastError());
+                    offset += work;
                 }
-                CUDA_CHECK(cudaGetLastError());
-                offset += work;
+                begin = end;
             }
-            begin = end;
+            int needs_retry = 0;
+            if constexpr (Pascal && Backward)
+                CUDA_CHECK(cudaMemcpyAsync(&needs_retry, retry, sizeof(int), cudaMemcpyDeviceToHost, stream));
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+            if (!needs_retry) break;
         }
-        CUDA_CHECK(cudaStreamSynchronize(stream));
     } catch (...) {
         (void)cudaStreamSynchronize(stream);
         throw;
     }
+}
+
+template<class T, bool Backward>
+void sig_coef_horner_cuda(const T* path, T* out, const T* coefs, const T* deriv,
+    const uint64_t* indices, uint64_t count, const uint64_t* degrees, uint64_t batch,
+    uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time,
+    bool prefixes, bool device_metadata) {
+    sig_coef_cuda_impl<T, Backward, false>(path, out, coefs, deriv, indices, count, degrees,
+        batch, dimension, length, time_aug, lead_lag, end_time, prefixes, device_metadata);
 }
 
 #define INSTANTIATE_HORNER(T, B) \
@@ -391,10 +436,13 @@ void sig_coef_dispatch_cuda(const T* path, T* out, const T* coefs, const T* deri
     const uint64_t* indices, uint64_t words, const uint64_t* degrees, uint64_t batch,
     uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time,
     bool prefixes, int method) {
-    if (method == 1) throw std::invalid_argument("Pascal coefficients are not supported on CUDA; use horner or auto");
-    if (method != 0 && method != 2) throw std::invalid_argument("Invalid coefficient method");
-    sig_coef_horner_cuda<T, Backward>(path, out, coefs, deriv, indices, words, degrees,
-        batch, dimension, length, time_aug, lead_lag, end_time, prefixes, !time_aug && !lead_lag);
+    if (method < 0 || method > 2) throw std::invalid_argument("Invalid coefficient method");
+    if (method == 1)
+        sig_coef_cuda_impl<T, Backward, true>(path, out, coefs, deriv, indices, words, degrees,
+            batch, dimension, length, time_aug, lead_lag, end_time, prefixes, false);
+    else
+        sig_coef_horner_cuda<T, Backward>(path, out, coefs, deriv, indices, words, degrees,
+            batch, dimension, length, time_aug, lead_lag, end_time, prefixes, !time_aug && !lead_lag);
 }
 
 extern "C" {
