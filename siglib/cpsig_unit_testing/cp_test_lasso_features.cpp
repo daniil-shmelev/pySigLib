@@ -58,10 +58,36 @@ public:
 }
 
 TEST(LassoFeatures, ExhaustiveDescendantAndGroupBounds) {
-    for (uint32_t mode : {1U, 2U}) for (size_t degree : {4U, 6U}) {
+    for (uint32_t mode : {1U, 2U}) for (size_t degree : {4U, 6U}) for (unsigned flags : {0U, 15U, 31U, 119U, 127U, 1015U, 2039U}) {
         siglasso::SearchOptions options(SigLassoOptions{}, mode); options.samples = 7; options.length = 5; options.dimension = 2;
         options.degree = degree; options.n_jobs = 1; options.cache_bytes = 32 * 1024 * 1024;
+        options.feature_kernel = flags;
         BoundBackend backend(options);
         EXPECT_GT(siglasso::audit_cpu_feature_bounds(backend, mode), 5);
+    }
+}
+
+TEST(LassoFeatures, FactorialProductsByDegree) {
+    std::mt19937 generator(6371); std::uniform_real_distribution<double> uniform(-5, 5);
+    for (size_t count : {1U, 3U, 8U, 32U}) for (size_t levels = 1; levels <= 12; ++levels) {
+        std::vector<siglasso::HallPowerFactor> factors;
+        std::vector<double> side(count), dp(levels + 1), next(levels + 1);
+        std::vector<siglasso::HallPowerItem> heap;
+        std::vector<long double> expected(levels + 1), update(levels + 1); expected[0] = 1;
+        for (size_t v = 0; v < count; ++v) {
+            side[v] = v % 7 ? std::exp(uniform(generator)) : 0;
+            const size_t degree = 1 + v % 4, run = v % 3;
+            factors.push_back({degree, v, run}); update = expected;
+            long double power = 1;
+            for (size_t k = 1; k * degree <= levels; ++k) {
+                power *= static_cast<long double>(side[v]) / (run + k);
+                for (size_t q = k * degree; q <= levels; ++q) update[q] = std::max(update[q], expected[q - k * degree] * power);
+            }
+            expected.swap(update);
+        }
+        std::sort(factors.begin(), factors.end(), [](const auto& a, const auto& b) { return a.degree < b.degree; });
+        siglasso::hall_factorial_products(factors, side.data(), 1, 0, levels, dp, next, heap);
+        for (size_t q = 0; q <= levels; ++q)
+            EXPECT_NEAR(dp[q], static_cast<double>(expected[q]), 2e-13 * std::max(1., static_cast<double>(expected[q])));
     }
 }

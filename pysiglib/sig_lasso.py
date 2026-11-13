@@ -70,7 +70,8 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
     separately with a scalar or per-target positive penalty. ``initial_words``
     seeds the working set with words in the transformed alphabet.
 
-    The native solver uses cyclic coordinate descent on each working set.
+    The native solver uses cyclic coordinate descent with safeguarded
+    acceleration on each working set.
     Every fit searches the feature tree by branch and bound. It evaluates
     coordinates without constructing a full truncated signature.
     ``memory_limit`` bounds owned native workspace and output

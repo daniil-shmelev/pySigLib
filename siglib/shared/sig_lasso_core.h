@@ -37,6 +37,24 @@
 
 namespace siglasso {
 
+inline std::atomic<unsigned> experimental_signature_bound{1};
+inline std::atomic<unsigned> experimental_candidate_pool{256};
+inline std::atomic<unsigned> experimental_search_strategy{0};
+inline std::atomic<unsigned> experimental_search_batch{4}, experimental_pool_rank{16}, experimental_traversal_order{4};
+inline std::atomic<unsigned> experimental_search_partitions{0}, experimental_search_method{3};
+inline std::atomic<size_t> experimental_cache_bytes{0};
+inline std::atomic<double> experimental_pool_refresh{0};
+inline std::atomic<unsigned> experimental_terminal_kernel{14}, experimental_restricted_solver{7};
+inline std::atomic<unsigned> experimental_feature_kernel{2039};
+inline std::atomic<unsigned> experimental_summary_flags{0};
+inline std::atomic<size_t> experimental_summary_bytes{0};
+enum OptimizationCounter { AndersonAttempts, AndersonAccepted, GramBuilds, GramReusedEntries, GramSeconds,
+    MatrixBlocks, MatrixCorrelations, MatrixSeconds, SummaryHits, SummaryMisses, SummaryPruned, SegmentRefinements, OptimizationCounterCount };
+inline thread_local std::array<double, OptimizationCounterCount> experimental_optimization_stats{};
+enum ExperimentCounter { RetainedChecks, RetainedHits, NormCalls, PermanentHits, ScreenedEntries, ScreenPasses,
+    InnerSweeps, AdaptiveRefinements, FinalAudits, AuditRepairs, ScreenSeconds, ExperimentCounterCount };
+inline thread_local std::array<double, ExperimentCounterCount> experimental_last_stats{};
+
 using Word = std::vector<uint64_t>;
 using Clock = std::chrono::steady_clock;
 inline double elapsed(Clock::time_point t) { return std::chrono::duration<double>(Clock::now() - t).count(); }
@@ -102,42 +120,87 @@ struct Column {
 
 struct Node {
     Word word;
-    Array coefficients, moments, integrals, values, linear_integrals;
+    Array coefficients, moments, integrals, values, linear_integrals, tt_state, tt_moments;
     bool uncertain_moments = false;
     std::shared_ptr<void> metadata;
-    size_t bytes() const { return coefficients.bytes() + moments.bytes() + integrals.bytes() + values.bytes() + linear_integrals.bytes() + 512 + word.size() * 64; }
+    size_t bytes() const { return coefficients.bytes() + moments.bytes() + integrals.bytes() + values.bytes() + linear_integrals.bytes() + tt_state.bytes() + tt_moments.bytes() + 512 + word.size() * 64; }
 };
 using NodePtr = std::shared_ptr<Node>;
-struct Probe { NodePtr node; uint64_t low, high; size_t block = 0; Array gram; };
+struct Probe { NodePtr node; uint64_t low, high; size_t block = 0; Array gram; double norm = -1; };
 struct Candidate { Word word; Array values; double score; };
 inline bool better(const Candidate& a, const Candidate& b) {
     return a.score == b.score ? word_less(a.word, b.word) : a.score > b.score;
 }
 struct SearchResult { std::vector<Candidate> candidates; double omitted = 0; };
 
+class CandidateCutoff {
+    size_t capacity_;
+    std::vector<double> scores_;
+    std::mutex mutex_;
+    std::shared_ptr<void> metadata_;
+public:
+    std::atomic<double> threshold{0};
+    CandidateCutoff(size_t capacity, std::shared_ptr<void> metadata) : capacity_(capacity), metadata_(std::move(metadata)) { scores_.reserve(capacity); }
+    void offer(double score) {
+        if (score <= threshold.load(std::memory_order_relaxed)) return;
+        std::lock_guard lock(mutex_);
+        if (scores_.size() < capacity_) { scores_.push_back(score); std::push_heap(scores_.begin(), scores_.end(), std::greater<double>{}); }
+        else if (score > scores_.front()) {
+            std::pop_heap(scores_.begin(), scores_.end(), std::greater<double>{});
+            scores_.back() = score; std::push_heap(scores_.begin(), scores_.end(), std::greater<double>{});
+        }
+        if (scores_.size() == capacity_) threshold.store(scores_.front(), std::memory_order_relaxed);
+    }
+};
+
 class FeatureSearch {
 public:
     virtual ~FeatureSearch() = default;
+    virtual void new_target() {}
+    virtual double stamp() const { return 0; }
+    virtual void screen(double, double, double, double) {}
     virtual NodePtr selected(const Word&) = 0;
     virtual SearchResult query(const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t,
         size_t = 0, size_t = 0, size_t = 0) = 0;
+    virtual SearchResult verify(const Array& r, double alpha, const std::unordered_map<Word, size_t, WordHash>& active, size_t capacity) {
+        return query(r, alpha, active, capacity);
+    }
 };
 
 class HostSearch {
 public:
     virtual ~HostSearch() = default;
     virtual void begin_query(const Array&, const std::unordered_map<Word, size_t, WordHash>&) {}
+    virtual double complete_bound(const Probe&, double value) { return value; }
+    virtual double subtree_norm(const Probe&) { return std::numeric_limits<double>::infinity(); }
     virtual void bounds(const std::vector<Probe>&, const Array&, double, std::vector<double>&) = 0;
 };
 
 struct SearchOptions : SigLassoOptions {
     size_t cache_bytes;
     unsigned search_method;
+    unsigned experiment;
+    unsigned batch_width, pool_rank, traversal_order, partitions;
+    unsigned terminal_kernel, restricted_solver, feature_kernel;
+    unsigned summary_flags;
+    size_t summary_bytes;
     bool selected_only;
     SearchOptions(const SigLassoOptions& o, uint32_t mode, bool predict = false) : SigLassoOptions(o), selected_only(predict) {
-        const size_t limit = predict ? 64u << 20 : 16u << 20;
+        const size_t limit = predict ? 64u << 20 : experimental_cache_bytes.load();
         cache_bytes = o.memory_limit ? std::min<size_t>(limit, o.memory_limit / 4) : limit;
         search_method = predict || mode == 2 ? 0 : (!mode && o.degree >= 4 ? 3 : 2);
+        if (!predict && !mode && experimental_search_method.load() < 4) search_method = experimental_search_method.load();
+        experiment = predict ? 0 : experimental_search_strategy.load();
+        batch_width = predict ? 32 : experimental_search_batch.load();
+        pool_rank = predict ? 0 : experimental_pool_rank.load();
+        traversal_order = predict ? 0 : experimental_traversal_order.load();
+        partitions = predict ? 0 : experimental_search_partitions.load();
+        terminal_kernel = predict || mode || o.degree < 3 ? 0 : experimental_terminal_kernel.load();
+        restricted_solver = predict || o.degree == 1 ? 0 : experimental_restricted_solver.load();
+        feature_kernel = experimental_feature_kernel.load();
+        summary_flags = predict || mode ? 0 : experimental_summary_flags.load();
+        summary_bytes = predict || mode ? 0 : experimental_summary_bytes.load();
+        if (o.memory_limit) summary_bytes = std::min<size_t>(summary_bytes, o.memory_limit / 8);
     }
 };
 
@@ -148,6 +211,11 @@ public:
     std::shared_ptr<Budget> budget;
     SigLassoStats stats{};
     bool uncertain_features = false;
+    bool verify_search = false;
+    double active_corr_cap = 0;
+    std::shared_ptr<CandidateCutoff> shared_cutoff;
+    std::array<double, ExperimentCounterCount> experiment_stats{};
+    std::array<double, OptimizationCounterCount> optimization_stats{};
     Array increments, variation, after, alphabet_ratios;
     std::vector<std::pair<size_t, size_t>> alphabet;
     std::function<void()> trim_search;
@@ -180,6 +248,8 @@ public:
     virtual void export_result(const Result&, const SigLassoOutput&) = 0;
     virtual bool native_search(const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t, SearchResult&) { return false; }
     virtual bool has_native_search() const { return false; }
+    virtual void native_new_target() {}
+    virtual void native_screen(double, double, double, double) {}
     virtual void finish() {}
     virtual void trim_caches() { if (trim_search) trim_search(); }
     std::shared_ptr<void> account(size_t bytes) {
@@ -287,6 +357,34 @@ class Search : public FeatureSearch {
     size_t factor_bytes_ = 0;
     size_t gram_bytes_ = 0;
     NodePtr root_;
+    struct Certificate {
+        double bound = 0, norm = 0, stamp = 0;
+        bool permanent = false;
+        std::shared_ptr<void> metadata;
+    };
+    std::unordered_map<Word, Certificate, WordHash> certificates_;
+    Array previous_residual_;
+    double travel_ = 0;
+    void advance(const Array& residual) {
+        if (!previous_residual_.owner) previous_residual_ = b_.clone(residual);
+        else {
+            double squared = 0;
+            for (size_t i = 0; i < residual.size; ++i) {
+                const double difference = residual.data[i] - previous_residual_.data[i];
+                squared += difference * difference;
+            }
+            travel_ = guard(travel_ + guard(std::sqrt(squared)) / residual.size);
+            b_.copy(residual.data, previous_residual_.data, residual.size);
+        }
+    }
+    void retain(Word key, double bound, double norm) {
+        auto found = certificates_.find(key);
+        if (found == certificates_.end()) {
+            auto memory = b_.account(sizeof(Certificate) + key.size() * 16 + 192);
+            found = certificates_.emplace(std::move(key), Certificate{0, guard(norm), 0, false, std::move(memory)}).first;
+        }
+        found->second.bound = guard(bound); found->second.stamp = travel_;
+    }
     Array get_factors(size_t k) {
         auto it = factors_.find(k);
         if (it != factors_.end()) return it->second;
@@ -311,6 +409,28 @@ public:
     }
     ~Search() { b_.trim_search = {}; }
     const NodePtr& root() const { return root_; }
+    void new_target() override {
+        certificates_ = decltype(certificates_){};
+        previous_residual_ = {}; travel_ = 0;
+        b_.native_new_target();
+    }
+    double stamp() const override { return travel_; }
+    void screen(double scale, double radius, double stamp, double alpha) override {
+        if (b_.has_native_search()) { b_.native_screen(scale, radius, stamp, alpha); return; }
+        const auto start = Clock::now();
+        for (auto& [key, entry] : certificates_) if (!entry.permanent) {
+            const double correlation = guard(entry.bound + entry.norm * std::abs(entry.stamp - stamp));
+            if (guard(scale * correlation + entry.norm * radius) < alpha) {
+                entry.permanent = true; ++b_.experiment_stats[ScreenedEntries];
+            }
+        }
+        ++b_.experiment_stats[ScreenPasses]; b_.experiment_stats[ScreenSeconds] += elapsed(start);
+    }
+    SearchResult verify(const Array& residual, double alpha, const std::unordered_map<Word, size_t, WordHash>& active, size_t capacity) override {
+        b_.verify_search = true;
+        try { auto result = query(residual, alpha, active, capacity); b_.verify_search = false; return result; }
+        catch (...) { b_.verify_search = false; throw; }
+    }
     NodePtr selected(const Word& word) {
         auto node = root_;
         for (auto letter : word) {
@@ -334,10 +454,16 @@ public:
     SearchResult query(const Array& residual, double alpha, const std::unordered_map<Word, size_t, WordHash>& active, size_t capacity,
         size_t low = 0, size_t high = 0, size_t block = 0) {
         SearchResult result;
+        if (b_.options.experiment & 5) advance(residual);
         if (b_.has_native_search()) {
             cache_.clear(); factors_.clear(); grams_.clear(); factor_bytes_ = gram_bytes_ = 0;
             b_.native_search(residual, alpha, active, capacity, result); ++b_.stats.search_passes; return result;
         }
+        const bool retain_bounds = (b_.options.experiment & 5) && !b_.verify_search;
+        const size_t rank = b_.options.pool_rank ? std::min<size_t>(capacity, b_.options.pool_rank) : capacity;
+        auto leader_storage = rank < capacity ? b_.account(multiply(rank, sizeof(double))) : std::shared_ptr<void>{};
+        std::vector<double> leaders;
+        if (rank < capacity) leaders.reserve(rank);
         b_.host_search()->begin_query(residual, active);
         std::vector<Probe> stack;
         const auto push = [&](const NodePtr& node, size_t first, size_t last, size_t index) {
@@ -348,11 +474,37 @@ public:
         while (!stack.empty()) {
             std::vector<Probe> batch;
             const auto k = stack.back().node->word.size();
-            while (!stack.empty() && batch.size() < 32 && stack.back().node->word.size() == k) {
+            while (!stack.empty() && batch.size() < b_.options.batch_width && stack.back().node->word.size() == k) {
                 batch.push_back(std::move(stack.back())); stack.pop_back();
             }
             double threshold = alpha;
-            if (capacity && result.candidates.size() == capacity) threshold = std::max(threshold, result.candidates.front().score);
+            if (rank < capacity) {
+                if (leaders.size() == rank) threshold = std::max(threshold, leaders.front());
+            } else if (capacity && result.candidates.size() == capacity) threshold = std::max(threshold, result.candidates.front().score);
+            if (b_.shared_cutoff) threshold = std::max(threshold, b_.shared_cutoff->threshold.load(std::memory_order_relaxed));
+            if (retain_bounds) {
+                size_t kept = 0;
+                for (size_t j = 0; j < batch.size(); ++j) {
+                    auto& task = batch[j];
+                    Word key = task.node->word; key.push_back(b_.options.dimension + task.block);
+                    const auto found = certificates_.find(key);
+                    if (found != certificates_.end()) {
+                        ++b_.experiment_stats[RetainedChecks];
+                        const auto& entry = found->second;
+                        task.norm = entry.norm;
+                        const double bound = guard(entry.bound + entry.norm * std::max(0., travel_ - entry.stamp));
+                        if (entry.permanent || ((b_.options.experiment & 1) && bound < threshold)) {
+                            ++b_.experiment_stats[entry.permanent ? PermanentHits : RetainedHits];
+                            result.omitted = std::max(result.omitted, bound);
+                            ++b_.stats.pruned; continue;
+                        }
+                    }
+                    if (kept != j) batch[kept] = std::move(task);
+                    ++kept;
+                }
+                batch.resize(kept);
+            }
+            if (batch.empty()) continue;
             std::vector<double> bounds;
             const size_t gram_size = multiply(multiply(b_.options.samples, b_.options.length - 1), (b_.options.length - 1) * sizeof(double));
             for (auto& task : batch) if (task.high - task.low > b_.options.length - 1 && gram_size && gram_size <= b_.options.cache_bytes / 8) {
@@ -374,6 +526,11 @@ public:
                 if (bound < threshold) {
                     result.omitted = std::max(result.omitted, bound);
                     ++b_.stats.pruned;
+                    if (retain_bounds) {
+                        if (task.norm < 0) { ++b_.experiment_stats[NormCalls]; task.norm = b_.host_search()->subtree_norm(task); }
+                        Word key = task.node->word; key.push_back(b_.options.dimension + task.block);
+                        retain(std::move(key), b_.host_search()->complete_bound(task, bound), task.norm);
+                    }
                 } else if (task.high - task.low > 1) {
                     const auto middle = task.low + (task.high - task.low) / 2;
                     stack.push_back({task.node, middle, task.high, task.block + 2 * (middle - task.low), {}});
@@ -408,9 +565,28 @@ public:
             for (size_t j = 0; j < nodes.size(); ++j) {
                 auto& node = nodes[j];
                 const double score = finite(std::abs(scores[j]) * b_.weights[node->word.size()]);
+                bool screened = false;
+                if (retain_bounds && (b_.options.experiment & 4)) {
+                    const auto found = certificates_.find(node->word);
+                    const double norm = found == certificates_.end()
+                        ? b_.weights[node->word.size()] * std::sqrt(b_.dot(node->values.data, node->values.data, residual.size))
+                            + 1e-11 * std::sqrt(static_cast<double>(residual.size))
+                        : found->second.norm;
+                    screened = found != certificates_.end() && found->second.permanent;
+                    retain(node->word, score, norm);
+                    if (screened) ++b_.experiment_stats[PermanentHits];
+                }
                 if (!active.count(node->word)) {
                     result.omitted = std::max(result.omitted, guard(score));
-                    if (capacity && score > alpha) {
+                    if (!screened && b_.shared_cutoff && score > alpha) b_.shared_cutoff->offer(score);
+                    if (!screened && rank < capacity && score > alpha) {
+                        if (leaders.size() < rank) { leaders.push_back(score); std::push_heap(leaders.begin(), leaders.end(), std::greater<double>{}); }
+                        else if (score > leaders.front()) {
+                            std::pop_heap(leaders.begin(), leaders.end(), std::greater<double>{});
+                            leaders.back() = score; std::push_heap(leaders.begin(), leaders.end(), std::greater<double>{});
+                        }
+                    }
+                    if (!screened && capacity && score > alpha) {
                         Candidate candidate{node->word, node->values, score};
                         if (result.candidates.size() < capacity) {
                             result.candidates.push_back(std::move(candidate));
@@ -422,10 +598,12 @@ public:
                         }
                     }
                 }
-                if (node->word.size() < b_.options.degree) {
-                    push(node, 0, b_.options.dimension, 0);
-                }
             }
+            if ((b_.options.traversal_order & 1) && nodes.size() > 1) {
+                std::vector<size_t> order(nodes.size()); std::iota(order.begin(), order.end(), 0);
+                std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t c) { return std::abs(scores[a]) < std::abs(scores[c]); });
+                for (auto j : order) if (nodes[j]->word.size() < b_.options.degree) push(nodes[j], 0, b_.options.dimension, 0);
+            } else for (const auto& node : nodes) if (node->word.size() < b_.options.degree) push(node, 0, b_.options.dimension, 0);
         }
         std::sort(result.candidates.begin(), result.candidates.end(), better);
         ++b_.stats.search_passes;

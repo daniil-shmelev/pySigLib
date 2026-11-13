@@ -16,12 +16,23 @@
 // Included inside each target namespace.
 
 void hall_polynomial_(const siglasso::HallKernelPlan&, const double*, const double*, double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, double, double*);
+void hall_terminal_(const siglasso::HallKernelPlan&, const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, double);
+void log_polynomial_(const double*, const double*, double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+void log_moments_(const siglasso::LogMomentPlan&, const double*, const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, double*);
+void log_terminal_integrals_(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+void log_terminal_products_(const double*, const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+void log_terminal_values_(const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 double hall_group_bound_(const double*, const double*, const double*, const siglasso::HallBoundFactor*, uint64_t, const double*, uint64_t, uint64_t, uint64_t);
+void hall_envelope_(const siglasso::HallEnvelopePlan&, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t);
 
 template<typename T>
 void sig_working_set_(const T*, const T*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
 template<typename T>
 void sig_working_set_predict_(const T*, const T*, const T*, T*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
+template<typename T>
+void sig_working_set_tt_envelopes_(const T*, const SigLassoOptions*, double*);
+template<typename T>
+void sig_working_set_query_benchmark_(const T*, const double*, const double*, uint32_t, const SigLassoOptions*, double*, double*);
 
 template<std::floating_point T>
 void log_sig_combine_(const T* log_sig1, const T* log_sig2, T* out, uint64_t batch_size, uint64_t dimension, uint64_t degree, int n_jobs);

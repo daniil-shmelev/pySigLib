@@ -38,6 +38,18 @@
 extern "C" {
 
     CPSIG_API int sig_working_set_version() noexcept;
+    CPSIG_API int sig_working_set_experimental_bound(uint32_t) noexcept;
+    CPSIG_API int sig_working_set_experimental_pool(uint32_t) noexcept;
+    CPSIG_API int sig_working_set_experimental_strategy(uint32_t) noexcept;
+    CPSIG_API int sig_working_set_experimental_stats(double*) noexcept;
+    CPSIG_API int sig_working_set_experimental_search(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint64_t) noexcept;
+    CPSIG_API int sig_working_set_experimental_refresh(double) noexcept;
+    CPSIG_API int sig_working_set_experimental_kernels(uint32_t, uint32_t) noexcept;
+    CPSIG_API int sig_working_set_experimental_features(uint32_t) noexcept;
+    CPSIG_API int sig_working_set_experimental_summaries(uint32_t, uint64_t) noexcept;
+    CPSIG_API int sig_working_set_query_benchmark_d(const double*, const double*, const double*, uint32_t, const SigLassoOptions*, double*, double*) noexcept;
+    CPSIG_API int sig_working_set_optimization_stats(double*, uint64_t) noexcept;
+    CPSIG_API int sig_working_set_tt_envelopes_d(const double*, const SigLassoOptions*, double*) noexcept;
     CPSIG_API int sig_working_set_f(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
     CPSIG_API int sig_working_set_d(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
     CPSIG_API int sig_working_set_predict_f(const float*, const float*, const float*, float*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*) noexcept;

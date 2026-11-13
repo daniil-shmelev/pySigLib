@@ -14,6 +14,7 @@
  * ========================================================================= */
 
 #include "sig_lasso_core.h"
+#include "cp_lasso_acceleration.h"
 #include <map>
 
 namespace siglasso {
@@ -28,6 +29,9 @@ struct Restricted {
     Array y, eta, gradient, residual;
     std::vector<Term> terms;
     double alpha, intercept = 0, value = 0, intercept_error = 0, active_error = 0;
+    Array previous_gram;
+    std::vector<Word> gram_words;
+    std::shared_ptr<void> gram_metadata;
     bool has_intercept() const {
         return b.options.intercept != 0;
     }
@@ -163,15 +167,107 @@ struct Restricted {
             update_gradient(curvature, false);
         }
     }
+    double priority(double coef, double g, double h, double penalty) const {
+        if (!(h > 0)) return 0;
+        const double u = h * coef - g;
+        const double next = std::copysign(std::max(0., std::abs(u) - penalty), u) / h;
+        const double delta = next - coef;
+        const double decrease = -g * delta - .5 * h * delta * delta + penalty * (std::abs(coef) - std::abs(next));
+        return std::isfinite(decrease) ? std::max(0., decrease) : std::numeric_limits<double>::infinity();
+    }
+    void save_iterate(double* out) const {
+        if (has_intercept()) *out++ = intercept;
+        for (const auto& t : terms) *out++ = t.beta;
+    }
+    void restore_iterate(const double* in) {
+        if (has_intercept()) intercept = *in++;
+        for (auto& t : terms) t.beta = *in++;
+    }
+    Array acceleration_history(size_t k) {
+        if (!(b.options.restricted_solver & 1) || k < 2 || multiply(12 * sizeof(double), k) > b.budget->available()) return {};
+        auto history = b.alloc(multiply(12, k));
+        save_iterate(history.data);
+        return history;
+    }
+    void accelerate(const Array& history, size_t& age, const Array& curvature = {}, const Array& gram_values = {}, const Array& corr = {}) {
+        if (!history.owner) return;
+        const size_t k = terms.size() + has_intercept();
+        save_iterate(history.at(++age * k));
+        if (age < 5) return;
+        ++b.optimization_stats[AndersonAttempts];
+        age = 0;
+        double* differences = history.at(6 * k);
+        for (size_t j = 0; j < 5 * k; ++j) differences[j] = history.data[j + k] - history.data[j];
+        std::array<double, 25> gram{};
+        std::array<double, 5> weights{};
+        for (size_t i = 0; i < 5; ++i) for (size_t j = 0; j <= i; ++j)
+            gram[i * 5 + j] = gram[j * 5 + i] = b.dot(differences + i * k, differences + j * k, k);
+        if (anderson_weights(gram.data(), weights.data())) {
+            double* candidate = history.at(11 * k);
+            std::fill_n(candidate, k, 0.);
+            for (size_t j = 0; j < 5; ++j) b.axpy(weights[j], history.at((j + 1) * k), candidate, k);
+            if (std::all_of(candidate, candidate + k, [](double x) { return std::isfinite(x); })) {
+                if (gram_values.owner) {
+                    double* delta = differences;
+                    double* change = differences + k;
+                    double penalty = 0, magnitude = 0;
+                    for (size_t j = 0; j < k; ++j) {
+                        delta[j] = candidate[j] - history.data[5 * k + j];
+                        if (j >= static_cast<size_t>(has_intercept())) {
+                            const double term = alpha * (std::abs(candidate[j]) - std::abs(history.data[5 * k + j]));
+                            penalty += term; magnitude += std::abs(term);
+                        }
+                    }
+                    for (size_t j = 0; j < k; ++j) {
+                        change[j] = b.dot(gram_values.at(j * k), delta, k);
+                        magnitude += std::abs(delta[j] * corr.data[j]) + .5 * std::abs(delta[j] * change[j]);
+                    }
+                    const double decrease = b.dot(delta, corr.data, k) + .5 * b.dot(delta, change, k) + penalty;
+                    if (std::isfinite(decrease) && decrease < -128. * k * std::numeric_limits<double>::epsilon() * magnitude) {
+                        restore_iterate(candidate);
+                        b.axpy(1., change, corr.data, k);
+                        ++b.optimization_stats[AndersonAccepted];
+                    }
+                    save_iterate(history.data);
+                    return;
+                }
+                refresh(false, curvature);
+                const double previous_value = value;
+                restore_iterate(candidate);
+                bool accepted = false;
+                try {
+                    refresh(false, curvature);
+                    accepted = value < previous_value;
+                } catch (const NonfiniteError&) {}
+                if (accepted) ++b.optimization_stats[AndersonAccepted];
+                else {
+                    restore_iterate(history.at(5 * k));
+                    refresh(false, curvature);
+                }
+            }
+        }
+        save_iterate(history.data);
+    }
     bool covariance_sweeps(size_t k, double feature_tol, double intercept_tol) {
+        const auto started = Clock::now();
         auto gram = b.alloc(multiply(k, k));
         auto corr = b.alloc(k);
         const size_t offset = has_intercept();
         const double inv = 1. / y.size;
+        auto index_metadata = previous_gram.owner ? b.account(multiply(k, sizeof(size_t))) : std::shared_ptr<void>{};
+        std::vector<size_t> previous(previous_gram.owner ? k : 0, gram_words.size());
+        if (previous_gram.owner) for (size_t j = 0; j < k; ++j) {
+            const Word& word = j < offset ? Word{} : terms[j - offset].column.word;
+            auto found = std::find(gram_words.begin(), gram_words.end(), word);
+            previous[j] = static_cast<size_t>(found - gram_words.begin());
+        }
         for (size_t j = 0; j < k; ++j) {
             for (size_t l = 0; l <= j; ++l) {
                 double entry;
-                if (l < offset)
+                if (!previous.empty() && previous[j] < gram_words.size() && previous[l] < gram_words.size()) {
+                    entry = previous_gram.data[previous[j] * gram_words.size() + previous[l]];
+                    ++b.optimization_stats[GramReusedEntries];
+                } else if (l < offset)
                     entry = j < offset ? 1. : inv * std::accumulate(terms[j-offset].column.values.data,
                                                                   terms[j-offset].column.values.data+y.size, 0.);
                 else
@@ -179,13 +275,34 @@ struct Restricted {
                 gram.data[j*k+l] = gram.data[l*k+j] = entry;
             }
         }
+        ++b.optimization_stats[GramBuilds];
+        b.optimization_stats[GramSeconds] += elapsed(started);
+        if (b.options.restricted_solver & 2) {
+            previous_gram = gram;
+            gram_words.clear();
+            gram_metadata = b.account(multiply(k, 64 + 8 * b.options.degree));
+            if (offset) gram_words.push_back({});
+            for (const auto& t : terms) gram_words.push_back(t.column.word);
+        }
+        auto history = acceleration_history(k);
+        const bool ordered = b.options.restricted_solver & 8;
+        auto order_metadata = ordered ? b.account(multiply(k, sizeof(std::pair<double, size_t>))) : std::shared_ptr<void>{};
+        std::vector<std::pair<double, size_t>> order(ordered ? k : 0);
+        size_t age = 0;
         for (size_t sweep = 0; sweep < 250000;) {
             corr.data[0] = std::accumulate(gradient.data, gradient.data+y.size, 0.);
             for (size_t j = offset; j < k; ++j)
                 corr.data[j] = b.dot(terms[j-offset].column.values.data, gradient.data, y.size);
             for (size_t inner = 0; inner < 256 && sweep < 250000; ++inner) {
                 ++sweep;
-                for (size_t j = 0; j < k; ++j) {
+                ++b.experiment_stats[InnerSweeps];
+                if (ordered) {
+                    for (size_t j = 0; j < k; ++j)
+                        order[j] = {-priority(j < offset ? intercept : terms[j-offset].beta, corr.data[j], gram.data[j*k+j], j < offset ? 0. : alpha), j};
+                    std::sort(order.begin(), order.end());
+                }
+                for (size_t index = 0; index < k; ++index) {
+                    const size_t j = ordered ? order[index].second : index;
                     double& coef = j < offset ? intercept : terms[j-offset].beta;
                     const double penalty = j < offset ? 0. : alpha;
                     if (coef == 0 && std::abs(corr.data[j]) <= penalty)
@@ -199,6 +316,7 @@ struct Restricted {
                         b.axpy(delta, gram.at(j*k), corr.data, k);
                     }
                 }
+                accelerate(history, age, {}, gram, corr);
                 bool done = !offset || std::abs(corr.data[0]) <= intercept_tol;
                 for (size_t j = offset; done && j < k; ++j) {
                     const double coef = terms[j-offset].beta, g = corr.data[j];
@@ -213,27 +331,52 @@ struct Restricted {
         }
         return false;
     }
-    bool solve(double tau) {
+    bool solve(double tau, double intercept_tol) {
         const auto curvature = b.options.loss == 1 || b.options.loss == 2 ? b.alloc(y.size) : Array{};
         const double fraction = b.options.single_precision ? .1 : .5;
+        auto history = acceleration_history(terms.size() + has_intercept());
+        const bool ordered = b.options.restricted_solver & 8;
+        auto order_metadata = ordered ? b.account(multiply(terms.size(), sizeof(std::pair<double, size_t>))) : std::shared_ptr<void>{};
+        std::vector<std::pair<double, size_t>> order(ordered ? terms.size() : 0);
+        size_t age = 0;
         for (size_t sweeps = 0;;) {
             refresh(false, curvature);
-            if (intercept_error <= b.options.tolerance * fraction && active_error <= tau * fraction)
+            if (intercept_error <= intercept_tol * fraction && active_error <= tau * fraction)
                 return true;
             const size_t k = terms.size() + has_intercept();
-            if (sweeps == 65 && b.options.loss == 0 && k > 0 && k <= y.size &&
-                k + 1 <= b.budget->available() / sizeof(double) / k)
-                return covariance_sweeps(k, tau * fraction, b.options.tolerance * fraction);
+            const bool switch_gram = b.options.restricted_solver & 16 ? sweeps >= (k + 1) / 2 : sweeps == 65;
+            if ((switch_gram || (previous_gram.owner && (b.options.restricted_solver & 4))) && b.options.loss == 0 && k > 0 && k <= y.size &&
+                k + 1 <= b.budget->available() / sizeof(double) / k) {
+                history = {};
+                return covariance_sweeps(k, tau * fraction, intercept_tol * fraction);
+            }
             if (sweeps == 250000)
                 return false;
+            if (ordered) {
+                for (size_t j = 0; j < terms.size(); ++j) {
+                    const auto& t = terms[j];
+                    double h = t.column.norm2 / y.size;
+                    if (curvature.owner) {
+                        h = 0;
+                        for (size_t i = 0; i < y.size; ++i) h += curvature.data[i] * t.column.values.data[i] * t.column.values.data[i];
+                        h /= y.size;
+                    }
+                    order[j] = {-priority(t.beta, b.dot(t.column.values.data, gradient.data, y.size), h, alpha), j};
+                }
+                std::sort(order.begin(), order.end());
+            }
             const size_t count = sweeps ? std::min<size_t>(4, 250000 - sweeps) : 1;
             for (size_t pass = 0; pass < count; ++pass) {
                 if (has_intercept())
                     coordinate(intercept, nullptr, 1., curvature);
-                for (auto& t : terms)
+                for (size_t index = 0; index < terms.size(); ++index) {
+                    auto& t = terms[ordered ? order[index].second : index];
                     coordinate(t.beta, &t.column, t.max_abs, curvature);
+                }
+                accelerate(history, age, curvature);
             }
             sweeps += count;
+            b.experiment_stats[InnerSweeps] += count;
         }
     }
     double initial_intercept() const {
@@ -274,6 +417,10 @@ Result fit(Backend& b, uint32_t mode, const std::vector<double>& alphas, const s
     const auto& o = b.options;
     if (o.loss > 3 || !o.samples || !o.length || !o.dimension || !o.degree)
         throw std::invalid_argument("Invalid working-set options");
+    if (((o.experiment & 5) && mode) || ((o.experiment & 4) && o.loss))
+        throw std::invalid_argument("Experimental certificates require signature features; permanent screening requires squared loss");
+    if ((o.experiment & 4) && experimental_candidate_pool.load())
+        throw std::invalid_argument("Permanent screening requires complete correlation queries without candidate pooling");
     const size_t degree = (mode && o.dimension == 1) ? 1 : o.degree;
     b.prepare();
     auto search = b.make_search();
@@ -284,19 +431,30 @@ Result fit(Backend& b, uint32_t mode, const std::vector<double>& alphas, const s
     std::map<Word, Column, decltype(&word_less)> support(&word_less);
     std::vector<std::vector<std::pair<Word, double>>> coefs(o.targets);
     for (size_t target = 0; target < o.targets; ++target) {
+        search->new_target();
         const auto failures = b.stats.numerical_failures;
         Restricted s{b, b.response(target), b.alloc(o.samples), b.alloc(o.samples), b.alloc(o.samples), {}, alphas[target]};
         const double tau = std::min(o.tolerance, 1e-4 * s.alpha);
+        double inner_tol = o.experiment & 2 ? std::max(tau, .1 * s.alpha) : tau;
+        double best_dual = 0, best_scale = 0, best_stamp = 0, best_offset = 0;
         s.intercept = s.initial_intercept();
         for (const auto& w : initial)
             s.add(w, search->selected(w)->values);
         uint64_t updates = 0;
         size_t capacity = 16;
+        const size_t candidate_bytes = multiply(o.samples, sizeof(double)) + 256 + 32 * degree;
+        size_t pool_capacity = std::min<size_t>(experimental_candidate_pool.load(), b.budget->available() / candidate_bytes / 4);
+        if (pool_capacity < 16) pool_capacity = 0;
+        const double pool_refresh = experimental_pool_refresh.load();
+        double last_excess = 0;
+        std::vector<Candidate> pool;
+        auto pool_metadata = pool_capacity ? b.account(multiply(pool_capacity, 256 + 32 * degree)) : std::shared_ptr<void>{};
         bool converged = false;
         double inactive = 0, raw_inactive = 0;
         for (;;) {
             auto start = Clock::now();
-            bool solved = s.solve(tau);
+            if (updates >= o.max_iter) inner_tol = tau;
+            bool solved = s.solve(inner_tol, std::max(o.tolerance, inner_tol));
             b.stats.solve_seconds += elapsed(start);
             size_t before = s.terms.size();
             std::erase_if(s.terms, [](const Term& t) { return !t.beta; });
@@ -305,13 +463,65 @@ Result fit(Backend& b, uint32_t mode, const std::vector<double>& alphas, const s
             for (size_t j = 0; j < s.terms.size(); ++j)
                 active.emplace(s.terms[j].column.word, j);
             bool last = !solved || updates >= o.max_iter;
+            b.active_corr_cap = guard(s.alpha + s.active_error + s.intercept_error);
             start = Clock::now();
-            auto found = search->query(s.residual, s.alpha + tau * .9, active, capacity);
+            SearchResult found;
+            if (pool_capacity && !last && !pool.empty()) {
+                std::vector<Column> columns;
+                for (const auto& c : pool) columns.push_back({{}, c.values, 0, 0});
+                std::vector<double> scores;
+                b.correlations(columns, s.residual, scores);
+                for (size_t j = 0; j < pool.size(); ++j) {
+                    auto& c = pool[j];
+                    c.score = finite(std::abs(scores[j]) * b.weights[c.word.size()]);
+                    if (!active.count(c.word) && c.score > s.alpha + tau * .9) found.candidates.push_back(c);
+                }
+                std::sort(found.candidates.begin(), found.candidates.end(), better);
+                if (!found.candidates.empty() && found.candidates.front().score - s.alpha < pool_refresh * last_excess)
+                    found.candidates.clear();
+            }
+            if (found.candidates.empty()) {
+                found = search->query(s.residual, s.alpha + tau * .9, active, pool_capacity ? pool_capacity : capacity);
+                if (pool_capacity) pool = found.candidates;
+                last_excess = found.candidates.empty() ? 0 : std::max(0., found.candidates.front().score - s.alpha);
+            }
+            if (o.experiment & 4) {
+                double maximum = std::max(found.omitted, b.active_corr_cap);
+                for (const auto& c : found.candidates) maximum = std::max(maximum, guard(c.score));
+                const double mean = o.intercept ? std::accumulate(s.residual.data, s.residual.data + o.samples, 0.) / o.samples : 0;
+                const double scale = s.alpha / std::max(s.alpha, guard(maximum + std::abs(mean)));
+                double dual = 0, magnitude = 0;
+                for (size_t i = 0; i < o.samples; ++i) {
+                    const double theta = scale * (s.residual.data[i] - mean) / o.samples;
+                    const double term = theta * (s.y.data[i] - .5 * o.samples * theta);
+                    dual += term; magnitude += std::abs(term);
+                }
+                dual -= 512 * std::numeric_limits<double>::epsilon() * (1 + magnitude + std::abs(s.value));
+                if (dual > best_dual) {
+                    best_dual = dual; best_scale = scale; best_stamp = search->stamp();
+                    best_offset = scale * std::abs(mean) / std::sqrt(static_cast<double>(o.samples));
+                }
+                const double gap = guard(std::max(0., s.value - best_dual));
+                search->screen(best_scale, guard(std::sqrt(2 * gap / o.samples) + best_offset), best_stamp, s.alpha);
+            }
+            if (!last && found.candidates.empty() && inner_tol > tau) {
+                inner_tol = tau; ++b.experiment_stats[AdaptiveRefinements];
+                b.stats.search_seconds += elapsed(start);
+                continue;
+            }
+            if ((o.experiment & 4) && (last || found.candidates.empty())) {
+                if (o.single_precision) { s.refresh(true); b.active_corr_cap = guard(s.alpha + s.active_error + s.intercept_error); }
+                ++b.experiment_stats[FinalAudits];
+                found = search->verify(s.residual, s.alpha + tau * .9, active, capacity);
+                if (!last && !found.candidates.empty()) ++b.experiment_stats[AuditRepairs];
+            }
             double query_seconds = elapsed(start);
             if (last || found.candidates.empty()) {
                 if (o.single_precision) {
                     s.refresh(true);
-                    found = search->query(s.residual, s.alpha + tau * .9, active, capacity);
+                    b.active_corr_cap = guard(s.alpha + s.active_error + s.intercept_error);
+                    found = o.experiment & 4 ? search->verify(s.residual, s.alpha + tau * .9, active, capacity)
+                                            : search->query(s.residual, s.alpha + tau * .9, active, capacity);
                 }
                 inactive = found.omitted;
                 for (auto& c : found.candidates)
@@ -342,6 +552,10 @@ Result fit(Backend& b, uint32_t mode, const std::vector<double>& alphas, const s
                 break;
             }
             b.stats.search_seconds += query_seconds;
+            if (o.experiment & 2) {
+                const double violation = std::max({found.candidates.front().score - s.alpha, s.active_error, s.intercept_error});
+                inner_tol = std::max(tau, std::min(inner_tol, .1 * violation));
+            }
             start = Clock::now();
             size_t groups = 0;
             double previous = 0;

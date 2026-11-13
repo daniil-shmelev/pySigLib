@@ -16,6 +16,7 @@
 #include "cppch.h"
 #include "cp_lasso_features.h"
 #include "cp_lasso_hall.h"
+#include "sig_lasso_math.h"
 #include "cp_dispatch.h"
 #include "multithreading.h"
 #include <Eigen/Eigenvalues>
@@ -25,17 +26,80 @@
 namespace cpsig {
 HWY_EXPORT(hall_polynomial_);
 HWY_EXPORT(hall_group_bound_);
+HWY_EXPORT(hall_envelope_);
+HWY_EXPORT(hall_terminal_);
+HWY_EXPORT(log_polynomial_);
+HWY_EXPORT(log_moments_);
+HWY_EXPORT(log_terminal_integrals_);
+HWY_EXPORT(log_terminal_products_);
+HWY_EXPORT(log_terminal_values_);
 void hall_polynomial(const siglasso::HallKernelPlan& plan, const double* left, const double* right, double* out, double* values,
     uint64_t n, uint64_t l, uint64_t begin, uint64_t end, double run, double* scratch) {
     HWY_DYNAMIC_DISPATCH(hall_polynomial_)(plan, left, right, out, values, n, l, begin, end, run, scratch);
+}
+void hall_terminal(const siglasso::HallKernelPlan& plan, const double* left, const double* right, double* values,
+    uint64_t n, uint64_t l, uint64_t begin, uint64_t end, double run) {
+    HWY_DYNAMIC_DISPATCH(hall_terminal_)(plan, left, right, values, n, l, begin, end, run);
+}
+void log_polynomial(const double* parent, const double* increments, double* out, double* values,
+    uint64_t n, uint64_t l, uint64_t d, uint64_t degree, uint64_t levels, uint64_t letter, uint64_t begin, uint64_t end) {
+    HWY_DYNAMIC_DISPATCH(log_polynomial_)(parent, increments, out, values, n, l, d, degree, levels, letter, begin, end);
+}
+void log_terminal_integrals(const double* polynomial, double* out, uint64_t n, uint64_t l, uint64_t degree, uint64_t levels, uint64_t begin, uint64_t end) {
+    HWY_DYNAMIC_DISPATCH(log_terminal_integrals_)(polynomial, out, n, l, degree, levels, begin, end);
+}
+void log_moments(const siglasso::LogMomentPlan& plan, const double* polynomial, const double* variation, const double* after,
+    double* out, uint64_t n, uint64_t l, uint64_t begin, uint64_t end, double* scratch) {
+    HWY_DYNAMIC_DISPATCH(log_moments_)(plan, polynomial, variation, after, out, n, l, begin, end, scratch);
+}
+void log_terminal_products(const double* integrals, const double* increments, const double* residual, double* out,
+    uint64_t n, uint64_t l, uint64_t d, uint64_t letter, uint64_t suffix, uint64_t begin, uint64_t end) {
+    HWY_DYNAMIC_DISPATCH(log_terminal_products_)(integrals, increments, residual, out, n, l, d, letter, suffix, begin, end);
+}
+void log_terminal_values(const double* products, const double* increments, double* out,
+    uint64_t n, uint64_t l, uint64_t d, uint64_t letter, uint64_t begin, uint64_t end) {
+    HWY_DYNAMIC_DISPATCH(log_terminal_values_)(products, increments, out, n, l, d, letter, begin, end);
 }
 double hall_group_bound(const double* global, const double* side, const double* residual, const siglasso::HallBoundFactor* factors,
     uint64_t count, const double* weights, uint64_t degree, uint64_t levels, uint64_t n) {
     return HWY_DYNAMIC_DISPATCH(hall_group_bound_)(global, side, residual, factors, count, weights, degree, levels, n);
 }
+void hall_envelope(const siglasso::HallEnvelopePlan& plan, const double* polynomial, double* out, uint64_t n, uint64_t l, uint64_t begin, uint64_t end) {
+    HWY_DYNAMIC_DISPATCH(hall_envelope_)(plan, polynomial, out, n, l, begin, end);
+}
 }
 
 namespace siglasso {
+void hall_factorial_products(const std::vector<HallPowerFactor>& factors, const double* side, size_t n, size_t i, size_t levels,
+    std::vector<double>& dp, std::vector<double>& next, std::vector<HallPowerItem>& heap) {
+    std::fill(dp.begin(), dp.end(), 0.); dp[0] = 1;
+    auto compare = [](const HallPowerItem& a, const HallPowerItem& b) { return a.value < b.value; };
+    for (size_t begin = 0; begin < factors.size();) {
+        const size_t degree = factors[begin].degree;
+        size_t end = begin; heap.clear();
+        while (end < factors.size() && factors[end].degree == degree) {
+            const auto& f = factors[end];
+            const double value = side[f.slot * n + i] / (f.run + 1);
+            heap.push_back({std::isfinite(value) ? value : std::numeric_limits<double>::infinity(), end, 1}); ++end;
+        }
+        std::make_heap(heap.begin(), heap.end(), compare);
+        next = dp;
+        double power = 1;
+        for (size_t count = 1; count * degree <= levels; ++count) {
+            std::pop_heap(heap.begin(), heap.end(), compare);
+            auto& item = heap.back(); power *= item.value;
+            const auto& f = factors[item.factor];
+            item.value = side[f.slot * n + i] / (f.run + ++item.count);
+            if (!std::isfinite(item.value)) item.value = std::numeric_limits<double>::infinity();
+            std::push_heap(heap.begin(), heap.end(), compare);
+            for (size_t q = count * degree; q <= levels; ++q) {
+                const double value = dp[q - count * degree] * power;
+                next[q] = std::isfinite(value) ? std::max(next[q], value) : std::numeric_limits<double>::infinity();
+            }
+        }
+        dp.swap(next); begin = end;
+    }
+}
 namespace {
 using Complex = std::complex<double>;
 
@@ -69,6 +133,10 @@ class PolynomialSearch final : public FeatureSearch {
     size_t product_bytes_ = 0;
     std::map<std::pair<size_t, size_t>, std::shared_ptr<HallKernelPlan>> hall_plans_;
     Array hall_scratch_;
+    Array log_channel_norms_;
+    std::map<size_t, std::shared_ptr<LogMomentPlan>> log_plans_;
+    std::map<std::pair<size_t, bool>, std::shared_ptr<HallEnvelopePlan>> envelope_plans_;
+    Array log_scratch_;
     std::vector<HallBoundFactor> group_factors_;
 
     double padded(double value, double allowance) const {
@@ -146,6 +214,11 @@ class PolynomialSearch final : public FeatureSearch {
         const size_t h = w.size(), levels = m_ - h;
         auto out = state(w, levels * (h + 1));
         samples([&](uint64_t begin, uint64_t end) {
+            if (b_.options.feature_kernel & 1) {
+                cpsig::log_polynomial(parent->polynomial.data, b_.increments.data, out->polynomial.data, out->values.data,
+                    n_, l_, d_, h, levels, letter, begin, end);
+                return;
+            }
             std::vector<double> totals(levels + 1);
             for (size_t i = begin; i < end; ++i) {
                 std::fill(totals.begin(), totals.end(), 0);
@@ -195,19 +268,39 @@ class PolynomialSearch final : public FeatureSearch {
         for (size_t p = 0; p < degree; ++p) for (size_t pu = 0; pu < a && pu <= p; ++pu)
             if (p - pu <= c) count += multiply(a - pu, c - (p - pu) + 1);
         auto plan = std::make_shared<HallKernelPlan>(); plan->degree = degree;
-        plan->metadata = b_.account(multiply(count, sizeof(HallProductTerm)) + multiply((degree + 1) * (degree + 1), sizeof(double)) + 256);
+        const bool terminal = (b_.options.feature_kernel & 4) && degree == m_;
+        plan->metadata = b_.account(multiply(count, sizeof(HallProductTerm) * (terminal ? 2 : 1)) + multiply((degree + 1) * (degree + 1), sizeof(double)) + 256);
         plan->terms.reserve(count); plan->choose.resize((degree + 1) * (degree + 1));
+        auto moments = terminal ? b_.alloc(degree) : Array{};
+        if (terminal) {
+            plan->terminal_terms.reserve(count);
+            auto bernoulli = b_.alloc(degree); bernoulli.data[0] = 1;
+            for (size_t p = 0; p < degree; ++p) {
+                if (p) {
+                    double sum = 0;
+                    for (size_t k = 0; k < p; ++k) sum += choose_[p + 1][k] * bernoulli.data[k];
+                    bernoulli.data[p] = -sum / (p + 1);
+                }
+                moments.data[p] = p % 2 ? 0 : (std::ldexp(1., 1 - static_cast<int>(p)) - 1) * bernoulli.data[p];
+            }
+        }
         for (size_t k = 0; k <= degree; ++k) for (size_t p = 0; p <= k; ++p) plan->choose[k * (degree + 1) + p] = choose_[k][p];
         for (size_t p = 0; p < degree; ++p) for (size_t pu = 0; pu < a && pu <= p; ++pu) {
             const size_t pv = p - pu; if (pv > c) continue;
             const size_t du = a - pu - 1, dv = c - pv;
-            for (size_t k = 0; k <= du; ++k) for (size_t t = 0; t <= dv; ++t)
-                plan->terms.push_back({offset(a, pu) + k, offset(c, pv) + t, offset(degree - 1, p) + k + t,
-                    (a - pu) * choose_[du][k] * choose_[dv][t] / choose_[du + dv][k + t]});
+            for (size_t k = 0; k <= du; ++k) for (size_t t = 0; t <= dv; ++t) {
+                HallProductTerm term{offset(a, pu) + k, offset(c, pv) + t, offset(degree - 1, p) + k + t,
+                    (a - pu) * choose_[du][k] * choose_[dv][t] / choose_[du + dv][k + t]};
+                plan->terms.push_back(term);
+                if (terminal && moments.data[p] != 0) {
+                    term.factor *= (degree % 2 ? 1. : -1.) * moments.data[p] / (degree - p);
+                    plan->terminal_terms.push_back(term);
+                }
+            }
         }
         hall_plans_.emplace(key, plan); return *plan;
     }
-    StatePtr hall_state(const HallPtr& h, bool required = false, bool polynomial = true) {
+    StatePtr hall_state(const HallPtr& h, bool required = false, bool polynomial = true, const StatePtr& parent = {}) {
         if (auto it = side_states_.find(h->word); it != side_states_.end()) return it->second;
         if (auto it = cache_.find(h->word); it != cache_.end()) { ++b_.stats.cache_hits; return it->second; }
         StatePtr summary;
@@ -236,9 +329,17 @@ class PolynomialSearch final : public FeatureSearch {
                 }
             });
         } else {
-            auto u = hall_state(h->left), v = hall_state(h->right);
+            auto u = parent && parent->polynomial.owner ? parent : hall_state(h->left), v = hall_state(h->right);
             const size_t a = h->left->word.size(), c = h->right->word.size();
             const auto& plan = hall_plan(a, c);
+            if (terminal && (b_.options.feature_kernel & 4)) {
+                samples([&](uint64_t begin, uint64_t end) {
+                    cpsig::hall_terminal(plan, u->polynomial.data, v->polynomial.data, out->values.data, n_, l_, begin, end, static_cast<double>(h->run));
+                });
+                ++b_.stats.constructed;
+                if (required) side_states_.emplace(h->word, out); else cache(out);
+                return out;
+            }
             const int64_t jobs = b_.options.n_jobs > 0 ? b_.options.n_jobs : static_cast<int64_t>(get_max_threads()) + 1 + b_.options.n_jobs;
             if (jobs < 1) throw std::invalid_argument("Invalid n_jobs");
             const size_t workers = n_ < 32 ? 1 : std::min(n_, static_cast<size_t>(jobs));
@@ -287,6 +388,35 @@ class PolynomialSearch final : public FeatureSearch {
         const size_t h = u->word.size(), levels = m_ - h;
         u->moments = b_.alloc(multiply(multiply(levels, l_), n_));
         if (cache_.count(u->word)) cache_size_ += u->moments.bytes();
+        if (b_.options.feature_kernel & 32) {
+            auto found = log_plans_.find(h);
+            if (found == log_plans_.end()) {
+                auto plan = std::make_shared<LogMomentPlan>(); plan->degree = h; plan->levels = levels;
+                const size_t count = time_nodes_.size();
+                plan->metadata = b_.account(multiply(count * (h + 3) + levels * levels + m_ + 1, sizeof(double)) + 512);
+                plan->nodes = time_nodes_; plan->weights = time_weights_;
+                plan->factorials = b_.weights;
+                plan->basis.resize(count * (h + 1)); plan->coefficients.resize(levels * levels);
+                for (size_t g = 0; g < count; ++g) for (size_t k = 0; k <= h; ++k)
+                    plan->basis[g * (h + 1) + k] = choose_[h][k] * std::pow(time_nodes_[g], static_cast<int>(k))
+                        * std::pow(1 - time_nodes_[g], static_cast<int>(h - k));
+                for (size_t p = 0; p < levels; ++p) for (size_t k = p; k < levels; ++k)
+                    plan->coefficients[p * levels + k] = stirling_[k][p] / b_.weights[k] * b_.weights[p];
+                found = log_plans_.emplace(h, std::move(plan)).first;
+            }
+            const int64_t jobs = b_.options.n_jobs > 0 ? b_.options.n_jobs : static_cast<int64_t>(get_max_threads()) + 1 + b_.options.n_jobs;
+            if (jobs < 1) throw std::invalid_argument("Invalid n_jobs");
+            const size_t workers = n_ < 32 ? 1 : std::min(n_, static_cast<size_t>(jobs));
+            const size_t stride = multiply(3 * levels, 4);
+            if (log_scratch_.size < multiply(workers, stride)) { log_scratch_ = {}; log_scratch_ = b_.alloc(multiply(workers, stride)); }
+            auto update = [&](uint64_t begin, uint64_t end) {
+                for (size_t worker = begin; worker < end; ++worker)
+                    cpsig::log_moments(*found->second, u->polynomial.data, b_.variation.data, b_.after.data, u->moments.data,
+                        n_, l_, n_ * worker / workers, n_ * (worker + 1) / workers, log_scratch_.data + worker * stride);
+            };
+            if (workers == 1) update(0, 1); else spawn_batch_threads(workers, b_.options.n_jobs, update);
+            return;
+        }
         samples([&](uint64_t begin, uint64_t end) {
             for (size_t i = begin; i < end; ++i) {
                 double v = l_ ? b_.variation.data[i] + b_.after.data[i] : 0;
@@ -427,11 +557,45 @@ class PolynomialSearch final : public FeatureSearch {
         }
         return padded(best, 1e-10 * m_ * m_ * (l_ + 1));
     }
+    const HallEnvelopePlan& envelope_plan(size_t h, bool derivative) {
+        const auto key = std::make_pair(h, derivative);
+        if (auto found = envelope_plans_.find(key); found != envelope_plans_.end()) return *found->second;
+        auto plan = std::make_shared<HallEnvelopePlan>(); plan->degree = h; plan->derivative = derivative;
+        const size_t degree = h - derivative, groups = (degree + 1) * (h + 1);
+        size_t count = 0;
+        for (size_t k = 0; k <= degree; ++k) for (size_t p = 0; p <= h - derivative; ++p) {
+            const size_t td = h - p - derivative;
+            for (size_t a = 0; a <= td; ++a) if (k >= a && k - a <= degree - td) ++count;
+        }
+        plan->metadata = b_.account(multiply(count, sizeof(HallEnvelopeTerm)) + multiply(groups + 1, sizeof(size_t))
+            + multiply(gaussian_nodes_.size() * (h + 2), sizeof(double)) + 512);
+        plan->offsets.reserve(groups + 1); plan->terms.reserve(count);
+        plan->weights = gaussian_weights_; plan->powers.resize(gaussian_nodes_.size() * (h + 1));
+        for (size_t g = 0; g < gaussian_nodes_.size(); ++g) {
+            Complex power = 1;
+            for (size_t p = 0; p <= h; ++p) { plan->powers[g * (h + 1) + p] = p % 2 ? power.imag() : power.real(); power *= gaussian_nodes_[g]; }
+        }
+        for (size_t k = 0; k <= degree; ++k) for (size_t p = 0; p <= h; ++p) {
+            plan->offsets.push_back(plan->terms.size());
+            if (derivative && p == h) continue;
+            const size_t td = h - p - derivative;
+            for (size_t a = 0; a <= td; ++a) if (k >= a && k - a <= degree - td)
+                plan->terms.push_back({offset(h, p) + a, choose_[td][a] * choose_[degree - td][k - a] / choose_[degree][k] * (derivative ? h - p : 1)});
+        }
+        plan->offsets.push_back(plan->terms.size());
+        return *envelope_plans_.emplace(key, std::move(plan)).first->second;
+    }
     double hall_group_bound(const StatePtr& u, const std::vector<HallPtr>& factors, size_t low, size_t high, const Array& residual) {
         const size_t levels = m_ - u->word.size();
         if (!side_maxima_.owner) {
             side_maxima_ = b_.alloc(multiply(sides_.size(), n_)); b_.fill(side_maxima_, 0);
-            samples([&](uint64_t begin, uint64_t end) {
+            if (b_.options.feature_kernel & 512) for (size_t v = 0; v < sides_.size(); ++v) {
+                const auto& plan = envelope_plan(sides_[v]->word.size(), false);
+                samples([&](uint64_t begin, uint64_t end) {
+                    cpsig::hall_envelope(plan, side_states_.at(sides_[v]->word)->polynomial.data, side_maxima_.data + v * n_, n_, l_, begin, end);
+                });
+            }
+            else samples([&](uint64_t begin, uint64_t end) {
                 for (size_t v = 0; v < sides_.size(); ++v) for (size_t i = begin; i < end; ++i)
                     for (size_t j = 0; j < l_; ++j) for (size_t g = 0; g < gaussian_nodes_.size(); ++g)
                         side_maxima_.data[v * n_ + i] = std::max(side_maxima_.data[v * n_ + i], hall_envelope(side_states_.at(sides_[v]->word), j, i, gaussian_nodes_[g], false));
@@ -440,17 +604,41 @@ class PolynomialSearch final : public FeatureSearch {
         if (!u->global.owner) {
             u->global = b_.alloc(multiply(levels + 2, n_)); b_.fill(u->global, 0);
             if (cache_.count(u->word)) cache_size_ += u->global.bytes();
+            if (b_.options.feature_kernel & 512) {
+                const auto& plan = envelope_plan(u->word.size(), true);
+                samples([&](uint64_t begin, uint64_t end) {
+                    cpsig::hall_envelope(plan, u->polynomial.data, u->global.data, n_, l_, begin, end);
+                });
+            }
+            std::vector<HallPowerFactor> powers;
+            std::shared_ptr<void> power_metadata;
+            if (b_.options.feature_kernel & 1024) {
+                const int64_t jobs = b_.options.n_jobs > 0 ? b_.options.n_jobs : static_cast<int64_t>(get_max_threads()) + 1 + b_.options.n_jobs;
+                if (jobs < 1) throw std::invalid_argument("Invalid n_jobs");
+                const size_t workers = n_ < 32 ? 1 : std::min(n_, static_cast<size_t>(jobs));
+                power_metadata = b_.account(multiply(sides_.size(), sizeof(HallPowerFactor) + multiply(workers, sizeof(HallPowerItem)))
+                    + multiply(workers * 2 * (levels + 1), sizeof(double)) + 512);
+                powers.reserve(sides_.size());
+                for (size_t v = 0; v < sides_.size(); ++v) {
+                    const int order = u->hall->right ? compare(sides_[v], u->hall->right) : -1;
+                    if (order > 0 || sides_[v]->word.size() > levels) continue;
+                    powers.push_back({sides_[v]->word.size(), v, order == 0 ? u->hall->run : 0});
+                }
+                std::sort(powers.begin(), powers.end(), [](const auto& a, const auto& b) { return a.degree < b.degree || (a.degree == b.degree && a.slot < b.slot); });
+            }
             samples([&](uint64_t begin, uint64_t end) {
                 std::vector<double> dp(levels + 1), next(levels + 1);
+                std::vector<HallPowerItem> heap; if (!powers.empty()) heap.reserve(powers.size());
                 for (size_t i = begin; i < end; ++i) {
                     std::fill(dp.begin(), dp.end(), 0); dp[0] = 1;
-                    double mass = 0;
-                    for (size_t g = 0; g < gaussian_nodes_.size(); ++g) {
+                    double mass = b_.options.feature_kernel & 512 ? u->global.data[i] : 0;
+                    if (!(b_.options.feature_kernel & 512)) for (size_t g = 0; g < gaussian_nodes_.size(); ++g) {
                         double value = 0; for (size_t j = 0; j < l_; ++j) value += hall_envelope(u, j, i, gaussian_nodes_[g], true);
                         mass += gaussian_weights_[g] * value;
                     }
                     u->global.data[i] = mass;
-                    for (size_t v = 0; v < sides_.size(); ++v) {
+                    if (b_.options.feature_kernel & 1024) hall_factorial_products(powers, side_maxima_.data, n_, i, levels, dp, next, heap);
+                    else for (size_t v = 0; v < sides_.size(); ++v) {
                         if (u->hall->right && compare(sides_[v], u->hall->right) > 0) continue;
                         const size_t degree = sides_[v]->word.size();
                         const size_t inherited = u->hall->right && compare(sides_[v], u->hall->right) == 0 ? u->hall->run : 0;
@@ -478,21 +666,106 @@ class PolynomialSearch final : public FeatureSearch {
         return padded(best, 1e-10 * m_ * m_ * (l_ + 1));
     }
     double offer(const StatePtr& u, const Array& residual, double alpha, size_t capacity,
-        const std::unordered_map<Word, size_t, WordHash>& active, SearchResult& result) {
+        const std::unordered_map<Word, size_t, WordHash>& active, SearchResult& result, bool copy_values = false) {
         if (active.count(u->word)) return 0;
         const double score = std::abs(b_.dot(u->values.data, residual.data, n_)) * b_.weights[u->word.size()] / n_;
         result.omitted = std::max(result.omitted, guard(score));
         if (!capacity || score <= alpha) return score;
         Candidate c{u->word, u->values, score};
-        if (result.candidates.size() < capacity) { result.candidates.push_back(std::move(c)); std::push_heap(result.candidates.begin(), result.candidates.end(), better); }
+        if (result.candidates.size() < capacity) {
+            if (copy_values) c.values = b_.clone(c.values);
+            result.candidates.push_back(std::move(c)); std::push_heap(result.candidates.begin(), result.candidates.end(), better);
+        }
         else if (better(c, result.candidates.front())) {
+            if (copy_values) c.values = b_.clone(c.values);
             std::pop_heap(result.candidates.begin(), result.candidates.end(), better); result.candidates.back() = std::move(c);
             std::push_heap(result.candidates.begin(), result.candidates.end(), better);
         }
         return score;
     }
+    void log_terminal_search(const StatePtr& u, const Array& residual, double alpha, size_t capacity,
+        const std::unordered_map<Word, size_t, WordHash>& active, SearchResult& result) {
+        ++b_.stats.terminal_queries;
+        const size_t h = u->word.size(), levels = m_ - h;
+        const double rounding = terminal_roundoff(h, multiply(n_, l_), l_);
+        const double underflow = 32. * (n_ + 1) * (l_ + 1) * std::numeric_limits<double>::min();
+        const double mass = b_.absolute_sum(residual) / n_;
+        if (!log_channel_norms_.owner) {
+            log_channel_norms_ = b_.alloc(multiply(n_, d_));
+            samples([&](uint64_t begin, uint64_t end) {
+                for (size_t a = 0; a < d_; ++a) for (size_t i = begin; i < end; ++i) {
+                    double squared = 0;
+                    for (size_t j = 0; j < l_; ++j) { const double value = step(j, a, i); squared += value * value; }
+                    log_channel_norms_.data[a * n_ + i] = std::sqrt(squared + underflow) * (1 + terminal_roundoff(0, multiply(n_, l_), l_));
+                }
+            });
+        }
+        auto integrals = b_.alloc(multiply(3 * l_, n_));
+        auto products = b_.alloc(multiply(l_ + 2, n_));
+        auto probe = std::make_shared<State>(); probe->values = b_.alloc(n_);
+        probe->metadata = b_.account(512 + m_ * 32);
+        samples([&](uint64_t begin, uint64_t end) {
+            cpsig::log_terminal_integrals(u->polynomial.data, integrals.data, n_, l_, h, levels, begin, end);
+        });
+        double maximum = 0;
+        for (size_t q = 1; q <= levels; ++q) for (size_t c = 0; c < (q == 2 ? d_ : 1); ++c) {
+            bool prepared = false;
+            double magnitude = 0;
+            for (size_t a = 0; a < d_; ++a) {
+                Word word = u->word; word.push_back(a); if (q == 2) word.push_back(c);
+                if (!lyndon(word) || active.count(word)) continue;
+                if (!prepared) {
+                    samples([&](uint64_t begin, uint64_t end) {
+                        cpsig::log_terminal_products(integrals.data, b_.increments.data, residual.data, products.data,
+                            n_, l_, d_, c, q, begin, end);
+                    });
+                    magnitude = std::accumulate(products.data + (l_ + 1) * n_, products.data + (l_ + 2) * n_, 0.);
+                    prepared = true;
+                }
+                double norm = std::numeric_limits<double>::infinity();
+                try { norm = b_.dot(products.data + l_ * n_, log_channel_norms_.data + a * n_, n_); }
+                catch (const NonfiniteError&) {}
+                const double bound = padded((norm + rounding * magnitude + underflow) * b_.weights[h + q] / n_ + rounding * caps_[h + q] * mass, rounding);
+                const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
+                if (std::isfinite(bound) && bound < cutoff) {
+                    result.omitted = std::max(result.omitted, bound); maximum = std::max(maximum, bound);
+                    continue;
+                }
+                bool pruned = false;
+                if ((b_.options.feature_kernel & 256) && std::isfinite(norm)) {
+                    double partial = 0, correction = 0, used = 0;
+                    for (size_t begin = 0; begin < n_; begin += 32) {
+                        const size_t end = std::min(n_, begin + 32);
+                        cpsig::log_terminal_values(products.data, b_.increments.data, probe->values.data, n_, l_, d_, a, begin, end);
+                        const double term = b_.dot(probe->values.data + begin, residual.data + begin, end - begin) - correction;
+                        const double next = partial + term; correction = (next - partial) - term; partial = next;
+                        used += b_.dot(products.data + l_ * n_ + begin, log_channel_norms_.data + a * n_ + begin, end - begin);
+                        const double remaining = std::max(0., norm - used) + rounding * (std::abs(norm) + std::abs(used));
+                        const double refined = padded((std::abs(partial) + remaining + rounding * magnitude + underflow) * b_.weights[h + q] / n_
+                            + rounding * caps_[h + q] * mass, rounding);
+                        if (std::isfinite(refined) && refined < cutoff) {
+                            result.omitted = std::max(result.omitted, refined); maximum = std::max(maximum, refined); pruned = true; break;
+                        }
+                    }
+                } else samples([&](uint64_t begin, uint64_t end) {
+                    cpsig::log_terminal_values(products.data, b_.increments.data, probe->values.data, n_, l_, d_, a, begin, end);
+                });
+                if (pruned) continue;
+                probe->word = std::move(word);
+                ++b_.stats.terminal_correlations;
+                const size_t previous = result.candidates.size();
+                maximum = std::max(maximum, offer(probe, residual, alpha, capacity, active, result, true));
+                if (result.candidates.size() > previous) ++b_.stats.constructed;
+            }
+        }
+        if (maximum <= alpha) ++b_.stats.terminal_pruned;
+    }
     void log_terminals(const StatePtr& u, const Array& residual, double alpha, size_t capacity,
         const std::unordered_map<Word, size_t, WordHash>& active, SearchResult& result) {
+        if (b_.options.feature_kernel & 16) {
+            log_terminal_search(u, residual, alpha, capacity, active, result);
+            return;
+        }
         ++b_.stats.terminal_queries;
         const size_t h = u->word.size(), levels = m_ - h;
         double maximum = 0;
@@ -635,13 +908,21 @@ public:
             if (h && period == h) offer(u, residual, alpha, capacity, active, result);
             if (h == m_) return;
             const size_t first = h ? u->word[h - period] : 0;
-            const double threshold = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
             if (m_ - h <= 2) {
                 log_terminals(u, residual, alpha, capacity, active, result); return;
             }
-            for (size_t a = first; a < d_; ++a) {
+            std::function<void(size_t, size_t)> group = [&](size_t low, size_t high) {
+                const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
+                ++b_.stats.block_queries; const double bound = log_bound(u, low, high, residual);
+                if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; return; }
+                if (high - low == 1) visit_log(log_child(u, low), h && low == first ? period : h + 1);
+                else { const size_t mid = std::midpoint(low, high); group(low, mid); group(mid, high); }
+            };
+            if (b_.options.feature_kernel & 8) group(first, d_);
+            else for (size_t a = first; a < d_; ++a) {
+                const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
                 ++b_.stats.block_queries; const double bound = log_bound(u, a, a + 1, residual);
-                if (bound < threshold) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; continue; }
+                if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; continue; }
                 visit_log(log_child(u, a), h && a == first ? period : h + 1);
             }
         };
@@ -649,22 +930,51 @@ public:
         visit_hall = [&](StatePtr u) {
             offer(u, residual, alpha, capacity, active, result);
             if (u->word.size() == m_) return;
-            if (!u->polynomial.owner && !u->moments.owner) u = hall_state(u->hall);
+            if (!u->polynomial.owner && !(b_.options.feature_kernel & 128 ? u->global.owner : u->moments.owner)) u = hall_state(u->hall);
             const double threshold = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
-            ++b_.stats.block_queries; const double bound = hall_bound(u, residual);
-            if (bound < threshold) {
-                result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned;
-                if (!cache_.count(u->word)) remember(u);
-                return;
-            }
-            if (!u->polynomial.owner && !u->global.owner) u = hall_state(u->hall);
             std::vector<HallPtr> factors;
             for (const auto& v : sides_) if (u->word.size() + v->word.size() <= m_ && admissible(u->hall, v)) factors.push_back(v);
-            for (size_t v = 0; v < factors.size(); ++v) {
+            if (factors.empty()) return;
+            if (b_.options.feature_kernel & 64) {
+                if (!u->polynomial.owner && !u->global.owner) u = hall_state(u->hall);
+                ++b_.stats.block_queries;
+                const double cheap = hall_group_bound(u, factors, 0, factors.size(), residual);
+                if (cheap < threshold) {
+                    result.omitted = std::max(result.omitted, cheap); ++b_.stats.pruned;
+                    if (!cache_.count(u->word)) remember(u);
+                    return;
+                }
+            }
+            if (!(b_.options.feature_kernel & 128)) {
+                ++b_.stats.block_queries; const double bound = hall_bound(u, residual);
+                if (bound < threshold) {
+                    result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned;
+                    if (!cache_.count(u->word)) remember(u);
+                    return;
+                }
+            }
+            if (!u->polynomial.owner && !u->global.owner) u = hall_state(u->hall);
+            std::function<void(size_t, size_t)> group = [&](size_t low, size_t high) {
+                const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
+                ++b_.stats.block_queries;
+                const double bound = hall_group_bound(u, factors, low, high, residual);
+                if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; return; }
+                if (high - low == 1) {
+                    if ((b_.options.feature_kernel & 2) && !u->polynomial.owner) u = hall_state(u->hall);
+                    visit_hall(hall_state(bracket(u->hall, factors[low]), false, false, b_.options.feature_kernel & 2 ? u : StatePtr{}));
+                }
+                else { const size_t mid = std::midpoint(low, high); group(low, mid); group(mid, high); }
+            };
+            if ((b_.options.feature_kernel & 8) && !factors.empty()) group(0, factors.size());
+            else for (size_t v = 0; v < factors.size(); ++v) {
+                const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
                 ++b_.stats.block_queries;
                 const double bound = hall_group_bound(u, factors, v, v + 1, residual);
-                if (bound < threshold) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; }
-                else visit_hall(hall_state(bracket(u->hall, factors[v]), false, false));
+                if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; }
+                else {
+                    if ((b_.options.feature_kernel & 2) && !u->polynomial.owner) u = hall_state(u->hall);
+                    visit_hall(hall_state(bracket(u->hall, factors[v]), false, false, b_.options.feature_kernel & 2 ? u : StatePtr{}));
+                }
             }
             if (!cache_.count(u->word)) remember(u);
         };
@@ -721,6 +1031,12 @@ public:
             const double bound = mode_ == 1 ? log_bound(u, 0, d_, residual) : hall_bound(u, residual);
             if (actual > bound + 1e-12) throw std::runtime_error("Descendant bound audit failed");
             ++checks;
+            if (mode_ == 1 && m_ - h <= 2) for (double threshold : {0., actual * .5, actual * 2}) {
+                SearchResult result;
+                log_terminals(u, residual, threshold, 0, {}, result);
+                if (actual > result.omitted + 1e-12) throw std::runtime_error("Log terminal bound audit failed");
+                ++checks;
+            }
             if (actual > 1e-8 && u->polynomial.size) {
                 const double saved = u->polynomial.data[0];
                 u->polynomial.data[0] = std::numeric_limits<double>::quiet_NaN();

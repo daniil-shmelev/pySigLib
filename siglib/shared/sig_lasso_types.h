@@ -15,7 +15,7 @@
 
 #pragma once
 #include <cstdint>
-namespace siglasso { struct Result; struct HallKernelPlan; struct HallBoundFactor; }
+namespace siglasso { struct Result; struct LogMomentPlan; struct HallKernelPlan; struct HallBoundFactor; struct HallEnvelopePlan; }
 
 struct SigLassoOptions {
     uint64_t samples, length, dimension, degree, targets;
