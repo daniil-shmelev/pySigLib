@@ -233,14 +233,16 @@ def test_per_call_split_autograd(monkeypatch, device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_auto_different_forward_and_backward_methods(device, monkeypatch):
     # This shape selects Horner forward and prefix-suffix backward on both backends.
-    path = torch.zeros((32, 17, 4), device=device)
+    degree = 12 if device == "cuda" else 8
+    shape = (16, 257, 3) if device == "cuda" else (32, 17, 4)
+    path = torch.zeros(shape, device=device)
     monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", "1")
-    signature = pysiglib.sig(path, 8, method="auto")
+    signature = pysiglib.sig(path, degree, method="auto")
     with pytest.raises(Exception, match="workspace"):
-        pysiglib.sig_backprop(path, signature, signature, 8, method="auto")
+        pysiglib.sig_backprop(path, signature, signature, degree, method="auto")
     path.requires_grad_()
     with pytest.raises(Exception, match="workspace"):
-        torch_api.sig(path, 8, method="auto").sum().backward()
+        torch_api.sig(path, degree, method="auto").sum().backward()
 
 
 def test_auto_horner_fallback(monkeypatch):
