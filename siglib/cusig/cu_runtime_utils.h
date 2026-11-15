@@ -83,7 +83,8 @@ inline uint64_t cuda_global_batch_index(
 }
 
 inline uint64_t cuda_workspace_initial_capacity(
-	uint64_t batch_size, size_t row_bytes, size_t free_bytes, size_t reserve_bytes = 0
+	uint64_t batch_size, size_t row_bytes, size_t free_bytes, size_t reserve_bytes = 0,
+	uint64_t existing_capacity = 0
 ) {
 	if (batch_size == 0)
 		return 0;
@@ -92,7 +93,7 @@ inline uint64_t cuda_workspace_initial_capacity(
 	// Zero retains the default half-memory budget.
 	const size_t budget = reserve_bytes
 		? (free_bytes > reserve_bytes ? free_bytes - reserve_bytes : 0) : free_bytes / 2;
-	uint64_t capacity = static_cast<uint64_t>(budget / row_bytes);
+	uint64_t capacity = std::max(existing_capacity, static_cast<uint64_t>(budget / row_bytes));
 	if (capacity == 0)
 		capacity = 1;
 	return std::min<uint64_t>(

@@ -268,7 +268,7 @@ template<typename T>
 bool try_forward(const T* path, T* output, uint64_t batch, int dimension, int degree,
 	int steps, uint64_t stride, SignaturePath<T> input, bool scalar) {
 	if (dimension < 2 || dimension > 32 || degree < (dimension > 4 ? 4 : 6)
-		|| degree > (dimension > 4 ? 8 : 16)) return false;
+		|| degree > (dimension == 6 ? 9 : (dimension > 4 ? 8 : 16))) return false;
 	const int tail = dimension == 2 ? 4 : (dimension == 3 ? 3 : (dimension == 4 ? 2 : 1));
 	const uint64_t words = power(dimension, degree - tail);
 	if (batch < (1024 + words - 1) / words) return false;
@@ -281,6 +281,9 @@ bool try_forward(const T* path, T* output, uint64_t batch, int dimension, int de
 	if (dimension == 2) { switch (degree) { TREE_DEGREES(2, 4) } }
 	if (dimension == 3) { switch (degree) { TREE_DEGREES(3, 3) } }
 	if (dimension == 4) { switch (degree) { TREE_DEGREES(4, 2) } }
+	if (dimension == 6) {
+		switch (degree) { LAUNCH_TREE(7, 6, 2) LAUNCH_TREE(8, 6, 2) LAUNCH_TREE(9, 6, 2) }
+	}
 	#define TREE_SHORT_DEGREES(D) LAUNCH_TREE(4, D, 1) LAUNCH_TREE(5, D, 1) \
 		LAUNCH_TREE(6, D, 1) LAUNCH_TREE(7, D, 1) LAUNCH_TREE(8, D, 1)
 	if constexpr (sizeof(T) == sizeof(double)) {
@@ -382,7 +385,7 @@ template<typename T>
 bool try_backward(const T* path, T* output, const T* signature, const T* seeds, uint64_t batch,
 	int dimension, int degree, int steps, uint64_t stride, bool scalar, cudaStream_t stream) {
 	if (dimension < 2 || dimension > 32 || degree < (dimension > 4 ? 4 : 6)
-		|| degree > (dimension > 4 ? 8 : 16)) return false;
+		|| degree > (dimension == 6 ? 9 : (dimension > 4 ? 8 : 16))) return false;
 	const int tail = dimension >= 4 ? 1 : 2;
 	const uint64_t words = power(dimension, degree - tail);
 	if (batch < (256 + words - 1) / words) return false;
@@ -395,6 +398,9 @@ bool try_backward(const T* path, T* output, const T* signature, const T* seeds, 
 	if (dimension == 2) { switch (degree) { TREE_DEGREES(2, 2) } }
 	if (dimension == 3) { switch (degree) { TREE_DEGREES(3, 2) } }
 	if (dimension == 4) { switch (degree) { TREE_DEGREES(4, 1) } }
+	if (dimension == 6) {
+		switch (degree) { LAUNCH_TREE(7, 6, 2) LAUNCH_TREE(8, 6, 2) LAUNCH_TREE(9, 6, 2) }
+	}
 	#define TREE_SHORT_DEGREES(D) LAUNCH_TREE(4, D, 1) LAUNCH_TREE(5, D, 1) \
 		LAUNCH_TREE(6, D, 1) LAUNCH_TREE(7, D, 1) LAUNCH_TREE(8, D, 1)
 	if (dimension == 6) { switch (degree) { TREE_SHORT_DEGREES(6) } }

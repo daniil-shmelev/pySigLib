@@ -39,9 +39,10 @@ bool use_prefix_suffix_cuda(uint64_t batch, uint64_t dimension, uint64_t length,
     // The grouped Horner kernels change the crossover with matrix multiplication.
     const bool grouped = (dimension <= 4 || dimension == 6 || dimension == 8 || dimension == 10
         || dimension == 12 || dimension == 16 || dimension == 24 || dimension == 32)
-        && degree >= (dimension <= 4 ? 6 : 4) && degree <= (dimension <= 4 ? 16 : 8);
+        && degree >= (dimension <= 4 ? 6 : 4) && degree <= (dimension <= 4 ? 16 : (dimension == 6 ? 9 : 8));
+    const bool two_level_tail = dimension == 6 && degree >= 7 && degree <= 9;
     if constexpr (std::is_same_v<T, double>) {
-        if (!backward) return dimension > 4 && degree >= 4 && work >= 512
+        if (!backward) return !two_level_tail && dimension > 4 && degree >= 4 && work >= 512
             && ((!grouped && width >= 4096) || (width >= 131072 && degree * (degree - 1) >= 3 * dimension));
         if (dimension == 2)
             return degree >= (batch <= 4 ? 10 : 12) && (segments >= 128 || width >= 16384)
@@ -52,12 +53,14 @@ bool use_prefix_suffix_cuda(uint64_t batch, uint64_t dimension, uint64_t length,
             return degree >= 5 && (segments >= 64 || work >= 512 || width >= 65536);
         return width >= 4096 && (batch <= 32 || width >= 16384);
     }
-    if (!backward) return dimension > 4 && width >= 65536 && batch * width >= 2097152 && work >= 512;
+    if (!backward) return !(two_level_tail && segments >= 64)
+        && dimension > 4 && width >= 65536 && batch * width >= 2097152 && work >= 512;
     if (!grouped) return width >= 4096 && work >= 128;
     if (dimension == 2) return false;
     if (dimension == 3) return width >= 196608 && (work >= 512 || (width >= 1048576 && work >= 128));
     if (dimension == 4) return width >= 65536 && work >= 128;
-    return segments >= 64 && ((width >= 65536 && work >= 128)
+    if (two_level_tail && (degree == 7 || (degree == 8 && (segments < 64 || batch < 8)))) return false;
+    return (segments >= 64 || width >= 262144) && ((width >= 65536 && work >= 128)
         || (dimension >= 8 && width >= 32768 && work >= 4096));
 }
 

@@ -2705,7 +2705,7 @@ void sig_backprop_dense_chen_cuda_stream_(
 	CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
 	const uint64_t max_capacity = std::min<uint64_t>(batch_size, CUDA_BATCH_GRID_LIMIT);
 	uint64_t capacity = cuda_workspace_initial_capacity(max_capacity, row_bytes,
-		free_bytes + s_inc_grad_buf_size, reserve_bytes);
+		free_bytes + s_inc_grad_buf_size, reserve_bytes, s_inc_grad_buf_size / row_bytes);
 	if (s_inc_grad_buf_size < checked_cuda_size_mul(capacity, row_bytes, "CUDA dense signature backprop")) {
 		if (s_inc_grad_buf) {
 			CUDA_CHECK(cudaFree(s_inc_grad_buf));
@@ -2905,7 +2905,7 @@ void sig_backprop_cuda_stream_(
 		&& dimension * sizeof(T) + dense_static_shared_bytes <= CUDA_BASE_DYNAMIC_SMEM
 		&& full_sig_len <= INT_MAX && batch_size <= INT_MAX
 		&& (!prefer_dense || cuda_workspace_initial_capacity(batch_size, dense_workspace_bytes,
-			dense_reusable_bytes, dense_reserve_bytes) >= dense_minimum_batch)
+			dense_reusable_bytes, dense_reserve_bytes, s_inc_grad_buf_size / dense_workspace_bytes) >= dense_minimum_batch)
 		&& dense_workspace_bytes <= dense_reusable_bytes
 		&& dense_reusable_bytes - dense_workspace_bytes >= dense_reserve_bytes;
 	if (use_dense_chen) {
