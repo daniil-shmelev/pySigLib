@@ -22,7 +22,6 @@
 #include "cu_path_transforms.h"
 #include <cub/block/block_scan.cuh>
 #include <algorithm>
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -1799,23 +1798,12 @@ __global__ void set_sig_level0(T* out, uint64_t sig_size, uint64_t batch_size) {
 static void* s_inc_grad_buf = nullptr;
 static size_t s_inc_grad_buf_size = 0;
 static std::mutex s_inc_grad_buf_mu;
-static const void* s_sig_context_path = nullptr;
-static const void* s_sig_context_sig = nullptr;
-static uint64_t s_sig_context_batch_size = 0;
-static uint64_t s_sig_context_dimension = 0;
-static uint64_t s_sig_context_length = 0;
-static uint64_t s_sig_context_degree = 0;
-static size_t s_sig_context_value_size = 0;
-static bool s_sig_context_scalar_term = false;
-static int s_sig_context_kind = 0;
-static std::atomic<bool> s_sig_context_valid = false;
 
 static void* ensure_inc_grad_buf(size_t needed) {
 	if (needed > s_inc_grad_buf_size) {
 		if (s_inc_grad_buf) { cudaFree(s_inc_grad_buf); s_inc_grad_buf = nullptr; s_inc_grad_buf_size = 0; }
 		CUDA_CHECK(cudaMalloc(&s_inc_grad_buf, needed));
 		s_inc_grad_buf_size = needed;
-		s_sig_context_valid = false;
 	}
 	return s_inc_grad_buf;
 }
@@ -1828,7 +1816,6 @@ void release_signature_state() {
 			s_inc_grad_buf = nullptr;
 			s_inc_grad_buf_size = 0;
 		}
-		s_sig_context_valid = false;
 	}
 }
 
@@ -2428,7 +2415,6 @@ void signature_cuda_core_(
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride
 ) {
-	s_sig_context_valid = false;
 	const uint64_t full_sig_len = host_sig_length(dimension, degree);
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
 	const uint64_t path_flat_len = dimension * length;
@@ -2528,7 +2514,6 @@ void signature_cuda_(
 
 	if (time_aug || lead_lag) {
 		if (correction_len == 0 && degree > 1 && length > 1) {
-			s_sig_context_valid = false;
 			signature_per_word_core_(path, out, batch_size, dimension, length, degree,
 				scalar_term, time_aug, lead_lag, end_time);
 			return;
@@ -2878,7 +2863,6 @@ void sig_backprop_cuda_stream_(
 		&& (dimension < 24 || degree < 4);
 	if (!prefer_dense && cuda_horner::try_backward(path, out, sig, sig_derivs, batch_size, dim, static_cast<int>(degree),
 		steps, sig_stride, scalar_term, stream)) {
-		s_sig_context_valid = false;
 		return;
 	}
 	const uint64_t context_size = degree > 1
@@ -2909,7 +2893,6 @@ void sig_backprop_cuda_stream_(
 		&& dense_workspace_bytes <= dense_reusable_bytes
 		&& dense_reusable_bytes - dense_workspace_bytes >= dense_reserve_bytes;
 	if (use_dense_chen) {
-		s_sig_context_valid = false;
 		sig_backprop_dense_chen_cuda_stream_<T>(
 			path, out, sig_derivs, sig, batch_size, dimension, length,
 			degree, scalar_term, dense_reserve_bytes, stream);
@@ -2917,7 +2900,6 @@ void sig_backprop_cuda_stream_(
 	}
 	if (prefer_dense && cuda_horner::try_backward(path, out, sig, sig_derivs, batch_size, dim, static_cast<int>(degree),
 		steps, sig_stride, scalar_term, stream)) {
-		s_sig_context_valid = false;
 		return;
 	}
 	const size_t scan_context_elements = static_cast<size_t>(batch_size)
@@ -2949,18 +2931,8 @@ void sig_backprop_cuda_stream_(
 			adjoint_context, 0, scan_context_elements * sizeof(T), stream));
 		CUDA_CHECK(cudaMemsetAsync(
 			increment_grads, 0, scan_increment_elements * sizeof(T), stream));
-		const bool reuse_prefix_context = s_sig_context_valid
-			&& s_sig_context_kind == 1
-			&& s_sig_context_path == path && s_sig_context_sig == sig
-			&& s_sig_context_batch_size == batch_size
-			&& s_sig_context_dimension == dimension
-			&& s_sig_context_length == length
-			&& s_sig_context_degree == degree
-			&& s_sig_context_value_size == sizeof(T)
-			&& s_sig_context_scalar_term == scalar_term;
-
 		uint64_t level_offset = dimension;
-		for (uint64_t level = 2; !reuse_prefix_context && level < degree; ++level) {
+		for (uint64_t level = 2; level < degree; ++level) {
 			const uint64_t level_size = host_power(dimension, level);
 			const auto scan_chunk = make_cuda_batch_grid_chunk(
 				level_size, batch_size, 0);
@@ -2982,19 +2954,6 @@ void sig_backprop_cuda_stream_(
 			#undef LAUNCH_LEVEL_PREFIX
 			level_offset += level_size;
 		}
-		if (!reuse_prefix_context) {
-			s_sig_context_path = path;
-			s_sig_context_sig = sig;
-			s_sig_context_batch_size = batch_size;
-			s_sig_context_dimension = dimension;
-			s_sig_context_length = length;
-			s_sig_context_degree = degree;
-			s_sig_context_value_size = sizeof(T);
-			s_sig_context_scalar_term = scalar_term;
-			s_sig_context_kind = 1;
-			s_sig_context_valid = true;
-		}
-
 		const int block = 256;
 		const uint64_t total_times = batch_size * static_cast<uint64_t>(steps);
 		const int group_width = scan_group_width;
@@ -3082,18 +3041,8 @@ void sig_backprop_cuda_stream_(
 		T* increment_grads = suffix_context + context_elements;
 		const int block = 256;
 
-		const bool reuse_grouped_context = degree > 2
-			&& s_sig_context_valid && s_sig_context_kind == 2
-			&& s_sig_context_path == path && s_sig_context_sig == sig
-			&& s_sig_context_batch_size == batch_size
-			&& s_sig_context_dimension == dimension
-			&& s_sig_context_length == length
-			&& s_sig_context_degree == degree
-			&& s_sig_context_value_size == sizeof(T)
-			&& s_sig_context_scalar_term == scalar_term;
-
 		uint64_t level_offset = dimension;
-		for (uint64_t level = 2; !reuse_grouped_context && level < degree;
+		for (uint64_t level = 2; level < degree;
 			++level) {
 			const uint64_t level_size = host_power(dimension, level);
 			const int scan_block = 256;
@@ -3124,18 +3073,6 @@ void sig_backprop_cuda_stream_(
 			}
 			#undef LAUNCH_PREFIX
 			level_offset += level_size;
-		}
-		if (degree > 2 && !reuse_grouped_context) {
-			s_sig_context_path = path;
-			s_sig_context_sig = sig;
-			s_sig_context_batch_size = batch_size;
-			s_sig_context_dimension = dimension;
-			s_sig_context_length = length;
-			s_sig_context_degree = degree;
-			s_sig_context_value_size = sizeof(T);
-			s_sig_context_scalar_term = scalar_term;
-			s_sig_context_kind = 2;
-			s_sig_context_valid = true;
 		}
 		const uint64_t total_times = batch_size
 			* static_cast<uint64_t>(steps);

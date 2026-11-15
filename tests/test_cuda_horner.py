@@ -151,3 +151,27 @@ def test_cuda_horner_long_reconstruction():
                                     method="horner", n_jobs=2)
     actual = pysiglib.sig_backprop(device_path, signature, torch.from_numpy(seeds).cuda(), 8, method="horner")
     np.testing.assert_allclose(actual.cpu().numpy(), expected, atol=2e-4, rtol=1e-3)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("scalar_term", [False, True])
+@pytest.mark.parametrize("dimension,segments", [(2, 64), (3, 1024)])
+def test_cuda_horner_backward_updated_buffers(dtype, scalar_term, dimension, segments):
+    generator = torch.Generator().manual_seed(731)
+    path = .02 * torch.randn(4, segments + 1, dimension, generator=generator, dtype=dtype).cumsum(dim=1)
+    signature = pysiglib.sig(path, 4, method="horner", scalar_term=scalar_term)
+    seeds = .05 * torch.randn(signature.shape, generator=generator, dtype=dtype)
+    device_path, device_signature, device_seeds = path.cuda(), signature.cuda(), seeds.cuda()
+    tolerance = 3e-5 if dtype == torch.float32 else 2e-10
+    for iteration in range(2):
+        if iteration:
+            path.copy_(.02 * torch.randn(path.shape, generator=generator, dtype=dtype).cumsum(dim=1))
+            signature.copy_(pysiglib.sig(path, 4, method="horner", scalar_term=scalar_term))
+            seeds.copy_(.05 * torch.randn(seeds.shape, generator=generator, dtype=dtype))
+            device_path.copy_(path)
+            device_signature.copy_(signature)
+            device_seeds.copy_(seeds)
+        expected = pysiglib.sig_backprop(path, signature, seeds, 4, method="horner")
+        actual = pysiglib.sig_backprop(device_path, device_signature, device_seeds, 4, method="horner")
+        torch.testing.assert_close(actual.cpu(), expected, atol=tolerance, rtol=tolerance)
