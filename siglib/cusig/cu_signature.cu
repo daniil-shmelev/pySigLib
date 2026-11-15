@@ -2684,6 +2684,7 @@ void sig_backprop_dense_chen_cuda_stream_(
 	uint64_t length,
 	uint64_t degree,
 	bool scalar_term,
+	size_t reserve_bytes,
 	cudaStream_t stream
 ) {
 	const int dim = static_cast<int>(dimension);
@@ -2699,16 +2700,26 @@ void sig_backprop_dense_chen_cuda_stream_(
 		checked_cuda_size_mul(2, checked_cuda_size_add(state_size, exp_size,
 			"CUDA dense signature backprop"), "CUDA dense signature backprop"),
 		dimension, "CUDA dense signature backprop");
-	if (s_inc_grad_buf) {
-		CUDA_CHECK(cudaFree(s_inc_grad_buf));
-		s_inc_grad_buf = nullptr;
-		s_inc_grad_buf_size = 0;
+	const size_t row_bytes = checked_cuda_size_mul(row_elements, sizeof(T), "CUDA dense signature backprop");
+	size_t free_bytes = 0, total_bytes = 0;
+	CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
+	const uint64_t max_capacity = std::min<uint64_t>(batch_size, CUDA_BATCH_GRID_LIMIT);
+	uint64_t capacity = cuda_workspace_initial_capacity(max_capacity, row_bytes,
+		free_bytes + s_inc_grad_buf_size, reserve_bytes);
+	if (s_inc_grad_buf_size < checked_cuda_size_mul(capacity, row_bytes, "CUDA dense signature backprop")) {
+		if (s_inc_grad_buf) {
+			CUDA_CHECK(cudaFree(s_inc_grad_buf));
+			s_inc_grad_buf = nullptr;
+			s_inc_grad_buf_size = 0;
+		}
+		CudaBatchWorkspace<T> workspace(max_capacity, row_elements, "CUDA dense signature backprop", reserve_bytes);
+		capacity = workspace.capacity();
+		s_inc_grad_buf_size = checked_cuda_size_mul(capacity, row_bytes, "CUDA dense signature backprop");
+		s_inc_grad_buf = workspace.release();
 	}
-	CudaBatchWorkspace<T> workspace(batch_size, row_elements, "CUDA dense signature backprop");
-	const uint64_t capacity = std::min<uint64_t>(workspace.capacity(), CUDA_BATCH_GRID_LIMIT);
 	const size_t state_elements = static_cast<size_t>(capacity) * state_size;
 	const size_t exp_elements = static_cast<size_t>(capacity) * exp_size;
-	T* state = workspace.get();
+	T* state = static_cast<T*>(s_inc_grad_buf);
 	T* adjoint = state + state_elements;
 	T* exp_values = adjoint + state_elements;
 	T* exp_adjoint = exp_values + exp_elements;
@@ -2894,14 +2905,14 @@ void sig_backprop_cuda_stream_(
 		&& dimension * sizeof(T) + dense_static_shared_bytes <= CUDA_BASE_DYNAMIC_SMEM
 		&& full_sig_len <= INT_MAX && batch_size <= INT_MAX
 		&& (!prefer_dense || cuda_workspace_initial_capacity(batch_size, dense_workspace_bytes,
-			dense_reusable_bytes) >= dense_minimum_batch)
+			dense_reusable_bytes, dense_reserve_bytes) >= dense_minimum_batch)
 		&& dense_workspace_bytes <= dense_reusable_bytes
 		&& dense_reusable_bytes - dense_workspace_bytes >= dense_reserve_bytes;
 	if (use_dense_chen) {
 		s_sig_context_valid = false;
 		sig_backprop_dense_chen_cuda_stream_<T>(
 			path, out, sig_derivs, sig, batch_size, dimension, length,
-			degree, scalar_term, stream);
+			degree, scalar_term, dense_reserve_bytes, stream);
 		return;
 	}
 	if (prefer_dense && cuda_horner::try_backward(path, out, sig, sig_derivs, batch_size, dim, static_cast<int>(degree),
