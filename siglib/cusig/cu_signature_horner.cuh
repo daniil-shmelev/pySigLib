@@ -282,6 +282,11 @@ bool try_forward(const T* path, T* output, uint64_t batch, int dimension, int de
 	if (dimension == 3) { switch (degree) { TREE_DEGREES(3, 3) } }
 	if (dimension == 4) { switch (degree) { TREE_DEGREES(4, 2) } }
 	if (dimension == 6) {
+		if constexpr (std::is_same_v<T, double>) {
+			if (steps <= 64) {
+				switch (degree) { LAUNCH_TREE(7, 6, 3) LAUNCH_TREE(8, 6, 3) LAUNCH_TREE(9, 6, 3) }
+			}
+		}
 		switch (degree) { LAUNCH_TREE(7, 6, 2) LAUNCH_TREE(8, 6, 2) LAUNCH_TREE(9, 6, 2) }
 	}
 	#define TREE_SHORT_DEGREES(D) LAUNCH_TREE(4, D, 1) LAUNCH_TREE(5, D, 1) \
@@ -390,6 +395,17 @@ bool try_backward(const T* path, T* output, const T* signature, const T* seeds, 
 	const uint64_t words = power(dimension, degree - tail);
 	if (batch < (256 + words - 1) / words) return false;
 	#define LAUNCH_TREE(K, D, R) case K: backward<T, D, K, R>(path, output, signature, seeds, batch, steps, stride, scalar, stream); return true;
+	if constexpr (std::is_same_v<T, double>) {
+		if (dimension == 2) {
+			if (batch >= 4) {
+				switch (degree) { LAUNCH_TREE(14, 2, 5) LAUNCH_TREE(15, 2, 6) LAUNCH_TREE(16, 2, 6) }
+			}
+			switch (degree) { LAUNCH_TREE(14, 2, 4) LAUNCH_TREE(15, 2, 4) LAUNCH_TREE(16, 2, 5) }
+		}
+		if (dimension == 3) {
+			switch (degree) { LAUNCH_TREE(10, 3, 4) LAUNCH_TREE(11, 3, 4) LAUNCH_TREE(12, 3, 4) }
+		}
+	}
 	#define TREE_DEGREES(D, R) \
 		LAUNCH_TREE(6, D, R) LAUNCH_TREE(7, D, R) LAUNCH_TREE(8, D, R) \
 		LAUNCH_TREE(9, D, R) LAUNCH_TREE(10, D, R) LAUNCH_TREE(11, D, R) \
@@ -399,6 +415,11 @@ bool try_backward(const T* path, T* output, const T* signature, const T* seeds, 
 	if (dimension == 3) { switch (degree) { TREE_DEGREES(3, 2) } }
 	if (dimension == 4) { switch (degree) { TREE_DEGREES(4, 1) } }
 	if (dimension == 6) {
+		if constexpr (std::is_same_v<T, double>) {
+			if (steps <= 64) {
+				switch (degree) { LAUNCH_TREE(7, 6, 3) LAUNCH_TREE(8, 6, 3) LAUNCH_TREE(9, 6, 3) }
+			}
+		}
 		switch (degree) { LAUNCH_TREE(7, 6, 2) LAUNCH_TREE(8, 6, 2) LAUNCH_TREE(9, 6, 2) }
 	}
 	#define TREE_SHORT_DEGREES(D) LAUNCH_TREE(4, D, 1) LAUNCH_TREE(5, D, 1) \

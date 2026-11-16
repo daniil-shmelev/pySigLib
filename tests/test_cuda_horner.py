@@ -26,10 +26,13 @@ from conftest import skip_no_cuda
 @pytest.mark.parametrize("scalar_term", [False, True])
 @pytest.mark.parametrize("batch,dimension,degree,time_aug,lead_lag", [
     (1, 31, 2, False, False),
+    (128, 24, 2, False, False),
     (3, 5, 3, False, False),
     (1, 3, 4, False, False),
     (3, 2, 3, True, False),
     (8, 2, 14, False, False),
+    (1, 2, 16, False, False),
+    (4, 2, 16, False, False),
     (4, 3, 9, False, False),
     (4, 3, 11, False, False),
     (3, 4, 8, False, False),
@@ -69,6 +72,29 @@ def test_cuda_horner_matches_cpu(dtype, scalar_term, batch, dimension, degree, t
     expected_grad = pysiglib.sig_backprop(path, expected, seeds, degree, **options)
     actual_grad = pysiglib.sig_backprop(device_path, actual, seeds.cuda(), degree, **options)
     torch.testing.assert_close(actual_grad.cpu(), expected_grad, atol=tolerance, rtol=tolerance)
+
+
+@skip_no_cuda
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("scalar_term", [False, True])
+def test_cuda_degree_two_backward_large_skew(dtype, scalar_term):
+    dimension = 24
+    path = torch.zeros((128, 3, dimension), dtype=dtype, device="cuda")
+    path[:, 1, 1] = 0.01
+    path[:, 2, 1] = 0.02
+    signature = pysiglib.sig(path, 2, method="horner", scalar_term=scalar_term)
+    seeds = torch.zeros_like(signature)
+    level_two = dimension + scalar_term
+    weight = torch.finfo(dtype).max * 0.75
+    seeds[:, level_two + 1] = weight
+    seeds[:, level_two + dimension] = -weight
+
+    actual = pysiglib.sig_backprop(path, signature, seeds, 2, method="horner")
+    expected = torch.zeros_like(path)
+    expected[:, 0, 0] = -0.01 * weight
+    expected[:, 1, 0] = 0.02 * weight
+    expected[:, 2, 0] = -0.01 * weight
+    torch.testing.assert_close(actual, expected)
 
 
 @skip_no_cuda

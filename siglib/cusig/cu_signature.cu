@@ -2719,6 +2719,63 @@ void sig_backprop_dense_chen_cuda_stream_(
 }
 
 template<typename T>
+__global__ void sig_degree_two_backprop_ker(
+	const T* __restrict__ path,
+	const T* __restrict__ seeds,
+	T* __restrict__ out,
+	uint64_t dimension,
+	uint64_t length,
+	uint64_t path_stride,
+	uint64_t sig_stride,
+	uint64_t total,
+	bool scalar_term
+) {
+	const uint64_t stride = static_cast<uint64_t>(gridDim.x) * blockDim.x;
+	for (uint64_t index = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		index < total; index += stride) {
+		const uint64_t batch = index / path_stride;
+		const uint64_t position = index % path_stride;
+		const uint64_t point = position / dimension;
+		const uint64_t letter = position % dimension;
+		const T* sample = path + batch * path_stride;
+		const T* level_one = seeds + batch * sig_stride + scalar_term;
+		const T* level_two = level_one + dimension;
+		const T* row = level_two + letter * dimension;
+		const T* column = level_two + letter;
+
+		if (point > 0 && point + 1 < length) {
+			// The terms in the two adjacent increment gradients cancel.
+			const T* before = sample + (point - 1) * dimension;
+			const T* after = before + 2 * dimension;
+			T gradient = 0;
+			for (uint64_t other = 0; other < dimension; ++other) {
+				const T half_span = (after[other] - before[other]) * T(0.5);
+				const T transposed = column[other * dimension];
+				const T skew = row[other] - transposed;
+				gradient += isfinite(skew) ? skew * half_span
+					: row[other] * half_span - transposed * half_span;
+			}
+			out[index] = gradient;
+		} else {
+			const bool first = point == 0;
+			const T* left = first ? sample : sample + (length - 2) * dimension;
+			const T* right = left + dimension;
+			const T* span_start = first ? right : sample;
+			const T* span_end = first ? sample + (length - 1) * dimension : left;
+			T gradient = level_one[letter];
+			for (uint64_t other = 0; other < dimension; ++other) {
+				const T half_increment = (right[other] - left[other]) * T(0.5);
+				const T span = span_end[other] - span_start[other];
+				const T transposed = column[other * dimension];
+				gradient += row[other] * half_increment + transposed * half_increment
+					+ (first ? row[other] : transposed) * span;
+			}
+			out[index] = first ? -gradient : gradient;
+		}
+	}
+}
+
+template<typename T>
 void sig_backprop_cuda_stream_(
 	const T* path,
 	T* out,
@@ -2832,6 +2889,18 @@ void sig_backprop_cuda_stream_(
 		check_cuda_kernel_launch();
 		return;
 	}
+	const bool use_direct_degree_two = (dimension >= 23 && dimension <= 32 && batch_size >= 32)
+		|| (dimension >= 48 && dimension <= 128 && batch_size <= 32 && length >= 65);
+	if (degree == 2 && use_direct_degree_two) {
+		const size_t path_stride = checked_cuda_size_mul(length, dimension, "CUDA degree-two backprop");
+		const size_t total = checked_cuda_size_mul(batch_size, path_stride, "CUDA degree-two backprop");
+		const uint64_t sig_stride = host_sig_length(dimension, degree) - !scalar_term;
+		constexpr int block = 64;
+		sig_degree_two_backprop_ker<T><<<make_cuda_1d_grid(total, block), block, 0, stream>>>(
+			path, sig_derivs, out, dimension, length, path_stride, sig_stride, total, scalar_term);
+		check_cuda_kernel_launch();
+		return;
+	}
 	if (degree > MAX_GENERIC_DEGREE)
 		throw std::invalid_argument(
 			"sig_backprop on CUDA requires degree <= 64. "
@@ -2842,7 +2911,11 @@ void sig_backprop_cuda_stream_(
 	const uint64_t full_sig_len = host_sig_length(dimension, degree);
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
 	const uint64_t dense_minimum_batch = std::is_same_v<T, double> && dimension != 3 ? 16 : 32;
-	const bool prefer_dense = std::is_same_v<T, double> && batch_size >= dense_minimum_batch
+	const bool prefer_tree = batch_size <= 32 && (
+		(dimension == 2 && degree >= 14 && degree <= 16 && steps <= 64)
+		|| (dimension == 3 && degree >= 10 && degree <= 12 && steps <= 256)
+		|| (dimension == 6 && degree >= 7 && degree <= 9 && steps <= 64));
+	const bool prefer_dense = std::is_same_v<T, double> && !prefer_tree && batch_size >= dense_minimum_batch
 		&& (dimension < 24 || degree < 4);
 	if (!prefer_dense && cuda_horner::try_backward(path, out, sig, sig_derivs, batch_size, dim, static_cast<int>(degree),
 		steps, sig_stride, scalar_term, stream)) {
