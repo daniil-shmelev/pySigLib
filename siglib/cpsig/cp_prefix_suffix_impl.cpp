@@ -134,7 +134,9 @@ template<typename F> void parallel_range(uint64_t count, int jobs, F work) {
     if (jobs == 1 || count < 2) work(0, count);
     else {
         const uint64_t owners = std::min<uint64_t>(count, jobs), chunk = count / owners, remainder = count % owners;
+        const auto subnormal_mode = CpuSubnormalMode::current();
         oneapi::tbb::parallel_for(oneapi::tbb::blocked_range<uint64_t>(0, owners, 1), [&](const auto& range) {
+            CpuSubnormalMode arithmetic(subnormal_mode);
             for (uint64_t i = range.begin(); i < range.end(); ++i) {
                 const uint64_t first = i * chunk + std::min(i, remainder);
                 work(first, first + chunk + (i < remainder));
@@ -150,7 +152,7 @@ void for_paths(uint64_t batch, int jobs, uint64_t elements, const char* name, Wo
     if (bytes > budget) throw std::runtime_error(std::string(name) + " requires " + std::to_string(bytes)
         + " workspace bytes for one path; configured limit is " + std::to_string(budget));
     const uint64_t owners = std::min({batch, uint64_t(jobs), bytes ? budget / bytes : uint64_t(jobs)});
-    get_tbb_arena(jobs).execute([&] { parallel_range(owners, jobs, [&](uint64_t first, uint64_t end) {
+    execute_in_arena(jobs, [&] { parallel_range(owners, jobs, [&](uint64_t first, uint64_t end) {
         std::unique_ptr<T[]> storage;
         try { storage.reset(new T[elements]); }
         catch (const std::bad_alloc&) { throw std::runtime_error(std::string(name) + " requires "
@@ -688,7 +690,7 @@ void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, co
     if (!batch || !path_stride) return;
     if (points < 2 || !degree) { std::fill_n(out, mul(batch, path_stride), T(0)); return; }
     if (degree == 1 || d == 1) {
-        get_tbb_arena(jobs).execute([&] { parallel_range(batch, jobs, [&](uint64_t first, uint64_t end) {
+        execute_in_arena(jobs, [&] { parallel_range(batch, jobs, [&](uint64_t first, uint64_t end) {
             for (uint64_t i = first; i < end; ++i) {
                 const T* input = path + i * path_stride;
                 const T* g = deriv + i * stride + (scalar ? 1 : 0);
@@ -740,7 +742,7 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
     if (!n_jobs || jobs < 1) throw std::invalid_argument("invalid n_jobs");
     if (!batch || !stride) return;
     if (points < 2 || degree < 2 || points == 2 || d == 1) {
-        get_tbb_arena(jobs).execute([&] { parallel_range(batch, jobs, [&](uint64_t first, uint64_t end) {
+        execute_in_arena(jobs, [&] { parallel_range(batch, jobs, [&](uint64_t first, uint64_t end) {
             for (uint64_t i = first; i < end; ++i) {
                 T* result = out + i * stride;
                 if (points < 2 || !degree) {

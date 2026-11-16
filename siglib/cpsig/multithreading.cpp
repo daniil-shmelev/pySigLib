@@ -14,6 +14,7 @@
  * ========================================================================= */
 
 #include "multithreading.h"
+#include "cp_floating_point.h"
 #include <oneapi/tbb/blocked_range.h>
 #include <oneapi/tbb/parallel_for.h>
 #include <oneapi/tbb/task_arena.h>
@@ -52,9 +53,11 @@ void run_batch_threads(uint64_t batch_size, int n_jobs, void* context, void (*wo
 	const uint64_t num_threads = std::min(static_cast<uint64_t>(max_threads), batch_size);
 	std::mutex err_mu;
 	std::exception_ptr first_err;
+	const auto subnormal_mode = cpsig::CpuSubnormalMode::current();
 
 	auto wrapped_worker = [&](uint64_t s, uint64_t e) {
 		try {
+			cpsig::CpuSubnormalMode arithmetic(subnormal_mode);
 			worker(context, s, e);
 		}
 		catch (...) {

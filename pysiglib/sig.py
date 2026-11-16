@@ -234,6 +234,13 @@ def sig(
         ``pysiglib.signature`` is an alias of ``pysiglib.sig`` included for backward
         compatibility with versions ``< 1.0.0``.
 
+        On x86 CPUs, set ``PYSIGLIB_CPU_FLUSH_SUBNORMALS=1`` to flush subnormal
+        inputs and results to zero during signature forward and backward calls.
+        This can improve runtime for very small values, but changes underflow
+        behaviour. The default is 0, which preserves the caller's arithmetic
+        settings. Each call restores the caller and worker thread settings.
+        This option does not affect CUDA.
+
     Example:
     ---------
 

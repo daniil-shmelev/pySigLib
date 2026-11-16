@@ -15,6 +15,7 @@
 
 #pragma once
 #include "cppch.h"
+#include "cp_floating_point.h"
 #include <exception>
 #include <memory>
 #include <oneapi/tbb/task_arena.h>
@@ -22,6 +23,15 @@
 unsigned int get_max_threads();
 oneapi::tbb::task_arena& get_tbb_arena(int threads);
 void run_batch_threads(uint64_t batch_size, int n_jobs, void* context, void (*worker)(void*, uint64_t, uint64_t));
+
+template<typename Work>
+void execute_in_arena(int threads, Work work) {
+	const auto subnormal_mode = cpsig::CpuSubnormalMode::current();
+	get_tbb_arena(threads).execute([&] {
+		cpsig::CpuSubnormalMode arithmetic(subnormal_mode);
+		work();
+	});
+}
 
 template<typename Worker>
 inline void spawn_batch_threads(uint64_t batch_size, int n_jobs, Worker worker) {

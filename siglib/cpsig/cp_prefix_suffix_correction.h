@@ -36,7 +36,7 @@ void compute(const T* input, T* output, const T* deriv, uint64_t batch, uint64_t
         + " workspace bytes for one path; configured limit is " + std::to_string(budget));
     const uint64_t owners = std::min({batch, uint64_t(jobs), budget / bytes});
     const int path_jobs = std::max(1, jobs / int(owners));
-    get_tbb_arena(jobs).execute([&] { parallel_range(owners, jobs, [&](uint64_t first, uint64_t end) {
+    execute_in_arena(jobs, [&] { parallel_range(owners, jobs, [&](uint64_t first, uint64_t end) {
         std::vector<T> storage(plan.count);
         T* memory = storage.data();
         T* increments = memory + plan.increments; T* prefixes = memory + plan.prefixes;
