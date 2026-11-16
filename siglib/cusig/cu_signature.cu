@@ -3013,7 +3013,7 @@ void sig_backprop_cuda_stream_(
 		(2 * context_elements + increment_elements) * sizeof(T);
 	const bool use_grouped_backprop = degree >= 2 && degree <= 12
 		&& batch_size <= 65535 && groups_per_block != 0
-		&& dim <= 32 && 32 % dim == 0
+		&& dim <= 32
 		&& grouped_work_per_thread <= 16
 		&& grouped_shared_bytes <= CUDA_BASE_DYNAMIC_SMEM
 		&& grouped_allocation_bytes <= dense_reusable_bytes

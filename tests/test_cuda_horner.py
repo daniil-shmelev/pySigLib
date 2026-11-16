@@ -25,6 +25,10 @@ from conftest import skip_no_cuda
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 @pytest.mark.parametrize("scalar_term", [False, True])
 @pytest.mark.parametrize("batch,dimension,degree,time_aug,lead_lag", [
+    (1, 31, 2, False, False),
+    (3, 5, 3, False, False),
+    (1, 3, 4, False, False),
+    (3, 2, 3, True, False),
     (8, 2, 14, False, False),
     (4, 3, 9, False, False),
     (4, 3, 11, False, False),
