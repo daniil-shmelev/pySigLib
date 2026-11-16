@@ -14,6 +14,24 @@
  * ========================================================================= */
 
 #include "cp_test_helpers.h"
+#include "cp_floating_point.h"
+#include <cfenv>
+
+TEST(CpuFloatingPoint, SubnormalModeRestoresOnException) {
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
+    cpsig::CpuSubnormalMode normal(0);
+    const int rounding = std::fegetround();
+    try {
+        cpsig::CpuSubnormalMode fast(cpsig::CpuSubnormalMode::mask);
+        EXPECT_EQ(cpsig::CpuSubnormalMode::current(), cpsig::CpuSubnormalMode::mask);
+        EXPECT_EQ(std::fegetround(), rounding);
+        throw std::runtime_error("scope exit");
+    }
+    catch (const std::runtime_error&) {}
+    EXPECT_EQ(cpsig::CpuSubnormalMode::current(), 0);
+    EXPECT_EQ(std::fegetround(), rounding);
+#endif
+}
 
 TEST(PolyTest, SigLengthTest) {
     EXPECT_EQ((uint64_t)1, sig_length(0, 0));

@@ -25,6 +25,7 @@
 #include <array>
 
 #include "multithreading.h"
+#include "cp_floating_point.h"
 #include "cp_sig_combine.h"
 #include "cp_exp_signature.h"
 
@@ -712,6 +713,7 @@ void signature_(
 	uint64_t ps_split = 0
 )
 {
+	SignatureArithmetic arithmetic;
 	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
 		time_aug || lead_lag, correction_len, false, false)) {
 		if (correction_len) {
@@ -911,6 +913,7 @@ void sig_backprop_(
 	uint64_t ps_split = 0
 )
 {
+	SignatureArithmetic arithmetic;
 	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
 		time_aug || lead_lag, correction_len, false, true)) {
 		if (correction_len) {
