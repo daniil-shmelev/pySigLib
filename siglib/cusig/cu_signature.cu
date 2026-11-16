@@ -19,6 +19,7 @@
 #include "signature_method.h"
 #include "cu_sig_combine.h"
 #include "cu_atomic.h"
+#include "cu_path_reduction.h"
 #include "cu_path_transforms.h"
 #include <cub/block/block_scan.cuh>
 #include <algorithm>
@@ -1795,28 +1796,13 @@ __global__ void set_sig_level0(T* out, uint64_t sig_size, uint64_t batch_size) {
 	if (b < batch_size) out[b * sig_size] = static_cast<T>(1);
 }
 
-static void* s_inc_grad_buf = nullptr;
-static size_t s_inc_grad_buf_size = 0;
-static std::mutex s_inc_grad_buf_mu;
-
-static void* ensure_inc_grad_buf(size_t needed) {
-	if (needed > s_inc_grad_buf_size) {
-		if (s_inc_grad_buf) { cudaFree(s_inc_grad_buf); s_inc_grad_buf = nullptr; s_inc_grad_buf_size = 0; }
-		CUDA_CHECK(cudaMalloc(&s_inc_grad_buf, needed));
-		s_inc_grad_buf_size = needed;
+static std::byte* ensure_inc_grad_buf(std::unique_ptr<CudaBatchWorkspace<std::byte>>& buffer,
+	size_t allocated_bytes, size_t needed) {
+	if (needed > allocated_bytes) {
+		buffer.reset();
+		buffer = std::make_unique<CudaBatchWorkspace<std::byte>>(1, needed, "CUDA signature backprop scan");
 	}
-	return s_inc_grad_buf;
-}
-
-void release_signature_state() {
-	{
-		std::lock_guard<std::mutex> lock(s_inc_grad_buf_mu);
-		if (s_inc_grad_buf) {
-			cudaFree(s_inc_grad_buf);
-			s_inc_grad_buf = nullptr;
-			s_inc_grad_buf_size = 0;
-		}
-	}
+	return buffer->get();
 }
 
 template<typename T>
@@ -2670,6 +2656,8 @@ void sig_backprop_dense_chen_cuda_stream_(
 	uint64_t degree,
 	bool scalar_term,
 	size_t reserve_bytes,
+	std::unique_ptr<CudaBatchWorkspace<std::byte>>& buffer,
+	size_t allocated_bytes,
 	cudaStream_t stream
 ) {
 	const int dim = static_cast<int>(dimension);
@@ -2690,21 +2678,16 @@ void sig_backprop_dense_chen_cuda_stream_(
 	CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
 	const uint64_t max_capacity = std::min<uint64_t>(batch_size, CUDA_BATCH_GRID_LIMIT);
 	uint64_t capacity = cuda_workspace_initial_capacity(max_capacity, row_bytes,
-		free_bytes + s_inc_grad_buf_size, reserve_bytes, s_inc_grad_buf_size / row_bytes);
-	if (s_inc_grad_buf_size < checked_cuda_size_mul(capacity, row_bytes, "CUDA dense signature backprop")) {
-		if (s_inc_grad_buf) {
-			CUDA_CHECK(cudaFree(s_inc_grad_buf));
-			s_inc_grad_buf = nullptr;
-			s_inc_grad_buf_size = 0;
-		}
-		CudaBatchWorkspace<T> workspace(max_capacity, row_elements, "CUDA dense signature backprop", reserve_bytes);
-		capacity = workspace.capacity();
-		s_inc_grad_buf_size = checked_cuda_size_mul(capacity, row_bytes, "CUDA dense signature backprop");
-		s_inc_grad_buf = workspace.release();
+		free_bytes + allocated_bytes, reserve_bytes, allocated_bytes / row_bytes);
+	if (allocated_bytes < checked_cuda_size_mul(capacity, row_bytes, "CUDA dense signature backprop")) {
+		buffer.reset();
+		buffer = std::make_unique<CudaBatchWorkspace<std::byte>>(
+			max_capacity, row_bytes, "CUDA dense signature backprop", reserve_bytes);
+		capacity = buffer->capacity();
 	}
 	const size_t state_elements = static_cast<size_t>(capacity) * state_size;
 	const size_t exp_elements = static_cast<size_t>(capacity) * exp_size;
-	T* state = static_cast<T*>(s_inc_grad_buf);
+	T* state = reinterpret_cast<T*>(buffer->get());
 	T* adjoint = state + state_elements;
 	T* exp_values = adjoint + state_elements;
 	T* exp_adjoint = exp_values + exp_elements;
@@ -2810,7 +2793,7 @@ void sig_backprop_cuda_core_(
 	}
 
 	{
-		std::lock_guard<std::mutex> workspace_lock(s_inc_grad_buf_mu);
+		std::lock_guard workspace_lock(cuda_path_workspaces().mutex);
 		sig_backprop_cuda_stream_<T>(
 			path, out, sig_derivs, sig, batch_size, dimension, length, degree,
 			scalar_term, nullptr);
@@ -2880,7 +2863,11 @@ void sig_backprop_cuda_stream_(
 	size_t dense_free_bytes = 0;
 	size_t dense_total_bytes = 0;
 	CUDA_CHECK(cudaMemGetInfo(&dense_free_bytes, &dense_total_bytes));
-	const size_t dense_reusable_bytes = dense_free_bytes + s_inc_grad_buf_size;
+	int device = 0;
+	CUDA_CHECK(cudaGetDevice(&device));
+	auto& buffer = cuda_path_workspaces().devices[device].signature_backward;
+	const size_t allocated_bytes = buffer ? buffer->capacity() * buffer->row_elements() : 0;
+	const size_t dense_reusable_bytes = dense_free_bytes + allocated_bytes;
 	const size_t dense_reserve_bytes = std::max(
 		size_t(512) * 1024 * 1024, dense_total_bytes / 16);
 	const bool use_dense_chen = degree >= 2
@@ -2889,13 +2876,13 @@ void sig_backprop_cuda_stream_(
 		&& dimension * sizeof(T) + dense_static_shared_bytes <= CUDA_BASE_DYNAMIC_SMEM
 		&& full_sig_len <= INT_MAX && batch_size <= INT_MAX
 		&& (!prefer_dense || cuda_workspace_initial_capacity(batch_size, dense_workspace_bytes,
-			dense_reusable_bytes, dense_reserve_bytes, s_inc_grad_buf_size / dense_workspace_bytes) >= dense_minimum_batch)
+			dense_reusable_bytes, dense_reserve_bytes, allocated_bytes / dense_workspace_bytes) >= dense_minimum_batch)
 		&& dense_workspace_bytes <= dense_reusable_bytes
 		&& dense_reusable_bytes - dense_workspace_bytes >= dense_reserve_bytes;
 	if (use_dense_chen) {
 		sig_backprop_dense_chen_cuda_stream_<T>(
 			path, out, sig_derivs, sig, batch_size, dimension, length,
-			degree, scalar_term, dense_reserve_bytes, stream);
+			degree, scalar_term, dense_reserve_bytes, buffer, allocated_bytes, stream);
 		return;
 	}
 	if (prefer_dense && cuda_horner::try_backward(path, out, sig, sig_derivs, batch_size, dim, static_cast<int>(degree),
@@ -2923,7 +2910,7 @@ void sig_backprop_cuda_stream_(
 		&& scan_workspace_bytes <= dense_reusable_bytes
 		&& dense_reusable_bytes - scan_workspace_bytes >= dense_reserve_bytes;
 	if (use_level_scan) {
-		T* allocation = static_cast<T*>(ensure_inc_grad_buf(scan_workspace_bytes));
+		T* allocation = reinterpret_cast<T*>(ensure_inc_grad_buf(buffer, allocated_bytes, scan_workspace_bytes));
 		T* prefix_context = allocation;
 		T* adjoint_context = prefix_context + scan_context_elements;
 		T* increment_grads = adjoint_context + scan_context_elements;
@@ -3034,8 +3021,7 @@ void sig_backprop_cuda_stream_(
 		&& context_elements <= UINT32_MAX
 		&& full_sig_len <= UINT32_MAX;
 	if (use_grouped_backprop) {
-		T* allocation = static_cast<T*>(
-			ensure_inc_grad_buf(grouped_allocation_bytes));
+		T* allocation = reinterpret_cast<T*>(ensure_inc_grad_buf(buffer, allocated_bytes, grouped_allocation_bytes));
 		T* prefix_context = allocation;
 		T* suffix_context = prefix_context + context_elements;
 		T* increment_grads = suffix_context + context_elements;

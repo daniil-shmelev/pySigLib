@@ -175,3 +175,18 @@ def test_cuda_horner_backward_updated_buffers(dtype, scalar_term, dimension, seg
         expected = pysiglib.sig_backprop(path, signature, seeds, 4, method="horner")
         actual = pysiglib.sig_backprop(device_path, device_signature, device_seeds, 4, method="horner")
         torch.testing.assert_close(actual.cpu(), expected, atol=tolerance, rtol=tolerance)
+
+
+@skip_no_cuda
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="requires two CUDA devices")
+@pytest.mark.parametrize("batch,segments,dimension", [(4, 64, 2), (4, 1024, 3), (16, 8, 8)])
+def test_cuda_horner_backward_device_changes(batch, segments, dimension):
+    generator = torch.Generator().manual_seed(92)
+    path = .02 * torch.randn(batch, segments + 1, dimension, generator=generator, dtype=torch.float64).cumsum(dim=1)
+    signature = pysiglib.sig(path, 4, method="horner")
+    seeds = .05 * torch.randn(signature.shape, generator=generator, dtype=torch.float64)
+    expected = pysiglib.sig_backprop(path, signature, seeds, 4, method="horner")
+    for index in (0, 1, 0):
+        device = torch.device("cuda", index)
+        actual = pysiglib.sig_backprop(path.to(device), signature.to(device), seeds.to(device), 4, method="horner")
+        torch.testing.assert_close(actual.cpu(), expected, atol=2e-10, rtol=2e-10)
