@@ -29,7 +29,6 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 from ..sig import sig as sig_forward
-from ..sig import _check_sig_method
 from ..sig import sig_combine as sig_combine_forward
 from ..transform_path import transform_path as transform_path_forward
 from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
@@ -57,7 +56,7 @@ from ..branched_log_sig import (
     branched_log_sig as branched_log_sig_forward,
 )
 from ..data_handlers import _infer_correction_degree
-from ..sig_coef import sig_coef as sig_coef_forward, _check_coef_method
+from ..sig_coef import sig_coef as sig_coef_forward
 from ..sig_kernel import sig_kernel as sig_kernel_forward
 from ..sig_kernel import sig_kernel_gram as sig_kernel_gram_forward
 from ..sig_kernel import _parse_sig_kernel_method
@@ -91,8 +90,6 @@ from ._ffi import (
     ensure_registered,
     sig_backprop_ffi_call,
     sig_ffi_call,
-    sig_coef_ffi_call,
-    sig_coef_backprop_ffi_call,
     sig_combine_ffi_call,
     sig_combine_backprop_ffi_call,
     transform_path_ffi_call,
@@ -246,20 +243,21 @@ def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
     _infer_correction_degree(path.shape[-1], degree, length)
     return correction
 
-@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7, 8, 9))
-def _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation):
-    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation)
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))
+def _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs):
+    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
 
 
-def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation):
-    sig_ = _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation)
+def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs):
+    sig_ = sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
     return sig_, (path, sig_, correction)
 
 
-def _sig_bwd(degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation, residual, cotangent):
+def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, residual, cotangent):
+    del horner
     path, sig_, correction = residual
-    grad = sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation)
-    return grad, jnp.zeros_like(correction)
+    grad = sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs)
+    return (grad, jnp.zeros_like(correction))
 
 
 _sig.defvjp(_sig_fwd, _sig_bwd)
@@ -272,12 +270,10 @@ def sig(
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
+    horner: bool = True,
     scalar_term: bool = False,
     correction=None,
     n_jobs: int = 1,
-    method="auto",
-    ps_split=None,
-    fp64_emulation: bool = False,
 ):
     ensure_registered()
 
@@ -289,12 +285,11 @@ def sig(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
+    check_type(horner, "horner", bool)
     check_n_jobs(n_jobs)
-    method_code, ps_split = _check_sig_method(method, ps_split, degree)
-    check_type(fp64_emulation, "fp64_emulation", bool)
 
     correction = _prepare_correction_jax(correction, path, degree, lead_lag)
-    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method_code, ps_split, fp64_emulation)
+    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
     if not scalar_term:
         result = _strip_scalar(result)
     return result
@@ -577,8 +572,6 @@ def log_sig(
     scalar_term: bool = False,
     correction=None,
     n_jobs: int = 1,
-    sig_method="auto",
-    ps_split=None,
 ):
     ensure_registered()
 
@@ -597,8 +590,7 @@ def log_sig(
 
     dimension = path.shape[-1]
     sig_ = sig(path, degree, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs,
-               method=sig_method, ps_split=ps_split)
+               end_time=end_time, horner=True, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs)
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug,
                           lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 
@@ -1632,29 +1624,8 @@ branched_sig_mmd.__doc__ = branched_sig_mmd_forward.__doc__
 
 
 # ---------------------------------------------------------------------------
-# sig_coef
+# sig_coef (pure JAX composition - compute sig then index)
 # ---------------------------------------------------------------------------
-
-@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
-def _sig_coef(path, words, time_aug, lead_lag, end_time, n_jobs, method):
-    return sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method)
-
-
-def _sig_coef_fwd(path, words, time_aug, lead_lag, end_time, n_jobs, method):
-    coefs = sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method)
-    return coefs, (path, coefs)
-
-
-def _sig_coef_bwd(words, time_aug, lead_lag, end_time, n_jobs, method, residual, cotangent):
-    path, coefs = residual
-    grad = sig_coef_backprop_ffi_call(
-        path, coefs, cotangent, words, time_aug, lead_lag, end_time, n_jobs, method
-    )
-    return (grad,)
-
-
-_sig_coef.defvjp(_sig_coef_fwd, _sig_coef_bwd)
-
 
 def sig_coef(
     path,
@@ -1665,8 +1636,28 @@ def sig_coef(
     end_time: float = 1.0,
     prefixes: bool = False,
     n_jobs: int = 1,
-    method = "pascal",
 ):
+    """Compute signature coefficients at specific words using JAX.
+
+    Computes the full signature via ``sig()`` then extracts the requested
+    coefficients. This is fully differentiable through JAX autodiff.
+
+    :param path: Path or batch of paths, shape ``(length, dim)`` or ``(batch, length, dim)``.
+    :type path: jax.Array
+    :param words: Word or list of words, e.g. ``(1, 2)`` or ``[(0,), (1, 0)]``.
+    :type words: tuple[int, ...] | list[tuple[int, ...]]
+    :param time_aug: Whether to apply time augmentation.
+    :type time_aug: bool
+    :param lead_lag: Whether to apply lead-lag transformation.
+    :type lead_lag: bool
+    :param end_time: End time for time augmentation.
+    :type end_time: float
+    :param prefixes: If True, also return coefficients at all prefixes of each word.
+    :type prefixes: bool
+    :param n_jobs: Number of threads for CPU computation.
+    :type n_jobs: int
+    :return: Signature coefficients at the requested words.
+    """
     ensure_registered()
 
     path = jnp.asarray(path)
@@ -1682,15 +1673,20 @@ def sig_coef(
     aug_dim = _augmented_dim(dimension, time_aug, lead_lag)
 
     words = check_word_or_word_list(words, aug_dim, "words")
-    method_code = _check_coef_method(method)
-    if not words:
-        raise ValueError("words must be a non-empty list of multi-indices.")
-    words = tuple(tuple(w) for w in words)
-    coefs = _sig_coef(path, words, time_aug, lead_lag, end_time, n_jobs, method_code)
-    if prefixes:
-        return coefs
-    offsets = np.cumsum([max(len(w), 1) for w in words]) - 1
-    return coefs[..., jnp.asarray(offsets)]
+
+    degree = max(len(w) for w in words)
+
+    sig_ = sig(path, degree, time_aug=time_aug, lead_lag=lead_lag,
+               end_time=end_time, horner=True, scalar_term=True, n_jobs=n_jobs)
+
+    idx = []
+    for w in words:
+        if prefixes:
+            for k in range(1, len(w) + 1):
+                idx.append(word_to_idx(w[:k], aug_dim, degree, scalar_term=True))
+        else:
+            idx.append(word_to_idx(w, aug_dim, degree, scalar_term=True))
+    return sig_[..., jnp.array(idx)]
 
 
 sig_coef.__doc__ = sig_coef_forward.__doc__

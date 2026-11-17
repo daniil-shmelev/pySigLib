@@ -83,7 +83,3 @@ build-verbosity = 1
 manylinux-x86_64-image = "manylinux_2_28"
 # Exclude system-CUDA libs, base-wheel libs, and the bundled CUDA FFI library.
 repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel} --exclude 'libcuda.so*' --exclude 'libnvidia-*' --exclude 'libcpsig.so*' --exclude 'libtbb.so*' --exclude 'libpysiglib_jax_ffi_cuda.so*'"
-
-[tool.cibuildwheel.windows]
-before-build = "python -m pip install delvewheel"
-repair-wheel-command = 'delvewheel repair --ignore-existing --analyze-existing --no-mangle-all --exclude "cpsig.dll;tbb12.dll" -w {dest_dir} {wheel}'

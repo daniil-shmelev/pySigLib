@@ -37,8 +37,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # library-path is false because cusig links the toolkit's cuBLAS; the
-      # tests run under `vgpu run` instead.
+      # Run the tests under `vgpu run` with the toolkit libraries.
       - name: Set up the simulated GPU and CUDA toolkit
         uses: pantheongpu/setup-pantheonsim@ab71a07326835be678918901c340d53a83358067 # v0.1.6
         with:
@@ -64,7 +63,7 @@ jobs:
       - name: Build
         run: cmake --build build --target cusig_tests -j3
 
-      # The Pascal tests skip when no device is found, so fail the job if any
+      # CUDA tests can skip when no device is found, so fail the job if any
       # test is skipped: that would mean the simulated GPU was not used.
       - name: Test
         shell: bash
