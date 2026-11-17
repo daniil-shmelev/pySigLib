@@ -321,9 +321,8 @@ static void BM_sig_coef_backprop(benchmark::State& state) {
     auto derivs = random_data(8 * prefix_size, 3);
     std::vector<double> out(8 * 3 * 32);
     for (auto _ : state) {
-        auto derivs_copy = derivs;
         ::sig_coef_backprop_d(path.data(), out.data(), coefs.data(),
-                              derivs_copy.data(), multi_idx.data(),
+                              derivs.data(), multi_idx.data(),
                               32, degrees.data(), 8, 3, 32,
                               false, false, 1.0);
         benchmark::DoNotOptimize(out.data());
