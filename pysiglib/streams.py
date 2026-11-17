@@ -20,7 +20,7 @@ import torch
 from .param_checks import check_pos, check_type, check_n_jobs
 from .sig_length import sig_length, log_sig_length
 from .sig_join import sig_join
-from .sig import sig_combine, sig, _check_sig_method
+from .sig import sig_combine, sig
 from .log_sig_join import log_sig_join
 from .log_sig_combine import log_sig_combine
 from .log_sig import log_sig
@@ -188,14 +188,6 @@ class SigStream:
         serial. If ``-1``, all available threads are used. For ``n_jobs < -1``,
         ``max_threads + 1 + n_jobs`` threads are used.
     :type n_jobs: int
-    :param method: Signature algorithm for ``push_batch``: ``"auto"`` (default),
-        ``"horner"``, or ``"ps"`` (prefix-suffix factorisation). Single-point
-        updates use ``sig_join``.
-    :type method: str
-    :param ps_split: Optional maximum degree of a prefix in the prefix-suffix
-        algorithm for ``method="ps"``.
-        See :func:`sig`. ``None`` selects the split automatically.
-    :type ps_split: int | None
 
     Example::
 
@@ -218,12 +210,8 @@ class SigStream:
     def __init__(self, dimension: int, degree: int,
                  *,
                  scalar_term: bool = False, n_jobs: int = 1,
-                 method="auto", ps_split=None,
-                 _sig_join=None, _sig_combine=None, _sig=None, _sig_length=None,
-                 _use_sig_method=True):
+                 _sig_join=None, _sig_combine=None, _sig=None, _sig_length=None):
         check_n_jobs(n_jobs)
-        if _use_sig_method:
-            _check_sig_method(method, ps_split, degree)
         self._dimension = dimension
         self._degree = degree
         self._scalar_term = scalar_term
@@ -231,9 +219,8 @@ class SigStream:
         raw_sig = _sig or sig
         raw_sig_join = _sig_join or sig_join
         raw_sig_combine = _sig_combine or sig_combine
-        sig_options = dict(method=method, ps_split=ps_split) if _use_sig_method else {}
         self._sig_fn = lambda path, deg: raw_sig(
-            path, deg, scalar_term=scalar_term, n_jobs=n_jobs, **sig_options)
+            path, deg, scalar_term=scalar_term, n_jobs=n_jobs)
         self._sig_combine_fn = lambda s1, s2, dim, deg: raw_sig_combine(
             s1, s2, dim, deg, n_jobs=n_jobs)
         self._sig_join_fn = lambda s, disp, dim, deg, prepend=False: raw_sig_join(
@@ -447,7 +434,7 @@ class BranchedSigStream(SigStream):
 
         super().__init__(dimension, degree, scalar_term=scalar_term, n_jobs=n_jobs,
                          _sig_join=join_fn, _sig_combine=combine_fn, _sig=sig_fn,
-                         _sig_length=length_fn, _use_sig_method=False)
+                         _sig_length=length_fn)
 
 
 class BranchedLogSigStream(BranchedSigStream):
@@ -576,14 +563,6 @@ class LogSigStream:
         available threads; for ``n_jobs < -1``, ``max_threads + 1 + n_jobs``
         threads are used.
     :type n_jobs: int
-    :param sig_method: Signature algorithm for ``push_batch`` with ``method=2``:
-        ``"auto"`` (default), ``"horner"``, or ``"ps"`` (prefix-suffix
-        factorisation). Ignored for method ``3``. Single-point updates use ``log_sig_join``.
-    :type sig_method: str
-    :param ps_split: Optional maximum degree of a prefix in the prefix-suffix
-        algorithm for ``sig_method="ps"``.
-        See :func:`sig`. ``None`` selects the split automatically. Ignored for method ``3``.
-    :type ps_split: int | None
 
     Example::
 
@@ -609,7 +588,6 @@ class LogSigStream:
     def __init__(self, dimension: int, degree: int,
                  *,
                  method: int = 2, n_jobs: int = 1,
-                 sig_method="auto", ps_split=None,
                  _log_sig_join=None, _log_sig_combine=None, _log_sig=None):
         if method not in (2, 3):
             raise ValueError(
@@ -617,17 +595,14 @@ class LogSigStream:
                 f"got method={method}. Method 1 uses the Hall basis which is "
                 f"incompatible with log_sig_combine/log_sig_join.")
         check_n_jobs(n_jobs)
-        if method != 3:
-            _check_sig_method(sig_method, ps_split, degree)
         self._dimension = dimension
         self._degree = degree
         self._ls_len = log_sig_length(dimension, degree)
         raw_log_sig = _log_sig or log_sig
         raw_log_sig_join = _log_sig_join or log_sig_join
         raw_log_sig_combine = _log_sig_combine or log_sig_combine
-        sig_options = {} if method == 3 else dict(sig_method=sig_method, ps_split=ps_split)
         self._log_sig_fn = lambda path, deg: raw_log_sig(
-            path, deg, method=method, n_jobs=n_jobs, **sig_options)
+            path, deg, method=method, n_jobs=n_jobs)
         self._log_sig_combine_fn = lambda s1, s2, dim, deg: raw_log_sig_combine(
             s1, s2, dim, deg, n_jobs=n_jobs)
         self._log_sig_join_fn = lambda ls, disp, dim, deg: raw_log_sig_join(
@@ -911,13 +886,6 @@ class SigWindowStream(_WindowStream):
     :param n_jobs: Number of threads to run in parallel in the internal per-window
         ``sig`` calls. ``-1`` uses all available threads.
     :type n_jobs: int
-    :param method: Per-window signature algorithm: ``"auto"`` (default),
-        ``"horner"``, or ``"ps"`` (prefix-suffix factorisation).
-    :type method: str
-    :param ps_split: Optional maximum degree of a prefix in the prefix-suffix
-        algorithm for ``method="ps"``.
-        See :func:`sig`. ``None`` selects the split automatically.
-    :type ps_split: int | None
 
     Example::
 
@@ -940,18 +908,14 @@ class SigWindowStream(_WindowStream):
 
     def __init__(self, dimension: int, degree: int, window_size: int,
                  *,
-                 stride: int = 1, scalar_term: bool = False, n_jobs: int = 1,
-                 method="auto", ps_split=None, _sig=None):
+                 stride: int = 1, scalar_term: bool = False, n_jobs: int = 1, _sig=None):
         check_type(window_size, "window_size", int)
         check_type(stride, "stride", int)
         check_pos(window_size, "window_size")
         check_pos(stride, "stride")
         check_n_jobs(n_jobs)
-        _check_sig_method(method, ps_split, degree)
         raw_sig = _sig or sig
-        sig_options = dict(method=method, ps_split=ps_split)
-        sig_fn = lambda path, deg: raw_sig(
-            path, deg, scalar_term=scalar_term, n_jobs=n_jobs, **sig_options)
+        sig_fn = lambda path, deg: raw_sig(path, deg, scalar_term=scalar_term, n_jobs=n_jobs)
         super().__init__(sig_fn, dimension, degree, window_size, stride)
 
 
@@ -1101,19 +1065,11 @@ class LogSigWindowStream(_WindowStream):
     :type window_size: int
     :param stride: Number of points between successive window starts. Default 1.
     :type stride: int
-    :param method: Method used for per-window log-signature computation. See :func:`log_sig`.
+    :param method: Method used for per-window log-signature computation (``2`` or ``3``).
     :type method: int
     :param n_jobs: Number of threads to run in parallel in the internal per-window
         ``log_sig`` calls. ``-1`` uses all available threads.
     :type n_jobs: int
-    :param sig_method: Per-window signature algorithm for methods ``0``, ``1``
-        and ``2``: ``"auto"`` (default), ``"horner"``, or ``"ps"``
-        (prefix-suffix factorisation). Ignored for method ``3``.
-    :type sig_method: str
-    :param ps_split: Optional maximum degree of a prefix in the prefix-suffix
-        algorithm for ``sig_method="ps"``.
-        See :func:`sig`. ``None`` selects the split automatically. Ignored for method ``3``.
-    :type ps_split: int | None
 
     Example::
 
@@ -1130,16 +1086,12 @@ class LogSigWindowStream(_WindowStream):
 
     def __init__(self, dimension: int, degree: int, window_size: int,
                  *,
-                 stride: int = 1, method: int = 2, n_jobs: int = 1,
-                 sig_method="auto", ps_split=None, _log_sig=None):
+                 stride: int = 1, method: int = 2, n_jobs: int = 1, _log_sig=None):
         check_type(window_size, "window_size", int)
         check_type(stride, "stride", int)
         check_pos(window_size, "window_size")
         check_pos(stride, "stride")
         check_n_jobs(n_jobs)
-        if method != 3:
-            _check_sig_method(sig_method, ps_split, degree)
         raw_log_sig = _log_sig or log_sig
-        sig_options = {} if method == 3 else dict(sig_method=sig_method, ps_split=ps_split)
-        sig_fn = lambda path, deg: raw_log_sig(path, deg, method=method, n_jobs=n_jobs, **sig_options)
+        sig_fn = lambda path, deg: raw_log_sig(path, deg, method=method, n_jobs=n_jobs)
         super().__init__(sig_fn, dimension, degree, window_size, stride)

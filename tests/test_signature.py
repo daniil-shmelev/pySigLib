@@ -213,8 +213,7 @@ def test_signature_cpu_batch_tail(dtype, scalar_term, n_jobs, dimension, degree,
     rng = np.random.default_rng(42)
     path = rng.normal(0, 0.1, (2, 5, 17, dimension)).astype(dtype)
     options = dict(scalar_term=scalar_term, time_aug=time_aug, lead_lag=lead_lag, end_time=0.7)
-    expected = np.stack([pysiglib.sig(item, degree, **options) for item in path.reshape(-1, 17, dimension)])
-    expected = expected.reshape(2, 5, -1)
+    expected = pysiglib.sig(path, degree, horner=False, **options)
     actual = pysiglib.sig(path, degree, n_jobs=n_jobs, **options)
     check_close(actual, expected)
     single = pysiglib.sig(path[1, 4].copy(), degree, **options)
@@ -223,7 +222,8 @@ def test_signature_cpu_batch_tail(dtype, scalar_term, n_jobs, dimension, degree,
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("scalar_term", [False, True])
-def test_signature_cpu_one_dimension(dtype, scalar_term):
+@pytest.mark.parametrize("horner", [False, True])
+def test_signature_cpu_one_dimension(dtype, scalar_term, horner):
     rng = np.random.default_rng(43)
     path = rng.normal(size=(9, 129, 1)).astype(dtype)
     increment = path[:, -1, 0].astype(np.float64) - path[:, 0, 0]
@@ -232,5 +232,5 @@ def test_signature_cpu_one_dimension(dtype, scalar_term):
         expected[:, level] = expected[:, level - 1] * increment / level
     if not scalar_term:
         expected = expected[:, 1:]
-    actual = pysiglib.sig(path, 8, scalar_term=scalar_term)
+    actual = pysiglib.sig(path, 8, scalar_term=scalar_term, horner=horner)
     check_close(actual, expected)

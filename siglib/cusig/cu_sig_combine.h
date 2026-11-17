@@ -22,7 +22,8 @@
 // Computes sig1 = sig1 (x) sig2  (tensor product / Chen's identity)
 // where sig2 is another truncated signature.
 //
-// Used by the signature join and combine kernels.
+// Used by both the signature forward pass (cu_signature.cu) and the
+// standalone sig_combine kernel (cu_tensor_poly.cu).
 // =========================================================================
 
 template<typename T>

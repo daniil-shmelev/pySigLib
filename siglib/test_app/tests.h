@@ -15,11 +15,6 @@
 
 #pragma once
 
-#include <cstdint>
-#include <string>
-
-int run_coefficient_profile(int argc, char** argv, const std::string& directory);
-
 void example_batch_signature_d(
 	uint64_t batch_size = 100,
 	uint64_t dimension = 6,
@@ -27,6 +22,7 @@ void example_batch_signature_d(
 	uint64_t degree = 5,
 	bool time_aug = false,
 	bool lead_lag = false,
+	bool horner = true,
 	int n_jobs = -1,
 	int num_runs = 50
 );
@@ -38,6 +34,7 @@ void example_batch_signature_cuda_d(
 	uint64_t degree = 5,
 	bool time_aug = false,
 	bool lead_lag = false,
+	bool horner = true,
 	int num_runs = 50
 );
 
