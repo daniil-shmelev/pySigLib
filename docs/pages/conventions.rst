@@ -59,7 +59,7 @@ inefficient in some cases. When this happens, ``pysiglib`` will issue a one-time
 
 
 Combinatorial coordinate labels
-------------------------------
+-------------------------------
 
 The five coordinate families are ``words``, ``lyndon_words``, ``trees``, ``forests``, and ``lyndon_forests``. Their enumerators and index helpers consistently take ``dimension`` and ``degree``. Enumerations return fresh lists in numerical output order, and full enumerations default to ``scalar_term=False``, matching signatures and indexing. Lyndon families always exclude the scalar. See :doc:`words` and :doc:`trees` for ordering, representations, and the distinction between full and compressed indices.
 
