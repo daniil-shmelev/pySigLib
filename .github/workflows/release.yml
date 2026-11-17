@@ -225,10 +225,15 @@ jobs:
   test-linux-cpu:
     name: Test Linux CPU wheel (py${{ matrix.python-version }})
     needs: build-linux-cpu
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python-version: ['3.9', '3.13']
+        include:
+          # Python 3.9 is not available on Ubuntu 26.04 (ubuntu-latest).
+          - os: ubuntu-24.04
+            python-version: '3.9'
+          - os: ubuntu-latest
+            python-version: '3.13'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
