@@ -46,8 +46,8 @@ void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, co
 template<bool Backward, std::floating_point T>
 void signature_prefix_suffix_correction_(const T* path, T* out, const T* deriv, uint64_t batch, uint64_t dimension, uint64_t length, uint64_t degree, bool time_aug, T end_time, bool scalar, int n_jobs, uint64_t ps_split, const T* correction, uint64_t correction_len, uint64_t batch_stride, uint64_t segment_stride);
 
-template<std::floating_point T>
-void sig_backprop_inplace_(const Path<T>& path, T* out, T* sig_derivs, T* sig, uint64_t degree, uint64_t sig_len);
+template<std::floating_point T, uint64_t dim = 0>
+void sig_backprop_inplace_(const Path<T>& path, T* out, T* sig_derivs, T* sig, uint64_t degree);
 
 template<std::floating_point T, uint64_t lanes>
 void sig_backprop_batch_simd_(
@@ -774,9 +774,11 @@ void signature_(
 	const int max_threads = n_jobs > 0 ? n_jobs : static_cast<int>(get_max_threads()) + 1 + n_jobs;
 	const bool enough_groups = sizeof(T) == 4 || aug_dim <= 2 || n_jobs == 1
 		|| batch_size / (vec_batch_lanes<T>) >= static_cast<uint64_t>(max_threads);
+	const bool parallel_four_dim = sizeof(T) == 4 && aug_dim == 4 && full_len > 4096
+		&& batch_size <= 2 * vec_batch_lanes<T> && max_threads >= 8;
 	// Limit the working set and retain enough independent tasks for the thread pool.
 	if (!has_correction && degree > 1 && length >= 16 && aug_dim <= 4
-		&& aug_dim < vec_batch_lanes<T>
+		&& aug_dim < vec_batch_lanes<T> && !parallel_four_dim
 		&& batch_size >= vec_batch_lanes<T> && full_len <= 8192 && enough_groups) {
 		auto batch_func = [&]<uint64_t dim>() {
 			return signature_horner_batch_<T, dim>(path, out, batch_size, dimension, length, degree,
@@ -994,7 +996,13 @@ void sig_backprop_(
 	else {
 		auto sig_backprop_func = [&](const T* path_ptr, T* sig_derivs_ptr, T* sig_ptr, T* out_ptr) {
 			Path<T> path_obj(path_ptr, dimension, length, time_aug, lead_lag, end_time);
-			sig_backprop_inplace_<T>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree, sig_len_);
+			switch (path_obj.dimension()) {
+			case 1: sig_backprop_inplace_<T, 1>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree); break;
+			case 2: sig_backprop_inplace_<T, 2>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree); break;
+			case 3: sig_backprop_inplace_<T, 3>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree); break;
+			case 4: sig_backprop_inplace_<T, 4>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree); break;
+			default: sig_backprop_inplace_<T>(path_obj, out_ptr, sig_derivs_ptr, sig_ptr, degree); break;
+			}
 		};
 
 		multi_threaded_batch(sig_backprop_func, batch_size, n_jobs,
@@ -1083,108 +1091,109 @@ void sig_backprop_correction_inplace_(
 	}
 }
 
-template<std::floating_point T>
+template<std::floating_point T, uint64_t dim>
 void sig_backprop_inplace_(
 	const Path<T>& path, 
 	T* out, 
 	T* sig_derivs,
 	T* sig,
-	uint64_t degree, 
-	uint64_t sig_len
+	uint64_t degree
 ) {
-
 	const uint64_t data_dimension = path.data_dimension();
-	const uint64_t dimension = path.dimension();
-
+	const uint64_t dimension = dim ? dim : path.dimension();
 	const uint64_t data_length = path.data_length();
-
-	auto local_derivs_uptr = std::make_unique<T[]>(sig_len);
-	T* local_derivs = local_derivs_uptr.get();
-
-	auto linear_signature_uptr = std::make_unique<T[]>(sig_len);
-	T* linear_signature = linear_signature_uptr.get();
-
-	auto increments_uptr = std::make_unique<T[]>(dimension);
-	T* increments = increments_uptr.get();
+	const bool lead_lag = path.lead_lag();
 
 	auto level_index_uptr = std::make_unique<uint64_t[]>(degree + 2);
 	uint64_t* level_index = level_index_uptr.get();
 	populate_level_index(level_index, dimension, degree + 2);
 
-	auto horner_step_uptr = std::make_unique<T[]>(level_index[degree + 1] - level_index[degree]);
+	auto horner_step_uptr = std::make_unique<T[]>(level_index[degree]);
 	T* horner_step = horner_step_uptr.get();
+	auto horner_derivs_uptr = std::make_unique<T[]>(level_index[degree] - level_index[degree - 1]);
+	T* horner_derivs = horner_derivs_uptr.get();
+	auto increments_uptr = std::make_unique<T[]>(3 * dimension);
+	T* increments = increments_uptr.get();
+	T* increment_derivs = increments + dimension;
+	T* increment_partials = increment_derivs + dimension;
+	auto reciprocals_uptr = std::make_unique<T[]>(degree + 1);
+	T* reciprocals = reciprocals_uptr.get();
+	for (uint64_t level = 1; level <= degree; ++level)
+		reciprocals[level] = static_cast<T>(1) / static_cast<T>(level);
 
 	Point<T> prev_pt(path.end());
 	Point<T> next_pt(path.end());
 	--prev_pt;
 	--prev_pt;
 	--next_pt;
-
 	Point<T> first_pt(path.begin());
+	T* pos = out + (data_length - 1) * data_dimension;
+	bool parity = false;
 
-	if (path.lead_lag()) {
-		T* pos = out + (data_length - 1) * data_dimension;
-		T* neg = pos - data_dimension;
-		bool parity = false;
-
-		while (next_pt != first_pt) {
-
-			for (uint64_t i = 0; i < dimension; ++i)
-				increments[i] = prev_pt[i] - next_pt[i];
-
-			linear_signature_(prev_pt, next_pt, linear_signature, dimension, degree - 1, level_index);
-			signature_horner_step_(sig, increments, dimension, degree, level_index, horner_step);
-			uncombine_sig_deriv(sig, linear_signature, sig_derivs, local_derivs, dimension, degree, level_index, false);
-			linear_sig_deriv_to_increment_deriv(
-				linear_signature, local_derivs, increments, dimension, degree,
-				level_index, sig_derivs + level_index[degree]);
-
-
-			//TODO: can we exploit the structure and avoid computing derivatives which are a priori zero?
-
-			T* s = parity ? increments + data_dimension : increments;
-			for (uint64_t d = 0; d < data_dimension; ++d) {
-				pos[d] += s[d];
-				neg[d] -= s[d];
-			}
-
-			--next_pt;
-			if (next_pt != first_pt) {
-				--prev_pt;
-				if (parity) {
-					pos -= data_dimension;
-					neg -= data_dimension;
-				}
-				parity = !parity;
-			}
+	while (next_pt != first_pt) {
+		for (uint64_t i = 0; i < dimension; ++i)
+			increments[i] = prev_pt[i] - next_pt[i];
+		signature_horner_step_(sig, increments, dimension, degree, level_index, horner_step);
+		for (uint64_t i = 0; i < dimension; ++i) {
+			increments[i] = -increments[i];
+			increment_derivs[i] = sig_derivs[1 + i];
 		}
-	}
-	else {
-		T* pos = out + (data_length - 1) * data_dimension;
-		while (next_pt != first_pt) {
 
+		// Reverse the in-place Horner updates in ascending level order.
+		for (uint64_t target_level = 2; target_level <= degree; ++target_level) {
 			for (uint64_t i = 0; i < dimension; ++i)
-				increments[i] = prev_pt[i] - next_pt[i];
-
-			linear_signature_(prev_pt, next_pt, linear_signature, dimension, degree - 1, level_index);
-			signature_horner_step_(sig, increments, dimension, degree, level_index, horner_step);
-			uncombine_sig_deriv(sig, linear_signature, sig_derivs, local_derivs, dimension, degree, level_index, false);
-			linear_sig_deriv_to_increment_deriv(
-				linear_signature, local_derivs, increments, dimension, degree,
-				level_index, sig_derivs + level_index[degree]);
-
-			T* neg = pos - data_dimension;
-			T* s = increments;
-			for (uint64_t d = 0; d < data_dimension; ++d) {
-				pos[d] += s[d];
-				neg[d] -= s[d];
+				horner_step[1 + i] = increments[i] * reciprocals[target_level];
+			for (uint64_t level = 1; level + 1 < target_level; ++level) {
+				const uint64_t size = level_index[level + 1] - level_index[level];
+				const T scale = reciprocals[target_level - level];
+				for (uint64_t i = 0; i < size; ++i) {
+					const T value = (horner_step[level_index[level] + i] + sig[level_index[level] + i]) * scale;
+					vec_mult_assign(horner_step + level_index[level + 1] + i * dimension, increments, value, dimension);
+				}
 			}
+			const T* incoming = sig_derivs + level_index[target_level];
+			for (uint64_t level = target_level - 1; level > 0; --level) {
+				const uint64_t size = level_index[level + 1] - level_index[level];
+				const T scale = reciprocals[target_level - level];
+				std::fill_n(increment_partials, dimension, static_cast<T>(0));
+				for (uint64_t i = 0; i < size; ++i) {
+					const T value = (horner_step[level_index[level] + i] + sig[level_index[level] + i]) * scale;
+					const T* row = incoming + i * dimension;
+					T reduced = static_cast<T>(0);
+					if constexpr (dim != 0) {
+						for (uint64_t j = 0; j < dimension; ++j) {
+							increment_partials[j] += row[j] * value;
+							reduced += row[j] * increments[j];
+						}
+					}
+					else {
+						vec_mult_add(increment_partials, row, value, dimension);
+						reduced = dot_product(row, increments, dimension);
+					}
+					reduced *= scale;
+					horner_derivs[i] = reduced;
+					sig_derivs[level_index[level] + i] += reduced;
+				}
+				// Add small high-level contributions only after summing the level.
+				vec_mult_add(increment_derivs, increment_partials, static_cast<T>(1), dimension);
+				incoming = horner_derivs;
+			}
+			for (uint64_t i = 0; i < dimension; ++i)
+				increment_derivs[i] += horner_derivs[i] * reciprocals[target_level];
+		}
 
-			--next_pt;
-			if (next_pt != first_pt) {
-				--prev_pt;
+		T* neg = pos - data_dimension;
+		const T* s = increment_derivs + (lead_lag && parity ? data_dimension : 0);
+		for (uint64_t d = 0; d < data_dimension; ++d) {
+			pos[d] += s[d];
+			neg[d] -= s[d];
+		}
+		--next_pt;
+		if (next_pt != first_pt) {
+			--prev_pt;
+			if (!lead_lag || parity)
 				pos -= data_dimension;
-			}
+			parity = !parity;
 		}
 	}
 }

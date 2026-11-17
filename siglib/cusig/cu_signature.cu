@@ -19,10 +19,10 @@
 #include "signature_method.h"
 #include "cu_sig_combine.h"
 #include "cu_atomic.h"
+#include "cu_path_reduction.h"
 #include "cu_path_transforms.h"
 #include <cub/block/block_scan.cuh>
 #include <algorithm>
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -637,7 +637,7 @@ void sig_backprop_per_word_ker(
 	const uint64_t batch_offset,
 	const uint64_t batch_chunk_size
 ) {
-	static_assert(DEGREE >= 1 && DEGREE <= 12, "DEGREE must be 1-12");
+	static_assert(DEGREE >= 1 && DEGREE <= 16, "DEGREE must be 1-16");
 
 	const uint64_t word_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
 	const uint64_t local_batch_idx = cuda_batch_index();
@@ -1231,6 +1231,8 @@ __global__ void increment_to_path_grad_batch_ker(
 	}
 }
 
+#include "cu_signature_horner.cuh"
+
 template<typename T, int LEVEL, int BLOCK_SIZE>
 __global__ void sig_context_scan_persistent_ker(
 	const T* __restrict__ path,
@@ -1794,40 +1796,13 @@ __global__ void set_sig_level0(T* out, uint64_t sig_size, uint64_t batch_size) {
 	if (b < batch_size) out[b * sig_size] = static_cast<T>(1);
 }
 
-static void* s_inc_grad_buf = nullptr;
-static size_t s_inc_grad_buf_size = 0;
-static std::mutex s_inc_grad_buf_mu;
-static const void* s_sig_context_path = nullptr;
-static const void* s_sig_context_sig = nullptr;
-static uint64_t s_sig_context_batch_size = 0;
-static uint64_t s_sig_context_dimension = 0;
-static uint64_t s_sig_context_length = 0;
-static uint64_t s_sig_context_degree = 0;
-static size_t s_sig_context_value_size = 0;
-static bool s_sig_context_scalar_term = false;
-static int s_sig_context_kind = 0;
-static std::atomic<bool> s_sig_context_valid = false;
-
-static void* ensure_inc_grad_buf(size_t needed) {
-	if (needed > s_inc_grad_buf_size) {
-		if (s_inc_grad_buf) { cudaFree(s_inc_grad_buf); s_inc_grad_buf = nullptr; s_inc_grad_buf_size = 0; }
-		CUDA_CHECK(cudaMalloc(&s_inc_grad_buf, needed));
-		s_inc_grad_buf_size = needed;
-		s_sig_context_valid = false;
+static std::byte* ensure_inc_grad_buf(std::unique_ptr<CudaBatchWorkspace<std::byte>>& buffer,
+	size_t allocated_bytes, size_t needed) {
+	if (needed > allocated_bytes) {
+		buffer.reset();
+		buffer = std::make_unique<CudaBatchWorkspace<std::byte>>(1, needed, "CUDA signature backprop scan");
 	}
-	return s_inc_grad_buf;
-}
-
-void release_signature_state() {
-	{
-		std::lock_guard<std::mutex> lock(s_inc_grad_buf_mu);
-		if (s_inc_grad_buf) {
-			cudaFree(s_inc_grad_buf);
-			s_inc_grad_buf = nullptr;
-			s_inc_grad_buf_size = 0;
-		}
-		s_sig_context_valid = false;
-	}
+	return buffer->get();
 }
 
 template<typename T>
@@ -1852,6 +1827,9 @@ void signature_per_word_core_(
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
 	const int steps = static_cast<int>(transformed_length - 1);
 	const int dim = static_cast<int>(dimension);
+
+	if (cuda_horner::try_forward(path, out, batch_size, dim, static_cast<int>(degree),
+		steps, sig_stride, input, scalar_term)) return;
 
 	auto li = std::make_unique<uint64_t[]>(degree + 2);
 	host_populate_level_index(li.get(), dimension, degree + 2);
@@ -2423,7 +2401,6 @@ void signature_cuda_core_(
 	uint64_t correction_batch_stride,
 	uint64_t correction_segment_stride
 ) {
-	s_sig_context_valid = false;
 	const uint64_t full_sig_len = host_sig_length(dimension, degree);
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
 	const uint64_t path_flat_len = dimension * length;
@@ -2523,7 +2500,6 @@ void signature_cuda_(
 
 	if (time_aug || lead_lag) {
 		if (correction_len == 0 && degree > 1 && length > 1) {
-			s_sig_context_valid = false;
 			signature_per_word_core_(path, out, batch_size, dimension, length, degree,
 				scalar_term, time_aug, lead_lag, end_time);
 			return;
@@ -2679,6 +2655,9 @@ void sig_backprop_dense_chen_cuda_stream_(
 	uint64_t length,
 	uint64_t degree,
 	bool scalar_term,
+	size_t reserve_bytes,
+	std::unique_ptr<CudaBatchWorkspace<std::byte>>& buffer,
+	size_t allocated_bytes,
 	cudaStream_t stream
 ) {
 	const int dim = static_cast<int>(dimension);
@@ -2690,45 +2669,110 @@ void sig_backprop_dense_chen_cuda_stream_(
 		? host_sig_length(dimension, degree - 1) - 1 : 0;
 	const uint64_t path_stride = length * dimension;
 
-	const size_t state_elements = static_cast<size_t>(batch_size) * state_size;
-	const size_t exp_elements = static_cast<size_t>(batch_size) * exp_size;
-	const size_t increment_elements = static_cast<size_t>(batch_size) * dimension;
-	const size_t workspace_bytes = (
-		2 * state_elements + 2 * exp_elements + increment_elements) * sizeof(T);
-	T* workspace = static_cast<T*>(ensure_inc_grad_buf(workspace_bytes));
-	T* state = workspace;
+	const size_t row_elements = checked_cuda_size_add(
+		checked_cuda_size_mul(2, checked_cuda_size_add(state_size, exp_size,
+			"CUDA dense signature backprop"), "CUDA dense signature backprop"),
+		dimension, "CUDA dense signature backprop");
+	const size_t row_bytes = checked_cuda_size_mul(row_elements, sizeof(T), "CUDA dense signature backprop");
+	size_t free_bytes = 0, total_bytes = 0;
+	CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
+	const uint64_t max_capacity = std::min<uint64_t>(batch_size, CUDA_BATCH_GRID_LIMIT);
+	uint64_t capacity = cuda_workspace_initial_capacity(max_capacity, row_bytes,
+		free_bytes + allocated_bytes, reserve_bytes, allocated_bytes / row_bytes);
+	if (allocated_bytes < checked_cuda_size_mul(capacity, row_bytes, "CUDA dense signature backprop")) {
+		buffer.reset();
+		buffer = std::make_unique<CudaBatchWorkspace<std::byte>>(
+			max_capacity, row_bytes, "CUDA dense signature backprop", reserve_bytes);
+		capacity = buffer->capacity();
+	}
+	const size_t state_elements = static_cast<size_t>(capacity) * state_size;
+	const size_t exp_elements = static_cast<size_t>(capacity) * exp_size;
+	T* state = reinterpret_cast<T*>(buffer->get());
 	T* adjoint = state + state_elements;
 	T* exp_values = adjoint + state_elements;
 	T* exp_adjoint = exp_values + exp_elements;
 	T* increments = exp_adjoint + exp_elements;
 	const uint64_t scalar_offset = scalar_term ? 1 : 0;
-	CUDA_CHECK(cudaMemcpy2DAsync(
-		state, state_size * sizeof(T), sig + scalar_offset,
-		sig_stride * sizeof(T), state_size * sizeof(T), batch_size,
-		cudaMemcpyDeviceToDevice, stream));
-	CUDA_CHECK(cudaMemcpy2DAsync(
-		adjoint, state_size * sizeof(T), sig_derivs + scalar_offset,
-		sig_stride * sizeof(T), state_size * sizeof(T), batch_size,
-		cudaMemcpyDeviceToDevice, stream));
-
 	const int block = 256;
-	for (int step = steps - 1; step >= 0; --step) {
-		sig_dense_chen_prepare_step_ker<T><<<
-			static_cast<unsigned int>(batch_size), block,
-			dimension * sizeof(T), stream>>>(
-				path, state, exp_values, increments, dim, step,
+	for (uint64_t offset = 0; offset < batch_size; offset += capacity) {
+		const unsigned int count = static_cast<unsigned int>(std::min(capacity, batch_size - offset));
+		CUDA_CHECK(cudaMemcpy2DAsync(
+			state, state_size * sizeof(T), sig + offset * sig_stride + scalar_offset,
+			sig_stride * sizeof(T), state_size * sizeof(T), count,
+			cudaMemcpyDeviceToDevice, stream));
+		CUDA_CHECK(cudaMemcpy2DAsync(
+			adjoint, state_size * sizeof(T), sig_derivs + offset * sig_stride + scalar_offset,
+			sig_stride * sizeof(T), state_size * sizeof(T), count,
+			cudaMemcpyDeviceToDevice, stream));
+		for (int step = steps - 1; step >= 0; --step) {
+			sig_dense_chen_prepare_step_ker<T><<<count, block, dimension * sizeof(T), stream>>>(
+				path + offset * path_stride, state, exp_values, increments, dim, step,
 				static_cast<int>(degree), state_size, exp_size, path_stride);
-
-		sig_dense_chen_pullback_step_ker<T><<<
-			static_cast<unsigned int>(batch_size), block,
-			dimension * sizeof(T), stream>>>(
-				state, exp_values, exp_adjoint, adjoint, increments, out, dim, step,
+			sig_dense_chen_pullback_step_ker<T><<<count, block, dimension * sizeof(T), stream>>>(
+				state, exp_values, exp_adjoint, adjoint, increments, out + offset * path_stride, dim, step,
 				static_cast<int>(degree), state_size, exp_size, path_stride);
+		}
+		increment_to_path_grad_inplace_ker<T><<<count, 64, 0, stream>>>(
+			out + offset * path_stride, static_cast<int>(length), dim);
 	}
-	increment_to_path_grad_inplace_ker<T><<<
-		static_cast<unsigned int>(batch_size), 64, 0, stream>>>(
-			out, static_cast<int>(length), dim);
 	check_cuda_kernel_launch();
+}
+
+template<typename T>
+__global__ void sig_degree_two_backprop_ker(
+	const T* __restrict__ path,
+	const T* __restrict__ seeds,
+	T* __restrict__ out,
+	uint64_t dimension,
+	uint64_t length,
+	uint64_t path_stride,
+	uint64_t sig_stride,
+	uint64_t total,
+	bool scalar_term
+) {
+	const uint64_t stride = static_cast<uint64_t>(gridDim.x) * blockDim.x;
+	for (uint64_t index = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+		index < total; index += stride) {
+		const uint64_t batch = index / path_stride;
+		const uint64_t position = index % path_stride;
+		const uint64_t point = position / dimension;
+		const uint64_t letter = position % dimension;
+		const T* sample = path + batch * path_stride;
+		const T* level_one = seeds + batch * sig_stride + scalar_term;
+		const T* level_two = level_one + dimension;
+		const T* row = level_two + letter * dimension;
+		const T* column = level_two + letter;
+
+		if (point > 0 && point + 1 < length) {
+			// The terms in the two adjacent increment gradients cancel.
+			const T* before = sample + (point - 1) * dimension;
+			const T* after = before + 2 * dimension;
+			T gradient = 0;
+			for (uint64_t other = 0; other < dimension; ++other) {
+				const T half_span = (after[other] - before[other]) * T(0.5);
+				const T transposed = column[other * dimension];
+				const T skew = row[other] - transposed;
+				gradient += isfinite(skew) ? skew * half_span
+					: row[other] * half_span - transposed * half_span;
+			}
+			out[index] = gradient;
+		} else {
+			const bool first = point == 0;
+			const T* left = first ? sample : sample + (length - 2) * dimension;
+			const T* right = left + dimension;
+			const T* span_start = first ? right : sample;
+			const T* span_end = first ? sample + (length - 1) * dimension : left;
+			T gradient = level_one[letter];
+			for (uint64_t other = 0; other < dimension; ++other) {
+				const T half_increment = (right[other] - left[other]) * T(0.5);
+				const T span = span_end[other] - span_start[other];
+				const T transposed = column[other * dimension];
+				gradient += row[other] * half_increment + transposed * half_increment
+					+ (first ? row[other] : transposed) * span;
+			}
+			out[index] = first ? -gradient : gradient;
+		}
+	}
 }
 
 template<typename T>
@@ -2806,7 +2850,7 @@ void sig_backprop_cuda_core_(
 	}
 
 	{
-		std::lock_guard<std::mutex> workspace_lock(s_inc_grad_buf_mu);
+		std::lock_guard workspace_lock(cuda_path_workspaces().mutex);
 		sig_backprop_cuda_stream_<T>(
 			path, out, sig_derivs, sig, batch_size, dimension, length, degree,
 			scalar_term, nullptr);
@@ -2835,6 +2879,28 @@ void sig_backprop_cuda_stream_(
 			out, 0, batch_size * length * dimension * sizeof(T), stream));
 		return;
 	}
+	if (degree == 1 || dimension == 1) {
+		const uint64_t full_size = host_sig_length(dimension, degree);
+		const size_t total = checked_cuda_size_mul(batch_size,
+			checked_cuda_size_mul(length, dimension, "CUDA signature endpoint backprop"),
+			"CUDA signature endpoint backprop");
+		cuda_horner::endpoint_backward_kernel<T><<<make_cuda_1d_grid(total, 256), 256, 0, stream>>>(
+			out, sig, sig_derivs, dimension, length, degree, full_size - !scalar_term, total, scalar_term);
+		check_cuda_kernel_launch();
+		return;
+	}
+	const bool use_direct_degree_two = (dimension >= 23 && dimension <= 32 && batch_size >= 32)
+		|| (dimension >= 48 && dimension <= 128 && batch_size <= 32 && length >= 65);
+	if (degree == 2 && use_direct_degree_two) {
+		const size_t path_stride = checked_cuda_size_mul(length, dimension, "CUDA degree-two backprop");
+		const size_t total = checked_cuda_size_mul(batch_size, path_stride, "CUDA degree-two backprop");
+		const uint64_t sig_stride = host_sig_length(dimension, degree) - !scalar_term;
+		constexpr int block = 64;
+		sig_degree_two_backprop_ker<T><<<make_cuda_1d_grid(total, block), block, 0, stream>>>(
+			path, sig_derivs, out, dimension, length, path_stride, sig_stride, total, scalar_term);
+		check_cuda_kernel_launch();
+		return;
+	}
 	if (degree > MAX_GENERIC_DEGREE)
 		throw std::invalid_argument(
 			"sig_backprop on CUDA requires degree <= 64. "
@@ -2844,6 +2910,17 @@ void sig_backprop_cuda_stream_(
 	const int dim = static_cast<int>(dimension);
 	const uint64_t full_sig_len = host_sig_length(dimension, degree);
 	const uint64_t sig_stride = scalar_term ? full_sig_len : full_sig_len - 1;
+	const uint64_t dense_minimum_batch = std::is_same_v<T, double> && dimension != 3 ? 16 : 32;
+	const bool prefer_tree = batch_size <= 32 && (
+		(dimension == 2 && degree >= 14 && degree <= 16 && steps <= 64)
+		|| (dimension == 3 && degree >= 10 && degree <= 12 && steps <= 256)
+		|| (dimension == 6 && degree >= 7 && degree <= 9 && steps <= 64));
+	const bool prefer_dense = std::is_same_v<T, double> && !prefer_tree && batch_size >= dense_minimum_batch
+		&& (dimension < 24 || degree < 4);
+	if (!prefer_dense && cuda_horner::try_backward(path, out, sig, sig_derivs, batch_size, dim, static_cast<int>(degree),
+		steps, sig_stride, scalar_term, stream)) {
+		return;
+	}
 	const uint64_t context_size = degree > 1
 		? host_sig_length(dimension, degree - 1) - 1 : dimension;
 	const uint64_t dense_state_size = full_sig_len - 1;
@@ -2851,27 +2928,38 @@ void sig_backprop_cuda_stream_(
 	const size_t dense_static_shared_bytes =
 		2 * (MAX_GENERIC_DEGREE + 1) * sizeof(uint64_t);
 	const uint64_t dense_contraction_count = degree * (degree - 1);
-	const size_t dense_workspace_bytes = static_cast<size_t>(batch_size)
-		* (2 * dense_state_size + 2 * dense_lower_state_size + dimension)
-		* sizeof(T);
+	const size_t dense_workspace_bytes = checked_cuda_size_mul(
+		checked_cuda_size_add(checked_cuda_size_mul(2,
+			checked_cuda_size_add(dense_state_size, dense_lower_state_size,
+				"CUDA dense signature backprop"), "CUDA dense signature backprop"),
+			dimension, "CUDA dense signature backprop"), sizeof(T), "CUDA dense signature backprop");
 	size_t dense_free_bytes = 0;
 	size_t dense_total_bytes = 0;
 	CUDA_CHECK(cudaMemGetInfo(&dense_free_bytes, &dense_total_bytes));
-	const size_t dense_reusable_bytes = dense_free_bytes + s_inc_grad_buf_size;
+	int device = 0;
+	CUDA_CHECK(cudaGetDevice(&device));
+	auto& buffer = cuda_path_workspaces().devices[device].signature_backward;
+	const size_t allocated_bytes = buffer ? buffer->capacity() * buffer->row_elements() : 0;
+	const size_t dense_reusable_bytes = dense_free_bytes + allocated_bytes;
 	const size_t dense_reserve_bytes = std::max(
 		size_t(512) * 1024 * 1024, dense_total_bytes / 16);
 	const bool use_dense_chen = degree >= 2
+		&& batch_size >= dense_minimum_batch
 		&& dense_state_size >= 256 * dense_contraction_count
-		&& batch_size >= 32
 		&& dimension * sizeof(T) + dense_static_shared_bytes <= CUDA_BASE_DYNAMIC_SMEM
 		&& full_sig_len <= INT_MAX && batch_size <= INT_MAX
+		&& (!prefer_dense || cuda_workspace_initial_capacity(batch_size, dense_workspace_bytes,
+			dense_reusable_bytes, dense_reserve_bytes, allocated_bytes / dense_workspace_bytes) >= dense_minimum_batch)
 		&& dense_workspace_bytes <= dense_reusable_bytes
 		&& dense_reusable_bytes - dense_workspace_bytes >= dense_reserve_bytes;
 	if (use_dense_chen) {
-		s_sig_context_valid = false;
 		sig_backprop_dense_chen_cuda_stream_<T>(
 			path, out, sig_derivs, sig, batch_size, dimension, length,
-			degree, scalar_term, stream);
+			degree, scalar_term, dense_reserve_bytes, buffer, allocated_bytes, stream);
+		return;
+	}
+	if (prefer_dense && cuda_horner::try_backward(path, out, sig, sig_derivs, batch_size, dim, static_cast<int>(degree),
+		steps, sig_stride, scalar_term, stream)) {
 		return;
 	}
 	const size_t scan_context_elements = static_cast<size_t>(batch_size)
@@ -2895,7 +2983,7 @@ void sig_backprop_cuda_stream_(
 		&& scan_workspace_bytes <= dense_reusable_bytes
 		&& dense_reusable_bytes - scan_workspace_bytes >= dense_reserve_bytes;
 	if (use_level_scan) {
-		T* allocation = static_cast<T*>(ensure_inc_grad_buf(scan_workspace_bytes));
+		T* allocation = reinterpret_cast<T*>(ensure_inc_grad_buf(buffer, allocated_bytes, scan_workspace_bytes));
 		T* prefix_context = allocation;
 		T* adjoint_context = prefix_context + scan_context_elements;
 		T* increment_grads = adjoint_context + scan_context_elements;
@@ -2903,18 +2991,8 @@ void sig_backprop_cuda_stream_(
 			adjoint_context, 0, scan_context_elements * sizeof(T), stream));
 		CUDA_CHECK(cudaMemsetAsync(
 			increment_grads, 0, scan_increment_elements * sizeof(T), stream));
-		const bool reuse_prefix_context = s_sig_context_valid
-			&& s_sig_context_kind == 1
-			&& s_sig_context_path == path && s_sig_context_sig == sig
-			&& s_sig_context_batch_size == batch_size
-			&& s_sig_context_dimension == dimension
-			&& s_sig_context_length == length
-			&& s_sig_context_degree == degree
-			&& s_sig_context_value_size == sizeof(T)
-			&& s_sig_context_scalar_term == scalar_term;
-
 		uint64_t level_offset = dimension;
-		for (uint64_t level = 2; !reuse_prefix_context && level < degree; ++level) {
+		for (uint64_t level = 2; level < degree; ++level) {
 			const uint64_t level_size = host_power(dimension, level);
 			const auto scan_chunk = make_cuda_batch_grid_chunk(
 				level_size, batch_size, 0);
@@ -2936,19 +3014,6 @@ void sig_backprop_cuda_stream_(
 			#undef LAUNCH_LEVEL_PREFIX
 			level_offset += level_size;
 		}
-		if (!reuse_prefix_context) {
-			s_sig_context_path = path;
-			s_sig_context_sig = sig;
-			s_sig_context_batch_size = batch_size;
-			s_sig_context_dimension = dimension;
-			s_sig_context_length = length;
-			s_sig_context_degree = degree;
-			s_sig_context_value_size = sizeof(T);
-			s_sig_context_scalar_term = scalar_term;
-			s_sig_context_kind = 1;
-			s_sig_context_valid = true;
-		}
-
 		const int block = 256;
 		const uint64_t total_times = batch_size * static_cast<uint64_t>(steps);
 		const int group_width = scan_group_width;
@@ -3021,7 +3086,7 @@ void sig_backprop_cuda_stream_(
 		(2 * context_elements + increment_elements) * sizeof(T);
 	const bool use_grouped_backprop = degree >= 2 && degree <= 12
 		&& batch_size <= 65535 && groups_per_block != 0
-		&& dim <= 32 && 32 % dim == 0
+		&& dim <= 32
 		&& grouped_work_per_thread <= 16
 		&& grouped_shared_bytes <= CUDA_BASE_DYNAMIC_SMEM
 		&& grouped_allocation_bytes <= dense_reusable_bytes
@@ -3029,25 +3094,14 @@ void sig_backprop_cuda_stream_(
 		&& context_elements <= UINT32_MAX
 		&& full_sig_len <= UINT32_MAX;
 	if (use_grouped_backprop) {
-		T* allocation = static_cast<T*>(
-			ensure_inc_grad_buf(grouped_allocation_bytes));
+		T* allocation = reinterpret_cast<T*>(ensure_inc_grad_buf(buffer, allocated_bytes, grouped_allocation_bytes));
 		T* prefix_context = allocation;
 		T* suffix_context = prefix_context + context_elements;
 		T* increment_grads = suffix_context + context_elements;
 		const int block = 256;
 
-		const bool reuse_grouped_context = degree > 2
-			&& s_sig_context_valid && s_sig_context_kind == 2
-			&& s_sig_context_path == path && s_sig_context_sig == sig
-			&& s_sig_context_batch_size == batch_size
-			&& s_sig_context_dimension == dimension
-			&& s_sig_context_length == length
-			&& s_sig_context_degree == degree
-			&& s_sig_context_value_size == sizeof(T)
-			&& s_sig_context_scalar_term == scalar_term;
-
 		uint64_t level_offset = dimension;
-		for (uint64_t level = 2; !reuse_grouped_context && level < degree;
+		for (uint64_t level = 2; level < degree;
 			++level) {
 			const uint64_t level_size = host_power(dimension, level);
 			const int scan_block = 256;
@@ -3078,18 +3132,6 @@ void sig_backprop_cuda_stream_(
 			}
 			#undef LAUNCH_PREFIX
 			level_offset += level_size;
-		}
-		if (degree > 2 && !reuse_grouped_context) {
-			s_sig_context_path = path;
-			s_sig_context_sig = sig;
-			s_sig_context_batch_size = batch_size;
-			s_sig_context_dimension = dimension;
-			s_sig_context_length = length;
-			s_sig_context_degree = degree;
-			s_sig_context_value_size = sizeof(T);
-			s_sig_context_scalar_term = scalar_term;
-			s_sig_context_kind = 2;
-			s_sig_context_valid = true;
 		}
 		const uint64_t total_times = batch_size
 			* static_cast<uint64_t>(steps);
@@ -3217,6 +3259,7 @@ void sig_backprop_cuda_stream_(
 				LAUNCH_BWD(1)  LAUNCH_BWD(2)  LAUNCH_BWD(3)  LAUNCH_BWD(4)
 				LAUNCH_BWD(5)  LAUNCH_BWD(6)  LAUNCH_BWD(7)  LAUNCH_BWD(8)
 				LAUNCH_BWD(9)  LAUNCH_BWD(10) LAUNCH_BWD(11) LAUNCH_BWD(12)
+				LAUNCH_BWD(13) LAUNCH_BWD(14) LAUNCH_BWD(15) LAUNCH_BWD(16)
 				default:
 					if (shared_cache_candidate
 						&& (smem_size <= CUDA_BASE_DYNAMIC_SMEM

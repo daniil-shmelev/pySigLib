@@ -53,11 +53,15 @@ TEST(cudaBatchGridTest, RespectsWorkspaceCapacity) {
 	EXPECT_EQ(chunk.grid.z, 1u);
 }
 
-TEST(cudaWorkspacePlanTest, UsesHalfFreeMemoryAndAlwaysTriesOne) {
+TEST(cudaWorkspacePlanTest, PlansCapacityAndAlwaysTriesOne) {
 	EXPECT_EQ(cuda_workspace_initial_capacity(100, 100, 1000), 5u);
 	EXPECT_EQ(cuda_workspace_initial_capacity(100, 100, 50), 1u);
 	EXPECT_EQ(cuda_workspace_initial_capacity(2, 100, 10000), 2u);
 	EXPECT_EQ(cuda_workspace_initial_capacity(0, 100, 10000), 0u);
+	EXPECT_EQ(cuda_workspace_initial_capacity(8, 100, 1000, 200), 8u);
+	EXPECT_EQ(cuda_workspace_initial_capacity(8, 100, 50, 200), 1u);
+	EXPECT_EQ(cuda_workspace_initial_capacity(8, 100, 1000, 300, 8), 8u);
+	EXPECT_EQ(cuda_workspace_initial_capacity(4, 100, 50, 200, 8), 4u);
 	EXPECT_THROW(
 		cuda_workspace_initial_capacity(1, 0, 10000), std::invalid_argument);
 }

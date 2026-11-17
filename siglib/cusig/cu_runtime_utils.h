@@ -83,13 +83,17 @@ inline uint64_t cuda_global_batch_index(
 }
 
 inline uint64_t cuda_workspace_initial_capacity(
-	uint64_t batch_size, size_t row_bytes, size_t free_bytes
+	uint64_t batch_size, size_t row_bytes, size_t free_bytes, size_t reserve_bytes = 0,
+	uint64_t existing_capacity = 0
 ) {
 	if (batch_size == 0)
 		return 0;
 	if (row_bytes == 0)
 		throw std::invalid_argument("CUDA workspace row size must be positive");
-	uint64_t capacity = static_cast<uint64_t>((free_bytes / 2) / row_bytes);
+	// Zero retains the default half-memory budget.
+	const size_t budget = reserve_bytes
+		? (free_bytes > reserve_bytes ? free_bytes - reserve_bytes : 0) : free_bytes / 2;
+	uint64_t capacity = std::max(existing_capacity, static_cast<uint64_t>(budget / row_bytes));
 	if (capacity == 0)
 		capacity = 1;
 	return std::min<uint64_t>(
@@ -188,7 +192,8 @@ public:
 	CudaBatchWorkspace(
 		uint64_t batch_size,
 		size_t row_elements,
-		const char* op_name
+		const char* op_name,
+		size_t reserve_bytes = 0
 	) : ptr_(nullptr), capacity_(0), row_elements_(row_elements) {
 		if (batch_size == 0)
 			return;
@@ -202,7 +207,7 @@ public:
 		size_t total_bytes = 0;
 		CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
 		uint64_t candidate = cuda_workspace_initial_capacity(
-			batch_size, row_bytes, free_bytes);
+			batch_size, row_bytes, free_bytes, reserve_bytes);
 
 		while (true) {
 			const size_t allocation_bytes = checked_cuda_size_mul(
@@ -242,6 +247,11 @@ public:
 	T* get() const noexcept { return ptr_; }
 	uint64_t capacity() const noexcept { return capacity_; }
 	size_t row_elements() const noexcept { return row_elements_; }
+	T* release() noexcept {
+		T* result = ptr_;
+		ptr_ = nullptr;
+		return result;
+	}
 
 private:
 	T* ptr_;

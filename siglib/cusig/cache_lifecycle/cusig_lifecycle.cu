@@ -18,7 +18,6 @@
 #include "../cu_path_reduction.h"
 #include <cuda_runtime.h>
 
-void release_signature_state();
 void release_log_sig_state();
 void release_exp_sig_state();
 void release_sig_combine_state();
@@ -38,7 +37,6 @@ extern "C" {
 		// the buffers we're about to cudaFree.
 		try { (void)cudaDeviceSynchronize(); } catch (...) {}
 
-		try { release_signature_state();        } catch (...) {}
 		try { release_log_sig_state();          } catch (...) {}
 		try { release_log_sig_combine_state();  } catch (...) {}
 		try { release_cuda_path_workspaces();   } catch (...) {}
