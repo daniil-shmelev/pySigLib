@@ -28,6 +28,23 @@ from .param_checks import check_type, check_dtype, check_n_jobs, ensure_own_cont
 from .transform_path import transform_path
 
 
+_FEATURE_TYPES = {'sig': 0, 'log': 1}
+
+
+def _pack_words(words):
+    offsets = np.zeros(len(words) + 1, dtype=np.uint64)
+    offsets[1:] = np.cumsum([len(word) for word in words], dtype=np.uint64)
+    letters = np.array([letter for word in words for letter in word], dtype=np.uint64)
+    return letters, offsets
+
+
+def _valid_word(word, degree, dimension):
+    return 1 <= len(word) <= degree and all(
+        isinstance(a, (int, np.integer)) and not isinstance(a, bool) and 0 <= a < dimension
+        for a in word
+    )
+
+
 def _pointer(array, scalar):
     if isinstance(array, np.ndarray):
         return array.ctypes.data_as(POINTER(scalar))
@@ -47,10 +64,10 @@ def _check_status(status, device):
     raise RuntimeError(message)
 
 
-def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit_intercept=True,
+def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
               tol=None, max_iter=1000, initial_words=(), memory_limit=None, time_aug=False,
               lead_lag=False, end_time=1.0, n_jobs=1):
-    r"""Fit a sparse linear predictor on normalized path features on CPU.
+    r"""Fit a sparse linear predictor on normalized signature coordinates on CPU.
 
     Minimise the mean loss at ``intercept + X @ coef`` plus ``alpha * ||coef||_1``.
     Select squared error (with factor 1/2), binary logistic, Poisson count, or
@@ -58,15 +75,13 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
     An unpenalised intercept requires both classes for logistic regression and
     at least one positive count for Poisson regression.
 
-    ``feature_type='sig'`` selects signature words, ``'log'`` selects tensor log
-    coefficients at Lyndon words, and ``'hall'`` selects reverse-degree Hall
-    coefficients. Each degree k is scaled by k! / V**k after path transforms,
-    where V is the sum of infinity norms of increments. Constant paths have
+    Each degree ``k`` is scaled by ``k! / V**k`` after path transforms,
+    where ``V`` is the sum of the infinity norms of the increments. Constant paths have
     zero features. Columns are centred only when fitting an intercept.
 
     NumPy arrays and CPU Torch tensors support float32 and float64. Paths have
-    shape (*batch, length, dimension). Responses have shape batch or
-    (*batch, targets), with optional flattening of batch axes. Each target
+    shape ``(*batch, length, dimension)``. Responses have shape ``batch`` or
+    ``(*batch, targets)``, with optional flattening of batch axes. Each target
     has its own objective with a scalar or per-target positive penalty. ``initial_words``
     seeds the working set with words in the transformed alphabet.
 
@@ -78,8 +93,8 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
     ``memory_limit`` bounds owned native workspace and output
     in bytes. ``n_jobs`` controls CPU workers. ``max_iter`` limits working-set
     updates per response. ``tol`` defaults to 1e-5 for float32 or 1e-8 for
-    float64. Feature stationarity is checked at min(tol, 1e-4 * alpha).
-    Joint squared-loss searches can refine candidates to min(tol, 1e-6 * alpha)
+    float64. Feature stationarity is checked at ``min(tol, 1e-4 * alpha)``.
+    Joint squared-loss searches can refine candidates to ``min(tol, 1e-6 * alpha)``
     before returning the certificate.
 
     Return sorted union support in ``words``, uncentred columns in ``signatures``,
@@ -87,8 +102,33 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
     ``converged``, ``n_iter`` (working-set updates), timings and memory in
     ``stats``, and prediction metadata. ``dual_gap`` is a squared-loss duality
     gap and is None for other losses. Prediction returns the linear predictor.
-    This forward-only function belongs to the base API.
+    The result is independent of any autograd graph.
     """
+    return _fit_lasso(path, y, degree, alpha, 'sig', loss=loss, fit_intercept=fit_intercept, tol=tol,
+                      max_iter=max_iter, initial_words=initial_words, memory_limit=memory_limit,
+                      time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+
+
+def log_sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
+                  tol=None, max_iter=1000, initial_words=(), memory_limit=None, time_aug=False,
+                  lead_lag=False, end_time=1.0, n_jobs=1):
+    """Fit a sparse linear predictor on tensor log-signature coordinates on CPU.
+
+    Features are coefficients of the tensor logarithm indexed by Lyndon words.
+    A word of degree ``k`` is scaled by ``k! / V**k``, where ``V`` is the path's
+    variation after the requested transforms. Initial words must be Lyndon words
+    in the transformed alphabet.
+
+    The arguments, losses and returned model fields follow :func:`sig_lasso`.
+    Use :func:`sig_lasso_predict` to evaluate the selected coordinates on new paths.
+    """
+    return _fit_lasso(path, y, degree, alpha, 'log', loss=loss, fit_intercept=fit_intercept, tol=tol,
+                      max_iter=max_iter, initial_words=initial_words, memory_limit=memory_limit,
+                      time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+
+
+def _fit_lasso(path, y, degree, alpha, feature_type, *, loss, fit_intercept, tol, max_iter,
+               initial_words, memory_limit, time_aug, lead_lag, end_time, n_jobs):
     for name, value in (('degree', degree), ('max_iter', max_iter)):
         if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or not 0 < value < 2**31:
             raise ValueError(name + ' must be a positive integer below 2**31')
@@ -101,9 +141,6 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
     losses = {'squared': 0, 'logistic': 1, 'poisson': 2, 'huber': 3}
     if not isinstance(loss, str) or loss not in losses:
         raise ValueError("loss must be 'squared', 'logistic', 'poisson' or 'huber'")
-    feature_types = {'sig': 0, 'log': 1, 'hall': 2}
-    if not isinstance(feature_type, str) or feature_type not in feature_types:
-        raise ValueError("feature_type must be 'sig', 'log', or 'hall'")
     for name, value in (('fit_intercept', fit_intercept), ('time_aug', time_aug), ('lead_lag', lead_lag)):
         check_type(value, name, bool)
     check_n_jobs(n_jobs)
@@ -139,13 +176,11 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
     alphas = np.ascontiguousarray(alphas)
     words = []
     for word in initial_words:
-        if not 1 <= len(word) <= degree or any(isinstance(a, bool) or not isinstance(a, (int, np.integer)) or not 0 <= a < inputs.dimension for a in word):
+        if not _valid_word(word, degree, inputs.dimension):
             raise ValueError('initial_words contains an invalid transformed-channel word')
         words.append(tuple(int(a) for a in word))
     words = sorted(set(words), key=lambda word: (len(word), word))
-    offsets = np.zeros(len(words) + 1, dtype=np.uint64)
-    offsets[1:] = np.cumsum([len(word) for word in words], dtype=np.uint64)
-    letters = np.array([a for word in words for a in word], dtype=np.uint64)
+    letters, offsets = _pack_words(words)
     if tol is None:
         tol = 1e-5 if inputs.dtype == 'float32' else 1e-8
     if not np.isfinite(tol) or tol <= 0:
@@ -193,7 +228,7 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
                 return 1
 
         args = [data.data_ptr, _pointer(response, scalar), _pointer(alphas, c_double),
-                _pointer(letters, c_uint64), _pointer(offsets, c_uint64), len(words), feature_types[feature_type],
+                _pointer(letters, c_uint64), _pointer(offsets, c_uint64), len(words), _FEATURE_TYPES[feature_type],
                 byref(options), allocate_output, None]
         status = CPSIG_WORKING_SET[data.dtype](*args)
         if allocation_error is not None:
@@ -202,14 +237,15 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
         selected = [tuple(int(a) for a in out_letters[out_offsets[j]:out_offsets[j + 1]]) for j in range(result_shape.words)]
         converged = converged.astype(bool)
         if not converged.all():
-            warnings.warn('sig_lasso did not pass the global KKT check; inspect n_iter and kkt_violation',
-                          RuntimeWarning, stacklevel=2)
+            warnings.warn('Lasso fit did not pass the global KKT check. Inspect n_iter and kkt_violation.',
+                          RuntimeWarning, stacklevel=3)
         stats = {name: getattr(result_shape.stats, name) for name, _ in result_shape.stats._fields_}
         if stats['engine'] != 3 or stats['full_transform_calls']:
             raise RuntimeError('The CPU library did not use branch and bound')
         stats['engine'] = 'tree'
-        stats['dictionary_size'] = sum(data.dimension**k for k in range(1, degree + 1))
-        if feature_type != 'sig':
+        if feature_type == 'sig':
+            stats['dictionary_size'] = sum(data.dimension**k for k in range(1, degree + 1))
+        else:
             primitive = [0] * (degree + 1)
             for k in range(1, degree + 1):
                 primitive[k] = data.dimension**k - sum(primitive[j] for j in range(1, k) if k % j == 0)
@@ -224,12 +260,12 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
                     n_iter=iterations[0] if single else iterations, stats=stats,
                     feature_type=feature_type, degree=degree, dimension=path.shape[-1],
                     time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
-                    feature_convention='reverse_degree_hall_v1' if feature_type == 'hall' else feature_type,
+                    feature_convention=feature_type,
                     normalization='factorial_variation')
 
 
 def sig_lasso_predict(path, model, *, n_jobs=1, memory_limit=None):
-    """Predict on CPU paths using selected features from :func:`sig_lasso`.
+    """Predict on CPU paths using a model from :func:`sig_lasso` or :func:`log_sig_lasso`.
 
     The model stores the feature convention and path transforms. Input paths
     must have the same array type, dtype and channel dimension as the model.
@@ -241,12 +277,9 @@ def sig_lasso_predict(path, model, *, n_jobs=1, memory_limit=None):
     check_n_jobs(n_jobs)
     if memory_limit is not None and (isinstance(memory_limit, bool) or not isinstance(memory_limit, (int, np.integer)) or not 0 < memory_limit < 2**64):
         raise ValueError('memory_limit must be a positive integer or None')
-    feature_types = {'sig': 0, 'log': 1, 'hall': 2}
     mode = model['feature_type']
-    if mode not in feature_types or model.get('normalization') != 'factorial_variation':
+    if mode not in _FEATURE_TYPES or model.get('normalization') != 'factorial_variation':
         raise ValueError('Unsupported Lasso model convention')
-    if mode == 'hall' and model.get('feature_convention') != 'reverse_degree_hall_v1':
-        raise ValueError('Unsupported Hall basis convention')
     coef = model['coef']
     if any(isinstance(value, torch.Tensor) and value.device.type != 'cpu' for value in (path, coef)):
         raise ValueError('sig_lasso_predict supports CPU arrays only')
@@ -260,8 +293,9 @@ def sig_lasso_predict(path, model, *, n_jobs=1, memory_limit=None):
         raise ValueError('Invalid model degree')
     if coef.ndim not in (1, 2) or coef.shape[0] != len(model['words']) or (coef.ndim == 2 and coef.shape[1] == 0):
         raise ValueError('Invalid model coefficient shape')
+    dimension = inputs.dimension * (2 if model['lead_lag'] else 1) + int(model['time_aug'])
     for word in model['words']:
-        if not 1 <= len(word) <= degree or any(isinstance(a, bool) or not isinstance(a, (int, np.integer)) or not 0 <= a < inputs.dimension * (2 if model['lead_lag'] else 1) + int(model['time_aug']) for a in word):
+        if not _valid_word(word, degree, dimension):
             raise ValueError('Invalid model feature word')
     if not inputs.length:
         raise ValueError('Paths must contain at least one point')
@@ -269,8 +303,13 @@ def sig_lasso_predict(path, model, *, n_jobs=1, memory_limit=None):
         raise ValueError('path must contain only finite values')
     single = coef.ndim == 1
     targets = 1 if single else coef.shape[1]
-    if tuple(np.shape(model['intercept'])) not in ((), (targets,)) or (targets > 1 and tuple(np.shape(model['intercept'])) != (targets,)):
+    intercept_shape = tuple(np.shape(model['intercept']))
+    if intercept_shape != (targets,) and (targets != 1 or intercept_shape != ()):
         raise ValueError('Invalid model intercept shape')
+    model_intercept = model['intercept']
+    finite_intercept = torch.isfinite(model_intercept).all() if isinstance(model_intercept, torch.Tensor) else np.isfinite(model_intercept).all()
+    if not finite_intercept:
+        raise ValueError('Model intercept must be finite')
     shape = (*inputs.batch_shape,) if single else (*inputs.batch_shape, targets)
     output = np.empty(shape, dtype=path.dtype) if isinstance(path, np.ndarray) else torch.empty(shape, dtype=path.dtype)
     if not inputs.batch_size:
@@ -286,9 +325,7 @@ def sig_lasso_predict(path, model, *, n_jobs=1, memory_limit=None):
     if CPSIG_SIG_LASSO_PREDICT is None:
         raise RuntimeError('The native library does not support Lasso prediction; rebuild pysiglib')
     words = model['words']
-    offsets = np.zeros(len(words) + 1, dtype=np.uint64)
-    offsets[1:] = np.cumsum([len(w) for w in words], dtype=np.uint64)
-    letters = np.array([a for w in words for a in w], dtype=np.uint64)
+    letters, offsets = _pack_words(words)
     with torch.no_grad():
         transformed = (transform_path(inputs.path, time_aug=model['time_aug'], lead_lag=model['lead_lag'], end_time=model['end_time'], n_jobs=n_jobs)
                        if model['time_aug'] or model['lead_lag'] else inputs.path)
@@ -300,6 +337,6 @@ def sig_lasso_predict(path, model, *, n_jobs=1, memory_limit=None):
         options = LassoOptions(data.batch_size, data.length, data.dimension, selected_degree, targets, 1, memory_limit or 0, 1e-8, n_jobs, 0, inputs.dtype == 'float32', 0)
         scalar = DTYPES[data.dtype]
         status = CPSIG_SIG_LASSO_PREDICT[data.dtype](data.data_ptr, _pointer(coefficients, scalar), _pointer(intercept, scalar), _pointer(output, scalar),
-            _pointer(letters, c_uint64), _pointer(offsets, c_uint64), len(words), feature_types[mode], byref(options))
+            _pointer(letters, c_uint64), _pointer(offsets, c_uint64), len(words), _FEATURE_TYPES[mode], byref(options))
         _check_status(status, 'cpu')
     return output

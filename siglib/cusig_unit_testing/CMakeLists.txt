@@ -39,10 +39,6 @@ add_custom_command(TARGET cusig_tests POST_BUILD
         $<TARGET_FILE:cusig>
         $<TARGET_FILE_DIR:cusig_tests>
 )
-if(WIN32)
-    add_custom_command(TARGET cusig_tests POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${_pysiglib_cudart_dll}" "$<TARGET_FILE_DIR:cusig_tests>")
-endif()
 
 set(_pysiglib_test_cache_root "${CMAKE_CURRENT_BINARY_DIR}/pysiglib_test_cache")
 file(MAKE_DIRECTORY "${_pysiglib_test_cache_root}")

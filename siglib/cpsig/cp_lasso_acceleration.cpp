@@ -46,10 +46,4 @@ bool anderson_weights(const double* gram, double* weights) {
     return true;
 }
 
-void terminal_matrix_product(const double* left, const double* right, double* out, size_t samples, size_t rows, size_t columns) {
-    using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
-    const Eigen::Map<const Matrix> a(left, samples, rows), b(right, samples, columns);
-    Eigen::Map<Matrix> c(out, rows, columns);
-    c.noalias() += a.transpose() * b;
-}
 }

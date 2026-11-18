@@ -37,6 +37,7 @@ from ..sig_length import sig_length, log_sig_length
 from ..words import words_of_length, words, lyndon_words_of_length, lyndon_words, is_lyndon, word_to_idx, idx_to_word
 from ..trees import trees, trees_of_order, tree_to_idx, idx_to_tree
 from ..sig_coef import extract_sig_coef
+from ..sig_lasso import sig_lasso, log_sig_lasso, sig_lasso_predict
 from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache
 from ..branched_sig import prepare_branched_sig, branched_sig_length
 from ..branched_log_sig import branched_log_sig_length, prepare_branched_log_sig
@@ -161,6 +162,7 @@ __all__ = [
     "is_lyndon", "word_to_idx", "idx_to_word",
     "trees", "trees_of_order", "tree_to_idx", "idx_to_tree",
     "extract_sig_coef", "extract_branched_sig_coef",
+    "sig_lasso", "log_sig_lasso", "sig_lasso_predict",
     "set_cache_dir", "prepare_log_sig", "clear_cache",
     "Context", "StaticKernel",
     "LinearKernel", "ScaledLinearKernel", "RBFKernel",

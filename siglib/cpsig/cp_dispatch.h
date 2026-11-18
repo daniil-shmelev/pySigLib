@@ -19,7 +19,6 @@
 #include "log_sig_method.h"
 #include "branched_log_sig_method.h"
 #include "sig_lasso_types.h"
-namespace siglasso { struct Result; }
 #include "cp_simd_config.h"
 #include "hwy/highway.h"
 

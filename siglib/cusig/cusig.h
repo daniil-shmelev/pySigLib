@@ -37,7 +37,6 @@
 
 extern "C" {
 
-
 	/**
 	* @brief Returns the CUDA error message for the current thread.
 	*/

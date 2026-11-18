@@ -1,27 +1,20 @@
-Signature Lasso
-==============
+Signature and log-signature Lasso
+=================================
 
 .. autofunction:: pysiglib.sig_lasso
+
+.. autofunction:: pysiglib.log_sig_lasso
 
 .. autofunction:: pysiglib.sig_lasso_predict
 
 Feature dictionaries
 --------------------
 
-``feature_type="sig"`` is the default and retains the signature dictionary.
-``"log"`` uses tensor log-signature coefficients indexed by Lyndon words,
-as in ``log_sig(method=1)``. ``"hall"`` uses canonical log coefficients in
-the reverse-degree Hall basis: higher degrees precede lower degrees, with
-recursive left-right order within a degree and the original channel order
-on letters. A bracket ``(u,v)`` is admitted when ``u<v`` and either ``u``
-is a letter or ``v<=right(u)``. Returned Hall words are foliage words.
-This Hall basis differs from the Lyndon basis returned by
-``log_sig(method=2)`` and ``log_sig(method=3)``. The dual Hall recursion is
-given in `Salvi et al., Theorem 5.24 <https://arxiv.org/pdf/2212.00134>`_.
-
-All three dictionaries accept NumPy arrays and CPU Torch tensors. For a word
-of degree ``k``, the column scale is ``k!/V**k`` after path transforms. Changing
-the dictionary changes the penalised problem.
+``sig_lasso`` uses signature coordinates indexed by words. ``log_sig_lasso``
+uses coefficients of the tensor logarithm indexed by Lyndon words, as in
+``log_sig(method=1)``. Both fitting functions accept NumPy arrays and CPU Torch
+tensors. For a word of degree ``k``, the column scale is ``k!/V**k``, where
+``V`` is the sum of the infinity norms of the transformed path increments.
 
 Working-set fit
 ---------------
@@ -83,7 +76,6 @@ Example
     rng = np.random.default_rng(42)
     paths = rng.normal(size=(100, 12, 3)).cumsum(axis=1)
     labels = (paths[:, -1, 0] > paths[:, 0, 0]).astype(float)
-    model = pysiglib.sig_lasso(paths[:80], labels[:80], 3, alpha=0.01,
-                               feature_type="log", loss="logistic")
+    model = pysiglib.log_sig_lasso(paths[:80], labels[:80], 3, alpha=0.01, loss="logistic")
     test_scores = pysiglib.sig_lasso_predict(paths[80:], model)
     predicted_labels = test_scores >= 0

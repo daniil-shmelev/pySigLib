@@ -16,7 +16,6 @@ set(_pysiglib_cpsig_test_sources
     cp_test_misc.cpp
     cp_test_signature.cpp
     cp_test_sig_coef.cpp
-    cp_test_sig_lasso.cpp
     cp_test_log_sig.cpp
     cp_test_sig_kernel.cpp
     cp_test_polynomial_sig_kernel.cpp
@@ -28,12 +27,6 @@ if(NOT PYSIGLIB_CPSIG_PREBUILT_LIBRARY)
     list(APPEND _pysiglib_cpsig_test_sources ../cpsig/cp_utils.cpp)
 endif()
 add_executable(cpsig_tests ${_pysiglib_cpsig_test_sources})
-if(TARGET pysiglib_lasso_cpu)
-    target_sources(cpsig_tests PRIVATE cp_test_lasso_features.cpp
-        ../cpsig/cp_lasso_features.cpp ../cpsig/cp_lasso_features_impl.cpp ../cpsig/multithreading.cpp)
-    FetchContent_GetProperties(pysiglib_eigen SOURCE_DIR _lasso_eigen_source)
-    target_include_directories(cpsig_tests PRIVATE "${_lasso_eigen_source}")
-endif()
 
 target_include_directories(cpsig_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../cpsig"

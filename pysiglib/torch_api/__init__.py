@@ -21,6 +21,7 @@ from ..trees import trees, trees_of_order, tree_to_idx, idx_to_tree
 from ..transform_path import transform_path
 from ..sig_length import sig_length, log_sig_length
 from ..sig_coef import extract_sig_coef
+from ..sig_lasso import sig_lasso, log_sig_lasso, sig_lasso_predict
 from ..branched_sig_coef import extract_branched_sig_coef
 from ..log_sig import set_cache_dir, prepare_log_sig, clear_cache
 from ..static_kernels import Context, StaticKernel, LinearKernel, ScaledLinearKernel, RBFKernel, PolynomialKernel, Matern12Kernel, Matern32Kernel, Matern52Kernel, RationalQuadraticKernel
