@@ -175,6 +175,31 @@ def test_moment_levels_and_adjoints(device, dtype, degree, n, d, scalar):
     torch.testing.assert_close(grad.cpu().double(), reference, rtol=tol, atol=tol * reference.abs().max().item())
 
 
+@pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
+@pytest.mark.parametrize("n,degree", [(33, 16), (513, 9), (4097, 8)])
+def test_scanned_moments_single_word_gradient(device, dtype, n, degree):
+    rng = np.random.default_rng(759 + n)
+    increments = rng.integers(-3, 4, size=(n, 2)) / (2 * np.sqrt(n))
+    increments[::9] = 0
+    path = torch.tensor(np.vstack((np.zeros(2), increments.cumsum(axis=0))), device=device, dtype=dtype)
+    host = path.cpu().double().numpy().copy()
+    word = tuple(int(c) for c in rng.integers(0, 2, degree))
+    coefs = pysiglib.sig_coef(host, word, prefixes=True, method="horner")
+    # Scale the seed to test deep levels even when the coefficient is small.
+    weight = 1 / max(abs(coefs[-1]), 1e-16)
+    seed = np.zeros_like(coefs)
+    seed[-1] = weight
+    expected = pysiglib.sig_coef_backprop(host, word, coefs, seed, method="horner")
+    index = 2 ** degree - 2 + sum(c << j for j, c in enumerate(reversed(word)))
+    sig = pysiglib.sig(path, degree, scalar_term=False, method="ps", n_jobs=3)
+    deriv = torch.zeros_like(sig)
+    deriv[index] = weight
+    grad = pysiglib.sig_backprop(path, sig, deriv, degree, method="ps", n_jobs=3)
+    tol = 5e-4 if dtype == torch.float32 else 3e-10
+    np.testing.assert_allclose(sig[index].item() * weight, coefs[-1] * weight, atol=tol, rtol=tol)
+    np.testing.assert_allclose(grad.cpu().numpy(), expected, atol=tol * np.abs(expected).max(), rtol=tol)
+
+
 @pytest.mark.parametrize("d,degree", [(12, 3), (32, 2)])
 def test_midpoint_thread_boundaries(d, degree):
     path = torch.from_numpy(np.random.default_rng(734).normal(size=(2, 778, d)).cumsum(axis=1) / 32)

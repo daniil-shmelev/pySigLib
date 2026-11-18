@@ -713,7 +713,7 @@ void signature_(
 )
 {
 	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
-		time_aug || lead_lag, correction_len, false, false)) {
+		time_aug || lead_lag, correction_len, false, false, false, n_jobs)) {
 		if (correction_len) {
 			if (!dimension) throw std::invalid_argument("signature received path of dimension 0");
 			validate_signature_correction_args_(correction, correction_len, dimension, degree, lead_lag);

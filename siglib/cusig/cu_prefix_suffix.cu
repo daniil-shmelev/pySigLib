@@ -26,6 +26,7 @@
 #include <cublas_v2.h>
 #include <cublasLt.h>
 #include <climits>
+#include <cstring>
 #include <type_traits>
 
 namespace {
@@ -93,7 +94,7 @@ struct Resources {
 template<typename T, bool UseBlas = true, typename Run>
 void with_factor_workspace(const Layout& l, int device, uint64_t batch, uint64_t max_paths,
     uint64_t stride, uint64_t metadata_bytes, uint64_t blas_charge, bool trim_cache, const char* name,
-    cudaStream_t stream, bool fp64_emulation, Run run) {
+    cudaStream_t stream, bool fp64_emulation, Run run, const void* metadata = nullptr) {
     const uint64_t row_bytes = add(mul(stride, sizeof(T)), metadata_bytes);
     const uint64_t budget = option("PYSIGLIB_PS_WORKSPACE_BYTES", UINT64_MAX);
     const uint64_t emulation_limit = fp64_emulation && std::is_same_v<T, double>
@@ -118,7 +119,9 @@ void with_factor_workspace(const Layout& l, int device, uint64_t batch, uint64_t
     auto* power = metadata_bytes ? reinterpret_cast<uint64_t*>(memory + capacity * stride) : nullptr;
     auto* offset = power ? power + l.power.size() : nullptr;
     try {
-        if (power) {
+        if (metadata) {
+            CUDA_CHECK(cudaMemcpyAsync(power, metadata, metadata_bytes, cudaMemcpyHostToDevice, stream));
+        } else if (power) {
             CUDA_CHECK(cudaMemcpyAsync(power, l.power.data(), l.power.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
             CUDA_CHECK(cudaMemcpyAsync(offset, l.offset.data(), l.offset.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
         }

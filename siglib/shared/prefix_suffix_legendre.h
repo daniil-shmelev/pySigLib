@@ -29,6 +29,18 @@ struct LegendreMode {
     uint64_t size() const { return rows() * cols; }
 };
 
+// Mode r stores all words through degree (depth-r), with consecutive segment
+// samples along each row of the factor matrix.
+struct MomentRows {
+    unsigned depth, size = 0, first[17]{};
+    MomentRows(const Layout& l, unsigned depth_) : depth(depth_) {
+        for (unsigned r = 0; r <= depth; ++r) {
+            first[r] = size;
+            size += unsigned(l.offset[depth - r + 1]);
+        }
+    }
+};
+
 // Orthogonal moments of the two segment polynomials. Mode r has a symmetric
 // centre of 2r+1 increment letters and ordered words on either side.
 struct LegendrePlan {
@@ -36,7 +48,8 @@ struct LegendrePlan {
     uint64_t buffers[2]{};
     std::vector<LegendreMode> modes;
 
-    explicit LegendrePlan(const Layout& l) : a(unsigned((l.m + 1) / 2)), b(unsigned(l.m - a)) {
+    explicit LegendrePlan(const Layout& l, unsigned split = 0)
+        : a(split ? split : unsigned((l.m + 1) / 2)), b(unsigned(l.m - a)) {
         const unsigned d = unsigned(l.d);
         std::vector<unsigned> keys(d);
         for (unsigned c = 0; c < d; ++c) keys[c] = c;

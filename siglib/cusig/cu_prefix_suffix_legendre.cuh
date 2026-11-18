@@ -317,12 +317,18 @@ __global__ void moment_adjoints(const T* pre, const T* suf, const T* powers, con
     }
 }
 
-// Store the two halves of each differentiated monomial as ordered power indices.
+// A differentiated centre is a previous centre times one increment, or a
+// product of two ordered powers when those are already available.
 struct PowerDerivatives {
     std::vector<uint4> terms;
     std::vector<unsigned> offsets{0};
-    PowerDerivatives(const Layout& l, const LegendrePlan& plan) {
+    PowerDerivatives(const Layout& l, const LegendrePlan& plan, bool centres_only) {
         const unsigned q = plan.modes.front().cols;
+        std::vector<std::unordered_map<unsigned, unsigned>> centre_index;
+        if (centres_only) for (const auto& m : plan.modes) {
+            auto& ids = centre_index.emplace_back();
+            for (unsigned g = 0; g < m.groups; ++g) ids.emplace(m.words[g], m.first_group + g);
+        }
         for (unsigned c = 0; c < l.d; ++c) {
             auto append = [&](unsigned word, unsigned k, unsigned col, unsigned mode) {
                 unsigned count = 0, remaining = 0, power = 1;
@@ -332,13 +338,18 @@ struct PowerDerivatives {
                     remaining += digit * power; power *= unsigned(l.d);
                 }
                 if (!count) return;
+                if (centres_only) {
+                    const unsigned parent = centre_index[mode - 1].at(unsigned(remaining / l.d));
+                    terms.push_back(make_uint4(col - q, parent, unsigned(remaining % l.d), mode * 32 + count));
+                    return;
+                }
                 const unsigned tail = (k - 1) / 2, head = k - 1 - tail, right = unsigned(l.power[tail]);
                 terms.push_back(make_uint4(col, unsigned(l.offset[head]) + remaining / right,
                     unsigned(l.offset[tail]) + remaining % right, mode * 32 + count));
             };
-            for (unsigned k = 1; k <= plan.b; ++k) for (unsigned w = 0; w < l.power[k]; ++w)
+            if (!centres_only) for (unsigned k = 1; k <= plan.b; ++k) for (unsigned w = 0; w < l.power[k]; ++w)
                 append(w, k, unsigned(l.offset[k]) + w, 0);
-            for (unsigned r = 0; r < plan.modes.size(); ++r) {
+            for (unsigned r = centres_only ? 1 : 0; r < plan.modes.size(); ++r) {
                 const auto& m = plan.modes[r];
                 for (unsigned g = 0; g < m.groups; ++g)
                     append(m.words[g], 2 * r + 1, q + m.first_group + g, r);
@@ -369,6 +380,8 @@ __global__ void increment_adjoints(const T* powers, const T* dpoly, const T* dc,
     }
 }
 
+#include "cu_prefix_suffix_moment_scan.cuh"
+
 template<bool Backward, typename T>
 bool compute(const T* path, const T* seed, T* out, const Layout& l, int device, uint64_t batch,
     uint64_t n, bool scalar, cudaStream_t stream) {
@@ -380,9 +393,6 @@ bool compute(const T* path, const T* seed, T* out, const Layout& l, int device, 
     if (l.d >= 4 && l.m >= 7 && n <= 64 && (!Backward || n < 32)) return false;
     if constexpr (std::is_same_v<T, float>) {
         if (n < 32 && (l.d >= 4 || l.m >= 9)) return false;
-        if (l.d >= 5 && l.m == 7 && n <= 256) return false;
-        if (!Backward && l.d == 3 && l.m == 7 && n <= 256) return false;
-        if (Backward && batch == 1 && l.d == 3 && l.m <= 10 && n >= 128 && n <= 256) return false;
     }
     if constexpr (!Backward) {
         if (l.m <= 5 && l.d <= 4 && n <= 32 && std::is_same_v<T, float>) {
@@ -415,6 +425,16 @@ bool compute(const T* path, const T* seed, T* out, const Layout& l, int device, 
     uint64_t stride = inc_size + 2 * scan_size + 4 * summary_size + temp + n * q + centre_size
         + factors + plan.buffers[0] + plan.buffers[1] + split_size;
     if constexpr (Backward) stride += summary_size + q + zsize + inc_size + factors + centre_size + 2 * head_size;
+    const ScanShape scan(l, plan, unsigned(n));
+    const bool fuse_products = !Backward && (sizeof(T) == sizeof(float) || batch * n >= 1024);
+    uint64_t left_rows = 0;
+    for (const auto& m : plan.modes)
+        if (m.head > 1 && !(fuse_products && m.size() <= 16384)) left_rows = std::max(left_rows, m.rows());
+    const uint64_t packed = uint64_t(scan.pitch) * (scan.p.size + scan.q.size + plan.groups + left_rows);
+    const uint64_t scan_stride = plan.buffers[0] + plan.buffers[1] + split_size + (1 + Backward) * packed
+        + (Backward ? inc_size + 2 * uint64_t(scan.pitch) * (l.offset[scan.p.depth + 1] + q) : 0);
+    const bool scanned = n >= 16 && scan_stride <= (192ULL << 20) / sizeof(T);
+    if (scanned) stride = scan_stride;
     stride = (stride + 63) / 64 * 64;
     if (stride > (192ULL << 20) / sizeof(T)) return false;
     Degrees levels{};
@@ -428,9 +448,16 @@ bool compute(const T* path, const T* seed, T* out, const Layout& l, int device, 
     std::vector<Mode<T>> modes;
     for (unsigned r = 0; r < plan.modes.size(); ++r) {
         const auto& m = plan.modes[r];
-        levels.scale[r] = r ? -levels.scale[r - 1] / (4 * (2 * r - 1) * (2 * r + 1)) : 1;
+        levels.scale[r] = r ? -(scanned ? 1.0 : levels.scale[r - 1]) / (4 * (2 * r - 1) * (2 * r + 1)) : 1;
         const unsigned width = levels.power[r], first = levels.offset[r];
-        for (auto word : m.words) words.push_back(make_uint4(first + word / width / levels.d,
+        if (scanned && r) {
+            const auto& prev = plan.modes[r - 1];
+            for (auto ex : m.parent) {
+                const unsigned pair = ex / levels.d;
+                words.push_back(make_uint4(prev.first_group + pair % prev.groups, pair / prev.groups,
+                    ex % levels.d, m.first_group + m.groups));
+            }
+        } else for (auto word : m.words) words.push_back(make_uint4(first + word / width / levels.d,
             word / width % levels.d, first + word % width, r));
         auto append = [&](const std::vector<unsigned>& data) {
             const auto pos = maps.size();
@@ -445,42 +472,59 @@ bool compute(const T* path, const T* seed, T* out, const Layout& l, int device, 
     std::vector<uint4> derivatives;
     const size_t derivative_offsets = maps.size();
     if constexpr (Backward) {
-        PowerDerivatives table(l, plan);
+        PowerDerivatives table(l, plan, scanned);
         derivatives = std::move(table.terms);
         maps.insert(maps.end(), table.offsets.begin(), table.offsets.end());
     }
-    const uint64_t meta64 = (l.power.size() + l.offset.size() + 1) / 2 * 2;
+    const uint64_t meta64 = scanned ? 0 : (l.power.size() + l.offset.size() + 1) / 2 * 2;
     const uint64_t metadata = meta64 * sizeof(uint64_t) + derivatives.size() * sizeof(uint4)
         + words.size() * sizeof(uint4) + maps.size() * sizeof(unsigned) + sizeof(int);
+    std::vector<std::byte> packed_metadata((metadata + 255) / 256 * 256);
+    if (!scanned) {
+        std::memcpy(packed_metadata.data(), l.power.data(), l.power.size() * sizeof(uint64_t));
+        std::memcpy(packed_metadata.data() + l.power.size() * sizeof(uint64_t), l.offset.data(), l.offset.size() * sizeof(uint64_t));
+    }
+    auto* term_bytes = packed_metadata.data() + meta64 * sizeof(uint64_t);
+    auto* word_bytes = term_bytes + derivatives.size() * sizeof(uint4);
+    if (!derivatives.empty()) std::memcpy(term_bytes, derivatives.data(), derivatives.size() * sizeof(uint4));
+    std::memcpy(word_bytes, words.data(), words.size() * sizeof(uint4));
+    std::memcpy(word_bytes + words.size() * sizeof(uint4), maps.data(), maps.size() * sizeof(unsigned));
     const uint64_t paths = std::clamp<uint64_t>((512ULL << 20) / (stride * sizeof(T)), 1, 32);
     int unsafe = 0;
-    with_factor_workspace<T>(l, device, batch, paths, stride, (metadata + 255) / 256 * 256,
+    with_factor_workspace<T>(l, device, batch, paths, stride, packed_metadata.size(),
         4ULL << 20, true, "prefix-suffix moments", stream, false,
         [&](cublasHandle_t handle, Fp64Emulation*, uint64_t capacity, T* memory, uint64_t* power, uint64_t* offset) {
         auto* terms = reinterpret_cast<uint4*>(power + meta64);
         auto* ids = terms + derivatives.size();
         auto* indices = reinterpret_cast<unsigned*>(ids + words.size());
         auto* flag = reinterpret_cast<int*>(indices + maps.size());
-        if constexpr (Backward) CUDA_CHECK(cudaMemsetAsync(flag, 0, sizeof(int), stream));
-        if constexpr (Backward) CUDA_CHECK(cudaMemcpyAsync(terms, derivatives.data(),
-            derivatives.size() * sizeof(uint4), cudaMemcpyHostToDevice, stream));
-        CUDA_CHECK(cudaMemcpyAsync(ids, words.data(), words.size() * sizeof(uint4), cudaMemcpyHostToDevice, stream));
-        CUDA_CHECK(cudaMemcpyAsync(indices, maps.data(), maps.size() * sizeof(unsigned), cudaMemcpyHostToDevice, stream));
         T* cursor = memory;
         auto take = [&](uint64_t size) { T* ptr = cursor; cursor += size; return ptr; };
-        T* inc = take(inc_size); T* pre = take(scan_size); T* suf = take(scan_size);
-        T* summary = take(summary_size); T* pscan = take(summary_size); T* qscan = take(summary_size);
-        T* swap = take(summary_size); T* work = take(temp); T* poly = take(n * q); T* centres = take(centre_size);
-        T* left = take(n * plan.max_rows); T* right = take(n * q);
+        const uint64_t pitch = scan.pitch;
+        T* inc = take(scanned && !Backward ? 0 : inc_size); T* pre = take(scanned ? pitch * scan.p.size : scan_size);
+        T* suf = take(scanned ? pitch * scan.q.size : scan_size);
+        T* summary = take(scanned ? 0 : summary_size); T* pscan = take(scanned ? 0 : summary_size);
+        T* qscan = take(scanned ? 0 : summary_size); T* swap = take(scanned ? 0 : summary_size);
+        T* work = take(scanned ? 0 : temp); T* poly = take(scanned ? 0 : n * q);
+        T* centres = take(scanned ? pitch * plan.groups : centre_size);
+        T* left = take(scanned ? pitch * left_rows : n * plan.max_rows); T* right = take(scanned ? 0 : n * q);
         T* buf[]{take(plan.buffers[0]), take(plan.buffers[1])};
         T* partial = take(split_size);
         T *boundary = nullptr, *low = nullptr, *dp = nullptr, *dq = nullptr, *dpoly = nullptr, *dv = nullptr;
         T *dl = nullptr, *dr = nullptr, *dc = nullptr, *heads = nullptr, *dh = nullptr;
+        T *zp = nullptr, *zq = nullptr, *cp = nullptr, *cq = nullptr;
         if constexpr (Backward) {
-            boundary = take(summary_size); low = take(q);
-            dp = take(scan_size); dq = take(scan_size); dpoly = take(n * q); dv = take(inc_size);
-            dl = take(n * plan.max_rows); dr = take(n * q); dc = take(centre_size);
-            heads = take(head_size); dh = take(head_size);
+            if (scanned) {
+                dp = take(pitch * scan.p.size); dq = take(pitch * scan.q.size);
+                dc = take(pitch * plan.groups); dl = take(pitch * left_rows);
+                zp = take(pitch * l.offset[scan.p.depth + 1]); zq = take(pitch * q);
+                cp = take(pitch * l.offset[scan.p.depth + 1]); cq = take(pitch * q);
+            } else {
+                boundary = take(summary_size); low = take(q);
+                dp = take(scan_size); dq = take(scan_size); dpoly = take(n * q); dv = take(inc_size);
+                dl = take(n * plan.max_rows); dr = take(n * q); dc = take(centre_size);
+                heads = take(head_size); dh = take(head_size);
+            }
         }
         for (uint64_t base = 0; base < batch; base += capacity) {
             const uint64_t count = std::min(capacity, batch - base);
@@ -501,7 +545,11 @@ bool compute(const T* path, const T* seed, T* out, const Layout& l, int device, 
                 CUDA_CHECK(cudaGetLastError());
             };
             const unsigned threads = l.power[plan.b] <= 64 ? 32 : 128;
-            if (plan.b == 2) {
+            if (scanned) {
+                scan_start<<<grid(l.d * pitch), 256, 0, stream>>>(input, centres, pre, suf, Backward ? nullptr : result,
+                    scan, unsigned(l.d), count, stride, sig_stride, scalar);
+                CUDA_CHECK(cudaGetLastError());
+            } else if (plan.b == 2) {
                 quadratic_scan<false><<<make_cuda_1d_grid(count * l.d * l.d, 2), 64, 0, stream>>>(input, inc,
                     pre, suf, Backward ? nullptr : result, grad, count, unsigned(n), unsigned(l.d),
                     stride, sig_stride, scalar, false);
@@ -509,15 +557,27 @@ bool compute(const T* path, const T* seed, T* out, const Layout& l, int device, 
             } else prepare_scans(input, inc, pre, suf, Backward ? low : result, summary, pscan, qscan, swap, work,
                 count, l.d, n + 1, l, n, q, q, chunks, chunk_length, stride, Backward ? stride : sig_stride,
                 Backward || scalar, false, false, T(1), power, offset, Backward, false, threads, 0, stream);
-            if (q <= 256 && plan.groups <= 256)
+            if (scanned) scan_centres<<<make_cuda_1d_grid(count * (pitch / 32), 1), 128, 0, stream>>>(
+                centres, ids, levels, scan, count, stride);
+            else if (q <= 256 && plan.groups <= 256)
                 powers_kernel<32><<<make_cuda_1d_grid(count * n, 4), 128, 4 * q * sizeof(T), stream>>>(
                     inc, poly, centres, ids, levels, unsigned(n), count, stride);
             else powers_kernel<128><<<make_cuda_1d_grid(count * n, 1), 128, q * sizeof(T), stream>>>(
                 inc, poly, centres, ids, levels, unsigned(n), count, stride);
             CUDA_CHECK(cudaGetLastError());
-            if constexpr (Backward) {
-                zero_adjoints_kernel<<<grid(zsize), 256, 0, stream>>>(dp, count, zsize, stride);
+            if (scanned) for (unsigned k = 2; k <= scan.q.depth; ++k) {
+                const uint64_t tasks = count * l.power[k] * (1 + unsigned(k <= scan.p.depth));
+                if (n >= 512) scan_level<128><<<make_cuda_1d_grid(tasks, 1), 128, 0, stream>>>(pre, suf, centres,
+                    Backward ? nullptr : result, scan, levels, k, count, stride, sig_stride, scalar);
+                else scan_level<32><<<make_cuda_1d_grid(tasks, 4), 128, 0, stream>>>(pre, suf, centres,
+                    Backward ? nullptr : result, scan, levels, k, count, stride, sig_stride, scalar);
                 CUDA_CHECK(cudaGetLastError());
+            }
+            if constexpr (Backward) {
+                if (!scanned) {
+                    zero_adjoints_kernel<<<grid(zsize), 256, 0, stream>>>(dp, count, zsize, stride);
+                    CUDA_CHECK(cudaGetLastError());
+                }
                 map_final();
             }
             CudaMatrices<T> matrices{handle, count};
@@ -536,6 +596,53 @@ bool compute(const T* path, const T* seed, T* out, const Layout& l, int device, 
                 const unsigned r = Backward ? step : unsigned(modes.size()) - 1 - step;
                 const auto& m = modes[r];
                 const uint64_t rows = plan.modes[r].rows(), cols = m.cols;
+                if (scanned) {
+                    T* product = buf[r % 2];
+                    T* head = pre + (scan.p.first[r] + levels.offset[m.h]) * pitch;
+                    T* centre = centres + m.first * pitch;
+                    T* rhs = suf + scan.q.first[r] * pitch;
+                    if constexpr (!Backward) {
+                        if (fuse_products && m.head > 1 && rows * cols <= 16384) {
+                            const uint64_t splits = std::max<uint64_t>(1, gpu_split_k::chunks(n, rows, cols));
+                            gpu_split_k::gemm<true, true>(head, rhs, partial, product, count, n, rows, cols,
+                                pitch, splits, stride, stride, true, stream, centre, m.groups);
+                            if (step && r) transfer.template operator()<false>(r);
+                            continue;
+                        }
+                    }
+                    T* lhs = m.head == 1 ? centre : left;
+                    if (m.head != 1) {
+                        scan_left<false><<<grid(rows * pitch), 256, 0, stream>>>(left, dp, dc, head, centre, m, scan, count, stride);
+                        CUDA_CHECK(cudaGetLastError());
+                    }
+                    if (cols == 1) {
+                        scan_constant_mode<Backward><<<make_cuda_1d_grid(count * rows, 4), 128, 0, stream>>>(
+                            Backward ? dc + m.first * pitch : nullptr, product, centre, unsigned(rows), scan, count, stride);
+                        CUDA_CHECK(cudaGetLastError());
+                        continue;
+                    }
+                    if constexpr (Backward) {
+                        T* dleft = m.head == 1 ? dc + m.first * pitch : dl;
+                        matrices.gemm({product, rows, cols, cols, 1, stride}, {rhs, cols, n, pitch, 1, stride},
+                            {dleft, rows, n, pitch, 1, stride}, true);
+                        matrices.gemm({product, cols, rows, 1, cols, stride}, {lhs, rows, n, pitch, 1, stride},
+                            {dq + scan.q.first[r] * pitch, cols, n, pitch, 1, stride}, true);
+                        if (m.head != 1) {
+                            scan_left<true><<<grid((m.head + m.groups) * pitch), 256, 0, stream>>>(dl, dp + (head - pre),
+                                dc + m.first * pitch, head, centre, m, scan, count, stride);
+                            CUDA_CHECK(cudaGetLastError());
+                        }
+                        if (r + 1 < modes.size()) transfer.template operator()<true>(r);
+                    } else {
+                        const uint64_t splits = gpu_split_k::chunks(n, rows, cols);
+                        if (splits) gpu_split_k::gemm<true>(lhs, rhs, partial, product, count, n, rows, cols,
+                            pitch, splits, stride, stride, true, stream);
+                        else matrices.gemm({lhs, rows, n, pitch, 1, stride}, {rhs, n, cols, 1, pitch, stride},
+                            {product, rows, cols, cols, 1, stride}, true);
+                        if (step && r) transfer.template operator()<false>(r);
+                    }
+                    continue;
+                }
                 const uint64_t bytes = sizeof(T) * (2 * cols + l.offset[m.h + 1] + m.groups + m.head);
                 if (bytes <= 32768) {
                     auto fill = [&]<unsigned D, unsigned Threads>() {
@@ -584,6 +691,32 @@ bool compute(const T* path, const T* seed, T* out, const Layout& l, int device, 
                 }
             }
             if constexpr (Backward) {
+                if (scanned) {
+                    auto reverse = [&]<unsigned D>() {
+                        for (unsigned k = scan.q.depth; k > 0; --k) {
+                            const uint64_t tasks = count * l.power[k] * (1 + unsigned(k <= scan.p.depth));
+                            if (n >= 512) scan_reverse_level<D, 128><<<make_cuda_1d_grid(tasks, 1), 128, 0, stream>>>(pre, suf,
+                                dp, dq, centres, zp, zq, cp, cq, grad, scan, levels, k, count, stride, sig_stride, scalar);
+                            else scan_reverse_level<D, 32><<<make_cuda_1d_grid(tasks, 4), 128, 0, stream>>>(pre, suf,
+                                dp, dq, centres, zp, zq, cp, cq, grad, scan, levels, k, count, stride, sig_stride, scalar);
+                            CUDA_CHECK(cudaGetLastError());
+                        }
+                        scan_increment_gradient<D><<<make_cuda_1d_grid(count * l.d * (pitch / 32), 1), 256, 0, stream>>>(
+                            pre, suf, zp, zq, cp, cq, centres, dc, inc, terms, indices + derivative_offsets,
+                            scan, levels, count, stride);
+                    };
+                    switch (l.d) {
+                    case 2: reverse.template operator()<2>(); break;
+                    case 3: reverse.template operator()<3>(); break;
+                    case 4: reverse.template operator()<4>(); break;
+                    default: reverse.template operator()<0>(); break;
+                    }
+                    CUDA_CHECK(cudaGetLastError());
+                    cuda_detail::path_backprop_kernel<<<grid(path_stride), 256, 0, stream>>>(inc, result, count,
+                        l.d, n + 1, l.d, n, stride, false);
+                    CUDA_CHECK(cudaGetLastError());
+                    continue;
+                }
                 increment_adjoints<<<grid(32 * inc_size), 256, 0, stream>>>(poly, dpoly, dc, dv, terms,
                     indices + derivative_offsets, levels, unsigned(n), count, stride);
                 CUDA_CHECK(cudaGetLastError());
@@ -610,7 +743,7 @@ bool compute(const T* path, const T* seed, T* out, const Layout& l, int device, 
             CUDA_CHECK(cudaGetLastError());
         }
         if constexpr (Backward) CUDA_CHECK(cudaMemcpyAsync(&unsafe, flag, sizeof(int), cudaMemcpyDeviceToHost, stream));
-    });
+    }, packed_metadata.data());
     return !unsafe;
 }
 

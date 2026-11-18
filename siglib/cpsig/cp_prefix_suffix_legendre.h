@@ -76,6 +76,35 @@ void legendre_expand(const LegendreMode& mode, const LegendreMode& next, const L
 }
 
 template<bool Backward, typename T>
+void legendre_levels(const T* seed, T* out, bool scalar, const Layout& l,
+    const LegendrePlan& plan, T* const buffers[2], int jobs) {
+    const auto& base = plan.modes.front();
+    const unsigned d = unsigned(l.d);
+    for (unsigned s = 0; s <= plan.b; ++s) {
+        const uint64_t width = l.power[s], level = l.offset[plan.a + s] - !scalar;
+        parallel_range(base.rows(), jobs, [&](uint64_t first, uint64_t end) {
+            for (uint64_t row = first; row < end; ++row) {
+                T* packed = buffers[0] + row * base.cols + l.offset[s];
+                if constexpr (Backward) std::copy_n(seed + level + row * width, width, packed);
+                else if (!s) out[level + row] = packed[0];
+                else {
+                    const auto& next = plan.modes[1];
+                    const unsigned pair = unsigned(row % (d * d));
+                    const uint64_t tail = l.power[s - 1];
+                    for (unsigned y = 0; y < d; ++y) {
+                        const uint64_t group = row / (d * d) * next.groups + base.grow[pair * d + y];
+                        vec_add_scaled(out + level + row * width + y * tail, packed + y * tail,
+                            buffers[1] + group * next.cols + l.offset[s - 1], T(1), tail);
+                    }
+                }
+            }
+        });
+    }
+}
+
+#include "cp_prefix_suffix_moment_scan.h"
+
+template<bool Backward, typename T>
 void legendre_path(const T* path, const T* seed, T* out, bool scalar, const Layout& l,
     const LegendrePlan& plan, uint64_t n, uint64_t block, int jobs, T* storage) {
     const unsigned d = unsigned(l.d), a = plan.a, b = plan.b;
@@ -109,30 +138,7 @@ void legendre_path(const T* path, const T* seed, T* out, bool scalar, const Layo
     }
     if constexpr (Backward) std::copy_n(seed + scalar, plen - 1, dq + 1);
     else std::copy(q + !scalar, q + plen, out);
-    const auto& base = plan.modes.front();
-    auto map_levels = [&] {
-        for (unsigned s = 0; s <= b; ++s) {
-            const uint64_t width = l.power[s], level = l.offset[a + s] - !scalar;
-            parallel_range(base.rows(), jobs, [&](uint64_t first, uint64_t end) {
-                for (uint64_t row = first; row < end; ++row) {
-                    T* packed = buffers[0] + row * qlen + l.offset[s];
-                    if constexpr (Backward) std::copy_n(seed + level + row * width, width, packed);
-                    else if (!s) out[level + row] = packed[0];
-                    else {
-                        const auto& next = plan.modes[1];
-                        const unsigned pair = unsigned(row % (d * d));
-                        const uint64_t tail = l.power[s - 1];
-                        for (unsigned y = 0; y < d; ++y) {
-                            const uint64_t group = row / (d * d) * next.groups + base.grow[pair * d + y];
-                            vec_add_scaled(out + level + row * width + y * tail, packed + y * tail,
-                                buffers[1] + group * next.cols + l.offset[s - 1], T(1), tail);
-                        }
-                    }
-                }
-            });
-        }
-    };
-    if constexpr (Backward) map_levels();
+    if constexpr (Backward) legendre_levels<true>(seed, out, scalar, l, plan, buffers, jobs);
     for (uint64_t i = 0; i < n; ++i) {
         const T* v = inc + i * d;
         T* m = mon + i * plan.groups;
@@ -235,7 +241,7 @@ void legendre_path(const T* path, const T* seed, T* out, bool scalar, const Layo
                 out[(i + 1) * d + c] = dv[i * d + c] - (i + 1 < n ? dv[(i + 1) * d + c] : T(0));
         }
         for (unsigned c = 0; c < d; ++c) out[c] = -dv[c];
-    } else map_levels();
+    } else legendre_levels<false>(seed, out, scalar, l, plan, buffers, jobs);
 }
 
 template<bool Backward, typename T>
@@ -296,7 +302,23 @@ bool legendre_batch(const T* path, const T* seed, T* out, uint64_t batch, uint64
         }
         return true;
     }
-    const LegendrePlan plan(l);
+    const bool shorter_prefix = !Backward && l.m == 7 && l.d >= 3 && l.d <= 6 && n >= 128 && n <= 512;
+    LegendrePlan plan(l, shorter_prefix ? 3 : 0);
+    if (n >= 16) {
+        const MomentRows p(l, plan.a - 1), q(l, plan.b);
+        const uint64_t block = std::min(n, std::max<uint64_t>(128, plan.tile(n, sizeof(T), Backward) * std::min(inner, 4)));
+        const uint64_t rows = p.size + q.size + plan.groups;
+        const uint64_t size = plan.buffers[0] + plan.buffers[1] + (1 + Backward) * (n * rows + block * plan.max_rows)
+            + (Backward ? n * l.power[q.depth] : 0);
+        if (size <= std::min<uint64_t>(256ULL << 20, option("PYSIGLIB_PS_WORKSPACE_BYTES", UINT64_MAX)) / sizeof(T)) {
+            for_paths<T>(batch, jobs, size, "CPU prefix-suffix", [&](uint64_t i, T* memory) {
+                scanned_legendre_path<Backward>(path + i * path_stride, Backward ? seed + i * sig_stride : nullptr,
+                    out + i * (Backward ? path_stride : sig_stride), scalar, l, plan, p, q, n, block, inner, memory);
+            });
+            return true;
+        }
+    }
+    if (shorter_prefix) plan = LegendrePlan(l);
     const uint64_t block = std::min(n, plan.tile(n, sizeof(T), Backward) * std::min(inner, 8));
     const uint64_t size = plan.workspace(l, n, block, Backward)
         + 4 * uint64_t(std::max(0, inner - 2)) * l.offset[plan.b + 1];

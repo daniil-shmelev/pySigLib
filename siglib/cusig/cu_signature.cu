@@ -2477,7 +2477,7 @@ void signature_cuda_(
 	bool fp64_emulation
 ) {
 	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
-		time_aug || lead_lag, correction_len, true, false)) {
+		time_aug || lead_lag, correction_len, true, false, fp64_emulation)) {
 		if (correction_len) {
 			if (!dimension) throw std::invalid_argument("signature_cuda received path of dimension 0");
 			validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
@@ -3328,7 +3328,7 @@ void sig_backprop_cuda_(
 	bool fp64_emulation
 ) {
 	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
-		time_aug || lead_lag, correction_len, true, true)) {
+		time_aug || lead_lag, correction_len, true, true, fp64_emulation)) {
 		if (correction_len) {
 			if (!dimension) throw std::invalid_argument("sig_backprop_cuda received path of dimension 0");
 			validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
