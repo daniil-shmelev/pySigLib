@@ -118,9 +118,10 @@ void log_moments_(const siglasso::LogMomentPlan& plan, const double* polynomial,
 // Integrate a child directly into the three moments used by the final two
 // letters. Its Bernstein control points only live in registers. The next
 // log-series level contributes a constant shift on every segment.
-template<typename D>
-void log_child_integrals_block(D tag, const double* parent, const double* dx, double* out, double* values,
-                              size_t n, size_t l, size_t stride, size_t h, size_t i) {
+template<size_t fixed_degree, typename D>
+HWY_INLINE void log_child_integrals_block(D tag, const double* parent, const double* dx, double* out, double* values,
+                              size_t n, size_t l, size_t stride, size_t degree, size_t i) {
+    const size_t h = fixed_degree ? fixed_degree : degree;
     const size_t plane = n * l;
     auto first = hn::Zero(tag), second = hn::Zero(tag), third = hn::Zero(tag);
     const auto mean = hn::Set(tag, 1. / (h + 1)), moment = hn::Set(tag, 1. / ((h + 1) * (h + 2)));
@@ -152,9 +153,14 @@ void log_child_integrals_(const double* parent, const double* dx, double* out, d
                          size_t n, size_t l, size_t stride, size_t h, size_t begin, size_t end) {
     const hn::ScalableTag<double> tag;
     const size_t lanes = hn::Lanes(tag);
-    size_t i = begin;
-    for (; i + lanes <= end; i += lanes) log_child_integrals_block(tag, parent, dx, out, values, n, l, stride, h, i);
-    for (; i < end; ++i) log_child_integrals_block(hn::CappedTag<double, 1>(), parent, dx, out, values, n, l, stride, h, i);
+    const auto apply = [&]<size_t degree>() {
+        size_t i = begin;
+        for (; i + lanes <= end; i += lanes) log_child_integrals_block<degree>(tag, parent, dx, out, values, n, l, stride, h, i);
+        for (; i < end; ++i) log_child_integrals_block<degree>(hn::CappedTag<double, 1>(), parent, dx, out, values, n, l, stride, h, i);
+    };
+    if (h == 1) apply.template operator()<1>();
+    else if (h == 2) apply.template operator()<2>();
+    else apply.template operator()<0>();
 }
 
 template<typename D>
@@ -191,12 +197,13 @@ void log_terminal_products_block(D tag, const double* integrals, const double* i
         displacement = hn::Add(displacement, hn::LoadU(tag, increments + (j * d + letter) * n + i));
     auto tail = displacement, squared = hn::Zero(tag), magnitude = hn::Zero(tag);
     for (size_t j = 0; j < l; ++j) {
-        auto value = hn::LoadU(tag, integrals + j * n + i), absolute = hn::Abs(value);
+        auto value = integrals ? hn::LoadU(tag, integrals + j * n + i) : hn::Set(tag, 1.);
+        auto absolute = hn::Abs(value);
         if (suffix == 2) {
             const auto step = hn::LoadU(tag, increments + (j * d + letter) * n + i);
             const auto left = hn::Mul(value, tail);
-            const auto right = hn::Mul(step, hn::LoadU(tag, integrals + stride + j * n + i));
-            const auto extra = hn::Mul(displacement, hn::LoadU(tag, integrals + 2 * stride + j * n + i));
+            const auto right = hn::Mul(step, integrals ? hn::LoadU(tag, integrals + stride + j * n + i) : hn::Set(tag, .5));
+            const auto extra = hn::Mul(displacement, integrals ? hn::LoadU(tag, integrals + 2 * stride + j * n + i) : hn::Set(tag, -.5));
             value = hn::Add(hn::Sub(left, right), extra);
             absolute = hn::Add(hn::Add(hn::Abs(left), hn::Abs(right)), hn::Abs(extra));
             tail = hn::Sub(tail, step);
@@ -224,7 +231,8 @@ void log_terminal_values_block(D tag, const double* products, const double* incr
     size_t n, size_t l, size_t d, size_t letter, size_t i) {
     auto value = hn::Zero(tag), correction = hn::Zero(tag);
     for (size_t j = 0; j < l; ++j) {
-        const auto term = hn::Mul(hn::LoadU(tag, products + j * n + i), hn::LoadU(tag, increments + (j * d + letter) * n + i));
+        const auto step = hn::LoadU(tag, increments + (j * d + letter) * n + i);
+        const auto term = products ? hn::Mul(hn::LoadU(tag, products + j * n + i), step) : step;
         const auto adjusted = hn::Sub(term, correction), next = hn::Add(value, adjusted);
         correction = hn::Sub(hn::Sub(next, value), adjusted); value = next;
     }

@@ -196,3 +196,42 @@ def test_restricted_gram_survives_drops_and_insertions():
         values = columns(x, group, 'sig')
         corr = np.maximum(corr, np.abs(values.T @ (y - score)).max(axis=0) / len(y))
     assert np.all(corr - alpha <= 1e-9)
+
+
+@pytest.mark.parametrize('mode', ['sig', 'log'])
+@pytest.mark.parametrize('max_iter', [1, 3000])
+def test_degree_continuation_checks_a_new_level_for_each_response(mode, max_iter):
+    rng = np.random.default_rng(1593)
+    paths = np.zeros((113, 8, 24))
+    paths[:, :, :3] = rng.normal(size=(113, 8, 3)).cumsum(axis=1)
+    x = normalize(paths[:, :, :3].copy())
+    # The first response has no signal on any lower-degree column. A second
+    # response can keep adding lower-degree words at the same search pass.
+    covariance = np.ones((len(x), len(x)))
+    for block in batches(dictionary(3, 3, mode), 7):
+        design = columns(x, block, mode)
+        covariance += design @ design.T
+    eigenvalues, vectors = np.linalg.eigh(covariance)
+    span = vectors[:, eigenvalues > eigenvalues[-1] * 1e-13]
+    signal = columns(x, [(0, 0, 1, 2)], mode)[:, 0]
+    high = signal - span @ (span.T @ signal)
+    endpoints = columns(x, [(0,), (1,)], mode)
+    y = np.column_stack([high, endpoints @ [1., 2.] + high, np.ones(len(x))])
+    alpha = np.array([.15 * (high @ high) / len(x), .004, .01])
+    with pytest.warns(RuntimeWarning, match='global KKT') if max_iter == 1 else nullcontext():
+        model = pysiglib.sig_lasso(paths, y, 4, alpha, feature_type=mode, n_jobs=3, max_iter=max_iter, tol=1e-9)
+    words = list(map(tuple, model['words']))
+    assert any(len(w) == 4 and model['coef'][j, 0] != 0 for j, w in enumerate(words))
+    assert model['stats']['full_transform_calls'] == 0
+    residual = y - model['signatures'] @ model['coef'] - model['intercept']
+    max_corr = np.zeros(3)
+    # Every word involving any of the padded channels vanishes identically.
+    for block in batches(dictionary(3, 4, mode), 17):
+        design = columns(x, block, mode)
+        max_corr = np.maximum(max_corr, abs((design - design.mean(0)).T @ residual).max(0) / len(x))
+    assert np.all(max_corr - alpha <= model['kkt_violation'] + 2e-13)
+    theta = (residual - residual.mean(0)) / len(x) * np.minimum(1., alpha / np.maximum(max_corr, 1e-300))
+    dual = (theta * (y - .5 * len(x) * theta)).sum(0)
+    np.testing.assert_allclose(model['dual_gap'], model['objective'] - dual, atol=2e-11)
+    if max_iter > 1:
+        assert model['converged'].all()

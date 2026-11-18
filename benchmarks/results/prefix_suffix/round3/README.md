@@ -1,5 +1,7 @@
 # Signature and tensor-log branch-and-bound benchmarks
 
+The next comparison uses this implementation as its baseline on the same audio splits. [Degree-continuation benchmarks](../round4/README.md)
+
 On the 14 configurations in the paper, the sum of median fit times fell from **5.40 s to 4.41 s**, a **1.23× speedup** over the preceding optimized solver. Across the three repetitions of all 26 configurations, the two builds selected identical word sets and agreed on every held-out class label. The fits used the tree throughout and recorded zero full-transform calls. [Individual measurements and numerical checks](measurements.json)
 
 Including the 12 additional tensor-log experiments, the combined signature fit time improved by 1.23× and the combined tensor-log fit time by 2.32×. Every configuration had a shorter median fit time. Tracked peak native allocation fell on 22 configurations and tied on four. Additional process peak RSS fell on 19 configurations and rose on seven. The largest increase was 3.30 MiB on the degree-two Speech Commands signature fit.

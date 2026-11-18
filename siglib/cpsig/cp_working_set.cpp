@@ -44,6 +44,7 @@ struct Term {
     Column column;
     double beta, max_abs;
     size_t gram_index = SIZE_MAX;
+    double gradient_correlation = 0.;
 };
 
 // A bounded direct-mapped cache shares Gram entries for live feature columns
@@ -161,8 +162,9 @@ struct Restricted {
         double sum = std::accumulate(gradient.data, gradient.data + y.size, 0.);
         intercept_error = has_intercept() ? std::abs(sum) : 0;
         active_error = 0;
-        for (const auto& t : terms) {
+        for (auto& t : terms) {
             const double c = b.dot(t.column.values.data, gradient.data, y.size);
+            t.gradient_correlation = c;
             active_error =
                 std::max(active_error, t.beta ? std::abs(c + std::copysign(alpha, t.beta)) : std::max(0., std::abs(c) - alpha));
         }
@@ -311,7 +313,8 @@ struct Restricted {
         for (size_t i = 0; i < count; ++i) {
             const size_t row = ids[i];
             direction.data[i] = -corr.data[row] - (row < offset ? 0. : std::copysign(alpha, terms[row - offset].beta));
-            for (size_t j = 0; j < count; ++j) matrix.data[i * count + j] = gram.data[row * k + ids[j]];
+            // The column-major Cholesky solver reads only its lower triangle.
+            for (size_t j = i; j < count; ++j) matrix.data[i * count + j] = gram.data[row * k + ids[j]];
         }
         if (!solve_positive_definite(matrix.data, direction.data, count)) return false;
         double step = 1.;
@@ -422,7 +425,7 @@ struct Restricted {
         for (size_t sweep = 0; sweep < 250000;) {
             corr.data[0] = std::accumulate(gradient.data, gradient.data+y.size, 0.);
             for (size_t j = offset; j < k; ++j)
-                corr.data[j] = b.dot(terms[j-offset].column.values.data, gradient.data, y.size);
+                corr.data[j] = terms[j-offset].gradient_correlation;
             for (size_t inner = 0; inner < 256 && sweep < 250000; ++inner) {
                 ++sweep;
                 ++b.experiment_stats[InnerSweeps];
@@ -431,6 +434,7 @@ struct Restricted {
                         order[j] = {-priority(j < offset ? intercept : terms[j-offset].beta, corr.data[j], gram.data[j*k+j], j < offset ? 0. : alpha), j};
                     std::sort(order.begin(), order.end());
                 }
+                bool stable_signs = true;
                 for (size_t index = 0; index < k; ++index) {
                     const size_t j = ordered ? order[index].second : index;
                     double& coef = j < offset ? intercept : terms[j-offset].beta;
@@ -442,11 +446,12 @@ struct Restricted {
                     const double next = std::copysign(std::max(0., std::abs(u)-penalty), u)/h;
                     const double delta = finite(next-coef);
                     if (delta) {
+                        stable_signs &= (next > 0.) == (coef > 0.) && (next < 0.) == (coef < 0.);
                         coef = next;
                         b.axpy(delta, gram.at(j*k), corr.data, k);
                     }
                 }
-                if ((b.options.restricted_solver & polish_solver_flag) && (inner % 8 == 3) && polish(gram, corr)) {
+                if ((b.options.restricted_solver & polish_solver_flag) && ((stable_signs && inner < 3) || inner % 8 == 3) && polish(gram, corr)) {
                     age = 0;
                     if (history.owner) save_iterate(history.data);
                 } else accelerate(history, age, {}, gram, corr);
@@ -588,7 +593,10 @@ Result fit(Backend& b, uint32_t mode, const std::vector<double>& alphas, const s
         const auto failures = b.stats.numerical_failures;
         Restricted s{b, b.response(target), b.alloc(o.samples), b.alloc(o.samples), b.alloc(o.samples), {}, alphas[target]};
         if (share) s.shared_gram = &shared_gram;
-        const double tau = std::min(o.tolerance, 1e-4 * s.alpha);
+        // Joint shortlists can reach a weakly active coordinate by different
+        // routes. Resolve small violations relative to the individual penalty.
+        const double certificate_tol = std::min(o.tolerance, 1e-4 * s.alpha);
+        const double tau = share ? std::min(certificate_tol, 1e-6 * s.alpha) : certificate_tol;
         double inner_tol = o.experiment & 2 ? std::max(tau, .1 * s.alpha) : tau;
         double best_dual = 0, best_scale = 0, best_stamp = 0, best_offset = 0;
         s.intercept = s.initial_intercept();
@@ -600,6 +608,7 @@ Result fit(Backend& b, uint32_t mode, const std::vector<double>& alphas, const s
         size_t pool_capacity = std::min<size_t>(experimental_candidate_pool.load(), b.budget->available() / candidate_bytes / 4);
         if (degree == 1) pool_capacity = std::min<size_t>(pool_capacity, std::max<size_t>(16, o.dimension));
         if (share && o.dimension < 24) pool_capacity = std::min<size_t>(pool_capacity, degree == 2 ? 96 : 160);
+        if (share && mode == 1 && o.dimension < 96 && degree >= 3) pool_capacity = std::min<size_t>(pool_capacity, 128);
         if (pool_capacity < 16) pool_capacity = 0;
         const double pool_refresh = experimental_pool_refresh.load();
         double last_excess = 0;
@@ -609,7 +618,7 @@ Result fit(Backend& b, uint32_t mode, const std::vector<double>& alphas, const s
         double inactive = 0, raw_inactive = 0;
         for (;;) {
             auto start = Clock::now();
-            if (updates >= o.max_iter) inner_tol = tau;
+            if (updates >= o.max_iter) inner_tol = certificate_tol;
             bool solved = s.solve(inner_tol, std::max(o.tolerance, inner_tol));
             b.stats.solve_seconds += elapsed(start);
             size_t before = s.terms.size();
@@ -670,6 +679,7 @@ Result fit(Backend& b, uint32_t mode, const std::vector<double>& alphas, const s
             if (found.candidates.empty()) {
                 pool.clear();
                 AwaitSeparation request{{s.residual, s.alpha, s.alpha + tau * .9, active, pool_capacity ? pool_capacity : capacity, {}}};
+                request.allow_lower_degree = !last;
                 const double local_seconds = elapsed(start);
                 found = co_await request;
                 separation_seconds = local_seconds + request.seconds;
@@ -738,7 +748,7 @@ Result fit(Backend& b, uint32_t mode, const std::vector<double>& alphas, const s
                                                                      : std::max(0., std::abs(corr) - s.alpha));
                 }
                 converged = solved && !b.uncertain_features && (share || b.stats.numerical_failures == failures) &&
-                            s.intercept_error <= o.tolerance && s.active_error <= tau && raw_inactive <= s.alpha + tau;
+                            s.intercept_error <= o.tolerance && s.active_error <= certificate_tol && raw_inactive <= s.alpha + certificate_tol;
                 if (!solved)
                     ++b.stats.numerical_failures;
                 b.stats.certification_seconds += separation_seconds + elapsed(start);

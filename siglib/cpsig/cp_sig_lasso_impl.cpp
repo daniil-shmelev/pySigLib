@@ -21,6 +21,7 @@
 #include "cp_lasso_features.h"
 #include "cp_lasso_acceleration.h"
 #include "multithreading.h"
+#include <bit>
 #include <cstring>
 
 #undef HWY_TARGET_INCLUDE
@@ -36,6 +37,7 @@ class LassoCPU final : public siglasso::Backend, public siglasso::HostSearch {
     uint32_t feature_type_ = 0;
     unsigned bound_type_ = 0;
     bool terminal_only_ = false;
+    size_t proposal_degree = 0;
     siglasso::Array tt_suffix_;
     siglasso::Array responses_, endpoint_variation_;
     const void* endpoint_input_ = nullptr;
@@ -190,7 +192,7 @@ class LassoCPU final : public siglasso::Backend, public siglasso::HostSearch {
         channels_.resize(d);
         pinned_.resize(d);
         cold_shards_ = std::clamp<size_t>(d / 16, 1, cold_.size());
-        const size_t hot_channels = feature_type_ == 1 ? std::min<size_t>(12, d / 3) : std::min<size_t>(48, d / 2);
+        const size_t hot_channels = feature_type_ == 1 ? std::min<size_t>(8, d / 4) : std::min<size_t>(48, d / 2);
         const size_t keep = std::max<size_t>(1, hot_channels);
         auto bank = alloc(siglasso::multiply(keep, n * l));
         for (size_t pos = 0; pos < keep; ++pos) {
@@ -294,12 +296,16 @@ class LassoCPU final : public siglasso::Backend, public siglasso::HostSearch {
     double* summary_values(Summary* entry) { return summary_values_.data + (entry - summaries_.data()) * 2 * options.samples; }
     // Independent SIMD accumulators shorten the dependency chain. Terminal
     // bounds include their reduction error. Exact correlations still use dot().
-    template<bool square = false> double reduction(const double* a, const double* b, size_t n) {
+    template<bool square = false, class T> double reduction(const T* a, const double* b, size_t n) {
         const hn::ScalableTag<double> tag;
         const size_t lanes = hn::Lanes(tag);
         auto s0 = hn::Zero(tag), s1 = s0, s2 = s0, s3 = s0;
         const auto add = [&](auto sum, size_t i) {
-            const auto x = hn::LoadU(tag, a + i), y = hn::LoadU(tag, b + i);
+            const auto x = [&] {
+                if constexpr (std::is_same_v<T, float>) return hn::PromoteTo(tag, hn::LoadU(hn::Rebind<float, decltype(tag)>(), a + i));
+                else return hn::LoadU(tag, a + i);
+            }();
+            const auto y = hn::LoadU(tag, b + i);
             if constexpr (square) {
                 const auto product = hn::Mul(x, y);
                 return hn::MulAdd(product, product, sum);
@@ -322,6 +328,7 @@ class LassoCPU final : public siglasso::Backend, public siglasso::HostSearch {
         return std::isfinite(value) ? value : std::numeric_limits<double>::infinity();
     }
     double bound_dot(const double* a, const double* b, size_t n) override { return reduction(a, b, n); }
+    double bound_dot(const float* a, const double* b, size_t n) override { return reduction(a, b, n); }
     double weighted_square(const double* a, const double* b, size_t n) override { return reduction<true>(a, b, n); }
     template<typename Function> void batch(size_t count, Function action) {
         if (options.n_jobs == 1 || count <= 1) action(0, count);
@@ -402,6 +409,7 @@ public:
         bound_type_ = source.bound_type_; tt_suffix_ = source.tt_suffix_; terminal_only_ = source.terminal_only_;
         terminal_channel_norms_ = source.terminal_channel_norms_; channel_group_norms_ = source.channel_group_norms_;
         terminal_sample_norms_ = source.terminal_sample_norms_;
+        compact_panels_ = source.compact_panels_;
     }
     template<typename T>
     LassoCPU(const siglasso::SearchOptions& o, const T* paths, const T* y, uint32_t feature_type = 0,
@@ -467,17 +475,30 @@ public:
     double dot(const double* a, const double* b, size_t n) override {
         const hn::ScalableTag<double> d;
         const auto lanes = hn::Lanes(d);
-        auto sum = hn::Zero(d);
-        auto correction = hn::Zero(d);
-        size_t j = 0;
-        for (; j + lanes <= n; j += lanes) {
+        auto sum0 = hn::Zero(d), sum1 = sum0, sum2 = sum0, sum3 = sum0;
+        auto err0 = sum0, err1 = sum0, err2 = sum0, err3 = sum0;
+        const auto accumulate = [&](size_t j, auto& sum, auto& correction) {
             const auto product = hn::Mul(hn::LoadU(d, a + j), hn::LoadU(d, b + j));
             const auto next = hn::Add(sum, product);
             correction = hn::Add(correction, hn::IfThenElse(hn::Ge(hn::Abs(sum), hn::Abs(product)),
                 hn::Add(hn::Sub(sum, next), product), hn::Add(hn::Sub(product, next), sum)));
             sum = next;
+        };
+        size_t j = 0;
+        for (; j + 4 * lanes <= n; j += 4 * lanes) {
+            accumulate(j, sum0, err0); accumulate(j + lanes, sum1, err1);
+            accumulate(j + 2 * lanes, sum2, err2); accumulate(j + 3 * lanes, sum3, err3);
         }
-        double result = hn::ReduceSum(d, sum), error = hn::ReduceSum(d, correction);
+        for (; j + lanes <= n; j += lanes) accumulate(j, sum0, err0);
+        // Compensate the combination of the four long partial sums as well.
+        const auto merge = [&](auto other) {
+            const auto next = hn::Add(sum0, other);
+            err0 = hn::Add(err0, hn::IfThenElse(hn::Ge(hn::Abs(sum0), hn::Abs(other)),
+                hn::Add(hn::Sub(sum0, next), other), hn::Add(hn::Sub(other, next), sum0)));
+            sum0 = next;
+        };
+        merge(sum1); merge(sum2); merge(sum3);
+        double result = hn::ReduceSum(d, sum0), error = hn::ReduceSum(d, hn::Add(hn::Add(err0, err1), hn::Add(err2, err3)));
         for (; j < n; ++j) {
             const double value = a[j] * b[j], next = result + value;
             error += std::abs(result) >= std::abs(value) ? (result - next) + value : (value - next) + result;
@@ -531,6 +552,70 @@ public:
     size_t norm_index(size_t block) const {
         const auto [low, high] = alphabet[block];
         return high - low == 1 ? low : options.dimension + block - low;
+    }
+    // Nonnegative bfloat16 values are ordered by their unsigned encoding.
+    // Round each leaf upward once. Every internal maximum then stays exact
+    // in the encoded representation without accumulating quantisation error.
+    struct PanelEnvelopes {
+        std::vector<uint16_t> codes;
+        std::shared_ptr<void> storage;
+    };
+    std::shared_ptr<PanelEnvelopes> compact_panels_;
+    static double panel_value(uint16_t bits) {
+        return std::bit_cast<float>(static_cast<uint32_t>(bits) << 16);
+    }
+    static uint16_t upper_panel(double value) {
+        const auto code = static_cast<uint16_t>(std::bit_cast<uint32_t>(static_cast<float>(value)) >> 16);
+        return code + (panel_value(code) < value);
+    }
+    double compact_bound(size_t block, const double* moments, const siglasso::Array& residual, double* majorant) {
+        const size_t n = options.samples;
+        // Sum the nonnegative panel majorants once per sample. The
+        // same geometry bounds every response in the joint query.
+        for (size_t j = 0; j < panels(); ++j) {
+            const double* moment = moments + j * n;
+            const auto* step = compact_panels_->codes.data() + (block * panels() + j) * n;
+            if (!j) for (size_t i = 0; i < n; ++i) majorant[i] = moment[i] * panel_value(step[i]);
+            else for (size_t i = 0; i < n; ++i) majorant[i] += moment[i] * panel_value(step[i]);
+        }
+        double maximum = 0.;
+        if (batch_absolute.empty()) {
+            for (size_t i = 0; i < n; ++i) maximum += std::abs(residual.data[i]) * majorant[i];
+        } else for (const auto& r : batch_absolute)
+            maximum = std::max(maximum, bound_dot(r.data, majorant, n));
+        return maximum;
+    }
+    void prepare_compact_panels() {
+        const size_t n = options.samples, l = options.length - 1, count = panels();
+        const size_t stride = siglasso::multiply(count, n);
+        compact_panels_ = std::make_shared<PanelEnvelopes>();
+        auto& table = *compact_panels_;
+        const size_t size = siglasso::multiply(alphabet.size(), stride);
+        table.storage = account(siglasso::multiply(size, sizeof(uint16_t)));
+        table.codes.resize(size);
+        batch(alphabet.size(), [&](size_t begin, size_t end) {
+            for (size_t block = begin; block < end; ++block) {
+                const auto [low, high] = alphabet[block];
+                if (high - low != 1) continue;
+                const auto steps = channel(low);
+                for (size_t g = 0; g < count; ++g) {
+                    auto* out = table.codes.data() + (block * count + g) * n;
+                    for (size_t j = g * panel_size(); j < std::min(l, (g + 1) * panel_size()); ++j) {
+                        const double* x = steps.values.data + j * steps.dimension * n;
+                        for (size_t i = 0; i < n; ++i) out[i] = std::max(out[i], upper_panel(std::abs(x[i])));
+                    }
+                }
+            }
+        });
+        for (size_t block = alphabet.size(); block-- > 0;) {
+            const auto [low, high] = alphabet[block];
+            if (high - low == 1) continue;
+            const size_t right = block + 2 * ((low + high) / 2 - low);
+            const auto* left_child = table.codes.data() + (block + 1) * stride;
+            const auto* right_child = table.codes.data() + right * stride;
+            auto* out = table.codes.data() + block * stride;
+            for (size_t i = 0; i < stride; ++i) out[i] = std::max(left_child[i], right_child[i]);
+        }
     }
     void prepare() override {
         if (endpoint_input_) return;
@@ -598,6 +683,11 @@ public:
             }
         }
         if (terminal_only_) return;
+        if (responses_.owner && joint_search_enabled() && panel_size() > 1 && l) {
+            prepare_compact_panels();
+            prepare_tt();
+            return;
+        }
         const size_t stored = absolute_steps() && panel_size() == 1 ? alphabet.size() - d : alphabet.size();
         alphabet_ratios = alloc(siglasso::multiply(stored, siglasso::multiply(n, panels())));
         batch(n, [&](uint64_t begin, uint64_t end) {
@@ -870,6 +960,16 @@ public:
     class BatchedSearch final : public siglasso::FeatureSearch {
         LassoCPU& b_;
         std::unique_ptr<siglasso::FeatureSearch> tree_;
+        bool lower_degree_;
+        void complete_dictionary() {
+            if (!lower_degree_) return;
+            if (b_.feature_type_) {
+                tree_.reset();
+                tree_ = siglasso::make_cpu_feature_search(b_, b_.feature_type_);
+            }
+            b_.proposal_degree = 0;
+            lower_degree_ = false;
+        }
         std::shared_ptr<const siglasso::QuantizedColumn> pack(const double* values, size_t n) const {
             auto packed = std::make_shared<siglasso::QuantizedColumn>();
             packed->storage = b_.account(128 + n * sizeof(int16_t));
@@ -887,12 +987,41 @@ public:
             return packed;
         }
     public:
-        BatchedSearch(LassoCPU& b, std::unique_ptr<siglasso::FeatureSearch> tree) : b_(b), tree_(std::move(tree)) {}
-        size_t response_batch() const override { return b_.options.dimension >= 96 ? siglasso::max_response_batch : (b_.feature_type_ == 1 ? 6 : 5); }
-        // With s_t = min(alpha)/alpha_t, the common envelope dominates every
-        // |s_t r_t|. A branch below min(alpha) is certified for all targets.
-        // Exact signed scores decide inclusion in each target's own heap.
+        BatchedSearch(LassoCPU& b, std::unique_ptr<siglasso::FeatureSearch> tree, bool lower) : b_(b), tree_(std::move(tree)), lower_degree_(lower) {}
+        size_t response_batch() const override {
+            if (b_.options.degree == 2 && b_.options.dimension < 96) return b_.feature_type_ ? 6 : 5;
+            if (!b_.feature_type_ && b_.options.degree == 3 && b_.options.dimension < 96) return 5;
+            return siglasso::max_response_batch;
+        }
+        // A lower-degree violation gives a valid descent direction for the full
+        // problem. On exhaustion, check the missing level at the same residual
+        // and combine the two bounds. All later requests cover the full tree.
         void query_batch(const std::vector<siglasso::Separation*>& queries) override {
+            if (!lower_degree_ || std::any_of(queries.begin(), queries.end(),
+                    [](const auto* q) { return !q->allow_lower_degree; })) {
+                complete_dictionary();
+                separate(queries);
+                return;
+            }
+            separate(queries);
+            std::vector<siglasso::Separation*> remaining;
+            std::vector<double> lower_bounds;
+            for (auto* q : queries) if (q->found.candidates.empty()) {
+                remaining.push_back(q);
+                lower_bounds.push_back(q->found.omitted);
+            }
+            if (remaining.empty()) return;
+            complete_dictionary();
+            b_.highest_degree_only = true;
+            try { separate(remaining); }
+            catch (...) { b_.highest_degree_only = false; throw; }
+            b_.highest_degree_only = false;
+            for (size_t i = 0; i < remaining.size(); ++i)
+                remaining[i]->found.omitted = std::max(remaining[i]->found.omitted, lower_bounds[i]);
+        }
+        // With s_t = min(alpha)/alpha_t, the common envelope dominates every
+        // |s_t r_t|. Exact signed scores decide inclusion in each target's heap.
+        void separate(const std::vector<siglasso::Separation*>& queries) {
             const size_t n = b_.options.samples;
             auto envelope = b_.alloc(n); b_.fill(envelope, 0.);
             const auto clear_batch = [&] {
@@ -929,6 +1058,7 @@ public:
                 cap * (b_.absolute_sum(q->residual) / n) + std::numeric_limits<double>::min());
             std::mutex mutex;
             b_.visit_column = [&](const siglasso::Word& word, const double* values) {
+                if (b_.highest_degree_only && word.size() < b_.options.degree) return false;
                 const double factor = b_.weights[word.size()] / n;
                 std::shared_ptr<const siglasso::QuantizedColumn> shared_values;
                 bool found = false;
@@ -957,17 +1087,25 @@ public:
         double feature_cap() const override { return tree_->feature_cap(); }
         void new_target() override { tree_->new_target(); }
         siglasso::NodePtr selected(const siglasso::Word& word, bool keep) override {
+            if (keep && lower_degree_ && word.size() >= b_.options.degree) complete_dictionary();
             if (keep) return tree_->selected(word, true);
             return b_.feature_type_ == 1 ? b_.selected_word<true>(word) : b_.selected_word<false>(word);
         }
         siglasso::SearchResult query(const siglasso::Array& r, double alpha,
                 const std::unordered_map<siglasso::Word, size_t, siglasso::WordHash>& active, size_t capacity,
-                size_t, size_t, size_t) override { return tree_->query(r, alpha, active, capacity); }
+                size_t, size_t, size_t) override {
+            complete_dictionary();
+            return tree_->query(r, alpha, active, capacity);
+        }
     };
     std::unique_ptr<siglasso::FeatureSearch> make_search() override {
         if (endpoint_input_) return std::make_unique<EndpointSearch>(*this);
-        auto tree = feature_type_ ? siglasso::make_cpu_feature_search(*this, feature_type_, options.selected_only) : Backend::make_search();
-        if (joint_search_enabled()) return std::make_unique<BatchedSearch>(*this, std::move(tree));
+        const bool joint = joint_search_enabled();
+        const bool lower = joint && ((options.degree == 4 && (feature_type_ || options.dimension >= 24)) ||
+            (!feature_type_ && options.degree == 3 && options.dimension >= 96));
+        if (lower && !feature_type_) proposal_degree = options.degree - 1;
+        auto tree = feature_type_ ? siglasso::make_cpu_feature_search(*this, feature_type_, options.selected_only, lower ? options.degree - 1 : 0) : Backend::make_search();
+        if (joint) return std::make_unique<BatchedSearch>(*this, std::move(tree), lower);
         return tree;
     }
     siglasso::Array compute_factors(size_t k) {
@@ -990,7 +1128,8 @@ public:
         const size_t n = options.samples, l = options.length - 1, k = node.word.size(), levels = options.degree - k;
         if (!terminal_only_) node.moments = bound_type_ == 1 || bound_type_ >= 3 ? tt_moments(node) : alloc(levels * n * l);
         if (bound_type_ == 2) node.tt_moments = tt_moments(node);
-        node.integrals = alloc(n * l);
+        // For the empty word the polynomial and its segment integral both equal one.
+        node.integrals = !k && power_prefix() ? node.coefficients : alloc(n * l);
         if ((options.search_method & 2) && levels <= 2 && (!(options.traversal_order & 4) || levels == 2)) node.linear_integrals = alloc(n * l);
         if (power_prefix()) {
             // P(s) = sum F_a s^a/a!. Integrating P or sP gives the two
@@ -999,7 +1138,7 @@ public:
                 for (size_t j = begin; j < end; ++j) {
                     double* integral = node.integrals.data + j * n;
                     const double* start = prefix_start(node, j);
-                    std::copy_n(start, n, integral);
+                    if (k) std::copy_n(start, n, integral);
                     double* linear = node.linear_integrals.owner ? node.linear_integrals.data + j * n : nullptr;
                     if (linear) for (size_t i = 0; i < n; ++i) linear[i] = .5 * start[i];
                     for (size_t a = 1; a <= k; ++a) {
@@ -1136,7 +1275,7 @@ public:
         size_t capacity, siglasso::SearchResult& result) override {
         const auto& node = *task.node;
         const size_t n = options.samples, l = options.length - 1, d = options.dimension;
-        const size_t k = node.word.size(), levels = options.degree - k;
+        const size_t k = node.word.size(), levels = (proposal_degree ? proposal_degree : options.degree) - k;
         if ((levels == 2 && !node.linear_integrals.owner) || !terminal_sample_norms_.owner) return false;
         ++stats.terminal_queries; ++stats.block_queries;
         const auto correlations_before = stats.terminal_correlations;
@@ -1251,7 +1390,7 @@ public:
                 })) ++stats.constructed;
             }
         };
-        visit(1, node.integrals.data);
+        if (!highest_degree_only || !visit_column || k + 1 == options.degree) visit(1, node.integrals.data);
         if (levels == 2) {
             word.push_back(0);
             const auto group = grouped_norm(operators);
@@ -1320,8 +1459,11 @@ public:
                 const size_t levels = options.degree - task.node->word.size();
                 double best = 0;
                 if (task.node->uncertain_moments) { out[t] = threshold; continue; }
-                for (size_t q = levels; q-- > 0;) {
+                const size_t start_q = highest_degree_only && visit_column ? levels - 1 : 0;
+                for (size_t q = proposal_degree ? proposal_degree - task.node->word.size() : levels; q-- > start_q;) {
                     const auto envelope = [&](const siglasso::Array& moments) {
+                    if (compact_panels_)
+                        return compact_bound(task.block, moments.data + q * panels() * n, residual, operator_weights.data);
                     double total = 0;
                     const hn::ScalableTag<double> tag;
                     const size_t lanes = hn::Lanes(tag);
@@ -1785,7 +1927,7 @@ public:
                 auto child = std::make_shared<siglasso::Node>();
                 child->word = parent.word; child->word.push_back(letter);
                 child->metadata = account(512 + child->word.size() * 64);
-                const bool two = options.degree - k - 1 == 2;
+                const bool two = (proposal_degree ? proposal_degree : options.degree) - k - 1 == 2;
                 if (visit_column && tasks.size() == 1) {
                     const size_t size = n + (two ? 2 : 1) * n * l;
                     if (terminal_child_storage_.size < size || terminal_child_storage_.owner.use_count() != 1)
@@ -1929,7 +2071,7 @@ public:
     void release_fit_workspace() {
         searches_.clear(); search_workers_.clear(); shared_factors_.clear(); channels_.clear();
         for (auto& shard : cold_) shard.values = {};
-        increments = {}; variation = {}; after = {}; alphabet_ratios = {}; tt_suffix_ = {};
+        increments = {}; variation = {}; after = {}; alphabet_ratios = {}; compact_panels_.reset(); tt_suffix_ = {};
         responses_ = {}; normalization_ = {}; endpoint_variation_ = {}; terminal_workspace_ = {}; terminal_child_storage_ = {}; terminal_sample_norms_ = {}; channel_group_norms_ = {};
         terminal_channel_norms_ = {}; trim_caches();
     }
@@ -2067,7 +2209,7 @@ public:
             for (size_t k = 0; k < experiment_stats.size(); ++k) experiment_stats[k] += search_workers_[j]->experiment_stats[k];
         }
     }
-    bool native_search(const siglasso::Array& residual, double alpha,
+    bool native_search(const siglasso::NodePtr& root, const siglasso::Array& residual, double alpha,
         const std::unordered_map<siglasso::Word, size_t, siglasso::WordHash>& active, size_t capacity, siglasso::SearchResult& result) override {
         if (searches_.empty()) {
             const size_t threads = options.n_jobs > 0 ? options.n_jobs : get_max_threads() + 1 + options.n_jobs;
@@ -2088,7 +2230,7 @@ public:
             std::sort(frontier_.begin(), frontier_.end());
             shared_factors_.resize(options.degree);
             auto single = options;
-        single.n_jobs = 1; single.cache_bytes /= frontier_.size(); single.summary_bytes /= frontier_.size();
+            single.n_jobs = 1; single.cache_bytes /= frontier_.size(); single.summary_bytes /= frontier_.size();
             const bool reusable = !options.experiment && !options.cache_bytes && !options.summary_flags;
             const size_t count = reusable ? std::min(frontier_.size(), threads) : frontier_.size();
             for (size_t j = 0; j < count; ++j) {
@@ -2096,7 +2238,7 @@ public:
                 worker->increments = increments; worker->variation = variation; worker->after = after;
                 worker->alphabet = alphabet; worker->alphabet_ratios = alphabet_ratios;
                 worker->factor_parent_ = this;
-                searches_.push_back(std::make_unique<siglasso::Search>(*worker, searches_.empty() ? siglasso::NodePtr{} : searches_.front()->root()));
+                searches_.push_back(std::make_unique<siglasso::Search>(*worker, root));
                 search_workers_.push_back(std::move(worker));
             }
         }
@@ -2113,7 +2255,9 @@ public:
                 auto& worker = *search_workers_[worker_id];
                 worker.stats = {}; worker.experiment_stats = {}; worker.optimization_stats = {};
                 worker.active_corr_cap = active_corr_cap; worker.verify_search = verify_search;
-                worker.visit_column = visit_column; worker.batch_ratios = batch_ratios; worker.batch_signed = batch_signed; worker.shared_cutoff = cutoff;
+                worker.proposal_degree = proposal_degree;
+                worker.highest_degree_only = highest_degree_only;
+                worker.visit_column = visit_column; worker.batch_absolute = batch_absolute; worker.batch_ratios = batch_ratios; worker.batch_signed = batch_signed; worker.shared_cutoff = cutoff;
                 for (size_t j = reusable ? next.fetch_add(1) : worker_id; j < frontier_.size();) {
                     const size_t low = options.search_method & 1 ? alphabet[frontier_[j]].first : frontier_[j];
                     const size_t high = options.search_method & 1 ? alphabet[frontier_[j]].second
@@ -2122,7 +2266,7 @@ public:
                     if (!reusable) break;
                     j = next.fetch_add(1);
                 }
-                worker.shared_cutoff.reset(); worker.visit_column = {}; worker.batch_ratios.clear(); worker.batch_signed.clear();
+                worker.shared_cutoff.reset(); worker.visit_column = {}; worker.batch_absolute.clear(); worker.batch_ratios.clear(); worker.batch_signed.clear();
             }
         });
         for (size_t j = 0; j < searches_.size(); ++j) {

@@ -139,7 +139,9 @@ class PolynomialSearch final : public FeatureSearch {
     size_t product_bytes_ = 0;
     std::map<std::pair<size_t, size_t>, std::shared_ptr<HallKernelPlan>> hall_plans_;
     Array hall_scratch_;
-    Array log_channel_norms_, log_fourth_norms_;
+    std::shared_ptr<float[]> log_channel_norms_;
+    std::shared_ptr<void> log_norm_storage_;
+    Array log_fourth_norms_, log_group_norms_;
     static constexpr size_t sample_groups = 8;
     std::map<size_t, std::shared_ptr<LogMomentPlan>> log_plans_;
     std::map<std::pair<size_t, bool>, std::shared_ptr<HallEnvelopePlan>> envelope_plans_;
@@ -188,7 +190,7 @@ class PolynomialSearch final : public FeatureSearch {
     double letter_bound(const Word& prefix, size_t next) const {
         const size_t h = prefix.size() + 1, first = prefix.empty() ? next : prefix.front();
         double best = 0;
-        for (size_t k = h; k <= m_; ++k) {
+        for (size_t k = b_.highest_degree_only && b_.visit_column ? m_ : h; k <= m_; ++k) {
             const double* factors = letter_factors_.data + (k - 1) * 2 * d_ * sample_groups;
             double sum = 0;
             for (size_t g = 0; g < sample_groups; ++g) {
@@ -558,7 +560,7 @@ class PolynomialSearch final : public FeatureSearch {
         ++b_.stats.cache_misses; ++b_.stats.constructed;
         return child;
     }
-    std::vector<uint16_t> panel_steps_;
+    std::vector<uint8_t> panel_steps_;
     Array panel_units_;
     std::shared_ptr<void> panel_storage_;
     static constexpr size_t panel_width = 6;
@@ -569,7 +571,7 @@ class PolynomialSearch final : public FeatureSearch {
         if (!l_ || panel_units_.owner || d_ < 12 || m_ < 3 || m_ > 4 || b_.options.memory_limit || b_.options.feature_kernel != 2039) return;
         const size_t panels = panel_count();
         const size_t count = multiply(d_ * panels, n_);
-        panel_storage_ = b_.account(multiply(count, sizeof(uint16_t)));
+        panel_storage_ = b_.account(multiply(count, sizeof(uint8_t)));
         panel_steps_.resize(count);
         panel_units_ = b_.alloc(d_);
         auto scratch = b_.alloc(panels * n_);
@@ -586,11 +588,11 @@ class PolynomialSearch final : public FeatureSearch {
             }
             // Round upward: the decoded number bounds the original channel norm.
             const double maximum = *std::max_element(scratch.data, scratch.data + panels * n_);
-            const double unit = std::max(maximum / 65533., std::numeric_limits<double>::min());
+            const double unit = std::max(maximum / 253., std::numeric_limits<double>::min());
             panel_units_.data[a] = unit;
             auto* codes = panel_steps_.data() + a * panels * n_;
             for (size_t i = 0; i < panels * n_; ++i)
-                codes[i] = static_cast<uint16_t>(1. + std::floor(scratch.data[i] / unit));
+                codes[i] = static_cast<uint8_t>(1. + std::floor(scratch.data[i] / unit));
         }
     }
     double panel_bound(const StatePtr& u, size_t a, const Array& residual) {
@@ -608,7 +610,7 @@ class PolynomialSearch final : public FeatureSearch {
             }
         }
         double best = 0.;
-        for (size_t q = 0; q < levels; ++q) {
+        for (size_t q = b_.highest_degree_only && b_.visit_column ? levels - 1 : 0; q < levels; ++q) {
             b_.fill(bound_samples_, 0.);
             for (size_t p = 0; p < panels; ++p) {
                 const auto* dx = panel_steps_.data() + (a * panels + p) * n_;
@@ -904,32 +906,49 @@ class PolynomialSearch final : public FeatureSearch {
     std::vector<TerminalWorker> terminal_workers_;
     PolynomialSearch(Backend& b, const PolynomialSearch& other)
         : b_(b), n_(other.n_), l_(other.l_), d_(other.d_), m_(other.m_), mode_(other.mode_),
-          caps_(other.caps_), log_channel_norms_(other.log_channel_norms_), log_fourth_norms_(other.log_fourth_norms_),
+          caps_(other.caps_), log_channel_norms_(other.log_channel_norms_), log_norm_storage_(other.log_norm_storage_),
+          log_fourth_norms_(other.log_fourth_norms_), log_group_norms_(other.log_group_norms_),
           feature_cap_(other.feature_cap_) {}
     void terminal_geometry(double underflow) {
-        if (!log_channel_norms_.owner) {
-            log_channel_norms_ = b_.alloc(multiply(n_, d_));
+        if (!log_channel_norms_) {
+            const size_t count = multiply(n_, d_);
+            log_norm_storage_ = b_.account(multiply(count, sizeof(float)));
+            log_channel_norms_.reset(new float[count]);
+            auto scratch = b_.alloc(n_);
             for (size_t a = 0; a < d_; ++a) {
                 const auto steps = b_.channel(a);
-                double* norms = log_channel_norms_.data + a * n_;
+                double* norms = scratch.data;
                 std::fill_n(norms, n_, 0.);
                 for (size_t j = 0; j < l_; ++j) {
                     const double* dx = steps.values.data + j * steps.dimension * n_;
                     for (size_t i = 0; i < n_; ++i) norms[i] += dx[i] * dx[i];
                 }
-                for (size_t i = 0; i < n_; ++i) norms[i] = std::sqrt(norms[i] + underflow) * (1 + terminal_roundoff(0, multiply(n_, l_), l_));
+                const double inflate = 1 + terminal_roundoff(0, multiply(n_, l_), l_);
+                for (size_t i = 0; i < n_; ++i) {
+                    const double upper = std::sqrt(norms[i] + underflow) * inflate;
+                    const float value = static_cast<float>(upper);
+                    log_channel_norms_[a * n_ + i] = value < upper ? std::nextafter(value, std::numeric_limits<float>::infinity()) : value;
+                }
             }
         }
-        if (!log_fourth_norms_.owner) {
+        const bool need_single = b_.visit_column && d_ >= 8 && !log_group_norms_.owner;
+        if (!log_fourth_norms_.owner || need_single) {
             // Group norms over disjoint sample intervals; the second table
             // bounds all channels at or above a prenecklace's next letter.
-            log_fourth_norms_ = b_.alloc(multiply(2 * d_, sample_groups));
+            if (need_single) log_group_norms_ = b_.alloc(multiply(2 * d_, sample_groups));
+            if (!log_fourth_norms_.owner) log_fourth_norms_ = b_.alloc(multiply(2 * d_, sample_groups));
             for (size_t a = d_; a-- > 0;) for (size_t g = 0; g < sample_groups; ++g) {
-                double fourth = 0;
+                double fourth = 0., sum = 0.;
                 for (size_t i = n_ * g / sample_groups; i < n_ * (g + 1) / sample_groups; ++i) {
-                    const double norm = log_channel_norms_.data[a * n_ + i];
+                    const double norm = log_channel_norms_[a * n_ + i];
                     const double square = norm * norm;
-                    fourth += square * square;
+                    fourth += square * square; sum += square;
+                }
+                if (need_single) {
+                    const double group = std::sqrt(sum + underflow);
+                    log_group_norms_.data[a * sample_groups + g] = group;
+                    log_group_norms_.data[(d_ + a) * sample_groups + g] = a + 1 == d_ ? group
+                        : std::max(group, log_group_norms_.data[(d_ + a + 1) * sample_groups + g]);
                 }
                 const double norm = std::sqrt(std::sqrt(fourth + underflow));
                 log_fourth_norms_.data[a * sample_groups + g] = norm;
@@ -961,6 +980,7 @@ class PolynomialSearch final : public FeatureSearch {
                 auto& search = *terminal_workers_[t].search;
                 auto& host = *terminal_workers_[t].backend;
                 host.stats = {};
+                host.highest_degree_only = b_.highest_degree_only;
                 host.visit_column = b_.visit_column;
                 host.batch_ratios = b_.batch_ratios;
                 host.batch_signed = b_.batch_signed;
@@ -1023,12 +1043,17 @@ class PolynomialSearch final : public FeatureSearch {
             }
         }
         terminal_geometry(underflow);
-        auto integrals = u->terminal_integrals.owner ? u->terminal_integrals : b_.alloc(multiply(3 * l_, n_));
-        auto products = b_.alloc(multiply(l_ + 2, n_));
+        // At the root I=1, J=1/2 and K=-1/2. The kernels can apply these
+        // constants directly without storing three copies across paths and time.
+        const bool root_constants = h == 0 && b_.options.feature_kernel == 2039;
+        auto integrals = u->terminal_integrals;
+        if (!root_constants && !integrals.owner) integrals = b_.alloc(multiply(3 * l_, n_));
+        Array pair_products;
+        auto single_stats = b_.alloc(2 * n_);
         auto probe = std::make_shared<State>(); probe->values = b_.alloc(n_);
         probe->metadata = b_.account(512 + m_ * 32);
         auto sample_bounds = b_.batch_ratios.empty() ? Array{} : b_.alloc(n_);
-        if (!u->terminal_integrals.owner) samples([&](uint64_t begin, uint64_t end) {
+        if (!root_constants && !u->terminal_integrals.owner) samples([&](uint64_t begin, uint64_t end) {
             cpsig::log_terminal_integrals(u->polynomial.data, integrals.data, n_, l_, h, levels, begin, end);
         });
         // H^b = M D^b with M[j,t] = I[j] 1(t>=j) - J[j] 1(t==j) + K[j].
@@ -1036,8 +1061,8 @@ class PolynomialSearch final : public FeatureSearch {
         const bool screen_pairs = !norms && levels == 2 && (b_.options.feature_kernel & 256);
         auto pair_weights = screen_pairs ? b_.alloc(n_) : Array{};
         if (screen_pairs) {
-            b_.fill(pair_weights, 0.);
-            for (size_t j = 0; j < l_; ++j) {
+            b_.fill(pair_weights, root_constants ? .25 * l_ * (l_ - 1.) : 0.);
+            if (!root_constants) for (size_t j = 0; j < l_; ++j) {
                 const double* I = integrals.data + j * n_;
                 const double* J = I + l_ * n_;
                 const double* K = J + l_ * n_;
@@ -1084,8 +1109,20 @@ class PolynomialSearch final : public FeatureSearch {
             return padded(total * factor + slack, rounding);
         };
         const size_t first = h ? u->word[h % period] : 0;
+        // All remaining Lyndon letters are at least the first letter of
+        // the prefix. The suffix maxima bound both ends of a terminal pair.
+        bool omit_pairs = false;
+        if (screen_pairs) {
+            const size_t second = h ? u->word.front() + 1 : 0;
+            if (second == d_) omit_pairs = true;
+            else {
+                const double bound = pair_bound(d_ + first, d_ + second);
+                omit_pairs = bound < cutoff_now();
+                if (omit_pairs) result.omitted = std::max(result.omitted, bound);
+            }
+        }
         double maximum = 0;
-        for (size_t q = 1; q <= levels; ++q) for (size_t c = 0; c < (q == 2 ? d_ : 1); ++c) {
+        for (size_t q = b_.highest_degree_only && b_.visit_column ? levels : 1; q <= (omit_pairs ? 1 : levels); ++q) for (size_t c = 0; c < (q == 2 ? d_ : 1); ++c) {
             size_t low = first, high = d_;
             if (q == 1) low += (h != 0);
             else if (!h) high = c;
@@ -1098,13 +1135,52 @@ class PolynomialSearch final : public FeatureSearch {
                 const double bound = pair_bound(d_ + low, c);
                 if (bound < cutoff_now()) { result.omitted = std::max(result.omitted, bound); continue; }
             }
+            std::array<double, sample_groups> single_groups{};
+            const bool screen_single = q == 1 && b_.visit_column && high - low >= 8;
+            const auto single_bound = [&](size_t channel) {
+                double sum = 0.;
+                for (size_t g = 0; g < sample_groups; ++g)
+                    sum += single_groups[g] * log_group_norms_.data[channel * sample_groups + g];
+                return padded((sum + underflow) * b_.weights[h + 1] / n_ + rounding * caps_[h + 1] * mass, rounding);
+            };
             bool prepared = false, scaled = false;
-            double magnitude = 0;
+            double magnitude = 0.;
+            const double* factors = integrals.data;
+            double* weighted_norm = single_stats.data;
+            const auto prepare_single = [&] {
+                b_.fill(single_stats, root_constants ? double(l_) : 0.);
+                if (!root_constants) for (size_t j = 0; j < l_; ++j) {
+                    const double* row = integrals.data + j * n_;
+                    for (size_t i = 0; i < n_; ++i) {
+                        weighted_norm[i] += row[i] * row[i];
+                        single_stats.data[n_ + i] += std::abs(row[i]);
+                    }
+                }
+                for (size_t i = 0; i < n_; ++i) {
+                    const double weight = std::abs(residual.data[i]);
+                    weighted_norm[i] = weight * std::sqrt(weighted_norm[i] + underflow);
+                    magnitude += weight * single_stats.data[n_ + i];
+                }
+                prepared = true;
+            };
+            if (screen_single) {
+                prepare_single();
+                for (size_t g = 0; g < sample_groups; ++g) {
+                    const size_t start = n_ * g / sample_groups, size = n_ * (g + 1) / sample_groups - start;
+                    single_groups[g] = std::sqrt(b_.bound_dot(weighted_norm + start, weighted_norm + start, size) + underflow);
+                }
+                const double bound = single_bound(d_ + low);
+                if (bound < cutoff_now()) { result.omitted = std::max(result.omitted, bound); continue; }
+            }
             Word word = u->word; word.push_back(low); if (q == 2) word.push_back(c);
             for (size_t a = low; a < high; ++a) {
                 word[h] = a;
                 if (!build && active.count(word)) continue;
                 const double cutoff = cutoff_now();
+                if (screen_single) {
+                    const double bound = single_bound(a);
+                    if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); continue; }
+                }
                 const size_t entry = q == 1 ? a : d_ + c * d_ + a;
                 if (norms && !build) {
                     const double upper = norm_score(norms->columns.data[entry]);
@@ -1117,11 +1193,11 @@ class PolynomialSearch final : public FeatureSearch {
                     const double coarse = pair_bound(a, c);
                     if (coarse < cutoff) { result.omitted = std::max(result.omitted, coarse); continue; }
                     if (!scaled) {
-                        const double* right = log_channel_norms_.data + c * n_;
+                        const float* right = log_channel_norms_.get() + c * n_;
                         for (size_t i = 0; i < n_; ++i) pair_scale.data[i] = right[i] * pair_weights.data[i];
                         scaled = true;
                     }
-                    const double sum = b_.bound_dot(log_channel_norms_.data + a * n_, pair_scale.data, n_);
+                    const double sum = b_.bound_dot(log_channel_norms_.get() + a * n_, pair_scale.data, n_);
                     const double upper = padded((sum + underflow) * b_.weights[h + q] / n_ + rounding * caps_[h + q] * mass, rounding);
                     if (upper < cutoff) {
                         result.omitted = std::max(result.omitted, upper); maximum = std::max(maximum, upper);
@@ -1129,17 +1205,23 @@ class PolynomialSearch final : public FeatureSearch {
                     }
                 }
                 if (!prepared) {
-                    const auto other = b_.channel(c);
-                    samples([&](uint64_t begin, uint64_t end) {
-                        cpsig::log_terminal_products(integrals.data, other.values.data, residual.data, products.data,
-                            n_, l_, other.dimension, 0, q, begin, end);
-                    });
-                    magnitude = std::accumulate(products.data + (l_ + 1) * n_, products.data + (l_ + 2) * n_, 0.);
+                    if (q == 1) prepare_single();
+                    else {
+                        if (!pair_products.owner) pair_products = b_.alloc(multiply(l_ + 2, n_));
+                        const auto other = b_.channel(c);
+                        samples([&](uint64_t begin, uint64_t end) {
+                            cpsig::log_terminal_products(integrals.data, other.values.data, residual.data, pair_products.data,
+                                n_, l_, other.dimension, 0, q, begin, end);
+                        });
+                        factors = pair_products.data;
+                        weighted_norm = pair_products.data + l_ * n_;
+                        magnitude = std::accumulate(weighted_norm + n_, weighted_norm + 2 * n_, 0.);
+                    }
                     prepared = true;
                 }
                 if (build) {
                     const auto steps = b_.channel(a);
-                    cpsig::log_terminal_values(products.data, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, 0, n_);
+                    cpsig::log_terminal_values(factors, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, 0, n_);
                     const double radius = column_radius(probe->values.data, h + q, rounding);
                     norms->columns.data[entry] = radius;
                     norms->max_radius = std::max(norms->max_radius, radius);
@@ -1151,7 +1233,7 @@ class PolynomialSearch final : public FeatureSearch {
                     continue;
                 }
                 double norm = std::numeric_limits<double>::infinity();
-                try { norm = b_.bound_dot(products.data + l_ * n_, log_channel_norms_.data + a * n_, n_); }
+                try { norm = b_.bound_dot(log_channel_norms_.get() + a * n_, weighted_norm, n_); }
                 catch (const NonfiniteError&) {}
                 const double bound = padded((norm + rounding * magnitude + underflow) * b_.weights[h + q] / n_ + rounding * caps_[h + q] * mass, rounding);
                 if (std::isfinite(bound) && bound < cutoff) {
@@ -1165,7 +1247,7 @@ class PolynomialSearch final : public FeatureSearch {
                     return padded((sum + rounding * (magnitude + 4 * norm) + underflow) * factor + rounding * caps_[h + q] * mass, rounding);
                 };
                 if (count && std::isfinite(norm)) {
-                    for (size_t i = 0; i < n_; ++i) sample_bounds.data[i] = products.data[l_ * n_ + i] * log_channel_norms_.data[a * n_ + i];
+                    for (size_t i = 0; i < n_; ++i) sample_bounds.data[i] = weighted_norm[i] * log_channel_norms_[a * n_ + i];
                     for (size_t t = 0; t < count; ++t) {
                         const auto* ratio = b_.batch_ratios[t].data;
                         remaining[t] = b_.bound_dot(ratio, sample_bounds.data, n_);
@@ -1178,7 +1260,7 @@ class PolynomialSearch final : public FeatureSearch {
                 if (count && std::isfinite(norm)) {
                     for (size_t first = 0; first < n_; first += 64) {
                         const size_t last = std::min(n_, first + 64);
-                        cpsig::log_terminal_values(products.data, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, first, last);
+                        cpsig::log_terminal_values(factors, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, first, last);
                         double top = 0.;
                         for (size_t t = 0; t < count; ++t) {
                             const auto* ratio = b_.batch_ratios[t].data;
@@ -1195,10 +1277,10 @@ class PolynomialSearch final : public FeatureSearch {
                     double partial = 0, correction = 0, used = 0;
                     for (size_t begin = 0; begin < n_; begin += 32) {
                         const size_t end = std::min(n_, begin + 32);
-                        cpsig::log_terminal_values(products.data, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, begin, end);
+                        cpsig::log_terminal_values(factors, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, begin, end);
                         const double term = b_.dot(probe->values.data + begin, residual.data + begin, end - begin) - correction;
                         const double next = partial + term; correction = (next - partial) - term; partial = next;
-                        used += b_.dot(products.data + l_ * n_ + begin, log_channel_norms_.data + a * n_ + begin, end - begin);
+                        used += b_.bound_dot(log_channel_norms_.get() + a * n_ + begin, weighted_norm + begin, end - begin);
                         const double remaining = std::max(0., norm - used) + rounding * (std::abs(norm) + std::abs(used));
                         const double refined = padded((std::abs(partial) + remaining + rounding * magnitude + underflow) * b_.weights[h + q] / n_
                             + rounding * caps_[h + q] * mass, rounding);
@@ -1207,7 +1289,7 @@ class PolynomialSearch final : public FeatureSearch {
                         }
                     }
                 } else samples([&](uint64_t begin, uint64_t end) {
-                    cpsig::log_terminal_values(products.data, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, begin, end);
+                    cpsig::log_terminal_values(factors, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, begin, end);
                 });
                 if (pruned) continue;
                 probe->word = word;
@@ -1273,7 +1355,7 @@ class PolynomialSearch final : public FeatureSearch {
         if (maximum <= alpha) ++b_.stats.terminal_pruned;
     }
 public:
-    PolynomialSearch(Backend& b, uint32_t mode, bool selected_only = false) : b_(b), n_(b.options.samples), l_(b.options.length - 1), d_(b.options.dimension), m_(b.options.dimension == 1 ? 1 : b.options.degree), mode_(mode) {
+    PolynomialSearch(Backend& b, uint32_t mode, bool selected_only, size_t degree) : b_(b), n_(b.options.samples), l_(b.options.length - 1), d_(b.options.dimension), m_(b.options.dimension == 1 ? 1 : degree), mode_(mode) {
         b_.trim_search = [this] {
             cache_.clear(); cache_order_.clear(); cache_size_ = 0;
             summaries_.clear(); summary_order_.clear(); summary_bytes_ = 0;
@@ -1309,7 +1391,7 @@ public:
                 for (size_t h = 1; h <= m_; ++h)
                     feature_cap_ = std::max(feature_cap_, padded(caps_[h] * std::pow(variation, int(h)), 1e-11 * (h + 1) * (l_ + 1)));
             }
-            const bool implicit = m_ > 2 && (b_.options.feature_kernel & 33) == 33;
+            const bool implicit = b_.options.feature_kernel == 2039 || (m_ > 2 && (b_.options.feature_kernel & 33) == 33);
             root_ = state({}, implicit ? 0 : m_);
             if (!implicit) for (size_t p = 0; p < m_; ++p) for (size_t j = 0; j < l_; ++j) for (size_t i = 0; i < n_; ++i)
                 at(root_->polynomial, p, j, i) = (p % 2 ? -1.0 : 1.0) / (p + 1);
@@ -1581,6 +1663,6 @@ public:
     }
 };
 }
-std::unique_ptr<FeatureSearch> make_cpu_feature_search(Backend& b, uint32_t mode, bool selected_only) { return std::make_unique<PolynomialSearch>(b, mode, selected_only); }
-size_t audit_cpu_feature_bounds(Backend& b, uint32_t mode) { PolynomialSearch search(b, mode); return search.audit(); }
+std::unique_ptr<FeatureSearch> make_cpu_feature_search(Backend& b, uint32_t mode, bool selected_only, size_t degree) { return std::make_unique<PolynomialSearch>(b, mode, selected_only, degree ? degree : b.options.degree); }
+size_t audit_cpu_feature_bounds(Backend& b, uint32_t mode) { PolynomialSearch search(b, mode, false, b.options.degree); return search.audit(); }
 }

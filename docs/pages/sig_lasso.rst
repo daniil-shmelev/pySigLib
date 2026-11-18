@@ -47,21 +47,25 @@ retain a bounded shortlist. Prediction evaluates selected words in sample tiles
 and reuses their common prefixes.
 
 For the default double-precision, multi-response squared-loss search at degrees
-two through four, several targets can traverse the tree together. An envelope
-of their penalty-scaled residuals lets one bound rule out a branch for every
-target in the group. Surviving words are scored separately for each target.
-For the squared-loss dual gap, the search tracks correlations above the penalty
-even when they lie inside the working-set stopping tolerance.
-The solver can store a 16-bit copy of a candidate column with its rounding
-error to prioritise later searches. It evaluates each activated column in
-double precision for the restricted solve. On wider inputs it keeps high-energy
-channel increments in memory and reconstructs other channels from the
-input paths as needed. Neighbouring cold channels share one pass through the
-input. The tensor-log search stores upward-rounded 16-bit channel norms for
-short time panels and can distribute surviving Lyndon prefixes across workers.
-Between restricted solves, the solver can retain just the lower triangle of the
-Gram matrix for the surviving terms. An explicit memory limit uses the
-individually budgeted search.
+two through four, targets can share a traversal. The signature search builds
+a bound for each path and tests it against the individual penalty-scaled
+residuals. On larger dictionaries, both solvers can first search through one
+degree below the requested truncation. A lower-degree violation gives a valid
+working-set update. When this first search finds no candidates for a target,
+the solver checks the remaining degree at the same residual and combines the
+two bounds. Subsequent searches cover the full dictionary.
+
+Each target keeps its own signed correlations and dual certificate. A 16-bit
+approximation and its rounding error can prioritise candidates between
+searches. The solver evaluates activated columns in double precision. On
+wider inputs it keeps high-energy channels in memory and reconstructs
+neighbouring cold channels together. For time panels, signature increment
+maxima use upward-rounded bfloat16 and tensor-log norms use upward-rounded
+8-bit integers with a scale per channel. The tensor-log search can exclude
+all admissible final letters using group norms before fetching their paths.
+Workers share read-only geometry. Between restricted solves, the solver can
+retain the lower triangle of the Gram matrix for surviving terms. An explicit
+memory limit uses the individually budgeted search.
 
 ``kkt_violation`` gives the maximum stationarity error or a conservative upper
 bound. Squared fits also return a primal-dual gap. Each target has its own

@@ -53,6 +53,6 @@ struct HallPowerFactor { size_t degree, slot, run; };
 struct HallPowerItem { double value; size_t factor, count; };
 void hall_factorial_products(const std::vector<HallPowerFactor>&, const double*, size_t, size_t, size_t,
     std::vector<double>&, std::vector<double>&, std::vector<HallPowerItem>&);
-std::unique_ptr<FeatureSearch> make_cpu_feature_search(Backend&, uint32_t, bool selected_only = false);
+std::unique_ptr<FeatureSearch> make_cpu_feature_search(Backend&, uint32_t, bool selected_only = false, size_t degree = 0);
 size_t audit_cpu_feature_bounds(Backend&, uint32_t);
 }

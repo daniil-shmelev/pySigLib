@@ -214,6 +214,9 @@ struct Separation {
     size_t capacity;
     SearchResult found;
     double seconds = 0.;
+    // A nonempty shortlist can advance this fit. A final or iteration-limited
+    // request instead needs a bound over the entire requested dictionary.
+    bool allow_lower_degree = false;
 };
 
 class FeatureSearch {
@@ -283,6 +286,7 @@ public:
     SigLassoStats stats{};
     bool uncertain_features = false;
     bool verify_search = false;
+    bool highest_degree_only = false;
     std::function<bool(const Word&, const double*)> visit_column;
     std::vector<Array> batch_absolute, batch_ratios, batch_signed;
     double active_corr_cap = 0;
@@ -316,6 +320,11 @@ public:
     }
     virtual std::unique_ptr<Backend> terminal_worker() { return {}; }
     virtual double bound_dot(const double* x, const double* y, size_t n) { return dot(x, y, n); }
+    virtual double bound_dot(const float* x, const double* y, size_t n) {
+        double sum = 0.;
+        for (size_t i = 0; i < n; ++i) sum += double(x[i]) * y[i];
+        return sum;
+    }
     virtual double weighted_square(const double* x, const double* y, size_t n) {
         double result = 0.;
         for (size_t i = 0; i < n; ++i) {
@@ -338,7 +347,7 @@ public:
     }
     virtual Array response(size_t target) = 0;
     virtual void export_result(const Result&, const SigLassoOutput&) = 0;
-    virtual bool native_search(const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t, SearchResult&) { return false; }
+    virtual bool native_search(const NodePtr&, const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t, SearchResult&) { return false; }
     virtual bool has_native_search() const { return false; }
     virtual void native_new_target() {}
     virtual void native_screen(double, double, double, double) {}
@@ -552,7 +561,7 @@ public:
         if (b_.options.experiment & 5) advance(residual);
         if (b_.has_native_search()) {
             cache_.clear(); factors_.clear(); grams_.clear(); factor_bytes_ = gram_bytes_ = 0;
-            b_.native_search(residual, alpha, active, capacity, result); ++b_.stats.search_passes; return result;
+            b_.native_search(root_, residual, alpha, active, capacity, result); ++b_.stats.search_passes; return result;
         }
         const bool retain_bounds = (b_.options.experiment & 5) && !b_.verify_search;
         const size_t rank = b_.options.pool_rank ? std::min<size_t>(capacity, b_.options.pool_rank) : capacity;

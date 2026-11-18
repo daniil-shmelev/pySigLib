@@ -79,6 +79,8 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
     in bytes. ``n_jobs`` controls CPU workers. ``max_iter`` limits working-set
     updates per response. ``tol`` defaults to 1e-5 for float32 or 1e-8 for
     float64. Feature stationarity is checked at min(tol, 1e-4 * alpha).
+    Joint squared-loss searches can refine candidates to min(tol, 1e-6 * alpha)
+    before returning the certificate.
 
     Return sorted union support in ``words``, uncentred columns in ``signatures``,
     ``coef``, ``intercept``, ``objective``, ``loss``, per-target ``kkt_violation``,

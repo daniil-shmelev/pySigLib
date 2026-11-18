@@ -185,7 +185,8 @@ def fit(args):
     record = dict(dataset=name, mode=mode, degree=degree, alpha=alpha.tolist(), seconds=seconds,
                   pred_seconds=pred_seconds, extra_rss_bytes=peak - before, correct=int(np.sum(pred.argmax(1) == labels)), n=len(labels),
                   support=len(model['words']), kkt=model['kkt_violation'].tolist(), gap=model['dual_gap'].tolist(),
-                  objective=model['objective'].tolist(), stats=model['stats'], dictionary_comparison=args.dictionary_comparison)
+                  objective=model['objective'].tolist(), converged=model['converged'].tolist(),
+                  iterations=model['n_iter'].tolist(), stats=model['stats'], dictionary_comparison=args.dictionary_comparison)
     save_json(args.output.with_suffix('.json'), record)
     np.savez(args.output.with_suffix('.npz'), pred=pred, signatures=model['signatures'],
              train=model['signatures'] @ model['coef'] + model['intercept'],
