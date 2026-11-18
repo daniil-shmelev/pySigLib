@@ -35,8 +35,7 @@ void tensor_powers(const T* v, T* powers, uint64_t degree, const Layout& l) {
     powers[0] = 1;
     for (uint64_t k = 1; k <= degree; ++k)
         for (uint64_t x = 0; x < l.power[k - 1]; ++x)
-            for (uint64_t c = 0; c < l.d; ++c)
-                powers[l.offset[k] + x * l.d + c] = powers[l.offset[k - 1] + x] * v[c];
+            vec_mult_assign(powers + l.offset[k] + x * l.d, v, powers[l.offset[k - 1] + x], l.d);
 }
 
 template<typename T>
@@ -68,10 +67,11 @@ void right_factor_backprop(const T* suffix, const T* v, const T* deriv, T* dsuff
     for (uint64_t k = 1; k < b; ++k) {
         const uint64_t previous = l.power[k - 1];
         const T reciprocal = T(1) / T(j + b - k + 2);
-        for (uint64_t c = 0; c < l.d; ++c)
-            for (uint64_t x = 0; x < previous; ++x)
-                history[l.offset[k] + c * previous + x] = suffix[l.offset[k] + c * previous + x]
-                    + v[c] * reciprocal * history[l.offset[k - 1] + x];
+        for (uint64_t c = 0; c < l.d; ++c) {
+            T* row = history + l.offset[k] + c * previous;
+            std::copy_n(suffix + l.offset[k] + c * previous, previous, row);
+            vec_mult_add(row, history + l.offset[k - 1], v[c] * reciprocal, previous);
+        }
     }
     for (uint64_t x = 0; x < l.power[b]; ++x) work[l.offset[b] + x] = deriv[x] * scale;
     for (uint64_t k = b; k > 0; --k) {
@@ -117,31 +117,34 @@ void horner_backprop(const T* state, const T* v, T* deriv, T* dv, uint64_t degre
         for (uint64_t k = 1; k + 1 < target; ++k) {
             const uint64_t size = l.power[k];
             const T reciprocal = T(1) / T(target - k);
-            for (uint64_t c = 0; c < l.d; ++c)
-                for (uint64_t x = 0; x < size; ++x) {
-                    const uint64_t word = Prepend ? c * size + x : x * l.d + c;
-                    history[l.offset[k + 1] + word] =
-                        (state[l.offset[k] + x] + history[l.offset[k] + x]) * v[c] * reciprocal;
-                }
+            if constexpr (Prepend) {
+                for (uint64_t c = 0; c < l.d; ++c)
+                    vec_add_scaled(history + l.offset[k + 1] + c * size, state + l.offset[k],
+                        history + l.offset[k], v[c] * reciprocal, size);
+            } else {
+                for (uint64_t x = 0; x < size; ++x)
+                    vec_mult_assign(history + l.offset[k + 1] + x * l.d, v,
+                        (state[l.offset[k] + x] + history[l.offset[k] + x]) * reciprocal, l.d);
+            }
         }
         const T* upper = deriv + l.offset[target];
         for (uint64_t k = target - 1; k > 0; --k) {
             const uint64_t size = l.power[k];
             const T reciprocal = T(1) / T(target - k);
             T* lower = work + l.offset[k];
-            std::fill_n(lower, size, T(0));
-            for (uint64_t c = 0; c < l.d; ++c) {
-                const T multiplier = v[c] * reciprocal;
-                T channel_deriv = 0;
-                for (uint64_t x = 0; x < size; ++x) {
-                    const uint64_t word = Prepend ? c * size + x : x * l.d + c;
-                    const T g = upper[word];
-                    lower[x] += g * multiplier;
-                    channel_deriv += g * (state[l.offset[k] + x] + history[l.offset[k] + x]);
+            T* node = history + l.offset[k];
+            vec_mult_add(node, state + l.offset[k], T(1), size);
+            if constexpr (Prepend) {
+                std::fill_n(lower, size, T(0));
+                for (uint64_t c = 0; c < l.d; ++c) {
+                    dv[c] += reciprocal * dot_product_mult_add(node, upper + c * size,
+                        lower, v[c] * reciprocal, size);
                 }
-                dv[c] += channel_deriv * reciprocal;
+            } else {
+                for (uint64_t x = 0; x < size; ++x)
+                    lower[x] = reciprocal * dot_product_mult_add(v, upper + x * l.d, dv, node[x] * reciprocal, l.d);
             }
-            for (uint64_t x = 0; x < size; ++x) deriv[l.offset[k] + x] += lower[x];
+            vec_mult_add(deriv + l.offset[k], lower, T(1), size);
             upper = lower;
         }
         for (uint64_t c = 0; c < l.d; ++c) dv[c] += work[1 + c] / T(target);

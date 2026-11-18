@@ -116,8 +116,8 @@ inline void prepend_fixed(T* state, const T* v, T* work) {
 }
 
 template<typename T>
-inline void prepend_generic(T* state, const T* v, const Layout& layout, T* work) {
-    for (uint64_t k = layout.scan_degree; k > 1; --k) {
+inline void prepend_generic(T* state, const T* v, const Layout& layout, T* work, uint64_t degree) {
+    for (uint64_t k = degree; k > 1; --k) {
         const T initial_reciprocal = T(1) / T(k);
         for (uint64_t channel = 0; channel < layout.d; ++channel)
             work[channel] = v[channel] * initial_reciprocal;
@@ -148,7 +148,7 @@ inline void prepend(T* state, const T* v, const Layout& layout, T* work) {
         case 8: run.template operator()<8>(); return;
         }
     }
-    prepend_generic(state, v, layout, work);
+    prepend_generic(state, v, layout, work, layout.scan_degree);
 }
 
 } // namespace cpu_detail

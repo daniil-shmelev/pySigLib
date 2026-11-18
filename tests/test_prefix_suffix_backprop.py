@@ -107,6 +107,80 @@ def test_corrected_exact_chen():
         np.testing.assert_allclose(actual, expected, atol=1e-13, rtol=1e-12)
 
 
+@pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
+@pytest.mark.parametrize("segments,d,degree", [(301, 7, 3), (133, 12, 3), (197, 20, 3), (147, 3, 10), (76, 4, 8)])
+def test_factor_adjoint_partial_blocks(monkeypatch, device, dtype, segments, d, degree):
+    rng = np.random.default_rng(733)
+    path = torch.tensor(rng.standard_normal((2, segments + 1, d)).cumsum(axis=1) / segments ** .5,
+                        dtype=dtype, device=device)
+    if degree > 3:
+        width = d ** ((degree + 1) // 2) + d ** (degree // 2)
+        monkeypatch.setenv("PYSIGLIB_PS_FACTOR_BYTES", str(137 * 2 * width * path.element_size()))
+    expected = pysiglib.sig(path, degree, scalar_term=True, method="horner")
+    actual = pysiglib.sig(path, degree, scalar_term=True, method="ps", n_jobs=2)
+    tol = 4e-4 if dtype == torch.float32 else 2e-10
+    start = 1
+    for k in range(1, degree + 1):
+        ref = expected[:, start:start + d ** k]
+        torch.testing.assert_close(actual[:, start:start + d ** k], ref, rtol=tol, atol=tol * ref.abs().max().item())
+        start += d ** k
+    seeds = torch.zeros_like(expected)
+    seeds[:, -d ** degree:] = torch.tensor(rng.standard_normal((2, d ** degree)), dtype=dtype, device=device)
+    reference = pysiglib.sig_backprop(path, expected, seeds, degree, method="horner")
+    gradient = pysiglib.sig_backprop(path, actual, seeds, degree, method="ps", n_jobs=2)
+    torch.testing.assert_close(gradient, reference, rtol=tol, atol=tol * reference.abs().max().item())
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_permutation_sum_overflow(device):
+    path = torch.zeros((84, 3), device=device, dtype=torch.float64)
+    path[42:] = .125
+    degree = 10
+    signature = pysiglib.sig(path, degree, method="ps", n_jobs=1)
+    seeds = torch.zeros_like(signature)
+    seeds[-3 ** degree:] = 1
+    reference = pysiglib.sig_backprop(path, signature, seeds, degree, method="horner")
+    scale = torch.finfo(seeds.dtype).max / 4
+    gradient = pysiglib.sig_backprop(path, signature, seeds * scale, degree, method="ps", n_jobs=1)
+    torch.testing.assert_close(gradient / scale, reference, rtol=2e-10, atol=2e-20)
+
+
+@pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
+@pytest.mark.parametrize("degree,n,d,scalar", [(4, 95, 3, True), (5, 129, 4, False), (6, 259, 3, True),
+                                             (7, 289, 5, True), (9, 39, 3, False), (10, 77, 3, True),
+                                             (12, 65, 2, False)])
+def test_moment_levels_and_adjoints(device, dtype, degree, n, d, scalar):
+    rng = np.random.default_rng(740 + degree)
+    v = rng.normal(size=(2, n, d)) / np.sqrt(n)
+    v[:, ::7] = 0
+    v[:, 3::11, 0] = 0
+    path = torch.tensor(np.pad(v.cumsum(axis=1), ((0, 0), (1, 0), (0, 0))), dtype=dtype, device=device)
+    host = path.cpu().double()
+    expected = pysiglib.sig(host, degree, scalar_term=scalar, method="horner")
+    actual = pysiglib.sig(path, degree, scalar_term=scalar, method="ps", n_jobs=3)
+    tol = 4e-4 if dtype == torch.float32 else 2e-10
+    start = int(scalar)
+    seeds = torch.zeros_like(expected)
+    for k in range(1, degree + 1):
+        end = start + d ** k
+        part = expected[:, start:end]
+        torch.testing.assert_close(actual[:, start:end].cpu().double(), part, rtol=tol,
+                                   atol=tol * part.abs().max().item())
+        if k in (1, degree // 2 + 1, degree):
+            seeds[:, start:end] = torch.from_numpy(rng.normal(size=part.shape))
+        start = end
+    seeds = seeds.to(path)
+    reference = pysiglib.sig_backprop(host, expected, seeds.cpu().double(), degree, method="horner")
+    grad = pysiglib.sig_backprop(path, actual, seeds, degree, method="ps", n_jobs=3)
+    torch.testing.assert_close(grad.cpu().double(), reference, rtol=tol, atol=tol * reference.abs().max().item())
+
+
+@pytest.mark.parametrize("d,degree", [(12, 3), (32, 2)])
+def test_midpoint_thread_boundaries(d, degree):
+    path = torch.from_numpy(np.random.default_rng(734).normal(size=(2, 778, d)).cumsum(axis=1) / 32)
+    check_sig_methods(path, degree, [("ps", None)], scalar_term=True, n_jobs=9)
+
+
 def test_corrected_auto_cpu_region(monkeypatch):
     rng = np.random.default_rng(729)
     path = torch.tensor(rng.normal(scale=.01, size=(1, 17, 4)), dtype=torch.float32)

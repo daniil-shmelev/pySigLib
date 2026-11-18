@@ -2776,6 +2776,20 @@ __global__ void sig_degree_two_backprop_ker(
 }
 
 template<typename T>
+void signature_degree_two_backprop_cuda(const T* path, const T* deriv, T* out, uint64_t batch,
+	uint64_t dimension, uint64_t length, uint64_t sig_stride, bool scalar, cudaStream_t stream) {
+	const size_t path_stride = checked_cuda_size_mul(length, dimension, "CUDA degree-two backprop");
+	const size_t total = checked_cuda_size_mul(batch, path_stride, "CUDA degree-two backprop");
+	constexpr int block = 64;
+	sig_degree_two_backprop_ker<T><<<make_cuda_1d_grid(total, block), block, 0, stream>>>(
+		path, deriv, out, dimension, length, path_stride, sig_stride, total, scalar);
+	check_cuda_kernel_launch();
+}
+
+template void signature_degree_two_backprop_cuda(const float*, const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, cudaStream_t);
+template void signature_degree_two_backprop_cuda(const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, cudaStream_t);
+
+template<typename T>
 void sig_backprop_cuda_stream_(
 	const T* path,
 	T* out,
@@ -2892,13 +2906,8 @@ void sig_backprop_cuda_stream_(
 	const bool use_direct_degree_two = (dimension >= 23 && dimension <= 32 && batch_size >= 32)
 		|| (dimension >= 48 && dimension <= 128 && batch_size <= 32 && length >= 65);
 	if (degree == 2 && use_direct_degree_two) {
-		const size_t path_stride = checked_cuda_size_mul(length, dimension, "CUDA degree-two backprop");
-		const size_t total = checked_cuda_size_mul(batch_size, path_stride, "CUDA degree-two backprop");
 		const uint64_t sig_stride = host_sig_length(dimension, degree) - !scalar_term;
-		constexpr int block = 64;
-		sig_degree_two_backprop_ker<T><<<make_cuda_1d_grid(total, block), block, 0, stream>>>(
-			path, sig_derivs, out, dimension, length, path_stride, sig_stride, total, scalar_term);
-		check_cuda_kernel_launch();
+		signature_degree_two_backprop_cuda(path, sig_derivs, out, batch_size, dimension, length, sig_stride, scalar_term, stream);
 		return;
 	}
 	if (degree > MAX_GENERIC_DEGREE)

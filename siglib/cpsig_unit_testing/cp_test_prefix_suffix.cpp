@@ -70,6 +70,30 @@ TEST(PrefixSuffix, CorrectionSelectionAndQuadrature) {
     EXPECT_FALSE(signature_method::use_prefix_suffix<float>(2, 0, 1, 4, 17, 8, false, 16, false, false));
 }
 
+TEST(PrefixSuffix, UncorrectedMethodSelection) {
+    using signature_method::automatic;
+    using signature_method::use_prefix_suffix;
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 8, 3, 257, 12, false, 0, false, false));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 8, 16, 769, 3, false, 0, false, true));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 4, 4, 513, 3, false, 0, false, true));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 8, 8, 1025, 3, false, 0, false, false));
+    EXPECT_FALSE(use_prefix_suffix<double>(automatic, 0, 1, 8, 1025, 3, false, 0, false, false));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 4, 3, 193, 12, false, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 4, 16, 2049, 2, false, 0, false, false));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 16, 8, 2049, 3, false, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 16, 4, 513, 5, false, 0, true, true));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 16, 4, 513, 5, false, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 8, 3, 257, 13, false, 0, true, false));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 8, 3, 257, 12, false, 0, true, false));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 8, 3, 129, 13, false, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 1, 3, 16385, 7, false, 0, true, false));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 4, 3, 8193, 7, false, 0, true, true));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 4, 3, 8193, 7, false, 0, true, true));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 2, 3, 32769, 7, false, 0, false, true));
+    EXPECT_FALSE(use_prefix_suffix<double>(automatic, 0, 2, 3, 32769, 7, false, 0, false, false));
+    EXPECT_FALSE(use_prefix_suffix<double>(automatic, 0, 4, 3, 193, 12, true, 0, true, false));
+}
+
 TEST(PrefixSuffix, InvalidSignatureMethod) {
     float path[4]{}, sig[7]{};
     EXPECT_NE(signature_f(path, sig, 1, 2, 2, 2, false, false, 1.f, true, 0,

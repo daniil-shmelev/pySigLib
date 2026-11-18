@@ -239,24 +239,25 @@ template<bool Prepend, typename T>
 __global__ void scan_adjoint_seeds_kernel(const T* increments, const T* sources, const T* deriv,
     T* summaries, T* scratch, uint64_t batch, uint64_t d, uint64_t n, uint64_t h, uint64_t qlen,
     uint64_t chunks, uint64_t chunk_length, uint64_t stride, uint64_t sig_stride, bool scalar,
-    const uint64_t* power, const uint64_t* offset, bool shared) {
+    const uint64_t* power, const uint64_t* offset, bool shared, uint64_t words, bool seed_terminal) {
     extern __shared__ unsigned char raw[];
     for (uint64_t task = blockIdx.x; task < batch * chunks; task += gridDim.x) {
         const uint64_t sample = task / chunks, chunk = task % chunks;
         const uint64_t first = chunk * chunk_length, end = min(n, first + chunk_length);
         T* adjoint = shared ? reinterpret_cast<T*>(raw) : scratch + sample * stride + chunk * 3 * qlen;
-        T* work = adjoint + qlen;
-        for (uint64_t x = threadIdx.x; x < qlen; x += blockDim.x)
-            adjoint[x] = !Prepend && end == n && x ? deriv[sample * sig_stride + x - !scalar] : T(0);
+        T* work = adjoint + words;
+        const bool seed = seed_terminal && (Prepend ? first == 0 : end == n);
+        for (uint64_t x = threadIdx.x; x < words; x += blockDim.x)
+            adjoint[x] = seed && x ? deriv[sample * sig_stride + x - !scalar] : T(0);
         __syncthreads();
         for (uint64_t t = first; t < end; ++t) {
             const uint64_t i = Prepend ? t : end - 1 - (t - first), vertex = Prepend ? i + 1 : i;
             adjoint_step<Prepend>(adjoint, increments + sample * stride + i * d, work, d, h, power, offset);
-            for (uint64_t x = threadIdx.x + 1; x < qlen; x += blockDim.x)
+            for (uint64_t x = threadIdx.x + 1; x < words; x += blockDim.x)
                 adjoint[x] += sources[sample * stride + vertex * qlen + x];
             __syncthreads();
         }
-        for (uint64_t x = threadIdx.x; x < qlen; x += blockDim.x)
+        for (uint64_t x = threadIdx.x; x < words; x += blockDim.x)
             summaries[sample * stride + chunk * qlen + x] = adjoint[x];
         __syncthreads();
     }
@@ -264,11 +265,11 @@ __global__ void scan_adjoint_seeds_kernel(const T* increments, const T* sources,
 
 template<bool Prepend, typename T>
 __global__ void summary_adjoint_kernel(const T* signatures, const T* in, T* out, uint64_t batch,
-    uint64_t chunks, uint64_t qlen, uint64_t stride, uint64_t shift, uint64_t h,
+    uint64_t chunks, uint64_t qlen, uint64_t words, uint64_t stride, uint64_t shift, uint64_t h,
     const uint64_t* power, const uint64_t* offset) {
-    const uint64_t total = batch * chunks * qlen;
+    const uint64_t total = batch * chunks * words;
     for (uint64_t x = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x; x < total; x += uint64_t(gridDim.x) * blockDim.x) {
-        const uint64_t sample = x / (chunks * qlen), chunk = x / qlen % chunks, word = x % qlen;
+        const uint64_t sample = x / (chunks * words), chunk = x / words % chunks, word = x % words;
         const uint64_t position = sample * stride + chunk * qlen;
         T value = in[position + word];
         if (word && (Prepend ? chunk >= shift : chunk + shift < chunks)) {
@@ -291,23 +292,23 @@ template<bool Prepend, typename T>
 __global__ void scans_backprop_kernel(const T* states, const T* increments, const T* sources,
     const T* boundary, const T* deriv, T* dincrements, T* scratch, uint64_t batch, uint64_t d, uint64_t n,
     uint64_t h, uint64_t qlen, uint64_t chunks, uint64_t chunk_length, uint64_t stride, uint64_t sig_stride,
-    bool scalar, const uint64_t* power, const uint64_t* offset, bool shared) {
+    bool scalar, const uint64_t* power, const uint64_t* offset, bool shared, uint64_t words, bool seed_terminal) {
     extern __shared__ unsigned char raw[];
     for (uint64_t task = blockIdx.x; task < batch * chunks; task += gridDim.x) {
         const uint64_t sample = task / chunks, chunk = task % chunks;
         const uint64_t first = chunk * chunk_length, end = min(n, first + chunk_length);
         const bool has_boundary = Prepend ? chunk != 0 : chunk + 1 < chunks;
         T* adjoint = shared ? reinterpret_cast<T*>(raw) : scratch + sample * stride + chunk * 3 * qlen;
-        T* history = adjoint + qlen; T* work = history + qlen;
-        for (uint64_t x = threadIdx.x; x < qlen; x += blockDim.x)
+        T* history = adjoint + words; T* work = history + words;
+        for (uint64_t x = threadIdx.x; x < words; x += blockDim.x)
             adjoint[x] = has_boundary ? boundary[sample * stride + (Prepend ? chunk - 1 : chunk + 1) * qlen + x]
-                : (!Prepend && x ? deriv[sample * sig_stride + x - !scalar] : T(0));
+                : (seed_terminal && x ? deriv[sample * sig_stride + x - !scalar] : T(0));
         __syncthreads();
         for (uint64_t t = first; t < end; ++t) {
             const uint64_t i = Prepend ? t : end - 1 - (t - first), vertex = Prepend ? i + 1 : i;
             horner_backprop<Prepend>(states + sample * stride + vertex * qlen, increments + sample * stride + i * d,
                 adjoint, dincrements + sample * stride + i * d, d, h, power, offset, history, work);
-            for (uint64_t x = threadIdx.x + 1; x < qlen; x += blockDim.x)
+            for (uint64_t x = threadIdx.x + 1; x < words; x += blockDim.x)
                 adjoint[x] += sources[sample * stride + vertex * qlen + x];
             __syncthreads();
         }

@@ -19,6 +19,8 @@
 #include "prefix_suffix.h"
 #include "prefix_suffix_endpoint.h"
 #include "prefix_suffix_selection.h"
+#include "prefix_suffix_symmetric.h"
+#include "prefix_suffix_legendre.h"
 #include <cmath>
 #include "cu_prefix_suffix_backprop.cuh"
 #include <cublas_v2.h>
@@ -88,7 +90,7 @@ struct Resources {
     }
 };
 
-template<typename T, typename Run>
+template<typename T, bool UseBlas = true, typename Run>
 void with_factor_workspace(const Layout& l, int device, uint64_t batch, uint64_t max_paths,
     uint64_t stride, uint64_t metadata_bytes, uint64_t blas_charge, bool trim_cache, const char* name,
     cudaStream_t stream, bool fp64_emulation, Run run) {
@@ -113,14 +115,18 @@ void with_factor_workspace(const Layout& l, int device, uint64_t batch, uint64_t
     const uint64_t capacity = resources.reserve(paths, row_bytes, trim_cache || emulation_limit ? available : UINT64_MAX, name);
     T* memory = reinterpret_cast<T*>(resources.storage->get());
     // Store metadata after the last sample; all numeric sample strides stay equal.
-    auto* power = reinterpret_cast<uint64_t*>(memory + capacity * stride);
-    auto* offset = power + l.power.size();
+    auto* power = metadata_bytes ? reinterpret_cast<uint64_t*>(memory + capacity * stride) : nullptr;
+    auto* offset = power ? power + l.power.size() : nullptr;
     try {
-        CUDA_CHECK(cudaMemcpyAsync(power, l.power.data(), l.power.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
-        CUDA_CHECK(cudaMemcpyAsync(offset, l.offset.data(), l.offset.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
-        blas_check(cublasSetStream(resources.handle, stream));
-        blas_check(cublasSetWorkspace(resources.handle, resources.blas_workspace.get(), 4ULL << 20));
-        blas_check(cublasSetMathMode(resources.handle, CUBLAS_PEDANTIC_MATH));
+        if (power) {
+            CUDA_CHECK(cudaMemcpyAsync(power, l.power.data(), l.power.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+            CUDA_CHECK(cudaMemcpyAsync(offset, l.offset.data(), l.offset.size() * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+        }
+        if constexpr (UseBlas) {
+            blas_check(cublasSetStream(resources.handle, stream));
+            blas_check(cublasSetWorkspace(resources.handle, resources.blas_workspace.get(), 4ULL << 20));
+            blas_check(cublasSetMathMode(resources.handle, CUBLAS_PEDANTIC_MATH));
+        }
         run(resources.handle, resources.emulation.get(), capacity, memory, power, offset);
         CUDA_CHECK(cudaStreamSynchronize(stream));
     } catch (...) {
@@ -325,12 +331,92 @@ __global__ void scan_kernel(const T* increments, T* prefixes, T* suffixes, T* su
     }
 }
 
+// A word needs only its own chain of shorter prefixes (suffixes for a reverse scan).
+template<int K, typename T>
+__device__ void scan_word(const T* increments, const T* seed, T* states, T* final,
+    uint64_t first, uint64_t end, uint64_t d, unsigned word, uint64_t pitch, bool reverse,
+    const uint64_t* offset, bool scalar) {
+    unsigned letters[K];
+    T chain[K + 1];
+    const uint64_t index = offset[K] + word;
+    #pragma unroll
+    for (int j = 0; j < K; ++j) {
+        letters[reverse ? j : K - 1 - j] = word % unsigned(d);
+        word /= unsigned(d);
+    }
+    unsigned subword = 0, place = 1;
+    #pragma unroll
+    for (int j = 0; j < K; ++j) {
+        subword = reverse ? subword + letters[j] * place : subword * unsigned(d) + letters[j];
+        place *= unsigned(d);
+        chain[j + 1] = seed ? seed[offset[j + 1] + subword] : T(0);
+    }
+    for (uint64_t t = first; t < end; ++t) {
+        const uint64_t i = reverse ? end - 1 - (t - first) : t;
+        if (states && index < pitch) states[(i + reverse) * pitch + index] = chain[K];
+        T v[K];
+        #pragma unroll
+        for (int j = 0; j < K; ++j) v[j] = increments[i * d + letters[j]];
+        #pragma unroll
+        for (int k = K; k > 0; --k) {
+            T value = v[0] * (T(1) / T(k));
+            #pragma unroll
+            for (int j = 1; j < k; ++j)
+                value = (chain[j] + value) * (v[j] * (T(1) / T(k - j)));
+            chain[k] += value;
+        }
+    }
+    if (final) final[index - !scalar] = chain[K];
+}
+
+template<typename T>
+__global__ void word_scan_kernel(const T* increments, T* states, T* summaries, const T* boundary,
+    T* output, uint64_t batch, uint64_t d, uint64_t n, uint64_t pitch, uint64_t qlen,
+    uint64_t chunks, uint64_t chunk_length, uint64_t stride, uint64_t output_stride, bool scalar,
+    bool reverse, bool summary_only, const uint64_t* offset) {
+    const uint64_t width = !summary_only && reverse ? pitch : qlen;
+    for (uint64_t x = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x; x < batch * chunks * width;
+        x += uint64_t(gridDim.x) * blockDim.x) {
+        const uint64_t task = x / width, sample = task / chunks, chunk = task % chunks;
+        const uint64_t word = x % width, first = chunk * chunk_length, end = min(n, first + chunk_length);
+        T* dest = summary_only ? nullptr : states + sample * stride;
+        T* final = summary_only ? summaries + sample * stride + chunk * qlen
+            : !reverse && chunk + 1 == chunks ? output + sample * output_stride : nullptr;
+        if (!final && word >= pitch) continue;
+        const bool with_scalar = summary_only || scalar;
+        if (!word) {
+            if (dest) for (uint64_t i = first; i < end; ++i) dest[(i + reverse) * pitch] = T(1);
+            if (final && with_scalar) final[0] = T(1);
+            continue;
+        }
+        const T* seed = nullptr;
+        if (!summary_only && (reverse ? chunk + 1 < chunks : chunk > 0))
+            seed = boundary + sample * stride + (reverse ? chunk + 1 : chunk - 1) * qlen;
+        unsigned k = 1;
+        while (word >= offset[k + 1]) ++k;
+        auto run = [&]<int K>() {
+            scan_word<K>(increments + sample * stride, seed, dest, final, first, end, d,
+                unsigned(word - offset[K]), pitch, reverse, offset, with_scalar);
+        };
+        switch (k) {
+        case 1: run.template operator()<1>(); break;
+        case 2: run.template operator()<2>(); break;
+        case 3: run.template operator()<3>(); break;
+        case 4: run.template operator()<4>(); break;
+        case 5: run.template operator()<5>(); break;
+        case 6: run.template operator()<6>(); break;
+        case 7: run.template operator()<7>(); break;
+        case 8: run.template operator()<8>(); break;
+        }
+    }
+}
+
 template<typename T>
 __global__ void summary_scan_kernel(const T* in, T* out, uint64_t batch, uint64_t chunks, uint64_t qlen,
-    uint64_t stride, uint64_t shift, uint64_t h, bool reverse, const uint64_t* power, const uint64_t* offset) {
-    const uint64_t total = batch * chunks * qlen;
+    uint64_t words, uint64_t stride, uint64_t shift, uint64_t h, bool reverse, const uint64_t* power, const uint64_t* offset) {
+    const uint64_t total = batch * chunks * words;
     for (uint64_t x = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x; x < total; x += uint64_t(gridDim.x) * blockDim.x) {
-        const uint64_t sample = x / (chunks * qlen), chunk = x / qlen % chunks, word = x % qlen;
+        const uint64_t sample = x / (chunks * words), chunk = x / words % chunks, word = x % words;
         const T* current = in + sample * stride + chunk * qlen;
         T value = current[word];
         if ((!reverse && chunk >= shift) || (reverse && chunk + shift < chunks)) {
@@ -370,6 +456,14 @@ void prepare_scans(const T* path, T* increments, T* prefixes, T* suffixes, T* ou
     }
     const unsigned grid = make_cuda_1d_grid(mul(count, chunks), 1);
     auto scan = [&](T* boundary, bool reverse, bool summary_only) {
+        if (!linear && l.scan_degree <= 8 && l.power[l.scan_degree] <= UINT_MAX) {
+            word_scan_kernel<<<make_cuda_1d_grid(mul(mul(count, chunks), qlen), 128), 128, 0, stream>>>(
+                increments, reverse ? suffixes : prefixes, summary, boundary, output, count, d, n,
+                reverse ? qlen : plen, qlen, chunks, chunk_length, stride, output_stride, scalar,
+                reverse, summary_only, offset);
+            CUDA_CHECK(cudaGetLastError());
+            return;
+        }
         scan_kernel<<<grid, threads, shared, stream>>>(increments, prefixes, suffixes, summary,
             boundary, work, output, count, d, n, l.scan_degree, plen, qlen, chunks, chunk_length,
             stride, output_stride, scalar, reverse, summary_only, power, offset, local_scan);
@@ -381,7 +475,7 @@ void prepare_scans(const T* path, T* increments, T* prefixes, T* suffixes, T* ou
         T* current = summary; T* next = reverse ? qscan : pscan; T* alternate = swap;
         for (uint64_t shift = 1; shift < chunks; shift *= 2) {
             summary_scan_kernel<<<make_cuda_1d_grid(mul(count, mul(chunks, qlen)), 256), 256, 0, stream>>>(
-                current, next, count, chunks, qlen, stride, shift, l.scan_degree, reverse, power, offset);
+                current, next, count, chunks, qlen, qlen, stride, shift, l.scan_degree, reverse, power, offset);
             CUDA_CHECK(cudaGetLastError());
             current = next; next = alternate; alternate = current;
         }
@@ -400,6 +494,8 @@ template<typename T> struct FactorCoefficients {
     }
 };
 
+#include "cu_prefix_suffix_warp.cuh"
+
 template<typename T, int D>
 __device__ T coefficient_right(const T* suffix, const T* v, unsigned word, unsigned dimension,
     unsigned j, unsigned b, const FactorCoefficients<T>& coefficients) {
@@ -416,7 +512,7 @@ __device__ T coefficient_right(const T* suffix, const T* v, unsigned word, unsig
     return value * coefficients.factorial[j + 1];
 }
 
-template<typename T, int D>
+template<typename T, int D, bool RightOnly = false>
 __global__ void coefficient_factors_kernel(const T* prefixes, const T* suffixes, const T* increments,
     T* left, T* right, uint64_t batch, unsigned dimension, uint64_t plen, uint64_t qlen,
     unsigned a, unsigned b, unsigned p, unsigned q, uint64_t base, uint64_t rows,
@@ -428,7 +524,7 @@ __global__ void coefficient_factors_kernel(const T* prefixes, const T* suffixes,
         const T* v = increments + sample * stride + i * d;
         const T* prefix = prefixes + sample * stride + i * plen + offset[a - 1 - j];
         const T* suffix = suffixes + sample * stride + (i + 1) * qlen;
-        for (unsigned word = lane; word < p + q; word += 32) {
+        for (unsigned word = (RightOnly ? p : 0) + lane; word < p + q; word += 32) {
             if (word < p) {
                 unsigned index = word;
                 T value = 1;
@@ -543,7 +639,47 @@ template<typename T> struct CudaMatrices {
     }
 };
 
+template<bool Prepend, typename T>
+void reverse_factor_scan(const Layout& l, unsigned h, bool seed, const T* states, const T* inc,
+    const T* sources, const T* gradient, T* dinc, T* summary, T* pscan, T* qscan, T* swap,
+    T* boundary, T* work, uint64_t count, uint64_t n, uint64_t qlen, uint64_t chunks,
+    uint64_t chunk_length, uint64_t stride, uint64_t sig_stride, bool scalar,
+    const uint64_t* power, const uint64_t* offset, unsigned scan_threads, cudaStream_t stream) {
+    const uint64_t d = l.d;
+    if (!h) return;
+    const uint64_t words = l.offset[h + 1];
+    const bool local = words <= 32768 / (3 * sizeof(T));
+    const uint64_t shared = local ? 3 * words * sizeof(T) : 0;
+    T* current = swap; T* next = boundary;
+    if (chunks > 1) {
+        cuda_detail::scan_adjoint_seeds_kernel<Prepend><<<make_cuda_1d_grid(mul(count, chunks), 1), scan_threads, shared, stream>>>(
+            inc, sources, gradient, current, work, count, d, n, h, qlen, chunks, chunk_length,
+            stride, sig_stride, scalar, power, offset, local, words, seed);
+        CUDA_CHECK(cudaGetLastError());
+        T* sig_current = summary; T* sig_next = pscan; T* sig_alternate = qscan;
+        const unsigned grid = make_cuda_1d_grid(mul(count, mul(chunks, words)), 256);
+        for (uint64_t shift = 1; shift < chunks; shift *= 2) {
+            cuda_detail::summary_adjoint_kernel<Prepend><<<grid, 256, 0, stream>>>(
+                sig_current, current, next, count, chunks, qlen, words, stride, shift, h, power, offset);
+            CUDA_CHECK(cudaGetLastError());
+            summary_scan_kernel<<<grid, 256, 0, stream>>>(
+                sig_current, sig_next, count, chunks, qlen, words, stride, shift, h, !Prepend, power, offset);
+            CUDA_CHECK(cudaGetLastError());
+            std::swap(current, next);
+            sig_current = sig_next; sig_next = sig_alternate; sig_alternate = sig_current;
+        }
+    }
+    cuda_detail::scans_backprop_kernel<Prepend><<<make_cuda_1d_grid(mul(count, chunks), 1), scan_threads, shared, stream>>>(
+        states, inc, sources, current, gradient, dinc, work, count, d, n,
+        h, qlen, chunks, chunk_length, stride, sig_stride, scalar, power, offset, local, words, seed);
+    CUDA_CHECK(cudaGetLastError());
+}
+
 #include "cu_prefix_suffix_endpoint.cuh"
+#include "cu_prefix_suffix_split_k.cuh"
+#include "cu_prefix_suffix_symmetric.cuh"
+#include "cu_prefix_suffix_legendre.cuh"
+#include "cu_prefix_suffix_midpoint.cuh"
 #include "cu_prefix_suffix_correction.cuh"
 } // namespace
 
@@ -576,6 +712,22 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
         CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaStreamSynchronize(stream));
         return;
     }
+    if (!ta && !ll && !ps_split && !fp64_emulation && degree >= 4
+        && prefix_suffix_selection::automatic()
+        && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && !option("PYSIGLIB_PS_SCAN_CHUNK", 0)
+        && gpu_legendre::compute<true>(path, deriv, out, l, device, batch, points - 1, scalar, stream)) return;
+    if (degree <= 3 && !fp64_emulation && !ta && !ll && !ps_split && prefix_suffix_selection::automatic()
+        && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && !option("PYSIGLIB_PS_SCAN_CHUNK", 0)) {
+        if (degree == 2 && d <= 64) {
+            signature_degree_two_backprop_cuda(path, deriv, out, batch, d, length, sig_stride, scalar, stream);
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+            return;
+        }
+        if (gpu_midpoint::fits<T>(l, points - 1)) {
+            gpu_midpoint::compute<true>(path, deriv, out, l, device, batch, points - 1, scalar, stream);
+            return;
+        }
+    }
     if (!ps_split) {
         const auto choice = prefix_suffix_selection::select_cuda(true, batch, points - 1, l, 1, ta || ll);
         if (choice.a) l.set_split(choice.a);
@@ -589,22 +741,48 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
     const uint64_t temporary = l.offset[std::max(l.scan_degree, l.left_degree(degree)) + 1];
     const uint64_t slots = std::max<uint64_t>(1, std::min({n, uint64_t(256), factor_bytes / mul(mul(4, temporary), sizeof(T))}));
     const uint64_t inc_count = mul(n, d), scan_count = mul(add(n, 1), qlen), summary_count = mul(chunks, qlen);
-    const uint64_t scan_scratch = mul(chunks, add(qlen, mul(2, scan_power)));
-    const uint64_t work_count = std::max({scan_scratch, mul(4, mul(slots, temporary)), mul(3, mul(chunks, qlen))});
+    const uint64_t scan_size = add(qlen, mul(2, scan_power));
+    const bool local_scan = scan_size <= 32768 / sizeof(T);
+    const bool local_backprop = qlen <= 32768 / (3 * sizeof(T));
+    constexpr uint64_t warp_bytes = std::is_same_v<T, float> ? 16384 : 32768;
+    const bool word_scan = l.scan_degree <= 8 && scan_power <= UINT_MAX && l.scan_degree > 1;
+    const bool compress = std::is_same_v<T, double> && !fp64_emulation && !option("PYSIGLIB_PS_WORKSPACE_BYTES", 0, true);
+    const gpu_symmetric::Maps maps(l, n, compress ? rows : 0, sizeof(T));
+    uint64_t work_count = std::max({local_scan || word_scan ? 0 : mul(chunks, scan_size),
+        local_backprop ? 0 : mul(3, summary_count), maps.plan.scratch});
+    for (uint64_t k = l.scan_degree + 1; k <= degree; ++k) {
+        const uint64_t a = l.left_degree(k), b = k - a;
+        if (!b || add(l.offset[a + 1], l.offset[b]) > warp_bytes / (2 * sizeof(T)) || add(l.power[a], l.power[b]) > INT_MAX) {
+            work_count = std::max(work_count, mul(4, mul(slots, temporary)));
+            break;
+        }
+    }
     uint64_t stride = add(mul(2, inc_count), mul(4, scan_count));
     stride = add(stride, add(mul(5, summary_count), add(work_count, qlen)));
     stride = add(stride, mul(rows, add(add(maxp, maxq), std::min(maxp, maxq))));
     stride = mul(add(stride, 63) / 64, 64);
-    const uint64_t metadata_bytes = mul(add(l.power.size(), l.offset.size()), sizeof(uint64_t));
+    const uint64_t metadata_bytes = add(mul(add(l.power.size(), l.offset.size()), sizeof(uint64_t)), mul(maps.indices.size(), sizeof(unsigned)));
     const FactorCoefficients<T> coefficients;
     const unsigned scan_threads = scan_power <= 64 ? 32 : 128;
-    const bool local_scan = mul(add(qlen, mul(2, scan_power)), sizeof(T)) <= 32768;
-    const uint64_t scan_shared = local_scan ? mul(add(qlen, mul(2, scan_power)), sizeof(T)) : 0;
-    const bool local_backprop = mul(3, mul(qlen, sizeof(T))) <= 32768;
-    const uint64_t backprop_shared = local_backprop ? mul(3, mul(qlen, sizeof(T))) : 0;
+    const uint64_t scan_shared = local_scan ? scan_size * sizeof(T) : 0;
     with_factor_workspace<T>(l, device, batch, 32, stride, mul(add(metadata_bytes, 255) / 256, 256),
         4ULL << 20, false, "prefix-suffix backprop", stream, fp64_emulation,
         [&](cublasHandle_t handle, Fp64Emulation* emulation, uint64_t capacity, T* memory, uint64_t* power, uint64_t* offset) {
+        auto* indices = reinterpret_cast<unsigned*>(offset + l.offset.size());
+        int unsafe = 0;
+        if (maps.plan.scratch) {
+            // A permutation group can overflow before multiplication by a small factor.
+            int* flag = reinterpret_cast<int*>(memory);
+            CUDA_CHECK(cudaMemsetAsync(flag, 0, sizeof(int), stream));
+            const uint64_t size = mul(batch, sig_stride);
+            gpu_symmetric::check_seeds<<<make_cuda_1d_grid(size, 256), 256, 0, stream>>>(
+                deriv, size, (std::numeric_limits<T>::max)() / T(2 * maxp), flag);
+            CUDA_CHECK(cudaGetLastError());
+            CUDA_CHECK(cudaMemcpyAsync(&unsafe, flag, sizeof(int), cudaMemcpyDeviceToHost, stream));
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+        }
+        if (!maps.indices.empty()) CUDA_CHECK(cudaMemcpyAsync(indices, maps.indices.data(),
+            maps.indices.size() * sizeof(unsigned), cudaMemcpyHostToDevice, stream));
         for (uint64_t base_batch = 0; base_batch < batch; base_batch += capacity) {
             const uint64_t count = std::min(capacity, batch - base_batch);
             T* inc = memory; T* prefixes = inc + inc_count; T* suffixes = prefixes + scan_count;
@@ -655,10 +833,20 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
                     T* g = const_cast<T*>(gradient + l.offset[k] - !scalar);
                     // Reuse the larger factor after its final read.
                     auto left_derivative = [&] {
+                        if (maps.plan.scratch && !unsafe && SymmetricPlan::use(n, a, p, q)) {
+                            gpu_symmetric::gemm<gpu_symmetric::Product::left_adjoint>(maps, indices, matrices, stream, work,
+                                dleft, right, g, a, p, q, q, base, nr, stride, sig_stride);
+                            return;
+                        }
                         matrices.gemm(Matrix<T>{right, nr, q, q, 1, stride}, Matrix<T>{g, q, p, 1, q, sig_stride},
                             Matrix<T>{dleft, nr, p, p, 1, stride}, true);
                     };
                     auto right_derivative = [&] {
+                        if (maps.plan.scratch && !unsafe && SymmetricPlan::use(n, a, p, q)) {
+                            gpu_symmetric::gemm<gpu_symmetric::Product::right_adjoint>(maps, indices, matrices, stream, work,
+                                left, dright, g, a, p, q, q, base, nr, stride, sig_stride);
+                            return;
+                        }
                         matrices.gemm(Matrix<T>{left, nr, p, p, 1, stride}, Matrix<T>{g, p, q, q, 1, sig_stride},
                             Matrix<T>{dright, nr, q, q, 1, stride}, true);
                     };
@@ -666,7 +854,17 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
                     else { left_derivative(); right_derivative(); }
                     const uint64_t segments = (base + nr - 1) / a - base / a + 1;
                     const uint64_t active_slots = std::min(slots, segments);
-                    auto reverse_factors = [&]<unsigned D>() { cuda_detail::factors_backprop_kernel<T, D><<<make_cuda_1d_grid(mul(count, active_slots), 1), 128, 0, stream>>>(
+                    const uint64_t warp_work = mul(2, add(l.offset[a + 1], l.offset[b]));
+                    const unsigned warps = warp_work <= 8192 / sizeof(T) ? 4 : warp_work <= 16384 / sizeof(T) ? 2 : 1;
+                    auto reverse_factors = [&]<unsigned D>() {
+                        if (b && warp_work <= warp_bytes / sizeof(T)) {
+                            warp_factor_adjoints<T, D><<<make_cuda_1d_grid(mul(count, segments), warps), 32 * warps,
+                                warps * warp_work * sizeof(T), stream>>>(prefixes, suffixes, inc, dleft, dright,
+                                dprefix, dsuffix, dinc, count, unsigned(d), qlen, unsigned(a), unsigned(b),
+                                base, nr, stride, power, offset, unsigned(warp_work), coefficients);
+                            return;
+                        }
+                        cuda_detail::factors_backprop_kernel<T, D><<<make_cuda_1d_grid(mul(count, active_slots), 1), 128, 0, stream>>>(
                         prefixes, suffixes, inc, dleft, dright, dprefix, dsuffix, dinc, work,
                         count, d, qlen, a, b, base, nr, active_slots, temporary, stride, power, offset); };
                     switch (d) {
@@ -681,29 +879,12 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
                 }
             }
             auto reverse_scan = [&]<bool Prepend>() {
-                const T* sources = Prepend ? dsuffix : dprefix;
-                T* current = swap; T* next = boundary;
-                if (chunks > 1) {
-                    cuda_detail::scan_adjoint_seeds_kernel<Prepend><<<make_cuda_1d_grid(mul(count, chunks), 1), scan_threads, backprop_shared, stream>>>(
-                        inc, sources, gradient, current, work, count, d, n, l.scan_degree, qlen, chunks, chunk_length,
-                        stride, sig_stride, scalar, power, offset, local_backprop);
-                    CUDA_CHECK(cudaGetLastError());
-                    T* sig_current = summary; T* sig_next = pscan; T* sig_alternate = qscan;
-                    for (uint64_t shift = 1; shift < chunks; shift *= 2) {
-                        cuda_detail::summary_adjoint_kernel<Prepend><<<make_cuda_1d_grid(mul(count, summary_count), 256), 256, 0, stream>>>(
-                            sig_current, current, next, count, chunks, qlen, stride, shift, l.scan_degree, power, offset);
-                        CUDA_CHECK(cudaGetLastError());
-                        summary_scan_kernel<<<make_cuda_1d_grid(mul(count, summary_count), 256), 256, 0, stream>>>(
-                            sig_current, sig_next, count, chunks, qlen, stride, shift, l.scan_degree, !Prepend, power, offset);
-                        CUDA_CHECK(cudaGetLastError());
-                        std::swap(current, next);
-                        sig_current = sig_next; sig_next = sig_alternate; sig_alternate = sig_current;
-                    }
-                }
-                cuda_detail::scans_backprop_kernel<Prepend><<<make_cuda_1d_grid(mul(count, chunks), 1), scan_threads, backprop_shared, stream>>>(
-                    Prepend ? suffixes : prefixes, inc, sources, current, gradient, dinc, work, count, d, n,
-                    l.scan_degree, qlen, chunks, chunk_length, stride, sig_stride, scalar, power, offset, local_backprop);
-                CUDA_CHECK(cudaGetLastError());
+                const bool seed = Prepend != (l.prefix_degree == l.scan_degree);
+                const unsigned h = unsigned(seed ? l.scan_degree : Prepend ? l.right_degree(degree) : l.prefix_degree);
+                reverse_factor_scan<Prepend>(l, h, seed, Prepend ? suffixes : prefixes, inc,
+                    Prepend ? dsuffix : dprefix, gradient, dinc, summary, pscan, qscan, swap, boundary,
+                    work, count, n, qlen, chunks, chunk_length, stride, sig_stride, scalar, power, offset,
+                    scan_threads, stream);
             };
             reverse_scan.template operator()<false>();
             reverse_scan.template operator()<true>();
@@ -729,9 +910,41 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
         CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaStreamSynchronize(stream));
         return;
     }
+    if (!ta && !ll && !ps_split && !fp64_emulation && degree >= 4
+        && prefix_suffix_selection::automatic()
+        && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && !option("PYSIGLIB_PS_SCAN_CHUNK", 0)
+        && option("PYSIGLIB_PS_COEFFICIENT_FACTORS", UINT64_MAX, true) == UINT64_MAX
+        && gpu_legendre::compute<false>(path, static_cast<const T*>(nullptr), out, l, device, batch,
+            points - 1, scalar, stream)) return;
     const auto choice = !ps_split || ps_split == degree
-        ? prefix_suffix_selection::select_cuda(false, batch, points - 1, l, device_parallelism(device), ta || ll)
+        ? prefix_suffix_selection::select_cuda(false, batch, points - 1, l, device_parallelism(device), ta || ll,
+            std::is_same_v<T, double> && !fp64_emulation)
         : prefix_suffix_selection::Choice{};
+    if (degree == 3 && points > 128 && d >= 8 && d <= (std::is_same_v<T, double> ? 16 : 24)
+        && d % 4 == 0 && !ta && !ll && !ps_split
+        && !fp64_emulation && prefix_suffix_selection::automatic() && !option("PYSIGLIB_PS_FACTOR_BYTES", 0)
+        && !option("PYSIGLIB_PS_SCAN_CHUNK", 0)) {
+        gpu_midpoint::cubic_forward(path, out, l, device, batch, points - 1, scalar, stream);
+        return;
+    }
+    const bool use_fused = d == 8 && ((degree == 2 && points > 512)
+        || (degree == 3 && std::is_same_v<T, double> && points <= 257));
+    if (!choice.block && !fp64_emulation && !use_fused && degree <= 3 && (d <= 4 || points > 33)
+        && !ta && !ll && !ps_split && prefix_suffix_selection::automatic()
+        && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && !option("PYSIGLIB_PS_SCAN_CHUNK", 0)) {
+        if (d <= 4 || (d <= 8 && points <= 257)) {
+            gpu_midpoint::direct<<<make_cuda_1d_grid(mul(batch, output_stride), 4), 128, 0, stream>>>(
+                path, out, batch, points - 1, unsigned(d), output_stride, scalar);
+            CUDA_CHECK(cudaGetLastError());
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+            return;
+        }
+        if (gpu_midpoint::fits<T>(l, points - 1)) {
+            gpu_midpoint::compute<false>(path, static_cast<const T*>(nullptr), out, l, device, batch, points - 1,
+                scalar, stream);
+            return;
+        }
+    }
     const uint64_t endpoint_block = ps_split ? choice.block : option("PYSIGLIB_PS_ENDPOINT_BLOCK", choice.block, true);
     if (endpoint_block) {
         try {
@@ -763,14 +976,28 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
     const uint64_t scan_shared = local_scan ? mul(add(qlen, mul(2, scan_power)), sizeof(T)) : 0;
     const unsigned scan_threads = scan_power <= 64 ? 32 : 128;
     const uint64_t summary_count = low && l.scan_degree == 1 ? 0 : mul(chunks, qlen);
-    const uint64_t scan_work = std::max(local_scan ? 0 : mul(chunks, add(qlen, mul(2, scan_power))), mul(2 * factor_width, sizeof(T)) > 32768 ? factor_work : 0);
+    const bool custom_work = option("PYSIGLIB_PS_WORKSPACE_BYTES", 0, true) != 0;
+    const bool compress = !fp64_emulation && !custom_work && (std::is_same_v<T, double> || n >= 512 || (d == 2 && n >= 128));
+    const gpu_symmetric::Maps maps(l, n, compress ? rows : 0, sizeof(T));
+    const bool word_scan = l.scan_degree <= 8 && scan_power <= UINT_MAX && l.scan_degree > 1;
+    uint64_t scan_work = std::max({local_scan || word_scan ? 0 : mul(chunks, add(qlen, mul(2, scan_power))),
+        mul(2 * factor_width, sizeof(T)) > 32768 ? factor_work : 0, maps.plan.scratch});
+    if (!fp64_emulation && !custom_work && !fused)
+        for (uint64_t k = l.scan_degree + 1; k <= degree; ++k) {
+            const uint64_t a = l.left_degree(k);
+            const uint64_t splits = gpu_split_k::chunks(std::min(rows, n * a), l.power[a], l.power[k - a]);
+            scan_work = std::max(scan_work, mul(splits, l.power[k]));
+        }
     uint64_t stride = add(add(inc_count, add(p_count, q_count)), add(mul(4, summary_count), add(scan_work, add(mul(rows, add(maxp, maxq)), partial_count))));
-    const uint64_t metadata_bytes = mul(add(l.power.size(), l.offset.size()), sizeof(uint64_t));
+    const uint64_t metadata_bytes = add(mul(add(l.power.size(), l.offset.size()), sizeof(uint64_t)), mul(maps.indices.size(), sizeof(unsigned)));
     // Align each sample and the metadata for cuBLAS and uint64_t access.
     stride = add(stride, 63) / 64 * 64;
     with_factor_workspace<T>(l, device, batch, low ? 256 : 32, stride, mul(add(metadata_bytes, 255) / 256, 256),
         0, false, "prefix-suffix", stream, fp64_emulation,
         [&](cublasHandle_t handle, Fp64Emulation* emulation, uint64_t capacity, T* memory, uint64_t* power, uint64_t* offset) {
+        auto* indices = reinterpret_cast<unsigned*>(offset + l.offset.size());
+        if (!maps.indices.empty()) CUDA_CHECK(cudaMemcpyAsync(indices, maps.indices.data(),
+            maps.indices.size() * sizeof(unsigned), cudaMemcpyHostToDevice, stream));
         for (uint64_t base_batch = 0; base_batch < batch; base_batch += capacity) {
             const uint64_t count = std::min(capacity, batch - base_batch);
             T* inc = memory; T* prefixes = inc + inc_count; T* suffixes = prefixes + p_count;
@@ -820,7 +1047,11 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
                 for (uint64_t base = 0; base < total; base += rows) {
                     const uint64_t nr = std::min(rows, total - base);
                     auto factor_dimension = [&]<int D>(bool extend) {
-                        if (extend) {
+                        if (extend && pitch <= 128) {
+                            coefficient_factors_kernel<T, D, true><<<make_cuda_1d_grid(mul(count, nr), 8), 256, 0, stream>>>(
+                                prefixes, suffixes, inc, left, right, count, unsigned(d), plen, qlen, unsigned(a), unsigned(b + 1),
+                                unsigned(p), unsigned(pitch), base, nr, stride, pitch, offset, coefficients);
+                        } else if (extend) {
                             const uint64_t segments = (base + nr - 1) / a - base / a + 1;
                             const uint64_t slots = std::min<uint64_t>(segments, 256);
                             const bool shared = mul(q, sizeof(T)) <= 32768;
@@ -854,14 +1085,23 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
                     factors_kernel<<<make_cuda_1d_grid(mul(count, slots), 1), 128, shared ? 2 * width * sizeof(T) : 0, stream>>>(prefixes, suffixes, inc, left, right, work, slots, factor_width, count, d, plen, qlen, a, b, p, q, base, nr, stride, power, offset, shared, pitch, coefficients);
                     }
                     CUDA_CHECK(cudaGetLastError());
-                    matrices.gemm(Matrix<T>{left, p, nr, 1, p, stride}, Matrix<T>{right, nr, q, pitch, 1, stride},
-                        Matrix<T>{output + l.offset[k] - (scalar ? 0 : 1), p, q, q, 1, output_stride}, base == 0);
+                    auto contract = [&](uint64_t level, uint64_t cols) {
+                        T* result = output + l.offset[level] - !scalar;
+                        const uint64_t splits = fp64_emulation || custom_work ? 0 : gpu_split_k::chunks(nr, p, cols);
+                        if (splits) {
+                            gpu_split_k::gemm(left, right, work, result, count, nr, p, cols, pitch, splits,
+                                stride, output_stride, base == 0, stream);
+                        } else if (maps.plan.scratch && SymmetricPlan::use(n, a, p, cols))
+                            gpu_symmetric::gemm<gpu_symmetric::Product::forward>(maps, indices, matrices, stream, work,
+                                left, right, result, a, p, cols, pitch, base, nr, stride, output_stride);
+                        else matrices.gemm({left, p, nr, 1, p, stride}, {right, nr, cols, pitch, 1, stride},
+                            {result, p, cols, cols, 1, output_stride}, base == 0);
+                    };
+                    contract(k, q);
                     if (paired) {
                         factor_dispatch(true);
                         CUDA_CHECK(cudaGetLastError());
-                        matrices.gemm(Matrix<T>{left, p, nr, 1, p, stride}, Matrix<T>{right, nr, pitch, pitch, 1, stride},
-                            Matrix<T>{output + l.offset[k + 1] - (scalar ? 0 : 1), p, pitch, pitch, 1, output_stride},
-                            base == 0);
+                        contract(k + 1, pitch);
                     }
                 }
                 if (paired) ++k;

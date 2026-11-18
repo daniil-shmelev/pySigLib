@@ -34,6 +34,19 @@ bool use_prefix_suffix_cuda(uint64_t batch, uint64_t dimension, uint64_t length,
         return backward && degree == 2 && batch <= 256 && segments <= 64
             && dimension >= wide_dimension && dimension <= 128;
     }
+    if (batch >= 8 && batch <= 32 && segments <= 4096) {
+        if (backward) {
+            if (degree == 3 && dimension >= 16 && dimension <= 24 && segments >= 128) return true;
+            if constexpr (std::is_same_v<T, float>) {
+                if (degree == 3 && dimension >= 8 && dimension < 16 && segments >= 512) return true;
+                if (dimension == 4 && degree == 5 && batch >= 16 && segments >= 256) return true;
+            }
+        } else if (degree == 3) {
+            if (dimension == 8 && segments >= 1536 && (std::is_same_v<T, float> || batch <= 16)) return true;
+            if constexpr (std::is_same_v<T, double>)
+                if ((dimension == 12 && batch <= 16 && segments >= 512) || (dimension == 16 && segments >= 256)) return true;
+        }
+    }
     if (!backward && batch <= 4) {
         if (dimension == 5 && degree == 3 && batch == 1 && segments >= 3072 && segments <= 8192)
             return true;
@@ -77,6 +90,19 @@ bool use_prefix_suffix_cuda(uint64_t batch, uint64_t dimension, uint64_t length,
         || dimension == 12 || dimension == 16 || dimension == 24 || dimension == 32)
         && degree >= (dimension <= 4 ? 6 : 4) && degree <= (dimension <= 4 ? 16 : (dimension == 6 ? 9 : 8));
     const bool dimension_six_tree = dimension == 6 && degree >= 7 && degree <= 9;
+    if (batch >= 8 && batch <= 32 && segments >= 128) {
+        if constexpr (std::is_same_v<T, double>) {
+            if (dimension == 3 && degree >= (backward ? 8 : 9)) return true;
+            if (!backward && dimension == 3 && degree == 6 && segments >= 3072) return true;
+            if (backward && dimension == 4 && degree == 4 && segments >= 256) return true;
+        } else {
+            if (backward && dimension == 3 && degree >= 10 && segments >= 256) return true;
+            if (!backward && dimension == 3 && degree >= 13 && segments >= 256) return true;
+            if (!backward && dimension == 4 && degree >= 10 && segments >= 256) return true;
+            if (!backward && dimension == 4 && degree == 9 && batch <= 16 && segments >= 1024) return true;
+        }
+        if (backward && dimension == 3 && degree == 5 && segments >= 256) return true;
+    }
     if (backward) {
         if (dimension == 5 && degree == 5 && segments >= 96) return true;
         if (degree == 3 && dimension >= 12 && dimension <= 24 && batch <= 4 && segments >= 512)
@@ -89,6 +115,8 @@ bool use_prefix_suffix_cuda(uint64_t batch, uint64_t dimension, uint64_t length,
             return true;
     }
     if constexpr (std::is_same_v<T, double>) {
+        if (dimension == 3 && degree >= 12 && degree <= 14 && batch >= 2 && batch <= 16
+            && segments >= 128 && segments <= 512) return true;
         if (!backward && dimension > 4 && degree >= 4 && !grouped && work >= 256 && width >= 32768)
             return true;
         if (!backward && dimension == 3 && degree >= 9 && batch <= 4 && segments >= 1024) return true;
@@ -131,21 +159,42 @@ bool use_prefix_suffix(int method, uint64_t ps_split, uint64_t batch, uint64_t d
         throw std::invalid_argument("A prefix length from 1 to degree requires the prefix-suffix method");
     if (method == standard) return false;
     if (method == prefix_suffix) return true;
+    if (!augmented && !correction_len && batch >= 1 && batch <= 4 && dimension == 3
+        && length >= 8193 && length <= 32769 && degree >= 6 && degree <= 8) {
+        if (!cuda) return backward || degree == 8 || (degree == 7 && std::is_same_v<T, float>);
+        if constexpr (std::is_same_v<T, double>) return true;
+        if (!backward) return batch == 1 && degree <= 7;
+        return batch == 1 || degree == 6 || (batch == 2 && degree == 7);
+    }
     if (cuda) return use_prefix_suffix_cuda<T>(batch, dimension, length, degree, augmented, correction_len, backward);
 
-    if (!std::is_same_v<T, float> || augmented || !batch || batch > 32 ||
-        length < 17 || length > 4097 || dimension < 2 || dimension > 32 || degree < 3 || degree > 16)
+    if (augmented || !batch || batch > 32 ||
+        length < 17 || length > 4097 || dimension < 2 || degree < 2 || degree > 16)
         return false;
     const uint64_t segments = length - 1;
 
-    constexpr uint64_t limit = 1ULL << 20;
+    if (degree == 2) return !correction_len && dimension >= 4 && dimension <= 64 && segments >= 2048;
+    if (dimension > 32) return false;
+    if (!correction_len && degree == 3 && dimension <= 24 && segments >= 256) {
+        if (dimension >= 12 || (backward && dimension >= 4)) return true;
+        if (dimension >= 8 && segments >= (batch >= 8 ? 1024ULL : 3072ULL)) return true;
+    }
+    const bool deep = !correction_len && dimension <= 8 && segments >= 128;
+    const uint64_t limit = deep ? (1ULL << 23) : (1ULL << 20);
     uint64_t width = 1;
     for (uint64_t k = 1; k <= degree; ++k) {
         width *= dimension;
         if (width > limit || (k == (degree + 1) / 2 && segments * width > limit)) return false;
     }
     if (correction_len)
-        return correction_len == dimension * dimension && degree >= 2 * dimension + 1 && width >= (1ULL << 17);
+        return std::is_same_v<T, float> && correction_len == dimension * dimension
+            && degree >= 2 * dimension + 1 && width >= (1ULL << 17);
+    if (deep && (dimension == 3 || dimension == 4)) {
+        if (backward && degree >= 4) return true;
+        if (degree >= (dimension == 3 ? 8 : 6)) return true;
+    }
+    if (deep && width >= (backward ? 4096ULL : 32768ULL)) return true;
+    if (!std::is_same_v<T, float>) return false;
     const unsigned exponent = backward ? 11 : 17;
     return width >= (1ULL << exponent);
 }

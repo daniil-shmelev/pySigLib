@@ -35,7 +35,7 @@ inline uint64_t block_size(uint64_t batch, uint64_t segments, uint64_t workers, 
 }
 
 inline Choice select_cuda(bool backward, uint64_t batch, uint64_t segments,
-    const prefix_suffix::Layout& l, int parallelism, bool augmented) {
+    const prefix_suffix::Layout& l, int parallelism, bool augmented, bool native_fp64 = false) {
     if (augmented || segments < 128) return {};
     Choice choice;
     if (backward && l.m >= 3 && prefix_suffix::mul(batch, segments) >= 4096) {
@@ -50,6 +50,8 @@ inline Choice select_cuda(bool backward, uint64_t batch, uint64_t segments,
         const uint64_t width = l.power[l.m - 1];
         if (batch >= 8 && ((l.m == 3 && l.d >= 16 && width <= 4096 && segments / l.d >= 16) || (l.m >= 7 && width <= 128)))
             choice.block = block_size(batch, segments, parallelism, 16, 256);
+        else if (native_fp64 && batch >= 8 && l.d <= 4 && l.m >= 5 && width >= 128 && width <= 256)
+            choice.block = 64;
     }
     if (!choice.a && !choice.block) return {};
     return automatic() ? choice : Choice{};
