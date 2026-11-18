@@ -20,18 +20,24 @@ struct ScanShape {
         : p(l, plan.a - 1), q(l, plan.b), n(segments), pitch((segments + 31) / 32 * 32) {}
 };
 
-template<typename T>
+template<bool Augmented, typename T>
 __global__ void scan_start(const T* path, T* centres, T* pre, T* suf, T* low, ScanShape s, unsigned d,
-    uint64_t batch, uint64_t stride, uint64_t sig_stride, bool scalar) {
+    uint64_t batch, uint64_t stride, uint64_t sig_stride, bool scalar,
+    uint64_t dimension, uint64_t path_stride, bool ta, bool ll, T end_time) {
     for (uint64_t index = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x; index < batch * d * s.pitch;
         index += uint64_t(gridDim.x) * blockDim.x) {
         const unsigned i = unsigned(index % s.pitch), c = unsigned(index / s.pitch % d);
         if (i >= s.n) continue;
         const uint64_t sample = index / s.pitch / d, base = sample * stride;
-        const T* x = path + sample * uint64_t(s.n + 1) * d + c;
-        const T u = x[i * d], next = x[(i + 1) * d], v = next - u;
+        const T* x = path + sample * path_stride;
+        auto point = [&](unsigned t) {
+            if constexpr (Augmented) return point_value(x, t, c, dimension, s.n + 1, ta, ll, end_time);
+            else return x[t * d + c];
+        };
+        const T u = point(i), next = point(i + 1), v = next - u;
         centres[base + uint64_t(c) * s.pitch + i] = v;
-        const T pm = (u - x[0]) + v / 2, qm = (x[s.n * d] - next) + v / 2;
+        const T first = point(0), last = point(s.n);
+        const T pm = (u - first) + v / 2, qm = (last - next) + v / 2;
         for (unsigned r = 0; r <= s.q.depth; ++r) {
             if (r <= s.p.depth) {
                 T* a = pre + base + uint64_t(s.p.first[r]) * s.pitch + i;
@@ -43,7 +49,7 @@ __global__ void scan_start(const T* path, T* centres, T* pre, T* suf, T* low, Sc
             if (r < s.q.depth) b[(1 + c) * s.pitch] = qm;
         }
         if (low && !i) {
-            low[sample * sig_stride + scalar + c] = x[s.n * d] - x[0];
+            low[sample * sig_stride + scalar + c] = last - first;
             if (scalar && !c) low[sample * sig_stride] = 1;
         }
     }
@@ -94,11 +100,11 @@ __device__ T scan_segments(T x, T& carry, unsigned lane, T* totals) {
 
 // The integral of mode zero is an exclusive segment scan. Each higher
 // Legendre moment corrects the preceding one with a word two letters shorter.
-template<unsigned Threads, typename T>
+template<unsigned Threads, unsigned Items = 1, typename T>
 __global__ void scan_level(T* pre, T* suf, const T* inc, T* low, ScanShape s, Degrees l,
     unsigned k, uint64_t batch, uint64_t stride, uint64_t sig_stride, bool scalar) {
     const unsigned width = l.power[k], prev = l.power[k - 1], span = l.power[k - 2];
-    const unsigned tasks = width * (1 + unsigned(k <= s.p.depth)), lane = threadIdx.x % 32;
+    const unsigned tasks = width * (1 + (k <= s.p.depth)), lane = threadIdx.x % 32;
     __shared__ T totals[Threads / 32];
     for (uint64_t task = (uint64_t(blockIdx.x) * blockDim.x + threadIdx.x) / Threads; task < batch * tasks;
         task += uint64_t(gridDim.x) * blockDim.x / Threads) {
@@ -113,20 +119,29 @@ __global__ void scan_level(T* pre, T* suf, const T* inc, T* low, ScanShape s, De
         const T* a = data + uint64_t(l.offset[k - 1] + parent) * s.pitch;
         T* row = data + uint64_t(l.offset[k] + w) * s.pitch;
         T carry = 0;
-        for (unsigned first = 0; first < s.n; first += Threads) {
-            const unsigned t = first + threadIdx.x % Threads, i = suffix ? s.n - 1 - t : t;
-            const T v = t < s.n ? inc[base + uint64_t(c) * s.pitch + i] : 0;
-            const T z = t < s.n ? a[i] * v : 0;
-            const T before = scan_segments<Threads>(z, carry, lane, totals);
-            if (t < s.n) {
+        for (unsigned first = 0; first < s.n; first += Threads * Items) {
+            const unsigned start = first + threadIdx.x % Threads * Items;
+            T z[Items], subtotal = 0;
+            #pragma unroll
+            for (unsigned j = 0; j < Items; ++j) {
+                const unsigned t = start + j, i = suffix ? s.n - 1 - t : t;
+                z[j] = t < s.n ? a[i] * inc[base + uint64_t(c) * s.pitch + i] : T(0);
+                subtotal += z[j];
+            }
+            T before = scan_segments<Threads>(subtotal, carry, lane, totals);
+            #pragma unroll
+            for (unsigned j = 0; j < Items && start + j < s.n; ++j) {
+                const unsigned i = suffix ? s.n - 1 - start - j : start + j;
+                const T v = inc[base + uint64_t(c) * s.pitch + i];
                 const T u = inc[base + uint64_t(c2) * s.pitch + i];
-                T value = (before + z / 2) - ((lower[uint64_t(side.first[1]) * s.pitch + i] / 12) * u) * v;
+                T value = (before + z[j] / 2) - ((lower[uint64_t(side.first[1]) * s.pitch + i] / 12) * u) * v;
                 row[i] = value;
                 for (unsigned r = 1; r <= side.depth - k; ++r) {
                     const T weight = T(l.scale[r + 1]);
                     value += ((weight * lower[uint64_t(side.first[r + 1]) * s.pitch + i]) * u) * v;
                     row[uint64_t(side.first[r]) * s.pitch + i] = value;
                 }
+                before += z[j];
             }
         }
         if (low && !suffix && threadIdx.x % Threads == 0) low[sample * sig_stride + l.offset[k] - !scalar + w] = carry;
@@ -180,12 +195,12 @@ __global__ void scan_constant_mode(T* grad, T* product, const T* centre, unsigne
     }
 }
 
-template<unsigned D, unsigned Threads, typename T>
+template<unsigned D, unsigned Threads, unsigned Items = 1, typename T>
 __global__ void scan_reverse_level(const T* pre, const T* suf, T* dp, T* dq, const T* inc,
     T* zp, T* zq, T* cp, T* cq, const T* seed, ScanShape s, Degrees l, unsigned k,
     uint64_t batch, uint64_t stride, uint64_t sig_stride, bool scalar) {
     const unsigned d = D ? D : l.d, width = l.power[k], lane = threadIdx.x % 32;
-    const unsigned tasks = width * (1 + unsigned(k <= s.p.depth));
+    const unsigned tasks = width * (1 + (k <= s.p.depth));
     __shared__ T totals[Threads / 32];
     for (uint64_t task = (uint64_t(blockIdx.x) * blockDim.x + threadIdx.x) / Threads; task < batch * tasks;
         task += uint64_t(gridDim.x) * blockDim.x / Threads) {
@@ -198,16 +213,19 @@ __global__ void scan_reverse_level(const T* pre, const T* suf, T* dp, T* dq, con
         T* corr = (suffix ? cq : cp) + base;
         const unsigned stem = k < 2 ? 0 : suffix ? w % l.power[k - 2] : w / (d * d);
         T carry = suffix ? 0 : seed[sample * sig_stride + index - !scalar];
-        for (unsigned first = 0; first < s.n; first += Threads) {
-            const unsigned t = first + threadIdx.x % Threads, i = suffix ? t : s.n - 1 - t;
-            T sum = 0, gpair = 0;
-            if (t < s.n) {
+        for (unsigned first = 0; first < s.n; first += Threads * Items) {
+            const unsigned start = first + threadIdx.x % Threads * Items;
+            T values[Items]{}, subtotal = 0;
+            #pragma unroll
+            for (unsigned j = 0; j < Items && start + j < s.n; ++j) {
+                const unsigned t = start + j, i = suffix ? t : s.n - 1 - t;
+                T sum = 0, gpair = 0;
                 const T* v = inc + base + i;
                 for (int mode = int(side.depth - k); mode >= 0; --mode) {
                     const unsigned r = unsigned(mode);
                     T* g = grad + uint64_t(side.first[r] + index) * s.pitch + i;
                     // Only the highest prefix degree of each mode enters the left matrix.
-                    if (suffix || r + k == side.depth) sum += *g;
+                    if (suffix ? r < l.a : r + k == side.depth) sum += *g;
                     if (!r && k < side.depth) {
                         for (unsigned c = 0; c < d; ++c) {
                             const unsigned child = l.offset[k + 1] + (suffix ? c * width + w : w * d + c);
@@ -233,9 +251,16 @@ __global__ void scan_reverse_level(const T* pre, const T* suf, T* dp, T* dq, con
                     }
                 }
                 if (k >= 2) corr[uint64_t(index) * s.pitch + i] = gpair;
+                values[j] = sum;
+                subtotal += sum;
             }
-            const T before = scan_segments<Threads>(sum, carry, lane, totals);
-            if (t < s.n) z[uint64_t(index) * s.pitch + i] = before + sum / 2;
+            T before = scan_segments<Threads>(subtotal, carry, lane, totals);
+            #pragma unroll
+            for (unsigned j = 0; j < Items && start + j < s.n; ++j) {
+                const unsigned t = start + j, i = suffix ? t : s.n - 1 - t;
+                z[uint64_t(index) * s.pitch + i] = before + values[j] / 2;
+                before += values[j];
+            }
         }
     }
 }

@@ -92,15 +92,68 @@ __global__ void reduce(const T* partial, T* result, uint64_t batch, uint64_t wid
         result[sample * sig_stride + word] = sum;
     }
 }
+
+// Each warp contracts a 4 by 8 tile. Lanes traverse consecutive segments.
+template<bool Factored, typename T>
+__global__ void warp_product(const T* left, const T* right, T* partial, uint64_t batch,
+    unsigned n, unsigned p, unsigned q, unsigned pitch, unsigned splits, uint64_t stride,
+    const T* centres, unsigned groups) {
+    const unsigned lane = threadIdx.x % 32, nw = (q + 7) / 8, tiles = ((p + 3) / 4) * nw;
+    const unsigned chunk = (n + splits - 1) / splits;
+    for (uint64_t task = uint64_t(blockIdx.x) * 4 + threadIdx.x / 32; task < batch * splits * tiles;
+        task += uint64_t(gridDim.x) * 4) {
+        const uint64_t sample = task / (uint64_t(tiles) * splits), base = sample * stride;
+        const unsigned tile = unsigned(task % tiles), row = tile / nw * 4, col = tile % nw * 8;
+        const unsigned split = unsigned(task / tiles % splits), end = min(n, (split + 1) * chunk);
+        const T* heads[4];
+        const T* mid[4];
+        #pragma unroll
+        for (unsigned r = 0; r < 4; ++r) {
+            const unsigned w = min(row + r, p - 1);
+            if constexpr (Factored) {
+                heads[r] = left + base + uint64_t(w / groups) * pitch;
+                mid[r] = centres + base + uint64_t(w % groups) * pitch;
+            } else heads[r] = left + base + uint64_t(w) * pitch;
+        }
+        T sums[32]{};
+        for (unsigned i = split * chunk + lane; i < end; i += 32) {
+            T rhs[8];
+            #pragma unroll
+            for (unsigned c = 0; c < 8; ++c)
+                rhs[c] = right[base + uint64_t(min(col + c, q - 1)) * pitch + i];
+            #pragma unroll
+            for (unsigned r = 0; r < 4; ++r) {
+                T a = heads[r][i];
+                if constexpr (Factored) a *= mid[r][i];
+                #pragma unroll
+                for (unsigned c = 0; c < 8; ++c) sums[r * 8 + c] += a * rhs[c];
+            }
+        }
+        #pragma unroll
+        for (unsigned mask = 16; mask; mask /= 2) {
+            #pragma unroll
+            for (unsigned k = 0; k < mask; ++k) {
+                const T a = sums[k], b = sums[k + mask];
+                sums[k] = (lane & mask ? b : a) + __shfl_xor_sync(0xffffffff, lane & mask ? a : b, mask);
+            }
+        }
+        if (row + lane / 8 < p && col + lane % 8 < q)
+            partial[base + (uint64_t(split) * p + row + lane / 8) * q + col + lane % 8] = sums[0];
+    }
+}
 template<bool WordRows = false, bool Factored = false, typename T>
 void gemm(const T* left, const T* right, T* partial, T* result, uint64_t batch, uint64_t rows,
     uint64_t p, uint64_t q, uint64_t pitch, uint64_t splits, uint64_t stride,
     uint64_t result_stride, bool first, cudaStream_t stream, const T* centres = nullptr, unsigned groups = 0) {
     const uint64_t tiles = mul((p + 31) / 32, (q + 31) / 32);
     const bool direct = splits == 1 && first && result_stride == stride;
-    product<WordRows, Factored><<<make_cuda_1d_grid(mul(mul(batch, splits), tiles), 1), 64, 0, stream>>>(left, right,
-        direct ? result : partial, batch, rows, unsigned(p), unsigned(q), unsigned(pitch), unsigned(splits),
-        stride, centres, groups);
+    if (WordRows && sizeof(T) == sizeof(double) && batch >= 8 && rows >= 128 && rows <= 512 && q <= 64) {
+        const uint64_t warps = batch * splits * ((p + 3) / 4) * ((q + 7) / 8);
+        warp_product<Factored><<<make_cuda_1d_grid(warps, 4), 128, 0, stream>>>(left, right,
+            direct ? result : partial, batch, unsigned(rows), unsigned(p), unsigned(q), unsigned(pitch), unsigned(splits),
+            stride, centres, groups);
+    } else product<WordRows, Factored><<<make_cuda_1d_grid(mul(mul(batch, splits), tiles), 1), 64, 0, stream>>>(left, right,
+        direct ? result : partial, batch, rows, unsigned(p), unsigned(q), unsigned(pitch), unsigned(splits), stride, centres, groups);
     CUDA_CHECK(cudaGetLastError());
     if (direct) return;
     reduce<<<make_cuda_1d_grid(mul(batch, p * q), 256), 256, 0, stream>>>(partial, result,

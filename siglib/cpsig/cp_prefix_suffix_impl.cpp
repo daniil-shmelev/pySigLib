@@ -23,6 +23,7 @@
 #include "cp_prefix_suffix_detail.h"
 #include "cp_prefix_suffix_backprop.h"
 #include "cp_signature.h"
+#include "cp_path_transforms.h"
 #include "cp_prefix_suffix_endpoint.h"
 #include "prefix_suffix.h"
 #include "prefix_suffix_selection.h"
@@ -31,7 +32,9 @@
 #include <cmath>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <climits>
+#include <optional>
 #include <oneapi/tbb/blocked_range.h>
 #include <oneapi/tbb/global_control.h>
 #include <oneapi/tbb/parallel_for.h>
@@ -762,9 +765,9 @@ void signature_prefix_suffix_backprop_(const T* path, T* out, const T* deriv, co
     if (openblas_get_parallel() != 0)
         throw std::runtime_error("prefix-suffix requires sequential OpenBLAS built with USE_THREAD=0 and USE_LOCKING=1");
     if (!final) throw std::invalid_argument("prefix-suffix backprop requires the final signature");
-    if (degree >= 4 && !time_aug && !lead_lag && !ps_split && prefix_suffix_selection::automatic()
+    if (degree >= 4 && !ps_split && prefix_suffix_selection::automatic(degree >= 7 && points > 1024)
         && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && legendre_batch<true>(path, deriv, out, batch,
-            points - 1, scalar, jobs, l, stride)) return;
+            points - 1, scalar, jobs, l, stride, dimension, time_aug, lead_lag, end_time)) return;
     if (degree <= 3 && !time_aug && !lead_lag && !ps_split && prefix_suffix_selection::automatic()
         && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && l.power[degree] <= (16ULL << 20) / sizeof(T)) {
         midpoint_batch<true>(path, deriv, out, batch, points - 1, d, degree, scalar, jobs, stride);
@@ -816,10 +819,10 @@ void signature_prefix_suffix_(const T* path, T* out, uint64_t batch, uint64_t di
     if (openblas_get_parallel() != 0)
         throw std::runtime_error("prefix-suffix requires sequential OpenBLAS built with USE_THREAD=0 and USE_LOCKING=1");
     const bool narrow_cubic = degree == 3 && d <= 3 && (sizeof(T) == sizeof(double) || (batch < 4 && points > 1024));
-    if (degree >= 4 && !time_aug && !lead_lag && !ps_split && prefix_suffix_selection::automatic()
+    if (degree >= 4 && !ps_split && prefix_suffix_selection::automatic(degree >= 7 && points > 1024)
         && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && !option("PYSIGLIB_PS_CPU_STREAM_BLOCK_BYTES", 0)
         && legendre_batch<false>(path, static_cast<const T*>(nullptr),
-            out, batch, points - 1, scalar, jobs, l, stride)) return;
+            out, batch, points - 1, scalar, jobs, l, stride, dimension, time_aug, lead_lag, end_time)) return;
     if (degree <= 3 && !narrow_cubic
         && !time_aug && !lead_lag && !ps_split && prefix_suffix_selection::automatic()
         && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && l.power[degree] <= (16ULL << 20) / sizeof(T)) {

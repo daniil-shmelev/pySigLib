@@ -25,8 +25,8 @@ enum Method { standard = 0, prefix_suffix = 1, automatic = 2 };
 
 template<class T>
 bool use_prefix_suffix_cuda(uint64_t batch, uint64_t dimension, uint64_t length,
-    uint64_t degree, bool augmented, uint64_t correction_len, bool backward, bool fp64_emulation = false) {
-    if (augmented || correction_len || !batch || length < 17
+    uint64_t degree, uint64_t correction_len, bool backward, bool fp64_emulation = false) {
+    if (correction_len || !batch || length < 17
         || dimension < 2 || degree < 2 || degree > 16) return false;
     const uint64_t segments = length - 1;
     if (dimension == 3 && batch <= 4 && degree >= 6 && degree <= 10 && segments <= 32768) {
@@ -175,7 +175,7 @@ bool use_prefix_suffix_cuda(uint64_t batch, uint64_t dimension, uint64_t length,
 
 template<class T>
 bool use_prefix_suffix(int method, uint64_t ps_split, uint64_t batch, uint64_t dimension,
-    uint64_t length, uint64_t degree, bool augmented, uint64_t correction_len,
+    uint64_t length, uint64_t degree, bool time_aug, bool lead_lag, uint64_t correction_len,
     bool cuda, bool backward, bool fp64_emulation = false, int cpu_jobs = 1) {
     if (method < standard || method > automatic)
         throw std::invalid_argument("Invalid signature method");
@@ -183,12 +183,59 @@ bool use_prefix_suffix(int method, uint64_t ps_split, uint64_t batch, uint64_t d
         throw std::invalid_argument("A prefix length from 1 to degree requires the prefix-suffix method");
     if (method == standard) return false;
     if (method == prefix_suffix) return true;
-    if (cuda) return use_prefix_suffix_cuda<T>(batch, dimension, length, degree, augmented, correction_len, backward, fp64_emulation);
-    if (!augmented && !correction_len && batch >= 1 && batch <= 4 && dimension == 3
+    if (time_aug || lead_lag) {
+        if (correction_len || batch < 2 || batch > 32 || !dimension || dimension > 6
+            || length < 65 || length > 2049 || degree < 5 || degree > 12
+            || (cuda && std::is_same_v<T, double> && fp64_emulation)) return false;
+        const uint64_t d = dimension * (1 + lead_lag) + time_aug, n = (length - 1) * (1 + lead_lag);
+        if (n < 128 || n > 2048) return false;
+        const bool deep = (d == 2 && degree == 12) || (d == 3 && degree >= 8 && degree <= 10)
+            || (d == 4 && degree >= 7 && degree <= 8) || ((d == 5 || d == 6) && degree == 7);
+        if (time_aug && !lead_lag && d == 3 && batch >= 8 && n <= 512 && (degree == 6 || degree == 7)) {
+            if (cuda && std::is_same_v<T, double>) return true;
+            if (!cuda && (backward || (degree == 7 &&
+                (std::is_same_v<T, float> ? cpu_jobs != 1 : cpu_jobs == 1 && n >= 256)))) return true;
+        }
+        if (lead_lag && !time_aug && d == 4 && n >= 256 && n <= 1024 && (degree == 5 || degree == 6)) {
+            if (degree == 6 && batch >= 4 && batch <= 16) {
+                if (cuda) return std::is_same_v<T, double> || (backward && batch >= 8 && n >= 384);
+                if (backward || cpu_jobs == 1) return true;
+                return std::is_same_v<T, float> ? n <= 768 : n <= 384 && batch <= 8;
+            }
+            if (cuda && std::is_same_v<T, double> && batch >= 8 && n <= 512) return true;
+            if (!cuda && backward && (degree == 5 || n >= 512)) return true;
+        }
+        if (cuda && std::is_same_v<T, float>) {
+            if (!backward) return d == 5 && degree == 7 && n >= 256;
+            if (time_aug && !lead_lag && d == 3 && batch == 8 && n >= 512 && n <= 1024
+                && degree >= 6 && degree <= 8) return true;
+            if (d == 3 && degree == 8) return n >= 1024 && (batch >= 16 || (lead_lag && batch >= 4 && batch <= 8));
+            return deep || (d == 4 && degree == 5 && n >= 256);
+        }
+        return deep || (d == 3 && degree == 6 && n >= 256 && (cuda || backward))
+            || (d == 4 && degree == 5 && n >= 256 && backward && (cuda || std::is_same_v<T, float>));
+    }
+    if (!correction_len && cuda && batch >= 1 && batch <= 4) {
+        if constexpr (std::is_same_v<T, float>) {
+            if (backward && dimension == 3 && degree == 9 && length >= 24577 && length <= 65537) return true;
+            if (backward && batch <= 2 && length > 131074 && length <= 262146
+                && ((dimension == 2 && degree == 12) || (dimension == 3 && degree == 8))) return true;
+        } else if (!fp64_emulation && dimension == 3 && degree == 9 && length >= 8193 && length <= 65537) return true;
+    }
+    if (!cuda && !correction_len && cpu_jobs != 1 && batch == 1 && dimension == 3 && degree == 8
+        && length > 131074 && length <= (1ULL << 22) + 1) return true;
+    if (!correction_len && batch >= 1 && batch <= 2 && length >= 8193 && length <= 131074
+        && (!cuda || !fp64_emulation || std::is_same_v<T, float>)) {
+        if (dimension == 2 && degree == 12 && length >= 16385) return true;
+        if ((cuda || cpu_jobs != 1) && dimension == 3
+            && (degree == 10 || degree == 12 || (degree == 8 && length >= 32769))) return true;
+    }
+    if (cuda) return use_prefix_suffix_cuda<T>(batch, dimension, length, degree, correction_len, backward, fp64_emulation);
+    if (!correction_len && batch >= 1 && batch <= 4 && dimension == 3
         && length >= 8193 && length <= 32769 && degree >= 6 && degree <= 8)
         return backward || degree == 8 || (degree == 7 && std::is_same_v<T, float>);
 
-    if (augmented || !batch || batch > 32 ||
+    if (!batch || batch > 32 ||
         length < 17 || length > 4097 || dimension < 2 || degree < 2 || degree > 16)
         return false;
     const uint64_t segments = length - 1;

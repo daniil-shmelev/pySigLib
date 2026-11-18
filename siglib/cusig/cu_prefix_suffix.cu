@@ -94,9 +94,10 @@ struct Resources {
 template<typename T, bool UseBlas = true, typename Run>
 void with_factor_workspace(const Layout& l, int device, uint64_t batch, uint64_t max_paths,
     uint64_t stride, uint64_t metadata_bytes, uint64_t blas_charge, bool trim_cache, const char* name,
-    cudaStream_t stream, bool fp64_emulation, Run run, const void* metadata = nullptr) {
+    cudaStream_t stream, bool fp64_emulation, Run run, const void* metadata = nullptr, uint64_t reserved_bytes = 0) {
     const uint64_t row_bytes = add(mul(stride, sizeof(T)), metadata_bytes);
-    const uint64_t budget = option("PYSIGLIB_PS_WORKSPACE_BYTES", UINT64_MAX);
+    const uint64_t configured = option("PYSIGLIB_PS_WORKSPACE_BYTES", UINT64_MAX);
+    const uint64_t budget = configured - std::min(reserved_bytes, configured);
     const uint64_t emulation_limit = fp64_emulation && std::is_same_v<T, double>
         ? std::min(option("PYSIGLIB_FP64_EMULATION_WORKSPACE_BYTES", 512ULL << 20),
             budget > add(row_bytes, blas_charge) ? budget - row_bytes - blas_charge : 0) : 0;
@@ -715,10 +716,10 @@ void signature_prefix_suffix_backprop_cuda(const T* path, T* out, const T* deriv
         CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaStreamSynchronize(stream));
         return;
     }
-    if (!ta && !ll && !ps_split && !fp64_emulation && degree >= 4
-        && prefix_suffix_selection::automatic()
+    if (!ps_split && (!fp64_emulation || std::is_same_v<T, float>) && degree >= 4
+        && prefix_suffix_selection::automatic(degree >= 7 && points > 1024)
         && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && !option("PYSIGLIB_PS_SCAN_CHUNK", 0)
-        && gpu_legendre::compute<true>(path, deriv, out, l, device, batch, points - 1, scalar, stream)) return;
+        && gpu_legendre::compute<true>(path, deriv, out, l, device, batch, points - 1, scalar, stream, dimension, ta, ll, end_time)) return;
     if (degree <= 3 && !fp64_emulation && !ta && !ll && !ps_split && prefix_suffix_selection::automatic()
         && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && !option("PYSIGLIB_PS_SCAN_CHUNK", 0)) {
         if (degree == 2 && d <= 64) {
@@ -913,12 +914,12 @@ void signature_prefix_suffix_cuda(const T* path, T* out, uint64_t batch, uint64_
         CUDA_CHECK(cudaGetLastError()); CUDA_CHECK(cudaStreamSynchronize(stream));
         return;
     }
-    if (!ta && !ll && !ps_split && !fp64_emulation && degree >= 4
-        && prefix_suffix_selection::automatic()
+    if (!ps_split && (!fp64_emulation || std::is_same_v<T, float>) && degree >= 4
+        && prefix_suffix_selection::automatic(degree >= 7 && points > 1024)
         && !option("PYSIGLIB_PS_FACTOR_BYTES", 0) && !option("PYSIGLIB_PS_SCAN_CHUNK", 0)
         && option("PYSIGLIB_PS_COEFFICIENT_FACTORS", UINT64_MAX, true) == UINT64_MAX
         && gpu_legendre::compute<false>(path, static_cast<const T*>(nullptr), out, l, device, batch,
-            points - 1, scalar, stream)) return;
+            points - 1, scalar, stream, dimension, ta, ll, end_time)) return;
     const auto choice = !ps_split || ps_split == degree
         ? prefix_suffix_selection::select_cuda(false, batch, points - 1, l, device_parallelism(device), ta || ll,
             std::is_same_v<T, double> && !fp64_emulation)

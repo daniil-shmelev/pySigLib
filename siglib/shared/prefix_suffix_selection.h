@@ -20,10 +20,10 @@ namespace prefix_suffix_selection {
 
 struct Choice { uint64_t a = 0, block = 0; };
 
-inline bool automatic() {
+inline bool automatic(bool supports_workspace_limit = false) {
     using prefix_suffix::option;
     return option("PYSIGLIB_PS_ENDPOINT_BLOCK", UINT64_MAX, true) == UINT64_MAX
-        && !option("PYSIGLIB_PS_WORKSPACE_BYTES", 0, true);
+        && (supports_workspace_limit || !option("PYSIGLIB_PS_WORKSPACE_BYTES", 0, true));
 }
 
 inline uint64_t block_size(uint64_t batch, uint64_t segments, uint64_t workers, uint64_t minimum, uint64_t maximum) {

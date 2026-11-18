@@ -103,6 +103,7 @@ void legendre_levels(const T* seed, T* out, bool scalar, const Layout& l,
 }
 
 #include "cp_prefix_suffix_moment_scan.h"
+#include "cp_prefix_suffix_blocks.h"
 
 template<bool Backward, typename T>
 void legendre_path(const T* path, const T* seed, T* out, bool scalar, const Layout& l,
@@ -246,16 +247,19 @@ void legendre_path(const T* path, const T* seed, T* out, bool scalar, const Layo
 
 template<bool Backward, typename T>
 bool legendre_batch(const T* path, const T* seed, T* out, uint64_t batch, uint64_t n,
-    bool scalar, int jobs, const Layout& l, uint64_t sig_stride) {
+    bool scalar, int jobs, const Layout& l, uint64_t sig_stride,
+    uint64_t dimension, bool ta, bool ll, T end_time) {
     if (l.m < 4 || l.m > 16 || l.power[l.m] > (1ULL << 25) || n < 8 || l.d > 24
-        || n > (256ULL << 20) / (sizeof(T) * l.offset[l.h + 1])) return false;
+        || (l.m <= 6 && n > (256ULL << 20) / (sizeof(T) * l.offset[l.h + 1]))) return false;
     if (l.m > 6 && l.d >= 3 && n < 32) return false;
     if (l.m <= 6 && l.d > 4) {
         if (l.d != 8 || (l.m != 6 && !(l.m == 5 && sizeof(T) == sizeof(float)))) return false;
         if (l.m == 6 && Backward) return false;
     }
     const int inner = std::max(1, available_threads(jobs) / int(std::min<uint64_t>(batch, jobs)));
-    const uint64_t path_stride = (n + 1) * l.d;
+    const uint64_t length = (ll ? n / 2 : n) + 1, path_stride = length * dimension;
+    const bool augmented = ta || ll;
+    if (augmented && n < 16) return false;
     if constexpr (Backward) {
         const T limit = std::numeric_limits<T>::max() / T(l.power[l.m] * l.m);
         const uint64_t count = batch * sig_stride;
@@ -277,21 +281,32 @@ bool legendre_batch(const T* path, const T* seed, T* out, uint64_t batch, uint64
         else check(0, count);
         if (unsafe.load(std::memory_order_relaxed)) return false;
     }
-    if (l.m <= 6 && (l.d <= 4 || (l.d == 8 && l.m == 5))) {
+    const bool pack_lead_lag = Backward && ll && !ta && l.d == 4 && (l.m == 5 || l.m == 6)
+        && n >= (sizeof(T) == sizeof(double) ? 256 : 512) && n <= 2048
+        && (jobs > 1 || (l.m == 5 && n >= 512));
+    if ((!augmented || pack_lead_lag) && l.m <= 6 && (l.d <= 4 || (l.d == 8 && l.m == 5))) {
         const uint64_t rows = l.power[3], cols = l.offset[l.m - 2], terms = std::min<uint64_t>(3, l.m - 2);
         const uint64_t block = std::min(n, std::clamp<uint64_t>((256ULL << 10) /
             (terms * (rows + cols) * sizeof(T) * (1 + Backward)), 32, 256));
         const uint64_t size = rows * cols + (1 + Backward) * terms * block * (rows + cols)
             + (uint64_t(l.m >= 5) + Backward) * n * l.power[2] + (l.m == 6 ? n * rows : 0);
+        const uint64_t packed = pack_lead_lag ? (n + 1) * l.d : 0;
         auto run = [&]<unsigned D>() {
-            for_paths<T>(batch, jobs, size, "CPU prefix-suffix", [&](uint64_t i, T* memory) {
+            for_paths<T>(batch, jobs, size + 2 * packed, "CPU prefix-suffix", [&](uint64_t i, T* memory) {
+                const T* input = path + i * path_stride;
+                T* output = out + i * (Backward ? path_stride : sig_stride);
+                if (packed) {
+                    transform_path_(input, memory + size, dimension, length, ta, ll, end_time);
+                    input = memory + size;
+                }
                 auto path_at = [&]<unsigned Degree>() {
-                    low_moment_path<Backward, Degree, D>(path + i * path_stride, Backward ? seed + i * sig_stride : nullptr,
-                        out + i * (Backward ? path_stride : sig_stride), n, scalar, block, inner, memory);
+                    low_moment_path<Backward, Degree, D>(input, Backward ? seed + i * sig_stride : nullptr,
+                        packed ? memory + size + packed : output, n, scalar, block, inner, memory);
                 };
                 if (l.m == 6) path_at.template operator()<6>();
                 else if (l.m == 5) path_at.template operator()<5>();
                 else path_at.template operator()<4>();
+                if (packed) transform_path_backprop_(memory + size + packed, output, dimension, length, ta, ll, end_time);
             });
         };
         switch (l.d) {
@@ -302,27 +317,30 @@ bool legendre_batch(const T* path, const T* seed, T* out, uint64_t batch, uint64
         }
         return true;
     }
-    const bool shorter_prefix = !Backward && l.m == 7 && l.d >= 3 && l.d <= 6 && n >= 128 && n <= 512;
-    LegendrePlan plan(l, shorter_prefix ? 3 : 0);
     if (n >= 16) {
-        const MomentRows p(l, plan.a - 1), q(l, plan.b);
-        const uint64_t block = std::min(n, std::max<uint64_t>(128, plan.tile(n, sizeof(T), Backward) * std::min(inner, 4)));
-        const uint64_t rows = p.size + q.size + plan.groups;
-        const uint64_t size = plan.buffers[0] + plan.buffers[1] + (1 + Backward) * (n * rows + block * plan.max_rows)
-            + (Backward ? n * l.power[q.depth] : 0);
-        if (size <= std::min<uint64_t>(256ULL << 20, option("PYSIGLIB_PS_WORKSPACE_BYTES", UINT64_MAX)) / sizeof(T)) {
-            for_paths<T>(batch, jobs, size, "CPU prefix-suffix", [&](uint64_t i, T* memory) {
-                scanned_legendre_path<Backward>(path + i * path_stride, Backward ? seed + i * sig_stride : nullptr,
-                    out + i * (Backward ? path_stride : sig_stride), scalar, l, plan, p, q, n, block, inner, memory);
+        const bool shorter = !Backward && l.m == 7 && l.d >= 3 && l.d <= 6 && n >= 128 && n <= 512;
+        const CpuMomentScan scan(l, n, sizeof(T), Backward, inner, shorter ? 3 : 0);
+        const uint64_t limit = std::min<uint64_t>(256ULL << 20, option("PYSIGLIB_PS_WORKSPACE_BYTES", UINT64_MAX)) / sizeof(T);
+        if (blocked_legendre_batch<Backward>(path, seed, out, batch, n, scalar, jobs, inner, l, sig_stride,
+            scan.size, limit, dimension, ta, ll, end_time))
+            return true;
+        if (scan.size <= limit) {
+            for_paths<T>(batch, jobs, scan.size, "CPU prefix-suffix", [&](uint64_t i, T* memory) {
+                const T* input = path + i * path_stride;
+                const Path<T> source(input, dimension, length, ta, ll, end_time);
+                scanned_legendre_path<Backward>(input, Backward ? seed + i * sig_stride : nullptr,
+                    out + i * (Backward ? path_stride : sig_stride), scalar, l, scan.plan, scan.p, scan.q,
+                    n, scan.tile, inner, memory, augmented ? &source : nullptr);
             });
             return true;
         }
     }
-    if (shorter_prefix) plan = LegendrePlan(l);
+    if (augmented || n > (256ULL << 20) / (sizeof(T) * l.offset[l.h + 1])) return false;
+    const LegendrePlan plan(l, 0, Backward);
     const uint64_t block = std::min(n, plan.tile(n, sizeof(T), Backward) * std::min(inner, 8));
     const uint64_t size = plan.workspace(l, n, block, Backward)
         + 4 * uint64_t(std::max(0, inner - 2)) * l.offset[plan.b + 1];
-    if (size > (256ULL << 20) / sizeof(T)) return false;
+    if (size > std::min<uint64_t>(256ULL << 20, option("PYSIGLIB_PS_WORKSPACE_BYTES", UINT64_MAX)) / sizeof(T)) return false;
     for_paths<T>(batch, jobs, size, "CPU prefix-suffix", [&](uint64_t i, T* memory) {
         legendre_path<Backward>(path + i * path_stride, Backward ? seed + i * sig_stride : nullptr,
             out + i * (Backward ? path_stride : sig_stride), scalar, l, plan, n, block, inner, memory);

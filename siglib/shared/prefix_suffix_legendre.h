@@ -16,8 +16,6 @@
 
 #pragma once
 #include "prefix_suffix.h"
-#include <array>
-#include <unordered_map>
 
 namespace prefix_suffix {
 
@@ -48,52 +46,57 @@ struct LegendrePlan {
     uint64_t buffers[2]{};
     std::vector<LegendreMode> modes;
 
-    explicit LegendrePlan(const Layout& l, unsigned split = 0)
+    explicit LegendrePlan(const Layout& l, unsigned split = 0, bool backward = true)
         : a(split ? split : unsigned((l.m + 1) / 2)), b(unsigned(l.m - a)) {
         const unsigned d = unsigned(l.d);
-        std::vector<unsigned> keys(d);
-        for (unsigned c = 0; c < d; ++c) keys[c] = c;
+        std::vector<unsigned> keys(d), parents(d, 0), previous(d);
+        for (unsigned c = 0; c < d; ++c) previous[c] = keys[c] = c;
+        auto insert_letters = [&](const std::vector<unsigned>& shorter) {
+            std::vector<unsigned> first(keys.size() + 1), children(keys.size() * d);
+            for (size_t g = 0; g < keys.size(); ++g) first[g + 1] = first[g] + d - keys[g] % d;
+            std::vector<unsigned> next(first.back()), next_parents(first.back());
+            for (unsigned g = 0; g < keys.size(); ++g) {
+                const unsigned last = keys[g] % d;
+                for (unsigned c = 0; c < last; ++c) {
+                    // Insert into the shorter sorted word, then append its former last letter.
+                    const unsigned prefix = shorter[parents[g] * d + c];
+                    children[g * d + c] = first[prefix] + last - keys[prefix] % d;
+                }
+                for (unsigned c = last; c < d; ++c) {
+                    const unsigned id = first[g] + c - last;
+                    next[id] = keys[g] * d + c;
+                    next_parents[id] = g;
+                    children[g * d + c] = id;
+                }
+            }
+            parents.swap(next_parents);
+            keys.swap(next);
+            return children;
+        };
         for (unsigned r = 0; r < a && r <= b; ++r) {
             auto& mode = modes.emplace_back();
             if (r) {
                 auto& prev = modes[r - 1];
-                auto insert_letters = [&](unsigned degree) {
-                    std::vector<unsigned> children(keys.size() * d), next;
-                    std::unordered_map<unsigned, unsigned> index;
-                    for (unsigned g = 0; g < keys.size(); ++g) {
-                        unsigned word = keys[g];
-                        std::array<unsigned, 17> digits{};
-                        for (unsigned t = degree; t-- > 0;) { digits[t] = word % d; word /= d; }
-                        for (unsigned c = 0; c < d; ++c) {
-                            unsigned key = 0, t = 0;
-                            for (; t < degree && digits[t] < c; ++t) key = key * d + digits[t];
-                            key = key * d + c;
-                            for (; t < degree; ++t) key = key * d + digits[t];
-                            auto [it, inserted] = index.try_emplace(key, unsigned(next.size()));
-                            if (inserted) next.push_back(key);
-                            children[g * d + c] = it->second;
-                        }
-                    }
-                    keys.swap(next);
-                    return children;
-                };
                 prev.grow.resize(d * keys.size() * d);
-                const auto half = insert_letters(2 * r - 1), full = insert_letters(2 * r);
+                const auto half = insert_letters(previous);
+                previous = insert_letters(half);
                 mode.parent.resize(keys.size(), UINT_MAX);
                 for (unsigned x = 0; x < d; ++x) for (unsigned g = 0; g < prev.groups; ++g) {
                     const unsigned mid = half[g * d + x];
                     for (unsigned y = 0; y < d; ++y) {
-                        const unsigned id = full[mid * d + y], ex = (x * prev.groups + g) * d + y;
+                        const unsigned id = previous[mid * d + y], ex = (x * prev.groups + g) * d + y;
                         if (mode.parent[id] == UINT_MAX) mode.parent[id] = ex;
                         prev.grow[ex] = id;
                     }
                 }
-                mode.offsets.resize(keys.size() + 1);
-                for (unsigned id : prev.grow) ++mode.offsets[id + 1];
-                for (unsigned g = 0; g < keys.size(); ++g) mode.offsets[g + 1] += mode.offsets[g];
-                auto cursor = mode.offsets;
-                mode.members.resize(prev.grow.size());
-                for (unsigned ex = 0; ex < prev.grow.size(); ++ex) mode.members[cursor[prev.grow[ex]]++] = ex;
+                if (backward) {
+                    mode.offsets.resize(keys.size() + 1);
+                    for (unsigned id : prev.grow) ++mode.offsets[id + 1];
+                    for (unsigned g = 0; g < keys.size(); ++g) mode.offsets[g + 1] += mode.offsets[g];
+                    auto cursor = mode.offsets;
+                    mode.members.resize(prev.grow.size());
+                    for (unsigned ex = 0; ex < prev.grow.size(); ++ex) mode.members[cursor[prev.grow[ex]]++] = ex;
+                }
             }
             mode.head = unsigned(l.power[a - 1 - r]);
             mode.depth = b - r;

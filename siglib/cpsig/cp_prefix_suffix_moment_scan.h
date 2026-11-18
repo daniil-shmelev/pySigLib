@@ -31,24 +31,22 @@ HWY_INLINE hn::Vec<Simd<T>> scan_midpoints(Simd<T> d, hn::Vec<Simd<T>> z, T& car
 // next level. Integrating the shifted Legendre polynomials couples modes r-1
 // and r+1, so higher moments need only a correction from two levels below.
 template<bool Suffix, typename T>
-void scan_moments(const T* path, const T* inc, T* moments, T* low, bool scalar,
+void scan_moments(const T* inc, T* moments, T* low, bool scalar,
     const Layout& l, const MomentRows& s, uint64_t n, int jobs) {
     const unsigned d = unsigned(l.d);
-    for (unsigned r = 0; r <= s.depth; ++r) std::fill_n(moments + s.first[r] * n, n, T(1));
-    for (unsigned k = 1; k <= s.depth; ++k) {
+    for (unsigned r = 0; r <= s.depth; ++r) {
+        T* base = moments + s.first[r] * n;
+        std::fill_n(base, n, T(1));
+        if (r && r < s.depth) for (unsigned c = 1; c <= d; ++c)
+            std::copy_n(moments + c * n, n, base + c * n);
+    }
+    for (unsigned k = 2; k <= s.depth; ++k) {
         const uint64_t width = l.power[k], prev = width / d;
         parallel_range(width, jobs, [&](uint64_t first, uint64_t end) {
             for (uint64_t w = first; w < end; ++w) {
                 const uint64_t c = Suffix ? w / prev : w % d, parent = Suffix ? w % prev : w / d;
                 const T* v = inc + c * n;
                 T* mean = moments + (l.offset[k] + w) * n;
-                if (k == 1) {
-                    for (uint64_t i = 0; i < n; ++i)
-                        mean[i] = (Suffix ? path[n * d + c] - path[(i + 1) * d + c] : path[i * d + c] - path[c]) + v[i] / 2;
-                    for (unsigned r = 1; r < s.depth; ++r) std::copy_n(mean, n, mean + s.first[r] * n);
-                    if (low) low[scalar + c] = path[n * d + c] - path[c];
-                    continue;
-                }
                 const uint64_t span = prev / d, c2 = Suffix ? parent / span : parent % d;
                 const uint64_t stem = Suffix ? parent % span : parent / d;
                 const T* u = inc + c2 * n;
@@ -143,7 +141,8 @@ void reverse_moments(const T* inc, const T* moments, T* grad, T* dv, T* dz, cons
 
 template<bool Backward, typename T>
 void scanned_legendre_path(const T* path, const T* seed, T* out, bool scalar, const Layout& l,
-    const LegendrePlan& plan, const MomentRows& p, const MomentRows& q, uint64_t n, uint64_t block, int jobs, T* storage) {
+    const LegendrePlan& plan, const MomentRows& p, const MomentRows& q, uint64_t n,
+    uint64_t block, int jobs, T* storage, const Path<T>* augmented = nullptr) {
     const unsigned d = unsigned(l.d);
     auto take = [&](uint64_t size) { T* ptr = storage; storage += size; return ptr; };
     T* buffers[]{take(plan.buffers[0]), take(plan.buffers[1])};
@@ -156,10 +155,24 @@ void scanned_legendre_path(const T* path, const T* seed, T* out, bool scalar, co
         dl = take(plan.max_rows * block); dz = take(l.power[q.depth] * n);
         legendre_levels<true>(seed, out, scalar, l, plan, buffers, jobs);
     } else if (scalar) out[0] = 1;
-    for (unsigned c = 0; c < d; ++c)
-        for (uint64_t i = 0; i < n; ++i) centres[c * n + i] = path[(i + 1) * d + c] - path[i * d + c];
-    scan_moments<false>(path, centres, pre, Backward ? nullptr : out, scalar, l, p, n, jobs);
-    scan_moments<true>(path, centres, suf, static_cast<T*>(nullptr), scalar, l, q, n, jobs);
+    auto start_moments = [&](auto point) {
+        for (unsigned c = 0; c < d; ++c) {
+            const T first = point(0, c), last = point(n, c);
+            T previous = first;
+            for (uint64_t i = 0; i < n; ++i) {
+                const T next = point(i + 1, c), v = next - previous;
+                centres[c * n + i] = v;
+                pre[(1 + c) * n + i] = (previous - first) + v / 2;
+                suf[(1 + c) * n + i] = (last - next) + v / 2;
+                previous = next;
+            }
+            if constexpr (!Backward) out[scalar + c] = last - first;
+        }
+    };
+    if (augmented) start_moments([&](uint64_t i, unsigned c) { return (*augmented)[i][c]; });
+    else start_moments([&](uint64_t i, unsigned c) { return path[i * d + c]; });
+    scan_moments<false>(centres, pre, Backward ? nullptr : out, scalar, l, p, n, jobs);
+    scan_moments<true>(centres, suf, static_cast<T*>(nullptr), scalar, l, q, n, jobs);
     for (unsigned r = 1; r < plan.modes.size(); ++r) {
         const auto& m = plan.modes[r]; const auto& prev = plan.modes[r - 1];
         const T scale = -T(1) / T(4 * (2 * r - 1) * (2 * r + 1));
@@ -239,10 +252,22 @@ void scanned_legendre_path(const T* path, const T* seed, T* out, bool scalar, co
         });
         reverse_moments<false>(centres, pre, dp, dm, dz, seed, scalar, l, p, n, jobs);
         reverse_moments<true>(centres, suf, dq, dm, dz, static_cast<const T*>(nullptr), scalar, l, q, n, jobs);
-        for (unsigned c = 0; c < d; ++c) {
+        const uint64_t channels = augmented ? augmented->data_dimension() : d;
+        for (unsigned c = 0; c < channels; ++c) {
             const T* grad = dm + c * n;
-            out[c] = -grad[0]; out[n * d + c] = grad[n - 1];
-            for (uint64_t i = 1; i < n; ++i) out[i * d + c] = grad[i - 1] - grad[i];
+            if (augmented && augmented->lead_lag()) {
+                const T* lead = grad + channels * n;
+                T previous = 0;
+                for (uint64_t i = 0; i < n / 2; ++i) {
+                    const T current = lead[2 * i] + grad[2 * i + 1];
+                    out[i * channels + c] = previous - current;
+                    previous = current;
+                }
+                out[n / 2 * channels + c] = previous;
+            } else {
+                out[c] = -grad[0]; out[n * channels + c] = grad[n - 1];
+                for (uint64_t i = 1; i < n; ++i) out[i * channels + c] = grad[i - 1] - grad[i];
+            }
         }
     } else legendre_levels<false>(seed, out, scalar, l, plan, buffers, jobs);
 }

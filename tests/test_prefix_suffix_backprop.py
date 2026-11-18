@@ -176,28 +176,84 @@ def test_moment_levels_and_adjoints(device, dtype, degree, n, d, scalar):
 
 
 @pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
-@pytest.mark.parametrize("n,degree", [(33, 16), (513, 9), (4097, 8)])
-def test_scanned_moments_single_word_gradient(device, dtype, n, degree):
+@pytest.mark.parametrize("n,degree,d", [(33, 16, 2), (513, 9, 2), (4097, 8, 2), (2049, 8, 4)])
+def test_scanned_moments_single_word_gradient(device, dtype, n, degree, d):
     rng = np.random.default_rng(759 + n)
-    increments = rng.integers(-3, 4, size=(n, 2)) / (2 * np.sqrt(n))
+    increments = rng.integers(-3, 4, size=(n, d)) / (2 * np.sqrt(n))
     increments[::9] = 0
-    path = torch.tensor(np.vstack((np.zeros(2), increments.cumsum(axis=0))), device=device, dtype=dtype)
+    path = torch.tensor(np.vstack((np.zeros(d), increments.cumsum(axis=0))), device=device, dtype=dtype)
     host = path.cpu().double().numpy().copy()
-    word = tuple(int(c) for c in rng.integers(0, 2, degree))
+    word = tuple(int(c) for c in rng.integers(0, d, degree))
     coefs = pysiglib.sig_coef(host, word, prefixes=True, method="horner")
     # Scale the seed to test deep levels even when the coefficient is small.
     weight = 1 / max(abs(coefs[-1]), 1e-16)
     seed = np.zeros_like(coefs)
     seed[-1] = weight
     expected = pysiglib.sig_coef_backprop(host, word, coefs, seed, method="horner")
-    index = 2 ** degree - 2 + sum(c << j for j, c in enumerate(reversed(word)))
-    sig = pysiglib.sig(path, degree, scalar_term=False, method="ps", n_jobs=3)
+    index = sum(d ** k for k in range(1, degree)) + sum(c * d ** j for j, c in enumerate(reversed(word)))
+    sig = pysiglib.sig(path, degree, scalar_term=False, method="ps", n_jobs=4)
     deriv = torch.zeros_like(sig)
     deriv[index] = weight
-    grad = pysiglib.sig_backprop(path, sig, deriv, degree, method="ps", n_jobs=3)
+    grad = pysiglib.sig_backprop(path, sig, deriv, degree, method="ps", n_jobs=4)
     tol = 5e-4 if dtype == torch.float32 else 3e-10
     np.testing.assert_allclose(sig[index].item() * weight, coefs[-1] * weight, atol=tol, rtol=tol)
     np.testing.assert_allclose(grad.cpu().numpy(), expected, atol=tol * np.abs(expected).max(), rtol=tol)
+
+
+@pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
+@pytest.mark.parametrize("time_aug,lead_lag,degree", [
+    (True, False, 7), (False, True, 7), (True, True, 7), (False, True, 5), (False, True, 6),
+])
+def test_augmented_moment_adjoints(device, dtype, time_aug, lead_lag, degree):
+    rng = np.random.default_rng(761)
+    increments = rng.normal(size=(2, 257, 2)) / 16
+    increments[:, ::7] = 0
+    increments[:, 2::13] = -increments[:, 1::13]
+    data = np.pad(increments.cumsum(axis=1), ((0, 0), (1, 0), (0, 0)))
+    path = torch.tensor(data, dtype=dtype, device=device)
+    host = path.cpu().double().numpy()
+    options = dict(time_aug=time_aug, lead_lag=lead_lag, end_time=-0.75)
+    scalar = time_aug or degree == 6
+    expected = pysiglib.sig(host, degree, scalar_term=scalar, method="horner", **options)
+    actual = pysiglib.sig(path, degree, scalar_term=scalar, method="ps", n_jobs=4, **options)
+    seed = torch.tensor(rng.normal(size=expected.shape), dtype=dtype, device=device)
+    reference = pysiglib.sig_backprop(host, expected, seed.cpu().double().numpy(), degree, method="horner", **options)
+    grad = pysiglib.sig_backprop(path, actual, seed, degree, method="ps", n_jobs=4, **options)
+    tol = 3e-4 if dtype == torch.float32 else 2e-10
+    d = 2 * (1 + lead_lag) + time_aug
+    first = int(scalar)
+    for level in range(1, degree + 1):
+        last = first + d ** level
+        part = expected[:, first:last]
+        np.testing.assert_allclose(actual[:, first:last].cpu().numpy(), part, rtol=tol, atol=tol * np.abs(part).max())
+        first = last
+    np.testing.assert_allclose(grad.cpu().numpy(), reference, rtol=tol, atol=tol * np.abs(reference).max())
+
+
+@pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
+@pytest.mark.parametrize("scalar", [True, False])
+def test_blocked_moment_gradient(monkeypatch, device, dtype, scalar):
+    monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", str(24 << 20))
+    n = 16387
+    rng = np.random.default_rng(763)
+    increments = rng.integers(-2, 3, size=n) / np.sqrt(n)
+    increments[-5:] = 0
+    path = torch.tensor(np.r_[0, increments.cumsum()][:, None], device=device, dtype=dtype)
+    host = path.cpu().double().numpy()
+    options = dict(time_aug=True, lead_lag=True, end_time=-0.75)
+    word = (0, 1, 2, 1, 0, 2, 0, 1)
+    coefs = pysiglib.sig_coef(host, word, prefixes=True, method="horner", **options)
+    seed = np.zeros_like(coefs)
+    seed[-1] = 1 / max(abs(coefs[-1]), 1e-16)
+    reference = pysiglib.sig_coef_backprop(host, word, coefs, seed, method="horner", **options)
+    index = int(scalar) + sum(3 ** k for k in range(1, len(word))) + sum(c * 3 ** k for k, c in enumerate(reversed(word)))
+    actual = pysiglib.sig(path, len(word), scalar_term=scalar, method="ps", n_jobs=4, **options)
+    deriv = torch.zeros_like(actual)
+    deriv[index] = seed[-1]
+    grad = pysiglib.sig_backprop(path, actual, deriv, len(word), method="ps", n_jobs=4, **options)
+    tol = 8e-4 if dtype == torch.float32 else 4e-10
+    np.testing.assert_allclose(actual[index].item() * seed[-1], coefs[-1] * seed[-1], rtol=tol, atol=tol)
+    np.testing.assert_allclose(grad.cpu().numpy(), reference, rtol=tol, atol=tol * np.abs(reference).max())
 
 
 @pytest.mark.parametrize("d,degree", [(12, 3), (32, 2)])
