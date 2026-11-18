@@ -92,7 +92,7 @@ def calibrate(paths, response, words, mode):
 
 def digest(path):
     sha = hashlib.sha256()
-    with path.open('rb') as source:
+    with Path(path).open('rb') as source:
         for chunk in iter(lambda: source.read(1 << 20), b''):
             sha.update(chunk)
     return sha.hexdigest()

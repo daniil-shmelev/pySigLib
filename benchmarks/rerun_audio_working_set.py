@@ -17,7 +17,6 @@
 
 import argparse
 import csv
-import hashlib
 import json
 from math import factorial
 from pathlib import Path
@@ -34,18 +33,13 @@ from threadpoolctl import threadpool_limits
 import pysiglib
 from pysiglib.load_siglib import CPSIG
 from benchmarks.benchmark_lasso_features import process_peak_bytes
-from sig_branch_and_bound_experiments.spoken_arabic_digit.feature_sign_benchmark import normalize_paths
+from benchmarks.benchmark_prefix_suffix import digest, normalize as normalize_paths
 
 
 ROOT = Path('sig_branch_and_bound_experiments')
 PROTOCOL = ROOT/'results/optimized_degree4_20261028/protocol.json'
 DATASETS = {'arabic': 'spoken_arabic_digit', 'speech': 'speech_commands', 'insect': 'insect_wingbeat'}
 TOL = 1e-8
-
-
-def digest(path):
-    with Path(path).open('rb') as source:
-        return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
 def tensor_word(j, dimension):
