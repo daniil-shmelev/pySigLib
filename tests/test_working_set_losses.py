@@ -63,7 +63,7 @@ def test_dense_optimum(mode, loss, intercept):
 
     ref = minimize(objective, np.zeros(1+2*p), method="L-BFGS-B", jac=True,
                    bounds=[(None,None) if intercept else (0,0)]+[(0,None)]*(2*p),
-                   options=dict(ftol=1e-15, gtol=1e-11, maxiter=5000))
+                   options=dict(ftol=1e-15, gtol=1e-11, maxiter=5000, maxls=80))
     assert ref.success
     eta = model["intercept"] + X[:, indices]@model["coef"]
     np.testing.assert_allclose(eta, ref.x[0]+X@(ref.x[1:1+p]-ref.x[1+p:]), atol=3e-6)

@@ -18,6 +18,15 @@
 #include <cmath>
 
 namespace siglasso {
+bool solve_positive_definite(double* matrix, double* rhs, size_t n) {
+    Eigen::Map<Eigen::MatrixXd> a(matrix, n, n);
+    Eigen::Map<Eigen::VectorXd> x(rhs, n);
+    Eigen::LLT<Eigen::Ref<Eigen::MatrixXd>> factor(a);
+    if (factor.info() != Eigen::Success) return false;
+    factor.solveInPlace(x);
+    return x.allFinite();
+}
+
 bool anderson_weights(const double* gram, double* weights) {
     using Matrix = Eigen::Matrix<double, 5, 5>;
     using Vector = Eigen::Matrix<double, 5, 1>;

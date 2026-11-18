@@ -31,6 +31,7 @@ HWY_EXPORT(hall_terminal_);
 HWY_EXPORT(log_polynomial_);
 HWY_EXPORT(log_moments_);
 HWY_EXPORT(log_terminal_integrals_);
+HWY_EXPORT(log_child_integrals_);
 HWY_EXPORT(log_terminal_products_);
 HWY_EXPORT(log_terminal_values_);
 void hall_polynomial(const siglasso::HallKernelPlan& plan, const double* left, const double* right, double* out, double* values,
@@ -44,6 +45,10 @@ void hall_terminal(const siglasso::HallKernelPlan& plan, const double* left, con
 void log_polynomial(const double* parent, const double* increments, double* out, double* values,
     uint64_t n, uint64_t l, uint64_t d, uint64_t degree, uint64_t levels, uint64_t letter, uint64_t begin, uint64_t end) {
     HWY_DYNAMIC_DISPATCH(log_polynomial_)(parent, increments, out, values, n, l, d, degree, levels, letter, begin, end);
+}
+void log_child_integrals(const double* parent, const double* dx, double* out, double* values,
+                         size_t n, size_t l, size_t stride, size_t degree, size_t begin, size_t end) {
+    HWY_DYNAMIC_DISPATCH(log_child_integrals_)(parent, dx, out, values, n, l, stride, degree, begin, end);
 }
 void log_terminal_integrals(const double* polynomial, double* out, uint64_t n, uint64_t l, uint64_t degree, uint64_t levels, uint64_t begin, uint64_t end) {
     HWY_DYNAMIC_DISPATCH(log_terminal_integrals_)(polynomial, out, n, l, degree, levels, begin, end);
@@ -105,7 +110,7 @@ using Complex = std::complex<double>;
 
 struct State {
     Word word;
-    Array polynomial, values, moments, envelope, global;
+    Array polynomial, values, moments, envelope, global, terminal_integrals, panel_moments;
     HallPtr hall;
     std::shared_ptr<void> metadata;
 };
@@ -125,6 +130,7 @@ class PolynomialSearch final : public FeatureSearch {
     std::list<Word> cache_order_, summary_order_;
     size_t cache_size_ = 0, summary_bytes_ = 0;
     StatePtr root_;
+    std::vector<StatePtr> prediction_path_;
     std::shared_ptr<void> tables_metadata_;
     size_t auxiliary_bytes_ = 0;
     Array side_maxima_;
@@ -133,16 +139,116 @@ class PolynomialSearch final : public FeatureSearch {
     size_t product_bytes_ = 0;
     std::map<std::pair<size_t, size_t>, std::shared_ptr<HallKernelPlan>> hall_plans_;
     Array hall_scratch_;
-    Array log_channel_norms_;
+    Array log_channel_norms_, log_fourth_norms_;
+    static constexpr size_t sample_groups = 8;
     std::map<size_t, std::shared_ptr<LogMomentPlan>> log_plans_;
     std::map<std::pair<size_t, bool>, std::shared_ptr<HallEnvelopePlan>> envelope_plans_;
-    Array log_scratch_;
+    Array log_scratch_, bound_samples_;
+    // At each segment, Hölder in the sample index separates the letters of
+    // any tensor word. The signed permutation formula for log contributes
+    // only its degree-dependent Eulerian absolute coefficient sum.
+    Array letter_factors_;
+    std::array<double, sample_groups> residual_groups_{};
+    void prepare_letter_factors() {
+        if (d_ < 24 || m_ < 3 || m_ > 8 || !l_ || n_ < sample_groups) return;
+        const size_t bytes = multiply(m_ * sample_groups * 2, d_) * sizeof(double);
+        if (bytes > b_.budget->available() / 16) return;
+        letter_factors_ = b_.alloc(bytes / sizeof(double));
+        b_.fill(letter_factors_, 0.);
+        auto run = [&](uint64_t low, uint64_t high) {
+            for (size_t a = low; a < high; ++a) {
+                const auto steps = b_.channel(a);
+                for (size_t g = 0; g < sample_groups; ++g) {
+                    const size_t begin = n_ * g / sample_groups, end = n_ * (g + 1) / sample_groups;
+                    std::array<double, 8> maxima{};
+                    for (size_t j = 0; j < l_; ++j) {
+                        std::array<double, 8> sums{};
+                        for (size_t i = begin; i < end; ++i) {
+                            const double dx = steps.values.data[j * steps.dimension * n_ + i], square = dx * dx;
+                            double power = square;
+                            for (size_t k = 0; k < m_; ++k) { sums[k] += power; power *= square; }
+                        }
+                        for (size_t k = 0; k < m_; ++k) maxima[k] = std::max(maxima[k], sums[k]);
+                    }
+                    for (size_t k = 0; k < m_; ++k) {
+                        const double safe = maxima[k] / (end - begin) + 32. * std::numeric_limits<double>::min();
+                        letter_factors_.data[(k * 2 * d_ + a) * sample_groups + g] =
+                            l_ * std::pow(safe, .5 / (k + 1)) * (1. + 1e-12 * (n_ + l_));
+                    }
+                }
+            }
+        };
+        if (b_.options.n_jobs == 1) run(0, d_); else spawn_batch_threads(d_, b_.options.n_jobs, run);
+        for (size_t k = 0; k < m_; ++k) for (size_t a = d_; a-- > 0;) for (size_t g = 0; g < sample_groups; ++g) {
+            const size_t id = (k * 2 * d_ + a) * sample_groups + g;
+            letter_factors_.data[id + d_ * sample_groups] = std::max(letter_factors_.data[id],
+                a + 1 == d_ ? 0. : letter_factors_.data[id + (d_ + 1) * sample_groups]);
+        }
+    }
+    double letter_bound(const Word& prefix, size_t next) const {
+        const size_t h = prefix.size() + 1, first = prefix.empty() ? next : prefix.front();
+        double best = 0;
+        for (size_t k = h; k <= m_; ++k) {
+            const double* factors = letter_factors_.data + (k - 1) * 2 * d_ * sample_groups;
+            double sum = 0;
+            for (size_t g = 0; g < sample_groups; ++g) {
+                double value = factors[next * sample_groups + g];
+                for (auto a : prefix) value *= factors[a * sample_groups + g];
+                const double suffix = factors[(d_ + first) * sample_groups + g];
+                for (size_t j = h; j < k; ++j) value *= suffix;
+                sum += value * residual_groups_[g];
+            }
+            if (!std::isfinite(sum)) return std::numeric_limits<double>::infinity();
+            best = std::max(best, sum * caps_[k]);
+        }
+        return padded(best + terminal_roundoff(m_, n_, l_) * feature_cap_ * residual_mass_, 1e-10 * (l_ + n_ + m_));
+    }
+    double residual_mass_ = 0, residual_mean_ = 0, residual_rms_ = 0;
+    void prepare_residual(const Array& residual) {
+        residual_mass_ = b_.absolute_sum(residual) / n_;
+        residual_mean_ = std::abs(std::accumulate(residual.data, residual.data + n_, 0.)) / n_;
+        const auto [low, high] = std::minmax_element(residual.data, residual.data + n_);
+        const double maximum = std::max(std::abs(*low), std::abs(*high));
+        // Scale the RMS before squaring to handle very large and very small gradients.
+        double squared = 0;
+        if (maximum) for (size_t i = 0; i < n_; ++i) {
+            const double x = residual.data[i] / maximum; squared += x * x;
+        }
+        residual_rms_ = padded(maximum * std::sqrt(squared / n_), 1e-11 * n_);
+        residual_mean_ += residual_rms_ * 1e-11 * n_;
+        if (letter_factors_.owner) for (size_t g = 0; g < sample_groups; ++g) {
+            const size_t begin = n_ * g / sample_groups, end = n_ * (g + 1) / sample_groups;
+            double squared = 0;
+            for (size_t i = begin; i < end; ++i) squared += residual.data[i] * residual.data[i];
+            residual_groups_[g] = std::sqrt((squared + 32. * (n_ + 1) * std::numeric_limits<double>::min()) * (end - begin)) / n_;
+        }
+    }
+    struct TerminalNorms {
+        Array columns;
+        std::shared_ptr<void> metadata;
+        double max_radius = 0, prefix_radius = 0;
+    };
+    std::unordered_map<Word, TerminalNorms, WordHash> terminal_norms_;
+    size_t terminal_bytes_ = 0;
+    double norm_score(double radius) const {
+        return padded(residual_mean_ * feature_cap_ + residual_rms_ * radius, 1e-10);
+    }
+    double column_radius(const double* values, size_t degree, double rounding) const {
+        const double mean = std::accumulate(values, values + n_, 0.) / n_;
+        double squared = 0;
+        for (size_t i = 0; i < n_; ++i) {
+            const double delta = values[i] - mean; squared += delta * delta;
+        }
+        const double tiny = 32. * (n_ + 1) * (l_ + 1) * std::numeric_limits<double>::min();
+        return padded(b_.weights[degree] * std::sqrt((squared + tiny) / n_) + rounding * caps_[degree], rounding);
+    }
     std::vector<HallBoundFactor> group_factors_;
 
     double padded(double value, double allowance) const {
         value *= 1 + allowance;
         return std::isfinite(value) ? value * (1 + 64 * std::numeric_limits<double>::epsilon()) + 1e-15 : std::numeric_limits<double>::infinity();
     }
+    double feature_cap_ = std::numeric_limits<double>::infinity();
     bool zero_path_ = false;
     bool gaussian_reliable_ = true;
 
@@ -207,16 +313,17 @@ class PolynomialSearch final : public FeatureSearch {
         }
         return value;
     }
-    StatePtr log_child(const StatePtr& parent, size_t letter) {
+    StatePtr log_child(const StatePtr& parent, size_t letter, bool extendible = true) {
         Word w = parent->word; w.push_back(letter);
         if (auto it = cache_.find(w); it != cache_.end()) { ++b_.stats.cache_hits; return it->second; }
         ++b_.stats.cache_misses;
-        const size_t h = w.size(), levels = m_ - h;
+        const size_t h = w.size(), levels = extendible ? m_ - h : 0;
         auto out = state(w, levels * (h + 1));
+        const auto steps = b_.channel(letter);
         samples([&](uint64_t begin, uint64_t end) {
             if (b_.options.feature_kernel & 1) {
-                cpsig::log_polynomial(parent->polynomial.data, b_.increments.data, out->polynomial.data, out->values.data,
-                    n_, l_, d_, h, levels, letter, begin, end);
+                cpsig::log_polynomial(parent->polynomial.size ? parent->polynomial.data : nullptr, steps.values.data, out->polynomial.data, out->values.data,
+                    n_, l_, steps.dimension, h, levels, 0, begin, end);
                 return;
             }
             std::vector<double> totals(levels + 1);
@@ -225,7 +332,7 @@ class PolynomialSearch final : public FeatureSearch {
                 for (size_t p = 0; p <= levels; ++p) for (size_t j = 0; j < l_; ++j) {
                     double value = totals[p];
                     if (p < levels) at(out->polynomial, p * (h + 1), j, i) = value;
-                    const double dx = step(j, letter, i) / h;
+                    const double dx = steps.values.data[j * steps.dimension * n_ + i] / h;
                     for (size_t k = 0; k < h; ++k) {
                         value += dx * at(parent->polynomial, p * h + k, j, i);
                         if (p < levels) at(out->polynomial, p * (h + 1) + k + 1, j, i) = value;
@@ -238,7 +345,8 @@ class PolynomialSearch final : public FeatureSearch {
             }
         });
         if (lyndon(w)) ++b_.stats.constructed;
-        cache(out); return out;
+        if (!b_.options.selected_only) cache(out);
+        return out;
     }
     HallPtr parse(const Word& w) {
         if (auto it = parsed_.find(w); it != parsed_.end()) return it->second;
@@ -411,7 +519,7 @@ class PolynomialSearch final : public FeatureSearch {
             if (log_scratch_.size < multiply(workers, stride)) { log_scratch_ = {}; log_scratch_ = b_.alloc(multiply(workers, stride)); }
             auto update = [&](uint64_t begin, uint64_t end) {
                 for (size_t worker = begin; worker < end; ++worker)
-                    cpsig::log_moments(*found->second, u->polynomial.data, b_.variation.data, b_.after.data, u->moments.data,
+                    cpsig::log_moments(*found->second, u->polynomial.size ? u->polynomial.data : nullptr, b_.variation.data, b_.after.data, u->moments.data,
                         n_, l_, n_ * worker / workers, n_ * (worker + 1) / workers, log_scratch_.data + worker * stride);
             };
             if (workers == 1) update(0, 1); else spawn_batch_threads(workers, b_.options.n_jobs, update);
@@ -436,9 +544,113 @@ class PolynomialSearch final : public FeatureSearch {
             }
         });
     }
+    StatePtr search_child(const StatePtr& parent, size_t letter) {
+        const size_t h = parent->word.size() + 1;
+        if (m_ - h != 2 || b_.options.feature_kernel != 2039 || b_.options.cache_bytes) return log_child(parent, letter);
+        Word word = parent->word; word.push_back(letter);
+        auto child = state(word, 0);
+        child->terminal_integrals = b_.alloc(multiply(3 * l_, n_));
+        const auto steps = b_.channel(letter);
+        samples([&](size_t begin, size_t end) {
+            cpsig::log_child_integrals(parent->polynomial.size ? parent->polynomial.data : nullptr, steps.values.data,
+                child->terminal_integrals.data, child->values.data, n_, l_, steps.dimension, h, begin, end);
+        });
+        ++b_.stats.cache_misses; ++b_.stats.constructed;
+        return child;
+    }
+    std::vector<uint16_t> panel_steps_;
+    Array panel_units_;
+    std::shared_ptr<void> panel_storage_;
+    static constexpr size_t panel_width = 6;
+    size_t panel_count() const { return (l_ + panel_width - 1) / panel_width; }
+    // Cauchy in each time panel bounds the positive log moment/increment
+    // contraction without fetching an individual channel's complete path.
+    void prepare_panels() {
+        if (!l_ || panel_units_.owner || d_ < 12 || m_ < 3 || m_ > 4 || b_.options.memory_limit || b_.options.feature_kernel != 2039) return;
+        const size_t panels = panel_count();
+        const size_t count = multiply(d_ * panels, n_);
+        panel_storage_ = b_.account(multiply(count, sizeof(uint16_t)));
+        panel_steps_.resize(count);
+        panel_units_ = b_.alloc(d_);
+        auto scratch = b_.alloc(panels * n_);
+        for (size_t a = 0; a < d_; ++a) {
+            const auto steps = b_.channel(a);
+            for (size_t p = 0; p < panels; ++p) {
+                double* dst = scratch.data + p * n_;
+                std::fill_n(dst, n_, 0.);
+                for (size_t j = p * panel_width; j < std::min(l_, (p + 1) * panel_width); ++j) {
+                    const double* dx = steps.values.data + j * steps.dimension * n_;
+                    for (size_t i = 0; i < n_; ++i) dst[i] += dx[i] * dx[i];
+                }
+                for (size_t i = 0; i < n_; ++i) dst[i] = std::sqrt(dst[i] + std::numeric_limits<double>::min());
+            }
+            // Round upward: the decoded number bounds the original channel norm.
+            const double maximum = *std::max_element(scratch.data, scratch.data + panels * n_);
+            const double unit = std::max(maximum / 65533., std::numeric_limits<double>::min());
+            panel_units_.data[a] = unit;
+            auto* codes = panel_steps_.data() + a * panels * n_;
+            for (size_t i = 0; i < panels * n_; ++i)
+                codes[i] = static_cast<uint16_t>(1. + std::floor(scratch.data[i] / unit));
+        }
+    }
+    double panel_bound(const StatePtr& u, size_t a, const Array& residual) {
+        const size_t h = u->word.size(), levels = m_ - h, panels = panel_count();
+        if (!u->panel_moments.owner) {
+            u->panel_moments = b_.alloc(multiply(levels * panels, n_));
+            for (size_t q = 0; q < levels; ++q) for (size_t p = 0; p < panels; ++p) {
+                double* dst = u->panel_moments.data + (q * panels + p) * n_;
+                std::fill_n(dst, n_, 0.);
+                for (size_t j = p * panel_width; j < std::min(l_, (p + 1) * panel_width); ++j) {
+                    const double* x = u->moments.data + (q * l_ + j) * n_;
+                    for (size_t i = 0; i < n_; ++i) dst[i] += x[i] * x[i];
+                }
+                for (size_t i = 0; i < n_; ++i) dst[i] = std::sqrt(dst[i] + std::numeric_limits<double>::min());
+            }
+        }
+        double best = 0.;
+        for (size_t q = 0; q < levels; ++q) {
+            b_.fill(bound_samples_, 0.);
+            for (size_t p = 0; p < panels; ++p) {
+                const auto* dx = panel_steps_.data() + (a * panels + p) * n_;
+                const auto* x = u->panel_moments.data + (q * panels + p) * n_;
+                for (size_t i = 0; i < n_; ++i) bound_samples_.data[i] += dx[i] * x[i];
+            }
+            for (size_t i = 0; i < n_; ++i) bound_samples_.data[i] = std::min(caps_[h + q + 1], panel_units_.data[a] * bound_samples_.data[i]);
+            if (b_.batch_absolute.empty()) {
+                double sum = 0.;
+                for (size_t i = 0; i < n_; ++i) sum += std::abs(residual.data[i]) * bound_samples_.data[i];
+                best = std::max(best, sum);
+            } else for (const auto& r : b_.batch_absolute) {
+                const double sum = b_.bound_dot(r.data, bound_samples_.data, n_);
+                best = std::max(best, sum);
+            }
+        }
+        return padded(best / n_ + terminal_roundoff(m_, n_, l_) * feature_cap_ * residual_mass_, 1e-11 * m_ * m_ * (l_ + n_));
+    }
     double log_bound(const StatePtr& u, size_t low, size_t high, const Array& residual) {
         log_moments(u); double best = 0;
         const size_t h = u->word.size();
+        if (high == low + 1) {
+            if (!bound_samples_.owner) bound_samples_ = b_.alloc(n_);
+            if (panel_units_.owner) return panel_bound(u, low, residual);
+            const auto steps = b_.channel(low);
+            for (size_t q = 1; q <= m_ - h; ++q) {
+                b_.fill(bound_samples_, 0.);
+                for (size_t j = 0; j < l_; ++j) {
+                    const auto* dx = steps.values.data + j * steps.dimension * n_;
+                    const auto* moments = u->moments.data + ((q - 1) * l_ + j) * n_;
+                    for (size_t i = 0; i < n_; ++i) bound_samples_.data[i] += std::abs(dx[i]) * moments[i];
+                }
+                double sum = 0;
+                for (size_t i = 0; i < n_; ++i) {
+                    // The variation cap also covers nonfinite polynomial majorants.
+                    sum += std::abs(residual.data[i]) * std::min(caps_[h + q], bound_samples_.data[i]);
+                }
+                if (!std::isfinite(sum)) return std::numeric_limits<double>::infinity();
+                best = std::max(best, sum / n_);
+            }
+            return padded(best, 1e-11 * m_ * m_ * (l_ + 1));
+        }
         for (size_t q = 1; q <= m_ - h; ++q) {
             double sum = 0;
             for (size_t i = 0; i < n_; ++i) {
@@ -668,6 +880,8 @@ class PolynomialSearch final : public FeatureSearch {
     double offer(const StatePtr& u, const Array& residual, double alpha, size_t capacity,
         const std::unordered_map<Word, size_t, WordHash>& active, SearchResult& result, bool copy_values = false) {
         if (active.count(u->word)) return 0;
+        if (b_.visit_column) return b_.visit_column(u->word, u->values.data)
+            ? std::nextafter(alpha, std::numeric_limits<double>::infinity()) : 0.;
         const double score = std::abs(b_.dot(u->values.data, residual.data, n_)) * b_.weights[u->word.size()] / n_;
         result.omitted = std::max(result.omitted, guard(score));
         if (!capacity || score <= alpha) return score;
@@ -683,60 +897,305 @@ class PolynomialSearch final : public FeatureSearch {
         }
         return score;
     }
-    void log_terminal_search(const StatePtr& u, const Array& residual, double alpha, size_t capacity,
+    struct TerminalWorker {
+        std::unique_ptr<Backend> backend;
+        std::unique_ptr<PolynomialSearch> search;
+    };
+    std::vector<TerminalWorker> terminal_workers_;
+    PolynomialSearch(Backend& b, const PolynomialSearch& other)
+        : b_(b), n_(other.n_), l_(other.l_), d_(other.d_), m_(other.m_), mode_(other.mode_),
+          caps_(other.caps_), log_channel_norms_(other.log_channel_norms_), log_fourth_norms_(other.log_fourth_norms_),
+          feature_cap_(other.feature_cap_) {}
+    void terminal_geometry(double underflow) {
+        if (!log_channel_norms_.owner) {
+            log_channel_norms_ = b_.alloc(multiply(n_, d_));
+            for (size_t a = 0; a < d_; ++a) {
+                const auto steps = b_.channel(a);
+                double* norms = log_channel_norms_.data + a * n_;
+                std::fill_n(norms, n_, 0.);
+                for (size_t j = 0; j < l_; ++j) {
+                    const double* dx = steps.values.data + j * steps.dimension * n_;
+                    for (size_t i = 0; i < n_; ++i) norms[i] += dx[i] * dx[i];
+                }
+                for (size_t i = 0; i < n_; ++i) norms[i] = std::sqrt(norms[i] + underflow) * (1 + terminal_roundoff(0, multiply(n_, l_), l_));
+            }
+        }
+        if (!log_fourth_norms_.owner) {
+            // Group norms over disjoint sample intervals; the second table
+            // bounds all channels at or above a prenecklace's next letter.
+            log_fourth_norms_ = b_.alloc(multiply(2 * d_, sample_groups));
+            for (size_t a = d_; a-- > 0;) for (size_t g = 0; g < sample_groups; ++g) {
+                double fourth = 0;
+                for (size_t i = n_ * g / sample_groups; i < n_ * (g + 1) / sample_groups; ++i) {
+                    const double norm = log_channel_norms_.data[a * n_ + i];
+                    const double square = norm * norm;
+                    fourth += square * square;
+                }
+                const double norm = std::sqrt(std::sqrt(fourth + underflow));
+                log_fourth_norms_.data[a * sample_groups + g] = norm;
+                log_fourth_norms_.data[(d_ + a) * sample_groups + g] = a + 1 == d_ ? norm
+                    : std::max(norm, log_fourth_norms_.data[(d_ + a + 1) * sample_groups + g]);
+            }
+        }
+    }
+    bool visit_terminal_children(const StatePtr& u, size_t period, const std::vector<size_t>& letters,
+                                 const Array& residual, double alpha, const ActiveWords& active, SearchResult& result) {
+        const int jobs = b_.options.n_jobs > 0 ? b_.options.n_jobs : static_cast<int>(get_max_threads()) + 1 + b_.options.n_jobs;
+        if (jobs < 1) throw std::invalid_argument("Invalid n_jobs");
+        // Each worker holds a segment operator for one child. Use a smaller
+        // concurrency limit on narrow alphabets, where there are fewer siblings.
+        const size_t limit = d_ >= 96 ? 4 : (d_ >= 24 ? 3 : 1);
+        const size_t workers = std::min({limit, static_cast<size_t>(jobs), letters.size()});
+        terminal_geometry(32. * (n_ + 1) * (l_ + 1) * std::numeric_limits<double>::min());
+        while (terminal_workers_.size() < workers) {
+            auto backend = b_.terminal_worker();
+            if (!backend) return false;
+            auto search = std::unique_ptr<PolynomialSearch>(new PolynomialSearch(*backend, *this));
+            terminal_workers_.push_back({std::move(backend), std::move(search)});
+        }
+        const size_t h = u->word.size();
+        std::atomic<size_t> next{0};
+        std::vector<SearchResult> local(workers);
+        spawn_batch_threads(workers, static_cast<int>(workers), [&](size_t begin, size_t end) {
+            for (size_t t = begin; t < end; ++t) {
+                auto& search = *terminal_workers_[t].search;
+                auto& host = *terminal_workers_[t].backend;
+                host.stats = {};
+                host.visit_column = b_.visit_column;
+                host.batch_ratios = b_.batch_ratios;
+                host.batch_signed = b_.batch_signed;
+                search.residual_mass_ = residual_mass_;
+                for (size_t slot = next.fetch_add(1); slot < letters.size(); slot = next.fetch_add(1)) {
+                    const size_t a = letters[slot];
+                    auto child = search.search_child(u, a);
+                    const size_t child_period = h && a == u->word[h - period] ? period : h + 1;
+                    if (child_period == h + 1) search.offer(child, residual, alpha, 0, active, local[t]);
+                    search.log_terminals(child, child_period, residual, alpha, 0, active, local[t]);
+                }
+                host.visit_column = {};
+                host.batch_ratios.clear();
+                host.batch_signed.clear();
+            }
+        });
+        for (size_t t = 0; t < workers; ++t) {
+            const auto& stats = terminal_workers_[t].backend->stats;
+            result.omitted = std::max(result.omitted, local[t].omitted);
+            b_.stats.evaluated += stats.evaluated;
+            b_.stats.constructed += stats.constructed;
+            b_.stats.cache_misses += stats.cache_misses;
+            b_.stats.block_queries += stats.block_queries;
+            b_.stats.terminal_queries += stats.terminal_queries;
+            b_.stats.pruned += stats.pruned;
+            b_.stats.terminal_pruned += stats.terminal_pruned;
+            b_.stats.terminal_correlations += stats.terminal_correlations;
+            b_.stats.numerical_failures += stats.numerical_failures;
+        }
+        return true;
+    }
+    void log_terminal_search(const StatePtr& u, size_t period, const Array& residual, double alpha, size_t capacity,
         const std::unordered_map<Word, size_t, WordHash>& active, SearchResult& result) {
         ++b_.stats.terminal_queries;
         const size_t h = u->word.size(), levels = m_ - h;
         const double rounding = terminal_roundoff(h, multiply(n_, l_), l_);
         const double underflow = 32. * (n_ + 1) * (l_ + 1) * std::numeric_limits<double>::min();
-        const double mass = b_.absolute_sum(residual) / n_;
-        if (!log_channel_norms_.owner) {
-            log_channel_norms_ = b_.alloc(multiply(n_, d_));
-            samples([&](uint64_t begin, uint64_t end) {
-                for (size_t a = 0; a < d_; ++a) for (size_t i = begin; i < end; ++i) {
-                    double squared = 0;
-                    for (size_t j = 0; j < l_; ++j) { const double value = step(j, a, i); squared += value * value; }
-                    log_channel_norms_.data[a * n_ + i] = std::sqrt(squared + underflow) * (1 + terminal_roundoff(0, multiply(n_, l_), l_));
+        const double mass = residual_mass_;
+        TerminalNorms* norms = nullptr;
+        bool build = false;
+        if (!b_.visit_column && (b_.options.feature_kernel & 256) && d_ <= 32 && n_ >= 32 && !b_.options.memory_limit) {
+            auto found = terminal_norms_.find(u->word);
+            if (found == terminal_norms_.end()) {
+                const size_t entries = d_ + (levels == 2 ? d_ * d_ : 0);
+                const size_t bytes = entries * sizeof(double) + 256 + h * sizeof(uint64_t);
+                if (terminal_bytes_ + bytes <= (1u << 20)) {
+                    auto storage = b_.alloc(entries); b_.fill(storage, 0);
+                    found = terminal_norms_.emplace(u->word, TerminalNorms{std::move(storage), b_.account(bytes - entries * sizeof(double))}).first;
+                    terminal_bytes_ += bytes; build = true;
+                    if (h && h == period) found->second.prefix_radius = column_radius(u->values.data, h, rounding);
                 }
-            });
+            }
+            if (found != terminal_norms_.end()) norms = &found->second;
+            if (norms && !build) {
+                const double bound = norm_score(norms->max_radius);
+                const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
+                if (bound < cutoff) {
+                    result.omitted = std::max(result.omitted, bound); ++b_.stats.terminal_pruned; return;
+                }
+            }
         }
-        auto integrals = b_.alloc(multiply(3 * l_, n_));
+        terminal_geometry(underflow);
+        auto integrals = u->terminal_integrals.owner ? u->terminal_integrals : b_.alloc(multiply(3 * l_, n_));
         auto products = b_.alloc(multiply(l_ + 2, n_));
         auto probe = std::make_shared<State>(); probe->values = b_.alloc(n_);
         probe->metadata = b_.account(512 + m_ * 32);
-        samples([&](uint64_t begin, uint64_t end) {
+        auto sample_bounds = b_.batch_ratios.empty() ? Array{} : b_.alloc(n_);
+        if (!u->terminal_integrals.owner) samples([&](uint64_t begin, uint64_t end) {
             cpsig::log_terminal_integrals(u->polynomial.data, integrals.data, n_, l_, h, levels, begin, end);
         });
+        // H^b = M D^b with M[j,t] = I[j] 1(t>=j) - J[j] 1(t==j) + K[j].
+        // The Frobenius norm is independent of both terminal letters.
+        const bool screen_pairs = !norms && levels == 2 && (b_.options.feature_kernel & 256);
+        auto pair_weights = screen_pairs ? b_.alloc(n_) : Array{};
+        if (screen_pairs) {
+            b_.fill(pair_weights, 0.);
+            for (size_t j = 0; j < l_; ++j) {
+                const double* I = integrals.data + j * n_;
+                const double* J = I + l_ * n_;
+                const double* K = J + l_ * n_;
+                for (size_t i = 0; i < n_; ++i) {
+                    const double upper = I[i] + K[i], diagonal = upper - J[i];
+                    pair_weights.data[i] += j * K[i] * K[i] + diagonal * diagonal + (l_ - j - 1) * upper * upper;
+                }
+            }
+            for (size_t i = 0; i < n_; ++i)
+                pair_weights.data[i] = std::abs(residual.data[i]) * std::sqrt(pair_weights.data[i] + underflow);
+        }
+        const auto pair_scale = screen_pairs ? b_.alloc(n_) : Array{};
+        std::array<double, sample_groups> operator_norms{};
+        if (screen_pairs) for (size_t g = 0; g < sample_groups; ++g) {
+            const size_t first = n_ * g / sample_groups, end = n_ * (g + 1) / sample_groups;
+            const double squared = b_.bound_dot(pair_weights.data + first, pair_weights.data + first, end - first);
+            operator_norms[g] = std::sqrt(squared + underflow);
+        }
+        std::array<std::array<double, sample_groups>, max_response_batch> group_bounds{};
+        if (screen_pairs) for (size_t t = 0; t < b_.batch_ratios.size(); ++t) {
+            for (size_t g = 0; g < sample_groups; ++g) {
+                const size_t first = n_ * g / sample_groups, end = n_ * (g + 1) / sample_groups;
+                const double squared = b_.weighted_square(pair_weights.data + first, b_.batch_ratios[t].data + first, end - first);
+                group_bounds[t][g] = std::sqrt(squared + underflow);
+            }
+        }
+        const auto cutoff_now = [&] {
+            return capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
+        };
+        const auto pair_bound = [&](size_t a, size_t c) {
+            const double* left = log_fourth_norms_.data + a * sample_groups;
+            const double* right = log_fourth_norms_.data + c * sample_groups;
+            double total = 0;
+            for (size_t g = 0; g < sample_groups; ++g) total += operator_norms[g] * left[g] * right[g];
+            const double factor = b_.weights[h + 2] / n_, slack = rounding * caps_[h + 2] * mass + underflow * factor;
+            if (b_.batch_ratios.size() > 1 && (total * factor + slack) * (1 + rounding) + 1e-15 >= cutoff_now()) {
+                total = 0.;
+                for (size_t t = 0; t < b_.batch_ratios.size(); ++t) {
+                    double sum = 0.;
+                    for (size_t g = 0; g < sample_groups; ++g) sum += group_bounds[t][g] * left[g] * right[g];
+                    total = std::max(total, sum);
+                }
+            }
+            return padded(total * factor + slack, rounding);
+        };
+        const size_t first = h ? u->word[h % period] : 0;
         double maximum = 0;
         for (size_t q = 1; q <= levels; ++q) for (size_t c = 0; c < (q == 2 ? d_ : 1); ++c) {
-            bool prepared = false;
+            size_t low = first, high = d_;
+            if (q == 1) low += (h != 0);
+            else if (!h) high = c;
+            else {
+                if (c <= u->word.front()) continue;
+                low += c <= u->word[(h + 1) % period];
+            }
+            if (low >= high) continue;
+            if (q == 2 && screen_pairs) {
+                const double bound = pair_bound(d_ + low, c);
+                if (bound < cutoff_now()) { result.omitted = std::max(result.omitted, bound); continue; }
+            }
+            bool prepared = false, scaled = false;
             double magnitude = 0;
-            for (size_t a = 0; a < d_; ++a) {
-                Word word = u->word; word.push_back(a); if (q == 2) word.push_back(c);
-                if (!lyndon(word) || active.count(word)) continue;
+            Word word = u->word; word.push_back(low); if (q == 2) word.push_back(c);
+            for (size_t a = low; a < high; ++a) {
+                word[h] = a;
+                if (!build && active.count(word)) continue;
+                const double cutoff = cutoff_now();
+                const size_t entry = q == 1 ? a : d_ + c * d_ + a;
+                if (norms && !build) {
+                    const double upper = norm_score(norms->columns.data[entry]);
+                    if (upper < cutoff) {
+                        result.omitted = std::max(result.omitted, upper); maximum = std::max(maximum, upper);
+                        continue;
+                    }
+                }
+                if (q == 2 && screen_pairs) {
+                    const double coarse = pair_bound(a, c);
+                    if (coarse < cutoff) { result.omitted = std::max(result.omitted, coarse); continue; }
+                    if (!scaled) {
+                        const double* right = log_channel_norms_.data + c * n_;
+                        for (size_t i = 0; i < n_; ++i) pair_scale.data[i] = right[i] * pair_weights.data[i];
+                        scaled = true;
+                    }
+                    const double sum = b_.bound_dot(log_channel_norms_.data + a * n_, pair_scale.data, n_);
+                    const double upper = padded((sum + underflow) * b_.weights[h + q] / n_ + rounding * caps_[h + q] * mass, rounding);
+                    if (upper < cutoff) {
+                        result.omitted = std::max(result.omitted, upper); maximum = std::max(maximum, upper);
+                        continue;
+                    }
+                }
                 if (!prepared) {
+                    const auto other = b_.channel(c);
                     samples([&](uint64_t begin, uint64_t end) {
-                        cpsig::log_terminal_products(integrals.data, b_.increments.data, residual.data, products.data,
-                            n_, l_, d_, c, q, begin, end);
+                        cpsig::log_terminal_products(integrals.data, other.values.data, residual.data, products.data,
+                            n_, l_, other.dimension, 0, q, begin, end);
                     });
                     magnitude = std::accumulate(products.data + (l_ + 1) * n_, products.data + (l_ + 2) * n_, 0.);
                     prepared = true;
                 }
+                if (build) {
+                    const auto steps = b_.channel(a);
+                    cpsig::log_terminal_values(products.data, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, 0, n_);
+                    const double radius = column_radius(probe->values.data, h + q, rounding);
+                    norms->columns.data[entry] = radius;
+                    norms->max_radius = std::max(norms->max_radius, radius);
+                    probe->word = word;
+                    ++b_.stats.terminal_correlations;
+                    const size_t previous = result.candidates.size();
+                    maximum = std::max(maximum, offer(probe, residual, alpha, capacity, active, result, true));
+                    if (result.candidates.size() > previous) ++b_.stats.constructed;
+                    continue;
+                }
                 double norm = std::numeric_limits<double>::infinity();
-                try { norm = b_.dot(products.data + l_ * n_, log_channel_norms_.data + a * n_, n_); }
+                try { norm = b_.bound_dot(products.data + l_ * n_, log_channel_norms_.data + a * n_, n_); }
                 catch (const NonfiniteError&) {}
                 const double bound = padded((norm + rounding * magnitude + underflow) * b_.weights[h + q] / n_ + rounding * caps_[h + q] * mass, rounding);
-                const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
                 if (std::isfinite(bound) && bound < cutoff) {
                     result.omitted = std::max(result.omitted, bound); maximum = std::max(maximum, bound);
                     continue;
                 }
+                std::array<double, max_response_batch> remaining{}, partial{};
+                const size_t count = b_.batch_ratios.size();
+                const double factor = b_.weights[h + q] / n_;
+                const auto bounded = [&](double sum) {
+                    return padded((sum + rounding * (magnitude + 4 * norm) + underflow) * factor + rounding * caps_[h + q] * mass, rounding);
+                };
+                if (count && std::isfinite(norm)) {
+                    for (size_t i = 0; i < n_; ++i) sample_bounds.data[i] = products.data[l_ * n_ + i] * log_channel_norms_.data[a * n_ + i];
+                    for (size_t t = 0; t < count; ++t) {
+                        const auto* ratio = b_.batch_ratios[t].data;
+                        remaining[t] = b_.bound_dot(ratio, sample_bounds.data, n_);
+                    }
+                    const double upper = bounded(*std::max_element(remaining.begin(), remaining.begin() + count));
+                    if (upper < cutoff) { result.omitted = std::max(result.omitted, upper); continue; }
+                }
+                const auto steps = b_.channel(a);
                 bool pruned = false;
-                if ((b_.options.feature_kernel & 256) && std::isfinite(norm)) {
+                if (count && std::isfinite(norm)) {
+                    for (size_t first = 0; first < n_; first += 64) {
+                        const size_t last = std::min(n_, first + 64);
+                        cpsig::log_terminal_values(products.data, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, first, last);
+                        double top = 0.;
+                        for (size_t t = 0; t < count; ++t) {
+                            const auto* ratio = b_.batch_ratios[t].data;
+                            const auto* weight = b_.batch_signed[t].data;
+                            const double signed_sum = b_.bound_dot(probe->values.data + first, weight + first, last - first);
+                            const double used = b_.bound_dot(sample_bounds.data + first, ratio + first, last - first);
+                            partial[t] += signed_sum; remaining[t] -= used;
+                            top = std::max(top, std::abs(partial[t]) + std::max(0., remaining[t]));
+                        }
+                        const double upper = bounded(top);
+                        if (upper < cutoff) { result.omitted = std::max(result.omitted, upper); pruned = true; break; }
+                    }
+                } else if (!b_.visit_column && (b_.options.feature_kernel & 256) && std::isfinite(norm)) {
                     double partial = 0, correction = 0, used = 0;
                     for (size_t begin = 0; begin < n_; begin += 32) {
                         const size_t end = std::min(n_, begin + 32);
-                        cpsig::log_terminal_values(products.data, b_.increments.data, probe->values.data, n_, l_, d_, a, begin, end);
+                        cpsig::log_terminal_values(products.data, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, begin, end);
                         const double term = b_.dot(probe->values.data + begin, residual.data + begin, end - begin) - correction;
                         const double next = partial + term; correction = (next - partial) - term; partial = next;
                         used += b_.dot(products.data + l_ * n_ + begin, log_channel_norms_.data + a * n_ + begin, end - begin);
@@ -748,10 +1207,10 @@ class PolynomialSearch final : public FeatureSearch {
                         }
                     }
                 } else samples([&](uint64_t begin, uint64_t end) {
-                    cpsig::log_terminal_values(products.data, b_.increments.data, probe->values.data, n_, l_, d_, a, begin, end);
+                    cpsig::log_terminal_values(products.data, steps.values.data, probe->values.data, n_, l_, steps.dimension, 0, begin, end);
                 });
                 if (pruned) continue;
-                probe->word = std::move(word);
+                probe->word = word;
                 ++b_.stats.terminal_correlations;
                 const size_t previous = result.candidates.size();
                 maximum = std::max(maximum, offer(probe, residual, alpha, capacity, active, result, true));
@@ -760,10 +1219,10 @@ class PolynomialSearch final : public FeatureSearch {
         }
         if (maximum <= alpha) ++b_.stats.terminal_pruned;
     }
-    void log_terminals(const StatePtr& u, const Array& residual, double alpha, size_t capacity,
+    void log_terminals(const StatePtr& u, size_t period, const Array& residual, double alpha, size_t capacity,
         const std::unordered_map<Word, size_t, WordHash>& active, SearchResult& result) {
         if (b_.options.feature_kernel & 16) {
-            log_terminal_search(u, residual, alpha, capacity, active, result);
+            log_terminal_search(u, period, residual, alpha, capacity, active, result);
             return;
         }
         ++b_.stats.terminal_queries;
@@ -839,9 +1298,20 @@ public:
             caps_[h] = 0; for (size_t k = 0; k < h; ++k) caps_[h] += euler[k] / choose_[h - 1][k] / h;
         }
         if (mode_ == 1) {
-            if (!selected_only) rule((m_ + 1) / 2, false);
-            root_ = state({}, m_);
-            for (size_t p = 0; p < m_; ++p) for (size_t j = 0; j < l_; ++j) for (size_t i = 0; i < n_; ++i)
+            if (!selected_only) {
+                zero_path_ = !l_ || b_.absolute_sum(b_.variation) == 0;
+                rule((m_ + 1) / 2, false);
+                if (!(b_.options.feature_kernel & 8)) { prepare_letter_factors(); prepare_panels(); }
+                double variation = 1.;
+                if (l_) for (size_t i = 0; i < n_; ++i)
+                    variation = std::max(variation, b_.variation.data[i] + b_.after.data[i]);
+                feature_cap_ = 1.;
+                for (size_t h = 1; h <= m_; ++h)
+                    feature_cap_ = std::max(feature_cap_, padded(caps_[h] * std::pow(variation, int(h)), 1e-11 * (h + 1) * (l_ + 1)));
+            }
+            const bool implicit = m_ > 2 && (b_.options.feature_kernel & 33) == 33;
+            root_ = state({}, implicit ? 0 : m_);
+            if (!implicit) for (size_t p = 0; p < m_; ++p) for (size_t j = 0; j < l_; ++j) for (size_t i = 0; i < n_; ++i)
                 at(root_->polynomial, p, j, i) = (p % 2 ? -1.0 : 1.0) / (p + 1);
         } else {
             if (selected_only) return;
@@ -886,12 +1356,18 @@ public:
     }
     std::vector<std::shared_ptr<void>> metadata_;
     ~PolynomialSearch() override { b_.trim_search = {}; }
-    NodePtr selected(const Word& word) override {
+    double feature_cap() const override { return feature_cap_; }
+    NodePtr selected(const Word& word, bool extendible = true) override {
         if (word.empty() || word.size() > m_ || std::any_of(word.begin(), word.end(), [&](uint64_t a) { return a >= d_; })) throw std::invalid_argument("Invalid feature word");
         StatePtr s;
         if (mode_ == 1) {
             if (!lyndon(word)) throw std::invalid_argument("Log feature words must be Lyndon words");
-            s = root_; for (auto a : word) s = log_child(s, a);
+            if (b_.options.selected_only || !extendible) {
+                s = selected_prefix(prediction_path_, root_, word, extendible,
+                    [&](const StatePtr& parent, size_t a, bool keep) { return log_child(parent, a, keep); });
+            } else {
+                s = root_; for (auto a : word) s = log_child(s, a);
+            }
         } else {
             auto h = parse(word); if (!h) throw std::invalid_argument("Feature word is not in the reverse-degree Hall set");
             s = hall_state(h, false, false);
@@ -901,7 +1377,9 @@ public:
     SearchResult query(const Array& residual, double alpha, const std::unordered_map<Word, size_t, WordHash>& active,
         size_t capacity, size_t = 0, size_t = 0, size_t = 0) override {
         SearchResult result;
-        if (zero_path_ || !l_ || b_.absolute_sum(b_.increments) == 0) return result;
+        prediction_path_.clear();
+        if (zero_path_ || !l_) return result;
+        if (mode_ == 1) prepare_residual(residual);
         std::function<void(const StatePtr&, size_t)> visit_log;
         visit_log = [&](const StatePtr& u, size_t period) {
             const size_t h = u->word.size();
@@ -909,22 +1387,41 @@ public:
             if (h == m_) return;
             const size_t first = h ? u->word[h - period] : 0;
             if (m_ - h <= 2) {
-                log_terminals(u, residual, alpha, capacity, active, result); return;
+                log_terminals(u, period, residual, alpha, capacity, active, result); return;
             }
             std::function<void(size_t, size_t)> group = [&](size_t low, size_t high) {
                 const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
                 ++b_.stats.block_queries; const double bound = log_bound(u, low, high, residual);
                 if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; return; }
-                if (high - low == 1) visit_log(log_child(u, low), h && low == first ? period : h + 1);
+                if (high - low == 1) visit_log(search_child(u, low), h && low == first ? period : h + 1);
                 else { const size_t mid = std::midpoint(low, high); group(low, mid); group(mid, high); }
             };
+            const bool parallel = b_.visit_column && b_.options.n_jobs != 1 && m_ - h == 3 && d_ >= 12 && !capacity;
+            std::vector<size_t> children;
             if (b_.options.feature_kernel & 8) group(first, d_);
             else for (size_t a = first; a < d_; ++a) {
                 const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
-                ++b_.stats.block_queries; const double bound = log_bound(u, a, a + 1, residual);
+                ++b_.stats.block_queries;
+                if (!b_.visit_column && !terminal_norms_.empty() && m_ - h == 3) {
+                    Word child = u->word; child.push_back(a);
+                    if (auto it = terminal_norms_.find(child); it != terminal_norms_.end()) {
+                        const auto& saved = it->second;
+                        const double radius = active.count(child) ? saved.max_radius : std::max(saved.max_radius, saved.prefix_radius);
+                        const double bound = norm_score(radius);
+                        if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; continue; }
+                    }
+                }
+                if (letter_factors_.owner) {
+                    const double bound = letter_bound(u->word, a);
+                    if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; continue; }
+                }
+                const double bound = log_bound(u, a, a + 1, residual);
                 if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; continue; }
-                visit_log(log_child(u, a), h && a == first ? period : h + 1);
+                if (parallel) children.push_back(a);
+                else visit_log(search_child(u, a), h && a == first ? period : h + 1);
             }
+            if (children.size() >= 4 && visit_terminal_children(u, period, children, residual, alpha, active, result)) return;
+            for (const size_t a : children) visit_log(search_child(u, a), h && a == first ? period : h + 1);
         };
         std::function<void(const StatePtr&)> visit_hall;
         visit_hall = [&](StatePtr u) {
@@ -1010,6 +1507,7 @@ public:
         auto residual = b_.alloc(n_);
         for (size_t i = 0; i < n_; ++i) residual.data[i] = std::sin(1.7 * i) - .3;
         b_.center(residual.data, n_, true);
+        if (mode_ == 1) prepare_residual(residual);
         std::vector<StatePtr> states;
         if (root_) states.push_back(root_);
         for (const auto& entry : cache_) states.push_back(entry.second);
@@ -1033,7 +1531,9 @@ public:
             ++checks;
             if (mode_ == 1 && m_ - h <= 2) for (double threshold : {0., actual * .5, actual * 2}) {
                 SearchResult result;
-                log_terminals(u, residual, threshold, 0, {}, result);
+                size_t period = 1;
+                for (size_t j = 1; j < h; ++j) if (u->word[j] != u->word[j % period]) period = j + 1;
+                log_terminals(u, period, residual, threshold, 0, {}, result);
                 if (actual > result.omitted + 1e-12) throw std::runtime_error("Log terminal bound audit failed");
                 ++checks;
             }

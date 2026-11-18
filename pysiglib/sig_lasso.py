@@ -66,14 +66,15 @@ def sig_lasso(path, y, degree, alpha, *, feature_type="sig", loss="squared", fit
 
     NumPy arrays and CPU Torch tensors support float32 and float64. Paths have
     shape (*batch, length, dimension). Responses have shape batch or
-    (*batch, targets), with optional flattening of batch axes. Fit each target
-    separately with a scalar or per-target positive penalty. ``initial_words``
+    (*batch, targets), with optional flattening of batch axes. Each target
+    has its own objective with a scalar or per-target positive penalty. ``initial_words``
     seeds the working set with words in the transformed alphabet.
 
     The native solver uses cyclic coordinate descent with safeguarded
     acceleration on each working set.
-    Every fit searches the feature tree by branch and bound. It evaluates
-    coordinates without constructing a full truncated signature.
+    Every fit searches the feature tree by branch and bound. Multiple squared-loss
+    responses can share this traversal and receive individual certificates.
+    Coordinates are evaluated without constructing a full truncated signature.
     ``memory_limit`` bounds owned native workspace and output
     in bytes. ``n_jobs`` controls CPU workers. ``max_iter`` limits working-set
     updates per response. ``tol`` defaults to 1e-5 for float32 or 1e-8 for
@@ -232,8 +233,8 @@ def sig_lasso_predict(path, model, *, n_jobs=1, memory_limit=None):
     must have the same array type, dtype and channel dimension as the model.
     The result preserves leading batch dimensions and has an optional target
     axis. Computation has no autograd connection and uses only selected features.
-    Private state reuse is limited to 64 MiB and one quarter of an explicit
-    ``memory_limit``. All native prediction workspace obeys that limit.
+    Signature and tensor-log prediction process sample tiles and share common
+    prefixes of selected words. ``memory_limit`` bounds native prediction workspace.
     """
     check_n_jobs(n_jobs)
     if memory_limit is not None and (isinstance(memory_limit, bool) or not isinstance(memory_limit, (int, np.integer)) or not 0 < memory_limit < 2**64):

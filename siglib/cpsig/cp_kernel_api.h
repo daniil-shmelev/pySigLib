@@ -19,6 +19,7 @@ void hall_polynomial_(const siglasso::HallKernelPlan&, const double*, const doub
 void hall_terminal_(const siglasso::HallKernelPlan&, const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, double);
 void log_polynomial_(const double*, const double*, double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 void log_moments_(const siglasso::LogMomentPlan&, const double*, const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, double*);
+void log_child_integrals_(const double*, const double*, double*, double*, size_t, size_t, size_t, size_t, size_t, size_t);
 void log_terminal_integrals_(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 void log_terminal_products_(const double*, const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 void log_terminal_values_(const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);

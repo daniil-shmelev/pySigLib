@@ -40,11 +40,13 @@ namespace siglasso {
 inline std::atomic<unsigned> experimental_signature_bound{1};
 inline std::atomic<unsigned> experimental_candidate_pool{256};
 inline std::atomic<unsigned> experimental_search_strategy{0};
-inline std::atomic<unsigned> experimental_search_batch{4}, experimental_pool_rank{16}, experimental_traversal_order{4};
+inline std::atomic<unsigned> experimental_search_batch{1}, experimental_pool_rank{16}, experimental_traversal_order{4};
 inline std::atomic<unsigned> experimental_search_partitions{0}, experimental_search_method{3};
 inline std::atomic<size_t> experimental_cache_bytes{0};
 inline std::atomic<double> experimental_pool_refresh{0};
-inline std::atomic<unsigned> experimental_terminal_kernel{14}, experimental_restricted_solver{7};
+inline constexpr unsigned signed_terminal_kernel = 16, polish_solver_flag = 32;
+inline constexpr size_t max_response_batch = 10;
+inline std::atomic<unsigned> experimental_terminal_kernel{signed_terminal_kernel}, experimental_restricted_solver{7 | polish_solver_flag};
 inline std::atomic<unsigned> experimental_feature_kernel{2039};
 inline std::atomic<unsigned> experimental_summary_flags{0};
 inline std::atomic<size_t> experimental_summary_bytes{0};
@@ -111,11 +113,16 @@ struct Array {
     size_t bytes() const { return multiply(size, sizeof(double)); }
 };
 
+struct Channel {
+    Array values;
+    size_t dimension; // Stride between successive time slices, in sample vectors.
+};
 struct Column {
     Word word;
     Array values;
     double mean = 0, norm2 = 0;
     std::shared_ptr<void> metadata;
+    uint64_t id = 0;
 };
 
 struct Node {
@@ -127,9 +134,53 @@ struct Node {
 };
 using NodePtr = std::shared_ptr<Node>;
 struct Probe { NodePtr node; uint64_t low, high; size_t block = 0; Array gram; double norm = -1; };
-struct Candidate { Word word; Array values; double score; };
+// Depth-first evaluation of selected words retains just the common prefix.
+// A leaf needs its endpoint only; its segment polynomial can be discarded.
+template<class Ptr, class Child>
+Ptr selected_prefix(std::vector<Ptr>& path, const Ptr& root, const Word& word, bool extendible, Child child) {
+    size_t common = 0;
+    while (common < path.size() && common < word.size() && path[common]->word.back() == word[common]) ++common;
+    path.resize(common);
+    Ptr node = common ? path.back() : root;
+    for (size_t j = common; j < word.size(); ++j) {
+        const bool keep = j + 1 < word.size() || extendible;
+        node = child(node, word[j], keep);
+        if (keep) path.push_back(node);
+    }
+    return node;
+}
+struct QuantizedColumn {
+    std::vector<int16_t> samples;
+    std::shared_ptr<void> storage;
+    double offset = 0., unit = 0., error = 0.;
+};
+struct Candidate {
+    Word word;
+    Array values;
+    double score;
+    std::shared_ptr<const QuantizedColumn> proposal;
+};
 inline bool better(const Candidate& a, const Candidate& b) {
     return a.score == b.score ? word_less(a.word, b.word) : a.score > b.score;
+}
+// Keep a bounded heap. A borrowed scratch column only needs copying if it qualifies.
+template<class Store>
+inline bool retain_candidate(std::vector<Candidate>& heap, size_t capacity, const Word& word, double score, Store store) {
+    if (!capacity) return false;
+    if (heap.size() == capacity) {
+        const auto& last = heap.front();
+        if (score < last.score || (score == last.score && !word_less(word, last.word))) return false;
+        std::pop_heap(heap.begin(), heap.end(), better);
+        heap.pop_back();
+    }
+    heap.push_back({word, {}, score, {}});
+    store(heap.back());
+    std::push_heap(heap.begin(), heap.end(), better);
+    return true;
+}
+template<class Values>
+inline bool shortlist(std::vector<Candidate>& heap, size_t capacity, const Word& word, double score, Values values) {
+    return retain_candidate(heap, capacity, word, score, [&](Candidate& candidate) { candidate.values = values(); });
 }
 struct SearchResult { std::vector<Candidate> candidates; double omitted = 0; };
 
@@ -153,13 +204,30 @@ public:
     }
 };
 
+using ActiveWords = std::unordered_map<Word, size_t, WordHash>;
+// The restricted solvers suspend only at an inactive-coordinate search. The
+// referenced residual and active set stay alive in the suspended target.
+struct Separation {
+    const Array& residual;
+    double penalty, threshold;
+    const ActiveWords& active;
+    size_t capacity;
+    SearchResult found;
+    double seconds = 0.;
+};
+
 class FeatureSearch {
 public:
     virtual ~FeatureSearch() = default;
+    virtual double feature_cap() const { return std::numeric_limits<double>::infinity(); }
     virtual void new_target() {}
+    virtual size_t response_batch() const { return 1; }
+    virtual void query_batch(const std::vector<Separation*>& queries) {
+        for (auto* q : queries) q->found = query(q->residual, q->threshold, q->active, q->capacity);
+    }
     virtual double stamp() const { return 0; }
     virtual void screen(double, double, double, double) {}
-    virtual NodePtr selected(const Word&) = 0;
+    virtual NodePtr selected(const Word&, bool extendible = true) = 0;
     virtual SearchResult query(const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t,
         size_t = 0, size_t = 0, size_t = 0) = 0;
     virtual SearchResult verify(const Array& r, double alpha, const std::unordered_map<Word, size_t, WordHash>& active, size_t capacity) {
@@ -170,6 +238,8 @@ public:
 class HostSearch {
 public:
     virtual ~HostSearch() = default;
+    virtual bool terminal_children(const std::vector<Probe>&, std::vector<NodePtr>&) { return false; }
+    virtual bool terminal_query(const Probe&, const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t, SearchResult&) { return false; }
     virtual void begin_query(const Array&, const std::unordered_map<Word, size_t, WordHash>&) {}
     virtual double complete_bound(const Probe&, double value) { return value; }
     virtual double subtree_norm(const Probe&) { return std::numeric_limits<double>::infinity(); }
@@ -195,8 +265,9 @@ struct SearchOptions : SigLassoOptions {
         pool_rank = predict ? 0 : experimental_pool_rank.load();
         traversal_order = predict ? 0 : experimental_traversal_order.load();
         partitions = predict ? 0 : experimental_search_partitions.load();
-        terminal_kernel = predict || mode || o.degree < 3 ? 0 : experimental_terminal_kernel.load();
-        restricted_solver = predict || o.degree == 1 ? 0 : experimental_restricted_solver.load();
+        const auto kernel = experimental_terminal_kernel.load();
+        terminal_kernel = predict || mode || (o.degree < 3 && kernel != signed_terminal_kernel) ? 0 : kernel;
+        restricted_solver = predict || (o.degree == 1 && o.memory_limit) ? 0 : experimental_restricted_solver.load();
         feature_kernel = experimental_feature_kernel.load();
         summary_flags = predict || mode ? 0 : experimental_summary_flags.load();
         summary_bytes = predict || mode ? 0 : experimental_summary_bytes.load();
@@ -212,6 +283,8 @@ public:
     SigLassoStats stats{};
     bool uncertain_features = false;
     bool verify_search = false;
+    std::function<bool(const Word&, const double*)> visit_column;
+    std::vector<Array> batch_absolute, batch_ratios, batch_signed;
     double active_corr_cap = 0;
     std::shared_ptr<CandidateCutoff> shared_cutoff;
     std::array<double, ExperimentCounterCount> experiment_stats{};
@@ -232,11 +305,25 @@ public:
     virtual void fill(const Array&, double) = 0;
     virtual void copy(const double*, double*, size_t) = 0;
     virtual double dot(const double*, const double*, size_t) = 0;
+    virtual double gram_dot(const double* a, const double* b, size_t n) { return dot(a, b, n); }
     virtual double absolute_sum(const Array&) = 0;
     virtual void axpy(double, const double*, double*, size_t) = 0;
     virtual void scale(double, double*, size_t) = 0;
     virtual double center(double*, size_t, bool) = 0;
     virtual void correlations(const std::vector<Column>&, const Array&, std::vector<double>&, const std::vector<size_t>* = nullptr) = 0;
+    virtual Channel channel(size_t a) {
+        return {{increments.size ? increments.data + a * options.samples : increments.data, 0, increments.owner}, options.dimension};
+    }
+    virtual std::unique_ptr<Backend> terminal_worker() { return {}; }
+    virtual double bound_dot(const double* x, const double* y, size_t n) { return dot(x, y, n); }
+    virtual double weighted_square(const double* x, const double* y, size_t n) {
+        double result = 0.;
+        for (size_t i = 0; i < n; ++i) {
+            const double product = x[i] * y[i];
+            result += product * product;
+        }
+        return result;
+    }
     virtual void prepare() = 0;
     virtual std::unique_ptr<FeatureSearch> make_search();
     virtual Array factors(size_t k) = 0;
@@ -244,6 +331,11 @@ public:
     virtual HostSearch* host_search() { return nullptr; }
     virtual Array energy_gram(size_t, size_t) = 0;
     virtual void children(const std::vector<Probe>&, std::vector<NodePtr>&) = 0;
+    virtual NodePtr prediction_child(const NodePtr& parent, size_t a, bool) {
+        std::vector<NodePtr> nodes;
+        children({Probe{parent, a, a + 1, 0, {}}}, nodes);
+        return nodes.front();
+    }
     virtual Array response(size_t target) = 0;
     virtual void export_result(const Result&, const SigLassoOutput&) = 0;
     virtual bool native_search(const Array&, double, const std::unordered_map<Word, size_t, WordHash>&, size_t, SearchResult&) { return false; }
@@ -260,7 +352,6 @@ public:
     void prepare_alphabet() {
         if (!(options.search_method & 1)) {
             for (size_t a = 0; a < options.dimension; ++a) alphabet.emplace_back(a, a + 1);
-            alphabet_ratios = alloc(multiply(multiply(options.samples, options.length - 1), alphabet.size()));
             return;
         }
         std::vector<std::pair<size_t, size_t>> pending{{0, options.dimension}};
@@ -271,7 +362,6 @@ public:
                 pending.emplace_back(mid, interval.second); pending.emplace_back(interval.first, mid);
             }
         }
-        alphabet_ratios = alloc(multiply(multiply(options.samples, options.length - 1), alphabet.size()));
     }
 };
 
@@ -352,6 +442,7 @@ public:
 class Search : public FeatureSearch {
     Backend& b_;
     PrefixCache cache_;
+    std::vector<NodePtr> prediction_path_;
     std::unordered_map<size_t, Array> factors_;
     std::unordered_map<size_t, Array> grams_;
     size_t factor_bytes_ = 0;
@@ -431,7 +522,10 @@ public:
         try { auto result = query(residual, alpha, active, capacity); b_.verify_search = false; return result; }
         catch (...) { b_.verify_search = false; throw; }
     }
-    NodePtr selected(const Word& word) {
+    NodePtr selected(const Word& word, bool extendible = true) override {
+        if (b_.options.selected_only || !extendible)
+            return selected_prefix(prediction_path_, root_, word, extendible,
+                [&](const NodePtr& parent, size_t a, bool keep) { return b_.prediction_child(parent, a, keep); });
         auto node = root_;
         for (auto letter : word) {
             Word child_word = node->word; child_word.push_back(letter);
@@ -452,8 +546,9 @@ public:
         return node;
     }
     SearchResult query(const Array& residual, double alpha, const std::unordered_map<Word, size_t, WordHash>& active, size_t capacity,
-        size_t low = 0, size_t high = 0, size_t block = 0) {
+        size_t low = 0, size_t high = 0, size_t block = 0) override {
         SearchResult result;
+        prediction_path_.clear();
         if (b_.options.experiment & 5) advance(residual);
         if (b_.has_native_search()) {
             cache_.clear(); factors_.clear(); grams_.clear(); factor_bytes_ = gram_bytes_ = 0;
@@ -470,8 +565,16 @@ public:
             if (b_.options.search_method & 1) stack.push_back({node, first, last, index, {}});
             else for (size_t a = last; a-- > first;) stack.push_back({node, a, a + 1, a, {}});
         };
+        const bool signed_terminal = b_.options.terminal_kernel == signed_terminal_kernel && (b_.options.search_method & 2) &&
+            !b_.options.experiment && !b_.options.summary_flags;
         push(root_, low, high ? high : b_.options.dimension, block);
         while (!stack.empty()) {
+            if (signed_terminal &&
+                b_.options.degree - stack.back().node->word.size() <= 2 &&
+                b_.host_search()->terminal_query(stack.back(), residual, alpha, active, capacity, result)) {
+                stack.pop_back();
+                continue;
+            }
             std::vector<Probe> batch;
             const auto k = stack.back().node->word.size();
             while (!stack.empty() && batch.size() < b_.options.batch_width && stack.back().node->word.size() == k) {
@@ -548,20 +651,24 @@ public:
             }
             if (!missing.empty()) {
                 std::vector<NodePtr> made;
-                b_.children(missing, made);
-                auto factor = k + 1 < b_.options.degree ? get_factors(k + 1) : Array{};
+                const bool terminal = signed_terminal && !b_.options.cache_bytes && k + 1 < b_.options.degree &&
+                    b_.options.degree - k - 1 <= 2 && b_.host_search()->terminal_children(missing, made);
+                if (!terminal) b_.children(missing, made);
+                auto factor = !terminal && k + 1 < b_.options.degree ? get_factors(k + 1) : Array{};
                 for (size_t j = 0; j < made.size(); ++j) {
                     ++b_.stats.constructed;
-                    if (k + 1 < b_.options.degree) b_.moments(*made[j], factor);
+                    if (!terminal && k + 1 < b_.options.degree) b_.moments(*made[j], factor);
                     cache_.insert(made[j]);
                     nodes[missing_positions[j]] = std::move(made[j]);
                 }
                 b_.stats.evaluated += made.size();
             }
-            std::vector<Column> probe_columns;
-            for (const auto& node : nodes) probe_columns.push_back({{}, node->values, 0, 0});
-            std::vector<double> scores;
-            b_.correlations(probe_columns, residual, scores);
+            std::vector<double> scores(nodes.size(), 0.);
+            if (!b_.visit_column) {
+                std::vector<Column> probe_columns;
+                for (const auto& node : nodes) probe_columns.push_back({{}, node->values, 0, 0});
+                b_.correlations(probe_columns, residual, scores);
+            }
             for (size_t j = 0; j < nodes.size(); ++j) {
                 auto& node = nodes[j];
                 const double score = finite(std::abs(scores[j]) * b_.weights[node->word.size()]);
@@ -578,6 +685,7 @@ public:
                 }
                 if (!active.count(node->word)) {
                     result.omitted = std::max(result.omitted, guard(score));
+                    if (b_.visit_column) b_.visit_column(node->word, node->values.data);
                     if (!screened && b_.shared_cutoff && score > alpha) b_.shared_cutoff->offer(score);
                     if (!screened && rank < capacity && score > alpha) {
                         if (leaders.size() < rank) { leaders.push_back(score); std::push_heap(leaders.begin(), leaders.end(), std::greater<double>{}); }

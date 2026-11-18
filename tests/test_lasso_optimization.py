@@ -122,8 +122,8 @@ def test_acceleration_and_matrix_counters():
 
 def test_invalid_native_configuration():
     select_method('balanced')
-    assert CPSIG.sig_working_set_experimental_kernels(16, 0) != 0
-    assert CPSIG.sig_working_set_experimental_kernels(0, 32) != 0
+    assert CPSIG.sig_working_set_experimental_kernels(17, 0) != 0
+    assert CPSIG.sig_working_set_experimental_kernels(0, 64) != 0
 
 
 def test_covariance_acceleration_with_correlated_features():

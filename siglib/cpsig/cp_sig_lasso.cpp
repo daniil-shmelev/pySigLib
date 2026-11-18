@@ -62,7 +62,7 @@ CPSIG_API int sig_working_set_experimental_refresh(double fraction) noexcept {
     return 0;
 }
 CPSIG_API int sig_working_set_experimental_kernels(uint32_t terminal, uint32_t solver) noexcept {
-    if (terminal > 15 || solver > 31) return -1;
+    if (terminal > siglasso::signed_terminal_kernel || solver > 63) return -1;
     siglasso::experimental_terminal_kernel.store(terminal);
     siglasso::experimental_restricted_solver.store(solver);
     return 0;

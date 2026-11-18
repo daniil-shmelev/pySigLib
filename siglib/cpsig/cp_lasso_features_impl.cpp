@@ -37,7 +37,9 @@ void log_polynomial_block(D tag, const double* parent, const double* increments,
             const auto step = hn::Div(hn::LoadU(tag, increments + (j * d + letter) * n + i), hn::Set(tag, static_cast<double>(degree)));
             if (p < levels) hn::StoreU(value, tag, out + p * (degree + 1) * stride + sample);
             for (size_t k = 0; k < degree; ++k) {
-                value = hn::Add(value, hn::Mul(step, hn::LoadU(tag, parent + (p * degree + k) * stride + sample)));
+                const auto coefficient = parent ? hn::LoadU(tag, parent + (p * degree + k) * stride + sample)
+                    : hn::Set(tag, (p % 2 ? -1. : 1.) / (p + 1));
+                value = hn::Add(value, hn::Mul(step, coefficient));
                 if (p < levels) hn::StoreU(value, tag, out + (p * (degree + 1) + k + 1) * stride + sample);
             }
         }
@@ -81,9 +83,11 @@ void log_moments_block(D tag, const siglasso::LogMomentPlan& plan, const double*
             }
             for (size_t p = 0; p < levels; ++p) {
                 auto value = hn::Zero(tag);
-                for (size_t k = 0; k <= h; ++k)
-                    value = hn::Add(value, hn::Mul(hn::Abs(hn::LoadU(tag, polynomial + (p * (h + 1) + k) * stride + j * n + i)),
-                        hn::Set(tag, plan.basis[g * (h + 1) + k])));
+                for (size_t k = 0; k <= h; ++k) {
+                    const auto magnitude = polynomial ? hn::Abs(hn::LoadU(tag, polynomial + (p * (h + 1) + k) * stride + j * n + i))
+                        : hn::Set(tag, 1. / (p + 1));
+                    value = hn::Add(value, hn::Mul(magnitude, hn::Set(tag, plan.basis[g * (h + 1) + k])));
+                }
                 value = hn::Mul(value, hn::Set(tag, plan.weights[g]));
                 for (size_t q = p + 1; q <= levels; ++q) {
                     auto weight = hn::Zero(tag);
@@ -109,6 +113,48 @@ void log_moments_(const siglasso::LogMomentPlan& plan, const double* polynomial,
     size_t i = begin;
     for (; i + lanes <= end; i += lanes) log_moments_block(tag, plan, polynomial, variation, after, out, n, l, i, scratch);
     for (; i < end; ++i) log_moments_block(hn::CappedTag<double, 1>(), plan, polynomial, variation, after, out, n, l, i, scratch);
+}
+
+// Integrate a child directly into the three moments used by the final two
+// letters. Its Bernstein control points only live in registers. The next
+// log-series level contributes a constant shift on every segment.
+template<typename D>
+void log_child_integrals_block(D tag, const double* parent, const double* dx, double* out, double* values,
+                              size_t n, size_t l, size_t stride, size_t h, size_t i) {
+    const size_t plane = n * l;
+    auto first = hn::Zero(tag), second = hn::Zero(tag), third = hn::Zero(tag);
+    const auto mean = hn::Set(tag, 1. / (h + 1)), moment = hn::Set(tag, 1. / ((h + 1) * (h + 2)));
+    for (size_t j = 0; j < l; ++j) {
+        const size_t index = j * n + i;
+        const auto step = hn::Mul(hn::LoadU(tag, dx + j * stride * n + i), hn::Set(tag, 1. / h));
+        auto integral = first, linear = first, extra = second;
+        for (size_t k = 0; k < h; ++k) {
+            const auto a = parent ? hn::LoadU(tag, parent + k * plane + index) : hn::Set(tag, 1.);
+            const auto b = parent ? hn::LoadU(tag, parent + (h + k) * plane + index) : hn::Set(tag, -.5);
+            const auto c = parent ? hn::LoadU(tag, parent + (2 * h + k) * plane + index) : hn::Set(tag, 1. / 3.);
+            first = hn::MulAdd(step, a, first); second = hn::MulAdd(step, b, second); third = hn::MulAdd(step, c, third);
+            integral = hn::Add(integral, first); linear = hn::MulAdd(hn::Set(tag, double(k + 2)), first, linear);
+            extra = hn::Add(extra, second);
+        }
+        hn::StoreU(hn::Mul(integral, mean), tag, out + index);
+        hn::StoreU(hn::Mul(linear, moment), tag, out + plane + index);
+        hn::StoreU(hn::Mul(extra, mean), tag, out + 2 * plane + index);
+    }
+    hn::StoreU(first, tag, values + i);
+    for (size_t j = 0; j < l; ++j) {
+        double* base = out + j * n + i;
+        hn::StoreU(hn::Add(hn::LoadU(tag, base), second), tag, base);
+        hn::StoreU(hn::MulAdd(hn::Set(tag, .5), second, hn::LoadU(tag, base + plane)), tag, base + plane);
+        hn::StoreU(hn::Add(hn::LoadU(tag, base + 2 * plane), third), tag, base + 2 * plane);
+    }
+}
+void log_child_integrals_(const double* parent, const double* dx, double* out, double* values,
+                         size_t n, size_t l, size_t stride, size_t h, size_t begin, size_t end) {
+    const hn::ScalableTag<double> tag;
+    const size_t lanes = hn::Lanes(tag);
+    size_t i = begin;
+    for (; i + lanes <= end; i += lanes) log_child_integrals_block(tag, parent, dx, out, values, n, l, stride, h, i);
+    for (; i < end; ++i) log_child_integrals_block(hn::CappedTag<double, 1>(), parent, dx, out, values, n, l, stride, h, i);
 }
 
 template<typename D>

@@ -33,12 +33,35 @@ For all four losses, prediction returns the intercept plus the feature matrix
 times the coefficients. Apply the sigmoid or exponential to obtain the fitted
 mean for logistic or Poisson regression respectively.
 
-The CPU solver fits the current columns by cyclic coordinate descent, drops zeros and searches
-for violations of the inactive optimality conditions. It admits up to 16
-distinct violation scores per update. Every search uses branch and bound on
-the tree for the chosen dictionary. A branch can be skipped when its bound
-excludes a violation. Fitting and prediction do not construct a full truncated
-signature. Prediction evaluates the selected coordinates and their dependencies.
+The CPU solver fits the current columns by cyclic coordinate descent and drops
+zero coefficients. For squared loss it can take a Cholesky step on the current
+nonzero coefficients when this decreases the restricted objective. Targets can
+reuse selected columns and their inner products. Each target has its own
+penalty, residual and optimality certificate.
+
+The signature search shares prefix polynomials and suffix bounds. For the final
+one or two letters it tests norm bounds before computing signed correlations.
+The tensor-log search applies the same principle to admissible Lyndon words,
+using their prefix period to restrict the possible final letters. Both searches
+retain a bounded shortlist. Prediction evaluates selected words in sample tiles
+and reuses their common prefixes.
+
+For the default double-precision, multi-response squared-loss search at degrees
+two through four, several targets can traverse the tree together. An envelope
+of their penalty-scaled residuals lets one bound rule out a branch for every
+target in the group. Surviving words are scored separately for each target.
+For the squared-loss dual gap, the search tracks correlations above the penalty
+even when they lie inside the working-set stopping tolerance.
+The solver can store a 16-bit copy of a candidate column with its rounding
+error to prioritise later searches. It evaluates each activated column in
+double precision for the restricted solve. On wider inputs it keeps high-energy
+channel increments in memory and reconstructs other channels from the
+input paths as needed. Neighbouring cold channels share one pass through the
+input. The tensor-log search stores upward-rounded 16-bit channel norms for
+short time panels and can distribute surviving Lyndon prefixes across workers.
+Between restricted solves, the solver can retain just the lower triangle of the
+Gram matrix for the surviving terms. An explicit memory limit uses the
+individually budgeted search.
 
 ``kkt_violation`` gives the maximum stationarity error or a conservative upper
 bound. Squared fits also return a primal-dual gap. Each target has its own

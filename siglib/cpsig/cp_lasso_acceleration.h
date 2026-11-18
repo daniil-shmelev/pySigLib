@@ -17,6 +17,7 @@
 #include <cstddef>
 
 namespace siglasso {
+bool solve_positive_definite(double* matrix, double* rhs, size_t n);
 bool anderson_weights(const double* gram, double* weights);
 void terminal_matrix_product(const double* left, const double* right, double* out, size_t samples, size_t rows, size_t columns);
 }
