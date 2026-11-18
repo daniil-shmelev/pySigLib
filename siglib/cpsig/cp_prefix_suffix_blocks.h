@@ -19,12 +19,11 @@ struct CpuMomentScan {
     MomentRows p, q;
     uint64_t tile, size;
 
-    CpuMomentScan(const Layout& l, uint64_t n, size_t bytes, bool backward, int jobs, unsigned split = 0)
-        : plan(l, split, backward), p(l, plan.a - 1), q(l, plan.b),
+    CpuMomentScan(const Layout& l, uint64_t n, size_t bytes, bool backward, int jobs, unsigned split = 0, unsigned lead_channels = 0)
+        : plan(l, split, backward, lead_channels), p(l, plan.a - 1), q(l, plan.b),
         tile(std::min(n, std::max<uint64_t>(128, plan.tile(n, bytes, backward) * std::min(jobs, 4)))) {
-        const uint64_t factors = add(mul(n, p.size + q.size + plan.groups), mul(tile, plan.max_rows));
-        size = add(plan.buffers[0] + plan.buffers[1], mul(1 + backward, factors));
-        if (backward) size = add(size, mul(n, l.power[q.depth]));
+        const uint64_t moments = mul(n, p.size + q.size + plan.groups);
+        size = add(plan.buffers[0] + plan.buffers[1], add(mul(1 + backward, moments), mul(tile, plan.max_rows)));
     }
 };
 
@@ -34,7 +33,7 @@ bool blocked_legendre_batch(const T* path, const T* seed, T* out, uint64_t batch
     uint64_t dimension, bool ta, bool ll, T end_time) {
     if (n < 1024 || l.m < 7) return false;
     const bool wide = (l.power[l.m] - 1) / (Backward ? 32 : 16) >= n;
-    if (wide && (Backward || inner < 4 || n < 2048 || (l.power[l.m] - 1) / 128 >= n)) return false;
+    if (wide && (Backward ? work <= limit : inner < 4 || n < 2048 || (l.power[l.m] - 1) / 128 >= n)) return false;
     const bool cache_blocks = sizeof(T) == sizeof(double) && inner <= 2 && (l.power[l.m] - 1) / 8 < n;
     const uint64_t target = work > limit ? std::min<uint64_t>((32ULL << 20) / sizeof(T), limit / 2)
         : cache_blocks ? (1ULL << 20) / sizeof(T) : work;
@@ -43,14 +42,15 @@ bool blocked_legendre_batch(const T* path, const T* seed, T* out, uint64_t batch
     blocks = std::max(blocks, std::bit_floor(std::min({uint64_t(inner), n / 256, uint64_t(32)})));
     if (wide) blocks = std::min<uint64_t>(4, blocks);
     if (blocks < 2 || n / blocks < 128) return false;
-    const int leaf_jobs = wide ? inner / int(blocks) : 1;
+    const int tile_jobs = wide ? std::max(1, inner / int(blocks)) : 1;
     const uint64_t length = (n - 1) / blocks + 1, vertices = (ll ? n / 2 : n) + 1;
     const uint64_t path_stride = vertices * dimension, transformed = ta || ll ? mul(n + 1, l.d) : 0;
     // The transpose of Chen multiplication only reads child signatures through degree m-1.
     const Layout child(l.d, l.m - Backward);
-    const CpuMomentScan reverse(l, length, sizeof(T), Backward, leaf_jobs);
+    const unsigned lead_channels = ll ? unsigned(dimension) : 0;
+    const CpuMomentScan reverse(l, length, sizeof(T), Backward, tile_jobs, 0, lead_channels);
     std::optional<CpuMomentScan> lower;
-    if constexpr (Backward) lower.emplace(child, length, sizeof(T), false, 1);
+    if constexpr (Backward) lower.emplace(child, length, sizeof(T), false, tile_jobs, 0, lead_channels);
     const CpuMomentScan& leaf = Backward ? *lower : reverse;
     const uint64_t full = l.offset[l.m + 1], width = child.offset[child.m + 1];
     const uint64_t scratch = std::max(leaf.size, Backward ? reverse.size + (length + 1) * l.d : 0);
@@ -58,6 +58,7 @@ bool blocked_legendre_batch(const T* path, const T* seed, T* out, uint64_t batch
     const uint64_t states_size = add(tree_size, mul(1 + Backward, transformed));
     if (states_size >= limit || scratch > limit - states_size) return false;
     const uint64_t workers = std::min({uint64_t(inner), blocks, (limit - states_size) / scratch});
+    const int leaf_jobs = Backward && wide ? inner / int(workers) : tile_jobs;
     const uint64_t size = workers * scratch + states_size;
     for_paths<T>(batch, jobs, size, "CPU prefix-suffix", [&](uint64_t sample, T* memory) {
         const T* input = path + sample * path_stride;
@@ -118,7 +119,7 @@ bool blocked_legendre_batch(const T* path, const T* seed, T* out, uint64_t batch
                     T* work = memory + worker * scratch;
                     T* grad = work + reverse.size;
                     scanned_legendre_path<true>(input + pos * l.d, grads + b * full, grad, true, l,
-                        reverse.plan, reverse.p, reverse.q, count, std::min(count, reverse.tile), 1, work);
+                        reverse.plan, reverse.p, reverse.q, count, std::min(count, reverse.tile), leaf_jobs, work);
                     std::copy_n(grad, l.d, endpoints + b * l.d);
                     std::copy_n(grad + l.d, count * l.d, result + (pos + 1) * l.d);
                 }

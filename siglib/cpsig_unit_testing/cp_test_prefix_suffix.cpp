@@ -19,6 +19,7 @@
 #include "cp_prefix_suffix_endpoint_plan.h"
 #include "cpsig.h"
 #include "prefix_suffix.h"
+#include "prefix_suffix_legendre.h"
 #include "signature_method.h"
 #include <cmath>
 #ifndef CPSIG_PREBUILT_TESTS
@@ -39,6 +40,37 @@ TEST(PrefixSuffix, CheckedSizes) {
     EXPECT_THROW(prefix_suffix::Layout(0, 3), std::invalid_argument);
     EXPECT_THROW(prefix_suffix::Layout(1, UINT64_MAX), std::overflow_error);
     EXPECT_EQ(prefix_suffix::Layout(1, 65536).offset.back(), 65537);
+}
+
+TEST(PrefixSuffix, LeadLagCentreExtensions) {
+    constexpr unsigned channels = 2;
+    for (unsigned d : {4u, 5u}) for (unsigned split : {3u, 4u}) {
+        const prefix_suffix::Layout layout(d, 7);
+        const prefix_suffix::LegendrePlan full(layout, split), sparse(layout, split, true, channels);
+        for (unsigned r = 0; r + 1 < sparse.modes.size(); ++r) {
+            const auto& mode = sparse.modes[r];
+            const auto& next = sparse.modes[r + 1];
+            const auto& dense = full.modes[r];
+            for (unsigned g = 0; g < mode.groups; ++g) {
+                const unsigned dg = unsigned(std::lower_bound(dense.words.begin(), dense.words.end(), mode.words[g]) - dense.words.begin());
+                ASSERT_LT(dg, dense.groups);
+                ASSERT_EQ(dense.words[dg], mode.words[g]);
+                for (unsigned x = 0; x < d; ++x) for (unsigned y = 0; y < d; ++y) {
+                    const unsigned id = mode.grow[(x * mode.groups + g) * d + y];
+                    const unsigned ref = dense.grow[(x * dense.groups + dg) * d + y];
+                    const unsigned word = full.modes[r + 1].words[ref];
+                    bool lead = false, lag = false;
+                    unsigned w = word;
+                    for (unsigned i = 0; i < 2 * r + 3; ++i, w /= d) {
+                        lead |= w % d < channels;
+                        lag |= w % d >= channels && w % d < 2 * channels;
+                    }
+                    if (lead && lag) EXPECT_EQ(id, UINT_MAX);
+                    else { ASSERT_LT(id, next.groups); EXPECT_EQ(next.words[id], word); }
+                }
+            }
+        }
+    }
 }
 
 TEST(PrefixSuffix, CorrectionSelectionAndQuadrature) {
@@ -80,12 +112,23 @@ TEST(PrefixSuffix, UncorrectedMethodSelection) {
     EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 16, 2, 513, 12, false, false, 0, false, false));
     EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 16, 3, 257, 6, false, false, 0, true, false));
     EXPECT_FALSE(use_prefix_suffix<double>(automatic, 0, 16, 3, 257, 6, false, false, 0, true, false, true));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 32, 3, 17, 8, false, false, 0, true, true));
+    EXPECT_FALSE(use_prefix_suffix<double>(automatic, 0, 8, 3, 17, 8, false, false, 0, true, true));
+    EXPECT_FALSE(use_prefix_suffix<double>(automatic, 0, 32, 3, 17, 8, false, false, 0, true, true, true));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 8, 3, 17, 9, false, false, 0, true, true));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 4, 3, 65, 7, false, false, 0, true, true));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 512, 4, 257, 4, false, false, 0, true, true));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 32, 8, 257, 4, false, false, 0, true, true));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 8, 8, 513, 4, false, false, 0, true, true));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 8, 8, 257, 4, false, false, 0, true, true));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 8, 4, 129, 4, false, false, 0, true, true));
     EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 8, 3, 129, 6, false, false, 0, true, true));
     EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 2, 3, 129, 7, false, false, 0, true, true));
     EXPECT_FALSE(use_prefix_suffix<double>(automatic, 0, 2, 3, 129, 7, false, false, 0, true, false));
     EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 4, 3, 513, 6, false, false, 0, true, false));
     EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 16, 2, 513, 12, false, false, 0, true, true));
-    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 8, 2, 257, 12, false, false, 0, true, true));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 8, 2, 129, 12, false, false, 0, true, true));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 8, 2, 257, 12, false, false, 0, true, true));
     EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 8, 16, 769, 3, false, false, 0, false, true));
     EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 4, 4, 513, 3, false, false, 0, false, true));
     EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 8, 8, 1025, 3, false, false, 0, false, false));
@@ -96,8 +139,28 @@ TEST(PrefixSuffix, UncorrectedMethodSelection) {
     EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 16, 4, 513, 5, false, false, 0, true, true));
     EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 16, 4, 513, 5, false, false, 0, true, false));
     EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 8, 3, 257, 13, false, false, 0, true, false));
-    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 8, 3, 257, 12, false, false, 0, true, false));
-    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 8, 3, 129, 13, false, false, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 8, 3, 257, 11, false, false, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 32, 3, 4097, 8, false, false, 0, true, true));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 8, 3, 257, 8, false, false, 0, true, true));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 16, 4, 257, 7, false, false, 0, true, true));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 8, 2, 257, 12, false, false, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 32, 3, 17, 8, false, false, 0, false, true));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 2, 2, 2050, 7, false, true, 0, true, false));
+    EXPECT_FALSE(use_prefix_suffix<double>(automatic, 0, 2, 2, 2050, 7, false, true, 0, true, false, true));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 48, 2, 129, 8, true, true, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 1, 2, 129, 8, true, true, 0, false, true));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 2, 3, 129, 14, false, false, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 8, 3, 17, 10, false, false, 0, false, false));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 8, 6, 257, 7, false, false, 0, true, false));
+    EXPECT_FALSE(use_prefix_suffix<double>(automatic, 0, 8, 6, 257, 7, false, false, 0, true, false, true));
+    EXPECT_FALSE(use_prefix_suffix<double>(automatic, 0, 2, 2, 258, 8, true, true, 0, true, false, true));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 16, 3, 257, 10, false, false, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 8, 2, 513, 7, true, false, 0, false, false, false, 8));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 256, 3, 258, 8, false, false, 0, false, true));
+    EXPECT_TRUE(use_prefix_suffix<double>(automatic, 0, 128, 2, 129, 12, false, false, 0, true, false));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 128, 2, 129, 12, false, false, 0, true, false));
+    EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 8, 3, 129, 13, false, false, 0, true, false));
+    EXPECT_FALSE(use_prefix_suffix<float>(automatic, 0, 8, 3, 129, 12, false, false, 0, true, false));
     EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 1, 3, 16385, 7, false, false, 0, true, false));
     EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 2, 3, 8193, 8, false, false, 0, true, false));
     EXPECT_TRUE(use_prefix_suffix<float>(automatic, 0, 1, 3, 32769, 9, false, false, 0, true, false));

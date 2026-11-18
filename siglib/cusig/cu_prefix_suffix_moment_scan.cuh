@@ -98,6 +98,32 @@ __device__ T scan_segments(T x, T& carry, unsigned lane, T* totals) {
     return before;
 }
 
+template<unsigned Threads, unsigned Items, typename T>
+__device__ void scan_midpoints(T (&values)[Items], T& carry, unsigned lane, T* totals, T* exchange) {
+    if constexpr (Items == 1) {
+        values[0] = scan_segments<Threads>(values[0], carry, lane, totals) + values[0] / 2;
+    } else {
+        exchange += (threadIdx.x / 32) * 32 * Items;
+        #pragma unroll
+        for (unsigned j = 0; j < Items; ++j) exchange[j * 32 + lane] = values[j];
+        __syncwarp();
+        T sum = 0;
+        #pragma unroll
+        for (unsigned j = 0; j < Items; ++j) { values[j] = exchange[lane * Items + j]; sum += values[j]; }
+        __syncwarp();
+        T before = scan_segments<Threads>(sum, carry, lane, totals);
+        #pragma unroll
+        for (unsigned j = 0; j < Items; ++j) {
+            exchange[lane * Items + j] = before + values[j] / 2;
+            before += values[j];
+        }
+        __syncwarp();
+        #pragma unroll
+        for (unsigned j = 0; j < Items; ++j) values[j] = exchange[j * 32 + lane];
+        __syncwarp();
+    }
+}
+
 // The integral of mode zero is an exclusive segment scan. Each higher
 // Legendre moment corrects the preceding one with a word two letters shorter.
 template<unsigned Threads, unsigned Items = 1, typename T>
@@ -105,7 +131,7 @@ __global__ void scan_level(T* pre, T* suf, const T* inc, T* low, ScanShape s, De
     unsigned k, uint64_t batch, uint64_t stride, uint64_t sig_stride, bool scalar) {
     const unsigned width = l.power[k], prev = l.power[k - 1], span = l.power[k - 2];
     const unsigned tasks = width * (1 + (k <= s.p.depth)), lane = threadIdx.x % 32;
-    __shared__ T totals[Threads / 32];
+    __shared__ T totals[Threads / 32], exchange[Items == 1 ? 1 : Threads * Items];
     for (uint64_t task = (uint64_t(blockIdx.x) * blockDim.x + threadIdx.x) / Threads; task < batch * tasks;
         task += uint64_t(gridDim.x) * blockDim.x / Threads) {
         const uint64_t sample = task / tasks, base = sample * stride;
@@ -120,28 +146,26 @@ __global__ void scan_level(T* pre, T* suf, const T* inc, T* low, ScanShape s, De
         T* row = data + uint64_t(l.offset[k] + w) * s.pitch;
         T carry = 0;
         for (unsigned first = 0; first < s.n; first += Threads * Items) {
-            const unsigned start = first + threadIdx.x % Threads * Items;
-            T z[Items], subtotal = 0;
+            const unsigned start = first + (threadIdx.x % Threads / 32) * 32 * Items + lane;
+            T z[Items];
             #pragma unroll
             for (unsigned j = 0; j < Items; ++j) {
-                const unsigned t = start + j, i = suffix ? s.n - 1 - t : t;
+                const unsigned t = start + j * 32, i = suffix ? s.n - 1 - t : t;
                 z[j] = t < s.n ? a[i] * inc[base + uint64_t(c) * s.pitch + i] : T(0);
-                subtotal += z[j];
             }
-            T before = scan_segments<Threads>(subtotal, carry, lane, totals);
+            scan_midpoints<Threads>(z, carry, lane, totals, exchange);
             #pragma unroll
-            for (unsigned j = 0; j < Items && start + j < s.n; ++j) {
-                const unsigned i = suffix ? s.n - 1 - start - j : start + j;
+            for (unsigned j = 0; j < Items && start + j * 32 < s.n; ++j) {
+                const unsigned i = suffix ? s.n - 1 - start - j * 32 : start + j * 32;
                 const T v = inc[base + uint64_t(c) * s.pitch + i];
                 const T u = inc[base + uint64_t(c2) * s.pitch + i];
-                T value = (before + z[j] / 2) - ((lower[uint64_t(side.first[1]) * s.pitch + i] / 12) * u) * v;
+                T value = z[j] - ((lower[uint64_t(side.first[1]) * s.pitch + i] / 12) * u) * v;
                 row[i] = value;
                 for (unsigned r = 1; r <= side.depth - k; ++r) {
                     const T weight = T(l.scale[r + 1]);
                     value += ((weight * lower[uint64_t(side.first[r + 1]) * s.pitch + i]) * u) * v;
                     row[uint64_t(side.first[r]) * s.pitch + i] = value;
                 }
-                before += z[j];
             }
         }
         if (low && !suffix && threadIdx.x % Threads == 0) low[sample * sig_stride + l.offset[k] - !scalar + w] = carry;
@@ -149,17 +173,25 @@ __global__ void scan_level(T* pre, T* suf, const T* inc, T* low, ScanShape s, De
 }
 
 template<bool Backward, typename T>
-__global__ void scan_left(T* left, T* dh, T* dc, const T* head, const T* centres, Mode<T> m,
+__global__ void scan_left(T* left, T* dh, T* dc, const T* head, const T* centres, Mode m,
     ScanShape s, uint64_t batch, uint64_t stride) {
     const unsigned rows = Backward ? m.head + m.groups : m.head * m.groups;
-    for (uint64_t id = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x; id < batch * rows * s.pitch;
-        id += uint64_t(gridDim.x) * blockDim.x) {
-        const unsigned i = unsigned(id % s.pitch), row = unsigned(id / s.pitch % rows);
+    constexpr unsigned items = Backward ? 1 : 4;
+    const unsigned tiles = (s.n + items * blockDim.x - 1) / (items * blockDim.x);
+    for (uint64_t task = blockIdx.x; task < batch * rows * tiles; task += gridDim.x) {
+        const unsigned i = (unsigned(task % tiles) * blockDim.x + threadIdx.x) * items;
+        const unsigned row = unsigned(task / tiles % rows);
         if (i >= s.n) continue;
-        const uint64_t base = id / s.pitch / rows * stride + i;
-        if constexpr (!Backward) left[base + uint64_t(row) * s.pitch] =
-            head[base + uint64_t(row / m.groups) * s.pitch] * centres[base + uint64_t(row % m.groups) * s.pitch];
-        else if (row < m.head) {
+        const uint64_t base = task / tiles / rows * stride + i;
+        if constexpr (!Backward) {
+            const T* x = head + base + uint64_t(row / m.groups) * s.pitch;
+            const T* y = centres + base + uint64_t(row % m.groups) * s.pitch;
+            T* z = left + base + uint64_t(row) * s.pitch;
+            if (i + 4 <= s.n) {
+                *reinterpret_cast<gpu_split_k::Four<T>*>(z) = gpu_split_k::multiply(
+                    gpu_split_k::load_four(x, 4), gpu_split_k::load_four(y, 4));
+            } else for (unsigned j = 0; i + j < s.n; ++j) z[j] = x[j] * y[j];
+        } else if (row < m.head) {
             T sum = 0;
             for (unsigned g = 0; g < m.groups; ++g)
                 sum += left[base + uint64_t(row * m.groups + g) * s.pitch] * centres[base + uint64_t(g) * s.pitch];
@@ -170,6 +202,76 @@ __global__ void scan_left(T* left, T* dh, T* dc, const T* head, const T* centres
             for (unsigned x = 0; x < m.head; ++x)
                 sum += left[base + uint64_t(x * m.groups + g) * s.pitch] * head[base + uint64_t(x) * s.pitch];
             dc[base + uint64_t(g) * s.pitch] = sum;
+        }
+    }
+}
+
+// Contract the signature adjoint with the opposite factor. Each lead-lag side
+// needs only the half of the segment samples on which its centre is active.
+template<bool Right, bool Alternating, typename T>
+__global__ void factor_gradient(const T* seed, const T* input, const T* centre, T* out,
+    Mode m, ScanShape s, uint64_t batch, uint64_t stride) {
+    constexpr unsigned nk = 16, nc = 16;
+    __shared__ T weights[nk][nc], left[nk][4][32];
+    const unsigned lane = threadIdx.x % 32, warp = threadIdx.x / 32;
+    constexpr unsigned sides = 1 + Alternating;
+    const unsigned height = m.head * m.groups / sides, n = s.n / sides;
+    const unsigned rows = Right ? height : m.cols, cols = Right ? m.cols : height;
+    const unsigned tiles = (cols + nc - 1) / nc, segments = (n + 127) / 128;
+    for (uint64_t task = blockIdx.x; task < batch * sides * tiles * segments; task += gridDim.x) {
+        const unsigned i = (unsigned(task % segments) * 32 + lane) * 4, col = unsigned(task / segments % tiles) * nc;
+        const unsigned valid = i < n ? min(4u, n - i) : 0, side = unsigned(task / segments / tiles % sides);
+        const uint64_t base = task / segments / tiles / sides * stride;
+        auto row = [&](unsigned k) { return gpu_split_k::matrix_row<Alternating>(k, m.groups, side); };
+        gpu_split_k::Four<T> sums[4]{};
+        for (unsigned k = 0; k < rows; k += nk) {
+            #pragma unroll
+            for (unsigned j = threadIdx.x; j < nk * nc; j += 128) {
+                const unsigned r = k + j / nc, c = col + j % nc;
+                const uint64_t index = Right ? uint64_t(row(r)) * m.cols + c : uint64_t(row(c)) * m.cols + r;
+                weights[j / nc][j % nc] = r < rows && c < cols ? seed[base + index] : T(0);
+            }
+            #pragma unroll
+            for (unsigned j = warp; j < nk; j += 4) {
+                const unsigned r = k + j;
+                gpu_split_k::Four<T> v{};
+                if (r < rows && valid) {
+                    auto load = [&](const T* data, unsigned k) {
+                        return gpu_split_k::load_samples<Alternating>(data + base + uint64_t(k) * s.pitch + i * sides, valid, side);
+                    };
+                    if constexpr (Right) {
+                        const unsigned w = row(r);
+                        v = gpu_split_k::multiply(load(input, w / m.groups), load(centre, w % m.groups));
+                    } else v = load(input, r);
+                }
+                #pragma unroll
+                for (unsigned t = 0; t < 4; ++t) left[j][t][lane] = v.v[t];
+            }
+            __syncthreads();
+            #pragma unroll
+            for (unsigned j = 0; j < nk; ++j) {
+                #pragma unroll
+                for (unsigned t = 0; t < 4; ++t) {
+                    const T v = left[j][t][lane];
+                    #pragma unroll
+                    for (unsigned c = 0; c < 4; ++c) sums[c].v[t] += weights[j][4 * warp + c] * v;
+                }
+            }
+            __syncthreads();
+        }
+        if (valid) {
+            #pragma unroll
+            for (unsigned c = 0; c < 4; ++c) if (col + 4 * warp + c < cols) {
+                const unsigned w = col + 4 * warp + c;
+                T* dest = out + base + uint64_t(Right ? w : row(w)) * s.pitch + i * sides;
+                if constexpr (Alternating) {
+                    for (unsigned t = 0; t < valid; ++t) {
+                        dest[2 * t + 1 - side] = sums[c].v[t];
+                        if constexpr (!Right) dest[2 * t + side] = 0;
+                    }
+                } else if (valid == 4) *reinterpret_cast<gpu_split_k::Four<T>*>(dest) = sums[c];
+                else for (unsigned t = 0; t < valid; ++t) dest[t] = sums[c].v[t];
+            }
         }
     }
 }
@@ -201,7 +303,7 @@ __global__ void scan_reverse_level(const T* pre, const T* suf, T* dp, T* dq, con
     uint64_t batch, uint64_t stride, uint64_t sig_stride, bool scalar) {
     const unsigned d = D ? D : l.d, width = l.power[k], lane = threadIdx.x % 32;
     const unsigned tasks = width * (1 + (k <= s.p.depth));
-    __shared__ T totals[Threads / 32];
+    __shared__ T totals[Threads / 32], exchange[Items == 1 ? 1 : Threads * Items];
     for (uint64_t task = (uint64_t(blockIdx.x) * blockDim.x + threadIdx.x) / Threads; task < batch * tasks;
         task += uint64_t(gridDim.x) * blockDim.x / Threads) {
         const uint64_t sample = task / tasks, base = sample * stride;
@@ -214,11 +316,11 @@ __global__ void scan_reverse_level(const T* pre, const T* suf, T* dp, T* dq, con
         const unsigned stem = k < 2 ? 0 : suffix ? w % l.power[k - 2] : w / (d * d);
         T carry = suffix ? 0 : seed[sample * sig_stride + index - !scalar];
         for (unsigned first = 0; first < s.n; first += Threads * Items) {
-            const unsigned start = first + threadIdx.x % Threads * Items;
-            T values[Items]{}, subtotal = 0;
+            const unsigned start = first + (threadIdx.x % Threads / 32) * 32 * Items + lane;
+            T values[Items]{};
             #pragma unroll
-            for (unsigned j = 0; j < Items && start + j < s.n; ++j) {
-                const unsigned t = start + j, i = suffix ? t : s.n - 1 - t;
+            for (unsigned j = 0; j < Items && start + j * 32 < s.n; ++j) {
+                const unsigned t = start + j * 32, i = suffix ? t : s.n - 1 - t;
                 T sum = 0, gpair = 0;
                 const T* v = inc + base + i;
                 for (int mode = int(side.depth - k); mode >= 0; --mode) {
@@ -252,14 +354,12 @@ __global__ void scan_reverse_level(const T* pre, const T* suf, T* dp, T* dq, con
                 }
                 if (k >= 2) corr[uint64_t(index) * s.pitch + i] = gpair;
                 values[j] = sum;
-                subtotal += sum;
             }
-            T before = scan_segments<Threads>(subtotal, carry, lane, totals);
+            scan_midpoints<Threads>(values, carry, lane, totals, exchange);
             #pragma unroll
-            for (unsigned j = 0; j < Items && start + j < s.n; ++j) {
-                const unsigned t = start + j, i = suffix ? t : s.n - 1 - t;
-                z[uint64_t(index) * s.pitch + i] = before + values[j] / 2;
-                before += values[j];
+            for (unsigned j = 0; j < Items && start + j * 32 < s.n; ++j) {
+                const unsigned t = start + j * 32, i = suffix ? t : s.n - 1 - t;
+                z[uint64_t(index) * s.pitch + i] = values[j];
             }
         }
     }

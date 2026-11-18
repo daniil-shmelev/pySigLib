@@ -233,7 +233,7 @@ def test_per_call_split_autograd(monkeypatch, device):
 @pytest.mark.parametrize("device", DEVICES)
 def test_auto_different_forward_and_backward_methods(device, monkeypatch):
     # This shape selects Horner forward and prefix-suffix backward on both backends.
-    degree = 12 if device == "cuda" else 8
+    degree = 10 if device == "cuda" else 7
     shape = (16, 257, 3) if device == "cuda" else (32, 17, 4)
     path = torch.zeros(shape, device=device)
     monkeypatch.setenv("PYSIGLIB_PS_WORKSPACE_BYTES", "1")

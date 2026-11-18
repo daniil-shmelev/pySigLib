@@ -146,7 +146,7 @@ def test_permutation_sum_overflow(device):
 
 
 @pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
-@pytest.mark.parametrize("degree,n,d,scalar", [(4, 95, 3, True), (5, 129, 4, False), (6, 259, 3, True),
+@pytest.mark.parametrize("degree,n,d,scalar", [(4, 95, 3, True), (5, 129, 4, False), (5, 93, 10, True), (6, 259, 3, True),
                                              (7, 289, 5, True), (9, 39, 3, False), (10, 77, 3, True),
                                              (12, 65, 2, False)])
 def test_moment_levels_and_adjoints(device, dtype, degree, n, d, scalar):
@@ -176,7 +176,9 @@ def test_moment_levels_and_adjoints(device, dtype, degree, n, d, scalar):
 
 
 @pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
-@pytest.mark.parametrize("n,degree,d", [(33, 16, 2), (513, 9, 2), (4097, 8, 2), (2049, 8, 4)])
+@pytest.mark.parametrize("n,degree,d", [
+    (17, 12, 2), (33, 16, 2), (513, 9, 2), (4097, 8, 2), (2049, 8, 4), (8193, 12, 3),
+])
 def test_scanned_moments_single_word_gradient(device, dtype, n, degree, d):
     rng = np.random.default_rng(759 + n)
     increments = rng.integers(-3, 4, size=(n, d)) / (2 * np.sqrt(n))
@@ -201,12 +203,13 @@ def test_scanned_moments_single_word_gradient(device, dtype, n, degree, d):
 
 
 @pytest.mark.parametrize("device,dtype", list(product(DEVICES, (torch.float32, torch.float64))))
-@pytest.mark.parametrize("time_aug,lead_lag,degree", [
-    (True, False, 7), (False, True, 7), (True, True, 7), (False, True, 5), (False, True, 6),
+@pytest.mark.parametrize("time_aug,lead_lag,degree,n", [
+    (True, False, 7, 257), (False, True, 7, 257), (True, True, 7, 257),
+    (False, True, 5, 257), (False, True, 6, 257), (False, True, 7, 513),
 ])
-def test_augmented_moment_adjoints(device, dtype, time_aug, lead_lag, degree):
+def test_augmented_moment_adjoints(device, dtype, time_aug, lead_lag, degree, n):
     rng = np.random.default_rng(761)
-    increments = rng.normal(size=(2, 257, 2)) / 16
+    increments = rng.normal(size=(2, n, 2)) / 16
     increments[:, ::7] = 0
     increments[:, 2::13] = -increments[:, 1::13]
     data = np.pad(increments.cumsum(axis=1), ((0, 0), (1, 0), (0, 0)))

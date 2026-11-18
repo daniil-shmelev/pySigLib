@@ -35,6 +35,7 @@
 #include <bit>
 #include <climits>
 #include <optional>
+#include <variant>
 #include <oneapi/tbb/blocked_range.h>
 #include <oneapi/tbb/global_control.h>
 #include <oneapi/tbb/parallel_for.h>
@@ -156,6 +157,13 @@ int available_threads(int requested) {
         global_control::active_value(global_control::max_allowed_parallelism)}));
 }
 
+template<typename T> struct PathBuffer {
+    std::unique_ptr<T[]> data;
+    uint64_t capacity = 0;
+};
+
+thread_local std::variant<std::monostate, PathBuffer<float>, PathBuffer<double>> path_workspace;
+
 template<typename T, typename Work>
 void for_paths(uint64_t batch, int jobs, uint64_t elements, const char* name, Work work, bool balance = true) {
     const uint64_t bytes = mul(elements, sizeof(T));
@@ -163,26 +171,42 @@ void for_paths(uint64_t batch, int jobs, uint64_t elements, const char* name, Wo
     if (bytes > budget) throw std::runtime_error(std::string(name) + " requires " + std::to_string(bytes)
         + " workspace bytes for one path; configured limit is " + std::to_string(budget));
     const uint64_t owners = std::min({batch, uint64_t(jobs), bytes ? budget / bytes : uint64_t(jobs)});
+    const uint64_t cache_limit = std::min<uint64_t>(128ULL << 20, budget);
+    const bool reuse = bytes && bytes <= cache_limit / owners;
+    PathBuffer<T> pooled;
+    // Borrow the buffer for the whole call. A nested TBB call gets its own storage.
+    if (auto* saved = std::get_if<PathBuffer<T>>(&path_workspace); reuse && saved)
+        pooled = std::move(*saved);
+    path_workspace.emplace<std::monostate>();
+    if (reuse && (pooled.capacity < owners * elements || pooled.capacity > cache_limit / sizeof(T))) {
+        pooled.data.reset();
+        pooled.capacity = owners * elements;
+        try { pooled.data.reset(new T[pooled.capacity]); }
+        catch (const std::bad_alloc&) { throw std::runtime_error(std::string(name) + " requires "
+            + std::to_string(pooled.capacity * sizeof(T)) + " workspace bytes for the batch"); }
+    }
     std::atomic<uint64_t> next{owners};
     get_tbb_arena(jobs).execute([&] { parallel_range(owners, jobs, [&](uint64_t first, uint64_t end) {
         std::unique_ptr<T[]> storage;
-        try { storage.reset(new T[elements]); }
+        try { if (!reuse) storage.reset(new T[elements]); }
         catch (const std::bad_alloc&) { throw std::runtime_error(std::string(name) + " requires "
             + std::to_string(bytes) + " workspace bytes for one path-processing task"); }
+        T* memory = reuse ? pooled.data.get() + first * elements : storage.get();
         if (!balance) {
             const auto cut = [batch, owners](uint64_t t) { return (batch / owners) * t + (batch % owners) * t / owners; };
             const uint64_t stop = cut(end);
-            for (uint64_t i = cut(first); i < stop; ++i) work(i, storage.get());
+            for (uint64_t i = cut(first); i < stop; ++i) work(i, memory);
             return;
         }
         for (uint64_t owner = first; owner < end; ++owner) {
-            work(owner, storage.get());
+            work(owner, memory);
             if (batch > owners)
                 for (uint64_t i = next.fetch_add(1, std::memory_order_relaxed); i < batch;
                     i = next.fetch_add(1, std::memory_order_relaxed))
-                    work(i, storage.get());
+                    work(i, memory);
         }
     }); });
+    if (reuse) path_workspace = std::move(pooled);
 }
 
 template<typename T> struct CpuMatrices {

@@ -84,9 +84,11 @@ void scan_moments(const T* inc, T* moments, T* low, bool scalar,
 }
 
 template<bool Suffix, typename T>
-void reverse_moments(const T* inc, const T* moments, T* grad, T* dv, T* dz, const T* low,
+void reverse_moments(const T* inc, T* moments, T* grad, T* dv, const T* low,
     bool scalar, const Layout& l, const MomentRows& s, uint64_t n, int jobs) {
     const unsigned d = unsigned(l.d);
+    // The adjoint reads moments only through degree s.depth - 1.
+    T* dz = moments + l.offset[s.depth] * n;
     for (unsigned k = s.depth; k > 0; --k) {
         const uint64_t width = l.power[k], prev = width / d;
         parallel_range(width, jobs, [&](uint64_t first, uint64_t end) {
@@ -128,7 +130,18 @@ void reverse_moments(const T* inc, const T* moments, T* grad, T* dv, T* dz, cons
                     const T* g = grad + (s.first[r] + l.offset[k] + w) * n;
                     T* du = dv + c2 * n;
                     const T scale = -T(1) / T(4 * (2 * r + 1) * (2 * r + 3));
-                    for (uint64_t i = first; i < end; ++i) {
+                    const Simd<T> tag;
+                    constexpr size_t lanes = vec_batch_lanes<T>;
+                    uint64_t i = first;
+                    if constexpr (lanes > 1) for (; end - i >= lanes; i += lanes) {
+                        const auto t = hn::Mul(hn::Set(tag, scale), hn::LoadU(tag, g + i));
+                        const auto x = hn::LoadU(tag, u + i), y = hn::LoadU(tag, v + i);
+                        const auto lower_grad = hn::Mul(t, hn::LoadU(tag, h + i));
+                        if (k > 2) hn::StoreU(hn::MulAdd(hn::Mul(t, x), y, hn::LoadU(tag, dh + i)), tag, dh + i);
+                        hn::StoreU(hn::MulAdd(lower_grad, x, hn::LoadU(tag, dc + i)), tag, dc + i);
+                        hn::StoreU(hn::MulAdd(lower_grad, y, hn::LoadU(tag, du + i)), tag, du + i);
+                    }
+                    for (; i < end; ++i) {
                         const T t = scale * g[i];
                         if (k > 2) dh[i] += (t * u[i]) * v[i];
                         dc[i] += (t * h[i]) * u[i]; du[i] += (t * h[i]) * v[i];
@@ -148,11 +161,11 @@ void scanned_legendre_path(const T* path, const T* seed, T* out, bool scalar, co
     T* buffers[]{take(plan.buffers[0]), take(plan.buffers[1])};
     T* pre = take(p.size * n); T* suf = take(q.size * n);
     T* centres = take(plan.groups * n); T* left = take(plan.max_rows * block);
-    T *dp = nullptr, *dq = nullptr, *dm = nullptr, *dl = nullptr, *dz = nullptr;
+    T *dp = nullptr, *dq = nullptr, *dm = nullptr;
     if constexpr (Backward) {
         dp = take(p.size * n); dq = take(q.size * n); dm = take(plan.groups * n);
         std::fill_n(dp, p.size * n, T(0)); std::fill_n(dm, plan.groups * n, T(0));
-        dl = take(plan.max_rows * block); dz = take(l.power[q.depth] * n);
+        if (plan.a < q.depth) std::fill_n(dq + q.first[plan.a] * n, (q.size - q.first[plan.a]) * n, T(0));
         legendre_levels<true>(seed, out, scalar, l, plan, buffers, jobs);
     } else if (scalar) out[0] = 1;
     auto start_moments = [&](auto point) {
@@ -207,22 +220,22 @@ void scanned_legendre_path(const T* path, const T* seed, T* out, bool scalar, co
                 }
             });
             if constexpr (Backward) {
-                T* dleft = constant_head ? dm + m.first_group * n + start : dl;
+                T* dleft = constant_head ? dm + m.first_group * n + start : left;
                 if (cols == 1) {
                     parallel_range(rows, jobs, [&](uint64_t first, uint64_t end) {
                         for (uint64_t g = first; g < end; ++g) std::fill_n(dleft + g * ld, count, product[g]);
                     });
                     continue;
                 }
-                matrices.gemm({product, rows, cols, cols, 1}, {right + start, cols, count, n, 1},
-                    {dleft, rows, count, ld, 1}, true);
                 matrices.gemm({product, cols, rows, 1, cols}, {lhs, rows, count, ld, 1},
                     {dq + q.first[r] * n + start, cols, count, n, 1}, true);
+                matrices.gemm({product, rows, cols, cols, 1}, {right + start, cols, count, n, 1},
+                    {dleft, rows, count, ld, 1}, true);
                 if (!constant_head) parallel_range(count, jobs, [&](uint64_t first, uint64_t end) {
                     for (uint64_t row = 0; row < rows; ++row) {
                         const uint64_t x = row / m.groups * n + start, y = row % m.groups * n + start;
                         T* dh = dp + head + x; T* dc = dm + m.first_group * n + y;
-                        const T* g = dl + row * block;
+                        const T* g = dleft + row * block;
                         for (uint64_t i = first; i < end; ++i) { dh[i] += g[i] * mid[y + i]; dc[i] += g[i] * h[x + i]; }
                     }
                 });
@@ -242,7 +255,18 @@ void scanned_legendre_path(const T* path, const T* seed, T* out, bool scalar, co
                     const unsigned ex = m.parent[g], pair = ex / d;
                     const uint64_t u = (prev.first_group + pair % prev.groups) * n, x = (pair / prev.groups) * n, y = (ex % d) * n;
                     const T* grad = dm + (m.first_group + g) * n;
-                    for (uint64_t i = first; i < end; ++i) {
+                    const Simd<T> tag;
+                    constexpr size_t lanes = vec_batch_lanes<T>;
+                    uint64_t i = first;
+                    if constexpr (lanes > 1) for (; end - i >= lanes; i += lanes) {
+                        const auto t = hn::Mul(hn::Set(tag, scale), hn::LoadU(tag, grad + i));
+                        const auto a = hn::LoadU(tag, centres + x + i), b = hn::LoadU(tag, centres + y + i);
+                        const auto h = hn::Mul(t, hn::LoadU(tag, centres + u + i));
+                        hn::StoreU(hn::MulAdd(hn::Mul(t, a), b, hn::LoadU(tag, dm + u + i)), tag, dm + u + i);
+                        hn::StoreU(hn::MulAdd(h, b, hn::LoadU(tag, dm + x + i)), tag, dm + x + i);
+                        hn::StoreU(hn::MulAdd(h, a, hn::LoadU(tag, dm + y + i)), tag, dm + y + i);
+                    }
+                    for (; i < end; ++i) {
                         const T t = scale * grad[i], h = t * centres[u + i];
                         dm[u + i] += (t * centres[x + i]) * centres[y + i];
                         dm[x + i] += h * centres[y + i]; dm[y + i] += h * centres[x + i];
@@ -250,8 +274,8 @@ void scanned_legendre_path(const T* path, const T* seed, T* out, bool scalar, co
                 }
             }
         });
-        reverse_moments<false>(centres, pre, dp, dm, dz, seed, scalar, l, p, n, jobs);
-        reverse_moments<true>(centres, suf, dq, dm, dz, static_cast<const T*>(nullptr), scalar, l, q, n, jobs);
+        reverse_moments<false>(centres, pre, dp, dm, seed, scalar, l, p, n, jobs);
+        reverse_moments<true>(centres, suf, dq, dm, static_cast<const T*>(nullptr), scalar, l, q, n, jobs);
         const uint64_t channels = augmented ? augmented->data_dimension() : d;
         for (unsigned c = 0; c < channels; ++c) {
             const T* grad = dm + c * n;

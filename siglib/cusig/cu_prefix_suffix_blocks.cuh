@@ -148,6 +148,7 @@ bool blocked(const T* path, const T* seed, T* out, const Layout& l, int device, 
     for (unsigned k = 0; k <= l.m; ++k) levels.power[k] = unsigned(l.power[k]);
     for (unsigned k = 0; k <= l.m + 1; ++k) levels.offset[k] = unsigned(l.offset[k]);
     const uint64_t path_stride = ((ll ? n / 2 : n) + 1) * dimension;
+    const unsigned lead_channels = ll ? unsigned(dimension) : 0;
     const uint64_t bytes = mul(elements, sizeof(T));
     const uint64_t paths = std::min(batch, std::max<uint64_t>(1, std::min<uint64_t>(128ULL << 20, available / 2) / bytes));
     CudaBatchWorkspace<T> storage(paths, elements, "CUDA prefix-suffix blocks", (4ULL << 20) + work / blocks * sizeof(T));
@@ -161,7 +162,7 @@ bool blocked(const T* path, const T* seed, T* out, const Layout& l, int device, 
             packed, count, n, dimension, l.d, blocks, unsigned(tile), ta, ll, end_time);
         CUDA_CHECK(cudaGetLastError());
         if (!compute<false>(packed, static_cast<const T*>(nullptr), states[0], child, device, leaves, tile,
-            scalar, stream, l.d, false, false, T(1), reserved)) return false;
+            scalar, stream, l.d, false, false, T(1), reserved, lead_channels)) return false;
         for (unsigned h = 1; h <= height - unsigned(Backward); ++h) {
             const uint64_t pairs = leaves >> h;
             if (h == height) states[h] = root;
@@ -189,7 +190,7 @@ bool blocked(const T* path, const T* seed, T* out, const Layout& l, int device, 
             }
             T* vertices = g[1] + leaves * full;
             if (!compute<true>(packed, current, vertices, l, device, leaves, tile, scalar, stream, l.d,
-                false, false, T(1), reserved)) return false;
+                false, false, T(1), reserved, lead_channels)) return false;
             merge_block_points<<<make_cuda_1d_grid(count * path_stride, 256), 256, 0, stream>>>(vertices, root,
                 count, n, dimension, l.d, blocks, unsigned(tile), ll);
             CUDA_CHECK(cudaGetLastError());
