@@ -15,6 +15,11 @@
 
 #pragma once
 
+#include <cstdint>
+#include <string>
+
+int run_coefficient_profile(int argc, char** argv, const std::string& directory);
+
 void example_batch_signature_d(
 	uint64_t batch_size = 100,
 	uint64_t dimension = 6,

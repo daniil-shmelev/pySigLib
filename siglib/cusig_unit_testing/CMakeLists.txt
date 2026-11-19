@@ -16,6 +16,7 @@ add_executable(cusig_tests
     cu_test_prefix_suffix.cpp
     cu_test_sig_backprop.cpp
     cu_test_sig_coef.cpp
+    cu_test_pascal.cpp
     cu_test_log_sig.cpp
     cu_test_sig_kernel.cpp
     cu_test_branched.cpp
