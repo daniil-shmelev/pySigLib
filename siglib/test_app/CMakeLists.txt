@@ -8,6 +8,9 @@ add_executable(test_app
 )
 
 target_compile_features(test_app PRIVATE cxx_std_20)
+if(WIN32)
+    target_compile_definitions(test_app PRIVATE NOMINMAX)
+endif()
 target_include_directories(test_app PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
