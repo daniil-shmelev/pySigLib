@@ -21,9 +21,14 @@ if(TARGET cpsig)
             $<TARGET_FILE_DIR:test_app>
     )
     if(WIN32)
+        if(TARGET tbb)
+            set(_test_app_tbb_target tbb)
+        else()
+            set(_test_app_tbb_target pysiglib_prebuilt_tbb)
+        endif()
         add_custom_command(TARGET test_app POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:tbb>
+                $<TARGET_FILE:${_test_app_tbb_target}>
                 $<TARGET_FILE_DIR:test_app>
         )
     endif()

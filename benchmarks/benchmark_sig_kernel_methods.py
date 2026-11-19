@@ -95,8 +95,8 @@ def load_cpsig(repo_root):
     library.sig_kernel_poly_d.restype = c_int
     library.signature_d.argtypes = (
         POINTER(c_double), POINTER(c_double), c_uint64, c_uint64,
-        c_uint64, c_uint64, c_bool, c_bool, c_double, c_bool,
-        c_bool, c_int, POINTER(c_double), c_uint64, c_uint64, c_uint64)
+        c_uint64, c_uint64, c_bool, c_bool, c_double,
+        c_bool, c_int, POINTER(c_double), c_uint64, c_uint64, c_uint64, c_int, c_uint64)
     library.signature_d.restype = c_int
     return library
 
@@ -182,8 +182,8 @@ def direct_signature_kernel(library, path1, path2, degree=21):
     signature_length = (1 << (degree + 1)) - 1
     sig1 = np.empty(signature_length, dtype=np.float64)
     sig2 = np.empty(signature_length, dtype=np.float64)
-    args = (1, 2, path1.shape[0], degree, False, False, 1.0, True, True, 1,
-            None, 0, 0, 0)
+    args = (1, 2, path1.shape[0], degree, False, False, 1.0, True, 1,
+            None, 0, 0, 0, 0, 0)
     status = library.signature_d(
         path1.ctypes.data_as(POINTER(c_double)),
         sig1.ctypes.data_as(POINTER(c_double)), *args)

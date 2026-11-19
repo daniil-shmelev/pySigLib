@@ -16,6 +16,7 @@
 #include "cusig.h"
 #include "cu_runtime_utils.h"
 #include "cu_signature.h"
+#include "signature_method.h"
 #include "cu_sig_combine.h"
 #include "cu_atomic.h"
 #include "cu_path_reduction.h"
@@ -26,85 +27,6 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
-
-// linear_signature_device is defined in cu_sig_combine.h
-
-template<typename T>
-__global__ void signature_naive_ker(
-	const T* __restrict__ path,
-	T* __restrict__ out,
-	const uint64_t* __restrict__ d_level_index,
-	uint64_t dimension,
-	uint64_t length,
-	uint64_t degree,
-	uint64_t sig_stride,
-	uint64_t path_flat_len,
-	T* __restrict__ linear_sig_workspace,  // [chunk_size * sig_stride]
-	uint64_t workspace_stride,
-	bool scalar_term,
-	uint64_t batch_offset,
-	uint64_t batch_chunk_size
-) {
-	const uint64_t local_batch_idx = cuda_batch_index();
-	if (local_batch_idx >= batch_chunk_size) return;
-	const uint64_t batch_idx = batch_offset + local_batch_idx;
-	const int thread_id = threadIdx.x;
-	const int nthreads = blockDim.x;
-
-	const T* my_path = path + batch_idx * path_flat_len;
-	T* my_out = out + batch_idx * sig_stride;
-	T* my_linear_sig = linear_sig_workspace + local_batch_idx * workspace_stride;
-
-	// ---- Shared memory: increments + level_index ----
-	extern __shared__ char smem[];
-	T* increments = reinterpret_cast<T*>(smem);
-	const size_t inc_bytes = dimension * sizeof(T);
-	const size_t aligned_off = (inc_bytes + 7) & ~size_t(7);
-	uint64_t* level_index_smem = reinterpret_cast<uint64_t*>(smem + aligned_off);
-
-	for (uint64_t i = thread_id; i < degree + 2; i += nthreads)
-		level_index_smem[i] = d_level_index[i];
-	__syncthreads();
-
-	// For scalar_term=false, shift offsets by -1 so that level k starts at
-	// level_index[k]-1 (level 1 starts at 0).
-	if (!scalar_term) {
-		if (thread_id == 0) {
-			for (uint64_t i = 1; i < degree + 2; ++i)
-				level_index_smem[i] -= 1;
-		}
-		__syncthreads();
-	}
-
-	const T* prev_pt = my_path;
-	const T* next_pt = my_path + dimension;
-
-	// Increments for first segment
-	for (uint64_t i = thread_id; i < dimension; i += nthreads)
-		increments[i] = next_pt[i] - prev_pt[i];
-	__syncthreads();
-
-	// Linear signature of first segment
-	linear_signature_device(increments, my_out, dimension, degree, level_index_smem, scalar_term);
-	__syncthreads();
-
-	if (length <= 2) return;
-
-	for (uint64_t step = 2; step < length; ++step) {
-		prev_pt = my_path + (step - 1) * dimension;
-		next_pt = my_path + step * dimension;
-
-		for (uint64_t i = thread_id; i < dimension; i += nthreads)
-			increments[i] = next_pt[i] - prev_pt[i];
-		__syncthreads();
-
-		linear_signature_device(increments, my_linear_sig, dimension, degree, level_index_smem, scalar_term);
-		__syncthreads();
-
-		sig_combine_inplace_device(my_out, my_linear_sig, degree, level_index_smem, scalar_term);
-		__syncthreads();
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Each thread shares prefix states between adjacent coefficients.
@@ -2472,7 +2394,6 @@ void signature_cuda_core_(
 	uint64_t dimension,     // transformed dimension
 	uint64_t length,        // transformed length
 	uint64_t degree,
-	bool horner,
 	bool scalar_term,
 	uint64_t data_dimension,
 	const T* correction,
@@ -2532,61 +2453,7 @@ void signature_cuda_core_(
 		return;
 	}
 
-	if (horner) {
-		signature_per_word_core_<T>(path, out, batch_size, dimension, length, degree, scalar_term);
-		return;
-	}
-
-	// Naive (Chen's identity) fallback
-	auto level_index_host = std::make_unique<uint64_t[]>(degree + 2);
-	host_populate_level_index(level_index_host.get(), dimension, degree + 2);
-
-	uint64_t max_level_size = level_index_host[degree + 1] - level_index_host[degree];
-	unsigned int threads_per_block = host_choose_threads_per_block(max_level_size);
-
-	const size_t increment_bytes = checked_cuda_size_mul(
-		static_cast<size_t>(dimension), sizeof(T),
-		"CUDA signature Chen fallback");
-	size_t smem_size = checked_cuda_size_add(
-		increment_bytes, 7, "CUDA signature Chen fallback") & ~size_t(7);
-	smem_size = checked_cuda_size_add(
-		smem_size,
-		checked_cuda_size_mul(
-			static_cast<size_t>(degree + 2), sizeof(uint64_t),
-			"CUDA signature Chen fallback"),
-		"CUDA signature Chen fallback");
-	if (!try_configure_dynamic_smem(signature_naive_ker<T>, smem_size)) {
-		signature_per_word_core_<T>(
-			path, out, batch_size, dimension, length, degree, scalar_term);
-		return;
-	}
-
-	const size_t level_index_bytes = (degree + 2) * sizeof(uint64_t);
-	const size_t aligned_li_bytes = (level_index_bytes + sizeof(T) - 1) / sizeof(T) * sizeof(T);
-	const size_t aligned_li_values = aligned_li_bytes / sizeof(T);
-	const size_t workspace_stride = checked_cuda_size_add(
-		aligned_li_values, static_cast<size_t>(sig_stride),
-		"CUDA signature Chen fallback");
-	CudaBatchWorkspace<T> workspace(
-		batch_size, workspace_stride, "CUDA signature Chen fallback");
-	uint64_t* d_level_index = reinterpret_cast<uint64_t*>(workspace.get());
-	T* d_linear_sig = workspace.get() + aligned_li_values;
-	CUDA_CHECK(cudaMemcpy(d_level_index, level_index_host.get(), level_index_bytes, cudaMemcpyHostToDevice));
-
-	for (uint64_t batch_offset = 0; batch_offset < batch_size;) {
-		const auto batch_chunk = make_cuda_batch_grid_chunk(
-			1, batch_size, batch_offset, workspace.capacity());
-		signature_naive_ker<T><<<
-			batch_chunk.grid, threads_per_block, smem_size>>>(
-				path, out, d_level_index,
-				dimension, length, degree, sig_stride, path_flat_len,
-				d_linear_sig, workspace_stride, scalar_term,
-				batch_chunk.offset, batch_chunk.size
-			);
-		batch_offset += batch_chunk.size;
-	}
-
-	check_cuda_kernel_launch();
+	signature_per_word_core_<T>(path, out, batch_size, dimension, length, degree, scalar_term);
 }
 
 template<typename T>
@@ -2600,13 +2467,28 @@ void signature_cuda_(
 	bool time_aug,
 	bool lead_lag,
 	T end_time,
-	bool horner,
-	bool scalar_term = true,
-	const T* correction = nullptr,
-	uint64_t correction_len = 0,
-	uint64_t correction_batch_stride = 0,
-	uint64_t correction_segment_stride = 0
+	bool scalar_term,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t correction_batch_stride,
+	uint64_t correction_segment_stride,
+	int method,
+	uint64_t ps_split,
+	bool fp64_emulation
 ) {
+	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
+		time_aug, lead_lag, correction_len, true, false, fp64_emulation)) {
+		if (correction_len) {
+			if (!dimension) throw std::invalid_argument("signature_cuda received path of dimension 0");
+			validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
+			signature_prefix_suffix_correction_cuda<false, T>(path, out, nullptr, batch_size, dimension, length, degree,
+				time_aug, end_time, scalar_term, nullptr, ps_split, correction, correction_len, correction_batch_stride, correction_segment_stride, fp64_emulation);
+			return;
+		}
+		signature_prefix_suffix_cuda(path, out, batch_size, dimension, length, degree,
+			time_aug, lead_lag, end_time, scalar_term, nullptr, ps_split, fp64_emulation);
+		return;
+	}
 	if (dimension == 0) throw std::invalid_argument("signature_cuda received path of dimension 0");
 	validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
 	if (batch_size == 0)
@@ -2617,7 +2499,7 @@ void signature_cuda_(
 	const uint64_t t_length = lead_lag ? 2 * length - 1 : length;
 
 	if (time_aug || lead_lag) {
-		if (horner && correction_len == 0 && degree > 1 && length > 1) {
+		if (correction_len == 0 && degree > 1 && length > 1) {
 			signature_per_word_core_(path, out, batch_size, dimension, length, degree,
 				scalar_term, time_aug, lead_lag, end_time);
 			return;
@@ -2642,7 +2524,7 @@ void signature_cuda_(
 				: correction + chunk.offset * correction_batch_stride;
 			signature_cuda_core_<T>(
 				transformed.get(), out + chunk.offset * sig_stride, chunk.size,
-				t_dimension, t_length, degree, horner, scalar_term, dimension,
+				t_dimension, t_length, degree, scalar_term, dimension,
 				chunk_correction, correction_len, correction_batch_stride,
 				correction_segment_stride);
 			batch_offset += chunk.size;
@@ -2651,7 +2533,7 @@ void signature_cuda_(
 	else {
 		signature_cuda_core_<T>(
 			path, out, batch_size, dimension, length, degree,
-			horner, scalar_term, dimension, correction, correction_len,
+			scalar_term, dimension, correction, correction_len,
 			correction_batch_stride, correction_segment_stride);
 	}
 }
@@ -2894,6 +2776,20 @@ __global__ void sig_degree_two_backprop_ker(
 }
 
 template<typename T>
+void signature_degree_two_backprop_cuda(const T* path, const T* deriv, T* out, uint64_t batch,
+	uint64_t dimension, uint64_t length, uint64_t sig_stride, bool scalar, cudaStream_t stream) {
+	const size_t path_stride = checked_cuda_size_mul(length, dimension, "CUDA degree-two backprop");
+	const size_t total = checked_cuda_size_mul(batch, path_stride, "CUDA degree-two backprop");
+	constexpr int block = 64;
+	sig_degree_two_backprop_ker<T><<<make_cuda_1d_grid(total, block), block, 0, stream>>>(
+		path, deriv, out, dimension, length, path_stride, sig_stride, total, scalar);
+	check_cuda_kernel_launch();
+}
+
+template void signature_degree_two_backprop_cuda(const float*, const float*, float*, uint64_t, uint64_t, uint64_t, uint64_t, bool, cudaStream_t);
+template void signature_degree_two_backprop_cuda(const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, bool, cudaStream_t);
+
+template<typename T>
 void sig_backprop_cuda_stream_(
 	const T* path,
 	T* out,
@@ -3010,13 +2906,8 @@ void sig_backprop_cuda_stream_(
 	const bool use_direct_degree_two = (dimension >= 23 && dimension <= 32 && batch_size >= 32)
 		|| (dimension >= 48 && dimension <= 128 && batch_size <= 32 && length >= 65);
 	if (degree == 2 && use_direct_degree_two) {
-		const size_t path_stride = checked_cuda_size_mul(length, dimension, "CUDA degree-two backprop");
-		const size_t total = checked_cuda_size_mul(batch_size, path_stride, "CUDA degree-two backprop");
 		const uint64_t sig_stride = host_sig_length(dimension, degree) - !scalar_term;
-		constexpr int block = 64;
-		sig_degree_two_backprop_ker<T><<<make_cuda_1d_grid(total, block), block, 0, stream>>>(
-			path, sig_derivs, out, dimension, length, path_stride, sig_stride, total, scalar_term);
-		check_cuda_kernel_launch();
+		signature_degree_two_backprop_cuda(path, sig_derivs, out, batch_size, dimension, length, sig_stride, scalar_term, stream);
 		return;
 	}
 	if (degree > MAX_GENERIC_DEGREE)
@@ -3427,12 +3318,28 @@ void sig_backprop_cuda_(
 	bool time_aug,
 	bool lead_lag,
 	T end_time,
-	bool scalar_term = true,
-	const T* correction = nullptr,
-	uint64_t correction_len = 0,
-	uint64_t correction_batch_stride = 0,
-	uint64_t correction_segment_stride = 0
+	bool scalar_term,
+	const T* correction,
+	uint64_t correction_len,
+	uint64_t correction_batch_stride,
+	uint64_t correction_segment_stride,
+	int method,
+	uint64_t ps_split,
+	bool fp64_emulation
 ) {
+	if (signature_method::use_prefix_suffix<T>(method, ps_split, batch_size, dimension, length, degree,
+		time_aug, lead_lag, correction_len, true, true, fp64_emulation)) {
+		if (correction_len) {
+			if (!dimension) throw std::invalid_argument("sig_backprop_cuda received path of dimension 0");
+			validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
+			signature_prefix_suffix_correction_cuda<true, T>(path, out, sig_derivs, batch_size, dimension, length, degree,
+				time_aug, end_time, scalar_term, nullptr, ps_split, correction, correction_len, correction_batch_stride, correction_segment_stride, fp64_emulation);
+			return;
+		}
+		signature_prefix_suffix_backprop_cuda(path, out, sig_derivs, batch_size, dimension, length, degree,
+			time_aug, lead_lag, end_time, scalar_term, nullptr, ps_split, fp64_emulation);
+		return;
+	}
 	if (dimension == 0) throw std::invalid_argument("sig_backprop_cuda received path of dimension 0");
 	validate_signature_correction_args_cuda_(correction, correction_len, dimension, degree, lead_lag);
 	if (batch_size == 0)
@@ -3498,22 +3405,24 @@ extern "C" {
 		const float* path, float* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, float end_time,
-		bool horner, bool scalar_term,
+		bool scalar_term,
 		const float* correction, uint64_t correction_len,
-		uint64_t correction_batch_stride, uint64_t correction_segment_stride
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
+		int method, uint64_t ps_split, bool fp64_emulation
 	) noexcept {
-		CUDA_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(signature_cuda_<float>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split, fp64_emulation));
 	}
 
 	CUSIG_API int signature_cuda_d(
 		const double* path, double* out,
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, double end_time,
-		bool horner, bool scalar_term,
+		bool scalar_term,
 		const double* correction, uint64_t correction_len,
-		uint64_t correction_batch_stride, uint64_t correction_segment_stride
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
+		int method, uint64_t ps_split, bool fp64_emulation
 	) noexcept {
-		CUDA_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, horner, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(signature_cuda_<double>(path, out, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split, fp64_emulation));
 	}
 
 	// =====================================================================
@@ -3527,9 +3436,10 @@ extern "C" {
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, float end_time, bool scalar_term,
 		const float* correction, uint64_t correction_len,
-		uint64_t correction_batch_stride, uint64_t correction_segment_stride
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
+		int method, uint64_t ps_split, bool fp64_emulation
 	) noexcept {
-		CUDA_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(sig_backprop_cuda_<float>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split, fp64_emulation));
 	}
 
 	CUSIG_API int sig_backprop_cuda_d(
@@ -3538,8 +3448,9 @@ extern "C" {
 		uint64_t batch_size, uint64_t dimension, uint64_t length, uint64_t degree,
 		bool time_aug, bool lead_lag, double end_time, bool scalar_term,
 		const double* correction, uint64_t correction_len,
-		uint64_t correction_batch_stride, uint64_t correction_segment_stride
+		uint64_t correction_batch_stride, uint64_t correction_segment_stride,
+		int method, uint64_t ps_split, bool fp64_emulation
 	) noexcept {
-		CUDA_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride));
+		CUDA_SAFE_CALL(sig_backprop_cuda_<double>(path, out, sig_derivs, sig, batch_size, dimension, length, degree, time_aug, lead_lag, end_time, scalar_term, correction, correction_len, correction_batch_stride, correction_segment_stride, method, ps_split, fp64_emulation));
 	}
 }

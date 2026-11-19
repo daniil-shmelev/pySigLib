@@ -28,7 +28,6 @@ void example_batch_signature_d(
     uint64_t degree,
     bool time_aug,
     bool lead_lag,
-    bool horner,
     int n_jobs,
     int num_runs
 ) {
@@ -39,7 +38,7 @@ void example_batch_signature_d(
     uint64_t out_size = sig_length(dimension, degree) * batch_size;
     std::vector<double> out(out_size, 0.);
 
-    time_function(num_runs, signature_d, path.data(), out.data(), batch_size, dimension, length, degree, time_aug, lead_lag, 1., horner, true, n_jobs, nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0);
+    time_function(num_runs, signature_d, path.data(), out.data(), batch_size, dimension, length, degree, time_aug, lead_lag, 1., true, n_jobs, nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0, 0, uint64_t(0));
 
     std::cout << "done\n";
 }
@@ -52,7 +51,6 @@ void example_batch_signature_cuda_d(
     uint64_t degree,
     bool time_aug,
     bool lead_lag,
-    bool horner,
     int num_runs
 ) {
     print_header("Batch Signature CUDA Double");
@@ -69,7 +67,7 @@ void example_batch_signature_cuda_d(
 
     cudaMemcpy(d_path, path.data(), sizeof(double) * path_size, cudaMemcpyHostToDevice);
 
-    time_function(num_runs, signature_cuda_d, d_path, d_out, batch_size, dimension, length, degree, time_aug, lead_lag, 1., horner, true, nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0);
+    time_function(num_runs, signature_cuda_d, d_path, d_out, batch_size, dimension, length, degree, time_aug, lead_lag, 1., true, nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0, 0, uint64_t(0), false);
 
     cudaFree(d_path);
     cudaFree(d_out);
@@ -198,7 +196,7 @@ void example_batch_sig_backprop_d(
     uint64_t out_size = batch_size * dimension * length;
     std::vector<double> out(out_size, 0.);
 
-    time_function(num_runs, sig_backprop_d, path.data(), out.data(), sig_derivs.data(), sig.data(), batch_size, dimension, length, degree, time_aug, lead_lag, 1., true, n_jobs, nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0);
+    time_function(num_runs, sig_backprop_d, path.data(), out.data(), sig_derivs.data(), sig.data(), batch_size, dimension, length, degree, time_aug, lead_lag, 1., true, n_jobs, nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0, 0, uint64_t(0));
 
     std::cout << "done\n";
 }
@@ -236,7 +234,7 @@ void example_batch_sig_backprop_cuda_d(
     cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(double) * batch_size * sig_len, cudaMemcpyHostToDevice);
     cudaMemcpy(d_sig, sig.data(), sizeof(double) * batch_size * sig_len, cudaMemcpyHostToDevice);
 
-    time_function(num_runs, sig_backprop_cuda_d, d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, 1., true, nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0);
+    time_function(num_runs, sig_backprop_cuda_d, d_path, d_out, d_sig_derivs, d_sig, batch_size, dimension, length, degree, time_aug, lead_lag, 1., true, nullptr, (uint64_t)0, (uint64_t)0, (uint64_t)0, 0, uint64_t(0), false);
 
     cudaFree(d_path);
     cudaFree(d_out);

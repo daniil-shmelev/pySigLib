@@ -28,7 +28,6 @@ void check_per_word_horner_degree(uint64_t degree) {
     }
 
     std::vector<double> horner_sig(sig_len);
-    std::vector<double> direct_sig(sig_len);
     std::vector<double> path_grad(path.size());
     double* d_path;
     double* d_sig;
@@ -46,15 +45,6 @@ void check_per_word_horner_degree(uint64_t degree) {
         false, false, 1., true));
     cudaMemcpy(
         horner_sig.data(), d_sig, sig_len * sizeof(double), cudaMemcpyDeviceToHost);
-
-    EXPECT_EQ(0, signature_cuda_d(
-        d_path, d_sig, 1, dimension, length, degree,
-        false, false, 1., false));
-    cudaMemcpy(
-        direct_sig.data(), d_sig, sig_len * sizeof(double), cudaMemcpyDeviceToHost);
-    for (uint64_t i = 0; i < sig_len; ++i) {
-        EXPECT_NEAR(horner_sig[i], direct_sig[i], 1e-9);
-    }
 
     cudaMemcpy(
         d_sig, horner_sig.data(), sig_len * sizeof(double), cudaMemcpyHostToDevice);
@@ -75,7 +65,7 @@ void check_per_word_horner_degree(uint64_t degree) {
                 cudaMemcpyHostToDevice);
             EXPECT_EQ(0, signature_cuda_d(
                 d_path, d_sig, 1, dimension, length, degree,
-                false, false, 1., true));
+                false, false, 1.));
             cudaMemcpy(
                 shifted_sig.data(), d_sig, sig_len * sizeof(double),
                 cudaMemcpyDeviceToHost);
@@ -164,7 +154,6 @@ TEST(sigBackpropDoubleTest, GenericDegreeHorner) {
 }
 
 TEST(sigBackpropDoubleTest, CorrectionSingleSegment) {
-    auto f = sig_backprop_cuda_d;
     uint64_t dimension = 1, length = 2, degree = 4;
     std::vector<double> path = { 0., 3. };
     std::vector<double> correction = { 2. };
@@ -190,7 +179,7 @@ TEST(sigBackpropDoubleTest, CorrectionSingleSegment) {
     cudaMemcpy(d_sig_derivs, sig_derivs.data(), sizeof(double) * sig_derivs.size(), cudaMemcpyHostToDevice);
     cudaMemcpy(d_correction, correction.data(), sizeof(double) * correction.size(), cudaMemcpyHostToDevice);
 
-    int err = f(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree,
+    int err = sig_backprop_cuda_d(d_path, d_out, d_sig_derivs, d_sig, (uint64_t)1, dimension, length, degree,
         false, false, 1., true, d_correction, correction.size(), 0, 0);
     cudaDeviceSynchronize();
     cudaMemcpy(out.data(), d_out, sizeof(double) * out.size(), cudaMemcpyDeviceToHost);

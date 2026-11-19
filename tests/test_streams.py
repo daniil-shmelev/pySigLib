@@ -17,6 +17,7 @@ import numpy as np
 import torch
 import pytest
 import pysiglib
+from conftest import DEVICES
 
 
 # ---- Fixtures ----
@@ -546,3 +547,96 @@ class TestNJobsFlag:
     def test_n_jobs_zero_rejected(self, factory):
         with pytest.raises(ValueError, match="n_jobs cannot be 0"):
             factory()
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("kind", ["SigStream", "LogSigStream", "SigWindowStream", "LogSigWindowStream"])
+@pytest.mark.parametrize("method,split", [("horner", None), ("ps", None), ("ps", 1), ("ps", 3), ("auto", None)])
+def test_ps_stream_forward_and_backward(device, dtype, kind, method, split):
+    import pysiglib.torch_api as api
+
+    is_log = kind.startswith("Log")
+    windowed = "Window" in kind
+    if is_log:
+        api.prepare_log_sig(2, 3, 2, device=device)
+        api.prepare_log_sig(2, 3, 3, device=device)
+    options = dict(sig_method=method, ps_split=split) if is_log else dict(method=method, ps_split=split, scalar_term=True)
+    if windowed:
+        options.update(window_size=5, stride=3)
+    stream = getattr(api, kind)(2, 3, **options)
+    path = torch.tensor(np.random.default_rng(25).normal(scale=0.05, size=(2, 1, 22, 2)),
+                        device=device, dtype=dtype)[..., ::2, :].detach().requires_grad_()
+    stream.push_batch(path[..., :0, :])
+    stream.push_batch(path[..., :4, :])
+    stream.push(path[..., 4, :])
+    stream.push_batch(path[..., 5:, :])
+    operation = api.log_sig if is_log else api.sig
+    reference_options = dict(method=2, sig_method="horner") if is_log else dict(scalar_term=True, method="horner")
+    if windowed:
+        actual = stream.sig()
+        expected = torch.stack([operation(path[..., i:i + 5, :], 3, **reference_options) for i in (0, 3, 6)])
+    else:
+        actual = stream.sig(0, 3)
+        expected = operation(path, 3, **reference_options)
+    seeds = torch.linspace(-0.5, 0.5, actual.numel(), device=device, dtype=dtype).reshape(actual.shape)
+    gradient, = torch.autograd.grad(actual, path, seeds)
+    reference, = torch.autograd.grad(expected, path, seeds)
+    tolerance = 2e-5 if dtype == torch.float32 else 2e-11
+    torch.testing.assert_close(actual, expected, rtol=tolerance, atol=tolerance)
+    torch.testing.assert_close(gradient, reference, rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.parametrize("kind", ["SigStream", "LogSigStream", "SigWindowStream", "LogSigWindowStream"])
+def test_ps_stream_routes_options(kind):
+    calls = []
+    is_log = kind.startswith("Log")
+    operation = pysiglib.log_sig if is_log else pysiglib.sig
+
+    def record(path, degree, **kwargs):
+        calls.append(kwargs.copy())
+        return operation(path, degree, **kwargs)
+
+    options = dict(sig_method="ps", ps_split=3, _log_sig=record) if is_log else dict(method="ps", ps_split=3, _sig=record)
+    if is_log:
+        pysiglib.prepare_log_sig(2, 3, 2)
+        pysiglib.prepare_log_sig(2, 3, 3)
+    if "Window" in kind:
+        options["window_size"] = 4
+    stream = getattr(pysiglib, kind)(2, 3, **options)
+    stream.push_batch(np.random.default_rng(26).normal(scale=0.05, size=(7, 2)))
+    assert calls
+    for call in calls:
+        assert call["sig_method" if is_log else "method"] == "ps"
+        assert call["ps_split"] == 3
+
+
+@pytest.mark.parametrize("kind", ["SigStream", "LogSigStream", "SigWindowStream", "LogSigWindowStream"])
+@pytest.mark.parametrize("method,split", [("invalid", None), (None, None), ("horner", 2), ("auto", 2), ("ps", 0)])
+def test_ps_stream_rejects_invalid_options(kind, method, split):
+    import pysiglib.torch_api as torch_api
+
+    options = dict(sig_method=method, ps_split=split) if kind.startswith("Log") else dict(method=method, ps_split=split)
+    if "Window" in kind:
+        options["window_size"] = 4
+    for api in (pysiglib, torch_api):
+        with pytest.raises(ValueError):
+            getattr(api, kind)(2, 3, **options)
+
+
+@pytest.mark.parametrize("kind", ["LogSigStream", "LogSigWindowStream"])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), ("horner", 2), ("invalid", 99)])
+def test_log_stream_method3_ignores_signature_options(kind, sig_method, split):
+    options = dict(method=3, sig_method=sig_method, ps_split=split)
+    if "Window" in kind:
+        options["window_size"] = 4
+    pysiglib.prepare_log_sig(2, 3, 3)
+    path = np.random.default_rng(31).normal(scale=0.05, size=(7, 2))
+    expected = getattr(pysiglib, kind)(2, 3, method=3, **({"window_size": 4} if "Window" in kind else {}))
+    actual = getattr(pysiglib, kind)(2, 3, **options)
+    expected.push_batch(path)
+    actual.push_batch(path)
+    if "Window" in kind:
+        np.testing.assert_allclose(actual.sig(), expected.sig())
+    else:
+        np.testing.assert_allclose(actual.sig(0, 1), expected.sig(0, 1))

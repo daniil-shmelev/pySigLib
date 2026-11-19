@@ -250,3 +250,61 @@ def test_log_signature_method3_empty_correction_match_default(device):
 
     assert_device(actual, device)
     check_close(expected, actual)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("method", [0, 1, 2])
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("ps", 1), ("ps", 3), ("auto", None)])
+@pytest.mark.parametrize("time_aug,lead_lag,scalar,corrected", [
+    (False, False, False, False), (True, False, True, True),
+    (False, True, True, False), (True, True, False, False),
+])
+def test_log_signature_ps_forward_and_backward(device, dtype, method, sig_method, split,
+                                               time_aug, lead_lag, scalar, corrected):
+    import pysiglib as base_api
+
+    path = torch.tensor(np.random.default_rng(24).normal(scale=0.05, size=(2, 1, 12, 2)),
+                        device=device, dtype=dtype)[..., ::2, :].detach().requires_grad_()
+    correction = None
+    if corrected:
+        correction = torch.tensor([0.0, 0.001, -0.001, 0.0], device=device, dtype=dtype)
+    options = dict(method=method, time_aug=time_aug, lead_lag=lead_lag,
+                   scalar_term=scalar, correction=correction, n_jobs=2)
+    pysiglib.prepare_log_sig(2, 3, method, time_aug=time_aug, lead_lag=lead_lag, device=device)
+    expected = pysiglib.log_sig(path, 3, sig_method="horner", **options)
+    actual = pysiglib.log_sig(path, 3, sig_method=sig_method, ps_split=split, **options)
+    seeds = torch.linspace(-0.5, 0.5, actual.numel(), device=device, dtype=dtype).reshape(actual.shape)
+    expected_grad, = torch.autograd.grad(expected, path, seeds)
+    actual_grad, = torch.autograd.grad(actual, path, seeds)
+    tolerance = 2e-5 if dtype == torch.float32 else 2e-11
+    torch.testing.assert_close(actual, expected, rtol=tolerance, atol=tolerance)
+    torch.testing.assert_close(actual_grad, expected_grad, rtol=tolerance, atol=tolerance)
+    if device == "cpu":
+        options["correction"] = correction.detach().numpy() if corrected else None
+        result = base_api.log_sig(path.detach().numpy(), 3, sig_method=sig_method, ps_split=split, **options)
+        np.testing.assert_allclose(result, expected.detach().numpy(), rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.parametrize("sig_method,split", [("ps", None), ("auto", None), ("horner", 2), ("invalid", 99)])
+def test_log_signature_method3_ignores_signature_options(sig_method, split):
+    import pysiglib as base_api
+
+    path = np.random.default_rng(31).normal(scale=0.05, size=(4, 2))
+    pysiglib.prepare_log_sig(2, 3, 3)
+    for api, value in ((base_api, path), (pysiglib, torch.tensor(path))):
+        expected = api.log_sig(value, 3, method=3)
+        actual = api.log_sig(value, 3, method=3, sig_method=sig_method, ps_split=split)
+        np.testing.assert_allclose(actual, expected)
+
+
+def test_log_signature_horner_method_validation():
+    import pysiglib as base_api
+
+    path = np.random.default_rng(40).normal(scale=0.05, size=(4, 2))
+    pysiglib.prepare_log_sig(2, 2, 0)
+    for api, value in ((base_api, path), (pysiglib, torch.tensor(path))):
+        expected = api.log_sig(value, 2, method=0, sig_method="horner")
+        np.testing.assert_allclose(expected, api.log_sig(value, 2, method=0))
+        with pytest.raises(ValueError, match="method"):
+            api.log_sig(value, 2, method=0, sig_method=None)
