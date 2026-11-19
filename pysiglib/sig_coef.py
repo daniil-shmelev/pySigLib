@@ -28,9 +28,9 @@ from .data_handlers import SigInputHandler, PathInputHandler, SigOutputHandler
 
 
 def _check_coef_method(method):
-    if method not in ("horner", "pascal"):
-        raise ValueError("method must be 'horner' or 'pascal'")
-    return {"horner": 0, "pascal": 1}[method]
+    if method not in ("horner", "prefix_suffix"):
+        raise ValueError("method must be 'horner' or 'prefix_suffix'")
+    return {"horner": 0, "prefix_suffix": 1}[method]
 
 
 def extract_sig_coef(
@@ -121,7 +121,7 @@ def sig_coef(
         end_time : float = 1.,
         prefixes : bool = False,
         n_jobs : int = 1,
-        method = "pascal"
+        method = "prefix_suffix"
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     Computes specific signature coefficients for a single path or a batch of paths. For
@@ -147,10 +147,11 @@ def sig_coef(
     :type lead_lag: bool
     :param end_time: End time for time-augmentation, :math:`t_L`.
     :type end_time: float
-    :param prefixes: If ``True``, will additionally return all prefixes of signature coefficients.
-        These prefixes are extracted for free as a by-product of the computation.
-        Use ``prefixes=True`` for :func:`pysiglib.sig_coef_backprop`. The Torch and JAX
-        APIs handle the prefix derivatives automatically.
+    :param prefixes: By default, return one coefficient per requested word. Set this to
+        ``True`` to return a coefficient for each nonempty prefix of each word.
+        Explicit Horner backpropagation requires these saved prefixes. Prefix-suffix
+        backpropagation also accepts one coefficient and derivative per complete word.
+        The Torch and JAX APIs handle these details automatically.
         For example, passing ``words=[(1,2), (3,2,1)]`` with ``prefixes=True`` returns an
         output equivalent to passing ``words=[(1,), (1,2), (3,), (3,2), (3,2,1)]`` with ``prefixes=False``.
     :type prefixes: bool
@@ -158,8 +159,8 @@ def sig_coef(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param method: ``"pascal"`` (default) uses Pascal factorisation on CPU and
-        inverse bidiagonal Pascal factors on CUDA. ``"horner"`` uses Horner's method.
+    :param method: ``"prefix_suffix"`` (default) contracts word-restricted prefix and suffix factors.
+        ``"horner"`` evaluates the coefficient by Horner recursion.
     :type method: str
     :return: Signature coefficients with the leading batch dimensions of ``path``.
         The last axis has one entry per word, or ``sum(max(1, len(w)) for w in words)``
@@ -236,7 +237,7 @@ def sig_coef(
 
     flat_indices = [i for idx in words for i in idx]
 
-    if data.device == "cpu" or method_code == 1 or time_aug or lead_lag:
+    if data.device == "cpu" or method_code != 0 or time_aug or lead_lag:
         words_t = torch.tensor(flat_indices, dtype=torch.uint64)
         degrees_t = torch.tensor(degrees, dtype=torch.uint64)
     else:

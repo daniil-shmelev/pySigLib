@@ -1188,8 +1188,8 @@ void profile_coefficient(const std::string& directory, const std::map<std::strin
         return it == options.end() ? std::string(fallback) : it->second;
     };
     const bool gpu = value("backend", "cpu") == "cuda";
-    const auto phase = value("phase", "both"), method_name = value("method", "pascal");
-    const std::map<std::string, int> methods{{"horner", 0}, {"pascal", 1}};
+    const auto phase = value("phase", "both"), method_name = value("method", "prefix_suffix");
+    const std::map<std::string, int> methods{{"horner", 0}, {"prefix_suffix", 1}};
     const int method = methods.at(method_name), threads = std::stoi(value("threads", "1"));
     const uint64_t m = std::stoull(value("degree", "16")), n = std::stoull(value("segments", "256"));
     const uint64_t batch = std::stoull(value("batch", "32")), words = std::stoull(value("words", "8"));
@@ -1218,7 +1218,12 @@ void profile_coefficient(const std::string& directory, const std::map<std::strin
         cuda_forward = sig_coef_cuda_d;
         cuda_backward = sig_coef_backprop_cuda_d;
     }
-    std::vector<T> path(batch * (n + 1) * d), out(batch * words * m), seed(out.size(), T(1)), grad(path.size());
+    const bool save_prefixes = method == 0 && phase != "forward";
+    std::vector<T> path(batch * (n + 1) * d), out(batch * words), grad(path.size());
+    std::vector<T> saved(save_prefixes ? batch * words * m : 0);
+    std::vector<T> seed(save_prefixes ? saved.size() : out.size(), T(0));
+    const uint64_t seed_stride = save_prefixes ? m : 1;
+    for (uint64_t i = seed_stride - 1; i < seed.size(); i += seed_stride) seed[i] = T(1);
     std::vector<uint64_t> indices(words * m), degrees(words, m);
     std::mt19937 engine(static_cast<uint32_t>(std::stoul(value("seed", "1729"))));
     std::normal_distribution<double> normal(0, .03);
@@ -1228,13 +1233,18 @@ void profile_coefficient(const std::string& directory, const std::map<std::strin
                 path[(b * (n + 1) + i) * d + c] = path[(b * (n + 1) + i - 1) * d + c] + T(normal(engine));
     for (auto& i : indices) i = engine() % d;
     T *x = path.data(), *y = out.data(), *dy = seed.data(), *dx = grad.data();
-    CudaBuf<T> device_path, device_coefs, device_seeds, device_gradient;
+    T* saved_data = save_prefixes ? saved.data() : nullptr;
+    CudaBuf<T> device_path, device_coefs, device_saved, device_seeds, device_gradient;
     CudaBuf<uint64_t> device_indices, device_degrees;
     cudaEvent_t start = nullptr, stop = nullptr;
     auto check = [](cudaError_t status) { if (status != cudaSuccess) throw std::runtime_error(cudaGetErrorString(status)); };
     if (gpu) {
         device_path = CudaBuf<T>(path.size() * sizeof(T));
         device_coefs = CudaBuf<T>(out.size() * sizeof(T));
+        if (save_prefixes) {
+            device_saved = CudaBuf<T>(saved.size() * sizeof(T));
+            saved_data = device_saved.get();
+        }
         device_seeds = CudaBuf<T>(seed.size() * sizeof(T));
         device_gradient = CudaBuf<T>(grad.size() * sizeof(T));
         x = device_path.get(); y = device_coefs.get(); dy = device_seeds.get(); dx = device_gradient.get();
@@ -1250,19 +1260,21 @@ void profile_coefficient(const std::string& directory, const std::map<std::strin
     }
     const uint64_t* word_data = gpu && method == 0 ? device_indices.get() : indices.data();
     const uint64_t* degree_data = gpu && method == 0 ? device_degrees.get() : degrees.data();
-    auto f = [&] {
-        const int code = gpu ? cuda_forward(x, y, word_data, words, degree_data, batch, d, n + 1, true, false, false, T(1), method)
-            : cpu_forward(x, y, indices.data(), words, degrees.data(), batch, d, n + 1, false, false, T(1), true, threads, method);
+    auto f = [&](T* result, bool prefixes) {
+        const int code = gpu ? cuda_forward(x, result, word_data, words, degree_data, batch, d, n + 1, prefixes, false, false, T(1), method)
+            : cpu_forward(x, result, indices.data(), words, degrees.data(), batch, d, n + 1, false, false, T(1), prefixes, threads, method);
         if (code) throw std::runtime_error("Coefficient forward failed: " + std::to_string(code));
     };
     auto b = [&] {
-        if (!gpu && method == 0) std::fill(seed.begin(), seed.end(), T(1));
-        const int code = gpu ? cuda_backward(x, dx, y, dy, word_data, words, degree_data, batch, d, n + 1, false, false, T(1), method)
-            : cpu_backward(x, dx, y, dy, indices.data(), words, degrees.data(), batch, d, n + 1, false, false, T(1), threads, method);
+        const int code = gpu ? cuda_backward(x, dx, saved_data, dy, word_data, words, degree_data, batch, d, n + 1, false, false, T(1), method)
+            : cpu_backward(x, dx, saved_data, dy, indices.data(), words, degrees.data(), batch, d, n + 1, false, false, T(1), threads, method);
         if (code) throw std::runtime_error("Coefficient backward failed: " + std::to_string(code));
     };
-    f();
-    auto run = [&] { if (phase != "backward") f(); if (phase != "forward") b(); };
+    if (phase == "backward" && save_prefixes) f(saved_data, true);
+    auto run = [&] {
+        if (phase != "backward") f(save_prefixes ? saved_data : y, save_prefixes);
+        if (phase != "forward") b();
+    };
     for (uint64_t i = 0; i < warmup; ++i) run();
     if (gpu) check(cudaEventRecord(start));
     const auto before = std::chrono::steady_clock::now();

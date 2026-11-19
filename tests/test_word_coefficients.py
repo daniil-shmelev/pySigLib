@@ -47,9 +47,9 @@ def jax_device(request):
         yield
 
 
-def pascal_with_gradient(path, words, seeds):
-    coefs = pysiglib.sig_coef(path, words, method="pascal", prefixes=True, n_jobs=-1)
-    gradient = pysiglib.sig_coef_backprop(path, words, coefs, seeds, method="pascal", n_jobs=-1)
+def prefix_suffix_with_gradient(path, words, seeds):
+    coefs = pysiglib.sig_coef(path, words, method="prefix_suffix", prefixes=True, n_jobs=-1)
+    gradient = pysiglib.sig_coef_backprop(path, words, coefs, seeds, method="prefix_suffix", n_jobs=-1)
     return coefs, gradient
 
 
@@ -69,9 +69,24 @@ def chen_prefixes(path, words):
     return np.asarray(result)
 
 
+def test_terminal_highway_targets():
+    rng = np.random.default_rng(603)
+    x = torch.tensor(rng.normal(scale=.04, size=(7, 258, 3)).cumsum(axis=1), requires_grad=True)
+    words = [(0, 1, 2, 0, 1), (2, 1), (0, 1, 2, 0, 1)]
+    seeds = torch.tensor(rng.normal(size=(7, len(words))))
+    reference = torch_api.sig_coef(x, words, method="horner")
+    gradient, = torch.autograd.grad(reference, x, seeds)
+    for target in highway_targets().values():
+        with force_highway_target(target):
+            y = torch_api.sig_coef(x, words, method="prefix_suffix")
+            dx, = torch.autograd.grad(y, x, seeds)
+            torch.testing.assert_close(y, reference, rtol=1e-11, atol=1e-13)
+            torch.testing.assert_close(dx, gradient, rtol=1e-11, atol=1e-13)
+
+
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-@pytest.mark.parametrize("method", ["horner", "pascal"])
+@pytest.mark.parametrize("method", ["horner", "prefix_suffix"])
 @pytest.mark.parametrize("segments", [1, 7, 63, 64, 65, 129, 256, 257])
 def test_coefficient_dispatch(device, dtype, method, segments):
     rng = np.random.default_rng(407 + segments)
@@ -98,21 +113,22 @@ def test_coefficient_dispatch(device, dtype, method, segments):
                                (seeds.cpu().numpy() * reference.imag).sum(axis=1) / 1e-25, atol=5 * tol, rtol=5 * tol)
     if segments == 7:
         last = np.cumsum([max(1, len(w)) for w in words]) - 1
-        torch.testing.assert_close(pysiglib.sig_coef(x, words, method=method), y[..., last], atol=0, rtol=0)
+        rounding = tol if method == "prefix_suffix" else 0
+        torch.testing.assert_close(pysiglib.sig_coef(x, words, method=method), y[..., last], atol=rounding, rtol=rounding)
 
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-def test_coefficient_default_matches_pascal(device, dtype):
+def test_coefficient_default_matches_prefix_suffix(device, dtype):
     path = torch.tensor(np.random.default_rng(812).normal(scale=.05, size=(4, 33, 3)).cumsum(axis=1),
                         device=device, dtype=dtype)
     words = [(0, 1, 0, 2), (2, 1, 0), ()]
     actual = pysiglib.sig_coef(path, words, prefixes=True)
-    expected = pysiglib.sig_coef(path, words, prefixes=True, method="pascal")
+    expected = pysiglib.sig_coef(path, words, prefixes=True, method="prefix_suffix")
     torch.testing.assert_close(actual, expected, atol=0, rtol=0)
     seeds = torch.tensor(np.random.default_rng(813).normal(size=actual.shape), device=device, dtype=dtype)
     gradient = pysiglib.sig_coef_backprop(path, words, actual, seeds.clone())
-    reference = pysiglib.sig_coef_backprop(path, words, expected, seeds.clone(), method="pascal")
+    reference = pysiglib.sig_coef_backprop(path, words, expected, seeds.clone(), method="prefix_suffix")
     torch.testing.assert_close(gradient, reference)
     path.requires_grad_()
     output = torch_api.sig_coef(path, words, prefixes=True)
@@ -122,10 +138,10 @@ def test_coefficient_default_matches_pascal(device, dtype):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-@pytest.mark.parametrize("method", ["horner", "pascal"])
+@pytest.mark.parametrize("method", ["horner", "prefix_suffix"])
 @pytest.mark.parametrize("degree", [2, 3, 8, 16, 20])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-def test_pascal_exact_rational(device, method, degree, dtype):
+def test_prefix_suffix_exact_rational(device, method, degree, dtype):
     path = [[Fraction(0), Fraction(0)], [Fraction(1), Fraction(1, 2)],
             [Fraction(-1, 2), Fraction(-1)], [Fraction(1, 32), Fraction(1, 16)]]
     word = tuple(i % 2 for i in range(degree))
@@ -136,8 +152,8 @@ def test_pascal_exact_rational(device, method, degree, dtype):
 
 
 @pytest.mark.parametrize("device", DEVICES)
-@pytest.mark.parametrize("method", ["horner", "pascal"])
-def test_pascal_gradcheck(device, method):
+@pytest.mark.parametrize("method", ["horner", "prefix_suffix"])
+def test_prefix_suffix_gradcheck(device, method):
     x = torch.randn((5, 2), dtype=torch.float64, device=device, requires_grad=True) * .1
     assert torch.autograd.gradcheck(lambda p: torch_api.sig_coef(p, [(0, 1, 0), (1, 1)],
                                                                 prefixes=True, method=method), (x,))
@@ -145,21 +161,21 @@ def test_pascal_gradcheck(device, method):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-def test_pascal_ranges(device, dtype):
+def test_prefix_suffix_ranges(device, dtype):
     numpy_type = np.float32 if dtype == torch.float32 else np.float64
     tiny = np.nextafter(numpy_type(0), numpy_type(1))
     large = numpy_type(1e30 if dtype == torch.float32 else 1e300)
     x = torch.tensor([[0, 0], [large, 0], [large, 3 * tiny]], dtype=dtype, device=device)
-    actual = pysiglib.sig_coef(x, (0, 1, 1), prefixes=True, method="pascal")
+    actual = pysiglib.sig_coef(x, (0, 1, 1), prefixes=True, method="prefix_suffix")
     expected = np.asarray(chen_prefixes(x.cpu().numpy().astype(np.longdouble), [(0, 1, 1)]), dtype=numpy_type)
     np.testing.assert_allclose(actual.cpu(), expected, rtol=2e-6 if dtype == torch.float32 else 1e-13, atol=0)
 
 
 @pytest.mark.parametrize("device", DEVICES)
-def test_pascal_empty_batch_and_invalid_method(device):
+def test_prefix_suffix_empty_batch_and_invalid_method(device):
     x = torch.empty((2, 0, 5, 2), device=device)
-    assert pysiglib.sig_coef(x, [(), (0, 1)], method="pascal").shape == (2, 0, 2)
-    for method in (None, "unknown", "auto"):
+    assert pysiglib.sig_coef(x, [(), (0, 1)], method="prefix_suffix").shape == (2, 0, 2)
+    for method in (None, "unknown", "auto", "pascal"):
         with pytest.raises(ValueError, match="method"):
             pysiglib.sig_coef(x, (0,), method=method)
         with pytest.raises(ValueError, match="method"):
@@ -169,8 +185,8 @@ def test_pascal_empty_batch_and_invalid_method(device):
             torch_api.sig_coef(x, (0,), method=method)
 
 
-@pytest.mark.parametrize("method", [None, "unknown", "auto"])
-def test_pascal_jax_invalid_method(jax_cpu, method):
+@pytest.mark.parametrize("method", [None, "unknown", "auto", "pascal"])
+def test_prefix_suffix_jax_invalid_method(jax_cpu, method):
     jax = pytest.importorskip("jax")
     import pysiglib.jax_api as jax_api
 
@@ -178,24 +194,24 @@ def test_pascal_jax_invalid_method(jax_cpu, method):
         jax_api.sig_coef(jax.numpy.zeros((2, 1)), (0,), method=method)
 
 
-def test_pascal_generic_cpu_and_workspace(monkeypatch):
+def test_prefix_suffix_generic_cpu_and_workspace(monkeypatch):
     x = np.array([[0.], [.5], [.75], [1.]], dtype=np.float64)
     word = (0,) * 32
-    actual = pysiglib.sig_coef(x, word, method="pascal")
+    actual = pysiglib.sig_coef(x, word, method="prefix_suffix")
     np.testing.assert_allclose(actual, [1 / factorial(32)], rtol=1e-12, atol=0)
-    y = pysiglib.sig_coef(x, word, prefixes=True, method="pascal")
-    gradient = pysiglib.sig_coef_backprop(x, word, y, np.ones_like(y), method="pascal")
+    y = pysiglib.sig_coef(x, word, prefixes=True, method="prefix_suffix")
+    gradient = pysiglib.sig_coef_backprop(x, word, y, np.ones_like(y), method="prefix_suffix")
     endpoint = sum(1 / factorial(j) for j in range(32))
     np.testing.assert_allclose(gradient[:, 0], [-endpoint, 0, 0, endpoint], rtol=1e-12, atol=1e-12)
-    monkeypatch.setenv("PYSIGLIB_PASCAL_WORKSPACE_BYTES", "1")
+    monkeypatch.setenv("PYSIGLIB_COEFFICIENT_WORKSPACE_BYTES", "1")
     with pytest.raises(Exception, match="workspace"):
-        pysiglib.sig_coef_backprop(x, word, y, np.ones_like(y), method="pascal")
+        pysiglib.sig_coef_backprop(x, word, y, np.ones_like(y), method="prefix_suffix")
 
 
 @pytest.mark.skipif("cuda" not in AVAILABLE_DEVICES, reason="CUDA required")
-@pytest.mark.parametrize("method", ["horner", "pascal"])
+@pytest.mark.parametrize("method", ["horner", "prefix_suffix"])
 @pytest.mark.parametrize("words", [[(0, 1, 2), (2, 2)], [(0, 1, 2), (2, 2, 1)], [(0, 1) * 8, (2,) * 11]])
-def test_pascal_nondefault_stream_and_limit(method, words):
+def test_prefix_suffix_nondefault_stream_and_limit(method, words):
     stream = torch.cuda.Stream()
     with torch.cuda.stream(stream):
         x = torch.randn((4, 70, 3), device="cuda", dtype=torch.float64) * .03
@@ -204,7 +220,7 @@ def test_pascal_nondefault_stream_and_limit(method, words):
     stream.synchronize()
     assert torch.isfinite(x.grad).all()
     cpu = x.detach().cpu().requires_grad_()
-    torch_api.sig_coef(cpu, words, method="pascal").sum().backward()
+    torch_api.sig_coef(cpu, words, method="prefix_suffix").sum().backward()
     torch.testing.assert_close(x.grad.cpu(), cpu.grad, rtol=1e-10, atol=1e-11)
     with pytest.raises(Exception, match="20"):
         pysiglib.sig_coef(x, (0,) * 21, method=method)
@@ -212,23 +228,23 @@ def test_pascal_nondefault_stream_and_limit(method, words):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-def test_pascal_range_restart(device, dtype):
+def test_prefix_suffix_range_restart(device, dtype):
     numpy_type = np.float32 if dtype == torch.float32 else np.float64
     large = 150. if dtype == torch.float32 else 1e16
     words = [(0,) * 20]
     x = torch.tensor([[0.], [large]], dtype=dtype, device=device)
-    y = pysiglib.sig_coef(x, words, method="pascal", prefixes=True)
+    y = pysiglib.sig_coef(x, words, method="prefix_suffix", prefixes=True)
     expected = np.asarray([float(Fraction.from_float(large) ** j / factorial(j)) for j in range(1, 21)])
     np.testing.assert_allclose(y.cpu(), expected, rtol=5e-6 if dtype == torch.float32 else 2e-14)
     x = torch.tensor([[0.], [16.]], dtype=dtype, device=device)
     seeds = torch.zeros(20, dtype=dtype, device=device)
     seeds[-1] = 1e-35 if dtype == torch.float32 else 1e-310
-    _, gradient = pascal_with_gradient(x, words, seeds)
+    _, gradient = prefix_suffix_with_gradient(x, words, seeds)
     expected_grad = float(Fraction.from_float(seeds[-1].item()) * 16 ** 19 / factorial(19))
     np.testing.assert_allclose(gradient.cpu(), [[-expected_grad], [expected_grad]], rtol=1e-5, atol=0)
     large = numpy_type(np.finfo(numpy_type).max * .6)
     x = torch.tensor([[0., 0.], [large, 0.], [large, .25]], dtype=dtype, device=device)
-    y, gradient = pascal_with_gradient(x, [(0, 1)], torch.tensor([0., 1.], dtype=dtype, device=device))
+    y, gradient = prefix_suffix_with_gradient(x, [(0, 1)], torch.tensor([0., 1.], dtype=dtype, device=device))
     assert torch.isfinite(y).all() and torch.isfinite(gradient).all()
     np.testing.assert_allclose(y.cpu(), [large, large * .25], rtol=2e-6 if dtype == torch.float32 else 1e-14)
     np.testing.assert_allclose(gradient.cpu().numpy()[:, 1] / large, [-.5, -.5, 1.], rtol=2e-6)
@@ -236,38 +252,39 @@ def test_pascal_range_restart(device, dtype):
 
 @pytest.mark.parametrize("device", DEVICES)
 @pytest.mark.parametrize("batch", [1, 3, 7, 9])
-def test_pascal_partial_chunks_and_word_workers(device, batch, monkeypatch):
+def test_prefix_suffix_partial_chunks_and_word_workers(device, batch, monkeypatch):
     torch.manual_seed(81)
     x = torch.randn((batch, 66, 3), dtype=torch.float64, device=device) * .03
     words = [(0, 1, 0), (2, 1), (), (1,) * 16] * 4
-    y = pysiglib.sig_coef(x, words, prefixes=True, method="pascal", n_jobs=1)
+    y = pysiglib.sig_coef(x, words, prefixes=True, method="prefix_suffix", n_jobs=1)
     seeds = torch.randn_like(y)
-    serial = pysiglib.sig_coef_backprop(x, words, y, seeds, method="pascal", n_jobs=1)
-    parallel = pysiglib.sig_coef_backprop(x, words, y, seeds, method="pascal", n_jobs=-1)
+    serial = pysiglib.sig_coef_backprop(x, words, y, seeds, method="prefix_suffix", n_jobs=1)
+    parallel = pysiglib.sig_coef_backprop(x, words, y, seeds, method="prefix_suffix", n_jobs=-1)
     torch.testing.assert_close(parallel, serial, atol=1e-12, rtol=1e-11)
-    monkeypatch.setenv("PYSIGLIB_PASCAL_WORKSPACE_BYTES", "65536")
-    limited = pysiglib.sig_coef_backprop(x, words, y, seeds, method="pascal", n_jobs=-1)
+    monkeypatch.setenv("PYSIGLIB_COEFFICIENT_WORKSPACE_BYTES", "65536")
+    limited = pysiglib.sig_coef_backprop(x, words, y, seeds, method="prefix_suffix", n_jobs=-1)
     torch.testing.assert_close(limited, serial, atol=1e-12, rtol=1e-11)
-    monkeypatch.setenv("PYSIGLIB_PASCAL_WORKSPACE_BYTES", "1")
+    monkeypatch.setenv("PYSIGLIB_COEFFICIENT_WORKSPACE_BYTES", "1")
     with pytest.raises(Exception, match="workspace"):
-        pysiglib.sig_coef_backprop(x, words, y, seeds, method="pascal")
+        pysiglib.sig_coef_backprop(x, words, y, seeds, method="prefix_suffix")
 
 
-@pytest.mark.skipif("cuda" not in AVAILABLE_DEVICES, reason="CUDA required")
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("prefixes", [False, True])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-def test_pascal_cuda_restart_clears_partial_gradients(dtype):
+def test_prefix_suffix_retraced_segment_gradient(device, prefixes, dtype):
     large = 2. ** (64 if dtype == torch.float32 else 512)
-    path = torch.tensor([[[0., 0.], [0., 0.], [0., 0.], [0., .5]]], dtype=dtype, device="cuda")
+    path = torch.tensor([[[0., 0.], [0., 0.], [0., 0.], [0., .5]]], dtype=dtype, device=device)
     path = path.expand(3, -1, -1).clone()
     path[1, 1, 0] = large
     words = [(1,), (0, 0, 1), (1,)]
-    coefs = torch.zeros((3, 5), dtype=dtype, device="cuda")
+    coefs = torch.zeros((3, 5 if prefixes else 3), dtype=dtype, device=device)
     coefs[:, 0] = coefs[:, -1] = .5
     seeds = torch.zeros_like(coefs)
     seeds[:, 0] = .75
     seeds[:, -1] = -.25
-    seeds[1, 3] = 1 / large
-    gradient = pysiglib.sig_coef_backprop(path, words, coefs, seeds, method="pascal")
+    seeds[1, -2] = 1 / large
+    gradient = pysiglib.sig_coef_backprop(path, words, coefs, seeds, method="prefix_suffix")
     reference = torch.zeros_like(path)
     reference[:, 0, 1] = -.5
     reference[:, -1, 1] = .5
@@ -280,15 +297,15 @@ def test_pascal_cuda_restart_clears_partial_gradients(dtype):
 @pytest.mark.skipif("cuda" not in AVAILABLE_DEVICES, reason="CUDA required")
 @pytest.mark.parametrize("dimension", [1, 2, 4])
 @pytest.mark.parametrize("degree", [8, 16, 20])
-def test_pascal_cuda_grouped_gradient(dimension, degree):
+def test_prefix_suffix_cuda_grouped_gradient(dimension, degree):
     rng = np.random.default_rng(561 + degree)
     path = torch.tensor(rng.normal(0, .03, (513, 8, dimension)).cumsum(axis=1),
                         dtype=torch.float32, device="cuda")
     words = [tuple(int(c) for c in w) for w in rng.integers(dimension, size=(8, degree))]
     words[0] = (0,) * degree
-    coefs = pysiglib.sig_coef(path, words, prefixes=True, method="pascal")
+    coefs = pysiglib.sig_coef(path, words, prefixes=True, method="prefix_suffix")
     seeds = torch.tensor(rng.normal(size=coefs.shape), dtype=path.dtype, device=path.device)
-    actual = pysiglib.sig_coef_backprop(path, words, coefs, seeds, method="pascal")
+    actual = pysiglib.sig_coef_backprop(path, words, coefs, seeds, method="prefix_suffix")
     reference_coefs = pysiglib.sig_coef(path, words, prefixes=True, method="horner")
     reference = pysiglib.sig_coef_backprop(path, words, reference_coefs, seeds, method="horner")
     torch.testing.assert_close(actual, reference, rtol=3e-5, atol=3e-6)
@@ -297,23 +314,23 @@ def test_pascal_cuda_grouped_gradient(dimension, degree):
 
 
 
-def test_pascal_highway_targets():
+def test_prefix_suffix_highway_targets():
     rng = np.random.default_rng(581)
     x = torch.tensor(rng.normal(size=(9, 5, 2)) * .1, dtype=torch.float64)
     words = [(0, 1) * 8, (1,) * 5]
     reference = np.asarray([chen_prefixes(p, words) for p in x.numpy()])
     for target in highway_targets().values():
         with force_highway_target(target):
-            y = pysiglib.sig_coef(x, words, method="pascal", prefixes=True)
+            y = pysiglib.sig_coef(x, words, method="prefix_suffix", prefixes=True)
             np.testing.assert_allclose(y, reference, rtol=1e-12, atol=1e-13)
-            dx = pysiglib.sig_coef_backprop(x, words, y, torch.ones_like(y), method="pascal")
+            dx = pysiglib.sig_coef_backprop(x, words, y, torch.ones_like(y), method="prefix_suffix")
             np.testing.assert_allclose(dx.sum(axis=1), 0., atol=1e-12)
 
 
-@pytest.mark.parametrize("method", ["horner", "pascal"])
+@pytest.mark.parametrize("method", ["horner", "prefix_suffix"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("time_aug,lead_lag", [(False, False), (True, False), (False, True), (True, True)])
-def test_pascal_jax_shapes_and_transforms(method, dtype, time_aug, lead_lag, jax_device):
+def test_prefix_suffix_jax_shapes_and_transforms(method, dtype, time_aug, lead_lag, jax_device):
     jax = pytest.importorskip("jax")
     import pysiglib.jax_api as jax_api
     jax.config.update("jax_enable_x64", True)
@@ -334,7 +351,7 @@ def test_pascal_jax_shapes_and_transforms(method, dtype, time_aug, lead_lag, jax
 
 
 @pytest.mark.parametrize("backend", DEVICES + ["jax"])
-@pytest.mark.parametrize("method", ["horner", "pascal"])
+@pytest.mark.parametrize("method", ["horner", "prefix_suffix"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_sparse_single_segment(backend, method, dtype, request):
     path = np.zeros((2, 32), dtype=dtype)
@@ -358,3 +375,122 @@ def test_sparse_single_segment(backend, method, dtype, request):
     tol = 2e-6 if dtype == np.float32 else 1e-12
     np.testing.assert_allclose(value, expected, rtol=tol, atol=0)
     np.testing.assert_allclose(gradient, expected_gradient, rtol=tol, atol=0)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("segments,batch,degree,word_count", [
+    (31, 2, 2, 5), (129, 64, 4, 5), (255, 65, 8, 8), (256, 64, 16, 8),
+    (257, 3, 10, 17), (511, 3, 10, 2), (4096, 1, 16, 1), (32773, 1, 8, 1), (32773, 1, 16, 1),
+])
+def test_terminal_word_batch(device, dtype, segments, batch, degree, word_count):
+    rng = np.random.default_rng(103 + segments)
+    data = rng.normal(scale=1. / np.sqrt(segments), size=(batch, segments + 1, 6)).cumsum(axis=1)
+    x = torch.tensor(data, dtype=dtype, device=device)[..., ::2].requires_grad_()
+    words = [tuple(w.tolist()) for w in rng.integers(3, size=(word_count, degree))]
+    if word_count > 1:
+        words[-1] = words[0]
+    seeds = torch.tensor(rng.normal(size=(batch, word_count)), dtype=dtype, device=device)
+    y = torch_api.sig_coef(x, words, method="prefix_suffix", n_jobs=-1)
+    assert y.shape == seeds.shape
+    actual, = torch.autograd.grad(y, x, seeds)
+    explicit = pysiglib.sig_coef_backprop(x, words, y.detach(), seeds, method="prefix_suffix", n_jobs=-1)
+    ref_path = x.detach().cpu().double().requires_grad_()
+    reference = torch_api.sig_coef(ref_path, words, method="horner")
+    grad, = torch.autograd.grad(reference, ref_path, seeds.cpu().double())
+    rtol = 5e-4 if dtype == torch.float32 else 5e-10
+    for a, b in ((y, reference), (actual, grad), (explicit, grad)):
+        torch.testing.assert_close(a.detach().cpu().double(), b, rtol=rtol, atol=rtol * b.detach().abs().max().item())
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize("time_aug,lead_lag", [(False, True), (True, False), (True, True)])
+def test_terminal_mixed_words(device, time_aug, lead_lag):
+    rng = np.random.default_rng(261)
+    x = torch.tensor(rng.normal(size=(2, 3, 154, 2)).cumsum(axis=2) / 12, device=device)
+    last = 2 * (2 if lead_lag else 1) + time_aug - 1
+    words = [(), (last,), (0, last, 1), (0, last, 1), (1, last)]
+    options = dict(time_aug=time_aug, lead_lag=lead_lag, end_time=2., n_jobs=-1)
+    x.requires_grad_()
+    y = torch_api.sig_coef(x, words, method="prefix_suffix", **options)
+    seeds = torch.tensor(rng.normal(size=y.shape), device=device)
+    grad, = torch.autograd.grad(y, x, seeds)
+    expected = torch_api.sig_coef(x, words, method="horner", **options)
+    reference, = torch.autograd.grad(expected, x, seeds)
+    torch.testing.assert_close(y, expected, rtol=2e-11, atol=2e-12)
+    torch.testing.assert_close(grad, reference, rtol=2e-11, atol=2e-12)
+
+
+@pytest.mark.parametrize("degree", [24, 32])
+def test_terminal_deep_cpu(degree):
+    x = np.array([[0., 0.], [4., 3.], [3.5, 5.], [5., 6.]])
+    word = (0, 1) * (degree // 2) + (0,) * (degree % 2)
+    ref = chen_prefixes(x.astype(np.clongdouble) + 1e-25j * np.eye(4, 2), [word])[-1]
+    y = pysiglib.sig_coef(x, word, method="prefix_suffix")
+    grad = pysiglib.sig_coef_backprop(x, word, y, np.ones_like(y), method="prefix_suffix")
+    np.testing.assert_allclose(y[0], ref.real, rtol=2e-10, atol=0)
+    np.testing.assert_allclose(np.trace(grad), ref.imag / 1e-25, rtol=2e-10, atol=0)
+
+
+def test_terminal_guarded_deep_cpu():
+    word = (0, 1) * 85 + (0,)
+    x = np.array([[0., 0.], [10., 8.]])
+    expected = float(Fraction(10 ** 86 * 8 ** 85, factorial(171)))
+    y = pysiglib.sig_coef(x, word, method="prefix_suffix")
+    grad = pysiglib.sig_coef_backprop(x, word, y, np.ones_like(y), method="prefix_suffix")
+    derivative = expected * np.array([86 / 10, 85 / 8])
+    np.testing.assert_allclose(y[0], expected, rtol=2e-12, atol=0)
+    np.testing.assert_allclose(grad, [-derivative, derivative], rtol=2e-12, atol=0)
+
+
+@pytest.mark.parametrize("dtype,delta,degree", [(np.float32, -130, 293), (np.float32, 200, 460), (np.float64, -1000, 2151)])
+def test_deep_axis_exponent_range(dtype, delta, degree):
+    x = np.array([[0], [delta]], dtype=dtype)
+    word = (0,) * degree
+    expected = Fraction(delta ** degree, factorial(degree))
+    last = expected * degree / delta
+    penultimate = last * (degree - 1) / delta
+    terminal = pysiglib.sig_coef(x, word, method="prefix_suffix")
+    prefixes = pysiglib.sig_coef(x, word, prefixes=True, method="prefix_suffix")
+    assert np.isinf(prefixes[abs(delta) - 1])
+    tol = 2e-6 if dtype == np.float32 else 2e-12
+    np.testing.assert_allclose([terminal[0], prefixes[-1]], float(expected), rtol=tol, atol=0)
+    weights = np.zeros_like(prefixes)
+    weights[-2:] = [-.25, .75]
+    for coefficients, seeds, derivative in ((terminal, np.ones_like(terminal), last),
+                                           (prefixes, weights, (3 * last - penultimate) / 4)):
+        grad = pysiglib.sig_coef_backprop(x, word, coefficients, seeds, method="prefix_suffix")
+        np.testing.assert_allclose(grad[:, 0], [-float(derivative), float(derivative)], rtol=tol, atol=0)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_terminal_restart(device, monkeypatch):
+    x = torch.tensor([[[0., 0.], [2e6, .5], [2e6, -.5]]] * 3, dtype=torch.float64, device=device)
+    words = [(0, 1), (), (1, 0), (0, 1)]
+    seeds = torch.tensor([[.5, 7., .25, -.75]] * 3, dtype=x.dtype, device=device)
+    ref = torch_api.sig_coef(x.requires_grad_(), words, method="horner")
+    grad, = torch.autograd.grad(ref, x, seeds)
+    monkeypatch.setenv("PYSIGLIB_COEFFICIENT_WORKSPACE_BYTES", "4096")
+    y = pysiglib.sig_coef(x, words, method="prefix_suffix")
+    actual = pysiglib.sig_coef_backprop(x, words, y, seeds, method="prefix_suffix")
+    torch.testing.assert_close(y, ref, atol=1e-10, rtol=1e-12)
+    torch.testing.assert_close(actual, grad, atol=1e-10, rtol=1e-12)
+    monkeypatch.setenv("PYSIGLIB_COEFFICIENT_WORKSPACE_BYTES", "1")
+    with pytest.raises(Exception, match="workspace"):
+        pysiglib.sig_coef_backprop(x, words, y, seeds, method="prefix_suffix")
+
+
+def test_terminal_jax_vjp(jax_device):
+    import jax
+    import pysiglib.jax_api as api
+    jax.config.update("jax_enable_x64", True)
+    rng = np.random.default_rng(431)
+    x = rng.normal(scale=.05, size=(2, 3, 258, 2)).cumsum(axis=-2)
+    words = [(), (1, 0), (0, 1, 0, 1, 1), (1, 0)]
+    seeds = rng.normal(size=(2, 3, len(words)))
+    f = jax.jit(jax.vmap(lambda p: api.sig_coef(p, words, method="prefix_suffix")))
+    result, pullback = jax.vjp(f, x)
+    expected = pysiglib.sig_coef(x, words, method="prefix_suffix")
+    ref = pysiglib.sig_coef_backprop(x, words, expected, seeds, method="prefix_suffix")
+    np.testing.assert_allclose(result, expected, atol=1e-12)
+    np.testing.assert_allclose(pullback(seeds)[0], ref, atol=1e-12)

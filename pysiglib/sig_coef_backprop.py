@@ -36,24 +36,24 @@ def sig_coef_backprop(
         lead_lag : bool = False,
         end_time : float = 1.,
         n_jobs : int = 1,
-        method = "pascal"
+        method = "prefix_suffix"
 ) -> Union[np.ndarray, torch.Tensor]:
     """
     This function is required to backpropagate through signature coefficient computation.
     Given the derivatives of a scalar function :math:`F` with respect to the
     signature coefficients, :math:`\\partial F / \\partial S(x)^I`, returns the
     derivatives of :math:`F` with respect to the underlying path,
-    :math:`\\partial F / \\partial x`. Note that ``coefs`` must be generated using
-    ``pysiglib.sig_coef`` using ``prefixes=True``, and ``derivs`` must be the derivatives
-    with respect to this extended array.
+    :math:`\\partial F / \\partial x`. Each entry in ``derivs`` weights the
+    corresponding coefficient in ``coefs``.
 
     :param path: The underlying path or batch of paths, of shape ``(..., length, dimension)``.
     :type path: numpy.ndarray | torch.Tensor
     :param words: Multi-indices :math:`I` indexing the signature coefficients, given as a list
         of lists of integers in :math:`[0, d-1]`, where :math:`d` is the dimension of the path(s).
     :type words: tuple[int, ...] | list[tuple[int, ...]]
-    :param coefs: Signature coefficients of the path or batch of paths, generated using
-        ``pysiglib.sig_coef`` using ``prefixes=True``.
+    :param coefs: Coefficients from ``pysiglib.sig_coef`` with ``prefixes=True``.
+        With ``method="prefix_suffix"``, ``prefixes=False`` is also supported and
+        uses one coefficient and one derivative per requested word.
     :type coefs: numpy.ndarray | torch.Tensor
     :param derivs: Derivatives of the scalar function :math:`F` with respect to the signature coefficients,
         :math:`\\partial F / \\partial S(x)^I`. This must be an array of the same shape as the
@@ -69,8 +69,8 @@ def sig_coef_backprop(
         If set to -1, all available threads are used. For n_jobs below -1, (max_threads + 1 + n_jobs)
         threads are used. For example if n_jobs = -2, all threads but one are used.
     :type n_jobs: int
-    :param method: ``"pascal"`` (default) uses Pascal factorisation on CPU and
-        inverse bidiagonal Pascal factors on CUDA. ``"horner"`` uses Horner's method.
+    :param method: ``"prefix_suffix"`` (default) contracts word-restricted prefix and suffix factors.
+        ``"horner"`` evaluates the coefficient by Horner recursion.
     :type method: str
     :return: Derivatives of the scalar function :math:`F` with respect to the path(s), :math:`\\partial F / \\partial x`.
         This is an array of the same shape as the provided path(s).
@@ -79,8 +79,8 @@ def sig_coef_backprop(
     Example:
     ---------
 
-    To differentiate only the coefficient of the full word, set the derivatives
-    of its shorter prefixes to zero.
+    When passing all prefixes, set the derivatives of the shorter prefixes to zero
+    to differentiate only the full word.
 
     .. code-block:: python
 
@@ -89,25 +89,24 @@ def sig_coef_backprop(
 
         path = np.random.default_rng(0).normal(size=(10, 100, 2))
         word = (0, 1, 0)
-        coefs = pysiglib.sig_coef(path, word, prefixes=True, method="pascal")
+        coefs = pysiglib.sig_coef(path, word, prefixes=True, method="prefix_suffix")
         derivs = np.zeros_like(coefs)
         derivs[..., -1] = 1
-        path_derivs = pysiglib.sig_coef_backprop(path, word, coefs, derivs, method="pascal")
+        path_derivs = pysiglib.sig_coef_backprop(path, word, coefs, derivs, method="prefix_suffix")
         print(path_derivs)
 
     .. code-block:: python
 
-        # Backprop with time augmentation and lead-lag
+        # Differentiate the sum of two word coefficients with time augmentation and lead-lag
         import torch
         import pysiglib
 
         path = torch.rand((10, 100, 5))
         words = [(0,), (1, 2)]
-        # Must generate coefs with prefixes=True for backprop
-        coefs = pysiglib.sig_coef(path, words, time_aug=True, lead_lag=True, prefixes=True)
+        coefs = pysiglib.sig_coef(path, words, time_aug=True, lead_lag=True, method="prefix_suffix")
         derivs = torch.ones_like(coefs)
         path_derivs = pysiglib.sig_coef_backprop(
-            path, words, coefs, derivs, time_aug=True, lead_lag=True,
+            path, words, coefs, derivs, time_aug=True, lead_lag=True, method="prefix_suffix",
         )
         print(path_derivs)
 
@@ -127,7 +126,10 @@ def sig_coef_backprop(
     for idx in words:
         coefs_len += len(idx) if idx else 1
 
-    if coefs.shape[-1] != coefs_len:
+    terminal = method_code == 1 and coefs.shape[-1] == len(words)
+    if terminal:
+        coefs_len = len(words)
+    elif coefs.shape[-1] != coefs_len:
         raise ValueError("Expected coefs.shape[-1] == " + str(coefs_len) + ". Please make sure coefs was generated using prefixes=True.")
 
     deriv_data = MultipleSigInputHandler([coefs, derivs], coefs_len, ["coef", "deriv"])
@@ -142,7 +144,7 @@ def sig_coef_backprop(
 
     flat_indices = [i for idx in words for i in idx]
 
-    if data.device == "cpu" or method_code == 1 or time_aug or lead_lag:
+    if data.device == "cpu" or method_code != 0 or time_aug or lead_lag:
         words_t = torch.tensor(flat_indices, dtype=torch.uint64)
         degrees_t = torch.tensor(degrees, dtype=torch.uint64)
     else:
@@ -158,16 +160,17 @@ def sig_coef_backprop(
         return result.data
 
     check_n_jobs(n_jobs)
+    saved = None if terminal else deriv_data.data[0].data_ptr
     if data.device == "cpu":
         err_code = CPSIG_SIG_COEF_BACKPROP[data.dtype](
             data.data_ptr, result.data_ptr,
-            deriv_data.data[0].data_ptr, deriv_data.data[1].data_ptr,
+            saved, deriv_data.data[1].data_ptr,
             multi_indices_ptr, num_multi_indices, degrees_ptr,
             data.batch_size, data.data_dimension, data.data_length,
             data.time_aug, data.lead_lag, data.end_time, n_jobs, method_code)
     else:
         args = (data.data_ptr, result.data_ptr,
-                deriv_data.data[0].data_ptr, deriv_data.data[1].data_ptr,
+                saved, deriv_data.data[1].data_ptr,
                 multi_indices_ptr, num_multi_indices, degrees_ptr,
                 data.batch_size, data.data_dimension, data.data_length,
                 data.time_aug, data.lead_lag, data.end_time, method_code)

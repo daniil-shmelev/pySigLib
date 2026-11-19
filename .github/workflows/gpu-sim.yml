@@ -64,7 +64,7 @@ jobs:
       - name: Build
         run: cmake --build build --target cusig_tests -j3
 
-      # The Pascal tests skip when no device is found, so fail the job if any
+      # CUDA tests can skip when no device is found, so fail the job if any
       # test is skipped: that would mean the simulated GPU was not used.
       - name: Test
         shell: bash

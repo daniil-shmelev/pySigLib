@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "cpsig.h"
-#include "pascal_coefficient.h"
+#include "word_coefficient.h"
 #include "signature_method.h"
 #include <climits>
 
@@ -1040,14 +1040,17 @@ ffi::Error SigCoefImpl(
     PathSpec spec;
     if (auto msg = GetPathSpec(path, spec); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = ValidateSameFloatDtype("path", path, "out", out); !msg.empty()) return InvalidArgument(msg);
-    if (method < 0 || method > 1 || n_jobs == 0 || n_jobs < INT_MIN || n_jobs > INT_MAX)
+    if (method < 0 || method > word_coefficient::prefix_suffix || n_jobs == 0 || n_jobs < INT_MIN || n_jobs > INT_MAX)
         return InvalidArgument("Invalid coefficient method or n_jobs");
     try {
         std::uint64_t size = 0;
-        for (auto degree : degrees) size = pascal_coefficient::add(size, degree);
+        for (auto degree : degrees) size = word_coefficient::add(size, degree);
         if (size != indices.size()) return InvalidArgument("Coefficient word metadata size mismatch");
-        pascal_coefficient::Words words(indices.begin(), degrees.begin(), degrees.size(),
-            pascal_coefficient::add(pascal_coefficient::mul(spec.dimension, lead_lag ? 2 : 1), time_aug ? 1 : 0), true);
+        const auto dims = Backward ? BufferDims(*coefs) : BufferDims(out);
+        const bool terminal = method == word_coefficient::prefix_suffix && dims.size() &&
+            static_cast<std::uint64_t>(dims[dims.size() - 1]) == degrees.size();
+        word_coefficient::Words words(indices.begin(), degrees.begin(), degrees.size(),
+            word_coefficient::add(word_coefficient::mul(spec.dimension, lead_lag ? 2 : 1), time_aug ? 1 : 0), !terminal);
         if constexpr (Backward) {
             if (auto msg = CheckGradOutputShape(out, spec); !msg.empty()) return InvalidArgument(msg);
             if (auto msg = ValidateSameFloatDtype("path", path, "coefs", *coefs); !msg.empty()) return InvalidArgument(msg);
@@ -1065,9 +1068,9 @@ ffi::Error SigCoefImpl(
                 const std::uint64_t* word_data = indices.begin();
                 const std::uint64_t* degree_data = degrees.begin();
                 CudaBuf<std::uint64_t> device_metadata;
-                if (method != 1 && !time_aug && !lead_lag && spec.batch_size) {
-                    device_metadata = CudaBuf<std::uint64_t>(pascal_coefficient::mul(
-                        pascal_coefficient::add(indices.size(), degrees.size()), sizeof(std::uint64_t)));
+                if (method == 0 && !time_aug && !lead_lag && spec.batch_size) {
+                    device_metadata = CudaBuf<std::uint64_t>(word_coefficient::mul(
+                        word_coefficient::add(indices.size(), degrees.size()), sizeof(std::uint64_t)));
                     word_data = device_metadata.get();
                     degree_data = word_data + indices.size();
                     if (indices.size()) CUDA_CHECK(cudaMemcpyAsync(device_metadata.get(), indices.begin(), indices.size() * sizeof(std::uint64_t), cudaMemcpyHostToDevice, nullptr));
@@ -1075,12 +1078,12 @@ ffi::Error SigCoefImpl(
                 }
                 if constexpr (Backward)
                     err_code = CudaFns<T>::coef_backprop(BufferData<T>(path), BufferData<T>(out),
-                        BufferData<T>(*coefs), BufferData<T>(*cotangent), word_data, degrees.size(), degree_data,
+                        terminal ? nullptr : BufferData<T>(*coefs), BufferData<T>(*cotangent), word_data, degrees.size(), degree_data,
                         spec.batch_size, spec.dimension, spec.length, time_aug, lead_lag, static_cast<T>(end_time), static_cast<int>(method));
                 else
                     err_code = CudaFns<T>::coef(BufferData<T>(path), BufferData<T>(out), word_data,
                         degrees.size(), degree_data, spec.batch_size, spec.dimension, spec.length,
-                        true, time_aug, lead_lag, static_cast<T>(end_time), static_cast<int>(method));
+                        !terminal, time_aug, lead_lag, static_cast<T>(end_time), static_cast<int>(method));
                 return err_code ? NativeCallErrorCuda(fn_name, err_code) : ffi::Error::Success();
             } else
 #endif
@@ -1089,17 +1092,17 @@ ffi::Error SigCoefImpl(
                     T* seeds_data = BufferData<T>(*cotangent);
                     std::vector<T> seeds;
                     if (method == 0 && spec.batch_size) {
-                        seeds.assign(seeds_data, seeds_data + pascal_coefficient::mul(spec.batch_size, words.width));
+                        seeds.assign(seeds_data, seeds_data + word_coefficient::mul(spec.batch_size, words.width));
                         seeds_data = seeds.data();
                     }
                     err_code = CpuFns<T>::coef_backprop(BufferData<T>(path), BufferData<T>(out),
-                        BufferData<T>(*coefs), seeds_data, indices.begin(), degrees.size(), degrees.begin(),
+                        terminal ? nullptr : BufferData<T>(*coefs), seeds_data, indices.begin(), degrees.size(), degrees.begin(),
                         spec.batch_size, spec.dimension, spec.length, time_aug, lead_lag, static_cast<T>(end_time),
                         static_cast<int>(n_jobs), static_cast<int>(method));
                 } else
                     err_code = CpuFns<T>::coef(BufferData<T>(path), BufferData<T>(out), indices.begin(),
                         degrees.size(), degrees.begin(), spec.batch_size, spec.dimension, spec.length,
-                        time_aug, lead_lag, static_cast<T>(end_time), true, static_cast<int>(n_jobs), static_cast<int>(method));
+                        time_aug, lead_lag, static_cast<T>(end_time), !terminal, static_cast<int>(n_jobs), static_cast<int>(method));
                 return err_code ? NativeCallErrorCpu(fn_name, err_code) : ffi::Error::Success();
             }
         });

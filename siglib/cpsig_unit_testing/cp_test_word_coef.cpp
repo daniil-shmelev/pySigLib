@@ -15,11 +15,11 @@
 
 #include <gtest/gtest.h>
 #include "cpsig.h"
-#include "pascal_coefficient.h"
+#include "word_coefficient.h"
 #include <cmath>
 #include <vector>
 
-TEST(PascalCoefficient, AllPrefixAdjoints) {
+TEST(PrefixSuffixCoefficient, AllPrefixAdjoints) {
     const uint64_t word[] = {0, 0, 0, 0}, degree = 4;
     for (const uint64_t length : {2, 65, 66, 131}) {
         std::vector<double> path(length), grad(length);
@@ -42,7 +42,7 @@ TEST(PascalCoefficient, AllPrefixAdjoints) {
         }
     }
 }
-TEST(PascalCoefficient, IdentityAndCheckedSizes) {
+TEST(PrefixSuffixCoefficient, IdentityAndCheckedSizes) {
     const uint64_t degrees[] = {0, 1}, word = 0;
     float path = 0, out[2];
     ASSERT_EQ(sig_coef_f(&path, out, &word, 2, degrees, 1, 1, 1,
@@ -55,9 +55,9 @@ TEST(PascalCoefficient, IdentityAndCheckedSizes) {
         EXPECT_EQ(out[0], 1);
         EXPECT_EQ(out[1], 0);
     }
-    EXPECT_THROW(pascal_coefficient::mul(UINT64_MAX, 2), std::overflow_error);
+    EXPECT_THROW(word_coefficient::mul(UINT64_MAX, 2), std::overflow_error);
     for (int method : {-1, 2, 3, 4, 5, 6}) {
-        EXPECT_THROW(pascal_coefficient::variant(method, 4), std::invalid_argument);
+        EXPECT_THROW(word_coefficient::check_method(method), std::invalid_argument);
         EXPECT_NE(sig_coef_f(&path, out, &word, 2, degrees, 1, 1, 1,
             false, false, 1.f, true, 1, method), 0);
         EXPECT_NE(sig_coef_backprop_f(&path, out, out, out, &word, 2, degrees, 1, 1, 1,
@@ -65,7 +65,7 @@ TEST(PascalCoefficient, IdentityAndCheckedSizes) {
     }
 }
 
-TEST(PascalCoefficient, GuardedTinyLink) {
+TEST(PrefixSuffixCoefficient, GuardedTinyLink) {
     const double tiny = std::numeric_limits<double>::denorm_min();
     const double path[] = {0, 0, 1e300, 0, 1e300, 3 * tiny};
     const uint64_t word[] = {0, 1}, degree = 2;
@@ -75,7 +75,7 @@ TEST(PascalCoefficient, GuardedTinyLink) {
     EXPECT_NEAR(result[1] / (1e300 * (3 * tiny)), 1., 1e-14);
 }
 
-TEST(PascalCoefficient, SimdScratchAlignment) {
+TEST(PrefixSuffixCoefficient, SimdScratchAlignment) {
     const uint64_t word[] = {0, 1, 1, 1, 0, 1}, degrees[] = {0, 2, 2, 2};
     for (uint64_t batch : {6, 8, 9}) {
         std::vector<double> path(batch * 16, 0), result(batch * 7), seeds(batch * 7, 1), gradient(path.size());

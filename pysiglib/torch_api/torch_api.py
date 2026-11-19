@@ -180,8 +180,8 @@ def _get_coef_from_prefixes(word, coef, prefixes):
 
 class SigCoef(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, path, word, time_aug, lead_lag, end_time, n_jobs, method):
-        coefs_ = sig_coef_forward(path, word, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, prefixes=True, n_jobs=n_jobs, method=method)
+    def forward(ctx, path, word, time_aug, lead_lag, end_time, n_jobs, method, prefixes):
+        coefs_ = sig_coef_forward(path, word, time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, prefixes=prefixes, n_jobs=n_jobs, method=method)
 
         ctx.save_for_backward(coefs_, path)
         ctx.word = word
@@ -200,7 +200,7 @@ class SigCoef(torch.autograd.Function):
         if torch.is_grad_enabled():
             raise NotImplementedError("Signature coefficient computation supports first-order reverse differentiation only")
         grad = sig_coef_backprop(path, ctx.word, coefs_, grad_output, time_aug=ctx.time_aug, lead_lag=ctx.lead_lag, end_time=ctx.end_time, n_jobs=ctx.n_jobs, method=ctx.method)
-        return grad, None, None, None, None, None, None
+        return grad, None, None, None, None, None, None, None
 
 def sig_coef(
         path: Union[np.ndarray, torch.Tensor],
@@ -211,10 +211,11 @@ def sig_coef(
         end_time: float = 1.,
         prefixes: bool = False,
         n_jobs: int = 1,
-        method = "pascal"
+        method = "prefix_suffix"
 ) -> Union[np.ndarray, torch.Tensor]:
-    coefs_ = SigCoef.apply(path, words, time_aug, lead_lag, end_time, n_jobs, method)
-    return _get_coef_from_prefixes(words, coefs_, prefixes)
+    save_prefixes = prefixes or method != "prefix_suffix"
+    coefs_ = SigCoef.apply(path, words, time_aug, lead_lag, end_time, n_jobs, method, save_prefixes)
+    return _get_coef_from_prefixes(words, coefs_, prefixes) if save_prefixes else coefs_
 
 sig_coef.__doc__ = sig_coef_forward.__doc__
 

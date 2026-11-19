@@ -21,6 +21,11 @@
 #define SIG_COEF_CUDA_MAX_DEGREE 20
 
 template<class T, bool Backward>
+bool prefix_suffix_coef_cuda(const T* path, T* out, const T* coefs, const T* seeds, const uint64_t* indices,
+    const uint64_t* degrees, const uint64_t* metadata, uint64_t count, uint64_t batch, uint64_t dimension,
+    uint64_t length, uint64_t width, bool prefixes, bool time_aug, bool lead_lag, T end_time, cudaStream_t stream);
+
+template<class T, bool Backward>
 void sig_coef_horner_cuda(const T* path, T* out, const T* coefs, const T* deriv,
     const uint64_t* indices, uint64_t words, const uint64_t* degrees, uint64_t batch,
     uint64_t dimension, uint64_t length, bool time_aug, bool lead_lag, T end_time,

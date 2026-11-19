@@ -1635,17 +1635,17 @@ branched_sig_mmd.__doc__ = branched_sig_mmd_forward.__doc__
 # sig_coef
 # ---------------------------------------------------------------------------
 
-@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6))
-def _sig_coef(path, words, time_aug, lead_lag, end_time, n_jobs, method):
-    return sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method)
+@partial(jax.custom_vjp, nondiff_argnums=(1, 2, 3, 4, 5, 6, 7))
+def _sig_coef(path, words, time_aug, lead_lag, end_time, n_jobs, method, prefixes):
+    return sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method, prefixes)
 
 
-def _sig_coef_fwd(path, words, time_aug, lead_lag, end_time, n_jobs, method):
-    coefs = sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method)
+def _sig_coef_fwd(path, words, time_aug, lead_lag, end_time, n_jobs, method, prefixes):
+    coefs = sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method, prefixes)
     return coefs, (path, coefs)
 
 
-def _sig_coef_bwd(words, time_aug, lead_lag, end_time, n_jobs, method, residual, cotangent):
+def _sig_coef_bwd(words, time_aug, lead_lag, end_time, n_jobs, method, prefixes, residual, cotangent):
     path, coefs = residual
     grad = sig_coef_backprop_ffi_call(
         path, coefs, cotangent, words, time_aug, lead_lag, end_time, n_jobs, method
@@ -1665,7 +1665,7 @@ def sig_coef(
     end_time: float = 1.0,
     prefixes: bool = False,
     n_jobs: int = 1,
-    method = "pascal",
+    method = "prefix_suffix",
 ):
     ensure_registered()
 
@@ -1686,8 +1686,9 @@ def sig_coef(
     if not words:
         raise ValueError("words must be a non-empty list of multi-indices.")
     words = tuple(tuple(w) for w in words)
-    coefs = _sig_coef(path, words, time_aug, lead_lag, end_time, n_jobs, method_code)
-    if prefixes:
+    coefs = _sig_coef(path, words, time_aug, lead_lag, end_time, n_jobs, method_code,
+                      prefixes or method != "prefix_suffix")
+    if prefixes or method == "prefix_suffix":
         return coefs
     offsets = np.cumsum([max(len(w), 1) for w in words]) - 1
     return coefs[..., jnp.asarray(offsets)]

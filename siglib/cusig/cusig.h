@@ -471,7 +471,7 @@ extern "C" {
 	* @param time_aug Whether to add time augmentation (default = false).
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
-	* @param method Coefficient algorithm: 0 for Horner or 1 for inverse bidiagonal Pascal factors (default).
+	* @param method Coefficient algorithm: 0 for Horner, 1 for prefix-suffix (default).
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_coef_cuda_f(const float* path, float* out, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool prefixes, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 1) noexcept;
@@ -488,8 +488,8 @@ extern "C" {
 	*
 	* @param path Pointer to input batch path data (row-major, on device), size = `batch_size * length * dimension`.
 	* @param out Pointer to output buffer (on device, preallocated), size = `batch_size * length * dimension`.
-	* @param coefs Pointer to prefix coefficients from forward pass (on device).
-	* @param derivs Pointer to dF/d(coefs) (on device), same size as coefs.
+	* @param coefs Device pointer to prefix coefficients. The prefix-suffix method accepts nullptr for one derivative per complete word.
+	* @param derivs Device pointer to one derivative per prefix coefficient, or one per requested word and path when coefs is nullptr.
 	* @param multi_idx Pointer to flattened multi-indices (on device for method 0 without augmentation, on host otherwise).
 	* @param num_multi_idx Number of multi-indices (words).
 	* @param degrees Pointer to degree of each multi-index (on device for method 0 without augmentation, on host otherwise), size = `num_multi_idx`.
@@ -499,7 +499,7 @@ extern "C" {
 	* @param time_aug Whether to add time augmentation (default = false).
 	* @param lead_lag Whether to apply the lead-lag transform (default = false).
 	* @param end_time End time for time augmentation (default = 1.0).
-	* @param method Coefficient algorithm: 0 for Horner or 1 for inverse bidiagonal Pascal factors (default).
+	* @param method Coefficient algorithm: 0 for Horner, 1 for prefix-suffix (default).
 	* @return Status code (0 = success).
 	*/
 	[[nodiscard]] CUSIG_API int sig_coef_backprop_cuda_f(const float* path, float* out, const float* coefs, const float* derivs, const uint64_t* multi_idx, uint64_t num_multi_idx, const uint64_t* degrees, uint64_t batch_size, uint64_t dimension, uint64_t length, bool time_aug = false, bool lead_lag = false, float end_time = 1., int method = 1) noexcept;

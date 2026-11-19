@@ -446,9 +446,9 @@ def sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, l
 # sig_coef
 # ---------------------------------------------------------------------------
 
-def sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method):
+def sig_coef_ffi_call(path, words, time_aug, lead_lag, end_time, n_jobs, method, prefixes):
     _normalize_dtype(path.dtype)
-    width = sum(max(len(word), 1) for word in words)
+    width = sum(max(len(word), 1) for word in words) if prefixes else len(words)
     out_type = jax.ShapeDtypeStruct((*path.shape[:-2], width), path.dtype)
     call_kwargs = dict(
         indices=np.asarray([index for word in words for index in word], dtype=np.uint64),
