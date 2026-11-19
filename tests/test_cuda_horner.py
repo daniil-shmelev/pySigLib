@@ -60,7 +60,7 @@ def test_cuda_horner_matches_cpu(dtype, scalar_term, batch, dimension, degree, t
     direction = torch.linspace(2., 4., dimension, dtype=dtype)
     path = torch.linspace(0., 1., 9, dtype=dtype)[None, :, None] * direction
     path = path + .01 * torch.randn(batch, 9, dimension, generator=generator, dtype=dtype)
-    options = dict(scalar_term=scalar_term, time_aug=time_aug,
+    options = dict(method="horner", scalar_term=scalar_term, time_aug=time_aug,
                    lead_lag=lead_lag, end_time=1.7)
     expected = pysiglib.sig(path, degree, **options)
     device_path = path.cuda()
@@ -82,14 +82,14 @@ def test_cuda_degree_two_backward_large_skew(dtype, scalar_term):
     path = torch.zeros((128, 3, dimension), dtype=dtype, device="cuda")
     path[:, 1, 1] = 0.01
     path[:, 2, 1] = 0.02
-    signature = pysiglib.sig(path, 2, scalar_term=scalar_term)
+    signature = pysiglib.sig(path, 2, method="horner", scalar_term=scalar_term)
     seeds = torch.zeros_like(signature)
     level_two = dimension + scalar_term
     weight = torch.finfo(dtype).max * 0.75
     seeds[:, level_two + 1] = weight
     seeds[:, level_two + dimension] = -weight
 
-    actual = pysiglib.sig_backprop(path, signature, seeds, 2)
+    actual = pysiglib.sig_backprop(path, signature, seeds, 2, method="horner")
     expected = torch.zeros_like(path)
     expected[:, 0, 0] = -0.01 * weight
     expected[:, 1, 0] = 0.02 * weight
@@ -103,7 +103,7 @@ def test_cuda_degree_two_backward_large_skew(dtype, scalar_term):
 def test_cuda_horner_high_degree_linear_path(dtype, degree):
     direction = torch.tensor([3., 4.], dtype=dtype)
     path = (torch.linspace(0., 1., 7, dtype=dtype)[:, None] * direction).repeat(8, 1, 1)
-    actual = pysiglib.sig(path.cuda(), degree, scalar_term=True).cpu()
+    actual = pysiglib.sig(path.cuda(), degree, method="horner", scalar_term=True).cpu()
     levels = [torch.ones(1, dtype=dtype)]
     for level in range(1, degree + 1):
         levels.append(torch.kron(levels[-1], direction) / level)
@@ -118,8 +118,8 @@ def test_cuda_horner_high_degree_linear_path(dtype, degree):
 def test_cuda_horner_endpoint_gradients(dimension, degree, scalar_term):
     generator = torch.Generator().manual_seed(121)
     path = torch.randn(3, 2, 17, dimension, generator=generator, dtype=torch.float64, requires_grad=True)
-    actual = pysiglib.torch_api.signature(path.cuda(), degree, scalar_term=scalar_term)
-    expected = pysiglib.torch_api.signature(path, degree, scalar_term=scalar_term)
+    actual = pysiglib.torch_api.signature(path.cuda(), degree, method="horner", scalar_term=scalar_term)
+    expected = pysiglib.torch_api.signature(path, degree, method="horner", scalar_term=scalar_term)
     weights = torch.randn(expected.shape, generator=generator, dtype=torch.float64)
     actual_grad = torch.autograd.grad(actual, path, weights.cuda())[0]
     expected_grad = torch.autograd.grad(expected, path, weights)[0]
@@ -135,13 +135,13 @@ def test_cuda_horner_directional_derivative(dimension, degree):
     path = torch.randn(2, 9, dimension, generator=generator, dtype=torch.float64) * .07
     path += torch.linspace(0., 3., 9)[None, :, None]
     path = path.cuda().requires_grad_()
-    value = pysiglib.torch_api.signature(path, degree, scalar_term=True)
+    value = pysiglib.torch_api.signature(path, degree, method="horner", scalar_term=True)
     seeds = .1 * torch.randn(value.shape, generator=generator, dtype=torch.float64).cuda()
     gradient = torch.autograd.grad(value, path, seeds)[0]
     direction = torch.randn(path.shape, generator=generator, dtype=torch.float64).cuda()
     epsilon = 1e-5
-    plus = pysiglib.sig(path.detach() + epsilon * direction, degree, scalar_term=True)
-    minus = pysiglib.sig(path.detach() - epsilon * direction, degree, scalar_term=True)
+    plus = pysiglib.sig(path.detach() + epsilon * direction, degree, method="horner", scalar_term=True)
+    minus = pysiglib.sig(path.detach() - epsilon * direction, degree, method="horner", scalar_term=True)
     expected = ((plus - minus) * seeds).sum() / (2 * epsilon)
     torch.testing.assert_close((gradient * direction).sum(), expected, atol=2e-7, rtol=2e-7)
 
@@ -153,13 +153,13 @@ def test_cuda_horner_long_noncontiguous_batch(dtype, scalar_term):
     generator = torch.Generator().manual_seed(98)
     data = .025 * torch.randn(2, 2, 131, 6, generator=generator, dtype=dtype).cumsum(dim=-2)
     path = data[..., ::2].requires_grad_()
-    expected = pysiglib.torch_api.signature(path, 10, scalar_term=scalar_term)
+    expected = pysiglib.torch_api.signature(path, 10, method="horner", scalar_term=scalar_term)
     seeds = .03 * torch.randn(expected.shape, generator=generator, dtype=dtype)
     expected_grad = torch.autograd.grad(expected, path, seeds)[0]
     stream = torch.cuda.Stream()
     with torch.cuda.stream(stream):
         device_path = data.cuda()[..., ::2].requires_grad_()
-        actual = pysiglib.torch_api.signature(device_path, 10, scalar_term=scalar_term)
+        actual = pysiglib.torch_api.signature(device_path, 10, method="horner", scalar_term=scalar_term)
         actual_grad = torch.autograd.grad(actual, device_path, seeds.cuda())[0]
     stream.synchronize()
     tolerance = 3e-5 if dtype == torch.float32 else 3e-10
@@ -173,13 +173,13 @@ def test_cuda_horner_long_reconstruction():
     path = np.zeros((16, 4097, 3), dtype=np.float32)
     path[:, 1:] = (rng.normal(size=(16, 4096, 3)) * .03).astype(np.float32).cumsum(axis=1)
     device_path = torch.from_numpy(path).cuda()
-    signature = pysiglib.sig(device_path, 8)
+    signature = pysiglib.sig(device_path, 8, method="horner")
     seeds = rng.normal(0, .05, signature.shape).astype(np.float32)
     reference_path = path.astype(np.float64)
-    reference = pysiglib.sig(reference_path, 8, n_jobs=2)
+    reference = pysiglib.sig(reference_path, 8, method="horner", n_jobs=2)
     expected = pysiglib.sig_backprop(reference_path, reference, seeds.astype(np.float64), 8,
-                                    n_jobs=2)
-    actual = pysiglib.sig_backprop(device_path, signature, torch.from_numpy(seeds).cuda(), 8)
+                                    method="horner", n_jobs=2)
+    actual = pysiglib.sig_backprop(device_path, signature, torch.from_numpy(seeds).cuda(), 8, method="horner")
     np.testing.assert_allclose(actual.cpu().numpy(), expected, atol=2e-4, rtol=1e-3)
 
 
@@ -190,20 +190,20 @@ def test_cuda_horner_long_reconstruction():
 def test_cuda_horner_backward_updated_buffers(dtype, scalar_term, dimension, segments):
     generator = torch.Generator().manual_seed(731)
     path = .02 * torch.randn(4, segments + 1, dimension, generator=generator, dtype=dtype).cumsum(dim=1)
-    signature = pysiglib.sig(path, 4, scalar_term=scalar_term)
+    signature = pysiglib.sig(path, 4, method="horner", scalar_term=scalar_term)
     seeds = .05 * torch.randn(signature.shape, generator=generator, dtype=dtype)
     device_path, device_signature, device_seeds = path.cuda(), signature.cuda(), seeds.cuda()
     tolerance = 3e-5 if dtype == torch.float32 else 2e-10
     for iteration in range(2):
         if iteration:
             path.copy_(.02 * torch.randn(path.shape, generator=generator, dtype=dtype).cumsum(dim=1))
-            signature.copy_(pysiglib.sig(path, 4, scalar_term=scalar_term))
+            signature.copy_(pysiglib.sig(path, 4, method="horner", scalar_term=scalar_term))
             seeds.copy_(.05 * torch.randn(seeds.shape, generator=generator, dtype=dtype))
             device_path.copy_(path)
             device_signature.copy_(signature)
             device_seeds.copy_(seeds)
-        expected = pysiglib.sig_backprop(path, signature, seeds, 4)
-        actual = pysiglib.sig_backprop(device_path, device_signature, device_seeds, 4)
+        expected = pysiglib.sig_backprop(path, signature, seeds, 4, method="horner")
+        actual = pysiglib.sig_backprop(device_path, device_signature, device_seeds, 4, method="horner")
         torch.testing.assert_close(actual.cpu(), expected, atol=tolerance, rtol=tolerance)
 
 
@@ -213,10 +213,10 @@ def test_cuda_horner_backward_updated_buffers(dtype, scalar_term, dimension, seg
 def test_cuda_horner_backward_device_changes(batch, segments, dimension):
     generator = torch.Generator().manual_seed(92)
     path = .02 * torch.randn(batch, segments + 1, dimension, generator=generator, dtype=torch.float64).cumsum(dim=1)
-    signature = pysiglib.sig(path, 4)
+    signature = pysiglib.sig(path, 4, method="horner")
     seeds = .05 * torch.randn(signature.shape, generator=generator, dtype=torch.float64)
-    expected = pysiglib.sig_backprop(path, signature, seeds, 4)
+    expected = pysiglib.sig_backprop(path, signature, seeds, 4, method="horner")
     for index in (0, 1, 0):
         device = torch.device("cuda", index)
-        actual = pysiglib.sig_backprop(path.to(device), signature.to(device), seeds.to(device), 4)
+        actual = pysiglib.sig_backprop(path.to(device), signature.to(device), seeds.to(device), 4, method="horner")
         torch.testing.assert_close(actual.cpu(), expected, atol=2e-10, rtol=2e-10)

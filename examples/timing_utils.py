@@ -129,7 +129,7 @@ def time_iisig_sig(cfg, progress_bar = False):
         best_time = min(best_time, time_)
     return best_time
 
-def time_pysiglib_sig(cfg, horner, n_jobs, progress_bar = False):
+def time_pysiglib_sig(cfg, n_jobs, progress_bar = False):
     dtype = torch_dtype(cfg['dtype'])
     X = torch.rand(size=(cfg['batch_size'], cfg['length'], cfg['dimension']), dtype=dtype, device=cfg['device'])
     best_time = float('inf')
@@ -137,7 +137,7 @@ def time_pysiglib_sig(cfg, horner, n_jobs, progress_bar = False):
     for _ in loop:
         torch.cuda.empty_cache()
         start = timeit.default_timer()
-        pysiglib.sig(X, cfg['degree'], horner = horner, n_jobs = n_jobs)
+        pysiglib.sig(X, cfg['degree'], n_jobs = n_jobs)
         end = timeit.default_timer()
         time_ = end - start
         best_time = min(best_time, time_)

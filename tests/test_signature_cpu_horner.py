@@ -50,7 +50,7 @@ def test_cpu_horner_reverse_matches_join_autograd(dtype, scalar_term, dimension,
         reference = torch_api.sig_join(reference, increment, channels, degree)
     seeds = torch.randn((1, 3, 2 * width), generator=generator, dtype=dtype)[..., ::2]
     expected, = torch.autograd.grad(reference, path, seeds.reshape(3, width))
-    options = dict(time_aug=time_aug, lead_lag=lead_lag, end_time=.7)
+    options = dict(time_aug=time_aug, lead_lag=lead_lag, end_time=.7, method="horner")
     signature = pysiglib.sig(path.detach(), degree, scalar_term=scalar_term, **options)
     saved = [value.detach().clone() for value in (path, signature, seeds)]
     tolerance = 2e-5 if dtype == torch.float32 else 2e-10
@@ -75,15 +75,15 @@ def test_cpu_horner_reverse_matches_join_autograd(dtype, scalar_term, dimension,
 def test_cpu_horner_reverse_simd_boundary(dtype, scalar_term, batch, dimension, degree):
     generator = torch.Generator().manual_seed(731)
     path = torch.randn((batch, 17, dimension), generator=generator, dtype=dtype) * .03
-    signature = pysiglib.sig(path, degree, scalar_term=scalar_term)
+    signature = pysiglib.sig(path, degree, scalar_term=scalar_term, method="horner")
     seeds = torch.randn(signature.shape, generator=generator, dtype=dtype)
-    expected = torch.stack([pysiglib.sig_backprop(x, s, g, degree)
+    expected = torch.stack([pysiglib.sig_backprop(x, s, g, degree, method="horner")
                             for x, s, g in zip(path, signature, seeds)])
     tolerance = 2e-5 if dtype == torch.float32 else 2e-11
     for jobs in [1, 4, 8]:
-        parallel_signature = pysiglib.sig(path, degree, scalar_term=scalar_term, n_jobs=jobs)
+        parallel_signature = pysiglib.sig(path, degree, scalar_term=scalar_term, method="horner", n_jobs=jobs)
         torch.testing.assert_close(parallel_signature, signature, atol=tolerance, rtol=tolerance)
-        actual = pysiglib.sig_backprop(path, signature, seeds, degree, n_jobs=jobs)
+        actual = pysiglib.sig_backprop(path, signature, seeds, degree, method="horner", n_jobs=jobs)
         torch.testing.assert_close(actual, expected, atol=tolerance, rtol=tolerance)
 
 

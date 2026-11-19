@@ -33,31 +33,25 @@ if __name__ == '__main__':
     signatorytime = []
     pysiglibtime = []
     pysiglibtimeparallel = []
-    pysiglibtimehorner = []
-    pysiglibtimehornerparallel = []
 
     for degree in tqdm(cfg['degree_arr']):
         cfg['degree'] = degree
         iisigtime.append(time_iisig_sig(cfg))
         signatorytime.append(time_signatory_sig(cfg))
-        pysiglibtime.append(time_pysiglib_sig(cfg, False, 1))
-        pysiglibtimeparallel.append(time_pysiglib_sig(cfg, False, -1))
-        pysiglibtimehorner.append(time_pysiglib_sig(cfg, True, 1))
-        pysiglibtimehornerparallel.append(time_pysiglib_sig(cfg, True, -1))
+        pysiglibtime.append(time_pysiglib_sig(cfg, 1))
+        pysiglibtimeparallel.append(time_pysiglib_sig(cfg, -1))
 
     print(iisigtime)
     print(signatorytime)
     print(pysiglibtime)
     print(pysiglibtimeparallel)
-    print(pysiglibtimehorner)
-    print(pysiglibtimehornerparallel)
 
     for scale in ["linear", "log"]:
         plot_times(
             x= cfg['degree_arr'],
-            ys= [iisigtime, pysiglibtime, pysiglibtimehorner],
-            legend = ["iisignature (Direct)", "pySigLib (Direct)", "pySigLib (Horner)"],
-            linestyles=["-", "--", "--"],
+            ys= [iisigtime, pysiglibtime],
+            legend = ["iisignature (Direct)", "pySigLib (Horner)"],
+            linestyles=["-", "--"],
             title = "Truncated Signatures (Serial)",
             xlabel = "Truncation Level",
             ylabel = "Elapsed Time (s)",
@@ -67,9 +61,9 @@ if __name__ == '__main__':
 
         plot_times(
             x=cfg['degree_arr'],
-            ys=[signatorytime, pysiglibtimeparallel, pysiglibtimehornerparallel],
-            legend=["signatory (Horner)", "pySigLib (Direct)", "pySigLib (Horner)"],
-            linestyles=["-", "--", "--"],
+            ys=[signatorytime, pysiglibtimeparallel],
+            legend=["signatory (Horner)", "pySigLib (Horner)"],
+            linestyles=["-", "--"],
             title= "Truncated Signatures (Parallel)",
             xlabel="Truncation Level",
             ylabel="Elapsed Time (s)",

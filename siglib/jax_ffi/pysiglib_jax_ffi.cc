@@ -21,6 +21,7 @@
 #include <utility>
 
 #include "cpsig.h"
+#include "signature_method.h"
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 #include "cusig.h"
@@ -301,10 +302,10 @@ std::string GetCorrectionSpec(
 }
 
 template <typename T>
-using CpuSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, int, const T*, std::uint64_t, std::uint64_t, std::uint64_t) noexcept;
+using CpuSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t) noexcept;
 
 template <typename T>
-using CpuSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int, const T*, std::uint64_t, std::uint64_t, std::uint64_t) noexcept;
+using CpuSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, int, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t) noexcept;
 
 template <typename T>
 struct CpuFns;
@@ -413,10 +414,10 @@ struct CpuFns<double> {
 
 #ifdef PYSIGLIB_JAX_WITH_CUDA
 template <typename T>
-using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t) noexcept;
+using CudaSigFn = int (*)(const T*, T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t, bool) noexcept;
 
 template <typename T>
-using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t) noexcept;
+using CudaSigBackpropFn = int (*)(const T*, T*, const T*, const T*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, bool, bool, T, bool, const T*, std::uint64_t, std::uint64_t, std::uint64_t, int, std::uint64_t, bool) noexcept;
 
 template <typename T>
 struct CudaFns;
@@ -543,8 +544,9 @@ ffi::Error SigCpuImpl(
     bool time_aug,
     bool lead_lag,
     double end_time,
-    bool horner,
     std::int64_t n_jobs,
+    std::int32_t method,
+    std::uint64_t ps_split,
     PathBuffer& path,
     PathBuffer& correction,
     OutBuffer& out,
@@ -580,13 +582,14 @@ ffi::Error SigCpuImpl(
         time_aug,
         lead_lag,
         static_cast<T>(end_time),
-        horner,
         true,
         static_cast<int>(n_jobs),
         correction_ptr,
         corr_spec.len,
         corr_spec.batch_stride,
-        corr_spec.segment_stride
+        corr_spec.segment_stride,
+        method,
+        ps_split
     );
 
     if (err_code != 0) {
@@ -604,6 +607,8 @@ ffi::Error SigBackpropCpuImpl(
     bool lead_lag,
     double end_time,
     std::int64_t n_jobs,
+    std::int32_t method,
+    std::uint64_t ps_split,
     PathBuffer& path,
     SigBuffer& sig,
     CotangentBuffer& cotangent,
@@ -625,7 +630,9 @@ ffi::Error SigBackpropCpuImpl(
     if (sig_len == 0) {
         return InvalidArgument("signature length overflow");
     }
-    if (auto msg = CheckSigOutputShape(sig, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
+    if (method != signature_method::prefix_suffix) {
+        if (auto msg = CheckSigOutputShape(sig, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
+    }
     if (auto msg = CheckSigOutputShape(cotangent, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = CheckGradOutputShape(out, spec); !msg.empty()) return InvalidArgument(msg);
 
@@ -652,7 +659,9 @@ ffi::Error SigBackpropCpuImpl(
         correction_ptr,
         corr_spec.len,
         corr_spec.batch_stride,
-        corr_spec.segment_stride
+        corr_spec.segment_stride,
+        method,
+        ps_split
     );
 
     if (err_code != 0) {
@@ -671,8 +680,10 @@ ffi::Error SigCudaImpl(
     bool time_aug,
     bool lead_lag,
     double end_time,
-    bool horner,
     std::int64_t n_jobs,
+    std::int32_t method,
+    std::uint64_t ps_split,
+    bool fp64_emulation,
     PathBuffer& path,
     PathBuffer& correction,
     OutBuffer& out,
@@ -695,9 +706,7 @@ ffi::Error SigCudaImpl(
     if (auto msg = CheckSigOutputShape(out, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
 
     const auto sync_status = cudaStreamSynchronize(stream);
-    if (sync_status != cudaSuccess) {
-        return InternalError(cudaGetErrorString(sync_status));
-    }
+    if (sync_status != cudaSuccess) return InternalError(cudaGetErrorString(sync_status));
 
     const auto* path_ptr = BufferData<T>(path);
     const auto* correction_ptr = BufferData<T>(correction);
@@ -713,12 +722,14 @@ ffi::Error SigCudaImpl(
         time_aug,
         lead_lag,
         static_cast<T>(end_time),
-        horner,
         true,
         correction_ptr,
         corr_spec.len,
         corr_spec.batch_stride,
-        corr_spec.segment_stride
+        corr_spec.segment_stride,
+        method,
+        ps_split,
+        fp64_emulation
     );
 
     if (err_code != 0) {
@@ -737,6 +748,9 @@ ffi::Error SigBackpropCudaImpl(
     bool lead_lag,
     double end_time,
     std::int64_t n_jobs,
+    std::int32_t method,
+    std::uint64_t ps_split,
+    bool fp64_emulation,
     PathBuffer& path,
     SigBuffer& sig,
     CotangentBuffer& cotangent,
@@ -758,14 +772,14 @@ ffi::Error SigBackpropCudaImpl(
     if (sig_len == 0) {
         return InvalidArgument("signature length overflow");
     }
-    if (auto msg = CheckSigOutputShape(sig, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
+    if (method != signature_method::prefix_suffix) {
+        if (auto msg = CheckSigOutputShape(sig, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
+    }
     if (auto msg = CheckSigOutputShape(cotangent, spec, sig_len); !msg.empty()) return InvalidArgument(msg);
     if (auto msg = CheckGradOutputShape(out, spec); !msg.empty()) return InvalidArgument(msg);
 
     const auto sync_status = cudaStreamSynchronize(stream);
-    if (sync_status != cudaSuccess) {
-        return InternalError(cudaGetErrorString(sync_status));
-    }
+    if (sync_status != cudaSuccess) return InternalError(cudaGetErrorString(sync_status));
 
     const auto* path_ptr = BufferData<T>(path);
     const auto* sig_ptr = BufferData<T>(sig);
@@ -789,7 +803,10 @@ ffi::Error SigBackpropCudaImpl(
         correction_ptr,
         corr_spec.len,
         corr_spec.batch_stride,
-        corr_spec.segment_stride
+        corr_spec.segment_stride,
+        method,
+        ps_split,
+        fp64_emulation
     );
 
     if (err_code != 0) {
@@ -805,8 +822,10 @@ ffi::Error SigCpu(
     bool time_aug,
     bool lead_lag,
     double end_time,
-    bool horner,
     std::int64_t n_jobs,
+    std::int32_t method,
+    std::uint64_t ps_split,
+    bool /*fp64_emulation*/,
     ffi::AnyBuffer path,
     ffi::AnyBuffer correction,
     ffi::Result<ffi::AnyBuffer> out
@@ -825,8 +844,9 @@ ffi::Error SigCpu(
             time_aug,
             lead_lag,
             end_time,
-            horner,
             n_jobs,
+            method,
+            ps_split,
             path,
             correction,
             out,
@@ -841,6 +861,9 @@ ffi::Error SigBackpropCpu(
     bool lead_lag,
     double end_time,
     std::int64_t n_jobs,
+    std::int32_t method,
+    std::uint64_t ps_split,
+    bool /*fp64_emulation*/,
     ffi::AnyBuffer path,
     ffi::AnyBuffer sig,
     ffi::AnyBuffer cotangent,
@@ -860,6 +883,8 @@ ffi::Error SigBackpropCpu(
             lead_lag,
             end_time,
             n_jobs,
+            method,
+            ps_split,
             path,
             sig,
             cotangent,
@@ -877,8 +902,10 @@ ffi::Error SigCuda(
     bool time_aug,
     bool lead_lag,
     double end_time,
-    bool horner,
     std::int64_t n_jobs,
+    std::int32_t method,
+    std::uint64_t ps_split,
+    bool fp64_emulation,
     ffi::AnyBuffer path,
     ffi::AnyBuffer correction,
     ffi::Result<ffi::AnyBuffer> out
@@ -898,8 +925,10 @@ ffi::Error SigCuda(
             time_aug,
             lead_lag,
             end_time,
-            horner,
             n_jobs,
+            method,
+            ps_split,
+            fp64_emulation,
             path,
             correction,
             out,
@@ -915,6 +944,9 @@ ffi::Error SigBackpropCuda(
     bool lead_lag,
     double end_time,
     std::int64_t n_jobs,
+    std::int32_t method,
+    std::uint64_t ps_split,
+    bool fp64_emulation,
     ffi::AnyBuffer path,
     ffi::AnyBuffer sig,
     ffi::AnyBuffer cotangent,
@@ -935,6 +967,9 @@ ffi::Error SigBackpropCuda(
             lead_lag,
             end_time,
             n_jobs,
+            method,
+            ps_split,
+            fp64_emulation,
             path,
             sig,
             cotangent,
@@ -2219,8 +2254,10 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("time_aug")
         .Attr<bool>("lead_lag")
         .Attr<double>("end_time")
-        .Attr<bool>("horner")
         .Attr<std::int64_t>("n_jobs")
+        .Attr<std::int32_t>("method")
+        .Attr<std::uint64_t>("ps_split")
+        .Attr<bool>("fp64_emulation")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
@@ -2235,6 +2272,9 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("lead_lag")
         .Attr<double>("end_time")
         .Attr<std::int64_t>("n_jobs")
+        .Attr<std::int32_t>("method")
+        .Attr<std::uint64_t>("ps_split")
+        .Attr<bool>("fp64_emulation")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
@@ -2252,8 +2292,10 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("time_aug")
         .Attr<bool>("lead_lag")
         .Attr<double>("end_time")
-        .Attr<bool>("horner")
         .Attr<std::int64_t>("n_jobs")
+        .Attr<std::int32_t>("method")
+        .Attr<std::uint64_t>("ps_split")
+        .Attr<bool>("fp64_emulation")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Ret<ffi::AnyBuffer>()
@@ -2269,6 +2311,9 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Attr<bool>("lead_lag")
         .Attr<double>("end_time")
         .Attr<std::int64_t>("n_jobs")
+        .Attr<std::int32_t>("method")
+        .Attr<std::uint64_t>("ps_split")
+        .Attr<bool>("fp64_emulation")
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()
         .Arg<ffi::AnyBuffer>()

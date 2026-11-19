@@ -29,6 +29,7 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 from ..sig import sig as sig_forward
+from ..sig import _check_sig_method
 from ..sig import sig_combine as sig_combine_forward
 from ..transform_path import transform_path as transform_path_forward
 from ..log_sig import sig_to_log_sig as sig_to_log_sig_forward
@@ -243,21 +244,20 @@ def _prepare_correction_jax(correction, path, degree: int, lead_lag: bool):
     _infer_correction_degree(path.shape[-1], degree, length)
     return correction
 
-@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7))
-def _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs):
-    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+@partial(jax.custom_vjp, nondiff_argnums=(2, 3, 4, 5, 6, 7, 8, 9))
+def _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation):
+    return sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation)
 
 
-def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs):
-    sig_ = sig_ffi_call(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+def _sig_fwd(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation):
+    sig_ = _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation)
     return sig_, (path, sig_, correction)
 
 
-def _sig_bwd(degree, time_aug, lead_lag, end_time, horner, n_jobs, residual, cotangent):
-    del horner
+def _sig_bwd(degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation, residual, cotangent):
     path, sig_, correction = residual
-    grad = sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs)
-    return (grad, jnp.zeros_like(correction))
+    grad = sig_backprop_ffi_call(path, sig_, cotangent, correction, degree, time_aug, lead_lag, end_time, n_jobs, method, ps_split, fp64_emulation)
+    return grad, jnp.zeros_like(correction)
 
 
 _sig.defvjp(_sig_fwd, _sig_bwd)
@@ -270,10 +270,12 @@ def sig(
     time_aug: bool = False,
     lead_lag: bool = False,
     end_time: float = 1.0,
-    horner: bool = True,
     scalar_term: bool = False,
     correction=None,
     n_jobs: int = 1,
+    method="auto",
+    ps_split=None,
+    fp64_emulation: bool = False,
 ):
     ensure_registered()
 
@@ -285,11 +287,12 @@ def sig(
     check_type(time_aug, "time_aug", bool)
     check_type(lead_lag, "lead_lag", bool)
     check_type(end_time, "end_time", float)
-    check_type(horner, "horner", bool)
     check_n_jobs(n_jobs)
+    method_code, ps_split = _check_sig_method(method, ps_split, degree)
+    check_type(fp64_emulation, "fp64_emulation", bool)
 
     correction = _prepare_correction_jax(correction, path, degree, lead_lag)
-    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, horner, n_jobs)
+    result = _sig(path, correction, degree, time_aug, lead_lag, end_time, n_jobs, method_code, ps_split, fp64_emulation)
     if not scalar_term:
         result = _strip_scalar(result)
     return result
@@ -572,6 +575,8 @@ def log_sig(
     scalar_term: bool = False,
     correction=None,
     n_jobs: int = 1,
+    sig_method="auto",
+    ps_split=None,
 ):
     ensure_registered()
 
@@ -590,7 +595,8 @@ def log_sig(
 
     dimension = path.shape[-1]
     sig_ = sig(path, degree, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs)
+               end_time=end_time, scalar_term=scalar_term, correction=correction, n_jobs=n_jobs,
+               method=sig_method, ps_split=ps_split)
     return sig_to_log_sig(sig_, dimension, degree, time_aug=time_aug,
                           lead_lag=lead_lag, method=method, n_jobs=n_jobs)
 
@@ -1677,7 +1683,7 @@ def sig_coef(
     degree = max(len(w) for w in words)
 
     sig_ = sig(path, degree, time_aug=time_aug, lead_lag=lead_lag,
-               end_time=end_time, horner=True, scalar_term=True, n_jobs=n_jobs)
+               end_time=end_time, method="horner", scalar_term=True, n_jobs=n_jobs)
 
     idx = []
     for w in words:
