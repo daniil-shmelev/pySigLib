@@ -351,10 +351,6 @@ public:
     SearchResult query_block(const Array& residual, double alpha, const ActiveWords& active, size_t capacity, size_t block) {
         const auto [low, high] = b_.alphabet[block];
         SearchResult result;
-        const size_t rank = std::min<size_t>(16, capacity);
-        auto leader_storage = rank < capacity ? b_.account(multiply(rank, sizeof(double))) : std::shared_ptr<void>{};
-        std::vector<double> leaders;
-        if (rank < capacity) leaders.reserve(rank);
         b_.begin_query(residual);
         std::vector<Probe> stack{{root_, low, high, block}};
         while (!stack.empty()) {
@@ -367,8 +363,7 @@ public:
             }
 
             double threshold = alpha;
-            if (rank < capacity && leaders.size() == rank) threshold = std::max(alpha, leaders.front());
-            else if (rank == capacity && capacity && result.candidates.size() == capacity)
+            if (capacity && result.candidates.size() == capacity)
                 threshold = std::max(alpha, result.candidates.front().score);
             const double estimate = b_.bound(task, residual, threshold) * (1. + 1e-10);
             const double bound = estimate >= 0 && std::isfinite(estimate) ? guard(estimate) : std::numeric_limits<double>::infinity();
@@ -398,17 +393,8 @@ public:
                 else {
                     const double score = finite(std::abs(b_.dot(node->values.data, residual.data, residual.size) / residual.size) * b_.weights[node->word.size()]);
                     result.omitted = std::max(result.omitted, guard(score));
-                    if (score > alpha) {
+                    if (score > alpha)
                         shortlist(result.candidates, capacity, node->word, score, [&] { return node->values; });
-                        if (rank < capacity && (leaders.size() < rank || score > leaders.front())) {
-                            if (leaders.size() == rank) {
-                                std::pop_heap(leaders.begin(), leaders.end(), std::greater<double>{});
-                                leaders.pop_back();
-                            }
-                            leaders.push_back(score);
-                            std::push_heap(leaders.begin(), leaders.end(), std::greater<double>{});
-                        }
-                    }
                 }
             }
             stack.push_back({node, 0, b_.options.dimension, 0});
