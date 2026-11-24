@@ -559,7 +559,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
         if (share && o.dimension < 24) pool_capacity = std::min<size_t>(pool_capacity, degree == 2 ? 96 : 160);
         if (share && log_features && o.dimension < 96 && degree >= 3) pool_capacity = std::min<size_t>(pool_capacity, 128);
         if (pool_capacity < 16) pool_capacity = 0;
-        const size_t capacity = pool_capacity ? std::min<size_t>(32, pool_capacity) : 16;
+        const size_t capacity = 16;
         std::vector<Candidate> pool;
         auto pool_metadata = pool_capacity ? b.account(multiply(pool_capacity, 256 + 32 * degree)) : std::shared_ptr<void>{};
         bool converged = false;
