@@ -372,6 +372,11 @@ class LogSearch final : public FeatureSearch {
         std::unique_ptr<Backend> backend;
         std::unique_ptr<LogSearch> search;
     };
+    double candidate_cutoff(const SearchResult& result, size_t capacity, size_t active, double alpha) const {
+        if (search_study.feedback && capacity)
+            return study_cutoff(result.candidates, search_study.batch(active), alpha);
+        return b_.search_cutoff(capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha);
+    }
     std::vector<TerminalWorker> terminal_workers_;
     LogSearch(Backend& b, const LogSearch& other)
         : b_(b), n_(other.n_), l_(other.l_), d_(other.d_), m_(other.m_),
@@ -448,6 +453,7 @@ class LogSearch final : public FeatureSearch {
                 host.stats = {};
                 host.highest_degree_only = b_.highest_degree_only;
                 host.visit_column = b_.visit_column;
+                host.joint_cutoff = b_.joint_cutoff;
                 host.batch_ratios = b_.batch_ratios;
                 host.batch_signed = b_.batch_signed;
                 search.residual_mass_ = residual_mass_;
@@ -459,6 +465,7 @@ class LogSearch final : public FeatureSearch {
                     search.log_terminal_search(child, child_period, residual, alpha, 0, active, local[t]);
                 }
                 host.visit_column = {};
+                host.joint_cutoff = nullptr;
                 host.batch_ratios.clear();
                 host.batch_signed.clear();
             }
@@ -502,7 +509,7 @@ class LogSearch final : public FeatureSearch {
             if (found != terminal_norms_.end()) norms = &found->second;
             if (norms && !build) {
                 const double bound = norm_score(norms->max_radius);
-                const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
+                const double cutoff = candidate_cutoff(result, capacity, active.size(), alpha);
                 if (bound < cutoff) {
                     result.omitted = std::max(result.omitted, bound); ++b_.stats.terminal_pruned; return;
                 }
@@ -556,7 +563,7 @@ class LogSearch final : public FeatureSearch {
             }
         }
         const auto cutoff_now = [&] {
-            return capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
+            return candidate_cutoff(result, capacity, active.size(), alpha);
         };
         const auto pair_bound = [&](size_t a, size_t c) {
             const double* left = log_fourth_norms_.data + a * sample_groups;
@@ -831,7 +838,7 @@ public:
             const bool parallel = b_.visit_column && b_.options.n_jobs != 1 && m_ - h == 3 && d_ >= 12 && !capacity;
             std::vector<size_t> children;
             for (size_t a = first; a < d_; ++a) {
-                const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
+                const double cutoff = candidate_cutoff(result, capacity, active.size(), alpha);
                 ++b_.stats.block_queries;
                 if (!b_.visit_column && !terminal_norms_.empty() && m_ - h == 3) {
                     Word child = u->word; child.push_back(a);

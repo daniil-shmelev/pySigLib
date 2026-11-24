@@ -19,6 +19,8 @@
 #include <coroutine>
 
 namespace siglasso {
+thread_local std::array<uint64_t, 8> study_counts{};
+void read_study_counts(uint64_t* dst) { std::copy(study_counts.begin(), study_counts.end(), dst); }
 namespace {
 struct TargetFit {
     struct promise_type {
@@ -511,6 +513,7 @@ struct Restricted {
 } // namespace
 
 Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, const std::vector<Word>& initial) {
+    study_counts.fill(0);
     const auto& o = b.options;
     if (o.loss > 3 || !o.samples || !o.length || !o.dimension || !o.degree)
         throw std::invalid_argument("Invalid working-set options");
@@ -537,6 +540,8 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
     };
     std::map<Word, SharedColumn, decltype(&word_less)> live(&word_less);
     const bool share = search->response_batch() > 1;
+    std::vector<const std::vector<Candidate>*> peer_pools;
+    if (share && search_study.peers) peer_pools.resize(o.targets);
     SharedGram shared_gram;
     std::vector<std::vector<std::pair<Word, double>>> coefs(o.targets);
     result.kkt.resize(o.targets); result.gaps.resize(o.targets); result.intercepts.resize(o.targets);
@@ -560,7 +565,21 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
         if (share && o.dimension < 24) pool_capacity = std::min<size_t>(pool_capacity, degree == 2 ? 96 : 160);
         if (share && log_features && o.dimension < 96 && degree >= 3) pool_capacity = std::min<size_t>(pool_capacity, 128);
         if (pool_capacity < 16) pool_capacity = 0;
+        if (search_study.width) {
+            capacity = search_study.width;
+            if (search_study.pool) {
+                pool_capacity = std::min(search_study.pool, b.budget->available() / candidate_bytes / 4);
+                if (degree == 1) pool_capacity = std::min<size_t>(pool_capacity, o.dimension);
+            }
+        }
         std::vector<Candidate> pool;
+        if (!peer_pools.empty()) peer_pools[target] = &pool;
+        const auto proposal_score = [&](const Candidate& c, double mass, double mean) {
+            const auto& packed = *c.proposal;
+            double correlation = 0.;
+            for (size_t i = 0; i < o.samples; ++i) correlation += packed.samples[i] * s.residual.data[i];
+            return std::max(0., std::abs(correlation / o.samples * packed.unit + mean * packed.offset) - mass * packed.error) * b.weights[c.word.size()];
+        };
         auto pool_metadata = pool_capacity ? b.account(multiply(pool_capacity, 256 + 32 * degree)) : std::shared_ptr<void>{};
         bool converged = false;
         double inactive = 0, raw_inactive = 0;
@@ -578,8 +597,11 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
             bool last = !solved || updates >= o.max_iter;
             start = Clock::now();
             SearchResult found;
+            size_t source = 0;
             double separation_seconds = 0.;
             if (pool_capacity && !last && !pool.empty()) {
+                if (search_study.unused)
+                    std::erase_if(pool, [&](const Candidate& c) { return active.count(c.word) != 0; });
                 std::vector<Column> columns;
                 for (const auto& c : pool) if (!c.proposal) columns.push_back({{}, c.values, 0, 0});
                 std::vector<double> scores;
@@ -588,12 +610,8 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
                 const double mean = columns.size() == pool.size() ? 0. : std::accumulate(s.residual.data, s.residual.data + o.samples, 0.) / o.samples;
                 size_t exact = 0;
                 for (auto& c : pool) {
-                    if (c.proposal) {
-                        const auto& packed = *c.proposal;
-                        double correlation = 0.;
-                        for (size_t i = 0; i < o.samples; ++i) correlation += packed.samples[i] * s.residual.data[i];
-                        c.score = std::max(0., std::abs(correlation / o.samples * packed.unit + mean * packed.offset) - mass * packed.error) * b.weights[c.word.size()];
-                    } else c.score = finite(std::abs(scores[exact++]) * b.weights[c.word.size()]);
+                    if (c.proposal) c.score = proposal_score(c, mass, mean);
+                    else c.score = finite(std::abs(scores[exact++]) * b.weights[c.word.size()]);
                     if (!active.count(c.word) && c.score > s.alpha + tau * .9) found.candidates.push_back(c);
                 }
                 std::sort(found.candidates.begin(), found.candidates.end(), better);
@@ -601,6 +619,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
             // Previously fitted targets already own centred, scaled columns. Re-score
             // their sparse support before paying for another full tree traversal.
             if (found.candidates.empty() && !last && pool_capacity && !support.empty()) {
+                source = 1;
                 for (const auto& [word, column] : support) {
                     if (active.count(word)) continue;
                     const double score = std::abs(b.dot(column.values.data, s.residual.data, o.samples)) / o.samples;
@@ -610,6 +629,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
                 std::sort(found.candidates.begin(), found.candidates.end(), better);
             }
             if (share && found.candidates.empty() && !last && pool_capacity) {
+                source = 1;
                 for (auto it = live.begin(); it != live.end();) {
                     const auto& [word, entry] = *it;
                     if (entry.data.expired()) { it = live.erase(it); continue; }
@@ -621,7 +641,27 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
                 }
                 std::sort(found.candidates.begin(), found.candidates.end(), better);
             }
+            if (found.candidates.empty() && !peer_pools.empty() && !last && pool_capacity) {
+                source = 2;
+                const double mass = b.absolute_sum(s.residual) / o.samples;
+                const double mean = std::accumulate(s.residual.data, s.residual.data + o.samples, 0.) / o.samples;
+                std::unordered_set<Word, WordHash> seen;
+                for (const auto* other : peer_pools) if (other && other != &pool) {
+                    const size_t count = std::min(other->size(), search_study.peers);
+                    for (size_t j = 0; j < count; ++j) {
+                        const auto& c = (*other)[j];
+                        if (!c.proposal || active.count(c.word) || !seen.insert(c.word).second) continue;
+                        const double score = proposal_score(c, mass, mean);
+                        if (score > s.alpha + .9 * tau)
+                            retain_candidate(found.candidates, pool_capacity, c.word, score,
+                                [&](Candidate& out) { out.proposal = c.proposal; });
+                    }
+                }
+                std::sort(found.candidates.begin(), found.candidates.end(), better);
+                if (!found.candidates.empty()) pool = found.candidates;
+            }
             if (found.candidates.empty()) {
+                source = 3;
                 pool.clear();
                 AwaitSeparation request{{s.residual, s.alpha, s.alpha + tau * .9, active, pool_capacity ? pool_capacity : capacity, {}}};
                 request.allow_lower_degree = !last;
@@ -672,9 +712,25 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
             size_t groups = 0;
             double previous = 0;
             const double tie = 1e-10 * found.candidates.front().score;
+            if (search_study.trace) {
+                ++study_counts[source];
+                const size_t n = std::min<size_t>(16, found.candidates.size());
+                size_t ties = 0;
+                for (size_t j = 1; j < n; ++j)
+                    ties += found.candidates[j-1].score - found.candidates[j].score <= tie;
+                study_counts[4] += n;
+                study_counts[5] += ties;
+                study_counts[6] += ties > 0;
+                study_counts[7] += found.candidates.size();
+            }
+            const size_t limit = search_study.width ? search_study.batch(active.size()) : 16;
+            const double minimum = s.alpha + search_study.fraction * (found.candidates.front().score - s.alpha);
             for (auto& c : found.candidates) {
-                if (!groups || previous - c.score > tie) {
-                    if (++groups <= 16) {
+                if (search_study.width && (groups == limit || c.score < minimum)) break;
+                const bool distinct = search_study.width ? (!search_study.bins || score_bin(previous) != score_bin(c.score))
+                                                         : previous - c.score > tie;
+                if (!groups || distinct) {
+                    if (++groups <= limit) {
                         const auto known = support.find(c.word);
                         if (known != support.end()) s.add_column(known->second);
                         else {
@@ -698,7 +754,8 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
                 previous = c.score;
             }
             size_t count = found.candidates.size();
-            capacity = count == capacity ? std::min<size_t>(64, (16 * count + groups - 1) / groups) : 16;
+            if (!search_study.width)
+                capacity = count == capacity ? std::min<size_t>(64, (16 * count + groups - 1) / groups) : 16;
             ++updates;
             b.stats.insertion_seconds += elapsed(start);
         }
@@ -731,6 +788,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
         result.objectives[target] = s.value;
         result.converged[target] = converged;
         result.iterations[target] = updates;
+        if (!peer_pools.empty()) peer_pools[target] = nullptr;
     };
     const size_t batch = search->response_batch();
     for (size_t first = 0; first < o.targets; first += batch) {

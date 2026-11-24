@@ -18,6 +18,7 @@
 #include "cp_dispatch.h"
 #include "macros.h"
 
+namespace siglasso { void read_study_counts(uint64_t*); }
 namespace cpsig {
 HWY_EXPORT_T(sig_working_set_f, sig_working_set_<float>);
 HWY_EXPORT_T(sig_working_set_d, sig_working_set_<double>);
@@ -25,6 +26,7 @@ HWY_EXPORT_T(sig_working_set_predict_f, sig_working_set_predict_<float>);
 HWY_EXPORT_T(sig_working_set_predict_d, sig_working_set_predict_<double>);
 
 extern "C" {
+CPSIG_API void study_search_counts(uint64_t* dst) noexcept { siglasso::read_study_counts(dst); }
 CPSIG_API int sig_working_set_version() noexcept {
     return 2;
 }

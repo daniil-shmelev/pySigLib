@@ -19,10 +19,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <list>
@@ -143,10 +145,67 @@ struct Candidate {
 inline bool better(const Candidate& a, const Candidate& b) {
     return a.score == b.score ? word_less(a.word, b.word) : a.score > b.score;
 }
+// Research policies are fixed for the lifetime of a benchmark process.
+struct SearchStudy {
+    size_t width = 0, pool = 0, peers = 0;
+    bool bins = false, first = false, grow = false, feedback = false, unused = false, trace = false;
+    double fraction = 0.;
+    SearchStudy() {
+        const auto setting = [](const char* name) {
+            const char* s = std::getenv(name);
+            return s ? std::atoi(s) : 0;
+        };
+        width = std::clamp(setting("PYSIGLIB_STUDY_WIDTH"), 0, 256);
+        pool = std::clamp(setting("PYSIGLIB_STUDY_POOL"), 0, 4096);
+        bins = setting("PYSIGLIB_STUDY_BINS") != 0;
+        first = setting("PYSIGLIB_STUDY_FIRST") != 0;
+        grow = setting("PYSIGLIB_STUDY_GROW") != 0;
+        feedback = setting("PYSIGLIB_STUDY_FEEDBACK") != 0;
+        unused = setting("PYSIGLIB_STUDY_UNUSED") != 0;
+        peers = std::clamp(setting("PYSIGLIB_STUDY_PEERS"), 0, 256);
+        trace = setting("PYSIGLIB_STUDY_TRACE") != 0;
+        fraction = std::clamp(setting("PYSIGLIB_STUDY_PERCENT"), 0, 100) / 100.;
+    }
+    size_t batch(size_t active) const {
+        return grow ? std::min(width, std::max<size_t>(8, active)) : width;
+    }
+};
+inline const SearchStudy search_study;
+inline uint64_t score_bin(double positive_score) {
+    return std::bit_cast<uint64_t>(positive_score) >> 19;
+}
 // Keep a bounded heap. A borrowed scratch column only needs copying if it qualifies.
 template<class Store>
 inline bool retain_candidate(std::vector<Candidate>& heap, size_t capacity, const Word& word, double score, Store store) {
     if (!capacity) return false;
+    if (search_study.bins || search_study.feedback) {
+        if (heap.size() == capacity && score < heap.front().score) return false;
+        auto it = heap.begin();
+        if (search_study.bins) {
+            const auto key = score_bin(score);
+            it = std::lower_bound(heap.begin(), heap.end(), key,
+                [](const Candidate& c, uint64_t k) { return score_bin(c.score) < k; });
+            if (it != heap.end() && score_bin(it->score) == key) {
+                if (it->score > score || (it->score == score && !word_less(word, it->word))) return false;
+                *it = {word, {}, score, {}};
+                store(*it);
+                return true;
+            }
+        } else {
+            it = std::lower_bound(heap.begin(), heap.end(), score, [&](const Candidate& c, double s) {
+                return c.score < s || (c.score == s && word_less(word, c.word));
+            });
+        }
+        if (heap.size() == capacity) {
+            if (it == heap.begin()) return false;
+            const auto index = it - heap.begin();
+            heap.erase(heap.begin());
+            it = heap.begin() + index - 1;
+        }
+        it = heap.insert(it, {word, {}, score, {}});
+        store(*it);
+        return true;
+    }
     if (heap.size() == capacity) {
         const auto& last = heap.front();
         if (score < last.score || (score == last.score && !word_less(word, last.word))) return false;
@@ -163,6 +222,13 @@ inline bool shortlist(std::vector<Candidate>& heap, size_t capacity, const Word&
     return retain_candidate(heap, capacity, word, score, [&](Candidate& candidate) { candidate.values = values(); });
 }
 struct SearchResult { std::vector<Candidate> candidates; double omitted = 0; };
+inline double study_cutoff(const std::vector<Candidate>& sorted, size_t batch, double penalty) {
+    if (sorted.empty()) return penalty;
+    if (search_study.first && sorted.size() >= batch) return std::numeric_limits<double>::infinity();
+    double cutoff = penalty + search_study.fraction * (sorted.back().score - penalty);
+    if (sorted.size() >= batch) cutoff = std::max(cutoff, sorted[sorted.size() - batch].score);
+    return cutoff;
+}
 
 using ActiveWords = std::unordered_map<Word, size_t, WordHash>;
 // The restricted solvers suspend only at an inactive-coordinate search. The
@@ -208,6 +274,10 @@ public:
     SigLassoStats stats{};
     bool highest_degree_only = false;
     std::function<bool(const Word&, const double*)> visit_column;
+    const std::atomic<double>* joint_cutoff = nullptr;
+    double search_cutoff(double initial) const {
+        return joint_cutoff ? std::max(initial, joint_cutoff->load(std::memory_order_relaxed)) : initial;
+    }
     std::vector<Array> batch_absolute, batch_ratios, batch_signed;
     Array increments, variation, after, alphabet_ratios;
     std::vector<std::pair<size_t, size_t>> alphabet;
@@ -351,7 +421,7 @@ public:
     SearchResult query_block(const Array& residual, double alpha, const ActiveWords& active, size_t capacity, size_t block) {
         const auto [low, high] = b_.alphabet[block];
         SearchResult result;
-        const size_t rank = std::min<size_t>(16, capacity);
+        const size_t rank = search_study.width ? capacity : std::min<size_t>(16, capacity);
         auto leader_storage = rank < capacity ? b_.account(multiply(rank, sizeof(double))) : std::shared_ptr<void>{};
         std::vector<double> leaders;
         if (rank < capacity) leaders.reserve(rank);
@@ -370,6 +440,9 @@ public:
             if (rank < capacity && leaders.size() == rank) threshold = std::max(alpha, leaders.front());
             else if (rank == capacity && capacity && result.candidates.size() == capacity)
                 threshold = std::max(alpha, result.candidates.front().score);
+            if (search_study.feedback && capacity)
+                threshold = study_cutoff(result.candidates, search_study.batch(active.size()), alpha);
+            threshold = b_.search_cutoff(threshold);
             const double estimate = b_.bound(task, residual, threshold) * (1. + 1e-10);
             const double bound = estimate >= 0 && std::isfinite(estimate) ? guard(estimate) : std::numeric_limits<double>::infinity();
             ++b_.stats.block_queries;

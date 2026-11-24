@@ -238,6 +238,10 @@ class LassoCPU final : public siglasso::Backend {
                 if (!capacity || score <= alpha) { ++b_.stats.pruned; continue; }
                 if (siglasso::shortlist(result.candidates, capacity, word, score, [&] { return b_.clone(values); }))
                     ++b_.stats.constructed;
+                if (siglasso::search_study.first && result.candidates.size() >= siglasso::search_study.batch(active.size())) {
+                    result.omitted = std::numeric_limits<double>::infinity();
+                    break;
+                }
             }
             ++b_.stats.search_passes;
             std::sort(result.candidates.begin(), result.candidates.end(), siglasso::better);
@@ -788,6 +792,7 @@ public:
             auto envelope = b_.alloc(n); b_.fill(envelope, 0.);
             const auto clear_batch = [&] {
                 b_.visit_column = {}; b_.batch_absolute.clear(); b_.batch_ratios.clear(); b_.batch_signed.clear();
+                b_.joint_cutoff = nullptr;
             };
             // The dual residual needs the maximum above alpha, even for a word
             // inside the stationarity tolerance that will not enter the fit.
@@ -819,6 +824,17 @@ public:
             for (const auto* q : queries) allowance.push_back((64. * (n + 1) * std::numeric_limits<double>::epsilon()) *
                 cap * (b_.absolute_sum(q->residual) / n) + std::numeric_limits<double>::min());
             std::mutex mutex;
+            std::atomic<double> shared_floor{threshold};
+            std::array<std::atomic<double>, siglasso::max_response_batch> floors{};
+            std::array<size_t, siglasso::max_response_batch> widths{};
+            const bool feedback = siglasso::search_study.feedback;
+            if (feedback) {
+                b_.joint_cutoff = &shared_floor;
+                for (size_t t = 0; t < queries.size(); ++t) {
+                    floors[t].store(queries[t]->penalty);
+                    widths[t] = siglasso::search_study.batch(queries[t]->active.size());
+                }
+            }
             b_.visit_column = [&](const siglasso::Word& word, const double* values) {
                 if (b_.highest_degree_only && word.size() < b_.options.degree) return false;
                 const double factor = b_.weights[word.size()] / n;
@@ -826,18 +842,30 @@ public:
                 bool found = false;
                 for (size_t target = 0; target < queries.size(); ++target) {
                     auto* q = queries[target];
-                    if (std::abs(b_.bound_dot(values, q->residual.data, n)) * factor + allowance[target] < q->penalty ||
+                    const double floor = feedback ? floors[target].load(std::memory_order_relaxed) : q->penalty;
+                    if (std::abs(b_.bound_dot(values, q->residual.data, n)) * factor + allowance[target] < floor ||
                         q->active.count(word)) continue;
                     const double score = siglasso::finite(std::abs(b_.dot(values, q->residual.data, n)) * factor);
                     if (score <= q->penalty) continue;
                     found = true;
                     std::lock_guard lock(mutex);
+                    if (feedback && siglasso::search_study.first && q->allow_lower_degree && q->found.candidates.size() >= widths[target]) continue;
                     q->found.omitted = std::max(q->found.omitted, siglasso::guard(score));
                     if (score <= q->threshold) continue;
-                    siglasso::retain_candidate(q->found.candidates, q->capacity, word, score, [&](siglasso::Candidate& candidate) {
+                    const bool retained = siglasso::retain_candidate(q->found.candidates, q->capacity, word, score, [&](siglasso::Candidate& candidate) {
                         if (!shared_values) shared_values = pack(values, n);
                         candidate.proposal = shared_values;
                     });
+                    if (feedback && retained && q->allow_lower_degree) {
+                        const double next = siglasso::study_cutoff(q->found.candidates, widths[target], q->penalty);
+                        if (next > floors[target].load(std::memory_order_relaxed)) {
+                            floors[target].store(next, std::memory_order_relaxed);
+                            double shared = std::numeric_limits<double>::infinity();
+                            for (size_t t = 0; t < queries.size(); ++t)
+                                shared = std::min(shared, floors[t].load(std::memory_order_relaxed) / queries[t]->penalty);
+                            shared_floor.store(threshold * (shared / (1. + 1e-12)), std::memory_order_relaxed);
+                        }
+                    }
                 }
                 return found;
             };
@@ -926,7 +954,9 @@ public:
         double* products = levels == 2 ? operators + n : nullptr;
         double* tail = levels == 2 ? products + n * l : nullptr;
         const auto cutoff = [&] {
-            return capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
+            if (siglasso::search_study.feedback && capacity)
+                return siglasso::study_cutoff(result.candidates, siglasso::search_study.batch(active.size()), alpha);
+            return search_cutoff(capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha);
         };
         const auto excluded = [&](double estimate, size_t q) {
             const double bound = (estimate + tiny) * (1 + rounding) * weights[k + q] / n + slack;
@@ -1265,11 +1295,13 @@ public:
                 auto& worker = *search_workers_[worker_id];
                 worker.stats = {};
                 worker.proposal_degree = proposal_degree;
+                worker.joint_cutoff = joint_cutoff;
                 worker.highest_degree_only = highest_degree_only;
                 worker.visit_column = visit_column; worker.batch_absolute = batch_absolute; worker.batch_ratios = batch_ratios; worker.batch_signed = batch_signed;
                 for (size_t j = next.fetch_add(1); j < frontier_.size(); j = next.fetch_add(1))
                     found[j] = searches_[worker_id]->query_block(residual, alpha, active, capacity, frontier_[j]);
                 worker.visit_column = {}; worker.batch_absolute.clear(); worker.batch_ratios.clear(); worker.batch_signed.clear();
+                worker.joint_cutoff = nullptr;
             }
         });
         for (size_t j = 0; j < searches_.size(); ++j) {
@@ -1283,6 +1315,12 @@ public:
         for (size_t j = 0; j < found.size(); ++j) {
             result.omitted = std::max(result.omitted, found[j].omitted);
             for (auto& candidate : found[j].candidates) result.candidates.push_back(std::move(candidate));
+        }
+        if (siglasso::search_study.bins) {
+            std::sort(result.candidates.begin(), result.candidates.end(), siglasso::better);
+            result.candidates.erase(std::unique(result.candidates.begin(), result.candidates.end(), [](const auto& a, const auto& b) {
+                return siglasso::score_bin(a.score) == siglasso::score_bin(b.score);
+            }), result.candidates.end());
         }
         if (result.candidates.size() > capacity) {
             std::nth_element(result.candidates.begin(), result.candidates.begin() + capacity, result.candidates.end(), siglasso::better);
