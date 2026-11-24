@@ -335,7 +335,7 @@ class LogSearch final : public FeatureSearch {
             }
         }
     }
-    bool visit_terminal_children(const StatePtr& u, size_t period, const std::vector<size_t>& letters,
+    void visit_terminal_children(const StatePtr& u, size_t period, const std::vector<size_t>& letters,
                                  const Array& residual, double alpha, const ActiveWords& active, SearchResult& result) {
         // Each worker holds a segment operator for one child. Use a smaller
         // concurrency limit on narrow alphabets, where there are fewer siblings.
@@ -385,7 +385,6 @@ class LogSearch final : public FeatureSearch {
             b_.stats.terminal_correlations += stats.terminal_correlations;
             b_.stats.numerical_failures += stats.numerical_failures;
         }
-        return true;
     }
     void log_terminal_search(const StatePtr& u, size_t period, const Array& residual, double alpha, size_t capacity,
         const ActiveWords& active, SearchResult& result) {
@@ -723,42 +722,60 @@ public:
         prediction_path_.clear();
         if (zero_path_ || !l_) return result;
         prepare_residual(residual);
-        std::function<void(const StatePtr&, size_t)> visit_log;
-        visit_log = [&](const StatePtr& u, size_t period) {
-            const size_t h = u->word.size();
-            if (h && period == h) offer(u, residual, alpha, capacity, active, result);
-            if (h == m_) return;
-            const size_t first = h ? u->word[h - period] : 0;
-            if (m_ - h <= 2) {
-                log_terminal_search(u, period, residual, alpha, capacity, active, result); return;
+        const auto child_bound = [&](const StatePtr& stem, size_t a, double cutoff) {
+            if (!b_.visit_column && !terminal_norms_.empty() && m_ - stem->word.size() == 3) {
+                Word child = stem->word; child.push_back(a);
+                if (auto it = terminal_norms_.find(child); it != terminal_norms_.end()) {
+                    const auto& saved = it->second;
+                    const double radius = active.count(child) ? saved.max_radius : std::max(saved.max_radius, saved.prefix_radius);
+                    const double bound = norm_score(radius);
+                    if (bound < cutoff) return bound;
+                }
             }
-            const bool parallel = b_.visit_column && b_.options.n_jobs != 1 && m_ - h == 3 && d_ >= 12 && !capacity;
-            std::vector<size_t> children;
-            for (size_t a = first; a < d_; ++a) {
-                const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
-                ++b_.stats.block_queries;
-                if (!b_.visit_column && !terminal_norms_.empty() && m_ - h == 3) {
-                    Word child = u->word; child.push_back(a);
-                    if (auto it = terminal_norms_.find(child); it != terminal_norms_.end()) {
-                        const auto& saved = it->second;
-                        const double radius = active.count(child) ? saved.max_radius : std::max(saved.max_radius, saved.prefix_radius);
-                        const double bound = norm_score(radius);
+            if (letter_factors_.owner) {
+                const double bound = letter_bound(stem->word, a);
+                if (bound < cutoff) return bound;
+            }
+            return variation_bound(stem, a, residual);
+        };
+        std::function<void(const StatePtr&)> visit_log;
+        visit_log = [&](const StatePtr& u) {
+            const size_t h = u->word.size();
+            if (h) offer(u, residual, alpha, capacity, active, result);
+            if (h == m_ || (h && u->word.front() == d_ - 1)) return;
+            if (m_ - h <= 2) {
+                log_terminal_search(u, h, residual, alpha, capacity, active, result); return;
+            }
+            // A direct child follows the periodic repetition of u, then increases one letter.
+            StatePtr stem = u;
+            const size_t last = h ? m_ - h - 3 : 0;
+            for (size_t q = 0; q <= last; ++q) {
+                const size_t next = h ? u->word[q % h] : 0;
+                const bool terminal = m_ - h - q == 3;
+                const bool parallel = terminal && b_.visit_column && b_.options.n_jobs != 1 && d_ >= 12 && !capacity;
+                std::vector<size_t> letters;
+                const auto descend = [&](size_t a) {
+                    auto child = search_child(stem, a);
+                    // Equality supplies only the shared state for the remaining terminal endings.
+                    if (h && a == next) log_terminal_search(child, h, residual, alpha, capacity, active, result);
+                    else visit_log(child);
+                };
+                for (size_t a = h && !terminal ? next + 1 : next; a < d_; ++a) {
+                    if (!h || a > next) {
+                        const double cutoff = capacity && result.candidates.size() == capacity ? std::max(alpha, result.candidates.front().score) : alpha;
+                        ++b_.stats.block_queries;
+                        const double bound = child_bound(stem, a, cutoff);
                         if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; continue; }
                     }
+                    if (parallel) letters.push_back(a);
+                    else descend(a);
                 }
-                if (letter_factors_.owner) {
-                    const double bound = letter_bound(u->word, a);
-                    if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; continue; }
-                }
-                const double bound = variation_bound(u, a, residual);
-                if (bound < cutoff) { result.omitted = std::max(result.omitted, bound); ++b_.stats.pruned; continue; }
-                if (parallel) children.push_back(a);
-                else visit_log(search_child(u, a), h && a == first ? period : h + 1);
+                if (letters.size() >= 4) visit_terminal_children(stem, h, letters, residual, alpha, active, result);
+                else for (const size_t a : letters) descend(a);
+                if (q < last) stem = log_child(stem, next);
             }
-            if (children.size() >= 4 && visit_terminal_children(u, period, children, residual, alpha, active, result)) return;
-            for (const size_t a : children) visit_log(search_child(u, a), h && a == first ? period : h + 1);
         };
-        visit_log(root_, 0);
+        visit_log(root_);
         std::sort(result.candidates.begin(), result.candidates.end(), better); ++b_.stats.search_passes; return result;
     }
 };
