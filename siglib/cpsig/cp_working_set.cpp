@@ -515,6 +515,7 @@ struct Restricted {
 Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, const std::vector<Word>& initial) {
     study_counts.fill(0);
     const auto& o = b.options;
+    const bool add_all = std::getenv("PYSIGLIB_STUDY_ALL") != nullptr;
     if (o.loss > 3 || !o.samples || !o.length || !o.dimension || !o.degree)
         throw std::invalid_argument("Invalid working-set options");
     const size_t degree = (log_features && o.dimension == 1) ? 1 : o.degree;
@@ -571,6 +572,10 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
                 pool_capacity = std::min(search_study.pool, b.budget->available() / candidate_bytes / 4);
                 if (degree == 1) pool_capacity = std::min<size_t>(pool_capacity, o.dimension);
             }
+        }
+        if (add_all) {
+            capacity = std::numeric_limits<size_t>::max();
+            pool_capacity = 0;
         }
         std::vector<Candidate> pool;
         if (!peer_pools.empty()) peer_pools[target] = &pool;
@@ -664,7 +669,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
                 source = 3;
                 pool.clear();
                 AwaitSeparation request{{s.residual, s.alpha, s.alpha + tau * .9, active, pool_capacity ? pool_capacity : capacity, {}}};
-                request.allow_lower_degree = !last;
+                request.allow_lower_degree = !last && !add_all;
                 const double local_seconds = elapsed(start);
                 found = co_await request;
                 separation_seconds = local_seconds + request.seconds;
@@ -723,7 +728,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
                 study_counts[6] += ties > 0;
                 study_counts[7] += found.candidates.size();
             }
-            const size_t limit = search_study.width ? search_study.batch(active.size()) : 16;
+            const size_t limit = add_all ? capacity : (search_study.width ? search_study.batch(active.size()) : 16);
             const double minimum = s.alpha + search_study.fraction * (found.candidates.front().score - s.alpha);
             for (auto& c : found.candidates) {
                 if (search_study.width && (groups == limit || c.score < minimum)) break;
