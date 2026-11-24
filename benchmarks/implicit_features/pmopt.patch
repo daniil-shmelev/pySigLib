@@ -1,0 +1,25 @@
+--- a/pmopt/CMakeLists.txt
++++ b/pmopt/CMakeLists.txt
+@@ -17,0 +18,3 @@
++if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
++    add_compile_options(-Wno-error=maybe-uninitialized)
++endif()
+--- a/pmopt/src/main.cpp
++++ b/pmopt/src/main.cpp
+@@ -205 +205 @@
+-            Utils::write_frequent(mined, enumerator, path);
++            Utils::write_frequent(mined, enumerator, path.string());
+@@ -409 +409 @@
+-                Utils::write_model(history[i_fold][i_l2][i_l1 % 2], params, path, trial, nol2);
++                Utils::write_model(history[i_fold][i_l2][i_l1 % 2], params, path.string(), trial, nol2);
+@@ -546,0 +547,2 @@
++            else if (key == "--max-skip")
++                SequenceEnumerator::_max_skip = Utils::stoui(argv.at(++i));
+--- a/pmopt/src/enumerators/itemset_enumerator.cpp
++++ b/pmopt/src/enumerators/itemset_enumerator.cpp
+@@ -1,0 +2 @@
++#include <algorithm>
+--- a/pmopt/src/utils/cross_validation.cpp
++++ b/pmopt/src/utils/cross_validation.cpp
+@@ -1,0 +2 @@
++#include <algorithm>
