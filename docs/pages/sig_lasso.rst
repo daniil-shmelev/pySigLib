@@ -36,8 +36,11 @@ The signature search shares prefix polynomials and suffix bounds. For the final
 one or two letters it tests norm bounds before computing signed correlations.
 The tensor-log search applies the same principle to admissible Lyndon words,
 using their prefix period to restrict the possible final letters. Both searches
-retain a bounded shortlist. Prediction evaluates selected words in sample tiles
-and reuses their common prefixes.
+retain a bounded shortlist. At each update the solver admits up to 16 inactive
+words with the strongest available violations. A larger pool lets it rescore
+unused candidates after the restricted fit before searching the tree again.
+Prediction evaluates selected words in sample tiles and reuses their common
+prefixes.
 
 For the default double-precision, multi-response squared-loss search at degrees
 two through four, targets can share a traversal. The signature search builds

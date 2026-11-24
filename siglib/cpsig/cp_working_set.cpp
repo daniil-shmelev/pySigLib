@@ -553,13 +553,13 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
         for (const auto& w : initial)
             s.add(w, search->selected(w)->values);
         uint64_t updates = 0;
-        size_t capacity = 16;
+        constexpr size_t admission_limit = 16;
         const size_t candidate_bytes = multiply(o.samples, sizeof(double)) + 256 + 32 * degree;
         size_t pool_capacity = std::min<size_t>(256, b.budget->available() / candidate_bytes / 4);
-        if (degree == 1) pool_capacity = std::min<size_t>(pool_capacity, std::max<size_t>(16, o.dimension));
+        if (degree == 1) pool_capacity = std::min<size_t>(pool_capacity, std::max<size_t>(admission_limit, o.dimension));
         if (share && o.dimension < 24) pool_capacity = std::min<size_t>(pool_capacity, degree == 2 ? 96 : 160);
         if (share && log_features && o.dimension < 96 && degree >= 3) pool_capacity = std::min<size_t>(pool_capacity, 128);
-        if (pool_capacity < 16) pool_capacity = 0;
+        if (pool_capacity < admission_limit) pool_capacity = 0;
         std::vector<Candidate> pool;
         auto pool_metadata = pool_capacity ? b.account(multiply(pool_capacity, 256 + 32 * degree)) : std::shared_ptr<void>{};
         bool converged = false;
@@ -623,7 +623,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
             }
             if (found.candidates.empty()) {
                 pool.clear();
-                AwaitSeparation request{{s.residual, s.alpha, s.alpha + tau * .9, active, pool_capacity ? pool_capacity : capacity, {}}};
+                AwaitSeparation request{{s.residual, s.alpha, s.alpha + tau * .9, active, pool_capacity ? pool_capacity : admission_limit, {}}};
                 request.allow_lower_degree = !last;
                 const double local_seconds = elapsed(start);
                 found = co_await request;
@@ -635,7 +635,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
             if (last || found.candidates.empty()) {
                 if (o.single_precision) {
                     s.refresh(true);
-                    found = search->query(s.residual, s.alpha + tau * .9, active, capacity);
+                    found = search->query(s.residual, s.alpha + tau * .9, active, admission_limit);
                 }
                 inactive = found.omitted;
                 for (auto& c : found.candidates)
@@ -669,36 +669,28 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
             }
             b.stats.search_seconds += query_seconds;
             start = Clock::now();
-            size_t groups = 0;
-            double previous = 0;
-            const double tie = 1e-10 * found.candidates.front().score;
-            for (auto& c : found.candidates) {
-                if (!groups || previous - c.score > tie) {
-                    if (++groups <= 16) {
-                        const auto known = support.find(c.word);
-                        if (known != support.end()) s.add_column(known->second);
-                        else {
-                            const auto it = live.find(c.word);
-                            Column shared = it == live.end() ? Column{} : it->second.acquire(c.word, o.samples);
-                            if (shared.values.owner) s.add_column(shared);
-                            else {
-                                const size_t before_add = s.terms.size();
-                                s.add(c.word, c.values.owner ? c.values : search->selected(c.word, false)->values);
-                                if (share && before_add < s.terms.size()) {
-                                    const auto& col = s.terms.back().column;
-                                    auto& entry = live[c.word];
-                                    if (!entry.storage) entry.storage = b.account(sizeof(SharedColumn) + 96 + c.word.size() * sizeof(uint64_t));
-                                    entry = {col.values.owner, col.metadata, col.values.data, col.mean, col.norm2, col.id, std::move(entry.storage)};
-                                }
-                            }
+            const size_t count = std::min(admission_limit, found.candidates.size());
+            for (size_t j = 0; j < count; ++j) {
+                auto& c = found.candidates[j];
+                const auto known = support.find(c.word);
+                if (known != support.end()) s.add_column(known->second);
+                else {
+                    const auto it = live.find(c.word);
+                    Column shared = it == live.end() ? Column{} : it->second.acquire(c.word, o.samples);
+                    if (shared.values.owner) s.add_column(shared);
+                    else {
+                        const size_t before_add = s.terms.size();
+                        s.add(c.word, c.values.owner ? c.values : search->selected(c.word, false)->values);
+                        if (share && before_add < s.terms.size()) {
+                            const auto& col = s.terms.back().column;
+                            auto& entry = live[c.word];
+                            if (!entry.storage) entry.storage = b.account(sizeof(SharedColumn) + 96 + c.word.size() * sizeof(uint64_t));
+                            entry = {col.values.owner, col.metadata, col.values.data, col.mean, col.norm2, col.id, std::move(entry.storage)};
                         }
-                        ++b.stats.activations;
                     }
                 }
-                previous = c.score;
+                ++b.stats.activations;
             }
-            size_t count = found.candidates.size();
-            capacity = count == capacity ? std::min<size_t>(64, (16 * count + groups - 1) / groups) : 16;
             ++updates;
             b.stats.insertion_seconds += elapsed(start);
         }
