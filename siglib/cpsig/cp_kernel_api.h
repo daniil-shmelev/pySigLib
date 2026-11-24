@@ -16,7 +16,6 @@
 // Included inside each target namespace.
 
 void log_polynomial_(const double*, const double*, double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
-void log_moments_(const siglasso::LogMomentPlan&, const double*, const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, double*);
 void log_child_integrals_(const double*, const double*, double*, double*, size_t, size_t, size_t, size_t, size_t, size_t);
 void log_terminal_integrals_(const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 void log_terminal_products_(const double*, const double*, const double*, double*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);

@@ -16,8 +16,6 @@
 #pragma once
 #include <cstdint>
 
-namespace siglasso { struct LogMomentPlan; }
-
 struct SigLassoOptions {
     uint64_t samples, length, dimension, degree, targets;
     uint64_t max_iter, memory_limit;

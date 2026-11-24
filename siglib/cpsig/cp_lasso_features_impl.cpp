@@ -62,59 +62,6 @@ void log_polynomial_(const double* parent, const double* increments, double* out
     for (; i < end; ++i) log_polynomial_block(hn::CappedTag<double, 1>(), parent, increments, out, values, n, l, d, degree, levels, letter, i);
 }
 
-template<typename D>
-void log_moments_block(D tag, const siglasso::LogMomentPlan& plan, const double* polynomial, const double* variation,
-    const double* after, double* out, size_t n, size_t l, size_t i, double* scratch) {
-    const size_t h = plan.degree, levels = plan.levels, stride = n * l;
-    double* powers_v = scratch, *powers_r = scratch + levels * 4, *sums = scratch + levels * 8;
-    auto power = hn::Set(tag, 1.);
-    const auto total = hn::Add(hn::LoadU(tag, variation + i), hn::LoadU(tag, after + i));
-    for (size_t k = 0; k < levels; ++k) {
-        hn::StoreU(power, tag, powers_v + k * 4); power = hn::Mul(power, total);
-    }
-    for (size_t j = 0; j < l; ++j) {
-        std::fill_n(sums, levels * 4, 0.);
-        for (size_t g = 0; g < plan.nodes.size(); ++g) {
-            const auto r = hn::Add(hn::LoadU(tag, after + j * n + i),
-                hn::Mul(hn::Set(tag, 1 - plan.nodes[g]), hn::LoadU(tag, variation + j * n + i)));
-            power = hn::Set(tag, 1.);
-            for (size_t k = 0; k < levels; ++k) {
-                hn::StoreU(hn::Div(power, hn::Set(tag, plan.factorials[k])), tag, powers_r + k * 4); power = hn::Mul(power, r);
-            }
-            for (size_t p = 0; p < levels; ++p) {
-                auto value = hn::Zero(tag);
-                for (size_t k = 0; k <= h; ++k) {
-                    const auto magnitude = polynomial ? hn::Abs(hn::LoadU(tag, polynomial + (p * (h + 1) + k) * stride + j * n + i))
-                        : hn::Set(tag, 1. / (p + 1));
-                    value = hn::Add(value, hn::Mul(magnitude, hn::Set(tag, plan.basis[g * (h + 1) + k])));
-                }
-                value = hn::Mul(value, hn::Set(tag, plan.weights[g]));
-                for (size_t q = p + 1; q <= levels; ++q) {
-                    auto weight = hn::Zero(tag);
-                    for (size_t k = p; k < q; ++k)
-                        weight = hn::Add(weight, hn::Mul(hn::Mul(hn::LoadU(tag, powers_v + k * 4),
-                            hn::LoadU(tag, powers_r + (q - 1 - k) * 4)), hn::Set(tag, plan.coefficients[p * levels + k])));
-                    hn::StoreU(hn::Add(hn::LoadU(tag, sums + (q - 1) * 4), hn::Mul(weight, value)), tag, sums + (q - 1) * 4);
-                }
-            }
-        }
-        for (size_t q = 1; q <= levels; ++q) {
-            auto value = hn::Mul(hn::LoadU(tag, sums + (q - 1) * 4), hn::Set(tag, plan.factorials[h + q]));
-            value = hn::IfThenElse(hn::IsFinite(value), value, hn::Set(tag, std::numeric_limits<double>::infinity()));
-            hn::StoreU(value, tag, out + (q - 1) * stride + j * n + i);
-        }
-    }
-}
-
-void log_moments_(const siglasso::LogMomentPlan& plan, const double* polynomial, const double* variation, const double* after,
-    double* out, uint64_t n, uint64_t l, uint64_t begin, uint64_t end, double* scratch) {
-    const hn::CappedTag<double, 4> tag;
-    const size_t lanes = hn::Lanes(tag);
-    size_t i = begin;
-    for (; i + lanes <= end; i += lanes) log_moments_block(tag, plan, polynomial, variation, after, out, n, l, i, scratch);
-    for (; i < end; ++i) log_moments_block(hn::CappedTag<double, 1>(), plan, polynomial, variation, after, out, n, l, i, scratch);
-}
-
 // Integrate a child directly into the three moments used by the final two
 // letters. Its Bernstein control points only live in registers. The next
 // log-series level contributes a constant shift on every segment.

@@ -17,10 +17,5 @@
 #include "sig_lasso_core.h"
 
 namespace siglasso {
-struct LogMomentPlan {
-    size_t degree, levels;
-    std::vector<double> nodes, weights, basis, coefficients, factorials;
-    std::shared_ptr<void> metadata;
-};
 std::unique_ptr<FeatureSearch> make_log_search(Backend&, size_t degree = 0);
 }
