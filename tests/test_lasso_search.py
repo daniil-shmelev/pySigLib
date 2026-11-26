@@ -58,6 +58,78 @@ def _dense_log_design(paths, degree):
     return words, dense[:, indices] * [factorial(len(w)) for w in words]
 
 
+@pytest.mark.parametrize("degree,dimension,targets,jobs", [(2, 3, 2, 2), (4, 3, 2, 2), (6, 2, 1, 1)])
+def test_signature_factor_tree_against_complete_design(degree, dimension, targets, jobs):
+    rng = np.random.default_rng(9325)
+    paths = rng.normal(size=(180, 10, dimension)).cumsum(axis=1)
+    paths[0] = 0.
+    variation = abs(np.diff(paths, axis=1)).max(axis=2).sum(axis=1)
+    normalized = paths / np.where(variation, variation, 1.)[:, None, None]
+    words = [w for k in range(1, degree + 1) for w in product(range(dimension), repeat=k)]
+    design = pysiglib.sig(normalized, degree) * [factorial(len(w)) for w in words]
+    # Prescribe one unique violating column in each search, including words
+    # that tie with a repeated Lyndon factor up to their final letter.
+    centered = design - design.mean(axis=0)
+    dual, _, rank, _ = np.linalg.lstsq(centered.T, np.eye(len(words)), rcond=None)
+    assert rank == len(words)
+    for first in range(0, len(words), targets):
+        cols = list(range(first, min(first + targets, len(words))))
+        y = np.ascontiguousarray(dual[:, cols] * len(paths) + centered[:, cols])
+        model = pysiglib.sig_lasso(paths, y, degree, 1., tree_order='lyndon', n_jobs=jobs, tol=1e-8)
+        assert model['words'] == [words[c] for c in cols]
+        np.testing.assert_allclose(model['signatures'], design[:, cols], atol=1e-13)
+        np.testing.assert_allclose(model['coef'], np.eye(len(cols)), atol=3e-7)
+        assert np.all(model['converged'])
+        assert model['stats']['full_transform_calls'] == 0
+        np.testing.assert_allclose(pysiglib.sig_lasso_predict(paths, model),
+                                   design[:, cols] @ model['coef'] + model['intercept'], atol=1e-12)
+
+
+@pytest.mark.parametrize("order,bound", [("prefix", "projected"), ("lyndon", "norm"), ("lyndon", "projected")])
+@pytest.mark.parametrize("loss", ["squared", "logistic", "poisson", "huber"])
+def test_signature_tree_order_dense_kkt(order, bound, loss):
+    rng = np.random.default_rng(213)
+    paths = rng.normal(size=(64, 8, 3)).cumsum(axis=1).astype(np.float32)
+    paths[:8] = paths[:8, -1:, :] * np.linspace(0, 1, 8)[None, :, None]
+    paths[8:16, -1] = paths[8:16, 0]
+    paths[16] = 0.
+    y = rng.normal(size=64).astype(np.float32)
+    if loss == "logistic":
+        y = (y > 0).astype(np.float32)
+    elif loss == "poisson":
+        y = rng.poisson(1.5, len(y)).astype(np.float32)
+    alpha = .015
+    model = pysiglib.sig_lasso(paths, y, 4, alpha, loss=loss, tree_order=order, terminal_bound=bound,
+                               memory_limit=4 << 20, tol=1e-6, initial_words=[(2, 2, 0)])
+    x = paths.astype(np.float64)
+    v = abs(np.diff(x, axis=1)).max(axis=2).sum(axis=1)
+    words = [w for k in range(1, 5) for w in product(range(3), repeat=k)]
+    design = pysiglib.sig(x / np.where(v, v, 1.)[:, None, None], 4) * [factorial(len(w)) for w in words]
+    cols = [words.index(w) for w in model["words"]]
+    eta = design[:, cols] @ model["coef"] + model["intercept"]
+    if loss == "logistic":
+        residual = y - 1 / (1 + np.exp(-eta))
+    elif loss == "poisson":
+        residual = y - np.exp(eta)
+    elif loss == "huber":
+        residual = np.clip(y - eta, -1., 1.)
+    else:
+        residual = y - eta
+    assert model["converged"]
+    cor = design.T @ residual / len(y)
+    assert np.max(abs(cor)) <= alpha + 2e-6
+    np.testing.assert_allclose(cor[cols], alpha * np.sign(model["coef"]), atol=2e-6)
+    assert abs(residual.mean()) <= 2e-6
+
+
+def test_signature_tree_arguments():
+    x = np.ones((3, 2, 1))
+    with pytest.raises(ValueError, match="tree_order"):
+        pysiglib.sig_lasso(x, x[:, 0, 0], 2, .1, tree_order="log")
+    with pytest.raises(ValueError, match="terminal_bound"):
+        pysiglib.sig_lasso(x, x[:, 0, 0], 2, .1, terminal_bound="exact")
+
+
 @pytest.mark.parametrize("dtype,jobs,limit,tol", [(np.float64, 2, None, 1e-8), (np.float32, 1, 4 << 20, 1e-6)])
 def test_log_variation_search_against_dense_tensor_log(dtype, jobs, limit, tol):
     rng = np.random.default_rng(7201)

@@ -29,6 +29,8 @@ from .transform_path import transform_path
 
 
 _FEATURE_TYPES = {'sig': 0, 'log': 1}
+_SIGNATURE_SEARCH = {('prefix', 'norm'): 0, ('lyndon', 'projected'): 2,
+                     ('prefix', 'projected'): 3, ('lyndon', 'norm'): 4}
 
 
 def _pack_words(words):
@@ -66,7 +68,7 @@ def _check_status(status, device):
 
 def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
               tol=None, max_iter=1000, initial_words=(), memory_limit=None, time_aug=False,
-              lead_lag=False, end_time=1.0, n_jobs=1):
+              lead_lag=False, end_time=1.0, n_jobs=1, tree_order="prefix", terminal_bound=None):
     r"""Fit a sparse linear predictor on normalized signature coordinates on CPU.
 
     Minimise the mean loss at ``intercept + X @ coef`` plus ``alpha * ||coef||_1``.
@@ -90,6 +92,12 @@ def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
     Every fit searches the feature tree by branch and bound. Multiple squared-loss
     responses can share this traversal and receive individual certificates.
     Coordinates are evaluated without constructing a full truncated signature.
+    ``tree_order="prefix"`` searches by successive letters. ``"lyndon"`` groups
+    ordinary signature words by their nonincreasing Lyndon factorisation.
+    Both orders fit the same dictionary and objective.
+    ``terminal_bound="projected"`` additionally screens groups using a signed
+    time projection. The default is ``"norm"`` for the prefix order and
+    ``"projected"`` for the Lyndon order.
     ``memory_limit`` bounds owned native workspace and output
     in bytes. ``n_jobs`` controls CPU workers. ``max_iter`` limits working-set
     updates per response. ``tol`` defaults to 1e-5 for float32 or 1e-8 for
@@ -104,7 +112,14 @@ def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
     gap and is None for other losses. Prediction returns the linear predictor.
     The result is independent of any autograd graph.
     """
-    return _fit_lasso(path, y, degree, alpha, 'sig', loss=loss, fit_intercept=fit_intercept, tol=tol,
+    if not isinstance(tree_order, str) or tree_order not in ("prefix", "lyndon"):
+        raise ValueError("tree_order must be 'prefix' or 'lyndon'")
+    if terminal_bound is None:
+        terminal_bound = 'projected' if tree_order == 'lyndon' else 'norm'
+    if not isinstance(terminal_bound, str) or terminal_bound not in ("norm", "projected"):
+        raise ValueError("terminal_bound must be 'norm' or 'projected'")
+    return _fit_lasso(path, y, degree, alpha, 'sig', tree_order=tree_order, terminal_bound=terminal_bound,
+                      loss=loss, fit_intercept=fit_intercept, tol=tol,
                       max_iter=max_iter, initial_words=initial_words, memory_limit=memory_limit,
                       time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
@@ -128,7 +143,7 @@ def log_sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
 
 
 def _fit_lasso(path, y, degree, alpha, feature_type, *, loss, fit_intercept, tol, max_iter,
-               initial_words, memory_limit, time_aug, lead_lag, end_time, n_jobs):
+               initial_words, memory_limit, time_aug, lead_lag, end_time, n_jobs, tree_order=None, terminal_bound=None):
     for name, value in (('degree', degree), ('max_iter', max_iter)):
         if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or not 0 < value < 2**31:
             raise ValueError(name + ' must be a positive integer below 2**31')
@@ -227,8 +242,10 @@ def _fit_lasso(path, y, degree, alpha, feature_type, *, loss, fit_intercept, tol
                 allocation_error = error
                 return 1
 
+        native_mode = _SIGNATURE_SEARCH[tree_order, terminal_bound] if feature_type == 'sig' else _FEATURE_TYPES[feature_type]
         args = [data.data_ptr, _pointer(response, scalar), _pointer(alphas, c_double),
-                _pointer(letters, c_uint64), _pointer(offsets, c_uint64), len(words), _FEATURE_TYPES[feature_type],
+                _pointer(letters, c_uint64), _pointer(offsets, c_uint64), len(words),
+                native_mode,
                 byref(options), allocate_output, None]
         status = CPSIG_WORKING_SET[data.dtype](*args)
         if allocation_error is not None:
@@ -244,6 +261,8 @@ def _fit_lasso(path, y, degree, alpha, feature_type, *, loss, fit_intercept, tol
             raise RuntimeError('The CPU library did not use branch and bound')
         stats['engine'] = 'tree'
         if feature_type == 'sig':
+            stats['tree_order'] = tree_order
+            stats['terminal_bound'] = terminal_bound
             stats['dictionary_size'] = sum(data.dimension**k for k in range(1, degree + 1))
         else:
             primitive = [0] * (degree + 1)

@@ -250,6 +250,9 @@ class LassoCPU final : public siglasso::Backend {
     LassoCPU* channel_source_ = nullptr;
     siglasso::Array terminal_sample_norms_, panel_scratch_;
     siglasso::Array channel_group_norms_;
+    siglasso::Array projection_boxes_, projection_workspace_;
+    static constexpr size_t projection_panels = 4;
+    static constexpr size_t box_planes = 2 * projection_panels + 1;
     static constexpr size_t sample_groups = 8;
     std::array<double, 2> terminal_caps_{};
     // Independent SIMD accumulators shorten the dependency chain. Terminal
@@ -320,6 +323,7 @@ public:
         tt_suffix_ = source.tt_suffix_;
         terminal_only_ = source.terminal_only_;
         channel_group_norms_ = source.channel_group_norms_;
+        projection_boxes_ = source.projection_boxes_;
         terminal_sample_norms_ = source.terminal_sample_norms_;
         compact_panels_ = source.compact_panels_;
     }
@@ -531,6 +535,8 @@ public:
         if (log_features_ || options.selected_only) return;
         prepare_alphabet();
         terminal_sample_norms_ = alloc(siglasso::multiply(n, alphabet.size()));
+        if (options.projected_bound && l)
+            projection_boxes_ = alloc(siglasso::multiply(box_planes * alphabet.size(), n));
         const double error = siglasso::terminal_roundoff(0, n * l, l);
         batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t a = 0; a < d; ++a) {
@@ -543,6 +549,31 @@ public:
                 }
                 for (size_t i = begin; i < end; ++i)
                     norms[i] = std::sqrt(norms[i] + 32. * (l + 1) * std::numeric_limits<double>::min()) * (1 + error);
+                if (projection_boxes_.owner) {
+                    auto* box = projection_boxes_.data + box_planes * a * n;
+                    auto* remainder = box + (box_planes - 1) * n;
+                    std::fill(remainder + begin, remainder + end, 0.);
+                    for (size_t p = 0; p < projection_panels; ++p) {
+                        const auto first = p * l / projection_panels, stop = (p + 1) * l / projection_panels;
+                        auto* mean = box + 2 * p * n;
+                        std::fill(mean + begin, mean + end, 0.);
+                        std::fill(mean + n + begin, mean + n + end, 0.);
+                        for (size_t j = first; j < stop; ++j) {
+                            const auto* dx = steps.values.data + j * steps.dimension * n;
+                            for (size_t i = begin; i < end; ++i) mean[i] += dx[i];
+                        }
+                        for (size_t i = begin; i < end; ++i) mean[i] /= std::max<size_t>(1, stop - first);
+                        for (size_t j = first; j < stop; ++j) {
+                            const auto* dx = steps.values.data + j * steps.dimension * n;
+                            for (size_t i = begin; i < end; ++i) {
+                                const auto delta = dx[i] - mean[i];
+                                remainder[i] += delta * delta;
+                            }
+                        }
+                    }
+                    for (size_t i = begin; i < end; ++i)
+                        remainder[i] = std::sqrt(remainder[i] + std::numeric_limits<double>::min()) * (1 + error);
+                }
             }
             for (size_t block = alphabet.size(); block-- > 0;) {
                 const auto [low, high] = alphabet[block];
@@ -551,9 +582,26 @@ public:
                 const size_t dst = norm_index(block), left = norm_index(block + 1), other = norm_index(right);
                 for (size_t i = begin; i < end; ++i) terminal_sample_norms_.data[dst * n + i] = std::max(
                     terminal_sample_norms_.data[left * n + i], terminal_sample_norms_.data[other * n + i]);
+                if (projection_boxes_.owner) {
+                    const auto* x = projection_boxes_.data + box_planes * left * n;
+                    const auto* y = projection_boxes_.data + box_planes * other * n;
+                    auto* box = projection_boxes_.data + box_planes * dst * n;
+                    for (size_t p = 0; p < projection_panels; ++p) for (size_t i = begin; i < end; ++i) {
+                        const size_t j = 2 * p * n + i;
+                        const double lower = std::min(x[j] - x[n + j], y[j] - y[n + j]);
+                        const double upper = std::max(x[j] + x[n + j], y[j] + y[n + j]);
+                        box[j] = std::midpoint(lower, upper);
+                        box[n + j] = std::max(upper - box[j], box[j] - lower);
+                    }
+                    for (size_t i = begin; i < end; ++i) {
+                        const size_t j = (box_planes - 1) * n + i;
+                        box[j] = std::max(x[j], y[j]);
+                    }
+                }
             }
         });
-        channel_group_norms_ = alloc(d * sample_groups);
+        const bool grouped = options.factor_tree || options.projected_bound;
+        channel_group_norms_ = alloc((grouped ? alphabet.size() : d) * sample_groups);
         for (size_t a = 0; a < d; ++a) for (size_t g = 0; g < sample_groups; ++g) {
             double sum = 0;
             for (size_t i = n * g / sample_groups; i < n * (g + 1) / sample_groups; ++i) {
@@ -561,6 +609,14 @@ public:
                 sum += value * value;
             }
             channel_group_norms_.data[a * sample_groups + g] = std::sqrt(sum + 32. * (n + 1) * std::numeric_limits<double>::min());
+        }
+        if (grouped) for (size_t block = alphabet.size(); block-- > 0;) {
+            const auto [lo, hi] = alphabet[block];
+            if (hi - lo == 1) continue;
+            auto* out = channel_group_norms_.data + norm_index(block) * sample_groups;
+            const auto* left = channel_group_norms_.data + norm_index(block + 1) * sample_groups;
+            const auto* right = channel_group_norms_.data + norm_index(block + 2 * ((lo + hi) / 2 - lo)) * sample_groups;
+            for (size_t g = 0; g < sample_groups; ++g) out[g] = std::max(left[g], right[g]);
         }
         if (terminal_only_) return;
         if (responses_.owner && joint_search_enabled() && l) {
@@ -905,6 +961,75 @@ public:
             terminal_caps_[1] += r * std::pow(v, static_cast<double>(m));
         }
     }
+    size_t search_degree() const override { return proposal_degree ? proposal_degree : options.degree; }
+    void project_terminal(const double* factors, const siglasso::Array& residual, double rounding, double tiny) {
+        const size_t n = options.samples, l = options.length - 1, targets = std::max<size_t>(1, batch_signed.size());
+        constexpr size_t stride = projection_panels + 1;
+        const size_t size = stride * (1 + targets) * n;
+        if (projection_workspace_.size < size) projection_workspace_ = alloc(size);
+        auto* sum = projection_workspace_.data;
+        auto* perpendicular = sum + projection_panels * n;
+        std::fill_n(sum, stride * n, 0.);
+        std::array<double, projection_panels> inverse_length;
+        for (size_t p = 0; p < projection_panels; ++p) {
+            const size_t first = p * l / projection_panels, end = (p + 1) * l / projection_panels;
+            inverse_length[p] = end > first ? 1. / (end - first) : 0.;
+            auto* part = sum + p * n;
+            for (size_t j = first; j < end; ++j) {
+                const auto* h = factors + j * n;
+                for (size_t i = 0; i < n; ++i) { part[i] += h[i]; perpendicular[i] += h[i] * h[i]; }
+            }
+        }
+        for (size_t i = 0; i < n; ++i) {
+            const double squared = perpendicular[i];
+            double project = 0.;
+            for (size_t p = 0; p < projection_panels; ++p)
+                project += sum[p * n + i] * sum[p * n + i] * inverse_length[p];
+            perpendicular[i] = std::sqrt(std::max(0., squared - project) + rounding * squared + tiny);
+        }
+        for (size_t t = 0; t < targets; ++t) {
+            const auto* r = batch_signed.empty() ? residual.data : batch_signed[t].data;
+            auto* v = sum + stride * (1 + t) * n;
+            for (size_t p = 0; p < projection_panels; ++p)
+                for (size_t i = 0; i < n; ++i) v[p * n + i] = r[i] * sum[p * n + i];
+            for (size_t i = 0; i < n; ++i) v[projection_panels * n + i] = std::abs(r[i]) * perpendicular[i];
+        }
+    }
+    // The group intervals enclose the signed projection on panel-constant
+    // vectors. Cauchy-Schwarz bounds the orthogonal remainder on each path.
+    double projected_radius(size_t index, size_t target) {
+        const size_t n = options.samples;
+        const double* box = projection_boxes_.data + box_planes * index * n;
+        const double* v = projection_workspace_.data + (projection_panels + 1) * (1 + target) * n;
+        const auto* remainder = box + (box_planes - 1) * n;
+        const auto* perpendicular = v + projection_panels * n;
+        if (index < options.dimension) {
+            double center = 0.;
+            for (size_t p = 0; p < projection_panels; ++p) center += bound_dot(v + p * n, box + 2 * p * n, n);
+            return std::abs(center) + bound_dot(perpendicular, remainder, n);
+        }
+        const hn::ScalableTag<double> tag;
+        const size_t lanes = hn::Lanes(tag);
+        auto signed_sum = hn::Zero(tag), widths = hn::Zero(tag);
+        size_t i = 0;
+        for (; i + lanes <= n; i += lanes) {
+            for (size_t p = 0; p < projection_panels; ++p) {
+                const auto s = hn::LoadU(tag, v + p * n + i);
+                signed_sum = hn::MulAdd(s, hn::LoadU(tag, box + 2 * p * n + i), signed_sum);
+                widths = hn::MulAdd(hn::Abs(s), hn::LoadU(tag, box + (2 * p + 1) * n + i), widths);
+            }
+            widths = hn::MulAdd(hn::LoadU(tag, perpendicular + i), hn::LoadU(tag, remainder + i), widths);
+        }
+        double center = hn::ReduceSum(tag, signed_sum), width = hn::ReduceSum(tag, widths);
+        for (; i < n; ++i) {
+            for (size_t p = 0; p < projection_panels; ++p) {
+                center += v[p * n + i] * box[2 * p * n + i];
+                width += std::abs(v[p * n + i]) * box[(2 * p + 1) * n + i];
+            }
+            width += perpendicular[i] * remainder[i];
+        }
+        return std::abs(center) + width;
+    }
     void terminal_query(const siglasso::Probe& task, const siglasso::Array& residual, double alpha,
         const siglasso::ActiveWords& active,
         size_t capacity, siglasso::SearchResult& result) override {
@@ -1000,15 +1125,68 @@ public:
             return excluded(maximum, q);
         };
         siglasso::Word word = node.word; word.push_back(0);
+        const auto& floor = task.range.floor;
+        const auto& ceiling = task.range.ceiling;
+        const size_t floor_a = floor.length ? floor.letter(node.word) : 0;
+        const size_t ceiling_a = ceiling.length ? ceiling.letter(node.word) : d;
+        const size_t floor_b = floor.length ? floor.letter(node.word, 1) : 0;
+        const size_t ceiling_b = ceiling.length ? ceiling.letter(node.word, 1) : d;
+        const auto cut = options.factor_tree && k && !floor.length ? siglasso::last_factor(node.word) : siglasso::PeriodicWord{};
+        // Test a dyadic alphabet block using the largest channel norm in each
+        // sample group. Leaves share the exact signed contraction below.
+        const auto screened_channels = [&](size_t first, size_t end, size_t block, const auto& group,
+                const auto& separate, size_t q, auto&& refine, auto&& leaf) {
+            if ((!options.factor_tree && !options.projected_bound) || end <= first + 3) {
+                for (size_t a = first; a < end; ++a) leaf(a);
+                return;
+            }
+            while (block < alphabet.size()) {
+                const auto [lo, hi] = alphabet[block];
+                if (lo >= end) break;
+                const size_t span = hi - lo;
+                if (hi <= first) { block += 2 * span - 1; continue; }
+                if (span >= 4) {
+                    const auto index = norm_index(block);
+                    if (excluded(coarse(group, index), q) || separated(separate, index, q) || refine(index)) {
+                        block += 2 * span - 1; continue;
+                    }
+                }
+                if (span <= 3) {
+                    for (size_t a = std::max(first, lo); a < std::min(end, hi); ++a) leaf(a);
+                    block += 2 * span - 1;
+                } else ++block;
+            }
+        };
         const auto visit = [&](size_t q, const double* factors) {
+            const bool pair = q == 2;
+            size_t first = task.low, end = task.high;
+            if (floor.length && (!pair || word[k + 1] <= floor_b)) first = std::max(first, floor_a + 1);
+            if (ceiling.length && pair && word[k + 1] > ceiling_b) end = std::min(end, ceiling_a);
+            if (first >= end) return;
             if (excluded(bound_dot(norms, first_norm, n), q)) return;
             const auto group = grouped_norm(norms);
             const auto separate = response_groups(norms);
-            for (size_t a = task.low; a < task.high; ++a) {
+            bool projected = false;
+            const auto projection = [&](size_t index) {
+                if (!projection_boxes_.owner) return false;
+                const size_t targets = std::max<size_t>(1, batch_signed.size());
+                if (!projected) {
+                    project_terminal(factors, residual, rounding, tiny);
+                    projected = true;
+                }
+                double maximum = 0.;
+                for (size_t t = 0; t < targets; ++t) {
+                    const double value = projected_radius(index, t);
+                    if (!std::isfinite(value) || !((value + tiny) * (1 + rounding) * weights[k + q] / n + slack < cutoff())) return false;
+                    maximum = std::max(maximum, value);
+                }
+                return excluded(maximum, q);
+            };
+            const auto leaf = [&](size_t a) {
                 word[k] = a;
                 if (excluded(coarse(group, a), q) || separated(separate, a, q) || active.count(word) ||
                     excluded(bound_dot(norms, terminal_sample_norms_.data + a * n, n), q) ||
-                    individual(norms, terminal_sample_norms_.data + a * n, q)) continue;
+                    individual(norms, terminal_sample_norms_.data + a * n, q) || projection(a)) return;
                 const auto dx = channel(a);
                 std::fill_n(values, n, 0.);
                 for (size_t j = 0; j < l; ++j) {
@@ -1016,23 +1194,32 @@ public:
                     for (size_t i = 0; i < n; ++i) values[i] += step[i] * factors[j * n + i];
                 }
                 ++stats.terminal_correlations; ++stats.evaluated;
-                if (visit_column) { visit_column(word, values); continue; }
+                if (visit_column) { visit_column(word, values); return; }
                 const double score = siglasso::finite(std::abs(dot(values, residual.data, n)) / n * weights[k + q]);
                 result.omitted = std::max(result.omitted, siglasso::guard(score));
                 if (score > alpha && siglasso::shortlist(result.candidates, capacity, word, score, [&] {
                     auto column = alloc(n); copy(values, column.data, n); return column;
                 })) ++stats.constructed;
-            }
+            };
+            if (cut.length) {
+                const auto split = std::clamp<size_t>(cut.letter(node.word) +
+                    (!pair || word[k + 1] <= cut.letter(node.word, 1)), first, end);
+                if (!cut.start) screened_channels(split, end, task.block, group, separate, q, projection, leaf);
+                screened_channels(first, split, task.block, group, separate, q, projection, leaf);
+                if (cut.start) screened_channels(split, end, task.block, group, separate, q, projection, leaf);
+            } else screened_channels(first, end, task.block, group, separate, q, projection, leaf);
         };
         if (!highest_degree_only || !visit_column || k + 1 == options.degree) visit(1, node.integrals.data);
         if (levels == 2) {
             word.push_back(0);
             const auto group = grouped_norm(operators);
             const auto separate = response_groups(operators);
-            for (size_t b = 0; b < d; ++b) {
-                if (excluded(coarse(group, b), 2) || separated(separate, b, 2)) continue;
+            const size_t first_b = floor.length && task.high == floor_a + 1 ? floor_b + 1 : 0;
+            const size_t end_b = ceiling.length && task.low == ceiling_a ? ceiling_b + 1 : d;
+            screened_channels(first_b, end_b, 0, group, separate, 2, [](size_t) { return false; }, [&](size_t b) {
+                if (excluded(coarse(group, b), 2) || separated(separate, b, 2)) return;
                 if (excluded(bound_dot(operators, terminal_sample_norms_.data + b * n, n), 2) ||
-                    individual(operators, terminal_sample_norms_.data + b * n, 2)) continue;
+                    individual(operators, terminal_sample_norms_.data + b * n, 2)) return;
                 word[k + 1] = b;
                 const auto dx = channel(b);
                 std::fill_n(tail, n, 0.); std::fill_n(norms, n, 0.);
@@ -1048,7 +1235,7 @@ public:
                 }
                 for (size_t i = 0; i < n; ++i) norms[i] = std::abs(residual.data[i]) * std::sqrt(norms[i] + tiny);
                 visit(2, products);
-            }
+            });
         }
         if (correlations_before == stats.terminal_correlations) ++stats.terminal_pruned;
     }
@@ -1222,6 +1409,7 @@ public:
         increments = {}; variation = {}; after = {}; alphabet_ratios = {}; compact_panels_.reset(); tt_suffix_ = {};
         responses_ = {}; normalization_ = {}; endpoint_variation_ = {}; terminal_workspace_ = {}; terminal_child_storage_ = {}; terminal_sample_norms_ = {}; channel_group_norms_ = {};
         panel_scratch_ = {};
+        projection_boxes_ = {}; projection_workspace_ = {};
     }
     std::unique_ptr<siglasso::Backend> terminal_worker() override {
         auto single = options;
@@ -1298,7 +1486,7 @@ public:
 static siglasso::SearchOptions search_options(const SigLassoOptions* options, uint32_t feature_type,
         const uint64_t* letters, const uint64_t* offsets, uint64_t words, bool predict) {
     if (!options || !options->samples || !options->length || !options->dimension || !options->targets ||
-        !options->degree || options->degree > 170 || feature_type > 1)
+        !options->degree || options->degree > 170 || feature_type > (predict ? 1u : 4u))
         throw std::invalid_argument("Invalid Lasso dimensions, degree or feature type");
     if (words && (!letters || !offsets || offsets[0] != 0))
         throw std::invalid_argument("Invalid packed Lasso words");
@@ -1309,6 +1497,8 @@ static siglasso::SearchOptions search_options(const SigLassoOptions* options, ui
             if (letters[k] >= options->dimension) throw std::invalid_argument("Invalid Lasso word letter");
     }
     siglasso::SearchOptions result(*options, predict);
+    result.factor_tree = feature_type == 2 || feature_type == 4;
+    result.projected_bound = feature_type == 2 || feature_type == 3;
     const int64_t jobs = options->n_jobs < 0 ? int64_t(get_max_threads()) + 1 + options->n_jobs : options->n_jobs;
     if (jobs < 1 || jobs > std::numeric_limits<int>::max()) throw std::invalid_argument("Invalid n_jobs");
     result.n_jobs = static_cast<int>(jobs);

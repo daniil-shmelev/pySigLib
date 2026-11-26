@@ -113,7 +113,38 @@ struct Node {
     std::shared_ptr<void> metadata;
 };
 using NodePtr = std::shared_ptr<Node>;
-struct Probe { NodePtr node; uint64_t low, high; size_t block = 0; };
+// A finite suffix tied with a periodic ceiling is admitted. At a floor
+// it must already have exceeded the periodic word at some letter.
+struct PeriodicWord {
+    size_t start = 0, length = 0;
+    uint64_t letter(const Word& prefix, size_t offset = 0) const {
+        return prefix[start + (prefix.size() - start + offset) % length];
+    }
+};
+struct FactorRange {
+    PeriodicWord floor, ceiling;
+    FactorRange after(const Word& prefix, uint64_t a) const {
+        return {floor.length && a == floor.letter(prefix) ? floor : PeriodicWord{},
+                ceiling.length && a == ceiling.letter(prefix) ? ceiling : PeriodicWord{}};
+    }
+};
+struct Probe { NodePtr node; uint64_t low, high; size_t block = 0; FactorRange range{}; };
+
+// Duval's last factor. For a non-Lyndon word its factor-tree descendants
+// append a decreasing list of factors bounded above by this factor.
+inline PeriodicWord last_factor(const Word& w) {
+    size_t i = 0, start = 0;
+    while (i < w.size()) {
+        size_t j = i + 1, k = i;
+        while (j < w.size() && w[k] <= w[j]) {
+            k = w[k] == w[j] ? k + 1 : i;
+            ++j;
+        }
+        const size_t period = j - k;
+        do { start = i; i += period; } while (i <= k);
+    }
+    return {start, w.size() - start};
+}
 // Depth-first evaluation of selected words retains just the common prefix.
 // A leaf needs its endpoint only; its segment polynomial can be discarded.
 template<class Ptr, class Child>
@@ -194,6 +225,8 @@ public:
 struct SearchOptions : SigLassoOptions {
     bool selected_only;
     bool accelerate_solver;
+    bool factor_tree = false;
+    bool projected_bound = false;
 
     explicit SearchOptions(const SigLassoOptions& o, bool predict = false)
         : SigLassoOptions(o), selected_only(predict),
@@ -239,6 +272,7 @@ public:
     virtual double weighted_square(const double*, const double*, size_t) = 0;
     virtual void prepare() = 0;
     virtual std::unique_ptr<FeatureSearch> make_search();
+    virtual size_t search_degree() const { return options.degree; }
     virtual void moments(Node&) = 0;
     virtual void begin_query(const Array&) = 0;
     virtual double bound(const Probe&, const Array&, double threshold) = 0;
@@ -349,6 +383,32 @@ public:
     }
 
     SearchResult query_block(const Array& residual, double alpha, const ActiveWords& active, size_t capacity, size_t block) {
+        if (b_.options.factor_tree) return traverse<true>(residual, alpha, active, capacity, block);
+        return traverse<false>(residual, alpha, active, capacity, block);
+    }
+private:
+    void factor_groups(std::vector<Probe>& stack, const NodePtr& node, FactorRange range, size_t remaining) {
+        const auto& w = node->word;
+        const auto dimension = b_.options.dimension;
+        const auto push = [&](FactorRange part) { stack.push_back({node, 0, dimension, 0, part}); };
+        if (range.floor.length) { push(range); return; }
+        const auto cut = last_factor(w);
+        // Compare the two ceilings only through the truncation degree.
+        for (size_t j = 0; j < remaining; ++j) {
+            const auto a = cut.letter(w, j);
+            const auto b = range.ceiling.length ? range.ceiling.letter(w, j) : dimension - 1;
+            if (a > b) break;
+            if (a < b) {
+                const FactorRange inside{{}, cut}, outside{cut, range.ceiling};
+                if (cut.start) { push(outside); push(inside); }
+                else { push(inside); push(outside); }
+                return;
+            }
+        }
+        push(range);
+    }
+    template<bool Factor>
+    SearchResult traverse(const Array& residual, double alpha, const ActiveWords& active, size_t capacity, size_t block) {
         const auto [low, high] = b_.alphabet[block];
         SearchResult result;
         b_.begin_query(residual);
@@ -357,6 +417,27 @@ public:
             Probe task = std::move(stack.back());
             stack.pop_back();
             const size_t levels = b_.options.degree - task.node->word.size();
+            if constexpr (Factor) {
+                const auto& w = task.node->word;
+                const auto& range = task.range;
+                const auto lo = range.floor.length ? range.floor.letter(w) : 0;
+                const auto hi = range.ceiling.length ? range.ceiling.letter(w) + 1 : b_.options.dimension;
+                if (task.high <= lo || task.low >= hi) continue;
+                if (levels <= 2) {
+                    task.low = std::max(task.low, lo);
+                    task.high = std::min(task.high, hi);
+                    b_.terminal_query(task, residual, alpha, active, capacity, result);
+                    continue;
+                }
+                // Use the smallest dyadic blocks covering the admissible first
+                // letters, so their precomputed panel and norm maxima apply.
+                if (task.low < lo || task.high > hi) {
+                    const auto mid = task.low + (task.high - task.low) / 2;
+                    if (mid < hi) stack.push_back({task.node, mid, task.high, task.block + 2 * (mid - task.low), range});
+                    if (mid > lo) stack.push_back({task.node, task.low, mid, task.block + 1, range});
+                    continue;
+                }
+            }
             if (levels <= 2) {
                 b_.terminal_query(task, residual, alpha, active, capacity, result);
                 continue;
@@ -375,8 +456,8 @@ public:
             }
             if (task.high - task.low > 1) {
                 const size_t mid = task.low + (task.high - task.low) / 2;
-                stack.push_back({task.node, mid, task.high, task.block + 2 * (mid - task.low)});
-                stack.push_back({task.node, task.low, mid, task.block + 1});
+                stack.push_back({task.node, mid, task.high, task.block + 2 * (mid - task.low), task.range});
+                stack.push_back({task.node, task.low, mid, task.block + 1, task.range});
                 continue;
             }
             NodePtr node;
@@ -388,7 +469,9 @@ public:
             ++b_.stats.cache_misses;
             ++b_.stats.constructed;
             ++b_.stats.evaluated;
-            if (!active.count(node->word)) {
+            FactorRange range;
+            if constexpr (Factor) range = task.range.after(task.node->word, task.low);
+            if ((!Factor || !range.floor.length) && !active.count(node->word)) {
                 if (b_.visit_column) b_.visit_column(node->word, node->values.data);
                 else {
                     const double score = finite(std::abs(b_.dot(node->values.data, residual.data, residual.size) / residual.size) * b_.weights[node->word.size()]);
@@ -397,7 +480,11 @@ public:
                         shortlist(result.candidates, capacity, node->word, score, [&] { return node->values; });
                 }
             }
-            stack.push_back({node, 0, b_.options.dimension, 0});
+            if constexpr (Factor) {
+                const size_t remaining = b_.search_degree() - node->word.size();
+                if (levels == 3 && remaining) stack.push_back({node, 0, b_.options.dimension, 0, range});
+                else if (remaining) factor_groups(stack, node, range, remaining);
+            } else stack.push_back({node, 0, b_.options.dimension, 0});
         }
         std::sort(result.candidates.begin(), result.candidates.end(), better);
         return result;

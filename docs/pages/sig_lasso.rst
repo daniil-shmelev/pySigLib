@@ -42,6 +42,52 @@ unused candidates after the restricted fit before searching the tree again.
 Prediction evaluates selected words in sample tiles and reuses their common
 prefixes.
 
+Signature tree orders
+---------------------
+
+The default prefix tree removes the final letter to obtain the parent.
+With ``tree_order="lyndon"``, a Lyndon word has its longest proper Lyndon
+prefix as parent, and a single letter has the empty root as parent.
+For any other word, write its unique nonincreasing Lyndon factorisation
+:math:`w=f_1\cdots f_m` and delete the last factor. For example, on
+:math:`1<2`, the parent of :math:`212=2\,|\,12` is :math:`2`. The
+column at :math:`212` is its ordinary normalised signature coefficient.
+
+At a non-Lyndon node ending in factor :math:`f`, the allowable suffixes
+are precisely those bounded above by the corresponding prefix of
+:math:`fff\cdots`. Appending a larger first Lyndon factor crosses this
+boundary. The search carries the two sides as lexicographic intervals,
+uses the prefix-suffix bound on admissible channel groups, and shares the
+signed contraction when two groups use the same terminal prefix state.
+The search obtains the last factor in linear time in the prefix length using
+`Duval's algorithm <https://doi.org/10.1016/0196-6774(83)90017-2>`_.
+
+Both tree orders accept ``terminal_bound="projected"``. For a fixed terminal
+state, let :math:`h_i` be its segment weights and :math:`d_i^a` the vector
+of normalised increments in channel :math:`a`. The unscaled column is
+:math:`\langle h_i,d_i^a\rangle`. Partition the segments into four consecutive
+panels :math:`J_p` and let :math:`P` replace entries by their panel
+means. For a channel group :math:`A`, let :math:`m_{ip}\pm e_{ip}`
+enclose the channel means on panel :math:`J_p`. Set
+:math:`R_i=\max_{a\in A}\|(I-P)d_i^a\|_2` and
+:math:`s_{ip}=\sum_{j\in J_p}h_{ij}`. The degree-:math:`k` correlations satisfy
+
+.. math::
+
+   \max_{a\in A}|c_a(r)| \le \frac{k!}{N}\left(\left|\sum_{i,p} r_i s_{ip} m_{ip}\right| + \sum_i |r_i|\left(\sum_p |s_{ip}|e_{ip} + \|(I-P)h_i\|_2 R_i\right)\right).
+
+The first term retains the sign across paths. The other two terms follow
+by bounding each panel mean and applying Cauchy-Schwarz to the orthogonal
+remainder. This is the sharp bound given only the independent intervals
+and remainder radii for each path. The extremum is obtained by choosing
+the interval endpoints and aligning the orthogonal remainders with the
+corresponding terminal weights, with signs agreeing across paths. The
+implementation also tests the original norm bound and computes the exact
+signed correlation if needed.
+
+Multiple responses and numerical checks
+---------------------------------------
+
 For the default double-precision, multi-response squared-loss search at degrees
 two through four, targets can share a traversal. The signature search builds
 a bound for each path and tests it against the individual penalty-scaled
