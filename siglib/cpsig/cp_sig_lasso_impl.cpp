@@ -962,6 +962,31 @@ public:
         }
     }
     size_t search_degree() const override { return proposal_degree ? proposal_degree : options.degree; }
+    void contract_terminal(const siglasso::Channel& channel, const double* factors, double* values) const {
+        const size_t n = options.samples, l = options.length - 1, stride = channel.dimension * n;
+        const hn::ScalableTag<double> tag;
+        const size_t lanes = hn::Lanes(tag);
+        size_t i = 0;
+        // Keep four sample vectors in registers over all path segments.
+        for (; i + 4 * lanes <= n; i += 4 * lanes) {
+            auto v0 = hn::Zero(tag), v1 = v0, v2 = v0, v3 = v0;
+            for (size_t j = 0; j < l; ++j) {
+                const auto* d = channel.values.data + j * stride + i;
+                const auto* h = factors + j * n + i;
+                v0 = hn::Add(v0, hn::Mul(hn::LoadU(tag, d), hn::LoadU(tag, h)));
+                v1 = hn::Add(v1, hn::Mul(hn::LoadU(tag, d + lanes), hn::LoadU(tag, h + lanes)));
+                v2 = hn::Add(v2, hn::Mul(hn::LoadU(tag, d + 2 * lanes), hn::LoadU(tag, h + 2 * lanes)));
+                v3 = hn::Add(v3, hn::Mul(hn::LoadU(tag, d + 3 * lanes), hn::LoadU(tag, h + 3 * lanes)));
+            }
+            hn::StoreU(v0, tag, values + i); hn::StoreU(v1, tag, values + i + lanes);
+            hn::StoreU(v2, tag, values + i + 2 * lanes); hn::StoreU(v3, tag, values + i + 3 * lanes);
+        }
+        for (; i < n; ++i) {
+            double value = 0.;
+            for (size_t j = 0; j < l; ++j) value += channel.values.data[j * stride + i] * factors[j * n + i];
+            values[i] = value;
+        }
+    }
     void project_terminal(const double* factors, const siglasso::Array& residual, double rounding, double tiny) {
         const size_t n = options.samples, l = options.length - 1, targets = std::max<size_t>(1, batch_signed.size());
         constexpr size_t stride = projection_panels + 1;
@@ -1033,6 +1058,13 @@ public:
     void terminal_query(const siglasso::Probe& task, const siglasso::Array& residual, double alpha,
         const siglasso::ActiveWords& active,
         size_t capacity, siglasso::SearchResult& result) override {
+        if (options.factor_tree || options.projected_bound)
+            terminal_search<true>(task, residual, alpha, active, capacity, result);
+        else terminal_search<false>(task, residual, alpha, active, capacity, result);
+    }
+    template<bool Grouped>
+    void terminal_search(const siglasso::Probe& task, const siglasso::Array& residual, double alpha,
+        const siglasso::ActiveWords& active, size_t capacity, siglasso::SearchResult& result) {
         const auto& node = *task.node;
         const size_t n = options.samples, l = options.length - 1, d = options.dimension;
         const size_t k = node.word.size(), levels = (proposal_degree ? proposal_degree : options.degree) - k;
@@ -1127,17 +1159,17 @@ public:
         siglasso::Word word = node.word; word.push_back(0);
         const auto& floor = task.range.floor;
         const auto& ceiling = task.range.ceiling;
-        const size_t floor_a = floor.length ? floor.letter(node.word) : 0;
-        const size_t ceiling_a = ceiling.length ? ceiling.letter(node.word) : d;
-        const size_t floor_b = floor.length ? floor.letter(node.word, 1) : 0;
-        const size_t ceiling_b = ceiling.length ? ceiling.letter(node.word, 1) : d;
-        const auto cut = options.factor_tree && k && !floor.length ? siglasso::last_factor(node.word) : siglasso::PeriodicWord{};
+        const size_t floor_a = Grouped && floor.length ? floor.letter(node.word) : 0;
+        const size_t ceiling_a = Grouped && ceiling.length ? ceiling.letter(node.word) : d;
+        const size_t floor_b = Grouped && floor.length ? floor.letter(node.word, 1) : 0;
+        const size_t ceiling_b = Grouped && ceiling.length ? ceiling.letter(node.word, 1) : d;
+        const auto cut = Grouped && options.factor_tree && k && !floor.length ? siglasso::last_factor(node.word) : siglasso::PeriodicWord{};
         // Test a dyadic alphabet block using the largest channel norm in each
         // sample group. Leaves share the exact signed contraction below.
         const auto screened_channels = [&](size_t first, size_t end, size_t block, const auto& group,
-                const auto& separate, size_t q, auto&& refine, auto&& leaf) {
-            if ((!options.factor_tree && !options.projected_bound) || end <= first + 3) {
-                for (size_t a = first; a < end; ++a) leaf(a);
+                const auto& separate, size_t q, auto&& refine, auto&& visit_range) {
+            if (!Grouped || end <= first + 3) {
+                visit_range(first, end);
                 return;
             }
             while (block < alphabet.size()) {
@@ -1152,7 +1184,7 @@ public:
                     }
                 }
                 if (span <= 3) {
-                    for (size_t a = std::max(first, lo); a < std::min(end, hi); ++a) leaf(a);
+                    visit_range(std::max(first, lo), std::min(end, hi));
                     block += 2 * span - 1;
                 } else ++block;
             }
@@ -1160,8 +1192,8 @@ public:
         const auto visit = [&](size_t q, const double* factors) {
             const bool pair = q == 2;
             size_t first = task.low, end = task.high;
-            if (floor.length && (!pair || word[k + 1] <= floor_b)) first = std::max(first, floor_a + 1);
-            if (ceiling.length && pair && word[k + 1] > ceiling_b) end = std::min(end, ceiling_a);
+            if (Grouped && floor.length && (!pair || word[k + 1] <= floor_b)) first = std::max(first, floor_a + 1);
+            if (Grouped && ceiling.length && pair && word[k + 1] > ceiling_b) end = std::min(end, ceiling_a);
             if (first >= end) return;
             if (excluded(bound_dot(norms, first_norm, n), q)) return;
             const auto group = grouped_norm(norms);
@@ -1170,6 +1202,9 @@ public:
             const auto projection = [&](size_t index) {
                 if (!projection_boxes_.owner) return false;
                 const size_t targets = std::max<size_t>(1, batch_signed.size());
+                // At a single channel a full signed column costs one dot per
+                // path. Several panel tests per target can exceed that work.
+                if (index < d && targets * (projection_panels + 1) > l) return false;
                 if (!projected) {
                     project_terminal(factors, residual, rounding, tiny);
                     projected = true;
@@ -1182,60 +1217,64 @@ public:
                 }
                 return excluded(maximum, q);
             };
-            const auto leaf = [&](size_t a) {
-                word[k] = a;
-                if (excluded(coarse(group, a), q) || separated(separate, a, q) || active.count(word) ||
-                    excluded(bound_dot(norms, terminal_sample_norms_.data + a * n, n), q) ||
-                    individual(norms, terminal_sample_norms_.data + a * n, q) || projection(a)) return;
-                const auto dx = channel(a);
-                std::fill_n(values, n, 0.);
-                for (size_t j = 0; j < l; ++j) {
-                    const double* step = dx.values.data + j * dx.dimension * n;
-                    for (size_t i = 0; i < n; ++i) values[i] += step[i] * factors[j * n + i];
+            const auto visit_range = [&](size_t low, size_t high) {
+                for (size_t a = low; a < high; ++a) {
+                    word[k] = a;
+                    if (excluded(coarse(group, a), q) || separated(separate, a, q) || active.count(word) ||
+                        excluded(bound_dot(norms, terminal_sample_norms_.data + a * n, n), q) ||
+                        individual(norms, terminal_sample_norms_.data + a * n, q) || (Grouped && projection(a))) continue;
+                    contract_terminal(channel(a), factors, values);
+                    ++stats.terminal_correlations; ++stats.evaluated;
+                    if (visit_column) { visit_column(word, values); continue; }
+                    const double score = siglasso::finite(std::abs(dot(values, residual.data, n)) / n * weights[k + q]);
+                    result.omitted = std::max(result.omitted, siglasso::guard(score));
+                    if (score > alpha && siglasso::shortlist(result.candidates, capacity, word, score, [&] {
+                        auto column = alloc(n); copy(values, column.data, n); return column;
+                    })) ++stats.constructed;
                 }
-                ++stats.terminal_correlations; ++stats.evaluated;
-                if (visit_column) { visit_column(word, values); return; }
-                const double score = siglasso::finite(std::abs(dot(values, residual.data, n)) / n * weights[k + q]);
-                result.omitted = std::max(result.omitted, siglasso::guard(score));
-                if (score > alpha && siglasso::shortlist(result.candidates, capacity, word, score, [&] {
-                    auto column = alloc(n); copy(values, column.data, n); return column;
-                })) ++stats.constructed;
             };
-            if (cut.length) {
+            if constexpr (!Grouped) {
+                visit_range(first, end);
+            } else if (cut.length) {
                 const auto split = std::clamp<size_t>(cut.letter(node.word) +
                     (!pair || word[k + 1] <= cut.letter(node.word, 1)), first, end);
-                if (!cut.start) screened_channels(split, end, task.block, group, separate, q, projection, leaf);
-                screened_channels(first, split, task.block, group, separate, q, projection, leaf);
-                if (cut.start) screened_channels(split, end, task.block, group, separate, q, projection, leaf);
-            } else screened_channels(first, end, task.block, group, separate, q, projection, leaf);
+                if (!cut.start) screened_channels(split, end, task.block, group, separate, q, projection, visit_range);
+                screened_channels(first, split, task.block, group, separate, q, projection, visit_range);
+                if (cut.start) screened_channels(split, end, task.block, group, separate, q, projection, visit_range);
+            } else screened_channels(first, end, task.block, group, separate, q, projection, visit_range);
         };
         if (!highest_degree_only || !visit_column || k + 1 == options.degree) visit(1, node.integrals.data);
         if (levels == 2) {
             word.push_back(0);
             const auto group = grouped_norm(operators);
             const auto separate = response_groups(operators);
-            const size_t first_b = floor.length && task.high == floor_a + 1 ? floor_b + 1 : 0;
-            const size_t end_b = ceiling.length && task.low == ceiling_a ? ceiling_b + 1 : d;
-            screened_channels(first_b, end_b, 0, group, separate, 2, [](size_t) { return false; }, [&](size_t b) {
-                if (excluded(coarse(group, b), 2) || separated(separate, b, 2)) return;
-                if (excluded(bound_dot(operators, terminal_sample_norms_.data + b * n, n), 2) ||
-                    individual(operators, terminal_sample_norms_.data + b * n, 2)) return;
-                word[k + 1] = b;
-                const auto dx = channel(b);
-                std::fill_n(tail, n, 0.); std::fill_n(norms, n, 0.);
-                for (size_t j = l; j-- > 0;) {
-                    const double* step = dx.values.data + j * dx.dimension * n;
-                    const double* integral = node.integrals.data + j * n;
-                    const double* linear = node.linear_integrals.data + j * n;
-                    for (size_t i = 0; i < n; ++i) {
-                        tail[i] += step[i];
-                        const double h = integral[i] * tail[i] - linear[i] * step[i];
-                        products[j * n + i] = h; norms[i] += h * h;
+            const size_t first_b = Grouped && floor.length && task.high == floor_a + 1 ? floor_b + 1 : 0;
+            const size_t end_b = Grouped && ceiling.length && task.low == ceiling_a ? ceiling_b + 1 : d;
+            const auto second_letters = [&](size_t low, size_t high) {
+                for (size_t b = low; b < high; ++b) {
+                    if (excluded(coarse(group, b), 2) || separated(separate, b, 2)) continue;
+                    if (excluded(bound_dot(operators, terminal_sample_norms_.data + b * n, n), 2) ||
+                        individual(operators, terminal_sample_norms_.data + b * n, 2)) continue;
+                    word[k + 1] = b;
+                    const auto dx = channel(b);
+                    std::fill_n(tail, n, 0.); std::fill_n(norms, n, 0.);
+                    for (size_t j = l; j-- > 0;) {
+                        const double* step = dx.values.data + j * dx.dimension * n;
+                        const double* integral = node.integrals.data + j * n;
+                        const double* linear = node.linear_integrals.data + j * n;
+                        for (size_t i = 0; i < n; ++i) {
+                            tail[i] += step[i];
+                            const double h = integral[i] * tail[i] - linear[i] * step[i];
+                            products[j * n + i] = h; norms[i] += h * h;
+                        }
                     }
+                    for (size_t i = 0; i < n; ++i) norms[i] = std::abs(residual.data[i]) * std::sqrt(norms[i] + tiny);
+                    visit(2, products);
                 }
-                for (size_t i = 0; i < n; ++i) norms[i] = std::abs(residual.data[i]) * std::sqrt(norms[i] + tiny);
-                visit(2, products);
-            });
+            };
+            if constexpr (!Grouped) {
+                second_letters(0, d);
+            } else screened_channels(first_b, end_b, 0, group, separate, 2, [](size_t) { return false; }, second_letters);
         }
         if (correlations_before == stats.terminal_correlations) ++stats.terminal_pruned;
     }

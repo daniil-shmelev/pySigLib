@@ -62,7 +62,8 @@ signed contraction when two groups use the same terminal prefix state.
 The search obtains the last factor in linear time in the prefix length using
 `Duval's algorithm <https://doi.org/10.1016/0196-6774(83)90017-2>`_.
 
-Both tree orders accept ``terminal_bound="projected"``. For a fixed terminal
+Both tree orders use ``terminal_bound="norm"`` by default. The option
+``terminal_bound="projected"`` adds a signed bound for channel groups. For a fixed terminal
 state, let :math:`h_i` be its segment weights and :math:`d_i^a` the vector
 of normalised increments in channel :math:`a`. The unscaled column is
 :math:`\langle h_i,d_i^a\rangle`. Partition the segments into four consecutive
@@ -83,7 +84,9 @@ and remainder radii for each path. The extremum is obtained by choosing
 the interval endpoints and aligning the orthogonal remainders with the
 corresponding terminal weights, with signs agreeing across paths. The
 implementation also tests the original norm bound and computes the exact
-signed correlation if needed.
+signed correlation if needed. At a single channel it goes directly to the
+signed contraction when the panel tests across responses would require
+more inner products per sample than the number of path segments.
 
 Multiple responses and numerical checks
 ---------------------------------------

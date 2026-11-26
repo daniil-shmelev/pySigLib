@@ -18,6 +18,7 @@
 import argparse
 import hashlib
 import json
+import os
 import platform
 from pathlib import Path
 import subprocess
@@ -40,6 +41,7 @@ def peak_rss():
 
 def fit(args, case, order, repeat):
     import pysiglib
+    from pysiglib.load_siglib import CPSIG
     from threadpoolctl import threadpool_limits
 
     dataset, degree = case.split("-")
@@ -53,12 +55,15 @@ def fit(args, case, order, repeat):
     filename = args.data / FOLDERS[dataset] / "results/normalized/integral_comparison/prepared.npz"
     with np.load(filename) as data:
         x, y = np.array(data["train"], order="C", copy=True), np.array(data["response"], order="C", copy=True)
-        tree, bound = order.split("_")
+        search = {}
+        if order != "original":
+            tree, bound = order.split("_")
+            search = dict(tree_order=tree, terminal_bound=bound)
         with threadpool_limits(limits=1):
             before = peak_rss()
             start = perf_counter()
-            model = pysiglib.sig_lasso(x, y, degree, ref["alpha"], tree_order=tree, terminal_bound=bound, n_jobs=8,
-                                       fit_intercept=True, tol=1e-8, max_iter=3000)
+            model = pysiglib.sig_lasso(x, y, degree, ref["alpha"], n_jobs=8, fit_intercept=True,
+                                       tol=1e-8, max_iter=3000, **search)
             elapsed = perf_counter() - start
             peak = peak_rss()
             assert np.all(model["converged"]) and model["stats"]["full_transform_calls"] == 0
@@ -71,6 +76,7 @@ def fit(args, case, order, repeat):
     np.savez(stem.with_suffix(".npz"), prediction=prediction, train=train,
              words=np.array([",".join(map(str, w)) for w in model["words"]]), coef=model["coef"])
     record = dict(case=case, order=order, repeat=repeat, seconds=elapsed, rss=peak, rss_increase=peak-before,
+                  native_sha256=hashlib.sha256(Path(CPSIG._name).read_bytes()).hexdigest(),
                   correct=correct, paper_correct=ref["correct"], test_samples=len(prediction),
                   words=len(model["words"]), max_kkt=float(np.max(model["kkt_violation"])),
                   objective=objective.tolist(), stats=model["stats"])
@@ -84,8 +90,12 @@ def compare(args):
             shift = repeat % len(args.orders)
             orders = args.orders[shift:] + args.orders[:shift]
             for order in orders:
+                environment = dict(os.environ)
+                if order == "original" and args.original_pythonpath:
+                    environment["PYTHONPATH"] = str(args.original_pythonpath.resolve())
                 subprocess.run([sys.executable, __file__, "--data", str(args.data), "--paper", str(args.paper),
-                                "--output", str(args.output), "--worker", case, order, str(repeat)], check=True)
+                                "--output", str(args.output), "--worker", case, order, str(repeat)],
+                               check=True, env=environment)
             reference = args.output / f"{case}-{orders[0]}-{repeat}.npz"
             with np.load(reference) as first:
                 for other in orders[1:]:
@@ -121,6 +131,53 @@ def audit_scores(args, case, order):
         return error
 
 
+def synthetic(args):
+    import pysiglib
+    from threadpoolctl import threadpool_limits
+
+    cases = ("baseline", "samples", "length", "channels", "degree", "anisotropic")
+    records = []
+    with threadpool_limits(limits=1):
+        for case in cases:
+            folder = args.synthetic_data / f"{case}_7201"
+            degree = json.loads((folder / "prepared.json").read_text())["degree"]
+            words = {tuple(w): j for j, w in enumerate(json.loads((folder / "sig_words.json").read_text()))}
+            design = np.load(folder / "sig.npy", mmap_mode="r")
+            held = np.load(folder / "sig_test.npy", mmap_mode="r")
+            with np.load(folder / "data.npz") as data, np.load(folder / "squared_response.npz") as responses:
+                x, test = data["train"].copy(), data["test"].copy()
+                y = responses["y"][:, 1].copy()
+            alpha = .03 * np.max(abs(design.T @ (y - y.mean()))) / len(y)
+            reference = None
+            for rep in range(-1, args.repeats):
+                for j in range(len(args.orders)):
+                    order = args.orders[(j + rep + 1) % len(args.orders)]
+                    tree, bound = order.split("_")
+                    start = perf_counter()
+                    model = pysiglib.sig_lasso(x, y, degree, alpha, tree_order=tree, terminal_bound=bound,
+                                              tol=1e-8, max_iter=3000, n_jobs=8)
+                    elapsed = perf_counter() - start
+                    cols = [words[w] for w in model["words"]]
+                    assert model["converged"] and model["stats"]["full_transform_calls"] == 0
+                    np.testing.assert_allclose(model["signatures"], design[:, cols], atol=1e-12)
+                    pred = held[:, cols] @ model["coef"] + model["intercept"]
+                    np.testing.assert_allclose(pysiglib.sig_lasso_predict(test, model, n_jobs=8), pred, atol=1e-11)
+                    residual = y - design[:, cols] @ model["coef"] - model["intercept"]
+                    correlations = design.T @ residual / len(y)
+                    kkt = max(np.max(abs(correlations)) - alpha, abs(residual.mean()),
+                              np.max(abs(correlations[cols] - alpha * np.sign(model["coef"])), initial=0.))
+                    assert kkt <= 1.01e-8
+                    if reference is None:
+                        reference = model["words"], pred
+                    assert model["words"] == reference[0]
+                    np.testing.assert_allclose(pred, reference[1], atol=1e-9)
+                    if rep >= 0:
+                        records.append(dict(case=case, degree=degree, shape=list(x.shape), order=order, repeat=rep,
+                                            seconds=elapsed, words=len(cols), alpha=float(alpha), kkt=float(kkt),
+                                            stats=model["stats"]))
+    (args.output / "synthetic.json").write_text(json.dumps(records, indent=2))
+
+
 def report(args):
     records = [json.loads(p.read_text()) for p in args.output.glob("*.json") if p.stem.rsplit("-", 1)[-1].isdigit()]
     lines = ["# Grouped searches for ordinary signature features", "",
@@ -129,6 +186,8 @@ def report(args):
              "one BLAS thread, float64, squared loss, an intercept and tolerance 1e-8. "
              "Times cover the complete fit with resident inputs. Loading, test prediction and auditing take place outside the timer.",
              "", f"Platform {platform.platform()}, Python {platform.python_version()}.", "",
+             "The prefix and Lyndon variants share the register-based signed terminal contraction. "
+             "An original column, when present, runs the pre-change prefix implementation from a separate library.", "",
              "The three audio tasks use the saved training and test splits. The penalty vectors come from the "
              "paper's archived measurements at revision 02da5ef18, including the reconstructed degree-four "
              "Speech Commands calibration. The separate Arabic dictionary comparison uses its own penalty.", "",
@@ -182,7 +241,9 @@ def report(args):
                   f"per configuration to {independent_error:.2g}.", "", *details])
     lines.extend(["", "## Reproduction", "", "From the built branch checkout, run the following in PowerShell.", "",
                   "```powershell", "git show 02da5ef18:benchmarks/results/prefix_suffix/paper_rerun/measurements.json | Set-Content -Encoding ascii paper.json",
-                  "python benchmarks/benchmark_signature_tree_order.py --data PATH/TO/sig_branch_and_bound_experiments --paper paper.json --output tree_results",
+                  "python benchmarks/benchmark_signature_tree_order.py --data PATH/TO/sig_branch_and_bound_experiments "
+                  f"--paper paper.json --output tree_results --repeats {args.repeats}" +
+                  (" --original-pythonpath PATH/TO/PRECHANGE/PACKAGE_PARENT" if args.original_pythonpath else ""),
                   "```", "", "SHA-256 hashes of the prepared input archives", ""])
     for name, folder in FOLDERS.items():
         file = args.data / folder / "results/normalized/integral_comparison/prepared.npz"
@@ -191,13 +252,24 @@ def report(args):
             for chunk in iter(lambda: stream.read(1 << 20), b""):
                 digest.update(chunk)
         lines.append(f"- {name} `{digest.hexdigest()}`")
+    hashes = {order: {r["native_sha256"] for r in records if r["order"] == order} for order in args.orders}
+    if any(len(h) != 1 for h in hashes.values()):
+        raise ValueError("Each configuration must use one native library throughout")
+    updated = set.union(*(h for order, h in hashes.items() if order != "original"))
+    if len(updated) != 1 or ("original" in hashes and hashes["original"] == updated):
+        raise ValueError("Expected a shared updated native library and a distinct original control")
+    lines += ["", f"Updated native library SHA-256 `{next(iter(updated))}`."]
+    if "original" in hashes:
+        lines.append(f"Pre-change native library SHA-256 `{next(iter(hashes['original']))}`.")
     (args.output / "REPORT.md").write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", type=Path, required=True, help="sig_branch_and_bound_experiments directory")
-    parser.add_argument("--paper", type=Path, required=True, help="paper_rerun/measurements.json at revision 02da5ef18")
+    parser.add_argument("--data", type=Path, help="sig_branch_and_bound_experiments directory")
+    parser.add_argument("--paper", type=Path, help="paper_rerun/measurements.json at revision 02da5ef18")
+    parser.add_argument("--synthetic-data", type=Path, help="Run the saved single-response synthetic benchmarks instead")
+    parser.add_argument("--original-pythonpath", type=Path, help="Include a separate pre-change package in the audio comparison")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--worker", nargs=3)
     parser.add_argument("--report-only", action="store_true")
@@ -206,8 +278,14 @@ if __name__ == "__main__":
     parser.add_argument("--orders", nargs="+", default=["prefix_norm", "lyndon_projected", "prefix_projected", "lyndon_norm"],
                         choices=["prefix_norm", "lyndon_projected", "prefix_projected", "lyndon_norm"])
     args = parser.parse_args()
+    if args.original_pythonpath and not args.worker:
+        args.orders = ["original", *args.orders]
     args.output.mkdir(parents=True, exist_ok=True)
-    if args.worker:
+    if args.synthetic_data:
+        synthetic(args)
+    elif args.data is None or args.paper is None:
+        parser.error("the audio comparison requires --data and --paper")
+    elif args.worker:
         fit(args, args.worker[0], args.worker[1], int(args.worker[2]))
     else:
         if not args.report_only:

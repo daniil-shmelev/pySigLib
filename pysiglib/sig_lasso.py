@@ -68,7 +68,7 @@ def _check_status(status, device):
 
 def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
               tol=None, max_iter=1000, initial_words=(), memory_limit=None, time_aug=False,
-              lead_lag=False, end_time=1.0, n_jobs=1, tree_order="prefix", terminal_bound=None):
+              lead_lag=False, end_time=1.0, n_jobs=1, tree_order="prefix", terminal_bound="norm"):
     r"""Fit a sparse linear predictor on normalized signature coordinates on CPU.
 
     Minimise the mean loss at ``intercept + X @ coef`` plus ``alpha * ||coef||_1``.
@@ -95,9 +95,8 @@ def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
     ``tree_order="prefix"`` searches by successive letters. ``"lyndon"`` groups
     ordinary signature words by their nonincreasing Lyndon factorisation.
     Both orders fit the same dictionary and objective.
-    ``terminal_bound="projected"`` additionally screens groups using a signed
-    time projection. The default is ``"norm"`` for the prefix order and
-    ``"projected"`` for the Lyndon order.
+    The default terminal bound uses norms. Set ``terminal_bound="projected"``
+    to additionally screen channel groups using a signed time projection.
     ``memory_limit`` bounds owned native workspace and output
     in bytes. ``n_jobs`` controls CPU workers. ``max_iter`` limits working-set
     updates per response. ``tol`` defaults to 1e-5 for float32 or 1e-8 for
@@ -114,8 +113,6 @@ def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
     """
     if not isinstance(tree_order, str) or tree_order not in ("prefix", "lyndon"):
         raise ValueError("tree_order must be 'prefix' or 'lyndon'")
-    if terminal_bound is None:
-        terminal_bound = 'projected' if tree_order == 'lyndon' else 'norm'
     if not isinstance(terminal_bound, str) or terminal_bound not in ("norm", "projected"):
         raise ValueError("terminal_bound must be 'norm' or 'projected'")
     return _fit_lasso(path, y, degree, alpha, 'sig', tree_order=tree_order, terminal_bound=terminal_bound,

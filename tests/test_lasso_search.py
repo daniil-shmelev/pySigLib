@@ -75,7 +75,8 @@ def test_signature_factor_tree_against_complete_design(degree, dimension, target
     for first in range(0, len(words), targets):
         cols = list(range(first, min(first + targets, len(words))))
         y = np.ascontiguousarray(dual[:, cols] * len(paths) + centered[:, cols])
-        model = pysiglib.sig_lasso(paths, y, degree, 1., tree_order='lyndon', n_jobs=jobs, tol=1e-8)
+        model = pysiglib.sig_lasso(paths, y, degree, 1., tree_order='lyndon', terminal_bound='projected',
+                                  n_jobs=jobs, tol=1e-8)
         assert model['words'] == [words[c] for c in cols]
         np.testing.assert_allclose(model['signatures'], design[:, cols], atol=1e-13)
         np.testing.assert_allclose(model['coef'], np.eye(len(cols)), atol=3e-7)
@@ -124,10 +125,29 @@ def test_signature_tree_order_dense_kkt(order, bound, loss):
 
 def test_signature_tree_arguments():
     x = np.ones((3, 2, 1))
+    y = np.ones(3)
+    for order in ("prefix", "lyndon"):
+        model = pysiglib.sig_lasso(x, y, 2, .1, tree_order=order)
+        assert model["stats"]["terminal_bound"] == "norm"
     with pytest.raises(ValueError, match="tree_order"):
-        pysiglib.sig_lasso(x, x[:, 0, 0], 2, .1, tree_order="log")
+        pysiglib.sig_lasso(x, y, 2, .1, tree_order="log")
     with pytest.raises(ValueError, match="terminal_bound"):
-        pysiglib.sig_lasso(x, x[:, 0, 0], 2, .1, terminal_bound="exact")
+        pysiglib.sig_lasso(x, y, 2, .1, terminal_bound="exact")
+
+
+@pytest.mark.parametrize("length", [1, 2, 3, 4])
+def test_projected_tree_on_short_scalar_paths(length):
+    rng = np.random.default_rng(91)
+    x = rng.normal(size=(40, length, 1)).cumsum(axis=1)
+    y = rng.normal(size=len(x))
+    model = pysiglib.sig_lasso(x, y, 5, .03, tree_order="lyndon", terminal_bound="projected")
+    total = abs(np.diff(x[:, :, 0], axis=1)).sum(axis=1)
+    delta = (x[:, -1, 0] - x[:, 0, 0]) / np.where(total, total, 1.)
+    design = delta[:, None] ** np.arange(1, 6)
+    cols = [len(w) - 1 for w in model["words"]]
+    np.testing.assert_allclose(model["signatures"], design[:, cols], atol=1e-12)
+    r = y - design[:, cols] @ model["coef"] - model["intercept"]
+    assert model["converged"] and np.max(abs(design.T @ r)) / len(y) <= .03 + 1e-8
 
 
 @pytest.mark.parametrize("dtype,jobs,limit,tol", [(np.float64, 2, None, 1e-8), (np.float32, 1, 4 << 20, 1e-6)])
