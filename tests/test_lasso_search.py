@@ -59,7 +59,10 @@ def _dense_log_design(paths, degree):
 
 
 @pytest.mark.parametrize("degree,dimension,targets,jobs", [(2, 3, 2, 2), (4, 3, 2, 2), (6, 2, 1, 1)])
-def test_signature_factor_tree_against_complete_design(degree, dimension, targets, jobs):
+@pytest.mark.parametrize("order,bound", [("lyndon", "projected"), ("suffix", "norm"), ("energy", "norm"),
+                                        ("profile", "primitive"), ("forward", "primitive"), ("outside", "norm"),
+                                        ("adaptive", "norm")])
+def test_signature_tree_against_complete_design(degree, dimension, targets, jobs, order, bound):
     rng = np.random.default_rng(9325)
     paths = rng.normal(size=(180, 10, dimension)).cumsum(axis=1)
     paths[0] = 0.
@@ -75,7 +78,7 @@ def test_signature_factor_tree_against_complete_design(degree, dimension, target
     for first in range(0, len(words), targets):
         cols = list(range(first, min(first + targets, len(words))))
         y = np.ascontiguousarray(dual[:, cols] * len(paths) + centered[:, cols])
-        model = pysiglib.sig_lasso(paths, y, degree, 1., tree_order='lyndon', terminal_bound='projected',
+        model = pysiglib.sig_lasso(paths, y, degree, 1., tree_order=order, terminal_bound=bound,
                                   n_jobs=jobs, tol=1e-8)
         assert model['words'] == [words[c] for c in cols]
         np.testing.assert_allclose(model['signatures'], design[:, cols], atol=1e-13)
@@ -86,7 +89,10 @@ def test_signature_factor_tree_against_complete_design(degree, dimension, target
                                    design[:, cols] @ model['coef'] + model['intercept'], atol=1e-12)
 
 
-@pytest.mark.parametrize("order,bound", [("prefix", "projected"), ("lyndon", "norm"), ("lyndon", "projected")])
+@pytest.mark.parametrize("order,bound", [("prefix", "projected"), ("lyndon", "norm"), ("lyndon", "projected"),
+                                        ("suffix", "primitive"), ("energy", "projected"), ("profile", "norm"),
+                                        ("forward", "norm"), ("grouped", "primitive"), ("outside", "projected"),
+                                        ("balanced", "norm"), ("adaptive", "projected")])
 @pytest.mark.parametrize("loss", ["squared", "logistic", "poisson", "huber"])
 def test_signature_tree_order_dense_kkt(order, bound, loss):
     rng = np.random.default_rng(213)
@@ -135,12 +141,39 @@ def test_signature_tree_arguments():
         pysiglib.sig_lasso(x, y, 2, .1, terminal_bound="exact")
 
 
+@pytest.mark.parametrize("order", ["suffix", "energy", "profile", "forward", "outside", "adaptive"])
+def test_reordered_tree_on_wide_transformed_paths(order):
+    rng = np.random.default_rng(1836)
+    raw = rng.normal(size=(84, 7, 12)).cumsum(axis=1)
+    raw[:, :, ::3] *= .04
+    transformed = pysiglib.transform_path(raw, lead_lag=True, time_aug=True)
+    d = transformed.shape[-1]
+    variation = abs(np.diff(transformed, axis=1)).max(axis=2).sum(axis=1)
+    x = (transformed - transformed[:, :1]) / variation[:, None, None]
+    words = [w for k in range(1, 4) for w in product(range(d), repeat=k)]
+    design = pysiglib.sig(x, 3) * [factorial(len(w)) for w in words]
+    seeds = [(4, 1, 2), (5, 3)]
+    y = np.ascontiguousarray(design[:, [words.index(w) for w in seeds]] + .015 * rng.normal(size=(len(x), 2)))
+    alpha = .13 * abs(design.T @ (y - y.mean(axis=0))).max(axis=0) / len(x)
+    model = pysiglib.sig_lasso(raw, y, 3, alpha, tree_order=order, terminal_bound="primitive",
+                              lead_lag=True, time_aug=True, n_jobs=3, initial_words=seeds, tol=1e-9)
+    assert np.all(model["converged"]) and model["stats"]["full_transform_calls"] == 0
+    assert model["words"] == sorted(model["words"], key=lambda w: (len(w), w))
+    cols = [words.index(w) for w in model["words"]]
+    np.testing.assert_allclose(model["signatures"], design[:, cols], atol=1e-12)
+    prediction = design[:, cols] @ model["coef"] + model["intercept"]
+    np.testing.assert_allclose(pysiglib.sig_lasso_predict(raw, model), prediction, atol=1e-11)
+    cor = design.T @ (y - prediction) / len(x)
+    assert np.all(abs(cor).max(axis=0) <= alpha + 1.1e-9)
+
+
 @pytest.mark.parametrize("length", [1, 2, 3, 4])
-def test_projected_tree_on_short_scalar_paths(length):
+@pytest.mark.parametrize("order,bound", [("lyndon", "projected"), ("outside", "primitive"), ("adaptive", "norm")])
+def test_signature_tree_on_short_scalar_paths(length, order, bound):
     rng = np.random.default_rng(91)
     x = rng.normal(size=(40, length, 1)).cumsum(axis=1)
     y = rng.normal(size=len(x))
-    model = pysiglib.sig_lasso(x, y, 5, .03, tree_order="lyndon", terminal_bound="projected")
+    model = pysiglib.sig_lasso(x, y, 5, .03, tree_order=order, terminal_bound=bound)
     total = abs(np.diff(x[:, :, 0], axis=1)).sum(axis=1)
     delta = (x[:, -1, 0] - x[:, 0, 0]) / np.where(total, total, 1.)
     design = delta[:, None] ** np.arange(1, 6)

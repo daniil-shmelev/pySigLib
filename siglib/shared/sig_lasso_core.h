@@ -222,11 +222,17 @@ public:
     virtual SearchResult query(const Array&, double threshold, const ActiveWords&, size_t capacity) = 0;
 };
 
+enum class SignatureOrder : uint32_t { prefix, lyndon, suffix, energy, profile, forward, grouped, outside, balanced, adaptive };
+enum class TerminalBound : uint32_t { norm, projected, primitive };
+
 struct SearchOptions : SigLassoOptions {
     bool selected_only;
     bool accelerate_solver;
-    bool factor_tree = false;
-    bool projected_bound = false;
+    SignatureOrder order = SignatureOrder::prefix;
+    TerminalBound terminal = TerminalBound::norm;
+    bool grouped_terminals() const {
+        return terminal != TerminalBound::norm || (order != SignatureOrder::prefix && order != SignatureOrder::suffix);
+    }
 
     explicit SearchOptions(const SigLassoOptions& o, bool predict = false)
         : SigLassoOptions(o), selected_only(predict),
@@ -244,6 +250,8 @@ public:
     std::vector<Array> batch_absolute, batch_ratios, batch_signed;
     Array increments, variation, after, alphabet_ratios;
     std::vector<std::pair<size_t, size_t>> alphabet;
+    const size_t* letter_order = nullptr;
+    size_t letter(size_t rank) const { return letter_order ? letter_order[rank] : rank; }
     std::shared_ptr<void> metadata;
     std::vector<double> weights;
     explicit Backend(const SearchOptions& o, std::shared_ptr<Budget> shared_budget = {}) : options(o), budget(shared_budget ? std::move(shared_budget) : std::make_shared<Budget>(o.memory_limit)) {
@@ -383,7 +391,7 @@ public:
     }
 
     SearchResult query_block(const Array& residual, double alpha, const ActiveWords& active, size_t capacity, size_t block) {
-        if (b_.options.factor_tree) return traverse<true>(residual, alpha, active, capacity, block);
+        if (b_.options.order == SignatureOrder::lyndon) return traverse<true>(residual, alpha, active, capacity, block);
         return traverse<false>(residual, alpha, active, capacity, block);
     }
 private:
@@ -463,7 +471,7 @@ private:
             NodePtr node;
             if (levels == 3) node = b_.terminal_child(task);
             else {
-                node = b_.child(task.node, task.low);
+                node = b_.child(task.node, b_.letter(task.low));
                 b_.moments(*node);
             }
             ++b_.stats.cache_misses;

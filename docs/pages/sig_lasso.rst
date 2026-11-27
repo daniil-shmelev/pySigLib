@@ -62,7 +62,7 @@ signed contraction when two groups use the same terminal prefix state.
 The search obtains the last factor in linear time in the prefix length using
 `Duval's algorithm <https://doi.org/10.1016/0196-6774(83)90017-2>`_.
 
-Both tree orders use ``terminal_bound="norm"`` by default. The option
+All tree orders use ``terminal_bound="norm"`` by default. The option
 ``terminal_bound="projected"`` adds a signed bound for channel groups. For a fixed terminal
 state, let :math:`h_i` be its segment weights and :math:`d_i^a` the vector
 of normalised increments in channel :math:`a`. The unscaled column is
@@ -87,6 +87,99 @@ implementation also tests the original norm bound and computes the exact
 signed correlation if needed. At a single channel it goes directly to the
 signed contraction when the panel tests across responses would require
 more inner products per sample than the number of path segments.
+
+Other grouped searches
+----------------------
+
+All the following orders use the ordinary normalised signature. Returned words
+and warm-start words use the original channel labels and chronological order.
+
+* ``suffix`` fixes the last letter first. Reversing the sequence of increments
+  gives :math:`S^w(D_{L-1},\ldots,D_0)=S^{\mathrm{rev}(w)}(D_0,\ldots,D_{L-1})`.
+  The implementation reverses the segment index during packing and applies the
+  prefix search in these coordinates. The same grouped bounds then apply to
+  suffixes. See the time-reversal identity in
+  `Chevyrev and Kormilitzin, Theorem 2.25 <https://link.springer.com/chapter/10.1007/978-3-031-97239-3_1>`_.
+* ``grouped`` uses the input channel order and also tests groups in the last
+  one or two positions. ``balanced`` uses these groups and divides the parallel
+  root search by estimated work. It splits the group with the largest sum of
+  training increment energies and schedules the most energetic groups first.
+* ``energy`` sorts channels by decreasing :math:`\sum_{i,j}|D_{ij}^a|^2`
+  before forming groups. ``profile`` forms a balanced tree on eight-dimensional
+  channel norm profiles. For a sample block :math:`G`, the corresponding
+  component is :math:`(\sum_{i\in G,j}|D_{ij}^a|^2)^{1/2}`. At each split
+  it takes the median on the component with the largest spread. Both orders
+  use energy-based work division. The profiles determine the partition.
+  Screening uses the bounds over all training samples in each resulting group.
+  Widest-axis median splitting follows the construction of
+  `Friedman, Bentley and Finkel <https://doi.org/10.1145/355744.355745>`_.
+* ``forward`` changes which letter is fixed in a terminal pair :math:`uab`.
+  Write :math:`I_j=\int_0^1 P_j^u(s)\,ds` and
+  :math:`J_j=\int_0^1 sP_j^u(s)\,ds` for the integrals of the prefix
+  coefficient on segment :math:`j`. Fixing :math:`a` gives
+  :math:`S^{uab}=\sum_j D_j^b (\sum_{t<j}I_tD_t^a+(I_j-J_j)D_j^a)`.
+  One forward scan supplies the weights for every final channel :math:`b`.
+  The standard terminal routine fixes :math:`b` and scans backwards.
+* ``adaptive`` compares the input, energy and profile partitions using the
+  training profiles :math:`e_{ag}`. It minimises the total excess introduced
+  by replacing individual channel norms with a group maximum,
+  :math:`\sum_{A,g} (|A|\max_{a\in A}e_{ag}-\sum_{a\in A}e_{ag})`,
+  where :math:`A` runs over internal channel groups. This score is a proxy
+  for pruning work. When a worker receives only a subset of the possible
+  penultimate letters, it fixes those letters first. Otherwise it uses the
+  backward terminal scan. The group choice and parallel work division use
+  training paths alone.
+
+The outside-in bound
+^^^^^^^^^^^^^^^^^^^^
+
+With ``tree_order="outside"``, a group specifies the first channel :math:`a`,
+the possible final channels :math:`B` and the degree :math:`n=k+2\ge3`.
+For one normalised path, let :math:`p_a(t)=x^a(t)-x^a(0)`,
+:math:`q_b(t)=x^b(T)-x^b(t)` and let :math:`v(t)` be its cumulative
+variation in the infinity norm, with :math:`V=v(T)`. Define
+
+.. math::
+
+   L_{a,k}^2=k\int p_a(t)^2(V-v(t))^{k-1}\,dv(t),\qquad
+   R_{b,k}^2=k\int q_b(t)^2v(t)^{k-1}\,dv(t).
+
+For every interior word :math:`w` of length :math:`k`,
+:math:`n!|S^{awb}|\le n(n-1)L_{a,k}R_{b,k}`. Integrating the two outside
+letters gives :math:`p_a(t_1)q_b(t_k)` on the ordered simplex of the
+remaining times. Replacing each interior differential by :math:`dv` and
+applying Cauchy-Schwarz on that simplex gives the displayed factors from
+the marginal measures of its first and last times.
+
+Across samples, a fixed endpoint pair therefore has the correlation bound
+:math:`n(n-1)\sum_i|r_i|L_{i,a,k}R_{i,b,k}/N`. Sample-block Cauchy-Schwarz
+first screens whole groups of final channels, and a surviving leaf uses the
+samplewise sum. The search reuses the admissible final channels across interior
+prefixes at the same residual. In a terminal pair, a worker assigned a proper
+subset of the penultimate letters fixes those letters first and contracts only
+the surviving final channels. On each linear segment it integrates the squared
+excursion against the chord of the variation weight. This is exact at degrees
+three and four and conservative at higher degrees by convexity. Only degrees
+that can reach the terminal routines need these tables. The tables use
+upward-rounded single-precision factors.
+
+The primitive terminal bound
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For ``terminal_bound="primitive"``, put :math:`T_j^b=\sum_{s\ge j}D_s^b`.
+For either orientation of the terminal contraction, summation by parts gives
+
+.. math::
+
+   \sum_{j=0}^{L-1}h_jD_j^b=h_0T_0^b+\sum_{j=1}^{L-1}(h_j-h_{j-1})T_j^b.
+
+For a group of channels, precompute the maxima of :math:`|T_0^b|` and
+:math:`\|(T_1^b,\ldots,T_{L-1}^b)\|_2` separately for each path. Multiplying
+these maxima by :math:`|h_0|` and :math:`\|\Delta h\|_2`, respectively,
+and adding bounds the contraction. Each sample takes the minimum of this
+quantity and the ordinary norm bound before the residual-weighted sum.
+The discrete identity is given in the
+`NIST Digital Library of Mathematical Functions, Section 2.10(ii) <https://dlmf.nist.gov/2.10.ii>`_.
 
 Multiple responses and numerical checks
 ---------------------------------------

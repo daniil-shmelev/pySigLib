@@ -29,6 +29,8 @@ import numpy as np
 
 
 FOLDERS = dict(arabic="spoken_arabic_digit", insect="insect_wingbeat", speech="speech_commands")
+ORDERS = ("prefix", "lyndon", "suffix", "energy", "profile", "forward", "grouped", "outside", "balanced", "adaptive")
+BOUNDS = ("norm", "projected", "primitive")
 
 
 def peak_rss():
@@ -55,6 +57,16 @@ def fit(args, case, order, repeat):
     filename = args.data / FOLDERS[dataset] / "results/normalized/integral_comparison/prepared.npz"
     with np.load(filename) as data:
         x, y = np.array(data["train"], order="C", copy=True), np.array(data["response"], order="C", copy=True)
+        permutation = np.random.default_rng(28011).permutation(x.shape[-1]) if args.symmetry == "permute" else None
+
+        def transform(paths):
+            if permutation is not None:
+                return np.take(paths, permutation, axis=-1)
+            if args.symmetry == "reverse":
+                return np.ascontiguousarray(-paths[:, ::-1, :])
+            return paths
+
+        x = transform(x)
         search = {}
         if order != "original":
             tree, bound = order.split("_")
@@ -62,20 +74,26 @@ def fit(args, case, order, repeat):
         with threadpool_limits(limits=1):
             before = peak_rss()
             start = perf_counter()
-            model = pysiglib.sig_lasso(x, y, degree, ref["alpha"], n_jobs=8, fit_intercept=True,
+            model = pysiglib.sig_lasso(x, y, degree, ref["alpha"], n_jobs=args.jobs, fit_intercept=True,
                                        tol=1e-8, max_iter=3000, **search)
             elapsed = perf_counter() - start
             peak = peak_rss()
             assert np.all(model["converged"]) and model["stats"]["full_transform_calls"] == 0
-            prediction = pysiglib.sig_lasso_predict(data["test"], model, n_jobs=8)
+            prediction = pysiglib.sig_lasso_predict(transform(data["test"]), model, n_jobs=args.jobs)
             correct = int(np.sum(prediction.argmax(axis=1) == data["test_labels"]))
             train = model["signatures"] @ model["coef"] + model["intercept"]
             objective = .5 * ((y - train)**2).mean(axis=0) + ref["alpha"] * np.abs(model["coef"]).sum(axis=0)
             np.testing.assert_allclose(objective, model["objective"], rtol=1e-11, atol=1e-13)
     stem = args.output / f"{case}-{order}-{repeat}"
+    words, coef = model["words"], model["coef"]
+    if args.symmetry != "identity":
+        words = ([tuple(permutation[a] for a in w) for w in words] if permutation is not None
+                 else [w[::-1] for w in words])
+        rows = sorted(range(len(words)), key=lambda j: (len(words[j]), words[j]))
+        words, coef = [words[j] for j in rows], coef[rows]
     np.savez(stem.with_suffix(".npz"), prediction=prediction, train=train,
-             words=np.array([",".join(map(str, w)) for w in model["words"]]), coef=model["coef"])
-    record = dict(case=case, order=order, repeat=repeat, seconds=elapsed, rss=peak, rss_increase=peak-before,
+             words=np.array([",".join(map(str, w)) for w in words]), coef=coef)
+    record = dict(case=case, order=order, repeat=repeat, symmetry=args.symmetry, jobs=args.jobs, seconds=elapsed, rss=peak, rss_increase=peak-before,
                   native_sha256=hashlib.sha256(Path(CPSIG._name).read_bytes()).hexdigest(),
                   correct=correct, paper_correct=ref["correct"], test_samples=len(prediction),
                   words=len(model["words"]), max_kkt=float(np.max(model["kkt_violation"])),
@@ -87,14 +105,16 @@ def fit(args, case, order, repeat):
 def compare(args):
     for case in args.cases:
         for repeat in range(args.repeats):
-            shift = repeat % len(args.orders)
+            shift = (repeat % len(args.orders) if args.repeats >= len(args.orders)
+                     else repeat * len(args.orders) // args.repeats)
             orders = args.orders[shift:] + args.orders[:shift]
             for order in orders:
                 environment = dict(os.environ)
                 if order == "original" and args.original_pythonpath:
                     environment["PYTHONPATH"] = str(args.original_pythonpath.resolve())
                 subprocess.run([sys.executable, __file__, "--data", str(args.data), "--paper", str(args.paper),
-                                "--output", str(args.output), "--worker", case, order, str(repeat)],
+                                "--output", str(args.output), "--jobs", str(args.jobs), "--symmetry", args.symmetry,
+                                "--worker", case, order, str(repeat)],
                                check=True, env=environment)
             reference = args.output / f"{case}-{orders[0]}-{repeat}.npz"
             with np.load(reference) as first:
@@ -131,6 +151,46 @@ def audit_scores(args, case, order):
         return error
 
 
+def audit_endpoint_pairs(args):
+    rows = []
+    for case in args.cases:
+        dataset, level = case.split("-")
+        if dataset == "dictionary" or int(level) not in (3, 4):
+            continue
+        with np.load(args.data / FOLDERS[dataset] / "results/normalized/integral_comparison/prepared.npz") as data:
+            x, y = data["train"], data["response"]
+        ref = next(r["tree"] for r in json.loads(args.paper.read_text())["classification"]
+                   if r["dataset"] == dataset and r["degree"] == int(level))
+        alpha = np.asarray(ref["alpha"])
+        with np.load(args.output / f"{case}-prefix_norm-0.npz") as baseline:
+            residuals = {"initial": y - y.mean(axis=0), "fitted": y - baseline["train"]}
+        dv = np.max(np.abs(np.diff(x, axis=1)), axis=-1)
+        total = dv.sum(axis=1)
+        scale = np.where(total > 0., total, 1.)
+        dv /= scale[:, None]
+        x = (x - x[:, :1]) / scale[:, None, None]
+        before = np.cumsum(dv, axis=1) - dv
+        after = np.cumsum(dv[:, ::-1], axis=1)[:, ::-1] - dv
+        k = int(level) - 2
+
+        def marginal(z, start, end):
+            a, b = z[:, :-1], z[:, 1:]
+            both = (a + b)**2
+            return np.sqrt((k / 12 * dv[:, :, None] *
+                           ((2*a*a + both) * start[:, :, None]**(k-1) +
+                            (2*b*b + both) * end[:, :, None]**(k-1))).sum(axis=1))
+
+        left = marginal(x, after + dv, after)
+        right = marginal(x[:, -1:] - x, before, before + dv)
+        for stage, r in residuals.items():
+            bound = np.zeros((x.shape[-1], x.shape[-1]))
+            for t in range(r.shape[1]):
+                products = (np.abs(r[:, t:t+1]) * left).T @ right
+                np.maximum(bound, (k+2)*(k+1) * products / (len(x)*alpha[t]), out=bound)
+            rows.append(dict(case=case, stage=stage, excluded=int(np.sum(bound < 1)), pairs=bound.size))
+    (args.output / "endpoint-audit.json").write_text(json.dumps(rows, indent=2))
+
+
 def synthetic(args):
     import pysiglib
     from threadpoolctl import threadpool_limits
@@ -155,13 +215,13 @@ def synthetic(args):
                     tree, bound = order.split("_")
                     start = perf_counter()
                     model = pysiglib.sig_lasso(x, y, degree, alpha, tree_order=tree, terminal_bound=bound,
-                                              tol=1e-8, max_iter=3000, n_jobs=8)
+                                              tol=1e-8, max_iter=3000, n_jobs=args.jobs)
                     elapsed = perf_counter() - start
                     cols = [words[w] for w in model["words"]]
                     assert model["converged"] and model["stats"]["full_transform_calls"] == 0
                     np.testing.assert_allclose(model["signatures"], design[:, cols], atol=1e-12)
                     pred = held[:, cols] @ model["coef"] + model["intercept"]
-                    np.testing.assert_allclose(pysiglib.sig_lasso_predict(test, model, n_jobs=8), pred, atol=1e-11)
+                    np.testing.assert_allclose(pysiglib.sig_lasso_predict(test, model, n_jobs=args.jobs), pred, atol=1e-11)
                     residual = y - design[:, cols] @ model["coef"] - model["intercept"]
                     correlations = design.T @ residual / len(y)
                     kkt = max(np.max(abs(correlations)) - alpha, abs(residual.mean()),
@@ -178,15 +238,39 @@ def synthetic(args):
     (args.output / "synthetic.json").write_text(json.dumps(records, indent=2))
 
 
+def report_synthetic(args):
+    records = json.loads((args.output / "synthetic.json").read_text())
+    lines = ["# Single-response signature regression", "",
+             f"Seed 7201, sparse signature target, 0.03 times the training maximum correlation, {args.jobs} worker(s). "
+             "One warm-up per method and case precedes the timed fits. The dense reference matrices are outside fit timing. "
+             "The memory column is the tracked native peak.", "",
+             "| Case | Order / bound | Median fit ms (Q1, Q3) | Native MiB | Words | Max dense KKT violation |",
+             "|---|---|---:|---:|---:|---:|"]
+    for case in dict.fromkeys(r["case"] for r in records):
+        for order in args.orders:
+            group = [r for r in records if r["case"] == case and r["order"] == order]
+            if len(group) != args.repeats:
+                raise ValueError(f"Incomplete synthetic measurements for {case}, {order}")
+            lo, mid, hi = 1000 * np.percentile([r["seconds"] for r in group], [25, 50, 75])
+            peak = np.median([r["stats"]["peak_bytes"] for r in group]) / 2**20
+            lines.append(f"| {case} | {order} | {mid:.2f} ({lo:.2f}, {hi:.2f}) | {peak:.2f} | "
+                         f"{group[0]['words']} | {max(r['kkt'] for r in group):.2g} |")
+    lines.extend(["", "The selected training columns and test predictions were checked against the full reference "
+                  "designs. Each order recovered the same support within each case."])
+    (args.output / "REPORT.md").write_text("\n".join(lines) + "\n", encoding="ascii")
+
+
 def report(args):
     records = [json.loads(p.read_text()) for p in args.output.glob("*.json") if p.stem.rsplit("-", 1)[-1].isdigit()]
+    if any(r.get("symmetry", "identity") != args.symmetry or r.get("jobs", 8) != args.jobs for r in records):
+        raise ValueError("The measurement directory mixes path symmetries or worker counts")
     lines = ["# Grouped searches for ordinary signature features", "",
-             "The comparison varies the signed terminal projection and the Lyndon factor ordering independently. "
-             f"Each cell uses {args.repeats} fresh processes in rotated order, eight feature workers, "
+             "Each configuration specifies its word or channel order and its terminal bound. "
+             f"Each cell uses {args.repeats} fresh processes in rotated order, {args.jobs} feature worker(s), "
              "one BLAS thread, float64, squared loss, an intercept and tolerance 1e-8. "
              "Times cover the complete fit with resident inputs. Loading, test prediction and auditing take place outside the timer.",
-             "", f"Platform {platform.platform()}, Python {platform.python_version()}.", "",
-             "The prefix and Lyndon variants share the register-based signed terminal contraction. "
+             "", f"Platform {platform.platform()}, Python {platform.python_version()}. Path symmetry: {args.symmetry}.", "",
+             "All updated variants share the register-based signed terminal contraction. "
              "An original column, when present, runs the pre-change prefix implementation from a separate library.", "",
              "The three audio tasks use the saved training and test splits. The penalty vectors come from the "
              "paper's archived measurements at revision 02da5ef18, including the reconstructed degree-four "
@@ -201,6 +285,7 @@ def report(args):
                "| Task | Order / bound | Native peak | RSS increase | Peak process RSS | Terminal contractions |",
                "|---|---|---:|---:|---:|---:|"]
     totals = dict.fromkeys(args.orders, 0.)
+    case_medians = {order: [] for order in args.orders}
     score_error = coef_error = obj_error = kkt = independent_error = 0.
     for case in args.cases:
         row = [case]
@@ -213,6 +298,8 @@ def report(args):
             row.append(f"{mid:.4f} ({lo:.4f}, {hi:.4f})")
             memory = [np.median([r["stats"]["peak_bytes"] for r in group]),
                       np.median([r["rss_increase"] for r in group]), np.median([r["rss"] for r in group])]
+            if not case.startswith("dictionary-"):
+                case_medians[order].append([mid, *memory])
             info = [case, order.replace("_", " / "), *(f"{v / 2**20:.2f}" for v in memory),
                     f'{int(np.median([r["stats"]["terminal_correlations"] for r in group])):,}']
             details.append("| " + " | ".join(info) + " |")
@@ -238,11 +325,24 @@ def report(args):
                   f"in coefficients, {score_error:.2g} in test scores and {obj_error:.2g} in recomputed objectives. "
                   f"The largest solver-reported KKT violation was {kkt:.2g}. An independent signature coefficient "
                   f"kernel reproduced scores up to a common intercept on 16 training and 16 held-out recordings "
-                  f"per configuration to {independent_error:.2g}.", "", *details])
+                  f"per experimental setting to {independent_error:.2g}."])
+    if case_medians[args.orders[0]]:
+        lines += ["", "### Classification tasks", "",
+                  "Time is the sum of the case medians. Each memory entry is the largest case median. "
+                  "The extra Arabic dictionary penalty is excluded from this summary.", "",
+                  "| Order / bound | Fit s | Native peak MiB | RSS increase MiB | Peak process RSS MiB |",
+                  "|---|---:|---:|---:|---:|"]
+        for order, rows in case_medians.items():
+            array = np.asarray(rows)
+            mem = " | ".join(f"{v:.2f}" for v in np.max(array[:, 1:], axis=0) / 2**20)
+            lines.append(f"| {order} | {array[:, 0].sum():.4f} | {mem} |")
+    lines.extend(["", *details])
     lines.extend(["", "## Reproduction", "", "From the built branch checkout, run the following in PowerShell.", "",
                   "```powershell", "git show 02da5ef18:benchmarks/results/prefix_suffix/paper_rerun/measurements.json | Set-Content -Encoding ascii paper.json",
                   "python benchmarks/benchmark_signature_tree_order.py --data PATH/TO/sig_branch_and_bound_experiments "
-                  f"--paper paper.json --output tree_results --repeats {args.repeats}" +
+                  f"--paper paper.json --output tree_results --repeats {args.repeats} --orders " +
+                  " ".join(o for o in args.orders if o != "original") + " --cases " + " ".join(args.cases) +
+                  f" --symmetry {args.symmetry} --jobs {args.jobs}" +
                   (" --original-pythonpath PATH/TO/PRECHANGE/PACKAGE_PARENT" if args.original_pythonpath else ""),
                   "```", "", "SHA-256 hashes of the prepared input archives", ""])
     for name, folder in FOLDERS.items():
@@ -269,22 +369,33 @@ if __name__ == "__main__":
     parser.add_argument("--data", type=Path, help="sig_branch_and_bound_experiments directory")
     parser.add_argument("--paper", type=Path, help="paper_rerun/measurements.json at revision 02da5ef18")
     parser.add_argument("--synthetic-data", type=Path, help="Run the saved single-response synthetic benchmarks instead")
+    parser.add_argument("--symmetry", choices=("identity", "reverse", "permute"), default="identity",
+                        help="Relabel the audio task by reversing increments or permuting channels with seed 28011")
     parser.add_argument("--original-pythonpath", type=Path, help="Include a separate pre-change package in the audio comparison")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--worker", nargs=3)
     parser.add_argument("--report-only", action="store_true")
+    parser.add_argument("--endpoint-audit", action="store_true",
+                        help="Audit the endpoint bound at the initial and fitted residuals of saved prefix fits")
     parser.add_argument("--cases", nargs="+", default=[f"{name}-{d}" for name in FOLDERS for d in range(1, 5)] + ["dictionary-4"])
     parser.add_argument("--repeats", type=int, default=4)
+    parser.add_argument("--jobs", type=int, default=8, help="CPU workers per fit")
     parser.add_argument("--orders", nargs="+", default=["prefix_norm", "lyndon_projected", "prefix_projected", "lyndon_norm"],
-                        choices=["prefix_norm", "lyndon_projected", "prefix_projected", "lyndon_norm"])
+                        choices=[f"{order}_{bound}" for order in ORDERS for bound in BOUNDS])
     args = parser.parse_args()
     if args.original_pythonpath and not args.worker:
         args.orders = ["original", *args.orders]
     args.output.mkdir(parents=True, exist_ok=True)
     if args.synthetic_data:
-        synthetic(args)
+        if args.symmetry != "identity" or args.original_pythonpath:
+            parser.error("symmetry and original-library controls apply to the audio experiments")
+        if not args.report_only:
+            synthetic(args)
+        report_synthetic(args)
     elif args.data is None or args.paper is None:
         parser.error("the audio comparison requires --data and --paper")
+    elif args.endpoint_audit:
+        audit_endpoint_pairs(args)
     elif args.worker:
         fit(args, args.worker[0], args.worker[1], int(args.worker[2]))
     else:

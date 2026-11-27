@@ -31,6 +31,8 @@
 HWY_BEFORE_NAMESPACE();
 namespace cpsig { namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
+using siglasso::SignatureOrder;
+using siglasso::TerminalBound;
 
 class LassoCPU final : public siglasso::Backend {
     const bool log_features_;
@@ -50,6 +52,7 @@ class LassoCPU final : public siglasso::Backend {
     }
     bool channels_ready_ = false;
     std::vector<siglasso::Array> channels_;
+    std::vector<size_t> ordered_letters_, rank_of_letter_;
     std::vector<bool> pinned_;
     struct ColdChannels {
         std::mutex mutex;
@@ -63,26 +66,32 @@ class LassoCPU final : public siglasso::Backend {
         // A subnormal variation can have an infinite reciprocal.
         return siglasso::finite(std::isfinite(reciprocal) ? delta * reciprocal : delta / total);
     }
-    template<size_t width, class T>
-    void load_channels(const T* paths, size_t first, const std::array<double*, width>& output) const {
+    template<bool adjacent, bool reverse, size_t width, class T>
+    void load_channels(const T* paths, const std::array<size_t, width>& letters, const std::array<double*, width>& output) const {
         const size_t n = options.samples, l = options.length - 1, d = options.dimension;
         for (size_t i = 0; i < n; ++i) {
-            const T* x = paths + i * (l + 1) * d + first;
+            const T* x = paths + i * (l + 1) * d + (adjacent ? letters[0] : 0);
             const double total = normalization_.data[i];
             const double reciprocal = total ? 1. / total : 0.;
             std::array<double, width> previous{};
             for (size_t j = 0; j < l; ++j) for (size_t c = 0; c < width; ++c) {
-                const double delta = double(x[(j + 1) * d + c]) - x[c];
+                const size_t a = adjacent ? c : letters[c];
+                const double delta = double(x[(j + 1) * d + a]) - x[a];
                 const double position = normalized_position(delta, total, reciprocal);
-                output[c][j * n + i] = position - previous[c];
+                const size_t segment = reverse ? l - 1 - j : j;
+                output[c][segment * n + i] = position - previous[c];
                 previous[c] = position;
             }
         }
     }
-    template<size_t width>
-    void read_channels(size_t first, const std::array<double*, width>& output) const {
-        if (input_float_) load_channels(static_cast<const float*>(original_paths_), first, output);
-        else load_channels(static_cast<const double*>(original_paths_), first, output);
+    template<size_t width, bool adjacent = true>
+    void read_channels(const std::array<size_t, width>& letters, const std::array<double*, width>& output) const {
+        const auto read = [&](const auto* paths) {
+            if (options.order == SignatureOrder::suffix) load_channels<adjacent, true>(paths, letters, output);
+            else load_channels<adjacent, false>(paths, letters, output);
+        };
+        if (input_float_) read(static_cast<const float*>(original_paths_));
+        else read(static_cast<const double*>(original_paths_));
     }
     template<class T>
     static double step_variation(const T* previous, const T* next, size_t dimension) {
@@ -111,23 +120,28 @@ class LassoCPU final : public siglasso::Backend {
         if (channel_source_) return channel_source_->channel(a);
         if (!channels_ready_) return Backend::channel(a);
         if (pinned_[a]) return {channels_[a], 1};
+        return rank_of_letter_.empty() ? cold_channel<false>(a) : cold_channel<true>(a);
+    }
+    template<bool permuted>
+    siglasso::Channel cold_channel(size_t a) {
         // Terminal loops visit neighbouring letters. Decode the pair in one
         // pass through the caller's sample-major data and recycle idle buffers.
-        const size_t first = a - a % 2;
+        const size_t rank = permuted ? rank_of_letter_[a] : a, first = rank - rank % 2;
         auto& shard = cold_[(first / 2) % cold_shards_];
         std::lock_guard lock(shard.mutex);
         if (shard.first != first) {
-            const size_t last = std::min<size_t>(first + 2, options.dimension);
-            for (size_t c = first; c < last; ++c) if (!pinned_[c]) {
-                auto& buffer = shard.values[c - first];
+            const size_t count = std::min<size_t>(2, options.dimension - first);
+            const auto source = [&](size_t j) { return permuted ? ordered_letters_[first + j] : first + j; };
+            for (size_t j = 0; j < count; ++j) if (!pinned_[source(j)]) {
+                auto& buffer = shard.values[j];
                 if (buffer.owner.use_count() != 1) buffer = alloc(options.samples * (options.length - 1));
             }
-            if (last - first == 2 && !pinned_[first] && !pinned_[first + 1])
-                read_channels<2>(first, {shard.values[0].data, shard.values[1].data});
-            else read_channels<1>(a, {shard.values[a - first].data});
+            if (count == 2 && !pinned_[source(0)] && !pinned_[source(1)])
+                read_channels<2, !permuted>({source(0), source(1)}, {shard.values[0].data, shard.values[1].data});
+            else read_channels<1>({a}, {shard.values[rank - first].data});
             shard.first = first;
         }
-        return {shard.values[a - first], 1};
+        return {shard.values[rank - first], 1};
     }
     template<class T>
     void channel_geometry(const T* paths, double* energy, double* previous, size_t begin, size_t end) {
@@ -148,7 +162,8 @@ class LassoCPU final : public siglasso::Backend {
                     maximum = std::max(maximum, std::abs(step));
                     energy[a] += step * step;
                 }
-                variation.data[j * n + i] = maximum;
+                const size_t segment = options.order == SignatureOrder::suffix ? l - 1 - j : j;
+                variation.data[segment * n + i] = maximum;
             }
             double tail = 0.;
             for (size_t j = l; j-- > 0;) {
@@ -196,7 +211,7 @@ class LassoCPU final : public siglasso::Backend {
         batch(keep, [&](size_t begin, size_t end) {
             for (size_t pos = begin; pos < end; ++pos) {
                 const size_t a = rank[pos].second;
-                read_channels<1>(a, {channels_[a].data});
+                read_channels<1>({a}, {channels_[a].data});
             }
         });
         channels_ready_ = true;
@@ -250,10 +265,28 @@ class LassoCPU final : public siglasso::Backend {
     LassoCPU* channel_source_ = nullptr;
     siglasso::Array terminal_sample_norms_, panel_scratch_;
     siglasso::Array channel_group_norms_;
+    siglasso::Array primitive_norms_, difference_norms_;
     siglasso::Array projection_boxes_, projection_workspace_;
     static constexpr size_t projection_panels = 4;
     static constexpr size_t box_planes = 2 * projection_panels + 1;
     static constexpr size_t sample_groups = 8;
+    struct EndpointGeometry {
+        size_t first_degree;
+        std::vector<float> left, right;
+        siglasso::Array groups;
+        std::shared_ptr<void> storage;
+    };
+    struct EndpointMask {
+        size_t anchor = SIZE_MAX;
+        double threshold = 0., omitted = 0.;
+        std::vector<size_t> counts;
+        std::shared_ptr<void> storage;
+        bool any(size_t low, size_t high) const { return counts[high] != counts[low]; }
+    };
+    std::shared_ptr<EndpointGeometry> endpoints_;
+    std::array<EndpointMask, 3> endpoint_masks_;
+    siglasso::Array endpoint_weights_;
+    std::vector<double> root_work_;
     std::array<double, 2> terminal_caps_{};
     // Independent SIMD accumulators shorten the dependency chain. Terminal
     // bounds include their reduction error. Exact correlations still use dot().
@@ -302,9 +335,10 @@ class LassoCPU final : public siglasso::Backend {
         for (; i + lanes <= n; i += lanes) {
             auto squared = hn::Zero(tag), magnitude = hn::Zero(tag);
             for (size_t a = task.low; a < task.high; ++a) {
+                const size_t c = letter(a);
                 auto value = hn::Zero(tag), absolute = hn::Zero(tag);
                 for (size_t j = 0; j < l; ++j) {
-                    const auto term = hn::Mul(hn::LoadU(tag, task.node->integrals.data + j * n + i), hn::LoadU(tag, increments.data + (j * d + a) * n + i));
+                    const auto term = hn::Mul(hn::LoadU(tag, task.node->integrals.data + j * n + i), hn::LoadU(tag, increments.data + (j * d + c) * n + i));
                     value = hn::Add(value, term); absolute = hn::Add(absolute, hn::Abs(term));
                 }
                 squared = hn::Add(squared, hn::Mul(value, value)); magnitude = hn::Add(magnitude, hn::Mul(absolute, absolute));
@@ -314,7 +348,7 @@ class LassoCPU final : public siglasso::Backend {
         }
         double result = hn::ReduceSum(tag, total);
         for (; i < n; ++i) result += std::abs(residual.data[i]) * siglasso::energy_sample(task.node->integrals.data,
-            increments.data, task.low, task.high, i, n, l, d);
+            increments.data, task.low, task.high, i, n, l, d, letter_order);
         return siglasso::finite(result);
     }
 public:
@@ -323,6 +357,9 @@ public:
         tt_suffix_ = source.tt_suffix_;
         terminal_only_ = source.terminal_only_;
         channel_group_norms_ = source.channel_group_norms_;
+        primitive_norms_ = source.primitive_norms_;
+        letter_order = source.letter_order;
+        endpoints_ = source.endpoints_;
         projection_boxes_ = source.projection_boxes_;
         terminal_sample_norms_ = source.terminal_sample_norms_;
         compact_panels_ = source.compact_panels_;
@@ -368,7 +405,8 @@ public:
                     for (size_t j = 0; j < segments; ++j) {
                         const double position = total ? siglasso::finite(
                             (double(sample[(j + 1) * o.dimension + a]) - sample[a]) / total) : 0;
-                        increments.data[(j * o.dimension + a) * o.samples + i] = position - previous;
+                        const size_t segment = o.order == SignatureOrder::suffix ? segments - 1 - j : j;
+                        increments.data[(segment * o.dimension + a) * o.samples + i] = position - previous;
                         previous = position;
                     }
                 }
@@ -455,7 +493,7 @@ public:
     size_t panels() const { return (options.length - 1 + panel_width - 1) / panel_width; }
     size_t norm_index(size_t block) const {
         const auto [low, high] = alphabet[block];
-        return high - low == 1 ? low : options.dimension + block - low;
+        return high - low == 1 ? letter(low) : options.dimension + block - low;
     }
     // Nonnegative bfloat16 values are ordered by their unsigned encoding.
     // Round each leaf upward once. Every internal maximum then stays exact
@@ -501,7 +539,7 @@ public:
             for (size_t block = begin; block < end; ++block) {
                 const auto [low, high] = alphabet[block];
                 if (high - low != 1) continue;
-                const auto steps = channel(low);
+                const auto steps = channel(letter(low));
                 for (size_t g = 0; g < count; ++g) {
                     auto* out = table.codes.data() + (block * count + g) * n;
                     for (size_t j = g * panel_width; j < std::min(l, (g + 1) * panel_width); ++j) {
@@ -521,6 +559,203 @@ public:
             for (size_t i = 0; i < stride; ++i) out[i] = std::max(left_child[i], right_child[i]);
         }
     }
+    void order_channel_groups() {
+        const size_t d = options.dimension;
+        const bool adaptive = options.order == SignatureOrder::adaptive;
+        const bool permuted = adaptive || options.order == SignatureOrder::energy || options.order == SignatureOrder::profile;
+        if (permuted) {
+            ordered_letters_.resize(d);
+            std::iota(ordered_letters_.begin(), ordered_letters_.end(), 0);
+            letter_order = ordered_letters_.data();
+        }
+        const auto* profile = channel_group_norms_.data;
+        auto energy = alloc(d);
+        for (size_t a = 0; a < d; ++a)
+            energy.data[a] = bound_dot(profile + a * sample_groups, profile + a * sample_groups, sample_groups);
+        std::vector<size_t> best_order;
+        double best_cost = std::numeric_limits<double>::infinity();
+        const auto test_order = [&] {
+            double cost = 0.;
+            for (const auto& [lo, hi] : alphabet) {
+                if (hi - lo == 1) continue;
+                std::array<double, sample_groups> largest{};
+                double total = 0.;
+                for (size_t p = lo; p < hi; ++p) {
+                    const auto* v = profile + ordered_letters_[p] * sample_groups;
+                    for (size_t g = 0; g < sample_groups; ++g) {
+                        largest[g] = std::max(largest[g], v[g]); total += v[g];
+                    }
+                }
+                cost += (hi - lo) * std::accumulate(largest.begin(), largest.end(), 0.) - total;
+            }
+            if (best_order.empty() || cost < best_cost) { best_cost = cost; best_order = ordered_letters_; }
+        };
+        if (adaptive) test_order();
+        if (adaptive || options.order == SignatureOrder::energy) {
+            std::sort(ordered_letters_.begin(), ordered_letters_.end(), [&](size_t a, size_t b) {
+                return energy.data[a] == energy.data[b] ? a < b : energy.data[a] > energy.data[b];
+            });
+            if (adaptive) test_order();
+        }
+        if (adaptive || options.order == SignatureOrder::profile) {
+            // Partition the channel norm profiles at the median on their widest axis.
+            for (const auto& [low, high] : alphabet) {
+                if (high - low <= 1) continue;
+                size_t axis = 0;
+                double widest = -1.;
+                for (size_t g = 0; g < sample_groups; ++g) {
+                    double lower = std::numeric_limits<double>::infinity(), upper = 0.;
+                    for (size_t p = low; p < high; ++p) {
+                        const double value = profile[ordered_letters_[p] * sample_groups + g];
+                        lower = std::min(lower, value); upper = std::max(upper, value);
+                    }
+                    if (upper - lower > widest) { widest = upper - lower; axis = g; }
+                }
+                auto first = ordered_letters_.begin();
+                std::nth_element(first + low, first + low + (high - low) / 2, first + high, [&](size_t a, size_t b) {
+                    const double x = profile[a * sample_groups + axis], y = profile[b * sample_groups + axis];
+                    return x == y ? a < b : x > y;
+                });
+            }
+            if (adaptive) {
+                test_order();
+                ordered_letters_.swap(best_order);
+                letter_order = ordered_letters_.data();
+            }
+        }
+        if (permuted && channels_ready_) {
+            rank_of_letter_.resize(d);
+            for (size_t rank = 0; rank < d; ++rank) rank_of_letter_[letter(rank)] = rank;
+            for (auto& shard : cold_) shard.first = SIZE_MAX;
+        }
+        root_work_.resize(alphabet.size());
+        for (size_t block = alphabet.size(); block-- > 0;) {
+            const auto [lo, hi] = alphabet[block];
+            root_work_[block] = hi - lo == 1 ? energy.data[letter(lo)]
+                : root_work_[block + 1] + root_work_[block + 2 * ((hi - lo) / 2)];
+        }
+    }
+    // First and last order-statistic marginals on the variation simplex.
+    void prepare_endpoint_geometry() {
+        const size_t n = options.samples, l = options.length - 1, d = options.dimension, m = options.degree;
+        endpoints_ = std::make_shared<EndpointGeometry>();
+        auto& e = *endpoints_;
+        e.first_degree = std::max<size_t>(3, m - 2);
+        const size_t levels = m - e.first_degree + 1;
+        const size_t size = siglasso::multiply(levels, siglasso::multiply(d, n));
+        e.storage = account(siglasso::multiply(2 * sizeof(float), size));
+        e.left.resize(size); e.right.resize(size);
+        e.groups = alloc(siglasso::multiply(levels * sample_groups, alphabet.size()));
+        const double error = siglasso::terminal_roundoff(m, n, l);
+        const auto upward = [](double x) {
+            const auto v = static_cast<float>(x);
+            return v < x ? std::nextafter(v, std::numeric_limits<float>::infinity()) : v;
+        };
+        batch(d, [&](size_t low, size_t high) {
+            for (size_t c = low; c < high; ++c) {
+                const auto dx = channel(c);
+                for (size_t i = 0; i < n; ++i) {
+                    double end = 0.;
+                    for (size_t j = 0; j < l; ++j) end += dx.values.data[j * dx.dimension * n + i];
+                    double x = 0., v = 0.;
+                    std::array<double, 3> left{}, right{};
+                    for (size_t j = 0; j < l; ++j) {
+                        const double next = x + dx.values.data[j * dx.dimension * n + i];
+                        const double y = end - x, y1 = end - next;
+                        const double dv = variation.data[j * n + i], tail = after.data[j * n + i];
+                        const double sx = (x + next) * (x + next), sy = (y + y1) * (y + y1);
+                        // Integrals of (1-t) and t against the squared linear excursion.
+                        const double x0 = dv / 12 * (sx + 2 * x * x), x1 = dv / 12 * (sx + 2 * next * next);
+                        const double y0 = dv / 12 * (sy + 2 * y * y), yr = dv / 12 * (sy + 2 * y1 * y1);
+                        const size_t power = e.first_degree - 3;
+                        double wl = power ? std::pow(tail + dv, power) : 1., wr = power ? std::pow(tail, power) : 1.;
+                        double vl = power ? std::pow(v, power) : 1., vr = power ? std::pow(v + dv, power) : 1.;
+                        for (size_t s = 0; s < levels; ++s) {
+                            left[s] += wl * x0 + wr * x1; right[s] += vl * y0 + vr * yr;
+                            wl *= tail + dv; wr *= tail; vl *= v; vr *= v + dv;
+                        }
+                        x = next; v += dv;
+                    }
+                    for (size_t s = 0; s < levels; ++s) {
+                        const size_t k = e.first_degree + s - 2, at = (s * d + c) * n + i;
+                        const double pad = error * std::pow(v, 1. + .5 * k);
+                        e.left[at] = upward(std::sqrt(k * left[s]) * (1 + error) + pad);
+                        e.right[at] = upward(std::sqrt(k * right[s]) * (1 + error) + pad);
+                    }
+                }
+            }
+        });
+        for (size_t s = 0; s < levels; ++s) for (size_t block = alphabet.size(); block-- > 0;) {
+            const auto [lo, hi] = alphabet[block];
+            auto* dst = e.groups.data + (s * alphabet.size() + block) * sample_groups;
+            if (hi - lo == 1) {
+                const float* right = e.right.data() + (s * d + lo) * n;
+                for (size_t g = 0; g < sample_groups; ++g) {
+                    double v = 0.;
+                    for (size_t i = n * g / sample_groups; i < n * (g + 1) / sample_groups; ++i)
+                        v += double(right[i]) * right[i];
+                    dst[g] = std::sqrt(v);
+                }
+            } else {
+                const size_t offset = 2 * ((hi - lo) / 2) * sample_groups;
+                for (size_t g = 0; g < sample_groups; ++g) dst[g] = std::max(dst[g + sample_groups], dst[g + offset]);
+            }
+        }
+    }
+    const EndpointMask* endpoint_mask(size_t a, size_t degree, const siglasso::Array& r, double threshold) {
+        if (!endpoints_ || degree < endpoints_->first_degree) return nullptr;
+        const auto& e = *endpoints_;
+        const size_t n = options.samples, d = options.dimension, s = degree - e.first_degree;
+        auto& mask = endpoint_masks_[s];
+        if (mask.anchor == a && mask.threshold <= threshold) return &mask;
+        mask.anchor = a; mask.threshold = threshold; mask.omitted = 0.;
+        if (!mask.storage) mask.storage = account(siglasso::multiply(d + 1, sizeof(size_t)));
+        mask.counts.assign(d + 1, 0);
+        const size_t targets = std::max<size_t>(1, batch_absolute.size());
+        if (endpoint_weights_.size < targets * n) endpoint_weights_ = alloc(targets * n);
+        const float* left = e.left.data() + (s * d + a) * n;
+        std::array<std::array<double, sample_groups>, siglasso::max_response_batch> groups{};
+        for (size_t t = 0; t < targets; ++t) {
+            const auto* residual = batch_absolute.empty() ? r.data : batch_absolute[t].data;
+            double* out = endpoint_weights_.data + t * n;
+            for (size_t i = 0; i < n; ++i) out[i] = std::abs(residual[i]) * left[i];
+            for (size_t g = 0; g < sample_groups; ++g) {
+                const size_t first = n * g / sample_groups, end = n * (g + 1) / sample_groups;
+                groups[t][g] = std::sqrt(bound_dot(out + first, out + first, end - first));
+            }
+        }
+        const double error = siglasso::terminal_roundoff(degree, n, options.length - 1);
+        const double scale = double(degree * (degree - 1)) / n * (1. + error);
+        const double slack = error * absolute_sum(r) / n + 1e-15;
+        if (!std::isfinite(scale) || !std::isfinite(slack)) { mask.anchor = SIZE_MAX; return nullptr; }
+        for (size_t block = 0; block < alphabet.size();) {
+            const auto [lo, hi] = alphabet[block];
+            const auto* radii = e.groups.data + (s * alphabet.size() + block) * sample_groups;
+            double bound = 0.;
+            for (size_t t = 0; t < targets; ++t) {
+                bound = std::max(bound, bound_dot(groups[t].data(), radii, sample_groups) * scale + slack);
+                if (bound >= threshold) break;
+            }
+            if (bound < threshold) {
+                mask.omitted = std::max(mask.omitted, bound);
+                block += 2 * (hi - lo) - 1;
+                continue;
+            }
+            if (hi - lo == 1) {
+                const float* right = e.right.data() + (s * d + lo) * n;
+                bound = 0.;
+                for (size_t t = 0; t < targets; ++t) {
+                    bound = std::max(bound, bound_dot(right, endpoint_weights_.data + t * n, n) * scale + slack);
+                    if (bound >= threshold) break;
+                }
+                if (bound < threshold) mask.omitted = std::max(mask.omitted, bound);
+                else mask.counts[hi] = 1;
+            }
+            ++block;
+        }
+        std::partial_sum(mask.counts.begin(), mask.counts.end(), mask.counts.begin());
+        return &mask;
+    }
     void prepare() override {
         if (endpoint_input_) return;
         const size_t n = options.samples, l = options.length - 1, d = options.dimension;
@@ -534,9 +769,12 @@ public:
         }
         if (log_features_ || options.selected_only) return;
         prepare_alphabet();
+        if (options.order == SignatureOrder::outside && options.degree >= 3 && l) prepare_endpoint_geometry();
         terminal_sample_norms_ = alloc(siglasso::multiply(n, alphabet.size()));
-        if (options.projected_bound && l)
+        if (options.terminal == TerminalBound::projected && l)
             projection_boxes_ = alloc(siglasso::multiply(box_planes * alphabet.size(), n));
+        if (options.terminal == TerminalBound::primitive && l)
+            primitive_norms_ = alloc(siglasso::multiply(2, terminal_sample_norms_.size));
         const double error = siglasso::terminal_roundoff(0, n * l, l);
         batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t a = 0; a < d; ++a) {
@@ -549,6 +787,25 @@ public:
                 }
                 for (size_t i = begin; i < end; ++i)
                     norms[i] = std::sqrt(norms[i] + 32. * (l + 1) * std::numeric_limits<double>::min()) * (1 + error);
+                if (primitive_norms_.owner) {
+                    double* endpoint = primitive_norms_.data + 2 * a * n;
+                    double* norm = endpoint + n;
+                    std::fill(endpoint + begin, endpoint + end, 0.);
+                    std::fill(norm + begin, norm + end, 0.);
+                    for (size_t j = l; j-- > 0;) {
+                        const double* dx = steps.values.data + j * steps.dimension * n;
+                        for (size_t i = begin; i < end; ++i) {
+                            endpoint[i] += dx[i];
+                            if (j) norm[i] += endpoint[i] * endpoint[i];
+                        }
+                    }
+                    for (size_t i = begin; i < end; ++i) {
+                        // A tail sum can cancel. Bound its absolute summation error by the increment norm.
+                        const double pad = error * std::sqrt(static_cast<double>(l)) * norms[i];
+                        endpoint[i] = std::abs(endpoint[i]) + pad;
+                        norm[i] = std::sqrt(norm[i]) * (1 + error) + std::sqrt(static_cast<double>(l)) * pad;
+                    }
+                }
                 if (projection_boxes_.owner) {
                     auto* box = projection_boxes_.data + box_planes * a * n;
                     auto* remainder = box + (box_planes - 1) * n;
@@ -575,6 +832,21 @@ public:
                         remainder[i] = std::sqrt(remainder[i] + std::numeric_limits<double>::min()) * (1 + error);
                 }
             }
+        });
+        const bool grouped = options.grouped_terminals();
+        channel_group_norms_ = alloc((grouped ? alphabet.size() : d) * sample_groups);
+        for (size_t a = 0; a < d; ++a) for (size_t g = 0; g < sample_groups; ++g) {
+            double sum = 0;
+            for (size_t i = n * g / sample_groups; i < n * (g + 1) / sample_groups; ++i) {
+                const double value = terminal_sample_norms_.data[a * n + i];
+                sum += value * value;
+            }
+            channel_group_norms_.data[a * sample_groups + g] = std::sqrt(sum + 32. * (n + 1) * std::numeric_limits<double>::min());
+        }
+        if (options.order == SignatureOrder::energy || options.order == SignatureOrder::profile ||
+            options.order == SignatureOrder::balanced || options.order == SignatureOrder::outside ||
+            options.order == SignatureOrder::adaptive) order_channel_groups();
+        batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t block = alphabet.size(); block-- > 0;) {
                 const auto [low, high] = alphabet[block];
                 const size_t right = block + 2 * ((low + high) / 2 - low);
@@ -582,6 +854,11 @@ public:
                 const size_t dst = norm_index(block), left = norm_index(block + 1), other = norm_index(right);
                 for (size_t i = begin; i < end; ++i) terminal_sample_norms_.data[dst * n + i] = std::max(
                     terminal_sample_norms_.data[left * n + i], terminal_sample_norms_.data[other * n + i]);
+                if (primitive_norms_.owner) for (size_t p = 0; p < 2; ++p) {
+                    auto* table = primitive_norms_.data + p * n;
+                    for (size_t i = begin; i < end; ++i)
+                        table[2 * dst * n + i] = std::max(table[2 * left * n + i], table[2 * other * n + i]);
+                }
                 if (projection_boxes_.owner) {
                     const auto* x = projection_boxes_.data + box_planes * left * n;
                     const auto* y = projection_boxes_.data + box_planes * other * n;
@@ -600,16 +877,6 @@ public:
                 }
             }
         });
-        const bool grouped = options.factor_tree || options.projected_bound;
-        channel_group_norms_ = alloc((grouped ? alphabet.size() : d) * sample_groups);
-        for (size_t a = 0; a < d; ++a) for (size_t g = 0; g < sample_groups; ++g) {
-            double sum = 0;
-            for (size_t i = n * g / sample_groups; i < n * (g + 1) / sample_groups; ++i) {
-                const double value = terminal_sample_norms_.data[a * n + i];
-                sum += value * value;
-            }
-            channel_group_norms_.data[a * sample_groups + g] = std::sqrt(sum + 32. * (n + 1) * std::numeric_limits<double>::min());
-        }
         if (grouped) for (size_t block = alphabet.size(); block-- > 0;) {
             const auto [lo, hi] = alphabet[block];
             if (hi - lo == 1) continue;
@@ -629,7 +896,7 @@ public:
             for (size_t block = alphabet.size(); block-- > 0;) {
                 const auto [low, high] = alphabet[block];
                 const size_t right = block + 2 * ((low + high) / 2 - low);
-                const auto steps = high - low == 1 ? channel(low) : siglasso::Channel{};
+                const auto steps = high - low == 1 ? channel(letter(low)) : siglasso::Channel{};
                 const size_t count = panels();
                 for (size_t g = 0; g < count; ++g) {
                     double* out = alphabet_ratios.data + (block * count + g) * n;
@@ -661,7 +928,7 @@ public:
         for (size_t a = 1; a <= m; ++a) std::fill_n(tt_suffix_.data + suffix_plane(0, a) * l * n, l * n, 1 / weights[a]);
         batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t q = 1; q < m; ++q) for (size_t c = 0; c < d; ++c) {
-                const auto steps = channel(c);
+                const auto steps = channel(letter(c));
                 for (size_t i = begin; i < end; ++i) {
                     double tail = 0.;
                     for (size_t j = l; j-- > 0;) {
@@ -953,6 +1220,7 @@ public:
         if (levels == 1) { node.coefficients = {}; node.tt_state = {}; }
     }
     void begin_query(const siglasso::Array& residual) override {
+        if (endpoints_) for (auto& mask : endpoint_masks_) mask.anchor = SIZE_MAX;
         const size_t n = options.samples, m = options.degree;
         terminal_caps_ = {};
         if (options.length > 1) for (size_t i = 0; i < n; ++i) {
@@ -1058,11 +1326,15 @@ public:
     void terminal_query(const siglasso::Probe& task, const siglasso::Array& residual, double alpha,
         const siglasso::ActiveWords& active,
         size_t capacity, siglasso::SearchResult& result) override {
-        if (options.factor_tree || options.projected_bound)
+        const bool restricted_pair = (options.order == SignatureOrder::adaptive || options.order == SignatureOrder::outside) &&
+            task.high - task.low < options.dimension;
+        if (options.order == SignatureOrder::forward || restricted_pair)
+            terminal_search<true, true>(task, residual, alpha, active, capacity, result);
+        else if (options.grouped_terminals())
             terminal_search<true>(task, residual, alpha, active, capacity, result);
         else terminal_search<false>(task, residual, alpha, active, capacity, result);
     }
-    template<bool Grouped>
+    template<bool Grouped, bool ForwardPair = false>
     void terminal_search(const siglasso::Probe& task, const siglasso::Array& residual, double alpha,
         const siglasso::ActiveWords& active, size_t capacity, siglasso::SearchResult& result) {
         const auto& node = *task.node;
@@ -1105,10 +1377,11 @@ public:
             }
         }
         const double* first_norm = terminal_sample_norms_.data + norm_index(task.block) * n;
+        const double* inner_norm = ForwardPair ? terminal_sample_norms_.data + norm_index(0) * n : first_norm;
         for (size_t i = 0; i < n; ++i) {
             const double r = std::abs(residual.data[i]);
             norms[i] = r * std::sqrt(norms[i] + tiny);
-            if (levels == 2) operators[i] = r * std::sqrt(operators[i] + tiny) * first_norm[i];
+            if (levels == 2) operators[i] = r * std::sqrt(operators[i] + tiny) * inner_norm[i];
         }
         const auto grouped_norm = [&](const double* v) {
             std::array<double, sample_groups> norms{};
@@ -1163,7 +1436,12 @@ public:
         const size_t ceiling_a = Grouped && ceiling.length ? ceiling.letter(node.word) : d;
         const size_t floor_b = Grouped && floor.length ? floor.letter(node.word, 1) : 0;
         const size_t ceiling_b = Grouped && ceiling.length ? ceiling.letter(node.word, 1) : d;
-        const auto cut = Grouped && options.factor_tree && k && !floor.length ? siglasso::last_factor(node.word) : siglasso::PeriodicWord{};
+        const auto cut = Grouped && options.order == SignatureOrder::lyndon && k && !floor.length ? siglasso::last_factor(node.word) : siglasso::PeriodicWord{};
+        const EndpointMask* last[2]{};
+        if (Grouped && endpoints_ && k) for (size_t q = 1; q <= levels; ++q) {
+            last[q - 1] = endpoint_mask(node.word.front(), k + q, residual, alpha);
+            if (last[q - 1]) result.omitted = std::max(result.omitted, last[q - 1]->omitted);
+        }
         // Test a dyadic alphabet block using the largest channel norm in each
         // sample group. Leaves share the exact signed contraction below.
         const auto screened_channels = [&](size_t first, size_t end, size_t block, const auto& group,
@@ -1191,15 +1469,48 @@ public:
         };
         const auto visit = [&](size_t q, const double* factors) {
             const bool pair = q == 2;
-            size_t first = task.low, end = task.high;
+            const size_t group_block = ForwardPair && pair ? 0 : task.block;
+            size_t first = ForwardPair && pair ? 0 : task.low, end = ForwardPair && pair ? d : task.high;
             if (Grouped && floor.length && (!pair || word[k + 1] <= floor_b)) first = std::max(first, floor_a + 1);
             if (Grouped && ceiling.length && pair && word[k + 1] > ceiling_b) end = std::min(end, ceiling_a);
             if (first >= end) return;
-            if (excluded(bound_dot(norms, first_norm, n), q)) return;
+            const auto* inner_mask = Grouped && (ForwardPair || !pair) ? last[q - 1] : nullptr;
+            if (inner_mask && !inner_mask->any(first, end)) return;
+            if (excluded(bound_dot(norms, ForwardPair && pair ? inner_norm : first_norm, n), q)) return;
             const auto group = grouped_norm(norms);
             const auto separate = response_groups(norms);
             bool projected = false;
             const auto projection = [&](size_t index) {
+                if (primitive_norms_.owner) {
+                    if (!projected) {
+                        if (!difference_norms_.owner) difference_norms_ = alloc(2 * n);
+                        double* diff = difference_norms_.data + n;
+                        std::fill_n(diff, n, 0.);
+                        for (size_t j = 1; j < l; ++j) for (size_t i = 0; i < n; ++i) {
+                            const double delta = factors[j * n + i] - factors[(j - 1) * n + i];
+                            diff[i] += delta * delta;
+                        }
+                        for (size_t i = 0; i < n; ++i) {
+                            difference_norms_.data[i] = std::abs(residual.data[i] * factors[i]);
+                            diff[i] = std::abs(residual.data[i]) * std::sqrt(diff[i] + tiny);
+                        }
+                        projected = true;
+                    }
+                    const double* endpoint = primitive_norms_.data + 2 * index * n;
+                    const double* direct = terminal_sample_norms_.data + index * n;
+                    for (size_t i = 0; i < n; ++i) {
+                        const double primitive = difference_norms_.data[i] * endpoint[i]
+                            + difference_norms_.data[n + i] * endpoint[n + i];
+                        values[i] = std::min(norms[i] * direct[i], primitive);
+                    }
+                    if (batch_ratios.empty()) return excluded(absolute_sum({values, n, {}}), q);
+                    double maximum = 0.;
+                    for (const auto& ratio : batch_ratios) {
+                        maximum = std::max(maximum, bound_dot(values, ratio.data, n));
+                        if (!((maximum + tiny) * (1 + rounding) * weights[k + q] / n + slack < cutoff())) return false;
+                    }
+                    return excluded(maximum, q);
+                }
                 if (!projection_boxes_.owner) return false;
                 const size_t targets = std::max<size_t>(1, batch_signed.size());
                 // At a single channel a full signed column costs one dot per
@@ -1218,8 +1529,10 @@ public:
                 return excluded(maximum, q);
             };
             const auto visit_range = [&](size_t low, size_t high) {
-                for (size_t a = low; a < high; ++a) {
-                    word[k] = a;
+                for (size_t rank = low; rank < high; ++rank) {
+                    const size_t a = Grouped ? letter(rank) : rank;
+                    if (inner_mask && !inner_mask->any(rank, rank + 1)) continue;
+                    word[k + (ForwardPair && pair)] = a;
                     if (excluded(coarse(group, a), q) || separated(separate, a, q) || active.count(word) ||
                         excluded(bound_dot(norms, terminal_sample_norms_.data + a * n, n), q) ||
                         individual(norms, terminal_sample_norms_.data + a * n, q) || (Grouped && projection(a))) continue;
@@ -1241,30 +1554,39 @@ public:
                 if (!cut.start) screened_channels(split, end, task.block, group, separate, q, projection, visit_range);
                 screened_channels(first, split, task.block, group, separate, q, projection, visit_range);
                 if (cut.start) screened_channels(split, end, task.block, group, separate, q, projection, visit_range);
-            } else screened_channels(first, end, task.block, group, separate, q, projection, visit_range);
+            } else screened_channels(first, end, group_block, group, separate, q, projection, visit_range);
         };
         if (!highest_degree_only || !visit_column || k + 1 == options.degree) visit(1, node.integrals.data);
-        if (levels == 2) {
+        if (levels == 2 && (!Grouped || !last[1] || last[1]->any(0, d))) {
             word.push_back(0);
             const auto group = grouped_norm(operators);
             const auto separate = response_groups(operators);
             const size_t first_b = Grouped && floor.length && task.high == floor_a + 1 ? floor_b + 1 : 0;
             const size_t end_b = Grouped && ceiling.length && task.low == ceiling_a ? ceiling_b + 1 : d;
             const auto second_letters = [&](size_t low, size_t high) {
-                for (size_t b = low; b < high; ++b) {
+                for (size_t rank = low; rank < high; ++rank) {
+                    const size_t b = Grouped ? letter(rank) : rank;
+                    if (Grouped && !ForwardPair && last[1] && !last[1]->any(rank, rank + 1)) continue;
                     if (excluded(coarse(group, b), 2) || separated(separate, b, 2)) continue;
                     if (excluded(bound_dot(operators, terminal_sample_norms_.data + b * n, n), 2) ||
                         individual(operators, terminal_sample_norms_.data + b * n, 2)) continue;
-                    word[k + 1] = b;
+                    word[k + (ForwardPair ? 0 : 1)] = b;
                     const auto dx = channel(b);
                     std::fill_n(tail, n, 0.); std::fill_n(norms, n, 0.);
-                    for (size_t j = l; j-- > 0;) {
+                    for (size_t s = 0; s < l; ++s) {
+                        const size_t j = ForwardPair ? s : l - 1 - s;
                         const double* step = dx.values.data + j * dx.dimension * n;
                         const double* integral = node.integrals.data + j * n;
                         const double* linear = node.linear_integrals.data + j * n;
                         for (size_t i = 0; i < n; ++i) {
-                            tail[i] += step[i];
-                            const double h = integral[i] * tail[i] - linear[i] * step[i];
+                            double h;
+                            if constexpr (ForwardPair) {
+                                h = tail[i] + (integral[i] - linear[i]) * step[i];
+                                tail[i] += integral[i] * step[i];
+                            } else {
+                                tail[i] += step[i];
+                                h = integral[i] * tail[i] - linear[i] * step[i];
+                            }
                             products[j * n + i] = h; norms[i] += h * h;
                         }
                     }
@@ -1274,6 +1596,8 @@ public:
             };
             if constexpr (!Grouped) {
                 second_letters(0, d);
+            } else if constexpr (ForwardPair) {
+                screened_channels(task.low, task.high, task.block, group, separate, 2, [](size_t) { return false; }, second_letters);
             } else screened_channels(first_b, end_b, 0, group, separate, 2, [](size_t) { return false; }, second_letters);
         }
         if (correlations_before == stats.terminal_correlations) ++stats.terminal_pruned;
@@ -1309,6 +1633,13 @@ public:
         const double slack = siglasso::terminal_roundoff(options.degree, n, options.length - 1) * absolute_sum(residual) / n;
         double best = 0.;
         for (size_t q = levels; q-- > first;) {
+            if (endpoints_ && k) {
+                const auto* mask = endpoint_mask(task.node->word.front(), k + q + 1, residual, threshold);
+                if (mask && !mask->any(q ? 0 : task.low, q ? options.dimension : task.high)) {
+                    best = std::max(best, mask->omitted);
+                    continue;
+                }
+            }
             double total = panel_bound(task, task.node->moments.at(q * panels() * n), residual) + slack;
             if (q == 0 && total >= threshold && task.high - task.low > 1 && increments.owner)
                 total = std::min(total, siglasso::finite(energy_bound(task, residual) * weights[k + 1] / n));
@@ -1323,7 +1654,7 @@ public:
     siglasso::NodePtr terminal_child(const siglasso::Probe& task) override {
         const size_t n = options.samples, l = options.length - 1;
         const auto& parent = *task.node;
-        const size_t k = parent.word.size(), letter = task.low;
+        const size_t k = parent.word.size(), letter = this->letter(task.low);
         auto child = std::make_shared<siglasso::Node>();
         child->word = parent.word; child->word.push_back(letter);
         child->metadata = account(512 + child->word.size() * 64);
@@ -1449,6 +1780,8 @@ public:
         responses_ = {}; normalization_ = {}; endpoint_variation_ = {}; terminal_workspace_ = {}; terminal_child_storage_ = {}; terminal_sample_norms_ = {}; channel_group_norms_ = {};
         panel_scratch_ = {};
         projection_boxes_ = {}; projection_workspace_ = {};
+        primitive_norms_ = {}; difference_norms_ = {};
+        endpoints_.reset(); endpoint_weights_ = {}; endpoint_masks_ = {};
     }
     std::unique_ptr<siglasso::Backend> terminal_worker() override {
         auto single = options;
@@ -1466,13 +1799,18 @@ public:
             frontier_.push_back(0);
             while (frontier_.size() < std::min(parts, static_cast<size_t>(options.dimension))) {
                 auto largest = std::max_element(frontier_.begin(), frontier_.end(), [&](size_t a, size_t b) {
-                    return alphabet[a].second - alphabet[a].first < alphabet[b].second - alphabet[b].first;
+                    const size_t x = alphabet[a].second - alphabet[a].first, y = alphabet[b].second - alphabet[b].first;
+                    if (root_work_.empty() || x == 1 || y == 1 || root_work_[a] == root_work_[b]) return x < y;
+                    return root_work_[a] < root_work_[b];
                 });
                 const auto [low, high] = alphabet[*largest];
                 const size_t block = *largest;
                 *largest = block + 1; frontier_.push_back(block + 2 * ((low + high) / 2 - low));
             }
-            std::sort(frontier_.begin(), frontier_.end());
+            if (root_work_.empty()) std::sort(frontier_.begin(), frontier_.end());
+            else std::sort(frontier_.begin(), frontier_.end(), [&](size_t a, size_t b) {
+                return root_work_[a] == root_work_[b] ? a < b : root_work_[a] > root_work_[b];
+            });
             auto single = options;
             single.n_jobs = 1;
             const size_t count = std::min(frontier_.size(), threads);
@@ -1525,7 +1863,7 @@ public:
 static siglasso::SearchOptions search_options(const SigLassoOptions* options, uint32_t feature_type,
         const uint64_t* letters, const uint64_t* offsets, uint64_t words, bool predict) {
     if (!options || !options->samples || !options->length || !options->dimension || !options->targets ||
-        !options->degree || options->degree > 170 || feature_type > (predict ? 1u : 4u))
+        !options->degree || options->degree > 170 || (predict && feature_type > 1))
         throw std::invalid_argument("Invalid Lasso dimensions, degree or feature type");
     if (words && (!letters || !offsets || offsets[0] != 0))
         throw std::invalid_argument("Invalid packed Lasso words");
@@ -1536,8 +1874,16 @@ static siglasso::SearchOptions search_options(const SigLassoOptions* options, ui
             if (letters[k] >= options->dimension) throw std::invalid_argument("Invalid Lasso word letter");
     }
     siglasso::SearchOptions result(*options, predict);
-    result.factor_tree = feature_type == 2 || feature_type == 4;
-    result.projected_bound = feature_type == 2 || feature_type == 3;
+    if (feature_type <= 4) {
+        if (feature_type == 2 || feature_type == 4) result.order = SignatureOrder::lyndon;
+        if (feature_type == 2 || feature_type == 3) result.terminal = TerminalBound::projected;
+    } else {
+        if (feature_type < 16 || (feature_type - 16) / 4 > static_cast<uint32_t>(SignatureOrder::adaptive) ||
+            feature_type % 4 > static_cast<uint32_t>(TerminalBound::primitive))
+            throw std::invalid_argument("Invalid signature search mode");
+        result.order = static_cast<SignatureOrder>((feature_type - 16) / 4);
+        result.terminal = static_cast<TerminalBound>(feature_type % 4);
+    }
     const int64_t jobs = options->n_jobs < 0 ? int64_t(get_max_threads()) + 1 + options->n_jobs : options->n_jobs;
     if (jobs < 1 || jobs > std::numeric_limits<int>::max()) throw std::invalid_argument("Invalid n_jobs");
     result.n_jobs = static_cast<int>(jobs);
@@ -1556,7 +1902,10 @@ void sig_working_set_(const T* path, const T* y, const double* alphas, const uin
         if (!std::isfinite(alphas[t]) || alphas[t] <= 0) throw std::invalid_argument("Expected a positive finite penalty");
     LassoCPU backend(settings, path, y, feature_type == 1);
     std::vector<siglasso::Word> initial;
-    for (size_t j = 0; j < words; ++j) initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
+    for (size_t j = 0; j < words; ++j) {
+        auto& word = initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
+        if (settings.order == SignatureOrder::suffix) std::reverse(word.begin(), word.end());
+    }
     auto result = siglasso::fit(backend, feature_type == 1, std::vector<double>(alphas, alphas + options->targets), initial);
     backend.release_fit_workspace();
     siglasso::export_result(backend, result, allocate, context);

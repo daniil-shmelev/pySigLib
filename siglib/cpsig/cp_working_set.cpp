@@ -743,6 +743,17 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
         }
     }
     search.reset();
+    if (o.order == SignatureOrder::suffix && o.degree > 1) {
+        decltype(support) restored(&word_less);
+        while (!support.empty()) {
+            auto entry = support.extract(support.begin());
+            std::reverse(entry.key().begin(), entry.key().end());
+            entry.mapped().word = entry.key();
+            restored.insert(std::move(entry));
+        }
+        support.swap(restored);
+        for (auto& target : coefs) for (auto& term : target) std::reverse(term.first.begin(), term.first.end());
+    }
     std::map<Word, size_t, decltype(&word_less)> index(&word_less);
     for (auto& [w, col] : support) {
         index.emplace(w, result.words.size());

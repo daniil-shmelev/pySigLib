@@ -29,8 +29,12 @@ from .transform_path import transform_path
 
 
 _FEATURE_TYPES = {'sig': 0, 'log': 1}
-_SIGNATURE_SEARCH = {('prefix', 'norm'): 0, ('lyndon', 'projected'): 2,
-                     ('prefix', 'projected'): 3, ('lyndon', 'norm'): 4}
+_TREE_ORDERS = ('prefix', 'lyndon', 'suffix', 'energy', 'profile', 'forward', 'grouped', 'outside', 'balanced', 'adaptive')
+_TERMINAL_BOUNDS = ('norm', 'projected', 'primitive')
+_SIGNATURE_SEARCH = {(order, bound): 16 + 4 * i + j for i, order in enumerate(_TREE_ORDERS)
+                     for j, bound in enumerate(_TERMINAL_BOUNDS)}
+_SIGNATURE_SEARCH.update({('prefix', 'norm'): 0, ('lyndon', 'projected'): 2,
+                          ('prefix', 'projected'): 3, ('lyndon', 'norm'): 4})
 
 
 def _pack_words(words):
@@ -94,9 +98,17 @@ def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
     Coordinates are evaluated without constructing a full truncated signature.
     ``tree_order="prefix"`` searches by successive letters. ``"lyndon"`` groups
     ordinary signature words by their nonincreasing Lyndon factorisation.
-    Both orders fit the same dictionary and objective.
+    ``"suffix"`` grows suffixes, ``"energy"`` and ``"profile"`` group channels
+    by training increment norms, and ``"forward"`` fixes the penultimate
+    letter first in terminal pairs. ``"grouped"`` uses input-order terminal
+    groups. ``"outside"`` screens first and last letters jointly before
+    filling their interior. ``"balanced"`` splits parallel work by channel
+    energy in input order. ``"adaptive"`` selects channel groups by norm
+    envelope slack and fixes the more restricted terminal letter first.
+    All orders fit the same dictionary and objective.
     The default terminal bound uses norms. Set ``terminal_bound="projected"``
-    to additionally screen channel groups using a signed time projection.
+    to additionally screen channel groups using a signed time projection,
+    or ``"primitive"`` for a summation-by-parts bound.
     ``memory_limit`` bounds owned native workspace and output
     in bytes. ``n_jobs`` controls CPU workers. ``max_iter`` limits working-set
     updates per response. ``tol`` defaults to 1e-5 for float32 or 1e-8 for
@@ -111,10 +123,10 @@ def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
     gap and is None for other losses. Prediction returns the linear predictor.
     The result is independent of any autograd graph.
     """
-    if not isinstance(tree_order, str) or tree_order not in ("prefix", "lyndon"):
-        raise ValueError("tree_order must be 'prefix' or 'lyndon'")
-    if not isinstance(terminal_bound, str) or terminal_bound not in ("norm", "projected"):
-        raise ValueError("terminal_bound must be 'norm' or 'projected'")
+    if not isinstance(tree_order, str) or tree_order not in _TREE_ORDERS:
+        raise ValueError("tree_order must be one of " + ", ".join(_TREE_ORDERS))
+    if not isinstance(terminal_bound, str) or terminal_bound not in _TERMINAL_BOUNDS:
+        raise ValueError("terminal_bound must be one of " + ", ".join(_TERMINAL_BOUNDS))
     return _fit_lasso(path, y, degree, alpha, 'sig', tree_order=tree_order, terminal_bound=terminal_bound,
                       loss=loss, fit_intercept=fit_intercept, tol=tol,
                       max_iter=max_iter, initial_words=initial_words, memory_limit=memory_limit,

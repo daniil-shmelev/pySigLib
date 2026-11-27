@@ -39,12 +39,13 @@ inline double terminal_roundoff(size_t k, size_t n, size_t segments) {
 }
 
 inline double energy_sample(const double* integrals, const double* increments,
-    size_t low, size_t high, size_t i, size_t n, size_t segments, size_t dimension) {
+    size_t low, size_t high, size_t i, size_t n, size_t segments, size_t dimension, const size_t* order = nullptr) {
     double squared = 0, magnitude = 0;
     for (size_t a = low; a < high; ++a) {
+        const size_t c = order ? order[a] : a;
         double value = 0, absolute = 0;
         for (size_t j = 0; j < segments; ++j) {
-            const double term = integrals[j * n + i] * increments[(j * dimension + a) * n + i];
+            const double term = integrals[j * n + i] * increments[(j * dimension + c) * n + i];
             value += term; absolute += fabs(term);
         }
         squared += value * value; magnitude += absolute * absolute;
