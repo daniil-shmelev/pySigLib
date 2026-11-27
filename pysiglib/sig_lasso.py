@@ -29,7 +29,8 @@ from .transform_path import transform_path
 
 
 _FEATURE_TYPES = {'sig': 0, 'log': 1}
-_TREE_ORDERS = ('prefix', 'lyndon', 'suffix', 'energy', 'profile', 'forward', 'grouped', 'outside', 'balanced', 'adaptive')
+_TREE_ORDERS = ('prefix', 'lyndon', 'suffix', 'energy', 'profile', 'forward', 'grouped', 'outside', 'balanced', 'adaptive',
+                'pivotweak', 'pivotstrong', 'pivotalternating')
 _TERMINAL_BOUNDS = ('norm', 'projected', 'primitive')
 _SIGNATURE_SEARCH = {(order, bound): 16 + 4 * i + j for i, order in enumerate(_TREE_ORDERS)
                      for j, bound in enumerate(_TERMINAL_BOUNDS)}
@@ -105,6 +106,9 @@ def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
     filling their interior. ``"balanced"`` splits parallel work by channel
     energy in input order. ``"adaptive"`` selects channel groups by norm
     envelope slack and fixes the more restricted terminal letter first.
+    The experimental orders "pivotweak", "pivotstrong" and "pivotalternating"
+    add a degree-four positional pivot screen to outside-in search, using
+    weak-first, strong-first and alternating channel elimination respectively.
     All orders fit the same dictionary and objective.
     The default terminal bound uses norms. Set ``terminal_bound="projected"``
     to additionally screen channel groups using a signed time projection,

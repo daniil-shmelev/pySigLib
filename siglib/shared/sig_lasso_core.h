@@ -222,7 +222,7 @@ public:
     virtual SearchResult query(const Array&, double threshold, const ActiveWords&, size_t capacity) = 0;
 };
 
-enum class SignatureOrder : uint32_t { prefix, lyndon, suffix, energy, profile, forward, grouped, outside, balanced, adaptive };
+enum class SignatureOrder : uint32_t { prefix, lyndon, suffix, energy, profile, forward, grouped, outside, balanced, adaptive, pivotweak, pivotstrong, pivotalternating };
 enum class TerminalBound : uint32_t { norm, projected, primitive };
 
 struct SearchOptions : SigLassoOptions {

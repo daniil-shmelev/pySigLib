@@ -29,7 +29,8 @@ import numpy as np
 
 
 FOLDERS = dict(arabic="spoken_arabic_digit", insect="insect_wingbeat", speech="speech_commands")
-ORDERS = ("prefix", "lyndon", "suffix", "energy", "profile", "forward", "grouped", "outside", "balanced", "adaptive")
+ORDERS = ("prefix", "lyndon", "suffix", "energy", "profile", "forward", "grouped", "outside", "balanced", "adaptive",
+          "pivotweak", "pivotstrong", "pivotalternating")
 BOUNDS = ("norm", "projected", "primitive")
 
 

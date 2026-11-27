@@ -61,7 +61,8 @@ def _dense_log_design(paths, degree):
 @pytest.mark.parametrize("degree,dimension,targets,jobs", [(2, 3, 2, 2), (4, 3, 2, 2), (6, 2, 1, 1)])
 @pytest.mark.parametrize("order,bound", [("lyndon", "projected"), ("suffix", "norm"), ("energy", "norm"),
                                         ("profile", "primitive"), ("forward", "primitive"), ("outside", "norm"),
-                                        ("adaptive", "norm")])
+                                        ("adaptive", "norm"), ("pivotweak", "norm"), ("pivotstrong", "norm"),
+                                        ("pivotalternating", "norm")])
 def test_signature_tree_against_complete_design(degree, dimension, targets, jobs, order, bound):
     rng = np.random.default_rng(9325)
     paths = rng.normal(size=(180, 10, dimension)).cumsum(axis=1)
@@ -92,7 +93,8 @@ def test_signature_tree_against_complete_design(degree, dimension, targets, jobs
 @pytest.mark.parametrize("order,bound", [("prefix", "projected"), ("lyndon", "norm"), ("lyndon", "projected"),
                                         ("suffix", "primitive"), ("energy", "projected"), ("profile", "norm"),
                                         ("forward", "norm"), ("grouped", "primitive"), ("outside", "projected"),
-                                        ("balanced", "norm"), ("adaptive", "projected")])
+                                        ("balanced", "norm"), ("adaptive", "projected"), ("pivotweak", "projected"),
+                                        ("pivotstrong", "primitive"), ("pivotalternating", "norm")])
 @pytest.mark.parametrize("loss", ["squared", "logistic", "poisson", "huber"])
 def test_signature_tree_order_dense_kkt(order, bound, loss):
     rng = np.random.default_rng(213)

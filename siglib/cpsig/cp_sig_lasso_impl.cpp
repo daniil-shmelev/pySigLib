@@ -284,6 +284,33 @@ class LassoCPU final : public siglasso::Backend {
         bool any(size_t low, size_t high) const { return counts[high] != counts[low]; }
     };
     std::shared_ptr<EndpointGeometry> endpoints_;
+    struct PivotGeometry {
+        std::vector<float> bounds;
+        std::vector<size_t> ranks, max_rank;
+        std::vector<std::array<size_t, 4>> first_allowed;
+        std::vector<unsigned> positions;
+        std::shared_ptr<void> storage;
+        double omitted = 0.;
+        bool active = false;
+    };
+    struct FixedPivot {
+        size_t rank = SIZE_MAX;
+        bool allowed = true;
+    };
+    std::shared_ptr<PivotGeometry> pivots_;
+    bool pivot_order() const { return options.order >= SignatureOrder::pivotweak; }
+    bool outside_order() const { return options.order == SignatureOrder::outside || pivot_order(); }
+    FixedPivot add_letter(FixedPivot fixed, size_t a, size_t p) const {
+        const size_t rank = pivots_->ranks[a];
+        if (rank > fixed.rank) return fixed;
+        const bool allowed = (pivots_->positions[a] & (1u << p)) != 0;
+        return {rank, allowed && (rank < fixed.rank || fixed.allowed)};
+    }
+    bool possible_last(FixedPivot fixed, size_t position, size_t block) const {
+        // A lower-ranked letter replaces the fixed pivot and must pass in its own position.
+        return (fixed.allowed && pivots_->max_rank[block] >= fixed.rank) ||
+            pivots_->first_allowed[block][position] < fixed.rank;
+    }
     std::array<EndpointMask, 3> endpoint_masks_;
     siglasso::Array endpoint_weights_;
     std::vector<double> root_work_;
@@ -360,6 +387,7 @@ public:
         primitive_norms_ = source.primitive_norms_;
         letter_order = source.letter_order;
         endpoints_ = source.endpoints_;
+        pivots_ = source.pivots_;
         projection_boxes_ = source.projection_boxes_;
         terminal_sample_norms_ = source.terminal_sample_norms_;
         compact_panels_ = source.compact_panels_;
@@ -756,6 +784,106 @@ public:
         std::partial_sum(mask.counts.begin(), mask.counts.end(), mask.counts.begin());
         return &mask;
     }
+    void prepare_pivots() {
+        const size_t n = options.samples, d = options.dimension, l = options.length - 1;
+        pivots_ = std::make_shared<PivotGeometry>();
+        auto& g = *pivots_;
+        const size_t size = siglasso::multiply(4 * sizeof(float), siglasso::multiply(d, n));
+        g.storage = account(size + d * (sizeof(size_t) + sizeof(unsigned)) + alphabet.size() * 5 * sizeof(size_t));
+        g.bounds.resize(size / sizeof(float)); g.ranks.resize(d); g.positions.resize(d);
+        g.max_rank.resize(alphabet.size()); g.first_allowed.resize(alphabet.size());
+        std::vector<size_t> order(d);
+        std::iota(order.begin(), order.end(), 0);
+        const auto* profile = channel_group_norms_.data;
+        auto energies = alloc(d);
+        for (size_t a = 0; a < d; ++a)
+            energies.data[a] = bound_dot(profile + a * sample_groups, profile + a * sample_groups, sample_groups);
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return energies.data[a] < energies.data[b]; });
+        auto remaining = alloc(n * l);
+        fill(remaining, 0.);
+        const double error = siglasso::terminal_roundoff(4, n, l);
+        for (size_t rank = d; rank-- > 0;) {
+            size_t index = rank;
+            if (options.order == SignatureOrder::pivotstrong) index = d - 1 - rank;
+            if (options.order == SignatureOrder::pivotalternating) index = rank % 2 ? rank / 2 : d - 1 - rank / 2;
+            const size_t a = order[index];
+            g.ranks[a] = rank;
+            const auto chan = channel(a);
+            const size_t stride = chan.dimension * n;
+            for (size_t i = 0; i < n; ++i) {
+                double total = 0.;
+                for (size_t j = 0; j < l; ++j) {
+                    auto& step = remaining.data[j * n + i];
+                    step = std::max(step, std::abs(chan.values.data[j * stride + i]));
+                    total += step;
+                }
+                std::array<double, 4> sums{};
+                double before = 0.;
+                for (size_t j = 0; j < l; ++j) {
+                    const double dv = remaining.data[j * n + i], dx = std::abs(chan.values.data[j * stride + i]);
+                    // Two Gauss nodes integrate each cubic position weight exactly.
+                    for (const double t : {.21132486540518711775, .78867513459481288225}) {
+                        const double u = before + t * dv, v = std::max(0., total - u);
+                        sums[0] += dx * v * v * v; sums[1] += dx * u * v * v;
+                        sums[2] += dx * u * u * v; sums[3] += dx * u * u * u;
+                    }
+                    before += dv;
+                }
+                const double square = total * total, cap = square * square;
+                for (size_t p = 0; p < 4; ++p) {
+                    const double factor = p == 0 || p == 3 ? 2. : 6.;
+                    const double upper = std::min(cap, factor * sums[p]) + error * (1. + cap);
+                    float value = static_cast<float>(upper);
+                    if (value < upper) value = std::nextafter(value, std::numeric_limits<float>::infinity());
+                    g.bounds[(4 * a + p) * n + i] = value;
+                }
+            }
+        }
+        for (size_t block = alphabet.size(); block-- > 0;) {
+            const auto [lo, hi] = alphabet[block];
+            g.max_rank[block] = hi - lo == 1 ? g.ranks[lo] :
+                std::max(g.max_rank[block + 1], g.max_rank[block + 2 * ((hi - lo) / 2)]);
+        }
+    }
+    void refresh_pivots(const siglasso::Array& residual, double alpha) {
+        auto& g = *pivots_;
+        g.active = false; g.omitted = 0.;
+        if (search_degree() != 4) return;
+        const size_t n = options.samples, d = options.dimension;
+        siglasso::Array absolute;
+        if (batch_absolute.empty()) {
+            absolute = alloc(n);
+            for (size_t i = 0; i < n; ++i) absolute.data[i] = std::abs(residual.data[i]);
+        }
+        const double error = siglasso::terminal_roundoff(4, n, options.length - 1);
+        const double slack = error * absolute_sum(residual) / n + 1e-15;
+        for (size_t a = 0; a < d; ++a) {
+            unsigned mask = 0;
+            for (size_t p = 0; p < 4; ++p) {
+                const float* column = g.bounds.data() + (4 * a + p) * n;
+                double bound = 0.;
+                const auto radius = [&](const siglasso::Array& r) {
+                    return bound_dot(column, r.data, n) / n * (1. + error) + slack;
+                };
+                if (absolute.owner) bound = radius(absolute);
+                else for (const auto& r : batch_absolute) {
+                    bound = std::max(bound, radius(r));
+                    if (bound >= alpha) break;
+                }
+                if (!(bound < alpha)) mask |= 1u << p;
+                else { g.omitted = std::max(g.omitted, bound); g.active = true; }
+            }
+            g.positions[a] = mask;
+        }
+        if (!g.active) return;
+        for (size_t block = alphabet.size(); block-- > 0;) {
+            const auto [lo, hi] = alphabet[block];
+            for (size_t p = 0; p < 4; ++p) {
+                g.first_allowed[block][p] = hi - lo == 1 ? (g.positions[lo] & (1u << p) ? g.ranks[lo] : SIZE_MAX)
+                    : std::min(g.first_allowed[block + 1][p], g.first_allowed[block + 2 * ((hi - lo) / 2)][p]);
+            }
+        }
+    }
     void prepare() override {
         if (endpoint_input_) return;
         const size_t n = options.samples, l = options.length - 1, d = options.dimension;
@@ -769,7 +897,7 @@ public:
         }
         if (log_features_ || options.selected_only) return;
         prepare_alphabet();
-        if (options.order == SignatureOrder::outside && options.degree >= 3 && l) prepare_endpoint_geometry();
+        if (outside_order() && options.degree >= 3 && l) prepare_endpoint_geometry();
         terminal_sample_norms_ = alloc(siglasso::multiply(n, alphabet.size()));
         if (options.terminal == TerminalBound::projected && l)
             projection_boxes_ = alloc(siglasso::multiply(box_planes * alphabet.size(), n));
@@ -844,8 +972,9 @@ public:
             channel_group_norms_.data[a * sample_groups + g] = std::sqrt(sum + 32. * (n + 1) * std::numeric_limits<double>::min());
         }
         if (options.order == SignatureOrder::energy || options.order == SignatureOrder::profile ||
-            options.order == SignatureOrder::balanced || options.order == SignatureOrder::outside ||
+            options.order == SignatureOrder::balanced || outside_order() ||
             options.order == SignatureOrder::adaptive) order_channel_groups();
+        if (pivot_order() && options.degree == 4 && l) prepare_pivots();
         batch(n, [&](uint64_t begin, uint64_t end) {
             for (size_t block = alphabet.size(); block-- > 0;) {
                 const auto [low, high] = alphabet[block];
@@ -1326,15 +1455,19 @@ public:
     void terminal_query(const siglasso::Probe& task, const siglasso::Array& residual, double alpha,
         const siglasso::ActiveWords& active,
         size_t capacity, siglasso::SearchResult& result) override {
-        const bool restricted_pair = (options.order == SignatureOrder::adaptive || options.order == SignatureOrder::outside) &&
+        const bool restricted_pair = (options.order == SignatureOrder::adaptive || outside_order()) &&
             task.high - task.low < options.dimension;
-        if (options.order == SignatureOrder::forward || restricted_pair)
+        if (pivots_ && pivots_->active && restricted_pair)
+            terminal_search<true, true, true>(task, residual, alpha, active, capacity, result);
+        else if (pivots_ && pivots_->active)
+            terminal_search<true, false, true>(task, residual, alpha, active, capacity, result);
+        else if (options.order == SignatureOrder::forward || restricted_pair)
             terminal_search<true, true>(task, residual, alpha, active, capacity, result);
         else if (options.grouped_terminals())
             terminal_search<true>(task, residual, alpha, active, capacity, result);
         else terminal_search<false>(task, residual, alpha, active, capacity, result);
     }
-    template<bool Grouped, bool ForwardPair = false>
+    template<bool Grouped, bool ForwardPair = false, bool Pivot = false>
     void terminal_search(const siglasso::Probe& task, const siglasso::Array& residual, double alpha,
         const siglasso::ActiveWords& active, size_t capacity, siglasso::SearchResult& result) {
         const auto& node = *task.node;
@@ -1438,6 +1571,11 @@ public:
         const size_t ceiling_b = Grouped && ceiling.length ? ceiling.letter(node.word, 1) : d;
         const auto cut = Grouped && options.order == SignatureOrder::lyndon && k && !floor.length ? siglasso::last_factor(node.word) : siglasso::PeriodicWord{};
         const EndpointMask* last[2]{};
+        FixedPivot prefix;
+        if constexpr (Pivot) {
+            for (size_t p = 0; p < k; ++p) prefix = add_letter(prefix, node.word[p], p);
+            result.omitted = std::max(result.omitted, pivots_->omitted);
+        }
         if (Grouped && endpoints_ && k) for (size_t q = 1; q <= levels; ++q) {
             last[q - 1] = endpoint_mask(node.word.front(), k + q, residual, alpha);
             if (last[q - 1]) result.omitted = std::max(result.omitted, last[q - 1]->omitted);
@@ -1457,7 +1595,7 @@ public:
                 if (hi <= first) { block += 2 * span - 1; continue; }
                 if (span >= 4) {
                     const auto index = norm_index(block);
-                    if (excluded(coarse(group, index), q) || separated(separate, index, q) || refine(index)) {
+                    if (excluded(coarse(group, index), q) || separated(separate, index, q) || refine(index, block)) {
                         block += 2 * span - 1; continue;
                     }
                 }
@@ -1470,6 +1608,15 @@ public:
         const auto visit = [&](size_t q, const double* factors) {
             const bool pair = q == 2;
             const size_t group_block = ForwardPair && pair ? 0 : task.block;
+            const size_t free_position = k + (ForwardPair && pair);
+            FixedPivot fixed = prefix;
+            if constexpr (Pivot) if (k + q == 4) {
+                if (pair) {
+                    const size_t other = k + !ForwardPair;
+                    fixed = add_letter(fixed, word[other], other);
+                }
+                if (!possible_last(fixed, free_position, group_block)) return;
+            }
             size_t first = ForwardPair && pair ? 0 : task.low, end = ForwardPair && pair ? d : task.high;
             if (Grouped && floor.length && (!pair || word[k + 1] <= floor_b)) first = std::max(first, floor_a + 1);
             if (Grouped && ceiling.length && pair && word[k + 1] > ceiling_b) end = std::min(end, ceiling_a);
@@ -1480,7 +1627,9 @@ public:
             const auto group = grouped_norm(norms);
             const auto separate = response_groups(norms);
             bool projected = false;
-            const auto projection = [&](size_t index) {
+            const auto projection = [&](size_t index, size_t block) {
+                if constexpr (Pivot) if (k + q == 4 && block != SIZE_MAX && !possible_last(fixed, free_position, block))
+                    return true;
                 if (primitive_norms_.owner) {
                     if (!projected) {
                         if (!difference_norms_.owner) difference_norms_ = alloc(2 * n);
@@ -1532,10 +1681,11 @@ public:
                 for (size_t rank = low; rank < high; ++rank) {
                     const size_t a = Grouped ? letter(rank) : rank;
                     if (inner_mask && !inner_mask->any(rank, rank + 1)) continue;
+                    if constexpr (Pivot) if (k + q == 4 && !add_letter(fixed, a, free_position).allowed) continue;
                     word[k + (ForwardPair && pair)] = a;
                     if (excluded(coarse(group, a), q) || separated(separate, a, q) || active.count(word) ||
                         excluded(bound_dot(norms, terminal_sample_norms_.data + a * n, n), q) ||
-                        individual(norms, terminal_sample_norms_.data + a * n, q) || (Grouped && projection(a))) continue;
+                        individual(norms, terminal_sample_norms_.data + a * n, q) || (Grouped && projection(a, SIZE_MAX))) continue;
                     contract_terminal(channel(a), factors, values);
                     ++stats.terminal_correlations; ++stats.evaluated;
                     if (visit_column) { visit_column(word, values); continue; }
@@ -1567,6 +1717,10 @@ public:
                 for (size_t rank = low; rank < high; ++rank) {
                     const size_t b = Grouped ? letter(rank) : rank;
                     if (Grouped && !ForwardPair && last[1] && !last[1]->any(rank, rank + 1)) continue;
+                    if constexpr (Pivot) if (k + 2 == 4) {
+                        const auto fixed = add_letter(prefix, b, k + !ForwardPair);
+                        if (!possible_last(fixed, k + ForwardPair, ForwardPair ? 0 : task.block)) continue;
+                    }
                     if (excluded(coarse(group, b), 2) || separated(separate, b, 2)) continue;
                     if (excluded(bound_dot(operators, terminal_sample_norms_.data + b * n, n), 2) ||
                         individual(operators, terminal_sample_norms_.data + b * n, 2)) continue;
@@ -1597,8 +1751,8 @@ public:
             if constexpr (!Grouped) {
                 second_letters(0, d);
             } else if constexpr (ForwardPair) {
-                screened_channels(task.low, task.high, task.block, group, separate, 2, [](size_t) { return false; }, second_letters);
-            } else screened_channels(first_b, end_b, 0, group, separate, 2, [](size_t) { return false; }, second_letters);
+                screened_channels(task.low, task.high, task.block, group, separate, 2, [](size_t, size_t) { return false; }, second_letters);
+            } else screened_channels(first_b, end_b, 0, group, separate, 2, [](size_t, size_t) { return false; }, second_letters);
         }
         if (correlations_before == stats.terminal_correlations) ++stats.terminal_pruned;
     }
@@ -1633,6 +1787,15 @@ public:
         const double slack = siglasso::terminal_roundoff(options.degree, n, options.length - 1) * absolute_sum(residual) / n;
         double best = 0.;
         for (size_t q = levels; q-- > first;) {
+            if (pivots_ && pivots_->active && k + q + 1 == 4 && task.high == task.low + 1) {
+                FixedPivot fixed;
+                for (size_t p = 0; p < k; ++p) fixed = add_letter(fixed, task.node->word[p], p);
+                fixed = add_letter(fixed, task.low, k);
+                bool possible = fixed.allowed;
+                for (size_t p = k + 1; p < 4 && !possible; ++p)
+                    possible = pivots_->first_allowed[0][p] < fixed.rank;
+                if (!possible) { best = std::max(best, pivots_->omitted); continue; }
+            }
             if (endpoints_ && k) {
                 const auto* mask = endpoint_mask(task.node->word.front(), k + q + 1, residual, threshold);
                 if (mask && !mask->any(q ? 0 : task.low, q ? options.dimension : task.high)) {
@@ -1781,7 +1944,7 @@ public:
         panel_scratch_ = {};
         projection_boxes_ = {}; projection_workspace_ = {};
         primitive_norms_ = {}; difference_norms_ = {};
-        endpoints_.reset(); endpoint_weights_ = {}; endpoint_masks_ = {};
+        endpoints_.reset(); pivots_.reset(); endpoint_weights_ = {}; endpoint_masks_ = {};
     }
     std::unique_ptr<siglasso::Backend> terminal_worker() override {
         auto single = options;
@@ -1792,6 +1955,7 @@ public:
     }
     bool parallel_search(const siglasso::NodePtr& root, const siglasso::Array& residual, double alpha,
         const siglasso::ActiveWords& active, size_t capacity, siglasso::SearchResult& result) override {
+        if (pivots_) refresh_pivots(residual, alpha);
         if (options.n_jobs == 1 || options.dimension == 1 || options.memory_limit) return false;
         if (searches_.empty()) {
             const size_t threads = options.n_jobs;
@@ -1878,7 +2042,7 @@ static siglasso::SearchOptions search_options(const SigLassoOptions* options, ui
         if (feature_type == 2 || feature_type == 4) result.order = SignatureOrder::lyndon;
         if (feature_type == 2 || feature_type == 3) result.terminal = TerminalBound::projected;
     } else {
-        if (feature_type < 16 || (feature_type - 16) / 4 > static_cast<uint32_t>(SignatureOrder::adaptive) ||
+        if (feature_type < 16 || (feature_type - 16) / 4 > static_cast<uint32_t>(SignatureOrder::pivotalternating) ||
             feature_type % 4 > static_cast<uint32_t>(TerminalBound::primitive))
             throw std::invalid_argument("Invalid signature search mode");
         result.order = static_cast<SignatureOrder>((feature_type - 16) / 4);
