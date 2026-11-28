@@ -44,6 +44,9 @@ extern "C" {
     // Prediction takes dictionary 0 or 1.
     CPSIG_API int sig_working_set_f(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
     CPSIG_API int sig_working_set_d(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*) noexcept;
+    // The grid has steps x targets entries. Relative entries use the common maximum null correlation.
+    CPSIG_API int sig_working_set_grid_f(const float*, const float*, const double*, uint64_t, uint32_t, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, SigLassoGridVisitor, void*) noexcept;
+    CPSIG_API int sig_working_set_grid_d(const double*, const double*, const double*, uint64_t, uint32_t, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, SigLassoGridVisitor, void*) noexcept;
     CPSIG_API int sig_working_set_predict_f(const float*, const float*, const float*, float*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*) noexcept;
     CPSIG_API int sig_working_set_predict_d(const double*, const double*, const double*, double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*) noexcept;
 

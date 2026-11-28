@@ -19,10 +19,10 @@ import warnings
 import numpy as np
 import torch
 
-from ._lasso_types import LassoOptions, LassoShape, LassoAllocator
+from ._lasso_types import LassoOptions, LassoShape, LassoAllocator, LassoGridVisitor
 from .data_handlers import PathInputHandler
 from .dtypes import DTYPES
-from .load_siglib import CPSIG_WORKING_SET, CPSIG_SIG_LASSO_PREDICT
+from .load_siglib import CPSIG_WORKING_SET, CPSIG_WORKING_SET_GRID, CPSIG_SIG_LASSO_PREDICT
 from .error_codes import err_msg
 from .param_checks import check_type, check_dtype, check_n_jobs, ensure_own_contiguous_storage
 from .transform_path import transform_path
@@ -51,6 +51,15 @@ def _valid_word(word, degree, dimension):
     )
 
 
+def _dictionary_size(feature_type, dimension, degree):
+    if feature_type == 'sig':
+        return sum(dimension**k for k in range(1, degree + 1))
+    primitive = [0] * (degree + 1)
+    for k in range(1, degree + 1):
+        primitive[k] = dimension**k - sum(primitive[j] for j in range(1, k) if k % j == 0)
+    return sum(primitive[k] // k for k in range(1, degree + 1))
+
+
 def _pointer(array, scalar):
     if isinstance(array, np.ndarray):
         return array.ctypes.data_as(POINTER(scalar))
@@ -70,9 +79,10 @@ def _check_status(status, device):
     raise RuntimeError(message)
 
 
-def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
+def sig_lasso(path, y, degree=None, alpha=None, *, loss="squared", fit_intercept=True,
               tol=None, max_iter=1000, initial_words=(), memory_limit=None, time_aug=False,
-              lead_lag=False, end_time=1.0, n_jobs=1, tree_order="prefix", terminal_bound="norm"):
+              lead_lag=False, end_time=1.0, n_jobs=1, tree_order="prefix", terminal_bound="norm",
+              max_words=None, max_degree=None, alpha_grid=None, validation_data=None, cv=5, scoring="auto"):
     r"""Fit a sparse linear predictor on normalized signature coordinates on CPU.
 
     Minimise the mean loss at ``intercept + X @ coef`` plus ``alpha * ||coef||_1``.
@@ -90,6 +100,22 @@ def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
     ``(*batch, targets)``, with optional flattening of batch axes. Each target
     has its own objective with a scalar or per-target positive penalty. ``initial_words``
     seeds the working set with words in the transformed alphabet.
+
+    For squared loss, omit ``degree`` to compare degrees 1 through ``max_degree``
+    (default 10), or omit ``alpha`` to compare positive scalar penalties in
+    ``alpha_grid``. The default grid uses 13 log-spaced ratios from 1 to 0.001
+    times the largest absolute correlation between a feature and a centred
+    training response, over all targets and words up to the candidate degree.
+    Without an intercept it uses the raw responses. Each training fold calibrates
+    its own grid. ``max_words`` bounds the number of distinct words across targets
+    in the returned full-training fit.
+    A fixed pair exceeding this cap raises ValueError. None leaves support unrestricted.
+
+    Supply ``validation_data=(paths, y)`` or use deterministic shuffled ``cv``-fold
+    cross-validation on the training data. ``scoring="auto"`` uses accuracy for
+    binary or one-hot targets and MSE otherwise. Choose ``"mse"`` or ``"accuracy"``
+    explicitly to override it. Ties prefer smaller degree then larger penalty.
+    Automatic fits return the chosen ``degree``, ``alpha`` and the scores in ``selection``.
 
     The native solver uses cyclic coordinate descent with safeguarded
     acceleration on each working set.
@@ -127,15 +153,16 @@ def sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
         raise ValueError("tree_order must be one of " + ", ".join(_TREE_ORDERS))
     if not isinstance(terminal_bound, str) or terminal_bound not in _TERMINAL_BOUNDS:
         raise ValueError("terminal_bound must be one of " + ", ".join(_TERMINAL_BOUNDS))
-    return _fit_lasso(path, y, degree, alpha, 'sig', tree_order=tree_order, terminal_bound=terminal_bound,
-                      loss=loss, fit_intercept=fit_intercept, tol=tol,
-                      max_iter=max_iter, initial_words=initial_words, memory_limit=memory_limit,
-                      time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+    return _fit_or_select(path, y, degree, alpha, 'sig', max_words, max_degree, alpha_grid, validation_data, cv, scoring,
+                          tree_order=tree_order, terminal_bound=terminal_bound, loss=loss, fit_intercept=fit_intercept,
+                          tol=tol, max_iter=max_iter, initial_words=initial_words, memory_limit=memory_limit,
+                          time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
 
 
-def log_sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
+def log_sig_lasso(path, y, degree=None, alpha=None, *, loss="squared", fit_intercept=True,
                   tol=None, max_iter=1000, initial_words=(), memory_limit=None, time_aug=False,
-                  lead_lag=False, end_time=1.0, n_jobs=1):
+                  lead_lag=False, end_time=1.0, n_jobs=1, max_words=None, max_degree=None,
+                  alpha_grid=None, validation_data=None, cv=5, scoring="auto"):
     """Fit a sparse linear predictor on tensor log-signature coordinates on CPU.
 
     Features are coefficients of the tensor logarithm indexed by Lyndon words.
@@ -146,13 +173,51 @@ def log_sig_lasso(path, y, degree, alpha, *, loss="squared", fit_intercept=True,
     The arguments, losses and returned model fields follow :func:`sig_lasso`.
     Use :func:`sig_lasso_predict` to evaluate the selected coordinates on new paths.
     """
-    return _fit_lasso(path, y, degree, alpha, 'log', loss=loss, fit_intercept=fit_intercept, tol=tol,
-                      max_iter=max_iter, initial_words=initial_words, memory_limit=memory_limit,
-                      time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+    return _fit_or_select(path, y, degree, alpha, 'log', max_words, max_degree, alpha_grid, validation_data, cv, scoring,
+                          loss=loss, fit_intercept=fit_intercept, tol=tol, max_iter=max_iter,
+                          initial_words=initial_words, memory_limit=memory_limit, time_aug=time_aug,
+                          lead_lag=lead_lag, end_time=end_time, n_jobs=n_jobs)
+
+
+def _fit_or_select(path, y, degree, alpha, feature_type, max_words, max_degree, alpha_grid, validation_data, cv, scoring, **options):
+    if max_words is not None and (isinstance(max_words, bool) or not isinstance(max_words, (int, np.integer)) or max_words < 0):
+        raise ValueError('max_words must be a nonnegative integer or None')
+    if max_degree is not None and degree is not None:
+        raise ValueError('max_degree is only used when degree is None')
+    if alpha_grid is not None and alpha is not None:
+        raise ValueError('alpha_grid is only used when alpha is None')
+    if degree is None or alpha is None:
+        if options['loss'] != 'squared':
+            raise ValueError('Automatic degree or alpha selection requires squared loss')
+        from ._lasso_selection import select_lasso
+        return select_lasso(path, y, degree, alpha, feature_type, max_words, max_degree, alpha_grid,
+                            validation_data, cv, scoring, options)
+    if validation_data is not None or scoring != 'auto' or cv != 5:
+        raise ValueError('Validation options require automatic selection of degree or alpha')
+    model = _fit_lasso(path, y, degree, alpha, feature_type, **options)
+    if max_words is not None and len(model['words']) > max_words:
+        raise ValueError(f"The fixed degree and alpha select {len(model['words'])} words, exceeding max_words={max_words}")
+    return model
+
+
+def _response_shape(path, y, inputs):
+    if type(y) is not type(path):
+        raise TypeError('y and path must have the same array type')
+    check_dtype(y, 'y')
+    if y.dtype != path.dtype or (isinstance(path, torch.Tensor) and y.device != path.device):
+        raise ValueError('y and path must have the same dtype and device')
+    shape = tuple(y.shape)
+    if shape in (inputs.batch_shape, (inputs.batch_size,)):
+        return True, 1
+    if ((len(shape) == len(inputs.batch_shape) + 1 and shape[:-1] == inputs.batch_shape)
+            or (len(shape) == 2 and shape[0] == inputs.batch_size)) and shape[-1] > 0:
+        return False, shape[-1]
+    raise ValueError('y shape must match the path sample axes, with an optional target axis')
 
 
 def _fit_lasso(path, y, degree, alpha, feature_type, *, loss, fit_intercept, tol, max_iter,
-               initial_words, memory_limit, time_aug, lead_lag, end_time, n_jobs, tree_order=None, terminal_bound=None):
+               initial_words, memory_limit, time_aug, lead_lag, end_time, n_jobs, tree_order=None, terminal_bound=None,
+               visit=None, relative=False):
     for name, value in (('degree', degree), ('max_iter', max_iter)):
         if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or not 0 < value < 2**31:
             raise ValueError(name + ' must be a positive integer below 2**31')
@@ -175,27 +240,15 @@ def _fit_lasso(path, y, degree, alpha, feature_type, *, loss, fit_intercept, tol
     inputs = PathInputHandler(path, time_aug, lead_lag, end_time, 'path')
     if not inputs.batch_size or inputs.data_length < 1:
         raise ValueError('sig_lasso requires at least one sample and one path point')
-    if type(y) is not type(path):
-        raise TypeError('y and path must have the same array type')
-    check_dtype(y, 'y')
-    if y.dtype != path.dtype or (isinstance(path, torch.Tensor) and y.device != path.device):
-        raise ValueError('y and path must have the same dtype and device')
-    shape = tuple(y.shape)
-    if shape in (inputs.batch_shape, (inputs.batch_size,)):
-        single = True
-        targets = 1
-    elif ((len(shape) == len(inputs.batch_shape) + 1 and shape[:-1] == inputs.batch_shape)
-          or (len(shape) == 2 and shape[0] == inputs.batch_size)) and shape[-1] > 0:
-        single = False
-        targets = shape[-1]
-    else:
-        raise ValueError('y shape must match the path sample axes, with an optional target axis')
+    single, targets = _response_shape(path, y, inputs)
     if isinstance(alpha, torch.Tensor):
         alpha = alpha.detach().numpy()
     alphas = np.asarray(alpha, dtype=np.float64)
     if alphas.ndim == 0:
         alphas = np.full(targets, alphas.item())
-    if alphas.shape != (targets,) or not np.all(np.isfinite(alphas)) or np.any(alphas <= 0):
+    shape_valid = (alphas.shape == (targets,) if visit is None else
+                   alphas.ndim == 2 and alphas.shape[1] == targets and len(alphas) > 0)
+    if not shape_valid or not np.all(np.isfinite(alphas)) or np.any(alphas <= 0):
         raise ValueError('alpha must be positive, finite and scalar or have one entry per target')
     alphas = np.ascontiguousarray(alphas)
     words = []
@@ -251,45 +304,61 @@ def _fit_lasso(path, y, degree, alpha, feature_type, *, loss, fit_intercept, tol
                 allocation_error = error
                 return 1
 
+        dictionary_size = _dictionary_size(feature_type, data.dimension, degree)
+
+        def make_model(penalties):
+            selected = [tuple(int(a) for a in out_letters[out_offsets[j]:out_offsets[j + 1]]) for j in range(result_shape.words)]
+            passed = converged.astype(bool)
+            updates = iterations
+            if visit is None and not passed.all():
+                warnings.warn('Lasso fit did not pass the global KKT check. Inspect n_iter and kkt_violation.',
+                              RuntimeWarning, stacklevel=3)
+            stats = {name: getattr(result_shape.stats, name) for name, _ in result_shape.stats._fields_}
+            if stats['engine'] != 3 or stats['full_transform_calls']:
+                raise RuntimeError('The CPU library did not use branch and bound')
+            stats['engine'] = 'tree'
+            stats['dictionary_size'] = dictionary_size
+            if feature_type == 'sig':
+                stats.update(tree_order=tree_order, terminal_bound=terminal_bound)
+            if isinstance(path, torch.Tensor):
+                passed = torch.as_tensor(passed, device=path.device)
+                updates = torch.as_tensor(iterations.astype(np.int64), device=path.device)
+            penalty = float(penalties[0]) if np.all(penalties == penalties[0]) else penalties.copy()
+            return dict(words=selected, coef=coefficients[:, 0] if single else coefficients, signatures=signatures,
+                        intercept=values[0][0] if single else values[0], objective=values[1][0] if single else values[1],
+                        dual_gap=(values[2][0] if single else values[2]) if loss == 'squared' else None,
+                        loss=loss, kkt_violation=values[3][0] if single else values[3], converged=passed[0] if single else passed,
+                        n_iter=updates[0] if single else updates, stats=stats, alpha=penalty,
+                        feature_type=feature_type, degree=degree, dimension=path.shape[-1],
+                        time_aug=time_aug, lead_lag=lead_lag, end_time=end_time, feature_convention=feature_type,
+                        normalization='factorial_variation')
+
         native_mode = _SIGNATURE_SEARCH[tree_order, terminal_bound] if feature_type == 'sig' else _FEATURE_TYPES[feature_type]
-        args = [data.data_ptr, _pointer(response, scalar), _pointer(alphas, c_double),
-                _pointer(letters, c_uint64), _pointer(offsets, c_uint64), len(words),
-                native_mode,
-                byref(options), allocate_output, None]
-        status = CPSIG_WORKING_SET[data.dtype](*args)
+        args = [data.data_ptr, _pointer(response, scalar), _pointer(alphas, c_double)]
+        word_args = [_pointer(letters, c_uint64), _pointer(offsets, c_uint64), len(words),
+                     native_mode, byref(options), allocate_output]
+        if visit is None:
+            status = CPSIG_WORKING_SET[data.dtype](*args, *word_args, None)
+        else:
+            if CPSIG_WORKING_SET_GRID is None:
+                raise RuntimeError('The CPU library does not support Lasso penalty grids; rebuild pysiglib')
+
+            @LassoGridVisitor
+            def visit_model(context, index, scale, scale_degree, available):
+                nonlocal allocation_error
+                try:
+                    visit(index, make_model(alphas[index] * scale), scale_degree, available if memory_limit is not None else None)
+                    return 0
+                except BaseException as error:
+                    allocation_error = error
+                    return 1
+
+            status = CPSIG_WORKING_SET_GRID[data.dtype](*args, len(alphas), relative, *word_args, visit_model, None)
         if allocation_error is not None:
             raise allocation_error
         _check_status(status, 'cpu')
-        selected = [tuple(int(a) for a in out_letters[out_offsets[j]:out_offsets[j + 1]]) for j in range(result_shape.words)]
-        converged = converged.astype(bool)
-        if not converged.all():
-            warnings.warn('Lasso fit did not pass the global KKT check. Inspect n_iter and kkt_violation.',
-                          RuntimeWarning, stacklevel=3)
-        stats = {name: getattr(result_shape.stats, name) for name, _ in result_shape.stats._fields_}
-        if stats['engine'] != 3 or stats['full_transform_calls']:
-            raise RuntimeError('The CPU library did not use branch and bound')
-        stats['engine'] = 'tree'
-        if feature_type == 'sig':
-            stats['tree_order'] = tree_order
-            stats['terminal_bound'] = terminal_bound
-            stats['dictionary_size'] = sum(data.dimension**k for k in range(1, degree + 1))
-        else:
-            primitive = [0] * (degree + 1)
-            for k in range(1, degree + 1):
-                primitive[k] = data.dimension**k - sum(primitive[j] for j in range(1, k) if k % j == 0)
-            stats['dictionary_size'] = sum(primitive[k] // k for k in range(1, degree + 1))
-        if isinstance(path, torch.Tensor):
-            converged = torch.as_tensor(converged, device=path.device)
-            iterations = torch.as_tensor(iterations.astype(np.int64), device=path.device)
-        return dict(words=selected, coef=coefficients[:, 0] if single else coefficients, signatures=signatures,
-                    intercept=values[0][0] if single else values[0], objective=values[1][0] if single else values[1],
-                    dual_gap=(values[2][0] if single else values[2]) if loss == 'squared' else None,
-                    loss=loss, kkt_violation=values[3][0] if single else values[3], converged=converged[0] if single else converged,
-                    n_iter=iterations[0] if single else iterations, stats=stats,
-                    feature_type=feature_type, degree=degree, dimension=path.shape[-1],
-                    time_aug=time_aug, lead_lag=lead_lag, end_time=end_time,
-                    feature_convention=feature_type,
-                    normalization='factorial_variation')
+        if visit is None:
+            return make_model(alphas)
 
 
 def sig_lasso_predict(path, model, *, n_jobs=1, memory_limit=None):

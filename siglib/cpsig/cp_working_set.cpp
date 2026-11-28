@@ -510,16 +510,20 @@ struct Restricted {
 };
 } // namespace
 
-Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, const std::vector<Word>& initial) {
+Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, const std::vector<Word>& initial,
+           FeatureSearch* prepared, const Result* previous) {
     const auto& o = b.options;
     if (o.loss > 3 || !o.samples || !o.length || !o.dimension || !o.degree)
         throw std::invalid_argument("Invalid working-set options");
     const size_t degree = (log_features && o.dimension == 1) ? 1 : o.degree;
-    b.prepare();
-    auto search = b.make_search();
-
+    std::unique_ptr<FeatureSearch> owned_search;
+    if (!prepared) {
+        b.prepare();
+        owned_search = b.make_search();
+        b.stats.preparation_seconds = elapsed(b.started);
+    }
+    auto* search = prepared ? prepared : owned_search.get();
     b.stats.engine = 3;
-    b.stats.preparation_seconds = elapsed(b.started);
     Result result;
     result.targets = o.targets;
     std::map<Word, Column, decltype(&word_less)> support(&word_less);
@@ -538,6 +542,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
     std::map<Word, SharedColumn, decltype(&word_less)> live(&word_less);
     const bool share = search->response_batch() > 1;
     SharedGram shared_gram;
+    if (previous) shared_gram.next_id = previous->words.size() + 1;
     std::vector<std::vector<std::pair<Word, double>>> coefs(o.targets);
     result.kkt.resize(o.targets); result.gaps.resize(o.targets); result.intercepts.resize(o.targets);
     result.objectives.resize(o.targets); result.converged.resize(o.targets); result.iterations.resize(o.targets);
@@ -550,8 +555,23 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
         const double certificate_tol = std::min(o.tolerance, 1e-4 * s.alpha);
         const double tau = share ? std::min(certificate_tol, 1e-6 * s.alpha) : certificate_tol;
         s.intercept = s.initial_intercept();
-        for (const auto& w : initial)
-            s.add(w, search->selected(w)->values);
+        if (previous) {
+            s.intercept = previous->intercepts[target];
+            for (size_t j = 0; j < previous->words.size(); ++j) {
+                const double beta = previous->coefficients[j * o.targets + target];
+                if (!beta) continue;
+                auto column = previous->selected_columns[j];
+                if (o.order == SignatureOrder::suffix && o.degree > 1)
+                    std::reverse(column.word.begin(), column.word.end());
+                column.id = j + 1;
+                s.add_column(column);
+                s.terms.back().beta = beta;
+                s.intercept += beta * column.mean;
+            }
+        } else {
+            for (const auto& w : initial)
+                s.add(w, search->selected(w)->values);
+        }
         uint64_t updates = 0;
         constexpr size_t admission_limit = 16;
         const size_t candidate_bytes = multiply(o.samples, sizeof(double)) + 256 + 32 * degree;
@@ -742,7 +762,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
             for (auto* request : pending) request->seconds = seconds;
         }
     }
-    search.reset();
+    owned_search.reset();
     if (o.order == SignatureOrder::suffix && o.degree > 1) {
         decltype(support) restored(&word_less);
         while (!support.empty()) {

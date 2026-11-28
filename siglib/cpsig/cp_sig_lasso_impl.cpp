@@ -1890,6 +1890,17 @@ static siglasso::SearchOptions search_options(const SigLassoOptions* options, ui
     return result;
 }
 
+static std::vector<siglasso::Word> initial_words(const uint64_t* letters, const uint64_t* offsets,
+        uint64_t words, SignatureOrder order) {
+    std::vector<siglasso::Word> initial;
+    initial.reserve(words);
+    for (size_t j = 0; j < words; ++j) {
+        auto& word = initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
+        if (order == SignatureOrder::suffix) std::reverse(word.begin(), word.end());
+    }
+    return initial;
+}
+
 template<typename T>
 void sig_working_set_(const T* path, const T* y, const double* alphas, const uint64_t* letters,
     const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) {
@@ -1901,15 +1912,64 @@ void sig_working_set_(const T* path, const T* y, const double* alphas, const uin
     for (size_t t = 0; t < options->targets; ++t)
         if (!std::isfinite(alphas[t]) || alphas[t] <= 0) throw std::invalid_argument("Expected a positive finite penalty");
     LassoCPU backend(settings, path, y, feature_type == 1);
-    std::vector<siglasso::Word> initial;
-    for (size_t j = 0; j < words; ++j) {
-        auto& word = initial.emplace_back(letters + offsets[j], letters + offsets[j + 1]);
-        if (settings.order == SignatureOrder::suffix) std::reverse(word.begin(), word.end());
-    }
+    const auto initial = initial_words(letters, offsets, words, settings.order);
     auto result = siglasso::fit(backend, feature_type == 1, std::vector<double>(alphas, alphas + options->targets), initial);
     backend.release_fit_workspace();
     siglasso::export_result(backend, result, allocate, context);
 }
+
+template<typename T>
+void sig_working_set_grid_(const T* path, const T* y, const double* grid, uint64_t steps, uint32_t relative,
+        const uint64_t* letters, const uint64_t* offsets, uint64_t words, uint32_t feature_type,
+        const SigLassoOptions* options, SigLassoAllocator allocate, SigLassoGridVisitor visit, void* context) {
+    const auto settings = search_options(options, feature_type, letters, offsets, words, false);
+    if (!path || !y || !grid || !steps || !allocate || !visit || relative > 1 || options->loss != 0 ||
+        !options->max_iter || !std::isfinite(options->tolerance) || options->tolerance <= 0)
+        throw std::invalid_argument("Invalid squared-loss penalty grid or fitting options");
+    const size_t count = siglasso::multiply(steps, options->targets);
+    for (size_t j = 0; j < count; ++j)
+        if (!std::isfinite(grid[j]) || grid[j] <= 0) throw std::invalid_argument("Expected positive finite penalties");
+    const auto initial = initial_words(letters, offsets, words, settings.order);
+    LassoCPU backend(settings, path, y, feature_type == 1);
+    backend.prepare();
+    auto search = backend.make_search();
+    double scale = 1.;
+    size_t scale_degree = 1;
+    if (relative) {
+        double highest = 0.;
+        for (size_t t = 0; t < options->targets; ++t) {
+            auto residual = backend.response(t);
+            backend.center(residual.data, residual.size, options->intercept != 0);
+            if (!backend.absolute_sum(residual)) continue;
+            const auto found = search->query(residual, highest, {}, 1);
+            if (!found.candidates.empty() && found.candidates.front().score > highest) {
+                highest = found.candidates.front().score;
+                scale_degree = found.candidates.front().word.size();
+            }
+        }
+        if (highest > 0.) scale = highest;
+    }
+    backend.stats.preparation_seconds = siglasso::elapsed(backend.started);
+    siglasso::Result previous;
+    std::vector<double> penalties(options->targets);
+    for (size_t j = 0; j < steps; ++j) {
+        if (j) {
+            backend.stats = {};
+            backend.started = siglasso::Clock::now();
+        }
+        for (size_t t = 0; t < penalties.size(); ++t) {
+            penalties[t] = siglasso::finite(grid[j * penalties.size() + t] * scale);
+            if (penalties[t] == 0.) throw std::underflow_error("Scaled Lasso penalty underflowed");
+        }
+        previous = siglasso::fit(backend, feature_type == 1, penalties, initial, search.get(), j ? &previous : nullptr);
+        if (j + 1 == steps) {
+            search.reset();
+            backend.release_fit_workspace();
+        }
+        siglasso::export_result(backend, previous, allocate, context, visit, j, scale, scale_degree);
+    }
+}
+
 template<typename T>
 void sig_working_set_predict_(const T* path, const T* coefficients, const T* intercept, T* output,
     const uint64_t* letters, const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options) {
@@ -1965,6 +2025,8 @@ void sig_working_set_predict_(const T* path, const T* coefficients, const T* int
 }
 template void sig_working_set_<float>(const float*, const float*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
 template void sig_working_set_<double>(const double*, const double*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
+template void sig_working_set_grid_<float>(const float*, const float*, const double*, uint64_t, uint32_t, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, SigLassoGridVisitor, void*);
+template void sig_working_set_grid_<double>(const double*, const double*, const double*, uint64_t, uint32_t, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, SigLassoGridVisitor, void*);
 template void sig_working_set_predict_<float>(const float*, const float*, const float*, float*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
 template void sig_working_set_predict_<double>(const double*, const double*, const double*, double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
 

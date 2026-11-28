@@ -48,3 +48,4 @@ class LassoOutput(Structure):
 
 
 LassoAllocator = CFUNCTYPE(c_int, c_void_p, POINTER(LassoShape), POINTER(LassoOutput))
+LassoGridVisitor = CFUNCTYPE(c_int, c_void_p, c_uint64, c_double, c_uint64, c_uint64)

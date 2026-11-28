@@ -21,7 +21,7 @@ import platform
 import ctypes
 from ctypes import c_char_p, c_float, c_double, c_int, c_uint64, c_uint32, c_bool, c_void_p, POINTER
 from collections.abc import Callable
-from ._lasso_types import LassoOptions, LassoAllocator
+from ._lasso_types import LassoOptions, LassoAllocator, LassoGridVisitor
 
 ######################################################
 # Figure out how pysiglib was built
@@ -132,12 +132,17 @@ def _bind_float_pair(
 
 
 CPSIG_WORKING_SET = None
+CPSIG_WORKING_SET_GRID = None
 CPSIG_SIG_LASSO_PREDICT = None
 if hasattr(CPSIG, 'sig_working_set_version') and CPSIG.sig_working_set_version() == 2:
     if all(hasattr(CPSIG, 'sig_working_set_' + kind) for kind in ('f', 'd')):
         CPSIG_WORKING_SET = _bind_float_pair(CPSIG, 'sig_working_set', lambda scalar: (
             POINTER(scalar), POINTER(scalar), POINTER(c_double), POINTER(c_uint64), POINTER(c_uint64),
             c_uint64, c_uint32, POINTER(LassoOptions), LassoAllocator, c_void_p))
+    if all(hasattr(CPSIG, 'sig_working_set_grid_' + kind) for kind in ('f', 'd')):
+        CPSIG_WORKING_SET_GRID = _bind_float_pair(CPSIG, 'sig_working_set_grid', lambda scalar: (
+            POINTER(scalar), POINTER(scalar), POINTER(c_double), c_uint64, c_uint32, POINTER(c_uint64),
+            POINTER(c_uint64), c_uint64, c_uint32, POINTER(LassoOptions), LassoAllocator, LassoGridVisitor, c_void_p))
     if all(hasattr(CPSIG, 'sig_working_set_predict_' + kind) for kind in ('f', 'd')):
         CPSIG_SIG_LASSO_PREDICT = _bind_float_pair(CPSIG, 'sig_working_set_predict', lambda scalar: (
             POINTER(scalar), POINTER(scalar), POINTER(scalar), POINTER(scalar), POINTER(c_uint64),

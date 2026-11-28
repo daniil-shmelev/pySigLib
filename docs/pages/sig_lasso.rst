@@ -210,6 +210,56 @@ bound. Squared fits also return a primal-dual gap. Each target has its own
 diagnostics and penalty. ``stats`` includes the native workspace peak in bytes
 and the preparation, search, restricted solve and certification times in seconds.
 
+Selecting the degree and penalty
+--------------------------------
+
+For squared loss, leave ``degree`` or ``alpha`` as ``None`` to select it by
+validation. With ``degree=None``, the candidate degrees are 1 through
+``max_degree`` (default 10). With ``alpha=None``, pass absolute scalar penalties
+in ``alpha_grid`` or use the default grid of 13 geometric ratios from 1 to 0.001.
+The default scales the ratios by the largest absolute correlation over all words
+at the candidate degree or below and all responses, at the intercept-only fit.
+With ``fit_intercept=False`` it uses the raw responses. A zero maximum uses unit
+scale. Calibration uses only the training observations for each fold.
+
+Pass ``validation_data=(paths, responses)`` to score on a separate sample, or
+use shuffled ``cv``-fold cross-validation (default five folds, capped at the
+sample count). The returned model is fitted on all the training observations.
+The default score is accuracy for binary or one-hot targets and mean squared
+error otherwise. Set ``scoring="mse"`` or ``scoring="accuracy"`` to choose
+explicitly. Equal scores favour the smaller degree, then the larger penalty.
+
+``max_words`` limits the number of distinct words with a nonzero coefficient
+in any response of the returned fit. The default ``None`` leaves this count
+unrestricted. A budget of zero allows an intercept-only fit. The search
+checks the full-training support at every candidate penalty because a word
+can leave the support as the penalty decreases. A fixed degree and penalty
+that exceed the budget raise ``ValueError``, as does a grid with no feasible
+fit when every candidate converged. Fits that fail the optimality check are
+ineligible. If all feasible candidates fail this check, selection raises
+``RuntimeError``.
+
+At each degree, successive penalties share the prepared feature tree and
+warm-start from the previous coefficients and columns. At a fixed absolute
+penalty, a certified solution also solves each smaller dictionary containing
+its support. On the relative grid this also requires that a word attaining
+the maximum training correlation remains in the smaller dictionary, ensuring
+the penalty scale is the same. The selected values are in ``model["degree"]`` and
+``model["alpha"]``. The validation score, candidate scores, word counts,
+certification status and number of native fits are in ``model["selection"]``.
+During validation, prediction uses the native memory budget left by the fit.
+The timings in ``model["stats"]`` describe the selected training step. Shared
+preparation is charged to the first penalty at each degree.
+
+.. code-block:: python
+
+    model = pysiglib.sig_lasso(
+        train_paths, train_targets, max_degree=6, max_words=100,
+        alpha_grid=[0.01, 0.003, 0.001, 0.0003],
+        validation_data=(validation_paths, validation_targets),
+    )
+    predictions = pysiglib.sig_lasso_predict(test_paths, model)
+
 Example
 -------
 

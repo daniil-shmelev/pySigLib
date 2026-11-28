@@ -54,3 +54,6 @@ struct SigLassoOutput {
 // Integer buffers are on the host; scalar buffers use the input dtype and device.
 // Return zero on success. The callback must not throw across the C boundary.
 using SigLassoAllocator = int (*)(void*, const SigLassoShape*, SigLassoOutput*);
+
+// Grid index, penalty scale, degree attaining that scale, and free workspace.
+using SigLassoGridVisitor = int (*)(void*, uint64_t, double, uint64_t, uint64_t);

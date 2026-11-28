@@ -242,7 +242,7 @@ struct SearchOptions : SigLassoOptions {
 class Backend {
 public:
     const SearchOptions options;
-    const Clock::time_point started = Clock::now();
+    Clock::time_point started = Clock::now();
     std::shared_ptr<Budget> budget;
     SigLassoStats stats{};
     bool highest_degree_only = false;
@@ -336,7 +336,8 @@ inline SigLassoOutput allocate_output(const Result& result, SigLassoAllocator al
     return output;
 }
 
-inline void export_result(Backend& backend, Result& result, SigLassoAllocator allocate, void* context) {
+inline void export_result(Backend& backend, Result& result, SigLassoAllocator allocate, void* context,
+                          SigLassoGridVisitor visit = nullptr, uint64_t step = 0, double scale = 1., uint64_t scale_degree = 1) {
     const auto started = Clock::now();
     size_t letters = 0;
     for (const auto& word : result.words) letters += word.size();
@@ -351,6 +352,8 @@ inline void export_result(Backend& backend, Result& result, SigLassoAllocator al
     backend.stats.peak_bytes = backend.budget->peak();
     backend.stats.total_seconds = elapsed(backend.started);
     *output.stats = backend.stats;
+    if (visit && visit(context, step, scale, scale_degree, backend.budget->available()))
+        throw std::runtime_error("Lasso grid visitor failed");
 }
 
 class Search final : public FeatureSearch {
@@ -501,6 +504,7 @@ private:
 
 inline std::unique_ptr<FeatureSearch> Backend::make_search() { return std::make_unique<Search>(*this); }
 
-Result fit(Backend&, bool log_features, const std::vector<double>& alphas, const std::vector<Word>& initial);
+Result fit(Backend&, bool log_features, const std::vector<double>& alphas, const std::vector<Word>& initial,
+           FeatureSearch* prepared = nullptr, const Result* previous = nullptr);
 
 } // namespace siglasso

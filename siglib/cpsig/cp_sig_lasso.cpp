@@ -21,6 +21,8 @@
 namespace cpsig {
 HWY_EXPORT_T(sig_working_set_f, sig_working_set_<float>);
 HWY_EXPORT_T(sig_working_set_d, sig_working_set_<double>);
+HWY_EXPORT_T(sig_working_set_grid_f, sig_working_set_grid_<float>);
+HWY_EXPORT_T(sig_working_set_grid_d, sig_working_set_grid_<double>);
 HWY_EXPORT_T(sig_working_set_predict_f, sig_working_set_predict_<float>);
 HWY_EXPORT_T(sig_working_set_predict_d, sig_working_set_predict_<double>);
 
@@ -35,6 +37,16 @@ CPSIG_API int sig_working_set_f(const float* path, const float* y, const double*
 CPSIG_API int sig_working_set_d(const double* path, const double* y, const double* alphas, const uint64_t* letters, const uint64_t* offsets,
     uint64_t words, uint32_t feature_type, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) noexcept {
     SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_working_set_d)(path, y, alphas, letters, offsets, words, feature_type, options, allocate, context));
+}
+CPSIG_API int sig_working_set_grid_f(const float* path, const float* y, const double* grid, uint64_t steps, uint32_t relative,
+    const uint64_t* letters, const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options,
+    SigLassoAllocator allocate, SigLassoGridVisitor visit, void* context) noexcept {
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_working_set_grid_f)(path, y, grid, steps, relative, letters, offsets, words, feature_type, options, allocate, visit, context));
+}
+CPSIG_API int sig_working_set_grid_d(const double* path, const double* y, const double* grid, uint64_t steps, uint32_t relative,
+    const uint64_t* letters, const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options,
+    SigLassoAllocator allocate, SigLassoGridVisitor visit, void* context) noexcept {
+    SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_working_set_grid_d)(path, y, grid, steps, relative, letters, offsets, words, feature_type, options, allocate, visit, context));
 }
 CPSIG_API int sig_working_set_predict_f(const float* path, const float* coefficients, const float* intercept, float* output, const uint64_t* letters,
     const uint64_t* offsets, uint64_t words, uint32_t feature_type, const SigLassoOptions* options) noexcept {

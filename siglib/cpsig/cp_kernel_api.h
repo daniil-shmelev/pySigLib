@@ -24,6 +24,8 @@ void log_terminal_values_(const double*, const double*, double*, uint64_t, uint6
 template<typename T>
 void sig_working_set_(const T*, const T*, const double*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, void*);
 template<typename T>
+void sig_working_set_grid_(const T*, const T*, const double*, uint64_t, uint32_t, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*, SigLassoAllocator, SigLassoGridVisitor, void*);
+template<typename T>
 void sig_working_set_predict_(const T*, const T*, const T*, T*, const uint64_t*, const uint64_t*, uint64_t, uint32_t, const SigLassoOptions*);
 
 template<std::floating_point T>
