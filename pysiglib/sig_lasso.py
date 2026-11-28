@@ -22,13 +22,14 @@ import torch
 from ._lasso_types import LassoOptions, LassoShape, LassoAllocator, LassoGridVisitor
 from .data_handlers import PathInputHandler
 from .dtypes import DTYPES
-from .load_siglib import CPSIG_WORKING_SET, CPSIG_WORKING_SET_GRID, CPSIG_SIG_LASSO_PREDICT
+from .load_siglib import CPSIG_WORKING_SET, CPSIG_WORKING_SET_GRID, CPSIG_WORKING_SET_GRID_LOSS_MASK, CPSIG_SIG_LASSO_PREDICT
 from .error_codes import err_msg
 from .param_checks import check_type, check_dtype, check_n_jobs, ensure_own_contiguous_storage
 from .transform_path import transform_path
 
 
 _FEATURE_TYPES = {'sig': 0, 'log': 1}
+_LOSSES = {'squared': 0, 'logistic': 1, 'poisson': 2, 'huber': 3}
 _TREE_ORDERS = ('prefix', 'lyndon', 'suffix', 'energy', 'profile', 'forward', 'grouped', 'outside', 'balanced', 'adaptive')
 _TERMINAL_BOUNDS = ('norm', 'projected', 'primitive')
 _SIGNATURE_SEARCH = {(order, bound): 16 + 4 * i + j for i, order in enumerate(_TREE_ORDERS)
@@ -101,20 +102,22 @@ def sig_lasso(path, y, degree=None, alpha=None, *, loss="squared", fit_intercept
     has its own objective with a scalar or per-target positive penalty. ``initial_words``
     seeds the working set with words in the transformed alphabet.
 
-    For squared loss, omit ``degree`` to compare degrees 1 through ``max_degree``
+    Omit ``degree`` to compare degrees 1 through ``max_degree``
     (default 10), or omit ``alpha`` to compare positive scalar penalties in
     ``alpha_grid``. The default grid uses 13 log-spaced ratios from 1 to 0.001
-    times the largest absolute correlation between a feature and a centred
-    training response, over all targets and words up to the candidate degree.
-    Without an intercept it uses the raw responses. Each training fold calibrates
-    its own grid. ``max_words`` bounds the number of distinct words across targets
+    times the largest absolute feature correlation with the negative loss
+    derivative at the intercept-only fit (at zero without an intercept).
+    Each training fold calibrates its own grid over all targets and eligible words.
+    ``max_words`` bounds the number of distinct words across targets
     in the returned full-training fit.
     A fixed pair exceeding this cap raises ValueError. None leaves support unrestricted.
 
     Supply ``validation_data=(paths, y)`` or use deterministic shuffled ``cv``-fold
-    cross-validation on the training data. ``scoring="auto"`` uses accuracy for
-    binary or one-hot targets and MSE otherwise. Choose ``"mse"`` or ``"accuracy"``
-    explicitly to override it. Ties prefer smaller degree then larger penalty.
+    cross-validation on the training data. For squared loss, ``scoring="auto"``
+    uses accuracy for binary or one-hot targets and MSE otherwise. For logistic,
+    Poisson and Huber fits it uses ``"log_loss"``, ``"poisson_deviance"`` and
+    ``"huber"`` respectively. Choose ``"mse"`` (on the response scale) or
+    ``"accuracy"`` for a different criterion. Ties prefer smaller degree then larger penalty.
     Automatic fits return the chosen ``degree``, ``alpha`` and the scores in ``selection``.
 
     The native solver uses cyclic coordinate descent with safeguarded
@@ -180,6 +183,9 @@ def log_sig_lasso(path, y, degree=None, alpha=None, *, loss="squared", fit_inter
 
 
 def _fit_or_select(path, y, degree, alpha, feature_type, max_words, max_degree, alpha_grid, validation_data, cv, scoring, **options):
+    loss = options['loss']
+    if not isinstance(loss, str) or loss not in _LOSSES:
+        raise ValueError("loss must be 'squared', 'logistic', 'poisson' or 'huber'")
     if max_words is not None and (isinstance(max_words, bool) or not isinstance(max_words, (int, np.integer)) or max_words < 0):
         raise ValueError('max_words must be a nonnegative integer or None')
     if max_degree is not None and degree is not None:
@@ -187,8 +193,8 @@ def _fit_or_select(path, y, degree, alpha, feature_type, max_words, max_degree, 
     if alpha_grid is not None and alpha is not None:
         raise ValueError('alpha_grid is only used when alpha is None')
     if degree is None or alpha is None:
-        if options['loss'] != 'squared':
-            raise ValueError('Automatic degree or alpha selection requires squared loss')
+        if not (CPSIG_WORKING_SET_GRID_LOSS_MASK & (1 << _LOSSES[loss])):
+            raise RuntimeError(f'Penalty grids for {loss} loss require a newer CPU library. Please rebuild pysiglib.')
         from ._lasso_selection import select_lasso
         return select_lasso(path, y, degree, alpha, feature_type, max_words, max_degree, alpha_grid,
                             validation_data, cv, scoring, options)
@@ -227,9 +233,6 @@ def _fit_lasso(path, y, degree, alpha, feature_type, *, loss, fit_intercept, tol
         raise ValueError('memory_limit must be a nonnegative integer or None')
     if memory_limit == 0:
         raise MemoryError('memory_limit must allow the native fitting workspace')
-    losses = {'squared': 0, 'logistic': 1, 'poisson': 2, 'huber': 3}
-    if not isinstance(loss, str) or loss not in losses:
-        raise ValueError("loss must be 'squared', 'logistic', 'poisson' or 'huber'")
     for name, value in (('fit_intercept', fit_intercept), ('time_aug', time_aug), ('lead_lag', lead_lag)):
         check_type(value, name, bool)
     check_n_jobs(n_jobs)
@@ -270,7 +273,7 @@ def _fit_lasso(path, y, degree, alpha, feature_type, *, loss, fit_intercept, tol
         response = ensure_own_contiguous_storage(y.detach() if isinstance(y, torch.Tensor) else y)
         options = LassoOptions(data.batch_size, data.length, data.dimension, degree, targets,
                                max_iter, memory_limit or 0, tol, n_jobs, fit_intercept, inputs.dtype == 'float32',
-                               losses[loss])
+                               _LOSSES[loss])
         scalar = DTYPES[data.dtype]
         result_shape = None
         out_letters = out_offsets = coefficients = signatures = values = converged = iterations = None

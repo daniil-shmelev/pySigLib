@@ -504,6 +504,7 @@ private:
 
 inline std::unique_ptr<FeatureSearch> Backend::make_search() { return std::make_unique<Search>(*this); }
 
+Array null_residual(Backend&, size_t target);
 Result fit(Backend&, bool log_features, const std::vector<double>& alphas, const std::vector<Word>& initial,
            FeatureSearch* prepared = nullptr, const Result* previous = nullptr);
 

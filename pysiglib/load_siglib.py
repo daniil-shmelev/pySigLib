@@ -133,6 +133,7 @@ def _bind_float_pair(
 
 CPSIG_WORKING_SET = None
 CPSIG_WORKING_SET_GRID = None
+CPSIG_WORKING_SET_GRID_LOSS_MASK = 1
 CPSIG_SIG_LASSO_PREDICT = None
 if hasattr(CPSIG, 'sig_working_set_version') and CPSIG.sig_working_set_version() == 2:
     if all(hasattr(CPSIG, 'sig_working_set_' + kind) for kind in ('f', 'd')):
@@ -140,6 +141,10 @@ if hasattr(CPSIG, 'sig_working_set_version') and CPSIG.sig_working_set_version()
             POINTER(scalar), POINTER(scalar), POINTER(c_double), POINTER(c_uint64), POINTER(c_uint64),
             c_uint64, c_uint32, POINTER(LassoOptions), LassoAllocator, c_void_p))
     if all(hasattr(CPSIG, 'sig_working_set_grid_' + kind) for kind in ('f', 'd')):
+        if hasattr(CPSIG, 'sig_working_set_grid_loss_mask'):
+            CPSIG.sig_working_set_grid_loss_mask.argtypes = ()
+            CPSIG.sig_working_set_grid_loss_mask.restype = c_uint32
+            CPSIG_WORKING_SET_GRID_LOSS_MASK = CPSIG.sig_working_set_grid_loss_mask()
         CPSIG_WORKING_SET_GRID = _bind_float_pair(CPSIG, 'sig_working_set_grid', lambda scalar: (
             POINTER(scalar), POINTER(scalar), POINTER(c_double), c_uint64, c_uint32, POINTER(c_uint64),
             POINTER(c_uint64), c_uint64, c_uint32, POINTER(LassoOptions), LassoAllocator, LassoGridVisitor, c_void_p))

@@ -30,6 +30,9 @@ extern "C" {
 CPSIG_API int sig_working_set_version() noexcept {
     return 2;
 }
+CPSIG_API uint32_t sig_working_set_grid_loss_mask() noexcept {
+    return 0x0f;
+}
 CPSIG_API int sig_working_set_f(const float* path, const float* y, const double* alphas, const uint64_t* letters, const uint64_t* offsets,
     uint64_t words, uint32_t feature_type, const SigLassoOptions* options, SigLassoAllocator allocate, void* context) noexcept {
     SAFE_CALL(HWY_DYNAMIC_DISPATCH_T(sig_working_set_f)(path, y, alphas, letters, offsets, words, feature_type, options, allocate, context));

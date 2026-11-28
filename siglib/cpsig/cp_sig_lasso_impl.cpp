@@ -1923,9 +1923,9 @@ void sig_working_set_grid_(const T* path, const T* y, const double* grid, uint64
         const uint64_t* letters, const uint64_t* offsets, uint64_t words, uint32_t feature_type,
         const SigLassoOptions* options, SigLassoAllocator allocate, SigLassoGridVisitor visit, void* context) {
     const auto settings = search_options(options, feature_type, letters, offsets, words, false);
-    if (!path || !y || !grid || !steps || !allocate || !visit || relative > 1 || options->loss != 0 ||
+    if (!path || !y || !grid || !steps || !allocate || !visit || relative > 1 || options->loss > 3 ||
         !options->max_iter || !std::isfinite(options->tolerance) || options->tolerance <= 0)
-        throw std::invalid_argument("Invalid squared-loss penalty grid or fitting options");
+        throw std::invalid_argument("Invalid Lasso penalty grid or fitting options");
     const size_t count = siglasso::multiply(steps, options->targets);
     for (size_t j = 0; j < count; ++j)
         if (!std::isfinite(grid[j]) || grid[j] <= 0) throw std::invalid_argument("Expected positive finite penalties");
@@ -1938,8 +1938,7 @@ void sig_working_set_grid_(const T* path, const T* y, const double* grid, uint64
     if (relative) {
         double highest = 0.;
         for (size_t t = 0; t < options->targets; ++t) {
-            auto residual = backend.response(t);
-            backend.center(residual.data, residual.size, options->intercept != 0);
+            auto residual = siglasso::null_residual(backend, t);
             if (!backend.absolute_sum(residual)) continue;
             const auto found = search->query(residual, highest, {}, 1);
             if (!found.candidates.empty() && found.candidates.front().score > highest) {

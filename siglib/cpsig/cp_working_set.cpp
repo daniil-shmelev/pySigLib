@@ -71,6 +71,33 @@ struct SharedGram {
     }
 };
 
+double null_prediction(const SearchOptions& o, const Array& y) {
+    if (!o.intercept) {
+        if (o.loss == 1) return .5;
+        if (o.loss == 2) return 1.;
+        return 0.;
+    }
+    if (o.loss != 3) {
+        const double mean = finite(std::accumulate(y.data, y.data + y.size, 0.) / y.size);
+        if (o.loss == 1 && (mean == 0. || mean == 1.))
+            throw std::invalid_argument("Binary logistic loss has no finite intercept for a constant class");
+        if (o.loss == 2 && mean == 0.)
+            throw std::invalid_argument("Poisson loss has no finite intercept for all-zero counts");
+        return mean;
+    }
+    auto ends = std::minmax_element(y.data, y.data + y.size);
+    double lo = *ends.first, hi = *ends.second;
+    for (;;) {
+        const double mid = std::midpoint(lo, hi);
+        if (mid == lo || mid == hi) return mid;
+        double sum = 0.;
+        for (size_t i = 0; i < y.size; ++i) sum += std::clamp(mid - y.data[i], -1., 1.);
+        if (sum == 0.) return mid;
+        if (sum < 0.) lo = mid;
+        else hi = mid;
+    }
+}
+
 struct Restricted {
     Backend& b;
     Array y, eta, gradient, residual;
@@ -479,36 +506,23 @@ struct Restricted {
     double initial_intercept() const {
         if (!has_intercept())
             return 0;
-        const double mean = std::accumulate(y.data, y.data + y.size, 0.) / y.size;
-        if (b.options.loss == 0)
-            return mean;
-        if (b.options.loss == 1) {
-            if (mean == 0 || mean == 1)
-                throw std::invalid_argument("Binary logistic loss has no finite intercept for a constant class");
-            return std::log(mean) - std::log1p(-mean);
-        }
-        if (b.options.loss == 2) {
-            if (mean == 0)
-                throw std::invalid_argument("Poisson loss has no finite intercept for all-zero counts");
-            return std::log(mean);
-        }
-        auto ends = std::minmax_element(y.data, y.data + y.size);
-        double lo = *ends.first, hi = *ends.second;
-        for (size_t iter = 0; iter < 80 && lo < hi; ++iter) {
-            double mid = std::midpoint(lo, hi), sum = 0;
-            for (size_t i = 0; i < y.size; ++i)
-                sum += std::clamp(mid - y.data[i], -1., 1.);
-            if (sum == 0)
-                return mid;
-            if (sum < 0)
-                lo = mid;
-            else
-                hi = mid;
-        }
-        return std::midpoint(lo, hi);
+        const double prediction = null_prediction(b.options, y);
+        if (b.options.loss == 1) return std::log(prediction) - std::log1p(-prediction);
+        if (b.options.loss == 2) return std::log(prediction);
+        return prediction;
     }
 };
 } // namespace
+
+Array null_residual(Backend& b, size_t target) {
+    auto residual = b.response(target);
+    const double prediction = null_prediction(b.options, residual);
+    for (size_t i = 0; i < residual.size; ++i) {
+        const double error = residual.data[i] - prediction;
+        residual.data[i] = b.options.loss == 3 ? std::clamp(error, -1., 1.) : error;
+    }
+    return residual;
+}
 
 Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, const std::vector<Word>& initial,
            FeatureSearch* prepared, const Result* previous) {
@@ -554,7 +568,6 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
         // routes. Resolve small violations relative to the individual penalty.
         const double certificate_tol = std::min(o.tolerance, 1e-4 * s.alpha);
         const double tau = share ? std::min(certificate_tol, 1e-6 * s.alpha) : certificate_tol;
-        s.intercept = s.initial_intercept();
         if (previous) {
             s.intercept = previous->intercepts[target];
             for (size_t j = 0; j < previous->words.size(); ++j) {
@@ -569,6 +582,7 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
                 s.intercept += beta * column.mean;
             }
         } else {
+            s.intercept = s.initial_intercept();
             for (const auto& w : initial)
                 s.add(w, search->selected(w)->values);
         }
@@ -663,11 +677,9 @@ Result fit(Backend& b, bool log_features, const std::vector<double>& alphas, con
                 if (!std::isfinite(inactive))
                     inactive = search->query(s.residual, s.alpha + tau * .9, active, 0).omitted;
                 raw_inactive = inactive;
-                if (o.intercept && !log_features)
-                    raw_inactive += s.intercept_error;
-                if (o.intercept && log_features && s.intercept_error > 0)
-                    raw_inactive += search->feature_cap() * s.intercept_error;
-                if (o.intercept && log_features && s.intercept_error > 0 && raw_inactive > s.alpha + tau) {
+                if (o.intercept && s.intercept_error > 0)
+                    raw_inactive += (log_features ? search->feature_cap() : 1.) * s.intercept_error;
+                if (o.intercept && s.intercept_error > 0 && raw_inactive > s.alpha + tau) {
                     auto raw = b.alloc(o.samples);
                     for (size_t i = 0; i < o.samples; ++i)
                         raw.data[i] = -s.gradient.data[i] * o.samples;

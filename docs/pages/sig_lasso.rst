@@ -213,21 +213,35 @@ and the preparation, search, restricted solve and certification times in seconds
 Selecting the degree and penalty
 --------------------------------
 
-For squared loss, leave ``degree`` or ``alpha`` as ``None`` to select it by
+For any of the four losses, leave ``degree`` or ``alpha`` as ``None`` to select it by
 validation. With ``degree=None``, the candidate degrees are 1 through
 ``max_degree`` (default 10). With ``alpha=None``, pass absolute scalar penalties
 in ``alpha_grid`` or use the default grid of 13 geometric ratios from 1 to 0.001.
-The default scales the ratios by the largest absolute correlation over all words
-at the candidate degree or below and all responses, at the intercept-only fit.
-With ``fit_intercept=False`` it uses the raw responses. A zero maximum uses unit
-scale. Calibration uses only the training observations for each fold.
+For each training fold the default scale is the maximum of :math:`|X_w^\top r_0|/N`
+over eligible words and responses. With an intercept, the null residual :math:`r_0`
+is the centred response for squared, logistic and Poisson loss. For Huber it is
+the residual at the fitted Huber location, clipped to :math:`[-1,1]`. With
+``fit_intercept=False``, evaluate the loss derivative at a zero linear predictor.
+This gives :math:`y`, :math:`y-1/2`, :math:`y-1` or clipped :math:`y`, respectively.
+A zero maximum uses unit scale.
 
 Pass ``validation_data=(paths, responses)`` to score on a separate sample, or
 use shuffled ``cv``-fold cross-validation (default five folds, capped at the
 sample count). The returned model is fitted on all the training observations.
-The default score is accuracy for binary or one-hot targets and mean squared
-error otherwise. Set ``scoring="mse"`` or ``scoring="accuracy"`` to choose
-explicitly. Equal scores favour the smaller degree, then the larger penalty.
+For squared loss the default score is accuracy for binary or one-hot targets and
+mean squared error otherwise. Logistic, Poisson and Huber fits use mean binary
+log loss (``log_loss``), mean Poisson deviance (``poisson_deviance``) and mean
+unit-threshold Huber loss (``huber``), averaged over observations and targets.
+For one-hot logistic training, validation also accepts class indices. Each
+response is a separate binary logistic fit. Every training fold needs both
+classes per logistic response or a positive count per Poisson response when
+fitting an intercept.
+
+Use ``scoring="mse"`` to compare predicted response means, or ``scoring="accuracy"``
+for binary or one-hot targets. Accuracy thresholds a binary predicted mean at
+one half and uses the largest prediction for one-hot targets. In particular,
+the binary logistic threshold on the linear predictor is zero. Equal scores
+favour the smaller degree, then the larger penalty.
 
 ``max_words`` limits the number of distinct words with a nonzero coefficient
 in any response of the returned fit. The default ``None`` leaves this count
@@ -237,7 +251,8 @@ can leave the support as the penalty decreases. A fixed degree and penalty
 that exceed the budget raise ``ValueError``, as does a grid with no feasible
 fit when every candidate converged. Fits that fail the optimality check are
 ineligible. If all feasible candidates fail this check, selection raises
-``RuntimeError``.
+``RuntimeError``. A candidate with a nonfinite validation score is also
+ineligible and is recorded with status ``nonfinite_score``.
 
 At each degree, successive penalties share the prepared feature tree and
 warm-start from the previous coefficients and columns. At a fixed absolute

@@ -55,6 +55,114 @@ def dense_lasso(design, y, penalty, intercept):
     raise AssertionError('dense reference did not converge')
 
 
+def null_residual(y, loss, intercept):
+    if loss == 'huber':
+        location = 0.
+        if intercept:
+            lo, hi = np.median(y) - 1., np.median(y) + 1.
+            for _ in range(60):
+                location = (lo + hi) / 2
+                if np.clip(y - location, -1., 1.).sum() > 0:
+                    lo = location
+                else:
+                    hi = location
+        return np.clip(y - location, -1., 1.)
+    mean = y.mean() if intercept else (.5 if loss == 'logistic' else 1.)
+    return y - mean
+
+
+def reference_score(y, eta, loss):
+    if loss == 'logistic':
+        p = 1. / (1. + np.exp(-eta))
+        return y - p, -np.where(y == 1, np.log(p), np.log1p(-p)).mean()
+    if loss == 'poisson':
+        mean = np.exp(eta)
+        deviance = mean - y + y * (np.log(np.maximum(1., y)) - eta)
+        return y - mean, 2. * deviance.mean()
+    error = y - eta
+    return np.clip(error, -1., 1.), np.where(abs(error) <= 1., .5 * error**2, abs(error) - .5).mean()
+
+
+@pytest.mark.parametrize('loss,metric', [('logistic', 'log_loss'), ('poisson', 'poisson_deviance'), ('huber', 'huber')])
+@pytest.mark.parametrize('fit,log', [(ps.sig_lasso, False), (ps.log_sig_lasso, True)])
+@pytest.mark.parametrize('intercept', [False, True])
+def test_all_loss_grid_against_full_dictionary_kkt_and_validation(loss, metric, fit, log, intercept):
+    rng = np.random.default_rng(613)
+    paths = rng.normal(size=(94, 7, 2)).cumsum(axis=1)
+    words, design = dense_features(paths, 2, log)
+    signal = 2. * design[:, 0] - design[:, 1] + design[:, words.index((0, 1))]
+    if loss == 'logistic':
+        y = rng.binomial(1, 1. / (1. + np.exp(-signal))).astype(float)
+    elif loss == 'poisson':
+        y = rng.poisson(np.exp(.5 + .45 * signal)).astype(float)
+    else:
+        y = signal + .1 * rng.normal(size=len(paths))
+        y[::6] += 9.
+    n = 64
+    options = dict(loss=loss, fit_intercept=intercept, tol=1e-9)
+    model = fit(paths[:n], y[:n], max_degree=2, validation_data=(paths[n:], y[n:]), max_words=3, **options)
+    assert model['selection']['scoring'] == metric and model['dual_gap'] is None
+    feasible = []
+    for m in (1, 2):
+        d = sum(len(w) <= m for w in words)
+        x = design[:n, :d]
+        maximum = np.max(np.abs(x.T @ null_residual(y[:n], loss, intercept))) / n
+        rows = [r for r in model['selection']['candidates'] if r['degree'] == m]
+        assert len(rows) == 13
+        for row, alpha in zip(rows, maximum * np.geomspace(1., .001, 13)):
+            assert row['alpha'] == pytest.approx(alpha, rel=2e-12)
+            cold = fit(paths[:n], y[:n], m, row['alpha'], **options)
+            active = [words.index(w) for w in cold['words']]
+            eta = design[:, active] @ cold['coef'] + cold['intercept']
+            residual, _ = reference_score(y[:n], eta[:n], loss)
+            corr = x.T @ residual / n
+            assert np.max(np.abs(corr)) <= alpha + 1e-8 and cold['converged']
+            np.testing.assert_allclose(corr[active], alpha * np.sign(cold['coef']), atol=1e-8)
+            if intercept:
+                assert abs(residual.mean()) < 1e-8
+            assert row['words'] == len(active)
+            if len(active) > 3:
+                assert row['status'] == 'over_cap'
+            else:
+                _, score = reference_score(y[n:], eta[n:], loss)
+                assert row['status'] == 'ok' and row['score'] == pytest.approx(score, abs=3e-8)
+                feasible.append(score)
+    _, held_score = reference_score(y[n:], ps.sig_lasso_predict(paths[n:], model), loss)
+    assert held_score == pytest.approx(min(feasible), abs=3e-8)
+    assert len(model['words']) <= 3
+
+
+@pytest.mark.parametrize('loss', ['logistic', 'poisson', 'huber'])
+def test_all_loss_cv_calibrates_on_training_folds(loss):
+    rng = np.random.default_rng(121)
+    x = rng.normal(size=(48, 5, 2)).cumsum(axis=1)
+    _, z = dense_features(x, 1)
+    if loss == 'logistic':
+        y = (z[:, 0] + .5 * rng.normal(size=len(x)) > 0).astype(float)
+    elif loss == 'poisson':
+        y = rng.poisson(np.exp(z[:, 0])).astype(float)
+    else:
+        y = 2 * z[:, 0] + rng.normal(size=len(x))
+        y[::5] += 7.
+    ratios = np.geomspace(1., .001, 13)
+    model = ps.sig_lasso(x, y, 1, loss=loss, cv=3, tol=1e-9)
+    order = np.random.default_rng(0).permutation(len(x))
+    if loss != 'huber':
+        order = order[np.argsort(y[order] > 0, kind='stable')]
+    expected = np.zeros(3)
+    steps = [0, 4, 8]
+    for fold in range(3):
+        valid = order[fold::3]
+        train = np.setdiff1d(np.arange(len(x)), valid)
+        scale = np.max(abs(z[train].T @ null_residual(y[train], loss, True))) / len(train)
+        for k, j in enumerate(steps):
+            cold = ps.sig_lasso(x[train], y[train], 1, scale * ratios[j], loss=loss, tol=1e-9)
+            eta = z[valid][:, [w[0] for w in cold['words']]] @ cold['coef'] + cold['intercept']
+            expected[k] += len(valid) * reference_score(y[valid], eta, loss)[1]
+    rows = model['selection']['candidates']
+    np.testing.assert_allclose([rows[j]['score'] for j in steps], expected / len(x), atol=2e-8)
+
+
 @pytest.mark.parametrize('log,order,intercept', [(False, 'prefix', True), (False, 'suffix', False),
                                                   (False, 'outside', True), (True, None, True)])
 def test_grid_matches_independent_dense_solutions(log, order, intercept):
@@ -214,19 +322,24 @@ def test_zero_features_and_zero_budget_use_default_degree_ceiling(fit):
 
 
 @pytest.mark.parametrize('fit', [ps.sig_lasso, ps.log_sig_lasso])
-def test_torch_transforms_batch_axes_and_multiclass_accuracy(fit):
+@pytest.mark.parametrize('loss,scoring', [('squared', 'auto'), ('logistic', 'accuracy'), ('logistic', 'auto')])
+def test_torch_transforms_batch_axes_and_multiclass_accuracy(fit, loss, scoring):
     rng = np.random.default_rng(472)
     raw = torch.tensor(rng.normal(size=(4, 12, 5, 4)).cumsum(axis=2), dtype=torch.float32)
     x = raw[..., ::2]
     classes = torch.argmax(torch.stack((x[:, :, -1, 0], -x[:, :, -1, 0], x[:, :, -1, 1]), dim=-1), dim=-1)
     y = torch.nn.functional.one_hot(classes, 3).float()
     model = fit(x[:3], y[:3], max_degree=2, alpha_grid=[.08, .02], validation_data=(x[3:], classes[3:]),
-                time_aug=True, lead_lag=True, initial_words=[(0, 1)], n_jobs=2, tol=1e-6)
-    assert model['selection']['scoring'] == 'accuracy'
+                time_aug=True, lead_lag=True, initial_words=[(0, 1)], n_jobs=2, tol=1e-6, loss=loss, scoring=scoring)
     assert model['signatures'].shape == (3, 12, len(model['words']))
     prediction = ps.sig_lasso_predict(x[3:], model)
     assert tuple(prediction.shape) == (1, 12, 3)
-    assert float((prediction.argmax(dim=-1) == classes[3:]).sum()) / 12 == model['selection']['score']
+    if model['selection']['scoring'] == 'accuracy':
+        assert float((prediction.argmax(dim=-1) == classes[3:]).sum()) / 12 == model['selection']['score']
+    else:
+        assert model['selection']['scoring'] == 'log_loss'
+        expected = torch.nn.functional.binary_cross_entropy_with_logits(prediction.double(), y[3:].double())
+        assert model['selection']['score'] == pytest.approx(expected.item())
     assert model['time_aug'] and model['lead_lag'] and model['dimension'] == 2
 
 
@@ -244,7 +357,7 @@ def test_grid_failure_handling_and_invalid_inputs(monkeypatch):
         (dict(alpha_grid=[]), 'alpha_grid'), (dict(alpha_grid=[.1, 0]), 'positive'),
         (dict(max_degree=0), 'max_degree'), (dict(max_words=-1), 'max_words'),
         (dict(max_words=True), 'max_words'), (dict(scoring='rmse'), 'scoring'),
-        (dict(cv=1), 'cv'), (dict(loss='huber'), 'squared'), (dict(validation_data=(x,)), 'pair'),
+        (dict(cv=1), 'cv'), (dict(loss='unknown'), 'loss'), (dict(validation_data=(x,)), 'pair'),
         (dict(degree=1, max_degree=2), 'max_degree'), (dict(alpha=.2, alpha_grid=[.1]), 'alpha_grid'),
         (dict(validation_data=(x, y[:-1])), 'responses'), (dict(initial_words=[(20,)]), 'initial_words'),
     ]:
@@ -277,3 +390,101 @@ def test_grid_shares_the_native_memory_limit_with_validation(monkeypatch):
     result = ps.sig_lasso(paths, y, 2, alpha_grid=[.5, .02], memory_limit=limit, validation_data=(paths, y))
     assert result['words'] and len(budgets) == 2
     assert all(0 < available < limit for available in budgets)
+
+
+def test_link_scale_scores_and_validation_with_a_missing_class():
+    paths = np.zeros((10, 2, 2))
+    y = np.arange(10) < 6
+    held = np.ones(10)
+    for loss in ('logistic', 'poisson'):
+        options = dict(loss=loss, degree=1, alpha_grid=[1.], validation_data=(paths, held))
+        for metric, expected in [('accuracy', 1.), ('mse', .4**2)]:
+            model = ps.sig_lasso(paths, y.astype(float), scoring=metric, **options)
+            assert model['selection']['score'] == pytest.approx(expected)
+    logistic = ps.sig_lasso(paths, y.astype(float), 1, loss='logistic', validation_data=(paths, held))
+    assert logistic['selection']['score'] == pytest.approx(-np.log(.6))
+
+
+def test_logistic_certificate_checks_raw_correlations_when_the_centred_bound_is_loose():
+    rng = np.random.default_rng(942)
+    x = rng.normal(size=(36, 5, 4)).cumsum(axis=1)
+    y = (rng.random(36) < .3).astype(float)
+    alpha, tol = .001, 1e-5
+    model = ps.sig_lasso(x, y, 3, alpha, loss='logistic', tol=tol)
+    words, design = dense_features(x, 3)
+    active = [words.index(w) for w in model['words']]
+    eta = design[:, active] @ model['coef'] + model['intercept']
+    residual = y - 1. / (1. + np.exp(-eta))
+    corr = design.T @ residual / len(y)
+    assert model['converged'] and abs(residual.mean()) <= tol
+    assert abs(corr).max() <= alpha + 1e-4 * alpha
+    np.testing.assert_allclose(corr[active], alpha * np.sign(model['coef']), rtol=0., atol=1e-4 * alpha)
+
+
+@pytest.mark.parametrize('loss', ['logistic', 'poisson', 'huber'])
+def test_multiple_targets_fixed_penalties_and_degree_selection(loss):
+    rng = np.random.default_rng(880)
+    x = rng.normal(size=(53, 5, 2))
+    y = rng.normal(size=(53, 2))
+    if loss == 'logistic':
+        y = (y > [-.2, .3]).astype(float)
+    elif loss == 'poisson':
+        y = rng.poisson([1.4, .8], size=y.shape).astype(float)
+    alpha = np.array([.01, .03])
+    model = ps.log_sig_lasso(x, y, alpha=alpha, max_degree=3, loss=loss, cv=3)
+    cold = ps.log_sig_lasso(x, y, model['degree'], alpha, loss=loss)
+    assert np.all(model['converged']) and model['dual_gap'] is None
+    np.testing.assert_array_equal(model['alpha'], alpha)
+    np.testing.assert_allclose(model['objective'], cold['objective'], atol=1e-9)
+    np.testing.assert_allclose(ps.sig_lasso_predict(x, model), ps.sig_lasso_predict(x, cold), atol=1e-6)
+
+
+@pytest.mark.parametrize('loss', ['logistic', 'poisson'])
+def test_grid_rejects_invalid_training_folds_and_targets(loss):
+    x = np.zeros((8, 3, 1))
+    y = np.zeros(8)
+    y[0] = 1.
+    with pytest.raises(ValueError, match='CV training fold'):
+        ps.sig_lasso(x, y, 1, loss=loss, cv=2)
+    with pytest.raises(ValueError, match='Validation'):
+        ps.sig_lasso(x, y, 1, loss=loss, validation_data=(x, np.full(8, .5)))
+    with pytest.raises(ValueError, match='Training'):
+        ps.sig_lasso(x, np.full(8, .5), 1, loss=loss, cv=2)
+    model = ps.sig_lasso(x, np.zeros(8), 1, loss=loss, cv=2, fit_intercept=False)
+    assert model['words'] == [] and model['intercept'] == 0.
+
+
+def test_old_native_grid_still_supports_squared_loss(monkeypatch):
+    module = import_module('pysiglib.sig_lasso')
+    monkeypatch.setattr(module, 'CPSIG_WORKING_SET_GRID_LOSS_MASK', 1)
+    x, y = np.zeros((8, 3, 1)), np.arange(8.)
+    with pytest.raises(RuntimeError, match='rebuild'):
+        ps.sig_lasso(x, y, 1, loss='huber', cv=2)
+    assert ps.sig_lasso(x, y, 1, cv=2)['converged']
+    assert ps.sig_lasso(x, y, 1, .1, loss='huber')['converged']
+
+
+def test_huber_null_fit_with_a_large_outlier():
+    x = np.zeros((5, 3, 1))
+    y = np.array([0., 1., 2., 3., 1e60])
+    model = ps.sig_lasso(x, y, 1, loss='huber', max_words=0, validation_data=(x, np.full(5, 2.)))
+    assert model['intercept'] == pytest.approx(2.) and not model['words']
+    assert model['selection']['score'] < 1e-25
+
+
+def test_extreme_poisson_validation_scores(monkeypatch):
+    selection = import_module('pysiglib._lasso_selection')
+    x = np.stack((np.zeros((10, 1)), np.tile([[-1.], [1.]], (5, 1))), axis=1)
+    y = np.tile([1., 3.], 5)
+
+    def predict(x, model, **kwargs):
+        return np.full(len(x), 1000. if model['words'] else -1000.)
+
+    monkeypatch.setattr(selection, 'sig_lasso_predict', predict)
+    with pytest.warns(RuntimeWarning, match='nonfinite validation scores'):
+        model = ps.sig_lasso(x, y, 1, loss='poisson', alpha_grid=[2., .1], validation_data=(x, y))
+    assert model['alpha'] == 2. and not model['words']
+    assert model['selection']['score'] == pytest.approx(2. * np.mean(y * (np.log(y) + 1000.) - y))
+    assert model['selection']['candidates'][1]['status'] == 'nonfinite_score'
+    with pytest.raises(FloatingPointError, match='finite validation score'):
+        ps.sig_lasso(x, y, 1, loss='poisson', alpha_grid=[.1], validation_data=(x, y))
